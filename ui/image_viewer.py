@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 
+from PyQt6 import sip
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QImage, QKeySequence, QPixmap, QShortcut
 from PyQt6.QtWidgets import (
@@ -246,6 +247,10 @@ class ImageViewerDialog(QDialog):
             failure = None
         finally:
             self._loading = False
+        if sip.isdeleted(self):
+            # Gone during the wait (run_off_gui holds a close of the
+            # window; a parent's deletion is not a close): nothing to show.
+            return
         if self._reload_pending or not self._siblings or \
                 self._siblings[min(self._idx, len(self._siblings) - 1)] != path:
             # What was decoded is no longer what is to be shown.
@@ -366,7 +371,10 @@ class ImageViewerDialog(QDialog):
 
     def delete_current(self) -> None:
         """Delete (after a question) the shown image and go on with the next."""
-        if VFA.delete_file(self, self._backend, self.current_path(), self._pane):
+        # The delete waits for the server (run_off_gui): the viewer may be
+        # gone once it is through.
+        if VFA.delete_file(self, self._backend, self.current_path(), self._pane) \
+                and not sip.isdeleted(self):
             self._drop_current()
 
     def _after_drag(self, path: str, action) -> None:

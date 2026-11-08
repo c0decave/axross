@@ -10,6 +10,17 @@ answered (no "not responding"). User input (keys, clicks, drops) is held
 back meanwhile and delivered afterwards, so nobody edits a text while it
 is being written, and no second Save starts inside the first.
 
+A close is held back too: the window manager's close (Alt+F4, the title
+bar's X, the taskbar) is no user input to Qt, and neither is a close()
+from a timer, so either ran the window's closeEvent inside the wait - a
+viewer or editor with WA_DeleteOnClose was gone when its call returned,
+and an editor's close asked to save and started a second, parallel Save.
+Every window shown when the (outermost) wait starts now refuses its
+close for the time of the wait (:class:`_CloseHold`); the close is
+replayed once the wait is over and its caller went back to the event
+loop, so it runs exactly as if it had come a moment later. Windows that
+open during the wait (a host-key question) close as usual.
+
 Used by the editor (save, save as, reload), the hex editor's save and
 the pane's encrypt / decrypt.
 """
@@ -22,7 +33,16 @@ import time
 from collections.abc import Callable
 from typing import TypeVar
 
-from PyQt6.QtCore import QCoreApplication, QEventLoop, QObject, Qt, QTimer, pyqtSignal
+from PyQt6 import sip
+from PyQt6.QtCore import (
+    QCoreApplication,
+    QEvent,
+    QEventLoop,
+    QObject,
+    Qt,
+    QTimer,
+    pyqtSignal,
+)
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +56,79 @@ class _Done(QObject):
     """Emitted from the worker; delivered (queued) in the waiting thread."""
 
     done = pyqtSignal()
+
+
+class _CloseHold(QObject):
+    """While a run_off_gui wait runs: the windows shown when it started
+    ignore their close (an application event filter), which is replayed
+    once the outermost wait is over. Nested waits (a timer starts one
+    inside another) share it; the windows go free when the last ends."""
+
+    def __init__(self, app) -> None:
+        super().__init__()
+        self._app = app
+        self._depth = 0
+        #: id(window) -> window, for the windows held in this wait.
+        self._windows: dict[int, QObject] = {}
+        #: The held windows asked to close meanwhile, in that order.
+        self._closed: list[QObject] = []
+
+    def enter(self) -> list[int]:
+        """Hold the shown windows; returns the ones this wait added."""
+        from PyQt6.QtWidgets import QApplication
+
+        if self._depth == 0:
+            self._app.installEventFilter(self)
+        self._depth += 1
+        added: list[int] = []
+        if isinstance(self._app, QApplication):
+            for window in QApplication.topLevelWidgets():
+                if window.isVisible() and id(window) not in self._windows:
+                    self._windows[id(window)] = window
+                    added.append(id(window))
+        return added
+
+    def leave(self, added: list[int]) -> None:
+        """Free the windows *added* by the wait that ends; replay the
+        closes they refused."""
+        self._depth -= 1
+        freed = [self._windows.pop(key) for key in added if key in self._windows]
+        if self._depth == 0:
+            self._app.removeEventFilter(self)
+            freed.extend(self._windows.values())
+            self._windows = {}
+        replay = [w for w in self._closed if any(w is f for f in freed)]
+        self._closed = [w for w in self._closed if not any(w is r for r in replay)]
+        for window in replay:
+            # Posted: the caller of the wait finishes with its window
+            # first, then the close runs as if it came now.
+            QTimer.singleShot(0, lambda w=window: _replay_close(w))
+
+    def eventFilter(self, watched, event) -> bool:
+        if (event.type() == QEvent.Type.Close
+                and self._windows.get(id(watched)) is watched):
+            event.ignore()
+            if not any(w is watched for w in self._closed):
+                log.info("Close of %s held until its background call is done",
+                         type(watched).__name__)
+                self._closed.append(watched)
+            return True
+        return False
+
+
+def _replay_close(window) -> None:
+    if not sip.isdeleted(window):
+        window.close()
+
+
+_hold: _CloseHold | None = None
+
+
+def _close_hold(app) -> _CloseHold:
+    global _hold
+    if _hold is None or sip.isdeleted(_hold) or _hold._app is not app:  # noqa: SLF001
+        _hold = _CloseHold(app)
+    return _hold
 
 
 def run_off_gui(fn: Callable[[], T], *, status: Callable[[str], None] | None = None,
@@ -83,11 +176,14 @@ def run_off_gui(fn: Callable[[], T], *, status: Callable[[str], None] | None = N
     timer.timeout.connect(show_busy)
     timer.start(BUSY_CURSOR_AFTER_MS)
     started = time.monotonic()
+    hold = _close_hold(app)
+    held = hold.enter()
     worker.start()
     try:
         while worker.is_alive() and "value" not in outcome and "error" not in outcome:
             loop.exec(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
     finally:
+        hold.leave(held)
         timer.stop()
         if busy:
             from PyQt6.QtWidgets import QApplication

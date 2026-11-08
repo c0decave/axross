@@ -880,9 +880,14 @@ class SSHSession(SessionLifecycle):
         items: list[FileItem] = []
         for attr in self._list_attrs(path):
             items.append(self._attr_to_item(attr))
-        from core.path_policy import drop_unsafe_names
+        # Only names no POSIX folder can hold go. A backslash, control
+        # character or bidi override is kept: a listing without the entry
+        # made a folder copy incomplete without an error, while the
+        # transfer list refuses such a name visibly ("name not usable
+        # here") and the pane shows it escaped.
+        from core.path_policy import drop_impossible_names
 
-        return drop_unsafe_names(items, origin=f"SFTP {path}")
+        return drop_impossible_names(items, origin=f"SFTP {path}")
 
     @_sftp_errors_as_oserror
     def stat(self, path: str) -> FileItem:

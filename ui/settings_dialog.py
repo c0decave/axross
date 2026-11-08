@@ -218,7 +218,7 @@ class _FormPage(QWidget):
 
 
 class GeneralPage(_FormPage):
-    """Language, restore the layout on start, pane activation."""
+    """Language, restore the layout on start, pane activation, the tour offer."""
 
     def __init__(self, window, parent: QWidget | None = None) -> None:
         super().__init__(window, parent)
@@ -257,6 +257,16 @@ class GeneralPage(_FormPage):
                  if self.activation_combo.itemData(i) == current)
         )
         form.addRow(tr("Activate a pane"), self.activation_combo)
+
+        from core import tour_offer
+
+        self.tour_offer_check = QCheckBox(tr("Offer the Getting Started tour at the next start"))
+        self.tour_offer_check.setToolTip(
+            tr("A notice in the status bar, shown once; Help > Tours… has every tour at any "
+               "time.")
+        )
+        self.tour_offer_check.setChecked(tour_offer.offer_at_start())
+        form.addRow(tr("Tours"), self.tour_offer_check)
         self.layout_.addLayout(form)
         self._finish()
 
@@ -265,6 +275,7 @@ class GeneralPage(_FormPage):
             "language": self.language_combo.currentData(),
             "restore": self.restore_check.isChecked(),
             "activation": self.activation_combo.currentData(),
+            "tour_offer": self.tour_offer_check.isChecked(),
         }
 
     def _store(self, changed: dict) -> None:
@@ -277,6 +288,10 @@ class GeneralPage(_FormPage):
             self._window.set_restore_on_start(changed["restore"])
         if "activation" in changed:
             PA.set_activation(changed["activation"])
+        if "tour_offer" in changed:
+            from core import tour_offer
+
+            tour_offer.set_offer_at_start(changed["tour_offer"])
 
 
 #: Settings > Appearance > Icon colours (ui.window_prefs.ICON_COLOUR_MODES).
@@ -883,7 +898,8 @@ def _agent_sub_pages() -> tuple[tuple[str, str], ...]:
 #: id -> (title, factory(parent, window), keywords, sub pages()).
 _BUILTIN: dict[str, tuple[str, Callable, tuple[str, ...], Callable | None]] = {
     "general": ("General", lambda p, w: GeneralPage(w, p),
-                ("language", "restore", "layout", "start", "activate", "hover", "click"), None),
+                ("language", "restore", "layout", "start", "activate", "hover", "click",
+                 "tour", "getting started"), None),
     "appearance": ("Appearance", lambda p, w: AppearancePage(w, p),
                    ("theme", "compact", "monochrome", "icons", "icon colours", "title bar", "frameless", "window manager", "font", "zoom", "hidden", "colour",
                     "color", "dark", "light"), None),
@@ -1028,6 +1044,16 @@ class SettingsDialog(QDialog):
         if self.tree.topLevelItemCount():
             self.tree.setCurrentItem(self.tree.topLevelItem(0))
         add_close_corner(self)
+        # F1: the handbook at the part of the open page (help_topic).
+        from ui.handbook import install_help_key
+
+        install_help_key(self, self.help_topic)
+
+    def help_topic(self) -> str:
+        """``settings.<page id>``: core.handbook.SECTIONS maps it to the
+        handbook's section of the page (or "Settings")."""
+        page_id = self.current_page_id()
+        return f"settings.{page_id}" if page_id else "settings"
 
     # -- pages -------------------------------------------------------------
     def _categories(self) -> list[tuple[str, str, Callable, tuple, tuple]]:

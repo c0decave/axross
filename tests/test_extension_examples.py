@@ -63,6 +63,7 @@ def test_happy_manifest_matches_sha256sum_and_verifies(tmp_path) -> None:
         "ok": ["a.bin", "b.txt"],
         "failed": [],
         "missing": [],
+        "errors": [],
     }
 
 
@@ -74,7 +75,7 @@ def test_sad_verify_names_changed_and_missing_files(tmp_path) -> None:
     (tmp_path / "a.txt").write_text("changed")
     (tmp_path / "b.txt").unlink()
     result = CM.verify(FS, str(tmp_path), text)
-    assert result == {"ok": [], "failed": ["a.txt"], "missing": ["b.txt"]}
+    assert result == {"ok": [], "failed": ["a.txt"], "missing": ["b.txt"], "errors": []}
 
 
 def test_edge_manifest_lines_that_leave_the_folder_are_ignored() -> None:

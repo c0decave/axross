@@ -197,6 +197,9 @@ class WindowTest(_Base):
             win = MW.MainWindow()
         self.addCleanup(win.deleteLater)
         self.addCleanup(win.close)
+        # The queued jobs never run (enqueue is a no-op): without this the
+        # close asked "Transfers running - Quit anyway?" and hung the test.
+        win._quit_with_transfers = True
         win._transfer_manager._worker.enqueue = lambda job: None
         gate = threading.Event()
         self.addCleanup(gate.set)

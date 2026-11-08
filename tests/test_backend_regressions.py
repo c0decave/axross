@@ -2456,6 +2456,7 @@ class GDriveAppendTruncateGuardTests(unittest.TestCase):
         # Stub everything _around_ the append-seed try-block.
         sess.normalize = lambda p: p
         sess.parent = lambda p: "/"
+        sess._path_cache = {"/": "root"}
         sess._resolve_path = mock.MagicMock(
             side_effect=lambda p, **_kw: "parent-id" if p == "/" else "existing-id"
         )

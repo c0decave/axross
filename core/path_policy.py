@@ -162,6 +162,47 @@ def drop_unsafe_names(items, *, keep_dots: bool = False, origin: str = "", backe
     return kept
 
 
+def drop_impossible_names(items, *, keep_dots: bool = False, origin: str = ""):
+    """Drop listing entries no POSIX directory can hold; keep the rest.
+
+    For a POSIX server's listing (SFTP, SCP): an empty name, one with a
+    ``/`` or a NUL byte, ``.`` or ``..`` (unless the caller's parser emits
+    them on purpose) names no entry - a hostile or broken server made it
+    up, and joined onto a destination it would land elsewhere. Those go.
+
+    Everything else STAYS, including names with a backslash (an ordinary
+    character on POSIX), control characters or bidi overrides: the entry
+    is there, and an entry left out of a listing is one a recursive copy,
+    move or delete never sees - the folder copy reports success while it
+    is incomplete. The consumers check such names where they use them
+    (:func:`transfer_leaf` / :func:`safe_join` refuse them visibly, the
+    transfer list shows "name not usable here"), and the file pane shows
+    them escaped (``sanitize_for_display``).
+    """
+    import logging
+
+    kept = []
+    for item in items:
+        name = getattr(item, "name", "")
+        if keep_dots and name in (".", ".."):
+            kept.append(item)
+            continue
+        impossible = (
+            not isinstance(name, str)
+            or not name
+            or "/" in name
+            or "\x00" in name
+            or name in (".", "..")
+        )
+        if impossible:
+            logging.getLogger(__name__).warning(
+                "dropping impossible remote name %r%s", name, f" from {origin}" if origin else ""
+            )
+            continue
+        kept.append(item)
+    return kept
+
+
 def _inside(root: str, path: str) -> bool:
     return os.path.commonpath([root, path]) == root
 
@@ -201,6 +242,7 @@ def confined_path(root: str, path: str, *, follow: bool = True) -> str:
 __all__ = [
     "BackendPathPolicy",
     "confined_path",
+    "drop_impossible_names",
     "drop_unsafe_names",
     "safe_join",
     "safe_leaf",

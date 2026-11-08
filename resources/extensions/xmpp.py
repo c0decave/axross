@@ -10,14 +10,16 @@ New devices are trusted blindly until a device of that contact is verified
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QObject, Qt, QTimer
 from PyQt6.QtWidgets import QMessageBox
 
 from core import chat as C
 from core import chat_xmpp as X
 from core.i18n import tr
+from core.thread_relay import GuiCall
 from ui.chat_panel import ChatPanel
 from ui.chat_security import DevicesDialog
 from ui.plain_text import plain_message
@@ -33,8 +35,51 @@ EXTENSION = {
 _PANELS: list[ChatPanel] = []
 
 
-def _wait(client: X.XmppClient, coro, timeout: float = 15.0):
-    return client.runner.submit(coro).result(timeout)
+#: Seconds the own device and the contact's devices may take to arrive
+#: (both are round trips to the server).
+DEVICES_TIMEOUT = 15.0
+
+
+async def _fetch_devices(client: X.XmppClient, jid: str, timeout: float):
+    async def both():
+        return await client.own_device(), await client.devices_of(jid)
+
+    return await asyncio.wait_for(both(), timeout)
+
+
+class _DevicesFetch(QObject):
+    """The devices of one Encryption… call, fetched on the client's loop:
+    *opened(result, error)* runs once on the GUI thread - with the
+    result, the loop's error, or a TimeoutError when nothing came (also
+    when the loop itself no longer runs). Dropped with the panel."""
+
+    def __init__(self, panel, opened, timeout: float) -> None:
+        super().__init__(panel)
+        self._opened = opened
+        self._done = False
+        self.deliver = GuiCall(self._deliver)
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(lambda: self._deliver(None, TimeoutError()))
+        self._timer.start(int((timeout + 2) * 1000))
+
+    def future_done(self, future) -> None:
+        """A done callback of the loop's future (on the loop's thread)."""
+        if future.cancelled():
+            self.deliver(None, TimeoutError())
+            return
+        exc = future.exception()
+        self.deliver(None if exc is not None else future.result(), exc)
+
+    def _deliver(self, result, error) -> None:
+        if self._done:
+            return
+        self._done = True
+        self._timer.stop()
+        try:
+            self._opened(result, error)
+        finally:
+            self.deleteLater()
 
 
 def show_security(panel, client: X.XmppClient, key: str) -> None:
@@ -47,21 +92,38 @@ def show_security(panel, client: X.XmppClient, key: str) -> None:
             "Group chats are not end-to-end encrypted here: the room's server can read them."))
         return
     jid = key if conv is not None and conv.kind == C.CONV_DIRECT else client.jid
-    own = _wait(client, client.own_device())
-
-    def devices():
-        return _wait(client, client.devices_of(jid))
 
     def set_trust(device, trust):
         mapping = {"verified": X.TRUST_VERIFIED, "trusted": X.TRUST_BLIND, "distrusted": X.TRUST_DISTRUSTED,
                    "undecided": X.TRUST_UNDECIDED}
         client.set_trust(device.user_id, device.identity_key, mapping[trust])
 
-    head = tr(C.ENC_TEXT.get(conv.encryption, "")) if conv is not None else ""
-    dialog = DevicesDialog(panel, tr("OMEMO - {jid}").format(jid=jid) + (f" ({head})" if head else ""), own,
-                           devices, set_trust, None, fingerprint_text=lambda f: f,
-                           trust_choices=("verified", "trusted", "distrusted", "undecided"))
-    dialog.exec()
+    def opened(result, error) -> None:
+        # Both lookups are network round trips (python-omemo): they ran on
+        # the client's loop, the window stayed usable; the dialog opens
+        # once they are in. Waiting for them here held the window up to
+        # 15 s per call, and a TimeoutError escaped the slot.
+        if error is not None:
+            reason = (tr("the server did not answer within {seconds:g} s").format(seconds=DEVICES_TIMEOUT)
+                      if isinstance(error, TimeoutError) else str(error) or type(error).__name__)
+            box = plain_message(panel, QMessageBox.Icon.Warning, tr("Encryption"),  # the server's text
+                                tr("Cannot get the OMEMO devices: {reason}").format(reason=reason))
+            box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+            box.open()
+            return
+        own, found = result
+        shown = list(found)  # the dialog's refresh after a trust change shows these again
+        head = tr(C.ENC_TEXT.get(conv.encryption, "")) if conv is not None else ""
+        dialog = DevicesDialog(panel, tr("OMEMO - {jid}").format(jid=jid) + (f" ({head})" if head else ""),
+                               own, lambda: shown, set_trust, None, fingerprint_text=lambda f: f,
+                               trust_choices=("verified", "trusted", "distrusted", "undecided"))
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dialog.open()
+
+    fetch = _DevicesFetch(panel, opened, DEVICES_TIMEOUT)
+    future = client.runner.submit(_fetch_devices(client, jid, DEVICES_TIMEOUT),
+                                  on_error=lambda _exc: None)  # shown by opened()
+    future.add_done_callback(fetch.future_done)
 
 
 def handle_request(panel, client: X.XmppClient, request) -> bool:

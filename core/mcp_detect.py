@@ -17,7 +17,13 @@ a container, under restricted rules):
   (a git URL, an unknown option, ``uv run`` …) is shown, not tickable.
 * a **program already on disk** runs as it is, in the sandbox profile of
   the place where it was ticked - not in a container, as the details say.
-  One that is not found is shown, not tickable.
+  One that is not found is shown, not tickable, and so is one named by a
+  **project folder's** file (``.mcp.json``, ``.vscode/mcp.json``,
+  ``.cursor/mcp.json`` of the scanned folders): a cloned repository can
+  name any program there, so it is added by hand or not at all
+  (:data:`PROJECT_PROGRAM`). A command that wraps a downloader (``env
+  npx``, ``sh -c "npx …"``, ``node …/npx-cli.js``, ``python -m uv``) is a
+  downloader (core.mcp_runner).
 * an http server becomes an http server; podman images axross installed
   run with its podman line.
 
@@ -72,6 +78,12 @@ log = logging.getLogger(__name__)
 #: The PATH programs are looked up in during a scan (detect's *env*).
 _PATH: ContextVar = ContextVar("mcp_detect_path", default=None)
 
+#: Why a program named by a project folder's file is not switched on with a
+#: tick: a cloned repository's .mcp.json can name any command, and a tick
+#: would run it on this machine.
+PROJECT_PROGRAM = ("it was found in a project folder's file, and a cloned repository can name "
+                   "any program there - it is not switched on with a tick: if you trust that "
+                   "file and the program, add its command under MCP Servers yourself")
 #: A configuration file larger than this is not read.
 MAX_CONFIG_BYTES = 8 << 20
 #: Servers read of one file.
@@ -387,9 +399,11 @@ def _on_disk(program: str, path: str | None) -> bool:
 
 
 def _server(raw, *, name: str, client: str, origin: str,
-            path: str | None = None) -> DetectedServer:
+            path: str | None = None, project: bool = False) -> DetectedServer:
     """One server of a client's configuration; _Refused says why not (never
-    with a value in it)."""
+    with a value in it). *project*: the file lies in one of the scanned
+    folders (a cloned repository's .mcp.json, .vscode/mcp.json,
+    .cursor/mcp.json) - its programs are not switched on with a tick."""
     if not isinstance(raw, dict):
         raise _Refused("a server is an object")
     kind = raw.get("type", raw.get("transport"))
@@ -455,6 +469,8 @@ def _server(raw, *, name: str, client: str, origin: str,
             values["why_not"] = f"the program {M.clean_text(program, 80)} is not on this machine"
         else:
             values["local"] = True
+            if project:
+                values["why_not"] = PROJECT_PROGRAM
         if raw.get("envFile"):
             notes.append("Its envFile is not read: set what it holds after switching it on.")
     elif url is not None:
@@ -501,7 +517,8 @@ def _key(values: dict) -> str:
     return "detected:" + hashlib.sha256(what.encode()).hexdigest()[:20]
 
 
-def _servers_of(mapping, *, client: str, origin: str, out: list, warnings: list) -> None:
+def _servers_of(mapping, *, client: str, origin: str, out: list, warnings: list,
+                project: bool = False) -> None:
     path = _PATH.get()
     if mapping is None:
         return
@@ -514,7 +531,8 @@ def _servers_of(mapping, *, client: str, origin: str, out: list, warnings: list)
             break
         label = M.clean_text(name, 40) or "?"
         try:
-            out.append(_server(raw, name=str(name), client=client, origin=origin, path=path))
+            out.append(_server(raw, name=str(name), client=client, origin=origin, path=path,
+                               project=project))
         except _Refused as exc:
             warnings.append(f"{origin}: {label} skipped - {exc}")
 
@@ -557,13 +575,16 @@ def _claude_code(home, env, folders, out, warnings) -> None:
     elif data is not None:
         warnings.append(f"{path}: not an object - skipped")
     for folder in folders:
-        _project_file(Path(folder) / ".mcp.json", "mcpServers", "Claude Code", out, warnings)
+        _project_file(Path(folder) / ".mcp.json", "mcpServers", "Claude Code", out, warnings,
+                      project=True)
 
 
-def _project_file(path: Path, key: str, client: str, out, warnings, *, jsonc=False) -> None:
+def _project_file(path: Path, key: str, client: str, out, warnings, *, jsonc=False,
+                  project=False) -> None:
     data = _load_json(path, warnings, jsonc=jsonc)
     if isinstance(data, dict):
-        _servers_of(data.get(key), client=client, origin=str(path), out=out, warnings=warnings)
+        _servers_of(data.get(key), client=client, origin=str(path), out=out, warnings=warnings,
+                    project=project)
     elif data is not None:
         warnings.append(f"{path}: not an object - skipped")
 
@@ -579,14 +600,14 @@ def _vscode(home, env, folders, out, warnings) -> None:
         _project_file(user / "mcp.json", "servers", "VS Code", out, warnings, jsonc=True)
     for folder in folders:
         _project_file(Path(folder) / ".vscode" / "mcp.json", "servers", "VS Code", out,
-                      warnings, jsonc=True)
+                      warnings, jsonc=True, project=True)
 
 
 def _cursor(home, env, folders, out, warnings) -> None:
     _project_file(home / ".cursor" / "mcp.json", "mcpServers", "Cursor", out, warnings)
     for folder in folders:
         _project_file(Path(folder) / ".cursor" / "mcp.json", "mcpServers", "Cursor", out,
-                      warnings)
+                      warnings, project=True)
 
 
 CLIENTS = (_claude_desktop, _claude_code, _vscode, _cursor)
@@ -705,6 +726,9 @@ def _merge(found, warnings, configured) -> DetectResult:
         if first is None:
             merged[server.key] = server
             continue
+        if first.why_not == PROJECT_PROGRAM and not server.why_not:
+            # The user's own file names it too: that one counts.
+            first, server = server, first
         merged[server.key] = replace(
             first, clients=tuple(dict.fromkeys(first.clients + server.clients)),
             origins=tuple(dict.fromkeys(first.origins + server.origins)))

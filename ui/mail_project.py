@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
@@ -114,6 +115,11 @@ class MailProjectDialog(QDialog):
         self._agent_dock = agent_dock
         self._connect = connect
         self._post_done = GuiCall(self._import_done)
+        self._post_shown = GuiCall(self._shown)
+        # parsing and sanitising a message (up to 64 MB of it) is no work for the GUI thread
+        self._viewer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mail-view")
+        self._showing = 0                   # the newest selection: older results are dropped
+        self._imports: set[threading.Event] = set()
         layout = QVBoxLayout(self)
         top = QHBoxLayout()
         self.folder_label = QLabel(tr("No project open."))
@@ -125,6 +131,10 @@ class MailProjectDialog(QDialog):
             b = QPushButton(label)
             b.clicked.connect(slot)
             top.addWidget(b)
+        self.cancel_button = QPushButton(tr("Cancel Import"))
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.clicked.connect(self.cancel_imports)
+        top.addWidget(self.cancel_button)
         layout.addLayout(top)
         from PyQt6.QtWidgets import QCheckBox
 
@@ -184,17 +194,31 @@ class MailProjectDialog(QDialog):
         return True
 
     def _run_import(self, label: str, work) -> None:
+        """*work(cancel)* on a thread of its own; *cancel()* turns true when
+        Cancel Import is pressed or the window closes."""
         self.status.setText(tr("Importing {what}…").format(what=label))
+        cancel = threading.Event()
+        self._imports.add(cancel)
+        self.cancel_button.setEnabled(True)
 
         def run():
             try:
-                result = work()
-                self._post_done(result.line(), result.errors[:20])
+                result = work(cancel.is_set)
+                line = result.line() + (" - " + tr("cancelled") if cancel.is_set() else "")
+                self._post_done(cancel, line, result.errors[:20])
             except Exception as exc:  # noqa: BLE001
-                self._post_done(f"{type(exc).__name__}: {exc}", [])
+                self._post_done(cancel, f"{type(exc).__name__}: {exc}", [])
         threading.Thread(target=run, daemon=True, name="mail-import").start()
 
-    def _import_done(self, line: str, errors: list) -> None:
+    def cancel_imports(self) -> None:
+        for cancel in self._imports:
+            cancel.set()
+        if self._imports:
+            self.status.setText(tr("Cancelling the import…"))
+
+    def _import_done(self, cancel: threading.Event, line: str, errors: list) -> None:
+        self._imports.discard(cancel)
+        self.cancel_button.setEnabled(bool(self._imports))
         self.status.setText(line + ("\n" + "\n".join(errors) if errors else ""))
         self.refresh()
 
@@ -204,14 +228,15 @@ class MailProjectDialog(QDialog):
         paths, _ = QFileDialog.getOpenFileNames(self, tr("Messages and mailboxes"), "",
                                                 tr("Mail (*.eml *.msg *.pst *.ost *.mbox *.mbx);;All files (*)"))
         if paths:
-            self._run_import(tr("{n} files").format(n=len(paths)), lambda: self.project.import_paths(paths))
+            self._run_import(tr("{n} files").format(n=len(paths)),
+                             lambda cancel: self.project.import_paths(paths, cancel=cancel))
 
     def import_folder(self) -> None:
         if not self._need_project():
             return
         folder = QFileDialog.getExistingDirectory(self, tr("A folder of messages, mbox files or a Maildir"))
         if folder:
-            self._run_import(folder, lambda: self.project.import_paths([folder]))
+            self._run_import(folder, lambda cancel: self.project.import_paths([folder], cancel=cancel))
 
     def import_mailbox(self) -> None:
         if not self._need_project() or self._connect is None:
@@ -231,7 +256,8 @@ class MailProjectDialog(QDialog):
         if not ok:
             return
         profile = pm.get(name)
-        self._run_import(f"{name}:{folder}", lambda: self.project.import_backend(self._connect(profile), folder))
+        self._run_import(f"{name}:{folder}",
+                         lambda cancel: self.project.import_backend(self._connect(profile), folder, cancel=cancel))
 
     def refresh(self) -> None:
         if self.project is None:
@@ -255,12 +281,33 @@ class MailProjectDialog(QDialog):
             self.detail.setPlainText(report_text(self.project.report(sha)))
         except (OSError, ValueError) as exc:
             self.detail.setPlainText(str(exc))
+        self._showing += 1
+        ticket, project = self._showing, self.project
+        self.message_view.setPlainText(tr("Loading…"))
+        try:
+            self._viewer.submit(self._load, ticket, project, sha)
+        except RuntimeError:                # the window is closing
+            pass
+
+    def _load(self, ticket: int, project: MailProject, sha: str) -> None:
+        """On the viewer thread: the message parsed and made safe HTML."""
+        if ticket != self._showing:         # another message was selected meanwhile
+            return
         from core.mail_html import message_html
 
         try:
-            self.message_view.setHtml(message_html(self.project.message(sha)))
+            html_text, error = message_html(project.message(sha)), ""
         except Exception as exc:  # noqa: BLE001 - an unreadable message shows why
-            self.message_view.setPlainText(str(exc))
+            html_text, error = None, str(exc)
+        self._post_shown(ticket, html_text, error)
+
+    def _shown(self, ticket: int, html_text: str | None, error: str) -> None:
+        if ticket != self._showing:
+            return
+        if html_text is None:
+            self.message_view.setPlainText(error)
+        else:
+            self.message_view.setHtml(html_text)
 
     def ask_agent(self) -> None:
         if not self._need_project():
@@ -278,6 +325,9 @@ class MailProjectDialog(QDialog):
         dock.raise_()
 
     def done(self, result: int) -> None:  # noqa: D401 - Qt API
+        self.cancel_imports()
+        self._showing += 1
+        self._viewer.shutdown(wait=False, cancel_futures=True)
         if self.project is not None:
             self.project.close()
             self.project = None

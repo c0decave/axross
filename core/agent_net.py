@@ -81,20 +81,69 @@ class HostRelay:
 
     *send* writes a message to the worker; *allowed* answers whether
     ``(host, port)`` may be reached right now.
+
+    An allowed name is resolved here, every address it resolves to is
+    checked like core.mcp_egress checks the egress proxy's
+    (``_refused_address``: no loopback, link-local or unspecified address,
+    and for a name no private one either - its DNS could be re-pointed at
+    the host's own services or the LAN), and the connection goes to the
+    checked address, never to the name again (a second lookup could
+    answer differently). A private address the user allowed as an address
+    is reached. *allow_loopback* is for tests (their server is local);
+    *resolver* is ``socket.getaddrinfo``'s shape.
     """
 
-    def __init__(self, send: Callable[[dict], None], allowed: Callable[[str, int], bool]) -> None:
+    def __init__(self, send: Callable[[dict], None], allowed: Callable[[str, int], bool], *,
+                 allow_loopback: bool = False, resolver=None) -> None:
         self._send = send
         self._allowed = allowed
+        self._allow_loopback = allow_loopback
+        self._resolver = resolver
         self._lock = threading.Lock()
         self._streams: dict[int, socket.socket] = {}
         self._next = 0
+
+    def _connect(self, host: str, port: int) -> socket.socket:
+        """A connection to the first address of *host* that may be reached;
+        PermissionError when every address was refused."""
+        from core.mcp_egress import _refused_address  # it imports this module
+
+        resolver = self._resolver or socket.getaddrinfo
+        try:
+            infos = resolver(host, port, type=socket.SOCK_STREAM)
+        except OSError as exc:
+            raise OSError(f"cannot resolve {host}: {exc}") from exc
+        try:
+            ipaddress.ip_address(host.split("%", 1)[0])
+            named = False
+        except ValueError:
+            named = True
+        refused = ""
+        failure: OSError | None = None
+        for family, kind, proto, _canon, address in infos:
+            why = _refused_address(str(address[0]), named=named)
+            if why and not (self._allow_loopback and why == "a loopback address"):
+                refused = f"{host} resolves to {why} ({address[0]})"
+                continue
+            sock = socket.socket(family, kind, proto)
+            sock.settimeout(CONNECT_TIMEOUT)
+            try:
+                sock.connect(address)
+            except OSError as exc:
+                sock.close()
+                failure = exc
+                continue
+            return sock
+        if refused:
+            log.warning("agent sandbox: refused %s:%s - %s", host, port, refused)
+            raise PermissionError(f"{host}:{port} is not reached from the sandbox: {refused}")
+        raise failure or OSError(f"cannot connect to {host}:{port}: no address")
 
     def open(self, host: str, port: int) -> int:
         host = str(host).lower()
         if not self._allowed(host, int(port)):
             raise PermissionError(f"{host}:{port} is not an allowed host of this sandbox")
-        sock = socket.create_connection((host, int(port)), timeout=CONNECT_TIMEOUT)
+        sock = self._connect(host, int(port))
         sock.settimeout(None)
         with self._lock:
             self._next += 1

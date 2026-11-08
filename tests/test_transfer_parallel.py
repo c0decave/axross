@@ -693,7 +693,7 @@ def test_happy_the_integrity_check_fails_only_its_own_job(tmp_path) -> None:
         parallel_transfers_safe = True
 
         def checksum(self, path: str, algorithm: str = "sha256") -> str:
-            if path.endswith("f001.bin"):
+            if "f001.bin" in path:  # the temp file, checked before the rename
                 return "sha256:" + "0" * 64
             return LocalFS.checksum(self, path, algorithm)
 

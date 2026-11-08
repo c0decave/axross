@@ -443,6 +443,30 @@ class GDriveSession(SessionLifecycle):
 
         return current_id
 
+    def _resolve_for_change(self, path: str, action: str) -> str:
+        """The id a delete, rename or overwrite of *path* acts on: asked of
+        the server, and refused when it is not the file the session saw.
+
+        stat / open_read / list_dir work from the cached path-to-id map,
+        so a move that read and size-checked id A must not then delete
+        id B: renamed on the web, with a new upload under the old name,
+        the path names another file now - and files.delete skips the
+        Drive trash. The fresh answer stays in the cache, so a retry
+        after the refusal acts on the file the path names now.
+        """
+        path = self.normalize(path)
+        seen_id = self._path_cache.get(path)
+        file_id = self._resolve_path(path, fresh=True)
+        if seen_id is not None and seen_id != file_id:
+            raise OSError(
+                errno.ESTALE,
+                f"Cannot {action} {path}: it names another file on Google Drive "
+                f"now than the one listed (renamed or replaced since); "
+                f"refresh the folder and try again",
+                path,
+            )
+        return file_id
+
     def _lookup_child(self, parent_id: str, name: str, path: str) -> str:
         """The id of the one item called *name* in folder *parent_id*,
         asked of the server (not the cache). FileNotFoundError when there
@@ -710,7 +734,7 @@ class GDriveSession(SessionLifecycle):
         log.info("Created directory: %s", path)
 
     def remove(self, path: str, recursive: bool = False) -> None:
-        file_id = self._resolve_path(path, fresh=True)
+        file_id = self._resolve_for_change(path, "remove")
         # files.delete takes a folder with everything in it, so a
         # non-recursive remove refuses a folder with children first.
         if not recursive and self._get_metadata(file_id).get("mimeType") == _FOLDER_MIME:
@@ -726,7 +750,7 @@ class GDriveSession(SessionLifecycle):
     def rename(self, src: str, dst: str) -> None:
         src = self.normalize(src)
         dst = self.normalize(dst)
-        file_id = self._resolve_path(src, fresh=True)
+        file_id = self._resolve_for_change(src, "rename")
         if src == dst:
             return
 
@@ -781,9 +805,12 @@ class GDriveSession(SessionLifecycle):
         # Check if file already exists (for update vs create). Only "not
         # found" means create: any other lookup failure (a transient API
         # error, a name two files share) would create a second file.
+        # The id must be the file the caller stat'ed (an overwrite
+        # decision, the append seed): a file uploaded under the name
+        # since is not overwritten in its place.
         existing_id: str | None = None
         try:
-            existing_id = self._resolve_path(path, fresh=True)
+            existing_id = self._resolve_for_change(path, "overwrite")
         except FileNotFoundError:
             pass
 

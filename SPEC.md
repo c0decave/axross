@@ -147,6 +147,14 @@ queried before any irreversible privileged operation.
   pre-push secret scanner to skip the scan and let the secret reach
   the public mirror. Attack sub-classes seen and defended:
 
+  *In this public repository:* the export scanner itself
+  (`scripts/export-public.py`) stays in the private tree - MANIFEST.in
+  excludes it on purpose. The public mirror ships only the `security/`
+  helpers it is built from: `security/scan_exclude_paths.py`,
+  `security/diff_line_split.py`, `security/scan_natural_language.py` and
+  `security/staged_blob.py`. Where a defense below names
+  `scripts/export-public.py`, it describes that private scanner.
+
   - **A9a — Non-ASCII / quoted-form filename inconsistency.** A
     filename like `"\303\251vil"` is decoded inconsistently across
     `git ls-tree`, `git diff-tree`, `git show`, and `git status`

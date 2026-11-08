@@ -186,9 +186,23 @@ class UpdateController(QObject):
         message = result.message
         if not inst.can_download:
             message += "\n" + inst.why_not()
+        elif not self.has_build(inst):
+            message += "\n" + self._no_build_message(inst)
         self._set(AVAILABLE, message)
-        if not self._manual and not skipped and SU.auto_download() and inst.can_download:
+        if not self._manual and not skipped and SU.auto_download() and self.has_build(inst):
             self.download()
+
+    def has_build(self, inst=None) -> bool:
+        """The found release carries this binary's asset (a release can be
+        published before its binaries are attached)."""
+        inst = inst if inst is not None else self.install()
+        return (self.release is not None and inst.can_download
+                and self.release.asset(inst.asset) is not None)
+
+    def _no_build_message(self, inst) -> str:
+        return tr("Release {version} has no {name} build yet: once it is attached, Check Now "
+                  "offers it. Until then this version keeps running.").format(
+                      version=self.release.version if self.release else "?", name=inst.asset)
 
     # -- the download -----------------------------------------------------------------
     def download(self) -> bool:
@@ -197,6 +211,9 @@ class UpdateController(QObject):
         inst = self.install()
         if not inst.can_download:
             self._set(AVAILABLE, inst.why_not())
+            return False
+        if not self.has_build(inst):
+            self._set(AVAILABLE, self._no_build_message(inst))
             return False
         release, factory = self.release, self.opener_factory
         asset = release.asset(inst.asset)
@@ -488,7 +505,7 @@ class UpdateDialog(QDialog):
                     version=release.version))
                 + "</a>")
         available = c.state == AVAILABLE
-        self.download_button.setVisible(available and inst.can_download)
+        self.download_button.setVisible(available and c.has_build(inst))
         self.download_button.setText(
             tr("Download and Install") if inst.can_self_replace else tr("Download"))
         self.skip_button.setVisible(available)

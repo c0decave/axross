@@ -1309,6 +1309,25 @@ def end_media_threads(timeout_ms: int = 5000) -> bool:
     return ended
 
 
+def _unregister_exit_handlers() -> None:
+    """Take back what :func:`media_thread` registered: each load runs this
+    module afresh, so a hook of an unloaded copy would pile up (and keep
+    that copy alive) until the process ends."""
+    global _exit_handler_registered
+    if not _exit_handler_registered:
+        return
+    atexit.unregister(end_media_threads)
+    from PyQt6.QtCore import QCoreApplication
+
+    app = QCoreApplication.instance()
+    if app is not None:
+        try:
+            app.aboutToQuit.disconnect(end_media_threads)
+        except TypeError:  # not connected (no application when it was registered)
+            pass
+    _exit_handler_registered = False
+
+
 def _start_multimedia_here() -> None:
     """Set Qt Multimedia's backend up on this (the GUI) thread: it belongs
     to the thread that makes the first multimedia object, and that must
@@ -5334,13 +5353,29 @@ class PlayerPanel(QWidget):
 
     def load_playlist(self, path: str) -> None:
         """Replace the list by the playlist at *path* (nothing changes when
-        it is refused)."""
-        try:
-            entries, skipped = read_playlist(path)
-        except PlaylistError as exc:
+        it is refused). Read off the GUI thread, as restore_state does: it
+        checks every entry (up to MAX_PLAYLIST_ENTRIES ``isfile`` calls),
+        and one on a dead mount froze the window. Only the last load asked
+        for fills the list."""
+        self._playlist_loads = getattr(self, "_playlist_loads", 0) + 1
+        token = self._playlist_loads
+
+        def failed(exc) -> None:
+            if token != self._playlist_loads:
+                return
+            if not isinstance(exc, (PlaylistError, OSError)):
+                raise exc
             self.note.setText(tr("Cannot load {name}: {error}").format(
                 name=os.path.basename(path), error=exc))
-            return
+
+        def done(result) -> None:
+            if token == self._playlist_loads:
+                self._fill_from_playlist(path, *result)
+
+        self.note.setText(tr("Loading {name}…").format(name=os.path.basename(path)))
+        self._background(lambda: read_playlist(path), done, failed)
+
+    def _fill_from_playlist(self, path: str, entries, skipped: int) -> None:
         self._remove_all_rows()
         for entry in entries:
             self._append(entry.path, entry.title, entry.duration)
@@ -6481,6 +6516,12 @@ def deactivate(api):
             pass
     while _TEMP_FOLDERS:
         shutil.rmtree(_TEMP_FOLDERS.pop(), ignore_errors=True)
+    # The audio, decoder and equalizer threads belong to this copy of the
+    # module: switched off or reloaded, they kept running (three more per
+    # cycle), with an exit hook each. A thread that does not end keeps its
+    # hooks: they hold this copy (and the running QThread) until the exit.
+    if end_media_threads():
+        _unregister_exit_handlers()
 
 
 def _mixer_opener(window):

@@ -34,6 +34,10 @@ Common behaviour:
   (aws-cli, restic, rclone, boto3; the signature itself is not checked).
   ``auth_token=None`` turns auth off, on loopback only; binding to a
   non-loopback address without a token is refused.
+* **TLS off loopback.** ``cert_file`` + ``key_file`` serve HTTPS. A
+  non-loopback bind over plain HTTP is refused - the token would cross
+  the network in clear - unless ``allow_insecure_http=True`` opts in
+  (logged as a warning).
 * **Read-only mode.** ``read_only=True`` rejects every mutating
   verb with 403.
 * **Path policy.** Every incoming key is normalised; ``..``
@@ -44,7 +48,10 @@ caller stops them with ``server.shutdown()``. Multiple reverse-servers
 can run side-by-side on different ports.
 
 This is **not** a full S3 / WebDAV implementation. Anything beyond
-the verb table above returns 501 Not Implemented. That's fine for
+the verb table above returns 501 Not Implemented - in S3 also every
+subresource (``?tagging``, ``?acl``, ``?uploads``, ``?versionId=``, ...)
+and CopyObject (``x-amz-copy-source``), which a plain PUT / DELETE / GET
+would otherwise treat as the object itself. That's fine for
 the swiss-army-knife use case ("let restic back up to my SFTP via
 S3 API"); operators who need full conformance should run a real
 gateway.
@@ -67,6 +74,8 @@ import posixpath
 import re
 import secrets
 import socket
+import ssl
+import sys
 import threading
 import time
 import xml.etree.ElementTree as ET
@@ -99,6 +108,11 @@ MAX_WALK_PATH_CHARS = 8_192
 MAX_LIST_WALK_KEYS = 250_000
 #: S3's ETag of an empty object (MD5 of no bytes), for a folder marker.
 _EMPTY_ETAG = '"d41d8cd98f00b204e9800998ecf8427e"'
+#: Longest chunk-size line (with extensions) and trailer line of a
+#: ``Transfer-Encoding: chunked`` body, and most trailer lines.
+MAX_CHUNK_LINE_BYTES = 4096
+MAX_CHUNK_TRAILER_LINES = 64
+_CHUNK_SIZE_LINE = re.compile(rb"([0-9A-Fa-f]{1,16})[ \t]*(?:;[^\r\n]*)?")
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +341,23 @@ class ServerConfig:
     # "" -> a loopback server generates one; None -> no auth (loopback only)
     auth_token: str | None = ""
     root_path: str = "/"  # everything is rooted here on the backend
+    # PEM certificate chain + private key: serve HTTPS instead of HTTP.
+    cert_file: str | None = None
+    key_file: str | None = None
+    # A non-loopback bind without TLS is refused unless this is set.
+    allow_insecure_http: bool = False
+
+    def tls_enabled(self) -> bool:
+        return bool(self.cert_file and self.key_file)
+
+
+class _BodyError(ValueError):
+    """A request body the server will not read: ``status`` is the answer
+    (400 malformed framing, 411 no length, 501 unknown transfer coding)."""
+
+    def __init__(self, status: int, message: str) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 class _BaseHandler(BaseHTTPRequestHandler):
@@ -438,13 +469,39 @@ class _BaseHandler(BaseHTTPRequestHandler):
     def _flavour_name(self) -> str:
         return "s3" if isinstance(self, _S3Handler) else "dav"
 
-    def _read_body(self) -> bytes:
-        length = self._content_length(default=0)
-        if length <= 0:
-            return b""
-        if length > MAX_BODY_BYTES:
-            raise ValueError(f"Content-Length {length} exceeds cap {MAX_BODY_BYTES}")
-        return self.rfile.read(length)
+    def _body_reader(self, *, length_required: bool = True):
+        """The request body as a ``read(size)`` object: a
+        ``Transfer-Encoding: chunked`` body decoded, else exactly
+        ``Content-Length`` bytes.
+
+        A body without either has no known length: :class:`_BodyError`
+        411 when *length_required* (a PUT that stores it - reading it as
+        empty replaced the file with nothing), else an empty body. Also
+        :class:`_BodyError` for framing the server will not guess at.
+        """
+        codings = [
+            coding.strip().lower()
+            for value in self.headers.get_all("Transfer-Encoding") or []
+            for coding in value.split(",")
+            if coding.strip()
+        ]
+        if codings:
+            if self.headers.get("Content-Length") is not None:
+                # RFC 9112 6.3: ambiguous framing (request smuggling).
+                raise _BodyError(400, "both Transfer-Encoding and Content-Length")
+            if codings[-1] != "chunked":
+                raise _BodyError(400, "the final transfer coding is not chunked")
+            if codings != ["chunked"]:
+                raise _BodyError(501, f"unsupported transfer coding {', '.join(codings)!r}")
+            return _ChunkedBody(self.rfile)
+        if self.headers.get("Content-Length") in (None, ""):
+            if length_required:
+                raise _BodyError(411, "Content-Length or Transfer-Encoding: chunked required")
+            return _RequestBody(self.rfile, 0)
+        try:
+            return _RequestBody(self.rfile, self._content_length())
+        except ValueError as exc:
+            raise _BodyError(400, str(exc)) from exc
 
     def _content_length(self, *, default: int | None = None) -> int:
         raw = self.headers.get("Content-Length")
@@ -462,13 +519,13 @@ class _BaseHandler(BaseHTTPRequestHandler):
             raise ValueError(f"Content-Length {length} exceeds cap {MAX_BODY_BYTES}")
         return length
 
-    def _stream_body_to(self, write_handle, length: int) -> int:
-        """Copy ``length`` bytes from the request body to ``write_handle``.
+    def _stream_body_to(self, write_handle, body) -> int:
+        """Copy the request *body* (from :meth:`_body_reader`) to
+        ``write_handle``.
 
         Streamed in ``PUT_CHUNK`` chunks so a multi-GiB upload doesn't
         materialise in memory.
         """
-        body = _RequestBody(self.rfile, length)
         moved = 0
         while chunk := body.read(PUT_CHUNK):
             written = write_handle.write(chunk)
@@ -477,8 +534,9 @@ class _BaseHandler(BaseHTTPRequestHandler):
             moved += len(chunk)
         return moved
 
-    def _store_body(self, path: str, length: int) -> None:
-        """Store the request body at ``path``; a failed PUT keeps the old object.
+    def _store_body(self, path: str, body) -> None:
+        """Store the request *body* (from :meth:`_body_reader`) at
+        ``path``; a failed PUT keeps the old object.
 
         Raises :class:`ValueError` when the client did not deliver the
         body it announced and :class:`OSError` when the backend refused
@@ -494,14 +552,12 @@ class _BaseHandler(BaseHTTPRequestHandler):
             # before the first byte was read.
             from core.atomic_io import atomic_write_stream
 
-            atomic_write_stream(
-                backend, path, _RequestBody(self.rfile, length), chunk_size=PUT_CHUNK
-            )
+            atomic_write_stream(backend, path, body, chunk_size=PUT_CHUNK)
             return
         handle = backend.open_write(path)
         completed = False
         try:
-            self._stream_body_to(handle, length)
+            self._stream_body_to(handle, body)
             completed = True
         finally:
             # Buffered writers commit at close: an incomplete body is
@@ -545,9 +601,139 @@ class _RequestBody:
         return chunk
 
 
+class _ChunkedBody:
+    """``read(size)`` over a ``Transfer-Encoding: chunked`` request body,
+    decoded and streamed (RFC 9112 7.1), at most ``MAX_BODY_BYTES``.
+
+    Malformed framing, a body that ends before its last chunk, or a
+    socket that fails while reading it raises :class:`ValueError`, like
+    :class:`_RequestBody`: nothing of it may be committed.
+    """
+
+    def __init__(self, rfile, cap: int | None = None) -> None:
+        self._rfile = rfile
+        self._cap = MAX_BODY_BYTES if cap is None else cap
+        self._left = 0  # bytes left in the current chunk
+        self._received = 0
+        self._done = False
+
+    def _io(self, what: str, call):
+        try:
+            return call()
+        except OSError as exc:
+            raise ValueError(
+                f"chunked request body unreadable at {what} after "
+                f"{self._received} bytes: {exc}"
+            ) from exc
+
+    def _line(self, what: str) -> bytes:
+        line = self._io(what, lambda: self._rfile.readline(MAX_CHUNK_LINE_BYTES + 2))
+        if not line.endswith(b"\r\n"):
+            if len(line) > MAX_CHUNK_LINE_BYTES:
+                raise ValueError(f"chunked request body: {what} line too long")
+            raise ValueError(
+                f"short chunked request body: {what} missing after {self._received} bytes"
+            )
+        return line[:-2]
+
+    def _next_chunk(self) -> None:
+        match = _CHUNK_SIZE_LINE.fullmatch(self._line("chunk size"))
+        if match is None:
+            raise ValueError("chunked request body: malformed chunk size")
+        size = int(match.group(1), 16)
+        if self._received + size > self._cap:
+            raise ValueError(f"chunked request body exceeds cap {self._cap}")
+        if size:
+            self._left = size
+            return
+        # Last chunk: trailer fields up to the empty line (ignored).
+        for _ in range(MAX_CHUNK_TRAILER_LINES + 1):
+            if not self._line("trailer"):
+                self._done = True
+                return
+        raise ValueError("chunked request body: too many trailer lines")
+
+    def read(self, size: int = -1) -> bytes:
+        if self._done or size == 0:
+            return b""
+        if not self._left:
+            self._next_chunk()
+            if self._done:
+                return b""
+        want = min(self._left, PUT_CHUNK if size is None or size < 0 else size)
+        chunk = self._io("chunk data", lambda: self._rfile.read(want))
+        if not chunk:
+            raise ValueError(
+                f"short chunked request body: ended after {self._received} bytes"
+            )
+        self._left -= len(chunk)
+        self._received += len(chunk)
+        if not self._left and self._io("chunk end", lambda: self._rfile.read(2)) != b"\r\n":
+            raise ValueError("chunked request body: chunk data not followed by CRLF")
+        return chunk
+
+
 # ---------------------------------------------------------------------------
 # Reverse-S3
 # ---------------------------------------------------------------------------
+
+
+#: Query parameters of the S3 calls served; any other one names a
+#: subresource or an option that changes what the call does.
+_LIST_BUCKETS_PARAMS = frozenset({"max-buckets", "continuation-token", "prefix", "bucket-region"})
+_LIST_OBJECTS_PARAMS = frozenset(
+    {
+        "list-type",
+        "prefix",
+        "delimiter",
+        "max-keys",
+        "marker",
+        "continuation-token",
+        "start-after",
+        "encoding-type",
+        "fetch-owner",
+    }
+)
+#: GetObject / HeadObject response-header overrides (ignored).
+_GET_OBJECT_PARAMS = frozenset(
+    {
+        "response-cache-control",
+        "response-content-disposition",
+        "response-content-encoding",
+        "response-content-language",
+        "response-content-type",
+        "response-expires",
+    }
+)
+
+
+_SIGNING_PARAMS = frozenset(
+    {
+        # The SDKs' operation label (``?x-id=PutObject``).
+        "x-id",
+        # Presigned URLs, V4 ...
+        "x-amz-algorithm",
+        "x-amz-credential",
+        "x-amz-date",
+        "x-amz-expires",
+        "x-amz-signedheaders",
+        "x-amz-signature",
+        "x-amz-security-token",
+        "x-amz-content-sha256",
+        # ... and V2.
+        "awsaccesskeyid",
+        "expires",
+        "signature",
+    }
+)
+
+
+def _signing_param(name: str) -> bool:
+    """A query parameter that only signs or labels a request. Other
+    ``x-amz-*`` names a presigner hoisted out of the headers
+    (``x-amz-copy-source``) are no such parameter."""
+    lower = name.lower()
+    return lower in _SIGNING_PARAMS or lower.startswith("x-amz-meta-")
 
 
 class _S3Handler(_BaseHandler):
@@ -565,12 +751,17 @@ class _S3Handler(_BaseHandler):
             self._s3_error(400, "InvalidArgument", str(exc))
             return
         if not bucket:
-            self._handle_list_buckets()
+            if not self._s3_refuse_query(_LIST_BUCKETS_PARAMS):
+                self._handle_list_buckets()
             return
         if key == "":
-            self._handle_list_bucket(bucket)
+            if self._query_has("location"):
+                self._handle_bucket_location(bucket)
+            elif not self._s3_refuse_query(_LIST_OBJECTS_PARAMS):
+                self._handle_list_bucket(bucket)
             return
-        self._handle_get_object(bucket, key)
+        if not self._s3_refuse_query(_GET_OBJECT_PARAMS):
+            self._handle_get_object(bucket, key)
 
     def do_HEAD(self) -> None:
         if not self._is_authed():
@@ -580,6 +771,8 @@ class _S3Handler(_BaseHandler):
             bucket, key = self._parse_path()
         except (ValueError, PermissionError) as exc:
             self._s3_error(400, "InvalidArgument", str(exc))
+            return
+        if self._s3_refuse_query(_GET_OBJECT_PARAMS):
             return
         if not bucket:
             self._send_simple(200)
@@ -600,6 +793,24 @@ class _S3Handler(_BaseHandler):
             bucket, key = self._parse_path()
         except (ValueError, PermissionError) as exc:
             self._s3_error(400, "InvalidArgument", str(exc))
+            return
+        if self._s3_refuse_query(frozenset(), body=True):
+            return
+        if self.headers.get("x-amz-copy-source") is not None:
+            # CopyObject / UploadPartCopy: storing the (empty) body as the
+            # object wrote an empty copy - and `aws s3 mv` then deleted
+            # the source.
+            self.close_connection = True
+            self._s3_error(
+                501, "NotImplemented", "CopyObject (x-amz-copy-source) is not implemented"
+            )
+            return
+        if self.headers.get("If-Match") is not None or self.headers.get(
+            "If-None-Match", "*"
+        ).strip() != "*":
+            # The ETags are synthetic: no condition on one can be checked.
+            self.close_connection = True
+            self._s3_error(501, "NotImplemented", "conditional PUT on an ETag is not implemented")
             return
         if not bucket or not key:
             self._s3_error(400, "InvalidArgument", "PUT requires bucket and key")
@@ -623,12 +834,49 @@ class _S3Handler(_BaseHandler):
         except (ValueError, PermissionError) as exc:
             self._s3_error(400, "InvalidArgument", str(exc))
             return
+        if self._s3_refuse_query(frozenset(), body=True):
+            return
+        if self.headers.get("If-Match") is not None:
+            self._s3_error(501, "NotImplemented", "conditional DELETE is not implemented")
+            return
         if not bucket or not key:
             self._s3_error(400, "InvalidArgument", "DELETE requires key")
             return
         self._handle_delete_object(bucket, key)
 
     # ------- helpers ---------------------------------------------------
+
+    def _query_names(self) -> list[str]:
+        """The decoded names of every query parameter (``?tagging`` and
+        ``?versionId=1`` alike)."""
+        query = urlparse(self.path).query or ""
+        return [unquote(chunk.partition("=")[0]) for chunk in query.split("&") if chunk]
+
+    def _query_has(self, name: str) -> bool:
+        return name in self._query_names()
+
+    def _s3_refuse_query(self, allowed: frozenset[str], *, body: bool = False) -> bool:
+        """Answer 501 NotImplemented, and return True, when the query
+        names anything beyond *allowed* and the parameters that only sign
+        a request: a subresource (``?tagging``, ``?acl``, ``?uploads``,
+        ``?uploadId=``, ``?partNumber=``, ``?versionId=``, ...). Unchecked,
+        a PUT stored the tagging XML as the object, a DELETE ``?tagging``
+        deleted it and a GET ``?acl`` returned it. *body*: the request
+        body is left unread, so the connection must close."""
+        unsupported = sorted(
+            {name for name in self._query_names() if name not in allowed and not _signing_param(name)}
+        )
+        if not unsupported:
+            return False
+        if body:
+            self.close_connection = True
+        self._s3_error(
+            501,
+            "NotImplemented",
+            "the reverse-server does not implement "
+            + ", ".join(f"?{name}" for name in unsupported),
+        )
+        return True
 
     def _parse_path(self) -> tuple[str, str]:
         """Path-style: ``/bucket/key…``. Empty bucket = list buckets.
@@ -813,6 +1061,24 @@ class _S3Handler(_BaseHandler):
         ).encode("utf-8")
         self._send_simple(200, body, content_type="application/xml")
 
+    def _handle_bucket_location(self, bucket: str) -> None:
+        """GetBucketLocation (s3cmd asks before every call): the default
+        region, an empty LocationConstraint."""
+        bucket_root = _rooted_join(self.config.backend, self.config.root_path, bucket)
+        try:
+            item = _stat_entry(self.config.backend, bucket_root)
+        except OSError as exc:
+            self._s3_failure(f"location {bucket}", exc)
+            return
+        if item is None or not getattr(item, "is_dir", False):
+            self._s3_error(404, "NoSuchBucket", "bucket not found")
+            return
+        body = (
+            "<?xml version='1.0' encoding='UTF-8'?>"
+            "<LocationConstraint xmlns='http://s3.amazonaws.com/doc/2006-03-01/'/>"
+        ).encode("utf-8")
+        self._send_simple(200, body, content_type="application/xml")
+
     def _handle_head_bucket(self, bucket: str) -> None:
         bucket_root = _rooted_join(self.config.backend, self.config.root_path, bucket)
         try:
@@ -882,21 +1148,44 @@ class _S3Handler(_BaseHandler):
         self.send_header("Server", HEAD_BANNER)
         self.end_headers()
 
+    def _s3_body_error(self, exc: _BodyError) -> None:
+        # The body is not read: the connection cannot carry another
+        # request after it.
+        self.close_connection = True
+        s3_code = {411: "MissingContentLength", 501: "NotImplemented"}.get(
+            exc.status, "InvalidArgument"
+        )
+        self._s3_error(exc.status, s3_code, str(exc))
+
     def _handle_put_object(self, bucket: str, key: str) -> None:
         path = self._backend_path_for(bucket, key)
+        try:
+            body = self._body_reader()
+        except _BodyError as exc:
+            self._s3_body_error(exc)
+            return
+        if self.headers.get("If-None-Match") is not None:
+            # "If-None-Match: *" - create only (terraform's S3 lock file).
+            # Best effort: checked here, not atomically with the write.
+            try:
+                taken = _stat_entry(self.config.backend, path) is not None
+            except OSError as exc:
+                self.close_connection = True
+                self._s3_failure(f"PUT {path}", exc)
+                return
+            if taken:
+                self.close_connection = True
+                self._s3_error(412, "PreconditionFailed", "the key exists and If-None-Match is *")
+                return
         # Auto-create parent directories on the backend (terraform / restic
         # often PUT new keys). Best-effort.
         parent = self.config.backend.parent(path) if hasattr(self.config.backend, "parent") else ""
         if parent:
             _mkdir_best_effort(self.config.backend, parent)
         try:
-            length = self._content_length(default=0)
+            self._store_body(path, body)
         except ValueError as exc:
-            self._s3_error(400, "InvalidArgument", str(exc))
-            return
-        try:
-            self._store_body(path, length)
-        except ValueError as exc:
+            self.close_connection = True
             self._s3_error(400, "InvalidArgument", str(exc))
             return
         except Exception as exc:  # noqa: BLE001 - any failed commit is a 500, never a 200
@@ -915,11 +1204,16 @@ class _S3Handler(_BaseHandler):
     def _handle_put_folder(self, bucket: str, key: str) -> None:
         """A zero-byte PUT of ``key/`` creates the folder ``key``."""
         try:
-            length = self._content_length(default=0)
+            # No length is an empty body here: nothing gets replaced.
+            has_body = bool(self._body_reader(length_required=False).read(1))
+        except _BodyError as exc:
+            self._s3_body_error(exc)
+            return
         except ValueError as exc:
+            self.close_connection = True
             self._s3_error(400, "InvalidArgument", str(exc))
             return
-        if length:
+        if has_body:
             # The body is not read: the connection cannot carry another
             # request after it.
             self.close_connection = True
@@ -1216,17 +1510,21 @@ class _DAVHandler(_BaseHandler):
         path = self._backend_path()
         if path is None:
             return
+        try:
+            body = self._body_reader()
+        except _BodyError as exc:
+            # The body is not read: the connection cannot carry another
+            # request after it.
+            self.close_connection = True
+            self._send_simple(exc.status, str(exc).encode("utf-8"))
+            return
         parent = self.config.backend.parent(path) if hasattr(self.config.backend, "parent") else ""
         if parent:
             _mkdir_best_effort(self.config.backend, parent)
         try:
-            length = self._content_length(default=0)
+            self._store_body(path, body)
         except ValueError as exc:
-            self._send_simple(400, str(exc).encode("utf-8"))
-            return
-        try:
-            self._store_body(path, length)
-        except ValueError as exc:
+            self.close_connection = True
             self._send_simple(400, str(exc).encode("utf-8"))
             return
         except Exception as exc:  # noqa: BLE001 - any failed commit is a 500, never a 201
@@ -1499,10 +1797,12 @@ class ReverseServer:
     #: What clients must send (Bearer, or the Basic password); "" when the
     #: server runs without auth (``auth_token=None``). Never logged.
     auth_token: str = field(default="", repr=False)
+    #: Served over HTTPS (``cert_file`` + ``key_file``).
+    tls: bool = False
 
     @property
     def base_url(self) -> str:
-        scheme = "http"
+        scheme = "https" if self.tls else "http"
         host = self.bind
         if ":" in host and not host.startswith("["):
             host = f"[{host}]"
@@ -1516,6 +1816,53 @@ class ReverseServer:
             self.httpd.server_close()
         if self.thread.is_alive():
             self.thread.join(timeout=2.0)
+
+
+class _ReverseHTTPServer(ThreadingHTTPServer):
+    """One thread per request; a client that fails the TLS handshake or
+    drops the connection is a debug line, not a traceback on stderr."""
+
+    def handle_error(self, request, client_address) -> None:
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (ssl.SSLError, ConnectionError, TimeoutError)):
+            log.debug("reverse-server: connection from %s failed: %s", client_address, exc)
+            return
+        super().handle_error(request, client_address)
+
+
+def _make_ssl_context(config: ServerConfig) -> ssl.SSLContext:
+    """Server-side TLS 1.2+ context from ``cert_file`` / ``key_file``."""
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.load_cert_chain(certfile=config.cert_file, keyfile=config.key_file)
+    return ctx
+
+
+def _check_transport(config: ServerConfig, flavour: str, local: bool) -> None:
+    """Refuse a partial TLS pair, and a non-loopback bind over plain
+    HTTP without ``allow_insecure_http`` (as core/mcp_http.py does): the
+    token - Bearer, Basic password or AWS key id - and every file would
+    cross the network in clear."""
+    if bool(config.cert_file) != bool(config.key_file):
+        raise ValueError(
+            f"reverse-{flavour}: TLS needs cert_file and key_file together; "
+            "refusing to fall back to plain HTTP with one of them"
+        )
+    if local or config.tls_enabled():
+        return
+    if not config.allow_insecure_http:
+        raise PermissionError(
+            f"reverse-{flavour} refuses to serve {config.bind!r} over plain HTTP: "
+            "the token and every file would cross the network in clear. "
+            "Pass cert_file + key_file for HTTPS, bind to 127.0.0.1 (an SSH "
+            "tunnel for remote access), or allow_insecure_http=True."
+        )
+    log.warning(
+        "reverse-%s on %s serves plain HTTP (allow_insecure_http): anyone who "
+        "can see the traffic reads the token and every file",
+        flavour,
+        config.bind,
+    )
 
 
 def _free_port(bind: str) -> int:
@@ -1565,6 +1912,9 @@ def _serve(config: ServerConfig, handler_cls: type, flavour: str) -> ReverseServ
             # as mcp_http does without TLS.
             config.auth_token = secrets.token_urlsafe(32)
             generated = True
+    _check_transport(config, flavour, local)
+    # Before the socket exists: a bad certificate or key leaks nothing.
+    ssl_ctx = _make_ssl_context(config) if config.tls_enabled() else None
     config.root_path = _normalize_root_path(config.root_path)
     if config.auth_token and len(config.auth_token) < 16:
         log.warning(
@@ -1581,8 +1931,15 @@ def _serve(config: ServerConfig, handler_cls: type, flavour: str) -> ReverseServ
         (handler_cls,),
         {"config": config},
     )
-    httpd = ThreadingHTTPServer((config.bind, int(config.port)), handler)
+    httpd = _ReverseHTTPServer((config.bind, int(config.port)), handler)
     httpd.timeout = 30.0
+    if ssl_ctx is not None:
+        # Handshake in the per-connection thread (first read, under the
+        # handler's socket timeout), not inside accept(): otherwise one
+        # silent TCP client stalls the accept loop for everyone.
+        httpd.socket = ssl_ctx.wrap_socket(
+            httpd.socket, server_side=True, do_handshake_on_connect=False
+        )
     config.port = int(httpd.server_address[1])
     label = getattr(config.backend, "name", type(config.backend).__name__)
     server = ReverseServer(
@@ -1597,6 +1954,7 @@ def _serve(config: ServerConfig, handler_cls: type, flavour: str) -> ReverseServ
             daemon=True,
         ),
         auth_token=config.auth_token,
+        tls=ssl_ctx is not None,
     )
     server.thread.start()
     log.info(
@@ -1625,6 +1983,9 @@ def serve_s3(
     read_only: bool = False,
     auth_token: str | None = "",
     root_path: str = "/",
+    cert_file: str | None = None,
+    key_file: str | None = None,
+    allow_insecure_http: bool = False,
 ) -> ReverseServer:
     """Expose ``backend`` as a minimum-viable S3 endpoint.
 
@@ -1636,6 +1997,9 @@ def serve_s3(
 
     The first URL segment becomes the bucket name; we map it to a
     top-level directory under ``root_path`` on the backend.
+
+    ``cert_file`` + ``key_file`` (PEM) serve HTTPS. A non-loopback
+    ``bind`` without them is refused unless ``allow_insecure_http=True``.
     """
     config = ServerConfig(
         backend=backend,
@@ -1644,6 +2008,9 @@ def serve_s3(
         read_only=read_only,
         auth_token=auth_token,
         root_path=root_path,
+        cert_file=cert_file,
+        key_file=key_file,
+        allow_insecure_http=allow_insecure_http,
     )
     return _serve(config, _S3Handler, "s3")
 
@@ -1656,12 +2023,17 @@ def serve_webdav(
     read_only: bool = False,
     auth_token: str | None = "",
     root_path: str = "/",
+    cert_file: str | None = None,
+    key_file: str | None = None,
+    allow_insecure_http: bool = False,
 ) -> ReverseServer:
     """Expose ``backend`` as a minimum-viable WebDAV endpoint.
 
     Common clients: cadaver, davfs2 (``mount -t davfs``), gnome-files
     (``davs://``), macOS Finder ("Connect to Server..."), Cyberduck.
     Any browser can do read-only listings via the HTML index.
+
+    TLS and the plain-HTTP refusal as in :func:`serve_s3`.
     """
     config = ServerConfig(
         backend=backend,
@@ -1670,6 +2042,9 @@ def serve_webdav(
         read_only=read_only,
         auth_token=auth_token,
         root_path=root_path,
+        cert_file=cert_file,
+        key_file=key_file,
+        allow_insecure_http=allow_insecure_http,
     )
     return _serve(config, _DAVHandler, "webdav")
 

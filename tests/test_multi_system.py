@@ -2051,7 +2051,7 @@ class ReverseServeDnsRebindingTests(unittest.TestCase):
 
     def test_non_loopback_bind_with_token_keeps_any_host(self) -> None:
         srv = reverse_serve.serve_webdav(
-            self.b, bind="0.0.0.0", port=0, auth_token="t" * 32
+            self.b, bind="0.0.0.0", port=0, auth_token="t" * 32, allow_insecure_http=True
         )
         try:
             status, body = self._status(

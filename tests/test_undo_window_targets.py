@@ -106,7 +106,10 @@ class _WindowBase(unittest.TestCase):
         if manager._walks:  # a folder still being walked (0.14.173): its jobs are to come
             return False
         jobs = list(manager._jobs.values())
-        return all(
+        # The counters follow the status through a queued signal: a status
+        # already DONE with the counter still at 1 made the window's close
+        # ask "Transfers running" in the cleanup, and the test hung there.
+        return manager.unfinished() == 0 and all(
             j.status not in (TransferStatus.PENDING, TransferStatus.ACTIVE) for j in jobs
         )
 

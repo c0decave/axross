@@ -52,7 +52,9 @@ def _wire(allowed, hosts):
         elif message["type"] == "tcp_close":
             bridge.closed(message["stream"])
 
-    relay = N.HostRelay(to_worker, allowed)
+    # The echo server is on this machine's loopback: the test lets the
+    # relay reach it (an allowed host never may in real use).
+    relay = N.HostRelay(to_worker, allowed, allow_loopback=True)
 
     def request(message):
         try:

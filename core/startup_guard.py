@@ -141,6 +141,36 @@ def stall_message(seconds: float, pid: int, crash_path, activation=None) -> str:
     return "\n".join(lines)
 
 
+#: Frames of the main thread written ahead of faulthandler's dump (its own cap).
+MAIN_STACK_DEPTH = 100
+
+
+def _write_main_thread_stack(handle) -> None:
+    """The main thread's stack, in faulthandler's format, ahead of its dump.
+
+    faulthandler writes at most 100 threads, newest first, and ends with
+    "...": with more threads alive (a pool, an extension's workers) the
+    oldest one is cut off, and that is the main thread, whose hang the
+    report is about.
+    """
+    main = threading.main_thread()
+    frame = sys._current_frames().get(main.ident)
+    if frame is None or main is threading.current_thread():
+        return  # faulthandler writes the calling thread first anyway
+    lines = [f"Main thread 0x{main.ident:016x} (most recent call first):\n"]
+    for _ in range(MAIN_STACK_DEPTH):
+        if frame is None:
+            break
+        lines.append(f'  File "{frame.f_code.co_filename}", line {frame.f_lineno} '
+                     f"in {frame.f_code.co_name}\n")
+        frame = frame.f_back
+    else:
+        if frame is not None:
+            lines.append("  ...\n")
+    handle.write("".join(lines) + "\n")
+    handle.flush()
+
+
 def _send(fd: int | None, event: dict) -> bool:
     """One JSON line to the detached parent; False when it is gone."""
     if fd is None:
@@ -272,6 +302,7 @@ class StartupWatchdog:
                 "every thread's stack: ---\n"
             )
             handle.flush()
+            _write_main_thread_stack(handle)
             faulthandler.dump_traceback(file=handle, all_threads=True)
             handle.flush()
         except (OSError, ValueError):

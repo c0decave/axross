@@ -94,6 +94,12 @@ def delete_file(parent: QWidget, backend, path: str, pane) -> bool:
     )
     if reply != QMessageBox.StandardButton.Yes:
         return False
+    from ui.production_gate import confirm_production
+
+    # The pane's Delete asks a production connection's countdown; the
+    # viewer's Delete removes the same file and asks it too.
+    if not confirm_production(parent, backend, f"delete {path}"):
+        return False
     from ui.off_gui import run_off_gui
 
     try:
@@ -101,7 +107,7 @@ def delete_file(parent: QWidget, backend, path: str, pane) -> bool:
     except OSError as exc:
         log.error("Delete failed for %s: %s", path, exc)
         QMessageBox.warning(
-            parent, "Delete", f"Could not delete {escape(name)}:\n{escape(str(exc))}"
+            None if sip.isdeleted(parent) else parent, "Delete", f"Could not delete {escape(name)}:\n{escape(str(exc))}"
         )
         return False
     log.info("Deleted: %s", path)

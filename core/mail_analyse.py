@@ -12,13 +12,13 @@ JSON for a mail project, a script or the Agent.
 
 from __future__ import annotations
 
-import html as html_mod
 import ipaddress
 import re
 from dataclasses import asdict, dataclass, field
 from email.utils import parseaddr, parsedate_to_datetime
 from urllib.parse import urlsplit
 
+from core.mail_html import links
 from core.mail_message import MailMessage
 
 MAX_LINKS = 2000
@@ -31,11 +31,11 @@ _MACRO = {".docm", ".xlsm", ".pptm", ".dotm", ".xltm", ".xlam", ".ppam", ".potm"
 _SHORTENERS = {"bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "is.gd", "buff.ly", "rebrand.ly",
                "cutt.ly", "shorturl.at", "rb.gy", "t.ly", "tiny.cc", "s.id"}
 _URL = re.compile(r"""\bhttps?://[^\s<>"'\]\)]+""", re.I)
-_HREF = re.compile(r"""<a\b[^>]*?\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>(.*?)</a\s*>""", re.I | re.S)
-_TAG = re.compile(r"<[^>]+>")
 _RECEIVED_FROM = re.compile(r"\bfrom\s+(\S+)(?:\s+\(([^)]*)\))?", re.I)
 _RECEIVED_BY = re.compile(r"\bby\s+(\S+)", re.I)
-_IP = re.compile(r"\[?((?:\d{1,3}\.){3}\d{1,3}|[0-9a-f]{0,4}(?::[0-9a-f]{0,4}){2,7})\]?", re.I)
+# an address literal: "[192.0.2.1]", "[IPv6:2001:db8::1]" (RFC 5321 4.1.3; Postfix and Exim
+# write it so in Received), "[2001:db8::1]", or a bare one ("192.0.2.1", "IPv6:2001:db8::1")
+_IP = re.compile(r"\[(?:IPv6:)?([0-9a-f:.]+)\]|(?<![0-9a-z:.])(?:IPv6:)?([0-9a-f:.]{2,})", re.I)
 _AUTH = re.compile(r"\b(spf|dkim|dmarc|arc)\s*=\s*([a-z]+)", re.I)
 
 
@@ -98,6 +98,18 @@ def _org(domain: str) -> str:
     return ".".join(parts[-2:])
 
 
+def ip_literals(text: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+    """The IP addresses written in *text* (a Received line's "from" comment),
+    in their order; the "IPv6:" tag of an address literal is not part of it."""
+    out = []
+    for m in _IP.finditer(text or ""):
+        try:
+            out.append(ipaddress.ip_address((m.group(1) or m.group(2)).rstrip(".")))
+        except ValueError:
+            continue
+    return out
+
+
 def _received(msg: MailMessage, report: Report) -> None:
     previous = None
     hops = []
@@ -107,8 +119,8 @@ def _received(msg: MailMessage, report: Report) -> None:
         m_from, m_by = _RECEIVED_FROM.search(body), _RECEIVED_BY.search(body)
         ip = ""
         if m_from and m_from.group(2):
-            m_ip = _IP.search(m_from.group(2))
-            ip = m_ip.group(1) if m_ip else ""
+            found = ip_literals(m_from.group(2))
+            ip = str(found[0]) if found else ""
         hop = Hop(m_from.group(1) if m_from else "", ip, m_by.group(1) if m_by else "", date_part.strip())
         try:
             when = parsedate_to_datetime(date_part.strip()) if date_part.strip() else None
@@ -211,9 +223,10 @@ def _link_notes(url: str, host: str, text: str) -> list[str]:
 
 def _links(msg: MailMessage, report: Report) -> None:
     seen = set()
-    for m in _HREF.finditer(msg.html or ""):
-        url = html_mod.unescape(next(g for g in m.groups()[:3] if g is not None)).strip()
-        text = html_mod.unescape(_TAG.sub("", m.group(4) or "")).strip()
+    # the parser unescapes both; at most this many <a> are looked at (each one
+    # that is no web address or was seen before costs little, but not nothing)
+    for href, inner in links(msg.html or "", limit=20 * MAX_LINKS):
+        url, text = href.strip(), inner.strip()
         if not url.lower().startswith(("http://", "https://")) or (url, text) in seen:
             continue
         seen.add((url, text))

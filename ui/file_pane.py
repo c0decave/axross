@@ -1071,6 +1071,7 @@ class FilePaneWidget(QWidget):
         from ui.security_badge import SecurityBadge
 
         self._security_badge = SecurityBadge(self)
+        self._security_badge.setObjectName("axSecurityBadge")  # the tours point at it
         header_layout.addWidget(self._security_badge)
         self.navigation_finished.connect(lambda _path, _ok: self.refresh_security())
 
@@ -1093,6 +1094,7 @@ class FilePaneWidget(QWidget):
 
         # "Set as Target" button
         self._btn_target = QPushButton("\u25ce")  # ◎
+        self._btn_target.setObjectName("axPaneTarget")
         self._btn_target.setFixedSize(20, 20)
         self._btn_target.setToolTip("Set as transfer target")
         self._btn_target.setStyleSheet(
@@ -1137,6 +1139,8 @@ class FilePaneWidget(QWidget):
         path_bar.addWidget(self._btn_bookmark)
 
         self._path_edit = QLineEdit()
+        self._path_edit.setObjectName("axPathEdit")
+        self._path_edit.setProperty("axHelpTopic", "path-bar")  # F1: ui.handbook
         self._path_edit.returnPressed.connect(self._on_path_entered)
         path_bar.addWidget(self._path_edit)
 
@@ -1171,6 +1175,8 @@ class FilePaneWidget(QWidget):
         filter_bar.addWidget(filter_label)
 
         self._filter_edit = QLineEdit()
+        self._filter_edit.setObjectName("axPaneFilter")
+        self._filter_edit.setProperty("axHelpTopic", "path-bar")
         self._filter_edit.setPlaceholderText("Type to filter files...")
         self._filter_edit.setClearButtonEnabled(True)
         self._filter_edit.textChanged.connect(self._on_filter_changed)
@@ -2098,9 +2104,11 @@ class FilePaneWidget(QWidget):
             self.transfer_requested.emit(selected)
 
     def _move_to_target(self) -> None:
-        """Move selected items to the target pane (F6)."""
+        """Move selected items to the target pane (F6). The production
+        countdown is the main window's (``_request_transfer``), which every
+        move passes; asking here too would ask twice."""
         selected = self.selected_items()
-        if selected and self._production_ok(f"move {len(selected)} item(s) away"):
+        if selected:
             self.move_requested.emit(selected)
 
     # -- Cut / Paste (ui.cut_clipboard) -----------------------------------------

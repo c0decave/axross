@@ -1694,7 +1694,10 @@ class MediaViewerDialog(QDialog):
 
     def delete_current(self) -> None:
         path = self.current_path()
-        if path and VFA.delete_file(self, self._backend, path, self._pane):
+        # The delete waits for the server (run_off_gui): the viewer may be
+        # gone once it is through.
+        if path and VFA.delete_file(self, self._backend, path, self._pane) \
+                and not sip.isdeleted(self):
             self.remove_path(path)
 
     def _after_drag(self, path: str, action) -> None:

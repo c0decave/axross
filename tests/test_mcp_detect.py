@@ -92,9 +92,9 @@ def test_happy_claude_code_user_project_and_folder_servers(tmp_path):
     assert config.transport == "http" and config.bearer and config.sandbox == ""
     assert TOKEN not in json.dumps(config.to_dict())
     assert any(str(work / ".mcp.json") in o for o in by["fs"].origins)
-    assert by["fs"].local and "not in a container" in by["fs"].describe()
-    fs = by["fs"].config(name="fs", sandbox="Normal")
-    assert fs.sandbox == "Normal" and fs.command == ("mcp-fs", str(work)) and not fs.container
+    # A program named by a project folder's file (a cloned repository) is
+    # shown, but not switched on with a tick (test_mcp_runner_wrappers).
+    assert by["fs"].local and not by["fs"].usable and by["fs"].why_not == D.PROJECT_PROGRAM
 
 
 def test_happy_vs_code_settings_with_comments_and_mcp_json(tmp_path):

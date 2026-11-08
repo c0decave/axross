@@ -170,7 +170,9 @@ def test_happy_a_local_copy_reads_its_source_once(tree, monkeypatch, temp):
     job = _job(src, dst, use_temp_file=temp)
     TW.TransferWorker()._process_job(job)
     assert job.status == TW.TransferStatus.DONE, job.error_message
-    assert hashed == [str(dst)]  # the destination only
+    # The destination only: on the temp-file route its temp file, checked
+    # before it replaces the destination.
+    assert hashed == [job.temp_path if temp else str(dst)]
     assert job.streamed_source_checksum.startswith("sha256:")
 
 
@@ -180,14 +182,14 @@ def test_sad_a_source_changed_after_the_read_is_hashed_again(tree, monkeypatch):
     tmp, src = tree
     dst = tmp / "b" / "f.bin"
     hashed = _count_source_hashes(monkeypatch, src)
-    real_finalize = TW.TransferWorker._finalize_temp_destination
+    real_refuse = TW.TransferWorker._refuse_aliased_source
 
-    def finalize(dest_backend, temp_path, dest_path):
-        real_finalize(dest_backend, temp_path, dest_path)
+    def refuse(job, temp_path):  # runs after the read, right before the check
+        real_refuse(job, temp_path)
         src.write_bytes(b"PAYLOAD" * 1000)
         os.utime(src, (2_000_000, 2_000_000))
 
-    monkeypatch.setattr(TW.TransferWorker, "_finalize_temp_destination", staticmethod(finalize))
+    monkeypatch.setattr(TW.TransferWorker, "_refuse_aliased_source", staticmethod(refuse))
     job = _job(src, dst)
     TW.TransferWorker()._process_job(job)
     assert str(src) in hashed

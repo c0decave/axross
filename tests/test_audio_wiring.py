@@ -312,6 +312,7 @@ class RecordingSink(MP.MemorySink):
         self.suspended = True
 
 
+@pytest.mark.skipif(MP.np is None, reason="numpy is missing")
 def test_happy_the_eq_engine_moves_a_playing_track_to_the_new_device():
     made = []
 
@@ -330,6 +331,7 @@ def test_happy_the_eq_engine_moves_a_playing_track_to_the_new_device():
     assert engine._sink.suspended  # paused stays paused on the new device
 
 
+@pytest.mark.skipif(MP.np is None, reason="numpy is missing")
 def test_edge_a_stopped_eq_engine_opens_nothing_on_a_change():
     made = []
     engine = MP.EqEngine(sink_factory=lambda fmt: made.append(1) or MP.MemorySink())

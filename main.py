@@ -316,7 +316,7 @@ def should_detach(
         return False
     if args.foreground or args.debug or args.verbose:
         return False
-    if args.script or args.mcp_server or args.mcp_list_tools:
+    if args.script or args.mcp_server or args.mcp_list_tools or args.mcp_http:
         return False
     if environ.get("AXROSS_MCP", "").strip().lower() in _TRUTHY:
         return False
@@ -542,7 +542,8 @@ def _add_mode_arguments(parser: argparse.ArgumentParser) -> None:
         "--mcp-server",
         action="store_true",
         help="Run as an MCP (Model Context Protocol) server on stdio instead "
-        "of launching the GUI. Can also be enabled via AXROSS_MCP=1.",
+        "of launching the GUI (--mcp-http: over HTTP). Can also be enabled via "
+        "AXROSS_MCP=1.",
     )
     parser.add_argument(
         "--mcp-write",
@@ -592,6 +593,16 @@ def _add_mode_arguments(parser: argparse.ArgumentParser) -> None:
         "--mcp-allow-exec'.",
     )
     parser.add_argument(
+        "--mcp-allow-secret-reads",
+        action="store_true",
+        help="Let MCP tools read the contents of secret files: axross's own "
+        "tokens and keys (cloud OAuth tokens, the MCP HTTP token, chat and "
+        "Bluetooth keys, its ADB key) and the private keys in ~/.ssh and "
+        "~/.gnupg. Off by default: read_file, grep, checksum, preview, copies "
+        "and the groups refuse them, whatever --mcp-root says (their names "
+        "are still listed). stdio only: refused together with --mcp-http.",
+    )
+    parser.add_argument(
         "--mcp-root",
         default=None,
         help="Filesystem root exposed to MCP file tools. Defaults to the "
@@ -601,8 +612,9 @@ def _add_mode_arguments(parser: argparse.ArgumentParser) -> None:
         "--mcp-http",
         default=None,
         help="Run the MCP server as HTTP on HOST:PORT (e.g. 127.0.0.1:7331, "
-        "[::1]:7331) instead of stdio. Non-loopback hosts require TLS flags; "
-        "without TLS every request needs the bearer token printed at start.",
+        "[::1]:7331) instead of stdio; implies --mcp-server. Non-loopback hosts "
+        "require TLS flags; without TLS every request needs the bearer token "
+        "printed at start.",
     )
     parser.add_argument(
         "--mcp-cert",
@@ -664,13 +676,14 @@ def _run(args) -> int:
         log.debug("tmpfs tempdir routing skipped: %s", exc)
 
     # Feature flag: the MCP path must be explicitly opted into, either
-    # via --mcp-server or via AXROSS_MCP={1,true,yes,on}. Anything
+    # via --mcp-server (or --mcp-http) or via AXROSS_MCP={1,true,yes,on}. Anything
     # else boots the GUI as before — PyQt isn't imported on the MCP
     # path so the server runs on headless machines without a display.
     truthy = _TRUTHY
     mcp_env = os.environ.get("AXROSS_MCP", "").strip().lower()
     write_env = os.environ.get("AXROSS_MCP_WRITE", "").strip().lower()
-    if args.mcp_list_tools or args.mcp_server or mcp_env in truthy:
+    # --mcp-http is a mode of its own (SPEC.md): it implies --mcp-server.
+    if args.mcp_list_tools or args.mcp_server or args.mcp_http or mcp_env in truthy:
         log.info(
             "%s Axross MCP server (read-only=%s, http=%s)",
             "Listing the tools of the" if args.mcp_list_tools else "Starting",
@@ -695,6 +708,15 @@ def _run(args) -> int:
         if args.mcp_allow_exec and not current_policy().allow_remote_exec:
             print(
                 "Security mode 'paranoid' blocks MCP remote command execution.",
+                file=sys.stderr,
+            )
+            return 2
+        if args.mcp_allow_secret_reads and args.mcp_http:
+            # The HTTP transport keeps the secret files out: a network
+            # client reading the SSH keys and cloud tokens is not offered.
+            print(
+                "--mcp-allow-secret-reads is stdio-only: secret files are not "
+                "read over a network transport (--mcp-http).",
                 file=sys.stderr,
             )
             return 2
@@ -727,6 +749,7 @@ def _run(args) -> int:
                 allow_scripts=args.mcp_allow_scripts,
                 tool_groups=tool_groups,
                 allow_exec=args.mcp_allow_exec,
+                allow_secret_reads=args.mcp_allow_secret_reads,
             )
             manifest = MG.tool_manifest(
                 tools,
@@ -793,6 +816,7 @@ def _run(args) -> int:
                 root=root,
                 tool_groups=tool_groups,
                 allow_exec=args.mcp_allow_exec,
+                allow_secret_reads=args.mcp_allow_secret_reads,
             )
         )
 
@@ -915,6 +939,9 @@ def _run(args) -> int:
         from ui.update_ui import schedule_start_check
 
         schedule_start_check(window)
+        # Once: a notice in the status bar offers the Getting Started tour
+        # (never a dialog - nothing at the start may wait for an answer).
+        QTimer.singleShot(0, window.offer_getting_started_tour)
     status = app.exec()
     # The window and every other Qt object Python owns go now: when this
     # frame ends, releasing ``app`` deletes them from inside PyQt's walk of

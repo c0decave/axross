@@ -10,6 +10,7 @@ import logging
 import os
 import socket
 import threading
+from core.subprocess_env import clean_child_env
 from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
@@ -613,6 +614,7 @@ def build_requests_proxies(
         # urllib3 can do: they talk to a loopback shim that does.
         from core.proxy_http import shim_for
 
+        refuse_without_peer_check("The loopback proxy shim")
         shim = shim_for(ProxyConfig(proxy_type, host, port, username, password, ca_file))
         return {"http": shim.url, "https": shim.url}
     if transport == "http":
@@ -760,8 +762,97 @@ def effective_http_proxy(proxy: "ProxyConfig") -> "ProxyConfig":
         return proxy
     from core.proxy_http import shim_for
 
+    refuse_without_peer_check("The loopback proxy shim")
     shim = shim_for(proxy)
     return ProxyConfig("http", shim.host, shim.port)
+
+
+#: Linux's table of TCP sockets with their owners.
+_PROC_NET_TCP = "/proc/net/tcp"
+#: Where lsof is looked for (a macOS GUI start has no /usr/sbin on PATH).
+_LSOF_PATHS = ("/usr/sbin/lsof", "/usr/bin/lsof", "/usr/local/sbin/lsof", "/usr/local/bin/lsof",
+               "/opt/homebrew/bin/lsof", "/opt/local/sbin/lsof")
+#: Seconds lsof may take to answer for one connection.
+LSOF_TIMEOUT = 5.0
+
+
+def _lsof_path() -> str | None:
+    import shutil
+
+    for path in _LSOF_PATHS:
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    return shutil.which("lsof")
+
+
+def _posix_uids() -> bool:
+    """A system with user ids (macOS, the BSDs - not Windows)."""
+    return os.name == "posix" and hasattr(os, "getuid")
+
+
+def peer_check_problem() -> str:
+    """Why a loopback listener of axross (the proxy tunnel, the shim)
+    cannot tell which local user connects to it; "" when it can: Linux
+    reads ``/proc/net/tcp``, macOS and the BSDs ask ``lsof`` for the
+    sockets of their own user. ``getpeereid`` / ``LOCAL_PEERCRED`` answer
+    for Unix-domain sockets only, and the clients behind a tunnel (libpq,
+    pymongo, the kernel's NFS client …) dial TCP; Windows has neither."""
+    if os.path.exists(_PROC_NET_TCP):
+        return ""
+    if _posix_uids():
+        if _lsof_path():
+            return ""
+        return ("lsof is not installed, and without it nothing tells which local user "
+                "connects to a loopback port")
+    return ("this system offers no way to tell which local user connects to a loopback "
+            "port, so any account on this computer could use the proxy (and its "
+            "credentials) through it")
+
+
+def refuse_without_peer_check(what: str) -> None:
+    """ProxyUnsupportedError when :func:`peer_check_problem` has a reason:
+    *what* (a loopback tunnel, the proxy shim) is not started at all."""
+    problem = peer_check_problem()
+    if problem:
+        raise ProxyUnsupportedError(
+            f"{what} is not started: {problem}. Remove the proxy from the profile to connect "
+            "directly, or route this traffic at the OS / network layer. See "
+            "docs/PROXY_SUPPORT.md."
+        )
+
+
+def _lsof_address(host: str, port: int) -> str:
+    return f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+
+
+def _peer_owned_per_lsof(peer: tuple, root_ok: bool, server: tuple | None) -> bool:
+    """True when a process of our uid (or of root, *root_ok*) holds the
+    client socket *peer* -> *server*: lsof is asked for the TCP sockets at
+    *peer* of those users only, so what another account holds is never
+    among them - whatever lsof may see. Fails closed."""
+    import subprocess
+
+    lsof = _lsof_path()
+    if lsof is None or server is None:
+        return False
+    try:
+        host, port = str(ipaddress.ip_address(peer[0])), int(peer[1])
+        want = f"n{_lsof_address(host, port)}->" + _lsof_address(
+            str(ipaddress.ip_address(server[0])), int(server[1]))
+    except (ValueError, TypeError, IndexError):
+        return False
+    users = ",".join([str(os.getuid())] + (["0"] if root_ok else []))
+    try:
+        found = subprocess.run(
+            [lsof, "-n", "-P", "-w", "-a", "-u", users, f"-iTCP@{_lsof_address(host, port)}",
+             "-Fn"],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=LSOF_TIMEOUT,
+            check=False, env=clean_child_env(),
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.warning("proxy: lsof could not tell who connected from %s: %s", peer, exc)
+        return False
+    return any(line.strip() == want for line in found.stdout.splitlines())
 
 
 def _peer_is_same_user(peer: tuple, root_ok: bool = False, server: tuple | None = None) -> bool:
@@ -770,17 +861,20 @@ def _peer_is_same_user(peer: tuple, root_ok: bool = False, server: tuple | None 
 
     A loopback listener is reachable by every local account; without
     this check another user on the host could ride the tunnel (and the
-    proxy credentials behind it). Reads ``/proc/net/tcp{,6}``; where
-    that is unavailable (non-Linux) there is nothing to compare, so the
-    peer is accepted.
+    proxy credentials behind it). Reads ``/proc/net/tcp{,6}`` on Linux;
+    asks ``lsof`` for our own sockets on macOS and the BSDs. Where neither
+    is possible (Windows, or no lsof) nothing tells the peer's user, so it
+    is refused (:func:`peer_check_problem`; the tunnel does not start).
 
     The client socket is identified by its full address pair: a source
     port can appear on several rows at once (a ``TIME_WAIT`` leftover is
     reported with uid 0), so *server* -- the accepted socket's own
     address -- selects the right one, and ``TIME_WAIT`` rows never count.
     """
-    if not os.path.exists("/proc/net/tcp"):
-        return True
+    if not os.path.exists(_PROC_NET_TCP):
+        if peer_check_problem():
+            return False
+        return _peer_owned_per_lsof(peer, root_ok, server)
     host, port = peer[0], peer[1]
     try:
         ip = ipaddress.ip_address(host)
@@ -867,6 +961,10 @@ class LocalTunnel:
 
     # -- lifecycle ---------------------------------------------------------
     def start(self) -> "LocalTunnel":
+        # Without a way to tell who connects, any local account could ride
+        # the tunnel: it is not started (ProxyUnsupportedError says why).
+        refuse_without_peer_check(
+            f"The loopback proxy tunnel to {self._target[0]}:{self._target[1]}")
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         listener.bind((self.host, 0))
         listener.listen(16)

@@ -57,6 +57,12 @@ LOCAL_FS = frozenset({
     "fuseblk", "vfat", "exfat", "msdos", "apfs", "hfs", "hfsplus", "iso9660", "udf", "bcachefs",
 })
 _REMOVABLE_ROOTS = ("/media/", "/run/media/", "/Volumes/")
+#: The kinds the panel shows unless "Show system and memory mounts" is on.
+SHOWN_KINDS = ("local", "network", "removable")
+#: Never measured: statvfs on an automount point mounts what is behind it
+#: (a dead server's share then hangs its probe thread for good).
+UNMEASURED_FS = frozenset({"autofs"})
+AUTOFS_NOTE = "not measured: an automount point"
 
 
 @dataclass(frozen=True)
@@ -246,6 +252,30 @@ def measure(drives: list[Drive], *, usage=_usage, timeout: float = TIMEOUT) -> l
             for i, d in enumerate(drives)]
 
 
+def is_measured(drive: Drive, show_system: bool = False) -> bool:
+    """Whether :func:`measure_shown` asks *drive* for its size: the drives
+    the panel shows (system and memory mounts only with *show_system*),
+    never an automount point."""
+    if drive.fstype.lower() in UNMEASURED_FS:
+        return False
+    return show_system or drive.kind in SHOWN_KINDS
+
+
+def measure_shown(drives: list[Drive], show_system: bool = False, *, usage=_usage,
+                  timeout: float = TIMEOUT) -> list[Drive]:
+    """*drives* with the size of those the panel shows (:func:`is_measured`)
+    - measuring all of them called statvfs on every proc, sysfs, cgroup
+    and autofs mount, which triggered automounts and left a hung thread
+    per dead one. The others keep an unknown size."""
+    picked = [i for i, d in enumerate(drives) if is_measured(d, show_system)]
+    measured = measure([drives[i] for i in picked], usage=usage, timeout=timeout)
+    out = list(drives)
+    for index, drive in zip(picked, measured):
+        out[index] = drive
+    return [replace(d, error=AUTOFS_NOTE) if d.fstype.lower() in UNMEASURED_FS else d
+            for d in out]
+
+
 def human(n: int | None) -> str:
     if n is None:
         return "?"
@@ -421,7 +451,7 @@ class DrivesPanel(QWidget):
     def visible_drives(self) -> list[Drive]:
         if self.show_system.isChecked():
             return list(self._drives)
-        return [d for d in self._drives if d.kind in ("local", "network", "removable")]
+        return [d for d in self._drives if d.kind in SHOWN_KINDS]
 
     def set_drives(self, drives: list[Drive]) -> None:
         self._drives = list(drives)
@@ -469,23 +499,32 @@ class DrivesPanel(QWidget):
 
 
 def activate(api):
-    state = {"busy": False}
+    state = {"busy": False, "again": False}
 
     def refresh() -> None:
         if state["busy"]:
+            state["again"] = True  # e.g. system mounts switched on meanwhile
             return
         state["busy"] = True
+        state["again"] = False
         panel.status.setText("Measuring…")
+        show_system = panel.show_system.isChecked()
+
+        def finish() -> None:
+            state["busy"] = False
+            if state["again"]:
+                refresh()
 
         def done(drives):
-            state["busy"] = False
             panel.set_drives(drives)
+            finish()
 
         def failed(exc):
-            state["busy"] = False
             panel.status.setText(f"Cannot list the drives: {exc}")
+            finish()
 
-        api.run_in_background(lambda: measure(list_drives()), on_done=done, on_error=failed)
+        api.run_in_background(lambda: measure_shown(list_drives(), show_system),
+                              on_done=done, on_error=failed)
 
     def open_folder(path: str) -> None:
         ctx = api.current()
@@ -498,5 +537,7 @@ def activate(api):
         ctx.pane.navigate_async(path)
 
     panel = DrivesPanel(refresh=refresh, open_folder=open_folder)
+    # The system and memory mounts are measured only once they are shown.
+    panel.show_system.toggled.connect(lambda on: refresh() if on else None)
     api.add_dock(tr("Drives Overview"), panel, icon="drives")
     refresh()

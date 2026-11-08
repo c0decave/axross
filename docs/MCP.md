@@ -64,11 +64,19 @@ the script tools can reach.
 mode. Unlike the script tools it runs nothing on the server's own
 host, so it is offered on both transports; see §9.8.
 
+Secret files are not read, whatever the root (§7.12): axross's own
+tokens and keys and the private keys in `~/.ssh` and `~/.gnupg`.
+`--mcp-allow-secret-reads` lets the tools read them; it is stdio only
+(refused together with `--mcp-http`, exit 2).
+
 Requests arrive on stdin (line-delimited JSON), responses go out on
 stdout. Logs go to stderr only. When the MCP path is taken, PyQt is
 not imported — the server runs cleanly on a headless host.
 
 ### 1.2 HTTP (+ optional mTLS)
+
+`--mcp-http HOST:PORT` implies `--mcp-server` (`axross --mcp-http
+127.0.0.1:7331` alone serves HTTP; it used to open the window instead).
 
 ```bash
 # Loopback HTTP (non-loopback without TLS is refused), bearer token required:
@@ -469,6 +477,8 @@ we've thought about. The MCP tests live in `tests/test_mcp_*.py`:
 | `tests/test_mcp_search_root.py` | `search` never returns indexed paths outside the root. |
 | `tests/test_mcp_tasks_limits.py` | `tasks/start` rate limit, running-task cap, tool timeout. |
 | `tests/test_mcp_write_root.py` | `--mcp-write` needs `--mcp-root`; `--mcp-allow-scripts` refused with `--mcp-http`. |
+| `tests/test_mcp_secret_reads.py` | Secret files (§7.12) are not read, grepped, hashed, previewed, copied, moved or hard-linked, also through a symlink, a group tool or `resources/read`; their names are listed; `--mcp-allow-secret-reads` (stdio only) lets them be read. |
+| `tests/test_mcp_http_mode.py` | `--mcp-http` alone starts the HTTP server (it opened the window) and does not detach from the terminal. |
 | `tests/test_mcp_script_audit.py` | Script tools write the audit trail, without source or output. |
 | `tests/test_mcp_script_run_child.py` | `script_run` in a child: timeout and group kill, no grandchild left, `input()` never reads the stdio stream, cancel, output cap, argument checks, structured reply. |
 | `tests/test_mcp_stdio_write_lock.py` | Concurrent stdio writers never interleave inside a line. |
@@ -611,6 +621,33 @@ When an operator registers the same backend instance under two
 ids, only the first one claims `is_default = true`. Previously
 the identity check said both were default, which confused
 clients trying to pick a primary.
+
+### 7.12 Secret files are not read
+
+The default root is the home folder, and some files there turn "read
+my files" into the user's accounts. No tool hands out their contents,
+whatever the root (`core.protected_places.read_refusal`):
+
+* axross's tokens: `~/.config/axross/*token*` (the Google Drive,
+  OneDrive and Dropbox refresh tokens of every profile, the MCP HTTP
+  token; `$XDG_RUNTIME_DIR/axross/*token*` too);
+* its keys: the chat accounts' state (`~/.local/state/axross/chat/`,
+  encryption keys and sync tokens), the Bluetooth link keys
+  (`bluetooth-direct-keys.json`), the ADB key it made (`~/.android/adbkey`);
+* every file in `~/.ssh` but `*.pub`, `known_hosts`, `authorized_keys`
+  and `config` (a private key may have any name);
+* GnuPG's `private-keys-v1.d/`, `openpgp-revocs.d/` and `secring.gpg`.
+
+Refused: `read_file`, `checksum`, `preview`, `open_version_read`,
+`resources/read`; in `grep` and `recursive_checksum` such a file is
+reported unreadable; `copy`, `bulk_copy`, `rename` and `hardlink` do not
+take one (or a folder holding one) as their source; the capability
+groups (§9) see it as outside the root. A symlink to a secret is
+resolved and refused. Names stay listable (`list_dir`, `walk`, `stat`,
+`search`). In the agent sandbox the host's home counts too.
+`--mcp-allow-secret-reads` (stdio only) switches the check off; the
+agent's own tools always keep it. The write side (§2, the protected
+places of `core.protected_places`) is a list of its own and unchanged.
 
 ---
 
@@ -864,7 +901,8 @@ server, starts nothing and prints JSON:
   "server": "axross-mcp",
   "protocol_version": "2024-11-05",
   "generated_for": {"mcp_allow_exec": true, "mcp_allow_scripts": true, "mcp_tools": ["..."], "mcp_write": true},
-  "timeout_classes": {"quick": 15.0, "walk": 60.0, "write": 30.0, "preview": 30.0, "stream": 300.0, "long": 1800.0},
+  "timeout_classes": {"quick": 15.0, "walk": 60.0, "write": 30.0, "preview": 30.0, "stream": 300.0, "long": 1800.0,
+                      "script": 610.0},
   "groups": {"metadata": {"description": "...", "tools": ["metadata_read", "..."]}},
   "tools": [{"name": "...", "group": "...", "mutating": false, "required_flags": ["--mcp-tools metadata"],
              "transports": ["stdio", "http"], "timeout_class": "stream", "timeout_seconds": 300.0,

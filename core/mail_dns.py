@@ -23,7 +23,8 @@ import ipaddress
 import re
 from email.utils import parseaddr
 
-from core.mail_analyse import Finding, _org
+from core.cfb import MAGIC as _CFB_MAGIC
+from core.mail_analyse import Finding, _org, ip_literals
 from core.mail_message import MailMessage
 
 MAX_LOOKUPS = 10
@@ -63,18 +64,29 @@ def _ips(lookup, name: str) -> list[ipaddress._BaseAddress]:
     return out
 
 
-def _in_net(ip, spec: str, base_ips) -> bool:
+_DOMAIN_CIDR = re.compile(r"(?::([^/]+))?(?:/(\d{1,2}))?(?://(\d{1,3}))?")
+
+
+def _domain_cidr(rest: str, domain: str) -> tuple[str, int, int]:
+    """'' | ':example.com' | '/24' | '//64' | ':example.com/24//64' after
+    'a' or 'mx' -> (domain, ip4-cidr, ip6-cidr) - RFC 7208 5.6 dual-cidr,
+    each family with its own prefix (default /32 and /128)."""
+    m = _DOMAIN_CIDR.fullmatch(rest)
+    if not m:
+        raise ValueError(f"not a domain and prefix lengths: {rest!r}")
+    v4, v6 = int(m.group(2) or 32), int(m.group(3) or 128)
+    if v4 > 32 or v6 > 128:
+        raise ValueError(f"a prefix length too long: {rest!r}")
+    return m.group(1) or domain, v4, v6
+
+
+def _in_net(ip, v4: int, v6: int, base_ips) -> bool:
+    prefix = v4 if ip.version == 4 else v6
     for b in base_ips:
         if ip.version != b.version:
             continue
-        default = 32 if ip.version == 4 else 128
-        m = re.search(r"/(\d+)\Z", spec)
-        prefix = int(m.group(1)) if m else default
-        try:
-            if ip in ipaddress.ip_network(f"{b}/{prefix}", strict=False):
-                return True
-        except ValueError:
-            continue
+        if ip in ipaddress.ip_network(f"{b}/{prefix}", strict=False):
+            return True
     return False
 
 
@@ -105,9 +117,9 @@ def spf_check(ip: str, domain: str, lookup=_lookup_default, *, _count=None, _dep
             if key.lower() == "redirect":
                 redirect = value
             continue
-        if "/" in mech_l and not arg:          # a/24, mx/24
-            mech_l, _, cidr = mech_l.partition("/")
-            arg = f"{domain}/{cidr}"
+        name = re.match(r"[a-z0-9]*", mech_l).group(0)
+        if name in ("a", "mx"):                 # a, a:host, a/24, a//64, mx:host/24//64
+            mech_l = name
         matched = False
         try:
             if mech_l == "all":
@@ -116,13 +128,13 @@ def spf_check(ip: str, domain: str, lookup=_lookup_default, *, _count=None, _dep
                 matched = addr in ipaddress.ip_network(arg, strict=False)
             elif mech_l == "a":
                 count[0] += 1
-                target = (arg or domain).split("/")[0]
-                matched = _in_net(addr, arg or "", _ips(lookup, target))
+                target, v4, v6 = _domain_cidr(term[1:], domain)
+                matched = _in_net(addr, v4, v6, _ips(lookup, target))
             elif mech_l == "mx":
                 count[0] += 1
-                target = (arg or domain).split("/")[0]
+                target, v4, v6 = _domain_cidr(term[2:], domain)
                 hosts = [r.split()[-1].rstrip(".") for r in lookup(target, "MX")]
-                matched = any(_in_net(addr, arg or "", _ips(lookup, h)) for h in hosts[:10])
+                matched = any(_in_net(addr, v4, v6, _ips(lookup, h)) for h in hosts[:10])
             elif mech_l == "include":
                 count[0] += 1
                 if count[0] > MAX_LOOKUPS or _depth > 10:
@@ -130,6 +142,8 @@ def spf_check(ip: str, domain: str, lookup=_lookup_default, *, _count=None, _dep
                 result, _why = spf_check(ip, arg, lookup, _count=count, _depth=_depth + 1)
                 if result in ("temperror", "permerror"):
                     return result, f"include:{arg}: {_why}"
+                if result == "none":            # RFC 7208 5.2: no record to include
+                    return "permerror", f"include:{arg}: {_why}"
                 matched = result == "pass"
             elif mech_l == "exists":
                 count[0] += 1
@@ -144,8 +158,14 @@ def spf_check(ip: str, domain: str, lookup=_lookup_default, *, _count=None, _dep
             result = {"+": "pass", "-": "fail", "~": "softfail", "?": "neutral"}[qual]
             return result, f"{ip} matches {qual}{term} of {domain}"
     if redirect:
+        # a lookup like include's (RFC 7208 4.6.4): a redirect loop ends at the limit
         count[0] += 1
-        return spf_check(ip, redirect, lookup, _count=count, _depth=_depth + 1)
+        if count[0] > MAX_LOOKUPS or _depth > MAX_LOOKUPS:
+            return "permerror", "more than 10 DNS lookups"
+        result, why = spf_check(ip, redirect, lookup, _count=count, _depth=_depth + 1)
+        if result == "none":                    # RFC 7208 6.1
+            return "permerror", f"redirect={redirect}: {why}"
+        return result, why
     return "neutral", f"nothing in {domain}'s SPF record matches {ip}"
 
 
@@ -199,9 +219,12 @@ def _raw_headers(raw: bytes) -> list[tuple[str, str]]:
 
 
 def dkim_verify(raw: bytes, signature: str, lookup=_lookup_default) -> tuple[str, str, str]:
-    """(result, domain, why) for one DKIM-Signature value: pass / fail / permerror / temperror."""
+    """(result, domain, why) for one DKIM-Signature value: pass / fail / permerror / temperror
+    (unverifiable: *raw* is an Outlook .msg, not the message's bytes)."""
     tags = _tags(signature)
     domain, selector = tags.get("d", ""), tags.get("s", "")
+    if raw[:8] == _CFB_MAGIC:
+        return "unverifiable", domain, "not verifiable from this file format (an Outlook .msg)"
     algo = tags.get("a", "rsa-sha256").lower()
     if not domain or not selector or "b" not in tags or "bh" not in tags or "h" not in tags:
         return "permerror", domain, "the signature lacks d=, s=, h=, b= or bh="
@@ -218,6 +241,8 @@ def dkim_verify(raw: bytes, signature: str, lookup=_lookup_default) -> tuple[str
         return "permerror", domain, f"no key published at {selector}._domainkey.{domain}"
     body = _canon_body(_body(raw), body_c == "relaxed")
     if "l" in tags:
+        if not re.fullmatch(r"\d{1,76}", tags["l"]):
+            return "permerror", domain, f"the body length l={tags['l'][:40]!r} is not a number"
         body = body[:int(tags["l"])]
     if base64.b64encode(hashlib.sha256(body).digest()).decode() != tags["bh"]:
         return "fail", domain, "the body was changed after signing (body hash differs)"
@@ -267,55 +292,104 @@ def dmarc_policy(domain: str, lookup=_lookup_default) -> dict | None:
             return None
         if recs:
             tags = _tags(recs[0])
-            return {"domain": name, "p": tags.get("p", "none"), "sp": tags.get("sp", ""),
-                    "adkim": tags.get("adkim", "r"), "aspf": tags.get("aspf", "r")}
+            return {"domain": name, "p": tags.get("p", "none").lower(), "sp": tags.get("sp", "").lower(),
+                    "adkim": tags.get("adkim", "r").lower(), "aspf": tags.get("aspf", "r").lower()}
     return {}
+
+
+def _aligned(domain: str, from_dom: str, mode: str) -> bool:
+    """RFC 7489 3.1: strict ("s") is the same domain, relaxed the same
+    organisational domain."""
+    domain, from_dom = domain.lower().rstrip("."), from_dom.lower().rstrip(".")
+    return domain == from_dom if mode == "s" else _org(domain) == _org(from_dom)
+
+
+def _applied(policy: dict, from_dom: str) -> tuple[str, str]:
+    """('p' | 'sp', its value): sp= is the policy of the subdomains of the
+    domain that publishes the record (RFC 7489 6.3)."""
+    if policy.get("sp") and from_dom.lower().rstrip(".") != policy["domain"]:
+        return "sp", policy["sp"]
+    return "p", policy["p"]
 
 
 # --- all of it -----------------------------------------------------------------------------
 
 def sending_ip(msg: MailMessage) -> str:
     """The address the receiving side saw: the newest Received hop whose
-    'from' address is public."""
+    'from' address is public ("[IPv6:2001:db8::1]" is 2001:db8::1)."""
     for value in msg.header_all("Received"):
         m = re.search(r"\bfrom\s+\S+\s+\(([^)]*)\)", " ".join(value.split()), re.I)
         if not m:
             continue
-        for cand in re.findall(r"\[?([0-9a-fA-F:.]{7,})\]?", m.group(1)):
-            try:
-                addr = ipaddress.ip_address(cand.strip("[]"))
-            except ValueError:
-                continue
+        for addr in ip_literals(m.group(1)):
             if not (addr.is_private or addr.is_loopback or addr.is_link_local):
                 return str(addr)
     return ""
 
 
+def unverifiable_dkim(msg: MailMessage) -> str:
+    """Why *msg.raw* cannot carry a DKIM signature's proof ('' when it can):
+    an Outlook .msg is a compound file of properties and a PST message is
+    rebuilt from them (core.pst.to_eml) - neither keeps the bytes signed."""
+    if msg.kind == "msg":
+        return "not verifiable from this file format (an Outlook .msg keeps no original message bytes)"
+    if msg.rebuilt == "pst":
+        return "not verifiable from this file format (a PST message is rebuilt from its properties)"
+    return ""
+
+
 def dns_check(msg: MailMessage, lookup=_lookup_default) -> tuple[list[Finding], dict]:
+    """SPF, every DKIM signature, DMARC: each one on its own - one that cannot
+    be checked (a broken record or signature, a resolver error) is a finding,
+    the others are still made."""
     findings: list[Finding] = []
     from_dom = parseaddr(msg.header("From") or msg.from_)[1].rpartition("@")[2].lower()
     env_dom = parseaddr(msg.header("Return-Path"))[1].rpartition("@")[2].lower() or from_dom
     ip = sending_ip(msg)
-    spf, spf_why = spf_check(ip, env_dom, lookup) if env_dom and ip else ("none", "no sender domain or address")
+    try:
+        spf, spf_why = spf_check(ip, env_dom, lookup) if env_dom and ip else ("none", "no sender domain or address")
+    except Exception as exc:  # noqa: BLE001 - this check fails, the others go on
+        spf, spf_why = "temperror", f"could not be checked: {type(exc).__name__}: {exc}"[:300]
     sev = {"fail": "high", "softfail": "warn", "permerror": "warn"}.get(spf, "info")
     findings.append(Finding(sev, "dns", f"SPF (looked up now) {spf}: {spf_why}"))
     dkim = []
+    no_proof = unverifiable_dkim(msg)
     for sig in msg.header_all("DKIM-Signature"):
-        result, domain, why = dkim_verify(msg.raw, sig, lookup)
+        if no_proof:
+            dkim.append({"result": "unverifiable", "domain": _tags(sig).get("d", ""), "why": no_proof})
+            findings.append(Finding("info", "dns", f"DKIM: {no_proof}"))
+            continue
+        try:
+            result, domain, why = dkim_verify(msg.raw, sig, lookup)
+        except Exception as exc:  # noqa: BLE001 - one signature, not the whole check
+            result, domain, why = "permerror", "", f"could not be checked: {type(exc).__name__}: {exc}"[:300]
         dkim.append({"result": result, "domain": domain, "why": why})
         findings.append(Finding({"fail": "high", "permerror": "warn"}.get(result, "info"), "dns",
                                 f"DKIM (verified now) {result}: {why}"))
     if not dkim:
         findings.append(Finding("info", "dns", "no DKIM signature to verify"))
-    policy = dmarc_policy(from_dom, lookup) if from_dom else None
-    aligned_spf = spf == "pass" and env_dom and _org(env_dom) == _org(from_dom)
-    aligned_dkim = any(d["result"] == "pass" and _org(d["domain"]) == _org(from_dom) for d in dkim)
+    try:
+        policy = dmarc_policy(from_dom, lookup) if from_dom else None
+    except Exception as exc:  # noqa: BLE001
+        policy = None
+        findings.append(Finding("info", "dns", f"DMARC could not be checked: {type(exc).__name__}: {exc}"[:300]))
     if policy:
+        aligned_spf = bool(spf == "pass" and env_dom and _aligned(env_dom, from_dom, policy["aspf"]))
+        aligned_dkim = any(d["result"] == "pass" and _aligned(d["domain"], from_dom, policy["adkim"]) for d in dkim)
+        which, applied = _applied(policy, from_dom)
+        policy["applied"] = applied
         ok = aligned_spf or aligned_dkim
-        sev = "info" if ok else ("high" if policy["p"] in ("reject", "quarantine") else "warn")
-        findings.append(Finding(sev, "dns", f"DMARC policy of {policy['domain']}: p={policy['p']}; "
-                                + ("passes (aligned " + ("SPF" if aligned_spf else "DKIM") + ")" if ok else
-                                   "neither SPF nor DKIM passes aligned with " + from_dom)))
+        head = f"DMARC policy of {policy['domain']}: {which}={applied}; "
+        strict = [f"{k}=s" for k in ("aspf", "adkim") if policy[k] == "s"]
+        if ok:
+            findings.append(Finding("info", "dns", head + "passes (aligned " + ("SPF" if aligned_spf else "DKIM") + ")"))
+        elif any(d["result"] == "unverifiable" for d in dkim):
+            findings.append(Finding("info", "dns", head + "no verdict: SPF does not pass aligned with " + from_dom
+                                    + " and DKIM is not verifiable from this file format"))
+        else:
+            sev = "high" if applied in ("reject", "quarantine") else "warn"
+            findings.append(Finding(sev, "dns", head + "neither SPF nor DKIM passes aligned with " + from_dom
+                                    + (f" (strict alignment: {', '.join(strict)})" if strict else "")))
     elif policy == {}:
         findings.append(Finding("info", "dns", f"{from_dom} publishes no DMARC policy"))
     return findings, {"spf": spf, "spf_ip": ip, "dkim": dkim, "dmarc": policy}

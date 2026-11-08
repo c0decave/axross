@@ -15,6 +15,8 @@ reaches Qt, which would abort the application.
 
 from __future__ import annotations
 
+import importlib
+import importlib.machinery
 import logging
 import re
 import sys
@@ -363,10 +365,21 @@ class ExtensionAPI:
     # -- host side ------------------------------------------------------------
     def _remove_all(self) -> None:
         had_agent = bool(self._reg.agent_tools or self._reg.agent_topics)
+        own_toggles = {id(dock.toggleViewAction()) for dock in self._reg.docks}
         for action in self._reg.actions:
             for widget in action.associatedObjects():
                 if isinstance(widget, QMenu):
                     widget.removeAction(action)
+            if id(action) not in own_toggles:
+                # A menu or Pause action is a child of the window: only
+                # taken out of the menu, it stayed alive with its lambda,
+                # which holds the API and the extension's whole module.
+                # (A dock's toggle action goes with its dock.)
+                try:
+                    action.triggered.disconnect()
+                except TypeError:  # nothing connected (any more)
+                    pass
+                action.deleteLater()
         removed = getattr(self._host.window, "extension_panel_removed", None)
         for dock in self._reg.docks:
             if callable(removed):
@@ -535,11 +548,14 @@ class ExtensionHost(QObject):
         suspended = EX.suspended_ids() | self._unsaved_suspended
         skipped: list[EX.ExtensionInfo] = []
         safe = EX.safe_mode() and not user_request
-        for info in EX.discover(ids=enabled):  # the others are not parsed
+        if safe:
+            # Before discover(): safe mode must not even parse a source - a
+            # manifest that breaks the parser is what it is there to get past.
+            for ext_id in enabled:
+                if ext_id not in self._loaded:
+                    self._errors[ext_id] = "not loaded: safe mode (--safe-mode)"
+        for info in () if safe else EX.discover(ids=enabled):  # the others are not parsed
             if info.ext_id not in enabled or info.ext_id in self._loaded:
-                continue
-            if safe:
-                self._errors[info.ext_id] = "not loaded: safe mode (--safe-mode)"
                 continue
             if info.ext_id in suspended and not user_request:
                 self._errors[info.ext_id] = (
@@ -683,7 +699,7 @@ class ExtensionHost(QObject):
             module = _exec_source(module_name, info.path)
             module.activate(api)
         except Exception as exc:  # noqa: BLE001 - extension code
-            sys.modules.pop(module_name, None)
+            _forget_modules(module_name)
             api._remove_all()
             self._record(api, exc)
             return False
@@ -711,7 +727,7 @@ class ExtensionHost(QObject):
         if callable(deactivate):
             self.call(api, deactivate, api)
         api._remove_all()
-        sys.modules.pop(f"axross_extension_{api.info.source}_{api.info.module_name}", None)
+        _forget_modules(f"axross_extension_{api.info.source}_{api.info.module_name}")
         log.info("Extension unloaded: %s", ext_id)
 
     def unload_all(self) -> None:
@@ -818,13 +834,63 @@ class ExtensionHost(QObject):
             )
 
 
+def _forget_modules(module_name: str) -> None:
+    """Drop an extension's module and, for a package, every submodule it
+    imported: a cached ``<package>.words`` kept running the old source
+    after Reload."""
+    prefix = module_name + "."
+    for name in [n for n in sys.modules if n == module_name or n.startswith(prefix)]:
+        sys.modules.pop(name, None)
+
+
+_MODULE_PREFIX = "axross_extension_"
+
+
+class _SourceOnlyLoader(importlib.machinery.SourceFileLoader):
+    """A package extension's submodule, compiled from its current source:
+    no ``__pycache__`` is read (a stale one ran the old code after Reload)
+    and none is written into the user's extension folder."""
+
+    def get_code(self, fullname):
+        path = self.get_filename(fullname)
+        return compile(self.get_data(path), path, "exec", dont_inherit=True)
+
+    def set_data(self, path, data, *, _mode=0o666):  # noqa: ARG002 - no byte code
+        return None
+
+
+class _ExtensionSubmoduleFinder:
+    """Finds ``axross_extension_<x>.<sub>`` like the normal path finder
+    (within the package's ``__path__``) but loads it with
+    :class:`_SourceOnlyLoader`."""
+
+    @classmethod
+    def find_spec(cls, fullname, path=None, target=None):
+        if path is None or "." not in fullname or not fullname.startswith(_MODULE_PREFIX):
+            return None
+        spec = importlib.machinery.PathFinder.find_spec(fullname, path, target)
+        if spec is not None and isinstance(spec.loader, importlib.machinery.SourceFileLoader):
+            spec.loader = _SourceOnlyLoader(fullname, spec.origin)
+            spec.cached = None
+        return spec
+
+    @classmethod
+    def invalidate_caches(cls) -> None:
+        return None
+
+
+if not any(f is _ExtensionSubmoduleFinder for f in sys.meta_path):
+    sys.meta_path.insert(0, _ExtensionSubmoduleFinder)
+
+
 def _exec_source(module_name: str, path: str) -> types.ModuleType:
     """Run the extension's current source as a module.
 
     Compiled straight from the file, never from ``__pycache__``: a source
     rewritten within the same second at the same size kept its old byte
     code, so Reload ran the previous version. No byte code is written
-    into the user's extension folder either.
+    into the user's extension folder either - neither for the module nor,
+    in a package, for its submodules (:class:`_ExtensionSubmoduleFinder`).
     """
     source = Path(path).read_bytes()
     module = types.ModuleType(module_name)
@@ -832,6 +898,8 @@ def _exec_source(module_name: str, path: str) -> types.ModuleType:
     if path.endswith("__init__.py"):
         module.__path__ = [str(Path(path).parent)]  # its own submodules import
         module.__package__ = module_name
+        _forget_modules(module_name)  # no submodule of an earlier load is reused
+        importlib.invalidate_caches()  # a submodule added since is found
     sys.modules[module_name] = module
     exec(compile(source, path, "exec", dont_inherit=True), module.__dict__)  # noqa: S102
     return module

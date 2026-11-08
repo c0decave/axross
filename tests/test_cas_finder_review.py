@@ -218,7 +218,8 @@ def test_edge_path_matcher_rules():
     assert path_matcher("  ") is None
     match = path_matcher("*.JPG")
     assert match("/x/IMG.jpg") and not match("/x.jpg/readme")
-    assert path_matcher("photos/*.jpg")("~/a.jpg")
+    in_photos = path_matcher("photos/*.jpg")
+    assert in_photos("~/photos/a.jpg") and not in_photos("~/a.jpg")
     assert path_matcher("[ab].txt")("/a.txt")
 
 

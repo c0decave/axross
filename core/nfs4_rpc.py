@@ -41,14 +41,28 @@ NFS4ERR_NOFILEHANDLE, NFS4ERR_DENIED = 10020, 10010
 OP_EXCHANGE_ID, OP_CREATE_SESSION, OP_DESTROY_SESSION, OP_SEQUENCE = 42, 43, 44, 53
 OP_DESTROY_CLIENTID, OP_RECLAIM_COMPLETE = 57, 58
 EXCHGID4_FLAG_USE_NON_PNFS = 0x00010000
-NFS4ERR_BADSESSION, NFS4ERR_DEADSESSION = 10052, 10078
+NFS4ERR_BADSESSION, NFS4ERR_DEADSESSION, NFS4ERR_SEQ_MISORDERED = 10052, 10078, 10063
+#: A SEQUENCE refused with one of these: the session (or the client id) is
+#: gone, or the slot's sequence id is out of step - a new session mends it.
+SESSION_LOST = (NFS4ERR_BADSESSION, NFS4ERR_DEADSESSION, NFS4ERR_STALE_CLIENTID, NFS4ERR_SEQ_MISORDERED)
 
 _V4_ERRORS = {10001: "bad file handle", 10004: "operation not supported", 10006: "server fault",
               10008: "the server is busy, try again later", 10011: "the client's lease expired",
               10013: "the server is in its grace period, try again", 10016: "wrong security flavour "
               "for this export (AUTH_SYS not accepted)", 10020: "no current file handle",
               10022: "stale client id", 10026: "the operation needs an OPEN the server does not know",
-              10044: "operation not supported on this kind of file", 10025: "bad stateid"}
+              10044: "operation not supported on this kind of file", 10025: "bad stateid",
+              10052: "the server does not know the session", 10078: "the server ended the session",
+              10063: "the session's sequence is out of step"}
+
+
+class _SequenceRefused(Exception):
+    """The server refused a compound's SEQUENCE: nothing of it was done,
+    and the slot's sequence id did not advance."""
+
+    def __init__(self, status: int):
+        super().__init__(status)
+        self.status = status
 
 
 def _error(status: int, what: str) -> OSError:
@@ -151,7 +165,14 @@ class Nfs4:
 
     *minor* 1: the client id is registered by EXCHANGE_ID, a session is made
     (CREATE_SESSION, RECLAIM_COMPLETE) at the first call, and every compound
-    starts with SEQUENCE on slot 0; OPEN needs no confirmation."""
+    starts with SEQUENCE on slot 0; OPEN needs no confirmation. The one slot
+    is used by one call at a time (``_slot_lock``: a listing and a transfer
+    on two threads otherwise send the same sequence id, or one out of
+    order); its sequence id advances only when the server took the
+    SEQUENCE. A session the server lost (BADSESSION, DEADSESSION,
+    STALE_CLIENTID: a reboot, an expired lease) or a sequence out of step
+    (SEQ_MISORDERED, after a reply that never came) is made again and the
+    call sent once more - a refused SEQUENCE means nothing of it was done."""
 
     def __init__(self, rpc: R.RpcConnection, *, client_id: str = "", machine_name: str = "", minor: int = 0):
         if minor not in (0, 1):
@@ -163,20 +184,60 @@ class Nfs4:
         self.client_id = (client_id or f"axross:{machine_name or 'client'}").encode("utf-8")[:1024]
         self._clientid: int | None = None
         self._verifier = os.urandom(8)
-        self._lock = threading.Lock()
+        self._lock = threading.Lock()       # the client id and making a session
+        self._slot_lock = threading.Lock()  # slot 0: its sequence id and the call that uses it
         self._last_renew = 0.0
 
     # --- compounds ----------------------------------------------------------------------
 
-    def compound(self, ops: list[tuple[int, bytes]], what: str) -> list[tuple[int, R.Unpacker]]:
+    def compound(self, ops: list[tuple[int, bytes]], what: str, *, _recover: bool = True
+                 ) -> list[tuple[int, R.Unpacker]]:
         """Send *ops*; [(opcode, unpacker positioned after that op's status)].
         The first failing op raises."""
         sequenced = self.minor == 1 and ops and ops[0][0] not in (OP_EXCHANGE_ID, OP_CREATE_SESSION)
-        if sequenced:
+        if not sequenced:
+            return self._send(ops, what, False)
+        for attempt in (0, 1):
             self._ensure_session()
-            self._slot_seq = (self._slot_seq + 1) & 0xFFFFFFFF
-            seq = R.Packer().fixed(self._session).uint(self._slot_seq).uint(0).uint(0).boolean(False).bytes()
-            ops = [(OP_SEQUENCE, seq)] + list(ops)
+            with self._slot_lock:
+                session = self._session
+                if session is None:              # closed, or lost on another thread just now
+                    refused = _SequenceRefused(NFS4ERR_BADSESSION)
+                else:
+                    seq = (self._slot_seq + 1) & 0xFFFFFFFF
+                    args = R.Packer().fixed(session).uint(seq).uint(0).uint(0).boolean(False).bytes()
+                    try:
+                        results = self._send([(OP_SEQUENCE, args)] + list(ops), what, True)
+                    except _SequenceRefused as exc:
+                        refused = exc            # not taken: the sequence id stays where it was
+                    except BaseException:
+                        # taken (a later op failed) or no answer at all: count it as used - the
+                        # same id sent again would be answered from the reply cache
+                        self._advance(session, seq)
+                        raise
+                    else:
+                        self._advance(session, seq)
+                        return results[1:]
+            if _recover and attempt == 0 and refused.status in SESSION_LOST:
+                self._drop_session(session, refused.status)
+                continue
+            raise _error(refused.status, what)
+        raise AssertionError("unreachable")
+
+    def _advance(self, session: bytes, seq: int) -> None:
+        """Under _slot_lock: *seq* was used on *session*."""
+        if self._session is session:
+            self._slot_seq = seq
+
+    def _drop_session(self, session: bytes | None, status: int) -> None:
+        """Forget *session* (unless another thread made a new one already)."""
+        with self._lock, self._slot_lock:
+            if self._session is session:
+                self._session = None
+                if status == NFS4ERR_STALE_CLIENTID:
+                    self._clientid = None
+
+    def _send(self, ops: list[tuple[int, bytes]], what: str, sequenced: bool) -> list[tuple[int, R.Unpacker]]:
         p = R.Packer().string("axross").uint(self.minor).uint(len(ops))
         body = p.bytes() + b"".join(R.Packer().uint(op).bytes() + args for op, args in ops)
         u = self.rpc.call(PROC_COMPOUND, body)
@@ -185,6 +246,8 @@ class Nfs4:
         n = u.uint()
         if n > len(ops):
             raise R.RpcError(errno.EPROTO, "more results than operations")
+        if sequenced and n == 0 and status != 0:
+            raise _SequenceRefused(status)     # refused before SEQUENCE was looked at
         results = []
         for i in range(n):
             op = u.uint()
@@ -192,12 +255,14 @@ class Nfs4:
                 raise R.RpcError(errno.EPROTO, f"result for operation {op}, expected {ops[i][0]}")
             op_status = u.uint()
             if op_status != 0:
+                if sequenced and i == 0:
+                    raise _SequenceRefused(op_status)
                 raise _error(op_status, what)
             results.append((op, u))
             self._consume(op, u, results)
         if status != 0:
             raise _error(status, what)
-        return results[1:] if sequenced else results
+        return results
 
     def _consume(self, op: int, u: R.Unpacker, results: list) -> None:
         """Read past an op's result body, keeping what is needed."""
@@ -399,10 +464,13 @@ class Nfs4:
             channel = attrs.bytes()
             args = (R.Packer().hyper(clientid).uint(sequence).uint(0).bytes() + channel + channel
                     + R.Packer().uint(0x40000000).uint(1).uint(0).bytes())   # callback: AUTH_NONE
-            self._session = self.compound([(OP_CREATE_SESSION, args)], "CREATE_SESSION")[-1][1]
-            self._clientid, self._slot_seq = clientid, 0
+            session = self.compound([(OP_CREATE_SESSION, args)], "CREATE_SESSION")[-1][1]
+            with self._slot_lock:                       # a new session: its slot starts again at 1
+                self._session, self._slot_seq = session, 0
+            self._clientid = clientid
         try:
-            self.compound([(OP_RECLAIM_COMPLETE, R.Packer().boolean(False).bytes())], "RECLAIM_COMPLETE")
+            self.compound([(OP_RECLAIM_COMPLETE, R.Packer().boolean(False).bytes())], "RECLAIM_COMPLETE",
+                          _recover=False)
         except OSError:
             pass                                        # a server without state to reclaim may say so
 
@@ -410,10 +478,12 @@ class Nfs4:
         """Ends the 4.1 session (best effort)."""
         if self.minor == 1 and self._session is not None:
             try:
-                self.compound([(OP_DESTROY_SESSION, R.Packer().fixed(self._session).bytes())], "DESTROY_SESSION")
+                self.compound([(OP_DESTROY_SESSION, R.Packer().fixed(self._session).bytes())], "DESTROY_SESSION",
+                              _recover=False)
             except OSError:
                 pass
-            self._session = None
+            with self._slot_lock:
+                self._session = None
 
     def _register(self) -> int:
         if self.minor == 1:

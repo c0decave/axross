@@ -107,6 +107,16 @@ class _TerminalWindowCase(unittest.TestCase):
         self.win.closeEvent(QCloseEvent())
         self.closed = True
 
+    def _restore_saying_yes(self) -> None:
+        """File > Restore Last Session, its "closes 1 shell" question
+        answered Yes."""
+        from ui import main_window as MW
+
+        with mock.patch.object(MW.QMessageBox, "question",
+                               return_value=MW.QMessageBox.StandardButton.Yes) as question:
+            self.win._restore_session()
+        question.assert_called_once()
+
     def _open_local_terminal(self):
         self.win._embed_terminal_pane(None, "Local Shell", None, self.win._active_pane)
         self.app.processEvents()
@@ -120,7 +130,7 @@ class RestoreWithTerminalsTest(_TerminalWindowCase):
 
         term, pid = self._open_local_terminal()
         self.win._save_session()
-        self.win._restore_session()
+        self._restore_saying_yes()
         self.app.processEvents()
         self.assertNotIn(term, self.win._terminal_panes)
         self.assertTrue(_wait_dead(pid), "the terminal's shell outlived the restore")
@@ -129,7 +139,7 @@ class RestoreWithTerminalsTest(_TerminalWindowCase):
     def test_sad_closing_the_window_after_a_restore_runs_the_whole_cleanup(self) -> None:
         self._open_local_terminal()
         self.win._save_session()
-        self.win._restore_session()
+        self._restore_saying_yes()
         self.app.processEvents()
         with mock.patch.object(self.win._connection_manager, "disconnect_all") as disconnect:
             self._close_window()

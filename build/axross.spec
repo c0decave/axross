@@ -285,6 +285,14 @@ for sub in ("scripts", "wordlists", "logo", "icons", "i18n", "extensions", "voic
     if os.path.isdir(src):
         datas.append((src, f"resources/{sub}"))
 
+# Help > Handbook (core.handbook): docs/USAGE*.md as resources/handbook/,
+# where a wheel has them too (pyproject's package-dir) - read from docs/,
+# never copied by hand. The names are core.handbook's.
+from core.handbook import HANDBOOK_FILES  # noqa: E402
+
+for _name in HANDBOOK_FILES.values():
+    datas.append((os.path.join(PROJECT_ROOT, "docs", _name), "resources/handbook"))
+
 # The flavour, for the self-update (core.self_update.FLAVOR_PATH): which
 # release asset replaces this binary does not depend on its file name.
 _flavor_file = os.path.join(workpath, "axross-bundle-flavor.txt")

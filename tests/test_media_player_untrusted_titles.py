@@ -44,6 +44,8 @@ WIDE = "<img width=4000 height=4000 src=x>"
 
 @pytest.fixture
 def panel(tmp_path, monkeypatch):
+    if MP.np is None:
+        pytest.skip("numpy is missing (the equalizer engine needs it)")
     monkeypatch.setenv("HOME", str(tmp_path))
     AR.forget()
     sink = MP.MemorySink()
@@ -101,8 +103,8 @@ def test_sad_a_markup_file_name_is_shown_as_text(panel, tmp_path):
     assert "<img" not in tip and "&lt;img" in tip
 
 
-def test_sad_notes_naming_a_file_are_plain(panel):
-    assert panel.note.textFormat() == Qt.TextFormat.PlainText
+def test_sad_notes_naming_a_file_are_plain(idle_panel):
+    assert idle_panel.note.textFormat() == Qt.TextFormat.PlainText
 
 
 def test_happy_the_tooltip_shows_the_title_as_it_is():

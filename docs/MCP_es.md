@@ -68,12 +68,20 @@ A diferencia de las herramientas de script no ejecuta nada en el
 propio host del servidor, por eso se ofrece en ambos transportes; ver
 §9.8.
 
+Los ficheros secretos no se leen, sea cual sea el root (§7.12): los
+tokens y claves de axross y las claves privadas de `~/.ssh` y
+`~/.gnupg`. `--mcp-allow-secret-reads` deja que las herramientas los
+lean; solo por stdio (rechazado junto con `--mcp-http`, exit 2).
+
 Las peticiones llegan por stdin (JSON delimitado por líneas), las
 respuestas salen por stdout. Los logs solo por stderr. Cuando se
 activa el modo MCP, PyQt no se importa — el servidor corre
 limpiamente en máquinas sin pantalla.
 
 ### 1.2 HTTP (+ mTLS opcional)
+
+`--mcp-http HOST:PORT` implica `--mcp-server` (`axross --mcp-http
+127.0.0.1:7331` solo sirve HTTP; antes abría la ventana).
 
 ```bash
 # HTTP loopback (sin TLS fuera de loopback se rechaza), token bearer obligatorio:
@@ -486,6 +494,8 @@ red-team que se pensó. Los tests de MCP están en
 | `tests/test_mcp_search_root.py` | `search` nunca devuelve rutas indexadas fuera de la raíz. |
 | `tests/test_mcp_tasks_limits.py` | Rate limit de `tasks/start`, tope de tareas en ejecución, timeout de la herramienta. |
 | `tests/test_mcp_write_root.py` | `--mcp-write` exige `--mcp-root`; `--mcp-allow-scripts` rechazado con `--mcp-http`. |
+| `tests/test_mcp_secret_reads.py` | Los ficheros secretos (§7.12) no se leen, ni se buscan con grep, ni se hashean, ni se previsualizan, copian, mueven o enlazan con hardlink, tampoco por un symlink, una herramienta de grupo o `resources/read`; sus nombres se listan; `--mcp-allow-secret-reads` (solo stdio) permite leerlos. |
+| `tests/test_mcp_http_mode.py` | `--mcp-http` solo arranca el servidor HTTP (abría la ventana) y no se separa del terminal. |
 | `tests/test_mcp_script_audit.py` | Las herramientas de script escriben la auditoría, sin código fuente ni salida. |
 | `tests/test_mcp_script_run_child.py` | `script_run` en un proceso hijo: timeout y kill del grupo, no queda ningún nieto, `input()` nunca lee el stream stdio, cancelación, tope de salida, validación de argumentos, respuesta estructurada. |
 | `tests/test_mcp_stdio_write_lock.py` | Escritores concurrentes en stdio nunca se entremezclan dentro de una línea. |
@@ -632,6 +642,37 @@ Cuando un operador registra la misma instancia de backend bajo
 dos ids, solo la primera reclama `is_default = true`. Antes el
 chequeo por identidad decía que ambas eran default, lo que
 confundía a los clientes eligiendo la primaria.
+
+### 7.12 Los ficheros secretos no se leen
+
+El root por defecto es la carpeta home, y algunos ficheros de ahí
+convierten "lee mis ficheros" en las cuentas del usuario. Ninguna
+herramienta entrega su contenido, sea cual sea el root
+(`core.protected_places.read_refusal`):
+
+* los tokens de axross: `~/.config/axross/*token*` (los refresh tokens
+  de Google Drive, OneDrive y Dropbox de cada perfil, el token de MCP
+  HTTP; también `$XDG_RUNTIME_DIR/axross/*token*`);
+* sus claves: el estado de las cuentas de chat
+  (`~/.local/state/axross/chat/`, claves y tokens de sincronización),
+  las link keys de Bluetooth (`bluetooth-direct-keys.json`), la clave
+  ADB que creó (`~/.android/adbkey`);
+* todo fichero de `~/.ssh` salvo `*.pub`, `known_hosts`,
+  `authorized_keys` y `config` (una clave privada puede tener cualquier
+  nombre);
+* `private-keys-v1.d/`, `openpgp-revocs.d/` y `secring.gpg` de GnuPG.
+
+Rechazado: `read_file`, `checksum`, `preview`, `open_version_read`,
+`resources/read`; en `grep` y `recursive_checksum` un fichero así consta
+como ilegible; `copy`, `bulk_copy`, `rename` y `hardlink` no lo aceptan
+(ni una carpeta que lo contenga) como origen; los grupos (§9) lo ven
+fuera del root. Un symlink a un secreto se resuelve y se rechaza. Los
+nombres se siguen listando (`list_dir`, `walk`, `stat`, `search`). En el
+sandbox del agente cuenta también el home del host.
+`--mcp-allow-secret-reads` (solo stdio) desactiva la comprobación; las
+herramientas propias del agente la mantienen siempre. El lado de
+escritura (§2, los lugares protegidos de `core.protected_places`) es
+una lista aparte y no cambia.
 
 ---
 
@@ -895,7 +936,8 @@ variables `AXROSS_MCP_*`)
 que el servidor, no arranca nada e imprime JSON: por herramienta
 `name`, `group`, `mutating`, `required_flags`, `transports`,
 `timeout_class`, `timeout_seconds`, `description` e `input_schema`,
-además de la tabla de grupos y las clases de timeout (estructura como
+además de la tabla de grupos y las siete clases de timeout (`quick`,
+`walk`, `write`, `preview`, `stream`, `long`, `script`; estructura como
 en el ejemplo de [MCP.md §9.7](MCP.md)).
 
 Cada schema indica tipos, campos obligatorios, enums, valores por

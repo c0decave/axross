@@ -24,7 +24,7 @@ from fuzz_testkit import check_contract  # noqa: E402
 from paramiko.sftp import SFTP_FAILURE, SFTP_NO_SUCH_FILE  # noqa: E402
 from sftp_hostile_kit import attr, hostile_session  # noqa: E402
 
-from core.path_policy import drop_unsafe_names  # noqa: E402
+from core.path_policy import drop_impossible_names  # noqa: E402
 
 
 @pytest.fixture
@@ -89,7 +89,9 @@ def test_sad_hostile_listings(sftp, listing):
     script.listing = listing
     result = _all_ops(s, repr(listing)[:80], only=("list_dir",))["list_dir"]
     if isinstance(result, list):
-        assert drop_unsafe_names(result) == result  # list_dir already dropped unsafe names
+        # list_dir already dropped the names no POSIX folder holds; a
+        # control character stays listed (the transfer refuses it visibly)
+        assert drop_impossible_names(result) == result
 
 
 @pytest.mark.parametrize(

@@ -59,6 +59,14 @@ def _profile_token_files(stem: str, profile_name: str) -> dict[str, str]:
     }
 
 
+# Protocols whose session identity is the profile name: ramfs (no
+# server at all) and the OAuth cloud backends, whose token file -- and so
+# the signed-in account -- is chosen by the profile name.
+_PROFILE_NAME_KEYED = frozenset(
+    {"ramfs", "gdrive", "dropbox", "onedrive", "sharepoint"}
+)
+
+
 def _session_class(name: str):
     """The class bound to *name* here — a test's patch if one is active."""
     return globals()[name] if name in globals() else __getattr__(name)
@@ -425,10 +433,18 @@ class ConnectionManager:
             str(profile.telnet_naws_height),
             str(hash(profile.gdrive_client_secret)),
             str(hash(profile.dropbox_app_secret)),
+            # NNTP over TLS and plaintext NNTP to one host and port are
+            # two different connections: a TLS profile must never reuse
+            # a plaintext session.
+            str(profile.nntp_ssl),
             # A RAM workspace has no server to tell two of them apart: the
-            # profile name is its identity. Two network profiles to one
-            # server keep sharing a session.
-            profile.name if profile.protocol == "ramfs" else "",
+            # profile name is its identity. The OAuth cloud backends keep
+            # one token file per profile name (_profile_token_files), so
+            # the profile name picks the ACCOUNT: "Work" and "Personal"
+            # with the same app key / client id and no host or username
+            # are two accounts and must not share a session. Two network
+            # profiles to one server keep sharing a session.
+            profile.name if profile.protocol in _PROFILE_NAME_KEYED else "",
         )
 
     def connect(

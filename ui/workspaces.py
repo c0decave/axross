@@ -833,6 +833,7 @@ class WorkspaceMixin:
 
     def _build_workspace_menu(self, menubar) -> QMenu:
         menu = menubar.addMenu(tr("&Workspace"))
+        menu.setObjectName("axWorkspaceMenu")  # the tours point at it (ui.tours)
         self._workspace_menu = menu
         menu.aboutToShow.connect(self._fill_workspace_menu)
         # New Workspace > With File List / With Terminal; the submenu stays,

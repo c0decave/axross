@@ -173,7 +173,10 @@ def _manifest(path: Path) -> tuple[dict, str]:
     if cached is not None and cached[0] == state:
         fields, error = cached[1]
         return dict(fields), error
-    result = _read_manifest(path, st.st_size)
+    try:
+        result = _read_manifest(path, st.st_size)
+    except Exception as exc:  # noqa: BLE001 - one bad file must not stop the start
+        result = {}, f"cannot parse: {type(exc).__name__}: {exc}"
     if not result[1].startswith("cannot read"):  # a passing read error is tried again
         _MANIFESTS[str(path)] = (state, (dict(result[0]), result[1]))
     return result
@@ -184,11 +187,18 @@ def _read_manifest(path: Path, size: int) -> tuple[dict, str]:
         return {}, f"too large ({size} bytes, at most {MAX_SOURCE_BYTES})"
     try:
         source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        return {}, f"cannot read: {exc}"
+    try:
         tree = ast.parse(source, filename=str(path))
     except SyntaxError as exc:
         return {}, f"syntax error in line {exc.lineno}: {exc.msg}"
-    except (OSError, UnicodeDecodeError, ValueError) as exc:
-        return {}, f"cannot read: {exc}"
+    except (RecursionError, MemoryError):
+        # Deeply nested source (``x = 1+1+...`` well under the size limit):
+        # the main window reads this while it is built, in safe mode too.
+        return {}, "cannot parse: the source is nested too deeply"
+    except Exception as exc:  # noqa: BLE001 - ValueError (NUL bytes) and the like
+        return {}, f"cannot parse: {type(exc).__name__}: {exc}"
     manifest = None
     has_activate = False
     for node in tree.body:
@@ -197,7 +207,9 @@ def _read_manifest(path: Path, size: int) -> tuple[dict, str]:
         ):
             try:
                 manifest = ast.literal_eval(node.value)
-            except ValueError:
+            except (RecursionError, MemoryError):
+                return {}, "EXTENSION must be a plain literal dict (it is nested too deeply)"
+            except Exception:  # noqa: BLE001 - ValueError, TypeError ({["a"]}), ...
                 return {}, "EXTENSION must be a plain literal dict"
         elif isinstance(node, ast.FunctionDef) and node.name == "activate":
             has_activate = True

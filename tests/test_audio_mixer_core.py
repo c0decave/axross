@@ -305,6 +305,7 @@ def test_happy_the_media_player_shows_and_changes_the_shared_equalizer(own_setti
         panel.close()
 
 
+@pytest.mark.skipif(not AEQ.available(), reason="numpy is missing")
 def test_happy_the_media_player_plays_at_its_mixer_channel(own_settings):
     mp, panel = _player_panel()
     try:
@@ -317,6 +318,7 @@ def test_happy_the_media_player_plays_at_its_mixer_channel(own_settings):
         panel.close()
 
 
+@pytest.mark.skipif(not AEQ.available(), reason="numpy is missing")
 def test_edge_the_media_player_s_names_still_work():
     """Tests and code reach the equalizer through the Media Player module."""
     mp, panel = _player_panel()

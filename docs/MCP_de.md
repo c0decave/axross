@@ -67,11 +67,20 @@ Script-Tools erreichen können, steht in §2.
 Servers selbst aus und wird deshalb auf beiden Transporten angeboten;
 siehe §9.8.
 
+Geheime Dateien werden nicht gelesen, egal welcher Root (§7.12):
+axross' eigene Tokens und Schlüssel und die privaten Schlüssel in
+`~/.ssh` und `~/.gnupg`. `--mcp-allow-secret-reads` erlaubt es den
+Tools; nur über stdio (zusammen mit `--mcp-http` verweigert, Exit 2).
+
 Requests über stdin (zeilen-delimitiertes JSON), Responses über
 stdout. Logs nur nach stderr. Wenn der MCP-Pfad aktiv ist, wird
 PyQt nicht importiert — der Server läuft sauber auf Headless-Hosts.
 
 ### 1.2 HTTP (+ optional mTLS)
+
+`--mcp-http HOST:PORT` schließt `--mcp-server` ein (`axross --mcp-http
+127.0.0.1:7331` allein startet den HTTP-Server; vorher öffnete es das
+Fenster).
 
 ```bash
 # Loopback-HTTP (ohne TLS auf Nicht-Loopback verweigert), Bearer-Token Pflicht:
@@ -484,6 +493,8 @@ Red-Team-Szenario. Die MCP-Tests liegen in `tests/test_mcp_*.py`:
 | `tests/test_mcp_search_root.py` | `search` liefert nie indizierte Pfade außerhalb der Root. |
 | `tests/test_mcp_tasks_limits.py` | `tasks/start`-Rate-Limit, Cap laufender Tasks, Tool-Timeout. |
 | `tests/test_mcp_write_root.py` | `--mcp-write` braucht `--mcp-root`; `--mcp-allow-scripts` mit `--mcp-http` verweigert. |
+| `tests/test_mcp_secret_reads.py` | Geheime Dateien (§7.12) werden nicht gelesen, gegrept, gehasht, als Vorschau gezeigt, kopiert, verschoben oder hart verlinkt, auch nicht über einen Symlink, ein Gruppen-Tool oder `resources/read`; ihre Namen werden gelistet; `--mcp-allow-secret-reads` (nur stdio) erlaubt das Lesen. |
+| `tests/test_mcp_http_mode.py` | `--mcp-http` allein startet den HTTP-Server (es öffnete das Fenster) und löst sich nicht vom Terminal. |
 | `tests/test_mcp_script_audit.py` | Script-Tools schreiben den Audit-Trail, ohne Quelltext oder Ausgabe. |
 | `tests/test_mcp_script_run_child.py` | `script_run` im Kindprozess: Timeout und Gruppen-Kill, kein Enkelprozess bleibt, `input()` liest nie den stdio-Stream, Cancel, Output-Cap, Argumentprüfung, strukturierte Antwort. |
 | `tests/test_mcp_stdio_write_lock.py` | Gleichzeitige stdio-Writer verschachteln sich nie innerhalb einer Zeile. |
@@ -627,6 +638,36 @@ Wenn ein Operator dieselbe Backend-Instanz unter zwei IDs
 registriert, beansprucht nur die erste `is_default = true`. Vorher
 sagte der Identity-Check beide seien Default, was Clients beim
 Default-Pick verwirrte.
+
+### 7.12 Geheime Dateien werden nicht gelesen
+
+Der Default-Root ist der Home-Ordner, und manche Dateien dort machen
+aus "lies meine Dateien" die Konten des Nutzers. Kein Tool gibt ihren
+Inhalt heraus, egal welcher Root (`core.protected_places.read_refusal`):
+
+* axross' Tokens: `~/.config/axross/*token*` (die Refresh-Tokens von
+  Google Drive, OneDrive und Dropbox jedes Profils, das MCP-HTTP-Token;
+  auch `$XDG_RUNTIME_DIR/axross/*token*`);
+* seine Schlüssel: der Zustand der Chat-Konten
+  (`~/.local/state/axross/chat/`, Schlüssel und Sync-Tokens), die
+  Bluetooth-Link-Keys (`bluetooth-direct-keys.json`), sein ADB-Schlüssel
+  (`~/.android/adbkey`);
+* jede Datei in `~/.ssh` außer `*.pub`, `known_hosts`,
+  `authorized_keys` und `config` (ein privater Schlüssel kann jeden
+  Namen haben);
+* GnuPGs `private-keys-v1.d/`, `openpgp-revocs.d/` und `secring.gpg`.
+
+Verweigert: `read_file`, `checksum`, `preview`, `open_version_read`,
+`resources/read`; in `grep` und `recursive_checksum` gilt so eine Datei
+als unlesbar; `copy`, `bulk_copy`, `rename` und `hardlink` nehmen sie
+(oder einen Ordner, der eine enthält) nicht als Quelle; die
+Capability-Gruppen (§9) sehen sie als außerhalb des Roots. Ein Symlink
+auf ein Geheimnis wird aufgelöst und verweigert. Namen bleiben
+auflistbar (`list_dir`, `walk`, `stat`, `search`). In der Agent-Sandbox
+zählt das Home des Hosts mit. `--mcp-allow-secret-reads` (nur stdio)
+schaltet die Prüfung ab; die eigenen Tools des Agenten behalten sie
+immer. Die Schreibseite (§2, die geschützten Orte von
+`core.protected_places`) ist eine eigene Liste und unverändert.
 
 ---
 
@@ -892,7 +933,8 @@ Ein langer Job im Hintergrund, auf beiden Transporten abbrechbar:
 wie der Server, startet nichts und gibt JSON aus: pro Tool `name`,
 `group`, `mutating`, `required_flags`, `transports`, `timeout_class`,
 `timeout_seconds`, `description` und `input_schema`, dazu die
-Gruppen-Tabelle und die Timeout-Klassen (Aufbau wie im Beispiel in
+Gruppen-Tabelle und die sieben Timeout-Klassen (`quick`, `walk`, `write`,
+`preview`, `stream`, `long`, `script`; Aufbau wie im Beispiel in
 [MCP.md §9.7](MCP.md)).
 
 Jedes Schema nennt Typen, Pflichtfelder, Enums, Defaults und Grenzen,

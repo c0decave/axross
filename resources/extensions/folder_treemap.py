@@ -20,10 +20,17 @@ MAX_ENTRIES = 20000
 MAX_DEPTH = 12
 
 
-def folder_sizes(backend, folder: str, *, max_entries: int = MAX_ENTRIES):
+class WalkCancelled(Exception):
+    """The walk was no longer wanted (the folder was left meanwhile)."""
+
+
+def folder_sizes(backend, folder: str, *, max_entries: int = MAX_ENTRIES, cancelled=None):
     """``([(name, size, is_dir)], complete)`` for the children of *folder*;
     subfolder sizes are recursive sums. *complete* is False when the walk
-    stopped at *max_entries* or met unreadable folders."""
+    stopped at *max_entries* or met unreadable folders. *cancelled()*,
+    asked before every listing, ends the walk with :class:`WalkCancelled`
+    when it returns True: a walk of a folder already left ran on to its
+    last listing (up to *max_entries* round trips) next to the new one."""
     budget = [max_entries]
     complete = [True]
 
@@ -31,6 +38,8 @@ def folder_sizes(backend, folder: str, *, max_entries: int = MAX_ENTRIES):
         if depth > MAX_DEPTH or budget[0] <= 0:
             complete[0] = False
             return 0
+        if cancelled is not None and cancelled():
+            raise WalkCancelled(folder)
         try:
             items = backend.list_dir(path)
         except OSError:
@@ -51,6 +60,8 @@ def folder_sizes(backend, folder: str, *, max_entries: int = MAX_ENTRIES):
         return total
 
     out = []
+    if cancelled is not None and cancelled():
+        raise WalkCancelled(folder)
     for item in backend.list_dir(folder):
         if item.name == "..":
             continue
@@ -229,23 +240,33 @@ def activate(api):
 
     view = Treemap()
     api.add_dock(tr("Folder Treemap"), view, icon="treemap")
-    state = {"folder": None}
+    #: Counts the walks started; a walk (and its result or error) whose
+    #: number is no longer the last one is stale.
+    state = {"generation": 0}
 
     def refresh(ctx):
-        state["folder"] = (id(ctx.backend), ctx.folder)
+        state["generation"] += 1
+        generation = state["generation"]
         view.message = "Measuring…"
         view.update()
 
-        def done(result, key=state["folder"]):
-            if state["folder"] == key:
+        def stale() -> bool:
+            return state["generation"] != generation
+
+        def done(result):
+            if not stale():
                 view.set_entries(*result)
 
+        def failed(exc):
+            if stale() or isinstance(exc, WalkCancelled):
+                return  # a newer walk is under way; its outcome is shown
+            view.message = f"Cannot measure: {exc}"
+            view.update()
+
         api.run_in_background(
-            lambda: folder_sizes(ctx.backend, ctx.folder),
+            lambda: folder_sizes(ctx.backend, ctx.folder, cancelled=stale),
             on_done=done,
-            on_error=lambda exc: (
-                setattr(view, "message", f"Cannot measure: {exc}") or view.update()
-            ),
+            on_error=failed,
         )
 
     api.on("path_changed", refresh)

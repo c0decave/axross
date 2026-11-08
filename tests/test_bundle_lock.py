@@ -265,7 +265,10 @@ def test_edge_the_lock_files_are_not_ignored(source):
     if source == "source .gitignore":
         text = (ROOT / ".gitignore").read_text(encoding="utf-8")
     else:
-        export = (ROOT / "scripts" / "export-public.py").read_text(encoding="utf-8")
+        script = ROOT / "scripts" / "export-public.py"
+        if not script.exists():
+            pytest.skip("export tooling is not part of the public tree")
+        export = script.read_text(encoding="utf-8")
         text = re.search(r'PUBLIC_GITIGNORE = """\\\n(.*?)"""', export, re.S).group(1)
     lines = text.splitlines()
     assert "build/*" in lines

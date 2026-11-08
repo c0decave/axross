@@ -15,6 +15,7 @@ from __future__ import annotations
 import email
 import email.policy
 import hashlib
+import re
 import struct
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -57,6 +58,9 @@ class MailMessage:
     size: int = 0
     truncated: list[str] = field(default_factory=list)
     raw: bytes = field(repr=False, default=b"")
+    #: "pst" when *raw* is not the message as it was sent but rebuilt by
+    #: axross (core.pst.to_eml): its DKIM signatures cannot be verified
+    rebuilt: str = ""
 
     def header(self, name: str) -> str:
         """The first value of header *name* ('' when absent)."""
@@ -100,8 +104,15 @@ def _clean(value) -> str:
 
 # --- .eml ----------------------------------------------------------------------------
 
+#: The source label core.mail_project gives a message of an Outlook data
+#: file: "<path>.pst#<folder>/<node>" - set by axross, not by the message.
+_PST_SOURCE = re.compile(r"\.(?:pst|ost)#", re.I)
+
+
 def parse_eml(data: bytes, source: str = "") -> MailMessage:
     msg = MailMessage(source=source, kind="eml", size=len(data), sha256=hashlib.sha256(data).hexdigest())
+    if _PST_SOURCE.search(source):
+        msg.rebuilt = "pst"
     if len(data) > MAX_MESSAGE:
         msg.truncated.append(f"message larger than {MAX_MESSAGE} bytes - only its start was read")
         data = data[:MAX_MESSAGE]

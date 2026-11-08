@@ -159,8 +159,8 @@ Every backend now reaches the proxy via one of three primitives:
    Used by SMB, DFS-N and ADB, which use libraries that have no
    better hook.
 4. **`LocalTunnel` / `open_tunnel(kwargs, host, port)`** — a loopback
-   listener (127.0.0.1, ephemeral port, **same-uid peers only** via
-   `/proc/net/tcp`, 64-connection cap) that relays every accepted
+   listener (127.0.0.1, ephemeral port, **same-uid peers only**, see
+   *Who may connect* below, 64-connection cap) that relays every accepted
    connection through the proxy. For libraries that open their own
    sockets and offer no hook (psycopg, pymongo, ldap3, `svn://`, dulwich
    over ssh). The tunnel dies with the session.
@@ -172,10 +172,33 @@ Every backend now reaches the proxy via one of three primitives:
    proxy URL (botocore, the svn client, rsync's helper, httplib2). It
    dials the real upstream itself -- SOCKS4/5, TLS to the proxy, Basic /
    NTLM / Negotiate -- and relays CONNECT and absolute-form requests.
-   Same-uid peers only; a shim port is registered with the SSRF guard
-   only while it is live. Chunked request bodies are refused (501);
+   Same-uid peers only (*Who may connect*); a shim port is registered
+   with the SSRF guard only while it is live. Chunked request bodies are refused (501);
    authenticated absolute-form requests buffer the body (limit 16 MiB)
    because NTLM may need to resend it.
+
+### Who may connect to the tunnel and the shim
+
+A loopback port is reachable by every account on the computer, so the
+tunnel and the shim accept a connection only when it comes from a
+process of the user running axross (`core.proxy._peer_is_same_user`):
+
+- **Linux**: the owner of the client socket is read from
+  `/proc/net/tcp{,6}` (by its full address pair, `TIME_WAIT` rows never
+  count).
+- **macOS and the BSDs**: `lsof -a -u <uid> -iTCP@<client address>` lists
+  the TCP sockets of this user only; the connection is accepted when one
+  of them is the client end. lsof is looked for in `/usr/sbin`,
+  `/usr/bin`, `/usr/local`, Homebrew and MacPorts. `getpeereid` /
+  `LOCAL_PEERCRED` cannot be used: they answer for Unix-domain sockets
+  only, and the clients behind a tunnel (libpq, pymongo, ldap3, the
+  kernel) dial TCP. A failing or slow lsof (5 s) refuses the connection.
+- **Windows** (and a Unix without lsof): nothing tells which user
+  connects, so the tunnel and the shim are **not started**: the connect
+  fails with `ProxyUnsupportedError` naming the reason. Remove the proxy
+  from the profile or route the traffic at the OS / network layer there.
+
+Before, every peer was accepted where `/proc/net/tcp` was missing.
 
 ### SSRF guard
 
@@ -321,6 +344,9 @@ The host tests for the proxy layer need no network and no lab:
 
 - `tests/test_proxy_tunnel.py` — `proxy_*` kwargs parsing, the
   loopback tunnel, SOCKS5 UDP.
+- `tests/test_proxy_peer_check_non_linux.py` — who may connect without
+  `/proc/net/tcp`: lsof for this user's sockets (macOS), fail closed when
+  it fails, no tunnel or shim where nothing can tell (Windows).
 - `tests/test_proxy_http.py` — HTTPS proxies, NTLM / Negotiate auth,
   the loopback shim, `build_requests_proxies` URL formation (no
   credentials in a shim URL), and the SSRF guard refusing loopback /

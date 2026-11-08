@@ -8,7 +8,7 @@ Idiomas: [English](USAGE.md) · [Deutsch](USAGE_de.md) · **Español**
 
 ## De un vistazo
 
-Axross es un gestor de ficheros estilo Total Commander para 22
+Axross es un gestor de ficheros estilo Total Commander para más de 30
 protocolos, construido en torno a tres ideas:
 
 - **Layout multi-panel.** Divide horizontal o verticalmente en
@@ -22,6 +22,38 @@ protocolos, construido en torno a tres ideas:
   cualquier backend configurado como herramientas MCP, de modo que
   un cliente LLM puede manejarlo. Solo lectura por defecto;
   `--mcp-write` opt-in para mutaciones.
+
+## Manual y tours
+
+- **Help → Handbook** (**F1**) muestra esta guía dentro de axross, en el
+  idioma de la interfaz (el alemán y el español tienen la suya; cualquier
+  otro idioma recibe la inglesa): el índice a la izquierda, encima un campo
+  de búsqueda (Return busca la siguiente coincidencia), enlaces entre sus
+  secciones. No carga ninguna imagen ni otro recurso y muestra el HTML
+  crudo como texto; los enlaces a los otros documentos los abren en GitHub
+  en el navegador.
+- **F1 abre la sección del área en la que estás**: un panel de ficheros
+  abre *Layout multi-panel*, su campo de dirección o de filtro *Path bar*,
+  el dock Transfers *Transferencias*, el dock Agent *Dock Agent*, *Connect
+  to Server* abre *Conexiones*, y en *Edit → Settings…* F1 abre la parte
+  de la página mostrada (*Logging*, *Updates*, las páginas del Agent …; el
+  resto *Settings*). En cualquier otro sitio F1 abre el índice. La lista de
+  atajos de teclado está en **Ctrl+F1** (*Help → Keyboard Shortcuts*).
+- **Help → Tours…** lista tours guiados sobre la ventana real: *Getting
+  started*, *Connect to a server*, *Copy and sync safely*, *Find and
+  organize*, *Automate* y *Extensions and features*. Un tour oscurece la
+  ventana alrededor de la parte que explica y la enmarca - esa parte sigue
+  usable - y un recuadro al lado dice *Step k of n* con **Back**, **Next**
+  y **End Tour**; **Esc** también termina el tour. Un paso cuya parte no
+  está en la ventana (un dock o una extension desactivados, un panel
+  cerrado, una toolbar oculta) se salta, y el paso siguiente dice cuáles
+  se saltaron; un dock Agent, Scripts o Console cerrado se abre para su
+  paso y se cierra de nuevo al terminar el tour.
+- **El primer arranque** ofrece el tour *Getting started* una vez, como
+  aviso en la barra de estado (*Take the Getting Started Tour*, *No
+  Thanks*) - nunca como diálogo. *Edit → Settings… → General → Tours* lo
+  ofrece de nuevo en el siguiente arranque, o nunca (`offer_tour_at_start`
+  en `settings.json`).
 
 ## Conexiones
 
@@ -412,8 +444,12 @@ muestra el fichero del índice.
   entradas ocultas incluidas, como mucho 50 niveles y 1 000 000 de entradas
   por pasada, escritas en lotes de 500, cancelable (lo indexado se
   conserva). Navegar nunca indexa. Indexar de nuevo la misma carpeta
-  actualiza sus filas; las filas de ficheros borrados desde entonces la GUI
-  **no** las quita (la herramienta MCP `index_build` con `prune` sí).
+  actualiza sus filas y quita las de ficheros borrados desde entonces — solo
+  tras una pasada completa: una cancelada, o una que llegó al límite de
+  entradas, no quita nada, y las filas bajo una carpeta que no se pudo listar
+  se quedan. La herramienta MCP `index_build` solo añade; con `prune` además
+  pregunta al backend por cada path indexado bajo la carpeta y quita las
+  filas cuyo fichero ya no está.
 - **Cómo se busca.** Subcadena del nombre (sin distinguir mayúsculas),
   extensión, rango de tamaño, rango de fechas, una conexión. Extensión,
   tamaño y fecha usan índices SQLite; una subcadena del nombre
@@ -1063,7 +1099,7 @@ herramientas JSON-RPC.
 
 ```bash
 axross --mcp-server                                  # solo lectura, stdio
-axross --mcp-server --mcp-write                      # añade tools de escritura (capada a un root)
+axross --mcp-server --mcp-write --mcp-root ~/data    # añade tools de escritura (capada a ese root)
 axross --mcp-server --mcp-http 127.0.0.1:7331        # HTTP, loopback
 ```
 
@@ -1591,7 +1627,7 @@ encuentra un ajuste por su nombre (escribe *sudo*, *proxy* o *zoom*).
 
 | Categoría | Ajustes |
 |---|---|
-| General | Idioma (al siguiente arranque), restaurar el layout de la última sesión al arrancar, cuándo un panel se vuelve activo (con clic o tras 0,5–3 s con el ratón dentro) |
+| General | Idioma (al siguiente arranque), restaurar el layout de la última sesión al arrancar, cuándo un panel se vuelve activo (con clic o tras 0,5–3 s con el ratón dentro), ofrecer el tour Getting started en el siguiente arranque (ver [Manual y tours](#manual-y-tours)) |
 | Appearance | Theme, compact mode, monochrome icons, icon colours (Theme default; Own colours in every theme - también en Hacker y Amber, que dibujan cada icono en un color; One colour a elegir), tamaño de letra (zoom), resaltar hidden files y su color (un color difícil de leer en el theme solo tras preguntar) |
 | Toolbar | Agrupar los botones por categoría, mostrar el color de cada categoría detrás de sus botones, el color de cada categoría (Connections, Windows & Panes, Files & Search, Media, LLM & Agent, Tools & System, Extensions), *Reset to Defaults* |
 | Files & Panes | Mostrar hidden files, open size limit, parallel transfers, workspaces en RAM (sí / no, límite de tamaño, memoria que queda libre) y ficheros temporales en RAM (al siguiente arranque) |
@@ -1682,8 +1718,11 @@ extensión incluida y los grupos de funciones son *unidades* que añade desde su
 release: *Help → Features… → Packs…* las lista con su tamaño; *Add* descarga los wheels
 (de la release o el mismo fichero de PyPI) y comprueba la firma, el manifiesto y el
 SHA-256 de cada wheel antes de descomprimir nada; *Remove* borra lo que ninguna otra
-unidad necesita; se aplica en el siguiente arranque. Una actualización del binario trae
-antes las unidades instaladas de la nueva release.
+unidad necesita. Una unidad de wheels solo de Python puro se puede usar en el acto; una
+con un wheel nativo, y quitar una, se aplican en el siguiente arranque. Una actualización
+del binario trae antes las unidades instaladas de la nueva release; si el manifiesto de
+packs de la release se volvió a emitir (misma versión, un pack corregido), *Help →
+Features…* ofrece *Update packs*, comprobado igual.
 
 Los binarios de un solo archivo (`axross-full`, `axross-slim`, y el
 `axross-slim` de macOS y de Windows) se actualizan desde los releases de
@@ -1759,7 +1798,8 @@ security mode; *Check Now* sigue funcionando.
   activación de panels, modo de escritura y confirmación de metadata,
   recordar la contraseña de sudo, hosts buscados a la vez, el security mode,
   los ajustes de update (`update_check_at_start`, `update_auto_download`,
-  una versión saltada, el último check).
+  una versión saltada, el último check), si el siguiente arranque ofrece el
+  tour Getting started (`offer_tour_at_start`).
 - `~/.config/axross/proxy.json`, `llm.json`, `extensions.json` — el proxy
   por defecto, los perfiles LLM, las extensions activadas (secretos en el
   keyring).

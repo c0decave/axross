@@ -165,7 +165,7 @@ AREAS: tuple[Area, ...] = (
     Area("update", "Update and packs", (*_core("self_update", "packs", "units"), *_ui("update_ui", "packs_dialog"))),
     Area("security", "Security / Credentials", (
         *_core("credentials", "secure_storage", "security_mode", "sudo_password", "redaction",
-               "cred_attack", "safety_tarpit"),
+               "cred_attack", "safety_tarpit", "protected_places"),
         *_ui("production_gate"),
     )),
     Area("terminal", "Terminal / Remote Commands", (
@@ -180,7 +180,7 @@ AREAS: tuple[Area, ...] = (
     ), patterns=("resources.extensions.*", "axross_extension_*", "ui.arcade_*", "core.arcade*")),
     Area("ui", "User Interface", (
         "ui", "models",
-        *_core("bookmarks", "visit_history"),
+        *_core("bookmarks", "visit_history", "guide_text", "handbook", "tour_offer"),
         *_ui("bookmark_edit_dialog", "bookmark_manager_dialog", "bookmark_sidebar",
              "about_dialog", "close_corner", "code_editor", "column_fit", "column_prefs", "dock_fit",
              "dock_frame", "dock_titlebar", "drag_autoscroll", "editor_window", "features_dialog",
@@ -192,7 +192,7 @@ AREAS: tuple[Area, ...] = (
              "themes", "third_party_dialog", "thread_lifetime", "thumbnail_view",
              "toolbar_categories", "toolbar_order", "viewer_file_actions", "viewer_window",
              "window_dock_bar", "window_move", "window_prefs", "title_bar", "state_files", "standalone_app", "media_player_app", "system_info_app", "workspaces", "dock_bindings",
-             "screen_fit"),
+             "screen_fit", "guide_view", "handbook", "tour_engine", "tours"),
         *_models("file_item", "file_table_model", "file_version"),
     )),
     Area("third_party", "Third-Party Libraries", default="WARNING"),

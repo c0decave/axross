@@ -132,6 +132,9 @@ class PollingWatcher(Watcher):
         self._initial_entries = None if initial_entries is None else tuple(initial_entries)
         self._tick_cond = threading.Condition()
         self._tick_state = WatchTickState()
+        #: The last listing failed: the next failures of the same streak
+        #: are not logged again (a deleted folder logged an error per tick).
+        self._failing = False
 
     def start(self) -> None:
         # Take the initial snapshot synchronously so callers can rely on
@@ -186,13 +189,19 @@ class PollingWatcher(Watcher):
         (``EOFError``, ``paramiko.SSHException``); none of them may end
         the watcher."""
         if _plain_local(self._backend):
-            return _local_snapshot(self._path)
-        try:
-            items = self._backend.list_dir(self._path)
-        except Exception as exc:  # noqa: BLE001 - any backend failure is "no news"
-            log.debug("PollingWatcher: list_dir(%s) failed: %s", self._path, exc)
-            return None
-        return self._snapshot_of(items)
+            snap = _local_snapshot(self._path, log_errors=not self._failing)
+        else:
+            try:
+                snap = self._snapshot_of(self._backend.list_dir(self._path))
+            except Exception as exc:  # noqa: BLE001 - any backend failure is "no news"
+                log.debug("PollingWatcher: list_dir(%s) failed: %s", self._path, exc)
+                snap = None
+        if snap is None and not self._failing:
+            self._failing = True
+        elif snap is not None and self._failing:
+            self._failing = False
+            log.info("PollingWatcher: %s can be listed again", self._path)
+        return snap
 
     @staticmethod
     def _snapshot_of(items) -> _Snapshot:
@@ -265,7 +274,7 @@ def _plain_local(backend) -> bool:
     return all(getattr(b, "__func__", None) is f for b, f in zip(bound, _LOCAL_LISTING))
 
 
-def _local_snapshot(path: str) -> _Snapshot | None:
+def _local_snapshot(path: str, *, log_errors: bool = True) -> _Snapshot | None:
     """``_snapshot_of(LocalFS().list_dir(path))`` without the FileItems:
     the same scandir and lstat per entry, the same (size, modification time
     as LocalFS turns it into a datetime, folder bit), an entry whose lstat
@@ -292,8 +301,8 @@ def _local_snapshot(path: str) -> _Snapshot | None:
                     stat_module.S_ISDIR(st.st_mode),
                 )
     except Exception as exc:  # noqa: BLE001 - as list_dir: any failure is "no news"
-        if isinstance(exc, OSError):
-            _local_log.error("Cannot list %s: %s", path, exc)  # as list_dir
+        if isinstance(exc, OSError) and log_errors:
+            _local_log.error("Cannot list %s: %s", path, exc)  # as list_dir (once per streak)
         log.debug("PollingWatcher: list_dir(%s) failed: %s", path, exc)
         return None
     return _Snapshot(entries=entries)

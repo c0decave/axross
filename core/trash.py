@@ -418,7 +418,13 @@ def trash_copy(
             try:
                 os.link(path, dst, follow_symlinks=False)
             except OSError:
+                # Another file system: a copy with the mode and times, which
+                # restore_over puts back (copyfile alone left the umask's).
                 shutil.copyfile(path, dst, follow_symlinks=False)
+                try:
+                    shutil.copystat(path, dst, follow_symlinks=False)
+                except OSError:  # a file system without modes keeps the data
+                    log.debug("trash_copy: no mode or times for %s", dst, exc_info=True)
         elif local_source is not None:
             with open(local_source, "rb") as src:
                 atomic_write_stream(backend, dst, src)
@@ -706,8 +712,34 @@ def restore(backend, trash_id: str, root: str | None = None, target: str | None 
     return dst
 
 
+class EmptyTrashIncomplete(OSError):
+    """:func:`empty_trash` removed what it could, but not every entry.
+
+    ``removed`` is the count of entries that went, ``failed`` lists
+    ``(trash_id, error)`` for each entry that stays - still listed in the
+    Trash window, with its sidecar, so the next Empty Trash tries again."""
+
+    def __init__(self, removed: int, failed: list[tuple[str, str]]) -> None:
+        self.removed = removed
+        self.failed = failed
+        shown = "; ".join(f"{trash_id}: {error}" for trash_id, error in failed[:10])
+        more = f" (and {len(failed) - 10} more)" if len(failed) > 10 else ""
+        super().__init__(
+            f"removed {removed} entr{'y' if removed == 1 else 'ies'}; "
+            f"{len(failed)} could not be removed and stay in the trash: {shown}{more}"
+        )
+
+
 def empty_trash(backend, root: str | None = None) -> int:
-    """Permanently remove every trash entry. Returns count removed."""
+    """Permanently remove every trash entry. Returns count removed.
+
+    Per entry the data goes first and its sidecar only once the data is
+    gone. In listing order the sidecar could go first: a data folder whose
+    removal then failed part way was no longer listed in the Trash window,
+    and every later Empty Trash kept it as "no sidecar" - hidden for good.
+    Raises :class:`EmptyTrashIncomplete` after trying every entry when some
+    could not be removed.
+    """
     trash_root = _resolve_root(backend, root)
     if not backend.exists(trash_root):
         return 0
@@ -717,40 +749,55 @@ def empty_trash(backend, root: str | None = None) -> int:
         log.warning("empty_trash: cannot list %s: %s", trash_root, exc)
         return 0
     removed = 0
+    failed: list[tuple[str, str]] = []
     # Only what the Trash window lists goes: a data object without its
     # sidecar (list_trash does not show it - say a move that stopped half
     # way) may be the only copy of the user's files, so it stays.
-    sidecar_ids = {
-        (getattr(it, "name", "") or "")[: -len(META_SUFFIX)]
-        for it in items
-        if (getattr(it, "name", "") or "").endswith(META_SUFFIX)
-    }
+    sidecar_ids: list[str] = []
+    data_items = {}
     for it in items:
         name = getattr(it, "name", "") or ""
-        if not name.endswith(META_SUFFIX) and name not in sidecar_ids:
-            log.warning("empty_trash: keeping %r in %s - it has no sidecar, the Trash "
-                        "window does not show it", name, trash_root)
-            continue
+        if name.endswith(META_SUFFIX):
+            sidecar_ids.append(name[: -len(META_SUFFIX)])
+        else:
+            data_items[name] = it
+    for name in data_items.keys() - set(sidecar_ids):
+        log.warning("empty_trash: keeping %r in %s - it has no sidecar, the Trash "
+                    "window does not show it", name, trash_root)
+    for trash_id in sidecar_ids:
         try:
-            full = (
-                _data_path(backend, trash_root, name)
-                if not name.endswith(META_SUFFIX)
-                else _meta_path(backend, trash_root, name[: -len(META_SUFFIX)])
-            )
+            meta_file = _meta_path(backend, trash_root, trash_id)
+            data_file = _data_path(backend, trash_root, trash_id)
         except ValueError as exc:
             log.warning(
                 "empty_trash: skipping unsafe trash entry %r: %s",
-                name,
+                trash_id,
                 exc,
             )
             continue
-        is_dir = bool(getattr(it, "is_dir", False))
-        try:
-            backend.remove(full, recursive=True) if is_dir else backend.remove(full)
+        data_item = data_items.get(trash_id)
+        if data_item is not None:
+            try:
+                if getattr(data_item, "is_dir", False):
+                    backend.remove(data_file, recursive=True)
+                else:
+                    backend.remove(data_file)
+            except OSError as exc:
+                # The sidecar stays: without it what is left of the data
+                # would vanish from the Trash window and from every later
+                # Empty Trash.
+                log.warning("empty_trash: remove %s failed: %s", data_file, exc)
+                failed.append((trash_id, str(exc)))
+                continue
             # Count only the data entries (not sidecars) to give the
             # caller a useful "how many files did I empty" number.
-            if not name.endswith(META_SUFFIX):
-                removed += 1
+            removed += 1
+        try:
+            backend.remove(meta_file)
         except OSError as exc:
-            log.warning("empty_trash: remove %s failed: %s", full, exc)
+            # The data is gone; a sidecar without data is not listed and
+            # goes with the next Empty Trash.
+            log.warning("empty_trash: remove %s failed: %s", meta_file, exc)
+    if failed:
+        raise EmptyTrashIncomplete(removed, failed)
     return removed

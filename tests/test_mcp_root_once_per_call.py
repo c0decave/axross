@@ -89,8 +89,10 @@ def test_happy_grep_resolves_the_root_once_per_call(tree):
         matches = grep(root)
     assert len(matched_files(matches)) == N
     assert counter.of_watched == 2  # the root once, the start path (= the root) once
-    # one per file read, plus the root and the start path - was about 2N
-    assert counter.total <= N + 2, counter.total
+    # Per file read: one for the root confinement and one for the secret-file
+    # check (core.protected_places resolves what the path points to); the
+    # secret places once per call. The root is not resolved per file.
+    assert counter.total <= 2 * N + 2 + 20, counter.total
 
 
 def test_happy_index_search_resolves_the_root_once_per_call(tree, tmp_path):

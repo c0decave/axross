@@ -17,6 +17,7 @@ import os
 import posixpath
 import re
 
+from PyQt6 import sip
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QAction, QKeySequence, QTextCursor
 from PyQt6.QtWidgets import (
@@ -121,6 +122,10 @@ class EditorTab(QWidget):
 
     def is_modified(self) -> bool:
         return self.editor.document().isModified()
+
+    def set_read_only(self, read_only: bool) -> None:
+        self.read_only = read_only
+        self.editor.setReadOnly(read_only)
 
     def mark_modified(self) -> None:
         self.editor.document().setModified(True)
@@ -258,6 +263,8 @@ class EditorWindow(QMainWindow):
         set_window_icon(self, "edit")
         # Files being read in the background: (backend, path, job).
         self._loads: list[tuple[object, str, ScanJob]] = []
+        #: Loads started read-only (View) that an Edit asked for meanwhile.
+        self._edit_wanted: list[tuple[object, str, ScanJob]] = []
         self.setWindowTitle(tr("Editor") + " — axross")
         self.resize(1000, 720)
         self.tabs = QTabWidget()
@@ -399,6 +406,8 @@ class EditorWindow(QMainWindow):
         message instead)."""
         tab = self._tab_of(backend, path)
         if tab is not None:
+            if not read_only:
+                self._make_writable(tab)
             self.tabs.setCurrentWidget(tab)
             return tab
         if background:
@@ -450,7 +459,13 @@ class EditorWindow(QMainWindow):
 
     def _load_in_background(self, backend, path: str, read_only: bool) -> None:
         if self.is_loading(backend, path):
-            return  # the tab is on its way
+            # The tab is on its way; an Edit while a View reads it wants
+            # it writable.
+            if not read_only:
+                self._edit_wanted.extend(
+                    e for e in self._loads
+                    if self._same_backend(e[0], backend) and e[1] == path)
+            return
         document = TextDocument(backend, path)
         job = ScanJob(self)
         entry = (backend, path, job)
@@ -467,6 +482,9 @@ class EditorWindow(QMainWindow):
         if entry not in self._loads:
             return  # dropped: the window closed meanwhile
         self._loads.remove(entry)
+        if entry in self._edit_wanted:
+            self._edit_wanted.remove(entry)
+            read_only = False
         backend, path, job = entry
         job.deleteLater()
         if not self._loads:  # another file may still be on its way
@@ -477,6 +495,8 @@ class EditorWindow(QMainWindow):
             return
         tab = self._tab_of(backend, path)
         if tab is not None:  # opened meanwhile without the background
+            if not read_only:
+                self._make_writable(tab)
             self.tabs.setCurrentWidget(tab)
             return
         self._add_tab(EditorTab(backend, path, value, document, read_only))
@@ -493,6 +513,15 @@ class EditorWindow(QMainWindow):
         tab.editor.setFocus()
         self.opened.emit(tab)
         return tab
+
+    def _make_writable(self, tab: EditorTab) -> None:
+        """Edit (F4) of a file a View (F3) opened read-only: the same tab,
+        writable now - not the read-only one back, whose Save refused."""
+        if not tab.read_only:
+            return
+        tab.set_read_only(False)
+        self._update_title(tab)
+        self._update_status()
 
     def _update_title(self, tab: EditorTab) -> None:
         index = self.tabs.indexOf(tab)
@@ -549,6 +578,9 @@ class EditorWindow(QMainWindow):
         blocks = tab.blocks()  # the text, read here: the widget is the GUI thread's
         try:
             result = self._io(tab, lambda: tab.document.save(blocks))
+            if self._gone(tab):
+                # The window or tab went meanwhile: no question to ask.
+                return result != "conflict"
             if result == "conflict":
                 answer = QMessageBox.question(
                     self, tr("File Changed"),
@@ -560,6 +592,8 @@ class EditorWindow(QMainWindow):
                 if answer != QMessageBox.StandardButton.Yes:
                     return False
                 self._io(tab, lambda: tab.document.save(blocks, force=True))
+                if self._gone(tab):
+                    return True
         except UnicodeEncodeError as exc:
             QMessageBox.critical(self, tr("Save"), tr(
                 "The text holds characters {encoding} cannot store; nothing was written. Choose "
@@ -570,6 +604,8 @@ class EditorWindow(QMainWindow):
             # (an OSError, or a library error of a backend: escaping, it
             # left Save-on-close accepted and the tab's edits were lost)
             log.warning("Saving %s failed", tab.path, exc_info=not isinstance(exc, OSError))
+            if self._gone(tab):
+                return False
             QMessageBox.critical(self, tr("Save"), tr("Cannot save {path}:\n{error}").format(
                 path=tab.path, error=exc))
             return False
@@ -608,6 +644,8 @@ class EditorWindow(QMainWindow):
 
         try:
             exists, folder = self._io(tab, look, "Checking")
+            if self._gone(tab):
+                return False
         except OSError as exc:
             # Unknown is not "free": writing now could replace a file the
             # user was never asked about.
@@ -627,6 +665,8 @@ class EditorWindow(QMainWindow):
         blocks = tab.blocks()
         try:
             self._io(tab, lambda: tab.document.save_as(backend, path, blocks))
+            if self._gone(tab):
+                return True
         except UnicodeEncodeError as exc:
             QMessageBox.critical(self, tr("Save"), tr(
                 "The text holds characters {encoding} cannot store; nothing was written. Choose "
@@ -692,10 +732,21 @@ class EditorWindow(QMainWindow):
         answers True / False, which closing a tab depends on."""
         from ui.off_gui import run_off_gui
 
-        return run_off_gui(
-            fn, text=tr(verb + " {name}…").format(name=tab.name),
-            status=lambda text: self.statusBar().showMessage(text) if text
-            else self.statusBar().clearMessage())
+        def status(text: str) -> None:
+            if sip.isdeleted(self):
+                return
+            if text:
+                self.statusBar().showMessage(text)
+            else:
+                self.statusBar().clearMessage()
+
+        return run_off_gui(fn, text=tr(verb + " {name}…").format(name=tab.name), status=status)
+
+    def _gone(self, tab: EditorTab) -> bool:
+        """After a wait (_io): the window or *tab* was deleted meanwhile.
+        run_off_gui holds a close of the window until the wait is over;
+        this is the guard for whatever else may delete them."""
+        return sip.isdeleted(self) or sip.isdeleted(tab) or sip.isdeleted(tab.editor)
 
     def save_current(self) -> bool:
         tab = self.current_tab()
@@ -716,7 +767,10 @@ class EditorWindow(QMainWindow):
         try:
             text = self._io(tab, tab.document.load, "Reading")
         except OSError as exc:
-            QMessageBox.warning(self, tr("Reload"), str(exc))
+            if not self._gone(tab):
+                QMessageBox.warning(self, tr("Reload"), str(exc))
+            return
+        if self._gone(tab):
             return
         tab.editor.setPlainText(text)
         tab.editor.document().setModified(False)
@@ -766,6 +820,7 @@ class EditorWindow(QMainWindow):
         for _backend, _path, job in self._loads:
             job.abandon()  # a read still running opens no tab later
         self._loads.clear()
+        self._edit_wanted.clear()
         event.accept()
 
     # -- view and format -------------------------------------------------------------------

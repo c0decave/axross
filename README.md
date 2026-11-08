@@ -426,7 +426,7 @@ More screenshots, each with an explanation: **[the slideshow](slideshow.md)**.
     commented "Try it" section.
 
 44. **Third-party software, credited.** **Help → Third-Party Software…**
-    lists the 222 projects axross uses or ships - purpose, licence, how
+    lists the 240 projects axross uses or ships - purpose, licence, how
     each reaches you, a link - from the same data file as the thanks at
     the end of this README.
 

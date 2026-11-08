@@ -180,23 +180,28 @@ def test_extract_single_member_notimplemented(window, monkeypatch, tmp_path):
 
 
 def test_single_member_tempdirs_dont_grow(window, sample_zip):
-    """Fix 2 (resource leak): opening a second single member reaps the
-    PREVIOUS member's temp dir, so the tracking list stays bounded and
-    the first temp dir is gone after the second open."""
+    """Fix 2 (resource leak), revised: each member's temp dir goes when its
+    viewer is destroyed (_hold_member_tempdir), so the tracking list stays
+    bounded - but a second open no longer reaps the first member's dir:
+    its viewer, an independent window, may still be open."""
+    from PyQt6.QtWidgets import QWidget
+
     first = window._extract_single_member(sample_zip, "top.txt")
     assert first is not None and os.path.isfile(first)
     first_dir = window._archive_last_member_tempdir
     assert first_dir is not None and os.path.isdir(first_dir)
-    assert len(window._archive_member_tempdirs) == 1
+    holder = QWidget()
+    window._hold_member_tempdir(first_dir, [holder])
 
-    # Second open: the first temp dir must be reaped (not pulled out from
-    # under a viewer mid-use — reaping happens on the NEXT open, here).
     second = window._extract_single_member(sample_zip, "sub/inner.txt")
     assert second is not None and os.path.isfile(second)
-    # First temp dir is gone; list did not grow unboundedly.
+    assert os.path.isfile(first)  # its "viewer" is still there
+    assert len(window._archive_member_tempdirs) == 2
+
+    holder.deleteLater()
+    APP.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     assert not os.path.exists(first_dir)
     assert len(window._archive_member_tempdirs) == 1
-    assert window._archive_last_member_tempdir != first_dir
     assert os.path.isdir(window._archive_last_member_tempdir)
 
 

@@ -35,6 +35,7 @@ from tests.media_testkit import write_image  # noqa: E402
 from ui import media_viewer as MV  # noqa: E402
 from ui import viewer_window as VW  # noqa: E402
 from ui.image_viewer import ImageViewerDialog  # noqa: E402
+from ui.screen_fit import fit_size  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 CTRL = Qt.KeyboardModifier.ControlModifier
@@ -226,7 +227,8 @@ def test_sad_a_broken_stored_state_opens_at_the_default_size(settings, image, ga
     settings.parent.mkdir(parents=True, exist_ok=True)
     settings.write_text(garbage, encoding="utf-8")
     dlg = ImageViewerDialog(LocalFS(), str(image), siblings=[str(image)])
-    assert dlg.size() == QSize(*VW.DEFAULT_SIZES["image"])
+    # The default, fitted to the screen (900 px is wider than offscreen's 800).
+    assert dlg.size() == fit_size(QSize(*VW.DEFAULT_SIZES["image"]), dlg)
     assert not (dlg.windowState() & Qt.WindowState.WindowMaximized)
     _show(dlg)
     assert not dlg.isMaximized()

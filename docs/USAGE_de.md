@@ -8,8 +8,8 @@ Sprachen: [English](USAGE.md) · **Deutsch** · [Español](USAGE_es.md)
 
 ## Auf einen Blick
 
-Axross ist ein Total-Commander-artiger Dateimanager für 22 Protokolle,
-gebaut um drei Ideen herum:
+Axross ist ein Total-Commander-artiger Dateimanager für mehr als 30
+Protokolle, gebaut um drei Ideen herum:
 
 - **Multi-Pane-Layout.** Beliebig viele Panes, horizontal oder
   vertikal gesplittet; jedes Pane verbindet sich mit seinem eigenen
@@ -22,6 +22,41 @@ gebaut um drei Ideen herum:
   konfigurierte Backend als MCP-Tools exponieren — ein LLM-Client kann
   es dann steuern. Read-only by default; opt-in `--mcp-write` für
   Mutationen.
+
+## Handbuch und Touren
+
+- **Help → Handbook** (deutsche Oberfläche: *Hilfe → Handbuch*, **F1**)
+  zeigt diese Anleitung in axross, in der Sprache der Oberfläche (Deutsch
+  und Spanisch haben eine eigene, jede andere Sprache bekommt die
+  englische): links das Inhaltsverzeichnis, darüber ein Suchfeld (Return
+  findet den nächsten Treffer), Links zwischen den Abschnitten. Es lädt
+  kein Bild und keine andere Ressource und zeigt rohes HTML als Text;
+  Links auf die anderen Dokumente öffnen sie auf GitHub im Browser.
+- **F1 öffnet den Abschnitt des Bereichs, in dem du gerade bist**: ein
+  Datei-Pane öffnet *Multi-Pane-Layout*, sein Adress- oder Filterfeld
+  *Pfadleiste*, das Transfers-Dock *Transfers*, das Agent-Dock *Agent-Dock*,
+  *Connect to Server* öffnet *Verbindungen*, und in *Edit → Settings…*
+  öffnet F1 den Teil zur gezeigten Seite (*Logging*, *Updates*, die Seiten
+  des Agent …; der Rest *Settings*). Überall sonst öffnet F1 das
+  Inhaltsverzeichnis. Die Liste der Tastenkürzel liegt auf **Strg+F1**
+  (*Help → Keyboard Shortcuts*).
+- **Help → Tours…** (*Hilfe → Touren…*) listet geführte Touren über das
+  echte Fenster: *Erste Schritte*, *Mit einem Server verbinden*, *Sicher
+  kopieren und synchronisieren*, *Finden und ordnen*, *Automatisieren* und
+  *Extensions und Funktionen*. Eine Tour dunkelt das Fenster um den Teil
+  ab, den sie erklärt, und rahmt ihn ein - der Teil bleibt bedienbar -,
+  daneben steht ein Kasten mit *Schritt k von n*, **Zurück**, **Weiter**
+  und **Tour beenden**; **Esc** beendet die Tour auch. Ein Schritt, dessen
+  Teil nicht im Fenster ist (ein Dock oder eine Extension ausgeschaltet,
+  ein Pane geschlossen, eine Toolbar ausgeblendet), wird übersprungen, und
+  der nächste Schritt sagt, welche übersprungen wurden; ein geschlossenes
+  Agent-, Scripts- oder Console-Dock wird für seinen Schritt geöffnet und
+  am Ende der Tour wieder geschlossen.
+- **Der erste Start** bietet die Tour *Erste Schritte* einmal an, als
+  Hinweis in der Statusleiste (*Tour „Erste Schritte“ starten*, *Nein
+  danke*) - nie als Dialog. *Edit → Settings… → General → Tours* bietet
+  sie beim nächsten Start wieder an oder gar nicht (`offer_tour_at_start`
+  in `settings.json`).
 
 ## Verbindungen
 
@@ -409,8 +444,13 @@ Fenster zeigt die Index-Datei.
   Einträge eingeschlossen, höchstens 50 Ebenen und 1 000 000 Einträge pro
   Lauf, in Paketen zu 500 geschrieben, abbrechbar (was indiziert ist,
   bleibt). Browsen indiziert nie. Denselben Ordner erneut zu indizieren
-  aktualisiert seine Zeilen; Zeilen inzwischen gelöschter Dateien entfernt
-  die GUI **nicht** (das MCP-Tool `index_build` mit `prune` tut es).
+  aktualisiert seine Zeilen und entfernt die Zeilen inzwischen gelöschter
+  Dateien — nur nach einem vollständigen Lauf: ein abgebrochener oder einer,
+  der an die Grenze der Einträge stieß, entfernt nichts, und Zeilen unter
+  einem Ordner, dessen Auflistung scheiterte, bleiben. Das MCP-Tool
+  `index_build` fügt nur hinzu; mit `prune` fragt es zusätzlich das Backend
+  nach jedem indizierten Pfad unter dem Ordner und entfernt die Zeilen,
+  deren Datei fehlt.
 - **Wie er durchsucht wird.** Teilstring im Namen (ohne Groß/Klein),
   Endung, Größen- und Zeitraum, eine Verbindung. Endung, Größe und Datum
   nutzen SQLite-Indizes; ein Namens-Teilstring (`LIKE '%…%'`) kann keinen
@@ -1054,7 +1094,7 @@ konfigurierte Backend über JSON-RPC-Tools steuern kann.
 
 ```bash
 axross --mcp-server                                  # read-only, stdio
-axross --mcp-server --mcp-write                      # Schreib-Tools (auf Root gecappt)
+axross --mcp-server --mcp-write --mcp-root ~/data    # Schreib-Tools (auf diesen Root gecappt)
 axross --mcp-server --mcp-http 127.0.0.1:7331        # HTTP-Loopback
 ```
 
@@ -1590,7 +1630,7 @@ rechts die Seite der gewählten, darüber ein Feld, das eine Einstellung
 
 | Kategorie | Einstellungen |
 |---|---|
-| General | Sprache (gilt ab dem nächsten Start), Layout der letzten Session beim Start wiederherstellen, wann ein Pane aktiv wird (per Klick oder nach 0,5–3 s Maus im Pane) |
+| General | Sprache (gilt ab dem nächsten Start), Layout der letzten Session beim Start wiederherstellen, wann ein Pane aktiv wird (per Klick oder nach 0,5–3 s Maus im Pane), die Tour „Erste Schritte“ beim nächsten Start anbieten (siehe [Handbuch und Touren](#handbuch-und-touren)) |
 | Appearance | Theme, Compact Mode, Monochrome Icons, Icon Colours (Theme default; Own colours in every theme - auch in Hacker und Amber, die jedes Icon in einer Farbe zeichnen; One colour nach Wahl), Schriftgröße (Zoom), Hidden Files hervorheben und ihre Farbe (eine auf dem Theme schwer lesbare Farbe erst nach Rückfrage) |
 | Toolbar | Buttons nach Kategorie gruppieren, die Farbe jeder Kategorie hinter ihren Buttons zeigen, die Farbe jeder Kategorie (Connections, Windows & Panes, Files & Search, Media, LLM & Agent, Tools & System, Extensions), *Reset to Defaults* |
 | Files & Panes | Hidden Files zeigen, Open Size Limit, Parallel transfers, RAM-Workspaces (an / aus, Größenlimit, frei gehaltener Speicher) und Temp-Dateien im RAM (gilt ab dem nächsten Start) |
@@ -1684,8 +1724,11 @@ mitgelieferte Erweiterung und die Feature-Gruppen sind *Units*, die es aus seine
 Release nachlädt: *Hilfe → Features… → Packs…* listet sie mit Downloadgröße; *Add* holt
 die Wheels der Unit (aus dem Release, sonst dieselbe Datei von PyPI) und prüft Signatur,
 Pack-Manifest und die SHA-256 jedes Wheels, bevor etwas entpackt wird; *Remove* löscht,
-was keine andere Unit braucht; wirksam beim nächsten Start. Ein Update des Binaries
-bringt die installierten Units des neuen Releases mit, bevor das Binary geholt wird.
+was keine andere Unit braucht. Eine Unit aus reinen Python-Wheels ist sofort nutzbar;
+eine mit nativem Wheel und das Entfernen wirken beim nächsten Start. Ein Update des
+Binaries bringt die installierten Units des neuen Releases mit, bevor das Binary geholt
+wird; wurde das Pack-Manifest des Releases neu ausgestellt (dieselbe Version, ein Pack
+repariert), bietet *Hilfe → Features…* *Update packs* an, genauso geprüft.
 
 Die One-File-Binaries (`axross-full`, `axross-slim`, das macOS- und das
 Windows-`axross-slim`) aktualisieren sich aus den GitHub-Releases von
@@ -1761,7 +1804,8 @@ Environment. Der Check beim Start läuft nicht mit
   Limit, Pane-Aktivierung, Metadata-Schreibweise und -Nachfrage, sudo-
   Passwort merken, gleichzeitig durchsuchte Hosts, der Security Mode, die
   Update-Einstellungen (`update_check_at_start`, `update_auto_download`,
-  eine übersprungene Version, der letzte Check).
+  eine übersprungene Version, der letzte Check), ob der nächste Start die
+  Tour „Erste Schritte“ anbietet (`offer_tour_at_start`).
 - `~/.config/axross/proxy.json`, `llm.json`, `extensions.json` — Default-
   Proxy, LLM-Profile, eingeschaltete Extensions (Secrets im Keyring).
 - `~/.config/axross/agent/voice.json` — die Voice-Einstellungen (`0o600`).

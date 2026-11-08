@@ -12,12 +12,21 @@ order - the signature against the pinned key, the manifest against
 its folder, no link), into ``~/.local/share/axross/packs/<version>/``.
 A blob comes from the release, else from PyPI (the same file: the hash
 decides). :func:`activate` puts the installed units' folders on sys.path
-at start; :func:`remove` deletes a unit's blobs no other unit uses.
+at start; :func:`activate_now` does so at once for a unit just added whose
+wheels are all pure Python (a native wheel waits for the next start);
+:func:`remove` deletes a unit's blobs no other unit uses.
+
+A release's manifest can be re-issued (same version, a pack fixed): the
+signed ``SHA256SUMS`` then names the new manifest. :func:`stale_units`
+compares the installed blobs against such a manifest and :func:`update`
+brings them to it - through :func:`signed_manifest` and the same blob
+checks as :func:`install`, there is no other path.
 """
 
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import os
 import shutil
@@ -195,8 +204,14 @@ def install(release, units: list[str], *, fetch: Fetcher | None = None, root: Pa
             verify=None, progress=None) -> list[str]:
     """Install *units* (and what they need) of *release*; the blobs installed."""
     fetch = fetch or Fetcher()
-    root = root or packs_root()
     manifest, entries = signed_manifest(release, fetch, verify=verify)
+    return _install_checked(release, manifest, entries, units, fetch, root or packs_root(), progress)
+
+
+def _install_checked(release, manifest: dict, entries: dict, units: list[str], fetch: Fetcher,
+                     root: Path, progress) -> list[str]:
+    """The blobs of *units*, each checked against *manifest* and *entries* -
+    which only :func:`signed_manifest` hands out (install, update)."""
     folder = root / release.version
     folder.mkdir(parents=True, exist_ok=True)
     os.chmod(folder, 0o700)
@@ -207,7 +222,7 @@ def install(release, units: list[str], *, fetch: Fetcher | None = None, root: Pa
     for i, name in enumerate(sorted(wanted)):
         entry = manifest["blobs"][name]
         dest = folder / name
-        if dest.is_dir() and (dest / ".axross-sha256").read_text().strip() == entry["sha256"]:
+        if dest.is_dir() and _blob_ok(folder, manifest, name):
             continue                                   # already there, the same file
         if entries.get(name) not in (None, entry["sha256"]):
             raise PackError(f"{name}: the manifest and SHA256SUMS disagree - refused")
@@ -263,18 +278,31 @@ def remove(version: str, unit: str, root: Path | None = None) -> list[str]:
     folder = (root or packs_root()) / version
     state = _state(folder)
     units = [u for u in state.get("units", []) if u != unit]
-    manifest = state.get("manifest") or {"units": {}}
+    gone = _drop_unused(folder, state.get("manifest") or {"units": {}}, units)
+    state["units"] = units
+    (folder / "installed.json").write_text(json.dumps(state, indent=1, sort_keys=True))
+    return gone
+
+
+def _drop_unused(folder: Path, manifest: dict, units: list[str]) -> list[str]:
+    """Delete the blob folders none of *units* needs (by *manifest*)."""
     keep = set()
     for u in units:
         keep |= needed_blobs(manifest, u)
     gone = []
-    for child in folder.iterdir() if folder.is_dir() else ():
+    for child in sorted(folder.iterdir()) if folder.is_dir() else ():
         if child.is_dir() and child.name not in keep and _safe_name(child.name):
             shutil.rmtree(child)
             gone.append(child.name)
-    state["units"] = units
-    (folder / "installed.json").write_text(json.dumps(state, indent=1, sort_keys=True))
     return gone
+
+
+def _blob_ok(folder: Path, manifest: dict, name: str) -> bool:
+    """*name* is unpacked in *folder* and its marker names the manifest's SHA-256."""
+    try:
+        return (folder / name / ".axross-sha256").read_text().strip() == manifest["blobs"][name]["sha256"]
+    except (OSError, KeyError, TypeError):
+        return False
 
 
 def activate(version: str, root: Path | None = None, path: list | None = None) -> list[str]:
@@ -292,14 +320,102 @@ def activate(version: str, root: Path | None = None, path: list | None = None) -
             continue
         for name in sorted(names):
             dest = folder / name
-            try:
-                ok = (dest / ".axross-sha256").read_text().strip() == manifest["blobs"][name]["sha256"]
-            except (OSError, KeyError):
-                ok = False
-            if ok and str(dest) not in path:
+            if _blob_ok(folder, manifest, name) and str(dest) not in path:
                 path.append(str(dest))
                 added.append(str(dest))
     return added
+
+
+def is_pure_python(blob: str) -> bool:
+    """*blob* is a wheel for every Python and platform (``py3-none-any``,
+    ``py2.py3-none-any``): nothing native to load, so it can be used at once."""
+    if not blob.endswith(".whl"):
+        return False
+    parts = blob[:-4].split("-")
+    if len(parts) < 5:
+        return False
+    python, abi, platform = parts[-3:]
+    return abi == "none" and platform == "any" and all(t.startswith("py") for t in python.split("."))
+
+
+def activate_now(version: str, units: list[str], root: Path | None = None,
+                 path: list | None = None) -> tuple[list[str], list[str]]:
+    """Use *units*, just installed, without a restart: (the folders put on
+    sys.path, the native blobs that wait for the next start). Only when
+    every blob the units need is pure Python (or already on the path since
+    the start) is anything added - a unit is used whole or not at all."""
+    folder = (root or packs_root()) / version
+    state = _state(folder)
+    manifest = state.get("manifest") or {}
+    path = sys.path if path is None else path
+    names: set[str] = set()
+    for unit in units:
+        names |= needed_blobs(manifest, unit)
+    waiting = sorted(n for n in names if not is_pure_python(n) and str(folder / n) not in path)
+    if waiting:
+        return [], waiting
+    if not all(_blob_ok(folder, manifest, n) for n in names):
+        raise PackError("an installed blob does not match the manifest - refused")
+    added = []
+    for name in sorted(names):
+        dest = str(folder / name)
+        if dest not in path:
+            path.append(dest)
+            added.append(dest)
+    importlib.invalidate_caches()
+    return added, []
+
+
+def stale_units(version: str, manifest: dict, root: Path | None = None) -> list[str]:
+    """The installed units of *version* whose blobs differ from *manifest*
+    (a signed manifest of the same release, from :func:`signed_manifest`):
+    what "Update packs" fetches. Empty when the manifest was not re-issued.
+    A unit the manifest no longer has is left out - nothing to fetch for it."""
+    folder = (root or packs_root()) / version
+    out = []
+    for unit in installed(version, root):
+        try:
+            names = needed_blobs(manifest, unit)
+        except PackError:
+            continue
+        if not all(_blob_ok(folder, manifest, n) for n in names):
+            out.append(unit)
+    return out
+
+
+def check_reissued(version: str, *, fetch: Fetcher | None = None, root: Path | None = None,
+                   verify=None):
+    """(release, stale units) of the running *version*: the release's
+    manifest as signed now against what is installed. (None, []) when no
+    unit is installed - then nothing is fetched."""
+    if not installed(version, root):
+        return None, []
+    fetch = fetch or Fetcher()
+    release = release_for(version, fetch=fetch)
+    manifest, _ = signed_manifest(release, fetch, verify=verify)
+    return release, stale_units(version, manifest, root)
+
+
+def update(release, *, fetch: Fetcher | None = None, root: Path | None = None, verify=None,
+           progress=None) -> list[str]:
+    """Bring the installed units of *release* (the running version) to its
+    re-issued manifest: the signature, the manifest's and every blob's
+    hash are checked as by :func:`install`; blobs no unit needs any more
+    go. The blobs fetched; they are used from the next start."""
+    fetch = fetch or Fetcher()
+    root = root or packs_root()
+    units = installed(release.version, root)
+    if not units:
+        return []
+    manifest, entries = signed_manifest(release, fetch, verify=verify)
+    keep = [u for u in units if u in manifest.get("units", {})]
+    done = _install_checked(release, manifest, entries, keep, fetch, root, progress)
+    folder = root / release.version
+    state = _state(folder)
+    state["units"] = sorted(keep)
+    _drop_unused(folder, manifest, keep)
+    (folder / "installed.json").write_text(json.dumps(state, indent=1, sort_keys=True))
+    return done
 
 
 def prune(keep_version: str, root: Path | None = None) -> list[str]:

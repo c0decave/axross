@@ -161,7 +161,8 @@ def test_happy_the_packs_dialog_lists_adds_and_removes(release, tmp_path):
 
     def get(url, max_bytes, hosts):
         return api if "api.github.com" in url else inner(url, max_bytes, hosts)
-    dlg = PacksDialog(version="9.9.9", fetch=P.Fetcher(get), root=tmp_path, verify=release["verify"])
+    dlg = PacksDialog(version="9.9.9", fetch=P.Fetcher(get), root=tmp_path, verify=release["verify"],
+                      path=[])     # a pure-Python unit goes on this list, not on sys.path
     end = time.monotonic() + 10
     while dlg.table.rowCount() == 0 and time.monotonic() < end:
         app.processEvents()

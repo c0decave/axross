@@ -80,15 +80,42 @@ speaks WebDAV.
 
 ---
 
+## Quick start — serving the LAN over HTTPS
+
+Off loopback the server speaks HTTPS: pass a PEM certificate chain and
+its private key.
+
+```python
+>>> srv = axross.serve_webdav(backend, bind="0.0.0.0", port=8443,
+...                           auth_token=secrets.token_urlsafe(32),
+...                           cert_file="/etc/axross/cert.pem",
+...                           key_file="/etc/axross/key.pem")
+>>> srv.base_url
+'https://0.0.0.0:8443'
+```
+
+A non-loopback bind without `cert_file` + `key_file` is **refused**
+(`PermissionError`): the token and every file would cross the network
+in clear. `allow_insecure_http=True` serves plain HTTP anyway, for a
+network you trust or a TLS proxy on the same host, and logs a warning.
+A self-signed certificate (`openssl req -x509 -newkey rsa:2048 -nodes
+-keyout key.pem -out cert.pem -days 365 -subj /CN=myhost`) works when
+the clients are told to trust it (`aws --ca-bundle cert.pem`,
+`curl --cacert cert.pem`, `rclone --ca-cert cert.pem`).
+
+---
+
 ## OPSEC defaults
 
 | Default | Value | Why |
 |---|---|---|
 | Bind | `127.0.0.1` | Listening on a public interface requires `bind="0.0.0.0"` explicitly. A stray reverse-server should never accidentally expose your remote SFTP to the LAN. |
 | Auth | a token, on localhost too | A loopback server generates one (`srv.auth_token`); `auth_token="…"` sets your own. Clients send it as `Authorization: Bearer <token>`, as the Basic password (WebDAV clients are asked for it), or as the AWS access key id (aws-cli, restic, boto3). `auth_token=None` turns auth off, on loopback only: every local user of the host can then reach the backend. Non-local binds such as `0.0.0.0` are **refused** without an explicit token. |
+| TLS | HTTPS with `cert_file` + `key_file` | Loopback serves plain HTTP unless a certificate is given. A non-loopback bind without one is **refused**, as `core/mcp_http.py` refuses it: the token (Bearer, Basic password or AWS key id) would cross the network in clear. `allow_insecure_http=True` is the explicit opt-in, logged as a warning. TLS 1.2 or later; `cert_file` without `key_file` (or the reverse) is refused. |
 | Read-only | False | Pass `read_only=True` to refuse every mutating verb (PUT / DELETE / MKCOL / MOVE / COPY) with HTTP 403. |
 | Path traversal | rejected | Every incoming path is normalised; `..` segments, segments with a backslash and segments that start with a drive (`C:`) are rejected with 400, and every joined path must stay below the root in the backend's own path flavour (Windows paths included). |
 | Body cap | 8 GiB per request | Hard cap to keep a hostile client from exhausting RAM via Content-Length lies. |
+| Body length | `Content-Length` or `Transfer-Encoding: chunked` | A chunked body (`curl -T -`, `rclone rcat`) is decoded as it streams, under the same cap. A PUT with neither is **411 Length Required** and the file stays as it was; both at once, another transfer coding, or broken chunk framing is refused (400 / 501) and keeps the file too. |
 
 The reverse-server **does not** check AWS Signature V4 — it reads only
 the access key id out of a signed request and compares it with the
@@ -122,7 +149,10 @@ is refused (409), never copied into it.
 | `GET /<bucket>/<key>` (GetObject) | ✓ |
 | `HEAD /<bucket>/<key>` (HeadObject) | ✓ |
 | `HEAD /<bucket>` (HeadBucket) | ✓ |
-| `PUT /<bucket>/<key>` (PutObject) | ✓ |
+| `GET /<bucket>?location` (GetBucketLocation) | ✓ — the default region (an empty `LocationConstraint`) |
+| `PUT /<bucket>/<key>` (PutObject) | ✓ — `If-None-Match: *` is honoured (412 `PreconditionFailed` when the key exists; checked before the write, not atomically with it); `If-Match` and an ETag in `If-None-Match` are 501, the ETags being synthetic |
+| `PUT` with `x-amz-copy-source` (CopyObject, UploadPartCopy) | ✗ - 501 `NotImplemented`, nothing is written: `aws s3 mv` / `cp` between two keys and rclone's server-side copy fail instead of writing an empty copy (and `mv` then deleting the source) |
+| Any subresource (`?tagging`, `?acl`, `?uploads`, `?uploadId=`, `?partNumber=`, `?versionId=`, `?retention`, `?legal-hold`, `?versioning`, …) on GET / HEAD / PUT / DELETE | ✗ - 501 `NotImplemented`; the object is neither returned, replaced nor deleted. Presign parameters (`X-Amz-*`, `AWSAccessKeyId` / `Expires` / `Signature`), the SDKs' `x-id` and the ListObjects / GetObject parameters are served |
 | `DELETE /<bucket>/<key>` (DeleteObject) | ✓ - 204 also for a key that does not exist; a delete the backend refuses is 403 `AccessDenied` (500 for any other failure), never 204 |
 | `POST /<bucket>?delete` (DeleteObjects) | ✗ |
 | Multipart upload | ✗ |
@@ -176,9 +206,13 @@ reverse-server trusts. Concretely:
   protection, no nonce, no time bound. Treat them like any other
   shared secret: rotate on suspicion, never log them, transport over
   TLS if leaving localhost.
-* No TLS termination. If you bind to `0.0.0.0` you should sit a TLS
-  proxy (nginx, caddy) in front, or tunnel via SSH `-L 9000:127.0.0.1:9000`
-  so the only thing the LAN sees is your SSH client.
+* TLS off loopback. A non-loopback bind serves HTTPS (`cert_file` +
+  `key_file`) or is refused; with `allow_insecure_http=True` it is plain
+  HTTP and anyone on the path reads the token. Alternatives: a TLS proxy
+  (nginx, caddy) in front of a loopback bind, or an SSH tunnel
+  (`-L 9000:127.0.0.1:9000`) so the only thing the LAN sees is your SSH
+  client. Client certificates (mTLS) are not checked; the token is the
+  authentication.
 * No rate limiting. A hostile client can DoS the backend you're
   serving. The reverse-server is for cooperative environments.
 

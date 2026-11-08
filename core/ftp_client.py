@@ -139,6 +139,14 @@ def _list_date(month: str, day: str, when: str, now: datetime) -> datetime | Non
         return None
 
 
+# What a server says on a 2xx that ends a listing it could not make:
+# vsftpd's "226 Transfer done (but failed to open directory)." and the
+# like. A successful 226 says none of these.
+_LIST_FAILED_REPLY = re.compile(
+    r"fail|denied|permission|not permitted|cannot|can't|unable", re.IGNORECASE
+)
+
+
 def _parse_unix_list_details(
     lines: list[str], now: datetime | None = None
 ) -> list[_ListEntry] | None:
@@ -1109,6 +1117,12 @@ class FtpSession(SessionLifecycle):
         # not 550: an empty answer counts only when CWD reaches the folder.
         if not names and not self._cwd_reaches(ftp, path):
             raise FileNotFoundError(errno.ENOENT, "No such directory", path)
+        if not names:
+            # CWD reaching a folder says it may be entered, not read: a
+            # 0711 folder lets vsftpd in and answers NLST with no names
+            # and "226 ... (but failed to open directory)". Taken as
+            # empty, a tree copy or move would skip everything inside.
+            self._confirm_empty(ftp, path)
 
         # A Unix-style LIST line carries type, mode, owner, size and date,
         # so an entry it names needs no probe of its own; only a regular
@@ -1161,6 +1175,44 @@ class FtpSession(SessionLifecycle):
                 items.append(FileItem(name=entry_name, is_link=is_link, **extra))
 
         return items
+
+    @staticmethod
+    def _confirm_empty(ftp: FTP, path: str) -> None:
+        """Ask ``LIST`` whether the folder an empty NLST named is empty.
+
+        ftplib's ``nlst`` drops the final reply, so LIST is asked again and
+        its reply read: wording such as vsftpd's "(but failed to open
+        directory)" on a 226, or a refusal, is a PermissionError; entries
+        LIST shows that NLST left out are an OSError. Neither is read as
+        an empty folder."""
+        lines: list[str] = []
+        try:
+            reply = ftp.retrlines(f"LIST {path}", lines.append)
+        except error_perm as e:
+            raise PermissionError(errno.EACCES, f"Cannot list {path}: {e}", path) from e
+        if isinstance(reply, str) and _LIST_FAILED_REPLY.search(reply):
+            raise PermissionError(
+                errno.EACCES,
+                f"Cannot list {path}: the server could not read the folder "
+                f"({reply.strip()[:200]})",
+                path,
+            )
+        shown = []
+        for line in lines:
+            line = line.rstrip("\r")
+            if not line.strip() or line.startswith("total "):
+                continue
+            m = _UNIX_LIST_LINE.match(line)
+            name = m.group("rest").split(" -> ", 1)[0] if m is not None else line
+            if name not in (".", ".."):
+                shown.append(name)
+        if shown:
+            raise OSError(
+                errno.EIO,
+                f"Cannot list {path}: NLST names nothing, but LIST shows "
+                f"{len(shown)} entries",
+                path,
+            )
 
     def _unix_listing(self, ftp: FTP, path: str) -> list[_ListEntry] | None:
         """Parsed Unix-style ``LIST`` of directory ``path``, or None when

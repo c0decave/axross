@@ -1,4 +1,5 @@
-"""Keyboard shortcut reference (F1): a scrollable list with a search field.
+"""Keyboard shortcut reference (Ctrl+F1; F1 is the handbook): a scrollable
+list with a search field.
 
 ``/`` jumps to the search from anywhere in the dialog; the search matches
 keys, descriptions and section names. Escape clears a search first and
@@ -91,7 +92,8 @@ SHORTCUTS: list[tuple[str, tuple[str, ...], str]] = [
     ("Window", ("Ctrl+=", "Ctrl+-", "Ctrl+0"), "Zoom in / out / reset"),
     ("Window", ("Ctrl+,",), "Settings (every setting, sorted by category)"),
     ("Window", ("Ctrl+Q",), "Quit"),
-    ("Window", ("F1",), "This list"),
+    ("Window", ("F1",), "Handbook, at the part of the window you are in"),
+    ("Window", ("Ctrl+F1",), "This list"),
     (
         "Viewers",
         ("Ctrl+M",),

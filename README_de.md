@@ -455,7 +455,7 @@ Weitere Screenshots, jeder mit Erklärung: **[die Slideshow](slideshow_de.md)**.
     Abschnitt "Try it".
 
 44. **Third-Party-Software, gewürdigt.** **Help → Third-Party Software…**
-    listet die 222 Projekte, die axross nutzt oder mitliefert - Zweck,
+    listet die 240 Projekte, die axross nutzt oder mitliefert - Zweck,
     Lizenz, wie es zu dir kommt, Link - aus derselben Datendatei wie der
     Dank am Ende dieser README.
 

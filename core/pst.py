@@ -102,8 +102,12 @@ class PstFile:
         _nbt_bid, nbt_ib, _bbt_bid, bbt_ib = struct.unpack_from("<QQQQ", head, 216)
         self.blocks: dict[int, tuple[int, int, int]] = {}
         self.nodes: dict[int, Node] = {}
+        # every B-tree page once: no more page reads than pages in the file
+        self._visited: set[int] = set()
+        self._page_budget = self.size // self.page + 1
         self._walk(bbt_ib, 0x80, 0)
         self._walk(nbt_ib, 0x81, 0)
+        del self._visited
 
     def close(self) -> None:
         self._f.close()
@@ -122,25 +126,37 @@ class PstFile:
         self._f.seek(offset)
         return self._f.read(n)
 
-    def _walk(self, ib: int, ptype: int, depth: int) -> None:
+    def _walk(self, ib: int, ptype: int, depth: int, level: int | None = None) -> None:
+        """One B-tree page and, below it, its children - each page read at
+        most once, at most as many pages as the file can hold, each child one
+        level lower than its parent: a crafted tree of pages pointing at each
+        other is refused, not walked for ever."""
         if depth > MAX_DEPTH:
-            raise PstError("a B-tree deeper than 16 levels")
+            raise PstError("corrupt .pst: a B-tree deeper than 16 levels")
+        if ib in self._visited:
+            raise PstError(f"corrupt .pst: the B-tree page at {ib} is reached twice")
+        self._visited.add(ib)
+        if len(self._visited) > self._page_budget:
+            raise PstError(f"corrupt .pst: more B-tree pages than the file can hold ({self._page_budget})")
         page = self._read(ib, self.page)
         if self.page == 512:
-            c_ent, _max, cb_ent, level = struct.unpack_from("<BBBB", page, 488)
+            c_ent, _max, cb_ent, page_level = struct.unpack_from("<BBBB", page, 488)
             trailer = 496
         else:
-            c_ent, _max, cb_ent, level = struct.unpack_from("<HHBB", page, 4056)
+            c_ent, _max, cb_ent, page_level = struct.unpack_from("<HHBB", page, 4056)
             trailer = 4072
         if page[trailer] != ptype:
-            raise PstError(f"page at {ib} is no B-tree page of the expected kind")
+            raise PstError(f"corrupt .pst: page at {ib} is no B-tree page of the expected kind")
+        if level is not None and page_level != level:
+            raise PstError(f"corrupt .pst: the B-tree page at {ib} is on level {page_level}, not on "
+                           f"level {level} below its parent")
         if cb_ent * c_ent > trailer or cb_ent < 24:
-            raise PstError(f"page at {ib}: {c_ent} entries of {cb_ent} bytes do not fit")
+            raise PstError(f"corrupt .pst: page at {ib}: {c_ent} entries of {cb_ent} bytes do not fit")
         for i in range(c_ent):
             e = page[i * cb_ent:(i + 1) * cb_ent]
-            if level > 0:
+            if page_level > 0:
                 _key, _bid, child = struct.unpack_from("<QQQ", e)
-                self._walk(child, ptype, depth + 1)
+                self._walk(child, ptype, depth + 1, page_level - 1)
             elif ptype == 0x80:
                 bid, bib = struct.unpack_from("<QQ", e)
                 cb = struct.unpack_from("<H", e, 16)[0]

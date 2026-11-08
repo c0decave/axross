@@ -143,6 +143,7 @@ class TransferDock(QDockWidget):
         bottom.addWidget(self._overall_progress, stretch=1)
 
         self._btn_retry = QPushButton("Retry Failed")
+        self._btn_retry.setObjectName("axTransferRetry")  # the tours point at it
         self._btn_retry.setToolTip("Retry failed/cancelled transfers with resume")
         self._btn_retry.clicked.connect(self._retry_failed)
         bottom.addWidget(self._btn_retry)

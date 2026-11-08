@@ -23,7 +23,7 @@ FIRST_PARTY = {"core", "ui", "models", "axross", "resources", "tests", "scripts"
                "examples", "security"}
 #: Import names whose distribution is not installed here or named otherwise
 #: (without the distribution installed, its import name is all there is).
-KNOWN_NAMES = {"piper": "piper-tts", "sift": "sift-summarizer"}
+KNOWN_NAMES = {"nio": "matrix-nio", "piper": "piper-tts", "sift": "sift-summarizer"}
 #: Modules that have to work on a plain pip install: base dependencies only.
 ALWAYS_USED = ("ui/code_editor.py", "core/encrypted_overlay.py")
 

@@ -1123,7 +1123,7 @@ modified path lists.
 
 ## Reverse-serve (expose a backend over S3 / WebDAV)
 
-### `axross.serve_s3(backend: 'FileBackend', *, bind: 'str' = '127.0.0.1', port: 'int' = 9000, read_only: 'bool' = False, auth_token: 'str | None' = '', root_path: 'str' = '/') -> 'ReverseServer'`
+### `axross.serve_s3(backend: 'FileBackend', *, bind: 'str' = '127.0.0.1', port: 'int' = 9000, read_only: 'bool' = False, auth_token: 'str | None' = '', root_path: 'str' = '/', cert_file: 'str | None' = None, key_file: 'str | None' = None, allow_insecure_http: 'bool' = False) -> 'ReverseServer'`
 
 Expose ``backend`` as a minimum-viable S3 endpoint so any
 existing S3 client (aws-cli / restic / rclone / terraform) can
@@ -1137,16 +1137,21 @@ password. ``auth_token="…"`` sets your own; ``auth_token=None``
 turns auth off - on loopback only, as every local user can then
 reach the backend.
 Pass ``bind="0.0.0.0"`` only when you intentionally want LAN access;
-non-local binds need an explicit ``auth_token``. Returns a live
-:class:`core.reverse_serve.ReverseServer` handle; call
+non-local binds need an explicit ``auth_token`` and TLS:
+``cert_file`` + ``key_file`` (PEM) serve HTTPS (``.base_url`` says
+``https://``). A non-local bind over plain HTTP is refused - the
+token would cross the network in clear - unless
+``allow_insecure_http=True`` opts in (logged as a warning). Returns
+a live :class:`core.reverse_serve.ReverseServer` handle; call
 ``.shutdown()`` to stop.
 
-### `axross.serve_webdav(backend: 'FileBackend', *, bind: 'str' = '127.0.0.1', port: 'int' = 8080, read_only: 'bool' = False, auth_token: 'str | None' = '', root_path: 'str' = '/') -> 'ReverseServer'`
+### `axross.serve_webdav(backend: 'FileBackend', *, bind: 'str' = '127.0.0.1', port: 'int' = 8080, read_only: 'bool' = False, auth_token: 'str | None' = '', root_path: 'str' = '/', cert_file: 'str | None' = None, key_file: 'str | None' = None, allow_insecure_http: 'bool' = False) -> 'ReverseServer'`
 
 Expose ``backend`` as a minimum-viable WebDAV endpoint —
 ``davfs2 mount``, gnome-files (``davs://``), macOS Finder, browser
 read-only listings all work; they ask for the token as the password
-(any user name). Same token rules as :func:`serve_s3`. Returns a
+(any user name). Same token and TLS rules as :func:`serve_s3`
+(``cert_file`` / ``key_file`` / ``allow_insecure_http``). Returns a
 :class:`core.reverse_serve.ReverseServer`.
 
 

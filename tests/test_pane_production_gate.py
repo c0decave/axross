@@ -209,14 +209,18 @@ def test_sad_a_cancelled_countdown_keeps_the_name(pane_on_prod, monkeypatch):
     assert not (root / "new.txt").exists()
 
 
-def test_sad_a_cancelled_countdown_sends_no_move(pane_on_prod, monkeypatch):
+def test_edge_the_pane_move_leaves_the_countdown_to_the_window(pane_on_prod, monkeypatch):
+    """Every move passes the main window's _request_transfer, which asks
+    the countdown (tests/test_move_production_gate_everywhere.py); the
+    pane asking too would ask twice."""
     pane, _root = pane_on_prod
-    _dialog_answers(monkeypatch, QDialog.DialogCode.Rejected)
+    shown = _dialog_answers(monkeypatch)
     moved: list = []
     pane.move_requested.connect(moved.append)
-    with mock.patch.object(pane, "selected_items", return_value=[FileItem(name="a")]):
+    with mock.patch.object(pane, "selected_items", return_value=["/x/a"]):
         pane._move_to_target()
-    assert moved == []
+    assert moved == [["/x/a"]]
+    assert shown == []
 
 
 def test_sad_a_cancelled_countdown_opens_no_permissions_editor(pane_on_prod, monkeypatch):

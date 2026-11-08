@@ -31,27 +31,34 @@ def activate(api):
     view.setOpenLinks(False)
     view.setPlaceholderText("Select a Markdown file (.md) to preview it here.")
     api.add_dock("Markdown Preview", view, icon="markdown")
-    state = {"wanted": None}
+    #: Counts the reads started: only the last one's result or error is shown.
+    state = {"generation": 0}
 
     def show(ctx):
         files = [i for i in ctx.items if not i.is_dir]
         if len(files) != 1 or not files[0].name.lower().endswith(SUFFIXES):
             return
         path = ctx.backend.join(ctx.folder, files[0].name)
-        state["wanted"] = path
+        state["generation"] += 1
+        generation = state["generation"]
 
-        def done(result, p=path):
-            if state["wanted"] != p:
+        def done(result):
+            if state["generation"] != generation:
                 return  # the selection moved on meanwhile
             text, cut = result
             if cut:
                 text += f"\n\n---\n*Preview cut at {MAX_BYTES // 1024} KiB.*"
             view.setMarkdown(text)
 
+        def failed(exc):
+            if state["generation"] != generation:
+                return  # a late error must not replace the newer preview
+            view.setPlainText(f"Cannot read {path}: {exc}")
+
         api.run_in_background(
             lambda: read_markdown(ctx.backend, path),
             on_done=done,
-            on_error=lambda exc: view.setPlainText(f"Cannot read {path}: {exc}"),
+            on_error=failed,
         )
 
     api.on("selection_changed", show)

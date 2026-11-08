@@ -795,9 +795,12 @@ class SCPSession(SessionLifecycle):
             # ls -la of a folder prints at least "."; Rebex's shell answers a
             # missing path with nothing and exit 0.
             raise FileNotFoundError(errno.ENOENT, "No such file or directory", path)
-        from core.path_policy import drop_unsafe_names
+        # Only names no POSIX folder can hold go; a backslash, control
+        # character or bidi override is kept and refused visibly where it
+        # is used (see SSHSession.list_dir).
+        from core.path_policy import drop_impossible_names
 
-        return drop_unsafe_names(_parse_ls_la(output), keep_dots=True, origin=f"SCP {path}")
+        return drop_impossible_names(_parse_ls_la(output), keep_dots=True, origin=f"SCP {path}")
 
     def stat(self, path: str) -> FileItem:
         path = self.normalize(path)

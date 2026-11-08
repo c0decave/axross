@@ -75,6 +75,30 @@ def test_happy_a_window_that_never_shows_is_reported_with_every_stack(tmp_path):
     assert "--safe-mode" in message
 
 
+def test_sad_more_than_100_threads_still_report_the_main_thread(tmp_path):
+    """faulthandler writes at most 100 threads, newest first: the full suite
+    left more alive and the main thread (the one that hangs) was cut off."""
+    stop = threading.Event()
+    idle = [threading.Thread(target=stop.wait, daemon=True) for _ in range(120)]
+    for thread in idle:
+        thread.start()
+    path, handle = _crash(tmp_path)
+    dog = SG.StartupWatchdog(0.3, crash_file=handle, crash_path=path, stderr=io.StringIO(),
+                             activation=lambda: None)
+    try:
+        dog.start()
+        assert SG.wait_for(lambda: dog.fired, 5.0)
+    finally:
+        dog.window_shown()
+        handle.close()
+        stop.set()
+        for thread in idle:
+            thread.join(5)
+    text = path.read_text()
+    main = text.index(f"Main thread 0x{threading.main_thread().ident:016x}")
+    assert "test_startup_guard.py" in text[main:text.index("\n\n", main)]
+
+
 def test_edge_fired_means_the_report_is_written_not_begun(tmp_path):
     """``fired`` turned True before the report was written: a test that
     waited for it and then read stderr, or closed crash.log, found an empty

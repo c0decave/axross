@@ -28,7 +28,7 @@ import logging
 from dataclasses import dataclass
 from typing import Callable
 
-from core.path_policy import drop_unsafe_names
+from core.path_policy import drop_impossible_names, drop_unsafe_names
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
@@ -116,7 +116,19 @@ def walk(
         # Listing names are server-chosen (WebDAV takes them from
         # <D:displayname>). ``../x`` or ``a/b`` would become a relative
         # path that a sync joins onto the OTHER root, outside it.
-        for item in drop_unsafe_names(entries, origin=path, backend=backend):
+        kept = drop_unsafe_names(entries, origin=path, backend=backend)
+        if unlisted is not None and len(kept) != len(entries):
+            # A name a sync cannot use here (a control character, a bidi
+            # override) is still an entry: shown as not compared, never
+            # left out - a sync that skips it silently looks complete.
+            # Names no folder can hold ("..", "a/b", NUL) stay dropped.
+            kept_ids = {id(item) for item in kept}
+            for item in entries:
+                name = getattr(item, "name", "")
+                if id(item) not in kept_ids and drop_impossible_names([item]):
+                    found[f"{prefix}{name}"] = item  # listed, never descended
+                    unlisted[f"{prefix}{name}"] = UNUSABLE_NAME
+        for item in kept:
             rel = f"{prefix}{item.name}"
             found[rel] = item
             if item.is_dir and not item.is_link:
@@ -124,6 +136,10 @@ def walk(
 
     _descend(root, "", 0)
     return found
+
+
+#: The ``unlisted`` value of an entry whose name a sync cannot use here.
+UNUSABLE_NAME = "name not usable here"
 
 
 def _under_unlisted(rel: str, unlisted: dict[str, str]) -> tuple[str, str] | None:
@@ -155,6 +171,11 @@ def _unlisted_entry(
                 if left.is_dir != right.is_dir:
                     # Folder vs file differs whatever the folder holds.
                     return None
+            if error == UNUSABLE_NAME:
+                return ComparedEntry(
+                    rel, Status.UNKNOWN,
+                    f"not compared: the {side} {UNUSABLE_NAME} (a control character "
+                    "or a bidi override)", left, right)
             where = f"folder {folder!r}" if folder else "root folder"
             return ComparedEntry(
                 rel,

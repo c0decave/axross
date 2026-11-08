@@ -4519,7 +4519,7 @@
     {
       "name": "serve_s3",
       "group": "Reverse-serve (expose a backend over S3 / WebDAV)",
-      "signature": "serve_s3(backend: FileBackend, *, bind: str = '127.0.0.1', port: int = 9000, read_only: bool = False, auth_token: str | None = '', root_path: str = '/') -> ReverseServer",
+      "signature": "serve_s3(backend: FileBackend, *, bind: str = '127.0.0.1', port: int = 9000, read_only: bool = False, auth_token: str | None = '', root_path: str = '/', cert_file: str | None = None, key_file: str | None = None, allow_insecure_http: bool = False) -> ReverseServer",
       "parameters": [
         {
           "name": "backend",
@@ -4561,11 +4561,32 @@
           "annotation": "str",
           "required": false,
           "default": "/"
+        },
+        {
+          "name": "cert_file",
+          "kind": "keyword_only",
+          "annotation": "str | None",
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "key_file",
+          "kind": "keyword_only",
+          "annotation": "str | None",
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "allow_insecure_http",
+          "kind": "keyword_only",
+          "annotation": "bool",
+          "required": false,
+          "default": false
         }
       ],
       "returns": "ReverseServer",
       "summary": "Expose ``backend`` as a minimum-viable S3 endpoint so any existing S3 client (aws-cli / restic / rclone / terraform) can speak to it.",
-      "doc": "Expose ``backend`` as a minimum-viable S3 endpoint so any\nexisting S3 client (aws-cli / restic / rclone / terraform) can\nspeak to it.\n\nLocalhost-bound by default, and with a token by default: the\nhandle's ``.auth_token`` is what clients send - as the AWS access\nkey id (``AWS_ACCESS_KEY_ID=<token>``, any secret: aws-cli, restic,\nrclone, boto3), as ``Authorization: Bearer <token>`` or as the Basic\npassword. ``auth_token=\"…\"`` sets your own; ``auth_token=None``\nturns auth off - on loopback only, as every local user can then\nreach the backend.\nPass ``bind=\"0.0.0.0\"`` only when you intentionally want LAN access;\nnon-local binds need an explicit ``auth_token``. Returns a live\n:class:`core.reverse_serve.ReverseServer` handle; call\n``.shutdown()`` to stop.",
+      "doc": "Expose ``backend`` as a minimum-viable S3 endpoint so any\nexisting S3 client (aws-cli / restic / rclone / terraform) can\nspeak to it.\n\nLocalhost-bound by default, and with a token by default: the\nhandle's ``.auth_token`` is what clients send - as the AWS access\nkey id (``AWS_ACCESS_KEY_ID=<token>``, any secret: aws-cli, restic,\nrclone, boto3), as ``Authorization: Bearer <token>`` or as the Basic\npassword. ``auth_token=\"…\"`` sets your own; ``auth_token=None``\nturns auth off - on loopback only, as every local user can then\nreach the backend.\nPass ``bind=\"0.0.0.0\"`` only when you intentionally want LAN access;\nnon-local binds need an explicit ``auth_token`` and TLS:\n``cert_file`` + ``key_file`` (PEM) serve HTTPS (``.base_url`` says\n``https://``). A non-local bind over plain HTTP is refused - the\ntoken would cross the network in clear - unless\n``allow_insecure_http=True`` opts in (logged as a warning). Returns\na live :class:`core.reverse_serve.ReverseServer` handle; call\n``.shutdown()`` to stop.",
       "examples": [],
       "raises": [],
       "mutates": true,
@@ -4574,7 +4595,7 @@
     {
       "name": "serve_webdav",
       "group": "Reverse-serve (expose a backend over S3 / WebDAV)",
-      "signature": "serve_webdav(backend: FileBackend, *, bind: str = '127.0.0.1', port: int = 8080, read_only: bool = False, auth_token: str | None = '', root_path: str = '/') -> ReverseServer",
+      "signature": "serve_webdav(backend: FileBackend, *, bind: str = '127.0.0.1', port: int = 8080, read_only: bool = False, auth_token: str | None = '', root_path: str = '/', cert_file: str | None = None, key_file: str | None = None, allow_insecure_http: bool = False) -> ReverseServer",
       "parameters": [
         {
           "name": "backend",
@@ -4616,11 +4637,32 @@
           "annotation": "str",
           "required": false,
           "default": "/"
+        },
+        {
+          "name": "cert_file",
+          "kind": "keyword_only",
+          "annotation": "str | None",
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "key_file",
+          "kind": "keyword_only",
+          "annotation": "str | None",
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "allow_insecure_http",
+          "kind": "keyword_only",
+          "annotation": "bool",
+          "required": false,
+          "default": false
         }
       ],
       "returns": "ReverseServer",
-      "summary": "Expose ``backend`` as a minimum-viable WebDAV endpoint — ``davfs2 mount``, gnome-files (``davs://``), macOS Finder, browser read-only listings all work; they ask for the token as the password (any user name). Same token rules as :func:`serve_s3`. Returns a :class:`core.reverse_serve.ReverseServer`.",
-      "doc": "Expose ``backend`` as a minimum-viable WebDAV endpoint —\n``davfs2 mount``, gnome-files (``davs://``), macOS Finder, browser\nread-only listings all work; they ask for the token as the password\n(any user name). Same token rules as :func:`serve_s3`. Returns a\n:class:`core.reverse_serve.ReverseServer`.",
+      "summary": "Expose ``backend`` as a minimum-viable WebDAV endpoint — ``davfs2 mount``, gnome-files (``davs://``), macOS Finder, browser read-only listings all work; they ask for the token as the password (any user name). Same token and TLS rules as :func:`serve_s3` (``cert_file`` / ``key_file`` / ``allow_insecure_http``). Returns a :class:`core.reverse_serve.ReverseServer`.",
+      "doc": "Expose ``backend`` as a minimum-viable WebDAV endpoint —\n``davfs2 mount``, gnome-files (``davs://``), macOS Finder, browser\nread-only listings all work; they ask for the token as the password\n(any user name). Same token and TLS rules as :func:`serve_s3`\n(``cert_file`` / ``key_file`` / ``allow_insecure_http``). Returns a\n:class:`core.reverse_serve.ReverseServer`.",
       "examples": [],
       "raises": [],
       "mutates": true,
@@ -7071,6 +7113,10 @@
         {
           "name": "auth_token",
           "annotation": "str"
+        },
+        {
+          "name": "tls",
+          "annotation": "bool"
         }
       ],
       "properties": [

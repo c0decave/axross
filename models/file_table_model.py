@@ -290,7 +290,9 @@ class FileTableModel(QAbstractTableModel):
             note = f"<br>Tags: {escape(', '.join(tags))}" if tags else ""
             if item.stat_error:
                 note += f"<br>Attributes unreadable: {escape(item.stat_error)}"
-            return f"<p style='white-space:pre'>{escape(item.name)}{note}</p>"
+            # Display filter as in the cell: a bidi override in a name
+            # would reorder the tooltip's text around it.
+            return f"<p style='white-space:pre'>{escape(sanitize_for_display(item.name))}{note}</p>"
 
         if role == Qt.ItemDataRole.DecorationRole and col == COL_NAME:
             return entry_icon(item.is_dir)

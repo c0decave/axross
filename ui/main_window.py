@@ -360,11 +360,11 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         # Content is transient per archive; the dock itself is created
         # on first preview and re-targeted thereafter.
         self._archive_dock = None
-        # Temp dirs created for single-member previews; cleaned on close.
+        # Temp dirs created for single-member previews: each is removed when
+        # the viewer showing its member is destroyed (_hold_member_tempdir),
+        # whatever is left on close.
         self._archive_member_tempdirs: list[str] = []
-        # The most-recent single-member temp dir. Since the member viewer
-        # opens one file at a time, the previous one is reaped on the NEXT
-        # open (never immediately, in case a viewer still holds the file).
+        # The most-recent single-member temp dir (the one being opened).
         self._archive_last_member_tempdir: str | None = None
         # The archive views of the dock, outermost first: the archive opened
         # from a pane, then each archive opened inside the one before.
@@ -472,6 +472,9 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         self._setup_toolbar_reorder()
         self._fit_toolbars()
 
+        # F1 in a dock or area opens its section of the handbook.
+        self._set_help_topics()
+
         # Debounce timer for post-transfer refresh
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setSingleShot(True)
@@ -483,13 +486,17 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
 
         # File menu
         file_menu = menubar.addMenu(tr("&File"))
+        # objectNames of menus and actions: the tours point at them (ui.tours).
+        file_menu.setObjectName("axFileMenu")
 
         quick_connect_action = file_menu.addAction(tr("Quic&k Connect…"))
         quick_connect_action.setShortcut(QKeySequence("Ctrl+N"))
+        quick_connect_action.setObjectName("axQuickConnectAction")
         quick_connect_action.triggered.connect(self._show_quick_connect)
 
         connect_action = file_menu.addAction(tr("Connection &Manager…"))
         connect_action.setShortcut(QKeySequence("Ctrl+Shift+N"))
+        connect_action.setObjectName("axConnectionManagerAction")
         connect_action.triggered.connect(self._on_connect)
 
         ssh_menu = file_menu.addMenu(tr("Import SSH &Config"))
@@ -518,6 +525,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         file_menu.addSeparator()
 
         recheck_keyring_action = file_menu.addAction(tr("Re-&detect System Keyring"))
+        recheck_keyring_action.setObjectName("axReDetectKeyringAction")
         recheck_keyring_action.setToolTip(
             "Force a fresh check for SecretService / KWallet / "
             "KeePassXC. Useful after starting a keyring daemon while "
@@ -535,7 +543,9 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         # desktop toolkit has done for thirty years, and a menu bar that
         # opens with Edit reads as broken before a single item is read.
         edit_menu = menubar.addMenu(tr("&Edit"))
+        edit_menu.setObjectName("axEditMenu")
         undo_action = edit_menu.addAction(tr("&Undo Last Operation"))
+        undo_action.setObjectName("axUndoAction")
         undo_action.setShortcut(QKeySequence("Ctrl+Z"))
         undo_action.setToolTip(tr("Reverse the most recent move or trash"))
         undo_action.triggered.connect(self._undo_last_operation)
@@ -543,6 +553,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         # Alt+F7 is the commander file managers' Find; Ctrl+F stays the
         # pane filter and Ctrl+Shift+F Find in Index.
         self._find_files_action = edit_menu.addAction(tr("&Find Files…"))
+        self._find_files_action.setObjectName("axFindFilesAction")
         self._find_files_action.setShortcuts([QKeySequence("Alt+F7"), QKeySequence("Ctrl+Alt+F")])
         self._find_files_action.setToolTip(
             tr("Search folders on any open connection by name, type, content and inside archives")
@@ -560,6 +571,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         # Every preference in one window (ui.settings_dialog). The menu
         # role puts it into the application menu on macOS.
         self._settings_action = edit_menu.addAction(tr("&Settings…"))
+        self._settings_action.setObjectName("axSettingsAction")
         self._settings_action.setShortcut(QKeySequence("Ctrl+,"))
         self._settings_action.setMenuRole(QAction.MenuRole.PreferencesRole)
         self._settings_action.setToolTip(tr("Every setting of axross, sorted by category"))
@@ -567,6 +579,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
 
         # View menu
         view_menu = menubar.addMenu(tr("&View"))
+        view_menu.setObjectName("axViewMenu")
 
         # One switch for the whole window; every file pane follows it
         # (_new_file_pane, _toggle_hidden). On by default; a stored
@@ -655,6 +668,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         view_menu.addSeparator()
 
         tagged_action = view_menu.addAction(tr("Tagged &Files…"))
+        tagged_action.setObjectName("axTaggedFilesAction")
         self._tagged_action = tagged_action  # the toolbar shows it too
         tagged_action.setToolTip("Every tag and the files that carry it")
         tagged_action.triggered.connect(self._show_tagged_files)
@@ -691,6 +705,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         disk_action.triggered.connect(self._open_disk_usage)
 
         compare_action = view_menu.addAction(tr("Compare Pa&nes…"))
+        compare_action.setObjectName("axCompareAction")
         self._compare_action = compare_action
         compare_action.setToolTip("Diff the active pane's tree against the target pane's")
         compare_action.triggered.connect(self._open_compare_panes)
@@ -758,6 +773,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
 
         # Tools menu
         tools_menu = menubar.addMenu(tr("&Tools"))
+        tools_menu.setObjectName("axToolsMenu")
         self._network_search_action = tools_menu.addAction(tr("&Find on Network Hosts (SMB)…"))
         self._network_search_action.setToolTip(
             "Your files on many SMB hosts at once - host list, addresses or CIDR, one login, read only"
@@ -774,6 +790,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         editor_action.triggered.connect(lambda _checked=False: self.show_editor())
         # These four open Edit > Settings… on their page.
         network_action = tools_menu.addAction(tr("&Network && Proxy…"))
+        network_action.setObjectName("axNetworkProxyAction")
         network_action.triggered.connect(lambda _checked=False: self._show_network_proxy())
         llm_action = tools_menu.addAction(tr("&LLM Profiles…"))
         llm_action.triggered.connect(lambda _checked=False: self._show_llm_profiles())
@@ -810,6 +827,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         agent_settings_action.triggered.connect(lambda _checked=False: self._show_agent_settings())
         # Settings > Agent > MCP Servers: configure servers, Add from Catalog…
         mcp_action = tools_menu.addAction(tr("M&CP Servers…"))
+        mcp_action.setObjectName("axMcpServersAction")
         mcp_action.setToolTip(
             tr("Configure the agent's MCP servers, or add one from a catalog (runs in podman)")
         )
@@ -874,7 +892,9 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         # Extensions menu: three fixed entries; loaded extensions add theirs
         # below (ui.extension_host). Manage opens Settings > Extensions.
         self.extensions_menu = menubar.addMenu(tr("E&xtensions"))
+        self.extensions_menu.setObjectName("axExtensionsMenu")
         manage_ext_action = self.extensions_menu.addAction(tr("&Manage Extensions…"))
+        manage_ext_action.setObjectName("axManageExtensionsAction")
         self._manage_ext_action = manage_ext_action
         manage_ext_action.triggered.connect(lambda _checked=False: self._show_extensions_dialog())
         folder_ext_action = self.extensions_menu.addAction(tr("&Open Extensions Folder"))
@@ -885,10 +905,25 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
 
         # Help menu
         help_menu = menubar.addMenu(tr("&Help"))
+        help_menu.setObjectName("axHelpMenu")
+        # F1: the handbook at the section of the area that has the focus
+        # (ui.handbook); the shortcut list moved to Ctrl+F1.
+        handbook_action = help_menu.addAction(tr("&Handbook"))
+        handbook_action.setObjectName("axHandbookAction")
+        handbook_action.setShortcut(QKeySequence("F1"))
+        handbook_action.setToolTip(tr("The user guide, at the part of the window you are in"))
+        handbook_action.triggered.connect(lambda _checked=False: self.show_context_help())
+        self._handbook_action = handbook_action
+        tours_action = help_menu.addAction(tr("T&ours…"))
+        tours_action.setObjectName("axToursAction")
+        tours_action.setToolTip(tr("Guided tours over the window: the right way to use it"))
+        tours_action.triggered.connect(lambda _checked=False: self.show_tours())
         shortcuts_action = help_menu.addAction(tr("&Keyboard Shortcuts"))
-        shortcuts_action.setShortcut(QKeySequence("F1"))
+        shortcuts_action.setShortcut(QKeySequence("Ctrl+F1"))
         shortcuts_action.triggered.connect(self._show_shortcuts)
+        help_menu.addSeparator()
         features_action = help_menu.addAction(tr("Features…"))
+        features_action.setObjectName("axFeaturesAction")
         self._features_action = features_action  # the toolbar shows it too
         features_action.setToolTip("Optional features: installed, missing, and how to get them")
         features_action.triggered.connect(self._show_features)
@@ -914,10 +949,12 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         toolbar.setMovable(False)
 
         quick_btn = toolbar.addAction(tr("Quick Connect"))
+        quick_btn.setObjectName("axToolbarQuickConnect")
         quick_btn.setToolTip("Quick connect to recent profiles (Ctrl+N)")
         quick_btn.triggered.connect(self._show_quick_connect)
 
         manager_btn = toolbar.addAction(tr("Connection Manager"))
+        manager_btn.setObjectName("axToolbarConnectionManager")
         manager_btn.setToolTip("Open connection manager (Ctrl+Shift+N)")
         manager_btn.triggered.connect(self._on_connect)
 
@@ -965,6 +1002,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         toolbar.addSeparator()
 
         copy_btn = toolbar.addAction(tr("Copy to Target"))
+        copy_btn.setObjectName("axCopyToTargetAction")
         copy_btn.setToolTip("Copy selected files to target pane (F5)")
         copy_btn.setShortcut(QKeySequence("F5"))
         copy_btn.triggered.connect(self._transfer_to_target)
@@ -1093,6 +1131,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         from ui.icon_provider import icon as _ico
 
         self._trash_action = QAction(tr("Show Trash…"), self)
+        self._trash_action.setObjectName("axTrashAction")
         self._trash_action.triggered.connect(self._trash_from_toolbar)
         buttons = [
             (self._agent_dock.toggleViewAction(), "agent", "Agent: tasks for the LLM agent"),
@@ -1603,6 +1642,138 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         self._navigate_bookmark(Bookmark(name=_pp.basename(folder) or folder, path=folder,
                                          backend_name=entry.backend_name,
                                          profile_name=entry.profile_name))
+
+    #: Help topics of the window's own docks and areas, by objectName: F1 in
+    #: one opens its section of the handbook (core.handbook.SECTIONS).
+    HELP_TOPICS = {
+        "workspaceTabs": "panes",
+        "axTransferDock": "transfers",
+        "axTerminalDock": "terminal",
+        "axLogDock": "log",
+        "axConsoleDock": "scripting",
+        "axScriptsDock": "scripting",
+        "axAgentDock": "agent",
+        "axAnalysisDock": "analysis",
+        "BookmarkSidebar": "bookmarks",
+    }
+
+    def _set_help_topics(self) -> None:
+        from ui.handbook import set_help_topic
+
+        for name, topic in self.HELP_TOPICS.items():
+            widget = self.findChild(QWidget, name)
+            if widget is not None:
+                set_help_topic(widget, topic)
+
+    def show_handbook(self, topic: str | None = None):
+        """Help > Handbook: one non-modal window, raised when open, at the
+        section of *topic* (the contents without one)."""
+        from ui.handbook import HandbookDialog
+
+        dialog = getattr(self, "_handbook", None)
+        if dialog is None:
+            dialog = HandbookDialog(self)
+            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            dialog.destroyed.connect(lambda *_: setattr(self, "_handbook", None))
+            self._handbook = dialog
+        dialog.go_to_topic(topic)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        return dialog
+
+    def show_context_help(self, widget: QWidget | None = None):
+        """F1: the handbook at the section of *widget* (default: the one with
+        the focus; ui.handbook.help_topic_of); the contents when it names
+        none or is not in this window."""
+        from ui.handbook import help_topic_of
+
+        focus = widget if widget is not None else QApplication.focusWidget()
+        mine = focus is not None and (focus is self or self.isAncestorOf(focus))
+        return self.show_handbook(help_topic_of(focus) if mine else None)
+
+    def show_tours(self):
+        """Help > Tours…: the list of tours, one non-modal window."""
+        from ui.tour_engine import ToursDialog
+        from ui.tours import TOURS
+
+        dialog = getattr(self, "_tours_dialog", None)
+        if dialog is None:
+            dialog = ToursDialog(self, TOURS)
+            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            dialog.destroyed.connect(lambda *_: setattr(self, "_tours_dialog", None))
+            self._tours_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        return dialog
+
+    def start_tour(self, tour_id: str):
+        """Start the tour *tour_id* over this window (a running one ends);
+        the runner, or None for an unknown tour or one with nothing to show."""
+        from ui.tour_engine import TourRunner
+        from ui.tours import tour
+
+        found = tour(tour_id)
+        if found is None:
+            log.warning("No tour %r", tour_id)
+            return None
+        running = getattr(self, "_tour", None)
+        if running is not None and running.running:
+            running.end("replaced")
+        self._dismiss_tour_offer()
+        runner = TourRunner(self, found)
+        self._tour = runner
+        return runner if runner.start() else None
+
+    def offer_getting_started_tour(self) -> bool:
+        """At the start (main.py): once, a notice in the status bar offers
+        the Getting Started tour - never a dialog. Not offered when Settings
+        > General says so or it was offered before (core.tour_offer)."""
+        from PyQt6.QtWidgets import QHBoxLayout, QLabel
+
+        from core import tour_offer
+
+        if not tour_offer.offer_at_start() or getattr(self, "_tour_offer", None) is not None:
+            return False
+        notice = QWidget()
+        notice.setObjectName("axTourOffer")
+        row = QHBoxLayout(notice)
+        row.setContentsMargins(0, 0, 0, 0)
+        label = QLabel(tr("New to axross? A short tour shows the panes, connecting and copying."))
+        take = QPushButton(tr("Take the Getting Started Tour"))
+        take.setObjectName("axTourOfferTake")
+        close = QPushButton(tr("No Thanks"))
+        close.setObjectName("axTourOfferDismiss")
+        close.setToolTip(tr("Help > Tours… has every tour; Settings > General offers this "
+                            "one again at the next start"))
+        row.addWidget(label)
+        row.addWidget(take)
+        row.addWidget(close)
+
+        def take_tour() -> None:
+            from ui.tours import FIRST_TOUR
+
+            self.start_tour(FIRST_TOUR)
+
+        take.clicked.connect(lambda _checked=False: take_tour())
+        close.clicked.connect(lambda _checked=False: self._dismiss_tour_offer())
+        self.statusBar().insertPermanentWidget(0, notice, 1)
+        self._tour_offer = notice
+        try:
+            tour_offer.mark_offered()  # shown once: not again
+        except OSError as exc:
+            log.warning("tour offer: not remembered: %s", exc)
+        return True
+
+    def _dismiss_tour_offer(self) -> None:
+        from PyQt6 import sip
+
+        notice = getattr(self, "_tour_offer", None)
+        self._tour_offer = None
+        if notice is not None and not sip.isdeleted(notice):
+            self.statusBar().removeWidget(notice)
+            notice.deleteLater()
 
     def _show_scripting_guide(self) -> None:
         """Help > Scripting Guide: one non-modal window, raised when open."""
@@ -2481,16 +2652,18 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         (``NotImplementedError`` from ``extract_members``) → info
         message.
 
-        Temp-dir lifecycle: the member viewer opens one file at a time,
-        so the PREVIOUS single-member temp dir is reaped here, on the
-        next open — never immediately after the prior viewer returns, in
-        case that viewer still holds the file open. Each dir is also
+        Temp-dir lifecycle: each member gets a dir of its own, removed
+        when the viewer that shows it is destroyed
+        (:meth:`_archive_open_member`, :meth:`_hold_member_tempdir`). The
+        viewers are independent windows, so several members can be open
+        at once: reaping the previous dir on the next open (as before)
+        deleted a member whose viewer was still open. Each dir is also
         tracked in ``_archive_member_tempdirs`` as a close-time safety
         net (deduped so ``closeEvent`` doesn't double-remove)."""
         import shutil
         import tempfile as _tempfile
 
-        self._reap_last_member_tempdir()
+        self._archive_last_member_tempdir = None
         base = _tempfile.mkdtemp(prefix="axross-archive-")
         extracted = self._extract_member_into(base, archive_path, member_name)
         if extracted is None:
@@ -2546,7 +2719,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             QMessageBox.warning(self, "Open Member", "Extracted member not found on disk.")
             return None
         # Track for the close-time safety net (deduped) and mark as the
-        # current member temp dir so the NEXT open reaps it.
+        # member temp dir being opened (_archive_open_member holds it).
         if base not in self._archive_member_tempdirs:
             self._archive_member_tempdirs.append(base)
         self._archive_last_member_tempdir = base
@@ -2561,6 +2734,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         :meth:`_extract_single_member`; this wraps it with the modal
         viewer open. A member that is itself an archive opens as the next
         archive view instead (:meth:`_archive_open_nested`)."""
+        from PyQt6 import sip
+
         from core import archive as ARCH
         from ui.file_pane import open_local_file_in_viewer
 
@@ -2570,26 +2745,77 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         extracted = self._extract_single_member(archive_path, member_name)
         if extracted is None:
             return
-        open_local_file_in_viewer(self, extracted, read_only=True, view=view)
+        base = self._archive_last_member_tempdir
+        # Kept, not their id()s: a wrapper freed meanwhile hands its id on.
+        before = [w for w in QApplication.topLevelWidgets() if w.isVisible()]
+        kind = open_local_file_in_viewer(self, extracted, read_only=True, view=view)
+        if base is None:
+            return
+        if not kind:
+            self._reap_member_tempdir(base)  # nothing shows it
+            return
+        if kind == "text":
+            self._hold_member_tempdir_for_tab(base, extracted)
+            return
+        # The image, media or hex viewer: the window that just opened.
+        viewers = [w for w in QApplication.topLevelWidgets()
+                   if not sip.isdeleted(w) and w.isVisible()
+                   and not any(w is b for b in before)]
+        if viewers:
+            self._hold_member_tempdir(base, viewers)
+        # "system" (the desktop's application has the file; no telling when
+        # it is done with it): the close-time cleanup removes it.
 
-    def _reap_last_member_tempdir(self) -> None:
-        """Remove the previous single-member preview temp dir, if any.
+    def _hold_member_tempdir(self, base: str, holders: list) -> None:
+        """Remove *base* once every widget of *holders* is destroyed."""
+        waiting = {id(h) for h in holders}
 
-        Called at the START of the next single-member open so we never
-        pull the file out from under a viewer that's still holding the
-        prior member. The dir is also dropped from the close-time
-        tracking list so ``closeEvent`` doesn't try to remove it twice."""
+        def gone(key: int) -> None:
+            waiting.discard(key)
+            if not waiting:
+                self._reap_member_tempdir(base)
+
+        for holder in holders:
+            holder.destroyed.connect(lambda _obj=None, k=id(holder): gone(k))
+
+    def _hold_member_tempdir_for_tab(self, base: str, path: str) -> None:
+        """A text member opens as a tab of the editor, read in the
+        background: its dir goes with the tab (a Reload reads the file)."""
+        from PyQt6 import sip
+
+        from core.local_fs import LocalFS
+
+        editor = getattr(self, "_editor_window", None)
+        if editor is None or sip.isdeleted(editor):
+            return
+        tab = editor._tab_of(LocalFS(), path)  # noqa: SLF001 - open already
+        if tab is not None:
+            self._hold_member_tempdir(base, [tab])
+            return
+
+        def opened(new_tab) -> None:
+            if getattr(new_tab, "path", None) != path:
+                return
+            try:
+                editor.opened.disconnect(opened)
+            except (TypeError, RuntimeError):
+                pass
+            self._hold_member_tempdir(base, [new_tab])
+
+        editor.opened.connect(opened)
+
+    def _reap_member_tempdir(self, base: str) -> None:
+        """Remove one single-member preview temp dir (its viewer is gone)
+        and drop it from the close-time list."""
         import shutil
 
-        prev = self._archive_last_member_tempdir
-        if prev is None:
-            return
-        self._archive_last_member_tempdir = None
-        shutil.rmtree(prev, ignore_errors=True)
+        shutil.rmtree(base, ignore_errors=True)
         try:
-            self._archive_member_tempdirs.remove(prev)
+            self._archive_member_tempdirs.remove(base)
         except ValueError:
             pass
+        if self._archive_last_member_tempdir == base:
+            self._archive_last_member_tempdir = None
 
     def _cleanup_archive_tempdirs(self) -> None:
         """Remove every temp dir created for single-member previews."""
@@ -2748,6 +2974,9 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         schedule_workspace_tabs(self)
         pane.set_show_hidden(self._hidden_action.isChecked())
         pane.set_hidden_style(self._highlight_hidden, self._hidden_color)
+        from ui.handbook import set_help_topic
+
+        set_help_topic(pane, "panes")  # F1 in it: Multi-pane layout
         pane.pane_focused.connect(lambda p=pane: self._set_active_pane(p))
         pane.view_mode_changed.connect(lambda _mode, p=pane: self._sync_view_mode_action(p))
         pane.selection_changed.connect(lambda p=pane: self._extension_event("selection_changed", p))
@@ -3298,6 +3527,14 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         a running shell or a remote connection. The key chord is easy to
         hit by accident, and the switch used to kill them unasked."""
         panes, terminals, _holders = self._widgets_of(self._current_ws)
+        return self._teardown_confirmed(
+            panes, terminals, tr("Switch Layout"),
+            tr("Switching the layout closes {what}. Switch anyway?"))
+
+    def _teardown_confirmed(self, panes, terminals, title: str, question: str) -> bool:
+        """True when closing *panes* and *terminals* loses nothing running
+        (no shell, no remote connection), or the user said Yes to
+        *question* (its ``{what}`` names what would be closed)."""
         shells = sum(1 for term in terminals if getattr(term, "is_running", False))
         remotes = sum(1 for pane in panes if pane in self._pane_profiles)
         if not shells and not remotes:
@@ -3309,9 +3546,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             lost.append(tr_n(remotes, "{n} connection", "{n} connections"))
         reply = QMessageBox.question(
             self,
-            tr("Switch Layout"),
-            tr("Switching the layout closes {what}. Switch anyway?").format(
-                what=tr(" and ").join(lost)),
+            title,
+            question.format(what=tr(" and ").join(lost)),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -4016,8 +4252,20 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
 
     def _undo_apply(self, plan, by_label: dict) -> None:
         from core.undo import apply_undo
+        from ui.production_gate import confirm_production
 
         backend, pane = by_label[plan.backend] if plan.backend else next(iter(by_label.values()))
+        # An undo changes files like the operation it reverses: on a
+        # production connection it waits for the countdown, on both ends of
+        # a move back (the data leaves one connection and lands on the other).
+        changed = [backend]
+        source = self._undo_source_backend(plan, by_label)
+        if source is not None and source is not backend:
+            changed.append(source)
+        for target in changed:
+            if not confirm_production(self, target, f"undo: {plan.reason}"):
+                self._undo_status("Undo cancelled")
+                return
         if plan.action == "transfer_back":
             # Here: it only queues transfers (the transfer engine is the
             # GUI thread's), which do their work off it themselves.
@@ -5505,9 +5753,17 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         # A host terminal bookmark's shell has no saved profile either.
         return None
 
-    def _serialize_pane(self, pane: FilePaneWidget) -> dict:
-        """Serialize a single pane's state."""
+    def _serialize_pane(self, pane: FilePaneWidget) -> dict | None:
+        """Serialize a single pane's state; None for a pane that cannot be
+        opened again. A remote pane without a saved profile (a share Network
+        Search opened, say) was written as ``"local": true`` with its remote
+        path - restored, it listed the local disk at that path. It is left
+        out now, as a terminal without a profile is."""
         profile = self._pane_profiles.get(pane)
+        if not profile and not isinstance(pane.backend, LocalFS):
+            log.info("Session: the pane on %s has no saved profile and is not kept",
+                     getattr(pane.backend, "name", type(pane.backend).__name__))
+            return None
         is_active = pane is self._active_pane
         is_target = pane is self._target_pane
         entry: dict = {
@@ -5553,6 +5809,12 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                 "Restore Session",
                 "Saved session is empty.",
             )
+            return
+        # The rebuild closes every pane and shell of every workspace: ask
+        # first, as a layout switch does (it killed them unasked).
+        if not self._teardown_confirmed(
+                list(self._panes), list(self._terminal_panes), tr("Restore Session"),
+                tr("Restoring the last session closes {what}. Restore anyway?")):
             return
         self._apply_session(data, connect_remote=True)
 
@@ -5908,7 +6170,9 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         self, splitter: QSplitter, data: dict, *, connect_remote: bool = True
     ) -> FilePaneWidget | None:
         """Restore a single pane from serialized data. A remote pane connects
-        only with *connect_remote*; else it becomes a placeholder (None)."""
+        only with *connect_remote*; else it becomes a placeholder (None) -
+        as it does when its profile is gone, a password or passphrase
+        prompt is cancelled or the connect fails (the reason in its note)."""
         path = data.get("path", "/")
         profile_name = data.get("profile")
 
@@ -5933,64 +6197,40 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         # Remote pane — try to reconnect
         profile = self._profile_manager.get(profile_name)
         if not profile:
-            log.warning("Session restore: profile %r not found, using local pane", profile_name)
-            pane = self._add_pane_to_splitter(splitter, LocalFS())
-            return pane
+            log.warning("Session restore: profile %r not found", profile_name)
+            # The placeholder says the profile is unknown; a local pane in
+            # its place hid that the pane was a remote one.
+            self._make_placeholder(splitter, KIND_PANE, profile_name, path)
+            return None
 
-        # Get stored password from keyring (non-blocking)
+        from PyQt6.QtWidgets import QInputDialog, QLineEdit
+
+        from ui.off_gui import connect_off_gui, run_off_gui
+
+        def not_connected(note: str) -> None:
+            # In its place, with a Reconnect button - never a local pane at
+            # the remote path (that one listed and wrote the local disk).
+            placeholder = self._make_placeholder(splitter, KIND_PANE, profile_name, path)
+            placeholder.set_note(note)
+
+        # A password only where connecting takes one - the decision Quick
+        # Connect and the MCP server share (core.profiles.password_needed):
+        # TFTP, anonymous S3, rsync over SSH, an SSH key asked for nothing.
         password = ""
         key_passphrase = ""
-        if profile.store_password:
-            from core.credentials import get_password
-            from ui.off_gui import run_off_gui
+        if password_needed(profile):
+            if profile.store_password:
+                from core.credentials import get_password
 
-            # The keyring (Secret Service over D-Bus) may wait for an
-            # unlock: off the GUI thread, the window painting meanwhile.
-            password = run_off_gui(lambda: get_password(profile.name)) or ""
-
-        auth = getattr(profile, "auth_type", "password")
-
-        # Determine what kind of credential prompt (if any) is needed
-        # No prompt: NFS, SSH agent, OAuth protocols, or password already retrieved
-        no_prompt_protocols = ("nfs", "onedrive", "sharepoint", "gdrive", "dropbox")
-        needs_no_prompt = (
-            profile.protocol in no_prompt_protocols
-            or auth == "agent"
-            or password  # already have it from keyring
-        )
-
-        if not needs_no_prompt:
-            from PyQt6.QtWidgets import QInputDialog, QLineEdit
-
-            if auth == "key":
-                # SSH key auth — may need key passphrase
-                label = (
-                    f"Session restore: Key passphrase for "
-                    f"'{profile.name}'\n"
-                    f"{profile.username}@{profile.host}:{profile.port}\n"
-                    f"Key: {profile.key_file}\n"
-                    f"(leave empty if key has no passphrase)"
-                )
-                key_passphrase, ok = QInputDialog.getText(
-                    self,
-                    "Session Restore — Key Passphrase",
-                    label,
-                    QLineEdit.EchoMode.Password,
-                )
-                if not ok:
-                    log.info(
-                        "Session restore: user cancelled passphrase for %s, using local pane",
-                        profile_name,
-                    )
-                    pane = self._add_pane_to_splitter(splitter, LocalFS())
-                    return pane
-            else:
-                # Password-based auth (SSH password, FTP, Telnet, SMB, etc.)
-                label = (
-                    f"Session restore: Password for "
-                    f"'{profile.name}'\n"
-                    f"{profile.username}@{profile.host}:{profile.port}"
-                )
+                # The keyring (Secret Service over D-Bus) may wait for an
+                # unlock: off the GUI thread, the window painting meanwhile.
+                password = run_off_gui(lambda: get_password(profile.name)) or ""
+            if not password:
+                if profile.protocol in SIMPLE_PASSWORD_PROTOCOLS:
+                    _ask, what = _simple_password_prompt(profile)
+                else:
+                    what = f"{profile.username}@{profile.host}:{profile.port}"
+                label = f"Session restore: Password for '{profile.name}'\n{what}"
                 password, ok = QInputDialog.getText(
                     self,
                     "Session Restore — Password Required",
@@ -5998,56 +6238,77 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                     QLineEdit.EchoMode.Password,
                 )
                 if not ok:
-                    log.info(
-                        "Session restore: user cancelled password for %s, using local pane",
-                        profile_name,
-                    )
-                    pane = self._add_pane_to_splitter(splitter, LocalFS())
-                    return pane
+                    log.info("Session restore: password for %s cancelled", profile_name)
+                    not_connected("Not connected: the password was not given.")
+                    return None
 
-        try:
-            from ui.off_gui import connect_off_gui
-
-            # Off the GUI thread: every remote pane of a restored session
-            # connected here in turn, the window frozen for each handshake.
-            session = connect_off_gui(
-                self._connection_manager, profile, password=password,
-                key_passphrase=key_passphrase, prompt=self._confirm_unknown_host,
-                status=lambda text: self.statusBar().showMessage(text),
-            )
-            pane = self._add_pane_to_splitter(
-                splitter,
-                session,
-                profile=profile,
-                password=password,
-                key_passphrase=key_passphrase,
-            )
-            # Register SSH terminal
-            if (
-                hasattr(session, "transport")
-                and session.transport
-                and session.transport.is_active()
-            ):
-                self._terminal_dock.add_ssh_session(
-                    _terminal_name(session, profile), session.transport
-                )
-            self._add_to_recent(profile.name)
+        # A key-auth profile connects without a passphrase first; an
+        # encrypted key fails with PasswordRequiredException and is asked
+        # for then (as Quick Connect does).
+        tries = 0
+        while True:
             try:
-                pane.navigate_async(path)
-            except Exception:
-                log.warning(
-                    "Session restore: failed to navigate to %s on %s",
-                    path,
-                    profile.name,
-                    exc_info=True,
+                # Off the GUI thread: every remote pane of a restored session
+                # connected here in turn, the window frozen for each handshake.
+                session = connect_off_gui(
+                    self._connection_manager, profile, password=password,
+                    key_passphrase=key_passphrase, prompt=self._confirm_unknown_host,
+                    status=lambda text: self.statusBar().showMessage(text),
                 )
-            log.info("Session restore: reconnected to %s", profile.name)
-            return pane
-        except Exception as e:
-            log.warning("Session restore: could not connect to %s: %s", profile_name, e)
-            # Fall back to local pane
-            pane = self._add_pane_to_splitter(splitter, LocalFS())
-            return pane
+                break
+            except Exception as e:  # noqa: BLE001 - shown in the placeholder
+                if _needs_key_passphrase(e) and tries < KEY_PASSPHRASE_TRIES:
+                    tries += 1
+                    prompt = (
+                        f"Session restore: Key passphrase for '{profile.name}'\n"
+                        f"{profile.username}@{profile.host}:{profile.port}\n"
+                        f"Key: {profile.key_file}"
+                    )
+                    if key_passphrase:
+                        prompt = f"Wrong passphrase. {prompt}"
+                    key_passphrase, ok = QInputDialog.getText(
+                        self,
+                        "Session Restore — Key Passphrase",
+                        prompt,
+                        QLineEdit.EchoMode.Password,
+                    )
+                    if ok:
+                        continue
+                    log.info("Session restore: key passphrase for %s cancelled", profile_name)
+                    not_connected("Not connected: the key passphrase was not given.")
+                    return None
+                log.warning("Session restore: could not connect to %s: %s", profile_name, e)
+                not_connected(f"Could not connect: {e}")
+                return None
+
+        pane = self._add_pane_to_splitter(
+            splitter,
+            session,
+            profile=profile,
+            password=password,
+            key_passphrase=key_passphrase,
+        )
+        # Register SSH terminal
+        if (
+            hasattr(session, "transport")
+            and session.transport
+            and session.transport.is_active()
+        ):
+            self._terminal_dock.add_ssh_session(
+                _terminal_name(session, profile), session.transport
+            )
+        self._add_to_recent(profile.name)
+        try:
+            pane.navigate_async(path)
+        except Exception:
+            log.warning(
+                "Session restore: failed to navigate to %s on %s",
+                path,
+                profile.name,
+                exc_info=True,
+            )
+        log.info("Session restore: reconnected to %s", profile.name)
+        return pane
 
     def _show_network_proxy(self) -> None:
         self.open_settings("network")
@@ -6594,8 +6855,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                 tr("Nothing to move: the cut entries already are in {folder}").format(
                     folder=dest_dir), 8000)
             return
-        if not source._production_ok(f"move {len(plan.paths)} item(s) away"):
-            return
+        # The production countdown for the move is _request_transfer's.
         self._request_transfer(
             source, target, list(plan.paths), move=True, dest_dir=dest_dir,
             on_queued=lambda: board.clear(cut),
@@ -6679,6 +6939,11 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         the jobs are being queued (not after a refusal, error or Cancel).
         """
         if not selected:
+            return
+        # Every move (F6, the toolbar, the pane's menu, drag & drop, Paste,
+        # a drop on a bookmark) removes the sources afterwards: a production
+        # source asks here, in the one place they all pass.
+        if move and not source._production_ok(f"move {len(selected)} item(s) away"):
             return
         from core import transfer_conflicts as TC
         from ui.scan_job import ScanJob
@@ -7891,7 +8156,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
     # --- About ---
 
     def _show_shortcuts(self) -> None:
-        """Show the keyboard shortcut reference (F1)."""
+        """Show the keyboard shortcut reference (Ctrl+F1)."""
         from ui.shortcuts_dialog import ShortcutsDialog
 
         dialog = ShortcutsDialog(self)
@@ -8050,7 +8315,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             f"<h3>{e('Tools')}</h3><ul>{items(self._ABOUT_TOOLS)}</ul>"
             f"<p><small>{e('axross {version} - Python + PyQt6').format(version=__version__)}"
             " | github.com/c0decave/axross</small></p>"
-            f"<p><small>{e('F1: keyboard shortcuts · Help > Scripting Guide')}</small></p>"
+            f"<p><small>{e('F1: handbook · Help > Tours… · Ctrl+F1: keyboard shortcuts')}"
+            "</small></p>"
             f"<p><small>{e('Thanks to the projects behind axross: Help > Third-Party Software…')}"
             "</small></p>"
         )
@@ -8712,6 +8978,25 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         if scripts is not None and not scripts.maybe_close():
             event.ignore()  # unsaved script edits, and the user chose Cancel
             return
+        manager = getattr(self, "_transfer_manager", None)
+        unfinished = manager.unfinished() if manager is not None else 0
+        if unfinished and not getattr(self, "_quit_with_transfers", False):
+            # Quitting cancels them all (and leaves their partial files):
+            # closing one pane asks the same, the whole window asked nothing.
+            # Asked before the editor and the viewers close below: a No
+            # here left them closed next to a main window that stayed.
+            from PyQt6.QtWidgets import QMessageBox
+
+            from ui.plain_text import plain_message
+
+            box = plain_message(self, QMessageBox.Icon.Warning, "Transfers running",
+                                f"{unfinished} transfer(s) are running or waiting. Quitting cancels "
+                                "them; partly copied files are left behind.\n\nQuit anyway?",
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            box.setDefaultButton(QMessageBox.StandardButton.No)
+            if box.exec() != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
         # The editor asks for its unsaved tabs now, while the connections
         # they save through are still open; Cancel keeps everything. Left to
         # Qt's quit, it asked after the teardown below: a Save went to a
@@ -8730,24 +9015,11 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         if not VW.close_independent_windows(self):
             event.ignore()
             return
-        manager = getattr(self, "_transfer_manager", None)
-        unfinished = manager.unfinished() if manager is not None else 0
-        if unfinished and not getattr(self, "_quit_with_transfers", False):
-            # Quitting cancels them all (and leaves their partial files):
-            # closing one pane asks the same, the whole window asked nothing.
-            from PyQt6.QtWidgets import QMessageBox
-
-            from ui.plain_text import plain_message
-
-            box = plain_message(self, QMessageBox.Icon.Warning, "Transfers running",
-                                f"{unfinished} transfer(s) are running or waiting. Quitting cancels "
-                                "them; partly copied files are left behind.\n\nQuit anyway?",
-                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-            box.setDefaultButton(QMessageBox.StandardButton.No)
-            if box.exec() != QMessageBox.StandardButton.Yes:
-                event.ignore()
-                return
         log.info("Application closing, cleaning up...")
+        tour = getattr(self, "_tour", None)
+        if tour is not None and tour.running:
+            # Before the session is saved: a dock the tour opened closes again.
+            tour.end("ended")
         if self._tag_job_queue:
             self._flush_tag_jobs()  # ended moves whose tags wait for the gap
         if scripts is not None:

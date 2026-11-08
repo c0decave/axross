@@ -803,8 +803,8 @@ axross --mcp-server
 # Per Env-Var
 AXROSS_MCP=1 axross
 
-# Read-write (mit Path-Traversal-Cap auf backend.home())
-axross --mcp-server --mcp-write
+# Read-write (Schreib-Tools brauchen ein ausdrückliches Wurzelverzeichnis)
+axross --mcp-server --mcp-write --mcp-root ~/data
 ```
 
 ### HTTP-Modus (für Remote-LLMs)

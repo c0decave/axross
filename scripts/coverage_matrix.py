@@ -1102,13 +1102,18 @@ FEATURES: tuple[Feature, ...] = (
             "core/agent_sandbox.py",
             "core/agent_access.py",
             "core/agent_net.py",
+            "core/protected_places.py",
             "ui/agent_access_dialog.py",
         ],
         [
             (
                 "tests/test_agent_sandbox.py::test_edge_inside_bubblewrap_there_is_no_network_no_home_and_paranoid_is_read_only",
                 "process",
-            )
+            ),
+            (
+                "tests/test_protected_places.py::test_happy_the_sandbox_mounts_existing_protected_places_read_only",
+                "process",
+            ),
         ],
     ),
     _f(
@@ -1342,15 +1347,24 @@ FEATURES: tuple[Feature, ...] = (
     _f(
         "System",
         "help",
-        "Features and Third-Party Software",
+        "Features, Third-Party Software, handbook (F1) and tours",
         [
             "core/features.py",
             "ui/features_dialog.py",
             "core/third_party.py",
             "ui/third_party_dialog.py",
+            "core/handbook.py",
+            "core/guide_text.py",
+            "core/tour_offer.py",
+            "ui/handbook.py",
+            "ui/guide_view.py",
+            "ui/tour_engine.py",
+            "ui/tours.py",
         ],
         [
             ("tests/test_features_overview.py::test_e2e_help_menu_opens_features", "ui"),
+            ("tests/test_handbook.py::test_happy_f1_in_a_file_pane_opens_multi_pane_layout", "ui"),
+            ("tests/test_tours.py::test_happy_a_tour_walks_forward_and_back", "ui"),
             (
                 "tests/test_third_party_dialog.py::test_happy_e2e_from_the_help_menu_filter_and_click_a_link",
                 "ui",

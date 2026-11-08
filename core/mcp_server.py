@@ -1181,36 +1181,16 @@ def _enforce_root_entry(path: str, root: str) -> str:
     return op.join(parent, name)
 
 
-#: Places under the home folder a tool never writes, moves or deletes,
-#: whatever the root: changed, they run code or widen the agent's rights
-#: with no prompt (its own settings and MCP servers, shell start files,
-#: autostart entries, user services, SSH and GnuPG keys and configs).
-_PROTECTED_HOME_DIRS = (".config/axross", ".local/share/axross", ".local/state/axross",
-                        ".config/autostart", ".config/systemd", ".config/environment.d",
-                        ".config/fish", ".ssh", ".gnupg", ".local/share/applications")
-_PROTECTED_HOME_FILES = (".bashrc", ".bash_profile", ".bash_login", ".bash_logout", ".profile",
-                         ".zshrc", ".zprofile", ".zshenv", ".zlogin", ".xprofile", ".xsessionrc",
-                         ".xinitrc", ".pam_environment", ".inputrc")
-
-
 def _refuse_protected(path: str, *, entry: bool = False) -> str:
     """*path* unless it is (or lies in) a protected place of the home
-    folder (_PROTECTED_HOME_*); PermissionError otherwise. *entry*: the
-    path's entry is removed or moved, so a folder holding a protected
-    place is refused too (deleting ~/.config takes ~/.config/autostart)."""
-    import os.path as op
+    folder (core.protected_places); PermissionError otherwise. *entry*:
+    the path's entry is created, removed or moved, so a folder holding a
+    protected place is refused too (deleting ~/.config takes ~/.config/autostart)."""
+    from core import protected_places
 
-    home = op.realpath(op.expanduser("~"))
-    protected = [op.join(home, rel) for rel in _PROTECTED_HOME_DIRS + _PROTECTED_HOME_FILES]
-    candidates = {op.abspath(path), op.realpath(path),
-                  op.join(op.realpath(op.dirname(op.abspath(path))), op.basename(path))}
-    for candidate in candidates:
-        for place in protected:
-            if candidate == place or candidate.startswith(place + op.sep):
-                raise PermissionError(f"{path}: the agent does not change {place} (it could "
-                                      "run code or widen its own rights from there)")
-            if entry and place.startswith(candidate.rstrip(op.sep) + op.sep):
-                raise PermissionError(f"{path} holds {place}, which the agent does not change")
+    reason = protected_places.refusal(path, entry=entry)
+    if reason is not None:
+        raise PermissionError(reason)
     return path
 
 
@@ -1245,8 +1225,15 @@ def _build_tools(
     allow_exec: bool = False,
     extra_roots: tuple = (),
     remote_registry=None,
+    allow_secret_reads: bool = False,
 ) -> list[_Tool]:
     """Build the catalogue. Write tools are added only when allowed.
+
+    *allow_secret_reads* (``--mcp-allow-secret-reads``): tools may hand out
+    the contents of secret files (core.protected_places.read_refusal:
+    axross's OAuth and MCP tokens, chat and Bluetooth keys, SSH and GnuPG
+    private keys). Off, every tool that returns or copies contents refuses
+    them, whatever the root; their names are still listed.
 
     *remote_registry* is a :class:`core.mcp_groups.RemoteRegistry` the
     caller owns - with connections it lent (``attach``) and its gate -
@@ -1446,6 +1433,35 @@ def _build_tools(
         return _refuse_protected(_refuse_read_only_below(
             _refuse_read_only(_confined(path, write_roots, _enforce_root_entry))), entry=True)
 
+    def _secret_check(active_backend):
+        """``refuse(path, entry=False) -> path`` for the paths of ONE tool
+        call: PermissionError when *path*'s contents are a secret
+        (core.protected_places: axross's tokens and keys, SSH and GnuPG
+        private keys) and *allow_secret_reads* is off. *entry*: the path is
+        copied or moved whole, so a folder holding a secret is refused too.
+        Names stay listable."""
+        if allow_secret_reads or _is_remote(active_backend):
+            return lambda path, *, entry=False: path
+        from core import protected_places
+
+        check = protected_places.secret_checker()
+
+        def refuse(path: str, *, entry: bool = False) -> str:
+            reason = check(path, entry=entry)
+            if reason is not None:
+                raise PermissionError(reason)
+            return path
+
+        return refuse
+
+    def _refuse_secret(path: str, active_backend, *, entry: bool = False) -> str:
+        """:func:`_secret_check` for one path."""
+        return _secret_check(active_backend)(path, entry=entry)
+
+    def _read_path(path: str, active_backend=None) -> str:
+        """:func:`_scope_path` for a path whose contents a tool hands out."""
+        return _refuse_secret(_scope_path(path, active_backend), active_backend)
+
     def _refuse_root(path: str, active_backend, operation: str) -> None:
         """Refuse a mutation of the configured root object itself."""
         if _is_remote(active_backend):
@@ -1504,7 +1520,7 @@ def _build_tools(
         path = args.get("path")
         if not path:
             raise ValueError("read_file requires a path")
-        path = _scope_path(path, backend)
+        path = _read_path(path, backend)
         encoding = args.get("encoding") or "base64"
         if encoding not in ("base64", "text"):
             raise ValueError("read_file: encoding must be 'base64' or 'text'")
@@ -1541,7 +1557,7 @@ def _build_tools(
         path = args.get("path")
         if not path:
             raise ValueError("checksum requires a path")
-        path = _scope_path(path, backend)
+        path = _read_path(path, backend)
         algo = (args.get("algorithm") or "sha256").lower()
         if algo not in _HASHLIB_ALGOS:
             raise ValueError(
@@ -1688,6 +1704,7 @@ def _build_tools(
         """
         backend = _resolve_backend(args)
         scope = _call_scope(backend)
+        refuse_secret = _secret_check(backend)
         path = scope(args.get("path") or "/")
         algo = (args.get("algorithm") or "sha256").lower()
         if algo not in _HASHLIB_ALGOS:
@@ -1736,7 +1753,7 @@ def _build_tools(
                 return
             ctx.check_cancel()
             try:
-                safe_full_path = scope(full_path)
+                safe_full_path = refuse_secret(scope(full_path))
                 result = _hash_one_path(
                     backend,
                     safe_full_path,
@@ -2021,7 +2038,7 @@ def _build_tools(
             raise ValueError(
                 "open_version_read requires path + version_id",
             )
-        path = _scope_path(path, backend)
+        path = _read_path(path, backend)
         cap = int(args.get("max_bytes") or MAX_READ_BYTES)
         cap = max(0, min(cap, MAX_READ_BYTES))
         with backend.open_version_read(path, version_id) as fh:
@@ -2085,6 +2102,7 @@ def _build_tools(
         except re.error as exc:
             raise ValueError(f"grep: bad regex {pattern!r}: {exc}") from exc
         scope = _call_scope(backend)
+        refuse_secret = _secret_check(backend)
         start = scope(args.get("path") or "/")
         max_depth = int(args.get("max_depth") or 2)
         max_matches = int(args.get("max_matches") or 100)
@@ -2121,7 +2139,8 @@ def _build_tools(
                 if size > MAX_GREP_FILE_BYTES:
                     continue
                 try:
-                    safe_full = scope(full)
+                    # PermissionError is an OSError: a secret is "unreadable".
+                    safe_full = refuse_secret(scope(full))
                     with backend.open_read(safe_full) as fh:
                         raw = fh.read(MAX_GREP_FILE_BYTES + 1)
                 except OSError as exc:
@@ -2175,7 +2194,7 @@ def _build_tools(
         path = args.get("path")
         if not path:
             raise ValueError("preview requires a path")
-        path = _scope_path(path, backend)
+        path = _read_path(path, backend)
         edge = int(args.get("edge") or 256)
         edge = max(16, min(edge, 2048))
         from core import previews as P
@@ -2372,7 +2391,8 @@ def _build_tools(
                 raise ValueError("rename requires src + dst")
             _audit("rename", "attempt", src=src, dst=dst)
             try:
-                safe_src = _entry_path(src, backend)
+                # Moved to a name of no secret place, a secret would be read.
+                safe_src = _refuse_secret(_entry_path(src, backend), backend, entry=True)
                 _refuse_root(safe_src, backend, "rename source")
                 safe_dst = _entry_path(dst, backend)
                 _refuse_root(safe_dst, backend, "rename destination")
@@ -2395,7 +2415,7 @@ def _build_tools(
                 raise ValueError("copy requires src + dst")
             _audit("copy", "attempt", src=src, dst=dst)
             try:
-                safe_src = _write_path(src, backend)
+                safe_src = _refuse_secret(_write_path(src, backend), backend, entry=True)
                 safe_dst = _write_path(dst, backend)
                 _refuse_root(safe_dst, backend, "copy destination")
                 if backend.exists(safe_dst):
@@ -2499,7 +2519,7 @@ def _build_tools(
 
             _audit("bulk_copy", "attempt", src=src, dst=dst, overwrite=overwrite)
             try:
-                safe_src = _write_path(src, backend)
+                safe_src = _refuse_secret(_write_path(src, backend), backend, entry=True)
                 safe_dst = _write_path(dst, backend)
                 if overwrite:
                     _refuse_root(safe_dst, backend, "bulk_copy destination")
@@ -2509,10 +2529,11 @@ def _build_tools(
 
             entries: list[dict] = []
             truncated = False
+            refuse_secret = _secret_check(backend)
 
             def _copy_one(src_file: str, dst_file: str, size: int) -> None:
                 try:
-                    safe_src_file = _write_path(src_file, backend)
+                    safe_src_file = refuse_secret(_write_path(src_file, backend))
                     safe_dst_file = _write_path(dst_file, backend)
                 except PermissionError as exc:
                     _audit(
@@ -2728,7 +2749,9 @@ def _build_tools(
             # create a read escape.
             _audit("symlink", "attempt", target=target, link_path=link_path)
             try:
-                safe_link = _write_path(link_path, backend)
+                # An entry: a link at a missing ~/.config would lead every
+                # later write around ~/.config/autostart.
+                safe_link = _entry_path(link_path, backend)
                 _refuse_root(safe_link, backend, "symlink link_path")
                 backend.symlink(target, safe_link)
             except BaseException as exc:
@@ -2756,7 +2779,8 @@ def _build_tools(
             # not meant to expose, so cap both ends.
             _audit("hardlink", "attempt", target=target, link_path=link_path)
             try:
-                safe_target = _write_path(target, backend)
+                # A second name of a secret file is the secret.
+                safe_target = _refuse_secret(_write_path(target, backend), backend)
                 safe_link = _write_path(link_path, backend)
                 _refuse_root(safe_link, backend, "hardlink link_path")
                 backend.hardlink(safe_target, safe_link)
@@ -3259,9 +3283,12 @@ def _build_tools(
                 _groups.GroupEnv(
                     default_backend=_default_backend,
                     resolve_backend=_resolve_backend,
-                    scope_path=_scope_path,
+                    # The groups read contents (metadata, file types,
+                    # hashes, archives, packing, encryption, transfers):
+                    # a secret is out of their reach like out of the root.
+                    scope_path=_read_path,
                     write_path=_write_path,
-                    entry_path=_entry_path,
+                    entry_path=lambda p, b: _refuse_secret(_entry_path(p, b), b, entry=True),
                     refuse_root=_refuse_root,
                     index_backend_id=lambda b: (
                         server_backend_id if b is _default_backend else _backend_id_for(b)
@@ -3504,6 +3531,8 @@ class _ResourceCatalog:
 
     backend: Any
     root: str  # absolute, enforced on every read
+    #: --mcp-allow-secret-reads: secret files (core.protected_places) may be read.
+    allow_secret_reads: bool = False
 
     def list_root(self) -> list[dict]:
         """Return up to MAX_RESOURCES_LISTED entries directly under
@@ -3572,6 +3601,12 @@ class _ResourceCatalog:
         # marker — the backend won't accept it.
         clean = raw_path.rstrip("/") or "/"
         resolved = _enforce_root(clean, self.root)
+        if not self.allow_secret_reads:
+            from core import protected_places
+
+            reason = protected_places.read_refusal(resolved)
+            if reason is not None:
+                raise PermissionError(reason)
         with self.backend.open_read(resolved) as fh:
             data, _ = _read_capped_stream(fh, MAX_READ_BYTES)
         # Silently truncate at cap — the MCP spec has no partial-read
@@ -3599,11 +3634,13 @@ class _ResourceCatalog:
         return entry
 
 
-def _build_resources(backend, *, root: str | None = None) -> _ResourceCatalog:
+def _build_resources(backend, *, root: str | None = None,
+                     allow_secret_reads: bool = False) -> _ResourceCatalog:
     """Construct the resources catalogue. Separated from
     :func:`_build_tools` so tests can drive one without the other
     and the HTTP transport can share them trivially."""
-    return _ResourceCatalog(backend=backend, root=root or "/")
+    return _ResourceCatalog(backend=backend, root=root or "/",
+                            allow_secret_reads=allow_secret_reads)
 
 
 # ---------------------------------------------------------------------------
@@ -4388,6 +4425,9 @@ class ServerConfig:
     tool_groups: frozenset[str] = frozenset()
     # Remote command execution (the exec group); its own opt-in, like scripts.
     allow_exec: bool = False
+    # --mcp-allow-secret-reads: tools may read axross's tokens and keys and
+    # the SSH / GnuPG private keys (core.protected_places.read_refusal).
+    allow_secret_reads: bool = False
     stdin: IO = field(default_factory=lambda: sys.stdin)
     stdout: IO = field(default_factory=lambda: sys.stdout)
     # Rate limit: token-bucket guarding tools/call only. Default on
@@ -4410,8 +4450,10 @@ def serve(config: ServerConfig) -> int:
         allow_scripts=config.allow_scripts,
         tool_groups=config.tool_groups,
         allow_exec=config.allow_exec,
+        allow_secret_reads=config.allow_secret_reads,
     )
-    resources = _build_resources(config.backend, root=config.root)
+    resources = _build_resources(config.backend, root=config.root,
+                                 allow_secret_reads=config.allow_secret_reads)
     cancels = _CancelRegistry()
     tasks = _TaskRegistry()
     rate_limiter = (

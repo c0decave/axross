@@ -263,6 +263,30 @@ def test_happy_e2e_notice_download_install_restart(stores, fake, binary):
     assert not win.isVisible()
 
 
+def test_sad_a_release_without_this_build_offers_no_install(stores, binary):
+    """0.15.176 was published with the Python package only: every binary
+    offered "Download and Install", and a click failed with one status line
+    while the button stayed - it looked like nothing happened."""
+    server = FakeGitHub(FakeRelease(NEW, {"axross-slim": NEW_BYTES}))
+    try:
+        win, controller = started_window(stores, server, frozen(binary))
+        win.start_update_check()
+        wait_for(lambda: idle(controller))
+        assert controller.state == "available"
+        assert not controller.has_build()
+        QTest.mouseClick(win._version_button, Qt.MouseButton.LeftButton)
+        pump()
+        (dialog,) = update_dialogs()
+        assert not dialog.download_button.isVisible()
+        status = dialog.status_label.text()
+        assert f"Release {NEW} has no axross-full build yet" in status
+        assert dialog.link_label.isVisible()  # the release page is still offered
+        assert controller.download() is False
+        assert binary.read_bytes() == OLD_BYTES
+    finally:
+        server.close()
+
+
 def _installed(stores, fake, binary):
     win, controller = started_window(stores, fake, frozen(binary))
     win.start_update_check()

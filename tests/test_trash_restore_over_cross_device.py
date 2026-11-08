@@ -72,6 +72,24 @@ def test_happy_restore_over_falls_back_to_a_copy_across_devices(tmp_path, monkey
     assert [p.name for p in tmp_path.iterdir()] == ["photo.jpg"]  # no temp left
 
 
+def test_sad_a_trash_on_another_file_system_keeps_mode_and_times(tmp_path, monkeypatch):
+    """No hard link into a trash on another file system: the copy taken
+    instead had the umask's mode (0644 for a 0640 file), and restore_over
+    put that back. Passed only while tmp_path and the test HOME shared one."""
+    def no_link(*a, **k):
+        raise OSError(errno.EXDEV, "Invalid cross-device link")
+
+    monkeypatch.setattr(T.os, "link", no_link)
+    target = tmp_path / "photo.jpg"
+    target.write_bytes(b"ORIGINAL with metadata")
+    os.chmod(target, 0o640)
+    os.utime(target, (1_600_000_000, 1_600_000_000))
+    trash_id = T.trash_copy(LocalFS(), str(target))
+    kept = Path(T._data_path(LocalFS(), T._resolve_root(LocalFS(), None), trash_id))
+    assert kept.stat().st_mode & 0o777 == 0o640
+    assert kept.stat().st_mtime == 1_600_000_000
+
+
 def test_sad_another_os_error_is_not_swallowed(tmp_path, monkeypatch):
     target = tmp_path / "photo.jpg"
     fs, trash_id = _prepare(target)

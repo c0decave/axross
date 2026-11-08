@@ -579,12 +579,11 @@ class TransferWorker(QObject):
                 # them to this job; the written size must come after them.
                 self.progress.emit(job.job_id, written, written)
 
-            # Post-transfer integrity check: native compare when both
-            # backends produce matching-algorithm hashes cheaply. When
-            # ``job.verify_checksum`` is True and native is missing /
-            # empty / algo-mismatched, fall back to streaming sha256
-            # of both sides.
-            self._verify_integrity(job)
+            # The integrity check ran inside _do_transfer, before the copy
+            # replaced the destination: the temp file is checked before the
+            # rename, a direct write before its rollback snapshot is let go.
+            # After the rename a mismatch left the corrupt copy in place of
+            # the original destination.
 
             # Move mode: delete source after successful transfer
             if job.move and job.source_backend:
@@ -719,8 +718,12 @@ class TransferWorker(QObject):
 
         return source_size(job.source_backend, job.source_path)
 
-    def _verify_integrity(self, job: TransferJob) -> None:
+    def _verify_integrity(self, job: TransferJob, dest_path: str | None = None) -> None:
         """Compare source + dest checksum after a successful transfer.
+
+        *dest_path*: the file to check on the destination backend, by
+        default ``job.dest_path``; the temp-file route passes its temp file,
+        so a mismatch is found while the original destination still exists.
 
         Default mode (``job.verify_checksum == False``):
           Opportunistic — if either side's native checksum is empty
@@ -753,6 +756,8 @@ class TransferWorker(QObject):
         dst = job.dest_backend
         if src is None or dst is None:
             return
+        if dest_path is None:
+            dest_path = job.dest_path
         src_cs = dst_cs = None
         # The second value is asked for only when the first could match it:
         # the verdict is the same, and a local file's "checksum" (a read of
@@ -761,13 +766,13 @@ class TransferWorker(QObject):
         # local.
         streamed = _streamed_source_checksum(job)
         if _hashes_whole_local_file(src) and not _hashes_whole_local_file(dst):
-            dst_cs = _native_checksum(dst, job.dest_path, "Dest")
+            dst_cs = _native_checksum(dst, dest_path, "Dest")
             if _could_match(dst_cs, src):
                 src_cs = streamed or _native_checksum(src, job.source_path, "Source")
         else:
             src_cs = streamed or _native_checksum(src, job.source_path, "Source")
             if _could_match(src_cs, dst):
-                dst_cs = _native_checksum(dst, job.dest_path, "Dest")
+                dst_cs = _native_checksum(dst, dest_path, "Dest")
         # Native fast path: both sides returned non-empty values with
         # the same algo prefix. Use what the backend gave us.
         if src_cs and dst_cs:
@@ -818,7 +823,7 @@ class TransferWorker(QObject):
         try:
             dst_sha = self._stream_sha256(
                 dst,
-                job.dest_path,
+                dest_path,
                 job.cancel_event,
             )
         except InterruptedError:
@@ -959,6 +964,15 @@ class TransferWorker(QObject):
         Azure Blob, cloud backends). *known_absent*: the no-overwrite check
         just found no destination, so the rollback snapshot need not ask
         again (on FTP a missing file is several refused commands).
+
+        A destination that already exists under the source's name may be
+        the source itself, reached over another protocol (axross's own
+        WebDAV reverse-serve, FTP or SCP to localhost, sshfs plus SCP):
+        a move probes for that before it writes (:meth:`_refuse_aliased_direct`),
+        and a copy whose writer truncates at open would read back a short
+        source - the snapshot then restores it (see below). The integrity
+        check runs while the snapshot is still held, so a mismatch puts the
+        old destination back instead of leaving the corrupt copy.
         """
         source_backend = job.source_backend
         dest_backend = job.dest_backend
@@ -969,9 +983,10 @@ class TransferWorker(QObject):
             _discard_or_close_writer,
             _rollback_direct_destination,
             _snapshot_direct_destination,
+            source_size,
         )
 
-        # Outside the try: until the snapshot exists nothing has been
+        # Outside the rollback: until the snapshot exists nothing has been
         # written, and a failed read-back of an existing destination
         # must not reach the rollback, which would take it for a partial
         # file of ours and remove it.
@@ -983,32 +998,50 @@ class TransferWorker(QObject):
                 job.dest_path,
             )
         try:
-            with source_backend.open_read(job.source_path) as src:
-                dst = dest_backend.open_write(job.dest_path, append=False)
-                streamed = _StreamedHash(job, 0)
-                try:
-                    while True:
-                        if job.cancel_event.is_set():
-                            raise InterruptedError("Transfer cancelled")
-                        chunk = src.read(CHUNK_SIZE)
-                        if not chunk:
-                            break
-                        dst.write(chunk)
-                        streamed.update(chunk)
-                        transferred += len(chunk)
-                        progress_callback(transferred, job.total_bytes)
-                    completed = True
-                    streamed.finish()
-                finally:
-                    _discard_or_close_writer(dst, completed=completed)
-        except BaseException:
-            _rollback_direct_destination(
-                dest_backend,
-                job.dest_path,
-                destination_existed=destination_existed,
-                destination_snapshot=destination_snapshot,
-            )
-            raise
+            size_before = None
+            if destination_existed:
+                # Only an existing destination can be the source itself.
+                self._refuse_aliased_direct(job)
+                if destination_snapshot is not None and self._same_leaf_name(job):
+                    # A writer that truncates at open, aimed at the source
+                    # under another path, empties it before it is read: the
+                    # copy then comes out short and "succeeds". The snapshot
+                    # holds the bytes; a short copy restores them.
+                    size_before = source_size(source_backend, job.source_path)
+            try:
+                with source_backend.open_read(job.source_path) as src:
+                    dst = dest_backend.open_write(job.dest_path, append=False)
+                    streamed = _StreamedHash(job, 0)
+                    try:
+                        while True:
+                            if job.cancel_event.is_set():
+                                raise InterruptedError("Transfer cancelled")
+                            chunk = src.read(CHUNK_SIZE)
+                            if not chunk:
+                                break
+                            dst.write(chunk)
+                            streamed.update(chunk)
+                            transferred += len(chunk)
+                            progress_callback(transferred, job.total_bytes)
+                        completed = True
+                        streamed.finish()
+                    finally:
+                        _discard_or_close_writer(dst, completed=completed)
+                if size_before is not None and transferred < size_before:
+                    raise OSError(
+                        f"only {transferred} of {size_before} bytes of {job.source_path} "
+                        f"were copied to {job.dest_path}; {job.dest_path} was put back "
+                        "as it was (it may be the source under another path)"
+                    )
+                self._verify_integrity(job)
+            except BaseException:
+                _rollback_direct_destination(
+                    dest_backend,
+                    job.dest_path,
+                    destination_existed=destination_existed,
+                    destination_snapshot=destination_snapshot,
+                )
+                raise
         finally:
             if destination_snapshot is not None:
                 destination_snapshot.close()
@@ -1110,6 +1143,7 @@ class TransferWorker(QObject):
                         temp_path,
                     )
                     self._refuse_aliased_source(job, temp_path)
+                    self._verify_integrity(job, temp_path)
                     self._check_existing_destination(job)
                     self._apply_source_mode(job, temp_path)
                     self._finalize_temp_destination(dest_backend, temp_path, job.dest_path)
@@ -1154,6 +1188,10 @@ class TransferWorker(QObject):
                     dst.close()
 
             self._refuse_aliased_source(job, temp_path)
+            # The temp file, before it replaces the destination: checked
+            # after the rename, a mismatch left the corrupt copy where the
+            # original had been.
+            self._verify_integrity(job, temp_path)
             self._check_existing_destination(job)
             if not mode_set:
                 self._apply_source_mode(job, temp_path)
@@ -1162,9 +1200,10 @@ class TransferWorker(QObject):
 
             cleanup_temp = False
             return transferred
-        except (_DestinationKept, FileExistsError, _SameEntry):
+        except (_DestinationKept, FileExistsError, _SameEntry, _ChecksumMismatch):
             # Refused to replace the destination: the partial is of no
-            # use to a retry, which would be refused the same way.
+            # use to a retry, which would be refused the same way - or,
+            # after a failed integrity check, holds the wrong bytes.
             raise
         except InterruptedError:
             keep_partial = transferred > 0 or resume_offset > 0
@@ -1188,14 +1227,19 @@ class TransferWorker(QObject):
         """Give a fresh temp file the source's mode BEFORE any data lands
         when that mode is narrower than a default file's (a 0600 key):
         written first and chmod-ed after, the bytes would sit group- or
-        world-readable for the whole transfer. True when the mode is set."""
+        world-readable for the whole transfer. True when the mode is set.
+
+        The owner gets write permission while the data goes in, as
+        atomic_io gives its temp files (``_OWNER_WRITE``): created 0400
+        (an AWS ``key.pem``) the temp file refused the write that follows
+        for every user but root. Such a mode is set after the write (False)."""
         mode = copy_mode(job.source_mode)
         if mode is None or mode & 0o044 == 0o044:
             return False
-        from core.atomic_io import _precreate_with_mode
+        from core.atomic_io import _OWNER_WRITE, _precreate_with_mode
 
-        _precreate_with_mode(job.dest_backend, temp_path, mode)
-        return True
+        _precreate_with_mode(job.dest_backend, temp_path, mode | _OWNER_WRITE)
+        return bool(mode & _OWNER_WRITE)
 
     @staticmethod
     def _apply_source_mode(job: TransferJob, temp_path: str) -> None:
@@ -1233,16 +1277,61 @@ class TransferWorker(QObject):
         fails proves nothing either way, so it refuses too: a kept source
         costs a second copy, a wrong delete costs the file.
         """
-        if not job.move:
+        if not job.move or not TransferWorker._same_leaf_name(job):
             return
-        src_backend, dest_backend = job.source_backend, job.dest_backend
-        dest_sep = dest_backend.separator() or "/"
-        src_sep = src_backend.separator() or "/"
-        dest_name = job.dest_path.rsplit(dest_sep, 1)[-1]
-        src_name = job.source_path.rsplit(src_sep, 1)[-1]
-        if dest_name.casefold() != src_name.casefold():
+        TransferWorker._refuse_if_seen_from_source(job, temp_path)
+
+    @staticmethod
+    def _same_leaf_name(job: TransferJob) -> bool:
+        """Whether source and destination have one name (case-insensitively):
+        only then can the destination be the source under another path."""
+        dest_name = job.dest_path.rsplit(job.dest_backend.separator() or "/", 1)[-1]
+        src_name = job.source_path.rsplit(job.source_backend.separator() or "/", 1)[-1]
+        return dest_name.casefold() == src_name.casefold()
+
+    @staticmethod
+    def _refuse_aliased_direct(job: TransferJob) -> None:
+        """:meth:`_refuse_aliased_source` for a move that writes straight to
+        its destination (WebDAV, FTP, SCP, Telnet, ADB, rsync, the cloud
+        stores): no temp file is written there, so an empty probe file named
+        with this job's id is written next to the destination BEFORE that is
+        touched, and looked for next to the source. Without it a move onto
+        the source's own folder
+        under another path uploaded the same bytes, passed the size checks
+        and deleted the only copy. A probe that cannot be written proves
+        nothing, so the move is refused as well; the probe is removed again.
+        """
+        if not job.move or not TransferWorker._same_leaf_name(job):
             return
-        temp_name = temp_path.rsplit(dest_sep, 1)[-1]
+        dest_backend = job.dest_backend
+        dest_name = job.dest_path.rsplit(dest_backend.separator() or "/", 1)[-1]
+        try:
+            probe = safe_join(
+                dest_backend,
+                dest_backend.parent(job.dest_path),
+                partial_name(dest_name, f"{job.job_id}-probe", ""),
+            )
+            dest_backend.open_write(probe).close()
+        except Exception as exc:  # noqa: BLE001 - unprovable means keep the source
+            raise _SameEntry(
+                f"cannot rule out that {job.source_path} and {job.dest_path} are one "
+                f"file (no probe file could be written: {exc}); nothing was replaced"
+            ) from exc
+        try:
+            TransferWorker._refuse_if_seen_from_source(job, probe)
+        finally:
+            try:
+                dest_backend.remove(probe)
+            except Exception as exc:  # noqa: BLE001 - a leftover probe is empty
+                log.warning("Could not remove the probe file %s: %s", probe, exc)
+
+    @staticmethod
+    def _refuse_if_seen_from_source(job: TransferJob, probe_path: str) -> None:
+        """Raise :class:`_SameEntry` when the file *probe_path*, just
+        written next to the destination, shows up next to the source too,
+        or when that cannot be checked."""
+        src_backend = job.source_backend
+        temp_name = probe_path.rsplit(job.dest_backend.separator() or "/", 1)[-1]
         try:
             probe = safe_join(src_backend, src_backend.parent(job.source_path), temp_name)
             visible = src_backend.exists(probe)

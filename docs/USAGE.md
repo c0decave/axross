@@ -8,7 +8,7 @@ Languages: **English** · [Deutsch](USAGE_de.md) · [Español](USAGE_es.md)
 
 ## At a glance
 
-Axross is a Total-Commander-style file manager for 22 protocols,
+Axross is a Total-Commander-style file manager for 30+ protocols,
 built around three ideas:
 
 - **Multi-pane layout.** Split horizontally / vertically into as many
@@ -21,6 +21,36 @@ built around three ideas:
 - **MCP server mode.** Axross can run headless and expose any
   configured backend as MCP tools, so an LLM client can drive it.
   Read-only by default; opt-in `--mcp-write` for mutations.
+
+## Handbook and tours
+
+- **Help → Handbook** (**F1**) shows this guide inside axross, in the
+  interface language (German and Spanish have their own; every other
+  language gets the English one): the contents on the left, a find field
+  above (Return finds the next match), links between its sections. It
+  loads no image or other resource and shows raw HTML as text; links to
+  the other documents open them on GitHub in the browser.
+- **F1 opens the section of the area you are in**: a file pane opens
+  *Multi-pane layout*, its address or filter field *Path bar*, the
+  Transfers dock *Transfers*, the Agent dock *Agent dock*, *Connect to
+  Server* opens *Connections*, and in *Edit → Settings…* F1 opens the part
+  about the page shown (*Logging*, *Updates*, the Agent's pages …; the
+  rest *Settings*). Anywhere else F1 opens the contents. The keyboard
+  shortcut list is **Ctrl+F1** (*Help → Keyboard Shortcuts*).
+- **Help → Tours…** lists guided tours over the real window: *Getting
+  started*, *Connect to a server*, *Copy and sync safely*, *Find and
+  organize*, *Automate* and *Extensions and features*. A tour dims the
+  window around the part it explains and frames it - that part stays
+  usable - and a box beside it says *Step k of n* with **Back**, **Next**
+  and **End Tour**; **Esc** ends the tour too. A step whose part is not in
+  the window (a dock or extension switched off, a pane closed, a toolbar
+  hidden) is skipped, and the next step says which were skipped; a closed
+  Agent, Scripts or Console dock is opened for its step and closed again
+  when the tour ends.
+- **The first start** offers the *Getting started* tour once, as a notice
+  in the status bar (*Take the Getting Started Tour*, *No Thanks*) - never
+  a dialog. *Edit → Settings… → General → Tours* offers it again at the
+  next start, or not at all (`offer_tour_at_start` in `settings.json`).
 
 ## Connections
 
@@ -408,9 +438,12 @@ index file.
   recursively through its connection — any backend, hidden entries
   included, at most 50 levels and 1 000 000 entries per run, written in
   batches of 500, cancellable (what was indexed is kept). Browsing never
-  indexes. Indexing the same folder again updates its rows in place; rows of
-  files deleted since are **not** removed by the GUI (the MCP tool
-  `index_build` with `prune` drops them).
+  indexes. Indexing the same folder again updates its rows in place and
+  drops the rows of files deleted since — only after a complete walk: a
+  cancelled run, or one that hit the entry limit, removes nothing, and rows
+  under a folder whose listing failed stay. The MCP tool `index_build` only
+  adds; with `prune` it also asks the backend for every indexed path under
+  the folder and drops the rows whose file is gone.
 - **How it is searched.** Name substring (case-insensitive), extension,
   size range, date range, one connection. Extension, size and date use
   SQLite indexes; a name substring (`LIKE '%…%'`) cannot use one and reads
@@ -1091,7 +1124,7 @@ backend through a JSON-RPC tool surface.
 
 ```bash
 axross --mcp-server                                  # read-only, stdio
-axross --mcp-server --mcp-write                      # add write tools (capped to a root)
+axross --mcp-server --mcp-write --mcp-root ~/data    # add write tools (capped to that root)
 axross --mcp-server --mcp-http 127.0.0.1:7331        # HTTP, loopback
 ```
 
@@ -1618,7 +1651,7 @@ finds a setting by its name (type *sudo*, *proxy* or *zoom*).
 
 | Category | Settings |
 |---|---|
-| General | Language (applies at the next start), restore the layout of the last session on start, when a pane becomes the active one (on click, or after resting the mouse 0.5–3 s in it) |
+| General | Language (applies at the next start), restore the layout of the last session on start, when a pane becomes the active one (on click, or after resting the mouse 0.5–3 s in it), offer the Getting Started tour at the next start (see [Handbook and tours](#handbook-and-tours)) |
 | Appearance | Theme, compact mode, monochrome icons, icon colours (Theme default; Own colours in every theme - also in Hacker and Amber, which draw every icon in one colour; One colour of your choice), font size (zoom), highlight hidden files and their colour (a colour that is hard to read on the theme is used only after a question) |
 | Toolbar | Group the buttons by category, show each category's colour behind its buttons, the colour of each category (Connections, Windows & Panes, Files & Search, Media, LLM & Agent, Tools & System, Extensions), *Reset to Defaults* |
 | Files & Panes | Show hidden files, open size limit, parallel transfers, RAM workspaces (on / off, size limit, memory kept free) and temporary files in RAM (applies at the next start) |
@@ -1711,9 +1744,13 @@ from its own release: *Help → Features… → Packs…* lists them with their
 download size, *Add* fetches the unit's wheels (from the release, else the
 same file from PyPI), checks the release's signature, the pack manifest and
 every wheel's SHA-256 before anything is unpacked, and *Remove* deletes what
-no other installed unit needs; changes apply at the next start. An update of
-the binary brings the installed units along - the new release's, checked the
-same way - before the new binary is fetched (docs/PACKS.md).
+no other installed unit needs. A unit whose wheels are all pure Python is
+ready to use at once; one with a native wheel, and a removal, apply at the
+next start. An update of the binary brings the installed units along - the
+new release's, checked the same way - before the new binary is fetched; when
+the release's pack manifest was re-issued (same version, a pack fixed),
+*Help → Features…* offers *Update packs*, checked the same way
+(docs/PACKS.md).
 
 
 - **Check at start.** Once per start, about two seconds after the window
@@ -1782,7 +1819,8 @@ environment or in the paranoid security mode; *Check Now* still works.
   pane activation, metadata write mode and confirmation, remember the sudo
   password, hosts searched at once, the security mode, the update settings
   (`update_check_at_start`, `update_auto_download`, a skipped version, the
-  last check).
+  last check), whether the next start offers the Getting Started tour
+  (`offer_tour_at_start`).
 - `~/.config/axross/proxy.json`, `llm.json`, `extensions.json` — the
   default proxy, the LLM profiles, the switched-on extensions (secrets in
   the keyring).

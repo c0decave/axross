@@ -456,7 +456,7 @@ Más capturas de pantalla, cada una con su explicación: **[la slideshow](slides
     Scripts** guarda la llamada como una sección comentada "Try it".
 
 44. **Software de terceros, con su crédito.** **Help → Third-Party
-    Software…** lista los 222 proyectos que axross usa o incluye -
+    Software…** lista los 240 proyectos que axross usa o incluye -
     propósito, licencia, cómo te llega, enlace - desde el mismo archivo de
     datos que los agradecimientos al final de este README.
 

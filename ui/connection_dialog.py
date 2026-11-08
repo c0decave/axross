@@ -125,6 +125,11 @@ class ConnectionDialog(QDialog):
             if self._loaded_profile_name != profile.name:
                 self._load_profile(profile)
         add_close_corner(self)
+        # F1: the handbook's Connections (the window's own F1 does not reach a
+        # modal dialog).
+        from ui.handbook import install_help_key
+
+        install_help_key(self, "connections")
 
     @property
     def result_profile(self) -> ConnectionProfile | None:

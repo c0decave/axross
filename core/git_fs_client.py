@@ -197,6 +197,19 @@ class GitForceRefused(OSError):
     edits silently."""
 
 
+class GitBranchMoved(OSError):
+    """Raised when a write finds the branch moved since the session read
+    it (or while it committed): committing on the old tip would drop the
+    commits made in between, so axross refuses instead."""
+
+
+def _short_sha(sha: bytes | None) -> str:
+    """The first 8 hex digits of *sha*, "none" for a missing ref."""
+    if not sha:
+        return "none"
+    return (sha.decode("ascii", "replace") if isinstance(sha, bytes) else str(sha))[:8]
+
+
 # ---------------------------------------------------------------------------
 # URL → cache-path
 # ---------------------------------------------------------------------------
@@ -1218,7 +1231,31 @@ class GitFsSession(SessionLifecycle):
                     "not commit to it (git refuses such a push too). Write to another "
                     "branch or a bare clone.",
                 )
-            tip_sha = self._branch_tips.get(branch)
+            # The tip the session read (and the caller decided on) may
+            # be stale: someone may have committed or pushed to the
+            # branch since. Building on it would drop that work from
+            # the branch, so the ref is read again here and the commit
+            # refused when it moved.
+            ref_name = f"refs/heads/{branch}".encode()
+            current_refs = self._repo.get_refs()
+            local_sha = current_refs.get(ref_name)
+            tip_now = (
+                local_sha
+                if local_sha is not None
+                else current_refs.get(f"refs/remotes/origin/{branch}".encode())
+            )
+            seen_sha = self._branch_tips.get(branch)
+            if tip_now != seen_sha:
+                # Show the branch as it is now; the change is not made.
+                self._refresh_branch_tips()
+                raise GitBranchMoved(
+                    errno.ESTALE,
+                    f"Git: branch {branch} moved since axross read it "
+                    f"({_short_sha(seen_sha)} -> {_short_sha(tip_now)}): someone "
+                    f"committed or pushed to it. axross did not commit, so that work "
+                    f"is kept; refresh the folder and repeat the change.",
+                )
+            tip_sha = tip_now
             if tip_sha is None:
                 # Brand-new branch: empty tree, no parent.
                 parent_sha = None
@@ -1257,7 +1294,21 @@ class GitFsSession(SessionLifecycle):
             commit.encoding = b"UTF-8"
             commit.message = message.encode("utf-8")
             self._repo.object_store.add_object(commit)
-            self._repo.refs[f"refs/heads/{branch}".encode()] = commit.id
+            # Compare-and-swap: a commit landing between the read above
+            # and here (another process, a push) is not overwritten.
+            if local_sha is None:
+                moved_ok = self._repo.refs.add_if_new(ref_name, commit.id)
+            else:
+                moved_ok = self._repo.refs.set_if_equals(ref_name, local_sha, commit.id)
+            if not moved_ok:
+                self._refresh_branch_tips()
+                raise GitBranchMoved(
+                    errno.ESTALE,
+                    f"Git: branch {branch} moved while axross committed to it: someone "
+                    f"committed or pushed at the same time. axross did not move the "
+                    f"branch, so that work is kept; refresh the folder and repeat the "
+                    f"change.",
+                )
             self._branch_tips[branch] = commit.id
             log.info("Git-FS commit %s on %s: %s", commit.id.decode()[:8], branch, message)
 

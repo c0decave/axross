@@ -578,17 +578,17 @@ sys.stdout.flush()
             proc.stdin.flush()
 
     allowed = {"hosts": {("db.internal", port)}}
-    relay = HostRelay(send, lambda h, p: (h, p) in allowed["hosts"])
-    # The relay opens a real connection: the test resolves the name for it.
-    real_connect = socket.create_connection
+    # The relay resolves the name and connects to the address it checked:
+    # the test resolves db.internal to the local echo server, which only a
+    # test may reach (allow_loopback).
+    def resolve(host, p, *a, **k):
+        assert host == "db.internal"
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", p))]
 
-    def connect(address, *a, **k):
-        host, p = address
-        return real_connect(("127.0.0.1" if host == "db.internal" else host, p), *a, **k)
-
+    relay = HostRelay(send, lambda h, p: (h, p) in allowed["hosts"], allow_loopback=True,
+                      resolver=resolve)
     results = {}
     try:
-        socket.create_connection = connect
         for raw in proc.stdout:
             message = json.loads(raw)
             kind = message.get("type")
@@ -610,7 +610,6 @@ sys.stdout.flush()
                 results["direct"] = message["out"]["direct"]
                 break
     finally:
-        socket.create_connection = real_connect
         relay.close_all()
         proc.stdin.close()
         proc.wait(timeout=10)

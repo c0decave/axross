@@ -4,22 +4,22 @@ Two tabs: the guide (``docs/SCRIPTING.md``, or the variant for the
 interface language, ``SCRIPTING_<lang>.md``) and the API reference
 (:func:`core.scripting.docs`, the same text ``axross.docs()`` returns).
 
-A wheel and the frozen bundle carry no ``docs/`` directory — MANIFEST.in
-ships it in the sdist only, and neither pyproject's package data nor
-build/axross.spec collects it. There the guide falls back to
-:data:`BUILT_IN_GUIDE` plus the slash-command and bundled-script
-references from core.scripting, which every install has.
+A wheel and the frozen bundle carry no ``SCRIPTING*.md`` - only the
+handbook's files (docs/USAGE*.md, see core.handbook) are packaged. There
+the guide falls back to :data:`BUILT_IN_GUIDE` plus the slash-command and
+bundled-script references from core.scripting, which every install has.
+
+The headings, anchors and the safe view are shared with Help > Handbook:
+core.guide_text and ui.guide_view.
 """
 
 from __future__ import annotations
 
 import os
 import re
-import unicodedata
 from urllib.parse import quote, unquote
 
 from PyQt6.QtCore import Qt, QUrl
-from PyQt6.QtGui import QTextCursor
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -35,12 +35,16 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.guide_text import FENCE as _FENCE
+from core.guide_text import HEADING as _HEADING
+from core.guide_text import MAX_GUIDE_BYTES, github_slug, headings
+from core.guide_text import plain_heading as _plain
+from core.guide_text import read_guide as _read_guide
 from core.i18n import tr
+from ui import guide_view
 from ui.close_corner import add_close_corner
 from ui.icon_provider import set_window_icon
 
-#: Largest guide file read from docs/ (the real ones are ~10 KB).
-MAX_GUIDE_BYTES = 1024 * 1024
 #: ``source`` value when the guide comes from :data:`BUILT_IN_GUIDE`.
 BUILT_IN_SOURCE = "built-in"
 
@@ -98,16 +102,6 @@ def _project_root() -> str:
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def _read_guide(path: str) -> str | None:
-    try:
-        if not os.path.isfile(path) or os.path.getsize(path) > MAX_GUIDE_BYTES:
-            return None
-        with open(path, encoding="utf-8") as fh:
-            return fh.read(MAX_GUIDE_BYTES + 1)
-    except (OSError, UnicodeDecodeError):
-        return None
-
-
 def guide_markdown(language: str | None = None, *, root: str | None = None) -> tuple[str, str]:
     """``(markdown, source)``: the docs file for ``language`` (default: the
     interface language), English next, else the built-in guide."""
@@ -137,44 +131,10 @@ def guide_markdown(language: str | None = None, *, root: str | None = None) -> t
 
 # -- structure: headings, slugs, links -------------------------------------------------
 
-_FENCE = re.compile(r"^\s*(```|~~~)")
-_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 _REF_FUNCTION = re.compile(r"^`axross\.([A-Za-z_][A-Za-z0-9_]*)\(")
 _INLINE_API = re.compile(r"`axross\.([A-Za-z_][A-Za-z0-9_]*)(\([^`]*\))?`")
 #: The guide's section about the API (every language writes `axross.*` in it).
 _API_SECTION = "`axross.*`"
-
-
-def _plain(heading: str) -> str:
-    """A heading as the rendered document shows it: without the backticks."""
-    return heading.replace("`", "").strip()
-
-
-def github_slug(heading: str) -> str:
-    """GitHub's anchor for a Markdown heading: lower case, punctuation
-    dropped (letters, digits, "-", "_" and spaces stay), spaces to "-"."""
-    text = heading.strip().lower()
-    out = []
-    for ch in text:
-        if ch in " -_" or unicodedata.category(ch)[0] in "LN":
-            out.append(ch)
-    return "".join(out).replace(" ", "-")
-
-
-def headings(markdown: str) -> list[tuple[int, str]]:
-    """``(level, text)`` of every ATX heading outside fenced code."""
-    out: list[tuple[int, str]] = []
-    in_fence = False
-    for line in markdown.splitlines():
-        if _FENCE.match(line):
-            in_fence = not in_fence
-            continue
-        if in_fence:
-            continue
-        match = _HEADING.match(line)
-        if match:
-            out.append((len(match.group(1)), match.group(2)))
-    return out
 
 
 def reference_topics(reference_md: str) -> dict[str, list[str]]:
@@ -230,31 +190,11 @@ def link_guide(markdown: str, topics: dict[str, list[str]]) -> str:
     return "\n".join(out)
 
 
-def _heading_block(view: QTextBrowser, match) -> "QTextCursor | None":
-    """A cursor at the first heading block of *view* for which *match(text)*
-    holds, or None."""
-    block = view.document().begin()
-    while block.isValid():
-        if block.blockFormat().headingLevel() > 0 and match(block.text()):
-            return QTextCursor(block)
-        block = block.next()
-    return None
-
-
-def _scroll_to(view: QTextBrowser, cursor: QTextCursor) -> None:
-    """Put the heading of *cursor* at the top of *view*."""
-    view.setTextCursor(cursor)
-    rect = view.document().documentLayout().blockBoundingRect(cursor.block())
-    view.verticalScrollBar().setValue(int(rect.top()))
-
-
-def _browser() -> QTextBrowser:
-    view = QTextBrowser()
+def _browser() -> guide_view.GuideBrowser:
     # Every link goes through ScriptingGuideDialog.on_link: api:, apitopic:,
     # #section and the language files stay in the dialog, the rest opens
     # in the browser.
-    view.setOpenLinks(False)
-    return view
+    return guide_view.GuideBrowser()
 
 
 class ScriptingGuideDialog(QDialog):
@@ -271,7 +211,7 @@ class ScriptingGuideDialog(QDialog):
         self.api = _browser()
         try:
             reference = scripting.docs()
-            self.api.setMarkdown(reference)
+            self.api.set_guide_markdown(reference)
         except Exception as exc:  # noqa: BLE001 — never fail the help window
             reference = ""
             self.api.setPlainText(tr("The API reference could not be built: {e}").format(e=exc))
@@ -330,9 +270,7 @@ class ScriptingGuideDialog(QDialog):
     def _load_guide(self, text: str, source: str) -> None:
         self.source = source
         self._guide_markdown = text
-        if source != BUILT_IN_SOURCE:
-            self.guide.setSearchPaths([os.path.dirname(source)])
-        self.guide.setMarkdown(link_guide(text, self._topics))
+        self.guide.set_guide_markdown(link_guide(text, self._topics))
 
     def _fill_contents(self) -> None:
         tree = self.contents
@@ -369,13 +307,13 @@ class ScriptingGuideDialog(QDialog):
             self._go(self.api, lambda text: text.startswith(f"axross.{value}("))
 
     def _go(self, view: QTextBrowser, match) -> bool:
-        cursor = _heading_block(view, match)
+        cursor = guide_view.heading_block(view, match)
         if cursor is None:
             self.search_hint.setText(tr("Not found"))
             return False
         self.search_hint.clear()
         self.tabs.setCurrentWidget(view)  # a tab change refills the contents
-        _scroll_to(view, cursor)
+        guide_view.scroll_to(view, cursor)
         return True
 
     def on_link(self, url: QUrl) -> None:
@@ -419,18 +357,11 @@ class ScriptingGuideDialog(QDialog):
     def find_next(self) -> bool:
         """Select the next match in the visible tab, wrapping at the end."""
         needle = self.search.text()
-        view = self._current_view()
         self.search_hint.clear()
-        if not needle:
-            return False
-        if view.find(needle):
+        if guide_view.find_next(self._current_view(), needle):
             return True
-        cursor = view.textCursor()
-        cursor.movePosition(cursor.MoveOperation.Start)
-        view.setTextCursor(cursor)
-        if view.find(needle):
-            return True
-        self.search_hint.setText(tr("Not found"))
+        if needle:
+            self.search_hint.setText(tr("Not found"))
         return False
 
     def keyPressEvent(self, event) -> None:  # noqa: N802 — Qt

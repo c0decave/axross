@@ -191,7 +191,18 @@ packages = [
     "resources.credits",
     "resources.i18n",
     "resources.chat_servers",
+    "resources.handbook",
 ]
+
+# Help > Handbook reads docs/USAGE*.md (core/handbook.py). A wheel carries
+# them as resources/handbook/ straight from docs/ - no second copy to drift:
+# the package "resources.handbook" is the directory docs/, and only the
+# handbook's files are its data (include-package-data would take every
+# document MANIFEST.in lists for the sdist; exclude-package-data leaves
+# everything that is not USAGE*.md out). tests/test_handbook.py holds the
+# names to core.handbook.HANDBOOK_FILES and build/axross.spec.
+[tool.setuptools.package-dir]
+"resources.handbook" = "docs"
 
 [tool.setuptools.package-data]
 "resources.logo" = ["*.png", "*.svg"]
@@ -203,8 +214,12 @@ packages = [
 "resources.credits" = ["*.json"]
 "resources.i18n" = ["*.json"]
 "resources.chat_servers" = ["*.json"]
+"resources.handbook" = ["USAGE.md", "USAGE_de.md", "USAGE_es.md"]
 "examples" = ["*.md"]
 "examples.scripting_api" = ["*.md"]
+
+[tool.setuptools.exclude-package-data]
+"resources.handbook" = ["*.json", "patterns/*", "[!U]*", "U[!S]*"]
 
 [tool.setuptools.dynamic]
 version = { attr = "axross._version.__version__" }

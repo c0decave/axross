@@ -375,7 +375,24 @@ def _agent_mounts(
     seen: dict[str, bool] = {}
     for path, rw in mounts:
         seen[path] = rw and seen.get(path, True)  # named twice: read-only wins
+    # The protected places of the home folder (shell start files, autostart,
+    # the agent's own settings, ...) stay read-only inside a writable mount:
+    # the worker's own refusal is no guard once the worker is compromised.
+    from core import protected_places
+
+    writable_roots = [p for p, rw in seen.items() if rw]
+    for place in protected_places.existing_places():
+        if any(place == r or place.startswith(r.rstrip(os.sep) + os.sep) for r in writable_roots):
+            seen[place] = False
     return sorted(seen.items(), key=lambda item: (item[0].rstrip(os.sep).count(os.sep), item[0]))
+
+
+def _host_home_env() -> str:
+    """The variable that tells the worker the host's home folder (its HOME
+    is /tmp): core.mcp_server refuses writes to its protected places."""
+    from core.protected_places import HOST_HOME_ENV
+
+    return HOST_HOME_ENV
 
 
 def _bwrap_command(profile: SandboxProfile, root: str, writable: bool, inner: list[str],
@@ -396,6 +413,9 @@ def _bwrap_command(profile: SandboxProfile, root: str, writable: bool, inner: li
         "--setenv",
         "HOME",
         "/tmp",
+        "--setenv",
+        _host_home_env(),
+        os.path.expanduser("~"),
         "--setenv",
         "LANG",
         "C.UTF-8",
@@ -455,6 +475,7 @@ def _container_command(profile: SandboxProfile, engine: str, root: str, writable
         f"--tmpfs=/tmp:rw,nosuid,nodev,noexec,size={rules.tmp_size}",
         f"--memory={rules.memory}", f"--pids-limit={rules.pids}",
         "--env=HOME=/tmp", "--env=PYTHONDONTWRITEBYTECODE=1",
+        f"--env={_host_home_env()}={os.path.expanduser('~')}",
     ]
     if engine == "podman":
         argv.append("--userns=keep-id")  # the user's uid inside is the user's uid outside

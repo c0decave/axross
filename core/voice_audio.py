@@ -141,16 +141,27 @@ _FORMATS = {"int16": ("<h", 32768.0, 0), "int32": ("<i", 2147483648.0, 0),
             "float": ("<f", 1.0, 0), "uint8": ("<B", 128.0, 128)}
 
 
+def _finite(v: float) -> float:
+    """NaN -> 0 (silence), an infinity -> full scale, as numpy.nan_to_num does."""
+    if v != v:
+        return 0.0
+    return max(-1.0, min(1.0, v)) if v in (math.inf, -math.inf) else v
+
+
 def to_mono16k(data: bytes, rate: int, channels: int, sample_format: str) -> bytes:
     """*data* (interleaved, *channels*, *rate*, *sample_format*) as 16 kHz
-    mono int16."""
+    mono int16. A rate of 0 or less is refused (a device that reports none);
+    a NaN float sample is silence, not a random value."""
     if sample_format not in _FORMATS:
         raise ValueError(f"unsupported sample format {sample_format!r}")
+    if not rate > 0:
+        raise ValueError(f"no usable sample rate: {rate!r}")
+    channels = max(1, int(channels))
     if sample_format == "int16" and rate == RATE and channels == 1:
         return data[: len(data) // 2 * 2]
     code, scale, offset = _FORMATS[sample_format]
     width = struct.calcsize(code)
-    frame = width * max(1, channels)
+    frame = width * channels
     data = data[: len(data) // frame * frame]
     try:
         import numpy as np
@@ -159,12 +170,13 @@ def to_mono16k(data: bytes, rate: int, channels: int, sample_format: str) -> byt
     if np is not None:
         dtype = {"<h": "<i2", "<i": "<i4", "<f": "<f4", "<B": "u1"}[code]
         audio = (np.frombuffer(data, dtype=dtype).astype(np.float64) - offset) / scale
-        audio = audio.reshape(-1, max(1, channels)).mean(axis=1)
+        audio = np.nan_to_num(audio, nan=0.0, posinf=1.0, neginf=-1.0)
+        audio = audio.reshape(-1, channels).mean(axis=1)
         if rate != RATE and len(audio):
             n = int(len(audio) * RATE / rate)
             audio = np.interp(np.linspace(0, len(audio) - 1, n), np.arange(len(audio)), audio)
         return (np.clip(audio, -1.0, 32767 / 32768) * 32768).astype("<i2").tobytes()
-    values = [(v[0] - offset) / scale for v in struct.iter_unpack(code, data)]
+    values = [_finite((v[0] - offset) / scale) for v in struct.iter_unpack(code, data)]
     mono = [sum(values[i:i + channels]) / channels for i in range(0, len(values), channels)]
     if rate != RATE and mono:
         n = int(len(mono) * RATE / rate)

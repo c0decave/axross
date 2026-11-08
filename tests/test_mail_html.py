@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -66,7 +67,10 @@ def test_happy_the_project_window_shows_the_message_safely_and_asks_before_a_lin
     dlg.project.import_paths([str(tmp_path / "p.eml")])
     dlg.refresh()
     dlg.table.selectRow(0)
-    app.processEvents()
+    deadline = time.monotonic() + 30           # parsed and sanitised on a thread of its own
+    while "203.0.113.9" not in dlg.message_view.toPlainText() and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
     html_out = dlg.message_view.toHtml()
     assert "203.0.113.9" in dlg.message_view.toPlainText()          # the real target is shown
     assert dlg.message_view.loadResource(2, QUrl("http://track.example/x.png")) is None

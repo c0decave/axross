@@ -42,8 +42,10 @@ Not supported on V1
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
+import posixpath
 import shlex
 import threading
 from datetime import datetime
@@ -201,45 +203,74 @@ def _load_signer(path: str = DEFAULT_ADB_KEY_PATH) -> "PythonRSASigner":
 # --------------------------------------------------------------------------
 
 
-# ``ls -la`` on Android's toybox emits lines like:
+# ``ls -la`` on Android's toybox (Android 6 and newer) emits lines like:
 #   drwxrwx--x 5 system system 3452 2026-04-20 14:02 Download
 #   -rw-rw---- 1 u0_a123 u0_a123 98765 2025-12-01 03:11 photo.jpg
 #   lrwxrwxrwx 1 root root 11 1971-01-01 00:00 sdcard -> /storage/self/primary
+#   crw-rw-rw- 1 root root 10, 229 2024-03-28 10:40 fuse
+# The old toolbox ``ls`` (Android 5 and older) has no link-count column,
+# and no size for a folder or a link:
+#   drwxrwx--x root     sdcard_r          2014-03-28 10:40 Alarms
+#   -rw-rw---- root     sdcard_r   123456 2014-03-28 10:41 photo.jpg
+#   crw-rw---- system   audio     14,   3 2014-03-28 10:40 dsp
 # The leading "total N" line is skipped. Other quirks:
-#   * toybox emits 7 fixed columns + name; the name may contain spaces
+#   * the name may contain spaces
+#   * a device node shows "major, minor" where the size goes
 #   * some Android builds use ``-h`` for bigger sizes (rare)
-# Regex captures the whole mode + numeric size + "YYYY-MM-DD HH:MM"
+# Each regex captures the whole mode + numeric size + "YYYY-MM-DD HH:MM"
 # + the remainder (name, possibly containing " -> target" for links).
-_LS_LINE_RE = None  # lazily compiled — import-time re isn't hot enough
+# Toybox is tried first: on a toolbox line whose owner is a bare uid
+# ("10055 10055 123 ...") the toolbox pattern alone reads it right.
+_LS_LINE_RES = None  # lazily compiled — import-time re isn't hot enough
 # to matter AND keeps the module's import surface small.
 
+#: The file-type characters of an ``ls`` mode that name no file content.
+_SPECIAL_NAMES = {
+    "b": "block device",
+    "c": "character device",
+    "p": "FIFO (named pipe)",
+    "s": "socket",
+}
+_SPECIAL_TYPES = frozenset(_SPECIAL_NAMES)
 
-def _compile_ls_re():
-    global _LS_LINE_RE
-    if _LS_LINE_RE is None:
+
+def _compile_ls_res():
+    global _LS_LINE_RES
+    if _LS_LINE_RES is None:
         import re
 
-        _LS_LINE_RE = re.compile(
-            r"^(?P<mode>[bcdlps-][rwxstST-]{9})\s+"
-            r"(?P<links>\d+)\s+"
-            r"(?P<user>\S+)\s+"
-            r"(?P<group>\S+)\s+"
-            r"(?P<size>\d+)\s+"
-            r"(?P<date>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})\s+"
-            r"(?P<name>.+?)$"
+        mode = r"^(?P<mode>[bcdlps-][rwxstST-]{9})[.+@]?\s+"
+        owner = r"(?P<user>\S+)\s+(?P<group>\S+)\s+"
+        tail = r"(?P<date>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})\s+(?P<name>.+?)$"
+        device = r"(?P<major>\d+),\s*(?P<minor>\d+)\s+"
+        _LS_LINE_RES = (
+            # toybox: link count, and a size (or major, minor) always
+            re.compile(
+                mode + r"(?P<links>\d+)\s+" + owner
+                + r"(?:(?P<size>\d+)\s+|" + device + ")" + tail
+            ),
+            # toolbox: no link count; no size for a folder or a link
+            re.compile(mode + owner + r"(?:(?P<size>\d+)\s+|" + device + ")?" + tail),
         )
-    return _LS_LINE_RE
+    return _LS_LINE_RES
 
 
-def _parse_ls_line(line: str) -> FileItem | None:
-    """Parse one ``ls -la`` output line into a FileItem. Returns
-    None for ``total N`` or otherwise unparseable lines so the
-    caller can skip silently rather than crash on a weird format.
+def _parse_ls_entry(line: str) -> tuple[FileItem, str] | None:
+    """One ``ls -la`` output line (toybox or toolbox) as ``(FileItem,
+    file-type character)``; None for ``total N`` or an unparseable line.
+
+    A device node, FIFO or socket is an entry like any other, with size
+    0 ("major, minor" is no size); its type character (``c``, ``b``,
+    ``p``, ``s``) tells the caller it holds no file content.
     """
     line = line.rstrip()
     if not line or line.startswith("total "):
         return None
-    m = _compile_ls_re().match(line)
+    m = None
+    for regex in _compile_ls_res():
+        m = regex.fullmatch(line)
+        if m is not None:
+            break
     if m is None:
         log.debug("ADB ls: unparseable line %r", line)
         return None
@@ -255,14 +286,25 @@ def _parse_ls_line(line: str) -> FileItem | None:
         modified = datetime.strptime(m.group("date"), "%Y-%m-%d %H:%M")
     except ValueError:
         modified = datetime.fromtimestamp(0)
-    return FileItem(
+    size = m.group("size")
+    item = FileItem(
         name=name,
-        size=int(m.group("size")),
+        size=int(size) if size is not None else 0,
         modified=modified,
         is_dir=is_dir,
         is_link=is_link,
         link_target=link_target,
     )
+    return item, mode[0]
+
+
+def _parse_ls_line(line: str) -> FileItem | None:
+    """Parse one ``ls -la`` output line into a FileItem. Returns None
+    for ``total N`` or otherwise unparseable lines; whether an answer
+    without a single parsed line is an error is the caller's to say
+    (it is: see :meth:`AdbSession.list_dir`)."""
+    entry = _parse_ls_entry(line)
+    return entry[0] if entry is not None else None
 
 
 # --------------------------------------------------------------------------
@@ -529,22 +571,50 @@ class AdbSession(SessionLifecycle):
         items: list[FileItem] = []
         listed = False
         errors: list[str] = []
+        unparsed: list[str] = []
+        special: dict[str, str] = {}
         for line in split_lf_only_stream(out):
-            fi = _parse_ls_line(line)
-            if fi is None:
+            entry = _parse_ls_entry(line)
+            if entry is None:
                 if line.startswith("ls:"):
                     errors.append(line.strip())
+                elif line.strip() and not line.startswith("total "):
+                    unparsed.append(line.rstrip())
                 continue
+            fi, kind = entry
             listed = True  # "." and ".." too: the folder is there
             if fi.name in (".", ".."):
                 continue
+            if kind in _SPECIAL_TYPES:
+                special[posixpath.normpath(posixpath.join(path, fi.name))] = kind
             items.append(fi)
         if errors and not listed:
             # ls refused the folder itself; an unparsable answer used to
             # be an empty listing (review B13, 2026-10-17). An entry ls
             # could not stat beside a listing stays a partial listing.
             raise ls_error(f"ADB list_dir({path})", errors[0])
+        if unparsed and not listed:
+            # An ls whose lines this parser cannot read at all (another
+            # ls build) is no empty folder: a copy would take it as one.
+            raise OSError(
+                f"ADB list_dir({path}): unreadable answer from ls: {unparsed[0][:200]!r}"
+            )
+        if unparsed:
+            log.warning(
+                "ADB list_dir(%s): %d ls line(s) not understood, first %r",
+                path, len(unparsed), unparsed[0][:200],
+            )
+        self._remember_special(path, special)
         return items
+
+    def _remember_special(self, folder: str, special: dict[str, str]) -> None:
+        """Note the device nodes, FIFOs and sockets a listing of *folder*
+        named: open_read refuses them (a pull of /dev/zero never ends)."""
+        known = self.__dict__.setdefault("_special_paths", {})
+        prefix = posixpath.normpath(folder).rstrip("/") + "/"
+        for old in [p for p in known if p.startswith(prefix) and "/" not in p[len(prefix):]]:
+            del known[old]
+        known.update(special)
 
     def stat(self, path: str) -> FileItem:
         """The entry at *path*. FileNotFoundError only when ``ls`` says
@@ -559,11 +629,17 @@ class AdbSession(SessionLifecycle):
         out = self._shell(f"ls -la -d {self._shell_q(path)}")
         errors: list[str] = []
         for line in split_lf_only_stream(out):
-            fi = _parse_ls_line(line)
-            if fi is None:
+            entry = _parse_ls_entry(line)
+            if entry is None:
                 if line.startswith("ls:"):
                     errors.append(line.strip())
                 continue
+            fi, kind = entry
+            known = self.__dict__.setdefault("_special_paths", {})
+            if kind in _SPECIAL_TYPES:
+                known[posixpath.normpath(path)] = kind
+            else:
+                known.pop(posixpath.normpath(path), None)
             # ls -d echoes the path as the name; reduce to basename
             # so callers comparing against FileItem.name aren't
             # surprised by a leading slash. FileItem is frozen — we
@@ -609,6 +685,15 @@ class AdbSession(SessionLifecycle):
         """
         import tempfile as _tf
 
+        kind = self.__dict__.get("_special_paths", {}).get(posixpath.normpath(path))
+        if kind is not None:
+            # A device node, FIFO or socket the listing named: no file
+            # content to pull, and a pull of /dev/zero never ends.
+            raise OSError(
+                errno.EINVAL,
+                f"ADB: {path} is not a regular file ({_SPECIAL_NAMES[kind]}); not read",
+                path,
+            )
         local = _tf.NamedTemporaryFile(
             prefix="axross-adb-",
             delete=False,

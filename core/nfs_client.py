@@ -190,12 +190,26 @@ class NfsSession(SessionLifecycle):
 
     def disconnect(self) -> None:
         if self._mounted:
+            # umount runs with check=False: its exit status, not the
+            # absence of an exception, says whether the export is off
+            # the mount point. A busy mount stays mounted - and marked
+            # so: the mount point is kept, the tunnel the kernel mount
+            # runs through stays up, and disconnect() again retries.
             try:
-                self._run(["umount", self._mount_point], check=False)
-                self._mounted = False
-                log.info("NFS unmounted: %s", self._mount_point)
-            except Exception as e:
-                log.error("Failed to unmount NFS: %s", e)
+                result = self._run(["umount", self._mount_point], check=False)
+            except Exception as e:  # noqa: BLE001 - sudo missing, a timeout
+                log.error("Failed to unmount NFS %s: %s", self._mount_point, e)
+                return
+            if result.returncode != 0:
+                log.error(
+                    "Failed to unmount NFS %s (exit %s): %s; it stays mounted",
+                    self._mount_point,
+                    result.returncode,
+                    (result.stderr or "").strip()[:200] or "no message",
+                )
+                return
+            self._mounted = False
+            log.info("NFS unmounted: %s", self._mount_point)
         if self._own_mount and os.path.isdir(self._mount_point) and not self._mounted:
             remove_private_mount_point(self._mount_point)
         self._close_tunnel()

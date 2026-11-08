@@ -64,7 +64,9 @@ signs `SHA256SUMS` (`scripts/sign_release.py`, raw 64-byte signature in
   (a blob whose SHA-256 is already there is kept) before the new binary is started; if
   a unit cannot be fetched, the update says which and the old version keeps running.
   *Help > Features…* also offers "Update packs" on its own when the release's manifest
-  was re-issued (same version, a pack fixed).
+  was re-issued (same version, a pack fixed): `core.packs.check_reissued` and `update`,
+  through the same signed `SHA256SUMS` and blob checks as *Add*; the fixed packs are used
+  from the next start.
 - Old versions' pack folders are removed once the new version has started once.
 
 ## In the base
@@ -73,8 +75,10 @@ Help > Features… lists the units with size and what they bring; *Add* download
 missing blobs (GitHub release asset, else PyPI - the same file: the SHA-256 decides),
 checks each hash against the signed manifest, unpacks into
 `~/.local/share/axross/packs/<version>/<blob>/` (0700, never over an existing one) and
-adds them to `sys.path` at the next start (and at once for pure-Python units). *Remove*
-deletes a unit's blobs that no other installed unit uses. Nothing is executed while
+adds them to `sys.path` at the next start (and at once for pure-Python units: every wheel
+`py3-none-any`; the window says "ready to use", a unit with a native wheel waits for the
+restart). *Remove* deletes a unit's blobs that no other installed unit uses; what is
+already loaded stays in use until the next start. Nothing is executed while
 unpacking; a blob whose hash or signature does not match is refused and deleted. A
 proxy and the offline case work as for the voice models. An update of axross brings a
 new manifest: units are fetched again for the new version.

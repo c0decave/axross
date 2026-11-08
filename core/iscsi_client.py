@@ -148,6 +148,10 @@ class IscsiSession(SessionLifecycle):
         self._device_path: str = ""
         self._mounted = False
         self._logged_in = False
+        # True only when THIS session's login made the iSCSI session: one
+        # that existed before (iscsiadm exit 15, reused) belongs to the
+        # system or another program and is not logged out on disconnect.
+        self._own_login = False
         self._tmp_dir_created = False
 
         if mount_point:
@@ -197,11 +201,32 @@ class IscsiSession(SessionLifecycle):
         self.disconnect()
 
     def disconnect(self) -> None:
-        """Unmount, log out of the target, and clean up."""
-        if self._mounted:
-            self._unmount()
+        """Unmount, log out of the target, and clean up.
+
+        Logs out only a session this one's login made, and only once the
+        file system is off it: with the umount failed (busy), logging out
+        would pull the block device out from under a mounted file system.
+        """
+        if self._mounted and not self._unmount():
+            # The session (and a proxy tunnel it runs through) stays up
+            # for the mounted file system; disconnect() again retries.
+            log.warning(
+                "iSCSI: staying logged in to %s: %s is still mounted (the umount "
+                "failed), and logging out would remove the device under it",
+                self._target_iqn,
+                self._mount_point,
+            )
+            return
         if self._logged_in:
-            self._logout()
+            if getattr(self, "_own_login", False):
+                self._logout()
+            else:
+                log.info(
+                    "iSCSI: not logging out of %s: its session existed before axross "
+                    "connected (reused), so it is left as it was",
+                    self._target_iqn,
+                )
+                self._logged_in = False
         self._delete_iface()
         if self._tmp_dir_created and os.path.isdir(self._mount_point) and not self._mounted:
             remove_private_mount_point(self._mount_point)
@@ -928,11 +953,15 @@ class IscsiSession(SessionLifecycle):
         except subprocess.CalledProcessError as exc:
             if exc.returncode == 15:
                 log.info(
-                    "iSCSI session already exists for %s; reusing",
+                    "iSCSI session already exists for %s; reusing (it is not logged "
+                    "out on disconnect)",
                     self._target_iqn,
                 )
+                self._own_login = False
             else:
                 raise
+        else:
+            self._own_login = True
         self._logged_in = True
         if self._proxied:
             self._assert_session_via_tunnel(portal)
@@ -957,7 +986,11 @@ class IscsiSession(SessionLifecycle):
                 seen.append(stripped.split(":", 1)[1].strip().split(",")[0])
         if seen and all(addr == portal for addr in seen):
             return
-        self._logout()
+        if getattr(self, "_own_login", False):
+            self._logout()
+        else:
+            # A session that was there before is not this one's to end.
+            self._logged_in = False
         raise OSError(
             f"iSCSI session for {self._target_iqn} left the proxy tunnel "
             f"(portals: {', '.join(seen) or 'unknown'}, expected {portal}); "
@@ -1135,14 +1168,17 @@ class IscsiSession(SessionLifecycle):
             pass
         return ""
 
-    def _unmount(self) -> None:
-        """Unmount the filesystem."""
+    def _unmount(self) -> bool:
+        """Unmount the filesystem. False (and still marked mounted) when
+        umount fails: the file system is still on the device then."""
         log.info("Unmounting %s", self._mount_point)
         try:
             self._run_privileged(["umount", self._mount_point])
-        except subprocess.CalledProcessError as exc:
-            log.warning("umount failed: %s", exc)
+        except (subprocess.CalledProcessError, OSError) as exc:
+            log.warning("umount of %s failed: %s", self._mount_point, exc)
+            return False
         self._mounted = False
+        return True
 
     # ------------------------------------------------------------------
     # Internal helpers -- stat / FileItem construction

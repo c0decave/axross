@@ -333,9 +333,17 @@ class NfsUserSession(SessionLifecycle):
 
     def rename(self, src: str, dst: str) -> None:
         sdir, sname, skey = self._parent(src)
-        ddir, dname, _dkey = self._parent(dst)
-        self._client().rename(sdir, sname, ddir, dname)
-        self._forget(skey)
+        ddir, dname, dkey = self._parent(dst)
+        try:
+            self._client().rename(sdir, sname, ddir, dname)
+        finally:
+            # Both names change: the source is gone, and the destination
+            # names the moved entry now. A handle cached for the entry
+            # the rename replaced (and for everything below it, when
+            # that was a folder) would read and write the old inode - one
+            # that lives on under another hard link or while still open.
+            self._forget(skey)
+            self._forget(dkey)
 
     def open_read(self, path: str) -> IO[bytes]:
         fh, attr = self._resolve(path)

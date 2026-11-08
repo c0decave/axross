@@ -87,6 +87,7 @@ from core import remote_sweep as RW  # noqa: E402
 from core import self_update as SU  # noqa: E402
 from core import security_mode as SM  # noqa: E402
 from core import sudo_password as SP  # noqa: E402
+from core import tour_offer as TO  # noqa: E402
 from core import transfer_pool as TP  # noqa: E402
 from core import voice_settings as VS  # noqa: E402
 from tests.proxy_testkit import EchoServer, FakeSocks5Server, allow_loopback_proxy  # noqa: E402
@@ -250,6 +251,16 @@ def effect_activation(ctx, win, value) -> None:
         assert pane._hover_timer.isActive()
         assert pane._hover_timer.interval() == int(value * 1000)
     pane._hover_timer.stop()
+
+
+def effect_tour_offer(ctx, win, value) -> None:
+    """The start offers the Getting Started tour (a status bar notice, never
+    a dialog) only while the setting is on, and only once."""
+    win._dismiss_tour_offer()
+    assert win.offer_getting_started_tour() is value
+    assert (win._tour_offer is not None) is value
+    assert TO.offer_at_start() is False  # shown once, or switched off
+    win._dismiss_tour_offer()
 
 
 def effect_theme(ctx, win, value) -> None:
@@ -961,6 +972,11 @@ ROWS = [
         lambda c: PA.activation(),
         lambda c, v: _edit_settings(c, PA.SETTING, v), (7, "x", True, 2.0, None),
         effect_activation),
+    Row("offer_tour_at_start", "general", "settings.json offer_tour_at_start", (False,), True,
+        _set_check("general", "tour_offer_check"), _page_attr("general", "tour_offer_check"),
+        lambda c: TO.offer_at_start(),
+        lambda c, v: _edit_settings(c, TO.SETTING, v), ("no", 0, None, [True]),
+        effect_tour_offer),
     Row("theme", "appearance", "session.json window.ui_theme", ("hacker", "modern-light"),
         "modern",
         _set_combo("appearance", "theme_combo"), _combo_shown("appearance", "theme_combo"),
@@ -1193,6 +1209,7 @@ _ROW_WIDGETS = {
     "language": ("general.language_combo",),
     "restore_layout_on_start": ("general.restore_check",),
     "pane_activation": ("general.activation_combo",),
+    "offer_tour_at_start": ("general.tour_offer_check",),
     "theme": ("appearance.theme_combo",),
     "compact": ("appearance.compact_check",),
     "monochrome_icons": ("appearance.monochrome_check",),
