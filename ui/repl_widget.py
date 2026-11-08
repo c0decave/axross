@@ -251,6 +251,9 @@ class ReplWidget(QPlainTextEdit):
     """
 
     statement_executed = pyqtSignal(str)
+    #: Esc: the user wants out. Tab completes here, so Tab cannot leave;
+    #: the window moves the focus back to the active file pane.
+    leave_requested = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None, startup_path: Path | None = None):
         super().__init__(parent)
@@ -792,7 +795,7 @@ REPL slash commands (typed at the prompt; not Python):
         Qt.Key.Key_Right, Qt.Key.Key_Left, Qt.Key.Key_Up, Qt.Key.Key_Down,
         Qt.Key.Key_Home, Qt.Key.Key_End, Qt.Key.Key_PageUp, Qt.Key.Key_PageDown,
         Qt.Key.Key_Shift, Qt.Key.Key_Control, Qt.Key.Key_Alt, Qt.Key.Key_Meta,
-        Qt.Key.Key_AltGr, Qt.Key.Key_CapsLock,
+        Qt.Key.Key_AltGr, Qt.Key.Key_CapsLock, Qt.Key.Key_Escape,
     })
 
     def _clamp_cursor_to_input(self) -> None:
@@ -856,6 +859,11 @@ REPL slash commands (typed at the prompt; not Python):
             return
         if key == Qt.Key.Key_Tab:
             self._tab_complete()
+            return
+        if key == Qt.Key.Key_Escape and event.modifiers() == Qt.KeyboardModifier.NoModifier:
+            # A way out of the REPL: Tab completes, and the dock sits in a
+            # tab group a keyboard user cannot otherwise leave (review round 3).
+            self.leave_requested.emit()
             return
         if key == Qt.Key.Key_Up:
             self._history_prev()
@@ -926,7 +934,7 @@ class _ApiTab(QWidget):
         layout.setSpacing(2)
 
         self._filter = QLineEdit()
-        self._filter.setPlaceholderText("Search axross.* …")
+        self._filter.setPlaceholderText(tr("Search axross.* …"))
         self._filter.textChanged.connect(self._on_filter_changed)
         layout.addWidget(self._filter)
 
@@ -945,7 +953,7 @@ class _ApiTab(QWidget):
 
         self._list.clear()
         for group, items in _help_entries():
-            header = QListWidgetItem(f"── {group} ──")
+            header = QListWidgetItem(f"── {tr(group)} ──")
             header.setFlags(Qt.ItemFlag.NoItemFlags)
             self._list.addItem(header)
             for sig, summary in items:
@@ -1073,11 +1081,11 @@ class _ApiDocPane(QWidget):
         # generator.
         from core import scripting as _s
 
-        self._tabs.addTab(_MarkdownTab(lambda: _s.docs("slash")), "Slash")
-        self._tabs.addTab(_MarkdownTab(lambda: _s.docs("scripts")), "Scripts")
+        self._tabs.addTab(_MarkdownTab(lambda: _s.docs("slash")), tr("Slash"))
+        self._tabs.addTab(_MarkdownTab(lambda: _s.docs("scripts")), tr("Scripts"))
         self._tabs.addTab(
             _MarkdownTab(lambda: _s.docs("backend")),
-            "Protocol",
+            tr("Protocol"),
         )
 
     # The previous incarnation exposed ``self._list``; some tests poke

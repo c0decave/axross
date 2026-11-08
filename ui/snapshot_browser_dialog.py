@@ -42,6 +42,7 @@ from core import snapshot_browser as SB
 from ui.close_corner import add_close_corner
 from ui.scan_job import BusyStrip, ScanJob
 from ui.icon_provider import set_window_icon
+from core.i18n import tr, tr_n
 
 log = logging.getLogger("ui.snapshot_browser_dialog")
 
@@ -84,7 +85,7 @@ class SnapshotBrowserDialog(QDialog):
         self._backend = backend
         self._path = path
         backend_name = getattr(backend, "name", type(backend).__name__)
-        self.setWindowTitle(f"Versions — {path} [{backend_name}]")
+        self.setWindowTitle(tr("Versions — {path} [{backend_name}]").format(path=path, backend_name=backend_name))
         self.resize(820, 460)
         self._entries: list = []
         # Saving / restoring a version streams the whole file: it runs in a
@@ -113,7 +114,7 @@ class SnapshotBrowserDialog(QDialog):
 
         self._table = QTableWidget(0, 5, self)
         self._table.setHorizontalHeaderLabels(
-            ["Modified", "Size", "Label", "Version ID", "Current"]
+            [tr("Modified"), tr("Size"), tr("Label"), tr("Version ID"), tr("Current")]
         )
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
@@ -125,17 +126,17 @@ class SnapshotBrowserDialog(QDialog):
         root.addWidget(self._table, stretch=1)
 
         btn_row = QHBoxLayout()
-        self._save_btn = QPushButton("Save Version As…", self)
+        self._save_btn = QPushButton(tr("Save Version As…"), self)
         self._save_btn.clicked.connect(self._save_as_selected)
         btn_row.addWidget(self._save_btn)
 
-        self._restore_btn = QPushButton("Restore as Current", self)
+        self._restore_btn = QPushButton(tr("Restore as Current"), self)
         self._restore_btn.clicked.connect(self._restore_selected)
         btn_row.addWidget(self._restore_btn)
 
         btn_row.addStretch(1)
 
-        self._strip = BusyStrip(self._job, self, cancel_text="Cancel")
+        self._strip = BusyStrip(self._job, self, cancel_text=tr("Cancel"))
         self._busy_bar = self._strip.bar
         self._progress_label = self._strip.label
         self._cancel_btn = self._strip.cancel_button
@@ -155,7 +156,7 @@ class SnapshotBrowserDialog(QDialog):
         """Ask the server for the versions (off the GUI thread: it held the
         window - and the dialog did not open - until the server answered)."""
         backend, path = self._backend, self._path
-        self._info.setText(f"{self._path}  —  listing versions…")
+        self._info.setText(f"{self._path}  —  " + tr("listing versions…"))
         self._save_btn.setEnabled(False)
         self._restore_btn.setEnabled(False)
         self._list_job.start(lambda _cancelled, _report: SB.browse(backend, path), replace=True)
@@ -171,7 +172,8 @@ class SnapshotBrowserDialog(QDialog):
         if kind == "error":
             self._entries = []
             self._table.setRowCount(0)
-            self._info.setText(f"{self._path}  —  could not list the versions: {value}")
+            self._info.setText(
+                f"{self._path}  —  " + tr("could not list the versions: {error}").format(error=value))
             return
         self._entries = value
         self._table.setRowCount(0)
@@ -187,11 +189,11 @@ class SnapshotBrowserDialog(QDialog):
             self._table.setItem(
                 row,
                 4,
-                QTableWidgetItem("yes" if e.is_current else ""),
+                QTableWidgetItem(tr("yes") if e.is_current else ""),
             )
 
         self._info.setText(
-            f"{self._path}  —  {len(self._entries)} version{'' if len(self._entries) == 1 else 's'}"
+            f"{self._path}  —  " + tr_n(len(self._entries), "{n} version", "{n} versions")
         )
         has_entries = bool(self._entries)
         self._save_btn.setEnabled(has_entries and not self._job.running)
@@ -214,14 +216,14 @@ class SnapshotBrowserDialog(QDialog):
         if entry is None:
             QMessageBox.information(
                 self,
-                "Save Version",
-                "Select a version row first.",
+                tr("Save Version"),
+                tr("Select a version row first."),
             )
             return
         suggested = f"{_basename(self._path) or 'file'}.{entry.version_id[:12]}"
         target, _ = QFileDialog.getSaveFileName(
             self,
-            "Save Version As",
+            tr("Save Version As"),
             suggested,
         )
         if not target:
@@ -277,18 +279,18 @@ class SnapshotBrowserDialog(QDialog):
         ctx = self._job_ctx
         entry = ctx.get("entry")
         if ctx.get("op") == "save":
-            title, failed = "Save Version", "Could not save version"
-            done_text = f"Saved version {entry.version_id} → {ctx.get('target')}"
+            title, failed = tr("Save Version"), tr("Could not save version")
+            done_text = tr("Saved version {version} → {target}").format(
+                version=entry.version_id, target=ctx.get("target"))
         else:
-            title, failed = "Restore Version", "Restore failed"
-            done_text = (
-                f"Restored version {entry.version_id} as the current contents of {self._path}."
-            )
+            title, failed = tr("Restore Version"), tr("Restore failed")
+            done_text = tr("Restored version {version} as the current contents of {path}.").format(
+                version=entry.version_id, path=self._path)
         if kind == "error":
             QMessageBox.warning(self, title, f"{failed}:\n{value}")
             return
         if cancelled:
-            QMessageBox.information(self, title, "Cancelled — nothing was changed.")
+            QMessageBox.information(self, title, tr("Cancelled — nothing was changed."))
             return
         QMessageBox.information(self, title, done_text)
         if ctx.get("op") == "restore":
@@ -310,23 +312,22 @@ class SnapshotBrowserDialog(QDialog):
         if entry is None:
             QMessageBox.information(
                 self,
-                "Restore Version",
-                "Select a version row first.",
+                tr("Restore Version"),
+                tr("Select a version row first."),
             )
             return
         if entry.is_current:
             QMessageBox.information(
                 self,
-                "Restore Version",
-                "That entry is already the current version.",
+                tr("Restore Version"),
+                tr("That entry is already the current version."),
             )
             return
         reply = QMessageBox.question(
             self,
-            "Restore Version",
-            f"Overwrite the current contents of\n{self._path}\n"
-            f"with version {entry.version_id} ({_format_when(entry.modified)})?\n\n"
-            "This is destructive on the backend.",
+            tr("Restore Version"),
+            tr("Overwrite the current contents of\n{path}\nwith version {version_id} "
+                "({when})?\n\nThis is destructive on the backend.").format(path=self._path, version_id=entry.version_id, when=_format_when(entry.modified)),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:

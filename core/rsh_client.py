@@ -364,6 +364,13 @@ class RshSession(SessionLifecycle):
         except (FileNotFoundError, NotADirectoryError):
             return False
 
+    def _is_file(self, path: str) -> bool:
+        """True for an entry that is not a folder (False when nothing is there)."""
+        try:
+            return not self.stat(path).is_dir
+        except (FileNotFoundError, NotADirectoryError):
+            return False
+
     def exists(self, path: str) -> bool:
         """False only when ``ls`` reports the path missing. A timeout, a
         cut connection, a refused permission or an unreadable answer is
@@ -403,7 +410,10 @@ class RshSession(SessionLifecycle):
     # ------------------------------------------------------------------
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
-        path = _validate_path(self.normalize(path))
+        from core.path_policy import refuse_folder_path
+
+        # normalize() drops the slash: "x/" was written as a FILE "x".
+        path = _validate_path(self.normalize(refuse_folder_path(path)))
         return _RshWriter(self, path, append=append)
 
     def remove(self, path: str, recursive: bool = False) -> None:
@@ -423,7 +433,12 @@ class RshSession(SessionLifecycle):
         self._run_remote(f"mkdir -p -- {shlex.quote(path)}")
 
     def rename(self, src: str, dst: str) -> None:
+        from core.path_policy import refuse_folder_path
+
         src = _validate_path(self.normalize(src))
+        # normalize() drops the slash: a file renamed to "x/" became "x". A
+        # source that is not there goes on to mv, which says so.
+        refuse_folder_path(dst, "rename to", source_is_file=lambda: self._is_file(src))
         dst = _validate_path(self.normalize(dst))
         # Plain mv moves src INTO an existing folder dst (review B6 twin).
         self._run_remote(rename_command(src, dst))

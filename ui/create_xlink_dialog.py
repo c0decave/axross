@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 from core import xlink as XL
 from ui.close_corner import add_close_corner
 from ui.icon_provider import set_window_icon
+from core.i18n import tr
 
 
 class CreateXlinkDialog(QDialog):
@@ -30,7 +31,7 @@ class CreateXlinkDialog(QDialog):
     def __init__(self, default_name: str = "", parent=None) -> None:
         super().__init__(parent)
         set_window_icon(self, "globe")
-        self.setWindowTitle("Create XLink")
+        self.setWindowTitle(tr("Create XLink"))
         self.resize(560, 220)
         self._build_ui(default_name)
         add_close_corner(self)
@@ -40,8 +41,8 @@ class CreateXlinkDialog(QDialog):
 
         form = QFormLayout()
         self._name_edit = QLineEdit(default_name)
-        self._name_edit.setPlaceholderText("link name (no .axlink suffix needed)")
-        form.addRow("Name:", self._name_edit)
+        self._name_edit.setPlaceholderText(tr("link name (no .axlink suffix needed)"))
+        form.addRow(tr("Name:"), self._name_edit)
 
         self._scheme_box = QComboBox()
         # Sorted alphabetically so the user can scan quickly. The
@@ -49,22 +50,22 @@ class CreateXlinkDialog(QDialog):
         for scheme in sorted(XL.ALLOWED_TARGET_SCHEMES):
             self._scheme_box.addItem(scheme)
         self._scheme_box.activated.connect(self._on_scheme_picked)
-        form.addRow("Scheme:", self._scheme_box)
+        form.addRow(tr("Scheme:"), self._scheme_box)
 
         self._url_edit = QLineEdit()
         self._url_edit.setPlaceholderText(
-            "e.g. sftp://host/path  or  s3://bucket/key  or  ax-cas://sha256:abc"
+            tr("e.g. sftp://host/path  or  s3://bucket/key  or  ax-cas://sha256:abc")
         )
-        form.addRow("Target URL:", self._url_edit)
+        form.addRow(tr("Target URL:"), self._url_edit)
 
         self._display_edit = QLineEdit()
-        self._display_edit.setPlaceholderText("optional human-readable label")
-        form.addRow("Display name:", self._display_edit)
+        self._display_edit.setPlaceholderText(tr("optional human-readable label"))
+        form.addRow(tr("Display name:"), self._display_edit)
         root.addLayout(form)
 
         # Allowed-schemes hint so the user can read what's permitted
         # without diving into the library docs.
-        hint = QLabel("Allowed schemes: " + ", ".join(sorted(XL.ALLOWED_TARGET_SCHEMES)))
+        hint = QLabel(tr("Allowed schemes: ") + ", ".join(sorted(XL.ALLOWED_TARGET_SCHEMES)))
         hint.setStyleSheet("color: #666; font-size: 11px;")
         hint.setWordWrap(True)
         root.addWidget(hint)
@@ -95,17 +96,17 @@ class CreateXlinkDialog(QDialog):
         name = self._name_edit.text().strip()
         url = self._url_edit.text().strip()
         if not name:
-            self._error.setText("Name is required.")
+            self._error.setText(tr("Name is required."))
             return
         try:
             from core.path_policy import safe_leaf
 
             safe_leaf(name)
         except ValueError as exc:
-            self._error.setText(f"Unsafe link name: {exc}")
+            self._error.setText(tr("Unsafe link name: {exc}").format(exc=exc))
             return
         if not url:
-            self._error.setText("Target URL is required.")
+            self._error.setText(tr("Target URL is required."))
             return
         try:
             XL._validate_target_url(url)

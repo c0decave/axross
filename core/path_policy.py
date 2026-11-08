@@ -230,6 +230,26 @@ def refuse_control_chars(path: str, where: str = "") -> str:
     return path
 
 
+def refuse_folder_path(path: str, action: str = "write", *, source_is_file=None) -> str:
+    """*path* unchanged; :class:`IsADirectoryError` (EISDIR) when it ends
+    in ``/`` (the root aside): such a path names a folder, never a file.
+
+    For a file write or rename destination on a backend whose path
+    handling drops the slash (``normpath``, a kernel path join, a server
+    that canonicalizes): ``x/`` was written as a FILE ``x``. A rename
+    passes *source_is_file*, called only for such a path: a folder
+    renamed to ``x/`` is what rename(2) allows, and a source that is not
+    there is the rename's own FileNotFoundError.
+    """
+    if path.endswith("/") and path.strip("/"):
+        if source_is_file is not None and not source_is_file():
+            return path
+        raise IsADirectoryError(
+            errno.EISDIR, f"Cannot {action} {path}: a path ending in '/' names a folder", path
+        )
+    return path
+
+
 def _inside(root: str, path: str) -> bool:
     return os.path.commonpath([root, path]) == root
 
@@ -272,6 +292,7 @@ __all__ = [
     "drop_impossible_names",
     "drop_unsafe_names",
     "refuse_control_chars",
+    "refuse_folder_path",
     "safe_join",
     "safe_leaf",
     "transfer_leaf",

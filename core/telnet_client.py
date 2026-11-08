@@ -1621,13 +1621,22 @@ class TelnetSession(SessionLifecycle):
         return out
 
     def stat(self, path: str) -> FileItem:
+        """A refusal is typed by its wording (core.exec_util.ls_error, as
+        SCP): a missing path was a CommandFailed, which the callers that
+        need "not there" could not tell from "cannot tell"."""
+        from core.exec_util import ls_error
+
         path = self._path(path)
         qpath = shell_path(path)
         if self._caps.has_stat_gnu:
-            output = self._exec(f"stat --format='%n|%s|%Y|%f|%U|%G|%F' {qpath}")
+            output, code = self._exec_raw(f"stat --format='%n|%s|%Y|%f|%U|%G|%F' {qpath}")
+            if code != 0:
+                raise ls_error(f"Telnet stat({path})", output.strip()[:500] or f"exit {code}")
             return _parse_stat_gnu(output)
         # Fallback: ls -ld
-        output = self._exec(f"{self._ls('-ld')} {qpath}")
+        output, code = self._exec_raw(f"{self._ls('-ld')} {qpath}")
+        if code != 0:
+            raise ls_error(f"Telnet stat({path})", output.strip()[:500] or f"exit {code}")
         items = _parse_ls_la(output, escaped=self._caps.has_ls_escape, utc=True)
         if not items:
             raise OSError(f"Cannot stat {path}: no output from ls -ld")
@@ -1676,6 +1685,10 @@ class TelnetSession(SessionLifecycle):
             raise ls_error(f"Telnet remove({path})", output.strip()[:500] or f"exit {code}")
 
     def rename(self, src: str, dst: str) -> None:
+        from core.path_policy import refuse_folder_path
+
+        # _path() drops the slash: a file renamed to "x/" became "x".
+        refuse_folder_path(dst, "rename to", source_is_file=lambda: self._path_kind(src) == "other")
         cmd = rename_command(self._path(src), self._path(dst))
         output, code = self._exec_tree_op(cmd)
         if code != 0:
@@ -1772,7 +1785,10 @@ class TelnetSession(SessionLifecycle):
         return data
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
-        path = self._path(path)
+        from core.path_policy import refuse_folder_path
+
+        # _path() drops the slash: "x/" was written as a FILE "x".
+        path = self._path(refuse_folder_path(path))
         if append:
             try:
                 with self.open_read(path) as f:

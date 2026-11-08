@@ -147,7 +147,7 @@ class LevelSelect(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(36, 28, 36, 28)
         intro = QLabel(f"<h1 style='color:{ACCENTS.get(kind, '#e2e8f0')}'>{GAMES[kind][0]}</h1>"
-                       f"<p>{GAMES[kind][1]}</p>")
+                       f"<p>{tr(GAMES[kind][1])}</p>")
         intro.setWordWrap(True)
         layout.addWidget(intro)
         first = QPushButton(tr("Start at level 1"))

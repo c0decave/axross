@@ -32,6 +32,7 @@ for ``/``.
 
 from __future__ import annotations
 
+import errno
 import functools
 import io
 import logging
@@ -225,8 +226,10 @@ class DbFsBackend(_RowAdapter, SessionLifecycle):
         # require a real row.
         if path != "/":
             row = self._db_get_meta(path)
-            if row is None or not row.get("is_dir"):
-                raise OSError(f"Not a directory: {path}")
+            if row is None:
+                raise FileNotFoundError(errno.ENOENT, f"No such path: {path}")
+            if not row.get("is_dir"):
+                raise NotADirectoryError(errno.ENOTDIR, f"Not a directory: {path}")
         items: list[FileItem] = []
         for row in self._db_list_meta(path):
             item = self._row_to_item(row)
@@ -250,7 +253,7 @@ class DbFsBackend(_RowAdapter, SessionLifecycle):
             )
         row = self._db_get_meta(path)
         if row is None:
-            raise OSError(f"No such path: {path}")
+            raise FileNotFoundError(errno.ENOENT, f"No such path: {path}")
         item = self._row_to_item(row)
         if item is None:
             raise OSError(f"Unusable row for {path}: it has no path")
@@ -276,9 +279,9 @@ class DbFsBackend(_RowAdapter, SessionLifecycle):
         path = self.normalize(path)
         row = self._db_get(path)
         if row is None:
-            raise OSError(f"No such path: {path}")
+            raise FileNotFoundError(errno.ENOENT, f"No such path: {path}")
         if row.get("is_dir"):
-            raise OSError(f"Is a directory: {path}")
+            raise IsADirectoryError(errno.EISDIR, f"Is a directory: {path}")
         return io.BytesIO(self._content_bytes(row, path))
 
     @staticmethod
@@ -318,11 +321,10 @@ class DbFsBackend(_RowAdapter, SessionLifecycle):
         if existing is not None:
             if existing.get("is_dir"):
                 return
-            raise OSError(f"Path exists and is a file: {path}")
+            raise FileExistsError(errno.EEXIST, f"Path exists and is a file: {path}")
         # Ensure parent exists (or is root).
         parent = self.parent(path)
-        if parent != "/" and not self.is_dir(parent):
-            raise OSError(f"Parent does not exist: {parent}")
+        self._check_parent(parent)
         self._db_insert(
             {
                 "path": path,
@@ -341,18 +343,23 @@ class DbFsBackend(_RowAdapter, SessionLifecycle):
             raise OSError("Refusing to remove root")
         row = self._db_get(path)
         if row is None:
-            raise OSError(f"No such path: {path}")
+            raise FileNotFoundError(errno.ENOENT, f"No such path: {path}")
         if row.get("is_dir"):
             children = list(self._db_list(path))
             if children and not recursive:
-                raise OSError(f"Directory not empty: {path}")
+                raise OSError(errno.ENOTEMPTY, f"Directory not empty: {path}")
             self._db_delete_subtree(path)
         else:
             self._db_delete(path)
 
     @_driver_errors_as_oserror
     def rename(self, src: str, dst: str) -> None:
+        from core.path_policy import refuse_folder_path
+
         src = self.normalize(src)
+        if src != "/":
+            # normalize() drops the slash: a file renamed to "x/" became "x".
+            refuse_folder_path(dst, "rename to", source_is_file=lambda: self._is_file(src))
         dst = self.normalize(dst)
         if src == "/" or dst == "/":
             raise OSError("Refusing to rename root")
@@ -361,15 +368,17 @@ class DbFsBackend(_RowAdapter, SessionLifecycle):
         # this can't actually loop today — but a buggy adapter (one whose
         # _db_list scans live state) would. Cheap insurance.
         if dst == src or dst.startswith(src.rstrip("/") + "/"):
-            raise OSError(f"Refusing rename {src!r} -> {dst!r}: destination is at or under source")
+            raise OSError(
+                errno.EINVAL,
+                f"Refusing rename {src!r} -> {dst!r}: destination is at or under source",
+            )
         row = self._db_get(src)
         if row is None:
-            raise OSError(f"No such path: {src}")
+            raise FileNotFoundError(errno.ENOENT, f"No such path: {src}")
         if self._db_get(dst) is not None:
-            raise OSError(f"Destination already exists: {dst}")
+            raise FileExistsError(errno.EEXIST, f"Destination already exists: {dst}")
         dst_parent = self.parent(dst)
-        if dst_parent != "/" and not self.is_dir(dst_parent):
-            raise OSError(f"Parent does not exist: {dst_parent}")
+        self._check_parent(dst_parent)
         # Use copy-then-delete via DB ops: read the bytes, insert
         # under the new path, drop the old. Subclasses with native
         # rename can override this whole method.
@@ -393,15 +402,17 @@ class DbFsBackend(_RowAdapter, SessionLifecycle):
 
     @_driver_errors_as_oserror
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
-        path = self.normalize(path)
+        from core.path_policy import refuse_folder_path
+
+        # normalize() drops the slash: "x/" was written as a FILE "x".
+        path = self.normalize(refuse_folder_path(path))
         if path == "/":
             raise OSError("Refusing to write root")
         parent = self.parent(path)
-        if parent != "/" and not self.is_dir(parent):
-            raise OSError(f"Parent does not exist: {parent}")
+        self._check_parent(parent)
         existing = self._db_get(path)
         if existing is not None and existing.get("is_dir"):
-            raise OSError(f"Is a directory: {path}")
+            raise IsADirectoryError(errno.EISDIR, f"Is a directory: {path}")
         prelude = b""
         if append and existing is not None:
             prelude = self._content_bytes(existing, path)
@@ -413,7 +424,7 @@ class DbFsBackend(_RowAdapter, SessionLifecycle):
         if path == "/":
             return
         if self._db_get(path) is None:
-            raise OSError(f"No such path: {path}")
+            raise FileNotFoundError(errno.ENOENT, f"No such path: {path}")
         self._db_update(path, mode=int(mode))
 
     @_driver_errors_as_oserror
@@ -424,16 +435,15 @@ class DbFsBackend(_RowAdapter, SessionLifecycle):
             raise OSError("Refusing to overwrite root")
         row = self._db_get(src)
         if row is None:
-            raise OSError(f"No such path: {src}")
+            raise FileNotFoundError(errno.ENOENT, f"No such path: {src}")
         if self._db_get(dst) is not None:
-            raise OSError(f"Destination already exists: {dst}")
+            raise FileExistsError(errno.EEXIST, f"Destination already exists: {dst}")
         if row.get("is_dir"):
-            raise OSError("DB-FS copy: source is a directory")
+            raise IsADirectoryError(errno.EISDIR, "DB-FS copy: source is a directory")
         # Mirror mkdir's parent-existence guard so copy can't insert an
         # orphan row that no list_dir() would ever surface.
         dst_parent = self.parent(dst)
-        if dst_parent != "/" and not self.is_dir(dst_parent):
-            raise OSError(f"Parent does not exist: {dst_parent}")
+        self._check_parent(dst_parent)
         self._db_insert(
             {
                 "path": dst,
@@ -444,6 +454,21 @@ class DbFsBackend(_RowAdapter, SessionLifecycle):
                 "content": row.get("content"),
             }
         )
+
+    def _is_file(self, path: str) -> bool:
+        row = self._db_get_meta(self.normalize(path))
+        return row is not None and not row.get("is_dir")
+
+    def _check_parent(self, parent: str) -> None:
+        """FileNotFoundError when the folder *parent* is not there,
+        NotADirectoryError when it is a file; the root always is."""
+        if parent == "/":
+            return
+        row = self._db_get_meta(parent)
+        if row is None:
+            raise FileNotFoundError(errno.ENOENT, f"Parent does not exist: {parent}")
+        if not row.get("is_dir"):
+            raise NotADirectoryError(errno.ENOTDIR, f"Parent is not a directory: {parent}")
 
     def disk_usage(self, path: str) -> tuple[int, int, int]:
         return (0, 0, 0)

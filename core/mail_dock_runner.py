@@ -17,6 +17,19 @@ from core import mail_send as MS
 log = logging.getLogger(__name__)
 
 
+class _ListingMailbox(MD.Mailbox):
+    """The dock's mailbox, remembering the mails :meth:`new` listed."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.listed: list[str] = []
+
+    def new(self, *, mark: bool = True) -> list[dict]:
+        out = super().new(mark=mark)
+        self.listed.extend(m["name"] for m in out)
+        return out
+
+
 class MailDockRunner:
     def __init__(
         self,
@@ -77,10 +90,11 @@ class MailDockRunner:
             self.backend = self._connect(self.dock)
         work = self.state_dir / "work"          # the agent's only folder: empty, read-only
         work.mkdir(parents=True, exist_ok=True)
-        mailbox = MD.Mailbox(self.backend, self.dock.folder, self.state_dir / "seen.json")
+        mailbox = _ListingMailbox(self.backend, self.dock.folder, self.state_dir / "seen.json")
         reports = self.bus.take(self.dock.name)
         if not reports and not mailbox.new(mark=False):
             return ""
+        mailbox.listed.clear()      # the runner's own look; only the agent's listings count
         self.tools = tools = MD.MailTools(self.dock, mailbox, ask_send=self._ask_send, smtp=self._smtp,
                                           drafts_dir=self.state_dir / "drafts", bus=self.bus,
                                           on_log=self._on_log)
@@ -113,6 +127,14 @@ class MailDockRunner:
             close = getattr(agent, "close", None)
             if callable(close):
                 close()
+        if result.stopped == "answered":
+            # The run ended without error: what the agent listed counts as
+            # handled, opened or not - a mail it saw and left alone came
+            # back in every run. A failed, cancelled or cut-off run (an
+            # exception above, "cancelled", "max_steps") marks only what
+            # the agent read (MailTools does that itself).
+            for name in dict.fromkeys(mailbox.listed):
+                mailbox.mark_seen(name)
         self._on_log(result.answer or f"(the run ended: {result.stopped})")
         return result.answer
 

@@ -6,6 +6,7 @@ import contextlib
 import dataclasses
 import errno
 import functools
+import inspect
 import io
 import logging
 import posixpath
@@ -23,7 +24,12 @@ from typing import IO, NoReturn
 
 from core import removal_cancel
 from core.backend import SessionLifecycle
-from core.path_policy import MAX_RECURSIVE_DELETE_DEPTH, check_tree_depth, safe_join
+from core.path_policy import (
+    MAX_RECURSIVE_DELETE_DEPTH,
+    check_tree_depth,
+    refuse_control_chars,
+    safe_join,
+)
 from core.read_spool import READ_CHUNK, new_read_spool
 from core.session_lock import io_lock, liveness_check, serialized
 from core.transfer_pool import MAX_PARALLEL
@@ -297,11 +303,31 @@ def _binary_mode(ftp) -> None:
     ftp._axross_type = "I"  # also for a connection without _ControlChannelMixin
 
 
+# Parameters of the wrapped FtpSession methods that carry a remote path.
+_PATH_PARAMS = frozenset({"path", "src", "dst"})
+
+
 def _ftp_errors_as_oserror(fn):
-    """Re-raise ftplib protocol errors from ``fn`` as ``OSError``."""
+    """Re-raise ftplib protocol errors from ``fn`` as ``OSError``.
+
+    Every path argument (``path`` / ``src`` / ``dst``) is checked first
+    with :func:`core.path_policy.refuse_control_chars`: FTP commands are
+    CRLF-framed, so a line break in a name either smuggled a second
+    command or made ftplib raise a ValueError (no OSError: the pane and
+    the transfer engine did not catch it); other C0 characters reach the
+    server's command parser as they are."""
+    checked = [
+        (index, name)
+        for index, name in enumerate(inspect.signature(fn).parameters)
+        if name in _PATH_PARAMS
+    ]
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
+        for index, name in checked:
+            value = args[index] if index < len(args) else kwargs.get(name)
+            if isinstance(value, str):
+                refuse_control_chars(value, f"FTP {fn.__name__}")
         try:
             return fn(*args, **kwargs)
         except _FTP_PROTOCOL_ERRORS as exc:
@@ -317,6 +343,38 @@ def _ftp_errors_as_oserror(fn):
             ) from exc
 
     return wrapper
+
+
+_DIGEST_HEX_LEN = {"md5": 32, "sha1": 40, "sha256": 64}
+
+
+def _is_digest(token: str, algorithm: str) -> bool:
+    want = _DIGEST_HEX_LEN.get(algorithm)
+    token = token.lower()
+    return len(token) == want and all(c in "0123456789abcdef" for c in token)
+
+
+def _hash_reply_digest(resp: str, algorithm: str, *, draft: bool) -> str:
+    """The hex digest in a checksum reply, or "".
+
+    ``HASH`` answers ``213 <algo> <range> <hash> <name>``
+    (draft-bryan-ftpext-hash): the last token is the FILE NAME, which was
+    returned as the hash - also when the name itself is hex. The name may
+    hold blanks, so the fields are taken from the left. ``XMD5`` /
+    ``XSHA*`` answer ``2xx <hash>`` (some servers add the name after it):
+    the first token after the code that is a digest of the right length.
+    """
+    parts = resp.split(None, 4)
+    if len(parts) < 2 or not parts[0].startswith("2"):
+        return ""
+    if draft:
+        if len(parts) >= 4 and _is_digest(parts[3], algorithm):
+            return parts[3].lower()
+        return ""
+    for token in parts[1:]:
+        if _is_digest(token, algorithm):
+            return token.lower()
+    return ""
 
 
 def _quit_quietly(ftp) -> None:
@@ -1382,10 +1440,8 @@ class FtpSession(SessionLifecycle):
         server whose MLST follows links answers it for a dangling link (no
         data behind it), and for an entry in a folder without search
         permission, where a write fails as well."""
-        if "\r" in path or "\n" in path:
-            # ftplib refuses to send it (ValueError), which SIZE below took
-            # for "a 213 reply it cannot parse".
-            raise OSError(errno.EINVAL, "FTP exists: a name with a line break cannot be sent", path)
+        # A line break in *path* is refused by the decorator: ftplib's
+        # ValueError was taken below for "a 213 reply it cannot parse".
         ftp = self._ensure_connected()
         answer = _mlst_exists(ftp, path)
         if answer is not None:
@@ -1417,6 +1473,11 @@ class FtpSession(SessionLifecycle):
         try:
             ftp.mkd(path)
         except error_perm as e:
+            # MKD of a taken name is a 550 like any other refusal.
+            if str(e).startswith("550") and self.exists(path):
+                raise FileExistsError(
+                    errno.EEXIST, f"Cannot create directory {path}: it exists", path
+                ) from e
             raise OSError(f"Cannot create directory {path}: {e}") from e
 
     @_ftp_errors_as_oserror
@@ -1448,6 +1509,12 @@ class FtpSession(SessionLifecycle):
             try:
                 ftp.delete(path)
             except error_perm as e:
+                # 550 says "not there" and "may not" alike: only exists()
+                # tells a typo (FileNotFoundError, as on LocalFS) apart.
+                if str(e).startswith("550") and not self.exists(path):
+                    raise FileNotFoundError(
+                        errno.ENOENT, f"Cannot delete {path}: not found", path
+                    ) from e
                 raise OSError(f"Cannot delete {path}: {e}") from e
 
     _MAX_TREE_DEPTH = MAX_RECURSIVE_DELETE_DEPTH
@@ -1716,6 +1783,11 @@ class FtpSession(SessionLifecycle):
         # Connected now, so a dead server fails here and not after the
         # caller spooled the whole file; the upload picks its connection
         # when the writer closes (_store).
+        if path.endswith("/") and path.strip("/"):
+            # STOR "x/" stored a FILE "x" on servers that drop the slash.
+            raise IsADirectoryError(
+                errno.EISDIR, f"Cannot write {path}: a path ending in '/' names a folder", path
+            )
         ftp = self._ensure_connected()
         return _SpooledWriter(ftp, path, append=append, store=self._store)
 
@@ -1833,10 +1905,7 @@ class FtpSession(SessionLifecycle):
         F38: refuse CR/LF in ``path`` (FTP wire-frame is CRLF-
         delimited; symmetry with ``site()``).
         """
-        if "\r" in path or "\n" in path:
-            raise ValueError(
-                "FTP mlst() path must not contain CR/LF (would smuggle a second wire command). F38."
-            )
+        refuse_control_chars(path, "FTP mlst")  # F38: no second wire command
         ftp = self._ensure_connected()
         try:
             resp = ftp.sendcmd(f"MLST {path}")
@@ -1855,8 +1924,7 @@ class FtpSession(SessionLifecycle):
         F38: refuse CR/LF in ``path`` (FTP wire-frame is CRLF-delim;
         symmetry with ``site()`` / ``mlst()``).
         """
-        if "\r" in path or "\n" in path:
-            raise ValueError("FTP cwd() path must not contain CR/LF. F38.")
+        refuse_control_chars(path, "FTP cwd")  # F38
         ftp = self._ensure_connected()
         try:
             ftp.cwd(path)
@@ -1885,12 +1953,9 @@ class FtpSession(SessionLifecycle):
             except Exception as exc:  # noqa: BLE001 - best effort: try the next command
                 log.debug("FTP %s of %s failed: %s", cmd, path, exc)
                 continue
-            # Typical response: "213 0-12345 abc123deadbeef..."
-            parts = resp.split()
-            if parts:
-                candidate = parts[-1].strip().lower()
-                if all(c in "0123456789abcdef" for c in candidate) and len(candidate) >= 32:
-                    return f"{algorithm}:{candidate}"
+            digest = _hash_reply_digest(resp, algorithm, draft=(cmd == "HASH"))
+            if digest:
+                return f"{algorithm}:{digest}"
         return ""
 
     def disk_usage(self, path: str) -> tuple[int, int, int]:

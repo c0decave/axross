@@ -21,6 +21,7 @@ from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QProgressBar, QPushButton, QWidget
 
 from core.thread_relay import GuiCall
+from core.i18n import tr
 
 Work = Callable[[Callable[[], bool], Callable[[int, int, str], None]], Any]
 
@@ -123,13 +124,14 @@ class ScanJob(QObject):
         result = state.get("result")
         if result is None:
             if self._cancel.is_set():
-                self.progress.emit("Cancelling…")
+                self.progress.emit(tr("Cancelling…"))
             else:
                 self.progress.emit(
                     self._formatter(state)
                     if self._formatter is not None
-                    else f"Working… {state['indexed']} indexed, {state['scanned']} scanned"
-                    f" — {shorten(state['path'])}"
+                    else tr("Working… {indexed} indexed, {scanned} scanned — {path}").format(
+                        indexed=state["indexed"], scanned=state["scanned"],
+                        path=shorten(state["path"]))
                 )
             return
         self._timer.stop()
@@ -156,8 +158,8 @@ class BusyStrip(QWidget):
         self.label = QLabel("", self)
         self.label.setProperty("role", "muted")
         layout.addWidget(self.label, stretch=1)
-        self.cancel_button = QPushButton(cancel_text, self)
-        self.cancel_button.setToolTip("Stop what is running")
+        self.cancel_button = QPushButton(tr(cancel_text), self)
+        self.cancel_button.setToolTip(tr("Stop what is running"))
         self.cancel_button.clicked.connect(job.cancel)
         layout.addWidget(self.cancel_button)
         job.started.connect(self._on_started)
@@ -171,7 +173,7 @@ class BusyStrip(QWidget):
             w.setVisible(busy)
 
     def _on_started(self) -> None:
-        self.label.setText("Working… scanning")
+        self.label.setText(tr("Working… scanning"))
         self.cancel_button.setEnabled(True)
         self._set_busy(True)
 

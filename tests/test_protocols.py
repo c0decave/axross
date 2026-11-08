@@ -9747,15 +9747,18 @@ def test_ftp_site_help():
 
 def test_ftp_mlst_and_cwd_refuse_crlf():
     """F38: same wire-frame guard as site() — symmetry across the
-    FTP-specific verbs."""
+    FTP-specific verbs. An OSError (EINVAL) since round 3, as for every
+    other FTP path (core.path_policy.refuse_control_chars)."""
+    import errno
+
     from core.ftp_client import FtpSession
 
     s = FtpSession.__new__(FtpSession)
     for fn_name, fn in (("mlst", lambda: s.mlst("/x\r\nQUIT")), ("cwd", lambda: s.cwd("/x\nLIST"))):
         try:
             fn()
-        except ValueError as e:
-            assert "CR/LF" in str(e) and "F38" in str(e)
+        except OSError as e:
+            assert e.errno == errno.EINVAL and "control characters" in str(e)
         else:
             raise AssertionError(f"FTP.{fn_name} should refuse CR/LF")
 

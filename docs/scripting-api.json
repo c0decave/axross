@@ -1152,7 +1152,7 @@
       ],
       "returns": "str",
       "summary": "Extract a local archive (zip / tar / 7z) to ``dst_dir``. Returns the destination directory after the extract. Refuses zip-bombs and zip-slip via the same guards used by the file-manager UI.",
-      "doc": "Extract a local archive (zip / tar / 7z) to ``dst_dir``. Returns\nthe destination directory after the extract. Refuses zip-bombs\nand zip-slip via the same guards used by the file-manager UI.\n\n``progress`` is an optional callable ``(current, total, name)``\ninvoked once per archive entry.",
+      "doc": "Extract a local archive (zip / tar / 7z) to ``dst_dir``. Returns\nthe destination directory after the extract. Refuses zip-bombs\nand zip-slip via the same guards used by the file-manager UI.\n\n``progress`` is an optional callable ``(current, total, name)``\ninvoked once per archive entry.\n\nSymbolic links in the archive are never extracted; a warning in the\nlog names them (\"3 symbolic links were not extracted: a, b, c\"), as\nthe folder is then not the whole archive.",
       "examples": [],
       "raises": [],
       "mutates": true,

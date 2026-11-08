@@ -10,6 +10,13 @@
 # 9.0.3: no shared /tmp/pytest-of-<user> directory another local user can
 # take over (CVE-2025-71176).
 pytest>=9.0.3
+# -n: the suite in parallel workers (tests/conftest.py keeps each worker's
+# state apart through PYTEST_XDIST_WORKER). 3.8: the release the suite runs
+# with on pytest 9.
+pytest-xdist>=3.8
+# @pytest.mark.timeout and --timeout: a hung test fails instead of stopping
+# the run. 2.4: the release the suite runs with on pytest 9.
+pytest-timeout>=2.4
 coverage>=7.4
 
 # ── linting / formatting ──────────────────────────────────────

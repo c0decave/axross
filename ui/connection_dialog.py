@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.backend_registry import all_backends, init_registry
+from core.credentials import profile_name_problem
 from core.desktop_open import open_in_browser
 from core.i18n import tr
 from core.profiles import SIMPLE_PASSWORD_PROTOCOLS, ConnectionProfile, ProfileManager
@@ -63,6 +64,10 @@ class _ConnectThread(QThread):
 
     success = pyqtSignal(str)  # home directory
     error = pyqtSignal(str)  # error message
+    #: The server's host key is not in known_hosts yet. A test has nobody
+    #: to ask (it runs without the trust prompt), so this is no failure:
+    #: the text sends the user to Connect, which shows the fingerprint.
+    unknown_host_key = pyqtSignal(str)
 
     def __init__(self, profile: ConnectionProfile, password: str, key_passphrase: str, parent=None):
         super().__init__(parent)
@@ -99,8 +104,14 @@ class _ConnectThread(QThread):
                 # its socket and its transport thread were left open.
                 mgr.disconnect_all()
             self.success.emit(home)
+        except UnknownHostKeyError as e:
+            from core.user_errors import describe
+
+            self.unknown_host_key.emit(describe(e))
         except Exception as e:
-            self.error.emit(str(e))
+            from core.user_errors import describe
+
+            self.error.emit(describe(e))
 
 
 def _expand_home(path: str) -> str:
@@ -128,7 +139,7 @@ class ConnectionDialog(QDialog):
         # it, so fields the form has no widget for survive a save.
         self._loaded_profile: ConnectionProfile | None = None
 
-        self.setWindowTitle("Connect to Server")
+        self.setWindowTitle(tr("Connect to Server"))
         self.setMinimumWidth(500)
         init_registry()
         self._setup_ui()
@@ -164,10 +175,10 @@ class ConnectionDialog(QDialog):
 
         # Profile selector
         profile_layout = QHBoxLayout()
-        profile_layout.addWidget(QLabel("Profile:"))
+        profile_layout.addWidget(QLabel(tr("Profile:")))
         self._profile_combo = QComboBox()
         self._profile_combo.setEditable(False)
-        self._profile_combo.addItem("(New Connection)")
+        self._profile_combo.addItem(tr("(New Connection)"))
         for name in self._profile_manager.list_names():
             self._profile_combo.addItem(name)
         self._profile_combo.currentTextChanged.connect(self._on_profile_selected)
@@ -176,11 +187,11 @@ class ConnectionDialog(QDialog):
         self._profile_combo.customContextMenuRequested.connect(self._show_profile_menu)
         profile_layout.addWidget(self._profile_combo, stretch=1)
 
-        self._btn_save_profile = QPushButton("Save")
+        self._btn_save_profile = QPushButton(tr("Save"))
         self._btn_save_profile.clicked.connect(self._save_profile)
         profile_layout.addWidget(self._btn_save_profile)
 
-        self._btn_delete_profile = QPushButton("Delete")
+        self._btn_delete_profile = QPushButton(tr("Delete"))
         self._btn_delete_profile.clicked.connect(self._delete_profile)
         profile_layout.addWidget(self._btn_delete_profile)
 
@@ -196,12 +207,12 @@ class ConnectionDialog(QDialog):
         outer, layout = layout, form_layout
 
         # Connection settings
-        conn_group = QGroupBox("Connection")
+        conn_group = QGroupBox(tr("Connection"))
         conn_form = QFormLayout(conn_group)
 
         self._profile_name = QLineEdit()
-        self._profile_name.setPlaceholderText("Profile name (for saving)")
-        conn_form.addRow("Name:", self._profile_name)
+        self._profile_name.setPlaceholderText(tr("Profile name (for saving)"))
+        conn_form.addRow(tr("Name:"), self._profile_name)
 
         # Protocol selector. The names first; whether each backend is
         # installed is asked off the GUI thread (_label_job): the first ask
@@ -210,7 +221,7 @@ class ConnectionDialog(QDialog):
         backends = all_backends()
         self._protocol_ids: list[str] = []
         for info in backends:
-            self._protocol_combo.addItem(info.display_name)
+            self._protocol_combo.addItem(tr(info.display_name))
             self._protocol_ids.append(info.protocol_id)
         self._labels_ready = False
         self._label_job = ScanJob(self)
@@ -222,79 +233,79 @@ class ConnectionDialog(QDialog):
         if "sftp" in self._protocol_ids:
             self._protocol_combo.setCurrentIndex(self._protocol_ids.index("sftp"))
         self._protocol_combo.currentIndexChanged.connect(self._on_protocol_changed)
-        conn_form.addRow("Protocol:", self._protocol_combo)
+        conn_form.addRow(tr("Protocol:"), self._protocol_combo)
 
         self._host = QLineEdit()
-        self._host.setPlaceholderText("hostname or IP")
-        conn_form.addRow("Host:", self._host)
+        self._host.setPlaceholderText(tr("hostname or IP"))
+        conn_form.addRow(tr("Host:"), self._host)
 
         self._port = QSpinBox()
         self._port.setRange(1, 65535)
         self._port.setValue(22)
-        conn_form.addRow("Port:", self._port)
+        conn_form.addRow(tr("Port:"), self._port)
 
         self._username = QLineEdit()
-        conn_form.addRow("Username:", self._username)
+        conn_form.addRow(tr("Username:"), self._username)
 
         # Address family
         self._addr_family = QComboBox()
-        self._addr_family.addItems(["Auto", "IPv4 only", "IPv6 only"])
-        conn_form.addRow("IP Version:", self._addr_family)
+        self._addr_family.addItems([tr("Auto"), tr("IPv4 only"), tr("IPv6 only")])
+        conn_form.addRow(tr("IP Version:"), self._addr_family)
 
         # --- Protocol-specific fields ---
 
         # FTP: passive mode
-        self._ftp_passive = QCheckBox("Passive mode (recommended)")
+        self._ftp_passive = QCheckBox(tr("Passive mode (recommended)"))
         self._ftp_passive.setChecked(True)
-        conn_form.addRow("FTP Mode:", self._ftp_passive)
+        conn_form.addRow(tr("FTP Mode:"), self._ftp_passive)
 
         # SMB: share name
         self._smb_share = QLineEdit()
-        self._smb_share.setPlaceholderText("Share name (e.g. Documents)")
-        conn_form.addRow("Share:", self._smb_share)
+        self._smb_share.setPlaceholderText(tr("Share name (e.g. Documents)"))
+        conn_form.addRow(tr("Share:"), self._smb_share)
 
         # WebDAV: full URL
         self._webdav_url = QLineEdit()
         self._webdav_url.setPlaceholderText("https://cloud.example.com/remote.php/dav")
-        conn_form.addRow("URL:", self._webdav_url)
+        conn_form.addRow(tr("URL:"), self._webdav_url)
 
         # S3: bucket, region, endpoint
         self._s3_bucket = QLineEdit()
-        self._s3_bucket.setPlaceholderText("my-bucket or bucket.s3.region.amazonaws.com")
-        conn_form.addRow("Bucket:", self._s3_bucket)
+        self._s3_bucket.setPlaceholderText(tr("my-bucket or bucket.s3.region.amazonaws.com"))
+        conn_form.addRow(tr("Bucket:"), self._s3_bucket)
 
         self._s3_region = QLineEdit()
         self._s3_region.setPlaceholderText("eu-central-1")
-        conn_form.addRow("Region:", self._s3_region)
+        conn_form.addRow(tr("Region:"), self._s3_region)
 
         self._s3_endpoint = QLineEdit()
-        self._s3_endpoint.setPlaceholderText("https://s3.example.com (for MinIO, R2, etc.)")
-        conn_form.addRow("Endpoint:", self._s3_endpoint)
+        self._s3_endpoint.setPlaceholderText(tr("https://s3.example.com (for MinIO, R2, etc.)"))
+        conn_form.addRow(tr("Endpoint:"), self._s3_endpoint)
 
         # --- Rsync fields ---
         self._rsync_module = QLineEdit()
-        self._rsync_module.setPlaceholderText("module name (for rsyncd)")
-        conn_form.addRow("Module:", self._rsync_module)
+        self._rsync_module.setPlaceholderText(tr("module name (for rsyncd)"))
+        conn_form.addRow(tr("Module:"), self._rsync_module)
 
-        self._rsync_ssh = QCheckBox("Use SSH transport (instead of rsyncd)")
+        self._rsync_ssh = QCheckBox(tr("Use SSH transport (instead of rsyncd)"))
         conn_form.addRow("", self._rsync_ssh)
 
         self._rsync_ssh_key = QLineEdit()
-        self._rsync_ssh_key.setPlaceholderText("Path to SSH key (optional)")
-        conn_form.addRow("SSH Key:", self._rsync_ssh_key)
+        self._rsync_ssh_key.setPlaceholderText(tr("Path to SSH key (optional)"))
+        conn_form.addRow(tr("SSH Key:"), self._rsync_ssh_key)
 
         # --- NFS fields ---
         self._nfs_export = QLineEdit()
         self._nfs_export.setPlaceholderText("/srv/nfs/share")
-        conn_form.addRow("Export:", self._nfs_export)
+        conn_form.addRow(tr("Export:"), self._nfs_export)
 
         self._nfs_version = QComboBox()
         self._nfs_version.addItems(["NFSv3", "NFSv4", "NFSv4.1"])
-        conn_form.addRow("Version:", self._nfs_version)
+        conn_form.addRow(tr("Version:"), self._nfs_version)
 
         # What the client sends about itself (AUTH_SYS). Any of them set:
         # axross speaks NFSv3 itself instead of mounting through the kernel.
-        sender_tip = (
+        sender_tip = tr(
             "What axross sends the NFS server about itself (AUTH_SYS) - the server "
             "believes it and decides access by it. Fill in any of these and axross "
             "speaks NFS itself - v3 or v4, as chosen above (no mount, no root); the fields left empty are this "
@@ -302,86 +313,86 @@ class ConnectionDialog(QDialog):
             "NFS mount, which always sends this computer's name and your IDs."
         )
         self._nfs_machine_name = QLineEdit()
-        self._nfs_machine_name.setPlaceholderText("this computer's name")
+        self._nfs_machine_name.setPlaceholderText(tr("this computer's name"))
         self._nfs_machine_name.setToolTip(sender_tip)
-        conn_form.addRow("Machine Name:", self._nfs_machine_name)
+        conn_form.addRow(tr("Machine Name:"), self._nfs_machine_name)
         id_validator = QRegularExpressionValidator(QRegularExpression(r"[0-9]{0,10}"))
         self._nfs_uid = QLineEdit()
-        self._nfs_uid.setPlaceholderText("your UID")
+        self._nfs_uid.setPlaceholderText(tr("your UID"))
         self._nfs_uid.setValidator(id_validator)
         self._nfs_uid.setToolTip(sender_tip)
-        conn_form.addRow("Send UID:", self._nfs_uid)
+        conn_form.addRow(tr("Send UID:"), self._nfs_uid)
         self._nfs_gid = QLineEdit()
-        self._nfs_gid.setPlaceholderText("your GID")
+        self._nfs_gid.setPlaceholderText(tr("your GID"))
         self._nfs_gid.setValidator(id_validator)
         self._nfs_gid.setToolTip(sender_tip)
-        conn_form.addRow("Send GID:", self._nfs_gid)
+        conn_form.addRow(tr("Send GID:"), self._nfs_gid)
         self._nfs_gids = QLineEdit()
-        self._nfs_gids.setPlaceholderText("extra GIDs, e.g. 27, 100 (at most 16)")
+        self._nfs_gids.setPlaceholderText(tr("extra GIDs, e.g. 27, 100 (at most 16)"))
         self._nfs_gids.setToolTip(sender_tip)
-        conn_form.addRow("Extra GIDs:", self._nfs_gids)
+        conn_form.addRow(tr("Extra GIDs:"), self._nfs_gids)
         self._nfs_client_id = QLineEdit()
-        self._nfs_client_id.setPlaceholderText("NFSv4: axross:<machine name>")
+        self._nfs_client_id.setPlaceholderText(tr("NFSv4: axross:<machine name>"))
         self._nfs_client_id.setToolTip(
-            "NFSv4 only: the client id string axross registers with the server (SETCLIENTID) - "
-            "what the server knows this client as. " + sender_tip
+            tr("NFSv4 only: the client id string axross registers with the server (SETCLIENTID) - "
+               "what the server knows this client as.") + " " + sender_tip
         )
-        conn_form.addRow("NFSv4 Client ID:", self._nfs_client_id)
-        self._nfs_privileged_port = QCheckBox("Send from a privileged port (< 1024, needs root)")
+        conn_form.addRow(tr("NFSv4 Client ID:"), self._nfs_client_id)
+        self._nfs_privileged_port = QCheckBox(tr("Send from a privileged port (< 1024, needs root)"))
         self._nfs_privileged_port.setToolTip(
-            "For exports with the 'secure' option, which accept only source ports below 1024. "
-            "Only with axross's own client (a sender field filled in)."
+            tr("For exports with the 'secure' option, which accept only source ports below 1024. "
+            "Only with axross's own client (a sender field filled in).")
         )
         conn_form.addRow("", self._nfs_privileged_port)
 
         # --- Azure fields ---
         self._azure_container = QLineEdit()
-        self._azure_container.setPlaceholderText("Container name")
-        conn_form.addRow("Container:", self._azure_container)
+        self._azure_container.setPlaceholderText(tr("Container name"))
+        conn_form.addRow(tr("Container:"), self._azure_container)
 
         self._azure_share = QLineEdit()
-        self._azure_share.setPlaceholderText("File share name")
-        conn_form.addRow("Share:", self._azure_share)
+        self._azure_share.setPlaceholderText(tr("File share name"))
+        conn_form.addRow(tr("Share:"), self._azure_share)
 
         self._azure_connection_string = QLineEdit()
         self._azure_connection_string.setPlaceholderText(
             "DefaultEndpointsProtocol=https;AccountName=..."
         )
         self._azure_connection_string.setEchoMode(QLineEdit.EchoMode.Password)
-        conn_form.addRow("Conn String:", self._azure_connection_string)
+        conn_form.addRow(tr("Conn String:"), self._azure_connection_string)
 
         self._azure_account_name = QLineEdit()
-        self._azure_account_name.setPlaceholderText("Storage account name")
-        conn_form.addRow("Account:", self._azure_account_name)
+        self._azure_account_name.setPlaceholderText(tr("Storage account name"))
+        conn_form.addRow(tr("Account:"), self._azure_account_name)
 
         self._azure_sas_token = QLineEdit()
         self._azure_sas_token.setPlaceholderText("?sv=2021-06-08&ss=...")
         self._azure_sas_token.setEchoMode(QLineEdit.EchoMode.Password)
-        conn_form.addRow("SAS Token:", self._azure_sas_token)
+        conn_form.addRow(tr("SAS Token:"), self._azure_sas_token)
 
         # --- OneDrive / SharePoint fields ---
         self._onedrive_client_id = QLineEdit()
-        self._onedrive_client_id.setPlaceholderText("Azure App Registration Client ID")
-        conn_form.addRow("Client ID:", self._onedrive_client_id)
+        self._onedrive_client_id.setPlaceholderText(tr("Azure App Registration Client ID"))
+        conn_form.addRow(tr("Client ID:"), self._onedrive_client_id)
 
         self._onedrive_tenant_id = QLineEdit()
         self._onedrive_tenant_id.setPlaceholderText("common")
         self._onedrive_tenant_id.setText("common")
-        conn_form.addRow("Tenant ID:", self._onedrive_tenant_id)
+        conn_form.addRow(tr("Tenant ID:"), self._onedrive_tenant_id)
 
         self._sharepoint_site_url = QLineEdit()
         self._sharepoint_site_url.setPlaceholderText("https://company.sharepoint.com/sites/MySite")
-        conn_form.addRow("Site URL:", self._sharepoint_site_url)
+        conn_form.addRow(tr("Site URL:"), self._sharepoint_site_url)
 
         # --- Google Drive fields ---
         self._gdrive_client_id = QLineEdit()
-        self._gdrive_client_id.setPlaceholderText("Google OAuth Client ID")
-        conn_form.addRow("Client ID:", self._gdrive_client_id)
+        self._gdrive_client_id.setPlaceholderText(tr("Google OAuth Client ID"))
+        conn_form.addRow(tr("Client ID:"), self._gdrive_client_id)
 
         self._gdrive_client_secret = QLineEdit()
         self._gdrive_client_secret.setEchoMode(QLineEdit.EchoMode.Password)
-        self._gdrive_client_secret.setPlaceholderText("Google OAuth Client Secret")
-        conn_form.addRow("Client Secret:", self._gdrive_client_secret)
+        self._gdrive_client_secret.setPlaceholderText(tr("Google OAuth Client Secret"))
+        conn_form.addRow(tr("Client Secret:"), self._gdrive_client_secret)
 
         self._gdrive_import = QPushButton(tr("Import Client JSON…"))
         self._gdrive_import.setToolTip(tr("The JSON file Google offers for download next to "
@@ -391,13 +402,13 @@ class ConnectionDialog(QDialog):
 
         # --- Dropbox fields ---
         self._dropbox_app_key = QLineEdit()
-        self._dropbox_app_key.setPlaceholderText("Dropbox App Key")
-        conn_form.addRow("App Key:", self._dropbox_app_key)
+        self._dropbox_app_key.setPlaceholderText(tr("Dropbox App Key"))
+        conn_form.addRow(tr("App Key:"), self._dropbox_app_key)
 
         self._dropbox_app_secret = QLineEdit()
         self._dropbox_app_secret.setEchoMode(QLineEdit.EchoMode.Password)
-        self._dropbox_app_secret.setPlaceholderText("Dropbox App Secret")
-        conn_form.addRow("App Secret:", self._dropbox_app_secret)
+        self._dropbox_app_secret.setPlaceholderText(tr("Dropbox App Secret"))
+        conn_form.addRow(tr("App Secret:"), self._dropbox_app_secret)
 
         # Where an OAuth service's values come from (core.oauth_help).
         self._oauth_help = QLabel()
@@ -410,47 +421,47 @@ class ConnectionDialog(QDialog):
         # --- iSCSI fields ---
         self._iscsi_target_iqn = QLineEdit()
         self._iscsi_target_iqn.setPlaceholderText("iqn.2024-01.com.example:storage.target1")
-        conn_form.addRow("Target IQN:", self._iscsi_target_iqn)
+        conn_form.addRow(tr("Target IQN:"), self._iscsi_target_iqn)
 
         self._iscsi_mount_point = QLineEdit()
-        self._iscsi_mount_point.setPlaceholderText("/mnt/iscsi (auto if empty)")
-        conn_form.addRow("Mount Point:", self._iscsi_mount_point)
+        self._iscsi_mount_point.setPlaceholderText(tr("/mnt/iscsi (auto if empty)"))
+        conn_form.addRow(tr("Mount Point:"), self._iscsi_mount_point)
 
         # What the initiator sends about itself (freely chosen; empty =
         # the system's initiatorname.iscsi / any interface).
         self._iscsi_initiator_name = QLineEdit()
-        self._iscsi_initiator_name.setPlaceholderText("system default (/etc/iscsi/initiatorname.iscsi)")
+        self._iscsi_initiator_name.setPlaceholderText(tr("system default (/etc/iscsi/initiatorname.iscsi)"))
         self._iscsi_initiator_name.setToolTip(
-            "The initiator name (IQN) this connection sends to the target - in the "
+            tr("The initiator name (IQN) this connection sends to the target - in the "
             "login and the discovery. Any name the target accepts, e.g. "
-            "iqn.2026-11.org.example:client1. Empty: the system's."
+            "iqn.2026-11.org.example:client1. Empty: the system's.")
         )
-        conn_form.addRow("Initiator Name:", self._iscsi_initiator_name)
+        conn_form.addRow(tr("Initiator Name:"), self._iscsi_initiator_name)
 
         self._iscsi_initiator_interface = QLineEdit()
-        self._iscsi_initiator_interface.setPlaceholderText("any (e.g. eth0, wlan0)")
+        self._iscsi_initiator_interface.setPlaceholderText(tr("any (e.g. eth0, wlan0)"))
         self._iscsi_initiator_interface.setToolTip(
-            "The network interface the iSCSI connection leaves through. Empty: any."
+            tr("The network interface the iSCSI connection leaves through. Empty: any.")
         )
-        conn_form.addRow("Send From Interface:", self._iscsi_initiator_interface)
+        conn_form.addRow(tr("Send From Interface:"), self._iscsi_initiator_interface)
 
         # --- IMAP fields ---
-        self._imap_ssl = QCheckBox("Use SSL/TLS (IMAPS, port 993)")
+        self._imap_ssl = QCheckBox(tr("Use SSL/TLS (IMAPS, port 993)"))
         self._imap_ssl.setChecked(True)
         conn_form.addRow("", self._imap_ssl)
 
         # --- NNTP fields ---
-        self._nntp_ssl = QCheckBox("Use SSL/TLS (NNTPS, port 563)")
+        self._nntp_ssl = QCheckBox(tr("Use SSL/TLS (NNTPS, port 563)"))
         self._nntp_ssl.setChecked(True)
         conn_form.addRow("", self._nntp_ssl)
 
         # Simple password field for non-SSH protocols
         self._simple_password = QLineEdit()
         self._simple_password.setEchoMode(QLineEdit.EchoMode.Password)
-        self._simple_password.setPlaceholderText("Enter password")
-        conn_form.addRow("Password:", self._simple_password)
+        self._simple_password.setPlaceholderText(tr("Enter password"))
+        conn_form.addRow(tr("Password:"), self._simple_password)
 
-        self._simple_store_pw = QCheckBox("Save in keyring")
+        self._simple_store_pw = QCheckBox(tr("Save in keyring"))
         conn_form.addRow("", self._simple_store_pw)
 
         # The production countdown (core.safety_tarpit, docs/DAILY_DRIVER.md):
@@ -466,13 +477,13 @@ class ConnectionDialog(QDialog):
         layout.addWidget(conn_group)
 
         # Authentication
-        auth_group = QGroupBox("Authentication")
+        auth_group = QGroupBox(tr("Authentication"))
         auth_layout = QVBoxLayout(auth_group)
 
-        self._auth_password = QRadioButton("Password")
+        self._auth_password = QRadioButton(tr("Password"))
         self._auth_password.setChecked(True)
-        self._auth_key = QRadioButton("SSH Key File")
-        self._auth_agent = QRadioButton("SSH Agent")
+        self._auth_key = QRadioButton(tr("SSH Key File"))
+        self._auth_agent = QRadioButton(tr("SSH Agent"))
 
         auth_btn_group = QButtonGroup(self)
         auth_btn_group.addButton(self._auth_password)
@@ -485,9 +496,9 @@ class ConnectionDialog(QDialog):
         pw_layout = QHBoxLayout()
         self._password = QLineEdit()
         self._password.setEchoMode(QLineEdit.EchoMode.Password)
-        self._password.setPlaceholderText("Enter password")
+        self._password.setPlaceholderText(tr("Enter password"))
         pw_layout.addWidget(self._password)
-        self._store_password = QCheckBox("Save in keyring")
+        self._store_password = QCheckBox(tr("Save in keyring"))
         pw_layout.addWidget(self._store_password)
         auth_layout.addLayout(pw_layout)
 
@@ -496,9 +507,9 @@ class ConnectionDialog(QDialog):
         # Key file
         key_layout = QHBoxLayout()
         self._key_file = QLineEdit()
-        self._key_file.setPlaceholderText("Path to private key")
+        self._key_file.setPlaceholderText(tr("Path to private key"))
         key_layout.addWidget(self._key_file)
-        self._btn_browse_key = QPushButton("Browse...")
+        self._btn_browse_key = QPushButton(tr("Browse..."))
         self._btn_browse_key.clicked.connect(self._browse_key)
         key_layout.addWidget(self._btn_browse_key)
         auth_layout.addLayout(key_layout)
@@ -506,7 +517,7 @@ class ConnectionDialog(QDialog):
         # Key passphrase
         self._key_passphrase = QLineEdit()
         self._key_passphrase.setEchoMode(QLineEdit.EchoMode.Password)
-        self._key_passphrase.setPlaceholderText("Key passphrase (if any)")
+        self._key_passphrase.setPlaceholderText(tr("Key passphrase (if any)"))
         auth_layout.addWidget(self._key_passphrase)
 
         auth_layout.addWidget(self._auth_agent)
@@ -519,7 +530,7 @@ class ConnectionDialog(QDialog):
         layout.addWidget(auth_group)
 
         # Proxy settings (collapsible)
-        self._proxy_group = QGroupBox("Proxy Settings")
+        self._proxy_group = QGroupBox(tr("Proxy Settings"))
         self._proxy_group.setCheckable(True)
         self._proxy_group.setChecked(False)
         proxy_form = QFormLayout(self._proxy_group)
@@ -527,8 +538,8 @@ class ConnectionDialog(QDialog):
         self._proxy_mode = QComboBox()
         # A combo box shows "&" as it is: "&&" showed up doubled.
         self._proxy_mode.addItem(tr("Default proxy (Tools > Network & Proxy)"), "default")
-        self._proxy_mode.addItem("Custom proxy for this profile", "custom")
-        proxy_form.addRow("Use:", self._proxy_mode)
+        self._proxy_mode.addItem(tr("Custom proxy for this profile"), "custom")
+        proxy_form.addRow(tr("Use:"), self._proxy_mode)
 
         self._proxy_default_hint = QLabel()
         self._proxy_default_hint.setWordWrap(True)
@@ -537,38 +548,38 @@ class ConnectionDialog(QDialog):
 
         self._proxy_type = QComboBox()
         for label, _value in TRANSPORT_CHOICES:
-            self._proxy_type.addItem(label)
-        proxy_form.addRow("Type:", self._proxy_type)
+            self._proxy_type.addItem(tr(label))
+        proxy_form.addRow(tr("Type:"), self._proxy_type)
 
         self._proxy_auth = QComboBox()
         for label, _value in AUTH_CHOICES:
-            self._proxy_auth.addItem(label)
-        proxy_form.addRow("Authentication:", self._proxy_auth)
+            self._proxy_auth.addItem(tr(label))
+        proxy_form.addRow(tr("Authentication:"), self._proxy_auth)
 
         self._proxy_host = QLineEdit()
-        self._proxy_host.setPlaceholderText("proxy hostname or IP")
-        proxy_form.addRow("Host:", self._proxy_host)
+        self._proxy_host.setPlaceholderText(tr("proxy hostname or IP"))
+        proxy_form.addRow(tr("Host:"), self._proxy_host)
 
         self._proxy_port = QSpinBox()
         self._proxy_port.setRange(1, 65535)
         self._proxy_port.setValue(1080)
-        proxy_form.addRow("Port:", self._proxy_port)
+        proxy_form.addRow(tr("Port:"), self._proxy_port)
 
         self._proxy_username = QLineEdit()
-        self._proxy_username.setPlaceholderText("(optional)")
-        proxy_form.addRow("Username:", self._proxy_username)
+        self._proxy_username.setPlaceholderText(tr("(optional)"))
+        proxy_form.addRow(tr("Username:"), self._proxy_username)
 
         self._proxy_password = QLineEdit()
         self._proxy_password.setEchoMode(QLineEdit.EchoMode.Password)
-        self._proxy_password.setPlaceholderText("(optional)")
-        proxy_form.addRow("Password:", self._proxy_password)
+        self._proxy_password.setPlaceholderText(tr("(optional)"))
+        proxy_form.addRow(tr("Password:"), self._proxy_password)
 
-        self._store_proxy_pw = QCheckBox("Save proxy password in keyring")
+        self._store_proxy_pw = QCheckBox(tr("Save proxy password in keyring"))
         proxy_form.addRow("", self._store_proxy_pw)
 
         self._proxy_command = QLineEdit()
-        self._proxy_command.setPlaceholderText("ssh -W %h:%p jumphost  (overrides proxy above)")
-        proxy_form.addRow("ProxyCommand:", self._proxy_command)
+        self._proxy_command.setPlaceholderText(tr("ssh -W %h:%p jumphost  (overrides proxy above)"))
+        proxy_form.addRow(tr("ProxyCommand:"), self._proxy_command)
 
         layout.addWidget(self._proxy_group)
         layout.addStretch(1)
@@ -585,23 +596,23 @@ class ConnectionDialog(QDialog):
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
 
-        self._btn_test = QPushButton("Test Connection")
+        self._btn_test = QPushButton(tr("Test Connection"))
         self._btn_test.clicked.connect(self._test_connection)
         buttons.addButton(self._btn_test, QDialogButtonBox.ButtonRole.ActionRole)
 
-        self._btn_import_ssh = QPushButton("Import SSH Config")
-        self._btn_import_ssh.setToolTip("Import host from ~/.ssh/config")
+        self._btn_import_ssh = QPushButton(tr("Import SSH Config"))
+        self._btn_import_ssh.setToolTip(tr("Import host from ~/.ssh/config"))
         self._btn_import_ssh.clicked.connect(self._import_from_ssh_config)
         buttons.addButton(self._btn_import_ssh, QDialogButtonBox.ButtonRole.ActionRole)
 
-        self._btn_import_file = QPushButton("Import Config File...")
-        self._btn_import_file.setToolTip("Import host from a custom SSH config file")
+        self._btn_import_file = QPushButton(tr("Import Config File..."))
+        self._btn_import_file.setToolTip(tr("Import host from a custom SSH config file"))
         self._btn_import_file.clicked.connect(self._import_from_ssh_config_file)
         buttons.addButton(self._btn_import_file, QDialogButtonBox.ButtonRole.ActionRole)
 
-        self._btn_deploy_key = QPushButton("Deploy SSH Key")
+        self._btn_deploy_key = QPushButton(tr("Deploy SSH Key"))
         self._btn_deploy_key.setToolTip(
-            "Copy your public key to the remote server (like ssh-copy-id)"
+            tr("Copy your public key to the remote server (like ssh-copy-id)")
         )
         self._btn_deploy_key.clicked.connect(self._deploy_ssh_key)
         buttons.addButton(self._btn_deploy_key, QDialogButtonBox.ButtonRole.ActionRole)
@@ -672,13 +683,13 @@ class ConnectionDialog(QDialog):
         self._set_form_row_visible(self._simple_store_pw, needs_simple_pw)
         if is_s3:
             self._set_form_label(self._simple_password, "Secret Key:")
-            self._simple_password.setPlaceholderText("AWS secret access key")
+            self._simple_password.setPlaceholderText(tr("AWS secret access key"))
         elif is_azure:
             self._set_form_label(self._simple_password, "Account Key:")
-            self._simple_password.setPlaceholderText("Azure storage account key")
+            self._simple_password.setPlaceholderText(tr("Azure storage account key"))
         else:
             self._set_form_label(self._simple_password, "Password:")
-            self._simple_password.setPlaceholderText("Enter password")
+            self._simple_password.setPlaceholderText(tr("Enter password"))
 
         # Protocol-specific field visibility
         self._set_form_row_visible(self._ftp_passive, is_ftp)
@@ -765,10 +776,10 @@ class ConnectionDialog(QDialog):
         # Username label
         if is_s3:
             self._set_form_label(self._username, "Access Key:")
-            self._username.setPlaceholderText("AWS access key ID")
+            self._username.setPlaceholderText(tr("AWS access key ID"))
         elif is_azure:
             self._set_form_label(self._username, "Account:")
-            self._username.setPlaceholderText("Storage account name")
+            self._username.setPlaceholderText(tr("Storage account name"))
         else:
             self._set_form_label(self._username, "Username:")
             self._username.setPlaceholderText("")
@@ -877,7 +888,7 @@ class ConnectionDialog(QDialog):
             self._key_file.setText(path)
 
     def _on_profile_selected(self, name: str) -> None:
-        if name == "(New Connection)":
+        if name == tr("(New Connection)"):
             self._clear_fields()
             return
         profile = self._profile_manager.get(name)
@@ -1001,7 +1012,7 @@ class ConnectionDialog(QDialog):
         elif defaults.proxy_type != "none":
             hint = f"{defaults.proxy_type.upper()} {defaults.host}:{defaults.port}"
         else:
-            hint = "No default proxy is configured yet (Tools > Network & Proxy)."
+            hint = tr("No default proxy is configured yet (Tools > Network & Proxy).")
         self._proxy_default_hint.setText(hint)
         self._update_proxy_fields()
 
@@ -1257,12 +1268,12 @@ class ConnectionDialog(QDialog):
 
     @staticmethod
     def _protocol_label(info, available: bool) -> str:
-        label = info.display_name
+        label = tr(info.display_name)
         if not available:
             if info.required_extra:
                 label += f"  (pip install axross[{info.required_extra}])"
             elif info.install_hint:
-                label += f"  (needs {info.install_hint})"
+                label += "  (" + tr("needs {what}").format(what=tr(info.install_hint)) + ")"
         return label
 
     def _on_availability(self, backends, kind: str, value) -> None:
@@ -1328,24 +1339,35 @@ class ConnectionDialog(QDialog):
             ("ProxyCommand", proxy_command, True),
         ):
             if value and not self._is_safe_text(value, allow_space=allow_space):
-                QMessageBox.warning(self, "Validation", f"{label} contains invalid characters.")
+                QMessageBox.warning(self, tr("Validation"), tr("{label} contains invalid characters.").format(label=tr(label)))
                 return False
+        # A name whose keyring entries belong to another secret: the save
+        # failed later inside the keyring code and was reported as a
+        # "Keyring Error" - the name is the problem, so it is said here.
+        problem = profile_name_problem(profile_name) if profile_name else None
+        if problem:
+            QMessageBox.warning(
+                self, tr("Validation"),
+                tr("The profile name {name} cannot be used: it {problem}. Choose another "
+                   "name.").format(name=f"'{profile_name}'", problem=tr(problem)))
+            self._profile_name.setFocus()
+            return False
 
         # Protocol-specific validation
         if proto == "rsync":
             if not host:
-                QMessageBox.warning(self, "Validation", "Host is required.")
+                QMessageBox.warning(self, tr("Validation"), tr("Host is required."))
                 return False
         elif proto == "nfs":
             if not host:
-                QMessageBox.warning(self, "Validation", "Host is required.")
+                QMessageBox.warning(self, tr("Validation"), tr("Host is required."))
                 return False
             if not self._nfs_export.text().strip():
-                QMessageBox.warning(self, "Validation", "NFS export path is required.")
+                QMessageBox.warning(self, tr("Validation"), tr("NFS export path is required."))
                 return False
             sender = self._profile_from_form_nfs_sender()
             if sender is not None:
-                QMessageBox.warning(self, "Validation", sender)
+                QMessageBox.warning(self, tr("Validation"), sender)
                 return False
         elif proto in ("azure_blob", "azure_files"):
             cs = self._azure_connection_string.text().strip()
@@ -1353,43 +1375,43 @@ class ConnectionDialog(QDialog):
             if not cs and not acct:
                 QMessageBox.warning(
                     self,
-                    "Validation",
-                    "Either Connection String or Account Name is required.",
+                    tr("Validation"),
+                    tr("Either Connection String or Account Name is required."),
                 )
                 return False
             if proto == "azure_blob" and not self._azure_container.text().strip():
-                QMessageBox.warning(self, "Validation", "Container name is required.")
+                QMessageBox.warning(self, tr("Validation"), tr("Container name is required."))
                 return False
             if proto == "azure_files" and not self._azure_share.text().strip():
-                QMessageBox.warning(self, "Validation", "File share name is required.")
+                QMessageBox.warning(self, tr("Validation"), tr("File share name is required."))
                 return False
         elif proto in ("onedrive", "sharepoint"):
             if not self._onedrive_client_id.text().strip():
                 QMessageBox.warning(
-                    self, "Validation", "Client ID is required. See OAUTH_SETUP.md."
+                    self, tr("Validation"), tr("Client ID is required. See OAUTH_SETUP.md.")
                 )
                 return False
             if proto == "sharepoint" and not self._sharepoint_site_url.text().strip():
-                QMessageBox.warning(self, "Validation", "SharePoint site URL is required.")
+                QMessageBox.warning(self, tr("Validation"), tr("SharePoint site URL is required."))
                 return False
         elif proto == "gdrive":
             if not self._gdrive_client_id.text().strip():
                 QMessageBox.warning(
-                    self, "Validation", "Google Client ID is required. See OAUTH_SETUP.md."
+                    self, tr("Validation"), tr("Google Client ID is required. See OAUTH_SETUP.md.")
                 )
                 return False
         elif proto == "dropbox":
             if not self._dropbox_app_key.text().strip():
                 QMessageBox.warning(
-                    self, "Validation", "Dropbox App Key is required. See OAUTH_SETUP.md."
+                    self, tr("Validation"), tr("Dropbox App Key is required. See OAUTH_SETUP.md.")
                 )
                 return False
         elif proto == "iscsi":
             if not host:
-                QMessageBox.warning(self, "Validation", "Target IP is required.")
+                QMessageBox.warning(self, tr("Validation"), tr("Target IP is required."))
                 return False
             if not self._iscsi_target_iqn.text().strip():
-                QMessageBox.warning(self, "Validation", "Target IQN is required.")
+                QMessageBox.warning(self, tr("Validation"), tr("Target IQN is required."))
                 return False
             from core.iscsi_client import validate_initiator_name, validate_interface
 
@@ -1397,17 +1419,17 @@ class ConnectionDialog(QDialog):
                 validate_initiator_name(self._iscsi_initiator_name.text())
                 validate_interface(self._iscsi_initiator_interface.text())
             except ValueError as exc:
-                QMessageBox.warning(self, "Validation", str(exc))
+                QMessageBox.warning(self, tr("Validation"), str(exc))
                 return False
         elif proto == "webdav":
             url = self._webdav_url.text().strip()
             if not url:
-                QMessageBox.warning(self, "Validation", "WebDAV URL is required.")
+                QMessageBox.warning(self, tr("Validation"), tr("WebDAV URL is required."))
                 return False
         elif proto == "s3":
             bucket = self._s3_bucket.text().strip()
             if not bucket:
-                QMessageBox.warning(self, "Validation", "S3 bucket name or URL is required.")
+                QMessageBox.warning(self, tr("Validation"), tr("S3 bucket name or URL is required."))
                 return False
             # Accept full URLs (https://bucket.s3.region.amazonaws.com) or plain names
             import re
@@ -1418,32 +1440,32 @@ class ConnectionDialog(QDialog):
                 if not re.fullmatch(r"^[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9]$", bucket):
                     QMessageBox.warning(
                         self,
-                        "Validation",
-                        "Invalid S3 bucket name. Use a valid bucket name (lowercase, "
+                        tr("Validation"),
+                        tr("Invalid S3 bucket name. Use a valid bucket name (lowercase, "
                         "3-63 chars) or paste a full S3 URL like:\n"
-                        "dev-s1.s3.ap-south-1.amazonaws.com",
+                        "dev-s1.s3.ap-south-1.amazonaws.com"),
                     )
                     return False
             # Access key is optional — anonymous access for public buckets
         elif proto in ("smb", "dfsn"):
             if not host:
-                QMessageBox.warning(self, "Validation", "Host is required.")
+                QMessageBox.warning(self, tr("Validation"), tr("Host is required."))
                 return False
             if not self._smb_share.text().strip():
                 label = "DFS namespace" if proto == "dfsn" else "SMB share name"
-                QMessageBox.warning(self, "Validation", f"{label} is required.")
+                QMessageBox.warning(self, tr("Validation"), tr("{label} is required.").format(label=tr(label)))
                 return False
         elif proto in ("gopher", "pjl", "nntp", "tftp"):
             # No username (TFTP has no login at all; its row is hidden).
             if not host:
-                QMessageBox.warning(self, "Validation", "Host is required.")
+                QMessageBox.warning(self, tr("Validation"), tr("Host is required."))
                 return False
         elif proto in ("telnet", "cisco-telnet"):
             # The username is optional: telnet_client logs in on a bare
             # password prompt or a no-auth shell, and IOS line-password
             # mode has no username at all (core/telnet_cisco.py).
             if not host:
-                QMessageBox.warning(self, "Validation", "Host is required.")
+                QMessageBox.warning(self, tr("Validation"), tr("Host is required."))
                 return False
         elif proto == "ramfs":
             pass  # an in-process RAM workspace: no host, no login
@@ -1451,10 +1473,10 @@ class ConnectionDialog(QDialog):
             # SFTP, FTP, FTPS need host + username; a protocol whose Username
             # row is hidden (MTP) must not ask for one.
             if not host:
-                QMessageBox.warning(self, "Validation", "Host is required.")
+                QMessageBox.warning(self, tr("Validation"), tr("Host is required."))
                 return False
             if not username and proto not in NO_USERNAME_PROTOCOLS:
-                QMessageBox.warning(self, "Validation", "Username is required.")
+                QMessageBox.warning(self, tr("Validation"), tr("Username is required."))
                 return False
 
         if (
@@ -1465,21 +1487,21 @@ class ConnectionDialog(QDialog):
         ):
             QMessageBox.warning(
                 self,
-                "Validation",
-                "Proxy host or ProxyCommand is required when proxy support is enabled.",
+                tr("Validation"),
+                tr("Proxy host or ProxyCommand is required when proxy support is enabled."),
             )
             return False
 
         # SSH-specific validation
         if proto in ("sftp", "scp"):
             if self._auth_key.isChecked() and not key_file:
-                QMessageBox.warning(self, "Validation", "Key file is required for key auth.")
+                QMessageBox.warning(self, tr("Validation"), tr("Key file is required for key auth."))
                 return False
             if self._auth_key.isChecked():
                 key_path = Path(key_file).expanduser()
                 if not key_path.is_file():
                     QMessageBox.warning(
-                        self, "Validation", "Key file does not exist or is not a file."
+                        self, tr("Validation"), tr("Key file does not exist or is not a file.")
                     )
                     return False
         return True
@@ -1505,9 +1527,9 @@ class ConnectionDialog(QDialog):
             # replaces it, so ask - default No.
             reply = QMessageBox.question(
                 self,
-                "Replace Profile",
-                f"A profile named '{profile.name}' already exists.\n\n"
-                "Replace it with this one? Its settings are lost.",
+                tr("Replace Profile"),
+                tr("A profile named '{name}' already exists.\n\n"
+                   "Replace it with this one? Its settings are lost.").format(name=profile.name),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
@@ -1521,22 +1543,41 @@ class ConnectionDialog(QDialog):
             if old_profile:
                 fallback_password = old_profile.get_password()
                 fallback_proxy_password = old_profile.get_proxy_password()
+        from core.user_errors import describe
+
+        # Each step says what failed: a refused name, a keyring that kept
+        # no secret, a file that was not written (full disk, an unreadable
+        # profiles.json) - all of them were "Keyring Error", or "Saved".
         try:
-            self._profile_manager.add(profile)
+            saved = self._profile_manager.add(profile, report_failure=False)
+        except ValueError as e:  # a name the keyring entries cannot hold
+            QMessageBox.warning(self, tr("Not saved"), describe(e))
+            return
+        except RuntimeError as e:  # the keyring refused a secret field
+            log.error("Failed to store profile secrets in keyring: %s", e)
+            QMessageBox.warning(
+                self, tr("Not saved"),
+                tr("The profile was not saved: the keyring did not store its secrets. "
+                   "Start or unlock your keyring (SecretService, KWallet, KeePassXC) "
+                   "and try again."))
+            return
+        except OSError as e:
+            QMessageBox.warning(self, tr("Not saved"), describe(e))
+            return
+        keyring_problem = ""
+        try:
             self._store_profile_credentials(
                 profile,
                 fallback_password=fallback_password,
                 fallback_proxy_password=fallback_proxy_password,
             )
-            if old_profile_name and old_profile_name != profile.name:
-                self._profile_manager.remove(old_profile_name)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the profile itself is saved
             log.error("Failed to store credentials in keyring: %s", e)
-            QMessageBox.warning(self, "Keyring Error", f"Could not save credentials:\n{e}")
-            return
+            keyring_problem = describe(e)
+        if saved and old_profile_name and old_profile_name != profile.name:
+            saved = self._profile_manager.remove(old_profile_name, report_failure=False)
         self._loaded_profile_name = profile.name
         self._loaded_profile = self._profile_manager.get(profile.name) or profile
-        log.info("Saved profile: %s", profile.name)
 
         # Update combo - with its signals blocked: selecting the saved name
         # loaded the profile again, which emptied the typed password (and
@@ -1554,12 +1595,27 @@ class ConnectionDialog(QDialog):
         finally:
             combo.blockSignals(False)
 
-        QMessageBox.information(self, "Saved", f"Profile '{profile.name}' saved.")
+        if not saved:
+            log.error("Profile %s not saved: %s", profile.name, saved.reason)
+            QMessageBox.warning(
+                self, tr("Not saved"),
+                tr("Profile '{name}' is not saved.\n\n{reason}\n\nIt stays available "
+                   "until axross ends.").format(name=profile.name, reason=saved.reason))
+            return
+        if keyring_problem:
+            QMessageBox.warning(
+                self, tr("Saved without password"),
+                tr("Profile '{name}' is saved, but the keyring did not store its "
+                   "password.\n\n{reason}").format(name=profile.name, reason=keyring_problem))
+            return
+        log.info("Saved profile: %s", profile.name)
+        QMessageBox.information(
+            self, tr("Saved"), tr("Profile '{name}' saved.").format(name=profile.name))
 
     def _build_profile_menu(self) -> QMenu:
         menu = QMenu(self)
-        delete = menu.addAction("Delete Connection Config…")
-        delete.setEnabled(self._profile_combo.currentText() != "(New Connection)")
+        delete = menu.addAction(tr("Delete Connection Config…"))
+        delete.setEnabled(self._profile_combo.currentText() != tr("(New Connection)"))
         delete.triggered.connect(lambda _checked=False: self._delete_profile())
         return menu
 
@@ -1572,12 +1628,12 @@ class ConnectionDialog(QDialog):
 
     def _delete_profile(self) -> None:
         name = self._profile_combo.currentText()
-        if name == "(New Connection)":
+        if name == tr("(New Connection)"):
             return
         reply = QMessageBox.question(
             self,
-            "Delete Profile",
-            f"Delete this profile?\n\n{name}",  # never markup in the first line
+            tr("Delete Profile"),
+            tr("Delete this profile?\n\n{name}").format(name=name),  # never markup in line 1
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
@@ -1586,7 +1642,7 @@ class ConnectionDialog(QDialog):
                 log.info("Deleted profile: %s", name)
             except Exception as e:
                 log.error("Failed to delete profile %s: %s", name, e)
-                QMessageBox.warning(self, "Error", f"Failed to delete profile:\n{e}")
+                QMessageBox.warning(self, tr("Error"), tr("Failed to delete profile:\n{error}").format(error=e))
                 return
             # removeItem() selected the next profile, the form was then
             # emptied under its name - and the next Delete removed that
@@ -1607,13 +1663,14 @@ class ConnectionDialog(QDialog):
             return
         profile = self._build_profile()
         self._btn_test.setEnabled(False)
-        self._btn_test.setText("Connecting...")
+        self._btn_test.setText(tr("Connecting..."))
 
         self._connect_thread = _ConnectThread(
             profile, self._effective_password(), self._key_passphrase.text(), parent=self
         )
         self._connect_thread.success.connect(self._on_test_success)
         self._connect_thread.error.connect(self._on_test_error)
+        self._connect_thread.unknown_host_key.connect(self._on_test_unknown_host_key)
         self._connect_thread.finished.connect(self._on_test_done)
         self._connect_thread.start()
 
@@ -1654,20 +1711,26 @@ class ConnectionDialog(QDialog):
 
         thread = getattr(self, "_connect_thread", None)
         if thread is not None:
-            detach_running_thread(thread, thread.success, thread.error, thread.finished)
+            detach_running_thread(thread, thread.success, thread.error,
+                                  thread.unknown_host_key, thread.finished)
             self._btn_test.setEnabled(True)
-            self._btn_test.setText("Test Connection")
+            self._btn_test.setText(tr("Test Connection"))
         super().done(result)
 
     def _on_test_success(self, home: str) -> None:
-        QMessageBox.information(self, "Success", f"Connection successful!\nHome directory: {home}")
+        QMessageBox.information(self, tr("Success"), tr("Connection successful!\nHome directory: {home}").format(home=home))
 
     def _on_test_error(self, error: str) -> None:
-        QMessageBox.critical(self, "Connection Failed", error)
+        QMessageBox.critical(self, tr("Connection Failed"), error)
+
+    def _on_test_unknown_host_key(self, text: str) -> None:
+        """The server answered, but with a host key not in known_hosts: no
+        failure of the connection - Connect shows the fingerprint to trust."""
+        QMessageBox.information(self, tr("New host key"), text)
 
     def _on_test_done(self) -> None:
         self._btn_test.setEnabled(True)
-        self._btn_test.setText("Test Connection")
+        self._btn_test.setText(tr("Test Connection"))
 
     def _store_profile_credentials(
         self,
@@ -1699,14 +1762,14 @@ class ConnectionDialog(QDialog):
 
         hosts = parse_ssh_config()
         if not hosts:
-            QMessageBox.information(self, "SSH Config", "No hosts found in ~/.ssh/config")
+            QMessageBox.information(self, tr("SSH Config"), tr("No hosts found in ~/.ssh/config"))
             return
 
         names = [h.alias for h in hosts]
         from PyQt6.QtWidgets import QInputDialog
 
         choice, ok = QInputDialog.getItem(
-            self, "Import SSH Config", "Select host:", names, editable=False
+            self, tr("Import SSH Config"), tr("Select host:"), names, editable=False
         )
         if not ok:
             return
@@ -1733,14 +1796,14 @@ class ConnectionDialog(QDialog):
 
         hosts = parse_ssh_config(Path(path))
         if not hosts:
-            QMessageBox.information(self, "SSH Config", f"No hosts found in {path}")
+            QMessageBox.information(self, tr("SSH Config"), tr("No hosts found in {source}").format(source=path))
             return
 
         names = [h.alias for h in hosts]
         from PyQt6.QtWidgets import QInputDialog
 
         choice, ok = QInputDialog.getItem(
-            self, "Import SSH Config", "Select host:", names, editable=False
+            self, tr("Import SSH Config"), tr("Select host:"), names, editable=False
         )
         if not ok:
             return
@@ -1787,8 +1850,8 @@ class ConnectionDialog(QDialog):
         if not pub_keys:
             QMessageBox.warning(
                 self,
-                "Deploy Key",
-                "No public keys found in ~/.ssh/.\nGenerate one first with: ssh-keygen -t ed25519",
+                tr("Deploy Key"),
+                tr("No public keys found in ~/.ssh/.\nGenerate one first with: ssh-keygen -t ed25519"),
             )
             return
 
@@ -1796,7 +1859,7 @@ class ConnectionDialog(QDialog):
         from PyQt6.QtWidgets import QInputDialog
 
         choice, ok = QInputDialog.getItem(
-            self, "Deploy SSH Key", "Select public key to deploy:", key_names, editable=False
+            self, tr("Deploy SSH Key"), tr("Select public key to deploy:"), key_names, editable=False
         )
         if not ok:
             return
@@ -1805,7 +1868,7 @@ class ConnectionDialog(QDialog):
         try:
             pub_key_content = pub_key_path.read_text().strip()
         except OSError as e:
-            QMessageBox.critical(self, "Error", f"Could not read {pub_key_path}:\n{e}")
+            QMessageBox.critical(self, tr("Error"), tr("Could not read {path}:\n{error}").format(path=pub_key_path, error=e))
             return
 
         # Connect and deploy - on a worker (ui.off_gui): the connect, the
@@ -1821,7 +1884,7 @@ class ConnectionDialog(QDialog):
         password = self._password.text()
         key_passphrase = self._key_passphrase.text()
         self._btn_deploy_key.setEnabled(False)
-        self._btn_deploy_key.setText("Deploying...")
+        self._btn_deploy_key.setText(tr("Deploying..."))
         bridge = HostKeyPrompt()
         bridge.set_prompt(self._confirm_unknown_host)
         bridge.request.connect(bridge.handle_request, _Qt.ConnectionType.QueuedConnection)
@@ -1886,36 +1949,34 @@ class ConnectionDialog(QDialog):
         try:
             outcome = run_off_gui(deploy)
         except Exception as e:
-            QMessageBox.critical(self, "Deploy Key Failed", str(e))
+            QMessageBox.critical(self, tr("Deploy Key Failed"), str(e))
             log.error("SSH key deployment failed: %s", e)
             return
         finally:
             self._btn_deploy_key.setEnabled(True)
-            self._btn_deploy_key.setText("Deploy SSH Key")
+            self._btn_deploy_key.setText(tr("Deploy SSH Key"))
         if outcome == "present":
             log.info("SSH key %s already present on %s", choice, profile.host)
             QMessageBox.information(
-                self, "Deploy Key", f"Key {choice} is already deployed on this server."
+                self, tr("Deploy Key"), tr("Key {key} is already deployed on this server.").format(key=choice)
             )
             return
         QMessageBox.information(
             self,
-            "Deploy Key",
-            f"Successfully deployed {choice} to {profile.host}.\n\n"
-            "You can now switch to SSH Key authentication.",
+            tr("Deploy Key"),
+            tr("Successfully deployed {key} to {host}.\n\n"
+               "You can now switch to SSH Key authentication.").format(key=choice, host=profile.host),
         )
         log.info("Deployed SSH key %s to %s", choice, profile.host)
 
     def _confirm_unknown_host(self, error: UnknownHostKeyError) -> bool:
         reply = QMessageBox.question(
             self,
-            "Trust Host Key?",
-            (
-                f"The host {error.host} is not present in known_hosts.\n\n"
-                f"Key type: {error.key_type}\n"
-                f"SHA256:{error.fingerprint_sha256}\n\n"
-                "Trust this host key and continue?"
-            ),
+            tr("Trust Host Key?"),
+            tr("The host {host} is not present in known_hosts.\n\nKey type: {key_type}\n"
+               "SHA256:{fingerprint}\n\nTrust this host key and continue?").format(
+                host=error.host, key_type=error.key_type,
+                fingerprint=error.fingerprint_sha256),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         return reply == QMessageBox.StandardButton.Yes

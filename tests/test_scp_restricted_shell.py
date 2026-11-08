@@ -48,6 +48,8 @@ def _posix(cmd: str, timeout: float = 0.0) -> tuple[str, int]:
     """A POSIX shell: takes the prefix, echo prints its argument."""
     if cmd.startswith(SHELL_ENV + " "):
         cmd = cmd[len(SHELL_ENV) + 1 :]
+    if cmd.startswith("TZ=UTC0 "):
+        cmd = cmd[len("TZ=UTC0 ") :]
     word = cmd.split()[0]
     if word == "echo":
         return cmd.split(" ", 1)[1], 0
@@ -87,7 +89,7 @@ def test_happy_a_posix_shell_keeps_the_utf8_prefix():
     s = _session(_posix)
     assert s._caps.has_env_prefix is True
     s.list_dir("/")
-    assert s.sent[0].startswith(SHELL_ENV + " ls -la ")
+    assert s.sent[0].startswith(SHELL_ENV + " TZ=UTC0 ls -la ")
 
 
 # --- sad ------------------------------------------------------------------

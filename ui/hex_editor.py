@@ -33,6 +33,7 @@ from core.open_limits import DEFAULT_MAX_OPEN_MB, describe_limit, max_open_bytes
 from ui.close_corner import add_close_corner
 from ui.scan_job import ScanJob
 from ui.icon_provider import set_window_icon
+from core.i18n import tr
 
 if TYPE_CHECKING:
     from core.backend import FileBackend
@@ -538,7 +539,7 @@ class HexEditorDialog(QDialog):
         self._loaded_once = False
 
         filename = file_path.rsplit(backend.separator(), 1)[-1]
-        prefix = "View Hex" if read_only else "Hex"
+        prefix = tr("View Hex") if read_only else tr("Hex")
         self.setWindowTitle(f"{prefix}: {filename} [{backend.name}]")
         self.resize(900, 600)
 
@@ -584,24 +585,24 @@ class HexEditorDialog(QDialog):
         # Search / goto bar
         search_layout = QHBoxLayout()
 
-        search_layout.addWidget(QLabel("Search:"))
+        search_layout.addWidget(QLabel(tr("Search:")))
         self._search_edit = QLineEdit()
-        self._search_edit.setPlaceholderText("Hex bytes (e.g. FF 00 AB) or text: hello")
+        self._search_edit.setPlaceholderText(tr("Hex bytes (e.g. FF 00 AB) or text: hello"))
         self._search_edit.returnPressed.connect(self._on_search)
         search_layout.addWidget(self._search_edit)
 
-        search_btn = QPushButton("Find Next")
+        search_btn = QPushButton(tr("Find Next"))
         search_btn.clicked.connect(self._on_search)
         search_layout.addWidget(search_btn)
 
-        search_layout.addWidget(QLabel("Goto:"))
+        search_layout.addWidget(QLabel(tr("Goto:")))
         self._goto_edit = QLineEdit()
-        self._goto_edit.setPlaceholderText("Hex offset (e.g. 1A0)")
+        self._goto_edit.setPlaceholderText(tr("Hex offset (e.g. 1A0)"))
         self._goto_edit.setFixedWidth(120)
         self._goto_edit.returnPressed.connect(self._on_goto)
         search_layout.addWidget(self._goto_edit)
 
-        goto_btn = QPushButton("Go")
+        goto_btn = QPushButton(tr("Go"))
         goto_btn.clicked.connect(self._on_goto)
         search_layout.addWidget(goto_btn)
 
@@ -612,12 +613,12 @@ class HexEditorDialog(QDialog):
         self._status_label = QLabel()
         status.addWidget(self._status_label)
 
-        self._offset_label = QLabel("Offset: 0x00000000")
+        self._offset_label = QLabel(tr("Offset: 0x00000000"))
         self._offset_label.setProperty("role", "muted")
         status.addStretch()
         status.addWidget(self._offset_label)
 
-        self._mode_label = QLabel("[HEX]")
+        self._mode_label = QLabel(tr("[HEX]"))
         self._mode_label.setProperty("role", "muted")
         status.addWidget(self._mode_label)
         layout.addLayout(status)
@@ -625,7 +626,7 @@ class HexEditorDialog(QDialog):
         # Buttons
         btn_layout = QHBoxLayout()
 
-        self._btn_save = QPushButton("Save")
+        self._btn_save = QPushButton(tr("Save"))
         self._btn_save.setShortcut(QKeySequence("Ctrl+S"))
         self._btn_save.setEnabled(False)
         self._btn_save.clicked.connect(self._save_file)
@@ -633,13 +634,13 @@ class HexEditorDialog(QDialog):
             self._btn_save.hide()
         btn_layout.addWidget(self._btn_save)
 
-        self._btn_reload = QPushButton("Reload")
+        self._btn_reload = QPushButton(tr("Reload"))
         self._btn_reload.clicked.connect(self._reload_file)
         btn_layout.addWidget(self._btn_reload)
 
         btn_layout.addStretch()
 
-        self._btn_close = QPushButton("Close")
+        self._btn_close = QPushButton(tr("Close"))
         self._btn_close.clicked.connect(self._on_close)
         btn_layout.addWidget(self._btn_close)
 
@@ -670,16 +671,16 @@ class HexEditorDialog(QDialog):
         if self.loading:
             return  # "Loading…" stays until the bytes are there
         pos = self._hex_widget._cursor_pos
-        self._offset_label.setText(f"Offset: 0x{pos:08X} ({pos})")
+        self._offset_label.setText(tr("Offset: 0x{pos:08X} ({pos})").format(pos=pos))
         self._mode_label.setText("[HEX]" if self._hex_widget._editing_hex else "[ASCII]")
 
         if self._hex_widget.is_modified:
             self._btn_save.setEnabled(True)
             self._status_label.setText(
-                f"Modified ({len(self._hex_widget._modified_offsets)} bytes changed)"
+                tr("Modified ({n} bytes changed)").format(n=len(self._hex_widget._modified_offsets))
             )
         else:
-            self._status_label.setText("Loaded")
+            self._status_label.setText(tr("Loaded"))
 
     def _load_file(self) -> None:
         cap = max_open_bytes()
@@ -699,7 +700,7 @@ class HexEditorDialog(QDialog):
         self._hex_widget.read_only = True
         self._btn_save.setEnabled(False)
         self._btn_reload.setEnabled(False)
-        self._status_label.setText("Loading…")
+        self._status_label.setText(tr("Loading…"))
         backend, path = self._backend, self._file_path
         job.start(lambda _cancel, _progress: read_for_hex(backend, path, cap), replace=True)
 
@@ -713,10 +714,10 @@ class HexEditorDialog(QDialog):
 
     def _show_loaded(self, result) -> None:
         stat, data = result
-        self._size_label.setText(f"{stat.size:,} bytes")
+        self._size_label.setText(tr("{size:,} bytes").format(size=stat.size))
         self._original_data = data
         self._hex_widget.set_data(self._original_data)
-        self._status_label.setText("Loaded")
+        self._status_label.setText(tr("Loaded"))
         self._btn_save.setEnabled(False)
         self._loaded_once = True
         log.debug("Hex loaded: %s (%d bytes)", self._file_path, len(self._original_data))
@@ -725,22 +726,21 @@ class HexEditorDialog(QDialog):
         if isinstance(exc, HexFileTooLargeError):
             QMessageBox.warning(
                 self,
-                "File Too Large",
-                f"File is {exc.size_human} — only files up to {describe_limit()} "
-                "are opened (change it under Edit → Settings… → Files & Panes → "
-                "Open Size Limit).",
+                tr("File Too Large"),
+                tr("File is {size_human} — only files up to {describe_limit} are opened "
+                    "(change it under Edit → Settings… → Files & Panes → Open Size Limit).").format(size_human=exc.size_human, describe_limit=describe_limit()),
             )
         else:
             log.error("Cannot read file %s: %s", self._file_path, exc)
-            QMessageBox.critical(self, "Error", f"Cannot read file:\n{exc}")
+            QMessageBox.critical(self, tr("Error"), tr("Cannot read file:\n{exc}").format(exc=exc))
         self.reject()
 
     def _reload_file(self) -> None:
         if self._hex_widget.is_modified:
             reply = QMessageBox.question(
                 self,
-                "Unsaved Changes",
-                "Reload and discard changes?",
+                tr("Unsaved Changes"),
+                tr("Reload and discard changes?"),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if reply != QMessageBox.StandardButton.Yes:
@@ -771,12 +771,12 @@ class HexEditorDialog(QDialog):
                 self._status_label.setText(text)
 
             try:
-                current = run_off_gui(read_current, status=status, text="Checking…")
+                current = run_off_gui(read_current, status=status, text=tr("Checking…"))
                 if current != self._original_data:
                     reply = QMessageBox.question(
                         self,
-                        "File Changed",
-                        "File was modified on server. Overwrite?",
+                        tr("File Changed"),
+                        tr("File was modified on server. Overwrite?"),
                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                     )
                     if reply != QMessageBox.StandardButton.Yes:
@@ -784,8 +784,8 @@ class HexEditorDialog(QDialog):
             except HexEditorReadLimitError as e:
                 QMessageBox.warning(
                     self,
-                    "File Too Large",
-                    f"Cannot safely check remote changes:\n{e}",
+                    tr("File Too Large"),
+                    tr("Cannot safely check remote changes:\n{e}").format(e=e),
                 )
                 return
             except OSError:
@@ -798,19 +798,19 @@ class HexEditorDialog(QDialog):
             # Off the GUI thread: the window keeps painting while a server
             # takes the write (ui.off_gui); clicks wait until it is done.
             run_off_gui(lambda: atomic_write(backend, path, content), status=status,
-                        text="Saving…")
+                        text=tr("Saving…"))
 
             self._original_data = content
             self._hex_widget._modified_offsets.clear()
             self._btn_save.setEnabled(False)
-            self._status_label.setText("Saved")
+            self._status_label.setText(tr("Saved"))
             log.info("Hex saved: %s (%d bytes)", self._file_path, len(content))
             self.saved.emit()
 
         except Exception as e:  # noqa: BLE001 - any failure is "not saved", never "saved"
             log.error("Cannot save file %s: %s", self._file_path, e,
                       exc_info=not isinstance(e, OSError))
-            QMessageBox.critical(self, "Save Error", f"Cannot save:\n{e}")
+            QMessageBox.critical(self, tr("Save Error"), tr("Cannot save:\n{e}").format(e=e))
 
     def _on_search(self) -> None:
         query = self._search_edit.text().strip()
@@ -835,9 +835,9 @@ class HexEditorDialog(QDialog):
 
         idx = self._hex_widget.search_bytes(pattern)
         if idx >= 0:
-            self._status_label.setText(f"Found at offset 0x{idx:08X}")
+            self._status_label.setText(tr("Found at offset 0x{idx:08X}").format(idx=idx))
         else:
-            self._status_label.setText("Not found")
+            self._status_label.setText(tr("Not found"))
 
     def _on_goto(self) -> None:
         text = self._goto_edit.text().strip()
@@ -851,11 +851,11 @@ class HexEditorDialog(QDialog):
         except ValueError:
             offset = -1
         if offset < 0:
-            self._status_label.setText("Invalid offset")
+            self._status_label.setText(tr("Invalid offset"))
             return
         if not self._hex_widget.goto_offset(offset):
             size = len(self._hex_widget.get_data())
-            self._status_label.setText(f"Offset 0x{offset:X} is past the end ({size} bytes)")
+            self._status_label.setText(tr("Offset 0x{offset:X} is past the end ({size} bytes)").format(offset=offset, size=size))
             return
         self._update_status()
 
@@ -863,8 +863,8 @@ class HexEditorDialog(QDialog):
         if self._hex_widget.is_modified:
             reply = QMessageBox.question(
                 self,
-                "Unsaved Changes",
-                "Discard changes?",
+                tr("Unsaved Changes"),
+                tr("Discard changes?"),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if reply != QMessageBox.StandardButton.Yes:
@@ -882,8 +882,8 @@ class HexEditorDialog(QDialog):
         if self._hex_widget.is_modified:
             reply = QMessageBox.question(
                 self,
-                "Unsaved Changes",
-                "Discard changes?",
+                tr("Unsaved Changes"),
+                tr("Discard changes?"),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if reply != QMessageBox.StandardButton.Yes:
@@ -894,8 +894,8 @@ class HexEditorDialog(QDialog):
         if self._hex_widget.is_modified:
             reply = QMessageBox.question(
                 self,
-                "Unsaved Changes",
-                "Discard changes?",
+                tr("Unsaved Changes"),
+                tr("Discard changes?"),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if reply != QMessageBox.StandardButton.Yes:

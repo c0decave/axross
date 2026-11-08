@@ -12,7 +12,7 @@ MCP-Tool-Oberfläche, mit der ein LLM das Ganze fernsteuern kann.**
 - **Multi-Pane-Layout im Commander-Stil** — beliebig viele Split-Panes, Layout-Presets, Drag & Drop.
 - **Workspaces** — benannte Pane-Layouts als Tabs, abtrennbar in ein eigenes Fenster, beim nächsten Start wiederhergestellt, jedes Dock auf einen Workspace beschränkbar.
 - **LLM-Agent eingebaut** — Agent-Dock mit Tabs und Sandboxes für LM Studio, Ollama, vLLM oder llama.cpp, read-only per Default.
-- **Mit dem Agent sprechen** — Push-to-Talk, gesprochene Antworten auf Deutsch und Englisch, Speech Recognition lokal oder auf dem LLM-Server.
+- **Mit dem Agenten sprechen** — Push-to-Talk, gesprochene Antworten auf Deutsch und Englisch, Speech Recognition lokal oder auf dem LLM-Server.
 - **MCP-Server und -Client** — LLMs steuern axross über stdio oder HTTP, und der Agent nutzt die Tools weiterer MCP-Server.
 - **Eingebautes Python-Scripting** — REPL, Scripts-Dock und 32 fertige Scripts auf einer `axross.*`-API.
 - **Text-Editor mit Tabs** — Syntax Highlighting, Find/Replace, Encodings und Line Endings, für lokale und Remote-Dateien.
@@ -324,7 +324,7 @@ Weitere Screenshots, jeder mit Erklärung: **[die Slideshow](slideshow_de.md)**.
     und Extension-Panels lassen sich wie ein Pane in einen Workspace legen.
     Die Workspaces kommen beim nächsten Start wieder.
 
-28. **Mit dem Agent sprechen.** Push-to-Talk (F9), Toggle oder
+28. **Mit dem Agenten sprechen.** Push-to-Talk (F9), Toggle oder
     Conversation Mode im Agent-Dock. Antworten kommen gesprochen auf
     Deutsch oder Englisch mit Piper-Voices, englische IT-Begriffe bleiben
     englisch; jede Stimme hat eigene Speed, Pitch, Expressiveness, Volume
@@ -562,7 +562,7 @@ Vollständige Tabelle der Extras + System-Tools pro Protokoll:
 | [docs/SCRIPTING_REFERENCE.md](docs/SCRIPTING_REFERENCE.md) | Auto-generierte Volldoku jeder Funktion mit Signatur + komplettem Docstring. |
 | [docs/MCP.md](docs/MCP.md) · [MCP_de.md](docs/MCP_de.md) · [MCP_es.md](docs/MCP_es.md) | MCP-Server-Referenz — Tools, Sessions, mTLS, Rate-Limits, Hardening. |
 | [docs/LLM_GUIDE.md](docs/LLM_GUIDE.md) · [llms.txt](llms.txt) | Für LLM-Agents (englisch): axross über MCP und die `axross.*`-API richtig bedienen, mit dem aus dem Manifest erzeugten Tool-Katalog. |
-| [docs/HANDBUCH.md](docs/HANDBUCH.md) | Vollständiges deutsches Handbuch (Workflows, Dialog-Referenz, Tastenkürzel). |
+| [docs/USAGE_de.md](docs/USAGE_de.md) | Das deutsche Handbuch – dasselbe, das *Hilfe → Handbuch* (F1) in axross zeigt. |
 | [docs/OPSEC.md](docs/OPSEC.md) | Threat-Model + per-Finding-Analyse, was der Client an Server preisgibt. |
 | [docs/PROXY_SUPPORT.md](docs/PROXY_SUPPORT.md) | SOCKS5 / SOCKS4 / HTTP-CONNECT pro Protokoll. |
 | [OAUTH_SETUP.md](OAUTH_SETUP.md) | OneDrive / SharePoint / Google Drive / Dropbox App-Registration-Rezepte. |

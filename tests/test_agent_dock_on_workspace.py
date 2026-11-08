@@ -5,7 +5,7 @@ not be bound to one. Besides *Show Only on Workspace* (tests/
 test_dock_bindings.py) the Agent dock now moves *into* a workspace as a
 pane, as extension panels do: its title bar's Send to Workspace, or
 Workspace > Add Extension Panel. There it shows only with its workspace,
-its [x] takes it out (View > Panels puts it back), Ctrl+Shift+A brings its
+its [x] takes it out (View > Panels puts it back), Ctrl+Shift+K brings its
 workspace, and a restart puts it back.
 """
 
@@ -124,7 +124,7 @@ def test_happy_ask_the_agent_brings_its_workspace(window):
     window.move_extension_panel(agent, b)
     window.switch_workspace(a)
     pump()
-    window._focus_agent()  # Ctrl+Shift+A
+    window._focus_agent()  # Ctrl+Shift+K
     pump()
     assert window.current_workspace() is b and agent.isVisible()
 

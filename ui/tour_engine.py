@@ -20,8 +20,16 @@ While a tour runs (:class:`TourRunner`):
 * a step whose widget is **missing** - a feature or dock switched off, a
   pane closed, a toolbar hidden - is skipped, and the next step shown says
   which were skipped. A dock that is open but tabbed behind another is
-  brought to the front; a closed one is opened for its step only when the
-  step says ``reveal`` (and closed again when the tour ends).
+  brought to the front (Qt parks such a dock outside the window and still
+  calls it visible, so a widget counts as shown only when it lies inside
+  the window); a closed one is opened for its step only when the step says
+  ``reveal`` (and closed again when the tour ends);
+* the widget's rectangle is **read afresh** every time the callout is
+  placed - a dock just opened or raised is laid out a moment later, and a
+  rectangle kept from the lookup framed its old, smaller size;
+* a step may also **frame** a second area (``TourStep.frame``): the context
+  of the widget it points at, such as both panes around the target pane's
+  ◎ button. It is left undimmed and outlined more thinly.
 """
 
 from __future__ import annotations
@@ -80,6 +88,9 @@ class TourStep:
     optional: bool = False
     #: A closed dock the step points at is opened for the step.
     reveal: bool = False
+    #: A second area left undimmed around the widget, outlined more thinly
+    #: (the same kinds of lookup as *target*; missing: nothing extra).
+    frame: Target | None = None
 
 
 @dataclass(frozen=True)
@@ -173,13 +184,27 @@ def _dock_of(widget: QWidget) -> QDockWidget | None:
     return None
 
 
+def window_rect(spot) -> QRect:
+    """The spot's rectangle in the coordinates of its widget's window."""
+    widget, rect = spot
+    host = widget.window()
+    return QRect(widget.mapTo(host, rect.topLeft()), rect.size())
+
+
 def shown(spot) -> bool:
-    """Whether a spot can be pointed at: on screen, with a size."""
+    """Whether a spot can be pointed at: visible, with a size, and inside its
+    window. Qt parks a dock tabbed behind another outside the window and
+    still calls it visible: the tour framed an empty corner for it."""
     if spot is None:
         return False
     widget, rect = spot
-    return (_alive(widget) and widget.isVisible() and widget.window().isVisible()
-            and rect.width() > 0 and rect.height() > 0)
+    if not (_alive(widget) and widget.isVisible() and widget.window().isVisible()
+            and rect.width() > 0 and rect.height() > 0):
+        return False
+    box = window_rect(spot)
+    area = widget.window().rect()
+    inside = box.intersected(area)
+    return inside.width() > 0 and inside.height() > 0 and area.contains(box.center())
 
 
 # -- the spotlight and the callout -----------------------------------------------------------
@@ -199,11 +224,14 @@ class Spotlight(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.hole = QRect()
+        #: The step's second area (TourStep.frame), or an empty rectangle.
+        self.context = QRect()
         self.setGeometry(host.rect())
 
-    def set_hole(self, rect: QRect) -> None:
+    def set_hole(self, rect: QRect, context: QRect | None = None) -> None:
         self.setGeometry(self.parentWidget().rect())
         self.hole = QRect(rect)
+        self.context = QRect(context) if context is not None else QRect()
         self.update()
 
     def paintEvent(self, _event) -> None:  # noqa: N802 - Qt
@@ -214,7 +242,14 @@ class Spotlight(QWidget):
         dim.addRect(QRectF(self.rect()))
         cut = QPainterPath()
         cut.addRoundedRect(QRectF(hole), 6, 6)
+        context = self.context.adjusted(-2, -2, 2, 2) if not self.context.isEmpty() else None
+        if context is not None:
+            cut.addRoundedRect(QRectF(context), 6, 6)
+            cut = cut.simplified()
         painter.fillPath(dim.subtracted(cut), self.DIM)
+        if context is not None:
+            painter.setPen(QPen(self.FRAME, 1.5, Qt.PenStyle.DashLine))
+            painter.drawRoundedRect(context, 6, 6)
         painter.setPen(QPen(self.FRAME, 3))
         painter.drawRoundedRect(hole, 6, 6)
         painter.end()
@@ -277,13 +312,28 @@ def place(box: QRect, size: tuple[int, int], area: QRect) -> QRect:
     """Where a callout of *size* goes in *area*: right of *box*, else left,
     below, above; else in the bottom right corner of *area*. Always inside
     *area* (as far as it is large enough)."""
+    beside = place_beside(box, size, area)
+    if beside is not None:
+        return beside
     width, height = size
-    candidates = [
-        QRect(box.right() + GAP, box.top(), width, height),
-        QRect(box.left() - GAP - width, box.top(), width, height),
-        QRect(box.left(), box.bottom() + GAP, width, height),
-        QRect(box.left(), box.top() - GAP - height, width, height),
-    ]
+    inner = area.adjusted(GAP // 2, GAP // 2, -GAP // 2, -GAP // 2)
+    corner = QRect(0, 0, min(width, inner.width()), min(height, inner.height()))
+    corner.moveBottomRight(inner.bottomRight())
+    return corner
+
+
+def place_beside(box: QRect, size: tuple[int, int], area: QRect,
+                 sides: str = "rlba") -> QRect | None:
+    """:func:`place` without the corner: None when no side of *box* has room.
+    *sides*: the sides tried, in order - right, left, below, above."""
+    width, height = size
+    by_side = {
+        "r": QRect(box.right() + GAP, box.top(), width, height),
+        "l": QRect(box.left() - GAP - width, box.top(), width, height),
+        "b": QRect(box.left(), box.bottom() + GAP, width, height),
+        "a": QRect(box.left(), box.top() - GAP - height, width, height),
+    }
+    candidates = [by_side[side] for side in sides]
     inner = area.adjusted(GAP // 2, GAP // 2, -GAP // 2, -GAP // 2)
     for rect in candidates:
         moved = QRect(rect)
@@ -300,9 +350,7 @@ def place(box: QRect, size: tuple[int, int], area: QRect) -> QRect:
                 moved.moveLeft(inner.left())
         if inner.contains(moved) and not moved.intersects(box):
             return moved
-    corner = QRect(0, 0, min(width, inner.width()), min(height, inner.height()))
-    corner.moveBottomRight(inner.bottomRight())
-    return corner
+    return None
 
 
 # -- running a tour ----------------------------------------------------------------------------
@@ -329,6 +377,9 @@ class TourRunner(QObject):
         self.running = False
         self.reason = ""
         self._revealed: list[QDockWidget] = []
+        #: The front dock of each tab group a step raised another dock in:
+        #: in front again when the tour ends.
+        self._fronts: list[QDockWidget] = []
         self._follow = QTimer(self)
         self._follow.setInterval(FOLLOW_MS)
         self._follow.timeout.connect(self._follow_step)
@@ -378,6 +429,10 @@ class TourRunner(QObject):
             if _alive(dock):
                 dock.close()
         self._revealed = []
+        for dock in self._fronts:
+            if _alive(dock) and not dock.isHidden():
+                dock.raise_()
+        self._fronts = []
         log.info("tour %s finished (%s) at step %d", self.tour.id, reason, self.index + 1)
         self._say_goodbye(reason)
         self.finished.emit(reason)
@@ -392,14 +447,52 @@ class TourRunner(QObject):
         if spot is None:
             return None
         dock = _dock_of(spot[0])
-        if dock is not None and not dock.isVisible():
-            if dock.toggleViewAction().isChecked() or not dock.isHidden():
-                dock.raise_()  # open, tabbed behind another dock
-            elif step.reveal:
-                dock.show()
+        if dock is not None and not shown(spot):
+            if dock.isHidden() and not dock.toggleViewAction().isChecked():
+                if step.reveal:  # closed: opened for the step
+                    dock.show()
+                    dock.raise_()
+                    self._revealed.append(dock)
+            else:
+                # Open but tabbed behind another dock: Qt keeps it "visible"
+                # outside the window, so isVisible() alone missed it.
+                self._remember_front(dock)
                 dock.raise_()
-                self._revealed.append(dock)
+            spot = resolve(self.window, step.target)
         return spot if shown(spot) else None
+
+    def _remember_front(self, dock: QDockWidget) -> None:
+        """Note the dock in front of *dock*'s tab group (once per group)."""
+        window = self.window
+        if not isinstance(window, QMainWindow):
+            return
+        group = [dock, *window.tabifiedDockWidgets(dock)]
+        if any(front in group for front in self._fronts):
+            return
+        front = next((d for d in group if shown((d, d.rect()))), None)
+        if front is not None and front is not dock:
+            self._fronts.append(front)
+
+    def _fresh_spot(self):
+        """The current step's spot, looked up again (no dock is raised)."""
+        step = self.step
+        if step is None:
+            return None
+        spot = resolve(self.window, step.target)
+        return spot if shown(spot) else None
+
+    def _frame_rect(self) -> QRect | None:
+        """The step's second area in the host's coordinates, or None."""
+        step = self.step
+        if step is None or step.frame is None or not _alive(self.host):
+            return None
+        spot = resolve(self.window, step.frame)
+        if not shown(spot) or spot[0].window() is not self.host:
+            return None
+        widget, rect = spot
+        box = QRect(widget.mapTo(self.host, rect.topLeft()), rect.size())
+        box = box.intersected(self.host.rect())
+        return box if not box.isEmpty() else None
 
     def _go(self, start: int, direction: int, skipped: list[str] | None = None) -> None:
         steps = self.tour.steps
@@ -446,6 +539,8 @@ class TourRunner(QObject):
         callout.show()
         self.spotlight.show()
         callout.next_button.setFocus()
+        # A dock just opened or raised is laid out a moment later: place again.
+        QTimer.singleShot(0, self._place)
 
     def _build(self, host: QWidget) -> None:
         for widget in (self.callout, self.spotlight):
@@ -464,14 +559,30 @@ class TourRunner(QObject):
         return QRect(top_left, rect.size()).intersected(self.host.rect())
 
     def _place(self) -> None:
+        """Frame the step's widget and put the callout beside it - with the
+        widget's rectangle read now, not the one of the lookup."""
         if not (self.running and _alive(self.host) and _alive(self.callout)):
             return
+        fresh = self._fresh_spot()
+        if fresh is not None and fresh[0].window() is self.host:
+            self.spot = fresh
+        elif not shown(self.spot):
+            return  # gone: _follow_step moves on
         box = self._target_rect()
+        context = self._frame_rect()
         area = self.host.rect()
         width = max(160, min(CALLOUT_WIDTH, area.width() - 2 * GAP))
         height = min(self.callout.fit_height(width), max(80, area.height() - GAP))
-        self.callout.setGeometry(place(box, (width, height), area))
-        self.spotlight.set_hole(box)
+        size = (width, height)
+        spot = None
+        if context is not None:
+            # Beside the whole framed area when there is room, so the callout
+            # covers neither the widget nor its context; else below or above
+            # the widget, off the row it sits in (a pane header's badges).
+            spot = (place_beside(context.united(box), size, area)
+                    or place_beside(box, size, area, "barl"))
+        self.callout.setGeometry(spot if spot is not None else place(box, size, area))
+        self.spotlight.set_hole(box, context)
         self.spotlight.raise_()
         self.callout.raise_()
 
@@ -479,7 +590,7 @@ class TourRunner(QObject):
         """The widget moved, was resized - or went: then on to the next."""
         if not self.running or self.step is None:
             return
-        if shown(self.spot):
+        if self._fresh_spot() is not None:
             self._place()
             return
         again = self.locate(self.step)
@@ -602,6 +713,8 @@ __all__ = [
     "action_spot",
     "find_named",
     "place",
+    "place_beside",
     "resolve",
     "shown",
+    "window_rect",
 ]

@@ -2,7 +2,7 @@
 
 Operator punch list item 46: "ich sehe nur die option send to agent aber
 nicht start agent...fehlt da noch was?". Before, the Agent dock opened only
-from View > Panels > Agent, "Ask the Agent" (Ctrl+Shift+A, in the same
+from View > Panels > Agent, "Ask the Agent" (then Ctrl+Shift+A, in the same
 submenu) or as a side effect of Send to Agent; the Tools menu held only
 Agent Settings… and LLM Profiles…, the pane menu only Send to Agent.
 

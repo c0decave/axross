@@ -35,8 +35,9 @@ class _OverallBar(QProgressBar):
 
     def __init__(self) -> None:
         super().__init__()
+        self.HINT = tr(type(self).HINT)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setAccessibleName("Overall progress (click: show current transfer)")
+        self.setAccessibleName(tr("Overall progress (click: show current transfer)"))
         self.setToolTip(self.HINT)
 
     def setToolTip(self, text: str) -> None:  # noqa: N802 - Qt name
@@ -150,17 +151,17 @@ class TransferDock(QDockWidget):
         self._overall_progress.setTextVisible(True)
         bottom.addWidget(self._overall_progress, stretch=1)
 
-        self._btn_retry = QPushButton("Retry Failed")
+        self._btn_retry = QPushButton(tr("Retry Failed"))
         self._btn_retry.setObjectName("axTransferRetry")  # the tours point at it
-        self._btn_retry.setToolTip("Retry failed/cancelled transfers with resume")
+        self._btn_retry.setToolTip(tr("Retry failed/cancelled transfers with resume"))
         self._btn_retry.clicked.connect(self._retry_failed)
         bottom.addWidget(self._btn_retry)
 
-        self._btn_cancel = QPushButton("Cancel All")
+        self._btn_cancel = QPushButton(tr("Cancel All"))
         self._btn_cancel.clicked.connect(self._cancel_all)
         bottom.addWidget(self._btn_cancel)
 
-        self._btn_clear = QPushButton("Clear Finished")
+        self._btn_clear = QPushButton(tr("Clear Finished"))
         self._btn_clear.clicked.connect(self._clear_finished)
         bottom.addWidget(self._btn_clear)
 
@@ -272,10 +273,11 @@ class TransferDock(QDockWidget):
         remaining = total - done
         if speed > 0 and remaining > 0:
             left = TransferModel._format_eta(remaining / speed)
-            self._overall_progress.setFormat(f"%p% · {left} left")
+            self._overall_progress.setFormat(tr("%p% · {left} left").format(left=left))
             self._overall_progress.setToolTip(
-                f"{TransferModel._format_size(done)} of {TransferModel._format_size(total)}, "
-                f"about {left} left at the current speed")
+                tr("{done} of {total}, about {left} left at the current speed").format(
+                    done=TransferModel._format_size(done),
+                    total=TransferModel._format_size(total), left=left))
         else:
             self._overall_progress.setFormat("%p%")
             self._overall_progress.setToolTip("")

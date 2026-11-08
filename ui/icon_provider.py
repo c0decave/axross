@@ -1010,14 +1010,73 @@ def get_tint() -> str | None:
     return _tint
 
 
+# The backdrop — the colour the icons are drawn on (the toolbar's background
+# in the current theme; the window sets it with each theme). The palette's
+# medium colours were picked for a dark bar: on a light one the yellow pie
+# read at 1.5:1 and 20 of 36 toolbar icons stayed below 3:1 (review round 3).
+# An icon's own colour that does not reach ICON_CONTRAST on the backdrop is
+# drawn darker (on a light backdrop) or lighter (on a dark one) - same hue,
+# only as far as needed.
+_backdrop: str | None = None
+
+#: Contrast an icon's own colour gets on the backdrop: WCAG 1.4.11 asks 3:1
+#: of a graphical object; the margin above it leaves the toolbar's category
+#: tint (ui.toolbar_categories) room to show without falling below 3:1.
+ICON_CONTRAST = 3.6
+
+
+def set_backdrop(colour: str | None) -> None:
+    """Draw the icons' own colours readable on *colour* (``#rrggbb``; None:
+    as they are). Clears the render cache when the value changes."""
+    global _backdrop
+    value = _valid_color(colour)
+    if value == _backdrop:
+        return
+    _backdrop = value
+    _render_icon.cache_clear()
+
+
+def get_backdrop() -> str | None:
+    return _backdrop
+
+
+def readable_colour(colour: str, backdrop: str | None = None) -> str:
+    """*colour* moved towards black (on a light *backdrop*) or white (on a
+    dark one) until it reaches :data:`ICON_CONTRAST` on it; unchanged when
+    it does already or there is no backdrop (default: the one set)."""
+    from ui.themes import contrast_ratio
+
+    backdrop = _valid_color(backdrop) or _backdrop
+    colour = _valid_color(colour)
+    if colour is None or backdrop is None or contrast_ratio(colour, backdrop) >= ICON_CONTRAST:
+        return colour
+    end = "#000000" if contrast_ratio("#000000", backdrop) >= contrast_ratio(
+        "#ffffff", backdrop) else "#ffffff"
+    rgb = [int(colour[i:i + 2], 16) for i in (1, 3, 5)]
+    far = [int(end[i:i + 2], 16) for i in (1, 3, 5)]
+    for step in range(1, 101):
+        mixed = "#" + "".join(f"{round(a + (b - a) * step / 100):02x}"
+                              for a, b in zip(rgb, far, strict=True))
+        if contrast_ratio(mixed, backdrop) >= ICON_CONTRAST:
+            return mixed
+    return end
+
+
+def _own_colour(name: str) -> str | None:
+    """The icon's palette colour, readable on the backdrop; None for none."""
+    colour = _ICON_COLORS.get(name)
+    return readable_colour(colour) if colour else None
+
+
 def stroke_colour(name: str) -> str:
     """The colour :func:`icon` strokes *name* with now: the theme tint, the
-    icon's own colour, or black (``currentColor`` rasterises black in a
-    pixmap: QSvgRenderer has no widget palette to resolve it against)."""
+    icon's own colour (readable on the backdrop), or black
+    (``currentColor`` rasterises black in a pixmap: QSvgRenderer has no
+    widget palette to resolve it against)."""
     if _tint:
         return _tint
     if not _monochrome:
-        colour = _ICON_COLORS.get(name)
+        colour = _own_colour(name)
         if colour:
             return colour
     return "#000000"
@@ -1059,7 +1118,7 @@ def _render_icon(name: str, size: int = 32, color: str | None = None) -> QIcon:
     elif _tint:
         svg_src = svg_src.replace('stroke="currentColor"', f'stroke="{_tint}"')
     elif not _monochrome:
-        colour = _ICON_COLORS.get(name)
+        colour = _own_colour(name)
         if colour:
             # Every SVG string uses ``stroke="currentColor"`` from
             # ``_SVG_OPEN``; substituting there swaps the palette-
@@ -1153,14 +1212,18 @@ def has_icon(name: str) -> bool:
 __all__ = [
     "BOOKMARK_COLORS",
     "ICONS",
+    "ICON_CONTRAST",
     "available_icons",
     "bookmark_icon_names",
     "entry_icon",
+    "get_backdrop",
     "get_tint",
     "has_icon",
     "icon",
     "is_monochrome",
+    "readable_colour",
     "refresh_window_icons",
+    "set_backdrop",
     "set_monochrome",
     "set_tint",
     "set_window_icon",

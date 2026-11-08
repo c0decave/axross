@@ -307,3 +307,35 @@ def _no_held_modifier_keys():
             "later tests would see it pressed",
             pytrace=False,
         )
+
+
+# --------------------------------------------------------------------------
+# Reports with undecodable names reach the xdist controller
+# --------------------------------------------------------------------------
+# A test about a non-UTF-8 name (a surrogate such as "\udce9") logs that
+# name; its captured log travels in the report, and execnet cannot encode a
+# surrogate: the worker died with UnicodeEncodeError and every test still
+# scheduled on it was silently dropped (about 500 in one run). The report is
+# made serialisable here, with surrogates shown as \udcXX escapes.
+
+
+def _plain_report_value(value):
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            return value.encode("utf-8", "backslashreplace").decode("utf-8")
+        return value
+    if isinstance(value, dict):
+        return {_plain_report_value(k): _plain_report_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return type(value)(_plain_report_value(v) for v in value)
+    return value
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_report_to_serializable(report):
+    outcome = yield
+    data = outcome.get_result()
+    if data is not None:
+        outcome.force_result(_plain_report_value(data))

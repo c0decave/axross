@@ -264,8 +264,8 @@ def test_sad_stat_of_a_name_with_a_pipe() -> None:
 
     item = _parse_stat_gnu("/data/a|b.txt|5|1767268800|81a4|u|u|regular file")
     assert (item.name, item.size, item.owner, item.is_dir) == ("a|b.txt", 5, "u", False)
-    with mock.patch("core.telnet_client.TelnetSession._exec") as exec_:
-        exec_.return_value = "/x/p|q|7|1767268800|41ed|u|g|directory"
+    with mock.patch("core.telnet_client.TelnetSession._exec_raw") as exec_:
+        exec_.return_value = ("/x/p|q|7|1767268800|41ed|u|g|directory", 0)
         from core.telnet_client import TelnetSession, _Capabilities
 
         s = object.__new__(TelnetSession)

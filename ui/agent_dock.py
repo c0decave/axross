@@ -2165,7 +2165,9 @@ class AgentDock(ExtensionDock):
 
     def _add_tab(self, session: AgentSession) -> AgentTab:
         tab = self._make_tab(session)
-        index = self.tabs.addTab(tab, session.title)
+        # The default title is a label (translated); a task's own title is its text.
+        index = self.tabs.addTab(tab, tr(session.title) if session.title == "New task"
+                                 else session.title)
         self.tabs.setCurrentIndex(index)
         return tab
 
@@ -2298,7 +2300,7 @@ class AgentDock(ExtensionDock):
                 presets_done = True
             # "&" in a name is no mnemonic ("Network & Web Recon").
             action = menu.addAction(profile_label(profile).replace("&", "&&"))
-            action.setToolTip(profile.description)
+            action.setToolTip(tr(profile.description) if profile.preset else profile.description)
             action.triggered.connect(
                 lambda _checked=False, n=profile.name: self.new_tab_from_profile(
                     n, folder=folder_provider() if folder_provider else None))
@@ -2563,7 +2565,8 @@ class AgentDock(ExtensionDock):
             return None
         tab = panel.tab
         self._panels.remove(panel)
-        index = self.tabs.addTab(tab, tab.session.title)
+        index = self.tabs.addTab(tab, tr(tab.session.title) if tab.session.title == "New task"
+                                 else tab.session.title)
         self.tabs.setTabToolTip(index, tab.session.title)
         self.tabs.setCurrentIndex(index)
         tab.show()

@@ -185,7 +185,7 @@ class UpdateController(QObject):
         inst = self.install()
         message = result.message
         if not inst.can_download:
-            message += "\n" + inst.why_not()
+            message += "\n" + tr(inst.why_not())
         elif not self.has_build(inst):
             message += "\n" + self._no_build_message(inst)
         self._set(AVAILABLE, message)
@@ -210,7 +210,7 @@ class UpdateController(QObject):
             return False
         inst = self.install()
         if not inst.can_download:
-            self._set(AVAILABLE, inst.why_not())
+            self._set(AVAILABLE, tr(inst.why_not()))
             return False
         if not self.has_build(inst):
             self._set(AVAILABLE, self._no_build_message(inst))
@@ -657,7 +657,7 @@ class UpdatesPage(_FormPage):
                        "it takes effect at the next start.").format(
                            path=inst.executable, name=inst.executable.name)
         else:
-            where = inst.why_not()
+            where = tr(inst.why_not())
         self.install_note = _note(where)
         self.layout_.addWidget(self.install_note)
         self.layout_.addWidget(_note(tr(

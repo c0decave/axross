@@ -124,9 +124,9 @@ class _ColorRow(QWidget):
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(4)
-        none = QPushButton("None", self)
+        none = QPushButton(tr("None"), self)
         none.setCheckable(True)
-        none.setToolTip("Use the icon's own colour")
+        none.setToolTip(tr("Use the icon's own colour"))
         none.clicked.connect(lambda _c=False: self._pick(""))
         row.addWidget(none)
         self._buttons[""] = none
@@ -190,7 +190,7 @@ class BookmarkEditDialog(QDialog):
         if self._bookmark.is_terminal:
             title = tr("New Terminal Bookmark") if self._is_new else tr("Edit Terminal Bookmark")
         else:
-            title = "New Bookmark" if self._is_new else "Edit Bookmark"
+            title = tr("New Bookmark") if self._is_new else tr("Edit Bookmark")
         self.setWindowTitle(title)
         self.resize(540, 420)
         self._build_ui()
@@ -201,7 +201,7 @@ class BookmarkEditDialog(QDialog):
 
         form = QFormLayout()
         self._name_edit = QLineEdit(self._bookmark.name, self)
-        form.addRow("Name:", self._name_edit)
+        form.addRow(tr("Name:"), self._name_edit)
         self._path_edit = QLineEdit(self._bookmark.path, self)
         # Path is always editable — user asked for this explicitly.
         # Previously read-only for existing bookmarks under the
@@ -217,10 +217,10 @@ class BookmarkEditDialog(QDialog):
 
             self._path_edit.setText(describe_saved_search(self._bookmark.search))
             self._path_edit.setReadOnly(True)
-            form.addRow("Search:", self._path_edit)
-            backend_label = QLabel(self._bookmark.backend_name or "Local", self)
+            form.addRow(tr("Search:"), self._path_edit)
+            backend_label = QLabel(self._bookmark.backend_name or tr("Local"), self)
             backend_label.setProperty("role", "muted")
-            form.addRow("Backend:", backend_label)
+            form.addRow(tr("Backend:"), backend_label)
         elif self._bookmark.is_terminal:
             self._path_edit.setPlaceholderText(tr("optional: the shell starts in this folder"))
             form.addRow(tr("Working Folder:"), self._path_edit)
@@ -250,28 +250,28 @@ class BookmarkEditDialog(QDialog):
             self._connection_combo.currentIndexChanged.connect(self._update_host_box)
             self._update_host_box()
         else:
-            form.addRow("Path:", self._path_edit)
-            backend_label = QLabel(self._bookmark.backend_name or "Local", self)
+            form.addRow(tr("Path:"), self._path_edit)
+            backend_label = QLabel(self._bookmark.backend_name or tr("Local"), self)
             backend_label.setProperty("role", "muted")
-            form.addRow("Backend:", backend_label)
+            form.addRow(tr("Backend:"), backend_label)
         if self._groups is not None:
             self._group_combo = QComboBox(self)
             self._group_options: list[BookmarkGroup | None] = [None]
-            self._group_combo.addItem("(top level)")
+            self._group_combo.addItem(tr("(top level)"))
             for depth, group in self._groups:
                 self._group_options.append(group)
                 self._group_combo.addItem("    " * depth + group.name)
             for i, option in enumerate(self._group_options):
                 if option is self._current_group:
                     self._group_combo.setCurrentIndex(i)
-            form.addRow("Group:", self._group_combo)
+            form.addRow(tr("Group:"), self._group_combo)
         root.addLayout(form)
 
-        root.addWidget(QLabel("Color:", self))
+        root.addWidget(QLabel(tr("Color:"), self))
         self._colors = _ColorRow(self._bookmark.color, self)
         root.addWidget(self._colors)
 
-        root.addWidget(QLabel("Icon:", self))
+        root.addWidget(QLabel(tr("Icon:"), self))
         self._picker = _IconGridPicker(
             self._bookmark.icon_name, parent=self, color=self._colors.selected_color
         )
@@ -427,17 +427,17 @@ class GroupEditDialog(QDialog):
         super().__init__(parent)
         set_window_icon(self, "folder")
         self._group = group or BookmarkGroup(name="")
-        self.setWindowTitle("New Group" if group is None else "Edit Group")
+        self.setWindowTitle(tr("New Group") if group is None else tr("Edit Group"))
         self.resize(540, 420)
         root = QVBoxLayout(self)
         form = QFormLayout()
         self._name_edit = QLineEdit(self._group.name, self)
-        form.addRow("Name:", self._name_edit)
+        form.addRow(tr("Name:"), self._name_edit)
         root.addLayout(form)
-        root.addWidget(QLabel("Color:", self))
+        root.addWidget(QLabel(tr("Color:"), self))
         self._colors = _ColorRow(self._group.color, self)
         root.addWidget(self._colors)
-        root.addWidget(QLabel("Icon:", self))
+        root.addWidget(QLabel(tr("Icon:"), self))
         self._picker = _IconGridPicker(
             self._group.icon_name, parent=self, color=self._colors.selected_color
         )
@@ -455,7 +455,7 @@ class GroupEditDialog(QDialog):
     def result(self) -> tuple[str, str, str]:
         """``(name, icon_name, color)``; an empty name keeps the old one
         (or "New Group")."""
-        name = self._name_edit.text().strip() or self._group.name or "New Group"
+        name = self._name_edit.text().strip() or self._group.name or tr("New Group")
         return name, self._picker.selected_name, self._colors.selected_color
 
 

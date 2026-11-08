@@ -115,6 +115,10 @@ class DockTitleBar(QWidget):
         self._float_btn.setIcon(icon("extract-pane", 16))
         self._float_btn.setIconSize(QSize(16, 16))
         self._float_btn.setToolTip(tr("Float / dock this panel"))
+        # Icon-only buttons: a screen reader needs a name, and "close"
+        # alone does not say which of the stacked panels it closes.
+        self._float_btn.setAccessibleName(
+            tr("Float or dock the panel {panel}").format(panel=title))
         self._float_btn.setAutoRaise(True)
         self._float_btn.setFixedSize(QSize(22, 22))
         self._float_btn.clicked.connect(self._toggle_float)
@@ -127,6 +131,7 @@ class DockTitleBar(QWidget):
         self._close_btn.setIconSize(QSize(16, 16))
         self._close_btn.setToolTip(
             tr("Close this panel (reopen via {menu})").format(menu=reopen_hint))
+        self._close_btn.setAccessibleName(tr("Close the panel {panel}").format(panel=title))
         self._close_btn.setAutoRaise(True)
         self._close_btn.setFixedSize(QSize(22, 22))
         self._close_btn.clicked.connect(dock.close)

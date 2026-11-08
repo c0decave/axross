@@ -29,7 +29,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import log_areas as LA
-from core.i18n import tr
+from core.i18n import tr, tr_n
 from core.thread_relay import GuiCall
 from ui.dock_frame import framed
 from ui.icon_provider import set_window_icon
@@ -171,7 +171,7 @@ class LogDock(QDockWidget):
         # Toolbar
         toolbar = QHBoxLayout()
 
-        toolbar.addWidget(QLabel("Level:"))
+        toolbar.addWidget(QLabel(tr("Level:")))
 
         self._level_combo = QComboBox()
         self._level_combo.addItems(["DEBUG", "INFO", "WARNING", "ERROR"])
@@ -201,11 +201,11 @@ class LogDock(QDockWidget):
         self._sync_area_actions()
         toolbar.addWidget(self._area_button)
 
-        self._btn_clear = QPushButton("Clear")
+        self._btn_clear = QPushButton(tr("Clear"))
         self._btn_clear.clicked.connect(self._clear)
         toolbar.addWidget(self._btn_clear)
 
-        self._btn_scroll = QPushButton("Auto-Scroll")
+        self._btn_scroll = QPushButton(tr("Auto-Scroll"))
         self._btn_scroll.setCheckable(True)
         self._btn_scroll.setChecked(True)
         self._btn_scroll.setToolTip(tr("Keep the newest line in view"))
@@ -215,7 +215,7 @@ class LogDock(QDockWidget):
 
         toolbar.addStretch()
 
-        self._count_label = QLabel("0 messages")
+        self._count_label = QLabel(tr_n(0, "{n} message", "{n} messages"))
         toolbar.addWidget(self._count_label)
 
         layout.addLayout(toolbar)
@@ -359,7 +359,7 @@ class LogDock(QDockWidget):
         if dropped_lines:
             bar.setValue(max(0, value_before - dropped_lines))
 
-        self._count_label.setText(f"{self._msg_count} messages")
+        self._count_label.setText(tr_n(self._msg_count, "{n} message", "{n} messages"))
 
         self._follow_newest()
 
@@ -448,14 +448,14 @@ class LogDock(QDockWidget):
         self._log_view.clear()
         self._msg_count = 0
         self._write_pending()
-        self._count_label.setText(f"{self._msg_count} messages")
+        self._count_label.setText(tr_n(self._msg_count, "{n} message", "{n} messages"))
 
     def _clear(self) -> None:
         self._pending.clear()  # arrived before the click: cleared with the rest
         self._records.clear()
         self._log_view.clear()
         self._msg_count = 0
-        self._count_label.setText("0 messages")
+        self._count_label.setText(tr_n(0, "{n} message", "{n} messages"))
 
     def shutdown(self) -> None:
         root = logging.getLogger()

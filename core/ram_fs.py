@@ -42,6 +42,7 @@ deterministically.
 
 from __future__ import annotations
 
+import errno
 import io
 import logging
 import posixpath
@@ -379,8 +380,12 @@ class RamFsSession(SessionLifecycle):
         path = self.normalize(path)
         with self._lock:
             entry = self._tree.get(path)
-            if entry is None or not entry.is_dir:
-                raise OSError(f"RamFS({self._label}): not a directory: {path}")
+            if entry is None:
+                raise FileNotFoundError(errno.ENOENT, f"RamFS({self._label}): no such path: {path}")
+            if not entry.is_dir:
+                raise NotADirectoryError(
+                    errno.ENOTDIR, f"RamFS({self._label}): not a directory: {path}"
+                )
             prefix = path if path.endswith("/") else path + "/"
             if path == "/":
                 prefix = "/"
@@ -410,7 +415,7 @@ class RamFsSession(SessionLifecycle):
         with self._lock:
             entry = self._tree.get(path)
             if entry is None:
-                raise OSError(f"RamFS({self._label}): no such path: {path}")
+                raise FileNotFoundError(errno.ENOENT, f"RamFS({self._label}): no such path: {path}")
             return FileItem(
                 name=posixpath.basename(path) or "/",
                 size=len(entry.data) if not entry.is_dir else 0,
@@ -435,8 +440,10 @@ class RamFsSession(SessionLifecycle):
         path = self.normalize(path)
         with self._lock:
             entry = self._tree.get(path)
-            if entry is None or entry.is_dir:
-                raise OSError(f"RamFS({self._label}): not a file: {path}")
+            if entry is None:
+                raise FileNotFoundError(errno.ENOENT, f"RamFS({self._label}): no such path: {path}")
+            if entry.is_dir:
+                raise IsADirectoryError(errno.EISDIR, f"RamFS({self._label}): not a file: {path}")
             return io.BytesIO(entry.data)
 
     # ------------------------------------------------------------------
@@ -444,7 +451,10 @@ class RamFsSession(SessionLifecycle):
     # ------------------------------------------------------------------
 
     def open_write(self, path: str, append: bool = False) -> IO[Any]:
-        path = self.normalize(path)
+        from core.path_policy import refuse_folder_path
+
+        # normalize() drops the slash: "x/" was written as a FILE "x".
+        path = self.normalize(refuse_folder_path(path))
         if path == "/":
             raise OSError(f"RamFS({self._label}): refusing to write root")
         # Auto-create parents up to root, like LocalFS does for atomic
@@ -456,13 +466,15 @@ class RamFsSession(SessionLifecycle):
             if parent not in self._tree:
                 self.mkdir(parent, parents=True, exist_ok=True)
             elif not self._tree[parent].is_dir:
-                raise OSError(
+                raise NotADirectoryError(
+                    errno.ENOTDIR,
                     f"RamFS({self._label}): parent is not a directory: {parent}",
                 )
             current = self._tree.get(path)
             if current is not None:
                 if current.is_dir:
-                    raise OSError(
+                    raise IsADirectoryError(
+                        errno.EISDIR,
                         f"RamFS({self._label}): target is a directory: {path}",
                     )
                 base_size = len(current.data)
@@ -482,7 +494,7 @@ class RamFsSession(SessionLifecycle):
             if path in self._tree:
                 if self._tree[path].is_dir and exist_ok:
                     return
-                raise OSError(f"RamFS({self._label}): already exists: {path}")
+                raise FileExistsError(errno.EEXIST, f"RamFS({self._label}): already exists: {path}")
             if parents:
                 # Walk the tree creating each missing component.
                 bits = [b for b in path.split("/") if b]
@@ -492,15 +504,13 @@ class RamFsSession(SessionLifecycle):
                     if cur not in self._tree:
                         self._tree[cur] = _Entry(is_dir=True, mode=0o755)
                     elif not self._tree[cur].is_dir:
-                        raise OSError(
+                        raise NotADirectoryError(
+                            errno.ENOTDIR,
                             f"RamFS({self._label}): path component is a file: {cur}",
                         )
             else:
                 parent = posixpath.dirname(path) or "/"
-                if parent not in self._tree or not self._tree[parent].is_dir:
-                    raise OSError(
-                        f"RamFS({self._label}): parent missing: {parent}",
-                    )
+                self._check_parent(parent)
                 self._tree[path] = _Entry(is_dir=True, mode=0o755)
 
     def remove(self, path: str, recursive: bool = False) -> None:
@@ -510,41 +520,61 @@ class RamFsSession(SessionLifecycle):
         with self._lock:
             entry = self._tree.get(path)
             if entry is None:
-                raise OSError(f"RamFS({self._label}): no such path: {path}")
+                raise FileNotFoundError(errno.ENOENT, f"RamFS({self._label}): no such path: {path}")
             if entry.is_dir:
                 children = [p for p in self._tree if p.startswith(path + "/")]
                 if children and not recursive:
                     raise OSError(
+                        errno.ENOTEMPTY,
                         f"RamFS({self._label}): directory not empty: {path}",
                     )
                 for c in children:
                     self._forget(self._tree.pop(c, None))
             self._forget(self._tree.pop(path, None))
 
+    def _is_file(self, path: str) -> bool:
+        with self._lock:
+            entry = self._tree.get(self.normalize(path))
+            return entry is not None and not entry.is_dir
+
+    def _check_parent(self, parent: str) -> None:
+        """FileNotFoundError when *parent* is not there, NotADirectoryError
+        when it is a file (the caller holds the lock)."""
+        entry = self._tree.get(parent)
+        if entry is None:
+            raise FileNotFoundError(errno.ENOENT, f"RamFS({self._label}): parent missing: {parent}")
+        if not entry.is_dir:
+            raise NotADirectoryError(
+                errno.ENOTDIR, f"RamFS({self._label}): parent is not a directory: {parent}"
+            )
+
     def _forget(self, entry: _Entry | None) -> None:
         if entry is not None and not entry.is_dir:
             self._used_bytes -= len(entry.data)
 
     def rename(self, src: str, dst: str) -> None:
+        from core.path_policy import refuse_folder_path
+
         src = self.normalize(src)
+        if src != "/":
+            # normalize() drops the slash: a file renamed to "x/" became "x".
+            refuse_folder_path(dst, "rename to", source_is_file=lambda: self._is_file(src))
         dst = self.normalize(dst)
         if src == "/" or dst == "/":
             raise OSError(f"RamFS({self._label}): refusing to rename root")
         if dst == src or dst.startswith(src.rstrip("/") + "/"):
             raise OSError(
+                errno.EINVAL,
                 f"RamFS({self._label}): refusing rename {src!r} -> {dst!r}: "
                 "destination is at or under source",
             )
         with self._lock:
             if src not in self._tree:
-                raise OSError(f"RamFS({self._label}): no such path: {src}")
+                raise FileNotFoundError(errno.ENOENT, f"RamFS({self._label}): no such path: {src}")
             if dst in self._tree:
-                raise OSError(f"RamFS({self._label}): already exists: {dst}")
+                raise FileExistsError(errno.EEXIST, f"RamFS({self._label}): already exists: {dst}")
             parent = posixpath.dirname(dst) or "/"
-            if parent not in self._tree or not self._tree[parent].is_dir:
-                raise OSError(
-                    f"RamFS({self._label}): parent missing: {parent}",
-                )
+            self._check_parent(parent)
             # Move the entry plus every descendant (re-keying).
             entry = self._tree.pop(src)
             self._tree[dst] = entry
@@ -561,7 +591,7 @@ class RamFsSession(SessionLifecycle):
         with self._lock:
             entry = self._tree.get(path)
             if entry is None:
-                raise OSError(f"RamFS({self._label}): no such path: {path}")
+                raise FileNotFoundError(errno.ENOENT, f"RamFS({self._label}): no such path: {path}")
             entry.mode = int(mode) & 0o7777
 
     def copy(self, src: str, dst: str) -> None:
@@ -581,13 +611,12 @@ class RamFsSession(SessionLifecycle):
             raise OSError(f"RamFS({self._label}): refusing to write root")
         with self._lock:
             parent = posixpath.dirname(path) or "/"
-            if parent not in self._tree or not self._tree[parent].is_dir:
-                raise OSError(
-                    f"RamFS({self._label}): parent missing: {parent}",
-                )
+            self._check_parent(parent)
             old = self._tree.get(path)
             if old is not None and old.is_dir:
-                raise OSError(f"RamFS({self._label}): target is a directory: {path}")
+                raise IsADirectoryError(
+                    errno.EISDIR, f"RamFS({self._label}): target is a directory: {path}"
+                )
             old_size = len(old.data) if old and not old.is_dir else 0
             delta = len(data) - old_size
             # The buffer is in RAM already: the free-memory probe ran

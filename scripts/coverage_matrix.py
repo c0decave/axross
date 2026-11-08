@@ -1397,6 +1397,7 @@ INFRASTRUCTURE: dict[str, str] = {
     "ui/title_bar.py": "axross's own title bar of every window (frameless), or the window manager's",
     "ui/state_files.py": "the window's state files, read bounded and written privately",
     "core/json_store.py": "a JSON store read before it is written back: broken files set aside",
+    "core/user_errors.py": "one plain sentence with a next step for an exception (message boxes)",
     "ui/standalone_app.py": "what a tool needs to run as a program of its own",
     "core/conn_security.py": "how a connection is protected (cleartext, TLS, encrypted, end-to-end)",
     "ui/security_badge.py": "the icon showing how a connection is protected, wherever it is named",

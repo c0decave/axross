@@ -15,7 +15,10 @@ from PyQt6.QtCore import QTranslator
 from core import i18n
 
 #: The Qt contexts whose texts the catalogue carries.
-CONTEXTS = frozenset({"QPlatformTheme", "QDialogButtonBox", "QMessageBox"})
+CONTEXTS = frozenset({"QPlatformTheme", "QDialogButtonBox", "QMessageBox",
+                      # A tab's close button ("Close Tab"), a shortcut editor's
+                      # placeholder ("Press shortcut").
+                      "QTabBar", "CloseButton", "QKeySequenceEdit"})
 
 
 class CatalogueTranslator(QTranslator):

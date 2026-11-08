@@ -82,6 +82,16 @@ class BackendCapabilities:
     seekable_reads: bool = True
     symlink_follows: bool = False
     delete_recursive_safe: bool = True
+    # True when rename() itself is a copy followed by a delete (object
+    # stores, rsync, IMAP messages): a rename that failed already tried
+    # what server_side_move's copy+delete fallback would do, so the
+    # failure is a refusal (ambiguous name, folder destination), not an
+    # unsupported verb.
+    rename_is_copy_delete: bool = False
+    # True for an object store: "x" and "x/..." are separate keys, so a
+    # file and a folder can carry the same name side by side (a write to
+    # "x" next to the folder "x" adds the file, it does not fail).
+    name_holds_file_and_folder: bool = False
 
 
 # Pre-built capability sets for common backend types
@@ -131,6 +141,8 @@ WEBDAV_CAPS = BackendCapabilities(
 )
 S3_CAPS = BackendCapabilities(
     can_chmod=False,
+    rename_is_copy_delete=True,
+    name_holds_file_and_folder=True,
     can_symlink=False,
     can_rename=False,
     can_seek=False,
@@ -144,6 +156,7 @@ S3_CAPS = BackendCapabilities(
 )
 RSYNC_CAPS = BackendCapabilities(
     can_chmod=False,
+    rename_is_copy_delete=True,
     can_symlink=False,  # no symlink() (links are listed and followed, not made)
     can_rename=False,
     can_seek=False,
@@ -166,6 +179,8 @@ NFS_CAPS = BackendCapabilities(
 )
 AZURE_BLOB_CAPS = BackendCapabilities(
     can_chmod=False,
+    rename_is_copy_delete=True,
+    name_holds_file_and_folder=True,
     can_symlink=False,
     can_rename=False,
     can_seek=False,
@@ -213,6 +228,7 @@ ISCSI_CAPS = BackendCapabilities(
 )
 IMAP_CAPS = BackendCapabilities(
     can_chmod=False,
+    rename_is_copy_delete=True,
     can_symlink=False,
     can_rename=False,
     can_seek=False,

@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from core.i18n import tr
 
 #: The two kinds of pane a placeholder can stand for.
 KIND_PANE = "pane"
@@ -59,7 +60,7 @@ class DisconnectedPanePlaceholder(QWidget):
         header = QHBoxLayout()
         # Plain text: the profile name and the path come from session.json
         # and must never be read as rich text.
-        self._title = QLabel(f"Not connected — {profile_name}")
+        self._title = QLabel(tr("Not connected — {name}").format(name=profile_name))
         self._title.setTextFormat(Qt.TextFormat.PlainText)
         font = self._title.font()
         font.setBold(True)
@@ -68,12 +69,13 @@ class DisconnectedPanePlaceholder(QWidget):
         header.addStretch()
         close_btn = QPushButton("✕")  # ✕
         close_btn.setFixedSize(22, 22)
-        close_btn.setToolTip("Close this pane")
+        close_btn.setToolTip(tr("Close this pane"))
+        close_btn.setAccessibleName(tr("Close this pane"))
         close_btn.clicked.connect(self.close_requested.emit)
         header.addWidget(close_btn)
         layout.addLayout(header)
 
-        what = "Terminal" if kind == KIND_TERMINAL else "Folder"
+        what = tr("Terminal") if kind == KIND_TERMINAL else tr("Folder")
         detail = f"{what}: {path}" if path else what
         self._detail = QLabel(detail)
         self._detail.setTextFormat(Qt.TextFormat.PlainText)
@@ -85,10 +87,11 @@ class DisconnectedPanePlaceholder(QWidget):
         self._note.setWordWrap(True)
         layout.addWidget(self._note)
         if not profile_known:
-            self.set_note(f"The profile '{profile_name}' no longer exists.")
+            self.set_note(tr("The profile '{name}' no longer exists.").format(name=profile_name))
 
-        self.reconnect_button = QPushButton("Reconnect")
-        self.reconnect_button.setToolTip(f"Connect '{profile_name}' and open it here")
+        self.reconnect_button = QPushButton(tr("Reconnect"))
+        self.reconnect_button.setToolTip(
+            tr("Connect '{name}' and open it here").format(name=profile_name))
         self.reconnect_button.clicked.connect(self.reconnect_requested.emit)
         row = QHBoxLayout()
         row.addStretch()

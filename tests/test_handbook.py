@@ -205,9 +205,28 @@ def test_happy_pyproject_maps_the_handbook_package_onto_docs():
     setuptools = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"][
         "setuptools"]
     assert "resources.handbook" in setuptools["packages"]
-    assert setuptools["package-dir"] == {"resources.handbook": "docs"}
+    assert setuptools["package-dir"]["resources.handbook"] == "docs"
     assert setuptools["package-data"]["resources.handbook"] == list(H.HANDBOOK_FILES.values())
     assert not (ROOT / "resources" / "handbook").exists(), "a second copy beside docs/"
+
+
+def test_happy_every_docs_subfolder_in_the_sdist_is_claimed_and_left_out():
+    """A docs/ subfolder whose files MANIFEST.in puts into the sdist is,
+    below the package "resources.handbook", an importable package of its
+    own to setuptools: every wheel build warned "Package
+    'resources.handbook.patterns' is absent from the `packages`
+    configuration". Each one is claimed as a package (pyproject.toml) and
+    carries nothing: all of its files are excluded."""
+    setuptools = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"][
+        "setuptools"]
+    folders = {Path(p).parent.relative_to("docs") for p in _manifest_docs()} - {Path(".")}
+    assert folders, "MANIFEST.in lists no docs/ subfolder any more: drop the claims too"
+    for folder in folders:
+        package = "resources.handbook." + ".".join(folder.parts)
+        assert package in setuptools["packages"], package
+        assert setuptools["package-dir"][package] == f"docs/{folder.as_posix()}", package
+        assert setuptools["exclude-package-data"][package] == ["*"], package
+        assert package not in setuptools["package-data"], package
 
 
 def test_happy_the_wheel_takes_only_the_handbook_files_of_docs():
@@ -393,6 +412,42 @@ def test_edge_return_in_the_find_field_does_not_close_the_handbook(book):
     book.search.setText("Transfers")
     QTest.keyClick(book.search, Qt.Key.Key_Return)
     assert book.isVisible()
+
+
+def _heading_top(dialog) -> int:
+    """Where the heading gone to starts, in pixels below the view's top."""
+    return dialog.view.cursorRect(dialog.view.textCursor()).top()
+
+
+@pytest.mark.parametrize("language, topic", [("en", "transfers"), ("de", "panes")])
+def test_happy_the_first_open_puts_the_heading_at_the_top(language, topic):
+    """Review round 3: F1 opened the right section, but on the first open
+    its heading stood at the bottom of the view (534 px down a 555 px view
+    in German): the window went to the heading before it was shown, while
+    the view had no size and no scroll range yet."""
+    from ui.handbook import HandbookDialog
+
+    dialog = HandbookDialog(language=language)
+    try:
+        assert dialog.go_to_topic(topic)
+        dialog.show()
+        pump(0.2)
+        assert dialog.view.verticalScrollBar().value() > 0
+        assert 0 <= _heading_top(dialog) < 40, _heading_top(dialog)
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+
+
+def test_edge_showing_the_contents_again_keeps_the_start(book):
+    """No heading gone to: showing the window again does not jump to an
+    earlier section."""
+    assert book.go_to_heading("Transfers")
+    book.show_contents()
+    book.hide()
+    book.show()
+    pump(0.1)
+    assert book.view.verticalScrollBar().value() == 0
 
 
 # ---------------------------------------------------------------------------

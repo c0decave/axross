@@ -54,7 +54,9 @@ def install_excepthook(title: str) -> None:
 
             app = QApplication.instance()
             if app is not None and not app.closingDown() and app.thread() == QThread.currentThread():
-                QMessageBox.critical(None, f"{title} - Unexpected Error",
+                from core.i18n import tr
+
+                QMessageBox.critical(None, tr("{title} - Unexpected Error").format(title=title),
                                      f"{exc_type.__name__}: {exc}")
                 return
         except Exception:  # noqa: BLE001 - the hook itself must never fail

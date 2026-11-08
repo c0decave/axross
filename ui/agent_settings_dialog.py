@@ -547,7 +547,8 @@ class _AgentSettingsForm:
             for profile in rows:
                 item = QListWidgetItem(profile_label(profile))
                 item.setData(Qt.ItemDataRole.UserRole, profile.name)
-                item.setToolTip(profile.description)
+                # A preset's description is axross's text (translated), a profile's the user's.
+                item.setToolTip(tr(profile.description) if profile.preset else profile.description)
                 self.agent_profile_list.addItem(item)
                 self.agent_profile_default_combo.addItem(profile_label(profile), profile.name)
             self.agent_profile_default_combo.setCurrentIndex(
@@ -1077,7 +1078,7 @@ class _AgentSettingsForm:
         top.addWidget(self.session_editor, 2)
         self._session_objects = self._sessions()
         for session in self._session_objects:
-            self.session_list.addItem(session.title)
+            self.session_list.addItem(tr(session.title) if session.title == "New task" else session.title)
         self.session_list.currentRowChanged.connect(self._show_session)
         return page
 
@@ -1156,7 +1157,7 @@ class _AgentSettingsForm:
         for engine in ENGINES:
             ok = engine == "auto" or available(engine)
             self.engine_combo.addItem(
-                ENGINE_LABELS[engine] + ("" if ok else tr(" (not installed)")), engine
+                tr(ENGINE_LABELS[engine]) + ("" if ok else tr(" (not installed)")), engine
             )
         form.addRow(tr("Engine"), self.engine_combo)
         self.level_combo = shrinkable(QComboBox())
@@ -1439,6 +1440,11 @@ class _AgentSettingsForm:
 
         self.server_form = QWidget()
         form = QFormLayout(self.server_form)
+        # A field wider than the room left of its label goes below the
+        # label: in German the label column and "Tabs dürfen die Tools
+        # dieses Servers anbieten" needed 740 px side by side, and Settings
+        # > Agent scrolled sideways by 28 px.
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         self.server_name_edit = QLineEdit()
         form.addRow(tr("Name"), self.server_name_edit)
         self.server_enabled_check = QCheckBox(tr("Tabs may offer this server's tools"))

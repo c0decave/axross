@@ -72,37 +72,16 @@ def capture_frames(out: Path, languages: list[str]) -> Path:
                          ("XDG_STATE_HOME", ".local/state"), ("XDG_CACHE_HOME", ".cache")):
             os.environ[var] = str(home / sub)
         i18n.install(language)
-        from ui.main_window import MainWindow
-        from ui.tour_engine import TourRunner
         from ui.tours import TOURS
 
-        window = MainWindow()
-        window.resize(*SIZE)
+        window = first_start_window(home)
         window.show()
         _pump(app, 1.0)
         tours = []
         for tour in TOURS:
             folder = out / language / tour.id
             folder.mkdir(parents=True, exist_ok=True)
-            runner = TourRunner(window, tour)
-            steps = []
-            if runner.start():
-                seen = set()
-                while runner.running and runner.index not in seen:
-                    seen.add(runner.index)
-                    _pump(app, 0.6)
-                    step = runner.step
-                    shot = folder / f"{runner.index:02d}.png"
-                    window.grab().save(str(shot))
-                    steps.append({"index": runner.index, "title": step.title,
-                                  "png": str(shot.relative_to(out))})
-                    runner.next()
-                runner.end()
-            _pump(app, 0.3)
-            first = folder / "intro.png"
-            window.grab().save(str(first))
-            tours.append({"id": tour.id, "title": tour.title, "intro_png":
-                          str(first.relative_to(out)), "steps": steps})
+            tours.append(capture_tour(app, window, tour, folder, out))
         manifest["languages"][language] = tours
         window._quit_with_transfers = True
         window.close()
@@ -111,6 +90,56 @@ def capture_frames(out: Path, languages: list[str]) -> Path:
     path = out / "manifest.json"
     path.write_text(json.dumps(manifest, indent=1, ensure_ascii=False), encoding="utf-8")
     return path
+
+
+def first_start_window(home: Path):
+    """The main window as a user's first start shows it: two panes side by
+    side, the source and the target pane, and the docks of a first start.
+    A bare MainWindow() has one pane, so the tour steps about the target
+    pane framed the wrong thing. The session and recents files are the
+    ones in *home*: the window's class kept the paths of the real home,
+    whose saved layout then replaced the first start's (and was
+    overwritten on close)."""
+    from ui.main_window import MainWindow
+
+    config = home / ".config" / "axross"
+    MainWindow._SESSION_FILE = config / "session.json"
+    MainWindow._RECENTS_FILE = config / "recents.json"
+    window = MainWindow()
+    window._reconnect_timer.stop()
+    window.resize(*SIZE)
+    if not window.apply_first_start_layout():
+        window.apply_layout_preset(window.FIRST_START_PRESET)
+    return window
+
+
+def capture_tour(app, window, tour, folder: Path, out: Path) -> dict:
+    """Screenshots of each step of *tour* and of the window after it; the
+    status bar starts and ends empty - the previous tour's "Tour finished"
+    message stood in every frame of the next one."""
+    from ui.tour_engine import TourRunner
+
+    window.statusBar().clearMessage()
+    runner = TourRunner(window, tour)
+    steps = []
+    if runner.start():
+        seen = set()
+        while runner.running and runner.index not in seen:
+            seen.add(runner.index)
+            _pump(app, 0.6)
+            step = runner.step
+            shot = folder / f"{runner.index:02d}.png"
+            window.grab().save(str(shot))
+            steps.append({"index": runner.index, "title": step.title,
+                          "png": str(shot.relative_to(out))})
+            runner.next()
+        runner.end()
+    window.statusBar().clearMessage()
+    _pump(app, 0.3)
+    first = folder / "intro.png"
+    window.grab().save(str(first))
+    return {"id": tour.id, "title": tour.title, "intro_png": str(first.relative_to(out)),
+            "steps": steps}
 
 
 def _pump(app, seconds: float) -> None:

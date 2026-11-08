@@ -3,6 +3,7 @@ from __future__ import annotations
 from html import escape
 from itertools import compress, islice
 
+from core.i18n import tr
 from PyQt6.QtCore import (
     QAbstractItemModel,
     QAbstractTableModel,
@@ -326,7 +327,7 @@ class FileTableModel(QAbstractTableModel):
     ):
         if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
             if 0 <= section < len(COLUMNS):
-                return COLUMNS[section]
+                return tr(COLUMNS[section])
         return None
 
     # QAbstractTableModel.flags depends only on index validity, so both

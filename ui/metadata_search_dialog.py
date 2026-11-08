@@ -89,7 +89,7 @@ class MetadataSearchDialog(QDialog):
         super().__init__(parent)
         set_window_icon(self, "find-index")
         self._active_pane = active_pane
-        self.setWindowTitle("Find in Index")
+        self.setWindowTitle(tr("Find in Index"))
         self.resize(880, 560)
         # The walk can take minutes: it runs in a thread (progress, Cancel, Esc).
         self._job = ScanJob(self)
@@ -107,17 +107,17 @@ class MetadataSearchDialog(QDialog):
         root = QVBoxLayout(self)
         add_close_corner(self)
 
-        criteria = QGroupBox("Criteria", self)
+        criteria = QGroupBox(tr("Criteria"), self)
         form = QFormLayout(criteria)
         self._needle_edit = QLineEdit()
-        self._needle_edit.setPlaceholderText("substring of name (case-insensitive)")
+        self._needle_edit.setPlaceholderText(tr("substring of name (case-insensitive)"))
         # Enter searches through the default button (Search); a
         # returnPressed connection on top searched twice.
-        form.addRow("Name contains:", self._needle_edit)
+        form.addRow(tr("Name contains:"), self._needle_edit)
 
         self._ext_edit = QLineEdit()
-        self._ext_edit.setPlaceholderText("e.g. pdf  (no dot)")
-        form.addRow("Extension:", self._ext_edit)
+        self._ext_edit.setPlaceholderText(tr("e.g. pdf  (no dot)"))
+        form.addRow(tr("Suffix:"), self._ext_edit)
 
         size_row = QHBoxLayout()
         self._min_size = QSpinBox()
@@ -125,37 +125,38 @@ class MetadataSearchDialog(QDialog):
         self._min_size.setSuffix(" B")
         self._max_size = QSpinBox()
         self._max_size.setRange(0, 2_000_000_000)
-        self._max_size.setSpecialValueText("(no limit)")
+        self._max_size.setSpecialValueText(tr("(no limit)"))
         self._max_size.setSuffix(" B")
         size_row.addWidget(QLabel("min"))
         size_row.addWidget(self._min_size)
         size_row.addWidget(QLabel("max"))
         size_row.addWidget(self._max_size)
         size_row.addStretch(1)
-        form.addRow("Size:", size_row)
+        form.addRow(tr("Size:"), size_row)
 
         scope_row = QHBoxLayout()
-        self._only_active = QCheckBox("Only active pane's backend")
+        self._only_active = QCheckBox(tr("Only active pane's backend"))
         scope_row.addWidget(self._only_active)
         scope_row.addStretch(1)
-        form.addRow("Scope:", scope_row)
+        form.addRow(tr("Scope:"), scope_row)
 
         root.addWidget(criteria)
 
         btn_row = QHBoxLayout()
-        self._search_btn = QPushButton("Search", self)
+        self._search_btn = QPushButton(tr("Search"), self)
         self._search_btn.setDefault(True)
         self._search_btn.clicked.connect(self._do_search)
         btn_row.addWidget(self._search_btn)
 
-        self._index_btn = QPushButton("Index Current Pane…", self)
+        self._index_btn = QPushButton(tr("Index Current Pane…"), self)
         self._index_btn.clicked.connect(self._do_index_active)
         self._index_btn.setEnabled(self._active_pane is not None)
         btn_row.addWidget(self._index_btn)
 
         index_path = str(MX.default_db_path())
         self._index_btn.setToolTip(
-            f"Record names, sizes and dates below the active pane's folder.\nStored in {index_path}"
+            tr("Record names, sizes and dates below the active pane's folder.\nStored in {path}")
+            .format(path=index_path)
         )
         btn_row.addStretch(1)
         self._status = QLabel("")
@@ -165,13 +166,13 @@ class MetadataSearchDialog(QDialog):
 
         # Where the index lives (operator question: "wo und in welcher
         # Datei wird das indexing eigentlich gespeichert?").
-        self.location_label = QLabel(f"Index file: {index_path}", self)
+        self.location_label = QLabel(tr("Index file: {path}").format(path=index_path), self)
         self.location_label.setProperty("role", "muted")
         self.location_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         root.addWidget(self.location_label)
 
         self._table = QTableWidget(0, 5, self)
-        self._table.setHorizontalHeaderLabels(["Name", "Path", "Size", "Modified", "Backend"])
+        self._table.setHorizontalHeaderLabels([tr("Name"), tr("Path"), tr("Size"), tr("Modified"), tr("Backend")])
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -220,7 +221,7 @@ class MetadataSearchDialog(QDialog):
         if cancelled:
             return
         if kind == "error":
-            QMessageBox.warning(self, "Search", f"Search failed:\n{value}")
+            QMessageBox.warning(self, tr("Search"), tr("Search failed:\n{value}").format(value=value))
             self._update_status()
             return
         self._populate(value)

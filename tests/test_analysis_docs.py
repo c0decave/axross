@@ -3,6 +3,7 @@ say to the code: its title, its place in the list, its store, its button."""
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -20,9 +21,18 @@ def _text(name: str) -> str:
     return (ROOT / name).read_text(encoding="utf-8")
 
 
-def _row(text: str) -> str:
-    row = re.search(r"^\| Analysis \(sift\) \| (.+) \|$", text, re.M)
-    assert row, "no Analysis (sift) row in the settings table"
+def _page(name: str, title: str) -> str:
+    """*title* as the guide's reader sees it: the German guide names the
+    pages as the German dialog does ("Analyse (sift)", "LLM-Profile")."""
+    if name.endswith("_de.md"):
+        return json.loads(_text("resources/i18n/de.json"))[title]
+    return title
+
+
+def _row(text: str, name: str = "docs/USAGE.md") -> str:
+    title = _page(name, "Analysis (sift)")
+    row = re.search(rf"^\| {re.escape(title)} \| (.+) \|$", text, re.M)
+    assert row, f"no {title} row in the settings table"
     return row.group(1)
 
 
@@ -31,11 +41,12 @@ def test_happy_each_guide_lists_the_page_where_the_dialog_has_it(name):
     from ui.settings_dialog import _BUILTIN, CATEGORY_ORDER
 
     text = _text(name)
-    _row(text)
+    _row(text, name)
     assert _BUILTIN["analysis"][0] == "Analysis (sift)"
     rows = re.findall(r"^\| ([^|]+?) \| ", text, re.M)
-    place = rows.index("Analysis (sift)")
-    assert rows.index("LLM Profiles") + 1 == place == rows.index("Agent") - 1
+    place = rows.index(_page(name, "Analysis (sift)"))
+    assert rows.index(_page(name, "LLM Profiles")) + 1 == place \
+        == rows.index(_page(name, "Agent")) - 1
     assert CATEGORY_ORDER.index("llm") + 1 == CATEGORY_ORDER.index("analysis") \
         == CATEGORY_ORDER.index("agent") - 1
 
@@ -45,7 +56,7 @@ def test_happy_each_guide_names_the_store_the_cache_and_the_button(name):
     from core import analysis_settings as AS
 
     text = _text(name)
-    row = _row(text)
+    row = _row(text, name)
     assert "*Clear Cache*" in row
     assert "~/.config/axross/" + AS.settings_file().name in text
     assert "~/.cache/axross/sift" in text
@@ -65,7 +76,7 @@ def test_sad_the_button_the_docs_name_exists():
 def test_edge_no_german_label_for_an_it_term_in_the_german_guide():
     """KEINE EINDEUTSCHUNGEN: the German guide says Cache, Tags, Vision as
     the page does."""
-    row = _row(_text("docs/USAGE_de.md"))
+    row = _row(_text("docs/USAGE_de.md"), "docs/USAGE_de.md")
     for word in ("Zwischenspeicher", "Schlagwörter", "Bilderkennung"):
         assert word not in row, word
     for word in ("Cache", "Tags", "Vision"):

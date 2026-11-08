@@ -425,6 +425,7 @@ class AzureBlobSession(SessionLifecycle):
         prefix = self._to_prefix(path)
         items: list[FileItem] = []
         folders: set[str] = set()
+        seen_any = not prefix  # the container root is always there
 
         def add_folder(name: str) -> None:
             # A hierarchical-namespace folder comes twice: as the prefix
@@ -440,6 +441,7 @@ class AzureBlobSession(SessionLifecycle):
                 ),
                 f"Cannot list {path}",
             ):
+                seen_any = True  # the folder marker "prefix" itself too
                 # item can be BlobPrefix (virtual dir) or BlobProperties (file)
                 if hasattr(item, "prefix"):
                     add_folder(item.prefix[len(prefix) :].rstrip("/"))
@@ -462,6 +464,16 @@ class AzureBlobSession(SessionLifecycle):
         except Exception as e:
             raise OSError(f"Cannot list {path}: {e}") from e
 
+        if not seen_any:
+            # Nothing under the prefix - not even a folder marker: no folder
+            # (a typo listed as an empty one), the name of a file, or an
+            # empty Data Lake folder (only its placeholder blob).
+            kind = self._blob_at(prefix.rstrip("/"), path)
+            if kind == "folder":
+                return items
+            if kind == "file":
+                raise NotADirectoryError(errno.ENOTDIR, f"Cannot list {path}: a file", path)
+            raise FileNotFoundError(errno.ENOENT, f"Cannot list {path}: not found", path)
         return items
 
     def stat(self, path: str) -> FileItem:
@@ -595,6 +607,11 @@ class AzureBlobSession(SessionLifecycle):
                 blob_client = self._container.get_blob_client(key)
                 blob_client.delete_blob()
             except Exception as e:
+                if _is_not_found(e):
+                    # Delete Blob answers 404 BlobNotFound, as unlink(2) ENOENT.
+                    raise FileNotFoundError(
+                        errno.ENOENT, f"Cannot remove {path}: not found", path
+                    ) from e
                 raise OSError(f"Cannot remove {path}: {e}") from e
 
     def _refuse_non_empty(self, prefix: str, path: str) -> None:
@@ -698,6 +715,10 @@ class AzureBlobSession(SessionLifecycle):
             raise FileExistsError(
                 errno.EEXIST, f"Cannot rename the folder {src} over the file {dst}", dst
             )
+        if src_is_dir and (dst_key.rstrip("/") + "/").startswith(src_key.rstrip("/") + "/"):
+            # rename(2) answers EINVAL: copy+delete moved the folder's files
+            # into a folder of its own and deleted them from their place.
+            raise OSError(errno.EINVAL, f"Cannot move the folder {src} into itself ({dst})", dst)
 
         if src_is_dir:
             kind = self._blob_at(src_key, src)

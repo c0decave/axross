@@ -4,7 +4,7 @@
     "getting-started": {
       "intro": {
         "en": "Welcome to the tour Getting started. It shows you the two panes, the address bar, connecting to a server, copying between panes, the transfer queue and Undo.",
-        "de": "Willkommen zur Tour Erste Schritte. Sie zeigt dir die zwei {Panes}, die Adressleiste, das Verbinden mit einem {Server}, das Kopieren zwischen {Panes}, die {Transfer}-Warteschlange und das Widerrufen."
+        "de": "Willkommen zur Tour Erste Schritte. Sie zeigt dir die zwei {Panes}, die Adressleiste, das Verbinden mit einem {Server}, das Kopieren zwischen {Panes}, die Warteschlange der Übertragungen und das Widerrufen."
       },
       "steps": {
         "Panes side by side": {
@@ -12,8 +12,8 @@
           "de": "Jedes {Pane} zeigt einen Ordner über seine eigene Verbindung. Das können deine lokalen Dateien sein, SFTP, SMB, S3 oder jedes andere Protokoll. Steuerung Umschalt H und Steuerung Umschalt V teilen das aktive {Pane}, Steuerung W schließt es. In einer Dateiliste wechselst du mit {Tab} und Umschalt {Tab} zwischen den {Panes}."
         },
         "Source and target": {
-          "en": "The active pane has a blue border, the target pane a green one. F5 copies your selection to the target, and F6 moves it there. The last pane you were in becomes the target, and the target button in a pane's header makes that pane the target. So look at the green border before you press F5.",
-          "de": "Das aktive {Pane} hat einen blauen Rahmen, das Ziel-{Pane} einen grünen. F5 kopiert deine Auswahl ins Ziel, und F6 verschiebt sie dorthin. Ziel wird das {Pane}, in dem du zuletzt warst, und der Ziel-Knopf im Kopf eines {Panes} macht es zum Ziel. Schau also vor F5 auf den grünen Rahmen."
+          "en": "The active pane is the source. It has a blue border and the word Source in its header. The target pane has a green border and the word Target. F5 copies your selection to the target, and F6 moves it there. A click into a pane makes it the source and the pane you were in the target, and the target button in another pane's header makes that pane the target. So look for Target before you press F5.",
+          "de": "Das aktive {Pane} ist die Quelle. Es hat einen blauen Rahmen, und in seinem Kopf steht Quelle. Das Ziel-{Pane} hat einen grünen Rahmen, und dort steht Ziel. F5 kopiert deine Auswahl ins Ziel, und F6 verschiebt sie dorthin. Ein Klick in ein {Pane} macht es zur Quelle und das {Pane}, in dem du warst, zum Ziel, und der Ziel-Knopf im Kopf eines anderen {Panes} macht dieses {Pane} zum Ziel. Schau also vor F5, wo Ziel steht."
         },
         "The address bar": {
           "en": "Type a path and press Enter to go there. The buttons of the address bar go up one level, go home, bookmark the folder and reload it, and one more reloads by itself when the folder changes, which is on for local folders. The filter field below narrows the list as you type. Control F takes you there, and Escape clears it.",
@@ -80,8 +80,8 @@
       },
       "steps": {
         "Check the target first": {
-          "en": "F5 and F6 go to the pane with the green border. The target button in a pane's header makes that pane the target. Set it before you copy, and your files land where you meant them to.",
-          "de": "F5 und F6 gehen in das {Pane} mit dem grünen Rahmen. Der Ziel-Knopf im Kopf eines {Panes} macht es zum Ziel. Setz es vor dem Kopieren, dann landen deine Dateien dort, wo du sie haben willst."
+          "en": "F5 and F6 go to the pane marked Target, the one with the green border. The pane you work in is marked Source. The target button in another pane's header makes that pane the target. Set it before you copy, and your files land where you meant them to.",
+          "de": "F5 und F6 gehen in das {Pane}, in dessen Kopf Ziel steht, das mit dem grünen Rahmen. Im {Pane}, in dem du arbeitest, steht Quelle. Der Ziel-Knopf im Kopf eines anderen {Panes} macht dieses {Pane} zum Ziel. Setz es vor dem Kopieren, dann landen deine Dateien dort, wo du sie haben willst."
         },
         "Conflicts are asked, not guessed": {
           "en": "The destination is checked before anything is queued. For each name already there, you choose Overwrite, Overwrite if Newer, Skip or Rename, and if you like, for all of them. Cancel copies nothing. A move removes its source only after its copy completed and was checked.",
@@ -89,7 +89,7 @@
         },
         "Resume instead of starting over": {
           "en": "Every file is written under a hidden temporary name and renamed into place at the end. So a broken transfer never leaves half a file under the real name. Retry Failed resumes failed and cancelled transfers from the bytes already there.",
-          "de": "Jede Datei wird unter einem versteckten, temporären Namen geschrieben und am Ende an ihren Platz umbenannt. Ein abgebrochener {Transfer} hinterlässt also nie eine halbe Datei unter dem echten Namen. {Retry Failed} setzt fehlgeschlagene und abgebrochene {Transfers} ab den schon übertragenen {Bytes} fort."
+          "de": "Jede Datei wird unter einem versteckten, temporären Namen geschrieben und am Ende an ihren Platz umbenannt. Eine abgebrochene Übertragung hinterlässt also nie eine halbe Datei unter dem echten Namen. {Retry Failed} setzt fehlgeschlagene und abgebrochene Übertragungen ab den schon übertragenen {Bytes} fort."
         },
         "Compare before you sync": {
           "en": "Compare Panes in the View menu compares the active pane's folder with the target pane's. Identical files are hidden, and a file on one side only can be copied over. Sync shows exactly what it would do before it does anything, and On conflict starts at Ask me, so nothing is overwritten.",
@@ -112,7 +112,7 @@
     "find-organize": {
       "intro": {
         "en": "This tour, Find and organize, shows you Find Files, the live filter, tags, bookmarks and workspaces.",
-        "de": "Diese Tour, Finden und ordnen, zeigt dir {Find Files}, den {Live}-Filter, {Tags}, {Bookmarks} und {Workspaces}."
+        "de": "Diese Tour, Finden und ordnen, zeigt dir Dateien finden, den {Live}-Filter, {Tags}, {Bookmarks} und {Workspaces}."
       },
       "steps": {
         "Find Files": {
@@ -125,7 +125,7 @@
         },
         "Tags": {
           "en": "The Tags entry of the right click menu marks files on any connection with a coloured tag, such as Important, Review later, or a new one. Tagged Files in the View menu lists the files of every tag and takes you to them. Tags follow files you move in axross.",
-          "de": "Der Eintrag {Tags} im Rechtsklick-Menü markiert Dateien auf jeder Verbindung mit einem farbigen {Tag}, etwa {Important}, {Review later} oder einem neuen. {Tagged Files} im Menü Ansicht listet die Dateien jedes {Tags} und springt zu ihnen. {Tags} wandern mit, wenn du Dateien in {axross} verschiebst."
+          "de": "Der Eintrag {Tags} im Rechtsklick-Menü markiert Dateien auf jeder Verbindung mit einem farbigen {Tag}, etwa {Important}, {Review later} oder einem neuen. Getaggte Dateien im Menü Ansicht listet die Dateien jedes {Tags} und springt zu ihnen. {Tags} wandern mit, wenn du Dateien in {axross} verschiebst."
         },
         "Bookmarks": {
           "en": "F8 bookmarks the folder you are in, and so does the star in the address bar. F12 shows or hides this sidebar. Group your bookmarks, drag folders in, and drop files onto a bookmark to move them there, or hold Control to copy them. A remote bookmark keeps its connection profile.",
@@ -185,7 +185,7 @@
         },
         "Packs": {
           "en": "In a one-file build, Packs in the Features window adds or removes signed units of this release, such as a protocol, an extension or voice. The release's signature, the pack list and every file's checksum are checked before anything is unpacked. A pure Python unit is ready at once, others after the next start.",
-          "de": "In einem {One-File-Build} fügt {Packs} im Fenster Funktionen signierte Einheiten dieses {Release} hinzu oder entfernt sie, etwa ein Protokoll, eine {Extension} oder Sprachausgabe. Die Signatur des {Release}, die {Pack}-Liste und die Prüfsumme jeder Datei werden geprüft, bevor irgendetwas entpackt wird. Eine reine {Python}-Einheit ist sofort bereit, andere nach dem nächsten Start."
+          "de": "In einem {One-File-Build} fügt {Packs} im Fenster Funktionen signierte Einheiten dieses {Releases} hinzu oder entfernt sie, etwa ein Protokoll, eine {Extension} oder Sprachausgabe. Die Signatur des {Releases}, die {Pack}-Liste und die Prüfsumme jeder Datei werden geprüft, bevor irgendetwas entpackt wird. Eine reine {Python}-Einheit ist sofort bereit, andere nach dem nächsten Start."
         },
         "Extensions": {
           "en": "Extensions are Python plugins and run with your rights, so every one starts switched off. Manage Extensions in the Extensions menu switches them on and off. The paranoid security mode loads none.",

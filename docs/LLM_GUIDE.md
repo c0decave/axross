@@ -542,7 +542,7 @@ Needs: `--mcp-tools archive`.
 
 #### `archive_extract` — mutating · long (1800 s) · stdio + http · *backend*
 
-Extract an archive into a new folder named after it inside dest_dir (default: the archive's folder): 'x.zip' -> 'x', then 'x-1', … - an existing folder is never written into. Zip-slip, absolute paths, links, more than 10,000 entries, more than 1 GiB or a compression ratio above 100 are refused and nothing is left behind. Returns {path (the new folder), files}. Progress per file; cancellable (the partial folder is removed). Local backend only.
+Extract an archive into a new folder named after it inside dest_dir (default: the archive's folder): 'x.zip' -> 'x', then 'x-1', … - an existing folder is never written into. Zip-slip, absolute paths, more than 10,000 entries, more than 1 GiB or a compression ratio above 100 are refused and nothing is left behind. Returns {path (the new folder), files}, plus {skipped_links, note} when symbolic links were left out (they are never extracted). Progress per file; cancellable (the partial folder is removed). Local backend only.
 
 Needs: `--mcp-tools archive` `--mcp-write` `--mcp-root DIR`.
 

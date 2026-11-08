@@ -1381,14 +1381,25 @@ def _build_archive(env: GroupEnv) -> list:
                 files = A.extract(path, target, progress=progress)
             except A.ExtractCancelled as exc:
                 raise CancelledError("request cancelled by client") from exc
-            return {"path": target, "files": files}
+            out = {"path": target, "files": int(files)}
+            skipped = list(getattr(files, "skipped_links", None) or ())
+            if skipped:
+                # Links are never extracted; the caller must not take the
+                # folder for the whole archive.
+                out["skipped_links"] = skipped[:_MAX_ARCHIVE_ENTRIES]
+                out["note"] = (
+                    f"{len(skipped)} symbolic link{'s were' if len(skipped) != 1 else ' was'} "
+                    f"not extracted: {', '.join(skipped[:10])}{', …' if len(skipped) > 10 else ''}"
+                )
+            return out
 
         return _audited(
             env,
             "archive_extract",
             fields,
             work,
-            lambda r: {"path": fields["path"], "target": r["path"], "files": r["files"]},
+            lambda r: {"path": fields["path"], "target": r["path"], "files": r["files"],
+                       "skipped_links": len(r.get("skipped_links", ()))},
         )
 
     path = _path_prop("Archive file (zip family, tar.*, 7z, rar, gz/bz2/xz/zst) on the local "
@@ -1417,9 +1428,10 @@ def _build_archive(env: GroupEnv) -> list:
             "archive_extract",
             "Extract an archive into a new folder named after it inside dest_dir (default: "
             "the archive's folder): 'x.zip' -> 'x', then 'x-1', … - an existing folder is "
-            "never written into. Zip-slip, absolute paths, links, more than 10,000 entries, "
+            "never written into. Zip-slip, absolute paths, more than 10,000 entries, "
             "more than 1 GiB or a compression ratio above 100 are refused and nothing is "
-            "left behind. Returns {path (the new folder), files}. Progress per file; "
+            "left behind. Returns {path (the new folder), files}, plus {skipped_links, note} "
+            "when symbolic links were left out (they are never extracted). Progress per file; "
             "cancellable (the partial folder is removed). Local backend only.",
             {
                 "path": path,

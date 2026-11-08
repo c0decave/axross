@@ -15,12 +15,25 @@ signature by a key pinned in ``core.self_update.TRUSTED_KEYS``
   release manager can see which key signed.
 * A key whose public half is not pinned in this tree is refused (the
   installed binaries would refuse the release); ``--allow-unpinned``
-  signs anyway (a key rotation, a test key).
+  signs anyway (a test key).
+* A pinned key that the binaries in use do not pin (not in
+  :data:`FIELD_KEYS`) is refused as well: it is the next key of a rotation,
+  and no installed binary could update to a release signed with it.
+  ``--allow-new-key`` signs anyway, with a warning - only once a release
+  signed with a field key, and pinning the new one, has binaries in the
+  field (docs/PACKAGING.md, "Key rotation"); then move the key into
+  :data:`FIELD_KEYS`.
 * The signature is verified with the derived public key, through the same
   check the updater runs, before anything is written; the file is written
   atomically.
 * A ``SHA256SUMS`` the updater would refuse (larger than its bound, or
   without one checksum line) is not signed.
+* ``--packs-issue N`` numbers the release's pack manifest: the line
+  ``# axross-packs-issue N`` goes right after the ``# axross-release`` line
+  (signed with it). The first publication may leave it out (issue 0); each
+  re-issue of the manifest under the same version takes the next number -
+  core.packs refuses an issue lower than the one installed, and another
+  manifest under the installed number. Binaries before it ignore the line.
 
 Exit status: 0 written, 1 refused, 2 usage.
 """
@@ -42,10 +55,24 @@ from cryptography.exceptions import UnsupportedAlgorithm  # noqa: E402
 from cryptography.hazmat.primitives import serialization  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: E402
 
+from core import packs as P  # noqa: E402
 from core import self_update as SU  # noqa: E402
 
 #: A PEM private key is a few hundred bytes; anything far larger is not one.
 MAX_KEY_BYTES = 16 << 10
+
+#: The release keys that the oldest installed binaries which must still
+#: update pin (their own core/self_update.py TRUSTED_KEYS) - a subset of
+#: TRUSTED_KEYS. A release must be signed with one of these, or those
+#: binaries refuse it. Today: the binaries of 0.14.53 to 0.14.136 pin only
+#: the first key, and 0.15.176 shipped no binaries, so no binary in the
+#: field carries the second one yet. The second key joins this tuple once
+#: a release signed with the first key and pinning both has binaries out
+#: (docs/PACKAGING.md, "Key rotation"); the first one leaves it only when
+#: no supported binary pins it alone any more.
+FIELD_KEYS: tuple[str, ...] = (
+    "rJX0yymA5/Mbw24qIpuLNaLqC/FbvugEREz1p0pSz68=",  # pinned by every binary of 0.14.53 on
+)
 
 
 class Refused(Exception):
@@ -136,8 +163,30 @@ def write_atomically(path: Path, data: bytes) -> None:
         raise
 
 
+def with_packs_issue(data: bytes, issue: int) -> bytes:
+    """*data* (SHA256SUMS) with the line ``# axross-packs-issue <issue>``
+    right after its release line; one that names another issue is Refused."""
+    text = data.decode("utf-8", errors="replace")
+    lines = text.splitlines(keepends=True)
+    present = [line for line in lines if line.startswith(P.PACKS_ISSUE_PREFIX)]
+    if present:
+        try:
+            named = P.packs_issue_of_sums(text)
+        except P.PackError as exc:
+            raise Refused(str(exc)) from None
+        if named != issue:
+            raise Refused(f"{SU.SUMS_NAME} names packs issue {named}, not {issue}")
+        return data
+    at = next((i + 1 for i, line in enumerate(lines) if line.startswith(SU.RELEASE_LINE_PREFIX)), 0)
+    if at and not lines[at - 1].endswith("\n"):
+        lines[at - 1] += "\n"
+    lines.insert(at, f"{P.PACKS_ISSUE_PREFIX}{issue}\n")
+    return "".join(lines).encode("utf-8")
+
+
 def sign_release(key_path: Path, sums_path: Path, *, allow_unpinned: bool = False,
-                 version: str | None = None) -> Path:
+                 version: str | None = None, packs_issue: int | None = None,
+                 allow_new_key: bool = False) -> Path:
     """Sign *sums_path* with the key in *key_path*; returns the .sig path."""
     key = load_private_key(read_key_file(key_path))
     public = public_key_b64(key)
@@ -146,6 +195,13 @@ def sign_release(key_path: Path, sums_path: Path, *, allow_unpinned: bool = Fals
         raise Refused(f"the public key {public} is not pinned in core/self_update.py "
                       "TRUSTED_KEYS: installed binaries would refuse this release "
                       "(--allow-unpinned signs anyway)")
+    in_field = public in FIELD_KEYS
+    if pinned and not in_field and not allow_new_key:
+        raise Refused(f"the public key {public} is pinned in this tree but not by the binaries "
+                      "in use (FIELD_KEYS in scripts/sign_release.py): every installed binary "
+                      "would refuse this release. Sign with a field key; --allow-new-key signs "
+                      "anyway, once a release signed with a field key and pinning this one has "
+                      "binaries in the field (docs/PACKAGING.md, \"Key rotation\")")
     data = read_sums(sums_path)
     text = data.decode("utf-8", errors="replace")
     named = SU.release_of_sums(text)
@@ -158,6 +214,15 @@ def sign_release(key_path: Path, sums_path: Path, *, allow_unpinned: bool = Fals
                       "refuses a release without it")
     if version is not None and named != version:
         raise Refused(f"{sums_path} is for {named}, not {version}")
+    if packs_issue is not None:
+        if packs_issue < 0 or packs_issue > 999_999_999:
+            raise Refused(f"--packs-issue {packs_issue}: a number from 0 to 999999999")
+        data = with_packs_issue(data, packs_issue)
+    else:
+        try:
+            P.packs_issue_of_sums(data.decode("utf-8", errors="replace"))
+        except P.PackError as exc:
+            raise Refused(str(exc)) from None
     signature = sign(key, data)
     try:
         SU.verify_signature(data, signature, keys=(public,))
@@ -172,6 +237,10 @@ def sign_release(key_path: Path, sums_path: Path, *, allow_unpinned: bool = Fals
         raise Refused(f"cannot write {target}: {exc.strerror}") from None
     print(f"{target}: signed {len(data)} bytes of {sums_path.name}")
     print(f"public key: {public} ({'pinned' if pinned else 'NOT pinned'} in TRUSTED_KEYS)")
+    if not in_field:
+        print(f"sign_release: WARNING: {public} is not a key the binaries in use pin "
+              "(FIELD_KEYS): installed binaries of the releases before will refuse this "
+              "release", file=sys.stderr)
     return target
 
 
@@ -182,12 +251,21 @@ def main(argv=None) -> int:
     parser.add_argument("sums", type=Path, help="the release's SHA256SUMS")
     parser.add_argument("--allow-unpinned", action="store_true",
                         help="sign with a key that core/self_update.py does not pin")
+    parser.add_argument("--allow-new-key", action="store_true",
+                        help="sign with a pinned key that the binaries in use do not pin "
+                             "(not in FIELD_KEYS): only once a release signed with a field key "
+                             "and pinning this one has binaries in the field")
     parser.add_argument("--version", default=None,
                         help="the release's version: added as the first line of SHA256SUMS "
                              "when it has none (the updater requires it)")
+    parser.add_argument("--packs-issue", type=int, default=None, metavar="N",
+                        help="number of the pack manifest's issue: the line "
+                             f"'{P.PACKS_ISSUE_PREFIX}N' after the release line (raise it by one "
+                             "for each re-issue of the manifest under the same version)")
     args = parser.parse_args(argv)
     try:
-        sign_release(args.key, args.sums, allow_unpinned=args.allow_unpinned, version=args.version)
+        sign_release(args.key, args.sums, allow_unpinned=args.allow_unpinned, version=args.version,
+                     packs_issue=args.packs_issue, allow_new_key=args.allow_new_key)
     except Refused as exc:
         print(f"sign_release: refused: {exc}", file=sys.stderr)
         return 1

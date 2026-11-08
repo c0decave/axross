@@ -5,10 +5,40 @@ from __future__ import annotations
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PyQt6.QtWidgets import QApplication, QStyle, QStyledItemDelegate, QStyleOptionProgressBar
 
+from core.i18n import tr
 from core.transfer_worker import TransferDirection, TransferJob, TransferStatus
 
 COLUMNS = ("File", "Direction", "Size", "Progress", "Speed", "ETA", "Status")
 COL_FILE, COL_DIR, COL_SIZE, COL_PROGRESS, COL_SPEED, COL_ETA, COL_STATUS = range(7)
+
+#: The Status cell's word for each state, translated where it is shown.
+STATUS_WORDS = {
+    TransferStatus.PENDING: "pending",
+    TransferStatus.ACTIVE: "active",
+    TransferStatus.DONE: "done",
+    TransferStatus.ERROR: "error",
+    TransferStatus.CANCELLED: "cancelled",
+}
+
+
+def status_text(job: TransferJob) -> str:
+    """The Status cell: the translated state word, and for a failed or
+    cancelled job the reason (``job.error_message``) behind it - the bare
+    word "error" left the user guessing what went wrong."""
+    if job.skipped:
+        return tr("skipped")
+    word = tr(STATUS_WORDS.get(job.status, job.status.value))
+    reason = _reason(job)
+    return f"{word}: {reason.splitlines()[0]}" if reason else word
+
+
+def _reason(job: TransferJob) -> str:
+    """Why a failed or cancelled job ended, or "" - not the bare "Cancelled"
+    the worker writes for a plain cancel, which repeats the state word."""
+    if job.status not in (TransferStatus.ERROR, TransferStatus.CANCELLED):
+        return ""
+    reason = (job.error_message or "").strip()
+    return "" if reason.casefold() == "cancelled" else reason
 
 
 class TransferModel(QAbstractTableModel):
@@ -105,16 +135,16 @@ class TransferModel(QAbstractTableModel):
                 else:
                     arrow = "\u2193"
                 # Words, not a symbol: U+2700 scissors is in almost no font.
-                return f"{arrow} move" if job.move else arrow
+                return f"{arrow} {tr('move')}" if job.move else arrow
             if col == COL_SIZE:
                 return self._format_size(job.total_bytes)
             if col == COL_PROGRESS:
                 if job.skipped:
                     # "newer" kept the destination: nothing was written and
                     # a move kept its source, so this is no "Done".
-                    return "Skipped"
+                    return tr("Skipped")
                 if job.status == TransferStatus.DONE:
-                    return "Done"
+                    return tr("Done")
                 return f"{job.progress_percent:.0f}%"
             if col == COL_SPEED:
                 if job.status == TransferStatus.ACTIVE and job.speed > 0:
@@ -125,7 +155,13 @@ class TransferModel(QAbstractTableModel):
                     return self._format_eta(job.eta_seconds)
                 return ""
             if col == COL_STATUS:
-                return "skipped" if job.skipped else job.status.value
+                return status_text(job)
+
+        if role == Qt.ItemDataRole.ToolTipRole and col == COL_STATUS:
+            reason = _reason(job)
+            if reason:
+                return f"{tr(STATUS_WORDS.get(job.status, job.status.value))}\n{reason}"
+            return None
 
         if role == Qt.ItemDataRole.UserRole and col == COL_PROGRESS:
             # No bar for a skipped job: the delegate then draws "Skipped".
@@ -144,7 +180,7 @@ class TransferModel(QAbstractTableModel):
     ):
         if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
             if 0 <= section < len(COLUMNS):
-                return COLUMNS[section]
+                return tr(COLUMNS[section])
         return None
 
     @staticmethod

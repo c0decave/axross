@@ -132,6 +132,7 @@ def _ps_decode(b64: str) -> str:
 # What the stat script answers for Get-Item's ItemNotFoundException; JSON
 # never reads like this.
 _NOT_FOUND = "AXROSS-NOT-FOUND"
+_DESTINATION_TAKEN = "AXROSS-DESTINATION-EXISTS"
 
 
 def _b64(value: str) -> str:
@@ -412,15 +413,35 @@ class WinRMSession(SessionLifecycle):
         self._run_ps(script)
 
     def rename(self, src: str, dst: str) -> None:
-        # Move-Item handles cross-directory moves on Windows — same
-        # contract as our other backends' rename().
+        """Move-Item, refused when *dst* exists (FileExistsError).
+
+        The caps say ``rename_overwrites=False``, but ``Move-Item -Force``
+        replaced an existing file - and onto a folder Move-Item moves the
+        source INTO it. The script looks first (Get-Item, so a hidden
+        entry or a dangling link counts). Only *dst* that is the source
+        itself under another case (Windows names are case-insensitive)
+        goes on. -Force stays: without it a hidden or read-only source
+        cannot be moved at all."""
         src_b64 = _b64(self.normalize(src))
         dst_b64 = _b64(self.normalize(dst))
-        script = (
-            f"Move-Item -Force -LiteralPath {_ps_decode(src_b64)} "
-            f"-Destination {_ps_decode(dst_b64)} -ErrorAction Stop"
-        )
-        self._run_ps(script)
+        script = f"""
+            $s = {_ps_decode(src_b64)}
+            $d = {_ps_decode(dst_b64)}
+            $taken = $null
+            try {{ $taken = Get-Item -Force -LiteralPath $d -ErrorAction Stop }}
+            catch [System.Management.Automation.ItemNotFoundException] {{ }}
+            $item = Get-Item -Force -LiteralPath $s -ErrorAction Stop
+            if ($null -ne $taken -and $taken.FullName -ne $item.FullName) {{
+              Write-Output '{_DESTINATION_TAKEN}'
+            }} else {{
+              Move-Item -Force -LiteralPath $s -Destination $d -ErrorAction Stop
+            }}
+        """
+        out = self._run_ps(script)
+        if out.strip() == _DESTINATION_TAKEN:
+            raise FileExistsError(
+                errno.EEXIST, f"WinRM rename {src} -> {dst}: the destination exists", dst
+            )
 
     def chmod(self, path: str, mode: int) -> None:
         # Windows ACLs don't map to POSIX bits cleanly; refuse rather

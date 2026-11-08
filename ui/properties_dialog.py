@@ -41,7 +41,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.i18n import tr
+from core.i18n import tr, tr_n
 from ui.format_utils import format_size, human_bytes
 from ui.permissions_dialog import PermissionsWidget
 from ui.thread_lifetime import detach_running_thread
@@ -184,9 +184,9 @@ class PropertiesDialog(QDialog):
         self._worker = None
 
         if self._multi:
-            self.setWindowTitle(f"Properties: {len(self._items)} items")
+            self.setWindowTitle(tr_n(len(self._items), "Properties: {n} item", "Properties: {n} items"))
         else:
-            self.setWindowTitle(f"Properties: {self._item.name}")
+            self.setWindowTitle(tr("Properties: {name}").format(name=self._item.name))
         self.setMinimumWidth(420)
         self._build()
 
@@ -206,7 +206,7 @@ class PropertiesDialog(QDialog):
         self._tabs = QTabWidget(self)
         layout.addWidget(self._tabs)
 
-        self._tabs.addTab(self._build_general(), "General")
+        self._tabs.addTab(self._build_general(), tr("General"))
 
         # No chmod tab for a multi-selection: chmod applies to one file,
         # and offering the editor for a mixed selection invites applying
@@ -216,7 +216,7 @@ class PropertiesDialog(QDialog):
             self._permissions = PermissionsWidget(
                 self._backend, self._file_path, self._item, self
             )
-            self._tabs.addTab(self._permissions, "Permissions")
+            self._tabs.addTab(self._permissions, tr("Permissions"))
 
         flags = QDialogButtonBox.StandardButton.Close
         if not self._multi:
@@ -242,14 +242,14 @@ class PropertiesDialog(QDialog):
             label = QLabel(self._compute_field(key), page)
             label.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
             label.setWordWrap(True)
-            form.addRow(f"{key}:", label)
+            form.addRow(tr(key) + ":", label)
             self._value_labels[key] = label
 
         # Only meaningful for directories on an expensive backend; for
         # anything else it stays hidden so the row does not suggest an
         # action that would do nothing.
-        self._calc_btn = QPushButton("Calculate", page)
-        self._calc_btn.setToolTip("Walk the directory and total up its contents")
+        self._calc_btn = QPushButton(tr("Calculate"), page)
+        self._calc_btn.setToolTip(tr("Walk the directory and total up its contents"))
         self._calc_btn.clicked.connect(self._start_size_walk)
         cheap = getattr(self._backend, "has_cheap_recursive_walk", False)
         self._calc_btn.setVisible((self._multi or self._item.is_dir) and not cheap)
@@ -279,8 +279,8 @@ class PropertiesDialog(QDialog):
             return self._file_path
         if key == "Type":
             if item.is_link:
-                return "Symlink"
-            return "Directory" if item.is_dir else "File"
+                return tr("Symlink")
+            return tr("Directory") if item.is_dir else tr("File")
         if key == "Link target":
             return item.link_target or DASH
         if key == "Size":
@@ -314,8 +314,9 @@ class PropertiesDialog(QDialog):
         from core.fs_summary import describe
 
         if self._summary is None:
-            return f"{len(self._items)} items — not counted yet"
-        return f"{len(self._items)} items selected: {describe(self._summary)}"
+            return tr_n(len(self._items), "{n} item — not counted yet", "{n} items — not counted yet")
+        return tr_n(len(self._items), "{n} item selected: {what}", "{n} items selected: {what}",
+                    what=describe(self._summary))
 
     def _summary_size_text(self) -> str:
         if self._summary is None:
@@ -338,7 +339,7 @@ class PropertiesDialog(QDialog):
         if self._thread is not None:  # already running
             return
         self._calc_btn.setEnabled(False)
-        self._value_labels["Size"].setText("calculating…")
+        self._value_labels["Size"].setText(tr("calculating…"))
 
         self._thread = QThread(self)
         if self._multi:
@@ -440,7 +441,7 @@ class PropertiesDialog(QDialog):
         if error is None:
             self.accept()
             return
-        QMessageBox.critical(self, "Permission Error", f"Failed to change permissions:\n{error}")
+        QMessageBox.critical(self, tr("Permission Error"), tr("Failed to change permissions:\n{error}").format(error=error))
 
     def reject(self) -> None:  # noqa: D102 - Qt override
         self._stop_thread()

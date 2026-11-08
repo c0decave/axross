@@ -28,6 +28,7 @@ from PyQt6 import sip
 from PyQt6.QtCore import QEvent, QMimeData, QObject, QPoint, Qt, QUrl
 from PyQt6.QtGui import QDrag
 from PyQt6.QtWidgets import QApplication, QMessageBox, QWidget
+from core.i18n import tr
 
 log = logging.getLogger("ui.viewer_file_actions")
 
@@ -88,8 +89,8 @@ def delete_file(parent: QWidget, backend, path: str, pane) -> bool:
     name = _name(backend, path)
     reply = QMessageBox.question(
         parent,
-        "Delete",
-        f"Delete {escape(name)}?\n{escape(path)}",
+        tr("Delete"),
+        tr("Delete {name}?\n{path}").format(name=escape(name), path=escape(path)),
         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
     )
     if reply != QMessageBox.StandardButton.Yes:
@@ -98,7 +99,7 @@ def delete_file(parent: QWidget, backend, path: str, pane) -> bool:
 
     # The pane's Delete asks a production connection's countdown; the
     # viewer's Delete removes the same file and asks it too.
-    if not confirm_production(parent, backend, f"delete {path}"):
+    if not confirm_production(parent, backend, tr("delete {path}").format(path=path)):
         return False
     from ui.off_gui import run_off_gui
 
@@ -107,7 +108,8 @@ def delete_file(parent: QWidget, backend, path: str, pane) -> bool:
     except OSError as exc:
         log.error("Delete failed for %s: %s", path, exc)
         QMessageBox.warning(
-            None if sip.isdeleted(parent) else parent, "Delete", f"Could not delete {escape(name)}:\n{escape(str(exc))}"
+            None if sip.isdeleted(parent) else parent, tr("Delete"),
+            tr("Could not delete {name}:\n{error}").format(name=escape(name), error=escape(str(exc)))
         )
         return False
     log.info("Deleted: %s", path)

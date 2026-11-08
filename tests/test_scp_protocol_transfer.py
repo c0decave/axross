@@ -156,10 +156,10 @@ def test_edge_an_empty_file_round_trips():
 
 def test_edge_a_name_with_a_newline_is_refused_before_sending():
     s = _session({"-t": b"\0\0\0"})
-    fh = s.open_write("/bad\nname")
-    fh.write(b"x")
-    with pytest.raises(OSError, match="line break"):
-        fh.close()
+    # Refused by open_write itself since round 3 (refuse_control_chars on
+    # every SCP path); _scp_write's own check stays as the last guard.
+    with pytest.raises(OSError, match="control characters"):
+        s.open_write("/bad\nname")
     assert s.channels == []
 
 

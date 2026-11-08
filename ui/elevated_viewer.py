@@ -29,6 +29,7 @@ from core.open_limits import DEFAULT_MAX_OPEN_MB, max_open_bytes
 # (core.open_limits) is hex-dumped instead.
 from ui.close_corner import add_close_corner
 from ui.icon_provider import set_window_icon
+from core.i18n import tr
 
 MAX_TEXT_RENDER = DEFAULT_MAX_OPEN_MB * 1024 * 1024
 
@@ -68,7 +69,8 @@ def _hex_dump(data: bytes, max_bytes: int = 256 * 1024) -> str:
         ascii_part = "".join(chr(b) if 32 <= b < 127 else "." for b in chunk)
         lines.append(f"{off:08x}  {hex_part:<47}  {ascii_part}")
     if len(data) > max_bytes:
-        lines.append(f"--- truncated: {len(data) - max_bytes} more bytes ({len(data)} total) ---")
+        lines.append("--- " + tr("truncated: {more} more bytes ({total} total)").format(
+            more=len(data) - max_bytes, total=len(data)) + " ---")
     return "\n".join(lines)
 
 
@@ -84,7 +86,7 @@ class ElevatedViewerDialog(QDialog):
         # A multi-MiB binary file that happens to lack NULs in the
         # first 4 KiB shouldn't dump its decoded form into the editor.
         self._is_text = _is_text_renderable(data)
-        self.setWindowTitle(f"Open as root: {path}")
+        self.setWindowTitle(tr("Open as root: {path}").format(path=path))
         self.resize(820, 560)
         self._build_ui()
 
@@ -92,9 +94,10 @@ class ElevatedViewerDialog(QDialog):
         root = QVBoxLayout(self)
         add_close_corner(self)
 
-        kind = "text" if self._is_text else "binary"
         info = QLabel(
-            f"{self._path}  —  {len(self._data)} bytes  ({kind}, read via pkexec, read-only)"
+            f"{self._path}  —  "
+            + (tr("{n} bytes  (text, read via pkexec, read-only)") if self._is_text
+               else tr("{n} bytes  (binary, read via pkexec, read-only)")).format(n=len(self._data))
         )
         info.setProperty("role", "muted")
         root.addWidget(info)

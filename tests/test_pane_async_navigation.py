@@ -136,7 +136,7 @@ class AsyncLoadTest(_Base):
         self.assertEqual(self.pane.current_path, self.p("a"))
         self.assertIn("a_file.txt", self.names())
         self.assertEqual(self.pane._path_edit.text(), self.p("a"))
-        self.assertEqual(self.pane._status.text(), "1 items")
+        self.assertEqual(self.pane._status.text(), "1 item")  # tr_n: one item, not "1 items"
         self.assertEqual(seen, [self.p("a")])
         self.assertEqual(self.pane._history[-1], self.p("a"))
         self.assertEqual(self.finished[-1], (self.p("a"), True))

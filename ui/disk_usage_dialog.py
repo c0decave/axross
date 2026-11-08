@@ -144,7 +144,7 @@ class DiskUsageDialog(QDialog):
         self._thread: QThread | None = None
         self._worker: _SnapshotWorker | None = None
 
-        self.setWindowTitle("Disk Usage")
+        self.setWindowTitle(tr("Disk Usage"))
         self.resize(720, 380)
         self._build()
         self.refresh()
@@ -156,7 +156,7 @@ class DiskUsageDialog(QDialog):
         add_close_corner(self)
 
         self._table = QTableWidget(0, len(COLUMNS), self)
-        self._table.setHorizontalHeaderLabels(list(COLUMNS))
+        self._table.setHorizontalHeaderLabels([tr(c) for c in COLUMNS])
         self._table.verticalHeader().setVisible(False)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -171,7 +171,7 @@ class DiskUsageDialog(QDialog):
         self._status.setProperty("role", "muted")
         bottom.addWidget(self._status, stretch=1)
 
-        self._refresh_btn = QPushButton("Refresh", self)
+        self._refresh_btn = QPushButton(tr("Refresh"), self)
         self._refresh_btn.clicked.connect(self.refresh)
         bottom.addWidget(self._refresh_btn)
         layout.addLayout(bottom)
@@ -186,7 +186,7 @@ class DiskUsageDialog(QDialog):
         if self._thread is not None:
             return
         self._refresh_btn.setEnabled(False)
-        self._status.setText("measuring…")
+        self._status.setText(tr("measuring…"))
 
         self._thread = QThread(self)
         self._worker = _SnapshotWorker(self._backends, self._snapshot_fn)
@@ -199,9 +199,9 @@ class DiskUsageDialog(QDialog):
         self._rows = list(snap.rows) if snap is not None else []
         self._populate()
         if error:
-            self._status.setText(f"Could not read capacity: {error}")
+            self._status.setText(tr("Could not read capacity: {error}").format(error=error))
         elif not self._rows:
-            self._status.setText("No open connections to measure.")
+            self._status.setText(tr("No open connections to measure."))
         else:
             unmeasured = sum(1 for r in self._rows if usage_percent(r) is None)
             text = tr_n(len(self._rows), "{n} connection", "{n} connections")

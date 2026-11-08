@@ -21,7 +21,7 @@ from typing import IO
 from core import posix_compat, removal_cancel
 from core.backend import SessionLifecycle
 from core.local_fs import LocalFS, copy_file_onto, entry_stat
-from core.path_policy import confined_path
+from core.path_policy import confined_path, refuse_folder_path
 from core.private_mount_dir import make_private_mount_point, remove_private_mount_point
 from core.subprocess_env import clean_child_env
 from models.file_item import FileItem, local_time
@@ -77,6 +77,14 @@ def _stat_to_item(name: str, st: os.stat_result, full_path: str) -> FileItem:
         accessed=local_time(st.st_atime) if getattr(st, "st_atime", 0) else None,
         created=local_time(birth) if birth else None,
     )
+
+
+def _with_context(exc: OSError, where: str) -> OSError:
+    """*exc* as an OSError of the same kind (FileNotFoundError for ENOENT,
+    NotADirectoryError ...) whose message starts with *where*."""
+    if exc.errno is None:
+        return OSError(f"{where}: {exc}")
+    return OSError(exc.errno, f"{where}: {exc.strerror or exc}")
 
 
 class NfsSession(SessionLifecycle):
@@ -263,7 +271,7 @@ class NfsSession(SessionLifecycle):
                     log.warning("Cannot stat %s: %s", entry_path, e)
                     items.append(FileItem(name=entry_name, stat_error=e.strerror or str(e)))
         except OSError as e:
-            raise OSError(f"Cannot list {path}: {e}") from e
+            raise _with_context(e, f"Cannot list {path}") from e
         return sorted(items, key=lambda i: (not i.is_dir, i.name.lower()))
 
     def stat(self, path: str) -> FileItem:
@@ -273,7 +281,9 @@ class NfsSession(SessionLifecycle):
             name = os.path.basename(path.rstrip("/")) or "/"
             return _stat_to_item(name, st, full)
         except OSError as e:
-            raise OSError(f"Cannot stat {path}: {e}") from e
+            # Typed as the kernel said it: a missing path was a plain
+            # OSError, which "not there" callers could not tell apart.
+            raise _with_context(e, f"Cannot stat {path}") from e
 
     def is_dir(self, path: str) -> bool:
         """Follows a link inside the mount. False only when nothing is
@@ -292,6 +302,11 @@ class NfsSession(SessionLifecycle):
         go-ahead to write."""
         return entry_stat(self._full_path(path, follow=False)) is not None
 
+    def _is_file(self, path: str) -> bool:
+        """True for an entry that is not a folder (False when nothing is there)."""
+        st = entry_stat(self._full_path(path, follow=False))
+        return st is not None and not stat_module.S_ISDIR(st.st_mode)
+
     def mkdir(self, path: str) -> None:
         os.makedirs(self._full_path(path), exist_ok=True)
 
@@ -308,6 +323,8 @@ class NfsSession(SessionLifecycle):
             os.remove(full)
 
     def rename(self, old_path: str, new_path: str) -> None:
+        # The mount path join drops the slash: a file renamed to "x/" became "x".
+        refuse_folder_path(new_path, "rename to", source_is_file=lambda: self._is_file(old_path))
         os.rename(self._full_path(old_path, follow=False), self._full_path(new_path, follow=False))
 
     def open_read(self, path: str) -> IO[bytes]:
@@ -316,6 +333,8 @@ class NfsSession(SessionLifecycle):
         return LocalFS().open_read(self._full_path(path))
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
+        # The mount path join drops the slash: "x/" was written as a FILE "x".
+        refuse_folder_path(path)
         mode = "ab" if append else "wb"
         parent = os.path.dirname(self._full_path(path))
         os.makedirs(parent, exist_ok=True)

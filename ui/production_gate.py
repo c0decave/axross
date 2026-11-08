@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 from core.safety_tarpit import DEFAULT_COUNTDOWN_S, arm_fired, profile_label, should_arm
 from ui.close_corner import add_close_corner
 from ui.icon_provider import set_window_icon
+from core.i18n import tr
 
 log = logging.getLogger(__name__)
 
@@ -46,15 +47,15 @@ class ProductionCountdownDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         set_window_icon(self, "shield")
-        self.setWindowTitle("Production profile")
+        self.setWindowTitle(tr("Production profile"))
         self._seconds = max(0.0, float(seconds))
         self._deadline = 0.0
         layout = QVBoxLayout(self)
         text = QLabel(
-            f"<b>{_escape(label)}</b> is marked as production.<br><br>"
-            f"About to: {_escape(op_desc)}<br><br>"
-            "Press Esc or Cancel to stop. The operation goes ahead when the "
-            "countdown ends.",
+            tr("<b>{label}</b> is marked as production.<br><br>"
+               "About to: {action}<br><br>"
+               "Press Esc or Cancel to stop. The operation goes ahead when the "
+               "countdown ends.").format(label=_escape(label), action=_escape(op_desc)),
             self,
         )
         text.setWordWrap(True)
@@ -89,7 +90,16 @@ class ProductionCountdownDialog(QDialog):
             self.accept()
             return
         self._bar.setValue(int((self._seconds - left) * _TICKS_PER_S))
-        self._remaining.setText(f"{left:.1f} s")
+        self._remaining.setText(tr("{seconds} s").format(seconds=_decimal(left)))
+
+
+def _decimal(value: float) -> str:
+    """*value* with one decimal, with the decimal comma where the language
+    writes one ("2,5 s" in German)."""
+    from core.i18n import active
+
+    text = f"{value:.1f}"
+    return text if active().language in ("en", "") else text.replace(".", ",")
 
 
 def _escape(text: str) -> str:

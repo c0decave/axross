@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from core.i18n import tr
+from core.i18n import tr, tr_keys
 from ui.close_corner import add_close_corner
 from ui.icon_provider import set_window_icon
 
@@ -58,6 +58,9 @@ SHORTCUTS: list[tuple[str, tuple[str, ...], str]] = [
     ("Navigation", ("Ctrl+Shift+D",), "Duplicate Finder"),
     ("Navigation", ("Tab",), "Next pane"),
     ("Navigation", ("Shift+Tab",), "Previous pane"),
+    ("Navigation", ("Ctrl+F6", "Ctrl+Shift+F6"),
+     "Next / previous area of the window: the panes, Transfers, the other panels in view"),
+    ("Navigation", ("Esc",), "Console: back to the file pane"),
     ("Selection", ("Space",), "Mark the file and move down"),
     ("Selection", ("Ctrl+A",), "Select all"),
     ("Selection", ("Ctrl+Shift+A",), "Invert selection"),
@@ -86,6 +89,7 @@ SHORTCUTS: list[tuple[str, tuple[str, ...], str]] = [
     ("Window", ("Ctrl+Shift+T",), "Open a shell terminal"),
     ("Window", ("Ctrl+Shift+R",), "Restore the last session"),
     ("Window", ("Ctrl+Shift+I",), "Show / hide the Analysis (sift) panel"),
+    ("Window", ("Ctrl+Shift+K",), "Ask the Agent: the Agent panel, at its task field"),
     ("Window", ("Ctrl+H",), "Show / hide hidden files"),
     ("Window", ("Ctrl+Shift+G",), "Thumbnail view for the active pane (images, PDFs, videos)"),
     ("Window", ("Ctrl+C",), "Copy the selected paths"),
@@ -168,9 +172,12 @@ class ShortcutsDialog(QDialog):
                 font.setBold(True)
                 parent.setFont(0, font)
                 sections[section] = parent
-            item = QTreeWidgetItem(parent, [" / ".join(keys), tr(description)])
+            # The keys as the keyboard prints them ("Strg+Umschalt+A" in German).
+            shown_keys = tuple(tr_keys(key) for key in keys)
+            item = QTreeWidgetItem(parent, [" / ".join(shown_keys), tr(description)])
             # English and translated text: what is shown must be findable.
-            haystack = " ".join((*keys, description, tr(description), section, tr(section)))
+            haystack = " ".join((*keys, *shown_keys, description, tr(description), section,
+                                 tr(section)))
             item.setData(0, Qt.ItemDataRole.UserRole, haystack.lower())
         self.tree.expandAll()
 

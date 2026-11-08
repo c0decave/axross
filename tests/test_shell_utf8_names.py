@@ -51,7 +51,8 @@ def test_happy_scp_lists_a_utf8_name():
 def test_happy_scp_asks_ls_for_utf8_output():
     s = _scp()
     s.list_dir("~")
-    assert s.commands[0].startswith(telnet_client.SHELL_ENV + " ls -la ")
+    # TZ=UTC0: the listing's dates come back in UTC (round 3).
+    assert s.commands[0].startswith(telnet_client.SHELL_ENV + " TZ=UTC0 ls -la ")
 
 
 def test_happy_telnet_sets_the_same_environment():

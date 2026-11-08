@@ -61,7 +61,7 @@ class FakeSmbClient:
         self.listings: dict[str, list] = {}  # per-directory entries (default: entries)
         self.calls: list[tuple[str, str]] = []  # (operation, UNC path)
         self.path = types.SimpleNamespace(
-            isdir=self._isdir, exists=self._exists, islink=self._islink
+            isdir=self._isdir, exists=self._exists, lexists=self._exists, islink=self._islink
         )
 
     def _maybe_fail(self) -> None:

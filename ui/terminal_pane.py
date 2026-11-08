@@ -80,7 +80,7 @@ class TerminalPaneWidget(QWidget):
     ):
         super().__init__(parent)
         self._transport = transport
-        self._label_text = label
+        self._label_text = tr(label) if label == "Local Shell" else label
         self._profile = profile
         # Folder the shell starts in: a local shell is started there, a
         # remote one is sent a ``cd`` there. None: the application's folder
@@ -203,18 +203,18 @@ class TerminalPaneWidget(QWidget):
         self._btn_pin.setIcon(icon("pin"))
         self._btn_pin.setFixedSize(22, 22)
         self._btn_pin.setCheckable(True)
-        self._btn_pin.setToolTip("Pin: capture all keyboard input (Ctrl+Shift+P)")
+        self._btn_pin.setToolTip(tr("Pin: capture all keyboard input (Ctrl+Shift+P)"))
         self._btn_pin.toggled.connect(self._toggle_pin)
         header.addWidget(self._btn_pin)
 
-        btn_restart = QPushButton("Restart")
+        btn_restart = QPushButton(tr("Restart"))
         btn_restart.setFixedHeight(22)
         btn_restart.clicked.connect(self._restart_session)
         header.addWidget(btn_restart)
 
         btn_close = QPushButton("\u2715")  # ✕
         btn_close.setFixedSize(22, 22)
-        btn_close.setToolTip("Close terminal pane")
+        btn_close.setToolTip(tr("Close terminal pane"))
         btn_close.clicked.connect(self.close_requested.emit)
         header.addWidget(btn_close)
 
@@ -314,7 +314,7 @@ class TerminalPaneWidget(QWidget):
                 transport = self._get_transport()
                 if transport is None:
                     self._terminal.message(
-                        "\n--- No active connection. Connect to the host first. ---\n"
+                        "\n--- " + tr("No active connection. Connect to the host first.") + " ---\n"
                     )
                     return
                 # Honour per-profile history-suppression toggle so
@@ -498,7 +498,7 @@ class TerminalPaneWidget(QWidget):
             self._session.close()
             self._session = None
             self._read_timer.stop()
-            self._terminal.message("\n--- Session ended ---\n")
+            self._terminal.message("\n--- " + tr("Session ended") + " ---\n")
             return
 
         # Everything the shell wrote, drawn once; a flood: again at once.

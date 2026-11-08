@@ -293,6 +293,107 @@ _FILE_ATTRIBUTE_READONLY = 0x01  # smbprotocol FileAttributes, MS-FSCC 2.6
 _FILE_ATTRIBUTE_REPARSE_POINT = 0x400
 _FILE_ATTRIBUTE_HIDDEN = 0x02
 _FILE_ATTRIBUTE_DIRECTORY = 0x10
+_SMB_PORT = 445
+
+
+def _host_key(name: str) -> str:
+    """*name* as one spelling: lowercase, without the trailing dot of an
+    absolute name or the brackets of an IPv6 literal."""
+    return str(name).strip().strip("[]").rstrip(".").lower()
+
+
+def _is_address(name: str) -> bool:
+    import ipaddress
+
+    try:
+        ipaddress.ip_address(name.partition("%")[0])
+    except ValueError:
+        return False
+    return True
+
+
+def _addresses(name: str) -> frozenset[str]:
+    """The addresses *name* resolves to; empty when it does not."""
+    try:
+        return frozenset(info[4][0] for info in socket.getaddrinfo(name, None))
+    except (OSError, UnicodeError):
+        return frozenset()
+
+
+class _ReferralPortCache(dict):
+    """A session's smbclient connection pool (``connection_cache``) that
+    keeps a non-default port to the server the user named.
+
+    smbclient opens every connection on the ``port`` of the call - also
+    the one to the server a DFS referral sends it to. So a namespace
+    server on, say, 4445 sent every referral to the target's port 4445,
+    where nothing listens. smbclient looks a connection up here by
+    ``"server:port"`` before it dials (``_pool.register_session``): for
+    any server but the original one, a lookup on the session's port gets
+    that server's connection on 445 instead.
+
+    "The original one" is the same server, not the same string: a
+    referral that names the namespace server by its FQDN where the user
+    typed the short name (or its address, or the other way round) must
+    keep the session's port. Names are compared by their addresses; with
+    a proxy (*resolve* False: a lookup here would leak the name to the
+    local resolver) or when one does not resolve, a short name matches
+    the first label of a full one.
+    """
+
+    def __init__(self, host: str, port: int, *, resolve: bool = True) -> None:
+        super().__init__()
+        self._origin = host.lower()
+        self._origin_key = _host_key(host)
+        self._port = int(port)
+        self._resolve = resolve
+        self._same: dict[str, bool] = {}
+
+    def _is_origin(self, server: str) -> bool:
+        key = _host_key(server)
+        if key == self._origin_key:
+            return True
+        if key not in self._same:
+            self._same[key] = self._same_server(self._origin_key, key)
+        return self._same[key]
+
+    def _same_server(self, a: str, b: str) -> bool:
+        if self._resolve:
+            mine, theirs = _addresses(a), _addresses(b)
+            if mine and theirs:
+                return bool(mine & theirs)
+        if _is_address(a) or _is_address(b) or ("." in a) == ("." in b):
+            return False
+        short, full = (a, b) if "." not in a else (b, a)
+        return full.split(".", 1)[0] == short
+
+    def get(self, key, default=None):
+        hit = super().get(key, default)
+        server, _, port = str(key).rpartition(":")
+        if self._port == _SMB_PORT or port != str(self._port) or self._is_origin(server):
+            return hit
+        if hit is not None and getattr(hit.transport, "connected", False):
+            return hit
+        target_key = f"{server}:{_SMB_PORT}"
+        connection = super().get(target_key)
+        if connection is None or not connection.transport.connected:
+            from smbclient._pool import ClientConfig
+            from smbprotocol.connection import Connection
+
+            connection = Connection(ClientConfig().client_guid, server, _SMB_PORT)
+            connection.connect(timeout=60)
+            self[target_key] = connection
+        return connection
+
+    def close_referral_targets(self) -> None:
+        """Disconnect the connections to servers other than the original
+        one (smbclient's delete_session only knows the original)."""
+        for key in [k for k in self if k.rpartition(":")[0] != self._origin]:
+            connection = self.pop(key)
+            try:
+                connection.disconnect()
+            except Exception as exc:  # noqa: BLE001 - closing anyway
+                log.debug("SMB: closing the referral connection %s failed: %s", key, exc)
 
 
 class SmbSession(SessionLifecycle):
@@ -367,7 +468,9 @@ class SmbSession(SessionLifecycle):
         effective_client_name = client_name or SMB_CLIENT_NAME
         from core.proxy import patched_create_connection
 
-        self._connections: dict = {}
+        self._connections: dict = _ReferralPortCache(
+            host, port, resolve=self._proxy.proxy_type == "none"
+        )
         with _session_lock(host):
 
             # Two scoped patches that nest cleanly:
@@ -439,6 +542,9 @@ class SmbSession(SessionLifecycle):
             smbclient.delete_session(self._host, **self._kw)
         except Exception as exc:
             log.debug("smbclient.delete_session(%s) raised: %s", self._host, exc)
+        connections = getattr(self, "_connections", None)
+        if isinstance(connections, _ReferralPortCache):
+            connections.close_referral_targets()
 
     def disconnect(self) -> None:
         self.close()
@@ -516,10 +622,14 @@ class SmbSession(SessionLifecycle):
             raise OSError(f"Cannot check {path}: {e}") from e
 
     def exists(self, path: str) -> bool:
-        """False only for "not found"; any other failure is an OSError -
-        server_side_copy(overwrite=False) takes False as its go-ahead."""
+        """Whether the entry itself is there - lstat, as on every other
+        backend: smbclient.path.exists follows a link, so a dangling one
+        or one to another server answered False and an overwrite=False
+        copy wrote over it. False only for "not found"; any other failure
+        is an OSError - server_side_copy(overwrite=False) takes False as
+        its go-ahead."""
         try:
-            return smbclient.path.exists(self._unc(path), **self._kw)
+            return smbclient.path.lexists(self._unc(path), **self._kw)
         except _SMB_FAILURES as e:
             if _is_not_found(e):
                 return False

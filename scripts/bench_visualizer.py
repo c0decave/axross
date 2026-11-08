@@ -149,11 +149,18 @@ def main(argv: list[str] | None = None) -> int:
             continue
         total_old += old
         total_new += new
-        print(f"{face:13s} old {old:7.2f}  new {new:7.2f} ms  {100 * (new - old) / old:+6.1f} %")
-    if total_old:
-        print(f"{'all':13s} old {total_old:7.2f}  new {total_new:7.2f} ms  "
-              f"{100 * (total_new - total_old) / total_old:+6.1f} %")
+        print(f"{face:13s} old {old:7.2f}  new {new:7.2f} ms  {_change(old, new)}")
+    print(f"{'all':13s} old {total_old:7.2f}  new {total_new:7.2f} ms  "
+          f"{_change(total_old, total_new)}")
     return 0
+
+
+def _change(old: float, new: float) -> str:
+    """The change from *old* to *new* in percent; "n/a" when *old* is 0
+    (a frame faster than the clock's resolution - a coarse clock, few frames)."""
+    if old <= 0:
+        return "   n/a"
+    return f"{100 * (new - old) / old:+6.1f} %"
 
 
 if __name__ == "__main__":

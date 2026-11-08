@@ -90,7 +90,12 @@ class WindowTest(unittest.TestCase):
         self.saved: list = []
         self.win._profile_manager = mock.Mock()
         self.win._profile_manager.get.return_value = None
-        self.win._profile_manager.add.side_effect = self.saved.append
+        # add() returns the save's result (core.profiles.SaveResult) since
+        # the UX review round 3; the import reads it.
+        from core.profiles import SAVED
+
+        self.win._profile_manager.add.side_effect = (
+            lambda profile, **_kw: self.saved.append(profile) or SAVED)
         self.marker = os.path.join(self.tmp, "ran")
 
     def import_file(self, entries: dict) -> None:

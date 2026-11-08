@@ -4,6 +4,7 @@ store, the Settings page."""
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -15,7 +16,7 @@ sys.path.insert(0, str(ROOT))
 
 from core import voice_settings as VS  # noqa: E402
 
-HEADINGS = {"USAGE.md": "### Talking with the agent", "USAGE_de.md": "### Mit dem Agent sprechen",
+HEADINGS = {"USAGE.md": "### Talking with the agent", "USAGE_de.md": "### Mit dem Agenten sprechen",
             "USAGE_es.md": "### Hablar con el agente"}
 
 
@@ -26,11 +27,23 @@ def _section(name: str) -> str:
     return text[start:end]
 
 
+def _path(name: str, *labels: str) -> str:
+    """A menu path as the guide's reader sees it: the German guide names
+    the German labels, joined by "→" (it wrote "Settings > Voice" and
+    "Help > Features…" where the window shows "Einstellungen" and "Hilfe →
+    Funktionen…")."""
+    if name == "USAGE_de.md":
+        german = json.loads((ROOT / "resources/i18n/de.json").read_text(encoding="utf-8"))
+        return " → ".join(german.get(label, label) for label in labels)
+    return " > ".join(labels)
+
+
 @pytest.mark.parametrize("name", HEADINGS)
 def test_happy_each_handbook_explains_talking_to_the_agent(name):
     section = _section(name)
     assert f"**{VS.VoiceSettings().hotkey}**" in section  # the default hold key
-    for needle in ("axross[voice]", "Settings > Voice", "Help > Features…", "Whisper", "Piper",
+    for needle in ("axross[voice]", _path(name, "Settings", "Voice"),
+                   _path(name, "Help", "Features…"), "Whisper", "Piper",
                    "~/.local/share/axross/voice/", "/audio/transcriptions"):
         assert needle in section, needle
 
@@ -58,7 +71,8 @@ def test_happy_each_handbook_explains_the_voices_and_how_they_speak(name):
     section = _section(name)
     for label, _tip in TUNING_LABELS.values():
         assert f"*{label}*" in section, label
-    for needle in ("**Listen**", "**Download**", "*Reset*", "*Reset All*", "Settings > Audio"):
+    for needle in ("**Listen**", "**Download**", "*Reset*", "*Reset All*",
+                   _path(name, "Settings", "Audio")):
         assert needle in section, needle
 
 

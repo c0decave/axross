@@ -101,6 +101,7 @@ def test_happy_cli_signs_and_the_updater_verifies(files, key):
 def test_happy_a_pinned_key_needs_no_flag(files, key, monkeypatch, capsys):
     key_file, sums = files
     monkeypatch.setattr(SU, "TRUSTED_KEYS", (public_key_b64(key),))
+    monkeypatch.setattr(sign_release, "FIELD_KEYS", (public_key_b64(key),))
     assert sign_release.main([str(key_file), str(sums)]) == 0
     SU.verify_signature(SUMS_TEXT, sums.with_name("SHA256SUMS.sig").read_bytes())
     out = capsys.readouterr()
@@ -118,6 +119,7 @@ def test_happy_e2e_a_release_signed_by_the_script_updates(files, key, tmp_path, 
     key_file, sums = files
     sums.write_bytes(release.sums_text().encode())
     monkeypatch.setattr(SU, "TRUSTED_KEYS", (public_key_b64(key),))
+    monkeypatch.setattr(sign_release, "FIELD_KEYS", (public_key_b64(key),))
     assert sign_release.main([str(key_file), str(sums)]) == 0
     release.sig_override = sums.with_name("SHA256SUMS.sig").read_bytes()
     exe = tmp_path / "axross-full"
@@ -284,4 +286,57 @@ def test_sad_a_version_other_than_the_line_is_refused(tmp_path, key):
     sums = tmp_path / "SHA256SUMS"
     sums.write_bytes(SUMS_TEXT)   # names 9.9.9
     assert sign_release.main(["--allow-unpinned", "--version", "1.0.0", str(key_file), str(sums)]) != 0
+    assert not sums.with_name("SHA256SUMS.sig").exists()
+
+
+# -- the packs issue (review round 3) ---------------------------------------------------
+
+#: core.self_update.parse_sums as installed binaries since v0.14.50 have it
+#: (unchanged up to v0.14.136 and today): checksum lines only.
+_V0_14_136_HEX64 = __import__("re").compile(r"[0-9a-f]{64}", __import__("re").ASCII)
+_V0_14_136_NAME = __import__("re").compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}", __import__("re").ASCII)
+
+
+def _v0_14_136_parse_sums(text: str) -> dict[str, str]:
+    sums: dict[str, str] = {}
+    for line in text.splitlines():
+        digest, sep, name = line.strip().partition(" ")
+        name = name.strip()
+        if name.startswith("*"):
+            name = name[1:]
+        digest = digest.lower()
+        if sep and _V0_14_136_HEX64.fullmatch(digest) and _V0_14_136_NAME.fullmatch(name):
+            sums.setdefault(name, digest)
+    return sums
+
+
+def test_happy_packs_issue_adds_a_signed_line_old_binaries_ignore(tmp_path, key):
+    """A re-issued pack manifest could be rolled back to an earlier signed
+    issue: nothing in SHA256SUMS numbered the issues. --packs-issue N adds
+    ``# axross-packs-issue N`` after the release line, signed with it; the
+    checksum parser of the installed binaries (v0.14.50 - v0.14.136, and
+    today's) and today's release-line parser read the file as before."""
+    from core import packs as P
+
+    key_file = write_key(tmp_path / "k.pem", key)
+    sums = tmp_path / "SHA256SUMS"
+    sums.write_bytes(f"{DIGEST}  axross-full\n".encode())
+    assert sign_release.main(["--allow-unpinned", "--version", "1.2.3", "--packs-issue", "2",
+                              str(key_file), str(sums)]) == 0
+    data = sums.read_bytes()
+    assert data.startswith(b"# axross-release 1.2.3\n# axross-packs-issue 2\n")
+    SU.verify_signature(data, sums.with_name("SHA256SUMS.sig").read_bytes(), keys=(public_key_b64(key),))
+    text = data.decode()
+    assert P.packs_issue_of_sums(text) == 2 and SU.release_of_sums(text) == "1.2.3"
+    assert _v0_14_136_parse_sums(text) == SU.parse_sums(text) == {"axross-full": DIGEST}
+
+
+def test_sad_a_packs_issue_other_than_the_line_is_refused(tmp_path, key):
+    key_file = write_key(tmp_path / "k.pem", key)
+    sums = tmp_path / "SHA256SUMS"
+    sums.write_bytes(SUMS_TEXT.replace(b"\n", b"\n# axross-packs-issue 3\n", 1))
+    assert sign_release.main(["--allow-unpinned", "--packs-issue", "4", str(key_file), str(sums)]) != 0
+    assert sign_release.main(["--allow-unpinned", "--packs-issue", "-1", str(key_file), str(sums)]) != 0
+    sums.write_bytes(SUMS_TEXT + b"# axross-packs-issue three\n")
+    assert sign_release.main(["--allow-unpinned", str(key_file), str(sums)]) != 0
     assert not sums.with_name("SHA256SUMS.sig").exists()

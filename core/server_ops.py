@@ -36,6 +36,10 @@ _UNSUPPORTED_RENAME_MARKERS = (
     "has no rename",
     "does not support rename",
 )
+# errno values that say "no rename here" rather than "not these paths".
+_UNSUPPORTED_RENAME_ERRNOS = frozenset(
+    {errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP}
+)
 
 _UNSUPPORTED_COPY_MARKERS = (
     "not support",
@@ -135,7 +139,18 @@ def _rename_fallback_allowed(backend, exc: BaseException) -> bool:
     """
     if isinstance(exc, NotImplementedError):
         return True
+    # An errno is the backend's answer about these two paths (EEXIST,
+    # EISDIR, ENOENT, EACCES, ...): copy+delete would only do by force
+    # what rename refused. Only "this verb is not there" moves on.
+    code = getattr(exc, "errno", None)
+    if code is not None and code not in _UNSUPPORTED_RENAME_ERRNOS:
+        return False
     caps = _known_backend_capabilities(backend)
+    if caps is not None and bool(getattr(caps, "rename_is_copy_delete", False)):
+        # rename() already is copy+delete: its failure is a refusal
+        # (a name that is both a file and a folder, say) and the fallback
+        # copied and deleted the FILE of the two and reported success.
+        return False
     if caps is not None and not bool(getattr(caps, "can_rename", True)):
         return True
     message = str(exc).lower()

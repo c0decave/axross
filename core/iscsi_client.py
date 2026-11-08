@@ -33,7 +33,7 @@ from core.local_fs import (
     owner_name,
     unstattable_item,
 )
-from core.path_policy import confined_path
+from core.path_policy import confined_path, refuse_folder_path
 from core.private_mount_dir import make_private_mount_point, remove_private_mount_point
 from core.subprocess_env import clean_child_env
 from models.file_item import FileItem
@@ -288,6 +288,11 @@ class IscsiSession(SessionLifecycle):
         go-ahead to write."""
         return entry_stat(self._real(path, follow=False)) is not None
 
+    def _is_file(self, path: str) -> bool:
+        """True for an entry that is not a folder (False when nothing is there)."""
+        st = entry_stat(self._real(path, follow=False))
+        return st is not None and not stat_module.S_ISDIR(st.st_mode)
+
     def mkdir(self, path: str) -> None:
         os.makedirs(self._real(path), exist_ok=True)
 
@@ -305,6 +310,8 @@ class IscsiSession(SessionLifecycle):
             os.remove(real)
 
     def rename(self, src: str, dst: str) -> None:
+        # The mount path join drops the slash: a file renamed to "x/" became "x".
+        refuse_folder_path(dst, "rename to", source_is_file=lambda: self._is_file(src))
         os.rename(self._real(src, follow=False), self._real(dst, follow=False))
 
     def open_read(self, path: str) -> IO[bytes]:
@@ -313,7 +320,8 @@ class IscsiSession(SessionLifecycle):
         return LocalFS().open_read(self._real(path))
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
-        real = self._real(path)
+        # The mount path join drops the slash: "x/" was written as a FILE "x".
+        real = self._real(refuse_folder_path(path))
         os.makedirs(os.path.dirname(real), exist_ok=True)
         return open(real, "ab" if append else "wb")
 

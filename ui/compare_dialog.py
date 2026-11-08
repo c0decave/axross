@@ -41,6 +41,7 @@ from ui.close_corner import add_close_corner
 from ui.format_utils import human_bytes
 from ui.thread_lifetime import detach_running_thread
 from ui.icon_provider import set_window_icon
+from core.i18n import tr, tr_n
 
 log = logging.getLogger(__name__)
 
@@ -60,6 +61,15 @@ FILTERS: dict[str, tuple[str, ...] | None] = {
 DEFAULT_FILTER = "Differences"
 
 COLUMNS = ("Path", "Status", "Left", "Right", "Reason")
+
+#: What the Status column shows for each status.
+STATUS_LABELS = {
+    Status.LEFT_ONLY: "only left",
+    Status.RIGHT_ONLY: "only right",
+    Status.SAME: "identical",
+    Status.DIFFERS: "differs",
+    Status.UNKNOWN: "unresolved",
+}
 
 
 def copy_direction(entry: ComparedEntry) -> str | None:
@@ -144,7 +154,7 @@ class CompareDialog(QDialog):
         self._thread: QThread | None = None
         self._worker: _CompareWorker | None = None
 
-        self.setWindowTitle("Compare panes")
+        self.setWindowTitle(tr("Compare panes"))
         self.resize(900, 520)
         self._build()
         self.refresh()
@@ -167,28 +177,32 @@ class CompareDialog(QDialog):
 
         top = QHBoxLayout()
         self._filter_box = QComboBox(self)
-        self._filter_box.addItems(list(FILTERS))
-        self._filter_box.setCurrentText(DEFAULT_FILTER)
-        self._filter_box.currentTextChanged.connect(self.set_filter)
-        top.addWidget(QLabel("Show:", self))
+        for name in FILTERS:
+            self._filter_box.addItem(tr(name), name)
+        self._filter_box.setCurrentIndex(self._filter_box.findData(DEFAULT_FILTER))
+        self._filter_box.currentIndexChanged.connect(
+            lambda index: self.set_filter(self._filter_box.itemData(index)))
+        top.addWidget(QLabel(tr("Show:"), self))
         top.addWidget(self._filter_box)
         top.addStretch(1)
 
-        top.addWidget(QLabel("On conflict:", self))
+        top.addWidget(QLabel(tr("On conflict:"), self))
         self._policy_box = QComboBox(self)
-        self._policy_box.addItems(list(POLICIES))
-        self._policy_box.currentTextChanged.connect(
-            lambda name: self.set_policy(POLICIES.get(name, ConflictPolicy.ASK))
+        for name in POLICIES:
+            self._policy_box.addItem(tr(name), name)
+        self._policy_box.currentIndexChanged.connect(
+            lambda index: self.set_policy(
+                POLICIES.get(self._policy_box.itemData(index), ConflictPolicy.ASK))
         )
         top.addWidget(self._policy_box)
 
-        self._refresh_btn = QPushButton("Re-compare", self)
+        self._refresh_btn = QPushButton(tr("Re-compare"), self)
         self._refresh_btn.clicked.connect(self.refresh)
         top.addWidget(self._refresh_btn)
         layout.addLayout(top)
 
         self._table = QTableWidget(0, len(COLUMNS), self)
-        self._table.setHorizontalHeaderLabels(list(COLUMNS))
+        self._table.setHorizontalHeaderLabels([tr(c) for c in COLUMNS])
         self._table.verticalHeader().setVisible(False)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -200,28 +214,28 @@ class CompareDialog(QDialog):
         layout.addWidget(self._table)
 
         actions = QHBoxLayout()
-        self._reveal_btn = QPushButton("Reveal in pane", self)
+        self._reveal_btn = QPushButton(tr("Reveal in pane"), self)
         self._reveal_btn.clicked.connect(self._reveal_selected)
         actions.addWidget(self._reveal_btn)
 
-        self._copy_btn = QPushButton("Copy to other side", self)
+        self._copy_btn = QPushButton(tr("Copy to other side"), self)
         self._copy_btn.clicked.connect(self._copy_selected)
         actions.addWidget(self._copy_btn)
 
-        self._delete_btn = QPushButton("Delete…", self)
+        self._delete_btn = QPushButton(tr("Delete…"), self)
         self._delete_btn.clicked.connect(self._delete_selected)
         actions.addWidget(self._delete_btn)
 
-        self._sync_btn = QPushButton("Sync…", self)
+        self._sync_btn = QPushButton(tr("Sync…"), self)
         self._sync_btn.setToolTip(
-            "Apply the whole comparison in both directions, after showing "
-            "you exactly what it would do"
+            tr("Apply the whole comparison in both directions, after showing "
+            "you exactly what it would do")
         )
         self._sync_btn.clicked.connect(self._sync)
         actions.addWidget(self._sync_btn)
 
-        self._export_btn = QPushButton("Copy list", self)
-        self._export_btn.setToolTip("Copy the current view to the clipboard")
+        self._export_btn = QPushButton(tr("Copy list"), self)
+        self._export_btn.setToolTip(tr("Copy the current view to the clipboard"))
         self._export_btn.clicked.connect(self._export)
         actions.addWidget(self._export_btn)
 
@@ -241,7 +255,7 @@ class CompareDialog(QDialog):
         if self._thread is not None:
             return
         self._refresh_btn.setEnabled(False)
-        self._summary.setText("comparing…")
+        self._summary.setText(tr("comparing…"))
 
         # The roots of THIS walk become the dialog's roots only when its
         # result replaces the rows: until then the table shows the rows of
@@ -278,10 +292,10 @@ class CompareDialog(QDialog):
         for row, entry in enumerate(visible):
             cells = (
                 entry.rel_path,
-                entry.status,
+                tr(STATUS_LABELS.get(entry.status, entry.status)),
                 human_bytes(entry.left.size) if entry.left is not None else DASH,
                 human_bytes(entry.right.size) if entry.right is not None else DASH,
-                entry.reason,
+                tr(entry.reason),
             )
             for col, text in enumerate(cells):
                 item = QTableWidgetItem(text)
@@ -291,18 +305,18 @@ class CompareDialog(QDialog):
 
     def _build_summary(self) -> str:
         if self._error:
-            return f"Comparison failed: {self._error}"
+            return tr("Comparison failed: {error}").format(error=self._error)
         if not self._entries:
-            return "The two trees match."
+            return tr("The two trees match.")
         counts = summarize(self._entries)
         parts = [
-            f"{counts[Status.LEFT_ONLY]} only left",
-            f"{counts[Status.RIGHT_ONLY]} only right",
-            f"{counts[Status.DIFFERS]} differ",
-            f"{counts[Status.SAME]} identical",
+            tr("{n} only left").format(n=counts[Status.LEFT_ONLY]),
+            tr("{n} only right").format(n=counts[Status.RIGHT_ONLY]),
+            tr("{n} differ").format(n=counts[Status.DIFFERS]),
+            tr("{n} identical").format(n=counts[Status.SAME]),
         ]
         if counts[Status.UNKNOWN]:
-            parts.append(f"{counts[Status.UNKNOWN]} unresolved")
+            parts.append(tr("{n} unresolved").format(n=counts[Status.UNKNOWN]))
         return ", ".join(parts)
 
     # -- filtering -------------------------------------------------------
@@ -311,8 +325,8 @@ class CompareDialog(QDialog):
         if name not in FILTERS:
             return
         self._filter = name
-        if self._filter_box.currentText() != name:
-            self._filter_box.setCurrentText(name)
+        if self._filter_box.currentData() != name:
+            self._filter_box.setCurrentIndex(self._filter_box.findData(name))
         self._populate()
 
     def current_filter(self) -> str:
@@ -392,11 +406,11 @@ class CompareDialog(QDialog):
         if ambiguous:
             QMessageBox.information(
                 self,
-                "Direction unclear",
-                "These entries exist on both sides, so there is no obvious "
-                "direction to copy them:\n\n"
+                tr("Direction unclear"),
+                tr("These entries exist on both sides, so there is no obvious "
+                   "direction to copy them:") + "\n\n"
                 + "\n".join(ambiguous[:10])
-                + "\n\nOpen them in a pane and copy the side you want to keep.",
+                + "\n\n" + tr("Open them in a pane and copy the side you want to keep."),
             )
         for direction, paths in directed.items():
             if paths:
@@ -419,16 +433,17 @@ class CompareDialog(QDialog):
         if total == 0:
             QMessageBox.information(
                 self,
-                "Nothing to delete here",
-                "Only entries that exist on one side can be deleted from this "
+                tr("Nothing to delete here"),
+                tr("Only entries that exist on one side can be deleted from this "
                 "window. For files present on both sides, delete from the pane "
-                "holding the copy you want gone.",
+                "holding the copy you want gone."),
             )
             return
         confirm = QMessageBox.question(
             self,
-            "Delete",
-            f"Delete {total} entr{'y' if total == 1 else 'ies'}? This cannot be undone.",
+            tr("Delete"),
+            tr_n(total, "Delete {n} entry? This cannot be undone.",
+                 "Delete {n} entries? This cannot be undone."),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -455,27 +470,27 @@ class CompareDialog(QDialog):
     def _sync(self) -> None:
         plan = self.sync_plan()
         if not plan.actions and not plan.conflicts:
-            QMessageBox.information(self, "Sync", summarize_plan(plan))
+            QMessageBox.information(self, tr("Sync"), summarize_plan(plan))
             return
 
         detail = summarize_plan(plan)
         if plan.conflicts:
-            detail += "\n\nLeft for you to decide:\n" + "\n".join(
+            detail += "\n\n" + tr("Left for you to decide:") + "\n" + "\n".join(
                 f"  {c.rel_path} — {c.reason}" for c in plan.conflicts[:10]
             )
             if len(plan.conflicts) > 10:
-                detail += f"\n  … and {len(plan.conflicts) - 10} more"
+                detail += "\n  " + tr("… and {hidden} more").format(hidden=len(plan.conflicts) - 10)
         if not plan.actions:
-            QMessageBox.information(self, "Sync", detail)
+            QMessageBox.information(self, tr("Sync"), detail)
             return
 
         overwrites = sum(1 for a in plan.actions if a.overwrites)
-        question = f"Apply {len(plan.actions)} change(s)?\n\n{detail}"
+        question = tr("Apply {n} change(s)?").format(n=len(plan.actions)) + f"\n\n{detail}"
         if overwrites:
-            question += "\n\nThis cannot be undone for the replaced files."
+            question += "\n\n" + tr("This cannot be undone for the replaced files.")
         if QMessageBox.question(
             self,
-            "Sync",
+            tr("Sync"),
             question,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
@@ -507,7 +522,7 @@ class CompareDialog(QDialog):
 
     def _export(self) -> None:
         QApplication.clipboard().setText(export_text(self.visible_entries()))
-        self._summary.setText(f"{self._build_summary()}  —  copied to clipboard")
+        self._summary.setText(self._build_summary() + "  —  " + tr("copied to clipboard"))
 
     # -- lifecycle -------------------------------------------------------
 

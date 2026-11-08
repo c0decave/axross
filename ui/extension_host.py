@@ -433,7 +433,12 @@ class ExtensionHost(QObject):
         return entry[0] if entry else None
 
     def error(self, ext_id: str) -> str:
-        return self._errors.get(ext_id, "")
+        """Why *ext_id* is not loaded, in the interface language ("" when
+        nothing is wrong); the fixed reasons of this module are catalogue
+        entries, an extension's own text stays as it is."""
+        from core.i18n import tr
+
+        return tr(self._errors.get(ext_id, ""))
 
     def docks(self, ext_id: str) -> list[QDockWidget]:
         entry = self._loaded.get(ext_id)
@@ -764,7 +769,10 @@ class ExtensionHost(QObject):
         )
         bar = self.window.statusBar()
         if bar is not None:
-            bar.showMessage(f"Extension {api.info.name} failed: {text}", 10000)
+            from core.i18n import tr
+
+            bar.showMessage(tr("Extension {name} failed: {error}").format(
+                name=api.info.name, error=text), 10000)
 
     def emit(self, event: str, pane) -> None:
         """Tell every subscribed extension about *event* on *pane*."""

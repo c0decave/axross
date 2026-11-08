@@ -1,5 +1,5 @@
 include LICENSE NOTICE README.md README_PYPI.md README_de.md README_es.md slideshow.md slideshow_de.md slideshow_es.md INSTALL.md
-include dev-requirements.txt
+include CHANGELOG.md dev-requirements.txt
 include OAUTH_SETUP.md SECURITY.md CONTRIBUTING.md THIRD_PARTY_LICENSES.md
 # docs/: an allow-list, not "recursive-include docs *.md" - that took every
 # Markdown file of the work tree, tracked or not, so an operator's note

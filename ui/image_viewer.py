@@ -84,7 +84,7 @@ class ImageViewerDialog(QDialog):
         self._loading = False
         self._reload_pending = False
 
-        self.setWindowTitle("Image Viewer")
+        self.setWindowTitle(tr("Image Viewer"))
         VW.allow_maximize(self)
         VW.restore_window_state(self, "image")
         self._build_ui()
@@ -125,11 +125,11 @@ class ImageViewerDialog(QDialog):
         root.addLayout(body, stretch=1)
 
         bar = QHBoxLayout()
-        prev_btn = QPushButton("◀ Prev")
+        prev_btn = QPushButton(tr("◀ Prev"))
         prev_btn.clicked.connect(self._prev)
         bar.addWidget(prev_btn)
 
-        next_btn = QPushButton("Next ▶")
+        next_btn = QPushButton(tr("Next ▶"))
         next_btn.clicked.connect(self._next)
         bar.addWidget(next_btn)
 
@@ -148,7 +148,7 @@ class ImageViewerDialog(QDialog):
         zoom_in.clicked.connect(lambda: self._zoom_by(1.25))
         bar.addWidget(zoom_in)
 
-        fit_btn = QPushButton("Fit")
+        fit_btn = QPushButton(tr("Fit"))
         fit_btn.clicked.connect(self._fit_window)
         bar.addWidget(fit_btn)
 
@@ -158,17 +158,17 @@ class ImageViewerDialog(QDialog):
 
         rot_btn = QPushButton("⟳")
         rot_btn.clicked.connect(self._rotate_cw)
-        rot_btn.setToolTip("Rotate 90° clockwise")
+        rot_btn.setToolTip(tr("Rotate 90° clockwise"))
         bar.addWidget(rot_btn)
 
-        info_btn = QPushButton("Info")
-        info_btn.setToolTip("Show / hide the metadata (I)")
+        info_btn = QPushButton(tr("Info"))
+        info_btn.setToolTip(tr("Show / hide the metadata (I)"))
         info_btn.clicked.connect(self.toggle_metadata)
         bar.addWidget(info_btn)
 
         bar.addStretch(1)
 
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(tr("Close"))
         close_btn.clicked.connect(self.reject)
         bar.addWidget(close_btn)
 
@@ -266,16 +266,18 @@ class ImageViewerDialog(QDialog):
             if failure is not None:
                 raise failure
         except P.PreviewTooLarge as exc:
-            self._failed("Image Too Large", f"Refusing to decode (Defense Layer 2):\n{exc}")
+            self._failed(tr("Image Too Large"),
+                         tr("Refusing to decode (Defense Layer 2):\n{error}").format(error=exc))
             return
         except P.PreviewNotAvailable as exc:
-            self._failed("Cannot Preview", f"{path}\n\n{exc}")
+            self._failed(tr("Cannot Preview"), f"{path}\n\n{exc}")
             return
         except P.PreviewDecodeFailed as exc:
-            self._failed("Decode Failed", f"{path}\n\n{exc}")
+            self._failed(tr("Decode Failed"), f"{path}\n\n{exc}")
             return
         if img is None or img.isNull():
-            self._failed("Decode Failed", f"{path}\n\nThe picture could not be decoded.")
+            self._failed(tr("Decode Failed"),
+                         f"{path}\n\n" + tr("The picture could not be decoded."))
             return
         self._shown_any = True
         self._original = img

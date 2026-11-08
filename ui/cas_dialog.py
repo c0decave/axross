@@ -162,19 +162,20 @@ _backend_id_for = CAS.backend_id_for
 
 def _format_mtime(mtime) -> str:
     if mtime is None:
-        return "unknown"
+        return tr("unknown")
     try:
         return datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
     except (OverflowError, OSError, ValueError):
-        return "unknown"
+        return tr("unknown")
 
 
 def scan_label(scan) -> str:
     """One line for a scan in the Show list."""
     if scan.scan_id == CAS.EARLIER_SCANS:
-        return "Earlier scans (before scan history)"
+        return tr("Earlier scans (before scan history)")
     when = scan.started_at.strftime("%Y-%m-%d %H:%M") if scan.started_at else "?"
-    return f"Scan #{scan.scan_id}: {scan.root} [{scan.backend_id}] — {when} ({scan.status})"
+    return tr("Scan #{id}: {root} [{backend}] — {when} ({status})").format(
+        id=scan.scan_id, root=scan.root, backend=scan.backend_id, when=when, status=tr(scan.status))
 
 
 def path_matcher(text: str):
@@ -300,7 +301,7 @@ class CasDuplicatesDialog(QDialog):
         self._rebuild_stats: CAS.RebuildStats | None = None
         self._rebuild_bid = ""
         self._delete_total = 0
-        self.setWindowTitle("Duplicate Finder")
+        self.setWindowTitle(tr("Duplicate Finder"))
         self.resize(1100, 650)
         # Background work: the rebuild walk + hashing and the verified delete
         # can take minutes, so they run in a thread while the dialog stays
@@ -320,49 +321,49 @@ class CasDuplicatesDialog(QDialog):
         add_close_corner(self)
 
         intro = QLabel(
-            "Indexed files grouped by content hash — every row in a group "
+            tr("Indexed files grouped by content hash — every row in a group "
             "holds identical content, wherever it lives. Use “Rebuild from "
-            "Active Pane” to index a directory first."
+            "Active Pane” to index a directory first.")
         )
         intro.setProperty("role", "muted")
         intro.setWordWrap(True)
         root.addWidget(intro)
 
         scope_row = QHBoxLayout()
-        scope_row.addWidget(QLabel("Show:", self))
+        scope_row.addWidget(QLabel(tr("Show:"), self))
         self._scope_combo = QComboBox(self)
         self._scope_combo.setToolTip(
-            "All scans; one scan (every group with a copy from it, all copies "
-            "shown); or only the copies inside a folder"
+            tr("All scans; one scan (every group with a copy from it, all copies "
+            "shown); or only the copies inside a folder")
         )
         self._scope_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self._scope_combo.currentIndexChanged.connect(self._on_scope_chosen)
         scope_row.addWidget(self._scope_combo, stretch=1)
-        self._folders_check = QCheckBox("Identical folders", self)
+        self._folders_check = QCheckBox(tr("Identical folders"), self)
         self._folders_check.setToolTip(
-            "Folders with the same content: recursively the same relative paths and "
+            tr("Folders with the same content: recursively the same relative paths and "
             "names, every file with the same hash (the folder's own name may differ). "
             "Only folders inside a completed scan are compared; empty folders are not "
-            "in the index.")
+            "in the index."))
         self._folders_check.toggled.connect(lambda _on: self._reload())
         scope_row.addWidget(self._folders_check)
-        self._history_btn = QPushButton("Index && History…", self)
+        self._history_btn = QPushButton(tr("Index && History…"), self)
         self._history_btn.setToolTip(
-            "Every scan that built the index: show its duplicates, re-scan, "
-            "remove it from the index, or clear the whole index"
+            tr("Every scan that built the index: show its duplicates, re-scan, "
+            "remove it from the index, or clear the whole index")
         )
         self._history_btn.clicked.connect(self._open_history)
         scope_row.addWidget(self._history_btn)
         root.addLayout(scope_row)
 
         filter_row = QHBoxLayout()
-        filter_row.addWidget(QLabel("Filter:", self))
+        filter_row.addWidget(QLabel(tr("Filter:"), self))
         self._filter_edit = QLineEdit(self)
         self._filter_edit.setClearButtonEnabled(True)
-        self._filter_edit.setPlaceholderText("Name or path, e.g. *.jpg *.png or holiday (Ctrl+F)")
+        self._filter_edit.setPlaceholderText(tr("Name or path, e.g. *.jpg *.png or holiday (Ctrl+F)"))
         self._filter_edit.setToolTip(
-            "Show only groups with a copy whose path contains this text, or whose "
-            "name matches one of the patterns (*, ?, [...]); not case-sensitive"
+            tr("Show only groups with a copy whose path contains this text, or whose "
+            "name matches one of the patterns (*, ?, [...]); not case-sensitive")
         )
         # Typing re-filters once it pauses, not on every key.
         self._filter_timer = QTimer(self)
@@ -372,83 +373,83 @@ class CasDuplicatesDialog(QDialog):
         self._filter_edit.textChanged.connect(lambda _t: self._filter_timer.start())
         self._filter_edit.returnPressed.connect(self._apply_view)
         filter_row.addWidget(self._filter_edit, stretch=2)
-        filter_row.addWidget(QLabel("At least:", self))
+        filter_row.addWidget(QLabel(tr("At least:"), self))
         self._min_size_combo = QComboBox(self)
         for label, size in MIN_SIZES:
-            self._min_size_combo.addItem(label, size)
-        self._min_size_combo.setToolTip("Hide groups of files smaller than this")
+            self._min_size_combo.addItem(tr(label), size)
+        self._min_size_combo.setToolTip(tr("Hide groups of files smaller than this"))
         self._min_size_combo.currentIndexChanged.connect(lambda _i: self._apply_view())
         filter_row.addWidget(self._min_size_combo)
-        filter_row.addWidget(QLabel("Sort:", self))
+        filter_row.addWidget(QLabel(tr("Sort:"), self))
         self._sort_combo = QComboBox(self)
         for label, key in SORTS:
-            self._sort_combo.addItem(label, key)
-        self._sort_combo.setToolTip("Order of the groups; the copies of a group stay in "
-                                    "survivor order (the first one is kept)")
+            self._sort_combo.addItem(tr(label), key)
+        self._sort_combo.setToolTip(tr("Order of the groups; the copies of a group stay in "
+                                    "survivor order (the first one is kept)"))
         self._sort_combo.currentIndexChanged.connect(lambda _i: self._apply_view())
         filter_row.addWidget(self._sort_combo)
-        self._empty_check = QCheckBox("Empty files", self)
+        self._empty_check = QCheckBox(tr("Empty files"), self)
         self._empty_check.setToolTip(
-            "Every empty file has the same hash. They are hidden by default: "
+            tr("Every empty file has the same hash. They are hidden by default: "
             "removing them frees nothing, and many have to exist (__init__.py, "
-            ".gitkeep, lock and marker files)."
+            ".gitkeep, lock and marker files).")
         )
         self._empty_check.toggled.connect(lambda _on: self._apply_view())
         filter_row.addWidget(self._empty_check)
-        self._links_check = QCheckBox("Hard links", self)
+        self._links_check = QCheckBox(tr("Hard links"), self)
         self._links_check.setToolTip(
-            "Show groups whose rows are all names of one file (hard links): "
-            "there is nothing to reclaim in them"
+            tr("Show groups whose rows are all names of one file (hard links): "
+            "there is nothing to reclaim in them")
         )
         self._links_check.toggled.connect(lambda _on: self._apply_view())
         filter_row.addWidget(self._links_check)
         root.addLayout(filter_row)
 
         btn_row = QHBoxLayout()
-        self._rebuild_btn = QPushButton("Rebuild from Active Pane…", self)
+        self._rebuild_btn = QPushButton(tr("Rebuild from Active Pane…"), self)
         self._rebuild_btn.clicked.connect(self._do_rebuild_active)
         self._rebuild_btn.setEnabled(self._active_pane is not None)
         btn_row.addWidget(self._rebuild_btn)
 
-        self._refresh_btn = QPushButton("Refresh", self)
-        self._refresh_btn.setToolTip("Read the index again (F5)")
+        self._refresh_btn = QPushButton(tr("Refresh"), self)
+        self._refresh_btn.setToolTip(tr("Read the index again (F5)"))
         self._refresh_btn.clicked.connect(self._refresh)
         btn_row.addWidget(self._refresh_btn)
 
-        self._mark_all_btn = QPushButton(MARK_ALL_TEXT, self)
+        self._mark_all_btn = QPushButton(tr(MARK_ALL_TEXT), self)
         self._mark_all_btn.setToolTip(
-            "Select every copy except the first of each group — the oldest by "
-            "modification time. Review, then Move Selected to Trash."
+            tr("Select every copy except the first of each group — the oldest by "
+            "modification time. Review, then Move Selected to Trash.")
         )
         self._mark_all_btn.clicked.connect(self._mark_all_duplicates)
         btn_row.addWidget(self._mark_all_btn)
 
-        self._keep_btn = QPushButton("Mark, Keeping…", self)
+        self._keep_btn = QPushButton(tr("Mark, Keeping…"), self)
         self._keep_btn.setToolTip(
-            "Select every copy except the one a rule keeps: the newest, the "
+            tr("Select every copy except the one a rule keeps: the newest, the "
             "shortest path, the one inside a folder — or select the copies "
-            "inside a folder. One copy of every group always stays."
+            "inside a folder. One copy of every group always stays.")
         )
         self._keep_menu = self._build_keep_menu(self._keep_btn)
         self._keep_btn.setMenu(self._keep_menu)
         btn_row.addWidget(self._keep_btn)
 
-        self._copy_btn = QPushButton("Copy ax-cas URL", self)
+        self._copy_btn = QPushButton(tr("Copy ax-cas URL"), self)
         self._copy_btn.clicked.connect(self._copy_url)
         btn_row.addWidget(self._copy_btn)
 
-        self._delete_btn = QPushButton("Move Selected to Trash…", self)
+        self._delete_btn = QPushButton(tr("Move Selected to Trash…"), self)
         self._delete_btn.setToolTip(
-            "Move the selected copies to the axross trash (restorable via Show Trash). "
+            tr("Move the selected copies to the axross trash (restorable via Show Trash). "
             "Each file is re-checked first, and at least one verified copy of every "
             "group is always kept: when every copy of a group is selected, the first "
-            "(oldest) one stays. (Del)"
+            "(oldest) one stays. (Del)")
         )
         self._delete_btn.clicked.connect(self._delete_selected)
         btn_row.addWidget(self._delete_btn)
 
-        self._export_btn = QPushButton("Copy list", self)
-        self._export_btn.setToolTip("Copy every duplicate group shown to the clipboard")
+        self._export_btn = QPushButton(tr("Copy list"), self)
+        self._export_btn.setToolTip(tr("Copy every duplicate group shown to the clipboard"))
         self._export_btn.clicked.connect(self._export)
         btn_row.addWidget(self._export_btn)
         btn_row.addStretch(1)
@@ -467,7 +468,7 @@ class CasDuplicatesDialog(QDialog):
         # backgrounds in a flat table.
         self._tree = _GroupTree(self)
         self._tree.setColumnCount(6)
-        self._tree.setHeaderLabels(["Name", "Folder", "Size", "Modified", "Backend", "Hash"])
+        self._tree.setHeaderLabels([tr("Name"), tr("Folder"), tr("Size"), tr("Modified"), tr("Backend"), tr("Hash")])
         # Every row has one height: Qt then lays out thousands of rows
         # without measuring each.
         self._tree.setUniformRowHeights(True)
@@ -544,7 +545,7 @@ class CasDuplicatesDialog(QDialog):
         for label, rule in KEEP_RULE_LABELS:
             if rule == "mark-in-folder":
                 menu.addSeparator()
-            menu.addAction(label, lambda r=rule: self.mark(r))
+            menu.addAction(tr(label), lambda r=rule: self.mark(r))
         return menu
 
     def _on_job_started(self) -> None:
@@ -602,15 +603,15 @@ class CasDuplicatesDialog(QDialog):
         combo.blockSignals(True)
         try:
             combo.clear()
-            combo.addItem("All scans", ("all", None))
+            combo.addItem(tr("All scans"), ("all", None))
             for scan in scans:
                 combo.addItem(scan_label(scan), ("scan", scan.scan_id))
             kind, value = self._scope
             if kind == "scan" and not any(s.scan_id == value for s in scans):
-                combo.addItem(f"Scan #{value} (no longer in the index)", ("scan", value))
+                combo.addItem(tr("Scan #{value} (no longer in the index)").format(value=value), ("scan", value))
             if kind == "folder" and value:
-                combo.addItem(f"Only inside folder: {value}", ("folder", value))
-            combo.addItem("Only inside folder…", ("folder", None))
+                combo.addItem(tr("Only inside folder: {value}").format(value=value), ("folder", value))
+            combo.addItem(tr("Only inside folder…"), ("folder", None))
             for i in range(combo.count()):
                 if tuple(combo.itemData(i)) == tuple(self._scope):
                     combo.setCurrentIndex(i)
@@ -629,8 +630,8 @@ class CasDuplicatesDialog(QDialog):
                 start = self._scope[1]
             text, ok = QInputDialog.getText(
                 self,
-                "Only Inside Folder",
-                "Show only duplicates whose copies lie inside this folder (on any backend):",
+                tr("Only Inside Folder"),
+                tr("Show only duplicates whose copies lie inside this folder (on any backend):"),
                 text=start,
             )
             text = (text or "").strip()
@@ -683,7 +684,8 @@ class CasDuplicatesDialog(QDialog):
         for members in shown:
             head = members[0][0]
             parent = QTreeWidgetItem(self._tree)
-            parent.setText(COL_NAME, f"{len(members)} identical folders · {head.files} file(s)")
+            parent.setText(COL_NAME, tr_n(len(members), "{n} identical folder", "{n} identical folders")
+                           + " · " + tr_n(head.files, "{n} file", "{n} files"))
             parent.setText(COL_SIZE, _format_size(head.size))
             parent.setData(COL_NAME, Qt.ItemDataRole.UserRole, ("folder-group", members))
             for copy, entries in members:
@@ -702,9 +704,10 @@ class CasDuplicatesDialog(QDialog):
         text = tr_n(len(shown), "{n} group of identical folders",
                     "{n} groups of identical folders")
         if shown:
-            text += f" — {_format_size(reclaim)} to reclaim"
+            text += tr(" — {size} to reclaim").format(size=_format_size(reclaim))
         if len(shown) != len(self._folder_groups):
-            text += f" ({len(self._folder_groups) - len(shown)} more hidden by the filters)"
+            text += tr(" ({n} more hidden by the filters)").format(
+                n=len(self._folder_groups) - len(shown))
         self._status.setText(text)
         self._update_buttons()
 
@@ -739,7 +742,7 @@ class CasDuplicatesDialog(QDialog):
         try:
             groups = run_off_gui(
                 lambda: [_Group(g) for g in self._query_groups(scope) if g],
-                status=self._status.setText, text="Reading the duplicate index…")
+                status=self._status.setText, text=tr("Reading the duplicate index…"))
         except Exception as exc:  # noqa: BLE001
             log.warning("CAS.duplicates failed: %s", exc)
             groups = []
@@ -787,9 +790,9 @@ class CasDuplicatesDialog(QDialog):
             self._tree.setColumnWidth(COL_NAME, cap)
         undated = self._summary[2]
         self._undated_label.setText(
-            f"{undated} group(s) contain copies without a modification time: those "
-            "sort after dated copies, then by path, so “first” there means the "
-            "shortest path. Rebuild the index to record the times."
+            tr("{undated} group(s) contain copies without a modification time: those "
+                "sort after dated copies, then by path, so “first” there means the "
+                "shortest path. Rebuild the index to record the times.").format(undated=undated)
         )
         self._undated_label.setVisible(undated > 0)
         self._update_status()
@@ -800,12 +803,12 @@ class CasDuplicatesDialog(QDialog):
         text = (tr_n(len(self._view), "{n} duplicate group", "{n} duplicate groups")
                 + " " + tr_n(files, "covering {n} file", "covering {n} files"))
         if self._view:
-            text += f" — {_format_size(reclaim)} to reclaim"
+            text += tr(" — {size} to reclaim").format(size=_format_size(reclaim))
         hidden = len(self._groups) - len(self._view)
         if hidden:
-            text += f" ({hidden} more hidden by the filters)"
+            text += tr(" ({n} more hidden by the filters)").format(n=hidden)
         if self._rendered < len(self._view):
-            text += f" — showing {self._rendered}, adding the rest…"
+            text += tr(" — showing {n}, adding the rest…").format(n=self._rendered)
         self._status.setText(text)
         self._update_buttons()
 
@@ -854,12 +857,12 @@ class CasDuplicatesDialog(QDialog):
         head = group[0]
         distinct = group.distinct
         reclaim = group.reclaim
-        label = f"[{head.algorithm}] {len(group)} copies"
+        label = f"[{head.algorithm}] " + tr_n(len(group), "{n} copy", "{n} copies")
         if distinct < len(group):
             links = len(group) - distinct
-            label += f" ({links} hard link{'s' if links > 1 else ''})"
+            label += " (" + tr_n(links, "{n} hard link", "{n} hard links") + ")"
         if reclaim:
-            label += f" · {_format_size(reclaim)} to reclaim"
+            label += tr(" · {size} to reclaim").format(size=_format_size(reclaim))
         parent.setText(COL_NAME, label)
         parent.setText(COL_SIZE, _format_size(group.size))
         parent.setText(COL_HASH, head.value)
@@ -876,8 +879,8 @@ class CasDuplicatesDialog(QDialog):
             child.setText(COL_FOLDER, folder)
             size_text = _format_size(entry.size)
             if entry.file_id in linked:
-                size_text += " · hard link"
-                child.setToolTip(COL_SIZE, HARD_LINK_TIP)
+                size_text += tr(" · hard link")
+                child.setToolTip(COL_SIZE, tr(HARD_LINK_TIP))
             child.setText(COL_SIZE, size_text)
             child.setText(COL_MODIFIED, _format_mtime(entry.mtime))
             child.setText(COL_BACKEND, entry.backend_id)
@@ -887,7 +890,7 @@ class CasDuplicatesDialog(QDialog):
                 font = child.font(COL_MODIFIED)
                 font.setBold(True)
                 child.setFont(COL_MODIFIED, font)
-                child.setToolTip(COL_MODIFIED, SURVIVOR_TIP)
+                child.setToolTip(COL_MODIFIED, tr(SURVIVOR_TIP))
             child.setData(COL_NAME, Qt.ItemDataRole.UserRole, ("entry", entry))
             children.append(child)
         parent.addChildren(children)
@@ -907,26 +910,26 @@ class CasDuplicatesDialog(QDialog):
             return
         if data[0] == "entry":
             entry = data[1]
-            parts = [entry.path, f"{entry.size:,} bytes", f"modified {_format_mtime(entry.mtime)}",
+            parts = [entry.path, tr("{n:,} bytes").format(n=entry.size),
+                     tr("modified {when}").format(when=_format_mtime(entry.mtime)),
                      f"[{entry.backend_id}]", f"{entry.algorithm}:{entry.value}"]
             group = self._group_of(item)
             if entry.file_id is not None and group:
                 twins = [e.path for e in group
                          if e.file_id == entry.file_id and e.path != entry.path]
                 if twins:
-                    parts.append("same file as " + ", ".join(twins[:3]))
+                    parts.append(tr("same file as {paths}").format(paths=", ".join(twins[:3])))
             self._details.setText(" · ".join(parts))
         elif data[0] == "group":
             group = self._group_of(item.child(0)) if item.childCount() else None
             if group:
                 self._details.setText(
-                    f"{len(group)} copies of {group[0].size:,} bytes · "
-                    f"{_format_size(CAS.reclaimable_bytes(group))} to reclaim · "
-                    f"{CAS.cas_url(group[0].algorithm, group[0].value)}"
+                    tr("{n} copies of {size:,} bytes · {reclaimable_bytes} to reclaim · "
+                        "{cas_url}").format(n=len(group), size=group[0].size, reclaimable_bytes=_format_size(CAS.reclaimable_bytes(group)), cas_url=CAS.cas_url(group[0].algorithm, group[0].value))
                 )
         elif data[0] == "folder":
             copy = data[1][0]
-            self._details.setText(f"{copy.path} · {copy.files} file(s) · {copy.size:,} bytes")
+            self._details.setText(tr("{path} · {files} file(s) · {size:,} bytes").format(path=copy.path, files=copy.files, size=copy.size))
         else:
             self._details.setText("")
 
@@ -969,12 +972,11 @@ class CasDuplicatesDialog(QDialog):
             return  # a scan is already running
         reply = QMessageBox.question(
             self,
-            "Rebuild CAS",
-            f"Walk and (re)hash every file under\n{path}\n"
-            f"on backend [{bid}]?\n\nNative checksum is used where "
-            "available. Where the backend has none, files are read and hashed "
-            "here — only those that share their size with another file, and "
-            "only as far as their first bytes match.",
+            tr("Rebuild CAS"),
+            tr("Walk and (re)hash every file under\n{path}\non backend [{bid}]?\n\nNative "
+                "checksum is used where available. Where the backend has none, files "
+                "are read and hashed here — only those that share their size with "
+                "another file, and only as far as their first bytes match.").format(path=path, bid=bid),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
@@ -1000,23 +1002,22 @@ class CasDuplicatesDialog(QDialog):
             if self._job_kind == "delete" and total:
                 self._busy_bar.setRange(0, total)
                 self._busy_bar.setValue(min(total, int(state["scanned"])))
-                return (f"Checking and moving to trash… {state['scanned']} of {total} "
-                        f"checked, {state['indexed']} moved — {where}")
-            return f"Checking and moving to trash… {state['indexed']} moved — " + where
+                return (tr("Checking and moving to trash… {scanned} of {total} checked, {indexed} "
+                    "moved — {where}").format(scanned=state['scanned'], total=total, indexed=state['indexed'], where=where))
+            return tr("Checking and moving to trash… {indexed} moved — ").format(indexed=state['indexed']) + where
         stats = self._rebuild_stats
         if stats is not None and stats.phase == "read" and stats.read_total:
             self._busy_bar.setRange(0, stats.read_total)
             self._busy_bar.setValue(min(stats.read_total, stats.read_done))
             return (
-                f"Reading files without a checksum… {stats.read_done} of "
-                f"{stats.read_total}, {state['indexed']} indexed, "
-                f"{_format_size(stats.bytes_hashed)} hashed — {where}"
+                tr("Reading files without a checksum… {read_done} of {read_total}, "
+                    "{indexed} indexed, {bytes_hashed} hashed — {where}").format(read_done=stats.read_done, read_total=stats.read_total, indexed=state['indexed'], bytes_hashed=_format_size(stats.bytes_hashed), where=where)
             )
-        text = f"Working… {state['indexed']} indexed, {state['scanned']} scanned"
+        text = tr("Working… {indexed} indexed, {scanned} scanned").format(indexed=state['indexed'], scanned=state['scanned'])
         if stats is not None:
-            text += f", {_format_size(stats.bytes_hashed)} hashed"
+            text += tr(", {bytes_hashed} hashed").format(bytes_hashed=_format_size(stats.bytes_hashed))
             if stats.unchanged:
-                text += f" ({stats.unchanged} unchanged)"
+                text += tr(" ({unchanged} unchanged)").format(unchanged=stats.unchanged)
         return text + f" — {where}"
 
     def _on_job_finished(self, kind: str, value, cancelled: bool) -> None:
@@ -1033,12 +1034,12 @@ class CasDuplicatesDialog(QDialog):
         self._rebuild_btn.setEnabled(self._active_pane is not None)
         path = self._rebuild_root
         if kind == "error":
-            QMessageBox.warning(self, "Rebuild CAS", f"Rebuild failed:\n{value}")
+            QMessageBox.warning(self, tr("Rebuild CAS"), tr("Rebuild failed:\n{value}").format(value=value))
             return
         text, trouble = rebuild_report(
             value, path, self._rebuild_stats, cancelled, self._rebuild_bid
         )
-        (QMessageBox.warning if trouble else QMessageBox.information)(self, "Rebuild CAS", text)
+        (QMessageBox.warning if trouble else QMessageBox.information)(self, tr("Rebuild CAS"), text)
         self._refresh()
 
     def reject(self) -> None:
@@ -1085,7 +1086,7 @@ class CasDuplicatesDialog(QDialog):
         selected = self.selected_entries()
         if not selected:
             QMessageBox.information(
-                self, "Move to Trash", "Select the file rows you want to remove."
+                self, tr("Move to Trash"), tr("Select the file rows you want to remove.")
             )
             return
 
@@ -1102,31 +1103,30 @@ class CasDuplicatesDialog(QDialog):
         if not mine:
             QMessageBox.information(
                 self,
-                "Not reachable from here",
-                "The selected copies live on backends that are not open in any "
-                "pane. Open a pane on that host and try again.",
+                tr("Not reachable from here"),
+                tr("The selected copies live on backends that are not open in any "
+                "pane. Open a pane on that host and try again."),
             )
             return
 
         hosts = sorted({e.backend_id for e in mine})
         size = sum(int(e.size or 0) for e in mine)
-        kept = f"{plan.survivors} " + ("copy is kept" if plan.survivors == 1 else "copies are kept")
+        kept = tr_n(plan.survivors, "{n} copy is kept", "{n} copies are kept")
         if plan.auto_kept:
             kept += (
-                f" — in {len(plan.auto_kept)} group(s) every copy was selected, so "
-                "the first (oldest) copy of each stays"
+                tr(" — in {n} group(s) every copy was selected, so the first (oldest) "
+                    "copy of each stays").format(n=len(plan.auto_kept))
             )
         confirm = QMessageBox.question(
             self,
-            "Move to Trash",
-            f"Move {len(mine)} file(s) ({_format_size(size)}) on {', '.join(hosts)} "
-            f"to the axross trash?\n{kept}.\n\n"
-            "Each file is re-checked first: it is only moved if it still holds "
-            "the indexed content and another verified copy remains. Trashed "
-            "files can be restored via Show Trash."
+            tr("Move to Trash"),
+            tr("Move {n} file(s) ({size}) on {hosts} to the axross "
+                "trash?\n{kept}.\n\nEach file is re-checked first: it is only moved if it "
+                "still holds the indexed content and another verified copy remains. "
+                "Trashed files can be restored via Show Trash.").format(n=len(mine), size=_format_size(size), hosts=', '.join(hosts), kept=kept)
             + (
-                f"\n\n{others} selected copy/copies live on backends that are not "
-                "open and are skipped."
+                tr("\n\n{others} selected copy/copies live on backends that are not open "
+                    "and are skipped.").format(others=others)
                 if others
                 else ""
             ),
@@ -1153,35 +1153,34 @@ class CasDuplicatesDialog(QDialog):
     def _on_delete_finished(self, kind: str, value, cancelled: bool) -> None:
         self._rebuild_btn.setEnabled(self._active_pane is not None)
         if kind == "error":
-            QMessageBox.warning(self, "Move to Trash", f"Failed:\n{value}")
+            QMessageBox.warning(self, tr("Move to Trash"), tr("Failed:\n{value}").format(value=value))
             self._reload()
             return
         outcome = value
         freed = sum(int(e.size or 0) for e in outcome.removed)
-        lines = [f"{len(outcome.removed)} file(s) moved to the axross trash "
-                 f"({_format_size(freed)})."]
+        lines = [tr("{n} file(s) moved to the axross trash ({freed}).").format(n=len(outcome.removed), freed=_format_size(freed))]
         if cancelled:
-            lines.append("Cancelled before every file was handled.")
+            lines.append(tr("Cancelled before every file was handled."))
         aliases = [e for e, why in outcome.refused if why == CAS.ALIAS_REASON]
         refused = [(e, why) for e, why in outcome.refused if why != CAS.ALIAS_REASON]
         if aliases:
             lines.append(
-                f"{len(aliases)} selected name(s) are hard links of the copy that stays "
-                "and were left alone: removing them frees nothing."
+                tr("{n} selected name(s) are hard links of the copy that stays and were "
+                    "left alone: removing them frees nothing.").format(n=len(aliases))
             )
         if refused or outcome.failed:
             lines.append("")
-            lines += [f"Kept {e.path}: {why}" for e, why in refused[:10]]
-            lines += [f"Failed {e.path}: {why}" for e, why in outcome.failed[:10]]
+            lines += [tr("Kept {path}: {why}").format(path=e.path, why=why) for e, why in refused[:10]]
+            lines += [tr("Failed {path}: {why}").format(path=e.path, why=why) for e, why in outcome.failed[:10]]
             hidden = len(refused) + len(outcome.failed) - 20
             if hidden > 0:
-                lines.append(f"… and {hidden} more")
-            QMessageBox.warning(self, "Move to Trash", "\n".join(lines))
+                lines.append(tr("… and {hidden} more").format(hidden=hidden))
+            QMessageBox.warning(self, tr("Move to Trash"), "\n".join(lines))
         else:
-            QMessageBox.information(self, "Move to Trash", "\n".join(lines))
+            QMessageBox.information(self, tr("Move to Trash"), "\n".join(lines))
         self._refresh()
         self._status.setText(
-            f"Moved {len(outcome.removed)} duplicate(s) to trash, {_format_size(freed)} freed"
+            tr("Moved {n} duplicate(s) to trash, {freed} freed").format(n=len(outcome.removed), freed=_format_size(freed))
         )
 
     # ------------------------------------------------------------------
@@ -1204,7 +1203,7 @@ class CasDuplicatesDialog(QDialog):
             return
         chosen = {(c.backend_id, c.path) for c, _e in self.selected_folders()}
         if not chosen:
-            QMessageBox.information(self, "Move to Trash", "Select the folder rows to remove.")
+            QMessageBox.information(self, tr("Move to Trash"), tr("Select the folder rows to remove."))
             return
         pairs = []
         for members in self._folder_groups:
@@ -1217,11 +1216,11 @@ class CasDuplicatesDialog(QDialog):
         if not pairs:
             return
         confirm = QMessageBox.question(
-            self, "Move to Trash",
-            f"Move {len(pairs)} folder(s) to the axross trash?\n\n"
-            "Each is checked first: it must still hold exactly the indexed files with "
-            "their indexed content, and the folder kept must hold a separate, intact copy "
-            "of every one. Trashed folders can be restored via Show Trash.",
+            self, tr("Move to Trash"),
+            tr("Move {n} folder(s) to the axross trash?\n\nEach is checked first: it "
+                "must still hold exactly the indexed files with their indexed content, "
+                "and the folder kept must hold a separate, intact copy of every one. "
+                "Trashed folders can be restored via Show Trash.").format(n=len(pairs)),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No)
         if confirm != QMessageBox.StandardButton.Yes:
@@ -1246,16 +1245,16 @@ class CasDuplicatesDialog(QDialog):
     def _on_folders_trashed(self, kind: str, value, cancelled: bool) -> None:
         self._rebuild_btn.setEnabled(self._active_pane is not None)
         if kind == "error":
-            QMessageBox.warning(self, "Move to Trash", f"Failed:\n{value}")
+            QMessageBox.warning(self, tr("Move to Trash"), tr("Failed:\n{value}").format(value=value))
         else:
             moved = [c for c, o in value if o.removed]
             kept = [(c, o.reason) for c, o in value if not o.removed]
-            lines = [f"{len(moved)} folder(s) moved to the axross trash."]
+            lines = [tr("{n} folder(s) moved to the axross trash.").format(n=len(moved))]
             if cancelled:
-                lines.append("Cancelled before every folder was handled.")
-            lines += [f"Kept {c.path}: {why}" for c, why in kept[:10]]
+                lines.append(tr("Cancelled before every folder was handled."))
+            lines += [tr("Kept {path}: {why}").format(path=c.path, why=why) for c, why in kept[:10]]
             (QMessageBox.warning if kept else QMessageBox.information)(
-                self, "Move to Trash", "\n".join(lines))
+                self, tr("Move to Trash"), "\n".join(lines))
         self._refresh()
 
     # ------------------------------------------------------------------
@@ -1276,57 +1275,57 @@ class CasDuplicatesDialog(QDialog):
         if kind == "entry":
             entry = data[1]
             menu.addAction(
-                "Open Containing Folder",
+                tr("Open Containing Folder"),
                 lambda: self.open_requested.emit(entry.backend_id, entry.path),
             )
-            menu.addAction("Keep This Copy, Select the Others", lambda: self._keep_only(item))
+            menu.addAction(tr("Keep This Copy, Select the Others"), lambda: self._keep_only(item))
             folder = _split_path(entry.path)[0]
             if folder:
                 menu.addAction(
-                    "Mark Every Copy Inside This Folder",
+                    tr("Mark Every Copy Inside This Folder"),
                     lambda: self.mark("mark-in-folder", folder),
                 )
                 menu.addAction(
-                    "Keep One Copy Inside This Folder, Mark the Others",
+                    tr("Keep One Copy Inside This Folder, Mark the Others"),
                     lambda: self.mark("keep-in-folder", folder),
                 )
             menu.addSeparator()
-            menu.addAction("Copy Path", lambda: self._to_clipboard(entry.path))
-            menu.addAction("Copy File Name", lambda: self._to_clipboard(_split_path(entry.path)[1]))
+            menu.addAction(tr("Copy Path"), lambda: self._to_clipboard(entry.path))
+            menu.addAction(tr("Copy File Name"), lambda: self._to_clipboard(_split_path(entry.path)[1]))
             menu.addAction(
-                "Copy ax-cas URL",
+                tr("Copy ax-cas URL"),
                 lambda: self._to_clipboard(CAS.cas_url(entry.algorithm, entry.value)),
             )
         elif kind == "folder":
             copy = data[1][0]
-            menu.addAction("Open in Pane",
+            menu.addAction(tr("Open in Pane"),
                            lambda: self.open_folder_requested.emit(copy.backend_id, copy.path))
-            menu.addAction("Bookmark Folder…",
+            menu.addAction(tr("Bookmark Folder…"),
                            lambda: self.bookmark_folder_requested.emit(copy.backend_id, copy.path))
-            menu.addAction("Keep This Folder, Select the Others", lambda: self._keep_only(item))
+            menu.addAction(tr("Keep This Folder, Select the Others"), lambda: self._keep_only(item))
             menu.addSeparator()
-            menu.addAction("Copy Path", lambda: self._to_clipboard(copy.path))
+            menu.addAction(tr("Copy Path"), lambda: self._to_clipboard(copy.path))
         elif kind == "folder-group":
-            menu.addAction("Select All but One", lambda: self._select_all_but_one([item]))
+            menu.addAction(tr("Select All but One"), lambda: self._select_all_but_one([item]))
         elif kind == "group":
             _kind, algo, value = data
-            menu.addAction("Select All but One", lambda: self._select_all_but_one([item]))
-            menu.addAction("Copy ax-cas URL", lambda: self._to_clipboard(CAS.cas_url(algo, value)))
-            menu.addAction("Copy All Paths", lambda: self._copy_group_paths(item))
+            menu.addAction(tr("Select All but One"), lambda: self._select_all_but_one([item]))
+            menu.addAction(tr("Copy ax-cas URL"), lambda: self._to_clipboard(CAS.cas_url(algo, value)))
+            menu.addAction(tr("Copy All Paths"), lambda: self._copy_group_paths(item))
 
         if kind is not None:
             menu.addSeparator()
-        menu.addAction(MARK_ALL_TEXT, self._mark_all_duplicates)
-        keeping = menu.addMenu("Mark All Duplicates, Keeping")
+        menu.addAction(tr(MARK_ALL_TEXT), self._mark_all_duplicates)
+        keeping = menu.addMenu(tr("Mark All Duplicates, Keeping"))
         for label, rule in KEEP_RULE_LABELS:
-            keeping.addAction(label, lambda r=rule: self.mark(r))
+            keeping.addAction(tr(label), lambda r=rule: self.mark(r))
         keeping.setEnabled(not self.folder_mode())
-        menu.addAction("Clear Selection", self._tree.clearSelection)
+        menu.addAction(tr("Clear Selection"), self._tree.clearSelection)
         menu.addSeparator()
         has_files = bool(self.selected_entries()) or bool(self.selected_folders())
-        trash = menu.addAction("Move Selected to Trash…", self._delete_selected)
+        trash = menu.addAction(tr("Move Selected to Trash…"), self._delete_selected)
         trash.setEnabled(has_files and not self._job.running)
-        forget = menu.addAction("Remove Selected from Index", self._forget_selected)
+        forget = menu.addAction(tr("Remove Selected from Index"), self._forget_selected)
         forget.setEnabled(has_files and not self._job.running)
         return menu
 
@@ -1382,12 +1381,12 @@ class CasDuplicatesDialog(QDialog):
             return 0
         if rule in ("keep-in-folder", "mark-in-folder") and not folder:
             start = getattr(self._active_pane, "current_path", "") or ""
-            prompt = ("Keep the copies inside this folder and mark the others "
-                      "(groups without a copy there are left alone):"
+            prompt = (tr("Keep the copies inside this folder and mark the others "
+                         "(groups without a copy there are left alone):")
                       if rule == "keep-in-folder" else
-                      "Mark the copies inside this folder (a group with every copy "
-                      "inside keeps its oldest one):")
-            text, ok = QInputDialog.getText(self, "Folder", prompt, text=start)
+                      tr("Mark the copies inside this folder (a group with every copy "
+                         "inside keeps its oldest one):"))
+            text, ok = QInputDialog.getText(self, tr("Folder"), prompt, text=start)
             folder = (text or "").strip()
             if not ok or not folder:
                 return 0
@@ -1443,7 +1442,7 @@ class CasDuplicatesDialog(QDialog):
 
     def _to_clipboard(self, text: str) -> None:
         QGuiApplication.clipboard().setText(text)
-        self._status.setText("Copied to clipboard")
+        self._status.setText(tr("Copied to clipboard"))
 
     def _forget_selected(self) -> None:
         """Drop the selected rows from the index; the files stay untouched.
@@ -1486,12 +1485,12 @@ class CasDuplicatesDialog(QDialog):
         else:
             QMessageBox.information(
                 self,
-                "Copy URL",
-                "Select a duplicate group (or any file in one) first.",
+                tr("Copy URL"),
+                tr("Select a duplicate group (or any file in one) first."),
             )
             return
         QGuiApplication.clipboard().setText(url)
-        self._status.setText(f"Copied {url} to clipboard")
+        self._status.setText(tr("Copied {url} to clipboard").format(url=url))
 
     def _open_history(self) -> None:
         """The Index / History view, following this finder: "Show Duplicates"
@@ -1536,45 +1535,45 @@ def rebuild_report(count, root: str, stats, cancelled: bool, backend_id: str = "
     every file or folder left out and why. *trouble* is true when something
     could not be read or listed."""
     if cancelled:
-        lines = [f"Cancelled — {count} file(s) indexed so far under {root}."]
+        lines = [tr("Cancelled — {count} file(s) indexed so far under {root}.").format(count=count, root=root)]
     else:
-        lines = [f"Indexed {count} file(s) under {root}."]
+        lines = [tr("Indexed {count} file(s) under {root}.").format(count=count, root=root)]
     if stats is None:
         return lines[0], False
-    where = f"[{backend_id}]" if backend_id else "this backend"
-    done = [f"{stats.hashed} hashed ({_format_size(stats.bytes_hashed)})"]
+    where = f"[{backend_id}]" if backend_id else tr("this backend")
+    done = [tr("{hashed} hashed ({bytes_hashed})").format(hashed=stats.hashed, bytes_hashed=_format_size(stats.bytes_hashed))]
     if stats.unchanged:
-        done.append(f"{stats.unchanged} unchanged since the last scan")
+        done.append(tr("{unchanged} unchanged since the last scan").format(unchanged=stats.unchanged))
     lines.append(", ".join(done) + ".")
     if stats.read:
-        lines.append(f"{stats.read} file(s) were read and hashed here: {where} has no "
-                     "checksum of its own.")
+        lines.append(tr("{read} file(s) were read and hashed here: {where} has no checksum of "
+            "its own.").format(read=stats.read, where=where))
     if stats.unique_size:
-        lines.append(f"{stats.unique_size} file(s) without a checksum were not read: no other "
-                     "file has their size (or their first bytes), so they have no duplicate.")
+        lines.append(tr("{unique_size} file(s) without a checksum were not read: no other file "
+            "has their size (or their first bytes), so they have no duplicate.").format(unique_size=stats.unique_size))
     if stats.no_checksum:
-        lines.append(f"{stats.no_checksum} file(s) skipped: {where} has no content checksum "
-                     "for them.")
+        lines.append(tr("{no_checksum} file(s) skipped: {where} has no content checksum for "
+            "them.").format(no_checksum=stats.no_checksum, where=where))
     if stats.special:
-        lines.append(f"{stats.special} special file(s) (FIFOs, sockets, devices) skipped.")
+        lines.append(tr("{special} special file(s) (FIFOs, sockets, devices) skipped.").format(special=stats.special))
     if stats.pruned:
-        noun = "entry" if stats.pruned == 1 else "entries"
-        lines.append(f"{stats.pruned} index {noun} of files no longer there removed.")
+        lines.append(tr_n(stats.pruned, "{n} index entry of files no longer there removed.",
+                          "{n} index entries of files no longer there removed."))
     if stats.truncated:
-        lines.append(f"The walk stopped at its limit ({CAS.MAX_WALK_ENTRIES:,} entries or "
-                     f"{CAS.MAX_WALK_DEPTH} folder levels): the rest was not scanned.")
+        lines.append(tr("The walk stopped at its limit ({MAX_WALK_ENTRIES:,} entries or "
+            "{MAX_WALK_DEPTH} folder levels): the rest was not scanned.").format(MAX_WALK_ENTRIES=CAS.MAX_WALK_ENTRIES, MAX_WALK_DEPTH=CAS.MAX_WALK_DEPTH))
     trouble = bool(stats.unreadable_count or stats.unlisted_count)
     if stats.unreadable_count:
         lines.append("")
-        lines.append(f"{stats.unreadable_count} file(s) could not be read:")
+        lines.append(tr("{unreadable_count} file(s) could not be read:").format(unreadable_count=stats.unreadable_count))
         lines += [f"  {p}: {why}" for p, why in stats.unreadable[:5]]
         if stats.unreadable_count > 5:
-            lines.append(f"  … and {stats.unreadable_count - 5} more")
+            lines.append(tr("  … and {count} more").format(count=stats.unreadable_count - 5))
     if stats.unlisted_count:
         lines.append("")
-        lines.append(f"{stats.unlisted_count} folder(s) could not be listed (their files "
-                     "were not scanned; their index entries are kept):")
+        lines.append(tr("{unlisted_count} folder(s) could not be listed (their files were not "
+            "scanned; their index entries are kept):").format(unlisted_count=stats.unlisted_count))
         lines += [f"  {p}: {why}" for p, why in stats.unlisted[:5]]
         if stats.unlisted_count > 5:
-            lines.append(f"  … and {stats.unlisted_count - 5} more")
+            lines.append(tr("  … and {count} more").format(count=stats.unlisted_count - 5))
     return "\n".join(lines), trouble

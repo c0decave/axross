@@ -179,6 +179,16 @@ def _note(text: str) -> QLabel:
     return label
 
 
+def _decimal(value: float) -> str:
+    """*value* as the interface language writes it: "0.5" in English,
+    "0,5" in German and the other catalogues (the German page read
+    "Nach 0.5 s")."""
+    from core import i18n
+
+    text = f"{value:g}"
+    return text if i18n.active().language == i18n.DEFAULT_LANGUAGE else text.replace(".", ",")
+
+
 class _FormPage(QWidget):
     """A page of plain values: ``_values()`` reads the widgets, ``_store``
     writes the changed ones. Dirty is "differs from what was loaded"."""
@@ -249,7 +259,7 @@ class GeneralPage(_FormPage):
         self.activation_combo.addItem(tr("On Click"), PA.CLICK)
         for seconds in PA.HOVER_SECONDS:
             self.activation_combo.addItem(
-                tr("After {n} s in the Pane").format(n=seconds), seconds
+                tr("After {n} s in the Pane").format(n=_decimal(seconds)), seconds
             )
         current = PA.activation()
         self.activation_combo.setCurrentIndex(
@@ -1076,7 +1086,10 @@ class SettingsDialog(QDialog):
         for page_id, title, factory, keywords, subs in self._categories():
             self._factories[page_id] = factory
             self._titles[page_id] = title
-            self._keywords[page_id] = [title.lower()] + [k.lower() for k in keywords]
+            # Each keyword in English and in the interface language: a
+            # German user types "Sprache", not "language".
+            self._keywords[page_id] = [title.lower()] + [
+                term for k in keywords for term in dict.fromkeys((k.lower(), tr(k).lower()))]
             self._subs[page_id] = subs
             item = QTreeWidgetItem([title])
             item.setData(0, _ID_ROLE, page_id)

@@ -139,6 +139,11 @@ VARIANT_PATH = ("axross", VARIANT_FILE)
 VARIANTS = ("glibc-2.34", "glibc-2.36")
 
 MAX_API_BYTES = 1 << 20
+#: GitHub lists at most 100 assets per answer; a release with its packs has
+#: more (about 160 pack wheels), so the rest is read page by page, up to
+#: this many assets in all (the asset list's pages: ASSETS_PAGE each).
+MAX_ASSETS = 500
+ASSETS_PAGE = 100
 MAX_SUMS_BYTES = 64 << 10
 MAX_ASSET_BYTES = 1 << 30
 MAX_REDIRECTS = 5
@@ -381,7 +386,7 @@ def parse_release(data) -> Release:
     raw_assets = data.get("assets")
     if not isinstance(raw_assets, list):
         raise UpdateError("the latest release has no list of files")
-    assets = tuple(a for a in (_asset(r, tag) for r in raw_assets[:100]) if a is not None)
+    assets = tuple(a for a in (_asset(r, tag) for r in raw_assets[:MAX_ASSETS]) if a is not None)
     return Release(
         version="%d.%d.%d" % version,
         tag=tag,
@@ -570,12 +575,46 @@ def check(current: str | None = None, *, opener=None, timeout: float = API_TIMEO
             if data.get(flag) is True:
                 return CheckResult(current, None, False,
                                    f"The latest release is a {flag}; ignored.")
+        _read_more_assets(data, opener, timeout)
     release = parse_release(data)
     if is_newer(release.version, current):
         message = f"axross {release.version} is available (this is {current})."
         return CheckResult(current, release, True, message)
     return CheckResult(current, release, False,
                        f"axross {current} is up to date (latest release: {release.version}).")
+
+
+def _read_more_assets(data: dict, opener, timeout: float) -> None:
+    """Append the release's further asset pages to ``data["assets"]``.
+
+    The address is built here from the repository and the release's numeric
+    id, never taken from the answer; every page is size-bounded, and the
+    whole list stops at MAX_ASSETS. A page that fails ends the reading: the
+    assets read so far stay, and a missing SHA256SUMS refuses the update
+    later as before."""
+    raw = data.get("assets")
+    release_id = data.get("id")
+    if (not isinstance(raw, list) or len(raw) < ASSETS_PAGE
+            or not isinstance(release_id, int) or isinstance(release_id, bool) or release_id <= 0):
+        return
+    page = 2
+    while len(raw) < MAX_ASSETS:
+        url = (f"https://api.github.com/repos/{REPOSITORY}/releases/{release_id}/assets"
+               f"?per_page={ASSETS_PAGE}&page={page}")
+        try:
+            body = fetch(url, opener=opener, max_bytes=MAX_API_BYTES, timeout=timeout,
+                         deadline=time.monotonic() + timeout,
+                         accept="application/vnd.github+json")
+            more = json.loads(body)
+        except (UpdateError, ValueError, RecursionError) as exc:
+            log.info("update check: asset page %d not read: %s", page, exc)
+            return
+        if not isinstance(more, list) or not more:
+            return
+        raw.extend(more[:MAX_ASSETS - len(raw)])
+        if len(more) < ASSETS_PAGE:
+            return
+        page += 1
 
 
 # -- download, verify, replace -----------------------------------------------------------

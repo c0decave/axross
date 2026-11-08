@@ -1,4 +1,4 @@
-"""The Agent dock in the main window: Ctrl+Shift+A, Send to Agent from a
+"""The Agent dock in the main window: Ctrl+Shift+K, Send to Agent from a
 pane, the pane lookups of the + menu and drops, settings at run time."""
 
 from __future__ import annotations
@@ -57,8 +57,10 @@ def win(tmp_path, monkeypatch):
 # -- happy ---------------------------------------------------------------------
 
 
-def test_happy_ctrl_shift_a_opens_the_agent_and_focuses_the_task(win):
-    actions = [a for a in win.actions() if a.shortcut() == QKeySequence("Ctrl+Shift+A")]
+def test_happy_ctrl_shift_k_opens_the_agent_and_focuses_the_task(win):
+    # Ctrl+Shift+K, not Ctrl+Shift+A: that is the file list's Invert Selection
+    # (tests/test_shortcut_collisions.py).
+    actions = [a for a in win.actions() if a.shortcut() == QKeySequence("Ctrl+Shift+K")]
     assert len(actions) == 1
     actions[0].trigger()
     _pump()

@@ -26,6 +26,7 @@ from typing import IO
 
 from core import nfs3_rpc as R
 from core.backend import SessionLifecycle
+from core.path_policy import refuse_folder_path
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
@@ -296,6 +297,15 @@ class NfsUserSession(SessionLifecycle):
                 return False
             raise
 
+    def _is_file(self, path: str) -> bool:
+        """True for an entry that is not a folder (False when nothing is there)."""
+        try:
+            return not self._resolve(path, follow=False)[1].is_dir
+        except R.NfsError as exc:
+            if exc.status == 2:
+                return False
+            raise
+
     def exists(self, path: str) -> bool:
         """False only when nothing is there; any other failure is an OSError."""
         try:
@@ -332,6 +342,8 @@ class NfsUserSession(SessionLifecycle):
         self._forget(key)
 
     def rename(self, src: str, dst: str) -> None:
+        # _split() drops the slash: a file renamed to "x/" became "x".
+        refuse_folder_path(dst, "rename to", source_is_file=lambda: self._is_file(src))
         sdir, sname, skey = self._parent(src)
         ddir, dname, dkey = self._parent(dst)
         try:
@@ -352,7 +364,8 @@ class NfsUserSession(SessionLifecycle):
         return io.BufferedReader(_NfsReader(self._client(), fh, self._info.rtmax), self._info.rtmax)
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
-        dir_fh, name, key = self._parent(path)
+        # _split() drops the slash: "x/" was written as a FILE "x".
+        dir_fh, name, key = self._parent(refuse_folder_path(path))
         nfs = self._client()
         offset = 0
         try:

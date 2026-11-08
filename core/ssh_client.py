@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import functools
 import hashlib
 import logging
@@ -51,6 +52,8 @@ log = logging.getLogger(__name__)
 
 HELPER_STDOUT_CAP = 4 * 1024 * 1024
 HELPER_STDERR_CAP = 256 * 1024
+# hardlink(): the shell's answer when the link path is already taken.
+_HARDLINK_TAKEN = "axross-hardlink-target-exists"
 
 
 def _read_limited_stream(stream, cap: int, label: str) -> bytes:
@@ -995,7 +998,19 @@ class SSHSession(SessionLifecycle):
 
     @_sftp_errors_as_oserror
     def mkdir(self, path: str) -> None:
-        self.sftp.mkdir(path)
+        """FileExistsError when *path* is taken, as mkdir(2): SFTP v3 has
+        no status for it, so OpenSSH answers SSH_FX_FAILURE ("Failure") -
+        an OSError nobody could tell from a refused permission."""
+        try:
+            self.sftp.mkdir(path)
+        except OSError as exc:
+            if isinstance(exc, FileNotFoundError):
+                raise
+            try:
+                self.sftp.lstat(path)
+            except OSError:
+                raise exc from None
+            raise FileExistsError(errno.EEXIST, f"Cannot create {path}: it exists", path) from exc
 
     @_sftp_errors_as_oserror
     def remove(self, path: str, recursive: bool = False) -> None:
@@ -1128,6 +1143,11 @@ class SSHSession(SessionLifecycle):
         # 32 KiB otherwise); every answer is still checked: core.sftp_io.
         from core.sftp_io import PipelinedWriter
 
+        if path.endswith("/") and path.strip("/"):
+            # A server that canonicalizes the path first wrote a FILE "x".
+            raise IsADirectoryError(
+                errno.EISDIR, f"Cannot write {path}: a path ending in '/' names a folder", path
+            )
         return PipelinedWriter(self.sftp.open(path, "ab" if append else "wb"), append=append)
 
     def normalize(self, path: str) -> str:
@@ -1197,13 +1217,21 @@ class SSHSession(SessionLifecycle):
         """Hardlink via a remote ``ln`` shell call — SFTP v3 has no
         native hardlink operation. Fails cleanly when the remote
         host lacks ``ln`` or the two paths live on different
-        filesystems (errors bubble up as OSError from the shell)."""
+        filesystems (errors bubble up as OSError from the shell).
+
+        An existing *link_path* is FileExistsError, as link(2): plain
+        ``ln`` onto a folder made the link INSIDE it and reported success
+        (``ln -T`` refuses that, but is GNU only), so the shell tests
+        first - a dangling symlink counts as taken too."""
         if not self._transport or not self._transport.is_active():
             raise OSError("SSH hardlink: transport not active")
+        qlink = shlex.quote(link_path)
         chan = self._transport.open_session()
         try:
             chan.exec_command(
-                f"ln -- {shlex.quote(target)} {shlex.quote(link_path)}",
+                f"if test -e {qlink} || test -L {qlink}; then "
+                f"echo {_HARDLINK_TAKEN} >&2; exit 1; fi; "
+                f"ln -- {shlex.quote(target)} {qlink}",
             )
             err = _read_limited_stream(
                 chan.makefile_stderr("rb"),
@@ -1213,6 +1241,10 @@ class SSHSession(SessionLifecycle):
             rc = chan.recv_exit_status()
         finally:
             chan.close()
+        if rc != 0 and _HARDLINK_TAKEN.encode() in err:
+            raise FileExistsError(
+                errno.EEXIST, f"SSH hardlink: {link_path} already exists", link_path
+            )
         if rc != 0:
             raise OSError(
                 f"SSH hardlink({target!r} → {link_path!r}) rc={rc}: "

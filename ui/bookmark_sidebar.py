@@ -756,7 +756,7 @@ class BookmarkTreeEditing:
                     node, dialog.result_bookmark(), group=dialog.result_group()
                 )
             except KeyError as exc:
-                QMessageBox.warning(self, "Edit Bookmark", f"Could not save changes: {exc}")
+                QMessageBox.warning(self, tr("Edit Bookmark"), tr("Could not save changes: {error}").format(error=exc))
                 return
         self._after_change()
 
@@ -865,18 +865,18 @@ class BookmarkSidebar(BookmarkTreeEditing, QDockWidget):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
 
-        self._new_group_btn = QPushButton("New Group", container)
+        self._new_group_btn = QPushButton(tr("New Group"), container)
         self._new_group_btn.setIcon(icon("plus", 16))
-        self._new_group_btn.setToolTip("Create a group to collect bookmarks")
+        self._new_group_btn.setToolTip(tr("Create a group to collect bookmarks"))
         self._new_group_btn.clicked.connect(lambda _c=False: self._new_group(None))
         layout.addWidget(self._new_group_btn)
 
         # Empty-state hint — tells the user how to populate the panel so a
         # fresh install doesn't look broken.
         self._hint = _DropHint(
-            "No bookmarks yet.\n\n"
-            "Drag folders here from a pane, or right-click\n"
-            'a folder and choose "Bookmark This Directory".',
+            tr("No bookmarks yet.\n\n"
+               "Drag folders here from a pane, or right-click\n"
+               'a folder and choose "Bookmark This Directory".'),
             container,
         )
         self._hint.external_drop_requested.connect(self._apply_external_drop)

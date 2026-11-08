@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 
 from ui.close_corner import add_close_corner
 from ui.icon_provider import set_window_icon
+from core.i18n import tr
 
 if TYPE_CHECKING:
     from core.backend import FileBackend
@@ -107,26 +108,26 @@ class PermissionsWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         info = QFormLayout()
-        info.addRow("File:", QLabel(self._item.name))
-        info.addRow("Type:", QLabel(self._item.type_char))
-        info.addRow("Owner:", QLabel(f"{self._item.owner}:{self._item.group}"))
-        info.addRow("Current:", QLabel(self._item.mode_str))
+        info.addRow(tr("File:"), QLabel(self._item.name))
+        info.addRow(tr("Type:"), QLabel(self._item.type_char))
+        info.addRow(tr("Owner:"), QLabel(f"{self._item.owner}:{self._item.group}"))
+        info.addRow(tr("Current:"), QLabel(self._item.mode_str))
         layout.addLayout(info)
 
-        self._link_note = QLabel(LINK_NOTE)
+        self._link_note = QLabel(tr(LINK_NOTE))
         self._link_note.setWordWrap(True)
         self._link_note.setVisible(self._item.is_link)
         layout.addWidget(self._link_note)
 
-        perm_group = QGroupBox("Permissions")
+        perm_group = QGroupBox(tr("Permissions"))
         grid = QGridLayout(perm_group)
 
         for col, header in enumerate(("Read", "Write", "Execute")):
-            grid.addWidget(QLabel(header), 0, col + 1, alignment=Qt.AlignmentFlag.AlignCenter)
+            grid.addWidget(QLabel(tr(header)), 0, col + 1, alignment=Qt.AlignmentFlag.AlignCenter)
 
         self._checks: list[QCheckBox] = []
         for row_idx, row_name in enumerate(("Owner", "Group", "Others")):
-            grid.addWidget(QLabel(row_name), row_idx + 1, 0)
+            grid.addWidget(QLabel(tr(row_name)), row_idx + 1, 0)
             for col_idx in range(3):
                 cb = QCheckBox()
                 cb.setChecked(bool(self._original_mode & _MODE_BITS[row_idx * 3 + col_idx]))
@@ -143,7 +144,7 @@ class PermissionsWidget(QWidget):
         self._octal_edit.setMaxLength(4)
         self._octal_edit.setFixedWidth(80)
         self._octal_edit.textChanged.connect(self._on_octal_changed)
-        octal_layout.addRow("Octal:", self._octal_edit)
+        octal_layout.addRow(tr("Octal:"), self._octal_edit)
         layout.addLayout(octal_layout)
 
         self._preview = QLabel()
@@ -193,7 +194,7 @@ class PermissionsWidget(QWidget):
         self._valid = valid
         self._octal_edit.setStyleSheet("" if valid else "QLineEdit { border: 1px solid red; }")
         self._octal_edit.setToolTip(
-            "" if valid else "Enter three or four octal digits (0-7), e.g. 644 or 1777."
+            "" if valid else tr("Enter three or four octal digits (0-7), e.g. 644 or 1777.")
         )
         self.validity_changed.emit(valid)
 
@@ -235,7 +236,8 @@ class PermissionsWidget(QWidget):
             if mode & special:
                 chars[pos] = with_x if mode & exec_bit else without_x
         perm_str = "".join(chars)
-        self._preview.setText(f"Preview: {self._item.type_char}{perm_str}  ({mode:04o})")
+        self._preview.setText(tr("Preview: {mode}").format(
+            mode=f"{self._item.type_char}{perm_str}  ({mode:04o})"))
 
     # -- action ----------------------------------------------------------
 
@@ -255,9 +257,9 @@ class PermissionsWidget(QWidget):
             if not self.is_modified():
                 return None
             # chmod follows the link: it would rewrite the target's mode.
-            return "Refusing to change permissions through a symbolic link."
+            return tr("Refusing to change permissions through a symbolic link.")
         if not self._valid:
-            return f"Not an octal mode: {self._octal_edit.text()!r}"
+            return tr("Not an octal mode: {text!r}").format(text=self._octal_edit.text())
         if not self.is_modified():
             return None
 
@@ -287,7 +289,7 @@ class PermissionsDialog(QDialog):
     ):
         super().__init__(parent)
         set_window_icon(self, "lock")
-        self.setWindowTitle(f"Permissions: {item.name}")
+        self.setWindowTitle(tr("Permissions: {name}").format(name=item.name))
         self.setMinimumWidth(350)
 
         layout = QVBoxLayout(self)
@@ -309,7 +311,7 @@ class PermissionsDialog(QDialog):
         if error is None:
             self.accept()
             return
-        QMessageBox.critical(self, "Permission Error", f"Failed to change permissions:\n{error}")
+        QMessageBox.critical(self, tr("Permission Error"), tr("Failed to change permissions:\n{error}").format(error=error))
 
 
 __all__ = ["PermissionsDialog", "PermissionsWidget"]

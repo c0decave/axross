@@ -552,7 +552,7 @@ Full table of extras + system tools per protocol:
 | [docs/EXTENSIONS.md](docs/EXTENSIONS.md) | Extensions menu — plugin API, trust model, the eighteen bundled extensions. |
 | [docs/MCP.md](docs/MCP.md) · [MCP_de.md](docs/MCP_de.md) · [MCP_es.md](docs/MCP_es.md) | MCP server reference — tools, sessions, mTLS, rate limits, hardening. |
 | [docs/LLM_GUIDE.md](docs/LLM_GUIDE.md) · [llms.txt](llms.txt) | For LLM agents: how to drive axross over MCP and the `axross.*` API correctly, with the tool catalog generated from the manifest. |
-| [docs/HANDBUCH.md](docs/HANDBUCH.md) | Full German manual (workflows, dialog reference, keyboard shortcuts). |
+| [docs/USAGE_de.md](docs/USAGE_de.md) | The German manual (the one Help → Handbook, F1, shows in German). |
 | [docs/OPSEC.md](docs/OPSEC.md) | Threat model + per-finding analysis of what the client reveals to servers. |
 | [docs/PROXY_SUPPORT.md](docs/PROXY_SUPPORT.md) | SOCKS4/5, HTTP(S) CONNECT, NTLM/Negotiate, default proxy, bypass, PAC — per protocol. |
 | [OAUTH_SETUP.md](OAUTH_SETUP.md) | OneDrive / SharePoint / Google Drive / Dropbox app registration recipes. |

@@ -48,7 +48,7 @@ import os
 import posixpath
 import shlex
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import IO, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -306,9 +306,13 @@ def _parse_ls_entry(line: str, rest: str = "") -> tuple[FileItem, str] | None:
     link_target = ""
     if is_link and " -> " in name:
         name, _, link_target = name.partition(" -> ")
-    # Android's ``ls -la`` without --full-time omits seconds.
+    # Android's ``ls -la`` without --full-time omits seconds. ls runs under
+    # TZ=UTC0 (AdbSession._LS): the date is UTC, returned aware (FileItem
+    # converts it); the device's wall clock was handed out as local time.
     try:
-        modified = datetime.strptime(m.group("date"), "%Y-%m-%d %H:%M")
+        modified = datetime.strptime(m.group("date"), "%Y-%m-%d %H:%M").replace(
+            tzinfo=timezone.utc
+        )
     except ValueError:
         modified = datetime.fromtimestamp(0)
     size = m.group("size")
@@ -434,6 +438,12 @@ class AdbSession(SessionLifecycle):
     # at action time, flag False so the UI hides the menu entries.
     supports_symlinks = False
     supports_hardlinks = False
+
+    #: The listing command: under TZ=UTC0 (every Android shell, mksh and
+    #: the older toolbox sh, takes a variable prefix), so its dates are UTC
+    #: and the parser returns them aware. Without it they were the device's
+    #: wall clock, handed out as the client's local time (as Telnet / SCP).
+    _LS = "TZ=UTC0 ls -la"
 
     def __init__(
         self,
@@ -592,7 +602,7 @@ class AdbSession(SessionLifecycle):
         from core.exec_util import ls_dir_operand, ls_error
 
         # /sdcard itself is a symlink on Android: list through it.
-        out = self._shell(f"ls -la {self._shell_q(ls_dir_operand(path))}")
+        out = self._shell(f"{self._LS} {self._shell_q(ls_dir_operand(path))}")
         items: list[FileItem] = []
         listed = False
         errors: list[str] = []
@@ -651,7 +661,7 @@ class AdbSession(SessionLifecycle):
 
         # Use ``ls -la -d <path>`` — -d prevents directories from
         # expanding their contents.
-        out = self._shell(f"ls -la -d {self._shell_q(path)}")
+        out = self._shell(f"{self._LS} -d {self._shell_q(path)}")
         errors: list[str] = []
         for line, rest in _ls_entries(out):
             entry = _parse_ls_entry(line, rest)
@@ -778,7 +788,11 @@ class AdbSession(SessionLifecycle):
     def mkdir(self, path: str) -> None:
         out = self._shell(f"mkdir {self._shell_q(path)}")
         if out.strip():
-            raise OSError(f"ADB mkdir({path}): {out.strip()}")
+            # Typed by mkdir's wording: "File exists" for an existing
+            # folder was a plain OSError (core.exec_util.ls_error).
+            from core.exec_util import ls_error
+
+            raise ls_error(f"ADB mkdir({path})", out.strip()[:500])
 
     def rename(self, src: str, dst: str) -> None:
         # Plain mv moves src INTO an existing folder dst and says nothing

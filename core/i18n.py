@@ -381,6 +381,34 @@ def format_count(n: int) -> str:
     return f"{int(n):,}".replace(",", _THOUSANDS.get(active().language, ","))
 
 
+#: Key names as the keyboard of each language prints them ("Strg+Umschalt+A").
+#: Qt's own .qm catalogues, which would do this, are not shipped.
+_KEY_NAMES = {
+    "de": {
+        "Ctrl": "Strg", "Shift": "Umschalt", "Del": "Entf", "Delete": "Entf",
+        "Ins": "Einfg", "Insert": "Einfg", "Return": "Eingabe", "Enter": "Eingabe",
+        "Space": "Leertaste", "Backspace": "Rücktaste", "Home": "Pos1", "End": "Ende",
+        "PgUp": "Bild auf", "PgDown": "Bild ab", "PageUp": "Bild auf",
+        "PageDown": "Bild ab", "Left": "Links", "Right": "Rechts", "Up": "Hoch",
+        "Down": "Runter", "Click": "Klick", "Drag": "Ziehen",
+        "Header drag": "Spaltenkopf ziehen",
+    },
+}
+
+
+def tr_keys(keys: str) -> str:
+    """A key combination such as ``"Ctrl+Shift+A"`` or ``"Up / Down"`` with
+    the active language's key names; English and unknown names unchanged."""
+    import re
+
+    names = _KEY_NAMES.get(active().language)
+    if not names:
+        return keys
+    if keys in names:  # a phrase ("Header drag")
+        return names[keys]
+    return re.sub(r"[A-Za-z]+", lambda m: names.get(m.group(0), m.group(0)), keys)
+
+
 __all__ = [
     "CATALOGUE_DIR",
     "format_count",
@@ -401,5 +429,6 @@ __all__ = [
     "stored_language",
     "timezone_from_localtime",
     "tr",
+    "tr_keys",
     "tr_n",
 ]

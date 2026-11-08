@@ -63,7 +63,7 @@ AREAS: tuple[Area, ...] = (
         *_core("features", "startup_guard", "qt_exit", "thread_lifetime", "thread_relay", "i18n",
                "posix_compat", "frozen_archive", "process_launcher", "subprocess_env",
                "desktop_open", "pane_activation", "open_limits", "json_store", "third_party",
-               "structured_log", "log_areas", "log_config"),
+               "structured_log", "log_areas", "log_config", "user_errors"),
     )),
     Area("protocols", "Protocols"),
     Area("protocols.connections", "Connections & Proxy", (

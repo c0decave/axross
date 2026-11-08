@@ -32,7 +32,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.i18n import tr
+from core.i18n import tr, tr_n
 from core.scheduler import MIN_INTERVAL_S, Job, JobStore, next_run_at, reenabled, script_target
 from ui.close_corner import add_close_corner
 from ui.icon_provider import set_window_icon
@@ -63,6 +63,23 @@ def format_interval(seconds: int) -> str:
         if value:
             parts.append(f"{value} {unit}" + ("s" if unit == "day" and value != 1 else ""))
     return "every " + (" ".join(parts) or "0 s")
+
+
+def shown_cell(column: str, text: str, job: Job) -> str:
+    """A :func:`job_row` cell as the table shows it: in the interface
+    language (the row itself stays English, for the tests and the log)."""
+    if column == "Every":
+        seconds = max(0, int(job.interval_s))
+        parts = []
+        for unit_s, unit in ((86400, "day"), (3600, "h"), (60, "min"), (1, "s")):
+            value, seconds = divmod(seconds, unit_s)
+            if value:
+                parts.append(tr_n(value, "{n} day", "{n} days") if unit == "day"
+                             else f"{value} {unit}")
+        return tr("every {interval}").format(interval=" ".join(parts) or "0 s")
+    if column == "Status" or text == "never":
+        return tr(text)
+    return text
 
 
 def job_row(job: Job, *, now: datetime | None = None) -> dict[str, str]:
@@ -101,7 +118,7 @@ class SchedulerDialog(QDialog):
         self.store = store
         self._jobs: list[Job] = []
 
-        self.setWindowTitle("Scheduled Jobs")
+        self.setWindowTitle(tr("Scheduled Jobs"))
         self.resize(900, 420)
         self._build()
         self.reload()
@@ -113,7 +130,7 @@ class SchedulerDialog(QDialog):
         add_close_corner(self)
 
         self._table = QTableWidget(0, len(COLUMNS), self)
-        self._table.setHorizontalHeaderLabels(list(COLUMNS))
+        self._table.setHorizontalHeaderLabels([tr(c) for c in COLUMNS])
         self._table.verticalHeader().setVisible(False)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -125,21 +142,22 @@ class SchedulerDialog(QDialog):
 
         form = QHBoxLayout()
         self._name_edit = QLineEdit(self)
-        self._name_edit.setPlaceholderText("Job name")
+        self._name_edit.setPlaceholderText(tr("Job name"))
         form.addWidget(self._name_edit)
 
         self._target_edit = QLineEdit(self)
-        self._target_edit.setPlaceholderText("Saved script name, e.g. mirror")
+        self._target_edit.setPlaceholderText(tr("Saved script name, e.g. mirror"))
         form.addWidget(self._target_edit)
 
         self._interval_box = QComboBox(self)
-        self._interval_box.addItems(list(INTERVAL_CHOICES))
-        self._interval_box.setCurrentText("1 hour")
+        for label, seconds in INTERVAL_CHOICES.items():
+            self._interval_box.addItem(tr(label), seconds)
+        self._interval_box.setCurrentIndex(list(INTERVAL_CHOICES).index("1 hour"))
         form.addWidget(self._interval_box)
 
         self._custom_spin = QSpinBox(self)
         self._custom_spin.setRange(0, 86400 * 7)
-        self._custom_spin.setSuffix(" s (0 = use the list)")
+        self._custom_spin.setSuffix(tr(" s (0 = use the list)"))
         self._custom_spin.setSpecialValueText("")
         # 0 (use the list) or at least five minutes, never in between: a
         # value is taken when typing ends, and one below the minimum snaps.
@@ -150,17 +168,17 @@ class SchedulerDialog(QDialog):
         self._custom_spin.valueChanged.connect(self._snap_custom_interval)
         form.addWidget(self._custom_spin)
 
-        add_btn = QPushButton("Add", self)
+        add_btn = QPushButton(tr("Add"), self)
         add_btn.clicked.connect(self._on_add)
         form.addWidget(add_btn)
         layout.addLayout(form)
 
         actions = QHBoxLayout()
-        self._toggle_btn = QPushButton("Enable / disable", self)
+        self._toggle_btn = QPushButton(tr("Enable / disable"), self)
         self._toggle_btn.clicked.connect(self._on_toggle)
         actions.addWidget(self._toggle_btn)
 
-        self._remove_btn = QPushButton("Remove", self)
+        self._remove_btn = QPushButton(tr("Remove"), self)
         self._remove_btn.clicked.connect(self._on_remove)
         actions.addWidget(self._remove_btn)
 
@@ -185,12 +203,14 @@ class SchedulerDialog(QDialog):
         self._table.setRowCount(len(rows))
         for row_idx, cells in enumerate(rows):
             for col_idx, column in enumerate(COLUMNS):
-                self._table.setItem(row_idx, col_idx, QTableWidgetItem(cells[column]))
+                self._table.setItem(row_idx, col_idx, QTableWidgetItem(
+                    shown_cell(column, cells[column], self._jobs[row_idx])))
         if not rows:
-            self._status.setText("No jobs scheduled.")
+            self._status.setText(tr("No jobs scheduled."))
         else:
             active = sum(1 for j in self._jobs if j.enabled)
-            self._status.setText(f"{len(rows)} job(s), {active} enabled")
+            self._status.setText(tr_n(len(rows), "{n} job, {active} enabled", "{n} jobs, {active} enabled",
+                                     active=active))
 
     # -- introspection ---------------------------------------------------
 
@@ -266,15 +286,13 @@ class SchedulerDialog(QDialog):
         name = self._name_edit.text().strip()
         target = self._target_edit.text().strip()
         if not name or not target:
-            QMessageBox.information(self, "Add job", "A name and a target are required.")
+            QMessageBox.information(self, tr("Add job"), tr("A name and a target are required."))
             return
-        interval = self._custom_spin.value() or INTERVAL_CHOICES[
-            self._interval_box.currentText()
-        ]
+        interval = self._custom_spin.value() or int(self._interval_box.currentData())
         try:
             self.add_job(name=name, kind="script", target=target, interval_s=interval)
         except ValueError as exc:
-            QMessageBox.warning(self, "Add job", str(exc))
+            QMessageBox.warning(self, tr("Add job"), str(exc))
             return
         self._name_edit.clear()
         self._target_edit.clear()
@@ -285,8 +303,8 @@ class SchedulerDialog(QDialog):
             return
         if QMessageBox.question(
             self,
-            "Remove job",
-            f"Remove {job.name!r} from the schedule?",
+            tr("Remove job"),
+            tr("Remove {name!r} from the schedule?").format(name=job.name),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         ) == QMessageBox.StandardButton.Yes:

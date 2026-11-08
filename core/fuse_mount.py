@@ -1181,31 +1181,75 @@ class MountHandle:
     backend_id: str
     _thread: threading.Thread = field(repr=False)
     _stop: threading.Event = field(default_factory=threading.Event, repr=False)
+    #: What ended the FUSE loop when it ended by an exception (fusepy
+    #: raises ``RuntimeError(status)`` when ``fuse_main`` fails: no
+    #: /dev/fuse, a busy or non-empty mount point, no permission).
+    error: BaseException | None = field(default=None, repr=False)
 
     def is_alive(self) -> bool:
         return self._thread.is_alive()
 
+    def is_mounted(self) -> bool:
+        """The kernel has the mount AND its loop serves it."""
+        return self._thread.is_alive() and os.path.ismount(self.mount_point)
+
+    def wait_until_mounted(self, timeout: float = 5.0) -> bool:
+        """Wait until the mount is up; False when the loop ended first or
+        *timeout* passed. :func:`mount` returns as soon as the loop thread
+        starts - a mount that libfuse refuses a moment later must not be
+        reported as mounted."""
+        deadline = time.monotonic() + timeout
+        while True:
+            if self.is_mounted():
+                return True
+            if not self._thread.is_alive() or time.monotonic() >= deadline:
+                return False
+            time.sleep(0.05)
+
     def unmount(self, timeout: float = 5.0) -> None:
-        """Best-effort unmount via fusermount. The mount loop exits
-        when the kernel detaches the FS; we then join the thread."""
+        """Unmount via fusermount (then umount), and wait for the loop to end.
+
+        Raises :class:`UnmountError` when the mount is still there or its
+        loop still runs afterwards ("Device or resource busy": a shell or
+        program has a file open in it). The handle stays valid then, so
+        the caller can keep it and try again."""
+        import subprocess
+
         log.info("FUSE unmounting: %s (backend=%s)", self.mount_point, self.backend_id)
-        # Always attempt the system unmount — easier to recover from
-        # a stuck mount this way than to try to signal libfuse.
+        failures: list[str] = []
         for cmd in (("fusermount", "-u", self.mount_point), ("umount", self.mount_point)):
             try:
-                import subprocess
-
-                subprocess.run(
+                done = subprocess.run(
                     cmd,
                     capture_output=True,
                     timeout=timeout,
                     check=False,
-                                    env=clean_child_env(),
+                    env=clean_child_env(),
                 )
             except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
                 log.debug("unmount(%s): %s failed: %s", self.mount_point, cmd[0], exc)
-        self._stop.set()
-        self._thread.join(timeout=timeout)
+                failures.append(f"{cmd[0]}: {exc}")
+                continue
+            if done.returncode == 0:
+                failures.clear()
+                break
+            detail = done.stderr.decode("utf-8", "replace").strip() if isinstance(
+                done.stderr, bytes) else str(done.stderr or "").strip()
+            failures.append(f"{cmd[0]} (exit {done.returncode}): {detail}")
+        mounted = os.path.ismount(self.mount_point)
+        if not mounted:
+            # Only once the kernel let go: the loop then ends by itself.
+            self._stop.set()
+            self._thread.join(timeout=timeout)
+        if mounted or self._thread.is_alive():
+            reason = "; ".join(failures) or "the FUSE loop did not end"
+            log.warning("FUSE unmount of %s failed: %s", self.mount_point, reason)
+            busy = "busy" in reason.lower()
+            raise UnmountError(errno.EBUSY if busy else errno.EIO, reason, self.mount_point)
+
+
+class UnmountError(OSError):
+    """The FUSE mount is still there (or still served) after an unmount."""
 
 
 def is_available() -> bool:
@@ -1263,6 +1307,7 @@ def mount(
         write_mode=write_mode,
     )
     stop = threading.Event()
+    holder: list[MountHandle] = []
 
     def _loop() -> None:
         try:
@@ -1276,8 +1321,9 @@ def mount(
                     nothreads=True,
                     allow_other=False,
                 )
-        except Exception as exc:  # noqa: BLE001 — log + die quietly
+        except Exception as exc:  # noqa: BLE001 — kept on the handle, logged
             log.warning("FUSE loop exited with %s", exc)
+            holder[0].error = exc
         finally:
             stop.set()
 
@@ -1286,22 +1332,24 @@ def mount(
         daemon=True,
         name=f"fuse-mount:{mount_point}",
     )
-    t.start()
     backend_id = type(backend).__name__
+    handle = MountHandle(
+        mount_point=mount_point,
+        backend_id=backend_id,
+        _thread=t,
+        _stop=stop,
+    )
+    holder.append(handle)
+    t.start()
     log.info(
-        "FUSE mounted: backend=%s root=%s -> %s mode=%s write_mode=%s",
+        "FUSE mount starting: backend=%s root=%s -> %s mode=%s write_mode=%s",
         backend_id,
         root,
         mount_point,
         "rw" if writeable else "ro",
         write_mode,
     )
-    return MountHandle(
-        mount_point=mount_point,
-        backend_id=backend_id,
-        _thread=t,
-        _stop=stop,
-    )
+    return handle
 
 
 __all__ = [
@@ -1310,6 +1358,7 @@ __all__ = [
     "MountHandle",
     "TTL_LISTING_DEFAULT",
     "TTL_STAT_DEFAULT",
+    "UnmountError",
     "_WriteSession",
     "is_available",
     "mount",

@@ -88,17 +88,19 @@ def ls_dir_operand(path: str) -> str:
 
 
 def ls_error(where: str, message: str) -> OSError:
-    """The OSError for an ``ls`` refusal, typed by its wording (GNU,
-    busybox and toybox say the same words).
+    """The OSError for an ``ls`` (``stat``, ``rm``, ``mkdir``) refusal,
+    typed by its wording (GNU, busybox and toybox say the same words).
 
     Only "No such file or directory" is a FileNotFoundError: callers
     answer exists() = False from it alone, so a refused permission or a
     message nobody recognises stays an OSError that means "cannot tell".
+    "File exists" (mkdir of an existing name) is a FileExistsError.
     """
     for text, kind, code in (
         ("No such file or directory", FileNotFoundError, errno.ENOENT),
         ("Permission denied", PermissionError, errno.EACCES),
         ("Not a directory", NotADirectoryError, errno.ENOTDIR),
+        ("File exists", FileExistsError, errno.EEXIST),
     ):
         if text in message:
             return kind(code, f"{where}: {message}")

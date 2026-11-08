@@ -67,8 +67,9 @@ class _Device:
         # Android's ls prints "YYYY-MM-DD HH:MM"; GNU ls does with long-iso.
         # (Its locale dates parse as nothing - an error since an answer
         # without one listing line understood is no empty folder.)
-        if cmd.startswith("ls -la "):
-            cmd = "ls -la --time-style=long-iso " + cmd[len("ls -la "):]
+        # The listing runs as "TZ=UTC0 ls -la ..." (UTC dates).
+        if cmd.startswith(("ls -la ", "TZ=UTC0 ls -la ")):
+            cmd = cmd.replace("ls -la ", "ls -la --time-style=long-iso ", 1)
         return "".join(map(str, _sh(cmd)[:1]))  # adb shell mixes stdout and stderr
 
 

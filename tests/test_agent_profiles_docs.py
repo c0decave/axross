@@ -4,6 +4,7 @@ the menu entries as they are on screen, the settings keys."""
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -38,14 +39,29 @@ def test_happy_every_preset_is_in_the_table_with_its_categories(name):
             assert f"*{server}*" in row, (preset.name, server)
 
 
+def _path(name: str, *labels: str) -> str:
+    """A menu path as the guide's reader sees it: German labels joined by
+    "→" in the German guide (it wrote the English "Tools > New Agent Tab
+    from Profile" for a menu that reads "Tools → Neuer Agent-Tab aus
+    Profile"), the English ones joined by ">" elsewhere."""
+    if name.endswith("_de.md"):
+        german = json.loads((ROOT / "resources/i18n/de.json").read_text(encoding="utf-8"))
+        def de(label: str) -> str:
+            bare = label.strip("*")
+            return label.replace(bare, german.get(bare, bare)).replace("&", "")
+
+        return " → ".join(de(label) for label in labels)
+    return " > ".join(label.replace("&", "") for label in labels)
+
+
 @pytest.mark.parametrize("name", HEADINGS)
 def test_happy_the_menu_entries_and_the_store_are_named_as_on_screen(name):
     section = " ".join(_section(name).split())  # a phrase may wrap
     for needle in ("New Tab from Profile", "Apply Profile…", "Edit Agent Profiles…",
-                   "Install from Catalog…", "Tools > New Agent Tab from Profile",
-                   "Agent Settings > **Profiles**", "*(preset)*", "*Copy*",
+                   "Install from Catalog…", _path(name, "Tools", "New Agent Tab from &Profile"),
+                   _path(name, "Agent Settings", "**Profiles**"), "*(preset)*", "*Copy*",
                    "~/.config/axross/agent/settings.json", "`agent_profiles`",
-                   "`agent_profile`", "Agent Settings > Access", "*Category*"):
+                   "`agent_profile`", _path(name, "Agent Settings", "Access"), "*Category*"):
         assert needle in section, needle
 
 

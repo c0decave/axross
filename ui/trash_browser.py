@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import trash as T
-from core.i18n import tr
+from core.i18n import tr, tr_n
 from ui.close_corner import add_close_corner
 from ui.scan_job import BusyStrip, ScanJob, shorten
 from ui.icon_provider import set_window_icon
@@ -76,7 +76,7 @@ class TrashBrowserDialog(QDialog):
         root.addWidget(self._info)
 
         self._table = QTableWidget(0, 4, self)
-        self._table.setHorizontalHeaderLabels(["Original Path", "Size", "Trashed At", "ID"])
+        self._table.setHorizontalHeaderLabels([tr("Original Path"), tr("Size"), tr("Trashed At"), tr("ID")])
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -87,15 +87,15 @@ class TrashBrowserDialog(QDialog):
         root.addWidget(self._table, stretch=1)
 
         btn_row = QHBoxLayout()
-        self._restore_btn = QPushButton("Restore")
+        self._restore_btn = QPushButton(tr("Restore"))
         self._restore_btn.clicked.connect(self._do_restore)
         btn_row.addWidget(self._restore_btn)
 
-        self._delete_btn = QPushButton("Delete Permanently")
+        self._delete_btn = QPushButton(tr("Delete Permanently"))
         self._delete_btn.clicked.connect(self._do_delete_permanent)
         btn_row.addWidget(self._delete_btn)
 
-        self._empty_btn = QPushButton("Empty Trash")
+        self._empty_btn = QPushButton(tr("Empty Trash"))
         self._empty_btn.clicked.connect(self._do_empty)
         btn_row.addWidget(self._empty_btn)
 
@@ -105,7 +105,7 @@ class TrashBrowserDialog(QDialog):
         # buttons, and the action buttons are off while it runs.
         self._job = ScanJob(self, formatter=self._progress_text)
         self._job.finished.connect(self._on_job_finished)
-        self._busy_strip = BusyStrip(self._job, self, cancel_text="Cancel")
+        self._busy_strip = BusyStrip(self._job, self, cancel_text=tr("Cancel"))
         root.addWidget(self._busy_strip)
         self._on_done = None
         # The listing has its own job: replacing a running load drops the
@@ -150,7 +150,7 @@ class TrashBrowserDialog(QDialog):
             self._fill([])
             QMessageBox.warning(
                 self,
-                "Trash",
+                tr("Trash"),
                 tr("Could not list trash:\n{error}").format(error=value),
             )
             return
@@ -173,7 +173,7 @@ class TrashBrowserDialog(QDialog):
             )
             self._table.setItem(row, 2, QTableWidgetItem(when))
             self._table.setItem(row, 3, QTableWidgetItem(e.trash_id))
-        self._info.setText(f"{len(entries)} entr{'y' if len(entries) == 1 else 'ies'} in trash.")
+        self._info.setText(tr_n(len(entries), "{n} entry in trash.", "{n} entries in trash."))
 
     def _selected_entries(self) -> list:
         out = []
@@ -203,7 +203,8 @@ class TrashBrowserDialog(QDialog):
 
     def _progress_text(self, state: dict) -> str:
         return (
-            f"Working… {state['scanned']} of {state['indexed']} — {shorten(state['path'])}"
+            tr("Working… {scanned} of {indexed} — {path}").format(
+                scanned=state['scanned'], indexed=state['indexed'], path=shorten(state['path']))
         )
 
     def _run(self, work, on_done) -> bool:
@@ -260,8 +261,8 @@ class TrashBrowserDialog(QDialog):
         if not entries:
             QMessageBox.information(
                 self,
-                "Restore",
-                "Select at least one entry to restore.",
+                tr("Restore"),
+                tr("Select at least one entry to restore."),
             )
             return
         backend = self._backend
@@ -275,14 +276,15 @@ class TrashBrowserDialog(QDialog):
 
         def done(kind, value, cancelled) -> None:
             if kind == "error":
-                QMessageBox.warning(self, "Restore", f"Failed:\n{value}")
+                QMessageBox.warning(self, tr("Restore"), tr("Failed:\n{value}").format(value=value))
                 return
             restored, errors = value
             if errors:
                 QMessageBox.warning(
                     self,
-                    "Restore",
-                    f"{restored} restored, {len(errors)} failed:\n" + "\n".join(errors[:10]),
+                    tr("Restore"),
+                    tr("{restored} restored, {failed} failed:\n").format(
+                        restored=restored, failed=len(errors)) + "\n".join(errors[:10]),
                 )
 
         self._run(self._per_entry(entries, restore), done)
@@ -295,10 +297,9 @@ class TrashBrowserDialog(QDialog):
             return
         reply = QMessageBox.question(
             self,
-            "Delete Permanently",
-            f"Delete {len(entries)} entr"
-            f"{'y' if len(entries) == 1 else 'ies'} "
-            f"from trash permanently? This cannot be undone.",
+            tr("Delete Permanently"),
+            tr_n(len(entries), "Delete {n} entry from trash permanently? This cannot be undone.",
+                 "Delete {n} entries from trash permanently? This cannot be undone."),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
@@ -317,11 +318,11 @@ class TrashBrowserDialog(QDialog):
 
         def done(kind, value, cancelled) -> None:
             if kind == "error":
-                QMessageBox.warning(self, "Delete Permanent", f"Failed:\n{value}")
+                QMessageBox.warning(self, tr("Delete Permanent"), tr("Failed:\n{value}").format(value=value))
                 return
             _deleted, errors = value
             if errors:
-                QMessageBox.warning(self, "Delete Permanent", "\n".join(errors[:10]))
+                QMessageBox.warning(self, tr("Delete Permanent"), "\n".join(errors[:10]))
 
         self._run(self._per_entry(entries, delete), done)
 
@@ -330,8 +331,8 @@ class TrashBrowserDialog(QDialog):
             return
         reply = QMessageBox.question(
             self,
-            "Empty Trash",
-            "Permanently delete ALL entries from trash?\nThis cannot be undone.",
+            tr("Empty Trash"),
+            tr("Permanently delete ALL entries from trash?\nThis cannot be undone."),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
@@ -339,17 +340,17 @@ class TrashBrowserDialog(QDialog):
         backend = self._backend
 
         def work(cancelled, report):
-            report(0, 1, "emptying the trash")
+            report(0, 1, tr("emptying the trash"))
             return T.empty_trash(backend)
 
         def done(kind, value, cancelled) -> None:
             if kind == "error":
-                QMessageBox.warning(self, "Empty Trash", f"Failed:\n{value}")
+                QMessageBox.warning(self, tr("Empty Trash"), tr("Failed:\n{value}").format(value=value))
                 return
             QMessageBox.information(
                 self,
-                "Empty Trash",
-                f"Removed {value} entr{'y' if value == 1 else 'ies'}.",
+                tr("Empty Trash"),
+                tr_n(value, "Removed {n} entry.", "Removed {n} entries."),
             )
 
         self._run(work, done)

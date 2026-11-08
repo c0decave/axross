@@ -410,14 +410,14 @@ class TerminalEmulator(QPlainTextEdit):
         """Copy, Paste (to the host) and Select All - no Cut, Delete, Undo:
         the screen belongs to the host - then what context_menu_hook adds."""
         menu = QMenu(self)
-        copy = menu.addAction("Copy")
+        copy = menu.addAction(tr("Copy"))
         copy.setEnabled(self.textCursor().hasSelection())
         copy.triggered.connect(self.copy)
-        paste = menu.addAction("Paste")
+        paste = menu.addAction(tr("Paste"))
         paste.setEnabled(self.canPaste())
         paste.triggered.connect(self.paste)
         menu.addSeparator()
-        select_all = menu.addAction("Select All")
+        select_all = menu.addAction(tr("Select All"))
         select_all.triggered.connect(self.selectAll)
         hook = self.context_menu_hook
         if hook is not None:
@@ -956,13 +956,13 @@ class _TerminalSearchBar(QWidget):
         layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(4)
         self._input = QLineEdit()
-        self._input.setPlaceholderText("Find in scrollback (Esc to close)")
+        self._input.setPlaceholderText(tr("Find in scrollback (Esc to close)"))
         self._input.returnPressed.connect(self._find_next)
         layout.addWidget(self._input, stretch=1)
-        prev_btn = QPushButton("Prev")
+        prev_btn = QPushButton(tr("Prev"))
         prev_btn.clicked.connect(self._find_prev)
         layout.addWidget(prev_btn)
-        next_btn = QPushButton("Next")
+        next_btn = QPushButton(tr("Next"))
         next_btn.clicked.connect(self._find_next)
         layout.addWidget(next_btn)
         close_btn = QPushButton("×")
@@ -1085,30 +1085,30 @@ class TerminalDock(QDockWidget):
         toolbar = QHBoxLayout()
 
         self._session_combo = QComboBox()
-        self._session_combo.addItem("Local Shell")
+        self._session_combo.addItem("Local Shell")  # the session key, not only a label
         self._session_combo.setMinimumWidth(200)
         self._session_combo.currentIndexChanged.connect(self._on_session_switched)
-        toolbar.addWidget(QLabel("Session:"))
+        toolbar.addWidget(QLabel(tr("Session:")))
         toolbar.addWidget(self._session_combo)
 
-        self._btn_start = QPushButton("Start")
+        self._btn_start = QPushButton(tr("Start"))
         self._btn_start.clicked.connect(self._start_session)
         toolbar.addWidget(self._btn_start)
 
-        self._btn_stop = QPushButton("Stop")
+        self._btn_stop = QPushButton(tr("Stop"))
         self._btn_stop.setEnabled(False)
         self._btn_stop.clicked.connect(self._stop_session)
         toolbar.addWidget(self._btn_stop)
 
-        self._btn_clear = QPushButton("Clear")
+        self._btn_clear = QPushButton(tr("Clear"))
         self._btn_clear.clicked.connect(self._clear_output)
         toolbar.addWidget(self._btn_clear)
 
         # "+" — spawn a brand-new local sub-shell tab. Adds an entry
         # to the session combo with a unique label so the user can
         # juggle multiple local shells without losing the original.
-        self._btn_new = QPushButton("+ Local")
-        self._btn_new.setToolTip("Spawn a fresh local sub-shell as a new session entry.")
+        self._btn_new = QPushButton(tr("+ Local"))
+        self._btn_new.setToolTip(tr("Spawn a fresh local sub-shell as a new session entry."))
         self._btn_new.clicked.connect(self._spawn_local_subshell)
         toolbar.addWidget(self._btn_new)
 
@@ -1121,12 +1121,12 @@ class TerminalDock(QDockWidget):
             self._theme_combo.addItem(theme_name)
         self._theme_combo.setCurrentText(DEFAULT_TERMINAL_THEME)
         self._theme_combo.currentTextChanged.connect(self._on_theme_changed)
-        toolbar.addWidget(QLabel("Theme:"))
+        toolbar.addWidget(QLabel(tr("Theme:")))
         toolbar.addWidget(self._theme_combo)
 
         toolbar.addStretch()
 
-        self._status_label = QLabel("Disconnected")
+        self._status_label = QLabel(tr("Disconnected"))
         toolbar.addWidget(self._status_label)
 
         layout.addLayout(toolbar)
@@ -1205,7 +1205,7 @@ class TerminalDock(QDockWidget):
                             if self._active_key == label:
                                 self._btn_start.setEnabled(False)
                                 self._btn_stop.setEnabled(True)
-                                self._status_label.setText(f"Connected: {label}")
+                                self._status_label.setText(tr("Connected: {name}").format(name=label))
                             log.info(
                                 "Restarted SSH terminal session for %s after transport update", name
                             )
@@ -1214,7 +1214,7 @@ class TerminalDock(QDockWidget):
                             if self._active_key == label:
                                 self._btn_start.setEnabled(True)
                                 self._btn_stop.setEnabled(False)
-                                self._status_label.setText("Disconnected")
+                                self._status_label.setText(tr("Disconnected"))
                                 self._terminal.message(f"\n--- Reconnect failed: {e} ---\n")
                 for j in range(self._session_combo.count()):
                     if self._ssh_extra.get(
@@ -1265,7 +1265,7 @@ class TerminalDock(QDockWidget):
         has_active_session = tab.session is not None and tab.session.is_active
         self._btn_start.setEnabled(not has_active_session)
         self._btn_stop.setEnabled(has_active_session)
-        self._status_label.setText(key if has_active_session else "Disconnected")
+        self._status_label.setText(key if has_active_session else tr("Disconnected"))
 
     def _start_session(self) -> None:
         key = self._current_key()
@@ -1285,7 +1285,7 @@ class TerminalDock(QDockWidget):
                     transport, initial_dir=tab.remote_dir, rows=rows, cols=cols
                 )
                 tab.session.start()
-                self._status_label.setText(f"Connected: {key}")
+                self._status_label.setText(tr("Connected: {name}").format(name=key))
             except Exception as e:
                 log.error("Failed to start SSH terminal: %s", e)
                 self._terminal.message(f"\n--- Error: {e} ---\n")
@@ -1295,7 +1295,7 @@ class TerminalDock(QDockWidget):
             tab.session = LocalTerminalSession(cwd=tab.cwd)
             tab.session.start()
             tab.session.resize(*self._terminal.grid_size())
-            self._status_label.setText("Local Shell")
+            self._status_label.setText(tr("Local Shell"))
 
         self._active_key = key
         self._btn_start.setEnabled(False)
@@ -1311,7 +1311,7 @@ class TerminalDock(QDockWidget):
             tab.session = None
         self._btn_start.setEnabled(True)
         self._btn_stop.setEnabled(False)
-        self._status_label.setText("Disconnected")
+        self._status_label.setText(tr("Disconnected"))
         self._terminal.message("\n--- Session ended ---\n")
 
     def _on_input(self, data: bytes) -> None:
@@ -1333,7 +1333,7 @@ class TerminalDock(QDockWidget):
                 if key == self._current_key():
                     self._btn_start.setEnabled(True)
                     self._btn_stop.setEnabled(False)
-                    self._status_label.setText("Disconnected")
+                    self._status_label.setText(tr("Disconnected"))
                     self._terminal.message("\n--- Session ended ---\n")
                 else:
                     tab.screen.feed("\r\n--- Session ended ---\r\n")
@@ -1425,7 +1425,7 @@ class TerminalDock(QDockWidget):
             self._start_session()
         except Exception as exc:  # noqa: BLE001 — UI-level catch
             log.error("Spawn local sub-shell failed: %s", exc)
-            self._status_label.setText(f"Spawn failed: {exc}")
+            self._status_label.setText(tr("Spawn failed: {error}").format(error=exc))
         log.info("Terminal dock: spawned %s", label)
 
     # ------------------------------------------------------------------
@@ -1450,7 +1450,7 @@ class TerminalDock(QDockWidget):
             self._start_session()
         except Exception as exc:  # noqa: BLE001 — UI-level catch, like + Local
             log.error("Terminal dock: starting %s failed: %s", label, exc)
-            self._status_label.setText(f"Start failed: {exc}")
+            self._status_label.setText(tr("Start failed: {error}").format(error=exc))
         return label
 
     def open_local_shell_at(self, directory: str) -> str | None:
@@ -1461,7 +1461,7 @@ class TerminalDock(QDockWidget):
         """
         folder = os.path.abspath(directory)
         if not os.path.isdir(folder):
-            self._status_label.setText(f"{folder} is no longer a folder")
+            self._status_label.setText(tr("{folder} is no longer a folder").format(folder=folder))
             log.warning("Terminal dock: %s is no longer a folder", folder)
             return None
         name = os.path.basename(folder.rstrip(os.sep)) or folder

@@ -752,7 +752,7 @@ class _MetadataSettingsForm:
         self.confirm_box.setChecked(MT.confirm_before_remove())
         layout.addWidget(self.confirm_box)
         caps = MT.capabilities()
-        missing = [f"{kind}: {cap.reason}" for kind, cap in caps.items() if cap.reason]
+        missing = [f"{tr(kind)}: {tr(cap.reason)}" for kind, cap in caps.items() if cap.reason]
         if missing:
             note = QLabel("\n".join(missing))
             note.setProperty("role", "muted")

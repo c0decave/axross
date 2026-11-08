@@ -15,6 +15,14 @@ does not clear the newer one).
 
 The entries of the pending cut are drawn dimmed in their pane
 (``names_in``), the way file managers show a cut that waits for a paste.
+
+Copy (Ctrl+C in a file pane) puts the paths on the system clipboard as text
+and remembers the entries here too, as a pending *copy* (``move`` False):
+Paste then copies them through the same transfer path, conflict prompt
+included - Ctrl+C then Ctrl+V did nothing before. A copy is not cleared by a
+paste (it can be pasted again), is not dimmed, and ends when the system
+clipboard no longer holds the text it put there (something else was copied
+meanwhile, in axross or another program).
 """
 
 from __future__ import annotations
@@ -27,12 +35,16 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 @dataclass(frozen=True, eq=False)
 class PendingCut:
-    """Entries cut in *source* (a file pane) on *backend*, all in *folder*."""
+    """Entries cut (or copied: *move* False) in *source* (a file pane) on
+    *backend*, all in *folder*. *clip_text* is what a copy put on the
+    system clipboard."""
 
     source: object
     backend: object
     folder: str
     paths: tuple[str, ...]
+    move: bool = True
+    clip_text: str = ""
 
     def names(self) -> frozenset[str]:
         """The entry names of :attr:`paths` (they all are in :attr:`folder`)."""
@@ -55,7 +67,13 @@ class CutClipboard(QObject):
 
     @property
     def pending(self) -> PendingCut | None:
-        return self._pending
+        cut = self._pending
+        if cut is not None and not cut.move and _system_clipboard_text() != cut.clip_text:
+            # Something else was copied since: a Paste must not paste
+            # the files of an older Ctrl+C.
+            self.clear(cut)
+            return None
+        return cut
 
     def cut(self, source, backend, folder: str, paths: Iterable[str]) -> PendingCut:
         """Remember *paths* (entries of *folder* on *backend*, shown in the
@@ -65,6 +83,19 @@ class CutClipboard(QObject):
         if not chosen:
             raise ValueError("nothing to cut")
         self._pending = PendingCut(source, backend, folder, chosen)
+        self.changed.emit()
+        return self._pending
+
+    def copy(self, source, backend, folder: str, paths: Iterable[str],
+             clip_text: str) -> PendingCut:
+        """Remember *paths* for a Paste that copies them (Ctrl+C); *clip_text*
+        is the text just put on the system clipboard. Replaces the pending
+        cut or copy; :class:`ValueError` for no paths."""
+        chosen = tuple(dict.fromkeys(str(p) for p in paths))
+        if not chosen:
+            raise ValueError("nothing to copy")
+        self._pending = PendingCut(source, backend, folder, chosen, move=False,
+                                   clip_text=clip_text)
         self.changed.emit()
         return self._pending
 
@@ -87,9 +118,21 @@ class CutClipboard(QObject):
     def names_in(self, backend, folder: str) -> frozenset[str]:
         """Names of the pending cut's entries shown in *folder* of *backend*."""
         cut = self._pending
-        if cut is None or cut.backend is not backend or cut.folder != folder:
+        if cut is None or not cut.move or cut.backend is not backend or cut.folder != folder:
             return frozenset()
         return cut.names()
+
+
+def _system_clipboard_text() -> str:
+    from PyQt6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        return ""
+    try:
+        return app.clipboard().text()
+    except RuntimeError:  # pragma: no cover - the application is going away
+        return ""
 
 
 _CLIPBOARD: CutClipboard | None = None

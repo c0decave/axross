@@ -1465,12 +1465,26 @@ def extract_archive(
 
     ``progress`` is an optional callable ``(current, total, name)``
     invoked once per archive entry.
+
+    Symbolic links in the archive are never extracted; a warning in the
+    log names them ("3 symbolic links were not extracted: a, b, c"), as
+    the folder is then not the whole archive.
     """
     from core.archive import extract
 
     log.info("axross.extract_archive: %s -> %s", local_path, dst_dir)
     file_count = extract(local_path, dst_dir, progress=progress)
     log.info("axross.extract_archive done: %d files into %s", file_count, dst_dir)
+    skipped = list(getattr(file_count, "skipped_links", None) or ())
+    if skipped:
+        more = ", …" if len(skipped) > 10 else ""
+        log.warning(
+            "axross.extract_archive: %d symbolic link%s not extracted: %s%s",
+            len(skipped),
+            "s were" if len(skipped) != 1 else " was",
+            ", ".join(skipped[:10]),
+            more,
+        )
     return dst_dir
 
 

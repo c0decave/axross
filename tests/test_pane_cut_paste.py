@@ -645,3 +645,90 @@ def test_edge_e2e_the_production_gate_can_stop_a_paste(win) -> None:
     assert not win._transfer_manager._jobs
     assert (ctx["a"] / "f.txt").read_text() == "payload"
     assert cut_clipboard().pending is not None
+
+
+# --- Copy (Ctrl+C) then Paste (Ctrl+V) ---------------------------------------
+# UX review round 3: Ctrl+C put the paths on the clipboard as text, and a
+# Ctrl+V in another pane then did nothing at all, silently. A Ctrl+C now
+# also remembers the entries, and Paste copies them through the transfer
+# queue (the conflict prompt included), like F5.
+
+
+def copy_in(pane, *names: str) -> None:
+    select(pane, *names)
+    press(pane._table, Qt.Key.Key_C, CTRL)
+
+
+def test_happy_ctrl_c_remembers_a_copy_that_is_not_dimmed(pane) -> None:
+    """The paths still reach the clipboard as text; nothing is marked as cut."""
+    from ui.cut_clipboard import cut_clipboard
+
+    folder = Path(pane.current_path)
+    copy_in(pane, "notes.txt")
+    pending = cut_clipboard().pending
+    assert pending is not None and pending.move is False
+    assert pending.paths == (str(folder / "notes.txt"),)
+    assert APP.clipboard().text() == str(folder / "notes.txt")
+    index = pane._table.model().index(row_of(pane, "notes.txt"), 0)
+    assert index.data(Qt.ItemDataRole.ForegroundRole) is None
+    assert "Ctrl+V" in pane._status.text()
+
+
+def test_happy_e2e_ctrl_c_then_ctrl_v_in_the_other_pane_copies(win) -> None:
+    from ui.cut_clipboard import cut_clipboard
+
+    ctx = win.test_ctx
+    copy_in(ctx["left"], "f.txt", "sub")
+    press(ctx["right"]._table, Qt.Key.Key_V, CTRL)
+    settle(win)
+    assert (ctx["b"] / "f.txt").read_text() == "payload"
+    assert (ctx["b"] / "sub" / "inner.txt").read_text() == "inner"
+    assert (ctx["a"] / "f.txt").read_text() == "payload"  # a copy, not a move
+    assert (ctx["a"] / "sub" / "inner.txt").read_text() == "inner"
+    assert cut_clipboard().pending is not None  # can be pasted again
+    assert ctx["asked"] == []
+    win._quit_with_transfers = True
+
+
+def test_edge_e2e_a_copy_paste_name_clash_goes_through_the_conflict_prompt(win) -> None:
+    ctx = win.test_ctx
+    (ctx["b"] / "f.txt").write_text("older")
+    ctx["right"].refresh()
+    copy_in(ctx["left"], "f.txt")
+    press(ctx["right"]._table, Qt.Key.Key_V, CTRL)
+    settle(win)
+    assert ctx["asked"] == ["f.txt"]  # the patched prompt answers Cancel
+    assert (ctx["b"] / "f.txt").read_text() == "older"
+    win._quit_with_transfers = True
+
+
+def test_edge_e2e_copying_something_else_ends_the_pending_copy(win) -> None:
+    """A later copy of text (here or in another program) must not paste
+    the files of an older Ctrl+C."""
+    from ui.cut_clipboard import cut_clipboard
+
+    ctx = win.test_ctx
+    copy_in(ctx["left"], "f.txt")
+    APP.clipboard().setText("some other text")
+    press(ctx["right"]._table, Qt.Key.Key_V, CTRL)
+    pump(0.3)
+    assert cut_clipboard().pending is None
+    assert not win._transfer_manager._jobs
+    assert list(ctx["b"].iterdir()) == []
+    copy_in(ctx["left"], "f.txt")  # copied again: this one is pasted
+    press(ctx["right"]._table, Qt.Key.Key_V, CTRL)
+    settle(win)
+    assert (ctx["b"] / "f.txt").read_text() == "payload"
+    win._quit_with_transfers = True
+
+
+def test_edge_e2e_a_copy_pasted_into_its_own_folder_copies_nothing(win) -> None:
+    ctx = win.test_ctx
+    copy_in(ctx["left"], "f.txt")
+    ctx["right"].navigate(str(ctx["a"]))
+    pump()
+    press(ctx["right"]._table, Qt.Key.Key_V, CTRL)
+    pump(0.3)
+    settle(win)
+    assert not win._transfer_manager._jobs
+    assert "Nothing to copy" in win.statusBar().currentMessage()

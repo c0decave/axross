@@ -57,6 +57,13 @@ def _is_not_found(exc: Exception) -> bool:
     return code in ("404", "NoSuchKey", "NotFound")
 
 
+# CopyObject copies at most 5 GiB in one request; a bigger object is copied
+# with a multipart upload whose parts are UploadPartCopy byte ranges.
+_MAX_SINGLE_COPY = 5 * 1024**3
+_COPY_PART_SIZE = 512 * 1024**2
+_MAX_PARTS = 10_000
+
+
 class _SpooledWriter:
     """Write to a temp file, then upload on close."""
 
@@ -343,6 +350,7 @@ class S3Session(SessionLifecycle):
     def list_dir(self, path: str) -> list[FileItem]:
         prefix = self._to_prefix(path)
         items: list[FileItem] = []
+        seen_any = not prefix  # the bucket root is always there
 
         try:
             paginator = self._s3.get_paginator("list_objects_v2")
@@ -353,6 +361,7 @@ class S3Session(SessionLifecycle):
             )
 
             for page in pages:
+                seen_any = seen_any or bool(page.get("CommonPrefixes") or page.get("Contents"))
                 # Directories (common prefixes)
                 for cp in page.get("CommonPrefixes", []):
                     dir_prefix = cp["Prefix"]
@@ -382,15 +391,25 @@ class S3Session(SessionLifecycle):
         except (ClientError, Exception) as e:
             raise OSError(f"Cannot list {path}: {e}") from e
 
+        if not seen_any:
+            # Nothing under the prefix - not even a folder marker: no folder
+            # (a typo listed as an empty one), or the name of a file.
+            if self._object_beside_prefix(prefix.rstrip("/"), path):
+                raise NotADirectoryError(errno.ENOTDIR, f"Cannot list {path}: a file", path)
+            raise FileNotFoundError(errno.ENOENT, f"Cannot list {path}: not found", path)
         return items
 
     def stat(self, path: str) -> FileItem:
         key = self._to_key(path)
         name = posixpath.basename(path.rstrip("/")) or path
 
-        # Check if it's a "directory" (has objects with this prefix)
-        if not key or key.endswith("/"):
+        if not key:
             return FileItem(name=name, is_dir=True)
+        if key.endswith("/"):
+            # A folder only when it is there: "x/" was a folder for any x.
+            if self.is_dir(path):
+                return FileItem(name=name, is_dir=True)
+            raise FileNotFoundError(errno.ENOENT, "Not found", path)
 
         # Try as object first
         try:
@@ -422,7 +441,7 @@ class S3Session(SessionLifecycle):
         except (ClientError, Exception) as e:
             raise OSError(f"Cannot stat {path}: {e}") from e
 
-        raise OSError(f"Not found: {path}")
+        raise FileNotFoundError(errno.ENOENT, "Not found", path)
 
     def is_dir(self, path: str) -> bool:
         """True when objects exist under ``path/``. A listing that fails
@@ -500,6 +519,10 @@ class S3Session(SessionLifecycle):
             else:
                 self._remove_prefix(key.rstrip("/") + "/")
         else:
+            # DeleteObject answers 204 for a key that is not there: a typo
+            # was reported as removed. Look first, as unlink(2) does.
+            if not self._object_beside_prefix(key, path):
+                raise FileNotFoundError(errno.ENOENT, f"Cannot remove {path}: not found", path)
             try:
                 self._s3.delete_object(Bucket=self._bucket, Key=key)
             except (ClientError, Exception) as e:
@@ -569,6 +592,14 @@ class S3Session(SessionLifecycle):
         dst_key = self._to_key(dst)
 
         src_is_dir = self.is_dir(src)
+        if not src_is_dir:
+            self._file_key(dst, "rename to")
+        if posixpath.normpath("/" + src_key) == posixpath.normpath("/" + dst_key):
+            # Copy onto itself, then delete the source: that deleted the
+            # only copy. rename(2) leaves the entry as it is.
+            if not src_is_dir and not self.exists(src):
+                raise FileNotFoundError(errno.ENOENT, f"Cannot rename {src}: not found", src)
+            return
         # Copy + delete onto an existing folder merged into it (namesakes
         # replaced, the source deleted) or put a file beside it that hid it.
         if self.is_dir(dst):
@@ -579,6 +610,10 @@ class S3Session(SessionLifecycle):
             raise FileExistsError(
                 errno.EEXIST, f"Cannot rename the folder {src} over the file {dst}", dst
             )
+        if src_is_dir and (dst_key.rstrip("/") + "/").startswith(src_key.rstrip("/") + "/"):
+            # rename(2) answers EINVAL: copy+delete moved the folder's files
+            # into a folder of its own and deleted them from their place.
+            raise OSError(errno.EINVAL, f"Cannot move the folder {src} into itself ({dst})", dst)
 
         if src_is_dir:
             if self._object_beside_prefix(src_key, src):
@@ -598,25 +633,92 @@ class S3Session(SessionLifecycle):
                 for obj in page.get("Contents", []):
                     old_key = obj["Key"]
                     new_key = new_prefix + old_key[len(old_prefix) :]
+                    what = f"Cannot rename {src} -> {dst}"
+                    self._copy_key(old_key, new_key, what, size=obj.get("Size"))
                     try:
-                        self._s3.copy_object(
-                            Bucket=self._bucket,
-                            CopySource={"Bucket": self._bucket, "Key": old_key},
-                            Key=new_key,
-                        )
                         self._s3.delete_object(Bucket=self._bucket, Key=old_key)
                     except (ClientError, Exception) as e:
-                        raise OSError(f"Cannot rename {src} -> {dst}: {e}") from e
+                        raise OSError(f"{what}: {e}") from e
         else:
+            what = f"Cannot rename {src} -> {dst}"
+            self._copy_key(src_key, dst_key, what, path=src)
             try:
-                self._s3.copy_object(
-                    Bucket=self._bucket,
-                    CopySource={"Bucket": self._bucket, "Key": src_key},
-                    Key=dst_key,
-                )
                 self._s3.delete_object(Bucket=self._bucket, Key=src_key)
             except (ClientError, Exception) as e:
-                raise OSError(f"Cannot rename {src} -> {dst}: {e}") from e
+                raise OSError(f"{what}: {e}") from e
+
+    def _copy_key(
+        self, src_key: str, dst_key: str, what: str, *, size: int | None = None, path: str = ""
+    ) -> None:
+        """Server-side copy of one object. CopyObject is capped at 5 GiB;
+        above that the copy is a multipart upload of UploadPartCopy ranges
+        (it failed with InvalidRequest before). *size* is the source size
+        when a listing already gave it; otherwise a HEAD finds it - and a
+        missing source is a FileNotFoundError."""
+        head: dict = {}
+        if size is None:
+            head = self._head_for_copy(src_key, what, path)
+            size = int(head.get("ContentLength") or 0)
+        source = {"Bucket": self._bucket, "Key": src_key}
+        if size <= _MAX_SINGLE_COPY:
+            try:
+                self._s3.copy_object(Bucket=self._bucket, CopySource=source, Key=dst_key)
+            except (ClientError, Exception) as e:
+                raise OSError(f"{what}: {e}") from e
+            return
+        if not head:
+            head = self._head_for_copy(src_key, what, path)
+        create: dict = {"Bucket": self._bucket, "Key": dst_key}
+        # CopyObject carries type and user metadata; a multipart upload
+        # only gets what CreateMultipartUpload is given.
+        for field in ("ContentType", "ContentEncoding", "ContentDisposition", "CacheControl"):
+            if head.get(field):
+                create[field] = head[field]
+        if head.get("Metadata"):
+            create["Metadata"] = head["Metadata"]
+        part_size = max(_COPY_PART_SIZE, -(-size // _MAX_PARTS))
+        try:
+            upload_id = self._s3.create_multipart_upload(**create)["UploadId"]
+        except (ClientError, Exception) as e:
+            raise OSError(f"{what}: {e}") from e
+        parts = []
+        try:
+            for number, start in enumerate(range(0, size, part_size), start=1):
+                end = min(start + part_size, size) - 1
+                resp = self._s3.upload_part_copy(
+                    Bucket=self._bucket,
+                    Key=dst_key,
+                    UploadId=upload_id,
+                    PartNumber=number,
+                    CopySource=source,
+                    CopySourceRange=f"bytes={start}-{end}",
+                )
+                parts.append({"PartNumber": number, "ETag": resp["CopyPartResult"]["ETag"]})
+            self._s3.complete_multipart_upload(
+                Bucket=self._bucket,
+                Key=dst_key,
+                UploadId=upload_id,
+                MultipartUpload={"Parts": parts},
+            )
+        except (ClientError, Exception) as e:
+            try:
+                self._s3.abort_multipart_upload(
+                    Bucket=self._bucket, Key=dst_key, UploadId=upload_id
+                )
+            except Exception:  # noqa: BLE001 - the copy error is the one to report
+                log.warning("S3: could not abort the multipart copy to %s", dst_key)
+            raise OSError(f"{what}: {e}") from e
+
+    def _head_for_copy(self, src_key: str, what: str, path: str) -> dict:
+        try:
+            return self._s3.head_object(Bucket=self._bucket, Key=src_key) or {}
+        except ClientError as e:
+            if _is_not_found(e):
+                where = path or "/" + src_key
+                raise FileNotFoundError(errno.ENOENT, f"{what}: not found", where) from e
+            raise OSError(f"{what}: {e}") from e
+        except Exception as e:
+            raise OSError(f"{what}: {e}") from e
 
     def open_read(self, path: str) -> IO[bytes]:
         key = self._to_key(path)
@@ -635,7 +737,7 @@ class S3Session(SessionLifecycle):
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
         if self._anonymous:
             raise OSError("Cannot write to anonymous/public S3 bucket (read-only)")
-        key = self._to_key(path)
+        key = self._file_key(path, "write")
         if append:
             # S3 doesn't support append — download, concatenate, re-upload.
             # Bounded so a hostile object can't OOM us.
@@ -745,15 +847,9 @@ class S3Session(SessionLifecycle):
             raise OSError(f"S3 get_object {path}@{version_id}: {exc}") from exc
 
     def copy(self, src: str, dst: str) -> None:
-        """S3 CopyObject — no client bytes."""
-        try:
-            self._s3.copy_object(
-                Bucket=self._bucket,
-                Key=self._to_key(dst),
-                CopySource={"Bucket": self._bucket, "Key": self._to_key(src)},
-            )
-        except Exception as exc:
-            raise OSError(f"S3 copy {src} -> {dst} failed: {exc}") from exc
+        """S3 CopyObject (UploadPartCopy above 5 GiB) — no client bytes."""
+        dst_key = self._file_key(dst, "copy to")
+        self._copy_key(self._to_key(src), dst_key, f"S3 copy {src} -> {dst} failed", path=src)
 
     # ------------------------------------------------------------------
     # S3-specific verbs (slice 5 of API_GAPS)
@@ -854,6 +950,20 @@ class S3Session(SessionLifecycle):
     def _to_key(self, path: str) -> str:
         """Convert a UI path to an S3 object key (no leading slash)."""
         return path.lstrip("/")
+
+    def _file_key(self, path: str, action: str) -> str:
+        """The object key a FILE at *path* is written to. A key ending in
+        "/" is a folder marker: data put there vanished from the listing
+        (shown as a folder) and the next mkdir() replaced it with an empty
+        marker. Such a destination - and the root - is refused."""
+        key = self._to_key(path)
+        if not key or key.endswith("/"):
+            raise IsADirectoryError(
+                errno.EISDIR,
+                f"Cannot {action} {path}: a path ending in '/' names a folder, not a file",
+                path,
+            )
+        return key
 
     def _to_prefix(self, path: str) -> str:
         """Convert a UI path to an S3 prefix for listing."""

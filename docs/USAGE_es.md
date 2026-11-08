@@ -1,8 +1,8 @@
 # Uso de Axross
 
 Esta guía cubre lo que puedes hacer con Axross una vez que está
-corriendo. Para la instalación, ver [INSTALL.md](../INSTALL.md); para
-el manual completo en alemán, ver [HANDBUCH.md](HANDBUCH.md).
+corriendo. Para la instalación, ver [INSTALL.md](../INSTALL.md); el
+manual en alemán es [USAGE_de.md](USAGE_de.md).
 
 Idiomas: [English](USAGE.md) · [Deutsch](USAGE_de.md) · **Español**
 
@@ -135,6 +135,10 @@ JSON de perfil mismo nunca lleva credenciales en plano.
   desde un campo de texto.
 - **Alt+Izq / Alt+Der** recorren la historia de panels;
   **Tab** / **Shift+Tab** en una lista de archivos ciclan los panels.
+- **Ctrl+F6** / **Ctrl+Shift+F6** (View → Focus Next Area / Focus
+  Previous Area) llevan el foco del teclado al área siguiente / anterior
+  de la ventana: los panels, Transfers y cada otro panel a la vista. Tab
+  nunca se detiene en un panel oculto detrás de otra pestaña.
 - Drag-and-drop entre panels inicia una transferencia (funciona
   para local↔remoto, remoto↔remoto, cross-protocolo). **Ctrl+X** /
   **Ctrl+V** hacen cut y paste entre dos carpetas cualesquiera (ver
@@ -179,7 +183,7 @@ panel de origen y de destino.
   **Workspace → Add Extension Panel** (también en el menú del clic
   derecho del tab) lleva un panel a un workspace - también el dock
   **Agent**, que allí es un panel más como los de extensiones
-  (**Ctrl+Shift+A** trae su workspace al frente). Allí es un panel más:
+  (**Ctrl+Shift+K** trae su workspace al frente). Allí es un panel más:
   solo aparece con su workspace, se va con él cuando se separa en una
   ventana, se arrastra por su barra de título sobre otro panel y acepta
   paneles arrastrados, cambia de tamaño con el splitter y **Equalize
@@ -976,7 +980,8 @@ puertas al mismo surface:
 
 - **Dock Console** (menú View) — REPL con entrada multilínea,
   historial, tab-completion, panel lateral con cada función y su
-  docstring.
+  docstring. Tab completa allí, así que **Esc** devuelve el foco al
+  panel de archivos.
 - **Headless** — ``axross --script myscript.py`` corre tu Python
   en el mismo namespace; ideal para cron/CI/lotes.
   Las palabras tras el fichero son el ``sys.argv[1:]`` del script
@@ -1159,7 +1164,8 @@ Para clientes LLM: [LLM_GUIDE.md](LLM_GUIDE.md) (en inglés).
 
 ## Dock Agent — un LLM local trabaja con axross
 
-View > Panels > Agent (Ctrl+Shift+A) abre un chat con un perfil LLM
+View > Panels > Agent (Ask the Agent: Ctrl+Shift+K; Ctrl+Shift+A en una
+lista de archivos invierte la selección) abre un chat con un perfil LLM
 (los perfiles del dock Analysis (sift): LM Studio, Ollama, vLLM, llama.cpp o
 cualquier servidor compatible con OpenAI; LLM… los gestiona). El modelo
 trabaja con las mismas herramientas que el servidor MCP, en la carpeta
@@ -1889,4 +1895,4 @@ security mode; *Check Now* sigue funcionando.
   referencia canónica del protocolo.
 - **¿Construir o contribuir?** [DEVELOPMENT.md](DEVELOPMENT.md) tiene
   la suite de tests, el compose del lab, y la matriz de cobertura.
-- **¿Manual completo en alemán?** [HANDBUCH.md](HANDBUCH.md).
+- **¿Manual en alemán?** [USAGE_de.md](USAGE_de.md).

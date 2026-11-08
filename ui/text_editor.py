@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 
 from core.open_limits import DEFAULT_MAX_OPEN_MB, describe_limit, max_open_bytes
 from ui.close_corner import add_close_corner
+from core.i18n import tr
 
 if TYPE_CHECKING:
     from core.backend import FileBackend
@@ -75,7 +76,7 @@ class TextEditorDialog(QDialog):
         self._loaded_once = False
 
         filename = file_path.rsplit(backend.separator(), 1)[-1]
-        prefix = "View" if read_only else "Edit"
+        prefix = tr("View") if read_only else tr("Edit")
         self.setWindowTitle(f"{prefix}: {filename} [{backend.name}]")
         self.resize(800, 600)
 
@@ -128,7 +129,7 @@ class TextEditorDialog(QDialog):
         # Buttons
         btn_layout = QHBoxLayout()
 
-        self._btn_save = QPushButton("Save")
+        self._btn_save = QPushButton(tr("Save"))
         self._btn_save.setShortcut(QKeySequence("Ctrl+S"))
         self._btn_save.setEnabled(False)
         self._btn_save.clicked.connect(self._save_file)
@@ -136,13 +137,13 @@ class TextEditorDialog(QDialog):
             self._btn_save.hide()
         btn_layout.addWidget(self._btn_save)
 
-        self._btn_reload = QPushButton("Reload")
+        self._btn_reload = QPushButton(tr("Reload"))
         self._btn_reload.clicked.connect(self._reload_file)
         btn_layout.addWidget(self._btn_reload)
 
         btn_layout.addStretch()
 
-        self._btn_close = QPushButton("Close")
+        self._btn_close = QPushButton(tr("Close"))
         self._btn_close.clicked.connect(self._on_close)
         btn_layout.addWidget(self._btn_close)
 
@@ -157,10 +158,9 @@ class TextEditorDialog(QDialog):
             if stat.size > max_open_bytes():
                 QMessageBox.warning(
                     self,
-                    "File Too Large",
-                    f"File is {stat.size_human} — only files up to {describe_limit()} "
-                    "are opened (change it under Edit → Settings… → Files & Panes → "
-                    "Open Size Limit).",
+                    tr("File Too Large"),
+                    tr("File is {size_human} — only files up to {describe_limit} are opened "
+                        "(change it under Edit → Settings… → Files & Panes → Open Size Limit).").format(size_human=stat.size_human, describe_limit=describe_limit()),
                 )
                 self.reject()
                 return
@@ -192,13 +192,13 @@ class TextEditorDialog(QDialog):
             self._loading = False
             self._modified = False
             self._btn_save.setEnabled(False)
-            self._status_label.setText("Loaded")
+            self._status_label.setText(tr("Loaded"))
             self._loaded_once = True
             log.debug("Loaded file: %s (%d bytes)", self._file_path, len(self._original_content))
 
         except OSError as e:
             log.error("Cannot read file %s: %s", self._file_path, e)
-            QMessageBox.critical(self, "Error", f"Cannot read file:\n{e}")
+            QMessageBox.critical(self, tr("Error"), tr("Cannot read file:\n{e}").format(e=e))
             self.reject()
 
     def _on_text_changed(self) -> None:
@@ -206,10 +206,10 @@ class TextEditorDialog(QDialog):
             return
         self._modified = True
         self._btn_save.setEnabled(True)
-        self._status_label.setText("Modified")
+        self._status_label.setText(tr("Modified"))
 
     def _reload_file(self) -> None:
-        if not self._confirm_discard_changes("Reload and discard unsaved changes?"):
+        if not self._confirm_discard_changes(tr("Reload and discard unsaved changes?")):
             return
         self._load_file()
 
@@ -225,8 +225,8 @@ class TextEditorDialog(QDialog):
         if not self._loaded_once:
             QMessageBox.warning(
                 self,
-                "Save Refused",
-                "The file was never read, so saving would replace content nobody has seen.",
+                tr("Save Refused"),
+                tr("The file was never read, so saving would replace content nobody has seen."),
             )
             return
         try:
@@ -241,9 +241,9 @@ class TextEditorDialog(QDialog):
                 if current_content != self._original_content:
                     reply = QMessageBox.question(
                         self,
-                        "File Changed",
-                        "The file has been modified on the server since you opened it.\n"
-                        "Overwrite with your changes?",
+                        tr("File Changed"),
+                        tr("The file has been modified on the server since you opened it.\n"
+                        "Overwrite with your changes?"),
                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                     )
                     if reply != QMessageBox.StandardButton.Yes:
@@ -251,8 +251,8 @@ class TextEditorDialog(QDialog):
             except EditorReadLimitError as e:
                 QMessageBox.warning(
                     self,
-                    "File Too Large",
-                    f"Cannot safely check remote changes:\n{e}",
+                    tr("File Too Large"),
+                    tr("Cannot safely check remote changes:\n{e}").format(e=e),
                 )
                 return
             except OSError as e:
@@ -265,9 +265,9 @@ class TextEditorDialog(QDialog):
             except UnicodeEncodeError as e:
                 QMessageBox.critical(
                     self,
-                    "Save Error",
-                    f"The text holds characters {encoding.upper()} cannot store "
-                    f"(the file was opened as {encoding.upper()}); nothing was written:\n{e}",
+                    tr("Save Error"),
+                    tr("The text holds characters {upper} cannot store (the file was opened "
+                        "as {upper}); nothing was written:\n{e}").format(upper=encoding.upper(), e=e),
                 )
                 return
 
@@ -277,13 +277,13 @@ class TextEditorDialog(QDialog):
             self._original_content = content
             self._modified = False
             self._btn_save.setEnabled(False)
-            self._status_label.setText("Saved")
+            self._status_label.setText(tr("Saved"))
             log.info("Saved file: %s (%d bytes)", self._file_path, len(content))
             self.saved.emit()
 
         except OSError as e:
             log.error("Cannot save file %s: %s", self._file_path, e)
-            QMessageBox.critical(self, "Save Error", f"Cannot save file:\n{e}")
+            QMessageBox.critical(self, tr("Save Error"), tr("Cannot save file:\n{e}").format(e=e))
 
     def _encoded_text(self, encoding: str) -> bytes:
         """The editor's text as the bytes the file should hold.
@@ -319,25 +319,25 @@ class TextEditorDialog(QDialog):
             return True
         reply = QMessageBox.question(
             self,
-            "Unsaved Changes",
+            tr("Unsaved Changes"),
             prompt,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         return reply == QMessageBox.StandardButton.Yes
 
     def _on_close(self) -> None:
-        if not self._confirm_discard_changes("You have unsaved changes. Discard them?"):
+        if not self._confirm_discard_changes(tr("You have unsaved changes. Discard them?")):
             return
         self.accept()
 
     def reject(self) -> None:
         # Esc must not throw away edits silently either.
-        if not self._confirm_discard_changes("You have unsaved changes. Discard them?"):
+        if not self._confirm_discard_changes(tr("You have unsaved changes. Discard them?")):
             return
         super().reject()
 
     def closeEvent(self, event) -> None:
-        if not self._confirm_discard_changes("You have unsaved changes. Discard them?"):
+        if not self._confirm_discard_changes(tr("You have unsaved changes. Discard them?")):
             event.ignore()
             return
         event.accept()

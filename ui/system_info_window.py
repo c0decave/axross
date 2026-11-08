@@ -419,10 +419,10 @@ class UsageBar(QWidget):
     def set_value(self, fraction: float | None, label: str, value_text: str,
                   colour: QColor | None = None) -> None:
         self.fraction = None if fraction is None else max(0.0, min(1.0, fraction))
-        self.label = label
+        self.label = tr(label)
         self.value_text = value_text
         self.colour = colour or level_colour(None if fraction is None else fraction * 100)
-        self.setToolTip(plain_tooltip(f"{label}: {value_text}"))
+        self.setToolTip(plain_tooltip(f"{self.label}: {value_text}"))
         self.update()
 
     def paintEvent(self, _event) -> None:  # noqa: N802 - Qt override
@@ -662,7 +662,7 @@ class PartitionBar(QWidget):
         line = fm.height() + 4
         y = bar_h + 8
         name_w = max(fm.horizontalAdvance(s["name"]) for s in segs) + 16
-        mount_w = min(320, max(fm.horizontalAdvance(", ".join(s["mounts"]) or "not mounted")
+        mount_w = min(320, max(fm.horizontalAdvance(", ".join(s["mounts"]) or tr("not mounted"))
                                for s in segs) + 20)
         for seg in segs:
             p.setPen(Qt.PenStyle.NoPen)
@@ -670,13 +670,13 @@ class PartitionBar(QWidget):
             p.drawRoundedRect(QRectF(1, y + line / 2 - 5, 10, 10), 2, 2)
             p.setPen(text)
             p.drawText(QRectF(18, y, name_w, line), Qt.AlignmentFlag.AlignVCenter, seg["name"])
-            mounts = ", ".join(seg["mounts"]) or "not mounted"
+            mounts = ", ".join(seg["mounts"]) or tr("not mounted")
             p.setPen(text if seg["mounts"] else muted(self))
             p.drawText(QRectF(18 + name_w, y, mount_w, line), Qt.AlignmentFlag.AlignVCenter,
                        fm.elidedText(mounts, Qt.TextElideMode.ElideMiddle, mount_w - 8))
             note = SI.human_bytes(seg["size"])
             if seg["percent"] is not None:
-                note += f" · {SI.percent(seg['percent'])} used"
+                note += " · " + tr("{percent} used").format(percent=SI.percent(seg["percent"]))
             p.setPen(muted(self))
             p.drawText(QRectF(18 + name_w + mount_w, y, width - name_w - mount_w, line),
                        Qt.AlignmentFlag.AlignVCenter, note)
@@ -812,7 +812,7 @@ class FitTree(QTreeWidget):
         columns = spec["columns"]
         parents = spec.get("parents")
         self.setColumnCount(len(columns))
-        self.setHeaderLabels(columns)
+        self.setHeaderLabels([tr(c) for c in columns])
         self.setRootIsDecorated(bool(parents))
         self.setUniformRowHeights(True)
         self.setAlternatingRowColors(True)
@@ -918,7 +918,7 @@ class FieldGrid(QWidget):
         self.rows: list[tuple[QLabel, QLabel, str]] = []
         colour = muted(self).name()
         for r, f in enumerate(fields):
-            label = set_plain(QLabel(f["label"]))
+            label = set_plain(QLabel(tr(f["label"])))
             label.setStyleSheet(f"color: {colour};")
             label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
             value = set_plain(QLabel(f["value"]))
@@ -958,7 +958,7 @@ class SectionView(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
-        layout.addWidget(heading(section["title"], 1.3))
+        layout.addWidget(heading(tr(section["title"]), 1.3))
         self.title_words = section["title"].lower()
         self.grid: FieldGrid | None = None
         self.tables: list[FitTree] = []
@@ -980,7 +980,7 @@ class SectionView(QWidget):
             self.grid = FieldGrid(section["fields"])
             layout.addWidget(self.grid)
         for spec in section.get("tables", []):
-            title = set_plain(QLabel(spec["title"]))
+            title = set_plain(QLabel(tr(spec["title"])))
             title.setFont(scaled_font(title, 1.0, bold=True))
             layout.addSpacing(4)
             layout.addWidget(title)
@@ -1176,7 +1176,8 @@ class HeaderCard(Card):
         col.addWidget(small(line1))
         session = os_data.get("session", "")
         desktop = os_data.get("desktop", "")
-        de = f"{desktop} on {session.capitalize() if session != 'x11' else 'X11'}" \
+        de = tr("{desktop} on {session}").format(
+            desktop=desktop, session=session.capitalize() if session != "x11" else "X11") \
             if desktop and session else desktop or session
         kernel = os_data.get("kernel", "")
         line2 = " · ".join(x for x in (os_data.get("name", ""),
@@ -1448,7 +1449,7 @@ class Overview(Page):
         for d in [d for d in data.get("displays", []) if d["status"] == "connected"][:3]:
             res = d.get("resolution") or d.get("preferred") or ""
             hz = f" @ {d['refresh']:.0f} Hz" if d.get("refresh") else ""
-            tile.body.addWidget(small(f"{d['connector']}: {d.get('monitor') or 'display'} · "
+            tile.body.addWidget(small(f"{d['connector']}: {d.get('monitor') or tr('display')} · "
                                       f"{res}{hz}", widget_muted=True))
         grid.add(tile)
 
@@ -1611,7 +1612,7 @@ class StackBar(QWidget):
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(colour)
             p.drawRoundedRect(QRectF(x, y + fm.height() / 2 - 5, 10, 10), 2, 2)
-            text = f"{label} {SI.human_bytes(value)} ({100 * value / total:.0f} %)"
+            text = f"{tr(label)} {SI.human_bytes(value)} ({100 * value / total:.0f} %)"
             p.setPen(self.palette().color(QPalette.ColorRole.Text))
             p.drawText(QRectF(x + 16, y, fm.horizontalAdvance(text) + 4, fm.height() + 2),
                        Qt.AlignmentFlag.AlignVCenter, text)
@@ -1644,10 +1645,11 @@ def memory_extra(section: dict, history: dict, live_targets: list) -> QWidget:
             stack.set_parts(memory_parts(stack, total, used, free))
         if swap_total:
             swap_bar.set_value(swap_used / swap_total, "Swap",
-                               f"{SI.human_bytes(swap_used)} of {SI.human_bytes(swap_total)}",
+                               tr("{used} of {total}").format(used=SI.human_bytes(swap_used),
+                                                              total=SI.human_bytes(swap_total)),
                                level_colour(100 * swap_used / swap_total, 60, 85))
         else:
-            swap_bar.set_value(None, "Swap", "none")
+            swap_bar.set_value(None, "Swap", tr("none"))
 
     show(data.get("total"), data.get("used") or 0, data.get("free"), data.get("swap_total"),
          data.get("swap_used") or 0)
@@ -1728,8 +1730,8 @@ def displays_extra(section: dict, screens: list[dict]) -> QWidget:
                                "detail": f"{s['width']}×{s['height']}",
                                "primary": s.get("primary")})
     sketch = DisplaySketch(shapes)
-    sketch.setToolTip("The displays as arranged by the desktop where it tells; otherwise side "
-                      "by side at their native resolution")
+    sketch.setToolTip(tr("The displays as arranged by the desktop where it tells; otherwise side "
+                      "by side at their native resolution"))
     return sketch
 
 
@@ -1847,7 +1849,7 @@ class InterfaceCard(Card):
             speed = iface["speed_mbps"]
             facts.append(f"{speed / 1000:g} Gb/s" if speed >= 1000 else f"{speed} Mb/s")
         if iface.get("signal_dbm") is not None:
-            facts.append(f"signal {iface['signal_dbm']} dBm")
+            facts.append(tr("signal {dbm} dBm").format(dbm=iface["signal_dbm"]))
         col.addWidget(small(" · ".join(f for f in facts if f), widget_muted=True))
         self.rate = small("↓ –   ↑ –" if up else "", widget_muted=False)
         col.addWidget(self.rate)

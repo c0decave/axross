@@ -57,10 +57,12 @@ def test_happy_each_readme_names_the_audio_page(name):
 
 
 def test_happy_the_extensions_doc_and_the_handbook_name_it():
+    """The German handbook is USAGE_de.md (HANDBUCH.md only points there);
+    it names the page by the German menu path the window shows."""
     assert "*Try Again*" in _text("docs/EXTENSIONS.md")
     assert "*Audio Settings…*" in _text("docs/EXTENSIONS.md")
-    handbook = _text("docs/HANDBUCH.md")
-    assert "### Audio" in handbook and "Edit → Settings… → Audio" in handbook
+    handbook = _text("docs/USAGE_de.md")
+    assert "Bearbeiten → Einstellungen… → Audio" in handbook
     assert "PipeWire" in handbook and "PulseAudio" in handbook
 
 

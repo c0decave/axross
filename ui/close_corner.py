@@ -45,6 +45,7 @@ from ui import window_move
 
 from ui.icon_provider import icon
 from ui.plain_text import plain_tooltip
+from core.i18n import tr, tr_keys
 
 
 def make_close_corner(parent: QWidget, handler: Callable[[], None]) -> QToolButton:
@@ -54,8 +55,8 @@ def make_close_corner(parent: QWidget, handler: Callable[[], None]) -> QToolButt
     btn.setAutoRaise(True)
     btn.setIcon(icon("x", 16))
     btn.setIconSize(QSize(16, 16))
-    btn.setToolTip("Close (Esc)")
-    btn.setAccessibleName("Close")
+    btn.setToolTip(tr("Close") + " (Esc)")
+    btn.setAccessibleName(tr("Close"))
     btn.clicked.connect(lambda _checked=False: handler())
     return btn
 
@@ -73,12 +74,12 @@ class _FollowWindowState(QObject):
 
     def update(self) -> None:
         if VW.is_maximized(self._window):
-            name, tip = "window-restore", f"Restore ({VW.MAXIMIZE_KEY})"
+            name, label = "window-restore", tr("Restore")
         else:
-            name, tip = "window-maximize", f"Maximize ({VW.MAXIMIZE_KEY})"
+            name, label = "window-maximize", tr("Maximize")
         self._button.setIcon(icon(name, 16))
-        self._button.setToolTip(tip)
-        self._button.setAccessibleName(tip.split(" ")[0])
+        self._button.setToolTip(f"{label} ({tr_keys(VW.MAXIMIZE_KEY)})")
+        self._button.setAccessibleName(label)
 
     def eventFilter(self, watched, event) -> bool:
         # A filter keeps getting events while Python tears it down (its
@@ -126,8 +127,8 @@ def make_dock_corner(window: QWidget) -> QToolButton:
     btn.setAutoRaise(True)
     btn.setIcon(icon("window-dock", 16))
     btn.setIconSize(QSize(16, 16))
-    btn.setToolTip("Put into the dock bar (a click on its name there brings it back)")
-    btn.setAccessibleName("Dock")
+    btn.setToolTip(tr("Put into the dock bar (a click on its name there brings it back)"))
+    btn.setAccessibleName(tr("Dock"))
 
     def dock() -> None:
         from ui.window_dock_bar import bar_for

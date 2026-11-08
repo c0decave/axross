@@ -192,6 +192,7 @@ packages = [
     "resources.i18n",
     "resources.chat_servers",
     "resources.handbook",
+    "resources.handbook.patterns",
 ]
 
 # Help > Handbook reads docs/USAGE*.md (core/handbook.py). A wheel carries
@@ -201,8 +202,14 @@ packages = [
 # document MANIFEST.in lists for the sdist; exclude-package-data leaves
 # everything that is not USAGE*.md out). tests/test_handbook.py holds the
 # names to core.handbook.HANDBOOK_FILES and build/axross.spec.
+# docs/patterns/ (in the sdist through MANIFEST.in) would otherwise be the
+# importable package "resources.handbook.patterns" to setuptools, which warns
+# "Package 'resources.handbook.patterns' is absent" on every build: it is
+# claimed here as a package of its own with no files (no module, and every
+# file excluded below), so the wheel carries nothing of it.
 [tool.setuptools.package-dir]
 "resources.handbook" = "docs"
+"resources.handbook.patterns" = "docs/patterns"
 
 [tool.setuptools.package-data]
 "resources.logo" = ["*.png", "*.svg"]
@@ -220,6 +227,7 @@ packages = [
 
 [tool.setuptools.exclude-package-data]
 "resources.handbook" = ["*.json", "patterns/*", "[!U]*", "U[!S]*"]
+"resources.handbook.patterns" = ["*"]
 
 [tool.setuptools.dynamic]
 version = { attr = "axross._version.__version__" }

@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QDialog,
@@ -88,6 +88,9 @@ class HandbookDialog(QDialog):
         set_window_icon(self, "book")
         self.setWindowTitle(tr("Handbook") + " — axross")
         self._root = root
+        #: Where the last heading gone to starts (a document position), put
+        #: at the top again when the window is shown; None: no heading.
+        self._scroll_target: int | None = None
         self.handbook: H.Handbook = H.load(language, root=root)
 
         self.view = guide_view.GuideBrowser()
@@ -181,8 +184,32 @@ class HandbookDialog(QDialog):
             return False
         self.search_hint.clear()
         guide_view.scroll_to(self.view, cursor)
+        self._scroll_target = cursor.block().position()
         self._select_in_contents(cursor.block().text())
         return True
+
+    def _scroll_to_target(self) -> None:
+        """The heading gone to at the top again, now that the view has its
+        final size (see showEvent)."""
+        position = self._scroll_target
+        if position is None:
+            return
+        try:
+            block = self.view.document().findBlock(position)
+        except RuntimeError:  # closed (WA_DeleteOnClose) before the timer ran
+            return
+        if block.isValid():
+            cursor = self.view.textCursor()
+            cursor.setPosition(block.position())
+            guide_view.scroll_to(self.view, cursor)
+
+    def showEvent(self, event) -> None:  # noqa: N802 — Qt
+        """Scroll to the section once more after the window is shown: F1
+        went to it before the first show, when the view had no size and no
+        scroll range yet, and the heading landed at the bottom of the view
+        instead of the top."""
+        super().showEvent(event)
+        QTimer.singleShot(0, self._scroll_to_target)
 
     def _select_in_contents(self, heading: str) -> None:
         found = self.contents.findItems(heading, Qt.MatchFlag.MatchExactly
@@ -208,6 +235,7 @@ class HandbookDialog(QDialog):
     def show_contents(self) -> None:
         """The start of the guide, the contents focused."""
         self.search_hint.clear()
+        self._scroll_target = None
         self.view.moveCursor(self.view.textCursor().MoveOperation.Start)
         self.view.verticalScrollBar().setValue(0)
         self.contents.setCurrentItem(None)
@@ -261,6 +289,7 @@ class HandbookDialog(QDialog):
         needle = self.search.text()
         self.search_hint.clear()
         if guide_view.find_next(self.view, needle):
+            self._scroll_target = None  # the match stays where find put it
             return True
         if needle:
             self.search_hint.setText(tr("Not found"))

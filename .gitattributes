@@ -1,0 +1,17 @@
+# Every text file is stored and checked out with LF, on every system: the
+# shell scripts, the Dockerfiles and the signed mail fixtures (DKIM covers
+# the exact line ends) break with CRLF, and a Windows checkout with
+# core.autocrlf would otherwise write CRLF.
+* text=auto eol=lf
+
+# Binary files the tree holds (git ls-files): never converted, never diffed
+# as text.
+# images
+*.png binary
+# archives (tests/fixtures/mail: the PST/OST fixtures)
+*.gz binary
+# audio (tests/fixtures/audio)
+*.flac binary
+*.mp3 binary
+*.ogg binary
+*.wav binary

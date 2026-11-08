@@ -242,6 +242,10 @@ and zip-slip via the same guards used by the file-manager UI.
 ``progress`` is an optional callable ``(current, total, name)``
 invoked once per archive entry.
 
+Symbolic links in the archive are never extracted; a warning in the
+log names them ("3 symbolic links were not extracted: a, b, c"), as
+the folder is then not the whole archive.
+
 ### `axross.is_archive(path: 'str') -> 'bool'`
 
 True when ``path`` looks like a zip / tar / 7z by extension.

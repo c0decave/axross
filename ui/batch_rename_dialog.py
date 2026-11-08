@@ -29,6 +29,7 @@ from core.path_policy import hidden_sibling_name
 from core.server_ops import rename_target_taken
 from ui.close_corner import add_close_corner
 from ui.icon_provider import set_window_icon
+from core.i18n import tr
 
 if TYPE_CHECKING:
     from core.backend import FileBackend
@@ -59,7 +60,7 @@ class BatchRenameDialog(QDialog):
         self._base_path = base_path
         self._items = items
 
-        self.setWindowTitle(f"Batch Rename — {len(items)} files")
+        self.setWindowTitle(tr("Batch Rename — {n} files").format(n=len(items)))
         self.setMinimumWidth(600)
         self.setMinimumHeight(400)
         self._setup_ui()
@@ -69,31 +70,31 @@ class BatchRenameDialog(QDialog):
         layout = QVBoxLayout(self)
 
         # Pattern input
-        pattern_group = QGroupBox("Rename Pattern")
+        pattern_group = QGroupBox(tr("Rename Pattern"))
         form = QFormLayout(pattern_group)
 
         self._mode = QComboBox()
-        self._mode.addItems(["Find & Replace", "Regex"])
+        self._mode.addItems([tr("Find & Replace"), tr("Regex")])
         self._mode.currentIndexChanged.connect(self._update_preview)
-        form.addRow("Mode:", self._mode)
+        form.addRow(tr("Mode:"), self._mode)
 
         self._find_edit = QLineEdit()
-        self._find_edit.setPlaceholderText("Search pattern")
+        self._find_edit.setPlaceholderText(tr("Search pattern"))
         self._find_edit.textChanged.connect(self._update_preview)
-        form.addRow("Find:", self._find_edit)
+        form.addRow(tr("Find:"), self._find_edit)
 
         self._replace_edit = QLineEdit()
-        self._replace_edit.setPlaceholderText("Replacement")
+        self._replace_edit.setPlaceholderText(tr("Replacement"))
         self._replace_edit.textChanged.connect(self._update_preview)
-        form.addRow("Replace:", self._replace_edit)
+        form.addRow(tr("Replace:"), self._replace_edit)
 
         options = QHBoxLayout()
-        self._case_sensitive = QCheckBox("Case sensitive")
+        self._case_sensitive = QCheckBox(tr("Case sensitive"))
         self._case_sensitive.setChecked(True)
         self._case_sensitive.toggled.connect(self._update_preview)
         options.addWidget(self._case_sensitive)
 
-        self._replace_all = QCheckBox("Replace all occurrences")
+        self._replace_all = QCheckBox(tr("Replace all occurrences"))
         self._replace_all.setChecked(True)
         self._replace_all.toggled.connect(self._update_preview)
         options.addWidget(self._replace_all)
@@ -103,11 +104,11 @@ class BatchRenameDialog(QDialog):
         layout.addWidget(pattern_group)
 
         # Preview table
-        preview_group = QGroupBox("Preview")
+        preview_group = QGroupBox(tr("Preview"))
         preview_layout = QVBoxLayout(preview_group)
 
         self._table = QTableWidget(len(self._items), 2)
-        self._table.setHorizontalHeaderLabels(["Current Name", "New Name"])
+        self._table.setHorizontalHeaderLabels([tr("Current Name"), tr("New Name")])
         self._table.horizontalHeader().setStretchLastSection(True)
         self._table.verticalHeader().setVisible(False)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -120,7 +121,7 @@ class BatchRenameDialog(QDialog):
         self._table.resizeColumnsToContents()
         preview_layout.addWidget(self._table)
 
-        self._status = QLabel(f"{len(self._items)} files selected, 0 will be renamed")
+        self._status = QLabel(tr("{n} files selected, 0 will be renamed").format(n=len(self._items)))
         preview_layout.addWidget(self._status)
 
         layout.addWidget(preview_group, stretch=1)
@@ -203,8 +204,8 @@ class BatchRenameDialog(QDialog):
             self._backend.rename(temp_path, recovery_path)
         except OSError as exc:
             log.error("Batch rename rollback failed for %s: %s", temp_path, exc)
-            return f"left as {temp_path}"
-        return f"kept as {recovery_path}"
+            return tr("left as {path}").format(path=temp_path)
+        return tr("kept as {path}").format(path=recovery_path)
 
     def _update_preview(self) -> None:
         pairs = self._compute_new_names()
@@ -215,7 +216,7 @@ class BatchRenameDialog(QDialog):
                 item.setForeground(Qt.GlobalColor.blue)
                 changed += 1
             self._table.setItem(row, 1, item)
-        self._status.setText(f"{len(self._items)} files selected, {changed} will be renamed")
+        self._status.setText(tr("{n} files selected, {changed} will be renamed").format(n=len(self._items), changed=changed))
 
     def _apply(self) -> None:
         pairs = self._compute_new_names()
@@ -228,7 +229,7 @@ class BatchRenameDialog(QDialog):
         # Check for conflicts (duplicate new names)
         new_names = [new for _, new in to_rename]
         if len(new_names) != len(set(new_names)):
-            QMessageBox.warning(self, "Conflict", "Some new names are duplicates. Fix the pattern.")
+            QMessageBox.warning(self, tr("Conflict"), tr("Some new names are duplicates. Fix the pattern."))
             return
 
         selected_old_names = {old for old, _ in to_rename}
@@ -239,8 +240,8 @@ class BatchRenameDialog(QDialog):
             except ValueError as exc:
                 QMessageBox.warning(
                     self,
-                    "Invalid Name",
-                    f"Refusing unsafe rename '{old_name}' -> '{new_name}':\n{exc}",
+                    tr("Invalid Name"),
+                    tr("Refusing unsafe rename '{old_name}' -> '{new_name}':\n{exc}").format(old_name=old_name, new_name=new_name, exc=exc),
                 )
                 return
 
@@ -256,7 +257,8 @@ class BatchRenameDialog(QDialog):
         ticker = QTimer(self)
         ticker.setInterval(150)
         ticker.timeout.connect(lambda: self._status.setText(
-            f"{progress['phase']} {progress['done']} of {progress['total']}…"))
+            tr("{phase} {done} of {total}…").format(
+                phase=tr(progress["phase"]), done=progress["done"], total=progress["total"])))
         ticker.start()
         try:
             outcome = run_off_gui(lambda: self._rename_all(to_rename, selected_old_names, progress))
@@ -265,8 +267,9 @@ class BatchRenameDialog(QDialog):
         if outcome[0] == "conflict":
             QMessageBox.warning(
                 self,
-                "Conflict",
-                f"Target '{outcome[1]}' already exists and is not part of the rename set.",
+                tr("Conflict"),
+                tr("Target '{name}' already exists and is not part of the rename set.").format(
+                    name=outcome[1]),
             )
             self._update_preview()
             return
@@ -274,8 +277,8 @@ class BatchRenameDialog(QDialog):
         if errors:
             QMessageBox.warning(
                 self,
-                "Rename Errors",
-                f"Renamed {renamed}, failed {len(errors)}:\n" + "\n".join(errors[:10]),
+                tr("Rename Errors"),
+                tr("Renamed {renamed}, failed {n}:\n").format(renamed=renamed, n=len(errors)) + "\n".join(errors[:10]),
             )
         self.accept()
 

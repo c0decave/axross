@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 
 from ui.close_corner import add_close_corner
 from ui.icon_provider import set_window_icon
+from core.i18n import tr
 
 
 class ChecksumDialog(QDialog):
@@ -32,7 +33,7 @@ class ChecksumDialog(QDialog):
         super().__init__(parent)
         set_window_icon(self, "shield")
         self._value = value
-        self.setWindowTitle("Checksum")
+        self.setWindowTitle(tr("Checksum"))
         self.resize(640, 160)
         self._build_ui(path, algo, value, source)
 
@@ -45,7 +46,7 @@ class ChecksumDialog(QDialog):
         path_label.setWordWrap(True)
         root.addWidget(path_label)
 
-        meta = QLabel(f"{algo}  ({source})")
+        meta = QLabel(f"{algo}  ({tr(source)})")
         meta.setProperty("role", "muted")
         root.addWidget(meta)
 
@@ -57,7 +58,7 @@ class ChecksumDialog(QDialog):
         root.addWidget(self._field)
 
         btn_row = QHBoxLayout()
-        copy_btn = QPushButton("Copy", self)
+        copy_btn = QPushButton(tr("Copy"), self)
         copy_btn.clicked.connect(self._copy)
         btn_row.addWidget(copy_btn)
         btn_row.addStretch(1)

@@ -14,6 +14,7 @@ catalogue has the tour names, their summaries and the step titles.
 
 from __future__ import annotations
 
+from PyQt6.QtCore import QPoint, QRect
 from PyQt6.QtWidgets import QWidget
 
 from ui.tour_engine import Tour, TourStep
@@ -35,6 +36,41 @@ def _active_pane(window):
 def _panes(window):
     """The panes of the workspace shown (the two panes of a first start)."""
     return window.findChild(QWidget, "workspaceTabs")
+
+
+def _other_panes(window) -> list:
+    """The panes beside the active one in its window, the target pane first."""
+    active = getattr(window, "_active_pane", None)
+    target = getattr(window, "_target_pane", None)
+    others = [p for p in getattr(window, "_panes", ())
+              if p is not active and p.isVisible() and p.window() is window]
+    if target in others:
+        others.remove(target)
+        others.insert(0, target)
+    return others
+
+
+def _target_button(window):
+    """The ◎ button of the target pane (another pane than the active one):
+    ◎ on the active pane - the source - cannot make it the target, and the
+    tours pointed there. With one pane only: that pane."""
+    for pane in _other_panes(window):
+        button = pane.findChild(QWidget, "axPaneTarget")
+        if button is not None and button.isVisible():
+            return button
+    return _active_pane(window)
+
+
+def _source_and_target(window):
+    """The active pane and the target pane together, as one area."""
+    panes = [p for p in (_active_pane(window), *_other_panes(window)[:1])
+             if p is not None and p.isVisible() and p.window() is window]
+    if not panes:
+        return None
+    area = QRect()
+    for pane in panes:
+        area = area.united(QRect(pane.mapTo(window, QPoint(0, 0)), pane.size()))
+    return window, area
 
 
 def _agent_mode(window):
@@ -59,11 +95,13 @@ GETTING_STARTED = Tour(
         ),
         TourStep(
             "Source and target",
-            "The active pane has a blue border, the target pane a green one: F5 copies the "
-            "selection to the target, F6 moves it there. The last pane you were in becomes "
-            "the target; the ◎ button in a pane's header makes that pane the target. Look "
-            "at the green border before you press F5.",
-            _active_pane,
+            "The active pane is the source: a blue border, and SOURCE in its header. The "
+            "target pane has a green border and TARGET: F5 copies the selection there, F6 "
+            "moves it there. A click into a pane makes it the source and the pane you were "
+            "in the target; ◎ in another pane's header makes that pane the target. Look "
+            "for TARGET before you press F5.",
+            _target_button,
+            frame=_source_and_target,
         ),
         TourStep(
             "The address bar",
@@ -166,10 +204,12 @@ COPY_SAFELY = Tour(
     (
         TourStep(
             "Check the target first",
-            "F5 and F6 go to the pane with the green border. ◎ in a pane's header makes "
-            "that pane the target - set it before you copy, and the files land where you "
-            "meant them to.",
-            _in_active_pane("axPaneTarget"),
+            "F5 and F6 go to the pane marked TARGET, with the green border; the pane you work "
+            "in is marked SOURCE. ◎ in another pane's header makes that pane the target - "
+            "set it before you copy, and the files land where you meant them to. One pane "
+            "only? Split it first (Ctrl+Shift+H).",
+            _target_button,
+            frame=_source_and_target,
         ),
         TourStep(
             "Conflicts are asked, not guessed",

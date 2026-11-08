@@ -139,12 +139,12 @@ class _ProxyForm:
         self._type = QComboBox()
         self._type.addItem(tr("None (connect directly)"), "none")
         for label, value in TRANSPORT_CHOICES:
-            self._type.addItem(label, value)
+            self._type.addItem(tr(label), value)
         form.addRow(tr("Type:"), self._type)
 
         self._auth = QComboBox()
         for label, _value in AUTH_CHOICES:
-            self._auth.addItem(label)
+            self._auth.addItem(tr(label))
         form.addRow(tr("Authentication:"), self._auth)
 
         self._host = QLineEdit()

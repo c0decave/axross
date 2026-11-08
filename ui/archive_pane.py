@@ -66,7 +66,7 @@ from core.archive import (
     list_archive,
     strip_archive_extension,
 )
-from core.i18n import tr
+from core.i18n import tr, tr_n
 from core.remote_name import sanitize_for_display
 from ui.icon_provider import set_window_icon
 
@@ -179,7 +179,7 @@ def build_archive_tree(entries: list[ArchiveEntry]) -> QStandardItemModel:
     PURE: takes entries, returns a model. No file IO, no widget show.
     """
     model = QStandardItemModel()
-    model.setHorizontalHeaderLabels(list(_HEADERS))
+    model.setHorizontalHeaderLabels([tr(h) for h in _HEADERS])
     root = model.invisibleRootItem()
 
     # Cache of dir-prefix -> the folder's Name QStandardItem, so repeated
@@ -385,7 +385,7 @@ def member_info(entry: ArchiveEntry) -> list[tuple[str, str]]:
         ("Name", entry.name),
         ("Type", kind_text),
         ("Size", format_size(max(0, entry.size))),
-        ("Compressed", f"{max(0, entry.compressed)} bytes"),
+        ("Compressed", tr("{n} bytes").format(n=max(0, entry.compressed))),
         ("Modified", modified),
         ("Mode", mode_text),
     ]
@@ -525,15 +525,15 @@ class ArchivePaneWidget(QWidget):
         layout.addWidget(self._tree, stretch=1)
 
         btn_row = QHBoxLayout()
-        self._btn_all = QPushButton("Extract All")
+        self._btn_all = QPushButton(tr("Extract All"))
         self._btn_all.clicked.connect(self.extract_all.emit)
         btn_row.addWidget(self._btn_all)
 
-        self._btn_selected = QPushButton("Extract Selected")
+        self._btn_selected = QPushButton(tr("Extract Selected"))
         self._btn_selected.clicked.connect(self._emit_extract_selected)
         btn_row.addWidget(self._btn_selected)
 
-        self._btn_to = QPushButton("Extract To…")
+        self._btn_to = QPushButton(tr("Extract To…"))
         self._btn_to.clicked.connect(self.extract_to.emit)
         btn_row.addWidget(self._btn_to)
 
@@ -591,12 +591,12 @@ class ArchivePaneWidget(QWidget):
             log.info("archive listing unavailable for %r: %s", self._archive_path, exc)
         elif isinstance(exc, UnsafeArchive):
             # Refused / hostile archive — show a safe message, no traceback.
-            self.load_error = f"Archive rejected: {exc}"
+            self.load_error = tr("Archive rejected: {error}").format(error=exc)
             log.warning("archive refused %r: %s", self._archive_path, exc)
         else:
             # Any other failure (corrupt file, OSError, format-library
             # quirk). Never crash the pane; show a generic safe message.
-            self.load_error = f"Archive could not be read: {exc}"
+            self.load_error = tr("Archive could not be read: {error}").format(error=exc)
             log.warning("archive listing failed %r: %s", self._archive_path, exc)
         self._set_empty_model()
         self._header_label.setText(basename)
@@ -613,9 +613,10 @@ class ArchivePaneWidget(QWidget):
         n_files = sum(1 for e in self._entries if not e.is_dir)
         total = sum(max(0, e.size) for e in self._entries if not e.is_dir)
         self._header_label.setText(
-            f"{basename} [{fmt}] — {n_files} entries, {_fmt_size(total)}",
+            f"{basename} [{fmt}] — "
+            + tr_n(n_files, "{n} entry, {size}", "{n} entries, {size}", size=_fmt_size(total)),
         )
-        self._status_label.setText("Ready")
+        self._status_label.setText(tr("Ready"))
         self._reveal_pending()
 
     def _reveal_key(self) -> tuple:
@@ -686,7 +687,7 @@ class ArchivePaneWidget(QWidget):
         """Install a header-only empty model so the tree is valid (and
         ``rowCount() == 0``) after a load failure."""
         model = QStandardItemModel()
-        model.setHorizontalHeaderLabels(list(_HEADERS))
+        model.setHorizontalHeaderLabels([tr(h) for h in _HEADERS])
         self._tree.setModel(model)
 
     @staticmethod

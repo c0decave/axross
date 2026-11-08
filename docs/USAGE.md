@@ -1,8 +1,8 @@
 # Using Axross
 
 This guide covers what you can do once Axross is running. For
-installation see [INSTALL.md](../INSTALL.md); for the full German
-manual see [HANDBUCH.md](HANDBUCH.md).
+installation see [INSTALL.md](../INSTALL.md); the German manual is
+[USAGE_de.md](USAGE_de.md).
 
 Languages: **English** · [Deutsch](USAGE_de.md) · [Español](USAGE_es.md)
 
@@ -127,6 +127,10 @@ profile goes, with its stored password.
   field.
 - **Alt+Left / Alt+Right** walk through pane history; **Tab** /
   **Shift+Tab** in a file list cycle the panes.
+- **Ctrl+F6** / **Ctrl+Shift+F6** (View → Focus Next Area / Focus
+  Previous Area) move the keyboard focus to the next / previous area of
+  the window: the panes, Transfers and every other panel in view. Tab
+  never stops in a panel tabbed away behind another one.
 - Drag-and-drop between panes initiates a transfer (works for
   local↔remote, remote↔remote, cross-protocol). **Ctrl+X** / **Ctrl+V**
   cut and paste entries between any two folders (see Transfers).
@@ -969,7 +973,8 @@ source of truth across all three entry points:
 
 - **Console dock** (View menu) — embedded REPL with multi-line
   input, history, tab completion, and a side panel listing every
-  function with its docstring.
+  function with its docstring. Tab completes there, so **Esc** takes
+  the focus back to the file pane.
 - **Headless** — ``axross --script myscript.py`` runs your Python
   in the same namespace; ideal for cron / CI / one-shot batching.
   Words after the file are the script's ``sys.argv[1:]``
@@ -1181,7 +1186,8 @@ For LLM clients: [LLM_GUIDE.md](LLM_GUIDE.md).
 ## Agent dock — a local LLM works with axross
 
 Tools > Start Agent, *New Agent Tab Here* in a pane's right-click menu
-(a new tab for that folder) or View > Panels > Agent (Ctrl+Shift+A)
+(a new tab for that folder) or View > Panels > Agent (Ask the Agent:
+Ctrl+Shift+K; Ctrl+Shift+A in a file list inverts the selection)
 open a chat with an LLM profile
 (the profiles of the Analysis dock: LM Studio, Ollama, vLLM, llama.cpp
 or any OpenAI-compatible server; LLM… manages them). The model works
@@ -1906,4 +1912,4 @@ environment or in the paranoid security mode; *Check Now* still works.
   protocol reference.
 - **Building or contributing?** [DEVELOPMENT.md](DEVELOPMENT.md)
   has the test suite, lab compose, and coverage matrix.
-- **Full German manual?** [HANDBUCH.md](HANDBUCH.md).
+- **German manual?** [USAGE_de.md](USAGE_de.md).

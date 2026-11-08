@@ -40,6 +40,7 @@ from core.profiles import (
 from core.thread_relay import GuiCall
 from core.transfer_manager import TransferManager
 from core.transfer_worker import TransferDirection
+from core.user_errors import describe
 from ui import themes, window_prefs
 from ui.state_files import MAX_UI_STATE_BYTES, _read_json_file, _write_private_text  # noqa: F401 - also used from here
 from ui.analysis_dock import DOCK_TITLE as ANALYSIS_DOCK_TITLE
@@ -551,9 +552,9 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         recheck_keyring_action = file_menu.addAction(tr("Re-&detect System Keyring"))
         recheck_keyring_action.setObjectName("axReDetectKeyringAction")
         recheck_keyring_action.setToolTip(
-            "Force a fresh check for SecretService / KWallet / "
+            tr("Force a fresh check for SecretService / KWallet / "
             "KeePassXC. Useful after starting a keyring daemon while "
-            "axross is already running."
+            "axross is already running.")
         )
         recheck_keyring_action.triggered.connect(self._recheck_keyring)
 
@@ -688,13 +689,23 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         view_menu.addSeparator()
 
         self._dock_view_menu = view_menu.addMenu(tr("P&anels"))
+        # The keyboard way between the window's areas - the panes, the
+        # Transfers panel, every other panel in view. Tab in a file list
+        # cycles the panes and Tab in the Console completes, so Tab alone
+        # could not get there (review round 3). F6 is Move to Target.
+        self._next_area_action = view_menu.addAction(tr("Focus Next Area"))
+        self._next_area_action.setShortcut(QKeySequence("Ctrl+F6"))
+        self._next_area_action.triggered.connect(lambda _c=False: self.focus_next_area(True))
+        self._prev_area_action = view_menu.addAction(tr("Focus Previous Area"))
+        self._prev_area_action.setShortcut(QKeySequence("Ctrl+Shift+F6"))
+        self._prev_area_action.triggered.connect(lambda _c=False: self.focus_next_area(False))
 
         view_menu.addSeparator()
 
         tagged_action = view_menu.addAction(tr("Tagged &Files…"))
         tagged_action.setObjectName("axTaggedFilesAction")
         self._tagged_action = tagged_action  # the toolbar shows it too
-        tagged_action.setToolTip("Every tag and the files that carry it")
+        tagged_action.setToolTip(tr("Every tag and the files that carry it"))
         tagged_action.triggered.connect(self._show_tagged_files)
         find_action = view_menu.addAction(tr("Find in Inde&x…"))
         self._find_index_action = find_action
@@ -703,13 +714,13 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
 
         self._view_media_action = view_menu.addAction(tr("&View Media…"))
         self._view_media_action.setToolTip(
-            "Images, PDFs and videos of the active pane's folder as overview or slideshow"
+            tr("Images, PDFs and videos of the active pane's folder as overview or slideshow")
         )
         self._view_media_action.triggered.connect(lambda: self._view_media(selected_only=False))
 
         self._view_selected_media_action = view_menu.addAction(tr("Vie&w Selected Media…"))
         self._view_selected_media_action.setToolTip(
-            "Images, PDFs and videos among the active pane's selection"
+            tr("Images, PDFs and videos among the active pane's selection")
         )
         self._view_selected_media_action.triggered.connect(
             lambda: self._view_media(selected_only=True)
@@ -720,22 +731,22 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         cas_action.triggered.connect(self._open_cas_duplicates)
 
         cas_history_action = view_menu.addAction(tr("Duplicate Index && History…"))
-        cas_history_action.setToolTip("Every scan of the duplicate index; remove or clear it")
+        cas_history_action.setToolTip(tr("Every scan of the duplicate index; remove or clear it"))
         cas_history_action.triggered.connect(self._open_cas_history)
 
         disk_action = view_menu.addAction(tr("Dis&k Usage…"))
         self._disk_usage_action = disk_action
-        disk_action.setToolTip("Capacity of every open connection")
+        disk_action.setToolTip(tr("Capacity of every open connection"))
         disk_action.triggered.connect(self._open_disk_usage)
 
         compare_action = view_menu.addAction(tr("Compare Pa&nes…"))
         compare_action.setObjectName("axCompareAction")
         self._compare_action = compare_action
-        compare_action.setToolTip("Diff the active pane's tree against the target pane's")
+        compare_action.setToolTip(tr("Diff the active pane's tree against the target pane's"))
         compare_action.triggered.connect(self._open_compare_panes)
 
         sched_action = view_menu.addAction(tr("Scheduled &Jobs…"))
-        sched_action.setToolTip("Run scripts on a recurring schedule")
+        sched_action.setToolTip(tr("Run scripts on a recurring schedule"))
         sched_action.triggered.connect(self._open_scheduler)
 
         view_menu.addSeparator()
@@ -800,7 +811,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         tools_menu.setObjectName("axToolsMenu")
         self._network_search_action = tools_menu.addAction(tr("&Find on Network Hosts (SMB)…"))
         self._network_search_action.setToolTip(
-            "Your files on many SMB hosts at once - host list, addresses or CIDR, one login, read only"
+            tr("Your files on many SMB hosts at once - host list, addresses or CIDR, one login, read only")
         )
         self._network_search_action.triggered.connect(self._show_network_search)
         diag_action = tools_menu.addAction(tr("Run Active Pane &Diagnostics…"))
@@ -907,7 +918,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         self._menu_icon(self._system_info_action, "system-info")
         metadata_settings_action = tools_menu.addAction(tr("&Metadata Settings…"))
         metadata_settings_action.setToolTip(
-            "How Remove Metadata writes (in place or a cleaned copy) and whether it asks first"
+            tr("How Remove Metadata writes (in place or a cleaned copy) and whether it asks first")
         )
         metadata_settings_action.triggered.connect(
             lambda _checked=False: self._show_metadata_settings()
@@ -949,12 +960,12 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         features_action = help_menu.addAction(tr("Features…"))
         features_action.setObjectName("axFeaturesAction")
         self._features_action = features_action  # the toolbar shows it too
-        features_action.setToolTip("Optional features: installed, missing, and how to get them")
+        features_action.setToolTip(tr("Optional features: installed, missing, and how to get them"))
         features_action.triggered.connect(self._show_features)
         guide_action = help_menu.addAction(tr("&Scripting Guide"))
         guide_action.triggered.connect(self._show_scripting_guide)
         third_party_action = help_menu.addAction(tr("&Third-Party Software…"))
-        third_party_action.setToolTip("The projects axross uses and ships, with their licences")
+        third_party_action.setToolTip(tr("The projects axross uses and ships, with their licences"))
         third_party_action.triggered.connect(self._show_third_party)
         help_menu.addSeparator()
         # Shown only while a newer version is there (ui.update_ui).
@@ -962,7 +973,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         self._update_menu_action.setVisible(False)
         self._update_menu_action.triggered.connect(lambda _checked=False: self.show_update_dialog())
         check_updates_action = help_menu.addAction(tr("Check for &Updates…"))
-        check_updates_action.setToolTip("Ask GitHub for a newer axross release")
+        check_updates_action.setToolTip(tr("Ask GitHub for a newer axross release"))
         check_updates_action.triggered.connect(lambda _checked=False: self.check_for_updates())
         about_action = help_menu.addAction(tr("&About axross"))
         about_action.triggered.connect(self._show_about)
@@ -974,16 +985,16 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
 
         quick_btn = toolbar.addAction(tr("Quick Connect"))
         quick_btn.setObjectName("axToolbarQuickConnect")
-        quick_btn.setToolTip("Quick connect to recent profiles (Ctrl+N)")
+        quick_btn.setToolTip(tr("Quick connect to recent profiles (Ctrl+N)"))
         quick_btn.triggered.connect(self._show_quick_connect)
 
         manager_btn = toolbar.addAction(tr("Connection Manager"))
         manager_btn.setObjectName("axToolbarConnectionManager")
-        manager_btn.setToolTip("Open connection manager (Ctrl+Shift+N)")
+        manager_btn.setToolTip(tr("Open connection manager (Ctrl+Shift+N)"))
         manager_btn.triggered.connect(self._on_connect)
 
         shell_btn = toolbar.addAction(tr("Shell"))
-        shell_btn.setToolTip("Open inline terminal pane (Ctrl+Shift+T)")
+        shell_btn.setToolTip(tr("Open inline terminal pane (Ctrl+Shift+T)"))
         shell_btn.setShortcut(QKeySequence("Ctrl+Shift+T"))
         shell_btn.triggered.connect(self._open_shell_pane)
 
@@ -991,48 +1002,48 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         # its own: F12 belongs to the dock's toggleViewAction and a second
         # owner would make the key ambiguous.
         self._bookmarks_btn = toolbar.addAction(tr("Bookmarks"))
-        self._bookmarks_btn.setToolTip("Show / hide the bookmark sidebar (F12)")
+        self._bookmarks_btn.setToolTip(tr("Show / hide the bookmark sidebar (F12)"))
         self._bookmarks_btn.setCheckable(True)
         self._bookmarks_btn.triggered.connect(self._toggle_bookmark_sidebar)
 
         toolbar.addSeparator()
 
         split_h_btn = toolbar.addAction(tr("Split Horizontal"))
-        split_h_btn.setToolTip("Split pane horizontally (Ctrl+Shift+H)")
+        split_h_btn.setToolTip(tr("Split pane horizontally (Ctrl+Shift+H)"))
         split_h_btn.triggered.connect(lambda: self._split_pane(Qt.Orientation.Horizontal))
 
         split_v_btn = toolbar.addAction(tr("Split Vertical"))
-        split_v_btn.setToolTip("Split pane vertically (Ctrl+Shift+V)")
+        split_v_btn.setToolTip(tr("Split pane vertically (Ctrl+Shift+V)"))
         split_v_btn.triggered.connect(lambda: self._split_pane(Qt.Orientation.Vertical))
 
         close_btn = toolbar.addAction(tr("Close Pane"))
-        close_btn.setToolTip("Close active pane (Ctrl+W)")
+        close_btn.setToolTip(tr("Close active pane (Ctrl+W)"))
         close_btn.triggered.connect(self._close_active_pane)
 
         # The Pane menu's own actions: one QAction per command, so a
         # shortcut has one owner and both places stay the same.
         toggle_btn = self._toggle_orient_action
         toolbar.addAction(toggle_btn)
-        toggle_btn.setToolTip("Toggle layout horizontal/vertical (Ctrl+Shift+L)")
+        toggle_btn.setToolTip(tr("Toggle layout horizontal/vertical (Ctrl+Shift+L)"))
 
         eq_btn = self._equalize_action
         toolbar.addAction(eq_btn)
-        eq_btn.setToolTip("Equalize pane sizes (Ctrl+Shift+E)")
+        eq_btn.setToolTip(tr("Equalize pane sizes (Ctrl+Shift+E)"))
 
         extract_btn = self._extract_pane_action
         toolbar.addAction(extract_btn)
-        extract_btn.setToolTip("Extract pane from nested split (Ctrl+Shift+X)")
+        extract_btn.setToolTip(tr("Extract pane from nested split (Ctrl+Shift+X)"))
 
         toolbar.addSeparator()
 
         copy_btn = toolbar.addAction(tr("Copy to Target"))
         copy_btn.setObjectName("axCopyToTargetAction")
-        copy_btn.setToolTip("Copy selected files to target pane (F5)")
+        copy_btn.setToolTip(tr("Copy selected files to target pane (F5)"))
         copy_btn.setShortcut(QKeySequence("F5"))
         copy_btn.triggered.connect(self._transfer_to_target)
 
         move_btn = toolbar.addAction(tr("Move to Target"))
-        move_btn.setToolTip("Move selected files to target pane (F6)")
+        move_btn.setToolTip(tr("Move selected files to target pane (F6)"))
         move_btn.setShortcut(QKeySequence("F6"))
         move_btn.triggered.connect(self._move_files)
 
@@ -1043,13 +1054,13 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         # desktop file managers + browsers. The toolbar-button
         # click and the V+iew menu's refresh entry still work for
         # mouse users.
-        refresh_btn.setToolTip("Refresh active pane (Ctrl+R)")
+        refresh_btn.setToolTip(tr("Refresh active pane (Ctrl+R)"))
         refresh_btn.setShortcut(QKeySequence("Ctrl+R"))
         refresh_btn.triggered.connect(self._refresh_active)
 
         # The shortcut belongs to View > Duplicate Finder; one owner per key.
         dupes_btn = toolbar.addAction(tr("Duplicate Finder"))
-        dupes_btn.setToolTip("Duplicate Finder (Ctrl+Shift+D)")
+        dupes_btn.setToolTip(tr("Duplicate Finder (Ctrl+Shift+D)"))
         dupes_btn.triggered.connect(self._open_cas_duplicates)
 
         # Icon-only toolbar: drop the inline [Shortcut] text labels,
@@ -1134,7 +1145,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             (self._manage_ext_action, "extensions", "Manage extensions"),
         ):
             toolbar.addAction(action)
-            action.setToolTip(tip)
+            action.setToolTip(tr(tip))
             action.setProperty("axIcon", icon_name)
             action.setProperty(TOOL_ID_PROPERTY, icon_name)
             action.setIcon(_ico(icon_name))
@@ -1177,7 +1188,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             action.triggered.connect(
                 lambda _checked=False, e=ext_id, t=title: self._toggle_extension_tool(e, t))
             self._extension_buttons[ext_id] = action
-            buttons.append((action, icon_name, f"{title} (extension)"))
+            buttons.append((action, icon_name,
+                            tr("{title} (extension)").format(title=tr(title))))
             if icon_name == "media-player":
                 # The equalizer: what plays and how (Settings > Audio).
                 buttons.append((self._av_settings_action, "audio-settings",
@@ -1190,7 +1202,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             toolbar.addSeparator()
         for action, icon_name, tip in buttons:
             toolbar.addAction(action)
-            action.setToolTip(tip)
+            action.setToolTip(tr(tip))
             action.setProperty("axIcon", icon_name)
             action.setProperty(TOOL_ID_PROPERTY, icon_name)
             action.setIcon(_ico(icon_name))
@@ -1503,6 +1515,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
 
         self._console_dock = ConsoleDock(self)
         self._console_dock.setObjectName("axConsoleDock")
+        # Esc in the REPL: back to the file pane (Tab there completes).
+        self._console_dock.repl.leave_requested.connect(self._focus_active_pane)
         self._install_dock_titlebar(
             self._console_dock,
             tr("Console"),
@@ -1631,7 +1645,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         if label:
             term.setToolTip(label)
         if not term.run_command(argv):
-            self.statusBar().showMessage(f"Could not start {argv[0] if argv else '?'}", 5000)
+            self.statusBar().showMessage(
+                tr("Could not start {program}").format(program=argv[0] if argv else "?"), 5000)
         return term
 
     def open_local_folder(self, path: str) -> None:
@@ -1928,7 +1943,10 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             lambda: self.open_settings("agent", "profiles"))
         self._agent_dock.visibilityChanged.connect(self._on_agent_visibility)
         self._focus_agent_action = QAction(tr("Ask the Agent"), self)
-        self._focus_agent_action.setShortcut(QKeySequence("Ctrl+Shift+A"))
+        # Not Ctrl+Shift+A: that is the file list's Invert Selection, and a
+        # window shortcut wins over the list's key - it opened the Agent
+        # instead (review round 3; tests/test_shortcut_collisions.py).
+        self._focus_agent_action.setShortcut(QKeySequence("Ctrl+Shift+K"))
         self._focus_agent_action.triggered.connect(self._focus_agent)
         self.addAction(self._focus_agent_action)
         self._populate_dock_view_menu()
@@ -2612,11 +2630,20 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                 "Extracted %s → %s (%d files)", archive_path, target_dir, state["count"]
             )
             self._refresh_panes_for_dir(os.path.dirname(target_dir))
-            QMessageBox.information(
-                self,
-                title,
-                f"Extracted {state['count']} files to\n{target_dir}",
+            from ui.file_pane import skipped_links_note
+
+            text = tr_n(
+                int(state["count"]),
+                "Extracted {n} file to\n{target}",
+                "Extracted {n} files to\n{target}",
+                target=target_dir,
             )
+            # Links are never extracted: say which, here and in the status line.
+            note = skipped_links_note(state["count"])
+            if note:
+                self.statusBar().showMessage(note, 8000)
+                text += "\n\n" + note
+            QMessageBox.information(self, title, text)
             return
         if state["error"] == "cancelled":
             log.info("Extraction cancelled: %s", archive_path)
@@ -2758,7 +2785,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             # On a worker, with Cancel after 250 ms: one member can be
             # gigabytes, and a .tar.gz is decompressed up to it - that held
             # every window (_extract_off_the_gui_thread).
-            self._extract_off_the_gui_thread(
+            result = self._extract_off_the_gui_thread(
                 f"Opening {os.path.basename(member_name.rstrip('/'))}…",
                 lambda progress: ARCH.extract_members(
                     archive_path, target, [member_name], progress=progress))
@@ -2780,6 +2807,15 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             log.warning("Open archive member failed for %r: %s", member_name, exc)
             return None
 
+        from ui.file_pane import skipped_links_note
+
+        note = skipped_links_note(result)
+        if note and not int(result or 0):
+            # The member is a link: links are never extracted, so there is
+            # nothing to open - say so rather than "not found on disk".
+            self.statusBar().showMessage(note, 8000)
+            QMessageBox.information(self, "Open Member", note)
+            return None
         # The member name may include a directory prefix; resolve the
         # actual extracted file path under the target dir.
         extracted = os.path.join(target, member_name.replace("\\", "/"))
@@ -3184,8 +3220,25 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         self.statusBar().showMessage(tr("Extensions folder: {folder}").format(folder=folder), 8000)
 
     def _set_target_pane(self, pane: FilePaneWidget) -> None:
-        """Explicitly set a pane as the transfer target."""
-        if pane not in self._panes or pane is self._active_pane:
+        """Explicitly set a pane as the transfer target (◎ in its header).
+
+        ◎ on the active pane - the source - cannot make it the target; that
+        click did nothing at all. With the default hover activation the
+        pane under the mouse becomes the active one, so the user is told
+        why and what to do instead."""
+        if pane not in self._panes:
+            return
+        if pane is self._active_pane:
+            others = [p for p in self._panes
+                      if p is not pane and p.isVisible() and p.window() is pane.window()]
+            if others:
+                text = tr("This pane is the source (the pane you work in), so it cannot "
+                          "be the target too. Click ◎ in another pane's header, or first "
+                          "click into the pane you copy from.")
+            else:
+                text = tr("This is the only pane, so there is no target: split it with "
+                          "Ctrl+Shift+H or Ctrl+Shift+V, then the new pane is the target.")
+            self.statusBar().showMessage(text, 8000)
             return
         self._target_pane = pane
         self._refresh_pane_styles()
@@ -3212,6 +3265,143 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             idx = 0
         self._set_active_pane(self._panes[idx])
         self._panes[idx]._table.setFocus()
+
+    # --- Keyboard focus: the window's areas (Ctrl+F6) and Tab past hidden panels ---
+
+    def _focus_reachable(self, widget: QWidget) -> bool:
+        """Whether *widget* lies where the user can see it: not in a panel
+        tabbed away behind another one. Qt counts such a panel as visible
+        (its region is empty), so Tab went through the title-bar buttons
+        of every panel behind the Transfers tab and into a Console REPL
+        off screen (review round 3)."""
+        from PyQt6.QtWidgets import QDockWidget
+
+        w = widget
+        while w is not None and w is not self:
+            if isinstance(w, QDockWidget):
+                if w.isFloating():
+                    return w.isVisible()
+                return w.isVisible() and not w.visibleRegion().isEmpty()
+            w = w.parentWidget()
+        return True
+
+    def _tab_focusable(self, widget: QWidget, start: QWidget | None = None,
+                       forward: bool = True) -> QWidget | None:
+        """*widget* (or its focus proxy) when Tab may stop there, else None.
+        The rules of Qt's own Tab walk, plus :meth:`_focus_reachable`."""
+        proxy = widget.focusProxy()
+        while proxy is not None and proxy.focusProxy() is not None:
+            proxy = proxy.focusProxy()
+        owner = proxy or widget
+        policy = owner.focusPolicy().value if owner.isEnabled() else 0
+        if policy & Qt.FocusPolicy.TabFocus.value != Qt.FocusPolicy.TabFocus.value:
+            return None
+        if proxy is not None and (proxy.isAncestorOf(widget) if forward
+                                  else widget.isAncestorOf(proxy)):
+            return None  # a compound widget: its proxy is visited on its own
+        if (not widget.isEnabled() or not widget.isVisibleTo(self)
+                or widget.window() is not self or owner is start
+                or not self._focus_reachable(widget)):
+            return None
+        return owner
+
+    def focusNextPrevChild(self, next: bool) -> bool:  # noqa: N802, A002 - Qt override
+        """Tab / Shift+Tab: Qt's walk, skipping what :meth:`_focus_reachable`
+        rules out. Without a reachable widget the focus stays."""
+        start = QApplication.focusWidget()
+        if start is None or start.window() is not self:
+            return super().focusNextPrevChild(next)
+        found = None
+        test = start.nextInFocusChain()
+        for _ in range(50000):  # the chain is a ring; this only guards a broken one
+            if test is None or test is start:
+                break
+            candidate = self._tab_focusable(test, start, next)
+            if candidate is not None:
+                found = candidate
+                if next:
+                    break
+            test = test.nextInFocusChain()
+        if found is not None:
+            found.setFocus(Qt.FocusReason.TabFocusReason if next
+                           else Qt.FocusReason.BacktabFocusReason)
+        return True
+
+    def _focus_areas(self) -> list[QWidget]:
+        """The areas Ctrl+F6 visits, in order: the panes of the workspace in
+        view (left to right, top to bottom), then the panels in view."""
+        from PyQt6.QtCore import QPoint
+        from PyQt6.QtWidgets import QDockWidget
+
+        def place(widget: QWidget) -> tuple[int, int]:
+            pos = widget.mapTo(self, QPoint(0, 0)) if widget.window() is self else QPoint(0, 0)
+            return (pos.y(), pos.x())
+
+        def in_view(widget: QWidget) -> bool:
+            return (widget.window() is self and widget.isVisible()
+                    and not widget.visibleRegion().isEmpty())
+
+        panes = [p for p in list(self._panes) + list(getattr(self, "_terminal_panes", []))
+                 if in_view(p)]
+        docks = [d for d in self.findChildren(QDockWidget)
+                 if d.isVisible() and not d.isFloating() and not d.visibleRegion().isEmpty()]
+        return sorted(panes, key=place) + sorted(docks, key=place)
+
+    def _focus_area(self, area: QWidget) -> None:
+        """Give *area* the keyboard focus: a file pane its list, a panel the
+        widget it had last, else its first list or text field."""
+        from PyQt6.QtWidgets import QAbstractScrollArea
+
+        if isinstance(area, FilePaneWidget):
+            if area in self._panes:
+                self._set_active_pane(area)
+            view = area._thumbs if area.view_mode == "thumbnails" else area._table
+            view.setFocus(Qt.FocusReason.ShortcutFocusReason)
+            return
+        last = area.focusWidget()
+        if (last is not None and area.isAncestorOf(last)
+                and self._tab_focusable(last) is not None):
+            last.setFocus(Qt.FocusReason.ShortcutFocusReason)
+            return
+        candidates = []  # in Tab order
+        w = area.nextInFocusChain()
+        for _ in range(50000):
+            if w is None or w is area or not area.isAncestorOf(w):
+                break
+            if self._tab_focusable(w) is not None:
+                candidates.append(w)
+            w = w.nextInFocusChain()
+        for w in candidates:
+            if isinstance(w, (QAbstractScrollArea, QLineEdit)):
+                w.setFocus(Qt.FocusReason.ShortcutFocusReason)
+                return
+        if candidates:
+            candidates[0].setFocus(Qt.FocusReason.ShortcutFocusReason)
+        else:
+            area.setFocus(Qt.FocusReason.ShortcutFocusReason)
+
+    def focus_next_area(self, forward: bool = True) -> None:
+        """View > Focus Next Area (Ctrl+F6) / Focus Previous Area
+        (Ctrl+Shift+F6): from the area holding the focus to the next one."""
+        areas = self._focus_areas()
+        if not areas:
+            return
+        focus = QApplication.focusWidget()
+        current = next((i for i, a in enumerate(areas)
+                        if focus is not None and (a is focus or a.isAncestorOf(focus))), None)
+        if current is None:
+            index = 0 if forward else len(areas) - 1
+        else:
+            index = (current + (1 if forward else -1)) % len(areas)
+        self._focus_area(areas[index])
+
+    def _focus_active_pane(self) -> None:
+        """Back to the active file pane's list (Esc in the Console)."""
+        pane = self._active_pane if self._active_pane in self._panes else None
+        if pane is None and self._panes:
+            pane = self._panes[0]
+        if pane is not None:
+            self._focus_area(pane)
 
     def _refresh_pane_styles(self) -> None:
         theme = themes.pane_family(
@@ -3260,7 +3450,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         names = [c[0] for c in choices]
         from PyQt6.QtWidgets import QInputDialog
 
-        choice, ok = QInputDialog.getItem(self, "Open Shell", "Select host:", names, editable=False)
+        choice, ok = QInputDialog.getItem(self, tr("Open Shell"), tr("Select host:"), names, editable=False)
         if not ok:
             return
 
@@ -3667,7 +3857,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         self._deferred_releases.append((profile, backend))
         log.info("%s stays connected until its transfers finish", profile.name)
         self.statusBar().showMessage(
-            f"{profile.name}: the connection stays open until its transfers finish", 8000
+            tr("{name}: the connection stays open until its transfers finish").format(
+                name=profile.name), 8000
         )
 
     @staticmethod
@@ -4220,7 +4411,9 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             jobs = _record(self._scheduler_jobs)
         self._scheduler_jobs = self._with_running_flags(jobs, finished=job_id)
         if not ok:
-            self.statusBar().showMessage(f"Scheduled job {job.name!r} failed: {detail}", 8000)
+            self.statusBar().showMessage(
+                tr("Scheduled job {name!r} failed: {detail}").format(name=job.name, detail=detail),
+                8000)
 
     def _backends_by_label(self) -> dict:
         """Every open backend, keyed by the label the journal records."""
@@ -4258,7 +4451,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             events = read_recent(limit=UNDO_JOURNAL_EVENTS)
         except Exception as exc:  # noqa: BLE001 — a broken journal must not block the app
             log.warning("undo: could not read the journal: %s", exc)
-            QMessageBox.warning(self, "Undo", f"Could not read the operation journal:\n{exc}")
+            QMessageBox.warning(self, tr("Undo"), tr("Could not read the operation journal:\n{error}").format(error=exc))
             return
 
         plans = undoable(events)
@@ -4303,34 +4496,35 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
 
     def _undo_picked(self, plans, kind: str, plan) -> None:
         if kind == "error":
-            QMessageBox.warning(self, "Undo failed", str(plan))
+            QMessageBox.warning(self, tr("Undo failed"), str(plan))
             return
         if plan is None:
             newest = plans[0] if plans else None
             if newest is not None and not newest.reversible:
                 QMessageBox.information(
                     self,
-                    "Nothing to undo",
-                    f"The most recent operation ({newest.operation}) cannot be "
-                    f"reversed:\n\n{newest.reason}",
+                    tr("Nothing to undo"),
+                    tr("The most recent operation ({operation}) cannot be reversed:\n\n"
+                       "{reason}").format(operation=newest.operation, reason=newest.reason),
                 )
             else:
                 QMessageBox.information(
                     self,
-                    "Nothing to undo",
-                    "No recent operation on a currently open connection can be reversed.",
+                    tr("Nothing to undo"),
+                    tr("No recent operation on a currently open connection can be reversed."),
                 )
             return
 
         refusal = self._undo_refusal(plan, self._backends_by_label())
         if refusal:
-            QMessageBox.information(self, "Cannot undo", refusal)
+            QMessageBox.information(self, tr("Cannot undo"), refusal)
             return
 
         if QMessageBox.question(
             self,
-            "Undo",
-            f"Undo the last {plan.operation}?\n\n{plan.reason}",
+            tr("Undo"),
+            tr("Undo the last {operation}?\n\n{reason}").format(
+                operation=plan.operation, reason=plan.reason),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         ) != QMessageBox.StandardButton.Yes:
@@ -4341,7 +4535,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         by_label = self._backends_by_label()
         refusal = self._undo_refusal(plan, by_label)
         if refusal:
-            QMessageBox.information(self, "Cannot undo", refusal)
+            QMessageBox.information(self, tr("Cannot undo"), refusal)
             return
         self._undo_apply(plan, by_label)
 
@@ -4389,18 +4583,18 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                     transfer=transfer,
                 )
             except (OSError, ValueError) as exc:
-                QMessageBox.warning(self, "Undo failed", str(exc))
+                QMessageBox.warning(self, tr("Undo failed"), str(exc))
             return
 
         def carried_out(kind, value):
             if kind == "error":
                 if not isinstance(value, (OSError, ValueError)):
                     raise value  # a bug: the error dialog
-                QMessageBox.warning(self, "Undo failed", str(value))
+                QMessageBox.warning(self, tr("Undo failed"), str(value))
                 return
             self._finish_undo(plan, pane)
 
-        self._undo_status(f"Undoing: {plan.reason}")
+        self._undo_status(tr("Undoing: {what}").format(what=plan.reason))
         self._undo_step(lambda: apply_undo(plan, backend, source_backend=None,
                                            transfer=None), carried_out)
 
@@ -4447,7 +4641,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                                                    backend=backend)
                 return done, failures
 
-            self._undo_status(f"Undoing: {plan.reason}")
+            self._undo_status(tr("Undoing: {what}").format(what=plan.reason))
             self._undo_step(work, lambda kind, value: self._undo_batch_ended(
                 plan, (pane, source_pane), kind, value))
             return
@@ -4457,7 +4651,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
 
         def queued(jobs) -> None:
             if partial and not jobs:
-                QMessageBox.warning(self, "Undo failed", f"{plan.reason} failed:\n{partial[0]}")
+                QMessageBox.warning(self, tr("Undo failed"), tr("{what} failed:\n{error}").format(
+                    what=plan.reason, error=partial[0]))
                 return
             back = {current: original for current, original in pairs}
             back.update({p.dest: p.source for p in plan.parts if p.action == "folder_back"})
@@ -4473,7 +4668,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             refused = [j for j in jobs if j.status is TransferStatus.ERROR]
             for job in refused:  # rows that never run: no signal comes for them
                 self._on_undo_job_error(job.job_id, job.error_message)
-            self.statusBar().showMessage(f"Undoing: {plan.reason}", 5000)
+            self.statusBar().showMessage(tr("Undoing: {what}").format(what=plan.reason), 5000)
 
         self._transfer_manager.transfer_pairs_in_background(
             backend, source_backend, pairs, self._transfer_direction(backend, source_backend),
@@ -4481,7 +4676,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         for each in (pane, source_pane):
             if each is not None:
                 self._transfer_target_panes.add(each)
-        self._undo_status(f"Undoing: {plan.reason}")
+        self._undo_status(tr("Undoing: {what}").format(what=plan.reason))
 
     def _undo_batch_jobs_ended(self, wait: dict) -> None:
         """Every job of a batch undo ended: the folders follow when all of
@@ -4513,7 +4708,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         if kind == "error":
             if not isinstance(value, (OSError, ValueError)):
                 raise value  # a bug: the error dialog
-            QMessageBox.warning(self, "Undo failed", str(value))
+            QMessageBox.warning(self, tr("Undo failed"), str(value))
             self._refresh_undo_panes(*panes)
             return
         done, failures = value
@@ -4530,7 +4725,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         elif files_done:
             # What came back is not offered again; the rest is.
             self._finish_undo(replace(plan, operation_id="", parts=tuple(files_done)),
-                              panes[0], jobs, message=f"Partly undone: {plan.reason}")
+                              panes[0], jobs, message=tr("Partly undone: {what}").format(what=plan.reason))
             self._refresh_undo_panes(panes[1])
         else:
             self._refresh_undo_panes(*panes)
@@ -4538,7 +4733,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         if len(failures) > 10:
             shown += "\n" + tr_n(len(failures) - 10, "… and {n} more", "… and {n} more")
         QMessageBox.warning(
-            self, "Undo",
+            self, tr("Undo"),
             tr("{count} of {total} entries could not be undone:\n{errors}\n\n"
                "They stay in the undo history.").format(
                 count=len(failures), total=len(plan.parts), errors=shown))
@@ -4571,13 +4766,16 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         finished signals of jobs already running, which an undo not yet
         watching them missed (it then never completed)."""
         if partial and not jobs:
-            QMessageBox.warning(self, "Undo failed", f"{plan.reason} failed:\n{partial[0]}")
+            QMessageBox.warning(self, tr("Undo failed"), tr("{what} failed:\n{error}").format(
+                    what=plan.reason, error=partial[0]))
             return
         self._await_undo_jobs(plan, list(jobs), pane, record=not partial)
         if partial:
             QMessageBox.warning(
-                self, "Undo", f"Not all of {plan.source} could be read for the undo:"
-                f"\n{partial[0]}\n\nWhat was found moves back; the undo stays in the history.")
+                self, tr("Undo"),
+                tr("Not all of {source} could be read for the undo:\n{error}\n\n"
+                   "What was found moves back; the undo stays in the history.").format(
+                    source=plan.source, error=partial[0]))
 
     def _await_undo_jobs(self, plan, jobs: list, pane, record: bool = True) -> None:
         """Record *plan* as undone when every job of it has finished (not
@@ -4587,13 +4785,14 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         refused = [j for j in jobs if j.status is TransferStatus.ERROR]
         if not jobs or refused:
             why = refused[0].error_message if refused else "nothing was queued"
-            QMessageBox.warning(self, "Undo failed", f"{plan.reason} failed:\n{why}")
+            QMessageBox.warning(self, tr("Undo failed"), tr("{what} failed:\n{error}").format(
+                what=plan.reason, error=why))
             return
         self._undo_waits.append(
             {"plan": plan, "pending": {j.job_id for j in jobs}, "pane": pane, "jobs": jobs,
              "record": record}
         )
-        self.statusBar().showMessage(f"Undoing: {plan.reason}", 5000)
+        self.statusBar().showMessage(tr("Undoing: {what}").format(what=plan.reason), 5000)
 
     def _on_undo_job_finished(self, job_id: str) -> None:
         for wait in list(self._undo_waits):
@@ -4614,7 +4813,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                     if pane is not None and pane in self._panes:
                         pane.refresh_after_change()
                     self.statusBar().showMessage(
-                        f"Partly undone: {wait['plan'].reason}", 8000)
+                        tr("Partly undone: {what}").format(what=wait["plan"].reason), 8000)
 
     def _on_undo_job_error(self, job_id: str, error: str) -> None:
         for wait in list(self._undo_waits):
@@ -4632,9 +4831,9 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             plan = wait["plan"]
             QMessageBox.warning(
                 self,
-                "Undo failed",
-                f"{plan.reason} failed:\n{error}\n\n"
-                "The operation stays in the undo history.",
+                tr("Undo failed"),
+                tr("{what} failed:\n{error}\n\nThe operation stays in the undo history.").format(
+                    what=plan.reason, error=error),
             )
 
     @staticmethod
@@ -4780,10 +4979,10 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         if left is None or right is None or left is right:
             QMessageBox.information(
                 self,
-                "Compare Panes",
-                "Comparing needs two panes: an active one and a target. "
+                tr("Compare Panes"),
+                tr("Comparing needs two panes: an active one and a target. "
                 "Split the view (Ctrl+Shift+H) and mark the second pane as "
-                "target from its header.",
+                "target from its header."),
             )
             return
 
@@ -4841,8 +5040,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             return True
         QMessageBox.information(
             self,
-            "Compare Panes",
-            "A pane of this comparison has been closed; compare again.",
+            tr("Compare Panes"),
+            tr("A pane of this comparison has been closed; compare again."),
         )
         return False
 
@@ -4936,7 +5135,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
     def _queue_sync(self, left, right, items: list, made: int, error=None) -> None:
         """The copies of a sync plan, once its folders exist (_apply_sync)."""
         if error is not None:
-            QMessageBox.warning(self, "Sync", f"Could not create the folders:\n{error}")
+            QMessageBox.warning(self, tr("Sync"), tr("Could not create the folders:\n{error}").format(error=error))
             return
         if not self._compared_panes_open(left, right):
             return
@@ -5106,7 +5305,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         """Duplicate Finder, identical folders: bookmark *folder*."""
         pane = self._pane_for_backend_id(backend_id)
         if pane is None:
-            QMessageBox.information(self, "CAS", f"No pane is open on [{backend_id}].")
+            QMessageBox.information(self, tr("CAS"), tr("No pane is open on [{backend}].").format(backend=backend_id))
             return
         self._on_bookmark_request(folder, pane.backend.name, pane)
 
@@ -5122,10 +5321,10 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         if _backend_id_for(pane.backend) != backend_id:
             QMessageBox.information(
                 self,
-                "CAS",
-                f"That file lives on backend [{backend_id}] but the "
-                f"active pane is on [{_backend_id_for(pane.backend)}]. "
-                "Open the matching session first.",
+                tr("CAS"),
+                tr("That file lives on backend [{backend}] but the active pane is on "
+                   "[{active}]. Open the matching session first.").format(
+                    backend=backend_id, active=_backend_id_for(pane.backend)),
             )
             return
         try:
@@ -5133,8 +5332,9 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         except OSError as exc:
             QMessageBox.warning(
                 self,
-                "CAS",
-                f"Could not navigate to {path}:\n{exc}",
+                tr("CAS"),
+                tr("Could not navigate to {path}:\n{error}").format(
+                    path=path, error=describe(exc, path)),
             )
 
     def _open_metadata_search(self) -> None:
@@ -5168,10 +5368,10 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         if _backend_id_for(pane.backend) != backend_id:
             QMessageBox.information(
                 self,
-                "Find in Index",
-                f"That entry lives on backend [{backend_id}] but the "
-                f"active pane is on [{_backend_id_for(pane.backend)}]. "
-                "Open the matching session first.",
+                tr("Find in Index"),
+                tr("That entry lives on backend [{backend}] but the active pane is on "
+                   "[{active}]. Open the matching session first.").format(
+                    backend=backend_id, active=_backend_id_for(pane.backend)),
             )
             return
         target = path if is_dir else pane.backend.parent(path)
@@ -5180,8 +5380,9 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         except OSError as exc:
             QMessageBox.warning(
                 self,
-                "Find in Index",
-                f"Could not navigate to {target}:\n{exc}",
+                tr("Find in Index"),
+                tr("Could not navigate to {path}:\n{error}").format(
+                    path=target, error=describe(exc, target)),
             )
 
     # ------------------------------------------------------------------
@@ -5499,9 +5700,9 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         reply = QMessageBox.question(
             self,
             tr("Run ProxyCommand?"),
-            f"The profile '{profile.name}' was imported and connects through this "
-            f"command, which runs on this computer:\n\n{command}\n\n"
-            "Run it now and from now on?",
+            tr("The profile '{name}' was imported and connects through this command, "
+               "which runs on this computer:\n\n{command}\n\nRun it now and from now on?"
+               ).format(name=profile.name, command=command),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -5543,7 +5744,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         ]
         if hasattr(self, "statusBar") and self.statusBar():
             self.statusBar().showMessage(
-                f"Connecting to {profile.name}…",
+                tr("Connecting to {name}…").format(name=profile.name),
                 0,
             )
 
@@ -5689,14 +5890,15 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                     # isn't on offer.
                     QMessageBox.warning(
                         self,
-                        "Password not saved",
+                        tr("Password not saved"),
                         keyring_status_message(),
                     )
                 else:
                     reply = QMessageBox.question(
                         self,
-                        "Save Password",
-                        f"Save password for '{profile.name}' in the system keyring?",
+                        tr("Save Password"),
+                        tr("Save password for '{name}' in the system keyring?").format(
+                            name=profile.name),
                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                     )
                     if reply == QMessageBox.StandardButton.Yes:
@@ -5707,7 +5909,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                         else:
                             QMessageBox.warning(
                                 self,
-                                "Password not saved",
+                                tr("Password not saved"),
                                 keyring_status_message()
                                 or "Could not persist password — see axross.log.",
                             )
@@ -5727,7 +5929,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                 if key_passphrase:
                     prompt = f"Wrong passphrase. {prompt}"
                 entered, ok = QInputDialog.getText(
-                    self, "Key Passphrase", prompt, QLineEdit.EchoMode.Password
+                    self, tr("Key Passphrase"), prompt, QLineEdit.EchoMode.Password
                 )
                 if not ok:
                     log.info("Quick connect to %s: passphrase prompt cancelled", profile.name)
@@ -5735,7 +5937,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                 key_passphrase = entered
                 self._run_connect_async(profile, password, key_passphrase, _on_success, _on_failure)
                 return
-            QMessageBox.critical(self, "Connection Failed", str(exc))
+            QMessageBox.critical(self, tr("Connection Failed"), describe(exc))
             log.error("Quick connect failed: %s", exc)
 
         self._run_connect_async(
@@ -6067,8 +6269,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         except (OSError, ValueError) as e:
             QMessageBox.information(
                 self,
-                "Restore Session",
-                f"No saved session found.\n{e}",
+                tr("Restore Session"),
+                tr("No saved session found.\n{error}").format(error=e),
             )
             return
 
@@ -6078,16 +6280,16 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         if problem:
             QMessageBox.information(
                 self,
-                "Restore Session",
-                f"The saved session cannot be restored.\n{problem}",
+                tr("Restore Session"),
+                tr("The saved session cannot be restored.\n{problem}").format(problem=problem),
             )
             return
 
         if not _session_has_panes(data):
             QMessageBox.information(
                 self,
-                "Restore Session",
-                "Saved session is empty.",
+                tr("Restore Session"),
+                tr("Saved session is empty."),
             )
             return
         # The rebuild closes every pane and shell of every workspace: ask
@@ -6516,7 +6718,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                 label = f"Session restore: Password for '{profile.name}'\n{what}"
                 password, ok = QInputDialog.getText(
                     self,
-                    "Session Restore — Password Required",
+                    tr("Session Restore — Password Required"),
                     label,
                     QLineEdit.EchoMode.Password,
                 )
@@ -6551,7 +6753,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                         prompt = f"Wrong passphrase. {prompt}"
                     key_passphrase, ok = QInputDialog.getText(
                         self,
-                        "Session Restore — Key Passphrase",
+                        tr("Session Restore — Key Passphrase"),
                         prompt,
                         QLineEdit.EchoMode.Password,
                     )
@@ -6664,9 +6866,9 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             if password and not profile.store_password:
                 reply = QMessageBox.question(
                     self,
-                    "Save Password",
-                    f"Save password for '{profile.name}' in the system keyring?\n"
-                    "This allows automatic reconnection.",
+                    tr("Save Password"),
+                    tr("Save password for '{name}' in the system keyring?\n"
+                       "This allows automatic reconnection.").format(name=profile.name),
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 )
                 if reply == QMessageBox.StandardButton.Yes:
@@ -6679,8 +6881,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                     else:
                         QMessageBox.warning(
                             self,
-                            "Keyring Error",
-                            "Could not save password to system keyring.",
+                            tr("Keyring Error"),
+                            tr("Could not save password to system keyring."),
                         )
 
             if not self._profile_manager.get(profile.name):
@@ -6689,7 +6891,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             log.info("Connected to %s", session.name)
 
         def _on_failure(exc):
-            QMessageBox.critical(self, "Connection Failed", str(exc))
+            QMessageBox.critical(self, tr("Connection Failed"), describe(exc))
             log.error("Connection failed: %s", exc)
 
         self._run_connect_async(
@@ -6703,7 +6905,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
     def _import_ssh_hosts(self, hosts: list, source: str) -> None:
         """Import parsed SSH host configs into connection profiles."""
         if not hosts:
-            QMessageBox.information(self, "SSH Config", f"No hosts found in {source}")
+            QMessageBox.information(self, tr("SSH Config"), tr("No hosts found in {source}").format(source=source))
             return
 
         imported = 0
@@ -6774,7 +6976,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         from core.ssh_config import parse_ssh_config
 
         dlg = QDialog(self)
-        dlg.setWindowTitle("Paste SSH Config")
+        dlg.setWindowTitle(tr("Paste SSH Config"))
         set_window_icon(dlg, "server")
         dlg.resize(520, 380)
         layout = QVBoxLayout(dlg)
@@ -6782,13 +6984,13 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
 
         text_edit = QPlainTextEdit()
         text_edit.setPlaceholderText(
-            "Paste SSH config here, e.g.:\n\n"
+            tr("Paste SSH config here, e.g.:\n\n"
             "Host myserver\n"
             "    Hostname 192.168.1.10\n"
             "    User admin\n"
             "    Port 22\n"
             "    IdentityFile ~/.ssh/id_rsa\n"
-            "    ProxyCommand ssh -W %h:%p jumphost"
+            "    ProxyCommand ssh -W %h:%p jumphost")
         )
         layout.addWidget(text_edit)
 
@@ -6830,12 +7032,13 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         try:
             data = _read_json_file(path, max_bytes=MAX_PROFILE_IMPORT_BYTES)
         except (ValueError, OSError) as e:
-            QMessageBox.warning(self, "Import Error", f"Cannot read file:\n{e}")
+            QMessageBox.warning(self, tr("Import Error"), tr("Cannot read file:\n{reason}").format(
+                reason=describe(e, path)))
             return
 
         if not isinstance(data, dict):
             QMessageBox.warning(
-                self, "Import Error", "Expected a JSON object with profile names as keys."
+                self, tr("Import Error"), tr("Expected a JSON object with profile names as keys.")
             )
             return
 
@@ -6843,6 +7046,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         skipped = 0
         failed: list[tuple[str, str]] = []
         warnings: list[tuple[str, str]] = []
+        not_saved = ""  # why the profiles file was not written, if it was not
 
         for name, profile_data in data.items():
             if not isinstance(profile_data, dict):
@@ -6854,7 +7058,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             except Exception as e:
                 # Parse error — that's a *failure*, not "already
                 # existed". Surface it so users can fix the JSON.
-                failed.append((name, f"parse error: {e}"))
+                failed.append((name, tr("not a valid profile: {reason}").format(
+                    reason=describe(e))))
                 log.warning("Profile %s parse failed: %s", name, e)
                 continue
 
@@ -6870,18 +7075,22 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             # sensitive field (headless system, locked keyring, DBus
             # session missing). Catch so one bad profile doesn't abort
             # the whole import.
+            # Each failure says its own cause (a reserved name, the keyring,
+            # the disk): "(keyring unavailable?)" blamed the keyring for all,
+            # next to Python class names.
             try:
-                self._profile_manager.add(profile)
+                saved = self._profile_manager.add(profile, report_failure=False)
             except RuntimeError as add_exc:
-                failed.append((profile.name, str(add_exc)))
+                failed.append((profile.name, tr(
+                    "the keyring did not store its secrets; start or unlock your keyring")))
                 log.warning("Profile %s import failed: %s", profile.name, add_exc)
                 continue
             except Exception as add_exc:  # noqa: BLE001
-                failed.append((profile.name, f"{type(add_exc).__name__}: {add_exc}"))
-                log.exception(
-                    "Profile %s import failed with %s", profile.name, type(add_exc).__name__
-                )
+                failed.append((profile.name, describe(add_exc)))
+                log.warning("Profile %s import failed: %s", profile.name, add_exc)
                 continue
+            if not saved:
+                not_saved = saved.reason
 
             if inline_pw and profile.store_password:
                 try:
@@ -6890,7 +7099,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                     warnings.append(
                         (
                             profile.name,
-                            f"password not stored in keyring: {exc}",
+                            tr("password not stored in keyring: {reason}").format(
+                                reason=describe(exc)),
                         )
                     )
                     log.warning("Could not store password for %s: %s", profile.name, exc)
@@ -6914,18 +7124,24 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             shown = failed[:LIMIT]
             joined = "\n".join(f"  - {n}: {err}" for n, err in shown)
             more = len(failed) - len(shown)
-            suffix = f"\n  ...and {more} more" if more > 0 else ""
-            msg_lines.append(f"\n{len(failed)} failed (keyring unavailable?):\n{joined}{suffix}")
+            suffix = "\n  " + tr_n(more, "...and {n} more", "...and {n} more") if more > 0 else ""
+            msg_lines.append("\n" + tr_n(len(failed), "{n} profile not imported:",
+                                         "{n} profiles not imported:")
+                             + f"\n{joined}{suffix}")
         if warnings:
             shown = warnings[:LIMIT]
             joined = "\n".join(f"  - {n}: {w}" for n, w in shown)
             more = len(warnings) - len(shown)
-            suffix = f"\n  ...and {more} more" if more > 0 else ""
+            suffix = "\n  " + tr_n(more, "...and {n} more", "...and {n} more") if more > 0 else ""
             msg_lines.append("\n" + tr_n(len(warnings), "{n} warning:", "{n} warnings:")
                              + f"\n{joined}{suffix}")
+        if not_saved:
+            msg_lines.append("\n" + tr("The profiles file was not written: {reason}\nThe "
+                                       "imported profiles stay available until axross ends."
+                                       ).format(reason=not_saved))
         QMessageBox.information(
             self,
-            "Profile Import",
+            tr("Profile Import"),
             "\n".join(msg_lines),
         )
 
@@ -6949,7 +7165,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                 private_dir=False,  # the user's folder keeps its mode
             )
         except OSError as e:
-            QMessageBox.warning(self, "Export Error", f"Cannot write file:\n{e}")
+            QMessageBox.warning(self, tr("Export Error"), tr("Cannot write file:\n{reason}").format(
+                reason=describe(e, path)))
             return
 
         QMessageBox.information(
@@ -6963,7 +7180,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
 
         profiles = self._profile_manager.all_profiles()
         if not profiles:
-            QMessageBox.information(self, "Profiles", "No saved profiles.")
+            QMessageBox.information(self, tr("Profiles"), tr("No saved profiles."))
             return
 
         data = {p.name: p.to_dict() for p in profiles}
@@ -6994,7 +7211,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
 
     def _run_active_pane_diagnostics(self) -> None:
         if self._active_pane is None:
-            QMessageBox.information(self, "Diagnostics", "No active pane.")
+            QMessageBox.information(self, tr("Diagnostics"), tr("No active pane."))
             return
         from core.security_mode import is_paranoid
 
@@ -7003,8 +7220,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             write_test = (
                 QMessageBox.question(
                     self,
-                    "Diagnostics",
-                    "Run a write/rename/delete probe in the active pane's current directory?",
+                    tr("Diagnostics"),
+                    tr("Run a write/rename/delete probe in the active pane's current directory?"),
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 )
                 == QMessageBox.StandardButton.Yes
@@ -7110,7 +7327,11 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         (no copy, no delete); a folder pasted into itself refuses the paste;
         a production source asks first. The cut is cleared once its move is
         queued; until then (a refusal, a Cancel at the conflict prompt) it
-        stays pending and nothing is removed."""
+        stays pending and nothing is removed.
+
+        A pending Copy (Ctrl+C in a pane) is pasted the same way as F5: a
+        copy through the transfer queue with the same conflict prompt. It
+        stays pending afterwards, so it can be pasted again elsewhere."""
         from core.cut_paste import plan_paste
         from ui.cut_clipboard import cut_clipboard
 
@@ -7130,13 +7351,21 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         dest_dir = target.current_path
         plan = plan_paste(cut.backend, cut.paths, target.backend, dest_dir)
         if plan.refusal:
-            QMessageBox.warning(self, tr("Paste"), tr("Nothing was moved: {reason}").format(
-                reason=plan.refusal))
+            if cut.move:
+                text = tr("Nothing was moved: {reason}").format(reason=plan.refusal)
+            else:
+                text = tr("Nothing was copied: a folder cannot be copied into itself or a "
+                          "folder below it ({folder}).").format(folder=dest_dir)
+            QMessageBox.warning(self, tr("Paste"), text)
             return
         if not plan.paths:
             self.statusBar().showMessage(
-                tr("Nothing to move: the cut entries already are in {folder}").format(
-                    folder=dest_dir), 8000)
+                (tr("Nothing to move: the cut entries already are in {folder}") if cut.move
+                 else tr("Nothing to copy: the copied entries already are in {folder}")
+                 ).format(folder=dest_dir), 8000)
+            return
+        if not cut.move:
+            self._request_transfer(source, target, list(plan.paths), dest_dir=dest_dir)
             return
         # The production countdown for the move is _request_transfer's.
         self._request_transfer(
@@ -8329,8 +8558,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             p = state["profile"]
             if not getattr(session, "transport", None):
                 self._connection_manager.release(p)
-                QMessageBox.critical(self, "Connection Failed",
-                                     f"{p.name}: the connection has no shell.")
+                QMessageBox.critical(self, tr("Connection Failed"),
+                                     tr("{name}: the connection has no shell.").format(name=p.name))
                 return
             term = TerminalPaneWidget(label=p.name, profile=p,
                                       connection_manager=self._connection_manager, cwd=folder)
@@ -8369,7 +8598,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                 if ask_password():
                     self._run_connect_async(retry, state["password"], "", on_success, on_failure)
                 return
-            QMessageBox.critical(self, "Connection Failed", str(exc))
+            QMessageBox.critical(self, tr("Connection Failed"), describe(exc))
             log.error("Host terminal connect to %s failed: %s", p.name, exc)
 
         if profile.auth_type == "password" and not ask_password():
@@ -8460,11 +8689,10 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             if not bookmark.profile_name:
                 QMessageBox.warning(
                     self,
-                    "Bookmark",
-                    f"Bookmark '{bookmark.name}' has no associated "
-                    f"connection profile. The profile reference was "
-                    f"lost or never set — re-bookmark this location "
-                    f"from the matching remote pane after connecting.",
+                    tr("Bookmark"),
+                    tr("Bookmark '{name}' has no associated connection profile. The profile "
+                       "reference was lost or never set — re-bookmark this location from the "
+                       "matching remote pane after connecting.").format(name=bookmark.name),
                 )
                 return
 
@@ -8472,8 +8700,9 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             if profile is None:
                 QMessageBox.warning(
                     self,
-                    "Bookmark",
-                    f"Profile '{bookmark.profile_name}' for this bookmark was not found.",
+                    tr("Bookmark"),
+                    tr("Profile '{name}' for this bookmark was not found.").format(
+                        name=bookmark.profile_name),
                 )
                 return
 
@@ -8509,13 +8738,11 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
     def _confirm_unknown_host(self, error: UnknownHostKeyError) -> bool:
         reply = QMessageBox.question(
             self,
-            "Trust Host Key?",
-            (
-                f"The host {error.host} is not present in known_hosts.\n\n"
-                f"Key type: {error.key_type}\n"
-                f"SHA256:{error.fingerprint_sha256}\n\n"
-                "Trust this host key and continue?"
-            ),
+            tr("Trust Host Key?"),
+            tr("The host {host} is not present in known_hosts.\n\nKey type: {key_type}\n"
+               "SHA256:{fingerprint}\n\nTrust this host key and continue?").format(
+                host=error.host, key_type=error.key_type,
+                fingerprint=error.fingerprint_sha256),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         return reply == QMessageBox.StandardButton.Yes
@@ -8539,13 +8766,13 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         if usable:
             QMessageBox.information(
                 self,
-                "Keyring",
-                "System keyring is now reachable. Saved passwords should persist again.",
+                tr("Keyring"),
+                tr("System keyring is now reachable. Saved passwords should persist again."),
             )
         else:
             QMessageBox.warning(
                 self,
-                "Keyring",
+                tr("Keyring"),
                 keyring_status_message(),
             )
 
@@ -8972,8 +9199,12 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         """Re-rasterise every icon surface after a theme or monochrome
         change: toolbar, dock title bars, bookmark sidebar + menu and
         the file lists (their rows ask the provider on each paint)."""
+        from ui.icon_provider import set_backdrop as _set_backdrop
         from ui.icon_provider import set_tint as _set_tint
 
+        # The icons' own colours read on this theme's bar (a yellow pie on
+        # a light one was 1.5:1).
+        _set_backdrop(self.toolbar_background())
         _set_tint(self._icon_tint())
         self._rebuild_toolbar_icons()
         self._rebuild_dock_titlebars()
@@ -9056,6 +9287,11 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             if ext is not None:
                 ext.setIcon(_ico("chevrons-right"))
                 ext.setMinimumWidth(self.TOOLBAR_EXTENSION_WIDTH)
+        # Qt's ">>" of every bar (the panels' too) is icon-only: a screen
+        # reader read nothing for it.
+        for ext in self.findChildren(QToolButton, "qt_toolbar_ext_button"):
+            if not ext.accessibleName():
+                ext.setAccessibleName(tr("More toolbar buttons"))
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt
         super().resizeEvent(event)

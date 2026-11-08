@@ -63,8 +63,10 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Reuse parsers from telnet_client (they are module-level functions)
 # ---------------------------------------------------------------------------
+from core.path_policy import refuse_control_chars  # noqa: E402
 from core.telnet_client import (  # noqa: E402 — re-using telnet shell-output parsers
     SHELL_ENV,
+    TREE_OP_TIMEOUT,
     _parse_df,
     _parse_ls_la,
     _parse_stat_gnu,
@@ -784,13 +786,46 @@ class SCPSession(SessionLifecycle):
         """SHELL_ENV in front of a command, where the shell takes it."""
         return f"{SHELL_ENV} " if self._caps.has_env_prefix else ""
 
+    def _ls(self, flags: str) -> tuple[str, bool]:
+        """The ``ls`` command a listing runs and whether its dates are UTC.
+        Under ``TZ=UTC0`` (where the shell takes a variable prefix) ls
+        prints UTC and the parser returns aware times; without it the
+        dates were the server's wall clock handed out as client-local."""
+        if self._caps.has_env_prefix:
+            return f"{SHELL_ENV} TZ=UTC0 ls {flags}", True
+        return f"ls {flags}", False
+
+    def _path(self, path: str) -> str:
+        """*path* normalized for a command line; OSError (EINVAL) when it
+        holds a control character (core.path_policy.refuse_control_chars),
+        before any command is built."""
+        return refuse_control_chars(self.normalize(path), "SCP")
+
+    def _exec_tree_op(self, cmd: str) -> tuple[str, int]:
+        """Run a command that changes the tree (cp, mv, rm -rf): under
+        TREE_OP_TIMEOUT, not CMD_TIMEOUT - a copy of a big file took more
+        than 30 s and was reported failed while it kept running - and
+        never sent a second time. A timeout says the command may still be
+        running."""
+        try:
+            return self._exec_raw(cmd, TREE_OP_TIMEOUT)
+        except OSError as exc:
+            if isinstance(exc, TimeoutError) or isinstance(exc.__cause__, TimeoutError):
+                raise TimeoutError(
+                    errno.ETIMEDOUT,
+                    f"SCP: no answer within {TREE_OP_TIMEOUT:.0f} s; the command may still be "
+                    f"running on the server: {cmd[:80]!r}",
+                ) from exc
+            raise
+
     # -- FileBackend interface -----------------------------------------------
 
     def list_dir(self, path: str) -> list[FileItem]:
-        path = self.normalize(path)
+        path = self._path(path)
         from core.exec_util import ls_dir_operand
 
-        output = self._exec(f"{self._env_prefix()}ls -la {shell_path(ls_dir_operand(path))}")
+        ls, utc = self._ls("-la")
+        output = self._exec(f"{ls} {shell_path(ls_dir_operand(path))}")
         if not output.strip():
             # ls -la of a folder prints at least "."; Rebex's shell answers a
             # missing path with nothing and exit 0.
@@ -800,17 +835,32 @@ class SCPSession(SessionLifecycle):
         # is used (see SSHSession.list_dir).
         from core.path_policy import drop_impossible_names
 
-        return drop_impossible_names(_parse_ls_la(output), keep_dots=True, origin=f"SCP {path}")
+        return drop_impossible_names(
+            _parse_ls_la(output, utc=utc), keep_dots=True, origin=f"SCP {path}"
+        )
 
     def stat(self, path: str) -> FileItem:
-        path = self.normalize(path)
+        path = self._path(path)
         qpath = shell_path(path)
         if self._caps.has_stat_gnu:
-            output = self._exec(f"stat --format='%n|%s|%Y|%f|%U|%G|%F' {qpath}")
+            # A refusal is typed by its wording (core.exec_util.ls_error):
+            # a missing path was a plain OSError, which the callers that
+            # need "not there" (exists-style checks, conflict dialogs)
+            # could not tell from "cannot tell".
+            from core.exec_util import ls_error
+
+            output, code = self._exec_raw(f"stat --format='%n|%s|%Y|%f|%U|%G|%F' {qpath}")
+            if code != 0:
+                raise ls_error(f"SCP stat({path})", output.strip()[:500] or f"exit {code}")
             return _parse_stat_gnu(output)
         # Fallback: ls -ld
-        output = self._exec(f"{self._env_prefix()}ls -ld {qpath}")
-        items = _parse_ls_la(output)
+        from core.exec_util import ls_error
+
+        ls, utc = self._ls("-ld")
+        output, code = self._exec_raw(f"{ls} {qpath}")
+        if code != 0:
+            raise ls_error(f"SCP stat({path})", output.strip()[:500] or f"exit {code}")
+        items = _parse_ls_la(output, utc=utc)
         if not items:
             raise FileNotFoundError(
                 errno.ENOENT, f"Cannot stat {path}: no output from ls -ld", path
@@ -835,7 +885,7 @@ class SCPSession(SessionLifecycle):
         False from exists() as the go-ahead to write."""
         from core.exec_util import path_kind, path_kind_command
 
-        path = self.normalize(path)
+        path = self._path(path)
         out, code = self._exec_raw(path_kind_command(path))
         return path_kind(f"SCP {path}", out, code)
 
@@ -846,13 +896,24 @@ class SCPSession(SessionLifecycle):
         return self._path_kind(path) is not None
 
     def mkdir(self, path: str) -> None:
-        self._exec(f"mkdir -p {shell_path(self.normalize(path))}")
+        self._exec(f"mkdir -p {shell_path(self._path(path))}")
 
     def remove(self, path: str, recursive: bool = False) -> None:
-        self._exec(remove_command(self.normalize(path), recursive=recursive))
+        """FileNotFoundError for a path that is not there (``rm -f`` said
+        nothing; remove_command asks ``ls -d`` first), another OSError for
+        any other refusal - typed by core.exec_util.ls_error, as Telnet."""
+        from core.exec_util import ls_error
+
+        path = self._path(path)
+        output, code = self._exec_tree_op(remove_command(path, recursive=recursive))
+        if code != 0:
+            raise ls_error(f"SCP remove({path})", output.strip()[:500] or f"exit {code}")
 
     def rename(self, src: str, dst: str) -> None:
-        self._exec(rename_command(self.normalize(src), self.normalize(dst)))
+        cmd = rename_command(self._path(src), self._path(dst))
+        output, code = self._exec_tree_op(cmd)
+        if code != 0:
+            raise OSError(f"Command failed (exit {code}): {cmd[:120]}\n{output[:500]}")
 
     def open_read(self, path: str) -> IO[bytes]:
         """Stream the file into a spooled temp file.
@@ -862,7 +923,7 @@ class SCPSession(SessionLifecycle):
         An exec channel is 8-bit clean, so ``cat`` output is kept as
         bytes rather than round-tripped through ``str``.
         """
-        path = self.normalize(path)
+        path = self._path(path)
         if self._caps.transfer_method == "scp":
             return self._scp_read(path)
         qpath = shell_path(path)
@@ -994,7 +1055,12 @@ class SCPSession(SessionLifecycle):
                 chan.close()
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
-        path = self.normalize(path)
+        if path.endswith("/") and path.strip("/"):
+            # normalize() drops the slash: "x/" was written as a FILE "x".
+            raise IsADirectoryError(
+                errno.EISDIR, f"Cannot write {path}: a path ending in '/' names a folder", path
+            )
+        path = self._path(path)
         if append:
             cap = self._MAX_APPEND_EXISTING_SIZE
             existing = read_existing_for_append(
@@ -1032,12 +1098,12 @@ class SCPSession(SessionLifecycle):
     def chmod(self, path: str, mode: int) -> None:
         if not self._caps.has_chmod:
             raise OSError("chmod not available on remote system")
-        self._exec(f"chmod {oct(mode)[2:]} {shell_path(self.normalize(path))}")
+        self._exec(f"chmod {oct(mode)[2:]} {shell_path(self._path(path))}")
 
     def readlink(self, path: str) -> str:
         if not self._caps.has_readlink:
             raise OSError("readlink not available on remote system")
-        output = self._exec(f"readlink {shell_path(self.normalize(path))}")
+        output = self._exec(f"readlink {shell_path(self._path(path))}")
         result = output.strip()
         if not result:
             raise OSError(f"Not a symlink: {path}")
@@ -1051,9 +1117,9 @@ class SCPSession(SessionLifecycle):
 
     def copy(self, src: str, dst: str) -> None:
         """Server-side shell cp via SSH exec_command."""
-        src = self.normalize(src)
-        dst = self.normalize(dst)
-        output, code = self._exec_raw(f"{copy_command(src, dst, preserve=True)} 2>&1")
+        src = self._path(src)
+        dst = self._path(dst)
+        output, code = self._exec_tree_op(f"{copy_command(src, dst, preserve=True)} 2>&1")
         if code != 0:
             raise OSError(f"cp {src} -> {dst} failed: {output.strip()!r}")
 
@@ -1066,7 +1132,7 @@ class SCPSession(SessionLifecycle):
         }.get(algorithm)
         if not tool:
             return ""
-        path = self.normalize(path)
+        path = self._path(path)
         output, code = self._exec_raw(f"{tool} {shell_path(path)} 2>/dev/null")
         if code != 0 or not output:
             return ""
@@ -1078,7 +1144,7 @@ class SCPSession(SessionLifecycle):
     def disk_usage(self, path: str) -> tuple[int, int, int]:
         if not self._caps.has_df:
             return (0, 0, 0)
-        path = self.normalize(path)
+        path = self._path(path)
         qpath = shell_path(path)
         # Try df -B1 (GNU) first
         output, code = self._exec_raw(f"df -B1 {qpath} 2>/dev/null")

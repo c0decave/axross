@@ -542,64 +542,170 @@ When a new optional extra lands:
 
 ## Release flow
 
-Suggested sequence for a tagged release:
+Every step names where it runs. **CI** is GitHub Actions; **builder** is
+the machine or container that runs `scripts/build_dist.sh` (Debian-based,
+with git, curl, gpgv, dpkg-deb, uv and the network that script names - no
+Docker, no root); **maintainer** is the machine that holds the release key
+and the PyPI tokens, and never builds. Nothing on the builder or in CI
+ever sees the key.
 
 ```bash
-# 1. Clean venv + deps (catches accidental dev leftovers)
-rm -rf .venv
-uv venv
-.venv/bin/pip install -e ".[all,adb,archive]"
-
-# 2. Run the full regression
-QT_QPA_PLATFORM=offscreen .venv/bin/pytest -q \
-    tests/test_regressions.py \
-    tests/test_new_features.py \
-    tests/test_backend_regressions.py \
-    tests/test_pane_layout_regressions.py \
-    tests/test_e2e.py
-
-# 3. Build all three flavours
-scripts/build_bundle.sh slim --appimage
-scripts/build_bundle.sh full --appimage
-
-# 4. Build the MCP Docker image (requires docker daemon)
-docker build -f Dockerfile.mcp -t axross-mcp:$(git describe --tags) .
-docker tag axross-mcp:$(git describe --tags) axross-mcp:latest
-
-# 5. The binaries against a current host (see "What comes from the host")
-AXROSS_FROZEN_BINARY=dist/axross-full .venv/bin/python -m pytest tests/test_frozen_binary_host_e2e.py
-AXROSS_FROZEN_BINARY=dist/axross-slim .venv/bin/python -m pytest tests/test_frozen_binary_host_e2e.py
-
-# 6. Sha256 everything
-( cd dist && sha256sum axross-* ) | tee dist/SHA256SUMS
-
-# 7. Sign SHA256SUMS with the release key (writes dist/SHA256SUMS.sig; --version
-#    adds the first line "# axross-release X.Y.Z" the updater requires)
-.venv/bin/python scripts/sign_release.py --version "$VERSION" /path/to/release-key.pem dist/SHA256SUMS
-
-# 8. Every ELF of the Linux binaries with its version: THIRD_PARTY_LICENSES.md
-#    and the release notes section (fails when a typed credits version disagrees)
-.venv/bin/python scripts/native_inventory.py dist/axross-full dist/axross-slim --check
-.venv/bin/python scripts/native_inventory.py dist/axross-full dist/axross-slim \
-    --notes dist/NATIVE-COMPONENTS.md
+VERSION=0.15.177
 ```
 
-The source tarball (`axross-<version>.tar.gz` + `.sha256` + `.sha512`)
-comes from `scripts/build_release.sh --tarball`: the committed files of
-`HEAD`, never untracked ones, and in a private tree the scrubbed mirror
-that `scripts/export-public.py --mirror` writes; see
-[DEVELOPMENT.md](DEVELOPMENT.md#building-a-release-tarball) for its
-identity-terms file.
+1. **maintainer** - prepare the commit. `axross/_version.py` says
+   `$VERSION`; `CHANGELOG.md` turns "Unreleased" into `## $VERSION -
+   <date>` (the release notes start from it). Merge to `main`; the "Python
+   application" workflow (`python-app.yml`, the test suite) must be green
+   on that commit.
 
-Checksums go into the release notes, and so does
-`dist/NATIVE-COMPONENTS.md`: every release names the native components
-of its Linux binaries with their versions. `--write` instead of
-`--check` regenerates the "Native files inside the Linux binaries" table
-of THIRD_PARTY_LICENSES.md when the lock or the builder image changed. `SHA256SUMS` and `SHA256SUMS.sig`
-are both release assets; without the signature no installed binary
-updates (see below). Linux AppImage signing
-(`gpg --detach-sign dist/axross-full-x86_64.AppImage`) is a
-nice-to-have on top.
+2. **maintainer** - tag that commit and push the tag:
+
+   ```bash
+   git tag -s "v$VERSION" -m "axross $VERSION" && git push origin "v$VERSION"
+   ```
+
+3. **CI** - the tag starts `cross-platform.yml`: the smoke tests on Linux,
+   macOS and Windows, then the `bundle` job builds the macOS and Windows
+   one-file binaries, slim and full. Its artifacts are
+   `axross-<flavor>-<runner.os>-<runner.arch>` - `axross-slim-macOS-ARM64`,
+   `axross-full-macOS-ARM64`, `axross-slim-Windows-X64`,
+   `axross-full-Windows-X64` - each with `axross-<flavor>[.exe]` and its
+   `.sha256`. Fetch them once the run is green:
+
+   ```bash
+   RUN=$(gh run list --workflow cross-platform.yml --branch "v$VERSION" --limit 1 \
+         --json databaseId --jq '.[0].databaseId')
+   gh run watch "$RUN" --exit-status
+   gh run download "$RUN" -D "dist/$VERSION-ci"
+   ```
+
+4. **builder** - build the Linux binaries, the packs, wheel and sdist from
+   the tag (`build_dist.sh` builds `HEAD`, a clean `git archive`, after the
+   supply-chain gate passed):
+
+   ```bash
+   git checkout "v$VERSION"
+   scripts/build_dist.sh            # -> dist/$VERSION/
+   ```
+
+   `dist/$VERSION/` then holds `glibc-2.34/` and `glibc-2.36/` (each with
+   `axross-base`, `axross-slim`, `axross-full` and the tools
+   `axross-media-player`, `axross-system-info`), `packs/` (the wheels and
+   `packs-$VERSION.json`), `standalone/`, the wheel
+   `axross-$VERSION-py3-none-any.whl`, the sdist `axross-$VERSION.tar.gz`,
+   `SUPPLY-CHAIN.md` and `BUILD-INFO.md`. Copy that folder to the
+   maintainer's machine.
+
+5. **builder, or any current distribution** - the Linux binaries against
+   a current host (see "What comes from the host"), and the native
+   components for THIRD_PARTY_LICENSES.md and the release notes (fails when
+   a typed credits version disagrees):
+
+   ```bash
+   for f in full slim base; do
+       AXROSS_FROZEN_BINARY=dist/$VERSION/glibc-2.34/axross-$f \
+           .venv/bin/python -m pytest tests/test_frozen_binary_host_e2e.py
+   done
+   .venv/bin/python scripts/native_inventory.py dist/$VERSION/glibc-2.34/axross-full \
+       dist/$VERSION/glibc-2.34/axross-slim --check
+   .venv/bin/python scripts/native_inventory.py dist/$VERSION/glibc-2.34/axross-full \
+       dist/$VERSION/glibc-2.34/axross-slim --notes "dist/$VERSION/NATIVE-COMPONENTS.md"
+   ```
+
+6. **maintainer** - assemble, sign and check the release, with the
+   **field key**: a key of `FIELD_KEYS` in `scripts/sign_release.py`, the
+   key the binaries in use pin (for 0.15.177 that is the first key,
+   `rJX0yymA5/...`; see "Key rotation" below):
+
+   ```bash
+   .venv/bin/python scripts/assemble_release.py --version "$VERSION" \
+       --dist "dist/$VERSION" --ci "dist/$VERSION-ci" --out "dist/release-$VERSION" \
+       --key /path/to/release-key.pem --require-all
+   ```
+
+   `scripts/assemble_release.py` renames everything to the asset names of
+   the contract below, checks every input against the checksum its build
+   wrote and drops those files (the per-folder `SHA256SUMS`, the CI's
+   `.sha256`), writes one `SHA256SUMS` (first line `# axross-release
+   $VERSION`, a line for every binary, pack wheel, the manifest, wheel and
+   sdist), signs it through `scripts/sign_release.py` and then checks the
+   result through `core.self_update` and `core.packs` themselves: every
+   kind of installed binary (platform, machine, flavour, glibc variant,
+   with and without the marker files of older bundles) finds its asset and
+   its line, the signature verifies with the field keys alone, the pack
+   manifest is what a base accepts, and everything the updater needs is
+   among the first 100 assets the API lists. It refuses on any problem;
+   `--require-all` also refuses when an input is missing (without it, a
+   partial release - Linux only, no packs - is assembled and the summary
+   names what is missing). `--check dist/release-$VERSION` repeats the
+   checks on an assembled folder. A re-issue of the pack manifest under
+   the same version adds `--packs-issue N` (see below).
+
+7. **maintainer** - a **draft** release with the assets. The updater asks
+   for `releases/latest`, which never returns a draft, so nothing installed
+   sees it yet. The updater's assets go first, the pack wheels after them
+   (the updater reads the first 100 assets the API lists):
+
+   ```bash
+   (cd "dist/release-$VERSION" &&
+    gh release create "v$VERSION" --draft --verify-tag --title "axross $VERSION" \
+        --notes-file notes.md $(cat upload-1.txt) &&
+    gh release upload "v$VERSION" $(cat upload-2.txt))
+   gh release download "v$VERSION" -D "dist/draft-$VERSION"
+   cp "dist/release-$VERSION"/upload-*.txt "dist/draft-$VERSION/"
+   .venv/bin/python scripts/assemble_release.py --version "$VERSION" \
+       --check "dist/draft-$VERSION" --require-all
+   ```
+
+   `dist/release-$VERSION/notes.md`: the `CHANGELOG.md` section,
+   `NATIVE-COMPONENTS.md` and the checksums of the summary. The last
+   command checks what GitHub actually holds (names, bytes, signature).
+
+8. **maintainer** - TestPyPI, then a clean install from it:
+
+   ```bash
+   A="dist/release-$VERSION/assets"
+   .venv/bin/twine check "$A/axross-$VERSION.tar.gz" "$A/axross-$VERSION-py3-none-any.whl"
+   .venv/bin/twine upload --repository testpypi \
+       "$A/axross-$VERSION.tar.gz" "$A/axross-$VERSION-py3-none-any.whl"
+   python3 -m venv /tmp/axross-testpypi
+   /tmp/axross-testpypi/bin/pip install --index-url https://test.pypi.org/simple/ \
+       --extra-index-url https://pypi.org/simple/ "axross==$VERSION"
+   /tmp/axross-testpypi/bin/axross --version
+   ```
+
+9. **maintainer** - publish the GitHub release
+   (`gh release edit "v$VERSION" --draft=false --latest`), then check
+   that an **installed 0.14.136 binary updates**: on a machine that is not
+   the builder, take `axross-full` (and `axross-slim`) of the v0.14.136
+   release, start it, *Help > Check for Updates...*, *Download*, *Restart
+   Now*; it must offer `$VERSION`, accept the signature and start as
+   `$VERSION` (`./axross-full --version`). The same for an axross-slim on
+   macOS and on Windows where one is at hand. If it refuses, turn the
+   release back into a draft at once (`gh release edit "v$VERSION"
+   --draft=true`): installed binaries then see the previous release again.
+
+10. **maintainer** - PyPI, last: an upload there cannot be replaced.
+
+    ```bash
+    .venv/bin/twine upload "$A/axross-$VERSION.tar.gz" "$A/axross-$VERSION-py3-none-any.whl"
+    ```
+
+    Then open a new "Unreleased" section in `CHANGELOG.md`.
+
+Optional, **maintainer**: the MCP Docker image (`docker build -f
+Dockerfile.mcp -t axross-mcp:$VERSION .`), and the source tarball
+(`axross-<version>.tar.gz` + `.sha256` + `.sha512`) from
+`scripts/build_release.sh --tarball`: the committed files of `HEAD`, never
+untracked ones, and in a private tree the scrubbed mirror that
+`scripts/export-public.py --mirror` writes; see
+[DEVELOPMENT.md](DEVELOPMENT.md#building-a-release-tarball) for its
+identity-terms file. `--write` instead of `--check` of
+`native_inventory.py` regenerates the "Native files inside the Linux
+binaries" table of THIRD_PARTY_LICENSES.md when the lock or the builder
+image changed. Without `SHA256SUMS.sig` no installed binary updates (see
+below).
 
 ## Self-update: what a release must carry
 
@@ -635,10 +741,11 @@ it is refused by every installed binary, nothing is replaced:
   Platforms without an asset (Linux aarch64, an axross-full on macOS) only
   get the notice with the release page.
 * **`SHA256SUMS`** among the assets of the same release, in `sha256sum`
-  format, with one line per binary (step 6 above). No line for the
+  format, with one line per binary (`scripts/assemble_release.py`, step 6
+  of the release flow). No line for the
   binary, or a different hash: refused. GitHub's own `digest` of an asset,
   where the API gives one, must agree with it as well.
-* **`SHA256SUMS.sig`**, the detached signature of `SHA256SUMS` (step 7):
+* **`SHA256SUMS.sig`**, the detached signature of `SHA256SUMS` (step 6):
   the **raw 64-byte Ed25519 signature** of the exact bytes of
   `SHA256SUMS` (not base64, nothing normalised - CRLF or a missing final
   newline are signed as they are). The binaries pin the public release
@@ -660,21 +767,53 @@ it is refused by every installed binary, nothing is replaced:
   passphrase), refused when group or others can read the file or when it
   is a symlink; no key material is printed, only the derived public key;
   a key not pinned in `TRUSTED_KEYS` is refused unless `--allow-unpinned`
-  is given; the new signature is verified with the derived public key,
+  is given, a pinned key outside `FIELD_KEYS` unless `--allow-new-key` is
+  (see "Key rotation"); the new signature is verified with the derived public key,
   through the updater's own check, before the file is written.
   **The signature names the version:** `SHA256SUMS` starts with
   `# axross-release X.Y.Z` (`--version` adds it), and the updater refuses
   a release whose signed line names no version or another one than its
   tag - an old release's signed checksums published under a new tag
-  would otherwise install that old, perhaps vulnerable, build.
+  would otherwise install that old, perhaps vulnerable, build. The
+  updater also refuses a release that is not newer than the running
+  version (`core.self_update.update` / `download`, not only the check).
+  **The signature numbers a pack re-issue:** `--packs-issue N` adds
+  `# axross-packs-issue N` right after the release line (signed with it).
+  The first publication of a release may leave it out (issue 0); each
+  re-issue of `packs-<version>.json` under the same version takes the
+  next number. `core.packs` keeps the highest issue installed in
+  `installed.json` and refuses a lower one - an earlier signed issue
+  uploaded again would otherwise roll a fixed pack back - and another
+  manifest under the installed number (a re-issue without
+  `--packs-issue` is refused by the binaries that have it). Installed
+  binaries of 0.14.50 and later read only the checksum lines
+  (`parse_sums`) and the `# axross-release` line: they ignore it.
   **Key rotation:** `TRUSTED_KEYS` is a tuple and any one key verifying
-  is enough. Add the new public key in a release signed with the old key,
-  sign with the new key only once the binaries in use carry it, then
-  drop the old one.
-  **Rotation under way (0.15.176):** 0.15.176 pins both keys and is
-  signed with the first one, so binaries of 0.14.53 and later take it; the
-  release after it is signed with the new key, and a later one drops the
-  first key.
+  is enough. An installed binary checks only the latest release and only
+  with the keys it was built with, so a rotation takes three releases:
+  (1) a release adds the new public key to `TRUSTED_KEYS` and is still
+  signed with the old key; (2) **the new key may sign only once a release
+  that is signed with the old key and pins both keys has been published
+  *with its binaries*** (every asset of the contract above, so that each
+  installed binary that updates lands on one that trusts both keys) **and
+  the binaries in use have updated to it** - a binary older than that
+  release which has not updated by then refuses every release signed with
+  the new key and must be replaced by hand from the release page; (3) a
+  later release drops the old key. A release without binaries (0.15.176)
+  does not count for (2): nothing installed carries its keys.
+  `scripts/sign_release.py` holds the keys the binaries in use pin in
+  `FIELD_KEYS` and refuses any other key - a pinned key outside it too;
+  `--allow-new-key` signs anyway, with a warning, and is right only once
+  (2) holds; with it, the new key moves into `FIELD_KEYS` (and
+  `tests/test_sign_release_field_keys.py`, which holds `FIELD_KEYS` to
+  the keys of the newest release with binaries).
+  **Rotation under way:** 0.15.176 pins both keys and is signed with the
+  first one, but it shipped no binaries; every installed binary (0.14.136
+  and older) pins only the first key. So **0.15.177 is signed with the
+  first key** (`rJX0yymA5/...`, the only entry of `FIELD_KEYS`), pins both
+  and carries every binary: it is the release of step (2). The second key
+  signs at the earliest the release after it, once the 0.15.177 binaries
+  are in use; a later release then drops the first key.
   **Migration:** binaries of 0.14.50 and older do not check signatures;
   they pick their assets by exact name (`axross-full`, `SHA256SUMS`, ...)
   and ignore `SHA256SUMS.sig`, so they keep updating - into a binary

@@ -52,5 +52,7 @@ def test_edge_backend_stat_reports_oserror(backend):
         s = SC.SCPSession.__new__(SC.SCPSession)
         s._caps = SC._Capabilities(has_stat_gnu=True)
     s._exec = lambda cmd, timeout=None: "/a|x|y|z|u|g|f"
+    # SCP's stat reads the exit status itself (round 3: a refusal is typed).
+    s._exec_raw = lambda cmd, timeout=None, stdin_data=None: ("/a|x|y|z|u|g|f", 0)
     with pytest.raises(OSError):
         s.stat("/a")

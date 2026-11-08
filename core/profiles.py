@@ -727,6 +727,30 @@ class ConnectionProfile:
         )
 
 
+@dataclass(frozen=True)
+class SaveResult:
+    """What :meth:`ProfileManager.save` did. True when the file was written.
+
+    ``error`` is the exception that stopped the write (None for success and
+    for a refusal without one); ``reason`` is the sentence for the user.
+    ``reported`` tells whether the save-failure listeners
+    (core.json_store.on_save_failure: the main window's "Not saved") were
+    already told - a caller that shows its own message passes
+    ``report_failure=False`` instead."""
+
+    ok: bool
+    error: BaseException | None = None
+    reason: str = ""
+    reported: bool = False
+
+    def __bool__(self) -> bool:
+        return self.ok
+
+
+#: The result of a save that wrote the file.
+SAVED = SaveResult(True)
+
+
 class ProfileManager:
     """Manages saved connection profiles."""
 
@@ -858,24 +882,50 @@ class ProfileManager:
         log.error("Could not back up unreadable profiles file: no free backup name")
         return False
 
-    def save(self) -> None:
+    def save(self, *, report_failure: bool = True) -> SaveResult:
         """Write the profiles, first merging what another writer changed in
-        the file meanwhile (see :meth:`_merge_from_disk`), under a file lock."""
-        target_dir = PROFILES_FILE.parent
-        target_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            os.chmod(target_dir, 0o700)
-        except OSError:
-            log.debug("Could not set permissions on %s", target_dir, exc_info=True)
-        with locked_store_update(PROFILES_FILE):
-            self._merge_from_disk()
-            self._write()
+        the file meanwhile (see :meth:`_merge_from_disk`), under a file lock.
 
-    def _write(self) -> None:
+        Returns a :class:`SaveResult` - a failed write used to be visible
+        only to the save-failure listeners, so the connection dialog said
+        "Saved" over a full disk or an unreadable profiles.json. With
+        *report_failure* False the listeners are not told: the caller shows
+        the failure itself."""
+        from core.user_errors import describe
+
+        target_dir = PROFILES_FILE.parent
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                os.chmod(target_dir, 0o700)
+            except OSError:
+                log.debug("Could not set permissions on %s", target_dir, exc_info=True)
+            with locked_store_update(PROFILES_FILE):
+                self._merge_from_disk()
+                result = self._write()
+        except OSError as e:
+            result = SaveResult(False, e, describe(e))
+        if not result.ok and result.error is not None and report_failure \
+                and not result.reported:
+            from core.json_store import report_save_failure
+
+            report_save_failure("connection profiles", result.error)
+            result = SaveResult(False, result.error, result.reason, reported=True)
+        elif not result.ok:
+            log.error("Profiles not saved: %s", result.reason)
+        return result
+
+    def _write(self) -> SaveResult:
+        from core.i18n import tr
+        from core.user_errors import describe
+
         target_dir = PROFILES_FILE.parent
         if not self._preserve_unloaded_file():
             log.error("Not saving profiles: %s would be overwritten", PROFILES_FILE)
-            return
+            return SaveResult(False, None, tr(
+                "{path} could not be read, and no copy of it could be kept; it is left "
+                "as it is, so nothing in it is lost. Repair or move the file, then save "
+                "again.").format(path=PROFILES_FILE))
         data = {name: profile.to_dict() for name, profile in self._profiles.items()}
         payload = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
         try:
@@ -913,9 +963,8 @@ class ProfileManager:
                     pass
                 raise
         except OSError as e:
-            from core.json_store import report_save_failure
-
-            report_save_failure("connection profiles", e)
+            return SaveResult(False, e, describe(e))
+        return SAVED
 
     def get(self, name: str) -> ConnectionProfile | None:
         profile = self._profiles.get(name)
@@ -946,10 +995,18 @@ class ProfileManager:
     def list_names(self) -> list[str]:
         return sorted(self._profiles.keys())
 
-    def add(self, profile: ConnectionProfile) -> None:
+    def add(self, profile: ConnectionProfile, *, report_failure: bool = True) -> SaveResult:
+        """Store *profile* (its secrets in the keyring) and save the file.
+        Raises ValueError for a name that cannot be used and RuntimeError
+        when the keyring refused a secret; returns the save's result."""
         problem = profile_name_problem(profile.name)
         if problem:
-            raise ValueError(f"Profile name {profile.name!r} {problem}")
+            from core.i18n import tr
+
+            # Shown to the user as it is (connection dialog, import report).
+            raise ValueError(tr("The profile name {name} cannot be used: it {problem}. "
+                                "Choose another name.").format(name=repr(profile.name),
+                                                               problem=tr(problem)))
         failed_secret_fields = self._sync_sensitive_fields(
             profile, self._foreign_entries(profile.name)
         )
@@ -962,9 +1019,9 @@ class ProfileManager:
             delete_password(profile.name)
         if not profile.store_proxy_password and proxy_entry(profile.name) not in self._profiles:
             delete_proxy_password(profile.name)
-        self.save()
+        return self.save(report_failure=report_failure)
 
-    def remove(self, name: str) -> None:
+    def remove(self, name: str, *, report_failure: bool = True) -> SaveResult:
         if name in self._profiles:
             if profile_name_problem(name):
                 # A profile file from before the name check: this name's
@@ -977,7 +1034,8 @@ class ProfileManager:
                 self._delete_sensitive_fields(name, self._foreign_entries(name))
             del self._profiles[name]
             self._secrets_unread.discard(name)
-            self.save()
+            return self.save(report_failure=report_failure)
+        return SAVED
 
     def _foreign_entries(self, name: str) -> set[str]:
         """Entries derived from *name* that are another loaded profile's

@@ -63,6 +63,24 @@ MAX_PROPFIND_BYTES = 64 * 1024 * 1024
 MAX_QUOTA_BYTES = 1024 * 1024
 
 
+# C0 characters XML 1.0 cannot carry (TAB, LF and CR it can).
+_XML_UNSAFE = frozenset(chr(c) for c in range(0x20)) - {"\t", "\n", "\r"}
+
+
+def _refuse_unlistable_name(path: str) -> None:
+    """OSError (EINVAL) for a name a PROPFIND answer cannot carry: the
+    multistatus is XML 1.0, where U+0001 and the other C0 controls are
+    not allowed even as character references. The server stored such a
+    file, and every listing of its folder then failed to parse."""
+    bad = sorted({c for c in path if c in _XML_UNSAFE})
+    if bad:
+        points = ",".join(f"U+{ord(c):04X}" for c in bad)
+        raise OSError(
+            errno.EINVAL,
+            f"WebDAV cannot list a name with control characters ({points}): {path!r}",
+        )
+
+
 class WebDavRequestError(OSError):
     """Raised when a WebDAV HTTP request returns an error status."""
 
@@ -478,6 +496,10 @@ class _WebDavClient:
     def list(self, path: str) -> list[dict]:
         results = self._propfind(path, depth="1")
         target = path.rstrip("/")
+        if any(r["path"].rstrip("/") == target and not r["isdir"] for r in results):
+            # Depth 1 on a FILE answers the file alone: that was listed as
+            # an empty folder.
+            raise NotADirectoryError(errno.ENOTDIR, f"{path} is not a folder", path)
         return [r for r in results if r["path"].rstrip("/") != target]
 
     def is_dir(self, path: str) -> bool:
@@ -504,6 +526,16 @@ class _WebDavClient:
     def download_to(self, fileobj: IO[bytes], path: str) -> None:
         with self._request("GET", path, stream=True) as resp:
             self._check_status(resp, allowed=(200,))
+            if resp.headers.get("Content-Type", "").lower().startswith("text/html"):
+                # GET on a collection answers its HTML index (Apache, nginx,
+                # sabre/dav, axross' own server): that page was "read" as the
+                # folder's content. Only an HTML answer pays the PROPFIND.
+                try:
+                    is_collection = bool(self.info(path)["isdir"])
+                except (FileNotFoundError, WebDavRequestError):
+                    is_collection = False
+                if is_collection:
+                    raise IsADirectoryError(errno.EISDIR, f"{path} is a folder", path)
             for chunk in resp.iter_content(chunk_size=64 * 1024):
                 if chunk:
                     fileobj.write(chunk)
@@ -515,15 +547,46 @@ class _WebDavClient:
 
     def mkdir(self, path: str) -> None:
         resp = self._request("MKCOL", path)
-        # 405 = already exists; treat as no-op so callers can be
-        # idempotent (matches webdavclient3 historical behaviour).
         if resp.status_code == 405:
+            # 405: something is there (RFC 4918 9.3.1). A folder is the
+            # idempotent no-op mkdir always was; a FILE of that name was
+            # taken for "folder exists" too and the caller wrote into a
+            # folder that was never made.
+            self._refuse_taken_by_a_file(path, resp)
             return
+        if resp.status_code == 409:
+            # 409: the parent is missing - or is a file.
+            parent = posixpath.dirname(path.rstrip("/")) or "/"
+            try:
+                parent_is_dir = bool(self.info(parent)["isdir"])
+            except FileNotFoundError:
+                raise FileNotFoundError(
+                    errno.ENOENT, f"Cannot create {path}: the parent folder is missing", path
+                ) from None
+            if not parent_is_dir:
+                raise NotADirectoryError(
+                    errno.ENOTDIR, f"Cannot create {path}: {parent} is a file", path
+                )
         self._check_status(resp, allowed=(200, 201))
+
+    def _refuse_taken_by_a_file(self, path: str, resp) -> None:
+        try:
+            isdir = bool(self.info(path)["isdir"])
+        except FileNotFoundError:
+            # 405 for a name that is not there: MKCOL is not allowed here.
+            self._check_status(resp, allowed=(200, 201))
+            return
+        if not isdir:
+            raise FileExistsError(
+                errno.EEXIST, f"Cannot create the folder {path}: a file has that name", path
+            )
 
     def delete(self, path: str) -> None:
         resp = self._request("DELETE", path)
-        self._check_status(resp, allowed=(200, 204, 404))
+        if resp.status_code in (404, 410):
+            # Counted as success: removing a typo said "removed".
+            raise FileNotFoundError(errno.ENOENT, f"Cannot remove {path}: not found", path)
+        self._check_status(resp, allowed=(200, 204))
 
     def move(self, src: str, dst: str, *, overwrite: bool = False) -> None:
         self._move_or_copy("MOVE", src, dst, overwrite)
@@ -779,7 +842,7 @@ class WebDavSession(SessionLifecycle):
         try:
             entries = self._client.list(path)
         except FileNotFoundError as e:
-            raise OSError(f"Cannot list {path}: {e}") from e
+            raise FileNotFoundError(errno.ENOENT, f"Cannot list {path}: {e}", path) from e
         except WebDavRequestError as e:
             raise OSError(f"Cannot list {path}: {e}") from e
 
@@ -803,7 +866,7 @@ class WebDavSession(SessionLifecycle):
         try:
             info = self._client.info(path)
         except FileNotFoundError as e:
-            raise OSError(f"Cannot stat {path}: {e}") from e
+            raise FileNotFoundError(errno.ENOENT, f"Cannot stat {path}: {e}", path) from e
         except WebDavRequestError as e:
             raise OSError(f"Cannot stat {path}: {e}") from e
         name = posixpath.basename(path.rstrip("/")) or path
@@ -829,7 +892,7 @@ class WebDavSession(SessionLifecycle):
             self._client.download_to(buf, self._norm(path))
         except FileNotFoundError as e:
             buf.close()
-            raise OSError(f"Cannot read {path}: {e}") from e
+            raise FileNotFoundError(errno.ENOENT, f"Cannot read {path}: {e}", path) from e
         except WebDavRequestError as e:
             buf.close()
             raise OSError(f"Cannot read {path}: {e}") from e
@@ -844,6 +907,7 @@ class WebDavSession(SessionLifecycle):
     # ------------------------------------------------------------------
 
     def mkdir(self, path: str) -> None:
+        _refuse_unlistable_name(path)
         try:
             self._client.mkdir(self._norm(path))
         except WebDavRequestError as e:
@@ -863,6 +927,7 @@ class WebDavSession(SessionLifecycle):
             raise OSError(f"Cannot remove {path}: {e}") from e
 
     def rename(self, src: str, dst: str) -> None:
+        _refuse_unlistable_name(dst)
         try:
             self._guarded_move_or_copy(self._client.move, src, dst, "rename")
         except WebDavRequestError as e:
@@ -890,6 +955,12 @@ class WebDavSession(SessionLifecycle):
         call(src, dst, overwrite=True)
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
+        if path.endswith("/") and path.strip("/"):
+            # PUT "x/" made a FILE "x" on servers that drop the slash.
+            raise IsADirectoryError(
+                errno.EISDIR, f"Cannot write {path}: a path ending in '/' names a folder", path
+            )
+        _refuse_unlistable_name(path)
         if append:
             # WebDAV has no append — download, concat, re-upload.
             cap = self._MAX_APPEND_EXISTING_SIZE
@@ -912,6 +983,7 @@ class WebDavSession(SessionLifecycle):
 
     def copy(self, src: str, dst: str) -> None:
         """WebDAV COPY method — server-side, no client bytes."""
+        _refuse_unlistable_name(dst)
         try:
             self._guarded_move_or_copy(self._client.copy, src, dst, "copy")
         except WebDavRequestError as exc:
