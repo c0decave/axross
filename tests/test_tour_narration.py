@@ -1,4 +1,4 @@
-"""resources/tour_narration.json: the spoken text of the tour videos.
+"""scripts/tour_narration.json: the spoken text of the tour videos.
 
 Each step of a guided tour (ui.tours.TOURS) gets a short video: a screenshot
 with the tour's highlight and callout, and a Piper voice reading this text
@@ -38,7 +38,7 @@ pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 not installed")
 
 from ui.tours import TOURS  # noqa: E402
 
-NARRATION = ROOT / "resources" / "tour_narration.json"
+NARRATION = ROOT / "scripts" / "tour_narration.json"
 LANGS = ("en", "de")
 
 #: Characters a TTS voice reads badly or not at all.

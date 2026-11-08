@@ -47,7 +47,7 @@ def test_edge_subtitles_drop_the_pronunciation_marks():
 def test_happy_every_narration_text_turns_into_speech_input():
     """Every German text of the shipped narration yields raw-phoneme blocks
     only for its braced parts, and no brace is left over."""
-    narration = json.loads((ROOT / "resources" / "tour_narration.json").read_text("utf-8"))
+    narration = json.loads((ROOT / "scripts" / "tour_narration.json").read_text("utf-8"))
     for tour in narration["tours"].values():
         texts = [tour["intro"], tour["outro"], *tour["steps"].values()]
         for text in texts:

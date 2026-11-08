@@ -9,7 +9,7 @@ Two stages, because they need different environments:
             window with the tour's spotlight and callout) plus a manifest.
 
 ``render``  (piper-tts and ffmpeg, e.g. from imageio-ffmpeg) speaks the
-            narration of ``resources/tour_narration.json`` for each step
+            narration of ``scripts/tour_narration.json`` for each step
             with the pinned Piper voices of core.voice_models and joins
             screenshots and speech into one MP4 per tour and language.
 
@@ -39,7 +39,7 @@ import wave
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-NARRATION = ROOT / "resources" / "tour_narration.json"
+NARRATION = ROOT / "scripts" / "tour_narration.json"
 #: Window size of the screenshots (16:10; the handbook's small-screen size).
 SIZE = (1280, 800)
 #: Piper voice per language (core.voice_models ids).
