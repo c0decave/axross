@@ -11,7 +11,7 @@ import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import (
 
 from core.i18n import tr
 from core.mail_project import MailProject
+from core.remote_name import sanitize_for_display
 from core.thread_relay import GuiCall
 from ui.close_corner import add_close_corner
 from ui.icon_provider import set_window_icon
@@ -67,10 +68,18 @@ def _safe_browser_class():
             return None
 
         def _clicked(self, url) -> None:
-            text = url.toString()
+            # Percent-encoded (and the host in its ASCII form, on a line of
+            # its own): a bidi override (U+202E) or a look-alike shown as
+            # such made "https://\u202emoc.lapyap.www@evil.example/" read
+            # as a paypal.com address while it opened evil.example.
+            encoded = QUrl.ComponentFormattingOption.FullyEncoded
+            text = sanitize_for_display(url.toString(encoded))
+            host = sanitize_for_display(url.host(encoded)) or tr("(no host)")
             self.asked.append(text)
-            answer = QMessageBox.question(self, tr("Open link?"),
-                                          tr("This link goes to:\n\n{url}\n\nOpen it in the web browser?").format(url=text))
+            answer = QMessageBox.question(
+                self, tr("Open link?"),
+                tr("This link goes to:\n\n{url}\n\nHost: {host}\n\nOpen it in the web browser?").format(
+                    url=text, host=host))
             if answer == QMessageBox.StandardButton.Yes:
                 from core.desktop_open import open_url
 
@@ -119,7 +128,14 @@ class MailProjectDialog(QDialog):
         # parsing and sanitising a message (up to 64 MB of it) is no work for the GUI thread
         self._viewer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mail-view")
         self._showing = 0                   # the newest selection: older results are dropped
-        self._imports: set[threading.Event] = set()
+        self._imports: set[threading.Event] = set()   # until their result is shown
+        #: The imports still at work, from their threads too: each one's
+        #: cancel flag -> the project it writes to; projects left (another
+        #: one opened, the window closed) while an import still wrote to
+        #: them, closed when the last of those ends.
+        self._writers: dict[threading.Event, MailProject] = {}
+        self._retired: list[MailProject] = []
+        self._writers_lock = threading.Lock()
         layout = QVBoxLayout(self)
         top = QHBoxLayout()
         self.folder_label = QLabel(tr("No project open."))
@@ -177,7 +193,12 @@ class MailProjectDialog(QDialog):
 
     def open_project(self, folder: str) -> None:
         if self.project is not None:
-            self.project.close()
+            # Closed under a running import, every message left failed with
+            # "Cannot operate on a closed database" and no import was logged:
+            # the imports are cancelled, the project closed once they ended.
+            self.cancel_imports()
+            self._retire(self.project)
+            self.project = None
         self.project = MailProject(folder, dns=self.dns_box.isChecked())
         self.folder_label.setText(folder)
         self.refresh()
@@ -194,21 +215,56 @@ class MailProjectDialog(QDialog):
         return True
 
     def _run_import(self, label: str, work) -> None:
-        """*work(cancel)* on a thread of its own; *cancel()* turns true when
-        Cancel Import is pressed or the window closes."""
+        """*work(cancel)* on a thread of its own, into the open project;
+        *cancel()* turns true when Cancel Import is pressed, another project
+        is opened or the window closes."""
         self.status.setText(tr("Importing {what}…").format(what=label))
         cancel = threading.Event()
+        project = self.project
         self._imports.add(cancel)
+        with self._writers_lock:
+            self._writers[cancel] = project
         self.cancel_button.setEnabled(True)
 
         def run():
             try:
                 result = work(cancel.is_set)
                 line = result.line() + (" - " + tr("cancelled") if cancel.is_set() else "")
-                self._post_done(cancel, line, result.errors[:20])
+                errors = result.errors[:20]
             except Exception as exc:  # noqa: BLE001
-                self._post_done(cancel, f"{type(exc).__name__}: {exc}", [])
-        threading.Thread(target=run, daemon=True, name="mail-import").start()
+                line, errors = f"{type(exc).__name__}: {exc}", []
+            finally:
+                # Here, not in _import_done: after the window closed (and was
+                # deleted) that is never called, and the project stayed open.
+                self._import_ended(cancel)
+            self._post_done(cancel, project, line, errors)
+        try:
+            threading.Thread(target=run, daemon=True, name="mail-import").start()
+        except RuntimeError as exc:         # no thread to be had
+            self._import_ended(cancel)
+            self._import_done(cancel, project, f"{type(exc).__name__}: {exc}", [])
+
+    def _retire(self, project: MailProject) -> None:
+        """Close *project* now, or once the imports writing to it ended."""
+        with self._writers_lock:
+            if any(p is project for p in self._writers.values()):
+                self._retired.append(project)
+                return
+        project.close()
+
+    def _import_ended(self, cancel: threading.Event) -> None:
+        """On the import's thread, when its work is over: a retired project
+        no other import writes to is closed."""
+        with self._writers_lock:
+            self._writers.pop(cancel, None)
+            busy = list(self._writers.values())
+            done = [p for p in self._retired if not any(p is b for b in busy)]
+            self._retired = [p for p in self._retired if not any(p is d for d in done)]
+        for project in done:
+            try:
+                project.close()
+            except Exception:  # noqa: BLE001 - cleanup only
+                log.debug("closing a mail project failed", exc_info=True)
 
     def cancel_imports(self) -> None:
         for cancel in self._imports:
@@ -216,9 +272,12 @@ class MailProjectDialog(QDialog):
         if self._imports:
             self.status.setText(tr("Cancelling the import…"))
 
-    def _import_done(self, cancel: threading.Event, line: str, errors: list) -> None:
+    def _import_done(self, cancel: threading.Event, project: MailProject | None, line: str,
+                     errors: list) -> None:
         self._imports.discard(cancel)
         self.cancel_button.setEnabled(bool(self._imports))
+        if project is not None and project is not self.project:
+            line = f"{project.folder}: {line}"   # the import into the project left
         self.status.setText(line + ("\n" + "\n".join(errors) if errors else ""))
         self.refresh()
 
@@ -228,15 +287,17 @@ class MailProjectDialog(QDialog):
         paths, _ = QFileDialog.getOpenFileNames(self, tr("Messages and mailboxes"), "",
                                                 tr("Mail (*.eml *.msg *.pst *.ost *.mbox *.mbx);;All files (*)"))
         if paths:
+            project = self.project
             self._run_import(tr("{n} files").format(n=len(paths)),
-                             lambda cancel: self.project.import_paths(paths, cancel=cancel))
+                             lambda cancel: project.import_paths(paths, cancel=cancel))
 
     def import_folder(self) -> None:
         if not self._need_project():
             return
         folder = QFileDialog.getExistingDirectory(self, tr("A folder of messages, mbox files or a Maildir"))
         if folder:
-            self._run_import(folder, lambda cancel: self.project.import_paths([folder], cancel=cancel))
+            project = self.project
+            self._run_import(folder, lambda cancel: project.import_paths([folder], cancel=cancel))
 
     def import_mailbox(self) -> None:
         if not self._need_project() or self._connect is None:
@@ -255,9 +316,9 @@ class MailProjectDialog(QDialog):
                                           text="/INBOX")
         if not ok:
             return
-        profile = pm.get(name)
+        profile, project = pm.get(name), self.project
         self._run_import(f"{name}:{folder}",
-                         lambda cancel: self.project.import_backend(self._connect(profile), folder, cancel=cancel))
+                         lambda cancel: project.import_backend(self._connect(profile), folder, cancel=cancel))
 
     def refresh(self) -> None:
         if self.project is None:
@@ -329,6 +390,6 @@ class MailProjectDialog(QDialog):
         self._showing += 1
         self._viewer.shutdown(wait=False, cancel_futures=True)
         if self.project is not None:
-            self.project.close()
+            self._retire(self.project)      # closed once its imports ended
             self.project = None
         super().done(result)

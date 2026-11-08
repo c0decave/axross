@@ -449,6 +449,7 @@ def test_happy_f1_in_connect_to_server_opens_connections(window):
     from ui.connection_dialog import ConnectionDialog
 
     dialog = ConnectionDialog(ProfileManager(), window)
+    dialog.setModal(True)  # as exec() opens it; a non-modal window uses the window's handbook
     dialog.show()
     dialog.activateWindow()
     pump()

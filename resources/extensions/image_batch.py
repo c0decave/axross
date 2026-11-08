@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import posixpath
 
+from resources.extensions._pane import refresh_pane
+
 EXTENSION = {
     "name": "Image Batch",
     "version": "1.0",
@@ -47,12 +49,16 @@ def convert(data: bytes, max_edge: int, fmt: str, quality: int = 88) -> bytes:
 
 
 def unique_name(existing: set[str], stem: str, ext: str) -> str:
+    """``stem.ext``, else ``stem (2).ext`` ... - a name not in *existing*
+    (casefolded names; the new one is added). Compared without case: on
+    an SMB share, a Windows or a macOS volume ``img.jpg`` *is* ``IMG.jpg``,
+    and that file was overwritten."""
     name = f"{stem}{ext}"
     n = 2
-    while name in existing:
+    while name.casefold() in existing:
         name = f"{stem} ({n}){ext}"
         n += 1
-    existing.add(name)
+    existing.add(name.casefold())
     return name
 
 
@@ -62,7 +68,7 @@ def run_batch(backend, folder: str, names: list[str], max_edge: int, fmt: str):
     out_dir = backend.join(folder, OUT_FOLDER)
     if not backend.exists(out_dir):
         backend.mkdir(out_dir)
-    existing = {i.name for i in backend.list_dir(out_dir)}
+    existing = {i.name.casefold() for i in backend.list_dir(out_dir)}
     written, skipped = [], []
     for name in names:
         src = backend.join(folder, name)
@@ -77,6 +83,10 @@ def run_batch(backend, folder: str, names: list[str], max_edge: int, fmt: str):
             continue
         stem = posixpath.splitext(name)[0]
         target = unique_name(existing, stem, FORMATS[fmt])
+        # Asked again right before the write: a file that came since the
+        # listing (or that the listing did not show) is never written over.
+        while backend.exists(backend.join(out_dir, target)):
+            target = unique_name(existing, stem, FORMATS[fmt])
         with backend.open_write(backend.join(out_dir, target)) as fh:
             fh.write(result)
         written.append(target)
@@ -106,8 +116,7 @@ def activate(api):
             if skipped:
                 text += f", {len(skipped)} skipped ({skipped[0]})"
             api.notify(text)
-            if ctx.pane is not None:
-                getattr(ctx.pane, "refresh_after_change", ctx.pane.refresh)()  # not blocking
+            refresh_pane(ctx.pane)  # not blocking; skipped for a pane closed meanwhile
 
         api.run_in_background(
             lambda: run_batch(ctx.backend, ctx.folder, names, edge, fmt), on_done=done

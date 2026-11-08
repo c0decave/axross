@@ -209,7 +209,7 @@ class DiskUsageDialog(QDialog):
                 text += tr(", {n} without capacity reporting").format(n=unmeasured)
             self._status.setText(text)
         self._refresh_btn.setEnabled(True)
-        self._stop_thread()
+        self._stop_thread(done=True)
 
     def _populate(self) -> None:
         self._table.setRowCount(len(self._rows))
@@ -268,7 +268,7 @@ class DiskUsageDialog(QDialog):
 
     # -- lifecycle -------------------------------------------------------
 
-    def _stop_thread(self) -> None:
+    def _stop_thread(self, *, done: bool = False) -> None:
         """Wind the worker down without dropping a live QThread.
 
         The snapshot itself cannot be interrupted — its budget lives in
@@ -279,15 +279,21 @@ class DiskUsageDialog(QDialog):
         if self._thread is None:
             return
         self._thread.quit()
-        if not self._thread.wait(5000):
-            # Handed over rather than kept: this dialog is a child of the
-            # pane / the window, and destroying it with the thread still
-            # running aborts the process. A late `done` reaches nobody.
-            detach_running_thread(
-                self._thread,
-                *((self._worker.done,) if self._worker is not None else ()),
-                keep=(self._worker,),
-            )
+        if done:
+            # The worker's run() has returned (its result is here): the
+            # thread only leaves its event loop, at once.
+            self._thread.wait(1000)
+        # Handed over at once rather than waited for: wait(5000) froze the
+        # window for 5 s when Close / Esc came during a slow walk. This
+        # dialog is a child of the pane / the window, and destroying it
+        # with the thread still running aborts the process; detached (a
+        # no-op for a thread that is done) it ends on its own, and a late
+        # `done` reaches nobody.
+        if detach_running_thread(
+            self._thread,
+            *((self._worker.done,) if self._worker is not None else ()),
+            keep=(self._worker,),
+        ):
             log.warning("disk usage: snapshot still running; not discarding the thread")
             self._thread = None
             self._worker = None

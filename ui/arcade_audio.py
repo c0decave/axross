@@ -27,7 +27,10 @@ out at the front of an empty buffer.
 Effects are rendered in a thread and kept in ~/.cache/axross/arcade/ (so
 the next start has them at once); one asked for before they are ready
 still plays if it is fresh. Music loops are rendered in a thread and
-cached the same way.
+cached the same way. A cache file is written to a temporary name and
+renamed into place (a write cut short leaves no half file); one that
+still reads wrong (not whole 16-bit samples) is deleted and rendered
+again, and one effect that fails costs that effect, not the rest.
 """
 
 from __future__ import annotations
@@ -35,6 +38,7 @@ from __future__ import annotations
 import array
 import hashlib
 import logging
+import os
 import threading
 import time
 from pathlib import Path
@@ -92,6 +96,48 @@ def open_sink(rate: int, device_id: str | None, volume: float, buffer_bytes: int
     return sink, io
 
 
+def _write_atomic(path: Path, data: bytes) -> None:
+    """*data* to *path* via a temporary file and ``os.replace``: a reader
+    sees the old file or the whole new one, never a part."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        tmp.write_bytes(data)
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def cached_samples(path: Path, render) -> array.array:
+    """The 16-bit samples cached in *path*, else ``render()``'s (then
+    cached). A damaged file - empty or not whole samples - is deleted and
+    rendered again."""
+    try:
+        pcm = path.read_bytes()
+    except OSError:
+        pcm = None
+    if pcm is not None and (not pcm or len(pcm) % 2):
+        log.info("Arcade: sound cache %s is damaged (%d bytes), rendering it again", path.name, len(pcm))
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        pcm = None
+    if pcm is None:
+        pcm = render()
+        try:
+            _write_atomic(path, pcm)
+        except OSError as exc:
+            log.debug("Arcade: sound cache not written (%s)", exc)
+    samples = array.array("h")
+    samples.frombytes(pcm)
+    return samples
+
+
 def _limit(x: float) -> int:
     """A soft knee above ~0.7 of full scale instead of hard clipping when
     many voices sound together."""
@@ -107,6 +153,7 @@ class ArcadeAudio(QObject):
         super().__init__(parent)
         self._sink_factory = sink_factory
         self._sink = self._io = None
+        self._device_id: str | None = None      # the output the open sink plays on
         self._failed = False
         self._effects: dict[str, array.array] = {}
         self._waiting: list[tuple[str, float, float]] = []   # (name, gain, asked at)
@@ -133,19 +180,11 @@ class ArcadeAudio(QObject):
         done = {}
         for name, effect in S.EFFECTS.items():
             key = hashlib.sha256(f"{SOUND_VERSION}:{S.RATE}:{effect!r}".encode()).hexdigest()[:24]
-            path = CACHE / "sfx" / f"{key}.pcm"
             try:
-                pcm = path.read_bytes()
-            except OSError:
-                pcm = S.render(effect)
-                try:
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_bytes(pcm)
-                except OSError:
-                    pass
-            samples = array.array("h")
-            samples.frombytes(pcm)
-            done[name] = samples
+                done[name] = cached_samples(CACHE / "sfx" / f"{key}.pcm", lambda e=effect: S.render(e))
+            except Exception:  # noqa: BLE001 - one effect lost, not every effect
+                log.warning("Arcade: the sound %r could not be made", name, exc_info=True)
+                continue
             with self._lock:                   # each one usable as soon as it is there
                 self._effects = dict(done)
 
@@ -165,18 +204,12 @@ class ArcadeAudio(QObject):
     def _render_music(self, key) -> None:
         seed, mood = key
         name = hashlib.sha256(f"{SOUND_VERSION}:{seed}:{mood}".encode()).hexdigest()[:24]
-        path = CACHE / f"{name}.pcm"
         try:
-            pcm = path.read_bytes()
-        except OSError:
-            pcm = S.render_tune(S.compose(seed, mood=mood))
-            try:
-                CACHE.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(pcm)
-            except OSError:
-                pass
-        samples = array.array("h")
-        samples.frombytes(pcm)
+            samples = cached_samples(CACHE / f"{name}.pcm",
+                                     lambda: S.render_tune(S.compose(seed, mood=mood)))
+        except Exception:  # noqa: BLE001 - no music, the effects still sound
+            log.warning("Arcade: the music %r could not be made", key, exc_info=True)
+            return
         with self._lock:
             if self._music_key == key:
                 self._music, self._music_pos = samples, 0
@@ -214,7 +247,18 @@ class ArcadeAudio(QObject):
                 self._sink.stop()
             except Exception:  # noqa: BLE001
                 pass
-        self._sink = self._io = None
+        self._sink = self._io = self._device_id = None
+
+    def close(self) -> None:
+        """For good (the extension is switched off): stopped, and no longer
+        on the Audio Mixer's notifier - nothing keeps it alive."""
+        self.stop()
+        if self._mixer_connected:
+            try:
+                AR.notifier().changed.disconnect(self._mixer_changed)
+            except (TypeError, RuntimeError):
+                pass
+            self._mixer_connected = False
 
     def _ensure_sink(self) -> None:
         if self._sink is not None or self._failed:
@@ -225,9 +269,10 @@ class ArcadeAudio(QObject):
             else:
                 from ui.voice import AudioPending
 
+                device_id = AR.source_output_id("games")
                 try:
-                    self._sink, self._io = open_sink(S.RATE, AR.source_output_id("games"),
-                                                     AR.source_gain("games"), lead_bytes())
+                    self._sink, self._io = open_sink(S.RATE, device_id, AR.source_gain("games"), lead_bytes())
+                    self._device_id = device_id
                 except AudioPending:
                     log.debug("Arcade: audio still starting, trying again")
                     if not self._retry.isActive():
@@ -243,12 +288,30 @@ class ArcadeAudio(QObject):
         self._timer.start(PUMP_MS)
 
     def _mixer_changed(self, *_args) -> None:
-        """The Audio Mixer's Arcade volume / mute reach the running sink."""
-        if self._sink is not None:
-            try:
-                self._sink.setVolume(AR.source_gain("games"))
-            except Exception:  # noqa: BLE001 - the sink went away
-                pass
+        """The Audio Mixer's Arcade volume / mute reach the running sink; a
+        new output for the Arcade closes the sink and opens it there, the
+        effects and music carry on."""
+        if self._sink is None:
+            return
+        if self._sink_factory is None and AR.source_output_id("games") != self._device_id:
+            self._close_sink()
+            self._ensure_sink()
+            return
+        try:
+            self._sink.setVolume(AR.source_gain("games"))
+        except Exception:  # noqa: BLE001 - the sink went away
+            pass
+
+    def _close_sink(self) -> None:
+        """Only the sink: what plays and the music stay."""
+        self._timer.stop()
+        sink, self._sink, self._io, self._device_id = self._sink, None, None, None
+        try:
+            sink.stop()
+            if isinstance(sink, QObject):
+                sink.deleteLater()
+        except Exception:  # noqa: BLE001 - it went away already
+            pass
 
     # -- the pump ------------------------------------------------------------------------------
 

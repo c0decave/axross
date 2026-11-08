@@ -86,13 +86,12 @@ MAX_INPUT_SIZE = 50 * 1024 * 1024
 # (a 1x1 PNG can declare 100_000 × 100_000 and explode on decode).
 MAX_DIMENSION = 20_000
 
-# Pillow's own decompression-bomb guard — keep it in lock-step with
-# our dimension cap so a malicious file can't slip past one decoder.
-if _PILImage is not None:  # pragma: no branch
-    try:
-        _PILImage.MAX_IMAGE_PIXELS = MAX_DIMENSION * MAX_DIMENSION
-    except Exception as _exc:  # pragma: no cover - defensive
-        log.debug("could not set PIL.Image.MAX_IMAGE_PIXELS: %s", _exc)
+# Pillow's global ``MAX_IMAGE_PIXELS`` is deliberately left at Pillow's
+# default: raising it here (it used to be MAX_DIMENSION**2 = 400 million
+# pixels) loosened the guard for every other Pillow user in the process -
+# the metadata cleaner then decoded 20000 x 20000 bombs. The preview loader
+# below checks its own bounds (MAX_DIMENSION, PILLOW_ALLOC_LIMIT_MIB) from
+# the header before decoding, which lie inside Pillow's default.
 
 # Qt allocation limit in MiB — applies to every QImageReader we create.
 QIMAGE_ALLOC_LIMIT_MIB = 128
@@ -325,8 +324,9 @@ def _decode_with_pillow(abs_path: str, edge: int | None, *, encode: bool = True)
     * Dimension cap (``MAX_DIMENSION``) is checked from the header
       (``img.size`` is available lazily, before ``.load()``) so a
       decompression bomb is rejected before a full decode.
-    * Pillow's own ``MAX_IMAGE_PIXELS`` guard is wired to
-      ``MAX_DIMENSION**2`` at import time as a second layer.
+    * The decoded size (``PILLOW_ALLOC_LIMIT_MIB``) is checked from the
+      header too; Pillow's own ``MAX_IMAGE_PIXELS`` guard stays at its
+      default as a second layer and is never raised.
 
     Raises:
       * :class:`PreviewDecodeFailed` — Pillow missing or decode failed.
@@ -344,6 +344,10 @@ def _decode_with_pillow(abs_path: str, edge: int | None, *, encode: bool = True)
         # spawns Ghostscript on load(), and sniffs content rather than
         # the extension, so "x.png" can be a PostScript program.
         img = _PILImage.open(abs_path, formats=list(PILLOW_FALLBACK_FORMATS))
+    except _PILImage.DecompressionBombError as exc:
+        raise PreviewTooLarge(
+            f"{abs_path}: Pillow decompression-bomb guard tripped: {exc}"
+        ) from exc
     except Exception as exc:
         raise PreviewDecodeFailed(f"{abs_path}: Pillow could not open file: {exc}") from exc
 

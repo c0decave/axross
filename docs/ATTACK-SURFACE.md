@@ -70,7 +70,15 @@ groups (`core/mcp_groups.py`): unknown group names exit 2; group
 schemas refuse unknown arguments; pack / extract / decrypt / encrypt
 / metadata export and cleaned copies only create fresh names under
 the root (never overwrite); dedupe re-checks every copy and trashes
-into `<root>/.axross-trash`; passphrases and the 7z password are
+into `<root>/.axross-trash`; the tools that read files through a
+folder or a name list (`pack`, `duplicates_scan`, `transfer_copy`, the
+metadata and file-type walks) leave every secret file
+(`core.protected_places`: SSH and GnuPG private keys, axross' tokens)
+out and list it in `skipped`, as `read_file` refuses it; the downloader
+check of MCP server commands (`core/mcp_runner.py`) fails closed: a
+word naming a runner anywhere in the command, nix / pixi / pkgx / dnx,
+or an interpreter with code on its line (`python -c`, `node -e`,
+`perl -e`, …) makes the command run only in a container; passphrases and the 7z password are
 never in results, errors or audit lines; `remote_profiles` uses a
 field allow-list (no secrets); `remote_open` takes passwords only
 from the keyring of a profile that stores them, never prompts
@@ -249,7 +257,13 @@ blocks accidental clobber; `_mutation_gate` issues a confirm step
 on destructive ops in the GUI; `destructive_preview.py` shows the
 exact set of paths a mutating op will touch before commit;
 `trash()` provides a soft-delete path; `archive.py` rejects
-absolute and `..`-traversing member names; checksums via
+absolute and `..`-traversing member names, and adds up the sizes a
+compressed tar's members declare while it reads their headers -
+listing stops above `MAX_LIST_TAR_BYTES`, extracting above
+`MAX_EXTRACT_TOTAL_BYTES`, before the data in between is decompressed;
+no single read of a tar stream (a GNU long name, a pax header) takes
+more than `MAX_TAR_READ`, and Cancel is polled per header and while
+seeking over a member; checksums via
 `hash_file()` allow post-hoc integrity check.
 
 **Known gaps to attack.** Symlink-after-stat (TOCTOU) on

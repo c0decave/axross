@@ -52,6 +52,10 @@ class _Panes(unittest.TestCase):
             self.win = MW.MainWindow()
         self.addCleanup(self.win.deleteLater)
         self.addCleanup(self.win.close)
+        # Runs before close(): the "Transfers running" question of
+        # closeEvent is modal and nobody answers it offscreen. The counters
+        # follow the job status through a queued signal, so wait for them.
+        self.addCleanup(self._let_close)
         self.win._reconnect_timer.stop()
         self.win.resize(1200, 700)
         self.win.show()
@@ -79,6 +83,10 @@ class _Panes(unittest.TestCase):
         )
         p.start()
         self.addCleanup(p.stop)
+
+    def _let_close(self) -> None:
+        self.wait_for(lambda: self.win._transfer_manager.unfinished() == 0)
+        self.win._quit_with_transfers = True
 
     # -- helpers -------------------------------------------------------------
     def wait_for(self, predicate, timeout: float = 10.0) -> bool:

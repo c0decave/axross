@@ -898,8 +898,9 @@ Skripte: `axross.metadata`, `axross.remove_metadata`,
   **Log**. Jeder flasht bernsteinfarben, wenn off-screen etwas
   passiert (Transfer-Status, Shell-Output, Log-Zeile). Klick raist
   + cleart.
-- Rechtsklick auf einen Transfer für **Cancel**, **Retry**, **Open
-  destination folder**.
+- Rechtsklick auf einen Transfer für **Abbrechen** (diesen Job),
+  **Wiederholen** (einen fehlgeschlagenen oder abgebrochenen Job) und
+  **Zielordner öffnen**.
 - Das Log-Dock filtert nach Level und nach Area: *Areas* neben dem Level
   ist eine Liste der Logging-Areas zum Anhaken (eine Area nimmt ihre
   Sub-Areas mit; *Other* ist alles außerhalb, *All Areas* der Default).
@@ -935,6 +936,9 @@ gleichen Surface:
   History, Tab-Completion, Seitenpanel mit jeder Funktion + Docstring.
 - **Headless** — ``axross --script myscript.py`` führt dein
   Python im selben Namensraum aus; ideal für Cron/CI/Batches.
+  Wörter nach der Datei sind ``sys.argv[1:]`` des Skripts
+  (``axross --script mirror.py /srv/data``); der Security-Mode
+  paranoid, auch wenn in *Settings* gewählt, verweigert es.
 - **MCP** — wenn ``--mcp-allow-scripts`` gesetzt ist, ist das
   Surface auch über MCP-Tool-Calls erreichbar.
 
@@ -1213,10 +1217,18 @@ dich etwas) und `update_plan` (eine Checkliste über dem Eingabefeld).
 axross' eigene Einstellungen und Daten (`~/.config/axross`,
 `~/.local/share/axross`, `~/.local/state/axross` - seine Rechte, seine
 MCP-Server), Shell-Startdateien (`~/.bashrc`, `~/.profile`, `~/.zshrc`,
-…), `~/.config/autostart`, `~/.config/systemd`, `~/.ssh` und `~/.gnupg`:
-geändert, würde jede davon Code ausführen oder die Rechte des Agenten
-ohne Rückfrage erweitern. Ein Ordner, der eine davon enthält, wird auch
-nicht gelöscht oder verschoben.
+…), `~/.config/autostart`, `~/.config/systemd`, `~/.ssh` und `~/.gnupg`,
+Befehle im PATH (`~/.local/bin`) und Python-Start-Hooks (`~/.local/lib`),
+Einstellungen von Git, pip und npm, Startdateien von Editoren und
+Window-Managern sowie Einstellungen und MCP-Server anderer LLM-Clients
+(`~/.claude`, Claude Desktop, Cursor, VS Code), am Standardort und am
+XDG-Ort: geändert, würde jede davon Code ausführen oder die Rechte des
+Agenten ohne Rückfrage erweitern. Ein Ordner, der eine davon enthält,
+wird auch nicht gelöscht oder verschoben, und ein Symlink führt nicht an
+ihnen vorbei. In der Sandbox werden die vorhandenen und die fehlenden
+Ordner darunter nur lesend eingehängt. Der Agent liest außerdem keine
+Tokens von axross und keine privaten SSH- und GnuPG-Keys
+(`--mcp-allow-secret-reads` hebt das für den MCP-Server auf).
 
 **Files read-only** (in der oberen Zeile des Tabs, und für jeden Tab in
 Agent Settings > Access): der Agent liest Dateien, ändert aber keine —

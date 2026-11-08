@@ -132,6 +132,7 @@ class PresenceDialog(QDialog):
         self._ask_save = ask_save
         self._summaries: list[BP.Summary] = []
         self._selected: str | None = None
+        self._left = False  # see _leave
 
         layout = QVBoxLayout(self)
         top = QHBoxLayout()
@@ -379,6 +380,21 @@ class PresenceDialog(QDialog):
         self._timer.stop()
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        self._leave()
+        super().closeEvent(event)
+
+    def done(self, result: int) -> None:  # noqa: D401 - Qt override
+        # reject() (Escape, the corner's [x]) ends here without a closeEvent
+        self._leave()
+        super().done(result)
+
+    def _leave(self) -> None:
+        """Once however the dialog is left (closeEvent, or reject() from
+        Escape and the corner's [x], which sends none): the timer stops and
+        the presence log's signals no longer reach it."""
+        if self._left:
+            return
+        self._left = True
         self._timer.stop()
         for signal, slot in ((self.presence.changed, self.refresh),
                              (self.presence.monitoring_changed, self._monitoring_changed)):
@@ -386,7 +402,6 @@ class PresenceDialog(QDialog):
                 signal.disconnect(slot)
             except (TypeError, RuntimeError):
                 pass
-        super().closeEvent(event)
 
 
 __all__ = ["PERIODS", "PresenceDialog", "Timeline", "signal_text", "when_text"]

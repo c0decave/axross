@@ -131,6 +131,7 @@ class TrailsView(AC.ArcadeView):
     TICK_MS = TICK_MS
     JINGLE = "intro-trails"
     DIRECTION_KEYS = frozenset(P1) | frozenset(P2)
+    ACTION_KEYS = frozenset(SKIP_KEYS)
 
     def __init__(self, *, settings: A.Settings | None = None, audio=None, on_exit=None, on_progress=None,
                  on_restart=None, intro: bool = True, parent=None):
@@ -144,6 +145,7 @@ class TrailsView(AC.ArcadeView):
         self.banner = ""
         self.banner_t = 0.0
         self.turns: dict[int, list] = {0: [], 1: []}
+        self._unboost: set[int] = set()          # boost keys let go during a pause
         self._floor: QPixmap | None = None
         self._floor_key = None
         self._ribbons: QPixmap | None = None
@@ -176,11 +178,11 @@ class TrailsView(AC.ArcadeView):
             if auto_repeat:
                 return key in SKIP_KEYS
             if key == Qt.Key.Key_Space:
-                g.boost(0, False)
+                self._end_boost(0)
                 return True
             if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
                 if two:
-                    g.boost(1, False)
+                    self._end_boost(1)
                 return True
             return key in P1 or key in P2
         if key in P1:
@@ -196,12 +198,21 @@ class TrailsView(AC.ArcadeView):
                 if not auto_repeat:
                     self.next_round()
                 return True
-            if key == Qt.Key.Key_Space:
-                g.boost(0)
-            elif two:
-                g.boost(1)
+            rider = 0 if key == Qt.Key.Key_Space else 1
+            if rider == 0 or two:
+                self._unboost.discard(rider)
+                g.boost(rider)
             return True
         return False
+
+    def _end_boost(self, rider: int) -> None:
+        """A boost key let go; during a pause the boost ends when the game
+        goes on - a paused game does not change."""
+        if self.paused:
+            self._unboost.add(rider)
+        else:
+            self._unboost.discard(rider)
+            self.game.boost(rider, False)
 
     def release_all(self) -> None:
         for i in range(len(self.game.boosting)):
@@ -230,6 +241,9 @@ class TrailsView(AC.ArcadeView):
             return
         if self.paused or self.intro_running():
             return
+        for i in self._unboost:
+            g.boost(i, False)
+        self._unboost.clear()
         for i, q in self.turns.items():
             if q and i < len(g.riders):
                 g.steer_rider(i, q.pop(0))

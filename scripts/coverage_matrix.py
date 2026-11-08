@@ -1378,6 +1378,7 @@ INFRASTRUCTURE: dict[str, str] = {
     "core/__init__.py": "package marker",
     "ui/__init__.py": "package marker",
     "resources/extensions/__init__.py": "package marker",
+    "resources/extensions/_pane.py": "refreshes a pane after an extension's job, if it still exists",
     "core/answer_fields.py": "typed reads of server JSON, used by the cloud backends",
     "core/append_helpers.py": "read-modify-write append shared by backends",
     "core/desktop_open.py": "hands files and links to the desktop",

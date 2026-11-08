@@ -181,6 +181,11 @@ class _RunnerState:
         self.cancel = threading.Event()
         self.stopped = False
         self.max_pending = max(1, max_pending)
+        #: Results posted to the GUI thread and not taken there yet, by
+        #: ticket: after the runner's deletion its GuiCall drops the post,
+        #: so stop() releases what is left (a remote file's temp copy).
+        self.posted: dict[int, Any] = {}
+        self.tickets = 0
 
     def reset(self) -> None:
         with self.cond:
@@ -195,6 +200,18 @@ class _RunnerState:
         with self.cond:
             self.stopped = True
             self.cond.notify_all()
+            left = list(self.posted.values())
+            self.posted.clear()
+        for value in left:
+            _release(value)
+
+    def take(self, ticket: int) -> tuple[bool, Any]:
+        """The posted result *ticket*, once: ``(False, None)`` if stop()
+        released it already."""
+        with self.cond:
+            if ticket not in self.posted:
+                return False, None
+            return True, self.posted.pop(ticket)
 
 
 #: How often an idle worker checks that its runner still exists.
@@ -212,14 +229,20 @@ def _runner_gone(runner: weakref.ref) -> bool:
 def _work(state: _RunnerState, deliver: GuiCall, runner: weakref.ref) -> None:
     while True:
         with state.cond:
+            gone = False
             while not state.queue and not state.stopped:
                 if not state.cond.wait(_IDLE_CHECK_SECONDS) and _runner_gone(runner):
-                    state.stopped = True
-            if state.stopped:
-                return
-            gen, key, fn = state.queue.pop()  # newest first
-            cancel = state.cancel
-            state.running += 1
+                    gone = True
+                    break
+            leave = gone or state.stopped
+            if not leave:
+                gen, key, fn = state.queue.pop()  # newest first
+                cancel = state.cancel
+                state.running += 1
+        if leave:
+            if gone:
+                state.stop()  # releases what was posted to the deleted runner
+            return
         value, error = None, None
         try:
             value = fn(cancel)
@@ -232,10 +255,16 @@ def _work(state: _RunnerState, deliver: GuiCall, runner: weakref.ref) -> None:
             current = gen == state.generation and not state.stopped
             if current:
                 state.active.discard(key)
+                # Kept until the GUI thread takes it: marked current here but
+                # posted after the lock, a result whose runner was deleted in
+                # between was dropped by the GuiCall and never released.
+                state.tickets += 1
+                ticket = state.tickets
+                state.posted[ticket] = value
         if current:
             # Never self.<signal>.emit() here: the runner may be being deleted
             # in the GUI thread right now (core/thread_relay.py).
-            deliver(gen, key, value, error)
+            deliver(ticket, gen, key, error)
         else:
             _release(value)
 
@@ -295,8 +324,11 @@ class TaskRunner(QObject):
     def shutdown(self) -> None:
         self._state.stop()
 
-    def _deliver(self, gen: int, key, value, error) -> None:
+    def _deliver(self, ticket: int, gen: int, key, error) -> None:
         s = self._state
+        posted, value = s.take(ticket)
+        if not posted:
+            return  # released by shutdown() meanwhile
         if gen != s.generation or s.stopped:
             _release(value)
             return

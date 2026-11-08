@@ -235,11 +235,19 @@ def child_env(policy_name: str, *, watched: bool = False) -> dict:
 
     ``watched=True`` (the Scripts dock) marks a run whose output a human
     sees live and can stop: the production tarpit's countdown then runs
-    instead of refusing (``core.ui_helpers.can_watch_countdown``)."""
+    instead of refusing (``core.ui_helpers.can_watch_countdown``).
+
+    The MCP server's variables (``AXROSS_MCP``, ``AXROSS_MCP_WRITE``,
+    ``AXROSS_MCP_TOOLS``, ...) are dropped: a script run is no MCP server,
+    and a frozen build's child is ``axross --script -``, which served MCP
+    on its stdin instead of running the script when it inherited
+    ``AXROSS_MCP=1`` from the client that started axross."""
     from core.subprocess_env import clean_child_env
     from core.ui_helpers import ENV_WATCHED
 
     env = clean_child_env(AXROSS_SECURITY_MODE=policy_name)
+    for name in [n for n in env if n.startswith("AXROSS_MCP")]:
+        del env[name]
     if watched:
         env[ENV_WATCHED] = "1"
     else:

@@ -31,6 +31,22 @@ SCARED_TICKS, JUMP_TICKS = 60, 6
 #: Ticks between two daemons leaving the den at the start and after a catch.
 RELEASE = 15
 DAEMONS = ("Tracker", "Cutter", "Drifter", "Warden")
+#: Daemon pace: at pace 0 they skip one tick in BASE_EVERY (4 of 5 steps,
+#: a little slower than the player); each step of pace adds a tick to
+#: that cycle, so they get faster, up to MAX_PACE (one skip in ten).
+BASE_EVERY, MAX_PACE = 5, 5
+#: Scared daemons move on every second tick only - slower than at any pace.
+SCARED_EVERY = 2
+
+
+def daemons_move(tick: int, pace: int, scared: bool) -> bool:
+    """Whether the daemons take a step on *tick*: the move rate rises with
+    *pace* (0 = level 1) from 80 % to 90 %; scared, they move on every
+    second tick (50 %), below the slowest normal rate."""
+    if scared:
+        return tick % SCARED_EVERY != 0
+    every = BASE_EVERY + max(0, min(MAX_PACE, pace))
+    return tick % every != 0
 
 
 def generate_maze(seed: int, width: int = 21, height: int = 21, braid: float = 0.75) -> list[list[str]]:
@@ -277,8 +293,7 @@ class ChaseGame:
         self._step_player()
         self._collide()
         # daemons are a little slower than the player, faster each level
-        every = max(2, 5 - self.level // 2) if not self.scared else 2
-        if self.tick_count % every != 0:
+        if daemons_move(self.tick_count, self.level - 1, bool(self.scared)):
             for d in self.daemons:
                 self._step_daemon(d)
         self._collide()

@@ -74,14 +74,30 @@ class _ConnectThread(QThread):
         try:
             from core.connection_manager import ConnectionManager
 
-            mgr = ConnectionManager()
-            session = mgr.connect(
-                self._profile,
-                password=self._password,
-                key_passphrase=self._key_passphrase,
-            )
-            home = session.home()
-            mgr.disconnect_all()
+            class _TestManager(ConnectionManager):
+                # A test connection is no connection of the app: enrolled in
+                # core.conn_health under the app's own key, its disconnect
+                # removed the health record of a pane open on that profile.
+                @staticmethod
+                def _enroll_health(*_args, **_kwargs) -> None:
+                    return None
+
+                @staticmethod
+                def _unenroll_health(*_args, **_kwargs) -> None:
+                    return None
+
+            mgr = _TestManager()
+            try:
+                session = mgr.connect(
+                    self._profile,
+                    password=self._password,
+                    key_passphrase=self._key_passphrase,
+                )
+                home = session.home()
+            finally:
+                # Also when home() raises after the connect: the session,
+                # its socket and its transport thread were left open.
+                mgr.disconnect_all()
             self.success.emit(home)
         except Exception as e:
             self.error.emit(str(e))
@@ -871,9 +887,11 @@ class ConnectionDialog(QDialog):
     def _load_profile(self, p: ConnectionProfile) -> None:
         self._loaded_profile_name = p.name
         self._loaded_profile = p
-        self._password.clear()
-        self._proxy_password.clear()
-        self._key_passphrase.clear()
+        # Every typed secret belongs to the profile it was typed for: the
+        # FTP / SMB / WebDAV / IMAP password, S3 secret or Azure key field
+        # survived a switch, and Connect sent A's password to B (and stored
+        # it as B's with "Save in keyring" on).
+        self._clear_typed_secrets()
         self._profile_name.setText(p.name)
 
         # Protocol
@@ -1020,6 +1038,17 @@ class ConnectionDialog(QDialog):
         ):
             widget.setEnabled(custom)
 
+    def _clear_typed_secrets(self) -> None:
+        """Empty every field a secret is typed into (never loaded from a
+        profile: the keyring holds those)."""
+        for field in (
+            self._password,
+            self._simple_password,
+            self._key_passphrase,
+            self._proxy_password,
+        ):
+            field.clear()
+
     def _clear_fields(self) -> None:
         self._loaded_profile_name = None
         self._loaded_profile = None
@@ -1029,13 +1058,12 @@ class ConnectionDialog(QDialog):
         self._host.clear()
         self._port.setValue(22)
         self._username.clear()
-        self._password.clear()
+        self._addr_family.setCurrentIndex(0)  # "auto": not the last profile's
+        self._clear_typed_secrets()
         self._key_file.clear()
-        self._key_passphrase.clear()
         self._store_password.setChecked(False)
         self._auth_password.setChecked(True)
         self._reset_proxy_fields()
-        self._simple_password.clear()
         self._simple_store_pw.setChecked(False)
         # Protocol-specific
         self._ftp_passive.setChecked(True)
@@ -1507,13 +1535,24 @@ class ConnectionDialog(QDialog):
             QMessageBox.warning(self, "Keyring Error", f"Could not save credentials:\n{e}")
             return
         self._loaded_profile_name = profile.name
+        self._loaded_profile = self._profile_manager.get(profile.name) or profile
         log.info("Saved profile: %s", profile.name)
 
-        # Update combo
-        idx = self._profile_combo.findText(profile.name)
-        if idx < 0:
-            self._profile_combo.addItem(profile.name)
-        self._profile_combo.setCurrentText(profile.name)
+        # Update combo - with its signals blocked: selecting the saved name
+        # loaded the profile again, which emptied the typed password (and
+        # a rename left the old name in the list, to a profile now gone).
+        combo = self._profile_combo
+        combo.blockSignals(True)
+        try:
+            if old_profile_name and old_profile_name != profile.name:
+                old_idx = combo.findText(old_profile_name)
+                if old_idx > 0:
+                    combo.removeItem(old_idx)
+            if combo.findText(profile.name) < 0:
+                combo.addItem(profile.name)
+            combo.setCurrentText(profile.name)
+        finally:
+            combo.blockSignals(False)
 
         QMessageBox.information(self, "Saved", f"Profile '{profile.name}' saved.")
 
@@ -1549,9 +1588,18 @@ class ConnectionDialog(QDialog):
                 log.error("Failed to delete profile %s: %s", name, e)
                 QMessageBox.warning(self, "Error", f"Failed to delete profile:\n{e}")
                 return
-            idx = self._profile_combo.findText(name)
-            if idx >= 0:
-                self._profile_combo.removeItem(idx)
+            # removeItem() selected the next profile, the form was then
+            # emptied under its name - and the next Delete removed that
+            # profile, unseen. "(New Connection)" is selected instead.
+            combo = self._profile_combo
+            combo.blockSignals(True)
+            try:
+                idx = combo.findText(name)
+                if idx >= 0:
+                    combo.removeItem(idx)
+                combo.setCurrentIndex(0)
+            finally:
+                combo.blockSignals(False)
             self._clear_fields()
 
     def _test_connection(self) -> None:
@@ -1778,8 +1826,14 @@ class ConnectionDialog(QDialog):
         bridge.set_prompt(self._confirm_unknown_host)
         bridge.request.connect(bridge.handle_request, _Qt.ConnectionType.QueuedConnection)
 
+        from core.connection_manager import effective_profile
+
         def deploy() -> str:
-            session = SSHSession(profile)
+            # The route a Connect takes (the default proxy, PAC, bypass
+            # list), resolved here off the GUI thread (a PAC script is
+            # fetched): SSHSession(profile) took a profile set to "default
+            # proxy" for one without a proxy and went to the server directly.
+            session = SSHSession(effective_profile(profile))
             try:
                 session.connect(
                     password=password,

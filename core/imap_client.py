@@ -1010,14 +1010,17 @@ class ImapSession(SessionLifecycle):
         if not remainder:
             return (mailbox,)
 
-        # Second part is either "uid.eml" or "uid" (directory for attachments)
+        # Second part is either "uid.eml" / "uid_subject.eml" (the message)
+        # or "uid" (the folder of its attachments)
         name_part = remainder[0]
-        uid_str = name_part
-        # Strip .eml extension if present
-        if uid_str.lower().endswith(".eml"):
-            uid_str = uid_str[:-4]
-        # Extract UID: it's the part before the first underscore
-        uid_match = re.match(r"^(\d+)", uid_str)
+        if name_part.lower().endswith(".eml"):
+            # The UID is the part before the first underscore
+            uid_match = re.match(r"^(\d+)", name_part[:-4])
+        else:
+            # Only the bare UID names the attachments' folder: a file such
+            # as "2024_report.pdf" was taken for message 2024's folder and
+            # "existed" without a question to the server.
+            uid_match = re.fullmatch(r"(\d+)", name_part)
         if not uid_match:
             # Non-UID filename (e.g. transfer temp file ".readme.txt.part-xxx"
             # or an arbitrary file being written).  Return mailbox + raw name
@@ -1165,8 +1168,12 @@ class ImapSession(SessionLifecycle):
                 "FETCH", batch.decode("ascii"), "(ENVELOPE RFC822.SIZE INTERNALDATE)"
             )
             if typ != "OK":
-                log.warning("FETCH failed for UIDs %s: %s", batch, fetch_data)
-                continue
+                # Skipped, the listing looked complete without these
+                # messages - and a sync or a compare took them for gone.
+                raise OSError(
+                    f"IMAP FETCH of {mailbox!r} failed for messages "
+                    f"{i + 1}-{min(i + batch_size, len(uid_list))}: {fetch_data}"
+                )
 
             for response in _imap_responses(fetch_data):
                 attrs = _fetch_attributes(response)
@@ -1297,7 +1304,7 @@ class ImapSession(SessionLifecycle):
                 # It's a message file
                 self._select_existing(mailbox, path)
                 imap = self._ensure_connected()
-                typ, data = imap.uid("FETCH", uid, "(RFC822.SIZE INTERNALDATE)")
+                typ, data = imap.uid("FETCH", uid, "(RFC822.SIZE INTERNALDATE ENVELOPE)")
                 if typ != "OK":
                     raise OSError(f"Cannot stat message UID {uid}: {data}")
                 size = 0
@@ -1305,6 +1312,7 @@ class ImapSession(SessionLifecycle):
                 if not any(part for part in data or ()):
                     # UID FETCH of a UID that is not there answers OK, no data.
                     raise FileNotFoundError(errno.ENOENT, "No such message", path)
+                envelope = None
                 for response in _imap_responses(data):
                     # A reply with a literal arrives split into a (line,
                     # literal) tuple and the rest of the line; joined here.
@@ -1314,9 +1322,25 @@ class ImapSession(SessionLifecycle):
                         size = found
                     if b"INTERNALDATE" in attrs:
                         modified = _fetch_date(attrs)
+                    if b"ENVELOPE" in attrs:
+                        envelope = attrs[b"ENVELOPE"]
+                if not self._names_message(leaf_name, uid, envelope):
+                    # "5_invoice.eml" copied in from another mailbox is not
+                    # this mailbox's message 5: it "existed", and a copy
+                    # there was refused or prompted for nothing.
+                    raise FileNotFoundError(
+                        errno.ENOENT, f"No message {leaf_name!r} (UID {uid} is another one)", path
+                    )
                 return FileItem(name=leaf_name, size=size, modified=modified)
             else:
-                # It's the attachment directory for this UID
+                # It's the attachment directory for this UID - when the
+                # message is there.
+                self._select_existing(mailbox, path)
+                typ, data = self._ensure_connected().uid("FETCH", uid, "(UID)")
+                if typ != "OK":
+                    raise OSError(f"Cannot stat message UID {uid}: {data}")
+                if not any(part for part in data or ()):
+                    raise FileNotFoundError(errno.ENOENT, "No such message", path)
                 return FileItem(name=uid, is_dir=True)
 
         if len(parsed) == 3:
@@ -1334,6 +1358,16 @@ class ImapSession(SessionLifecycle):
             )
 
         raise OSError(f"Invalid path: {path!r}")
+
+    @staticmethod
+    def _names_message(leaf: str, uid: str, envelope) -> bool:
+        """Whether the file name *leaf* is message *uid*'s: ``<uid>.eml``,
+        or the name the listing gives it (``<uid>_<subject>.eml``). A reply
+        without the envelope cannot tell another message apart: it passes."""
+        if leaf.lower() == f"{uid}.eml" or envelope is None:
+            return True
+        listed = f"{uid}_{_sanitize_filename(_envelope_subject(envelope), max_len=80)}.eml"
+        return leaf.casefold() == listed.casefold()
 
     @_imap_errors_as_oserror
     def is_dir(self, path: str) -> bool:
@@ -1439,13 +1473,17 @@ class ImapSession(SessionLifecycle):
         typ, _ = self._ensure_connected().status(encoded, "(MESSAGES)")
         return typ != "OK"
 
-    def _message_count(self, mailbox: str) -> int:
-        """Messages in *mailbox* by STATUS; 0 for a name that cannot hold any."""
+    def _message_count(self, mailbox: str) -> int | None:
+        """Messages in *mailbox* by STATUS; 0 for a name that cannot hold any
+        (listed \\Noselect); None when STATUS fails otherwise - unknown,
+        which a non-recursive delete took for empty."""
         imap = self._ensure_connected()
         encoded = _mailbox_arg(mailbox)
         typ, data = imap.status(encoded, "(MESSAGES)")
         if typ != "OK":
-            return 0
+            if (mailbox, False) in self._list_entries():
+                return 0
+            return None
         raw = b" ".join(d if isinstance(d, bytes) else str(d).encode() for d in data if d)
         match = re.search(rb"MESSAGES\s+(\d+)", raw, re.IGNORECASE)
         return int(match.group(1)) if match else 0
@@ -1474,12 +1512,19 @@ class ImapSession(SessionLifecycle):
             key=lambda name: name.count(self._hierarchy_sep),
             reverse=True,
         )
-        if not recursive and (children or self._message_count(mailbox)):
-            raise OSError(
-                errno.ENOTEMPTY,
-                f"Mailbox {mailbox!r} has messages or sub-mailboxes; remove it recursively",
-                path,
-            )
+        if not recursive:
+            count = None if children else self._message_count(mailbox)
+            if count is None and not children:
+                raise OSError(
+                    f"Cannot tell whether mailbox {mailbox!r} is empty (STATUS failed); "
+                    "nothing was deleted",
+                )
+            if children or count:
+                raise OSError(
+                    errno.ENOTEMPTY,
+                    f"Mailbox {mailbox!r} has messages or sub-mailboxes; remove it recursively",
+                    path,
+                )
         try:
             for child in children:
                 typ, data = self._delete_mailbox(child)

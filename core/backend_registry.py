@@ -183,7 +183,9 @@ AZURE_FILES_CAPS = BackendCapabilities(
     case_sensitive=False,
     can_server_side_copy=True,
     rename_atomic=True,
-    append_native=True,
+    # No real append: the client downloads the whole file (capped at 256 MiB)
+    # and uploads it again (core.server_ops.WriteTraits.real_append).
+    append_native=False,
 )
 CLOUD_CAPS = BackendCapabilities(
     can_chmod=False,

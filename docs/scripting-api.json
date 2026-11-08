@@ -1384,7 +1384,7 @@
       ],
       "returns": "dict",
       "summary": "Execute a saved script in a fresh namespace pre-populated with ``axross`` (this module). Returns the post-exec namespace so the caller can inspect any variables it left behind. ``env`` overrides / augments the initial namespace.",
-      "doc": "Execute a saved script in a fresh namespace pre-populated with\n``axross`` (this module). Returns the post-exec namespace so the\ncaller can inspect any variables it left behind. ``env`` overrides\n/ augments the initial namespace.",
+      "doc": "Execute a saved script in a fresh namespace pre-populated with\n``axross`` (this module). Returns the post-exec namespace so the\ncaller can inspect any variables it left behind. ``env`` overrides\n/ augments the initial namespace.\n\nThe script runs as from ``axross --script``: ``__name__`` is\n``\"__main__\"`` (an ``if __name__ == \"__main__\":`` block runs) and\n``__file__`` is the script's path.",
       "examples": [],
       "raises": [
         "OSError",

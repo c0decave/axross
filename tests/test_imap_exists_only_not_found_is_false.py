@@ -32,7 +32,7 @@ from mail_fuzz_servers import STALL, FakeImapServer  # noqa: E402
 from core import imap_client as IC  # noqa: E402
 from core.transfer_worker import TransferWorker  # noqa: E402
 
-MSG = "/INBOX/1_Hello.eml"
+MSG = "/INBOX/1_Hello world.eml"  # the name the listing gives message 1 ("Hello world")
 
 
 @pytest.fixture(autouse=True)

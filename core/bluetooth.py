@@ -789,6 +789,8 @@ class AgentRequest:
     passkey: int | None = None
     pin: str = ""
     uuid: str = ""
+    #: display-passkey: how many digits were typed on the device so far
+    entered: int | None = None
 
     @property
     def needs_answer(self) -> bool:
@@ -821,7 +823,8 @@ class _Agent(QDBusAbstractAdaptor):
 
     @pyqtSlot(QDBusObjectPath, "uint", "ushort")
     def DisplayPasskey(self, device, passkey, entered) -> None:  # noqa: N802
-        self._client._agent_show("display-passkey", device, passkey=int(passkey))
+        self._client._agent_show("display-passkey", device, passkey=int(passkey),
+                                 entered=int(entered))
 
     @pyqtSlot(QDBusObjectPath, "uint", QDBusMessage)
     def RequestConfirmation(self, device, passkey, message) -> None:  # noqa: N802
@@ -1593,9 +1596,16 @@ class BluezClient(QObject):
                 pass
 
     def _agent_show(self, kind: str, device, **extra) -> None:
+        """A code to show (display-*; no answer). BlueZ calls DisplayPasskey
+        again for every digit typed on the device: a code already shown for
+        the same device keeps its token, so the panel updates that dialog
+        instead of opening one more per call."""
         try:
             path = normalise(device)
-            token = next(self._tokens)
+            token = next((t for t, (shown, _m) in self._requests.items()
+                          if shown.kind == kind and shown.device_path == path), None)
+            if token is None:
+                token = next(self._tokens)
             request = AgentRequest(token=token, kind=kind, device_path=path,
                                    device_name=self._device_name(path), **extra)
             self._requests[token] = (request, None)

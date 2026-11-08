@@ -170,6 +170,8 @@ def attach(path: str, vm: str, controller: str, exe: str | None = None) -> str:
 def activate(api):
     from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
+    from ui.plain_text import plain_item, plain_message
+
     def local_path(ctx):
         if not ctx.is_local:
             api.notify("VirtualBox needs a local file")
@@ -183,8 +185,8 @@ def activate(api):
         api.run_in_background(
             lambda: register(path),
             on_done=lambda p: api.notify(f"registered {os.path.basename(p)} in VirtualBox"),
-            on_error=lambda exc: QMessageBox.warning(api.window, "Register in VirtualBox",
-                                                     str(exc)),
+            on_error=lambda exc: plain_message(api.window, QMessageBox.Icon.Warning,
+                                               "Register in VirtualBox", str(exc)).exec(),
         )
 
     def do_attach(ctx):
@@ -202,9 +204,8 @@ def activate(api):
                 api.notify("VirtualBox has no machines")
                 return
             labels = [name for name, _uuid in vms]
-            choice, ok = QInputDialog.getItem(api.window, "Attach to VirtualBox VM",
-                                              f"Attach {os.path.basename(path)} to:", labels,
-                                              editable=False)
+            choice, ok = plain_item(api.window, "Attach to VirtualBox VM",
+                                    f"Attach {os.path.basename(path)} to:", labels)
             if not ok:
                 return
             uuid = vms[labels.index(choice)][1]
@@ -217,8 +218,8 @@ def activate(api):
         def got_machine(name, uuid, state, controllers):
             usable = disk_controllers(controllers)
             if not usable:
-                QMessageBox.warning(api.window, "Attach to VirtualBox VM",
-                                    f"{name} has no controller with a free port.")
+                plain_message(api.window, QMessageBox.Icon.Warning, "Attach to VirtualBox VM",
+                              f"{name} has no controller with a free port.").exec()
                 return
             ctl = usable[0]
             if len(usable) > 1:
@@ -238,7 +239,8 @@ def activate(api):
             )
 
         def failed(exc):
-            QMessageBox.warning(api.window, "Attach to VirtualBox VM", str(exc))
+            plain_message(api.window, QMessageBox.Icon.Warning, "Attach to VirtualBox VM",
+                          str(exc)).exec()
 
         api.run_in_background(lambda: parse_vms(run([exe, "list", "vms"])), on_done=got_vms,
                               on_error=failed)

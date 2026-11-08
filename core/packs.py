@@ -21,6 +21,13 @@ signed ``SHA256SUMS`` then names the new manifest. :func:`stale_units`
 compares the installed blobs against such a manifest and :func:`update`
 brings them to it - through :func:`signed_manifest` and the same blob
 checks as :func:`install`, there is no other path.
+
+The running session has its blob folders on sys.path: nothing it may
+import from is deleted or replaced while it runs. A blob re-issued under
+its old name is unpacked into a folder of its own (``installed.json``
+``dirs`` maps the blob to it), and a folder no unit needs any more
+(:func:`update`, :func:`remove`) is only listed under ``retired``;
+:func:`prune` at the next start deletes it.
 """
 
 from __future__ import annotations
@@ -32,7 +39,6 @@ import os
 import shutil
 import sys
 import tempfile
-import time
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -161,9 +167,13 @@ def _unpack(blob: Path, dest: Path) -> None:
 class Fetcher:
     """How bytes are fetched: *get(url, max_bytes, hosts)* -> bytes. The
     default goes through core.self_update.fetch (https, allowed hosts, the
-    default proxy, bounded)."""
+    default proxy, bounded). Like the binary's download it has no overall
+    deadline - a blob may be hundreds of MiB on a slow line - but each read
+    times out (core.self_update.READ_TIMEOUT), and *cancel* (an Event)
+    stops it between reads."""
 
     get: object = None
+    cancel: object = None
 
     def __call__(self, url: str, max_bytes: int, hosts=None) -> bytes:
         if self.get is not None:
@@ -171,7 +181,7 @@ class Fetcher:
         from core import self_update as SU
 
         return SU.fetch(url, opener=SU.build_opener(), max_bytes=max_bytes, hosts=hosts,
-                        deadline=time.monotonic() + 600)
+                        cancel=self.cancel)
 
 
 def signed_manifest(release, fetch: Fetcher, *, verify=None, sums: bytes | None = None) -> tuple[dict, dict]:
@@ -208,6 +218,55 @@ def install(release, units: list[str], *, fetch: Fetcher | None = None, root: Pa
     return _install_checked(release, manifest, entries, units, fetch, root or packs_root(), progress)
 
 
+def split_available(manifest: dict, units: list[str]) -> tuple[list[str], list[str]]:
+    """(*units* the manifest has, with everything they need; the others) -
+    a unit a newer release dropped or renamed, or one that needs such a unit."""
+    kept, dropped = [], []
+    for unit in units:
+        try:
+            needed_blobs(manifest, unit)
+        except PackError:
+            dropped.append(unit)
+        else:
+            kept.append(unit)
+    return kept, dropped
+
+
+def install_available(release, units: list[str], *, fetch: Fetcher | None = None,
+                      root: Path | None = None, verify=None,
+                      progress=None) -> tuple[list[str], list[str]]:
+    """Like :func:`install`, for the units of another version brought
+    along by a self-update: (the blobs installed, the units *release* no
+    longer has - left out instead of refusing the whole update)."""
+    fetch = fetch or Fetcher()
+    manifest, entries = signed_manifest(release, fetch, verify=verify)
+    kept, dropped = split_available(manifest, units)
+    done = _install_checked(release, manifest, entries, kept, fetch, root or packs_root(), progress)
+    return done, dropped
+
+
+def _dir_of(state: dict, name: str) -> str:
+    """The folder (below the version's folder) blob *name* is unpacked in."""
+    dirs = state.get("dirs")
+    folder = dirs.get(name) if isinstance(dirs, dict) else None
+    return folder if isinstance(folder, str) and _safe_name(folder) else name
+
+
+def _fresh_dir(folder: Path, name: str, sha256: str) -> str:
+    """A folder name for *name* that nothing uses yet (a re-issued blob
+    must not be unpacked over the folder the running session imports from)."""
+    base = f"{name}.{sha256[:12]}"
+    candidate, n = base, 0
+    while (folder / candidate).exists():
+        n += 1
+        candidate = f"{base}.{n}"
+    return candidate
+
+
+def _write_state(folder: Path, state: dict) -> None:
+    (folder / "installed.json").write_text(json.dumps(state, indent=1, sort_keys=True))
+
+
 def _install_checked(release, manifest: dict, entries: dict, units: list[str], fetch: Fetcher,
                      root: Path, progress) -> list[str]:
     """The blobs of *units*, each checked against *manifest* and *entries* -
@@ -218,11 +277,15 @@ def _install_checked(release, manifest: dict, entries: dict, units: list[str], f
     wanted = set()
     for u in units:
         wanted |= needed_blobs(manifest, u)
+    state = _state(folder)
+    dirs = dict(state.get("dirs") or {}) if isinstance(state.get("dirs"), dict) else {}
+    retired = set(state.get("retired") or [])
     done = []
     for i, name in enumerate(sorted(wanted)):
         entry = manifest["blobs"][name]
-        dest = folder / name
-        if dest.is_dir() and _blob_ok(folder, manifest, name):
+        current = _dir_of(state, name)
+        if _blob_ok(folder, manifest, name, current):
+            retired.discard(current)                   # wanted again before the restart
             continue                                   # already there, the same file
         if entries.get(name) not in (None, entry["sha256"]):
             raise PackError(f"{name}: the manifest and SHA256SUMS disagree - refused")
@@ -246,19 +309,29 @@ def _install_checked(release, manifest: dict, entries: dict, units: list[str], f
         with tempfile.NamedTemporaryFile(dir=folder, delete=False, suffix=".whl") as tmp:
             tmp.write(data)
         try:
-            if dest.exists():
-                shutil.rmtree(dest)
+            # Another file under the same name (a re-issue): a folder of its
+            # own, the old one stays for the running session until the restart.
+            target = name if not (folder / name).exists() else _fresh_dir(folder, name, entry["sha256"])
+            dest = folder / target
             _unpack(Path(tmp.name), dest)
             (dest / ".axross-sha256").write_text(entry["sha256"] + "\n")
         finally:
             os.unlink(tmp.name)
+        if (folder / current).is_dir() and current != target:
+            retired.add(current)
+        if target == name:
+            dirs.pop(name, None)
+        else:
+            dirs[name] = target
+        retired.discard(target)
         done.append(name)
         if progress:
             progress(i + 1, len(wanted))
-    state = _state(folder)
     state["units"] = sorted(set(state.get("units", [])) | set(units))
     state["manifest"] = manifest
-    (folder / "installed.json").write_text(json.dumps(state, indent=1, sort_keys=True))
+    state["dirs"] = dirs
+    state["retired"] = sorted(retired)
+    _write_state(folder, state)
     return done
 
 
@@ -274,33 +347,44 @@ def installed(version: str, root: Path | None = None) -> list[str]:
 
 
 def remove(version: str, unit: str, root: Path | None = None) -> list[str]:
-    """Uninstall *unit*; the blobs deleted (those no remaining unit needs)."""
+    """Uninstall *unit*; the blobs no remaining unit needs. Their folders
+    go at the next start (:func:`prune`): this session may import from them."""
     folder = (root or packs_root()) / version
     state = _state(folder)
     units = [u for u in state.get("units", []) if u != unit]
-    gone = _drop_unused(folder, state.get("manifest") or {"units": {}}, units)
+    gone = _drop_unused(folder, state, state.get("manifest") or {"units": {}}, units)
     state["units"] = units
-    (folder / "installed.json").write_text(json.dumps(state, indent=1, sort_keys=True))
+    _write_state(folder, state)
     return gone
 
 
-def _drop_unused(folder: Path, manifest: dict, units: list[str]) -> list[str]:
-    """Delete the blob folders none of *units* needs (by *manifest*)."""
+def _drop_unused(folder: Path, state: dict, manifest: dict, units: list[str]) -> list[str]:
+    """Retire the blob folders none of *units* needs (by *manifest*): listed
+    in *state*'s ``retired`` (the caller writes it), deleted by :func:`prune`
+    at the next start - never under the running session. Their names."""
     keep = set()
     for u in units:
-        keep |= needed_blobs(manifest, u)
+        keep |= {_dir_of(state, b) for b in needed_blobs(manifest, u)}
+    retired = set(state.get("retired") or [])
     gone = []
     for child in sorted(folder.iterdir()) if folder.is_dir() else ():
         if child.is_dir() and child.name not in keep and _safe_name(child.name):
-            shutil.rmtree(child)
-            gone.append(child.name)
+            if child.name not in retired:
+                gone.append(child.name)
+            retired.add(child.name)
+    state["retired"] = sorted(retired - keep)
+    dirs = state.get("dirs")
+    if isinstance(dirs, dict):
+        state["dirs"] = {b: d for b, d in dirs.items() if d in keep}
     return gone
 
 
-def _blob_ok(folder: Path, manifest: dict, name: str) -> bool:
-    """*name* is unpacked in *folder* and its marker names the manifest's SHA-256."""
+def _blob_ok(folder: Path, manifest: dict, name: str, directory: str | None = None) -> bool:
+    """*name* is unpacked in *folder* (in *directory*, default its own
+    name) and its marker names the manifest's SHA-256."""
     try:
-        return (folder / name / ".axross-sha256").read_text().strip() == manifest["blobs"][name]["sha256"]
+        marker = folder / (directory or name) / ".axross-sha256"
+        return marker.read_text().strip() == manifest["blobs"][name]["sha256"]
     except (OSError, KeyError, TypeError):
         return False
 
@@ -319,8 +403,9 @@ def activate(version: str, root: Path | None = None, path: list | None = None) -
         except PackError:
             continue
         for name in sorted(names):
-            dest = folder / name
-            if _blob_ok(folder, manifest, name) and str(dest) not in path:
+            directory = _dir_of(state, name)
+            dest = folder / directory
+            if _blob_ok(folder, manifest, name, directory) and str(dest) not in path:
                 path.append(str(dest))
                 added.append(str(dest))
     return added
@@ -351,14 +436,15 @@ def activate_now(version: str, units: list[str], root: Path | None = None,
     names: set[str] = set()
     for unit in units:
         names |= needed_blobs(manifest, unit)
-    waiting = sorted(n for n in names if not is_pure_python(n) and str(folder / n) not in path)
+    waiting = sorted(n for n in names
+                     if not is_pure_python(n) and str(folder / _dir_of(state, n)) not in path)
     if waiting:
         return [], waiting
-    if not all(_blob_ok(folder, manifest, n) for n in names):
+    if not all(_blob_ok(folder, manifest, n, _dir_of(state, n)) for n in names):
         raise PackError("an installed blob does not match the manifest - refused")
     added = []
     for name in sorted(names):
-        dest = str(folder / name)
+        dest = str(folder / _dir_of(state, name))
         if dest not in path:
             path.append(dest)
             added.append(dest)
@@ -372,13 +458,14 @@ def stale_units(version: str, manifest: dict, root: Path | None = None) -> list[
     what "Update packs" fetches. Empty when the manifest was not re-issued.
     A unit the manifest no longer has is left out - nothing to fetch for it."""
     folder = (root or packs_root()) / version
+    state = _state(folder)
     out = []
     for unit in installed(version, root):
         try:
             names = needed_blobs(manifest, unit)
         except PackError:
             continue
-        if not all(_blob_ok(folder, manifest, n) for n in names):
+        if not all(_blob_ok(folder, manifest, n, _dir_of(state, n)) for n in names):
             out.append(unit)
     return out
 
@@ -400,32 +487,75 @@ def update(release, *, fetch: Fetcher | None = None, root: Path | None = None, v
            progress=None) -> list[str]:
     """Bring the installed units of *release* (the running version) to its
     re-issued manifest: the signature, the manifest's and every blob's
-    hash are checked as by :func:`install`; blobs no unit needs any more
-    go. The blobs fetched; they are used from the next start."""
+    hash are checked as by :func:`install`. The blobs fetched; they are
+    used from the next start. Until then the running session keeps the
+    folders it imports from: a changed blob is unpacked beside the old
+    one, and blobs no unit needs any more are retired, deleted by
+    :func:`prune` at the next start."""
     fetch = fetch or Fetcher()
     root = root or packs_root()
     units = installed(release.version, root)
     if not units:
         return []
     manifest, entries = signed_manifest(release, fetch, verify=verify)
-    keep = [u for u in units if u in manifest.get("units", {})]
+    keep, _dropped = split_available(manifest, units)
     done = _install_checked(release, manifest, entries, keep, fetch, root, progress)
     folder = root / release.version
     state = _state(folder)
     state["units"] = sorted(keep)
-    _drop_unused(folder, manifest, keep)
-    (folder / "installed.json").write_text(json.dumps(state, indent=1, sort_keys=True))
+    _drop_unused(folder, state, manifest, keep)
+    _write_state(folder, state)
     return done
 
 
 def prune(keep_version: str, root: Path | None = None) -> list[str]:
-    """Remove the pack folders of other versions (after an update has started once)."""
+    """At the start (main.py), after :func:`activate`: remove the pack
+    folders of versions older than *keep_version* (an update has started
+    once), and the blob folders of *keep_version* that an update or a
+    removal retired. A newer version's packs stay: a self-update installs
+    them before it replaces the binary, and this older binary may run once
+    more (the replacement waits in ~/.cache, or a rollback to .previous).
+    Folders that are no version are left alone. The names removed."""
+    from core import self_update as SU
+
     root = root or packs_root()
+    running = SU.parse_version(keep_version)
     gone = []
-    for child in root.iterdir() if root.is_dir() else ():
-        if child.is_dir() and child.name != keep_version:
+    for child in sorted(root.iterdir()) if root.is_dir() else ():
+        if not child.is_dir() or child.name == keep_version:
+            continue
+        version = SU.parse_version(child.name)
+        if running is not None and version is not None and version < running:
             shutil.rmtree(child, ignore_errors=True)
             gone.append(child.name)
+    gone += _prune_retired(root / keep_version)
+    return gone
+
+
+def _prune_retired(folder: Path) -> list[str]:
+    """Delete the retired blob folders of one version (see :func:`prune`);
+    a folder the state uses again is kept. Their names, as ``<version>/<dir>``."""
+    state = _state(folder)
+    retired = state.get("retired") or []
+    if not retired:
+        return []
+    manifest = state.get("manifest") or {}
+    used = set()
+    for unit in state.get("units", []):
+        try:
+            used |= {_dir_of(state, b) for b in needed_blobs(manifest, unit)}
+        except PackError:
+            continue
+    gone = []
+    for name in retired:
+        if isinstance(name, str) and _safe_name(name) and name not in used:
+            shutil.rmtree(folder / name, ignore_errors=True)
+            gone.append(f"{folder.name}/{name}")
+    state["retired"] = []
+    try:
+        _write_state(folder, state)
+    except OSError:
+        pass
     return gone
 
 

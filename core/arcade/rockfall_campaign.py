@@ -202,14 +202,31 @@ class CaveGame(R.RockfallGame):
             self.events.append("dig")
         elif cell == R.GEM and (nx, ny) not in self.falling:
             self.grid[ny][nx] = R.EMPTY
-            self.gems += 1
-            self.score += 10 + (5 if self.gems > self.quota else 0)
-            self.events.append("gem")
-            if self.gems == self.quota:
-                self.grid[self.exit[1]][self.exit[0]] = R.EXIT
-                self.events.append("exit-open")
+            self._collect_gem()
 
     # -- prisms and seekers ----------------------------------------------------------------
+
+    def _creature_cells(self) -> set:
+        return super()._creature_cells() | {s.pos for s in self.seekers}
+
+    def _fall_onto_creature(self, cell, kind: str) -> None:
+        for s in list(self.seekers):
+            if s.pos == cell:
+                if kind == R.ROCK:        # a seeker turns into crystals under a rock only
+                    self._crush_seeker(s)
+                return
+        super()._fall_onto_creature(cell, kind)
+
+    def _crush_seeker(self, s: Seeker) -> None:
+        g = self.grid
+        self.seekers.remove(s)
+        x, y = s.pos
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if g[y + dy][x + dx] in (R.EMPTY, R.EARTH) and (x + dx, y + dy) != self.player:
+                    g[y + dy][x + dx] = R.GEM
+        self.score += 75
+        self.events.append("crawler")
 
     def _physics(self) -> None:
         before = set(self.falling)
@@ -222,23 +239,21 @@ class CaveGame(R.RockfallGame):
                 g[y][x] = R.EMPTY
                 split = 0
                 for dx in (-1, 1):
-                    if g[y + 1][x + dx] == R.EMPTY:
-                        g[y + 1][x + dx] = R.GEM
-                        self.falling.add((x + dx, y + 1))
-                        split += 1
+                    side = (x + dx, y + 1)
+                    if g[side[1]][side[0]] != R.EMPTY or side in self._creature_cells():
+                        continue
+                    if side == self.player:     # a crystal split onto the digger: it is taken
+                        self._collect_gem()
+                    else:
+                        g[side[1]][side[0]] = R.GEM
+                        self.falling.add(side)
+                    split += 1
                 if not split:
                     g[y][x] = R.GEM
                 self.events.append("prism")
         for s in list(self.seekers):
             if g[s.pos[1] - 1][s.pos[0]] == R.ROCK and (s.pos[0], s.pos[1] - 1) in self.falling:
-                self.seekers.remove(s)
-                x, y = s.pos
-                for dy in (-1, 0, 1):
-                    for dx in (-1, 0, 1):
-                        if g[y + dy][x + dx] in (R.EMPTY, R.EARTH) and (x + dx, y + dy) != self.player:
-                            g[y + dy][x + dx] = R.GEM
-                self.score += 75
-                self.events.append("crawler")
+                self._crush_seeker(s)
 
     def _move_seekers(self) -> None:
         px, py = self.player

@@ -291,6 +291,41 @@ def _confined(env: GroupEnv, backend, path: str) -> str | None:
         return None
 
 
+def _secret_refuser(env: GroupEnv, backend) -> Callable[[str], bool]:
+    """``refuse(path)``: true for an entry below a confined folder that the
+    tools must not read - a secret (core.protected_places: an SSH key, a
+    token) unless the operator allowed secret reads. The secret places are
+    resolved once per call; only a path among them goes through the full
+    read confinement (:func:`_confined`), which decides."""
+    if not _is_local(backend):
+        return lambda path: False  # no secret places on a remote backend
+    from core import protected_places
+
+    check = protected_places.secret_checker()
+    return lambda path: check(path) is not None and _confined(env, backend, path) is None
+
+
+class _ConfinedListing:
+    """*backend* with ``list_dir`` leaving out every secret entry
+    (:func:`_secret_refuser`): for a walk in another module (core.cas)
+    whose files are read."""
+
+    def __init__(self, env: GroupEnv, backend) -> None:
+        self._backend = backend
+        self._refuse = _secret_refuser(env, backend)
+
+    def __getattr__(self, name):
+        return getattr(self._backend, name)
+
+    def list_dir(self, path: str):
+        return [
+            child
+            for child in self._backend.list_dir(path)
+            if getattr(child, "name", "") in ("", ".", "..")
+            or not self._refuse(self._backend.join(path, child.name))
+        ]
+
+
 def _removable(path: str, backend, env: GroupEnv, *, entry: bool = True) -> bool:
     """Whether a tool walking a folder may change *path* in it: confined for
     writing (*entry*: removed or moved as an entry) - a read-only extra
@@ -790,7 +825,8 @@ def _build_duplicates(env: GroupEnv) -> list:
         rehash = _bool_arg(args, "rehash", False)
         bid = cas.backend_id_for(backend)
         count = cas.rebuild(
-            backend,
+            # Hashing reads every file: a secret is not read (nor indexed).
+            _ConfinedListing(env, backend),
             folder,
             backend_id=bid,
             algorithm=algo,
@@ -972,7 +1008,8 @@ def _build_duplicates(env: GroupEnv) -> list:
         _tool(
             "duplicates_scan",
             "Hash every file under a folder into the Duplicate Finder's index (the same "
-            "index the GUI uses), skipping symlinks and the axross trash; files whose size and "
+            "index the GUI uses), skipping symlinks, the axross trash and secret files (private "
+            "keys, tokens); files whose size and "
             "mtime did not change are not hashed again unless rehash. Returns {scan_id, root, "
             "backend_id, algorithm, files_indexed, status}. One progress notification per "
             "file; cancellable (rows indexed so far are kept). Run it before duplicates_groups.",
@@ -1167,6 +1204,11 @@ def _build_packer(env: GroupEnv) -> list:
                         float(done), float(total), f"packed {name}"
                     ),
                     cancel=_cancel_event(ctx),
+                    # Every name and everything below one: a secret (an SSH
+                    # key, a token) is left out and listed in skipped, as
+                    # transfer_copy does - packed, read_file on the archive
+                    # would hand it out.
+                    refuse=_secret_refuser(env, backend),
                 )
             except P.PackCancelled as exc:
                 raise CancelledError("request cancelled by client") from exc
@@ -1209,7 +1251,8 @@ def _build_packer(env: GroupEnv) -> list:
             "pack",
             "Pack entries of folder into a new archive folder/archive_name + suffix. Folders "
             "are packed recursively; symbolic links are skipped and listed in skipped, never "
-            "followed. The archive is written to a temporary file first and an existing "
+            "followed, and so are secret files (private keys, tokens) and folders that "
+            "read_file refuses. The archive is written to a temporary file first and an existing "
             "archive is never overwritten: 'bundle.zip' becomes 'bundle (2).zip'. Only 7z "
             "takes a password (AES-256; encrypt_names also hides the file list); ZIP and tar "
             "refuse one. Single-file formats (gz, bz2, xz, zst) take exactly one file. "
@@ -1289,7 +1332,10 @@ def _build_archive(env: GroupEnv) -> list:
     def _list(args, ctx):
         _backend, path = _local_archive(env, args)
         max_entries = _int_arg(args, "max_entries", 1000, 1, _MAX_ARCHIVE_ENTRIES)
-        entries = A.list_archive(path)
+        try:
+            entries = A.list_archive(path, cancel=lambda: ctx.is_cancelled)
+        except A.ExtractCancelled as exc:
+            raise _cancelled() from exc
         return {
             "path": path,
             "total": len(entries),
@@ -1328,7 +1374,8 @@ def _build_archive(env: GroupEnv) -> list:
             def progress(done, total, name):
                 if ctx.is_cancelled:
                     raise A.ExtractCancelled("cancelled")
-                ctx.progress(float(done), float(total), f"extracted {name}")
+                if total:  # 0: core.archive is still reading the headers
+                    ctx.progress(float(done), float(total), f"extracted {name}")
 
             try:
                 files = A.extract(path, target, progress=progress)

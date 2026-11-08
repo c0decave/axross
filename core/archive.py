@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib.util
+import io
 import logging
 import os
 import shutil
@@ -129,6 +130,18 @@ MAX_LIST_ENTRIES = 250_000
 # archives (a 600 MiB app-bundle expands to a few hundred MiB),
 # tight enough that a 42-kB bomb expanding to 4 GiB is refused.
 MAX_EXTRACT_TOTAL_BYTES = 1 * 1024 * 1024 * 1024
+
+# Max bytes the members of a compressed tar declare before a listing (the
+# archive preview, MCP archive_list, a selection's extraction) stops. A
+# compressed tar has no index: every member's data is decompressed to
+# reach the next header, so a 2.4 KB .tar.bz2 declaring one 10 TB member
+# kept a core busy for hours. A plain .tar is skipped through by seeking
+# and has no such limit.
+MAX_LIST_TAR_BYTES = 8 * MAX_EXTRACT_TOTAL_BYTES
+# The most of a compressed tar's stream that one read may take: a header's
+# own data (a GNU long name, a pax header) is read whole, in one call,
+# before anyone can count it. Member data is read in 64 KiB chunks.
+MAX_TAR_READ = 16 * 1024 * 1024
 
 # Max per-entry compression ratio (uncompressed / max(1,compressed)).
 # The canonical "zip of zeros" bomb hits ratios of 1000:1. 100:1
@@ -463,15 +476,108 @@ def _safe_member_path(target_root: str, member_name: str) -> str:
     return resolved_member
 
 
-def _tar_members_capped(tf: tarfile.TarFile, cap: int) -> list[tarfile.TarInfo]:
+class _TarBudget:
+    """A compressed tar's decompressed stream that refuses to go past
+    *limit* bytes, and any single read above :data:`MAX_TAR_READ` - before
+    the decompressor does the work (tarfile seeks over member data and
+    reads a header's own data in one call). While :attr:`poll` is set, a
+    long seek forward goes in steps of :data:`_SEEK_STEP` and polls between
+    them, so Cancel stops even the skip over one big member."""
+
+    def __init__(self, fileobj, limit: int) -> None:
+        self._fileobj = fileobj
+        self._limit = limit
+        self.poll: Callable[[], None] | None = None
+
+    def __getattr__(self, name):
+        return getattr(self._fileobj, name)
+
+    def _refuse(self, end: int) -> None:
+        if end > self._limit:
+            raise UnsafeArchive(
+                f"archive data goes on past {self._limit} bytes; the cap is {self._limit}"
+            )
+
+    def seek(self, pos: int, whence: int = 0):
+        if whence == os.SEEK_CUR:
+            pos, whence = self._fileobj.tell() + pos, os.SEEK_SET
+        if whence != os.SEEK_SET:
+            return self._fileobj.seek(pos, whence)
+        self._refuse(pos)
+        if self.poll is not None:
+            here = self._fileobj.tell()
+            while pos - here > _SEEK_STEP:
+                self.poll()
+                here = self._fileobj.seek(here + _SEEK_STEP)
+        return self._fileobj.seek(pos)
+
+    def read(self, size: int = -1):
+        if size is None or size < 0 or size > MAX_TAR_READ:
+            raise UnsafeArchive(f"a tar header holds more than {MAX_TAR_READ} bytes of data")
+        self._refuse(self._fileobj.tell() + size)
+        return self._fileobj.read(size)
+
+
+def _stream_budget(max_bytes: int, cap: int) -> int:
+    """The decompressed bytes of a tar whose *cap* members declare at most
+    *max_bytes*: their data, and a few KiB of headers and padding each."""
+    return max_bytes + cap * 4096 + MAX_TAR_READ
+
+
+#: Bytes decompressed between two polls while seeking over member data.
+_SEEK_STEP = 64 * 1024 * 1024
+
+
+def _tar_is_plain(tf: tarfile.TarFile) -> bool:
+    """*tf* reads an uncompressed file (seeking past data costs nothing)."""
+    return isinstance(tf.fileobj, (io.BufferedReader, io.BufferedRandom, io.FileIO))
+
+
+def _tar_members_capped(
+    tf: tarfile.TarFile,
+    cap: int,
+    *,
+    max_bytes: int,
+    poll: Callable[[str], None] | None = None,
+) -> list[tarfile.TarInfo]:
     """The members of *tf*, read header by header, and
     :class:`UnsafeArchive` as soon as there are more than *cap*:
-    ``getmembers()`` reads every header before anyone can count them."""
+    ``getmembers()`` reads every header before anyone can count them.
+
+    The bytes the members declare are added up as the headers come, and
+    above *max_bytes* the walk stops before the next header is read: in a
+    compressed tar, reaching it decompresses the member's data first.
+    (A plain .tar is seeked through: *max_bytes* does not apply.) *poll*
+    gets each member's name and may raise (:class:`ExtractCancelled`)."""
+    plain = _tar_is_plain(tf)
+    budget = None
+    if not plain:
+        if not isinstance(tf.fileobj, _TarBudget):
+            tf.fileobj = _TarBudget(tf.fileobj, _stream_budget(max_bytes, cap))
+        budget = tf.fileobj
+        if poll is not None:
+            budget.poll = lambda: poll("")
     members: list[tarfile.TarInfo] = []
-    for member in tf:
-        if len(members) >= cap:
-            raise UnsafeArchive(f"archive has more than {cap} entries; cap is {cap}")
-        members.append(member)
+    declared = 0
+    try:
+        for member in tf:
+            if poll is not None:
+                poll(member.name)
+            if len(members) >= cap:
+                raise UnsafeArchive(f"archive has more than {cap} entries; cap is {cap}")
+            members.append(member)
+            # What tarfile skips to reach the next header: regular (and
+            # sparse) data, and that of types it does not know.
+            if member.isreg() or member.type not in tarfile.SUPPORTED_TYPES:
+                declared += max(0, int(member.size))
+                if declared > max_bytes and not plain:
+                    raise UnsafeArchive(
+                        f"archive declares more than {max_bytes} uncompressed bytes; "
+                        f"cap is {max_bytes}"
+                    )
+    finally:
+        if budget is not None:
+            budget.poll = None
     return members
 
 
@@ -602,13 +708,55 @@ def _extract_zip(
         return files_done
 
 
+#: Leading bytes of the stream formats :func:`_open_tar` opens itself.
+_TAR_CODECS = ((b"\x1f\x8b", "gz"), (b"BZh", "bz2"), (b"\xfd7zXZ\x00", "xz"))
+
+
 @contextlib.contextmanager
-def _open_tar(archive_path: str):
+def _budgeted_tar(archive_path: str, limit: int):
+    """A TarFile over the gzip / bzip2 / xz stream of *archive_path* read
+    through :class:`_TarBudget` from the very first header (tarfile reads
+    that one, and a GNU long name or pax header before it, while it is
+    constructed); None for anything else (a plain or zstd tar)."""
+    import bz2
+    import gzip
+    import lzma
+    import zlib
+
+    with open(archive_path, "rb") as raw:
+        magic = raw.read(6)
+        codec = next((c for m, c in _TAR_CODECS if magic.startswith(m)), None)
+        if codec is None:
+            yield None
+            return
+        raw.seek(0)
+        opener = {"gz": lambda f: gzip.GzipFile(fileobj=f, mode="rb"),
+                  "bz2": lambda f: bz2.BZ2File(f), "xz": lambda f: lzma.LZMAFile(f)}[codec]
+        with opener(raw) as stream:
+            try:
+                tf = tarfile.TarFile(fileobj=_TarBudget(stream, limit), mode="r")
+            except (OSError, EOFError, zlib.error, lzma.LZMAError) as exc:
+                # What tarfile.open says of a stream that is not a tar.
+                raise tarfile.ReadError(f"{codec} stream is not a tar archive: {exc}") from exc
+            with tf:
+                yield tf
+
+
+@contextlib.contextmanager
+def _open_tar(archive_path: str, budget: int | None = None):
     """A TarFile for any of the TAR family. A zstd tarball on a Python
     whose tarfile has no zstd (before 3.14 - the binary build) is
     decompressed into a private temporary file first, at most a little
-    over MAX_EXTRACT_TOTAL_BYTES: tarfile needs random access."""
+    over MAX_EXTRACT_TOTAL_BYTES: tarfile needs random access.
+
+    *budget*: the decompressed bytes a gzip / bzip2 / xz tar may take
+    (:class:`_TarBudget`, from the first header on)."""
     lower = archive_path.lower()
+    if budget is not None:
+        with _budgeted_tar(archive_path, budget) as tf:
+            if tf is not None:
+                yield tf
+                return
     if not lower.endswith((".tar.zst", ".tzst")) or _tarfile_knows_zstd():
         with tarfile.open(archive_path, mode="r:*") as tf:
             yield tf
@@ -706,8 +854,14 @@ def _extract_tar(
     """Extract a TAR-family archive. Tarfile sniffs gz/bz2/xz from
     the magic bytes so a single ``mode='r:*'`` open handles all
     four compressed variants."""
-    with _open_tar(archive_path) as tf:
-        members = _tar_members_capped(tf, MAX_EXTRACT_FILES)
+    with _open_tar(archive_path, _stream_budget(MAX_EXTRACT_TOTAL_BYTES, MAX_EXTRACT_FILES)) as tf:
+        members = _tar_members_capped(
+            tf,
+            MAX_EXTRACT_FILES,
+            max_bytes=MAX_EXTRACT_TOTAL_BYTES,
+            # Cancel is honoured while the headers are read, too.
+            poll=(lambda name: progress(0, 0, name)) if progress is not None else None,
+        )
         total_uncompressed = sum(max(0, m.size) for m in members if m.isfile())
         if total_uncompressed > MAX_EXTRACT_TOTAL_BYTES:
             raise UnsafeArchive(
@@ -1031,8 +1185,13 @@ def _extract_members_tar(
     """Partial TAR extraction. Mirrors :func:`_extract_tar`'s guards
     (symlink/hardlink + non-file/dir refusal, zip-slip, duplicate, count
     + total-byte caps) applied ONLY to the SELECTED subset."""
-    with _open_tar(archive_path) as tf:
-        members_all = _tar_members_capped(tf, MAX_LIST_ENTRIES)
+    with _open_tar(archive_path, _stream_budget(MAX_LIST_TAR_BYTES, MAX_LIST_ENTRIES)) as tf:
+        members_all = _tar_members_capped(
+            tf,
+            MAX_LIST_ENTRIES,
+            max_bytes=MAX_LIST_TAR_BYTES,
+            poll=(lambda name: progress(0, 0, name)) if progress is not None else None,
+        )
         requested = _resolve_selection([m.name for m in members_all], members)
         selected = [m for m in members_all if _is_selected(m.name, requested)]
         sel_files = [m for m in selected if m.isfile()]
@@ -1244,10 +1403,16 @@ def _list_zip(p: str) -> list[ArchiveEntry]:
     return out
 
 
-def _list_tar(p: str) -> list[ArchiveEntry]:
+def _list_tar(p: str, cancel: Callable[[], bool] | None = None) -> list[ArchiveEntry]:
     out: list[ArchiveEntry] = []
-    with _open_tar(p) as tf:
-        for ti in _tar_members_capped(tf, MAX_LIST_ENTRIES):
+
+    def poll(_name: str) -> None:
+        if cancel is not None and cancel():
+            raise ExtractCancelled("listing cancelled")
+
+    with _open_tar(p, _stream_budget(MAX_LIST_TAR_BYTES, MAX_LIST_ENTRIES)) as tf:
+        for ti in _tar_members_capped(tf, MAX_LIST_ENTRIES, max_bytes=MAX_LIST_TAR_BYTES,
+                                      poll=poll):
             is_dir = ti.isdir()
             name = ti.name + "/" if is_dir and not ti.name.endswith("/") else ti.name
             size = int(ti.size)
@@ -1332,7 +1497,9 @@ def _list_rar(p: str) -> list[ArchiveEntry]:
     return out
 
 
-def list_archive(archive_path: str) -> list[ArchiveEntry]:
+def list_archive(
+    archive_path: str, *, cancel: Callable[[], bool] | None = None
+) -> list[ArchiveEntry]:
     """Return the member listing of *archive_path* WITHOUT extracting
     anything to disk. Dispatch is by filename extension (case-
     insensitive), reusing the same extension tables as :func:`extract`.
@@ -1347,6 +1514,11 @@ def list_archive(archive_path: str) -> list[ArchiveEntry]:
 
     Listing is strictly read-only: no files are written, no target
     directory is created.
+
+    *cancel* (zero-argument, true once a stop was asked for) is polled per
+    tar header: :class:`ExtractCancelled` then. A compressed tar whose
+    members declare more than :data:`MAX_LIST_TAR_BYTES` is refused
+    (:class:`UnsafeArchive`) before that much is decompressed.
     """
     lower = archive_path.lower()
     # RAR is checked first so the availability gate fires before file
@@ -1358,7 +1530,7 @@ def list_archive(archive_path: str) -> list[ArchiveEntry]:
     # extensions live in the TAR table and must win the longest match).
     for ext in _TAR_EXTENSIONS:
         if lower.endswith(ext):
-            return _list_tar(archive_path)
+            return _list_tar(archive_path, cancel)
     for ext in _ZIP_EXTENSIONS:
         if lower.endswith(ext):
             return _list_zip(archive_path)

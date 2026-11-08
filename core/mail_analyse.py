@@ -16,9 +16,7 @@ import ipaddress
 import re
 from dataclasses import asdict, dataclass, field
 from email.utils import parseaddr, parsedate_to_datetime
-from urllib.parse import urlsplit
-
-from core.mail_html import links
+from core.mail_html import hidden_chars, links, split_url, strip_hidden
 from core.mail_message import MailMessage
 
 MAX_LINKS = 2000
@@ -198,8 +196,19 @@ def _addresses(msg: MailMessage, report: Report) -> None:
                                        "(could imitate another one)"))
 
 
+#: Notes of :func:`_link_notes` that make a high-severity finding.
+_MALFORMED = "a malformed address (it cannot be read as a link; browsers differ on where it leads)"
+_HIDDEN = "hidden characters in the address (bidi overrides or zero-width marks change what it shows)"
+
+
 def _link_notes(url: str, host: str, text: str) -> list[str]:
     notes = []
+    if hidden_chars(url):
+        notes.append(_HIDDEN)
+        url = strip_hidden(url)
+    parts = split_url(url)
+    if parts is None:
+        return [*notes, _MALFORMED]
     try:
         ipaddress.ip_address(host.strip("[]"))
         notes.append("an IP address instead of a name")
@@ -209,16 +218,24 @@ def _link_notes(url: str, host: str, text: str) -> list[str]:
         notes.append("non-ASCII letters in the name")
     if host in _SHORTENERS:
         notes.append("a URL shortener - the real target is hidden")
-    if "@" in (urlsplit(url).netloc or ""):
+    if "@" in (parts.netloc or ""):
         notes.append("a user name in the address (the part before @ is not the host)")
-    shown = _URL.search(text or "")
+    shown = _URL.search(strip_hidden(text or ""))
     if shown:
-        shown_host = (urlsplit(shown.group(0)).hostname or "").lower()
+        shown_parts = split_url(shown.group(0))
+        shown_host = ((shown_parts.hostname if shown_parts else "") or "").lower()
         if shown_host and _org(shown_host) != _org(host):
             notes.append(f"the text shows {shown_host}, the link leads to {host}")
-    if urlsplit(url).scheme.lower() == "http":
+    if parts.scheme.lower() == "http":
         notes.append("not encrypted (http)")
     return notes
+
+
+def _host(url: str) -> str:
+    """The host *url* leads to (format characters left out), "" for none
+    or a malformed address."""
+    parts = split_url(strip_hidden(url))
+    return ((parts.hostname if parts else "") or "").lower()
 
 
 def _links(msg: MailMessage, report: Report) -> None:
@@ -230,7 +247,7 @@ def _links(msg: MailMessage, report: Report) -> None:
         if not url.lower().startswith(("http://", "https://")) or (url, text) in seen:
             continue
         seen.add((url, text))
-        host = (urlsplit(url).hostname or "").lower()
+        host = _host(url)
         report.links.append(Link(url[:2048], host, text[:200], _link_notes(url, host, text)))
         if len(report.links) >= MAX_LINKS:
             break
@@ -238,11 +255,12 @@ def _links(msg: MailMessage, report: Report) -> None:
         url = m.group(0).rstrip(".,;:!?")
         if any(link.url == url for link in report.links) or len(report.links) >= MAX_LINKS:
             continue
-        host = (urlsplit(url).hostname or "").lower()
+        host = _host(url)
         report.links.append(Link(url[:2048], host, "", _link_notes(url, host, "")))
     for link in report.links:
         for note in link.notes:
-            sev = "high" if note.startswith("the text shows") or "user name" in note else "warn"
+            sev = ("high" if note.startswith("the text shows") or "user name" in note
+                   or note in (_MALFORMED, _HIDDEN) else "warn")
             if note.startswith("not encrypted"):
                 sev = "info"
             report.findings.append(Finding(sev, "link", f"{link.host}: {note}"))

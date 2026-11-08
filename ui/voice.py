@@ -173,11 +173,16 @@ class QtPlayer(QObject):
         #: through axross's equalizer (core.audio_eq): the voice is; a test
         #: tone on a device of its own (a sink_factory) is not, unless asked
         self._equalize = sink_factory is None if equalize is None else bool(equalize)
+        #: the voice follows the Audio Mixer's output for it; a test tone
+        #: on a device of its own (a sink_factory) does not
+        self._follow_route = sink_factory is None
         if sink_factory is None:
             # the voice: the Audio Mixer's volume and mute reach a sentence
-            # already playing (its device and equalizer the next one)
+            # already playing, its equalizer the next one, a new output the
+            # next utterance (at once when it is silent)
             AR.notifier().changed.connect(self._mixer_changed)
         self._sink = None
+        self._device_id: str | None = None  # the output the open sink plays on
         self._io = None
         self._rate = 0  # the rate of the chunks the open sink plays
         self._device_rate = 0
@@ -206,6 +211,7 @@ class QtPlayer(QObject):
 
     def _open(self, rate: int) -> bool:
         self._close()
+        device_id = AR.source_output_id("voice") if self._follow_route else None
         try:
             self._sink, self._io, self._device_rate = self._sink_factory(rate)
         except AudioPending:
@@ -216,6 +222,7 @@ class QtPlayer(QObject):
             self.drained.emit()
             return False
         self._rate = rate
+        self._device_id = device_id
         return True
 
     def _push(self) -> None:
@@ -241,6 +248,8 @@ class QtPlayer(QObject):
                 self.level.emit(VA.level(piece))
         if not self._pending and not self._queue and not self._playing():
             self._timer.stop()
+            if self._device_moved():
+                self._close()  # the utterance is over: the next one plays on the new output
             self.level.emit(0.0)
             self.drained.emit()
 
@@ -250,11 +259,22 @@ class QtPlayer(QObject):
             self._sink.deleteLater()
         self._sink = self._io = None
         self._rate = self._device_rate = 0
+        self._device_id = None
+
+    def _device_moved(self) -> bool:
+        """The Audio Mixer sends the voice to another output than the open
+        sink plays on (unknown - a sink not opened here - is no move)."""
+        if not self._follow_route or self._sink is None or self._device_id is None:
+            return False
+        return AR.source_output_id("voice") != self._device_id
 
     def _mixer_changed(self, _saved) -> None:
         sink = self._sink
         if sink is not None and not sip.isdeleted(sink):
             sink.setVolume(AR.source_gain("voice"))
+        if self._device_moved() and not self.busy():
+            self._close()  # silent: the next utterance opens the new output
+        # speaking: _push closes it when the utterance has ended
 
     def stop(self) -> None:
         self._queue.clear()

@@ -294,6 +294,10 @@ Execute a saved script in a fresh namespace pre-populated with
 caller can inspect any variables it left behind. ``env`` overrides
 / augments the initial namespace.
 
+The script runs as from ``axross --script``: ``__name__`` is
+``"__main__"`` (an ``if __name__ == "__main__":`` block runs) and
+``__file__`` is the script's path.
+
 
 ## Per-protocol
 

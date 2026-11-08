@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QDockWidget,
     QHBoxLayout,
+    QMenu,
     QProgressBar,
     QPushButton,
     QTableView,
@@ -119,6 +120,10 @@ class TransferDock(QDockWidget):
 
         # Progress bar delegate
         self._table.setItemDelegateForColumn(COL_PROGRESS, ProgressBarDelegate(self._table))
+        # A right click on a job: Cancel, Retry, Open destination folder
+        # (the tour and the handbook promised it; there was no menu).
+        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._table.customContextMenuRequested.connect(self._show_job_menu)
 
         # Column sizing: File takes the free width, the others fit their
         # content; every divider stays draggable (ui.column_fit).
@@ -268,6 +273,86 @@ class TransferDock(QDockWidget):
     def _cancel_all(self) -> None:
         self._manager.cancel_all()
 
+    # -- the right-click menu of one job -----------------------------------------------
+
+    def _job_at(self, pos) -> TransferJob | None:
+        index = self._table.indexAt(pos)
+        if not index.isValid():
+            return None
+        return self._model.get_job(index.row())
+
+    @staticmethod
+    def _can_retry(job: TransferJob) -> bool:
+        return (
+            job.status in (TransferStatus.ERROR, TransferStatus.CANCELLED)
+            and bool(getattr(job, "retryable", True))
+            and not getattr(job, "retried", False)
+        )
+
+    def build_job_menu(self, job: TransferJob | None) -> QMenu:
+        """The menu of *job* (None: no job under the pointer, every entry
+        disabled): Cancel a waiting or running job, Retry a failed or
+        cancelled one, Open destination folder."""
+        menu = QMenu(self)
+        cancel = menu.addAction(tr("Cancel"))
+        cancel.setObjectName("axTransferJobCancel")
+        cancel.setEnabled(
+            job is not None and job.status in (TransferStatus.PENDING, TransferStatus.ACTIVE)
+        )
+        cancel.triggered.connect(lambda _checked=False, j=job: self.cancel_job(j))
+        retry = menu.addAction(tr("Retry"))
+        retry.setObjectName("axTransferJobRetry")
+        retry.setEnabled(job is not None and self._can_retry(job))
+        retry.triggered.connect(lambda _checked=False, j=job: self.retry_job(j))
+        menu.addSeparator()
+        reveal = menu.addAction(tr("Open destination folder"))
+        reveal.setObjectName("axTransferJobReveal")
+        reveal.setEnabled(job is not None and bool(job.dest_path))
+        reveal.triggered.connect(lambda _checked=False, j=job: self.open_destination(j))
+        return menu
+
+    def _show_job_menu(self, pos) -> None:
+        job = self._job_at(pos)
+        if job is not None:
+            self._table.selectRow(self._table.indexAt(pos).row())
+        menu = self.build_job_menu(job)
+        try:
+            menu.exec(self._table.viewport().mapToGlobal(pos))
+        finally:
+            menu.deleteLater()
+
+    def cancel_job(self, job: TransferJob | None) -> None:
+        if job is not None:
+            self._manager.cancel_job(job.job_id)
+
+    def retry_job(self, job: TransferJob | None) -> TransferJob | None:
+        if job is None:
+            return None
+        return self._manager.retry_job(job.job_id)
+
+    def open_destination(self, job: TransferJob | None) -> bool:
+        """The destination folder of *job*: in the pane on its connection,
+        the file selected (the main window's reveal); a local folder without
+        such a window in the system's file manager. False when neither."""
+        if job is None or not job.dest_path:
+            return False
+        backend = getattr(job, "dest_backend", None)
+        reveal = getattr(self.parent(), "_reveal_found", None)
+        if callable(reveal) and backend is not None:
+            reveal(backend, job.dest_path)
+            return True
+        from core.local_fs import LocalFS
+
+        if backend is None or isinstance(backend, LocalFS):
+            import os
+
+            from PyQt6.QtCore import QUrl
+
+            from core.desktop_open import open_url
+
+            return bool(open_url(QUrl.fromLocalFile(os.path.dirname(job.dest_path))))
+        return False
+
     def _retry_failed(self) -> None:
         """Retry all failed/cancelled transfers with resume."""
         jobs = self._manager.all_jobs()
@@ -281,6 +366,17 @@ class TransferDock(QDockWidget):
             log.info("Retried %d failed transfers", retried)
 
     def _clear_finished(self) -> None:
+        # The finished jobs of a batch still running stay part of its bar:
+        # dropped from the list, the bar fell back to 0 % mid-batch.
+        running = (TransferStatus.ACTIVE, TransferStatus.PENDING)
+        jobs = self._manager.all_jobs()
+        if any(j.status in running for j in jobs):
+            for job in jobs:
+                if job.status in running or job.job_id not in self._batch:
+                    continue
+                self._batch.discard(job.job_id)
+                self._batch_dropped += job.total_bytes if job.status == TransferStatus.DONE \
+                    else min(job.transferred_bytes, job.total_bytes)
         self._manager.clear_finished()
         self._model.clear_finished()
         self._update_overall()

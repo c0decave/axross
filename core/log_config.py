@@ -327,6 +327,9 @@ _current: LogSettings | None = None
 _floor: int | None = None
 _terminal_forced = False
 _log_file: Path | None = None
+#: True when this run's log file could not be opened (configure): the
+#: terminal then carries the log, whatever the settings say.
+_file_unavailable = False
 #: Logger names whose level apply() set - teardown() gives them NOTSET back.
 _touched: set[str] = set()
 _filters: weakref.WeakSet[RepeatCollapseFilter] = weakref.WeakSet()
@@ -421,7 +424,7 @@ def configure(log_file: Path, *, debug: bool = False, verbose: bool = False,
     """At the start: the log file, the terminal with --debug / --verbose or
     when the settings ask for it, the levels. *settings* None reads the saved
     ones. Calling it again replaces the handlers it made before."""
-    global _floor, _terminal_forced, _log_file, _atexit_registered
+    global _floor, _terminal_forced, _log_file, _atexit_registered, _file_unavailable
     root = logging.getLogger()
     with _state_lock:
         for handler in list(root.handlers):
@@ -431,10 +434,18 @@ def configure(log_file: Path, *, debug: bool = False, verbose: bool = False,
         _terminal_forced = debug or verbose
         _log_file = Path(log_file)
         # The file first, with the defaults: a warning about an unreadable
-        # store then lands in it rather than on stderr.
-        file_h = _make_file_handler(_log_file, settings or LogSettings())
-        attach_filters(file_h)
-        root.addHandler(file_h)
+        # store then lands in it rather than on stderr. A start never fails
+        # over its log file (a read-only or full ~/.local/state, a folder
+        # owned by root): the log then goes to the terminal for this run.
+        file_error: OSError | None = None
+        try:
+            file_h = _make_file_handler(_log_file, settings or LogSettings())
+        except OSError as exc:
+            file_error = exc
+        else:
+            attach_filters(file_h)
+            root.addHandler(file_h)
+        _file_unavailable = file_error is not None
         if settings is None:
             settings = LogSettings.load()
         apply(settings)
@@ -442,6 +453,9 @@ def configure(log_file: Path, *, debug: bool = False, verbose: bool = False,
             # Registered after logging's own shutdown hook: atexit runs it first.
             atexit.register(flush_repeats)
             _atexit_registered = True
+    if file_error is not None:
+        log.warning("The log file %s cannot be written (%s); this run logs to the "
+                    "terminal only", _log_file, file_error.strerror or file_error)
     return settings
 
 
@@ -498,7 +512,7 @@ def apply(settings: LogSettings) -> None:
         if isinstance(file_h, logging.handlers.RotatingFileHandler):
             file_h.maxBytes = settings.file_max_mib * MIB
             file_h.backupCount = settings.file_backups
-        want_terminal = settings.terminal or _terminal_forced
+        want_terminal = settings.terminal or _terminal_forced or _file_unavailable
         term = terminal_handler()
         if want_terminal and term is None and _log_file is not None:
             term = _make_terminal_handler()
@@ -506,6 +520,11 @@ def apply(settings: LogSettings) -> None:
             root.addHandler(term)
         elif not want_terminal and term is not None:
             _remove_handler(term)
+        if term is not None and want_terminal:
+            # Standing in for an unwritable log file only: warnings and
+            # errors, not every INFO line on a script's stderr.
+            stand_in = _file_unavailable and not (settings.terminal or _terminal_forced)
+            term.setLevel(logging.WARNING if stand_in else logging.NOTSET)
 
         for filt in list(_filters):
             if filt.enabled and not settings.collapse_repeats:
@@ -549,7 +568,7 @@ def prepare_logger(name: str) -> None:
 def teardown() -> None:
     """Undo configure() and apply(): our handlers removed, every logger level
     we set back to NOTSET. For tests and a clean exit."""
-    global _current, _floor, _terminal_forced, _log_file
+    global _current, _floor, _terminal_forced, _log_file, _file_unavailable
     with _state_lock:
         root = logging.getLogger()
         for handler in list(root.handlers):
@@ -563,6 +582,7 @@ def teardown() -> None:
         _floor = None
         _terminal_forced = False
         _log_file = None
+        _file_unavailable = False
 
 
 __all__ = ["AREA_CHOICES", "BACKUPS_RANGE", "FILE_MIB_RANGE", "LEVELS", "MAX_REPEAT_KEYS", "MIB",

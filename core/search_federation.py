@@ -38,11 +38,12 @@ from __future__ import annotations
 import fnmatch
 import logging
 import math
+import queue
 import re
 import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, Future, wait
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -430,6 +431,66 @@ def _to_epoch(raw: Any) -> float:
 # ---------------------------------------------------------------------------
 
 
+class DaemonPool:
+    """*max_workers* daemon threads over a queue of calls; :meth:`submit`
+    returns a :class:`concurrent.futures.Future` (``wait()``, ``cancel()``
+    and ``result()`` as with a ThreadPoolExecutor).
+
+    For probes with a per-call timeout (federated_search, core.multi_view):
+    a ThreadPoolExecutor's workers are joined by Python's exit hook even
+    after ``shutdown(wait=False)``, so one adapter hung on a dead host kept
+    a script's process from exiting after its call had long returned.
+    These threads are daemons: a hung call is left behind, not waited for.
+    """
+
+    def __init__(self, max_workers: int, *, name: str = "probe") -> None:
+        self._calls: queue.SimpleQueue = queue.SimpleQueue()
+        self._threads = [
+            threading.Thread(target=self._work, name=f"{name}-{i}", daemon=True)
+            for i in range(max(1, int(max_workers)))
+        ]
+        try:
+            for thread in self._threads:
+                thread.start()
+        except BaseException:
+            self.shutdown()
+            raise
+
+    def submit(self, fn: Callable[..., Any], *args: Any) -> Future:
+        future: Future = Future()
+        self._calls.put((future, fn, args))
+        return future
+
+    def _work(self) -> None:
+        while True:
+            call = self._calls.get()
+            if call is None:
+                return
+            future, fn, args = call
+            if not future.set_running_or_notify_cancel():
+                continue  # cancelled while queued
+            try:
+                value = fn(*args)
+            except BaseException as exc:  # noqa: BLE001 - handed to the waiter
+                future.set_exception(exc)
+            else:
+                future.set_result(value)
+
+    def shutdown(self) -> None:
+        """Cancel the calls not yet started and let the idle threads end;
+        never waits for a running call."""
+        while True:
+            try:
+                call = self._calls.get_nowait()
+            except queue.Empty:
+                break
+            if call is not None:
+                call[0].cancel()
+        for thread in self._threads:
+            if thread.ident is not None:
+                self._calls.put(None)
+
+
 def federated_search(
     backends: list,
     query: SearchQuery,
@@ -486,7 +547,7 @@ def federated_search(
         return (label, hits)
 
     max_workers = max(1, min(parallelism, len(backends)))
-    pool = ThreadPoolExecutor(max_workers=max_workers)
+    pool = DaemonPool(max_workers, name="federated-search")
     timeout_keys = probe_timeout_keys_for_count(len(backends))
     # Map future -> (submission index, backend) so the deadline clock and
     # the timed-out error reporting share the same index key.
@@ -591,7 +652,7 @@ def federated_search(
                 f"TimeoutError: exceeded {per_backend_timeout_s:.1f}s",
             )
     finally:
-        pool.shutdown(wait=False, cancel_futures=True)
+        pool.shutdown()
 
     result.elapsed_s = time.monotonic() - started
     return result

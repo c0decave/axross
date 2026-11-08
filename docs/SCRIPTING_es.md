@@ -37,7 +37,7 @@ que permite a un agente LLM escribir y ejecutar sus propios scripts.
 |---|---|---|
 | **Dock Scripts** | Escribir, guardar, gestionar y ejecutar scripts en la GUI | *View > Panels > Scripts* (junto a *Console*) |
 | **Dock Console** (REPL) | Exploración interactiva en la GUI | Dock inferior, pestaña *Console* |
-| **`axross --script <fichero>`** | Headless / cron / CI | `axross --script myscript.py` |
+| **`axross --script <fichero> [argumentos…]`** | Headless / cron / CI | `axross --script myscript.py` |
 | **Comandos slash del REPL** | Guardar / cargar / ejecutar scripts desde el prompt | `.save name`, `.run name` |
 | **Scheduled Jobs** | Ejecutar un script guardado a intervalos | *View > Scheduled Jobs…* |
 | **Herramientas MCP `script_*`** | Un agente LLM controla axross | Arrancar con `--mcp-allow-scripts` |
@@ -47,6 +47,21 @@ puede hacer en el REPL se puede hacer igual en un script, headless o a
 través de un LLM. *Help > Scripting Guide* muestra esta guía (en el
 idioma de la interfaz) y la referencia completa de la API dentro de la
 app; *F1* lista las teclas del dock Scripts y los comandos slash.
+
+Todas las superficies ejecutan un script como `__main__`:
+`__name__ == "__main__"` y `__file__` es la ruta del script -
+`axross --script`, Run, el scheduler, `script_run` y también
+**Run in Console**, `.run` y `axross.run_script()` (en la Console solo
+mientras se ejecuta; el prompt no tiene `__file__`). Un bloque
+`if __name__ == "__main__":` se ejecuta en todas ellas.
+
+`axross --script FICHERO ARG …` pasa todo lo que sigue a `FICHERO` al
+script como `sys.argv[1:]` (`sys.argv[0]` es `FICHERO`; `-` lee el
+script de stdin); las opciones propias de axross van antes de
+`--script`. Un fichero que falta o no se puede leer se rechaza en una
+línea (exit 2). Un `--script` explícito gana a `AXROSS_MCP=1` en el
+entorno; junto con `--mcp-server`, `--mcp-http` o `--mcp-list-tools`
+se rechaza (exit 2).
 
 ---
 
@@ -98,7 +113,9 @@ Cómo se comporta una ejecución:
   renombrar o borrar uno avisa antes, porque el job lo nombra.
 - En el modo de seguridad **paranoid** (*Edit > Settings > Security*)
   Run y Run in Console están desactivados (el tooltip explica por qué);
-  `.run` y el proceso hijo también se niegan.
+  `.run` y el proceso hijo también se niegan, y también
+  `axross --script` (exit 2) - tanto si el modo se eligió allí como si
+  se fijó con `AXROSS_SECURITY_MODE`, que gana cuando hay ambos.
 
 ---
 

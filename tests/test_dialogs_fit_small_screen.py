@@ -141,27 +141,46 @@ def _fits(size: QSize) -> bool:
 @pytest.mark.timeout(240)
 def test_happy_every_window_the_menus_open_fits_1280x800(window):
     seen = {id(w) for w in APP.topLevelWidgets()}
-    opened, too_big = [], []
+    opened, too_big, quiet = [], [], []
+
+    def collect(path) -> bool:
+        found = False
+        for widget in APP.topLevelWidgets():
+            if (sip.isdeleted(widget) or id(widget) in seen or widget is window
+                    or isinstance(widget, QMenu)
+                    or not widget.isVisible() or not widget.windowTitle()):
+                continue
+            seen.add(id(widget))
+            where = " > ".join(path)
+            opened.append(where)
+            for what, size in (("size", widget.size()), ("minimum", widget.minimumSize()),
+                               ("minimum hint", widget.minimumSizeHint())):
+                if not _fits(size):
+                    too_big.append(f"{where}: {what} {size.width()}x{size.height()}")
+            widget.close()
+            pump()
+            found = True
+        return found
+
     for top in window.menuBar().actions():
         for path, action in list(_entries(top.menu(), [top.text().replace("&", "")])):
             if SKIP.search(" ".join(path[1:])) or not action.isEnabled():
                 continue
             action.trigger()
             pump(0.15)
-            for widget in APP.topLevelWidgets():
-                if (sip.isdeleted(widget) or id(widget) in seen or widget is window
-                        or isinstance(widget, QMenu)
-                        or not widget.isVisible() or not widget.windowTitle()):
-                    continue
-                seen.add(id(widget))
-                where = " > ".join(path)
-                opened.append(where)
-                for what, size in (("size", widget.size()), ("minimum", widget.minimumSize()),
-                                   ("minimum hint", widget.minimumSizeHint())):
-                    if not _fits(size):
-                        too_big.append(f"{where}: {what} {size.width()}x{size.height()}")
-                widget.close()
-                pump()
+            if not collect(path):
+                quiet.append((path, action))
+    # A window that took longer than 0.15 s under load (a busy machine in a
+    # full parallel run) gets a second, patient try - only these entries.
+    for name in ("Connection Manager", "System Information", "About axross"):
+        if any(name in where for where in opened):
+            continue
+        for path, action in quiet:
+            if name in " > ".join(path) and action.isEnabled():
+                action.trigger()
+                end = time.monotonic() + 3.0
+                while time.monotonic() < end and not collect(path):
+                    pump(0.05)
     # the walk reached the windows the report named
     for name in ("Connection Manager", "System Information", "About axross"):
         assert any(name in where for where in opened), (name, opened)

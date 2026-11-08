@@ -1027,6 +1027,17 @@ class TransferManager(QObject):
         for _worker, thread in self._pool:
             thread.quit()
             thread.wait(max(0, int((deadline - time.monotonic()) * 1000)))
+        # A worker still stuck in a backend call (a dead FTP link, a hung
+        # NFS server) after the budget: its QThread, destroyed with the
+        # manager while it runs, aborted the whole process at quit
+        # ("QThread: Destroyed while thread is still running"). Handed over
+        # instead, with the worker it runs, to end with the process.
+        from core.thread_lifetime import detach_running_thread
+
+        for worker, thread in self._pool:
+            if detach_running_thread(thread, keep=(worker,)):
+                log.warning("A transfer worker is still in a backend call at shutdown; "
+                            "leaving it to end with the process")
 
     # --- Slots for worker signals ---
 

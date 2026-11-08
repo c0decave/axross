@@ -365,7 +365,7 @@ def _read_fields(kind: str, local_path: str, cancel: _CancelView):
     if kind == IMAGE:
         with open(local_path, "rb") as fh:
             data = fh.read()
-        return MF.image_fields(data)
+        return MF.image_fields(data, cancel=cancel)  # a zTXt bomb stops on Cancel
     if kind == OFFICE:
         return MF.office_fields(local_path)
     if kind == PDF:
@@ -483,7 +483,7 @@ def _clean(kind: str, src: str, dst: str, cancel: _CancelView) -> None:
     if kind == IMAGE:
         with open(src, "rb") as fh:
             data = fh.read()
-        cleaned = MF.image_clean(data)
+        cleaned = MF.image_clean(data, cancel=cancel)
         with open(dst, "wb") as out:
             out.write(cleaned)
     elif kind == OFFICE:

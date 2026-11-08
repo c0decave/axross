@@ -99,6 +99,10 @@ class _BookmarkTree(QTreeWidget):
         # Modifiers of the last mouse press: a Ctrl/Shift click only
         # selects (see BookmarkSidebar._on_item_clicked).
         self.press_modifiers = Qt.KeyboardModifier.NoModifier
+        #: True while a key press is handled: itemActivated from Enter /
+        #: Return opens a bookmark; one from the mouse (a double click, or
+        #: a single click on a single-click style) is the click's own.
+        self.key_activation = False
         self.setHeaderHidden(True)
         self.setIconSize(QSize(20, 20))
         self.setIndentation(14)
@@ -115,6 +119,13 @@ class _BookmarkTree(QTreeWidget):
     def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt override
         self.press_modifiers = event.modifiers()
         super().mousePressEvent(event)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt override
+        self.key_activation = True
+        try:
+            super().keyPressEvent(event)
+        finally:
+            self.key_activation = False
 
     def selected_nodes(self) -> list:
         """The nodes of the selected rows, in tree order."""
@@ -434,6 +445,17 @@ class BookmarkTreeEditing:
         node = item.data(0, _NODE_ROLE)
         if isinstance(node, BookmarkGroup):
             item.setExpanded(not item.isExpanded())  # persisted by itemExpanded/Collapsed
+        elif isinstance(node, Bookmark):
+            self.navigate_requested.emit(node)
+
+    def _on_item_activated(self, item: QTreeWidgetItem, _col: int) -> None:
+        """Enter / Return on a row: what a click does (only itemClicked was
+        connected, so no bookmark opened from the keyboard)."""
+        if not self._tree.key_activation:
+            return  # the mouse: its click already opened or folded the row
+        node = item.data(0, _NODE_ROLE)
+        if isinstance(node, BookmarkGroup):
+            item.setExpanded(not item.isExpanded())
         elif isinstance(node, Bookmark):
             self.navigate_requested.emit(node)
 
@@ -866,6 +888,7 @@ class BookmarkSidebar(BookmarkTreeEditing, QDockWidget):
 
         self._tree = _BookmarkTree(container)
         self._tree.itemClicked.connect(self._on_item_clicked)
+        self._tree.itemActivated.connect(self._on_item_activated)
         self._tree.itemExpanded.connect(lambda item: self._on_expanded(item, True))
         self._tree.itemCollapsed.connect(lambda item: self._on_expanded(item, False))
         self._tree.customContextMenuRequested.connect(self._show_context_menu)

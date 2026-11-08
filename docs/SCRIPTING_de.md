@@ -37,7 +37,7 @@ LLM-Agent eigene Skripte schreiben und ausführen kann.
 |---|---|---|
 | **Scripts-Dock** | Skripte in der GUI schreiben, speichern, verwalten und starten | *View > Panels > Scripts* (neben *Console*) |
 | **Console-Dock** (REPL) | Interaktives Erkunden in der GUI | Unteres Dock, Tab *Console* |
-| **`axross --script <datei>`** | Headless / Cron / CI | `axross --script myscript.py` |
+| **`axross --script <datei> [argumente…]`** | Headless / Cron / CI | `axross --script myscript.py` |
 | **REPL-Slash-Commands** | Skripte am Prompt speichern / laden / starten | `.save name`, `.run name` |
 | **Scheduled Jobs** | Ein gespeichertes Skript im Intervall starten | *View > Scheduled Jobs…* |
 | **MCP `script_*`-Tools** | Ein LLM-Agent steuert axross | Mit `--mcp-allow-scripts` starten |
@@ -47,6 +47,21 @@ REPL geht, geht genauso im Skript, headless oder über ein LLM.
 *Help > Scripting Guide* zeigt diese Anleitung (in der Sprache der
 Oberfläche) und die vollständige API-Referenz in der App; *F1* listet
 die Tasten des Scripts-Docks und die Slash-Commands.
+
+Jeder Weg führt ein Skript als `__main__` aus: `__name__ == "__main__"`
+und `__file__` ist der Skriptpfad - `axross --script`, Run, der
+Scheduler, `script_run` und ebenso **Run in Console**, `.run` und
+`axross.run_script()` (in der Console nur während des Laufs; der Prompt
+hat kein `__file__`). Ein Block `if __name__ == "__main__":` läuft auf
+jedem davon.
+
+`axross --script DATEI ARG …` gibt alles nach `DATEI` als
+`sys.argv[1:]` an das Skript (`sys.argv[0]` ist `DATEI`; `-` liest das
+Skript von stdin); die eigenen Optionen von axross stehen vor
+`--script`. Eine fehlende oder unlesbare Datei wird in einer Zeile
+abgelehnt (Exit 2). Ein ausdrückliches `--script` gewinnt gegen
+`AXROSS_MCP=1` in der Umgebung; zusammen mit `--mcp-server`,
+`--mcp-http` oder `--mcp-list-tools` wird es abgelehnt (Exit 2).
 
 ---
 
@@ -98,7 +113,9 @@ So verhält sich ein Lauf:
   nennt.
 - Im Sicherheitsmodus **paranoid** (*Edit > Settings > Security*) sind
   Run und Run in Console deaktiviert (der Tooltip sagt warum); `.run`
-  und der Kindprozess verweigern ebenso.
+  und der Kindprozess verweigern ebenso, und auch `axross --script`
+  (Exit 2) - ob der Modus dort gewählt oder mit `AXROSS_SECURITY_MODE`
+  gesetzt wurde, das bei beiden gewinnt.
 
 ---
 

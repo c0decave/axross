@@ -56,6 +56,10 @@ def win(tmp_path, monkeypatch):
     window = MainWindow()
     window._reconnect_timer.stop()
     yield window
+    # The counters follow the job status through a queued signal: closing
+    # at once asked "Transfers running" (a modal box offscreen) and hung.
+    _pump(lambda: window._transfer_manager.unfinished() == 0, 5.0)
+    window._quit_with_transfers = True  # the test's jobs are cancelled anyway
     window.close()
     window.deleteLater()
 

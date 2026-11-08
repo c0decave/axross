@@ -399,3 +399,23 @@ def test_edge_a_panel_that_closed_copies_no_further(temp_root):
     assert not jobs.pending
     MP.deactivate(None)
     assert media_folders(temp_root) == []
+
+
+def test_sad_an_unload_while_listing_leaves_no_temp_folder(temp_root):
+    """The extension unloads while the remote listing runs. The host drops
+    a result that comes after the unload, so ``listed`` never runs. The
+    listing's worker made the temp folder after deactivate() had emptied
+    _TEMP_FOLDERS, and the empty ``axross-media-*`` folder stayed behind.
+    It was registered with a module copy that would never unload again.
+    The folder is now made on the GUI thread once the listing is in."""
+    log = []
+    jobs = Jobs()
+    panel = MP.PlayerPanel(engine=FakeEngine(), run_in_background=jobs)
+    MP._PANELS.append(panel)
+    panel.add_remote(music(log), ["/music"], play_first=True)
+    MP.deactivate(None)  # the unload, while the listing is still running
+    work, _done, _error = jobs.pending.pop(0)
+    work()  # the listing finishes; the host drops its result
+    assert media_folders(temp_root) == []
+    assert MP._TEMP_FOLDERS == []
+    assert not jobs.pending and ("open", "a.wav") not in log

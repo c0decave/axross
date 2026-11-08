@@ -1538,6 +1538,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         dialog = getattr(self, "_features_dialog", None)
         if dialog is None:
             dialog = FeaturesDialog(self)
+            self._install_window_help(dialog)
             dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             dialog.destroyed.connect(lambda *_: setattr(self, "_features_dialog", None))
             self._features_dialog = dialog
@@ -1557,6 +1558,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         if editor is None:
             editor = EditorWindow(self)
             editor.setWindowFlag(Qt.WindowType.Window, True)
+            self._install_window_help(editor)
             editor.saved.connect(self._editor_saved)
             editor.opened.connect(lambda _tab: self._show_editor_window())
             self._editor_window = editor
@@ -1622,6 +1624,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         dialog = getattr(self, "_tagged_files_dialog", None)
         if dialog is None:
             dialog = TaggedFilesDialog(self, go_to=self._go_to_tagged_file)
+            self._install_window_help(dialog)
             dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             dialog.destroyed.connect(lambda *_: setattr(self, "_tagged_files_dialog", None))
             self._tagged_files_dialog = dialog
@@ -1664,6 +1667,43 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             widget = self.findChild(QWidget, name)
             if widget is not None:
                 set_help_topic(widget, topic)
+        # The workspace tabs themselves (not the panes they hold).
+        tabs = getattr(self, "_workspace_tabs", None)
+        if tabs is not None:
+            set_help_topic(tabs.tabBar(), "workspaces")
+
+    def _install_window_help(self, window: QWidget, topic: str | None = None) -> None:
+        """F1 in a non-modal window of this one (the window's own F1 works
+        in the main window and its detached workspaces only): the handbook
+        at *topic*, the contents without one."""
+        from ui.handbook import install_help_key
+
+        install_help_key(window, topic)
+
+    def _is_own_window(self, window: QWidget | None) -> bool:
+        """This window or one of its detached workspace windows."""
+        from ui.workspaces import WorkspaceWindow
+
+        return window is self or (
+            isinstance(window, WorkspaceWindow) and window.__dict__.get("_owner") is self
+        )
+
+    def _fallback_help_topic(self, widget: QWidget) -> str | None:
+        """The topic of an area without one of its own: a mail dock, any
+        other dock (the right column, extension panels), a detached
+        workspace window."""
+        from PyQt6.QtWidgets import QDockWidget
+
+        from ui.workspaces import WorkspaceWindow
+
+        node = widget
+        while node is not None:
+            if isinstance(node, QDockWidget):
+                return "mail" if node.objectName().startswith("mail-dock-") else "docks"
+            if isinstance(node, WorkspaceWindow):
+                return "workspaces"
+            node = node.parentWidget()
+        return None
 
     def show_handbook(self, topic: str | None = None):
         """Help > Handbook: one non-modal window, raised when open, at the
@@ -1689,8 +1729,13 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         from ui.handbook import help_topic_of
 
         focus = widget if widget is not None else QApplication.focusWidget()
-        mine = focus is not None and (focus is self or self.isAncestorOf(focus))
-        return self.show_handbook(help_topic_of(focus) if mine else None)
+        # The window family, not isAncestorOf: that stops at a window
+        # boundary, and a pane in a detached workspace window got the
+        # contents instead of its section.
+        topic = None
+        if focus is not None and self._is_own_window(focus.window()):
+            topic = help_topic_of(focus) or self._fallback_help_topic(focus)
+        return self.show_handbook(topic)
 
     def show_tours(self):
         """Help > Tours…: the list of tours, one non-modal window."""
@@ -1782,6 +1827,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         dialog = getattr(self, "_scripting_guide", None)
         if dialog is None:
             dialog = ScriptingGuideDialog(self)
+            self._install_window_help(dialog, "scripting")
             dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             dialog.destroyed.connect(lambda *_: setattr(self, "_scripting_guide", None))
             self._scripting_guide = dialog
@@ -1796,6 +1842,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         dialog = getattr(self, "_third_party_dialog", None)
         if dialog is None:
             dialog = ThirdPartyDialog(self)
+            self._install_window_help(dialog)
             dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             dialog.destroyed.connect(lambda *_: setattr(self, "_third_party_dialog", None))
             self._third_party_dialog = dialog
@@ -2276,7 +2323,11 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         # than a pane-internal callback.
         # Listed on a worker: a large .tar.gz is read through to its end.
         pane = ArchivePaneWidget(path, on_open_member=None, chain=chain, background=True)
-        basename = pane.display_name()
+        # The name as the file table shows it: bidi controls kept intact made
+        # "invoice\u202efdp.exe" read as "invoiceexe.pdf" in the dock title.
+        from core.remote_name import sanitize_for_display
+
+        basename = sanitize_for_display(pane.display_name())
         pane.extract_all.connect(lambda p=path, d=parent: self._archive_extract_all(p, d))
         pane.extract_selected.connect(
             lambda members, p=path, d=parent: self._archive_extract_selected(p, members, d)
@@ -4023,12 +4074,23 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         from dataclasses import replace
         from datetime import datetime
 
-        from core.scheduler import due_jobs
+        from core.scheduler import due_jobs, planned_start
 
+        # The jobs as the store holds them now: the Scheduled Jobs window
+        # (open, its exec() running while this timer fires) or another
+        # axross may have switched a job off or removed it since the last
+        # load - the copy from before started it anyway.
+        try:
+            self._scheduler_jobs = self._with_running_flags(self._job_store().load())
+        except Exception as exc:  # noqa: BLE001 — a tick must not raise into Qt
+            log.warning("scheduler: could not read the job store: %s", exc)
         jobs = getattr(self, "_scheduler_jobs", None)
         if not jobs:
             return
         now = datetime.now()
+        planned = getattr(self, "_scheduler_planned", None)
+        if planned is None:
+            planned = self._scheduler_planned = {}
         for job in due_jobs(jobs, now=now):
             # Mark it in flight BEFORE starting: due_jobs excludes
             # running jobs, and without this a slow job would be
@@ -4037,6 +4099,9 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                 replace(j, running=True) if j.job_id == job.job_id else j
                 for j in self._scheduler_jobs
             ]
+            # The slot it runs for becomes its last run (not the finish):
+            # "every 1 h" no longer drifts by each run's length.
+            planned[job.job_id] = planned_start(job, now=now)
             self._run_scheduled_job(job)
 
     @staticmethod
@@ -4106,10 +4171,11 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
 
         from core.scheduler import record_result
 
+        started = (getattr(self, "_scheduler_planned", None) or {}).pop(job_id, None)
         job = next((j for j in self._scheduler_jobs if j.job_id == job_id), None)
         if job is None:
             return
-        at = datetime.now()
+        at = started or datetime.now()
 
         def _record(jobs: list) -> list:
             # The result goes onto the job as the store holds it now: the
@@ -7007,6 +7073,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                              len(undeletable))
                     return
                 if choice == "elevated":
+                    if not self._target_production_ok(target, value, None, len(paths), True):
+                        return
                     self._elevated_move(source, target, paths, dest_dir)
                     if on_queued is not None:
                         on_queued()
@@ -7015,6 +7083,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             plan = self._resolve_transfer_conflicts(dest_backend, value)
             if plan is None:
                 log.info("Transfer cancelled at the conflict prompt")
+                return
+            if not self._target_production_ok(target, value, plan, len(paths), move_now):
                 return
             self._start_transfer_between(
                 source, target, paths, move=move_now, dest_dir=dest_dir, conflict_plan=plan
@@ -7025,6 +7095,35 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         check.finished.connect(finished)
         self.statusBar().showMessage(tr("Checking the destination for existing names…"))
         check.start(work)
+
+    @staticmethod
+    def _plan_overwrites(scan, plan) -> int:
+        """How many names the answered *plan* replaces (or merges into) at
+        the destination of *scan*."""
+        from core import transfer_conflicts as TC
+
+        replacing = (TC.IF_EXISTS_OVERWRITE, TC.IF_EXISTS_NEWER)
+        count = 0
+        for conflict in scan.conflicts:
+            answer = plan.resolve(conflict.dest_path, conflict.source_path)
+            if answer is not None and answer[0] == conflict.dest_path and answer[1] in replacing:
+                count += 1
+        return count
+
+    def _target_production_ok(self, target, scan, plan, count: int, move: bool) -> bool:
+        """The production countdown of a transfer's *target* pane, once the
+        conflict answers are known: when the plan replaces anything there, or
+        when the operation moves into it. Only a production *source* of a
+        move asked; an overwrite on a production server went straight
+        through, though the profile promises the countdown for it."""
+        overwrites = self._plan_overwrites(scan, plan) if plan is not None else 0
+        if overwrites:
+            what = tr("overwrite {count} item(s)").format(count=overwrites)
+        elif move:
+            what = tr("move {count} item(s) here").format(count=count)
+        else:
+            return True
+        return target._production_ok(what)
 
     def _ask_undeletable_move(self, undeletable: list) -> str:
         """Some sources of a move could not be removed after the copy: move
@@ -8225,6 +8324,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         dialog = self._update_dialog
         if dialog is None:
             dialog = UpdateDialog(self._update_controller, self, self)
+            self._install_window_help(dialog, "settings.updates")
             dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             dialog.destroyed.connect(lambda *_: setattr(self, "_update_dialog", None))
             self._update_dialog = dialog
@@ -8970,6 +9070,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         manager = getattr(self, "_connection_manager", None) or ConnectionManager()
         dialog = MailProjectDialog(self, agent_dock=lambda: getattr(self, "_agent_dock", None),
                                    connect=lambda profile: manager.connect(profile))
+        self._install_window_help(dialog, "mail")
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.show()
 

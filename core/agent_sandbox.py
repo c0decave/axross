@@ -368,23 +368,166 @@ def _agent_mounts(
     folders: ``(path, writable)``, writable only where the level lets
     extra folders be and the tab may change files), parents first: a
     read-only folder inside a writable one is mounted after it and stays
-    read-only."""
+    read-only. The protected places inside a writable folder are listed
+    read-only, the missing ones too (:func:`_mount_plan` says how)."""
+    return [(path, rw) for path, rw, _kind in _mount_plan(profile, root, writable, extra)]
+
+
+def _inside(path: str, folder: str) -> bool:
+    return path == folder or path.startswith(folder.rstrip(os.sep) + os.sep)
+
+
+def _mount_plan(
+    profile: SandboxProfile, root: str, writable: bool, extra=()
+) -> list[tuple[str, bool, str]]:
+    """:func:`_agent_mounts` with how each is mounted: ``"bind"`` (the path
+    itself), ``"dir"`` (a missing protected folder: an empty read-only
+    one) or ``"file"`` (a missing protected file: an empty read-only one)."""
     extra_rw = writable and profile.rules.extra_writable
     mounts = [(root, writable), *profile.effective_mounts(),
               *((os.path.abspath(p), bool(rw) and extra_rw) for p, rw in extra)]
     seen: dict[str, bool] = {}
     for path, rw in mounts:
         seen[path] = rw and seen.get(path, True)  # named twice: read-only wins
+    kinds = dict.fromkeys(seen, "bind")
     # The protected places of the home folder (shell start files, autostart,
     # the agent's own settings, ...) stay read-only inside a writable mount:
     # the worker's own refusal is no guard once the worker is compromised.
+    # A missing folder too, or the agent creates it (~/.config/autostart/x.desktop):
+    # an empty read-only folder takes its place. A missing *file* is not
+    # mounted: the engine would create its mount point on the host, and an
+    # empty ~/.bash_profile left behind by a crash hides ~/.profile from every
+    # later login (an empty ~/.vimrc switches off vim's defaults). The
+    # worker's own refusal (core.protected_places) guards those.
     from core import protected_places
 
     writable_roots = [p for p, rw in seen.items() if rw]
-    for place in protected_places.existing_places():
-        if any(place == r or place.startswith(r.rstrip(os.sep) + os.sep) for r in writable_roots):
-            seen[place] = False
-    return sorted(seen.items(), key=lambda item: (item[0].rstrip(os.sep).count(os.sep), item[0]))
+    missing: list[tuple[str, bool]] = []
+    for place, folder in protected_places.protected_paths():
+        if not any(_inside(place, r) for r in writable_roots):
+            continue
+        if os.path.lexists(place):
+            seen[place], kinds[place] = False, "bind"
+        else:
+            missing.append((place, folder))
+    for place, folder in sorted(missing, key=lambda item: item[0].count(os.sep)):
+        holder = max((p for p in seen if _inside(place, p)), key=len)
+        if not seen[holder]:
+            continue  # inside a read-only mount already (and nothing can be made there)
+        ancestor = os.path.dirname(place)
+        while not os.path.lexists(ancestor):
+            ancestor = os.path.dirname(ancestor)
+        if not _inside(os.path.realpath(ancestor), os.path.realpath(holder)):
+            continue  # reached through a link that leaves the writable folder
+        if not folder:
+            continue  # see above: never an empty file on the host
+        seen[place], kinds[place] = False, "dir"
+    ordered = sorted(seen.items(), key=lambda item: (item[0].rstrip(os.sep).count(os.sep), item[0]))
+    return [(path, rw, kinds[path]) for path, rw in ordered]
+
+
+_EMPTY_LOCK = threading.Lock()
+_EMPTY_DIR: list[str] = []
+
+
+def _empty_file() -> str:
+    """An empty read-only file in a private temporary folder: what a
+    missing protected file is mounted from (made again if a cleaner took it)."""
+    import tempfile
+
+    with _EMPTY_LOCK:
+        if _EMPTY_DIR and os.path.isfile(os.path.join(_EMPTY_DIR[0], "empty")):
+            return os.path.join(_EMPTY_DIR[0], "empty")
+        folder = tempfile.mkdtemp(prefix="axross-agent-empty-")
+        path = os.path.join(folder, "empty")
+        with open(path, "wb"):
+            pass
+        os.chmod(path, 0o444)
+        os.chmod(folder, 0o500)
+        if not _EMPTY_DIR:
+            import atexit
+
+            atexit.register(_remove_empty_file)
+        _EMPTY_DIR[:] = [folder]
+        return path
+
+
+def _remove_empty_file() -> None:
+    for folder in _EMPTY_DIR:
+        try:
+            os.chmod(folder, 0o700)
+            shutil.rmtree(folder, ignore_errors=True)
+        except OSError:
+            pass
+
+
+#: Host paths a running sandbox's engine made as mount points of missing
+#: protected places, and how many running sandboxes use each: removed when
+#: the last one ends (an empty ~/.bash_profile left behind would hide
+#: ~/.profile from the next login shell, an empty ~/.xsession end the session).
+_POINTS_LOCK = threading.Lock()
+_POINTS_IN_USE: collections.Counter = collections.Counter()
+
+
+def _mount_points(plan) -> list[str]:
+    """The host paths the engine creates for *plan*'s missing places (and
+    their missing parents), or that another running sandbox made: parents first."""
+    points: list[str] = []
+    with _POINTS_LOCK:
+        in_use = set(_POINTS_IN_USE)
+    for path, _rw, kind in plan:
+        if kind == "bind" and path not in in_use:
+            continue
+        chain = []
+        current = path
+        while current not in points and (not os.path.lexists(current) or current in in_use):
+            chain.append(current)
+            parent = os.path.dirname(current)
+            if parent == current:
+                break
+            current = parent
+        points.extend(reversed(chain))
+    return points
+
+
+def _hold_mount_points(points) -> None:
+    with _POINTS_LOCK:
+        _POINTS_IN_USE.update(points)
+
+
+def _release_mount_points(points) -> None:
+    """Drop *points*; remove those no running sandbox uses any more and that
+    are still empty (deepest first) - what someone wrote there stays."""
+    with _POINTS_LOCK:
+        free = []
+        for point in points:
+            _POINTS_IN_USE[point] -= 1
+            if _POINTS_IN_USE[point] <= 0:
+                del _POINTS_IN_USE[point]
+                free.append(point)
+    for point in sorted(free, key=lambda p: p.count(os.sep), reverse=True):
+        try:
+            if os.path.islink(point):
+                continue
+            if os.path.isdir(point):
+                os.rmdir(point)  # only when empty
+            elif os.path.isfile(point) and os.path.getsize(point) == 0:
+                os.unlink(point)
+        except OSError:
+            pass
+
+
+def _host_xdg_env() -> list[tuple[str, str]]:
+    """``(variable, value)``: the host's XDG folders under the names the
+    worker reads them from (core.protected_places.XDG_PLACES)."""
+    from core.protected_places import XDG_PLACES
+
+    out = []
+    for _prefix, var, host_var in XDG_PLACES:
+        value = os.environ.get(var, "")
+        if value and os.path.isabs(value):
+            out.append((host_var, value))
+    return out
 
 
 def _host_home_env() -> str:
@@ -449,8 +592,15 @@ def _bwrap_command(profile: SandboxProfile, root: str, writable: bool, inner: li
             argv += ["--ro-bind", path, path]
     for path in mounts:
         argv += ["--ro-bind", path, path]
-    for path, rw in _agent_mounts(profile, root, writable, extra):
-        argv += ["--bind" if rw else "--ro-bind", path, path]
+    for var, value in _host_xdg_env():
+        argv += ["--setenv", var, value]
+    for path, rw, kind in _mount_plan(profile, root, writable, extra):
+        if kind == "dir":
+            argv += ["--tmpfs", path, "--remount-ro", path]
+        elif kind == "file":
+            argv += ["--ro-bind", _empty_file(), path]
+        else:
+            argv += ["--bind" if rw else "--ro-bind", path, path]
     argv += ["--chdir", root, "--", *inner]
     if profile.network == "full":
         if _pasta_works():
@@ -488,8 +638,14 @@ def _container_command(profile: SandboxProfile, engine: str, root: str, writable
         argv.append("--ipc=none")
     if rules.cpus:
         argv.append(f"--cpus={rules.cpus}")
-    for path, rw in _agent_mounts(profile, root, writable, extra):
-        argv += ["-v", f"{path}:{path}:{'rw' if rw else 'ro'}"]
+    argv += [f"--env={var}={value}" for var, value in _host_xdg_env()]
+    for path, rw, kind in _mount_plan(profile, root, writable, extra):
+        if kind == "dir":
+            argv.append(f"--tmpfs={path}:ro,nosuid,nodev,noexec")
+        elif kind == "file":
+            argv += ["-v", f"{_empty_file()}:{path}:ro"]
+        else:
+            argv += ["-v", f"{path}:{path}:{'rw' if rw else 'ro'}"]
     argv += [f"--workdir={root}"]
     if inner:
         argv += ["--entrypoint", inner[0], profile.image, *inner[1:]]
@@ -662,6 +818,11 @@ class SandboxedAgent:
         self._host_slots = threading.BoundedSemaphore(MAX_HOST_CALLS)
         #: (engine, name) of a podman/docker worker, removed on a hard stop.
         self._container: tuple[str, str] | None = None
+        #: Mount points the engine makes for missing protected places
+        #: (removed when the worker has ended, see _release_mount_points).
+        self._points: list[str] = []
+        #: A container that "rm -f" could not remove still has them mounted.
+        self._container_left = False
         self._relay = HostRelay(self._send, self._host_allowed)
         # Remote connections and their credentials stay here: the worker
         # reaches them through host tools (a "host_tool" message).
@@ -791,6 +952,12 @@ class SandboxedAgent:
             if engine in ("podman", "docker")
             else None
         )
+        self._release_points()
+        writable = bool(self.config.allow_write) and profile.rules.folder_writable
+        points = _mount_points(_mount_plan(profile, os.path.abspath(self.config.root), writable,
+                                           tuple(self.config.extra_roots)))
+        _hold_mount_points(points)
+        self._points, self._container_left = points, False
         return sandbox_command(profile, self.config.root, writable=self.config.allow_write,
                                name=self._container[1] if self._container else None,
                                extra=tuple(self.config.extra_roots))
@@ -814,6 +981,7 @@ class SandboxedAgent:
                 cwd=str(_package_root()), env=env, start_new_session=True,
             )
         except OSError as exc:
+            self._release_points()
             raise A.AgentError(f"the agent sandbox cannot start: {exc}") from None
         self._signature = self._signature_of(profile)
         self._stderr.clear()
@@ -915,6 +1083,7 @@ class SandboxedAgent:
                     env=clean_child_env(),
                 )
             except (OSError, subprocess.SubprocessError) as exc:
+                self._container_left = True
                 log.warning("agent sandbox: removing the container %s failed: %s", name, exc)
 
     def _ended(self) -> A.AgentError:
@@ -924,6 +1093,7 @@ class SandboxedAgent:
             self._stderr_thread.join(timeout=2)  # the last words of the worker
         tail = " | ".join(line for line in self._stderr if line)[-800:]
         self._proc = None
+        self._release_points()
         self._relay.close_all()
         advice = _start_advice(tail)
         return A.AgentError(
@@ -931,6 +1101,14 @@ class SandboxedAgent:
             + (f": {tail}" if tail else "")
             + (f" - {advice}" if advice else "")
         )
+
+    def _release_points(self) -> None:
+        """Give up this worker's mount points - only once it has ended: a
+        mount point removed from the host leaves the running sandbox's
+        mount (and the protection) behind."""
+        points, self._points = self._points, []
+        if points and not self._container_left:
+            _release_mount_points(points)
 
     def close(self) -> None:
         self._stop()
@@ -963,6 +1141,9 @@ class SandboxedAgent:
                 proc.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 log.warning("agent sandbox: the worker %s did not end", proc.pid)
+                self._points = []  # still running: its mount points stay
+                return
+        self._release_points()
 
     # -- a task -----------------------------------------------------------------------
 

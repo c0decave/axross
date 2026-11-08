@@ -41,6 +41,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.i18n import tr
 from ui.format_utils import format_size, human_bytes
 from ui.permissions_dialog import PermissionsWidget
 from ui.thread_lifetime import detach_running_thread
@@ -63,7 +64,9 @@ def _format_time(value: datetime | None) -> str:
 
 
 class _SizeWorker(QObject):
-    """Recursive size walk, off the GUI thread."""
+    """Recursive size walk, off the GUI thread. ``done`` carries
+    ``(total, complete)``: *complete* is False when a subfolder could not
+    be listed (or the walk was cut off), so the total is a floor."""
 
     #: object, not int: a Qt int is 32 bits, and a 3 GiB folder would
     #: arrive as -1 GiB.
@@ -74,6 +77,8 @@ class _SizeWorker(QObject):
         self._backend = backend
         self._path = path
         self._cancelled = False
+        #: False once a part of the tree was not counted.
+        self.complete = True
 
     def cancel(self) -> None:
         """Ask the walk to stop at the next directory boundary.
@@ -85,7 +90,8 @@ class _SizeWorker(QObject):
         self._cancelled = True
 
     def run(self) -> None:
-        self.done.emit(self._walk(self._path))
+        total = self._walk(self._path)
+        self.done.emit((total, self.complete and not self._cancelled))
 
     def _walk(self, path: str, depth: int = 0) -> int:
         if self._cancelled:
@@ -94,14 +100,17 @@ class _SizeWorker(QObject):
         # loop on a backend that does not report is_link must not
         # recurse until the stack dies.
         if depth > 64:
+            self.complete = False
             return 0
         total = 0
         try:
             entries = self._backend.list_dir(path)
         except OSError as exc:
             # An unreadable subtree is normal (permissions, vanished
-            # directory). Report what we could read rather than nothing.
+            # directory). Report what we could read rather than nothing -
+            # as a floor: it was shown as the exact size.
             log.debug("properties: skipping %s: %s", path, exc)
+            self.complete = False
             return 0
         for item in entries:
             child = self._backend.join(path, item.name)
@@ -169,6 +178,7 @@ class PropertiesDialog(QDialog):
             self._item = item
 
         self._size_override: int | None = None
+        self._size_complete = True
         self._summary = None
         self._thread: QThread | None = None
         self._worker = None
@@ -189,6 +199,10 @@ class PropertiesDialog(QDialog):
     def _build(self) -> None:
         layout = QVBoxLayout(self)
         add_close_corner(self)
+        # F1: the handbook (its contents) - the main window's F1 does not reach this window.
+        from ui.handbook import install_help_key
+
+        install_help_key(self)
         self._tabs = QTabWidget(self)
         layout.addWidget(self._tabs)
 
@@ -271,7 +285,7 @@ class PropertiesDialog(QDialog):
             return item.link_target or DASH
         if key == "Size":
             if self._size_override is not None:
-                return format_size(self._size_override)
+                return self._override_size_text()
             if item.is_dir:
                 # Not known until something walks the tree.
                 return DASH
@@ -312,7 +326,7 @@ class PropertiesDialog(QDialog):
         # An incomplete walk must not present its total as a fact: it is
         # a floor, and it is wrong in the direction that matters —
         # somebody checking whether a copy fits is told yes.
-        return f"at least {total}"
+        return tr("at least {size}").format(size=total)
 
     def general_fields(self) -> dict[str, str]:
         """The General tab as a mapping, in display order."""
@@ -344,15 +358,23 @@ class PropertiesDialog(QDialog):
         self._value_labels["Size"].setText(self._summary_size_text())
         self._value_labels["Selection"].setText(self._selection_text())
         self._calc_btn.setEnabled(True)
-        self._stop_thread()
+        self._stop_thread(done=True)
 
-    def _on_size_ready(self, total: int) -> None:
+    def _override_size_text(self) -> str:
+        text = format_size(self._size_override)
+        # Unreadable subfolders counted as zero: a floor, not the size (the
+        # multi-selection summary said so; one folder did not).
+        return text if self._size_complete else tr("at least {size}").format(size=text)
+
+    def _on_size_ready(self, result) -> None:
+        total, complete = result if isinstance(result, tuple) else (result, True)
         self._size_override = total
-        self._value_labels["Size"].setText(format_size(total))
+        self._size_complete = bool(complete)
+        self._value_labels["Size"].setText(self._override_size_text())
         self._calc_btn.setEnabled(True)
-        self._stop_thread()
+        self._stop_thread(done=True)
 
-    def _stop_thread(self) -> None:
+    def _stop_thread(self, *, done: bool = False) -> None:
         """Wind the worker down, and only forget it once it is really gone.
 
         Clearing ``self._thread`` while the walk is still running drops
@@ -367,15 +389,21 @@ class PropertiesDialog(QDialog):
         if self._worker is not None:
             self._worker.cancel()
         self._thread.quit()
-        if not self._thread.wait(5000):
-            # Handed over rather than kept: this dialog is a child of the
-            # pane / the window, and destroying it with the thread still
-            # running aborts the process. A late `done` reaches nobody.
-            detach_running_thread(
-                self._thread,
-                *((self._worker.done,) if self._worker is not None else ()),
-                keep=(self._worker,),
-            )
+        if done:
+            # The worker's run() has returned (its result is here): the
+            # thread only leaves its event loop, at once.
+            self._thread.wait(1000)
+        # Handed over at once rather than waited for: wait(5000) froze the
+        # window for 5 s when Close / Esc came during a slow walk. This
+        # dialog is a child of the pane / the window, and destroying it
+        # with the thread still running aborts the process; detached (a
+        # no-op for a thread that is done) it ends on its own against a
+        # cancelled worker, and a late `done` reaches nobody.
+        if detach_running_thread(
+            self._thread,
+            *((self._worker.done,) if self._worker is not None else ()),
+            keep=(self._worker,),
+        ):
             log.warning(
                 "properties: size walk for %s still running; leaving it to "
                 "finish against a cancelled worker",

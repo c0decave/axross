@@ -69,6 +69,19 @@ MAX_ZIP_ENTRIES = 20_000
 MAX_ZIP_UNCOMPRESSED = 1024 * 1024 * 1024
 #: Most frames compared when verifying an animated image.
 MAX_VERIFY_FRAMES = 2000
+#: Most bytes one decoded frame may take (width x height x bytes per pixel,
+#: as Pillow stores it), checked from the header *before* decoding: a 1.5 MB
+#: PNG can declare 20000 x 20000 pixels. 512 MiB is a 134-megapixel photo.
+MAX_DECODED_FRAME_BYTES = 512 * 1024 * 1024
+#: Most decoded bytes over all frames of one image (CPU for an animation).
+MAX_DECODED_TOTAL_BYTES = 4 * 1024 * 1024 * 1024
+#: Most decoded bytes a TIFF re-save may hold at once (it keeps every page).
+MAX_TIFF_HELD_BYTES = 1024 * 1024 * 1024
+#: Pixels are compared in strips of about this many bytes.
+VERIFY_STRIP_BYTES = 4 * 1024 * 1024
+#: Most bytes all compressed PNG text chunks of one file inflate to together
+#: (each chunk is capped at 256 KiB on its own).
+MAX_PNG_INFLATE_TOTAL = 4 * 1024 * 1024
 #: ffprobe output bound and the external tools' time limits.
 MAX_PROBE_OUTPUT = 8 * 1024 * 1024
 PROBE_TIMEOUT = 60.0
@@ -711,23 +724,60 @@ def _png_chunks(data: bytes):
             return
 
 
-def _inflate_bounded(data: bytes, limit: int = 256 * 1024) -> bytes:
+class _InflateBudget:
+    """What is left of one file's :data:`MAX_PNG_INFLATE_TOTAL`."""
+
+    def __init__(self, total: int = MAX_PNG_INFLATE_TOTAL) -> None:
+        self.left = total
+
+
+_BUDGET_USED_UP = "<not expanded: the file's budget for compressed text is used up>"
+
+
+def _inflate_bounded(
+    data: bytes, limit: int = 256 * 1024, budget: _InflateBudget | None = None
+) -> bytes:
+    if budget is not None:
+        if budget.left <= 0:
+            return _BUDGET_USED_UP.encode()
+        limit = min(limit, budget.left)
     d = zlib.decompressobj()
     try:
         out = d.decompress(data, limit)
     except zlib.error as exc:
+        if budget is not None:
+            budget.left -= limit  # the work was done before the stream broke
         raise FormatError(f"bad compressed text: {exc}") from exc
+    if budget is not None:
+        budget.left -= len(out)
     if d.unconsumed_tail:
         out += b"..."
     return out
 
 
-def png_fields(data: bytes) -> tuple[_Fields, str]:
+def _cancelled(cancel) -> bool:
+    return cancel is not None and cancel.is_set()
+
+
+def png_fields(data: bytes, cancel=None) -> tuple[_Fields, str]:
+    """The PNG's fields. Compressed text (zTXt, compressed iTXt) inflates to
+    at most 256 KiB per chunk and :data:`MAX_PNG_INFLATE_TOTAL` per file; the
+    walk stops once :data:`MAX_FIELDS` is reached or *cancel* (anything with
+    ``is_set()``) is set."""
     fields = _Fields()
+    budget = _InflateBudget()
     error = ""
     end = None
+    stopped = False
     try:
         for kind, s, e, _cs, ce in _png_chunks(data):
+            if fields.truncated:
+                stopped = True
+                break
+            if _cancelled(cancel):
+                error = "cancelled"
+                stopped = True
+                break
             body = data[s:e]
             if kind == b"tEXt":
                 key, _, text = body.partition(b"\x00")
@@ -735,7 +785,7 @@ def png_fields(data: bytes) -> tuple[_Fields, str]:
             elif kind == b"zTXt":
                 key, _, rest = body.partition(b"\x00")
                 try:
-                    text = _inflate_bounded(rest[1:]).decode("latin-1")
+                    text = _inflate_bounded(rest[1:], budget=budget).decode("latin-1")
                 except FormatError as exc:
                     text = f"<{exc}>"
                 fields.add("PNG text", key.decode("latin-1"), text)
@@ -746,7 +796,7 @@ def png_fields(data: bytes) -> tuple[_Fields, str]:
                 _tkey, _, text = rest.partition(b"\x00")
                 if flag == b"\x01":
                     try:
-                        text = _inflate_bounded(text)
+                        text = _inflate_bounded(text, budget=budget)
                     except FormatError as exc:
                         text = f"<{exc}>".encode()
                 if key == b"XML:com.adobe.xmp":
@@ -775,7 +825,7 @@ def png_fields(data: bytes) -> tuple[_Fields, str]:
             end = ce
     except FormatError as exc:
         error = str(exc)
-    if end is not None and end < len(data):
+    if not stopped and end is not None and end < len(data):
         fields.add("Trailer", "data after the end of the image", f"{len(data) - end} bytes")
     return fields, error
 
@@ -1130,7 +1180,8 @@ def tiff_clean(data: bytes) -> bytes:
     from PIL import Image, ImageSequence
 
     try:
-        im = Image.open(io.BytesIO(data))
+        im = _open_image(data, "tiff")
+        held = _DecodeBudget(MAX_TIFF_HELD_BYTES)
         compression = im.info.get("compression", "raw")
         if compression in _TIFF_LOSSY:
             raise FormatError(
@@ -1141,6 +1192,7 @@ def tiff_clean(data: bytes) -> bytes:
             if n >= 256:
                 raise FormatError("TIFF with more than 256 pages")
             orientation = frame.tag_v2.get(274)
+            held.charge(frame)  # every page is kept decoded until the save
             frame.load()
             copy = frame.copy()
             if orientation in _UNDO_ORIENTATION and frame.getexif().get(274) is None:
@@ -1217,54 +1269,170 @@ def sniff_image(data: bytes) -> str | None:
     return None
 
 
-def image_fields(data: bytes, name: str = "") -> tuple[list[Field], str, bool]:
+def image_fields(
+    data: bytes, name: str = "", cancel=None
+) -> tuple[list[Field], str, bool]:
+    """``(fields, error, truncated)``; *cancel* (anything with ``is_set()``)
+    stops a long walk with the error ``"cancelled"``."""
     fmt = sniff_image(data)
     if fmt is None:
         return [], "not a supported image (JPEG, PNG, WebP, GIF or TIFF)", False
-    fields, error = _IMAGE_READERS[fmt](data)
+    if fmt == "png":
+        fields, error = png_fields(data, cancel)
+    else:
+        fields, error = _IMAGE_READERS[fmt](data)
     return list(fields), error, fields.truncated
 
 
-def _frames(data: bytes):
-    from PIL import Image, ImageSequence
+_PIL_FORMATS = {"jpeg": "JPEG", "png": "PNG", "webp": "WEBP", "gif": "GIF", "tiff": "TIFF"}
 
-    im = Image.open(io.BytesIO(data))
+
+def _decoded_bytes(im) -> int:
+    """Bytes Pillow allocates for *im* decoded: 1 per pixel for the 8-bit
+    one-band modes, 2 for 16-bit, 4 for everything else (Pillow keeps RGB,
+    LA, CMYK ... in 32-bit pixels, and I / F are 32-bit)."""
+    w, h = im.size
+    mode = im.mode
+    if mode in ("1", "L", "P"):
+        per = 1
+    elif mode.startswith("I;16"):
+        per = 2
+    else:
+        per = 4
+    return max(0, w) * max(0, h) * per
+
+
+class _DecodeBudget:
+    """Checks every frame against :data:`MAX_DECODED_FRAME_BYTES` *before*
+    it is decoded and all frames together against *total*."""
+
+    def __init__(self, total: int = MAX_DECODED_TOTAL_BYTES) -> None:
+        self.total = self.left = total
+
+    def charge(self, im) -> None:
+        need = _decoded_bytes(im)
+        w, h = im.size
+        if need > MAX_DECODED_FRAME_BYTES:
+            raise FormatError(
+                f"image too large to verify: {w} x {h} {im.mode} decodes to "
+                f"{need >> 20} MiB, the limit is {MAX_DECODED_FRAME_BYTES >> 20} MiB; "
+                "left unchanged"
+            )
+        if need > self.left:
+            raise FormatError(
+                "image too large to verify: its frames decode to more than "
+                f"{self.total >> 20} MiB together; left unchanged"
+            )
+        self.left -= need
+
+
+def _open_image(data: bytes, fmt: str | None = None):
+    """Pillow image of *data*, lazily (header only), restricted to the format
+    :func:`sniff_image` found. Pillow's own pixel guard (its default
+    ``MAX_IMAGE_PIXELS``, never raised by this program) becomes a
+    :class:`FormatError`."""
+    from PIL import Image
+
+    fmt = fmt or sniff_image(data)
+    formats = [_PIL_FORMATS[fmt]] if fmt in _PIL_FORMATS else None
+    try:
+        with warnings.catch_warnings():
+            # The size is checked against our own budget before decoding.
+            warnings.simplefilter("ignore", Image.DecompressionBombWarning)
+            return Image.open(io.BytesIO(data), formats=formats)
+    except Image.DecompressionBombError as exc:
+        raise FormatError(f"image too large to verify ({exc}); left unchanged") from exc
+
+
+def _frames(data: bytes, budget: _DecodeBudget | None = None, cancel=None):
+    from PIL import ImageSequence
+
+    budget = budget or _DecodeBudget()
+    im = _open_image(data)
     for n, frame in enumerate(ImageSequence.Iterator(im)):
         if n >= MAX_VERIFY_FRAMES:
             return
+        if _cancelled(cancel):
+            raise FormatError("cancelled")
+        budget.charge(frame)  # from the header, before any pixel is decoded
         frame.load()
         yield frame
 
 
-def pixels_equal(before: bytes, after: bytes) -> bool:
-    """True when both decode to the same frames, pixel for pixel."""
+def _frame_digest(frame, cancel=None) -> tuple:
+    """Mode, size and a strip-by-strip hash of *frame*'s pixels (for a
+    palette image also of its RGBA rendering), so two images are compared
+    without holding both decoded, nor a full ``tobytes()`` copy."""
+    import hashlib
+
+    w, h = frame.size
+    raw = hashlib.blake2b(digest_size=32)
+    rgba = hashlib.blake2b(digest_size=32) if frame.mode == "P" else None
+    row = max(1, _decoded_bytes(frame) // max(1, h)) * (4 if rgba is not None else 1)
+    rows = max(1, VERIFY_STRIP_BYTES // max(1, row))
+    for y in range(0, h, rows):
+        if _cancelled(cancel):
+            raise FormatError("cancelled")
+        strip = frame.crop((0, y, w, min(h, y + rows)))
+        raw.update(strip.tobytes())
+        if rgba is not None:
+            rgba.update(strip.convert("RGBA").tobytes())
+    return (
+        frame.mode,
+        frame.size,
+        raw.digest(),
+        rgba.digest() if rgba is not None else None,
+    )
+
+
+def _check_decode_budget(data: bytes) -> None:
+    """Raise :class:`FormatError` when the first frame of *data* would
+    decode past :data:`MAX_DECODED_FRAME_BYTES` - from the header alone."""
     try:
-        a_frames = _frames(before)
-        b_frames = _frames(after)
-        while True:
-            fa = next(a_frames, None)
-            fb = next(b_frames, None)
-            if fa is None or fb is None:
-                return fa is None and fb is None
-            if fa.mode != fb.mode or fa.size != fb.size or fa.tobytes() != fb.tobytes():
+        im = _open_image(data)
+    except FormatError:
+        raise
+    except Exception:  # noqa: BLE001 - unreadable: the cleaner reports it
+        return
+    _DecodeBudget().charge(im)
+
+
+def pixels_equal(before: bytes, after: bytes, cancel=None) -> bool:
+    """True when both decode to the same frames, pixel for pixel.
+
+    The images are decoded one after the other, frame by frame, each frame
+    checked against :data:`MAX_DECODED_FRAME_BYTES` before it is decoded and
+    compared by strip hashes; a frame over the budget (or *cancel* set)
+    counts as "not verified"."""
+    try:
+        digests = [_frame_digest(f, cancel) for f in _frames(before, cancel=cancel)]
+        n = 0
+        for frame in _frames(after, cancel=cancel):
+            if n >= len(digests) or _frame_digest(frame, cancel) != digests[n]:
                 return False
-            if fa.mode == "P" and fa.convert("RGBA").tobytes() != fb.convert("RGBA").tobytes():
-                return False
+            n += 1
+        return n == len(digests)
     except Exception as exc:  # noqa: BLE001 - a decode failure is "not verified"
         log.info("metadata: pixel verification failed: %s", exc)
         return False
 
 
-def image_clean(data: bytes) -> bytes:
+def image_clean(data: bytes, cancel=None) -> bytes:
     """Cleaned bytes, verified: the pixels decode identically and nothing
-    removable is left. Raises FormatError otherwise."""
+    removable is left. Raises FormatError otherwise - also, before anything
+    is decoded, for an image over :data:`MAX_DECODED_FRAME_BYTES`."""
     fmt = sniff_image(data)
     if fmt is None:
         raise FormatError("not a supported image (JPEG, PNG, WebP, GIF or TIFF)")
+    _check_decode_budget(data)
     cleaned = _IMAGE_CLEANERS[fmt](data)
-    if not pixels_equal(data, cleaned):
+    if _cancelled(cancel):
+        raise FormatError("cancelled")
+    if not pixels_equal(data, cleaned, cancel):
+        if _cancelled(cancel):
+            raise FormatError("cancelled")
         raise FormatError("the cleaned image would not look the same; left unchanged")
-    left, error, _ = image_fields(cleaned)
+    left, error, _ = image_fields(cleaned, cancel=cancel)
     if error or any(f.removable for f in left):
         raise FormatError(f"cleaning left metadata behind ({error or len(left)})")
     return cleaned

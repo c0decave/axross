@@ -45,3 +45,21 @@ def plain_message(parent, icon, title: str, text: str, buttons=None):
                       QMessageBox.StandardButton.Ok if buttons is None else buttons, parent)
     box.setTextFormat(Qt.TextFormat.PlainText)
     return box
+
+
+def plain_item(parent, title: str, label: str, items: list[str]) -> tuple[str, bool]:
+    """``QInputDialog.getItem(...)`` with *label* shown as plain text (its
+    label guesses the format too); ``(choice, ok)``."""
+    from PyQt6.QtWidgets import QDialog, QInputDialog, QLabel
+
+    dialog = QInputDialog(parent)
+    dialog.setWindowTitle(title)
+    dialog.setLabelText(label)
+    dialog.setComboBoxItems(items)
+    dialog.setComboBoxEditable(False)
+    for child in dialog.findChildren(QLabel):
+        set_plain(child)
+    ok = dialog.exec() == QDialog.DialogCode.Accepted
+    choice = dialog.textValue()
+    dialog.deleteLater()
+    return choice, ok

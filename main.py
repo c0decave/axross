@@ -28,6 +28,8 @@ CRASH_FILE_MAX_BYTES = 1024 * 1024
 # faulthandler writes to this file's descriptor at the moment of a fatal
 # signal, so it stays open for the life of the process.
 _crash_file = None
+# The namespace of a --script run, kept until the process ends (_run).
+_script_namespace: dict | None = None
 
 
 def enable_crash_traces() -> Path | None:
@@ -530,14 +532,33 @@ def main() -> int:
     return _run(args)
 
 
+class _ScriptAction(argparse.Action):
+    """``--script FILE [ARG ...]``: the first value is the script, every
+    value after it (options too) is the script's own ``sys.argv[1:]``, as
+    with ``python FILE ARG ...``. axross's own options go before
+    ``--script``."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        if not values:
+            raise argparse.ArgumentError(self, "expected a script FILE (or - for stdin)")
+        namespace.script = values[0]
+        namespace.script_args = list(values[1:])
+
+
 def _add_mode_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--script",
         default=None,
+        nargs=argparse.REMAINDER,
+        action=_ScriptAction,
         help="Run a Python script against the axross scripting surface "
         "(headless, no GUI). Use '-' to read from stdin. Inside the script "
-        "the curated API is reachable as `axross.*`.",
+        "the curated API is reachable as `axross.*`. Everything after FILE "
+        "goes to the script as sys.argv[1:]; axross's own options go before "
+        "--script. Wins over AXROSS_MCP; refused together with --mcp-server, "
+        "--mcp-http and --mcp-list-tools.",
     )
+    parser.set_defaults(script_args=[])
     parser.add_argument(
         "--mcp-server",
         action="store_true",
@@ -675,6 +696,14 @@ def _run(args) -> int:
     except Exception as exc:  # noqa: BLE001 — never block boot for this
         log.debug("tmpfs tempdir routing skipped: %s", exc)
 
+    # The security mode chosen in Edit > Settings > Security comes back
+    # for every mode, before any of their gates: the paranoid mode blocks
+    # --script and --mcp-allow-scripts too (SPEC.md, MCP.md, USAGE.md).
+    # AXROSS_SECURITY_MODE, when set, wins.
+    from core.security_mode import apply_stored_mode
+
+    apply_stored_mode()
+
     # Feature flag: the MCP path must be explicitly opted into, either
     # via --mcp-server (or --mcp-http) or via AXROSS_MCP={1,true,yes,on}. Anything
     # else boots the GUI as before — PyQt isn't imported on the MCP
@@ -682,8 +711,22 @@ def _run(args) -> int:
     truthy = _TRUTHY
     mcp_env = os.environ.get("AXROSS_MCP", "").strip().lower()
     write_env = os.environ.get("AXROSS_MCP_WRITE", "").strip().lower()
+    mcp_flags = bool(args.mcp_list_tools or args.mcp_server or args.mcp_http)
+    if args.script and mcp_flags:
+        print(
+            "--script runs a script and exits; it cannot be combined with "
+            "--mcp-server, --mcp-http or --mcp-list-tools.",
+            file=sys.stderr,
+        )
+        return 2
+    # An explicit --script wins over AXROSS_MCP: the variable is inherited
+    # by everything an MCP client's environment starts - a frozen build's
+    # script child (`axross --script -`) included, which served MCP on its
+    # stdin instead of running the script.
+    if args.script and mcp_env in truthy:
+        log.info("AXROSS_MCP is set, --script wins: running the script")
     # --mcp-http is a mode of its own (SPEC.md): it implies --mcp-server.
-    if args.mcp_list_tools or args.mcp_server or args.mcp_http or mcp_env in truthy:
+    if mcp_flags or (mcp_env in truthy and not args.script):
         log.info(
             "%s Axross MCP server (read-only=%s, http=%s)",
             "Listing the tools of the" if args.mcp_list_tools else "Starting",
@@ -738,6 +781,14 @@ def _run(args) -> int:
         except MG.GroupError as exc:
             print(str(exc), file=sys.stderr)
             return 2
+        if args.mcp_allow_exec and "exec" not in tool_groups:
+            # The flag alone serves nothing: the exec tools are a group.
+            print(
+                "--mcp-allow-exec needs the exec group: add --mcp-tools exec "
+                "(or all, or AXROSS_MCP_TOOLS=exec).",
+                file=sys.stderr,
+            )
+            return 2
         backend = M.default_backend()
         if args.mcp_list_tools:
             # The manifest of exactly what this start would serve; nothing
@@ -775,6 +826,10 @@ def _run(args) -> int:
             )
             return 2
         root = _resolve_mcp_root(backend, args.mcp_root)
+        if args.mcp_root and not os.path.isdir(root):
+            # A typo served an empty tree: every call answered "not found".
+            print(f"--mcp-root {args.mcp_root}: no such directory.", file=sys.stderr)
+            return 2
         if args.mcp_http:
             # CLI-usage errors go to stderr regardless of the logging
             # config - the user may not have --debug on, and a silent
@@ -837,15 +892,31 @@ def _run(args) -> int:
             source = sys.stdin.read()
             filename = "<stdin>"
         else:
-            with open(args.script, "r", encoding="utf-8") as fh:
-                source = fh.read()
+            # A missing or unreadable file is one line, never a traceback.
+            try:
+                with open(args.script, "r", encoding="utf-8") as fh:
+                    source = fh.read()
+            except (OSError, UnicodeDecodeError) as exc:
+                reason = exc.strerror if isinstance(exc, OSError) and exc.strerror else exc
+                print(f"--script {args.script}: {reason}", file=sys.stderr)
+                return 2
             filename = args.script
+        # The script's own command line, as with `python FILE ARG ...`
+        # (and as script_run, Run and the scheduler hand it over).
+        sys.argv = [args.script, *args.script_args]
         # Shared with the Scripts dock's child process: one namespace and
         # one SystemExit mapping (None is 0, an int is the status, anything
         # else is a message on stderr and status 1).
         from core.script_runner import execute_source
 
-        status = execute_source(source, filename)
+        # The script's globals live until the exit, as __main__'s do with
+        # `python FILE`: a Qt slot it left connected (a `destroyed` handler
+        # the exit clean-up of core.qt_exit calls) still finds its names.
+        # Unreferenced, they were a garbage cycle the collector could empty
+        # first - the slot then died with a NameError, the process aborted.
+        global _script_namespace
+        _script_namespace = {}
+        status = execute_source(source, filename, _script_namespace)
         # A script that built Qt objects of its own and left them: they go
         # before PyQt's exit walk, which crashes when one of their
         # destructors calls into Python (core.qt_exit).
@@ -882,13 +953,6 @@ def _run(args) -> int:
     from core.backend_registry import init_registry
 
     init_registry()
-
-    # The security mode chosen in Edit > Settings > Security comes back;
-    # AXROSS_SECURITY_MODE, when set, wins. Only the window: the MCP server
-    # and --script take their limits from flags and the environment.
-    from core.security_mode import apply_stored_mode
-
-    apply_stored_mode()
 
     from PyQt6.QtWidgets import QApplication
 

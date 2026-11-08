@@ -10,9 +10,15 @@ the pinned runtime container, an image pulled and run with the hardened
 podman line, no network by default), and core.mcp_client refuses to start
 one on the host - also from a hand-edited settings file.
 
-A command that is not recognised as a runner (a program or script already
-on disk) is left alone: it runs as it is, in a sandbox profile if one is
-chosen.
+The check fails closed. A command counts as a runner when any of its words
+names a runner or a downloader (``strace -f npx …``, ``xvfb-run npx …``,
+``script -qc "npx …"``: a wrapper axross does not know is no way around it),
+when it starts a package tool that fetches what it runs (``nix run``,
+``pixi exec``, ``pkgx``, ``dnx``), or when an interpreter runs code from its
+line (``python -c``, ``node -e``, ``perl -e``, ``ruby -e``, ``php -r`` …),
+which nobody can read with certainty. Only what is left (a program or script
+already on disk, ``npm start`` of a project on disk, ``python -m module``) runs
+as it is, in a sandbox profile if one is chosen.
 """
 
 from __future__ import annotations
@@ -241,6 +247,33 @@ _SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "mksh", "ash", "yash", 
 _POWERSHELLS = frozenset({"powershell", "pwsh"})
 _PYTHONS = re.compile(r"(?:python(?:[0-9][0-9.]*)?w?|py|pypy[0-9.]*)")
 _NODES = frozenset({"node", "nodejs"})
+#: Interpreters whose options can carry code on the command line: the code
+#: options, the letters of a one-letter option cluster that mean code, and
+#: the letters that take the rest of the cluster as their value.
+_CODE_INTERPRETERS = {
+    "perl": (frozenset({"-e", "-E"}), "eE", "IMmxdDil0C"),
+    "ruby": (frozenset({"-e", "--eval"}), "e", "IrCEFxKT0"),
+    "php": (frozenset({"-r", "-B", "-R", "-E", "-F"}), "", ""),
+    "lua": (frozenset({"-e"}), "e", "l"),
+    "luajit": (frozenset({"-e"}), "e", "lbj"),
+    "rscript": (frozenset({"-e", "--expr"}), "", ""),
+    "julia": (frozenset({"-e", "--eval", "-E", "--print"}), "eE", "JLp"),
+    "osascript": (frozenset({"-e"}), "e", "lis"),
+    "tclsh": (frozenset({"-c"}), "", ""),
+    "gawk": (frozenset({"--source", "-e"}), "", ""),
+}
+#: Programs that download (or install) what they run, wherever they stand
+#: in a command line: a word naming one makes the command a runner.
+_RUNNER_NAMES = frozenset({
+    "npx", "bunx", "pnpx", "npm", "pnpm", "yarn", "bun", "uvx", "uv", "pipx", "pip", "pip3",
+    "docker", "podman", "nerdctl", "docker-compose", "deno", "go", "nix", "nix-shell",
+    "nix-env", "nix-build", "nix-store", "pixi", "pkgx", "dnx", "corepack",
+})
+#: Python modules that are package tools (``python -m pdm run …``).
+_PYTHON_TOOL_MODULES = frozenset({"pdm", "poetry", "hatch", "conda", "mamba", "ensurepip",
+                                   "pixi", "virtualenv", "venv"})
+#: What makes a word of a command line a line of its own (``script -qc "npx x"``).
+_LINE_MARKS = re.compile(r"[\s;&|()<>$`'\"\\]")
 #: Programs that start the rest of their line.
 _PLAIN_PREFIXES = frozenset({"exec", "command", "nohup", "setsid", "time", "builtin",
                              "corepack", "sudo", "doas", "chronic", "unbuffer"})
@@ -293,6 +326,8 @@ def _unwrap(program: str, argv: list[str], depth: int):
         return _node(rest, depth)
     if _PYTHONS.fullmatch(program):
         return _python(program, rest, depth)
+    if program in _CODE_INTERPRETERS:
+        return _code_interpreter(program, rest)
     if program in _PLAIN_PREFIXES:
         return _prefix(program, rest, depth)
     if program in _VALUE_PREFIXES:
@@ -331,10 +366,11 @@ def _value_prefix(rest: list[str], depth: int):
         if rest[k].startswith("-"):
             continue
         tried += 1
-        plan = _runner(rest[k:], depth + 1)
+        plan = _runner(rest[k:], depth + 1, scan=False)
         if plan is not None:
             return plan
-    return None
+    # Fail closed: a runner anywhere in what follows.
+    return _runner(rest[i:], depth + 1) if i < len(rest) else None
 
 
 def _env(rest: list[str], depth: int):
@@ -543,8 +579,8 @@ def _node(rest: list[str], depth: int):
         if arg == "--":
             i += 1
             break
-        if arg in ("-e", "--eval", "-p", "--print"):
-            return None  # code on its line, no runner
+        if arg in ("-e", "--eval", "-p", "--print") or arg.startswith(("--eval=", "--print=")):
+            return _unreadable("node -e", "node runs code from its command line")
         if arg in _NODE_VALUED:
             i += 2
             continue
@@ -565,27 +601,89 @@ def _python(program: str, rest: list[str], depth: int):
     i = 0
     while i < len(rest):
         arg = rest[i]
-        if arg == "--" or not arg.startswith("-") or arg == "-":
-            return None  # a script on disk (or its input)
+        if arg == "-":
+            return _unreadable(program, f"{program} - reads its code from its input")
+        if arg == "--" or not arg.startswith("-"):
+            return None  # a script on disk
         if arg.startswith("--"):
             i += 1
             continue
         letters = arg[1:]
         for at, letter in enumerate(letters):
             if letter == "c":
-                return None  # code on its line
+                return _unreadable(f"{program} -c", f"{program} -c runs code from its "
+                                                    "command line")
             if letter == "m":
                 module = letters[at + 1:] or (rest[i + 1] if i + 1 < len(rest) else "")
                 after = rest[i + 1:] if letters[at + 1:] else rest[i + 2:]
                 name = module.split(".", 1)[0].lower()
                 if name in ("pip", "uv", "uvx", "pipx", "pip3"):
                     return _with_env(_runner([name, *after], depth + 1), {}, f"{program} -m")
+                if name in _PYTHON_TOOL_MODULES:
+                    return _unreadable(f"{program} -m {name}", f"{program} -m {name} is a "
+                                                               "package tool")
                 return None
             if letter in ("X", "W", "Q"):
                 if not letters[at + 1:]:
                     i += 1  # the value is the next word
                 break
         i += 1
+    return None
+
+
+def _code_interpreter(program: str, rest: list[str]):
+    """``perl -e '…'``, ``ruby -e``, ``php -r`` …: code on the command line
+    is a runner that cannot be converted (it may start anything); a script
+    on disk is not."""
+    flags, code_letters, value_letters = _CODE_INTERPRETERS[program]
+    for arg in rest:
+        if arg == "--" or not arg.startswith("-") or arg == "-":
+            break
+        name = arg.split("=", 1)[0]
+        if name in flags:
+            return _unreadable(f"{program} {name}", f"{program} {name} runs code from its "
+                                                    "command line")
+        if arg.startswith("--") or not code_letters:
+            continue
+        for letter in arg[1:]:
+            if letter in code_letters:
+                return _unreadable(f"{program} -{letter}", f"{program} -{letter} runs code "
+                                                           "from its command line")
+            if letter in value_letters:
+                break  # the rest of the cluster is this option's value
+    return None
+
+
+def _scan(program: str, words: list[str], depth: int):
+    """Fail closed: the plan of the first word of *words* (the arguments of
+    a program that is no known runner) that names a runner or a downloader,
+    an interpreter with options, or that is a command line of its own
+    (``strace -f npx x``, ``xvfb-run python3 -c …``, ``script -qc "npx x"``,
+    ``--exec=npx``). None when no word does."""
+    for k, word in enumerate(words):
+        if _LINE_MARKS.search(word):
+            commands = _shell_words(word)
+            if commands is not None:
+                plan = _shell_line(program, word, depth)
+            else:
+                # A line only a shell can read: any runner name in it counts.
+                bare = word.replace("'", "").replace('"', "").replace("\\", "")
+                names = {_program([t]) for t in re.split(r"[\s;&|()<>$`{}=,:]+", bare) if t}
+                plan = (_unreadable(program, f"an argument of {program} is a command line "
+                                             "that cannot be read with certainty")
+                        if names & _RUNNER_NAMES else None)
+            if plan is not None:
+                return plan
+            continue
+        name = _program([word.rsplit("=", 1)[-1]]) if word.startswith("-") else _program([word])
+        if name in _RUNNER_NAMES:
+            start = [word.rsplit("=", 1)[-1]] if word.startswith("-") else [word]
+            # The runner's own parse has scanned the words after it.
+            return _with_env(_runner([*start, *words[k + 1:]], depth + 1), {}, program)
+        if (name in _SHELLS or name in _POWERSHELLS or name in _NODES or name == "cmd"
+                or name in _CODE_INTERPRETERS or _PYTHONS.fullmatch(name)) and \
+                k + 1 < len(words) and words[k + 1][:1] in ("-", "/"):
+            return _with_env(_runner(words[k:], depth + 1), {}, program)
     return None
 
 
@@ -603,16 +701,31 @@ def downloading_runner(argv) -> RunnerPlan | None:
     pip|uv|uvx|pipx`` and ``corepack``. A wrapper whose line cannot be read
     with certainty (a shell line with ``$``, backquotes, a subshell or a
     keyword, an unknown ``env`` option) counts as a runner that cannot be
-    converted: it never runs on the host."""
+    converted: it never runs on the host.
+
+    It fails closed: behind any other program, a word that names a runner
+    or a downloader (``strace -f npx x``, ``script -qc "npx x"``,
+    ``--exec=npx``) still makes a runner, and so do ``nix``, ``pixi``,
+    ``pkgx``, ``dnx`` and an interpreter with code on its line (``python
+    -c``, ``python -``, ``node -e``, ``perl -e``, ``ruby -e``, ``php -r``)."""
     return _runner([str(a) for a in (argv or ())], 0)
 
 
-def _runner(argv: list[str], depth: int) -> RunnerPlan | None:
+def _runner(argv: list[str], depth: int, scan: bool = True) -> RunnerPlan | None:
     if not argv:
         return None
     program = _program(argv)
     if depth > _MAX_DEPTH:
         return RunnerPlan(program or "?", why_not="wrapped too deeply to be read: not converted")
+    plan = _direct(program, argv, depth)
+    if plan is None and scan:
+        plan = _scan(program, argv[1:], depth)
+    return plan
+
+
+def _direct(program: str, argv: list[str], depth: int) -> RunnerPlan | None:
+    """The plan of *argv* read by its program alone (None: not a runner by
+    what its program is - its words are scanned after that)."""
     wrapped = _unwrap(program, argv, depth)
     if wrapped is not _NO_WRAPPER:
         return wrapped
@@ -661,6 +774,12 @@ def _runner(argv: list[str], depth: int) -> RunnerPlan | None:
         return RunnerPlan("deno", why_not="deno fetches code by URL: not converted")
     if program == "go" and sub == "run":
         return RunnerPlan("go run", why_not="go run fetches modules: not converted")
+    if program in ("nix", "nix-shell", "nix-env", "nix-build", "nix-store"):
+        return RunnerPlan(f"{program} {M.clean_text(sub, 20)}".strip(),
+                          why_not=f"{program} fetches and builds what it runs: not converted")
+    if program in ("pixi", "pkgx", "dnx"):
+        return RunnerPlan(f"{program} {M.clean_text(sub, 20)}".strip(),
+                          why_not=f"{program} fetches the packages it runs: not converted")
     return None
 
 

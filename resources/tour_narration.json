@@ -1,0 +1,209 @@
+{
+  "version": 1,
+  "tours": {
+    "getting-started": {
+      "intro": {
+        "en": "Welcome to the tour Getting started. It shows you the two panes, the address bar, connecting to a server, copying between panes, the transfer queue and Undo.",
+        "de": "Willkommen zur Tour Erste Schritte. Sie zeigt dir die zwei {Panes}, die Adressleiste, das Verbinden mit einem {Server}, das Kopieren zwischen {Panes}, die {Transfer}-Warteschlange und das Widerrufen."
+      },
+      "steps": {
+        "Panes side by side": {
+          "en": "Each pane shows one folder on its own connection. That can be your local files, SFTP, SMB, S3 or any other protocol. Control Shift H and Control Shift V split the active pane, and Control W closes it. In a file list, Tab and Shift Tab move you between the panes.",
+          "de": "Jedes {Pane} zeigt einen Ordner über seine eigene Verbindung. Das können deine lokalen Dateien sein, SFTP, SMB, S3 oder jedes andere Protokoll. Steuerung Umschalt H und Steuerung Umschalt V teilen das aktive {Pane}, Steuerung W schließt es. In einer Dateiliste wechselst du mit {Tab} und Umschalt {Tab} zwischen den {Panes}."
+        },
+        "Source and target": {
+          "en": "The active pane has a blue border, the target pane a green one. F5 copies your selection to the target, and F6 moves it there. The last pane you were in becomes the target, and the target button in a pane's header makes that pane the target. So look at the green border before you press F5.",
+          "de": "Das aktive {Pane} hat einen blauen Rahmen, das Ziel-{Pane} einen grünen. F5 kopiert deine Auswahl ins Ziel, und F6 verschiebt sie dorthin. Ziel wird das {Pane}, in dem du zuletzt warst, und der Ziel-Knopf im Kopf eines {Panes} macht es zum Ziel. Schau also vor F5 auf den grünen Rahmen."
+        },
+        "The address bar": {
+          "en": "Type a path and press Enter to go there. The buttons of the address bar go up one level, go home, bookmark the folder and reload it, and one more reloads by itself when the folder changes, which is on for local folders. The filter field below narrows the list as you type. Control F takes you there, and Escape clears it.",
+          "de": "Tippe einen Pfad ein und drücke {Enter}, um dorthin zu gehen. Die Knöpfe der Adressleiste gehen eine Ebene hoch, nach Hause, setzen ein {Bookmark} auf den Ordner und laden ihn neu, und einer lädt ihn von selbst neu, wenn sich der Ordner ändert, bei lokalen Ordnern ist das an. Das Filterfeld darunter grenzt die Liste beim Tippen ein. Steuerung F bringt dich hin, und {Escape} leert es."
+        },
+        "Connect to a server": {
+          "en": "The Connection Manager, Control Shift N, makes a profile with protocol, host, login and proxy, and connects. Quick Connect, Control N, opens a saved profile at once. Each connection opens in a pane of its own, so a server and your local files sit side by side.",
+          "de": "Der {Connection Manager}, Steuerung Umschalt N, legt ein {Profile} mit Protokoll, {Host}, {Login} und {Proxy} an und verbindet. Die Schnellverbindung, Steuerung N, öffnet ein gespeichertes {Profile} sofort. Jede Verbindung öffnet sich in einem eigenen {Pane}, so liegen ein {Server} und deine lokalen Dateien nebeneinander."
+        },
+        "Copy between panes": {
+          "en": "Select files and press F5 to copy them to the target, or F6 to move them there. You can also drag them onto the other pane: a drag moves, and with Control held down it copies. Before anything is queued, axross asks about every name that already exists: overwrite, overwrite if newer, skip or rename. Nothing is replaced without your answer.",
+          "de": "Wähle Dateien aus und drück F5, um sie ins Ziel zu kopieren, oder F6, um sie dorthin zu verschieben. Du kannst sie auch auf das andere {Pane} ziehen: Ziehen verschiebt, mit gedrückter Steuerungstaste kopiert es. Bevor etwas in die Warteschlange kommt, fragt {axross} bei jedem Namen, den es schon gibt: überschreiben, überschreiben wenn neuer, überspringen oder umbenennen. Nichts wird ohne deine Antwort ersetzt."
+        },
+        "The transfer queue": {
+          "en": "Every copy and move runs here in the background, with progress, speed and the time left. You can keep working, and even close the pane. Retry Failed resumes what failed, Cancel All stops the queue, and a right click on a job offers Cancel, Retry and Open destination folder.",
+          "de": "Jede Kopie und jedes Verschieben läuft hier im Hintergrund, mit Fortschritt, Geschwindigkeit und Restzeit. Du kannst weiterarbeiten und sogar das {Pane} schließen. {Retry Failed} setzt Fehlgeschlagenes fort, {Cancel All} stoppt die Warteschlange, und ein Rechtsklick auf einen {Job} bietet Abbrechen, Wiederholen und Zielordner öffnen."
+        },
+        "Undo": {
+          "en": "Undo Last Operation in the Edit menu, or Control Z, reverses the newest move or Move to Trash whose connection is open. A copy cannot be undone, and axross says so instead of guessing. So when in doubt, move to the trash rather than delete.",
+          "de": "Letzte Aktion widerrufen im Menü Bearbeiten, oder Steuerung Z, macht das neueste Verschieben oder {Move to Trash} rückgängig, dessen Verbindung offen ist. Eine Kopie lässt sich nicht widerrufen, und {axross} sagt das, statt zu raten. Im Zweifel verschiebst du also lieber in den {Trash}, statt zu löschen."
+        }
+      },
+      "outro": {
+        "en": "Next, the tour Connect to a server shows you profiles, passwords and proxies in more detail.",
+        "de": "Als Nächstes zeigt dir die Tour Mit einem {Server} verbinden {Profiles}, Passwörter und {Proxies} genauer."
+      }
+    },
+    "connect": {
+      "intro": {
+        "en": "This tour, Connect to a server, shows you profiles, saved passwords and the keyring, how a connection is protected, and proxies.",
+        "de": "Diese Tour, Mit einem {Server} verbinden, zeigt dir {Profiles}, gespeicherte Passwörter und den {Keyring}, wie eine Verbindung geschützt ist, und {Proxies}."
+      },
+      "steps": {
+        "Quick Connect": {
+          "en": "Quick Connect, Control N, lists your saved profiles, and a click connects. A right click on a profile offers Delete Connection Config, which removes the profile together with its stored password.",
+          "de": "Die Schnellverbindung, Steuerung N, listet deine gespeicherten {Profiles}, und ein Klick verbindet. Ein Rechtsklick auf ein {Profile} bietet {Delete Connection Config}, das entfernt das {Profile} zusammen mit seinem gespeicherten Passwort."
+        },
+        "Profiles": {
+          "en": "The Connection Manager, Control Shift N, makes and edits profiles. Pick the protocol, fill in host and user, choose a password, an SSH key file or the SSH agent, give it a name and save. Tick Production for a server where a slip costs something: the first delete, move or overwrite then waits with a countdown that Escape stops.",
+          "de": "Der {Connection Manager}, Steuerung Umschalt N, legt {Profiles} an und bearbeitet sie. Wähl das Protokoll, trag {Host} und Benutzer ein, wähl ein Passwort, eine SSH-{Key}-Datei oder den SSH-{Agent}, gib einen Namen und speichere. Setz den Haken bei Produktion für einen {Server}, bei dem ein Fehlgriff etwas kostet: Das erste Löschen, Verschieben oder Überschreiben wartet dann mit einem {Countdown}, den {Escape} stoppt."
+        },
+        "Passwords go to the keyring": {
+          "en": "Save in keyring stores the password in the system keyring, such as Secret Service, K Wallet, KeePassXC, the macOS Keychain or the Windows Credential Locker. The profile file never holds it. No keyring found? Install one, for example gnome-keyring, then choose Re-detect System Keyring in the File menu.",
+          "de": "{Save in keyring} legt das Passwort im System-{Keyring} ab, etwa in {Secret Service}, {K Wallet}, {KeePassXC}, der {macOS Keychain} oder dem {Windows Credential Locker}. Die Datei des {Profiles} enthält es nie. Kein {Keyring} gefunden? Installiere einen, zum Beispiel {gnome-keyring}, und wähle dann System-{Keyring} neu erkennen im Menü Datei."
+        },
+        "How the connection is protected": {
+          "en": "The icon at the left of a pane's header tells you how its connection is protected: cleartext, signed only, TLS, SSH or end-to-end. Its tooltip says whether that was negotiated or only configured. The first SSH connection to a host shows its key fingerprint, so compare it with the server's before you trust it.",
+          "de": "Das Symbol links im Kopf eines {Panes} zeigt dir, wie seine Verbindung geschützt ist: Klartext, nur signiert, TLS, SSH oder Ende-zu-Ende. Sein {Tooltip} sagt, ob das ausgehandelt oder nur eingestellt ist. Die erste SSH-Verbindung zu einem {Host} zeigt seinen {Key Fingerprint}, vergleiche ihn also mit dem des {Servers}, bevor du ihm vertraust."
+        },
+        "Proxies": {
+          "en": "Network and Proxy in the Tools menu, which you also find in the Settings, sets the default proxy: SOCKS5, SOCKS4, HTTP CONNECT or HTTPS, with a bypass list. Test proxy tells you which stage fails. A profile uses this proxy or one of its own, and a connection that cannot go through the proxy fails instead of going direct.",
+          "de": "Netzwerk und {Proxy} im Menü {Tools}, das du auch in den Einstellungen findest, setzt den Standard-{Proxy}: SOCKS5, SOCKS4, HTTP {CONNECT} oder HTTPS, mit einer Ausnahmeliste. {Test proxy} sagt dir, an welcher Stufe es scheitert. Ein {Profile} nutzt diesen {Proxy} oder einen eigenen, und eine Verbindung, die nicht über den {Proxy} gehen kann, schlägt fehl, statt direkt zu gehen."
+        }
+      },
+      "outro": {
+        "en": "Next, the tour Copy and sync safely shows you the target pane, conflicts, the trash and Undo.",
+        "de": "Als Nächstes zeigt dir die Tour Sicher kopieren und synchronisieren das Ziel-{Pane}, Konflikte, den {Trash} und das Widerrufen."
+      }
+    },
+    "copy-safely": {
+      "intro": {
+        "en": "This tour, Copy and sync safely, shows you the target pane, conflicts, resuming, Compare Panes, the trash and Undo.",
+        "de": "Diese Tour, Sicher kopieren und synchronisieren, zeigt dir das Ziel-{Pane}, Konflikte, das Fortsetzen, das Vergleichen von {Panes}, den {Trash} und das Widerrufen."
+      },
+      "steps": {
+        "Check the target first": {
+          "en": "F5 and F6 go to the pane with the green border. The target button in a pane's header makes that pane the target. Set it before you copy, and your files land where you meant them to.",
+          "de": "F5 und F6 gehen in das {Pane} mit dem grünen Rahmen. Der Ziel-Knopf im Kopf eines {Panes} macht es zum Ziel. Setz es vor dem Kopieren, dann landen deine Dateien dort, wo du sie haben willst."
+        },
+        "Conflicts are asked, not guessed": {
+          "en": "The destination is checked before anything is queued. For each name already there, you choose Overwrite, Overwrite if Newer, Skip or Rename, and if you like, for all of them. Cancel copies nothing. A move removes its source only after its copy completed and was checked.",
+          "de": "Das Ziel wird geprüft, bevor etwas in die Warteschlange kommt. Für jeden Namen, der dort schon existiert, wählst du {Overwrite}, {Overwrite if Newer}, {Skip} oder Umbenennen, auf Wunsch für alle. Abbrechen kopiert nichts. Ein Verschieben entfernt die Quelle erst, wenn die Kopie fertig und geprüft ist."
+        },
+        "Resume instead of starting over": {
+          "en": "Every file is written under a hidden temporary name and renamed into place at the end. So a broken transfer never leaves half a file under the real name. Retry Failed resumes failed and cancelled transfers from the bytes already there.",
+          "de": "Jede Datei wird unter einem versteckten, temporären Namen geschrieben und am Ende an ihren Platz umbenannt. Ein abgebrochener {Transfer} hinterlässt also nie eine halbe Datei unter dem echten Namen. {Retry Failed} setzt fehlgeschlagene und abgebrochene {Transfers} ab den schon übertragenen {Bytes} fort."
+        },
+        "Compare before you sync": {
+          "en": "Compare Panes in the View menu compares the active pane's folder with the target pane's. Identical files are hidden, and a file on one side only can be copied over. Sync shows exactly what it would do before it does anything, and On conflict starts at Ask me, so nothing is overwritten.",
+          "de": "{Panes} vergleichen im Menü Ansicht vergleicht den Ordner des aktiven {Panes} mit dem des Ziel-{Panes}. Gleiche Dateien werden ausgeblendet, und eine Datei, die es nur auf einer Seite gibt, lässt sich hinüberkopieren. {Sync} zeigt genau, was es tun würde, bevor es irgendetwas tut, und {On conflict} steht anfangs auf {Ask me}, so wird nichts überschrieben."
+        },
+        "The trash first": {
+          "en": "Move to Trash in the right click menu works on every connection, and Show Trash restores from it. Delete Permanently, on the Delete key, counts first and asks again when hidden files are inside. Use the trash for anything you might want back.",
+          "de": "{Move to Trash} im Rechtsklick-Menü funktioniert auf jeder Verbindung, und {Trash} anzeigen stellt daraus wieder her. {Delete Permanently}, auf der Taste Entfernen, zählt erst und fragt noch einmal, wenn versteckte Dateien darin sind. Nimm den {Trash} für alles, was du vielleicht zurückhaben willst."
+        },
+        "Undo": {
+          "en": "Control Z reverses the newest move or Move to Trash whose connection is open. A copy is reported as not reversible, instead of being guessed at.",
+          "de": "Steuerung Z macht das neueste Verschieben oder {Move to Trash} rückgängig, dessen Verbindung offen ist. Bei einer Kopie meldet {axross}, dass sie sich nicht widerrufen lässt, statt zu raten."
+        }
+      },
+      "outro": {
+        "en": "Next, the tour Find and organize shows you how to find your files and keep them in order.",
+        "de": "Als Nächstes zeigt dir die Tour Finden und ordnen, wie du deine Dateien findest und Ordnung hältst."
+      }
+    },
+    "find-organize": {
+      "intro": {
+        "en": "This tour, Find and organize, shows you Find Files, the live filter, tags, bookmarks and workspaces.",
+        "de": "Diese Tour, Finden und ordnen, zeigt dir {Find Files}, den {Live}-Filter, {Tags}, {Bookmarks} und {Workspaces}."
+      },
+      "steps": {
+        "Find Files": {
+          "en": "Find Files in the Edit menu, or Alt F7, searches folders on every open connection at once. It searches by name, type, content, size and date, also inside archives. Results stream in while it runs, and Save as Smart Folder keeps the search in the bookmarks.",
+          "de": "Dateien finden im Menü Bearbeiten, oder Alt F7, durchsucht Ordner auf allen offenen Verbindungen zugleich. Es sucht nach Name, Typ, Inhalt, Größe und Datum, auch in Archiven. Die Treffer erscheinen schon während der Suche, und {Save as Smart Folder} legt die Suche bei den {Bookmarks} ab."
+        },
+        "The live filter": {
+          "en": "Control F filters the folder you are in as you type. It is the quickest way to a file you can see. Type tag, a colon and the tag's name, and only the files with that tag are shown.",
+          "de": "Steuerung F filtert beim Tippen den Ordner, in dem du gerade bist. Das ist der schnellste Weg zu einer Datei, die du schon siehst. Tippst du {tag}, einen Doppelpunkt und den Namen eines {Tags}, siehst du nur die Dateien mit diesem {Tag}."
+        },
+        "Tags": {
+          "en": "The Tags entry of the right click menu marks files on any connection with a coloured tag, such as Important, Review later, or a new one. Tagged Files in the View menu lists the files of every tag and takes you to them. Tags follow files you move in axross.",
+          "de": "Der Eintrag {Tags} im Rechtsklick-Menü markiert Dateien auf jeder Verbindung mit einem farbigen {Tag}, etwa {Important}, {Review later} oder einem neuen. {Tagged Files} im Menü Ansicht listet die Dateien jedes {Tags} und springt zu ihnen. {Tags} wandern mit, wenn du Dateien in {axross} verschiebst."
+        },
+        "Bookmarks": {
+          "en": "F8 bookmarks the folder you are in, and so does the star in the address bar. F12 shows or hides this sidebar. Group your bookmarks, drag folders in, and drop files onto a bookmark to move them there, or hold Control to copy them. A remote bookmark keeps its connection profile.",
+          "de": "F8 setzt ein {Bookmark} auf den Ordner, in dem du bist, der Stern in der Adressleiste ebenso. F12 zeigt oder versteckt diese Seitenleiste. Gruppiere deine {Bookmarks}, zieh Ordner hinein und lass Dateien auf ein {Bookmark} fallen, um sie dorthin zu verschieben, mit gedrückter Steuerungstaste werden sie kopiert. Ein {Remote-Bookmark} behält sein {Connection Profile}."
+        },
+        "Workspaces": {
+          "en": "A workspace is a pane layout of its own. New Workspace in the Workspace menu, or Control Alt N, opens one, and Control Alt Page Down and Page Up switch between them. Keep one per job, a server or a project, each with its own source and target pane. Detach to Window puts one on another screen.",
+          "de": "Ein {Workspace} ist ein eigenes {Pane-Layout}. Neuer {Workspace} im Menü {Workspace}, oder Steuerung Alt N, öffnet einen, und Steuerung Alt Bild ab und Bild auf wechseln zwischen ihnen. Nimm einen pro Aufgabe, etwa einen {Server} oder ein Projekt, jeden mit eigenem Quell- und Ziel-{Pane}. In eigenes Fenster lösen legt einen auf einen anderen Bildschirm."
+        }
+      },
+      "outro": {
+        "en": "Next, the tour Automate shows you the Agent, scripts, the console and MCP.",
+        "de": "Als Nächstes zeigt dir die Tour Automatisieren den {Agent}, {Scripts}, die {Console} und MCP."
+      }
+    },
+    "automate": {
+      "intro": {
+        "en": "This tour, Automate, shows you the Agent dock and its protection modes, scripts, the console and MCP.",
+        "de": "Diese Tour, Automatisieren, zeigt dir das {Agent Dock} und seine Schutzmodi, {Scripts}, die {Console} und MCP."
+      },
+      "steps": {
+        "The Agent": {
+          "en": "A local LLM, such as LM Studio, Ollama or any OpenAI-compatible server, works with the file tools of axross in the folder shown at the top of its tab. Choose the LLM profile first. A server that is not on this machine or its network asks before the first task. In the View menu, under Panels, Agent shows or hides it.",
+          "de": "Ein lokales LLM, etwa {LM Studio}, {Ollama} oder jeder {OpenAI}-kompatible {Server}, arbeitet mit den Datei-{Tools} von {axross} in dem Ordner, der oben in seinem {Tab} steht. Wähle zuerst das LLM-{Profile}. Ein {Server}, der nicht auf diesem Rechner oder in seinem Netz läuft, fragt vor dem ersten {Task}. Im Menü Ansicht unter {Panels} zeigt oder versteckt {Agent} ihn."
+        },
+        "Protection modes": {
+          "en": "Each tab has its mode: in Ask, every change waits for your yes, in Plan, it only reads and writes a plan, and in Auto, changes run, but remote commands still ask. Start with Ask or Plan. Bypass must first be switched on in Agent Settings.",
+          "de": "Jeder {Tab} hat seinen Modus: Bei {Ask} wartet jede Änderung auf dein Ja, bei {Plan} liest er nur und schreibt einen Plan, und bei {Auto} laufen Änderungen, aber {Remote}-Befehle fragen weiterhin. Fang mit {Ask} oder {Plan} an. {Bypass} muss erst in den {Agent}-Einstellungen eingeschaltet werden."
+        },
+        "Scripts": {
+          "en": "Write Python that uses axross and save it here. Run starts the script in its own process, and Stop ends it. The Scripting Guide in the Help menu has the API. Started from the command line with the script option and a file, axross runs a script without the window, and Scheduled Jobs in the View menu runs one on an interval.",
+          "de": "Schreib {Python}, das {axross} nutzt, und speichere es hier. {Run} startet das {Script} in einem eigenen Prozess, Stopp beendet es. Der {Scripting}-Leitfaden im Menü Hilfe beschreibt die {API}. Von der Kommandozeile mit der Option {script} und einer Datei gestartet, führt {axross} ein {Script} ohne Fenster aus, und Geplante {Jobs} im Menü Ansicht führt eines in einem festen Intervall aus."
+        },
+        "The console": {
+          "en": "This is a Python prompt with axross ready. Calling axross dot help lists what there is. Typing dot run and a script's name runs that saved script here, and the variables it sets stay at the prompt.",
+          "de": "Das ist ein {Python}-{Prompt}, in dem {axross} schon bereitsteht. Der Aufruf {axross} Punkt {help} listet, was es gibt. Tippst du Punkt {run} und den Namen eines gespeicherten {Scripts}, läuft es hier, und die Variablen, die es setzt, bleiben am {Prompt} erhalten."
+        },
+        "MCP": {
+          "en": "Started with the MCP server option, axross lets an LLM client such as Claude Desktop or Cline use your connections as MCP tools. They only read, unless the MCP write option adds the write tools, which are kept to one folder. MCP Servers in the Tools menu is the other direction: MCP servers whose tools the Agent may use.",
+          "de": "Mit der Option MCP-{Server} gestartet, lässt {axross} einen LLM-{Client} wie {Claude Desktop} oder {Cline} deine Verbindungen als MCP-{Tools} nutzen. Sie lesen nur, außer die Option MCP {write} fügt die Schreib-{Tools} hinzu, beschränkt auf einen Ordner. MCP-{Server} im Menü {Tools} ist die andere Richtung: MCP-{Server}, deren {Tools} der {Agent} nutzen darf."
+        }
+      },
+      "outro": {
+        "en": "Next, the last tour, Extensions and features, shows you the optional parts, packs, extensions and the settings.",
+        "de": "Als Nächstes zeigt dir die letzte Tour, {Extensions} und Funktionen, die optionalen Teile, {Packs}, {Extensions} und die Einstellungen."
+      }
+    },
+    "extensions": {
+      "intro": {
+        "en": "This tour, Extensions and features, shows you the Features window, packs, extensions and where every setting is.",
+        "de": "Diese Tour, {Extensions} und Funktionen, zeigt dir das Fenster Funktionen, {Packs}, {Extensions} und wo jede Einstellung ist."
+      },
+      "steps": {
+        "Features": {
+          "en": "Features in the Help menu lists every optional part, such as protocols, file analysis, archives and tools like ripgrep or rsync, as installed or missing, and how to get it. Install Selected names the pip command before it runs. A one-file build links its axross full download instead.",
+          "de": "Funktionen im Menü Hilfe listet jeden optionalen Teil, etwa Protokolle, Dateianalyse, Archive und {Tools} wie {ripgrep} oder {rsync}, als installiert oder fehlend, und wie man ihn bekommt. {Install Selected} nennt den {pip}-Befehl, bevor er läuft. Ein {One-File-Build} verlinkt stattdessen den {Download} von {axross full}."
+        },
+        "Packs": {
+          "en": "In a one-file build, Packs in the Features window adds or removes signed units of this release, such as a protocol, an extension or voice. The release's signature, the pack list and every file's checksum are checked before anything is unpacked. A pure Python unit is ready at once, others after the next start.",
+          "de": "In einem {One-File-Build} fügt {Packs} im Fenster Funktionen signierte Einheiten dieses {Release} hinzu oder entfernt sie, etwa ein Protokoll, eine {Extension} oder Sprachausgabe. Die Signatur des {Release}, die {Pack}-Liste und die Prüfsumme jeder Datei werden geprüft, bevor irgendetwas entpackt wird. Eine reine {Python}-Einheit ist sofort bereit, andere nach dem nächsten Start."
+        },
+        "Extensions": {
+          "en": "Extensions are Python plugins and run with your rights, so every one starts switched off. Manage Extensions in the Extensions menu switches them on and off. The paranoid security mode loads none.",
+          "de": "{Extensions} sind {Python}-{Plugins} und laufen mit deinen Rechten, darum ist jede zunächst ausgeschaltet. {Extensions} verwalten im Menü {Extensions} schaltet sie ein und aus. Der Sicherheitsmodus paranoid lädt keine."
+        },
+        "Your own extensions": {
+          "en": "Open Extensions Folder in the Extensions menu opens the extensions folder in your axross settings folder. A Python file there appears in the manager as user, a colon and its name. Reload Extensions runs the current source again, and an extension that hangs a start is skipped at the next one.",
+          "de": "{Extensions}-Ordner öffnen im Menü {Extensions} öffnet den {Extensions}-Ordner in deinem {axross}-Einstellungsordner. Eine {Python}-Datei dort erscheint im {Manager} als {user}, ein Doppelpunkt und ihr Name. {Extensions} neu laden führt den aktuellen Quelltext erneut aus, und eine {Extension}, die einen Start aufhält, wird beim nächsten übersprungen."
+        },
+        "Settings and help": {
+          "en": "Settings in the Edit menu, or Control comma, holds every setting, and the field above the list finds one by name. F1 opens the handbook at the part of the window you are in, also on a settings page.",
+          "de": "Einstellungen im Menü Bearbeiten, oder Steuerung Komma, enthält jede Einstellung, und das Feld über der Liste findet eine nach Namen. F1 öffnet das Handbuch an der Stelle des Fensters, an der du gerade bist, auch auf einer Einstellungsseite."
+        }
+      },
+      "outro": {
+        "en": "That was the last tour, and you can start any of the tours again with Tours in the Help menu.",
+        "de": "Das war die letzte Tour, und mit Touren im Menü Hilfe startest du jede Tour noch einmal."
+      }
+    }
+  }
+}

@@ -215,6 +215,39 @@ def _axross_runtime_env_restored():
 
 
 @pytest.fixture(autouse=True)
+def _shared_audio_settings_restored():
+    """Put axross's audio settings back after the test: the run's home's
+    ~/.config/axross/audio.json and core.audio_route's copy of it. They
+    outlive a test: the Media Player's equalizer row saves its bands there
+    and every later panel takes them, so a band one test moved re-tuned a
+    later test's track (tests/test_media_player_controls.py's restored
+    position read a ramp 6% high - "2.655 s for 2.5 s" - after the
+    equalizer-slider test, in 5 of 8 runs)."""
+    path = os.path.join(os.environ["AXROSS_TEST_HOME"], ".config", "axross", "audio.json")
+    try:
+        with open(path, "rb") as fh:
+            before = fh.read()
+    except FileNotFoundError:
+        before = None
+    yield
+    try:
+        with open(path, "rb") as fh:
+            after = fh.read()
+    except FileNotFoundError:
+        after = None
+    if after != before:
+        if before is None:
+            os.unlink(path)
+        else:
+            with open(path, "wb") as fh:
+                fh.write(before)
+            os.chmod(path, 0o600)
+    route = sys.modules.get("core.audio_route")
+    if route is not None:
+        route.forget()  # its copy is read from the file again
+
+
+@pytest.fixture(autouse=True)
 def _no_held_mouse_buttons():
     """Release any mouse button a test left held (tests/qt_modifier_guard.py):
     under the offscreen platform QTest.mouseDClick leaves it held, and the

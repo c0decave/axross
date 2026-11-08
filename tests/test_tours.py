@@ -460,3 +460,25 @@ def test_edge_main_offers_it_after_the_window_is_up_and_not_in_a_smoke_start():
     smoke = source.rindex("if smoke_ms is not None:", 0, start)
     assert source.index("window.show()") < smoke
     assert "QTimer.singleShot(0, window.offer_getting_started_tour)" in source[start:start + 400]
+
+
+def test_sad_the_callout_is_opaque_and_the_rest_is_dimmed(window):
+    """The callout's style sheet set only a border: Qt then paints the frame
+    itself and autoFillBackground no longer applies, so the box was
+    transparent and its text ran over the toolbar below. The dim (alpha 90)
+    was all but invisible on the dark theme."""
+    from ui.tour_engine import Spotlight, TourRunner
+    from ui.tours import TOURS
+
+    runner = TourRunner(window, TOURS[0])
+    assert runner.start()
+    try:
+        pump(0.3)
+        box = runner.callout
+        image = window.grab(box.geometry()).toImage()
+        inner = image.pixelColor(box.width() // 2, box.height() - 6)
+        expected = box.palette().color(box.backgroundRole())
+        assert inner.name() == expected.name()
+        assert Spotlight.DIM.alpha() >= 140
+    finally:
+        runner.end()

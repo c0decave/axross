@@ -253,7 +253,7 @@ class ExtensionAPI:
             name=full, description=f"[{self.info.name}] {description}"[:2000],
             schema={"type": "object", "properties": dict(props), "required": list(required)},
             handler=handler, write=bool(writes), always_ask=bool(writes),
-            alive=lambda: self._host._loaded.get(self.info.ext_id, (None, None))[1] is self,
+            alive=lambda: self._host.is_live(self),
         )
         self._reg.agent_tools = [t for t in self._reg.agent_tools if t.name != full] + [tool]
         self._host.agent_tools_changed.emit()
@@ -291,7 +291,10 @@ class ExtensionAPI:
         done = None
         if on_done is not None:
             def done(answer, error, _cb=on_done):
-                self._host.call(self, _cb, answer, error)
+                # A task outlives a switch-off or Reload: the old callback
+                # touched its deleted panel (run_in_background's drops it too).
+                if self._host.is_live(self):
+                    self._host.call(self, _cb, answer, error)
         tab = self._agent_dock().start_task(str(task), folder=folder, mode=mode,
                                             groups=(f"ext:{self.info.ext_id}",), on_done=done)
         return tab.session.id
@@ -439,6 +442,12 @@ class ExtensionHost(QObject):
     def loaded_ids(self) -> list[str]:
         return list(self._loaded)
 
+    def is_live(self, api: ExtensionAPI) -> bool:
+        """*api*'s extension is loaded, and not reloaded since: a callback
+        to it may run. Every call into an extension that comes later than
+        its registration (a result, a task's end, a menu kept open) asks."""
+        return self._loaded.get(api.info.ext_id, (None, None))[1] is api
+
     # -- pause ------------------------------------------------------------------
     def is_paused(self, ext_id: str) -> bool:
         return ext_id in self._paused
@@ -497,6 +506,8 @@ class ExtensionHost(QObject):
         for event in _CATCH_UP_ORDER:
             if event in missed:
                 for handler in list(api._reg.handlers.get(event, ())):
+                    if not self.is_live(api):
+                        return  # a handler switched it off
                     self.call(api, handler, context)
 
     def _offer_pause(self, api: ExtensionAPI) -> None:
@@ -765,7 +776,9 @@ class ExtensionHost(QObject):
             if handlers and ext_id in self._paused:
                 self._missed.setdefault(ext_id, set()).add(event)
                 continue
-            for handler in handlers:
+            for handler in list(handlers):
+                if not self.is_live(api):
+                    break  # an earlier handler switched it off
                 if context is None:
                     context = context_of(pane)
                 self.call(api, handler, context)
@@ -774,6 +787,8 @@ class ExtensionHost(QObject):
     def emit_agent_event(self, session_id: str, event: dict) -> None:
         for _module, api in list(self._loaded.values()):
             for handler in list(api._reg.agent_handlers):
+                if not self.is_live(api):
+                    break  # an earlier handler switched it off
                 self.call(api, handler, session_id, dict(event))
 
     def agent_tool_owners(self) -> list[tuple[str, str]]:
@@ -803,7 +818,7 @@ class ExtensionHost(QObject):
         threading.Thread(target=runner, name=f"ext-{api.info.module_name}", daemon=True).start()
 
     def _deliver(self, api, callbacks, value, failed) -> None:
-        if self._loaded.get(api.info.ext_id, (None, None))[1] is not api:
+        if not self.is_live(api):
             return  # switched off (or reloaded) meanwhile
         on_done, on_error = callbacks
         if failed:
@@ -829,8 +844,10 @@ class ExtensionHost(QObject):
         menu.addSeparator()
         for api, label, callback in entries:
             action = menu.addAction(label)
+            # The menu is open a while: the extension may be gone by the click.
             action.triggered.connect(
-                lambda _checked=False, a=api, cb=callback, c=context: self.call(a, cb, c)
+                lambda _checked=False, a=api, cb=callback, c=context:
+                    self.call(a, cb, c) if self.is_live(a) else None
             )
 
 

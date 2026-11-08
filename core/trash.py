@@ -712,6 +712,49 @@ def restore(backend, trash_id: str, root: str | None = None, target: str | None 
     return dst
 
 
+def _remove_entry(backend, data_file: str, meta_file: str, data_is_dir: bool | None) -> bool:
+    """Remove one trash entry: its data first (*data_is_dir* None: there is
+    none), its sidecar only once the data is gone. An OSError removing the
+    data propagates and the sidecar stays - without it what is left of the
+    data would vanish from the Trash window and from every later Empty
+    Trash. True when data was removed."""
+    removed = False
+    if data_is_dir is not None:
+        if data_is_dir:
+            backend.remove(data_file, recursive=True)
+        else:
+            backend.remove(data_file)
+        removed = True
+    try:
+        backend.remove(meta_file)
+    except OSError as exc:
+        # The data is gone; a sidecar without data is not listed and goes
+        # with the next Empty Trash.
+        log.warning("trash: remove %s failed: %s", meta_file, exc)
+    return removed
+
+
+def delete_entry(backend, trash_id: str, root: str | None = None) -> bool:
+    """Permanently remove trash entry *trash_id* (Delete Permanently in the
+    Trash window), as :func:`empty_trash` removes each entry: the data
+    first, the sidecar only on success. Raises OSError when the data could
+    not be removed - the entry then stays listed. True when there was data
+    to remove (False: only a sidecar was left)."""
+    trash_root = _resolve_root(backend, root)
+    try:
+        meta_file = _meta_path(backend, trash_root, trash_id)
+        data_file = _data_path(backend, trash_root, trash_id)
+    except ValueError as exc:
+        raise OSError(f"delete: unsafe trash id {trash_id!r}: {exc}") from exc
+    st = _stat_safely(backend, data_file)
+    data_is_dir = None
+    if st is not None:
+        data_is_dir = bool(getattr(st, "is_dir", False))
+    elif backend.exists(data_file):
+        data_is_dir = True  # cannot tell: a recursive remove takes a file too
+    return _remove_entry(backend, data_file, meta_file, data_is_dir)
+
+
 class EmptyTrashIncomplete(OSError):
     """:func:`empty_trash` removed what it could, but not every entry.
 
@@ -776,28 +819,15 @@ def empty_trash(backend, root: str | None = None) -> int:
             )
             continue
         data_item = data_items.get(trash_id)
-        if data_item is not None:
-            try:
-                if getattr(data_item, "is_dir", False):
-                    backend.remove(data_file, recursive=True)
-                else:
-                    backend.remove(data_file)
-            except OSError as exc:
-                # The sidecar stays: without it what is left of the data
-                # would vanish from the Trash window and from every later
-                # Empty Trash.
-                log.warning("empty_trash: remove %s failed: %s", data_file, exc)
-                failed.append((trash_id, str(exc)))
-                continue
+        data_is_dir = None if data_item is None else bool(getattr(data_item, "is_dir", False))
+        try:
             # Count only the data entries (not sidecars) to give the
             # caller a useful "how many files did I empty" number.
-            removed += 1
-        try:
-            backend.remove(meta_file)
+            if _remove_entry(backend, data_file, meta_file, data_is_dir):
+                removed += 1
         except OSError as exc:
-            # The data is gone; a sidecar without data is not listed and
-            # goes with the next Empty Trash.
-            log.warning("empty_trash: remove %s failed: %s", meta_file, exc)
+            log.warning("empty_trash: remove %s failed: %s", data_file, exc)
+            failed.append((trash_id, str(exc)))
     if failed:
         raise EmptyTrashIncomplete(removed, failed)
     return removed

@@ -161,23 +161,7 @@ class AgentDialog(QDialog):
         self.cancelled = False
         self.setWindowTitle(tr("Bluetooth Pairing"))
         layout = QVBoxLayout(self)
-        name = request.device_name
-        passkey = f"{request.passkey or 0:06d}"
-        texts = {
-            "confirm": tr("Does {device} show the passkey {passkey}? Confirm only if it does.")
-            .format(device=name, passkey=passkey),
-            "pin": tr("Enter the PIN for {device} - the one it shows, or the one in its manual "
-                      "(often 0000 or 1234):").format(device=name),
-            "passkey": tr("Enter the 6-digit passkey {device} shows:").format(device=name),
-            "display-passkey": tr("Type {passkey} on {device} and press Enter there.")
-            .format(device=name, passkey=passkey),
-            "display-pin": tr("Enter the PIN {pin} on {device}.").format(device=name,
-                                                                        pin=request.pin),
-            "authorize": tr("Allow pairing with {device}?").format(device=name),
-            "authorize-service": tr("Allow {device} to use the service {uuid}?")
-            .format(device=name, uuid=request.uuid),
-        }
-        self.text_label = QLabel(texts.get(request.kind, request.kind))
+        self.text_label = QLabel(self.text_of(request))
         # The device chose its name: as markup it could restyle or hide the
         # passkey and the question it is asked to confirm.
         self.text_label.setTextFormat(Qt.TextFormat.PlainText)
@@ -213,6 +197,37 @@ class AgentDialog(QDialog):
         except ImportError:  # pragma: no cover - axross ships ui
             pass
         self._update()
+
+    @staticmethod
+    def text_of(request: BT.AgentRequest) -> str:
+        """What the dialog says for *request*."""
+        name = request.device_name
+        passkey = f"{request.passkey or 0:06d}"
+        if request.kind == "display-passkey" and request.entered:
+            return tr("Type {passkey} on {device} and press Enter there ({entered} of 6 "
+                      "digits typed).").format(device=name, passkey=passkey,
+                                                entered=min(request.entered, 6))
+        texts = {
+            "confirm": tr("Does {device} show the passkey {passkey}? Confirm only if it does.")
+            .format(device=name, passkey=passkey),
+            "pin": tr("Enter the PIN for {device} - the one it shows, or the one in its manual "
+                      "(often 0000 or 1234):").format(device=name),
+            "passkey": tr("Enter the 6-digit passkey {device} shows:").format(device=name),
+            "display-passkey": tr("Type {passkey} on {device} and press Enter there.")
+            .format(device=name, passkey=passkey),
+            "display-pin": tr("Enter the PIN {pin} on {device}.").format(device=name,
+                                                                        pin=request.pin),
+            "authorize": tr("Allow pairing with {device}?").format(device=name),
+            "authorize-service": tr("Allow {device} to use the service {uuid}?")
+            .format(device=name, uuid=request.uuid),
+        }
+        return texts.get(request.kind, request.kind)
+
+    def show_request(self, request: BT.AgentRequest) -> None:
+        """BlueZ asked again for the same code (DisplayPasskey once per digit
+        typed on the device): this dialog shows the new state."""
+        self.request = request
+        self.text_label.setText(self.text_of(request))
 
     def value(self):
         if self.edit is None:
@@ -1064,11 +1079,26 @@ class BluetoothPanel(QWidget):
         self._show(box)
 
     def _agent_request(self, request: BT.AgentRequest) -> None:
+        if not request.needs_answer:
+            # The same code again (BlueZ calls DisplayPasskey for every digit
+            # typed): the dialog that shows it is updated - before, each call
+            # opened one more.
+            shown = self._agent_dialogs.get(request.token) or next(
+                (d for d in self._agent_dialogs.values()
+                 if not sip.isdeleted(d) and not d.request.needs_answer
+                 and d.request.kind == request.kind
+                 and d.request.device_path == request.device_path), None)
+            if shown is not None and not sip.isdeleted(shown):
+                if shown.request.token != request.token:
+                    self._agent_dialogs.pop(shown.request.token, None)
+                    self._agent_dialogs[request.token] = shown
+                shown.show_request(request)
+                return
         dialog = AgentDialog(request, self)
         self._agent_dialogs[request.token] = dialog
 
         def done(result: int) -> None:
-            self._agent_dialogs.pop(request.token, None)
+            self._agent_dialogs.pop(dialog.request.token, None)  # its latest request
             if dialog.cancelled or not request.needs_answer:
                 return
             accepted = result == QDialog.DialogCode.Accepted

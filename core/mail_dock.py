@@ -31,6 +31,7 @@ import dataclasses
 import json
 import logging
 import os
+import posixpath
 import re
 import threading
 import time
@@ -228,16 +229,78 @@ class Mailbox:
                 for i in self._items()[-limit:]]
 
     def message(self, msg_id: str) -> MailMessage:
+        """The message *msg_id* names: an id this mailbox listed, or the bare
+        ``.eml`` name of a message in the dock's folder. Nothing outside the
+        folder: "/Sent/7.eml" or "../Sent/7.eml" would read another mailbox,
+        and a reply could hand it on."""
         name = self._ids.get(msg_id) or (msg_id if msg_id.endswith(".eml") else "")
-        if not name:
+        if not _bare_name(name):
             raise KeyError(f"no message {msg_id!r} - use an id mail_list_new or mail_list gave")
-        path = self.backend.join("/" + self.folder, name)
+        folder = "/" + self.folder
+        path = self.backend.join(folder, name)
+        if posixpath.dirname(posixpath.normpath(path)) != posixpath.normpath(folder):
+            raise KeyError(f"no message {msg_id!r} in {self.folder}")
         with self.backend.open_read(path) as f:
             data = f.read(MAX_MESSAGE + 1)
         return parse_any(data, name, f"{self.folder}/{name}")
 
 
+def _bare_name(name: str) -> bool:
+    """*name* is one entry of a folder: no separator, no "." or "..", no NUL."""
+    return bool(name) and name not in (".", "..") and not any(c in name for c in "/\\\0")
+
+
 # --- the tools --------------------------------------------------------------------------
+
+#: The most of a mail body the send approval shows (after a run of empty
+#: lines is shown as one line that counts them): a longer body is not sent
+#: on the user's yes, since the approval would show less than what is sent.
+APPROVAL_MAX_CHARS = 6000
+APPROVAL_MAX_LINES = 60
+
+
+def _visible(text: str) -> str:
+    """*text* with every control (but line breaks and tabs), bidi override,
+    isolate, invisible mark and line separator as a \\uXXXX escape: the
+    user approves what is sent, and a right-to-left override would show
+    the rest of a line in another order (as ui.agent_dock._visible)."""
+    import unicodedata
+
+    return "".join(
+        f"\\u{ord(c):04x}"
+        if (unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp") and c not in "\n\t")
+        else c
+        for c in text
+    )
+
+
+def _approval_body(body: str) -> tuple[str, int]:
+    """``(text the approval shows, its line count)`` of *body*: every line,
+    made visible; three or more empty lines in a row as one line saying how
+    many (thousands of empty lines would push the rest out of sight)."""
+    from core.i18n import tr
+
+    lines = body.replace("\r\n", "\n").split("\n")
+    out: list[str] = []
+    blank = 0
+
+    def flush() -> None:
+        nonlocal blank
+        if blank > 2:
+            out.append(tr("[{count} empty lines]").format(count=blank))
+        else:
+            out.extend([""] * blank)
+        blank = 0
+
+    for line in lines:
+        if not line.strip():
+            blank += 1
+            continue
+        flush()
+        out.append(_visible(line))
+    flush()
+    return "\n".join(out), len(out)
+
 
 def _recipient_allowed(addr: str, allowed: list[str]) -> bool:
     addr = addr.lower()
@@ -358,16 +421,22 @@ class MailTools:
             return "Not sent: this dock may not send (its send policy is 'never'). Save a draft instead."
         out, reply_id = self._outgoing(args)
         recipients = [a for _n, a in getaddresses([out.message.get("To", ""), out.message.get("Cc", "")]) if a]
-        summary = f"To: {out.message.get('To')}\nCc: {out.message.get('Cc') or ''}\nSubject: {out.message['Subject']}\n\n" \
-                  f"{out.message.get_content()[:4000]}"
         if policy == "allowed":
             sender = self._replied_to.get(reply_id, "") if reply_id else ""
             outside = [r for r in recipients
                        if r.lower() != sender.lower() and not _recipient_allowed(r, self.dock.send_allow)]
-            if outside and not self.ask_send(out, summary + f"\n\n(not on the allow-list: {', '.join(outside)})"):
-                return f"Not sent: {', '.join(outside)} may only get mail with the user's yes, and the user said no."
-        elif not self.ask_send(out, summary):
-            return "Not sent: the user declined. Keep it as a draft if it is still useful."
+            if outside:
+                summary, too_long = self._summary(out)
+                if too_long:
+                    return too_long
+                if not self.ask_send(out, summary + _visible(f"\n\n(not on the allow-list: {', '.join(outside)})")):
+                    return f"Not sent: {', '.join(outside)} may only get mail with the user's yes, and the user said no."
+        else:
+            summary, too_long = self._summary(out)
+            if too_long:
+                return too_long
+            if not self.ask_send(out, summary):
+                return "Not sent: the user declined. Keep it as a draft if it is still useful."
         accepted = MS.send(self.smtp(), out)
         save = getattr(self.mailbox.backend, "append_message", None)
         if callable(save):
@@ -378,6 +447,28 @@ class MailTools:
         self.sent.append(out.message["Message-ID"])
         self.on_log(f"Sent to {', '.join(accepted)}: {out.message['Subject']}")
         return f"Sent to {', '.join(accepted)}."
+
+    def _summary(self, out) -> tuple[str, str]:
+        """``(what the send approval shows, "")``: the headers and the whole
+        body, made visible, with its length - or ``("", why not sent)`` when
+        the body is longer than the approval can show."""
+        from core.i18n import tr
+
+        body = out.message.get_content()
+        shown, lines = _approval_body(body)
+        if len(shown) > APPROVAL_MAX_CHARS or lines > APPROVAL_MAX_LINES:
+            self.on_log(tr("Not sent: the mail is longer than the approval can show "
+                           "({chars} characters, {lines} lines).")
+                        .format(chars=len(body), lines=body.count("\n") + 1))
+            return "", (f"Not sent: the body is longer than the send approval shows in full "
+                        f"({APPROVAL_MAX_CHARS} characters or {APPROVAL_MAX_LINES} lines; this one has "
+                        f"{len(shown)} characters in {lines} lines). Shorten it, or save it with "
+                        "mail_draft for the user to send.")
+        head = _visible(f"To: {out.message.get('To')}\nCc: {out.message.get('Cc') or ''}\n"
+                        f"Subject: {out.message['Subject']}")
+        length = tr("Body: {chars} characters, {lines} lines (shown in full):").format(
+            chars=len(body), lines=body.count("\n") + 1)
+        return f"{head}\n{length}\n\n{shown}", ""
 
     def report(self, args: dict) -> str:
         target = str(args.get("dock", "")).strip()

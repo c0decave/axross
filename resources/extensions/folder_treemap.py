@@ -161,10 +161,16 @@ def human(n: float) -> str:
     return f"{n:.1f} TiB"
 
 
+#: The walk state of each activation, by id(api), for deactivate().
+_STATES: dict[int, dict] = {}
+
+
 def activate(api):
     from PyQt6.QtCore import QRectF, Qt
     from PyQt6.QtGui import QColor, QPainter
     from PyQt6.QtWidgets import QToolTip, QWidget
+
+    from ui.plain_text import plain_tooltip
 
     class Treemap(QWidget):
         def __init__(self):
@@ -228,9 +234,9 @@ def activate(api):
             entry = self.entry_at(event.position())
             if entry is not None:
                 note = "" if self.complete else " (at least)"
-                QToolTip.showText(
-                    event.globalPosition().toPoint(), f"{entry[0]}\n{human(entry[1])}{note}", self
-                )
+                # The name is the folder's: shown as it is, never as markup.
+                QToolTip.showText(event.globalPosition().toPoint(),
+                                  plain_tooltip(f"{entry[0]}\n{human(entry[1])}{note}"), self)
 
         def mouseDoubleClickEvent(self, event):  # noqa: N802
             entry = self.entry_at(event.position())
@@ -241,10 +247,14 @@ def activate(api):
     view = Treemap()
     api.add_dock(tr("Folder Treemap"), view, icon="treemap")
     #: Counts the walks started; a walk (and its result or error) whose
-    #: number is no longer the last one is stale.
-    state = {"generation": 0}
+    #: number is no longer the last one is stale. deactivate() counts on
+    #: once more, so every walk still running stops at its next listing.
+    state = {"generation": 0, "off": False}
+    _STATES[id(api)] = state
 
     def refresh(ctx):
+        if state["off"]:
+            return
         state["generation"] += 1
         generation = state["generation"]
         view.message = "Measuring…"
@@ -274,3 +284,13 @@ def activate(api):
     ctx = api.current()
     if ctx is not None:
         refresh(ctx)
+
+
+def deactivate(api):
+    """Switched off or reloaded: every walk still running is stale. Before,
+    a walk of a large remote folder went on listing it (up to 20,000
+    round trips) after the extension was gone."""
+    state = _STATES.pop(id(api), None)
+    if state is not None:
+        state["off"] = True
+        state["generation"] += 1

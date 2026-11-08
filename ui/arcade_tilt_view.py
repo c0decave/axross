@@ -79,6 +79,7 @@ class TiltView(AC.ArcadeView):
     TICK_MS = TICK_MS
     JINGLE = "intro-tilt"
     DIRECTION_KEYS = frozenset(KEYS)
+    ACTION_KEYS = frozenset({Qt.Key.Key_Space})
 
     def __init__(self, *, level: int = 1, audio=None, on_exit=None, on_progress=None, on_restart=None,
                  intro: bool = True, parent=None):

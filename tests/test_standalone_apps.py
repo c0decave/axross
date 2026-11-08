@@ -69,8 +69,9 @@ def test_happy_the_player_adds_files_folders_and_streams_from_the_command_line(t
         app.processEvents()
         assert count == 3
         paths = [panel.playlist.item(i).data(MP._PATH_ROLE) for i in range(panel.playlist.count())]
-        assert paths[0] == "https://radio.example.org/live"
-        assert sorted(os.path.basename(p) for p in paths[1:]) == ["a.mp3", "b.ogg"]
+        # In the command line's order (tests/test_media_player_app_argument_order.py).
+        assert [os.path.basename(p) for p in paths[:2]] == ["a.mp3", "b.ogg"]
+        assert paths[2] == "https://radio.example.org/live"
         assert engine.state == "playing" and engine.path == paths[0]
     finally:
         panel.shutdown()

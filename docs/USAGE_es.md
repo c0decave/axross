@@ -902,8 +902,10 @@ sobre el contenido del fichero. Scripts: `axross.metadata`,
   **Log**. Cada una parpadea ámbar cuando algo pasa fuera de pantalla
   (cambio de estado de transferencia, salida de shell, línea de log).
   Click la levanta y limpia el indicador.
-- Click derecho en una transferencia para **Cancel**, **Retry**,
-  **Open destination folder**.
+- Click derecho en una transferencia para **Cancel** (este job),
+  **Retry** (un job fallido o cancelado) y **Open destination folder**
+  (el panel de su conexión muestra la carpeta, con el archivo
+  seleccionado).
 - El dock de Log filtra por nivel y por área: *Areas* junto al nivel es
   una lista de las áreas de logging para marcar (un área incluye sus
   sub-áreas; *Other* es todo lo de fuera, *All Areas* el valor por
@@ -940,6 +942,9 @@ puertas al mismo surface:
   docstring.
 - **Headless** — ``axross --script myscript.py`` corre tu Python
   en el mismo namespace; ideal para cron/CI/lotes.
+  Las palabras tras el fichero son el ``sys.argv[1:]`` del script
+  (``axross --script mirror.py /srv/data``); el security mode
+  paranoid, también si se eligió en *Settings*, lo rechaza.
 - **MCP** — si ``--mcp-allow-scripts`` está activo, el surface
   también es alcanzable vía herramientas MCP.
 
@@ -1217,10 +1222,18 @@ checklist encima del campo de tarea).
 ajustes y datos de axross (`~/.config/axross`, `~/.local/share/axross`,
 `~/.local/state/axross` - sus permisos, sus servidores MCP), los ficheros
 de inicio del shell (`~/.bashrc`, `~/.profile`, `~/.zshrc`, …),
-`~/.config/autostart`, `~/.config/systemd`, `~/.ssh` y `~/.gnupg`:
-cambiado, cada uno ejecutaría código o ampliaría los permisos del agente
-sin preguntar. Una carpeta que contiene uno de ellos tampoco se borra ni
-se mueve.
+`~/.config/autostart`, `~/.config/systemd`, `~/.ssh` y `~/.gnupg`, los
+comandos del PATH (`~/.local/bin`) y los hooks de inicio de Python
+(`~/.local/lib`), los ajustes de Git, pip y npm, los ficheros de inicio de
+editores y gestores de ventanas, y los ajustes y servidores MCP de otros
+clientes LLM (`~/.claude`, Claude Desktop, Cursor, VS Code), en su sitio
+por defecto y en el de XDG: cambiado, cada uno ejecutaría código o
+ampliaría los permisos del agente sin preguntar. Una carpeta que contiene
+uno de ellos tampoco se borra ni se mueve, y un enlace simbólico no lleva
+a ellos por otro camino. En el sandbox se montan de solo lectura los que
+existen y las carpetas que faltan. El agente tampoco lee los tokens de
+axross ni las claves privadas SSH y GnuPG (`--mcp-allow-secret-reads` lo
+permite para el servidor MCP).
 
 **Files read-only** (en la fila superior de la pestaña, y para todas las
 pestañas en Agent Settings > Access): el agente lee archivos pero no

@@ -385,6 +385,8 @@ def activate(api):
         QVBoxLayout,
     )
 
+    from ui.plain_text import plain_message, set_plain
+
     class RepoDialog(QDialog):
         def __init__(self, ctx, folder, info: RepoInfo):
             super().__init__(api.window)
@@ -407,7 +409,8 @@ def activate(api):
             self.table.setHorizontalHeaderLabels(["ID", "Time", "Host", "Paths / tags", "Note"])
             self.table.horizontalHeader().setStretchLastSection(True)
             layout.addWidget(self.table, 1)
-            self.status = QLabel("")
+            # Says what restic / borg answered, naming the repository: plain text.
+            self.status = set_plain(QLabel(""))
             layout.addWidget(self.status)
             row = QHBoxLayout()
             self.unlock_button = QPushButton("Unlock…")
@@ -451,7 +454,7 @@ def activate(api):
 
         def failed(self, exc):
             self.status.setText(str(exc))
-            QMessageBox.warning(self, "Unlock", str(exc))
+            plain_message(self, QMessageBox.Icon.Warning, "Unlock", str(exc)).exec()
 
     def show(ctx):
         folder = ctx.paths[0] if ctx.paths else ctx.folder

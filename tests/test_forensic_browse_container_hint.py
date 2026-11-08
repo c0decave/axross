@@ -111,7 +111,10 @@ def test_e2e_browse_on_a_qcow2_offers_convert_to_raw_and_converts(tmp_path, monk
     subprocess.run([QEMU_IMG, "convert", "-f", "raw", "-O", "qcow2", str(raw), str(qcow)],
                    check=True)
     raw.unlink()
-    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    # The Convert question is a plain-text box of its own (the path is not ours).
+    real_exec = QMessageBox.exec
+    monkeypatch.setattr(QMessageBox, "exec", lambda box: QMessageBox.StandardButton.Yes
+                        if box.text().startswith("Write a raw copy") else real_exec(box))
     seen, api = _browse(qcow, "Convert to Raw…")
     assert "No partition" not in seen["text"]
     assert "qemu-img convert" in seen["text"] and "qcow2" in seen["text"]

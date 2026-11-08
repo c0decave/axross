@@ -46,10 +46,10 @@ def _slow_listing(seconds: float):
     threads: list[str] = []
     real = AP.list_archive
 
-    def slow(path):
+    def slow(path, **kw):  # kw: the pane's cancel (review 2 of 0.15.176)
         threads.append(threading.current_thread().name)
         time.sleep(seconds)
-        return real(path)
+        return real(path, **kw)
 
     return mock.patch.object(AP, "list_archive", slow), threads
 
@@ -89,7 +89,7 @@ def test_happy_without_background_it_is_listed_on_return(zip_path):
     (OSError("truncated"), "Archive could not be read: truncated"),
 ])
 def test_sad_a_failed_background_listing_is_reported_as_before(zip_path, error, shown):
-    def broken(path):
+    def broken(path, **_kw):
         raise error
 
     with mock.patch.object(AP, "list_archive", broken):

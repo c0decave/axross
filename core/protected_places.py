@@ -4,7 +4,12 @@ Changed, they run code or widen the agent's rights with no prompt: its own
 settings and MCP servers, shell and session start files, autostart entries,
 user services, commands on PATH, Python start hooks, Git and pip settings,
 SSH and GnuPG keys. core.mcp_server refuses tool writes there whatever the
-root, and core.agent_sandbox mounts the ones that exist read-only.
+root, and core.agent_sandbox mounts them read-only - the missing ones too,
+as empty read-only places (an agent would otherwise create them).
+
+Places under ``~/.config``, ``~/.local/share`` and ``~/.local/state`` are
+also protected where ``$XDG_CONFIG_HOME``, ``$XDG_DATA_HOME`` and
+``$XDG_STATE_HOME`` move them (both locations count).
 
 A path names a place when it is the place or lies inside it, compared
 component by component (Windows separators included), case-insensitively
@@ -29,20 +34,38 @@ import sys
 #: Folders (relative to the home folder, "/"-separated).
 HOME_DIRS = (
     ".config/axross", ".local/share/axross", ".local/state/axross",
-    ".config/autostart", ".config/systemd", ".config/environment.d", ".config/fish",
-    ".config/plasma-workspace", ".config/git", ".config/pip",
+    ".config/autostart", ".config/autostart-scripts", ".config/systemd",
+    ".config/environment.d", ".config/fish",
+    ".config/plasma-workspace", ".config/git", ".config/pip", ".config/containers",
     ".ssh", ".gnupg", ".local/share/applications",
+    # user services and D-Bus activation (both start programs on demand)
+    ".local/share/systemd/user", ".local/share/dbus-1/services",
     # commands on PATH and the user site-packages (a .pth file runs at every Python start)
     ".local/bin", ".local/lib",
+    # shell, editor and window-manager start code
+    ".bashrc.d", ".oh-my-zsh", ".vim", ".config/nvim",
+    ".config/i3", ".config/sway", ".config/hypr", ".ipython",
+    # other agents' and editors' settings: their MCP servers and hooks run code
+    ".claude", ".config/Claude", ".cursor", ".config/Code/User", ".vscode/extensions",
+    # container CLI plugins and credential helpers
+    ".docker",
 )
 #: Files (relative to the home folder).
 HOME_FILES = (
     ".bashrc", ".bash_profile", ".bash_login", ".bash_logout", ".bash_aliases", ".profile",
-    ".zshrc", ".zprofile", ".zshenv", ".zlogin", ".xprofile", ".xsession", ".xsessionrc",
-    ".xinitrc", ".pam_environment", ".inputrc", ".gitconfig", ".pip/pip.conf",
+    ".zshrc", ".zprofile", ".zshenv", ".zlogin", ".zlogout", ".xprofile", ".xsession",
+    ".xsessionrc", ".xinitrc", ".pam_environment", ".inputrc", ".gitconfig", ".pip/pip.conf",
+    ".vimrc", ".npmrc", ".claude.json",
 )
 #: The host's home folder, set by core.agent_sandbox for the worker.
 HOST_HOME_ENV = "AXROSS_AGENT_HOST_HOME"
+#: ``(home-relative prefix, XDG variable, variable naming the host's value
+#: in the agent sandbox)``: where XDG moves the places below the prefix.
+XDG_PLACES = (
+    (".config", "XDG_CONFIG_HOME", "AXROSS_AGENT_HOST_XDG_CONFIG_HOME"),
+    (".local/share", "XDG_DATA_HOME", "AXROSS_AGENT_HOST_XDG_DATA_HOME"),
+    (".local/state", "XDG_STATE_HOME", "AXROSS_AGENT_HOST_XDG_STATE_HOME"),
+)
 
 def _case_insensitive() -> bool:
     return sys.platform in ("win32", "darwin")
@@ -81,15 +104,54 @@ def places(home: str) -> list[str]:
     return out
 
 
+def _xdg_bases(environ) -> list[tuple[str, str]]:
+    """``(home-relative prefix, folder)`` of every XDG location set to an
+    absolute path - this process's and, in the agent sandbox, the host's."""
+    out: list[tuple[str, str]] = []
+    for prefix, var, host_var in XDG_PLACES:
+        for value in (environ.get(var, ""), environ.get(host_var, "")):
+            if value and os.path.isabs(value):
+                base = (prefix, os.path.abspath(value))
+                if base not in out:
+                    out.append(base)
+    return out
+
+
+def protected_paths(environ=os.environ) -> list[tuple[str, bool]]:
+    """``(path, is_folder)`` of every protected place as typed: below each
+    home and where the XDG variables move them."""
+    out: list[tuple[str, bool]] = []
+    seen: set[str] = set()
+
+    def add(path: str, folder: bool) -> None:
+        if path not in seen:
+            seen.add(path)
+            out.append((path, folder))
+
+    entries = [(rel, True) for rel in HOME_DIRS] + [(rel, False) for rel in HOME_FILES]
+    for home in homes(environ):
+        for rel, folder in entries:
+            add(os.path.join(home, *rel.split("/")), folder)
+    for prefix, base in _xdg_bases(environ):
+        for rel, folder in entries:
+            if rel.startswith(prefix + "/"):
+                add(os.path.join(base, *rel[len(prefix) + 1:].split("/")), folder)
+    return out
+
+
+def _all_places(environ) -> list[str]:
+    """Every protected place, as typed and as resolved."""
+    out: list[str] = []
+    for place, _folder in protected_paths(environ):
+        for variant in (place, os.path.realpath(place)):
+            if variant not in out:
+                out.append(variant)
+    return out
+
+
 def existing_places(environ=os.environ) -> list[str]:
     """The protected places that exist now (as typed, not resolved)."""
-    seen: list[str] = []
-    for home in homes(environ):
-        for rel in HOME_DIRS + HOME_FILES:
-            place = os.path.join(home, *rel.split("/"))
-            if os.path.lexists(place) and place not in seen:
-                seen.append(place)
-    return seen
+    return [place for place, _folder in protected_paths(environ) if os.path.lexists(place)]
 
 
 def refusal(path: str, *, entry: bool = False, environ=os.environ) -> str | None:
@@ -101,15 +163,14 @@ def refusal(path: str, *, entry: bool = False, environ=os.environ) -> str | None
                   os.path.join(os.path.realpath(os.path.dirname(absolute)),
                                os.path.basename(absolute))}
     keys = {_key(c) for c in candidates}
-    for home in homes(environ):
-        for place in places(home):
-            pk = _key(place)
-            for ck in keys:
-                if ck[:len(pk)] == pk:
-                    return (f"{path}: the agent does not change {place} (it could run code "
-                            "or widen its own rights from there)")
-                if entry and len(ck) < len(pk) and pk[:len(ck)] == ck:
-                    return f"{path} holds {place}, which the agent does not change"
+    for place in _all_places(environ):
+        pk = _key(place)
+        for ck in keys:
+            if ck[:len(pk)] == pk:
+                return (f"{path}: the agent does not change {place} (it could run code "
+                        "or widen its own rights from there)")
+            if entry and len(ck) < len(pk) and pk[:len(ck)] == ck:
+                return f"{path} holds {place}, which the agent does not change"
     return None
 
 

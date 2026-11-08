@@ -190,6 +190,12 @@ class SocketRelay:
 
     def close(self) -> None:
         self._closed = True
+        # close() alone does not wake the accept() blocked on it (Linux):
+        # one sift-relay thread was left behind per worker restart.
+        try:
+            self._listener.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
         try:
             self._listener.close()
         except OSError:

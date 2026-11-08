@@ -161,7 +161,7 @@ def test_happy_ble_scan_connect_read_notify_over_the_air(radio, tmp_path, monkey
     [link] = [k for k in parsed.all_links() if k.address == sensor.address]
     assert link.radio == "LE" and link.end is not None
     att = {s.direction: s for s in parsed.streams.values()
-           if s.handle == link.handle and s.protocol == "ATT (GATT)"}
+           if (s.controller, s.handle) == link.key and s.protocol == "ATT (GATT)"}
     assert att["out"].att.get("read", 0) >= 2  # our two reads (and discovery)
     assert att["in"].att.get("notify", 0) >= 1  # the battery counting down
     assert parsed.errors == 0

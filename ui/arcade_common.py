@@ -390,6 +390,9 @@ class ArcadeView(QWidget):
     JINGLE = ""
     ACCENT = "#e2e8f0"
     DIRECTION_KEYS: frozenset = frozenset()
+    #: The game's other keys (jump, grab, boost): with the directions, what a
+    #: pause swallows.
+    ACTION_KEYS: frozenset = frozenset()
 
     def __init__(self, *, audio=None, on_exit=None, on_progress=None, on_restart=None, intro: bool = True,
                  parent=None):
@@ -470,6 +473,8 @@ class ArcadeView(QWidget):
         True when it was taken."""
         key, auto = event.key(), event.isAutoRepeat()
         if not pressed:
+            # also while paused: a key let go must not stay held. The views
+            # only forget held keys then, the game itself is not touched.
             return self.game_key(key, False, auto)
         if self.intro_running():
             if not auto:
@@ -497,6 +502,9 @@ class ArcadeView(QWidget):
                 self.shutdown()
                 self.on_restart()
             return True
+        if self.paused:
+            # paused: no key changes the game (no jump, no turn, no boost)
+            return key in self.DIRECTION_KEYS or key in self.ACTION_KEYS
         return self.game_key(key, True, auto)
 
     def game_key(self, key, pressed: bool, auto_repeat: bool) -> bool:  # noqa: ARG002 - for subclasses

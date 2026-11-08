@@ -63,11 +63,23 @@ signs `SHA256SUMS` (`scripts/sign_release.py`, raw 64-byte signature in
   fetches the new release's manifest and the blobs of every installed unit that changed
   (a blob whose SHA-256 is already there is kept) before the new binary is started; if
   a unit cannot be fetched, the update says which and the old version keeps running.
+  A unit the new release no longer has (dropped or renamed), and a unit that needs one,
+  cannot come along: the update goes ahead without it and its message names it.
   *Help > Features…* also offers "Update packs" on its own when the release's manifest
   was re-issued (same version, a pack fixed): `core.packs.check_reissued` and `update`,
   through the same signed `SHA256SUMS` and blob checks as *Add*; the fixed packs are used
-  from the next start.
-- Old versions' pack folders are removed once the new version has started once.
+  from the next start. Until then the running session keeps the folders it imports
+  from: a blob re-issued under its old file name is unpacked into a folder of its own
+  (`<blob>.<sha256 prefix>`, recorded as `dirs` in `installed.json`), and a folder no
+  unit needs any more is only listed as `retired` there.
+- At the start, `core.packs.prune` removes the pack folders of versions *older* than the
+  running one (the new version has started once) and the folders retired by "Update
+  packs" or *Remove*. A newer version's folder stays: the update installs it before it
+  replaces the binary, and the old binary may run once more (the new file waits in
+  `~/.cache`, or a rollback to `<name>.previous`).
+- A pack blob has no overall time limit (it may be hundreds of MiB on a slow line):
+  each read times out after `READ_TIMEOUT`, and *Cancel* stops it between reads, as
+  for the binary.
 
 ## In the base
 
@@ -77,8 +89,9 @@ checks each hash against the signed manifest, unpacks into
 `~/.local/share/axross/packs/<version>/<blob>/` (0700, never over an existing one) and
 adds them to `sys.path` at the next start (and at once for pure-Python units: every wheel
 `py3-none-any`; the window says "ready to use", a unit with a native wheel waits for the
-restart). *Remove* deletes a unit's blobs that no other installed unit uses; what is
-already loaded stays in use until the next start. Nothing is executed while
+restart). *Remove* retires a unit's blobs that no other installed unit uses; their
+folders are deleted at the next start, so what this session loaded or loads later
+stays usable until then. Nothing is executed while
 unpacking; a blob whose hash or signature does not match is refused and deleted. A
 proxy and the offline case work as for the voice models. An update of axross brings a
 new manifest: units are fetched again for the new version.

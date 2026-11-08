@@ -67,6 +67,7 @@ from core.archive import (
     strip_archive_extension,
 )
 from core.i18n import tr
+from core.remote_name import sanitize_for_display
 from ui.icon_provider import set_window_icon
 
 log = logging.getLogger("ui.archive_pane")
@@ -138,8 +139,10 @@ def _make_row(
 ) -> list[QStandardItem]:
     """Build one model row (five items). The Name item carries the full
     member name (or dir prefix) in ``UserRole``; every item is made
-    non-editable — this is a read-only listing."""
-    name_item = QStandardItem(label)
+    non-editable — this is a read-only listing. The label is shown with
+    controls and bidi overrides replaced (as the file table does):
+    "invoice\u202efdp.exe" would read as "invoiceexe.pdf"."""
+    name_item = QStandardItem(sanitize_for_display(label))
     name_item.setData(member, Qt.ItemDataRole.UserRole)
     cells = [
         name_item,
@@ -540,7 +543,8 @@ class ArchivePaneWidget(QWidget):
         self._list_job = ScanJob(self)
         self._list_job.finished.connect(self._on_listed)
         path = self._archive_path
-        self._list_job.start(lambda _cancelled, _report: list_archive(path))
+        # Cancel (closing the pane) stops a long tar listing between headers.
+        self._list_job.start(lambda cancelled, _report: list_archive(path, cancel=cancelled))
 
     def _on_listed(self, kind: str, value, cancelled: bool) -> None:
         if cancelled:
@@ -587,7 +591,7 @@ class ArchivePaneWidget(QWidget):
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt
         if self._list_job is not None:
-            self._list_job.abandon()  # the listing goes on alone, its answer is dropped
+            self._list_job.abandon()  # a tar listing stops at its next header; the answer is dropped
         super().closeEvent(event)
 
     def _set_empty_model(self) -> None:

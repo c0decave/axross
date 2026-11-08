@@ -91,7 +91,7 @@ import urllib.parse
 import urllib.request
 from base64 import b64decode
 from binascii import Error as Base64Error
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable
 
@@ -597,6 +597,17 @@ class Installed:
     how_to_finish: str  # what the user still has to do ("" when replaced)
     sha256: str = ""
     version: str = ""
+    #: Installed units (core.units names) the new release no longer has
+    #: (dropped or renamed): not brought along, named in the window.
+    dropped_units: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class CarriedPacks:
+    """What :func:`_carry_packs` brought along to the new version."""
+
+    blobs: list[str] = field(default_factory=list)  # fetched and unpacked
+    dropped: list[str] = field(default_factory=list)  # units the new release does not have
 
 
 #: The first line of a release's SHA256SUMS: the version the signature is
@@ -880,7 +891,14 @@ def update(release: Release, inst: Install, *, opener=None,
     and the result says so (the window offers Save to…)."""
     if not inst.can_download:
         raise UpdateError(inst.why_not())
-    _carry_packs(release, opener, progress, cancel)
+    carried = _carry_packs(release, opener, progress, cancel)
+    result = _update_binary(release, inst, opener=opener, progress=progress, cancel=cancel)
+    if carried.dropped:
+        result = replace(result, dropped_units=tuple(carried.dropped))
+    return result
+
+
+def _update_binary(release: Release, inst: Install, *, opener, progress, cancel) -> Installed:
     folder = inst.executable.parent
     if _writable(folder):
         downloaded = download(release, inst, dest_dir=folder, opener=opener, progress=progress,
@@ -910,29 +928,39 @@ def update(release: Release, inst: Install, *, opener=None,
 
 
 def _carry_packs(release: Release, opener, progress=None, cancel=None, *, current: str | None = None,
-                 root=None, verify=None) -> list[str]:
+                 root=None, verify=None) -> CarriedPacks:
     """The packs installed for the running version, fetched and checked for
     *release* before its binary is fetched (core.packs) - an update that
-    cannot bring a unit along stops here, nothing is replaced."""
+    cannot bring a unit along stops here, nothing is replaced. A unit the
+    new release no longer has (dropped, renamed) cannot be brought along
+    and does not stop the update: it is left out and named in the result.
+
+    Each blob may be large: no overall deadline, as for the binary's
+    :func:`download` - each read times out (:data:`READ_TIMEOUT`) and
+    *cancel* stops it between reads."""
     from core import packs
 
     if current is None:
         from axross._version import __version__ as current
     units = packs.installed(current, root)
     if not units:
-        return []
+        return CarriedPacks()
 
     def get(url, max_bytes, hosts):
         if cancel is not None and cancel.is_set():
             raise Cancelled("cancelled")
         return fetch(url, opener=opener or build_opener(), max_bytes=max_bytes, hosts=hosts,
-                     deadline=time.monotonic() + 600)
+                     cancel=cancel)
     try:
-        return packs.install(release, units, fetch=packs.Fetcher(get), root=root, verify=verify,
-                             progress=progress)
+        done, dropped = packs.install_available(release, units, fetch=packs.Fetcher(get),
+                                                root=root, verify=verify, progress=progress)
     except packs.PackError as exc:
         raise UpdateError(f"the packs of {release.version} could not be brought along ({exc}); "
                           "axross was not updated") from None
+    if dropped:
+        log.warning("update: release %s has no unit %s; not brought along", release.version,
+                    ", ".join(dropped))
+    return CarriedPacks(done, dropped)
 
 
 def save_copy(installed: Installed, destination) -> Path:
@@ -1058,6 +1086,7 @@ __all__ = [
     "ALLOWED_HOSTS",
     "Asset",
     "Cancelled",
+    "CarriedPacks",
     "CheckResult",
     "ChecksumError",
     "Downloaded",

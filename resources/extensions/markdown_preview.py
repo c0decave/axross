@@ -24,9 +24,28 @@ def read_markdown(backend, path: str, limit: int = MAX_BYTES) -> tuple[str, bool
 
 
 def activate(api):
+    from PyQt6.QtCore import QByteArray
+    from PyQt6.QtGui import QImage, QTextDocument
     from PyQt6.QtWidgets import QTextBrowser
 
-    view = QTextBrowser()
+    class Preview(QTextBrowser):
+        """Loads no resource: the file is not axross's. QTextBrowser read
+        an image (``![x](/dev/zero)``, a FIFO, a file on a hung mount)
+        with QFile.readAll on the GUI thread, so a crafted .md froze the
+        window or filled the memory; it is shown without its images.
+
+        The answer must be a valid, non-empty one: for an empty answer
+        QTextDocument reads the local file itself, and for an image that
+        is no image QTextImageHandler loads the name directly."""
+
+        def loadResource(self, kind, _name):  # noqa: N802 - Qt
+            if kind == QTextDocument.ResourceType.ImageResource.value:
+                blank = QImage(1, 1, QImage.Format.Format_ARGB32)
+                blank.fill(0)
+                return blank
+            return QByteArray(b" ")
+
+    view = Preview()
     view.setOpenExternalLinks(False)  # a click never leaves axross unasked
     view.setOpenLinks(False)
     view.setPlaceholderText("Select a Markdown file (.md) to preview it here.")

@@ -164,8 +164,7 @@ class TiltGame(C.ChaseGame):
         self.tick_count += 1
         self._step_player()
         self._collide()
-        every = max(2, 5 - self.spec.speed) if not self.scared else 2
-        if self.tick_count % every != 0:
+        if C.daemons_move(self.tick_count, self.spec.speed, bool(self.scared)):
             for d in self.daemons:
                 self._step_daemon(d)
         self._collide()

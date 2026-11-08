@@ -70,13 +70,13 @@ def test_happy_a_classic_link_with_an_avdtp_audio_stream():
     [link] = parsed.all_links()
     assert (link.address, link.radio, link.start, link.end) == ("06:05:04:03:02:01",
                                                                  "Classic", 1.0, 4.0)
-    out = parsed.streams[(h, 0x0071, "out")]
+    out = parsed.streams[(0, h, 0x0071, "out")]
     assert (out.protocol, out.psm, out.frames, out.bytes) == ("AVDTP (audio/video stream)",
                                                               0x0019, 20, 12000)
     assert out.rate == pytest.approx(12000 / 1.9)
-    assert parsed.streams[(h, 0x0040, "in")].protocol == "AVDTP (audio/video stream)"
+    assert parsed.streams[(0, h, 0x0040, "in")].protocol == "AVDTP (audio/video stream)"
     assert parsed.sorted_streams()[0] is out
-    assert parsed.streams[(h, 0x0001, "out")].protocol == "L2CAP signalling"
+    assert parsed.streams[(0, h, 0x0001, "out")].protocol == "L2CAP signalling"
     assert parsed.errors == 0
 
 
@@ -88,10 +88,10 @@ def test_happy_le_att_counts_and_role():
                (0.3, True, acl(h, l2cap(0x0004, bytes([0x1B, 0x03, 0x00, 0x59])))),  # notify
                (0.4, False, acl(h, l2cap(0x0006, bytes([0x01, 0x03]))))]          # SMP
     parsed = BS.StreamParser().feed_all(packets)
-    assert parsed.links[h].radio == "LE" and parsed.links[h].role == "central"
-    assert parsed.streams[(h, 4, "out")].att == {"read": 1}
-    assert parsed.streams[(h, 4, "in")].att == {"read": 1, "notify": 1}
-    assert parsed.streams[(h, 6, "out")].protocol == "SMP (pairing)"
+    assert parsed.links[(0, h)].radio == "LE" and parsed.links[(0, h)].role == "central"
+    assert parsed.streams[(0, h, 4, "out")].att == {"read": 1}
+    assert parsed.streams[(0, h, 4, "in")].att == {"read": 1, "notify": 1}
+    assert parsed.streams[(0, h, 6, "out")].protocol == "SMP (pairing)"
 
 
 def test_happy_le_credit_based_channel():
@@ -103,7 +103,7 @@ def test_happy_le_credit_based_channel():
                                                                 0), cid=0x0005))),
                (0.3, False, acl(h, l2cap(0x0090, bytes(20))))]
     parsed = BS.StreamParser().feed_all(packets)
-    assert parsed.streams[(h, 0x0090, "out")].protocol == "EATT"
+    assert parsed.streams[(0, h, 0x0090, "out")].protocol == "EATT"
 
 
 def test_edge_fragments_are_reassembled():
@@ -114,7 +114,7 @@ def test_edge_fragments_are_reassembled():
                (0.2, True, acl(h, frame[27:60], first=False)),
                (0.3, True, acl(h, frame[60:], first=False))]
     parsed = BS.StreamParser().feed_all(packets)
-    stream = parsed.streams[(h, 4, "in")]
+    stream = parsed.streams[(0, h, 4, "in")]
     assert (stream.frames, stream.bytes, stream.att) == (1, 103, {"notify": 1})
 
 
@@ -126,7 +126,7 @@ def test_edge_a_channel_seen_before_its_response_is_named_afterwards():
                (0.2, True, acl(h, signal(0x03, 1, struct.pack("<HHHH", 0x0050, 0x0041, 0,
                                                                 0))))]
     parsed = BS.StreamParser().feed_all(packets)
-    assert parsed.streams[(h, 0x0041, "in")].protocol == "RFCOMM"
+    assert parsed.streams[(0, h, 0x0041, "in")].protocol == "RFCOMM"
 
 
 def test_sad_a_refused_channel_stays_unnamed_and_broken_packets_count():
@@ -139,7 +139,7 @@ def test_sad_a_refused_channel_stays_unnamed_and_broken_packets_count():
                (0.5, True, bytes([0x02, 0x04, 0x20])),     # too short
                (0.6, True, acl(h, b"\x05\x00"))]           # a first fragment of 2 bytes
     parsed = BS.StreamParser().feed_all(packets)
-    assert parsed.streams[(h, 0x0042, "in")].protocol == "Dynamic channel 0x0042"
+    assert parsed.streams[(0, h, 0x0042, "in")].protocol == "Dynamic channel 0x0042"
     assert parsed.errors == 2  # the 3-byte ACL is too short to be looked at
     assert parsed.packets == 7
 
@@ -168,8 +168,8 @@ def test_happy_btsnoop_round_trip(tmp_path):
     BS.write_btsnoop(path, packets)
     datalink, back = BS.read_btsnoop(path)
     assert datalink == BS.DATALINK_H4
-    assert [(round(t, 6), r, p) for t, r, p in back] == packets
-    assert BS.parse_file(path).links[5].radio == "LE"
+    assert [(round(t, 6), r, p) for t, r, p, _c in back] == packets
+    assert BS.parse_file(path).links[(0, 5)].radio == "LE"
 
 
 def test_happy_h1_and_monitor_datalinks():
@@ -178,12 +178,12 @@ def test_happy_h1_and_monitor_datalinks():
 
     ev = le_connected(9)[1:]
     h1 = BS.BTSNOOP_MAGIC + struct.pack(">II", 1, BS.DATALINK_H1) + record(3, ev)
-    _dl, [(_t, received, packet)] = BS.parse_btsnoop(h1)
+    _dl, [(_t, received, packet, _c)] = BS.parse_btsnoop(h1)
     assert received and packet == le_connected(9)
     mon = BS.BTSNOOP_MAGIC + struct.pack(">II", 1, BS.DATALINK_MONITOR) + \
         record(3, ev) + record(0, b"index")  # opcode 3: event; 0: new index (skipped)
     _dl, packets = BS.parse_btsnoop(mon)
-    assert [p for _t, _r, p in packets] == [le_connected(9)]
+    assert [p for _t, _r, p, _c in packets] == [le_connected(9)]
 
 
 def test_sad_not_a_btsnoop_file():
@@ -343,4 +343,4 @@ def test_edge_many_one_byte_fragments_reassemble_quickly():
     start = time.monotonic()
     parsed = BS.StreamParser().feed_all(packets)
     assert time.monotonic() - start < 5
-    assert parsed.streams[(h, 0x0040, "in")].bytes == 60_000
+    assert parsed.streams[(0, h, 0x0040, "in")].bytes == 60_000

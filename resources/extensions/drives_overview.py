@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 
 from core.i18n import tr
 from core.subprocess_env import clean_child_env
+from ui.plain_text import plain_tooltip, set_plain
 
 EXTENSION = {
     "name": "Drives Overview",
@@ -226,24 +227,45 @@ def _usage(path: str) -> tuple[int, int, int]:
     return total, used, free
 
 
+#: The probe still running for a mount, by ``(usage, mount)``: a probe
+#: stuck in statvfs on a dead network mount never returns, and a refresh
+#: does not start another one beside it.
+_PROBING: dict[tuple, threading.Thread] = {}
+_PROBING_LOCK = threading.Lock()
+
+
 def measure(drives: list[Drive], *, usage=_usage, timeout: float = TIMEOUT) -> list[Drive]:
     """Size, used and free of every drive, each probed on its own thread: a
     drive that does not answer within *timeout* (a dead network mount) is
-    unknown with the reason, and the others are not held up."""
+    unknown with the reason, and the others are not held up. A drive whose
+    probe from an earlier call is still running is not probed again - it
+    is "not answering". Before, every refresh started one more thread per
+    dead mount, and they piled up."""
     results: dict[int, Drive] = {}
 
-    def probe(index: int, drive: Drive) -> None:
+    def probe(index: int, drive: Drive, key: tuple) -> None:
         try:
             total, used, free = usage(drive.mount)
             results[index] = replace(drive, total=int(total), used=int(used), free=int(free))
         except Exception as exc:  # noqa: BLE001 - one drive, shown with its reason
             results[index] = replace(drive, error=str(exc) or type(exc).__name__)
+        finally:
+            with _PROBING_LOCK:
+                if _PROBING.get(key) is threading.current_thread():
+                    del _PROBING[key]
 
     threads = []
     for index, drive in enumerate(drives):
-        thread = threading.Thread(target=probe, args=(index, drive), daemon=True,
-                                  name="axross-drive-probe")
-        thread.start()
+        key = (usage, drive.mount)
+        with _PROBING_LOCK:
+            running = _PROBING.get(key)
+            if running is not None and running.is_alive():
+                results[index] = replace(drive, error=tr("not answering"))
+                continue
+            thread = threading.Thread(target=probe, args=(index, drive, key), daemon=True,
+                                      name="axross-drive-probe")
+            _PROBING[key] = thread
+            thread.start()
         threads.append(thread)
     deadline = time.monotonic() + timeout
     for thread in threads:
@@ -420,7 +442,7 @@ class DrivesPanel(QWidget):
         self.refresh_button.clicked.connect(refresh)
         self.show_system = QCheckBox("Show system and memory mounts")
         self.show_system.toggled.connect(lambda _on: self._fill())
-        self.status = QLabel("")
+        self.status = set_plain(QLabel(""))  # an error names a mount
         top.addWidget(self.refresh_button)
         top.addWidget(self.show_system)
         top.addStretch(1)
@@ -474,7 +496,7 @@ class DrivesPanel(QWidget):
             )
             cells[0].setData(Qt.ItemDataRole.UserRole, drive)
             if drive.error:
-                cells[COL_USE].setToolTip(drive.error)
+                cells[COL_USE].setToolTip(plain_tooltip(drive.error))  # names the mount
             for col, item in enumerate(cells):
                 table.setItem(row, col, item)
         table.setSortingEnabled(True)

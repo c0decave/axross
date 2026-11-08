@@ -131,6 +131,12 @@ class HandbookDialog(QDialog):
         add_close_corner(self)
         self.resize(1060, 700)
         self._show(self.handbook)
+        # F1 in the handbook: its own section, about the handbook and the
+        # tours (core.handbook.SECTIONS["handbook"]) - in this window.
+        set_help_topic(self, "handbook")
+        self.help_shortcut = QShortcut(QKeySequence(HELP_KEY), self)
+        self.help_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self.help_shortcut.activated.connect(lambda: self.go_to_topic("handbook"))
 
     # -- the text --------------------------------------------------------------------------
 
@@ -271,9 +277,26 @@ class HandbookDialog(QDialog):
         super().keyPressEvent(event)
 
 
+def _handbook_owner(dialog: QWidget):
+    """The main window *dialog* belongs to (the first parent with
+    ``show_handbook``), or None."""
+    owner = dialog.parentWidget()
+    while owner is not None:
+        show = getattr(owner, "show_handbook", None)
+        if callable(show):
+            return owner
+        owner = owner.parentWidget()
+    return None
+
+
 def open_handbook_for(dialog: QWidget, topic: str | None) -> HandbookDialog:
-    """A handbook as a child of *dialog* (a modal dialog's own: usable while
-    it waits), at the section of *topic*; one per dialog, raised again."""
+    """A handbook at the section of *topic*: for a modal dialog its own child
+    (usable while it waits; one per dialog, raised again), for a non-modal
+    window the main window's one handbook when it has one."""
+    if not dialog.isModal():
+        owner = _handbook_owner(dialog)
+        if owner is not None:
+            return owner.show_handbook(topic)
     book = getattr(dialog, "_ax_handbook", None)
     if book is None:
         book = HandbookDialog(dialog)
@@ -287,11 +310,14 @@ def open_handbook_for(dialog: QWidget, topic: str | None) -> HandbookDialog:
     return book
 
 
-def install_help_key(dialog: QWidget, topic: str | Callable[[], str | None]) -> QShortcut:
+def install_help_key(
+    dialog: QWidget, topic: str | Callable[[], str | None] | None = None
+) -> QShortcut:
     """F1 in *dialog* opens the handbook at *topic* (a key of
     core.handbook.SECTIONS, or a function that answers one when F1 is
-    pressed); the widget with the focus wins when it names a topic of its
-    own."""
+    pressed; None: the contents); the widget with the focus wins when it
+    names a topic of its own. A non-modal window needs it as much as a
+    modal dialog: the main window's F1 works in the main window only."""
     if isinstance(topic, str):
         set_help_topic(dialog, topic)
     elif callable(topic) and not callable(getattr(dialog, "help_topic", None)):

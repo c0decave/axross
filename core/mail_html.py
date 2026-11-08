@@ -10,8 +10,9 @@ a viewer that loads no resource at all (ui/mail_project.py SafeBrowser).
 from __future__ import annotations
 
 import html
+import unicodedata
 from html.parser import HTMLParser
-from urllib.parse import urlsplit
+from urllib.parse import SplitResult, urlsplit
 
 ALLOWED = {"p", "br", "div", "span", "b", "strong", "i", "em", "u", "s", "a", "ul", "ol", "li", "table",
            "thead", "tbody", "tfoot", "tr", "td", "th", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote",
@@ -26,6 +27,30 @@ VOID = {"area", "base", "basefont", "bgsound", "br", "col", "command", "embed", 
 MAX_OUTPUT = 2 * 1024 * 1024
 #: Elements open at once; deeper ones are left out (keeps every end tag cheap).
 MAX_NESTING = 256
+
+
+def split_url(url: str) -> SplitResult | None:
+    """``urlsplit(url)``, or None when it cannot be split: "https://[x"
+    raises ValueError (an unclosed IPv6 bracket, a bad port), and one such
+    link kept a whole mail out of the analysis and the safe view."""
+    try:
+        parts = urlsplit(url)
+        parts.hostname, parts.port  # noqa: B018 - these raise ValueError too
+    except ValueError:
+        return None
+    return parts
+
+
+def hidden_chars(text: str) -> bool:
+    """*text* holds format characters (Unicode Cf: bidi overrides and
+    isolates, zero-width spaces and joiners), which show an address in
+    another order or hide part of it."""
+    return any(unicodedata.category(c) == "Cf" for c in text)
+
+
+def strip_hidden(text: str) -> str:
+    """*text* without its format characters (see :func:`hidden_chars`)."""
+    return "".join(c for c in text if unicodedata.category(c) != "Cf")
 
 
 class _Sanitiser(HTMLParser):
@@ -61,13 +86,20 @@ class _Sanitiser(HTMLParser):
             return
         kept = ""
         if tag == "a":
-            href = next((v for k, v in attrs if k.lower() == "href" and v), "").strip()
-            scheme = urlsplit(href).scheme.lower()
-            if scheme in ("http", "https", "mailto"):
+            raw = next((v for k, v in attrs if k.lower() == "href" and v), "").strip()
+            # A bidi override in the address would show the target label
+            # below in another order: removed, and the label says so.
+            href = strip_hidden(raw)
+            note = " (hidden characters removed)" if href != raw else ""
+            parts = split_url(href)
+            if parts is None:
+                self.link_target.append(("", "malformed link - not followed"))
+            elif parts.scheme.lower() in ("http", "https", "mailto"):
                 kept = f' href="{html.escape(href, quote=True)}"'
-                self.link_target.append(href)
+                host = parts.hostname or (href[7:] if href.lower().startswith("mailto:") else "")
+                self.link_target.append((href, (host or "not a web address") + note))
             else:
-                self.link_target.append("")
+                self.link_target.append(("", "not a web address"))
         elif tag in ("td", "th"):
             for k, v in attrs:
                 if k.lower() in ("colspan", "rowspan") and (v or "").isdigit() and int(v) < 100:
@@ -89,9 +121,8 @@ class _Sanitiser(HTMLParser):
         """Close the innermost open element."""
         open_tag = self.stack.pop()
         if open_tag == "a":
-            target = self.link_target.pop() if self.link_target else ""
-            host = urlsplit(target).hostname or (target[7:] if target.lower().startswith("mailto:") else "")
-            self._emit(f"</a> <small>[&#8594; {html.escape(host or 'not a web address')}]</small>", closing=True)
+            _target, label = self.link_target.pop() if self.link_target else ("", "not a web address")
+            self._emit(f"</a> <small>[&#8594; {html.escape(strip_hidden(label))}]</small>", closing=True)
         else:
             self._emit(f"</{open_tag}>", closing=True)
         return open_tag

@@ -317,6 +317,8 @@ def activate(api):
     )
 
     from core import disk_image as DI
+    from resources.extensions._pane import refresh_pane
+    from ui.plain_text import plain_message
 
     def local(ctx):
         if not ctx.is_local:
@@ -325,7 +327,10 @@ def activate(api):
         return ctx.paths[0]
 
     def warn(title):
-        return lambda exc: QMessageBox.warning(api.window, title, str(exc))
+        # An error names the image (or says what a tool printed about it):
+        # shown as plain text, never as markup.
+        return lambda exc: plain_message(api.window, QMessageBox.Icon.Warning, title,
+                                         str(exc)).exec()
 
     def do_hash(ctx):
         path = ctx.paths[0]
@@ -333,8 +338,11 @@ def activate(api):
 
         def done(result):
             text = "\n".join(f"{k}: {v}" for k, v in result.items())
-            box = QMessageBox(QMessageBox.Icon.Information, "Hash Image",
-                              f"{path}\n\n{text}", parent=api.window)
+            # The path is the first line: as AutoText a name such as
+            # "evidence<br><br>MD5: 0123…<!--.dd" rendered as markup, showing
+            # forged hashes and hiding the real ones below a comment.
+            box = plain_message(api.window, QMessageBox.Icon.Information, "Hash Image",
+                                f"{path}\n\n{text}", QMessageBox.StandardButton.NoButton)
             copy = box.addButton("Copy", QMessageBox.ButtonRole.ActionRole)
             box.addButton(QMessageBox.StandardButton.Close)
             box.exec()
@@ -352,7 +360,8 @@ def activate(api):
         def done(info):
             lines = [f"{k}: {DI.human_size(v) if isinstance(v, int) else v}"
                      for k, v in info.items()]
-            QMessageBox.information(api.window, "Image Info", f"{path}\n\n" + "\n".join(lines))
+            plain_message(api.window, QMessageBox.Icon.Information, "Image Info",
+                          f"{path}\n\n" + "\n".join(lines)).exec()
 
         api.run_in_background(lambda: image_info(path), on_done=done,
                               on_error=warn("Image Info"))
@@ -362,16 +371,16 @@ def activate(api):
         if path is None:
             return
         target = raw_target(path)
-        if QMessageBox.question(api.window, "Convert to Raw Image",
-                                f"Write a raw copy of\n{path}\nto\n{target}?") \
+        if plain_message(api.window, QMessageBox.Icon.Question, "Convert to Raw Image",
+                         f"Write a raw copy of\n{path}\nto\n{target}?",
+                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No).exec() \
                 != QMessageBox.StandardButton.Yes:
             return
         api.notify(f"converting to {os.path.basename(target)}…")
 
         def done(written):
             api.notify(f"wrote {written}")
-            if ctx.pane is not None:
-                getattr(ctx.pane, "refresh_after_change", ctx.pane.refresh)()  # not blocking
+            refresh_pane(ctx.pane)  # not blocking; skipped for a pane closed meanwhile
 
         api.run_in_background(lambda: convert_to_raw(path, target), on_done=done,
                               on_error=warn("Convert to Raw Image"))
@@ -522,10 +531,10 @@ def activate(api):
             # A qcow2, VMDK, dynamic VDI, VHD(X) or E01 keeps its partitions
             # inside a container The Sleuth Kit cannot read: say how to get
             # at them (core.disk_image's note) instead of "nothing found".
-            box = QMessageBox(QMessageBox.Icon.Information, "Browse File System",
-                              f"{os.path.basename(path)}: {info.description}.\n\nThe Sleuth "
-                              f"Kit cannot read the partitions inside this container. {info.note}",
-                              parent=api.window)
+            box = plain_message(api.window, QMessageBox.Icon.Information, "Browse File System",
+                                f"{os.path.basename(path)}: {info.description}.\n\nThe Sleuth "
+                                "Kit cannot read the partitions inside this container. "
+                                f"{info.note}", QMessageBox.StandardButton.NoButton)
             convert = None
             if info.kind in QEMU_CONVERTS:
                 convert = box.addButton("Convert to Raw…", QMessageBox.ButtonRole.ActionRole)
@@ -551,7 +560,7 @@ def activate(api):
             try:
                 exe = need(tool)
             except ToolError as exc:
-                QMessageBox.warning(api.window, tool, str(exc))
+                plain_message(api.window, QMessageBox.Icon.Warning, tool, str(exc)).exec()
                 return
             opener = getattr(api.window, "open_terminal_command", None)
             if opener is None:

@@ -37,7 +37,7 @@ scripts.
 |---|---|---|
 | **Scripts dock** | Write, save, manage and run scripts in the GUI | *View > Panels > Scripts* (next to *Console*) |
 | **Console dock** (REPL) | Interactive exploration inside the GUI | Bottom dock, *Console* tab |
-| **`axross --script <file>`** | Headless / cron / CI | `axross --script myscript.py` |
+| **`axross --script <file> [args…]`** | Headless / cron / CI | `axross --script myscript.py` |
 | **REPL slash-commands** | Save / load / run scripts from the prompt | `.save name`, `.run name` |
 | **Scheduled jobs** | Run a saved script on an interval | *View > Scheduled Jobs…* |
 | **MCP `script_*` tools** | LLM agent drives axross | Run with `--mcp-allow-scripts` |
@@ -47,6 +47,21 @@ so anything you can do at the REPL, you can do in a script,
 headless, or through an LLM. *Help > Scripting Guide* shows this guide
 and the full API reference inside the app; *F1* lists the Scripts dock
 keys and the slash-commands.
+
+Every surface runs a script as `__main__`: `__name__ == "__main__"`
+and `__file__` is the script's path - `axross --script`, Run, the
+scheduler, `script_run`, and also **Run in Console**, `.run` and
+`axross.run_script()` (in the Console only while it runs; the prompt
+has no `__file__`). An `if __name__ == "__main__":` block runs on
+every one of them.
+
+`axross --script FILE ARG …` hands everything after `FILE` to the
+script as `sys.argv[1:]` (`sys.argv[0]` is `FILE`; `-` reads the
+script from stdin); axross's own options go before `--script`. A
+missing or unreadable file is refused in one line (exit 2). An
+explicit `--script` wins over `AXROSS_MCP=1` in the environment, and
+together with `--mcp-server`, `--mcp-http` or `--mcp-list-tools` it is
+refused (exit 2).
 
 ---
 
@@ -95,7 +110,9 @@ How a run behaves:
   or deleting one warns first, because the job refers to it by name.
 - In **paranoid** security mode (*Edit > Settings > Security*) Run
   and Run in Console are disabled (the tooltip says why); `.run` and
-  the child process refuse as well.
+  the child process refuse as well, and so does `axross --script`
+  (exit 2) - whether the mode was chosen there or set with
+  `AXROSS_SECURITY_MODE`, which wins when both are given.
 
 ---
 

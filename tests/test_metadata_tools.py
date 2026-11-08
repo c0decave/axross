@@ -231,8 +231,8 @@ def test_sad_a_file_changed_while_being_cleaned_is_not_overwritten(tmp_path, mon
     f = K.write(tmp_path / "photo.jpg", K.jpeg_bytes())
     real = MF.image_clean
 
-    def clean_and_meanwhile_edit(data):
-        out = real(data)
+    def clean_and_meanwhile_edit(data, cancel=None):
+        out = real(data, cancel=cancel)
         with open(f, "ab") as fh:
             fh.write(b"appended by someone else")
         return out

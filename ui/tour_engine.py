@@ -189,7 +189,8 @@ class Spotlight(QWidget):
     """Dims the window around a rectangle and frames it; every mouse event
     goes through to the widgets below."""
 
-    DIM = QColor(0, 0, 0, 90)
+    #: 90 was all but invisible on the dark theme (#1a1c22 -> #111318).
+    DIM = QColor(0, 0, 0, 150)
     FRAME = QColor("#f39c12")
 
     def __init__(self, host: QWidget) -> None:
@@ -227,8 +228,12 @@ class Callout(QFrame):
         self.setObjectName("axTourCallout")
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setAutoFillBackground(True)
+        # With a style sheet Qt paints the frame itself: without a background
+        # in it the box stayed transparent and its text ran over the widgets
+        # below (autoFillBackground no longer applies).
         self.setStyleSheet(
-            "#axTourCallout { border: 2px solid #f39c12; border-radius: 6px; }")
+            "#axTourCallout { border: 2px solid #f39c12; border-radius: 6px;"
+            " background-color: palette(window); }")
         self.step_label = QLabel()
         self.step_label.setProperty("role", "muted")
         self.title_label = QLabel()
@@ -552,8 +557,9 @@ class ToursDialog(QDialog):
         if tours:
             self.list.setCurrentItem(self.list.topLevelItem(0))
         self.list.resizeColumnToContents(0)
+        # itemActivated only: it comes with a double click as well (and with
+        # Return); itemDoubleClicked on top of it started the tour twice.
         self.list.itemActivated.connect(lambda _item, _col=0: self.start_selected())
-        self.list.itemDoubleClicked.connect(lambda _item, _col=0: self.start_selected())
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         self.start_button = buttons.addButton(tr("Start Tour"),
@@ -566,6 +572,10 @@ class ToursDialog(QDialog):
         layout.addWidget(self.list, 1)
         layout.addWidget(buttons)
         add_close_corner(self)
+        # F1: its section of the handbook - the main window's F1 does not reach this window.
+        from ui.handbook import install_help_key
+
+        install_help_key(self, "handbook")
         self.resize(720, 360)
 
     def selected_id(self) -> str:

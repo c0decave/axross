@@ -53,9 +53,22 @@ axross --mcp-list-tools --mcp-tools all --mcp-write
 
 `--mcp-write` ohne `--mcp-root` wird verweigert (Exit 2): die
 Default-Root ist das Home-Verzeichnis, und das ist zu weit, um
-beschreibbar zu sein. Eine unbekannte `--mcp-tools`-Gruppe wird
+beschreibbar zu sein. Ein `--mcp-root`, den es nicht gibt, wird
+verweigert (Exit 2). Eine unbekannte `--mcp-tools`-Gruppe wird
 verweigert (Exit 2), mit einer stderr-Zeile, die die gültigen Gruppen
 nennt.
+
+`AXROSS_MCP=1` startet den Server nur ohne `--script`: ein
+ausdrückliches `axross --script DATEI` führt das Skript aus (die
+Variable erbt alles, was die Umgebung des Clients startet), und
+`--script` zusammen mit `--mcp-server`, `--mcp-http` oder
+`--mcp-list-tools` wird verweigert (Exit 2). Ein Skriptlauf
+(`script_run`, das Kind `axross --script -` eines Frozen-Builds)
+bekommt keine `AXROSS_MCP*`-Variable.
+
+Der Security-Mode `paranoid` unten ist der beim Start gültige:
+`AXROSS_SECURITY_MODE`, wenn gesetzt, sonst der in *Edit > Settings >
+Security* gewählte Modus.
 
 `--mcp-allow-scripts` wird im Security-Mode `paranoid` verweigert
 (Exit 2) und zusammen mit `--mcp-http` ebenfalls (Exit 2): Script-
@@ -63,9 +76,10 @@ Ausführung über einen Netzwerk-Transport wird nicht angeboten. Was die
 Script-Tools erreichen können, steht in §2.
 
 `--mcp-allow-exec` wird im Security-Mode `paranoid` verweigert
-(Exit 2). Anders als die Script-Tools führt es nichts auf dem Host des
-Servers selbst aus und wird deshalb auf beiden Transporten angeboten;
-siehe §9.8.
+(Exit 2), ebenso ohne die Gruppe exec (`--mcp-tools exec`, `all` oder
+`AXROSS_MCP_TOOLS=exec`): das Flag allein stellt nichts bereit. Anders
+als die Script-Tools führt es nichts auf dem Host des Servers selbst
+aus und wird deshalb auf beiden Transporten angeboten; siehe §9.8.
 
 Geheime Dateien werden nicht gelesen, egal welcher Root (§7.12):
 axross' eigene Tokens und Schlüssel und die privaten Schlüssel in

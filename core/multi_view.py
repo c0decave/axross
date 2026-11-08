@@ -31,9 +31,10 @@ import logging
 import math
 import threading
 import time
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, wait
 from dataclasses import dataclass, field
 
+from core.search_federation import DaemonPool
 from security.federation_timeout import probe_overdue_indices as _probe_overdue_indices
 
 log = logging.getLogger(__name__)
@@ -217,7 +218,9 @@ def _probe_parallel(
         )
         return (i, probe)
 
-    pool = ThreadPoolExecutor(max_workers=max_workers)
+    # Daemon threads: a probe hung on a dead host must not keep the
+    # process from exiting (Python's exit hook joins pool workers).
+    pool = DaemonPool(max_workers, name="multi-view")
     futures = {
         pool.submit(_run, i, backend, path, label): (i, backend, path, label)
         for i, (backend, path, label) in enumerate(pairs)
@@ -309,7 +312,7 @@ def _probe_parallel(
                 elapsed_s=per_target_timeout_s,
             )
     finally:
-        pool.shutdown(wait=False, cancel_futures=True)
+        pool.shutdown()
 
     return [p for p in out if p is not None]
 

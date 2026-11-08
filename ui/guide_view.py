@@ -71,10 +71,18 @@ def find_next(view: QTextBrowser, needle: str) -> bool:
         return False
     if view.find(needle):
         return True
-    cursor = view.textCursor()
+    # Wrap: from the start once more. Nothing there either - the view goes
+    # back where it was (it was left at the top, the place read lost).
+    before = view.textCursor()
+    scroll = view.verticalScrollBar().value()
+    cursor = QTextCursor(before)
     cursor.movePosition(QTextCursor.MoveOperation.Start)
     view.setTextCursor(cursor)
-    return bool(view.find(needle))
+    if view.find(needle):
+        return True
+    view.setTextCursor(before)
+    view.verticalScrollBar().setValue(scroll)
+    return False
 
 
 __all__ = ["GuideBrowser", "find_next", "heading_block", "scroll_to"]

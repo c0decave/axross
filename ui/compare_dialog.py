@@ -160,6 +160,10 @@ class CompareDialog(QDialog):
     def _build(self) -> None:
         layout = QVBoxLayout(self)
         add_close_corner(self)
+        # F1: the handbook (its contents) - the main window's F1 does not reach this window.
+        from ui.handbook import install_help_key
+
+        install_help_key(self)
 
         top = QHBoxLayout()
         self._filter_box = QComboBox(self)
@@ -266,7 +270,7 @@ class CompareDialog(QDialog):
         self._error = error
         self._populate()
         self._refresh_btn.setEnabled(True)
-        self._stop_thread()
+        self._stop_thread(done=True)
 
     def _populate(self) -> None:
         visible = self.visible_entries()
@@ -520,7 +524,7 @@ class CompareDialog(QDialog):
                 QEventLoop.ProcessEventsFlag.WaitForMoreEvents, 50
             )
 
-    def _stop_thread(self) -> None:
+    def _stop_thread(self, *, done: bool = False) -> None:
         """Wind the worker down without dropping a live QThread.
 
         Clearing the reference while the walk still runs is what
@@ -533,15 +537,21 @@ class CompareDialog(QDialog):
         if self._worker is not None:
             self._worker.cancel()
         self._thread.quit()
-        if not self._thread.wait(5000):
-            # Handed over rather than kept: this dialog is a child of the
-            # pane / the window, and destroying it with the thread still
-            # running aborts the process. A late `done` reaches nobody.
-            detach_running_thread(
-                self._thread,
-                *((self._worker.done,) if self._worker is not None else ()),
-                keep=(self._worker,),
-            )
+        if done:
+            # The worker's run() has returned (its result is here): the
+            # thread only leaves its event loop, at once.
+            self._thread.wait(1000)
+        # Handed over at once rather than waited for: wait(5000) froze the
+        # window for 5 s when Close / Esc came during a slow walk. This
+        # dialog is a child of the pane / the window, and destroying it
+        # with the thread still running aborts the process; detached (a
+        # no-op for a thread that is done) it ends on its own against a
+        # cancelled worker, and a late `done` reaches nobody.
+        if detach_running_thread(
+            self._thread,
+            *((self._worker.done,) if self._worker is not None else ()),
+            keep=(self._worker,),
+        ):
             log.warning("compare: walk still running; left with a cancelled worker")
             self._thread = None
             self._worker = None

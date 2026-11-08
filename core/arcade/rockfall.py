@@ -7,7 +7,8 @@ becomes empty), collects crystals, pushes a single rock sideways into an
 empty cell. Rocks and crystals fall into empty space, and roll off a rock,
 a crystal or a wall when the cell beside and the one below it are empty.
 Something falling onto the digger or a crawler ends it - a crawler hit
-leaves crystals where it was. Collect the level's quota and the exit
+leaves crystals where it was; nothing falls, rolls or is pushed into a
+creature's cell. Collect the level's quota and the exit
 opens; reach it before the time runs out.
 """
 
@@ -113,12 +114,7 @@ class RockfallGame:
         cell = self._at(nx, ny)
         if cell in (EARTH, EMPTY, GEM) or (cell == EXIT):
             if cell == GEM:
-                self.gems += 1
-                self.score += 10 + (5 if self.gems > self.quota else 0)
-                self.events.append("gem")
-                if self.gems == self.quota:
-                    self.grid[self.exit[1]][self.exit[0]] = EXIT
-                    self.events.append("exit-open")
+                self._collect_gem()
             if cell == EXIT:
                 self.score += self.time_left // 10
                 self.won_level = True
@@ -128,13 +124,40 @@ class RockfallGame:
             self.grid[ny][nx] = EMPTY if cell != EXIT else EXIT
         elif cell == ROCK and d in (LEFT, RIGHT):
             bx = nx + d[0]
-            if self._at(bx, ny) == EMPTY and (nx, ny) not in self.falling:
+            if self._at(bx, ny) == EMPTY and (nx, ny) not in self.falling \
+                    and not self._creature_at((bx, ny)):
                 self.grid[ny][bx] = ROCK
                 self.grid[ny][nx] = EMPTY
                 self.grid[y][x] = EMPTY
                 self.player = (nx, ny)
 
+    def _collect_gem(self) -> None:
+        """The digger takes a crystal: points, and the exit opens at the quota."""
+        self.gems += 1
+        self.score += 10 + (5 if self.gems > self.quota else 0)
+        self.events.append("gem")
+        if self.gems == self.quota:
+            self.grid[self.exit[1]][self.exit[0]] = EXIT
+            self.events.append("exit-open")
+
     # --- physics ----------------------------------------------------------------------------
+
+    def _creature_at(self, cell) -> bool:
+        """A creature stands in *cell* (its grid cell reads EMPTY): rocks and
+        crystals treat it like the digger's cell - they neither fall, roll
+        nor get pushed into it."""
+        return cell in self._creature_cells()
+
+    def _creature_cells(self) -> set:
+        return {c.pos for c in self.crawlers}
+
+    def _fall_onto_creature(self, cell, kind: str) -> None:
+        """Something of *kind* that was falling comes down onto the creature
+        in *cell*: a crawler is crushed (crystals, points)."""
+        for c in list(self.crawlers):
+            if c.pos == cell:
+                self._crush_crawler(c)
+                return
 
     def _physics(self) -> None:
         g = self.grid
@@ -148,16 +171,21 @@ class RockfallGame:
                 below = g[y + 1][x]
                 was_falling = (x, y) in self.falling
                 target = None
-                if below == EMPTY and (x, y + 1) != self.player:
+                occupied = {self.player} | self._creature_cells()
+                if below == EMPTY and (x, y + 1) not in occupied:
                     target = (x, y + 1)
                 elif below in (ROCK, GEM, WALL) and (x, y + 1) not in self.falling:
                     for dx in (-1, 1):
                         if g[y][x + dx] == EMPTY and g[y + 1][x + dx] == EMPTY \
-                                and (x + dx, y) != self.player and (x + dx, y + 1) != self.player:
+                                and (x + dx, y) not in occupied and (x + dx, y + 1) not in occupied:
                             target = (x + dx, y)
                             break
                 elif was_falling and (x, y + 1) == self.player:
                     crushed = True      # handled after the loop: it replaces the grid
+                    continue
+                elif was_falling and below == EMPTY:
+                    # a creature under it: crushed, and the rock stops where it is
+                    self._fall_onto_creature((x, y + 1), g[y][x])
                     continue
                 if target is None:
                     continue

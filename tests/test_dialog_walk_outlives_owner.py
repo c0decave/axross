@@ -63,6 +63,7 @@ _CHILD = textwrap.dedent(
         dlg = DiskUsageDialog([], parent=owner, snapshot_fn=stuck)
     # The worker is inside the blocking call (a remote list_dir / probe).
     assert entered.wait(5)
+    {before}
     dlg.reject()
     owner.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
@@ -72,8 +73,10 @@ _CHILD = textwrap.dedent(
 )
 
 
-def _run(which: str, after: str = "", stuck_for: float = 2.0) -> subprocess.CompletedProcess:
-    code = _CHILD.format(root=str(ROOT), which=which, after=after, stuck_for=stuck_for)
+def _run(which: str, after: str = "", stuck_for: float = 2.0,
+         before: str = "") -> subprocess.CompletedProcess:
+    code = _CHILD.format(root=str(ROOT), which=which, after=after, stuck_for=stuck_for,
+                         before=before)
     return subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True,
@@ -116,13 +119,26 @@ class WalkOutlivesOwnerTest(unittest.TestCase):
         self.check(_run("properties", after=after, stuck_for=0.5))
 
     def test_edge_a_walk_that_ends_in_time_is_not_handed_over(self) -> None:
+        # The walk is done and its result shown before the dialog closes:
+        # nothing is left running, nothing is handed over. (Closing never
+        # waits for a walk any more - ui/properties_dialog.py _stop_thread.)
+        before = textwrap.dedent(
+            """
+            import time
+            end = time.time() + 5
+            while dlg._thread is not None and time.time() < end:
+                app.processEvents()
+                time.sleep(0.01)
+            assert dlg._thread is None
+            """
+        ).replace("\\n", "\\n    ")
         after = textwrap.dedent(
             """
             from ui import thread_lifetime as TL
             assert not TL._DETACHED
             """
         ).replace("\\n", "\\n    ")
-        self.check(_run("properties", after=after, stuck_for=0.0))
+        self.check(_run("properties", after=after, stuck_for=0.0, before=before))
 
 
 if __name__ == "__main__":

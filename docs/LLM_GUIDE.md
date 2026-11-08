@@ -577,7 +577,7 @@ Duplicate Finder: scan a folder into the duplicate index, list scans and duplica
 
 #### `duplicates_scan` — read-only · long (1800 s) · stdio + http · *backend*
 
-Hash every file under a folder into the Duplicate Finder's index (the same index the GUI uses), skipping symlinks and the axross trash; files whose size and mtime did not change are not hashed again unless rehash. Returns {scan_id, root, backend_id, algorithm, files_indexed, status}. One progress notification per file; cancellable (rows indexed so far are kept). Run it before duplicates_groups.
+Hash every file under a folder into the Duplicate Finder's index (the same index the GUI uses), skipping symlinks, the axross trash and secret files (private keys, tokens); files whose size and mtime did not change are not hashed again unless rehash. Returns {scan_id, root, backend_id, algorithm, files_indexed, status}. One progress notification per file; cancellable (rows indexed so far are kept). Run it before duplicates_groups.
 
 Needs: `--mcp-tools duplicates`.
 
@@ -766,7 +766,7 @@ Needs: `--mcp-tools packer`.
 
 #### `pack` — mutating · long (1800 s) · stdio + http · *backend*
 
-Pack entries of folder into a new archive folder/archive_name + suffix. Folders are packed recursively; symbolic links are skipped and listed in skipped, never followed. The archive is written to a temporary file first and an existing archive is never overwritten: 'bundle.zip' becomes 'bundle (2).zip'. Only 7z takes a password (AES-256; encrypt_names also hides the file list); ZIP and tar refuse one. Single-file formats (gz, bz2, xz, zst) take exactly one file. Returns {path, format, files, folders, bytes_in, bytes_out, skipped, encrypted}. One progress notification per file; cancellable (nothing is left behind).
+Pack entries of folder into a new archive folder/archive_name + suffix. Folders are packed recursively; symbolic links are skipped and listed in skipped, never followed, and so are secret files (private keys, tokens) and folders that read_file refuses. The archive is written to a temporary file first and an existing archive is never overwritten: 'bundle.zip' becomes 'bundle (2).zip'. Only 7z takes a password (AES-256; encrypt_names also hides the file list); ZIP and tar refuse one. Single-file formats (gz, bz2, xz, zst) take exactly one file. Returns {path, format, files, folders, bytes_in, bytes_out, skipped, encrypted}. One progress notification per file; cancellable (nothing is left behind).
 
 Needs: `--mcp-tools packer` `--mcp-write` `--mcp-root DIR`.
 

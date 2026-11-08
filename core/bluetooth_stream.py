@@ -15,6 +15,11 @@ packets between a host and its controller. :class:`StreamParser` follows
   remote control), HID, ATT over BR/EDR, BNEP;
 * ACL fragments reassembled per handle into L2CAP frames.
 
+A connection handle is the controller's own number: a btmon capture of
+two controllers (hci0 and hci1) has a link 0x0040 on each. Everything is
+kept by (controller, handle) - the controller index of btmon's records,
+0 in the formats that carry one controller only.
+
 Each (link, channel, direction) is a :class:`Stream` with its frames,
 bytes and a per-second rate; :func:`rate_series` makes the curve a graph
 or a visualizer shows. For ATT, the stream also counts reads, writes and
@@ -62,6 +67,12 @@ class Link:
     start: float
     end: float | None = None
     role: str = ""
+    #: the controller's index (btmon: hci0 = 0, hci1 = 1); 0 without one
+    controller: int = 0
+
+    @property
+    def key(self) -> tuple:
+        return (self.controller, self.handle)
 
 
 @dataclass
@@ -83,6 +94,8 @@ class Stream:
     samples: list = field(default_factory=list)
     #: ATT: {"read": n, "write": n, "notify": n, ...}
     att: dict = field(default_factory=dict)
+    #: the controller of its link (see :attr:`Link.controller`)
+    controller: int = 0
 
     def note(self, t: float, size: int) -> None:
         self.frames += 1
@@ -93,7 +106,7 @@ class Stream:
 
     @property
     def key(self) -> tuple:
-        return (self.handle, self.cid, self.direction)
+        return (self.controller, self.handle, self.cid, self.direction)
 
     @property
     def rate(self) -> float:
@@ -103,14 +116,15 @@ class Stream:
         return self.bytes / (self.last - self.first)
 
 
-def read_btsnoop(path) -> tuple[int, list[tuple[float, bool, bytes]]]:
-    """A btsnoop file -> (datalink, [(unix time, received, H4 packet)]).
-    The packets are H4 (type byte first) whatever the file's datalink."""
+def read_btsnoop(path) -> tuple[int, list[tuple[float, bool, bytes, int]]]:
+    """A btsnoop file -> (datalink, [(unix time, received, H4 packet,
+    controller)]). The packets are H4 (type byte first) whatever the file's
+    datalink; the controller is btmon's index (0 in H1 / H4 files)."""
     data = Path(path).read_bytes()
     return parse_btsnoop(data)
 
 
-def parse_btsnoop(data: bytes) -> tuple[int, list[tuple[float, bool, bytes]]]:
+def parse_btsnoop(data: bytes) -> tuple[int, list[tuple[float, bool, bytes, int]]]:
     if data[:8] != BTSNOOP_MAGIC or len(data) < 16:
         raise ValueError("not a btsnoop file")
     version, datalink = struct.unpack(">II", data[8:16])
@@ -126,28 +140,31 @@ def parse_btsnoop(data: bytes) -> tuple[int, list[tuple[float, bool, bytes]]]:
         if len(body) < incl:
             break
         t = (ts - _EPOCH_DELTA_US) / 1e6
+        controller = 0
         if datalink == DATALINK_H4:
             packet, received = body, bool(flags & 1)
         elif datalink == DATALINK_H1:
             received = bool(flags & 1)
             kind = (0x04 if received else 0x01) if flags & 2 else 0x02
             packet = bytes([kind]) + body
-        else:  # Linux monitor: the opcode in the upper 16 bits of flags
-            opcode = flags & 0xFFFF
+        else:  # Linux monitor: the controller index in the upper 16 bits, the opcode below
+            opcode, controller = flags & 0xFFFF, flags >> 16
             mapping = {2: (0x01, False), 3: (0x04, True), 4: (0x02, False), 5: (0x02, True),
                        6: (0x03, False), 7: (0x03, True), 18: (0x05, False), 19: (0x05, True)}
             if opcode not in mapping:
                 continue
             kind, received = mapping[opcode]
             packet = bytes([kind]) + body
-        out.append((t, received, packet))
+        out.append((t, received, packet, controller))
     return datalink, out
 
 
 def write_btsnoop(path, packets) -> None:
-    """[(unix time, received, H4 packet)] -> a btsnoop file (datalink H4)."""
+    """[(unix time, received, H4 packet)] -> a btsnoop file (datalink H4,
+    one controller: a packet's controller index, when it has one, is not
+    kept)."""
     parts = [BTSNOOP_MAGIC, struct.pack(">II", 1, DATALINK_H4)]
-    for t, received, packet in packets:
+    for t, received, packet, *_controller in packets:
         kind = packet[0] if packet else 0
         flags = (1 if received else 0) | (2 if kind in (0x01, 0x04) else 0)
         parts.append(struct.pack(">IIIIq", len(packet), len(packet), flags, 0,
@@ -164,77 +181,84 @@ class StreamParser:
     """Feed H4 packets in time order; read :attr:`links` and :attr:`streams`."""
 
     def __init__(self) -> None:
-        self.links: dict[int, Link] = {}
+        #: the open links by (controller, handle) - :attr:`Link.key`
+        self.links: dict[tuple, Link] = {}
         #: links that ended, oldest first
         self.closed: list[Link] = []
+        #: by (controller, handle, cid, direction) - :attr:`Stream.key`
         self.streams: dict[tuple, Stream] = {}
-        #: handle -> {cid: (psm, protocol)} of the dynamic channels
-        self._channels: dict[int, dict[int, tuple[int, str]]] = {}
-        #: (handle, signalling id) -> (psm, local or remote source cid, direction)
+        #: (controller, handle) -> {cid: (psm, protocol)} of the dynamic channels
+        self._channels: dict[tuple, dict[int, tuple[int, str]]] = {}
+        #: (controller, handle, signalling id) -> (psm, source cid, direction)
         self._pending: dict[tuple, tuple[int, int, str]] = {}
-        #: (handle, direction) -> [expected length, bytes so far]
+        #: (controller, handle, direction) -> [expected length, bytes so far]
         self._partial: dict[tuple, list] = {}
         self.packets = 0
         self.errors = 0
 
     # -- input ---------------------------------------------------------------------------
 
-    def feed(self, t: float, received: bool, packet: bytes) -> None:
+    def feed(self, t: float, received: bool, packet: bytes, controller: int = 0) -> None:
+        """One H4 *packet* between the host and *controller*."""
         self.packets += 1
         if not packet:
             return
         try:
             if packet[0] == 0x04 and len(packet) >= 3:
-                self._event(t, packet[1], packet[3:3 + packet[2]])
+                self._event(t, controller, packet[1], packet[3:3 + packet[2]])
             elif packet[0] == 0x02 and len(packet) >= 5:
-                self._acl(t, received, packet[1:])
+                self._acl(t, controller, received, packet[1:])
         except (struct.error, IndexError, ValueError):
             self.errors += 1  # a broken packet is counted, not fatal
 
     def feed_all(self, packets) -> StreamParser:
-        for t, received, packet in packets:
-            self.feed(t, received, packet)
+        """``(t, received, packet)`` or ``(t, received, packet, controller)``
+        tuples, as :func:`parse_btsnoop` gives them."""
+        for t, received, packet, *controller in packets:
+            self.feed(t, received, packet, *controller[:1])
         return self
 
     # -- links ---------------------------------------------------------------------------
 
-    def _event(self, t: float, code: int, body: bytes) -> None:
+    def _event(self, t: float, controller: int, code: int, body: bytes) -> None:
         if code == 0x03 and len(body) >= 11 and body[0] == 0:  # Connection Complete
             handle = struct.unpack("<H", body[1:3])[0] & 0x0FFF
             if body[9] == 0x01:  # ACL (not SCO)
-                self._open(Link(handle, _address(body[3:9]), "Classic", t))
+                self._open(Link(handle, _address(body[3:9]), "Classic", t,
+                                controller=controller))
         elif code == 0x3E and body:  # LE Meta
             sub = body[0]
             if sub in (0x01, 0x0A) and len(body) >= 12 and body[1] == 0:
                 handle = struct.unpack("<H", body[2:4])[0] & 0x0FFF
                 role = "central" if body[4] == 0 else "peripheral"
-                self._open(Link(handle, _address(body[6:12]), "LE", t, role=role))
+                self._open(Link(handle, _address(body[6:12]), "LE", t, role=role,
+                                controller=controller))
         elif code == 0x05 and len(body) >= 4 and body[0] == 0:  # Disconnection Complete
-            handle = struct.unpack("<H", body[1:3])[0] & 0x0FFF
-            link = self.links.pop(handle, None)
+            link_key = (controller, struct.unpack("<H", body[1:3])[0] & 0x0FFF)
+            link = self.links.pop(link_key, None)
             if link is not None:
                 link.end = t
                 self.closed.append(link)
-            self._channels.pop(handle, None)
-            for key in [k for k in self._partial if k[0] == handle]:
+            self._channels.pop(link_key, None)
+            for key in [k for k in self._partial if k[:2] == link_key]:
                 del self._partial[key]
 
     def _open(self, link: Link) -> None:
-        old = self.links.pop(link.handle, None)
+        old = self.links.pop(link.key, None)
         if old is not None:
             old.end = link.start
             self.closed.append(old)
-        self.links[link.handle] = link
-        self._channels[link.handle] = {}
+        self.links[link.key] = link
+        self._channels[link.key] = {}
 
     # -- ACL and L2CAP ---------------------------------------------------------------------
 
-    def _acl(self, t: float, received: bool, data: bytes) -> None:
+    def _acl(self, t: float, controller: int, received: bool, data: bytes) -> None:
         word, length = struct.unpack("<HH", data[:4])
-        handle, boundary = word & 0x0FFF, (word >> 12) & 0x3
+        link_key, boundary = (controller, word & 0x0FFF), (word >> 12) & 0x3
         payload = data[4:4 + length]
         direction = "in" if received else "out"
-        key = (handle, direction)
+        key = (*link_key, direction)
         if boundary == 0x1:  # a continuing fragment
             part = self._partial.get(key)
             if part is None:
@@ -249,24 +273,26 @@ class StreamParser:
                                          bytearray(payload)]
         if len(part[1]) >= part[0]:
             del self._partial[key]
-            self._frame(t, handle, direction, bytes(part[1][:part[0]]))
+            self._frame(t, link_key, direction, bytes(part[1][:part[0]]))
 
-    def _frame(self, t: float, handle: int, direction: str, frame: bytes) -> None:
+    def _frame(self, t: float, link_key: tuple, direction: str, frame: bytes) -> None:
         length, cid = struct.unpack("<HH", frame[:4])
         body = frame[4:4 + length]
-        link = self.links.get(handle)
+        link = self.links.get(link_key)
         if cid in (0x0001, 0x0005):
-            self._signalling(handle, direction, cid, body)
+            self._signalling(link_key, direction, cid, body)
         protocol = FIXED_CIDS.get(cid)
         psm = None
         if protocol is None:
-            psm, protocol = self._channels.get(handle, {}).get(
+            psm, protocol = self._channels.get(link_key, {}).get(
                 cid, (None, f"Dynamic channel 0x{cid:04X}"))
-        key = (handle, cid, direction)
+        key = (*link_key, cid, direction)
         stream = self.streams.get(key)
         if stream is None:
+            controller, handle = link_key
             stream = self.streams[key] = Stream(handle, cid, direction, protocol,
-                                                address=link.address if link else "", psm=psm)
+                                                address=link.address if link else "", psm=psm,
+                                                controller=controller)
         elif psm is not None and stream.psm is None:
             stream.psm, stream.protocol = psm, protocol
         stream.note(t, len(body))
@@ -274,7 +300,7 @@ class StreamParser:
             kind = ATT_KINDS.get(body[0], "other")
             stream.att[kind] = stream.att.get(kind, 0) + 1
 
-    def _signalling(self, handle: int, direction: str, cid: int, body: bytes) -> None:
+    def _signalling(self, link_key: tuple, direction: str, cid: int, body: bytes) -> None:
         """Connection requests and responses: which dynamic channel carries
         which PSM. The CID a side names in its own request or response is
         the one the *other* side sends to."""
@@ -285,31 +311,32 @@ class StreamParser:
             i += 4 + length
             if cid == 0x0001 and code == 0x02 and len(data) >= 4:  # Connection Request
                 psm, scid = struct.unpack("<HH", data[:4])
-                self._pending[(handle, ident)] = (psm, scid, direction)
+                self._pending[(*link_key, ident)] = (psm, scid, direction)
             elif cid == 0x0001 and code == 0x03 and len(data) >= 8:  # Connection Response
                 dcid, scid, result = struct.unpack("<HHH", data[:6])
-                self._link_channel(handle, ident, dcid, result)
+                self._link_channel(link_key, ident, dcid, result)
             elif cid == 0x0005 and code == 0x14 and len(data) >= 4:  # LE Credit Based Conn.
                 psm, scid = struct.unpack("<HH", data[:4])
-                self._pending[(handle, ident)] = (psm, scid, direction)
+                self._pending[(*link_key, ident)] = (psm, scid, direction)
             elif cid == 0x0005 and code == 0x15 and len(data) >= 10:  # its response
                 dcid = struct.unpack("<H", data[:2])[0]
                 result = struct.unpack("<H", data[8:10])[0]
-                self._link_channel(handle, ident, dcid, result)
+                self._link_channel(link_key, ident, dcid, result)
 
-    def _link_channel(self, handle: int, ident: int, responder_cid: int, result: int) -> None:
-        pending = self._pending.pop((handle, ident), None)
+    def _link_channel(self, link_key: tuple, ident: int, responder_cid: int,
+                      result: int) -> None:
+        pending = self._pending.pop((*link_key, ident), None)
         if pending is None or result != 0:
             return
         psm, requester_cid, _direction = pending
         protocol = PSMS.get(psm, f"PSM 0x{psm:04X}")
-        channels = self._channels.setdefault(handle, {})
+        channels = self._channels.setdefault(link_key, {})
         # frames to the requester carry its cid, frames to the responder carry the other
         channels[requester_cid] = (psm, protocol)
         channels[responder_cid] = (psm, protocol)
         for stream in self.streams.values():
-            if stream.handle == handle and stream.cid in (requester_cid, responder_cid) and \
-                    stream.psm is None:
+            if (stream.controller, stream.handle) == link_key and \
+                    stream.cid in (requester_cid, responder_cid) and stream.psm is None:
                 stream.psm, stream.protocol = psm, protocol
 
     # -- reading -------------------------------------------------------------------------
@@ -319,7 +346,8 @@ class StreamParser:
 
     def sorted_streams(self) -> list[Stream]:
         """Busiest first."""
-        return sorted(self.streams.values(), key=lambda s: (-s.bytes, s.handle, s.cid))
+        return sorted(self.streams.values(),
+                      key=lambda s: (-s.bytes, s.controller, s.handle, s.cid))
 
 
 #: rate_series makes at most this many buckets: a capture whose times span

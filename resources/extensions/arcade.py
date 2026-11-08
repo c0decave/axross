@@ -64,7 +64,16 @@ def activate(api):
 
 
 def deactivate(api):
+    """Switched off: the window closes and goes - it is a child of the main
+    window, and a close alone (no WA_DeleteOnClose) kept it, its views and
+    its sound alive until axross ended, one more on every switch on/off."""
     global _WINDOW
     window, _WINDOW = _WINDOW, None
-    if window is not None and not sip.isdeleted(window):
-        window.close()
+    if window is None or sip.isdeleted(window):
+        return
+    window.close()
+    audio = getattr(window, "audio", None)
+    close_audio = getattr(audio, "close", None)
+    if callable(close_audio):
+        close_audio()                       # off the Audio Mixer's notifier
+    window.deleteLater()

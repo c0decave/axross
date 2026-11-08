@@ -94,6 +94,10 @@ class NetworkSearchDialog(QDialog):
         self._host_rows: dict[str, int] = {}
         self._build()
         add_close_corner(self)
+        # F1: the handbook (its contents) - the main window's F1 does not reach this window.
+        from ui.handbook import install_help_key
+
+        install_help_key(self)
 
     # -- layout ----------------------------------------------------------------------------
 
@@ -410,8 +414,10 @@ class NetworkSearchDialog(QDialog):
         super().reject()
 
     def _stop_and_forget(self) -> None:
+        # The cancel flag only - never a join on the GUI thread: a host
+        # that does not answer held the window for the connect timeout,
+        # 5 s here and 5 s more in reject() after closeEvent(). The sweep
+        # stops at its next check and _on_finished (GuiCall, safe for a
+        # window deleted meanwhile) cleans up.
         self.cancel()
-        thread = self._thread
-        if thread is not None:
-            thread.join(timeout=5.0)
         self.password_edit.clear()

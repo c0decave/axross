@@ -178,8 +178,11 @@ def run_off_gui(fn: Callable[[], T], *, status: Callable[[str], None] | None = N
     started = time.monotonic()
     hold = _close_hold(app)
     held = hold.enter()
-    worker.start()
     try:
+        # In here: a thread that cannot start ("can't start new thread")
+        # left the close hold entered, and every window refused its close
+        # for the rest of the session.
+        worker.start()
         while worker.is_alive() and "value" not in outcome and "error" not in outcome:
             loop.exec(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
     finally:
@@ -192,7 +195,8 @@ def run_off_gui(fn: Callable[[], T], *, status: Callable[[str], None] | None = N
                 QApplication.restoreOverrideCursor()
             if status is not None and text:
                 status("")
-        worker.join(timeout=1.0)
+        if worker.ident is not None:  # started (join() raises on one that never was)
+            worker.join(timeout=1.0)
     log.debug("off the GUI thread for %.0f ms", (time.monotonic() - started) * 1000)
     if "error" in outcome:
         raise outcome["error"]

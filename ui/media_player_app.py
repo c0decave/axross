@@ -79,21 +79,33 @@ def build(app, args: list[str]):
 
 
 def add_arguments(panel, args: list[str]) -> int:
-    """Add what the command line named; play the first. Returns how many."""
+    """Add what the command line named, in its order; play the first.
+    Returns how many. Before, every stream URL went in ahead of every file,
+    so ``song.mp3 https://radio`` played the radio first."""
     from resources.extensions import media_player as MP
 
     first = None
     count = 0
-    files = [a for a in args if not MP.is_stream(a) and not a.startswith("-")]
+    files: list[str] = []  # the local paths since the last stream, collected together
+
+    def add_files() -> None:
+        nonlocal first, count
+        if files:
+            found, skipped, truncated = MP.collect_local(files)
+            item = panel.add_collected(found, skipped, truncated)
+            count += len(found)
+            first = first or item
+            files.clear()
+
     for arg in args:
-        if MP.is_stream(arg) and panel.add_stream(arg):
-            count += 1
-            first = first or panel.playlist.item(panel.playlist.count() - 1)
-    if files:
-        found, skipped, truncated = MP.collect_local(files)
-        item = panel.add_collected(found, skipped, truncated)
-        count += len(found)
-        first = first or item
+        if MP.is_stream(arg):
+            add_files()
+            if panel.add_stream(arg):
+                count += 1
+                first = first or panel.playlist.item(panel.playlist.count() - 1)
+        elif not arg.startswith("-"):
+            files.append(arg)
+    add_files()
     if first is not None:
         panel.play_item(first)
     return count

@@ -304,7 +304,9 @@ def test_happy_a_reissued_manifest_is_found_and_updated(release, tmp_path):
     done = P.update(rel, **_opts(release, tmp_path))
     assert done == [ALPHA_FIXED]                                  # shared is the same file: kept
     folder = tmp_path / VERSION
-    assert not (folder / ALPHA).exists()                          # the old blob went
+    assert (folder / ALPHA).is_dir()                              # the running session's, until the restart
+    assert P.prune(VERSION, tmp_path) == [f"{VERSION}/{ALPHA}"]  # the next start removes it
+    assert not (folder / ALPHA).exists()
     assert P.check_reissued(VERSION, **_opts(release, tmp_path))[1] == []
     path = []
     P.activate(VERSION, tmp_path, path)
@@ -326,7 +328,16 @@ def test_happy_a_blob_reissued_under_the_same_name_is_replaced(release, tmp_path
     rel, stale = P.check_reissued(VERSION, **_opts(release, tmp_path))
     assert stale == ["extra:a"]
     assert P.update(rel, **_opts(release, tmp_path)) == [ALPHA]
-    assert "fixed" in (tmp_path / VERSION / ALPHA / "alpha_pk" / "__init__.py").read_text()
+    # Unpacked beside the old folder (which the running session imports
+    # from); the next start uses the new one and removes the old.
+    assert "alpha" in (tmp_path / VERSION / ALPHA / "alpha_pk" / "__init__.py").read_text()
+    path = []
+    P.activate(VERSION, tmp_path, path)
+    used = next(Path(p) for p in path if Path(p).name.startswith(ALPHA))
+    assert used.name != ALPHA and "fixed" in (used / "alpha_pk" / "__init__.py").read_text()
+    P.prune(VERSION, tmp_path)
+    assert not (tmp_path / VERSION / ALPHA).exists() and used.is_dir()
+    assert P.check_reissued(VERSION, **_opts(release, tmp_path))[1] == []
 
 
 def test_edge_no_reissue_and_no_packs_offer_nothing(release, tmp_path):

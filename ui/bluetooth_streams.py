@@ -220,6 +220,7 @@ class StreamsDialog(QDialog):
         self._mtime = None
         self._reading = False
         self.visual_window = None
+        self._left = False  # see _leave
 
         layout = QVBoxLayout(self)
         top = QHBoxLayout()
@@ -375,7 +376,7 @@ class StreamsDialog(QDialog):
 
     def _select_link(self, link) -> None:
         for row, other in enumerate(self._links, start=1):
-            if (other.handle, other.start) == (link.handle, link.start):
+            if (other.key, other.start) == (link.key, link.start):
                 self.links.selectRow(row)
                 return
 
@@ -387,8 +388,8 @@ class StreamsDialog(QDialog):
         if link is None:
             return streams
         end = link.end if link.end is not None else float("inf")
-        return [s for s in streams if s.handle == link.handle and s.first is not None
-                and link.start <= s.first <= end]
+        return [s for s in streams if (s.controller, s.handle) == link.key
+                and s.first is not None and link.start <= s.first <= end]
 
     def _fill_streams(self) -> None:
         self._streams = self.shown_streams()
@@ -417,7 +418,7 @@ class StreamsDialog(QDialog):
         if stream is None or self.parsed is None:
             self.graph.set_series([])
             return
-        other = self.parsed.streams.get((stream.handle, stream.cid,
+        other = self.parsed.streams.get((stream.controller, stream.handle, stream.cid,
                                          "in" if stream.direction == "out" else "out"))
         pair = [s for s in (stream, other) if s is not None and s.samples]
         since = min(s.samples[0][0] for s in pair)
@@ -454,13 +455,27 @@ class StreamsDialog(QDialog):
         return window
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        self._leave()
+        super().closeEvent(event)
+
+    def done(self, result: int) -> None:  # noqa: D401 - Qt override
+        # reject() (Escape, the corner's [x]) ends here without a closeEvent
+        self._leave()
+        super().done(result)
+
+    def _leave(self) -> None:
+        """Once however the dialog is left (closeEvent, or reject() from
+        Escape and the corner's [x], which sends none): following the
+        capture stops and the visualizer window closes."""
+        if self._left:
+            return
+        self._left = True
         self._follow.stop()
         if self.visual_window is not None:
             try:
                 self.visual_window.close()
             except RuntimeError:
                 pass
-        super().closeEvent(event)
 
 
 __all__ = ["RateGraph", "StreamsDialog", "TrafficEngine", "load_capture", "ops_text",

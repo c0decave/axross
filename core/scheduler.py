@@ -40,6 +40,8 @@ log = logging.getLogger(__name__)
 #: Consecutive failures after which a job disables itself. A schedule
 #: that fails every time is not a schedule, it is a retry loop.
 MAX_CONSECUTIVE_FAILURES = 10
+#: The shortest interval the Scheduled Jobs window offers and accepts.
+MIN_INTERVAL_S = 300
 
 #: Wall-clock limit of one scheduled script run. Generous on purpose (a
 #: nightly mirror may take hours); it exists so a hung script ends as a
@@ -114,6 +116,35 @@ def due_jobs(jobs: list[Job], *, now: datetime) -> list[Job]:
         if when is not None and when <= now:
             due.append(job)
     return due
+
+
+def planned_start(job: Job, *, now: datetime) -> datetime:
+    """The time a run started at *now* stands for, recorded as its
+    ``last_run_at``: the slot it was due at, so "every 1 h" stays on the
+    hour instead of drifting by each run's length (and the tick's delay).
+    A slot missed by a whole interval or more (the machine was off) is
+    not caught up on: the run counts from *now*."""
+    when = next_run_at(job, now=now)
+    if when is None or when > now:
+        return now
+    try:
+        late = now - when >= timedelta(seconds=job.interval_s)
+    except OverflowError:
+        late = False
+    return now if late else when
+
+
+def reenabled(job: Job) -> Job:
+    """*job* switched on by the user: its failure count starts over (one
+    more transient failure must not disable it again at once), and the
+    "disabled after N consecutive failures" note leaves its detail."""
+    detail = job.last_detail
+    marker = detail.rfind(" — disabled after ")
+    if marker >= 0 and detail.endswith(" consecutive failures"):
+        detail = detail[:marker]
+    elif detail.startswith("disabled after ") and detail.endswith(" consecutive failures"):
+        detail = ""
+    return replace(job, enabled=True, consecutive_failures=0, last_detail=detail)
 
 
 def record_result(job: Job, *, ok: bool, at: datetime, detail: str = "") -> Job:
@@ -358,11 +389,14 @@ def _parse_dt(value) -> datetime | None:
 
 __all__ = [
     "MAX_CONSECUTIVE_FAILURES",
+    "MIN_INTERVAL_S",
     "Job",
     "JobStore",
     "due_jobs",
     "next_run_at",
+    "planned_start",
     "record_result",
+    "reenabled",
     "run_job",
     "run_script_job",
     "script_target",

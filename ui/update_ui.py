@@ -256,11 +256,20 @@ class UpdateController(QObject):
     @staticmethod
     def _finished_message(result: SU.Installed) -> str:
         if not result.replaced:
-            return result.how_to_finish
-        return tr("axross {version} is installed in {path} and takes effect at the next "
-                  "start. The old version is kept as {previous}.").format(
-                      version=result.version, path=result.path,
-                      previous=result.previous.name if result.previous else "-")
+            message = result.how_to_finish
+        else:
+            message = tr("axross {version} is installed in {path} and takes effect at the next "
+                         "start. The old version is kept as {previous}.").format(
+                             version=result.version, path=result.path,
+                             previous=result.previous.name if result.previous else "-")
+        dropped = getattr(result, "dropped_units", ())
+        if dropped:
+            # A unit the new release dropped or renamed is not brought along:
+            # the user learns it now, not from a feature missing after the restart.
+            message += "\n" + tr("These packs are not part of axross {version} and were not "
+                                  "brought along: {units}.").format(version=result.version,
+                                                                    units=", ".join(dropped))
+        return message
 
     # -- the answers ------------------------------------------------------------------
     def skip_version(self) -> None:

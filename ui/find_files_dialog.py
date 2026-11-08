@@ -198,6 +198,10 @@ class FindFilesDialog(QDialog):
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
         add_close_corner(self)
+        # F1: its section of the handbook - the main window's F1 does not reach this window.
+        from ui.handbook import install_help_key
+
+        install_help_key(self, "find-files")
         top = QHBoxLayout()
         root.addLayout(top)
 

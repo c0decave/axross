@@ -86,7 +86,10 @@ def test_happy_the_sandbox_mounts_existing_protected_places_read_only(home):
     assert mounts[str(home)] is True
     assert mounts[str(home / ".bashrc")] is False
     assert mounts[str(home / ".ssh")] is False
-    assert str(home / ".gitconfig") not in mounts  # missing: nothing to mount
+    # Missing files get no placeholder: the engine would create an empty one
+    # in the real home (a crash leaving ~/.bash_profile hides ~/.profile);
+    # the worker's refusal guards them, missing folders get a read-only tmpfs.
+    assert str(home / ".gitconfig") not in mounts  # a missing file: no host placeholder
     order = [p for p, _rw in AS._agent_mounts(AS.SandboxProfile(name="t"), str(home), True)]
     assert order.index(str(home)) < order.index(str(home / ".bashrc"))  # parents first
 

@@ -900,8 +900,9 @@ Scripts: `axross.metadata`, `axross.remove_metadata`,
   **Log**. Each flashes amber when something happens off-screen
   (new transfer state, shell output, log line). Click clears the
   indicator.
-- Right-click a transfer for **Cancel**, **Retry**, **Open
-  destination folder**.
+- Right-click a transfer for **Cancel** (this job), **Retry** (a
+  failed or cancelled job) and **Open destination folder** (the pane on
+  its connection shows the folder, the file selected).
 - The Log dock filters by level and by area: *Areas* next to the level
   is a list of the logging areas to tick (an area takes its sub-areas;
   *Other* is anything outside them, *All Areas* the default). Either
@@ -936,6 +937,9 @@ source of truth across all three entry points:
   function with its docstring.
 - **Headless** — ``axross --script myscript.py`` runs your Python
   in the same namespace; ideal for cron / CI / one-shot batching.
+  Words after the file are the script's ``sys.argv[1:]``
+  (``axross --script mirror.py /srv/data``); the paranoid security
+  mode, also when chosen in *Settings*, refuses it.
 - **MCP** — when ``--mcp-allow-scripts`` is set, the REPL surface
   is also reachable via MCP tool calls.
 
@@ -1240,9 +1244,17 @@ field).
 own settings and data (`~/.config/axross`, `~/.local/share/axross`,
 `~/.local/state/axross` - its rights, its MCP servers), shell start files
 (`~/.bashrc`, `~/.profile`, `~/.zshrc`, …), `~/.config/autostart`,
-`~/.config/systemd`, `~/.ssh` and `~/.gnupg`: changed, each would run
-code or widen the agent's rights without a question. A folder holding one
-of them is not deleted or moved either.
+`~/.config/systemd`, `~/.ssh` and `~/.gnupg`, commands on PATH
+(`~/.local/bin`) and Python start hooks (`~/.local/lib`), Git, pip and npm
+settings, editor and window-manager start files, and other LLM clients'
+settings and MCP servers (`~/.claude`, Claude Desktop, Cursor, VS Code),
+in their default and their XDG locations: changed, each would run code
+or widen the agent's rights without a question. A folder holding one of
+them is not deleted or moved either, and a symlink does not lead around
+them. In the sandbox the existing ones, and the missing folders among
+them, are mounted read-only. The agent also does not read axross's own
+tokens or private SSH and GnuPG keys (`--mcp-allow-secret-reads` lifts
+that for the MCP server).
 
 **Files read-only** (in the tab's top row, and for every tab in Agent
 Settings > Access): the agent reads files but changes none - no

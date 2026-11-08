@@ -710,7 +710,7 @@ class SystemMixer(QObject):
     # ---------------------------------------------------------- lifecycle
     def start(self) -> None:
         """Check pactl and the sound server, list everything, then follow
-        ``pactl subscribe``. Again after "unavailable" it is a retry."""
+        ``pactl subscribe``. Again after "unavailable" or "too old" it is a retry."""
         if self._state in (STATE_STOPPED, STATE_PROBING, STATE_READY):
             return
         found = shutil.which(self._program_name, path=os.environ.get("PATH"))
@@ -741,9 +741,11 @@ class SystemMixer(QObject):
             proc.deleteLater()
 
     def refresh(self) -> None:
-        """List everything again (or retry start() when not ready)."""
+        """List everything again (or retry start() when not ready). Also
+        after "too old": Try Again checks pactl's version again (pactl was
+        upgraded meanwhile) - before, it did nothing in that state."""
         if self._state != STATE_READY:
-            if self._state in (STATE_IDLE, STATE_UNAVAILABLE):
+            if self._state in (STATE_IDLE, STATE_UNAVAILABLE, STATE_TOO_OLD):
                 self.start()
             return
         self._refresh_now()

@@ -17,6 +17,7 @@ import shutil
 import stat as stat_module
 import tempfile
 import uuid
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from core.path_policy import hidden_sibling_name, safe_join
@@ -197,23 +198,68 @@ def _exists_true(backend, path: str) -> bool:
     return backend.exists(path) is True
 
 
-# Writers that buffer locally and replace the object in ONE commit at close:
-# s3transfer aborts a failed multipart upload (tasks.py, abort_multipart_
-# upload cleanup), Azure Blob commits its block list as the last step. A
-# failed upload therefore leaves the old object untouched. Deliberately
-# narrower than atomic_io._NATIVE_ATOMIC_PROTOCOLS: Azure Files writes ranges
-# as it goes, IMAP "overwrites" by appending a new message.
-_COMMIT_ON_CLOSE_PROTOCOLS = frozenset({"s3", "azure_blob"})
+@dataclass(frozen=True)
+class WriteTraits:
+    """What writes and sizes of a backend really do. The transfer engine's
+    generic guards - the rollback snapshot, the alias probe, the size checks,
+    a resume by append - consult it instead of assuming a file system."""
+
+    #: The writer buffers locally and replaces the object in ONE commit at
+    #: close: s3transfer aborts a failed multipart upload (tasks.py,
+    #: abort_multipart_upload cleanup), Azure Blob commits its block list as
+    #: the last step. A failed upload leaves the old object untouched.
+    commits_on_close: bool = False
+    #: A write to an existing name adds an entry and replaces nothing (IMAP
+    #: APPEND, an EWS save): there is nothing to snapshot, roll back or
+    #: alias, and a "restore" or probe would add one more message.
+    append_only: bool = False
+    #: open_write(append=True) appends in place. False: it downloads the
+    #: file and uploads it again whole (bounded at 256 MiB), so a partial
+    #: kept for a resume saves nothing and above the bound blocks the name.
+    real_append: bool = True
+    #: stat().size is the number of bytes a read yields. False for the mail
+    #: stores: Exchange reports the EWS store size and the copy is the MIME
+    #: text; IMAP servers (Exchange's among them) estimate RFC822.SIZE.
+    exact_size: bool = True
 
 
-def _commits_on_close(backend) -> bool:
+#: By registry protocol id; a backend not named here has the defaults.
+#: Narrower than atomic_io._NATIVE_ATOMIC_PROTOCOLS: Azure Files writes ranges
+#: as it goes. (AZURE_FILES_CAPS in core.backend_registry still declares
+#: append_native - its append is the read-modify-write described above.)
+_RMW_APPEND = WriteTraits(real_append=False)
+_WRITE_TRAITS = {
+    "s3": WriteTraits(commits_on_close=True, real_append=False),
+    "azure_blob": WriteTraits(commits_on_close=True, real_append=False),
+    "azure_files": _RMW_APPEND,
+    "dropbox": _RMW_APPEND,
+    "gdrive": _RMW_APPEND,
+    "onedrive": _RMW_APPEND,
+    "sharepoint": _RMW_APPEND,
+    "webdav": _RMW_APPEND,
+    "scp": _RMW_APPEND,
+    "rsync": _RMW_APPEND,
+    "git": _RMW_APPEND,
+    "imap": WriteTraits(append_only=True, real_append=False, exact_size=False),
+    "exchange": WriteTraits(append_only=True, real_append=False, exact_size=False),
+}
+_DEFAULT_TRAITS = WriteTraits()
+
+
+def write_traits(backend) -> WriteTraits:
+    """The :class:`WriteTraits` of *backend*, by its registry entry
+    (matched by class name, as the registry is everywhere)."""
     from core import backend_registry
 
     name = type(backend).__name__
-    return any(
-        info.class_name == name and info.protocol_id in _COMMIT_ON_CLOSE_PROTOCOLS
-        for info in backend_registry.all_backends()
-    )
+    for info in backend_registry.all_backends():
+        if info.class_name == name and info.protocol_id in _WRITE_TRAITS:
+            return _WRITE_TRAITS[info.protocol_id]
+    return _DEFAULT_TRAITS
+
+
+def _commits_on_close(backend) -> bool:
+    return write_traits(backend).commits_on_close
 
 
 def _snapshot_direct_destination(backend, dst: str):
@@ -233,9 +279,11 @@ def _snapshot_direct_destination(backend, dst: str):
         ) from exc
     if not existed:
         return False, None
-    if _commits_on_close(backend):
-        # Nothing is replaced before the writer's close succeeds, so a
-        # failed upload leaves the old object — no copy needed.
+    traits = write_traits(backend)
+    if traits.commits_on_close or traits.append_only:
+        # Nothing is replaced before the writer's close succeeds (or ever,
+        # on a store that only adds), so a failed upload leaves the old
+        # object — no copy needed.
         return True, None
     if not hasattr(backend, "open_read"):
         raise OSError(
@@ -326,6 +374,10 @@ def _rollback_direct_destination(
     destination_existed: bool,
     destination_snapshot,
 ) -> None:
+    if write_traits(backend).append_only:
+        # A failed APPEND adds nothing, and the name may be another
+        # message's: removing "the partial" by it deleted that one.
+        return
     if destination_existed and destination_snapshot is not None:
         _restore_direct_destination(backend, dst, destination_snapshot)
         return
@@ -345,8 +397,12 @@ def _is_destination_exists_error(exc: OSError) -> bool:
 def source_size(backend, path: str) -> int | None:
     """The size *backend* reports for *path* now, to tell afterwards whether
     it changed while it was copied. ``None`` when it cannot tell (no stat,
-    a failed one) and for a symlink, whose own size is the length of its
-    target's path."""
+    a failed one), for a symlink, whose own size is the length of its
+    target's path, and for a backend whose sizes are estimates (the mail
+    stores, :class:`WriteTraits`): a copy of their bytes is not that long,
+    and every move of one was refused as a short copy."""
+    if not write_traits(backend).exact_size:
+        return None
     try:
         item = backend.stat(path)
     except Exception as exc:  # noqa: BLE001 - no size: nothing to compare later
@@ -506,9 +562,11 @@ def stream_copy_between_backends(
         )
 
     transferred = 0
+    opened = False
     try:
         with src_backend.open_read(src) as rf:
             wf = dst_backend.open_write(target)
+            opened = True
             completed = False
             try:
                 while True:
@@ -525,7 +583,7 @@ def stream_copy_between_backends(
         return transferred
     except BaseException:
         _cleanup_temp_destination(dst_backend, temp_path)
-        if temp_path is None:
+        if temp_path is None and opened:  # a writer never opened changed nothing
             _rollback_direct_destination(
                 dst_backend,
                 dst,

@@ -69,6 +69,7 @@ class RockfallView(AC.ArcadeView):
     TICK_MS = TICK_MS
     JINGLE = "intro-rockfall"
     DIRECTION_KEYS = frozenset(DIRS)
+    ACTION_KEYS = frozenset({Qt.Key.Key_Space})
 
     def __init__(self, *, level: int = 1, audio=None, on_exit=None, on_progress=None, on_restart=None,
                  intro: bool = True, parent=None):

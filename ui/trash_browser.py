@@ -67,6 +67,10 @@ class TrashBrowserDialog(QDialog):
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
         add_close_corner(self)
+        # F1: the handbook (its contents) - the main window's F1 does not reach this window.
+        from ui.handbook import install_help_key
+
+        install_help_key(self)
 
         self._info = QLabel("")
         root.addWidget(self._info)
@@ -302,16 +306,14 @@ class TrashBrowserDialog(QDialog):
         backend, trash_root = self._backend, self._trash_root()
 
         def delete(entry, errors) -> None:
-            data_file = backend.join(trash_root, entry.trash_id)
-            meta_file = backend.join(trash_root, entry.trash_id + T.META_SUFFIX)
+            # core.trash.delete_entry: the data first, the sidecar only once
+            # it is gone. Both went regardless: data that could not be
+            # removed lost its sidecar and vanished from this list, still
+            # on disk. Now the entry stays listed, with the error.
             try:
-                backend.remove(data_file, recursive=True)
+                T.delete_entry(backend, entry.trash_id, root=trash_root)
             except OSError as exc:
-                errors.append(f"{entry.original_path} data: {exc}")
-            try:
-                backend.remove(meta_file)
-            except OSError as exc:
-                errors.append(f"{entry.original_path} meta: {exc}")
+                errors.append(f"{entry.original_path}: {exc}")
 
         def done(kind, value, cancelled) -> None:
             if kind == "error":

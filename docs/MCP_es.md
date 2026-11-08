@@ -55,18 +55,32 @@ axross --mcp-list-tools --mcp-tools all --mcp-write
 
 `--mcp-write` sin `--mcp-root` se rechaza (exit 2): la raíz por
 defecto es tu directorio home, demasiado amplio para ser escribible.
-Un grupo desconocido en `--mcp-tools` se rechaza (exit 2) con una
-línea en stderr que enumera los grupos válidos.
+Un `--mcp-root` que no existe se rechaza (exit 2). Un grupo
+desconocido en `--mcp-tools` se rechaza (exit 2) con una línea en
+stderr que enumera los grupos válidos.
+
+`AXROSS_MCP=1` arranca el servidor solo sin `--script`: un
+`axross --script FICHERO` explícito ejecuta el script (la variable la
+hereda todo lo que arranca el entorno del cliente), y `--script` junto
+con `--mcp-server`, `--mcp-http` o `--mcp-list-tools` se rechaza
+(exit 2). Una ejecución de script (`script_run`, el hijo
+`axross --script -` de un build frozen) no recibe ninguna variable
+`AXROSS_MCP*`.
+
+El security mode `paranoid` de abajo es el vigente al arrancar:
+`AXROSS_SECURITY_MODE` si está definida, si no el modo elegido en
+*Edit > Settings > Security*.
 
 `--mcp-allow-scripts` se rechaza (exit 2) en el security mode
 `paranoid`, y también junto con `--mcp-http` (exit 2): no se ofrece
 ejecución de scripts sobre un transporte de red. Lo que pueden
 alcanzar las herramientas de script está en §2.
 
-`--mcp-allow-exec` se rechaza (exit 2) en el security mode `paranoid`.
-A diferencia de las herramientas de script no ejecuta nada en el
-propio host del servidor, por eso se ofrece en ambos transportes; ver
-§9.8.
+`--mcp-allow-exec` se rechaza (exit 2) en el security mode `paranoid`,
+y también sin el grupo exec (`--mcp-tools exec`, `all` o
+`AXROSS_MCP_TOOLS=exec`): el flag solo no ofrece nada. A diferencia de
+las herramientas de script no ejecuta nada en el propio host del
+servidor, por eso se ofrece en ambos transportes; ver §9.8.
 
 Los ficheros secretos no se leen, sea cual sea el root (§7.12): los
 tokens y claves de axross y las claves privadas de `~/.ssh` y

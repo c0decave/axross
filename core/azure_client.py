@@ -63,6 +63,17 @@ def _is_not_a_directory(exc: BaseException) -> bool:
     return _is_not_found(exc) or getattr(code, "value", code) == "ResourceTypeMismatch"
 
 
+def _listing_with_timestamps(dir_client):
+    """List Directories and Files with the files' times: the service sends
+    Last-Modified only when asked (include=Timestamps, API 2020-04-08) -
+    without, every file listed as 1970, and "overwrite if newer" from Azure
+    Files skipped every changed file. An SDK before 12.6 has no *include*."""
+    try:
+        return dir_client.list_directories_and_files(include=["timestamps"])
+    except TypeError:
+        return dir_client.list_directories_and_files()
+
+
 def _each_page_once(paged, what: str):
     """The items of an SDK listing, page by page.
 
@@ -1209,9 +1220,8 @@ class AzureFilesSession(SessionLifecycle):
 
         try:
             dir_client = self._share.get_directory_client(dir_path)
-            for item in _each_page_once(
-                dir_client.list_directories_and_files(), f"Cannot list {path}"
-            ):
+            for item in _each_page_once(_listing_with_timestamps(dir_client),
+                                        f"Cannot list {path}"):
                 if not isinstance(item.get("name"), str) or not item.get("name"):
                     # An entry without a name cannot be shown or addressed.
                     log.warning("Azure Files list_dir(%s): skipping an entry without a name", path)

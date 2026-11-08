@@ -224,7 +224,8 @@ def test_happy_an_update_brings_the_installed_packs_along_first(release, tmp_pat
                               verify=release["verify"])
     finally:
         S.fetch = orig
-    assert sorted(done) == ["beta-1.0-py3-none-any.whl", "shared-1.0-py3-none-any.whl"]
+    assert sorted(done.blobs) == ["beta-1.0-py3-none-any.whl", "shared-1.0-py3-none-any.whl"]
+    assert done.dropped == []
     assert P.installed("9.9.9", tmp_path) == ["extra:b"]
     # a release whose packs cannot be checked stops the update before the binary is fetched
     other = tmp_path / "other"

@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import posixpath
+import secrets
+
+from core.i18n import tr
+from resources.extensions._pane import refresh_pane
 
 EXTENSION = {
     "name": "Checksum Manifest",
@@ -17,6 +21,10 @@ MANIFEST_NAME = "SHA256SUMS"
 CHUNK = 1024 * 1024
 #: A manifest line longer than this is ignored as garbage.
 MAX_LINE = 4096
+#: What verify() puts in "errors" for a manifest that lists no file at all:
+#: an empty SHA256SUMS (one left by a write that failed) checked nothing and
+#: must not read as a clean folder.
+NO_ENTRIES = "no entries"
 
 
 def sha256_of(backend, path: str) -> str:
@@ -128,6 +136,8 @@ def verify(backend, folder: str, text: str) -> dict[str, list[str]]:
     pairs, bad = read_manifest(text)
     result: dict[str, list[str]] = {"ok": [], "failed": [], "missing": [],
                                     "errors": [f"line {n}" for n in bad]}
+    if not pairs and not bad:
+        result["errors"].append(NO_ENTRIES)
     for digest, name in pairs:
         path = backend.join(folder, *name.split("/"))
         try:
@@ -140,8 +150,31 @@ def verify(backend, folder: str, text: str) -> dict[str, list[str]]:
 
 
 def _write(backend, path: str, text: str) -> None:
-    with backend.open_write(path) as fh:
-        fh.write(text.encode("utf-8"))
+    """Write *text* to *path*, all or nothing.
+
+    A name that is no UTF-8 (``caf\\xe9.txt``, held as a surrogate escape)
+    is written as its own bytes, the way sha256sum writes it. The text is
+    encoded before anything is opened and goes to a temporary file that is
+    renamed into place: before, the encoding failed after *path* had been
+    truncated, and the empty SHA256SUMS left behind later "verified"."""
+    data = text.encode("utf-8", "surrogateescape")
+    temp = backend.join(backend.parent(path), f".{MANIFEST_NAME}.{secrets.token_hex(4)}.part")
+    try:
+        with backend.open_write(temp) as fh:
+            fh.write(data)
+        backend.rename(temp, path)
+    except BaseException:
+        try:
+            backend.remove(temp)
+        except Exception:  # noqa: BLE001 - never written, or already gone
+            pass
+        raise
+
+
+def _shown(name: str) -> str:
+    """*name* as it can be shown: a byte that is no UTF-8 (held as a
+    surrogate escape) as U+FFFD."""
+    return name.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
 
 
 def activate(api):
@@ -179,10 +212,7 @@ def activate(api):
                 api.notify(f"{MANIFEST_NAME} already exists here - not overwritten")
                 return
             api.notify(f"wrote {MANIFEST_NAME} for {count} file(s)")
-            pane = ctx.pane
-            if pane is not None:
-                refresh = getattr(pane, "refresh_after_change", None) or pane.refresh
-                refresh()
+            refresh_pane(ctx.pane)
 
         api.notify(f"hashing {len(chosen)} file(s)…" if chosen else "hashing the folder…")
         api.run_in_background(work, on_done=done)
@@ -193,12 +223,23 @@ def activate(api):
 
         def work():
             with ctx.backend.open_read(path) as fh:
-                text = fh.read(16 * 1024 * 1024).decode("utf-8", "replace")
+                # surrogateescape: a name that is no UTF-8 is looked up as
+                # its own bytes (as _write writes it), not as U+FFFD.
+                text = fh.read(16 * 1024 * 1024).decode("utf-8", "surrogateescape")
             return verify(ctx.backend, ctx.folder, text)
 
         def done(result):
             from PyQt6.QtWidgets import QMessageBox
 
+            from ui.plain_text import plain_message
+
+            if not (result["ok"] or result["failed"] or result["missing"]) \
+                    and result["errors"] == [NO_ENTRIES]:
+                # An empty manifest checked nothing: never "all is well".
+                plain_message(api.window, QMessageBox.Icon.Warning, tr("Verify SHA256SUMS"),
+                              tr("{name} lists no files: nothing was verified.").format(
+                                  name=_shown(item.name))).exec()
+                return
             summary = (
                 f"OK: {len(result['ok'])}\nFAILED: {len(result['failed'])}\n"
                 f"Missing: {len(result['missing'])}\n"
@@ -206,9 +247,10 @@ def activate(api):
             )
             bad = result["failed"] + result["missing"] + result["errors"]
             if bad:
-                summary += "\n\n" + "\n".join(bad[:30])
-            box = QMessageBox.warning if bad else QMessageBox.information
-            box(api.window, "Verify SHA256SUMS", summary)
+                summary += "\n\n" + "\n".join(_shown(name) for name in bad[:30])
+            # The names are the manifest's, not ours: plain text.
+            icon = QMessageBox.Icon.Warning if bad else QMessageBox.Icon.Information
+            plain_message(api.window, icon, tr("Verify SHA256SUMS"), summary).exec()
 
         api.run_in_background(work, on_done=done)
 

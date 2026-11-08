@@ -32,7 +32,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.scheduler import Job, JobStore, next_run_at, script_target
+from core.i18n import tr
+from core.scheduler import MIN_INTERVAL_S, Job, JobStore, next_run_at, reenabled, script_target
 from ui.close_corner import add_close_corner
 from ui.icon_provider import set_window_icon
 
@@ -136,6 +137,13 @@ class SchedulerDialog(QDialog):
         self._custom_spin.setRange(0, 86400 * 7)
         self._custom_spin.setSuffix(" s (0 = use the list)")
         self._custom_spin.setSpecialValueText("")
+        # 0 (use the list) or at least five minutes, never in between: a
+        # value is taken when typing ends, and one below the minimum snaps.
+        self._custom_spin.setKeyboardTracking(False)
+        self._custom_spin.setToolTip(
+            tr("A custom interval of at least {seconds} s").format(seconds=MIN_INTERVAL_S))
+        self._custom_last = 0
+        self._custom_spin.valueChanged.connect(self._snap_custom_interval)
         form.addWidget(self._custom_spin)
 
         add_btn = QPushButton("Add", self)
@@ -193,9 +201,20 @@ class SchedulerDialog(QDialog):
 
     # -- mutations -------------------------------------------------------
 
+    def _snap_custom_interval(self, value: int) -> None:
+        """Below the minimum (but not 0): down to 0 (use the list) when
+        stepping down from the minimum, else up to the minimum."""
+        if 0 < value < MIN_INTERVAL_S:
+            self._custom_spin.setValue(0 if self._custom_last == MIN_INTERVAL_S else MIN_INTERVAL_S)
+            return
+        self._custom_last = value
+
     def add_job(self, *, name: str, kind: str, target: str, interval_s: int) -> Job:
         # Job.__post_init__ rejects a non-positive interval; letting it
         # raise here keeps the invalid job out of the store entirely.
+        if interval_s < MIN_INTERVAL_S:
+            raise ValueError(tr("The shortest interval is {seconds} s (5 minutes).").format(
+                seconds=MIN_INTERVAL_S))
         if kind == "script":
             target = script_target(target)  # ValueError for a name scripts refuse
         job = Job(
@@ -214,9 +233,14 @@ class SchedulerDialog(QDialog):
     def set_enabled(self, job_id: str, enabled: bool) -> None:
         from dataclasses import replace
 
-        self._change(
-            lambda jobs: [replace(j, enabled=enabled) if j.job_id == job_id else j for j in jobs]
-        )
+        def switch(j: Job) -> Job:
+            if not enabled:
+                return replace(j, enabled=False)
+            # Switched on again: the failure count starts over (it kept 10,
+            # and one more failure disabled the job at once).
+            return j if j.enabled else reenabled(j)
+
+        self._change(lambda jobs: [switch(j) if j.job_id == job_id else j for j in jobs])
 
     def _change(self, change) -> None:
         """Apply *change* to the jobs as the store holds them now, not to

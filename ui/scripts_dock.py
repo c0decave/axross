@@ -263,6 +263,8 @@ class ScriptsDock(QDockWidget):
         #: What the running script only defines (SR.only_defines), for its end.
         self._run_library: list[str] = []
         self._run_path = ""
+        #: "user" or "example": which list the last run's script is in.
+        self._run_kind = "user"
 
         container = QWidget()
         layout = QVBoxLayout(container)
@@ -823,6 +825,7 @@ class ScriptsDock(QDockWidget):
         self._run_library = [] if example else SR.only_defines(self.editor.toPlainText())
         self._run_path = (os.path.join(scripting._bundled_scripts_dir(), f"{name}.py")
                           if example else os.path.join(command.cwd, f"{name}.py"))
+        self._run_kind = "example" if example else "user"
         run = ScriptRun(command, SR.child_env(policy.name, watched=True), self)
         run.output.connect(self._on_run_output)
         run.ended.connect(self._on_run_ended)
@@ -874,16 +877,32 @@ class ScriptsDock(QDockWidget):
         return SR.script_line_in(text, self._run_path)
 
     def jump_to_traceback_line(self, text: str) -> bool:
-        """Open the script of the last run at the line ``text`` points to."""
+        """Open the script of the last run at the line ``text`` points to -
+        the file the traceback names: a bundled example's line opens that
+        example (it was looked up among the user's scripts, and failed or
+        opened a user script of the same name)."""
         line = self._traceback_line(text)
         if line is None:
             return False
-        if self._current != ("user", self._run_name):
-            if self._run_name not in scripting.list_scripts():
-                self.status.setText(tr("{name} no longer exists.").format(name=self._run_name))
+        kind, name = self._run_kind, self._run_name
+        if self._current != (kind, name):
+            if kind == "example":
+                known = scripting._list_bundled_scripts()
+                opener = self.open_example
+            else:
+                known = scripting.list_scripts()
+                opener = self.open_script
+            if name not in known:
+                self.status.setText(tr("{name} no longer exists.").format(name=name))
                 return False
-            if not self.open_script(self._run_name):
+            if not opener(name):
                 return False
+        if kind == "example" and line > self.editor.blockCount():
+            # An example runs with its call appended (core.script_runner):
+            # the line is in that call, not in the file.
+            self.status.setText(tr("Line {line} is in the call that ran {name}, after the "
+                                   "example's own lines.").format(line=line, name=name))
+            return False
         return self.editor.go_to_line(line)
 
     def shutdown(self) -> None:

@@ -2835,16 +2835,21 @@ def run_script(name: str, env: dict | None = None) -> dict:
     """Execute a saved script in a fresh namespace pre-populated with
     ``axross`` (this module). Returns the post-exec namespace so the
     caller can inspect any variables it left behind. ``env`` overrides
-    / augments the initial namespace."""
+    / augments the initial namespace.
+
+    The script runs as from ``axross --script``: ``__name__`` is
+    ``"__main__"`` (an ``if __name__ == "__main__":`` block runs) and
+    ``__file__`` is the script's path."""
     from core.security_mode import current_policy, require
 
     require("saved script execution", current_policy().allow_scripts)
     source = load_script(name)
+    import os as _os
     import sys as _sys
 
     ns: dict = {
-        "__name__": "__axross_script__",
-        "__file__": f"<axross:{name}>",
+        "__name__": "__main__",
+        "__file__": _os.path.join(script_dir(), f"{_validate_script_name(name)}.py"),
         "axross": _sys.modules[__name__],
     }
     if env:

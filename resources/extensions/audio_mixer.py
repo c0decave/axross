@@ -44,6 +44,7 @@ from PyQt6.QtWidgets import (
 from core import audio_eq as AEQ
 from core import audio_route as AR
 from core.i18n import tr
+from ui.plain_text import set_plain
 
 log = logging.getLogger(__name__)
 
@@ -154,7 +155,7 @@ class MixerPanel(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs, 1)
-        self.message = QLabel("")
+        self.message = set_plain(QLabel(""))  # an error names a device or a file
         self.message.setWordWrap(True)
         layout.addWidget(self.message)
 

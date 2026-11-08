@@ -533,7 +533,8 @@ def fetch_remote(backend, paths, temp_root: str | None = None):
 
 def remote_temp_folder(temp_root: str | None = None) -> str:
     """A new temporary folder for remote tracks' copies, registered at once:
-    an unload while it fills still removes it."""
+    an unload while it fills still removes it. The panel makes it on the
+    GUI thread, where the unload runs (PlayerPanel.add_remote)."""
     import tempfile
 
     folder = os.path.abspath(tempfile.mkdtemp(prefix="axross-media-", dir=temp_root))
@@ -5205,13 +5206,20 @@ class PlayerPanel(QWidget):
                 failed(exc)
 
         def listed(result) -> None:
-            remote, skipped, truncated, folder = result
+            remote, skipped, truncated = result
             if self._gone():
-                if folder:
-                    _forget_temp(folder)
                 return
             if not remote:
                 self._say_added(0, skipped, truncated)
+                return
+            # Made here, on the GUI thread, once the panel is known to be
+            # there: made by the listing's worker, a folder made after
+            # deactivate() had emptied _TEMP_FOLDERS stayed behind - the host
+            # drops a result that comes after the unload, so this never ran.
+            try:
+                folder = remote_temp_folder()
+            except OSError as exc:
+                say_failed(exc)
                 return
             copy_next({"remote": remote, "skipped": skipped, "truncated": truncated,
                        "folder": folder, "index": 0, "total": 0})
@@ -5246,11 +5254,7 @@ class PlayerPanel(QWidget):
                 _forget_temp(job["folder"])  # nothing of it is in the playlist
             say_failed(exc)
 
-        def listing():
-            remote, skipped, truncated = list_remote(backend, paths)
-            return remote, skipped, truncated, remote_temp_folder() if remote else ""
-
-        self._background(listing, listed, say_failed)
+        self._background(lambda: list_remote(backend, paths), listed, say_failed)
 
     def _background(self, work, done, failed) -> None:
         if self.run_in_background is not None:
@@ -5972,6 +5976,18 @@ class PlayerPanel(QWidget):
             timer.timeout.connect(self._save_shared_eq)
         timer.start()
 
+    def _flush_shared_eq(self) -> None:
+        """A change still waiting for _share_eq's timer is saved now (the
+        panel closes, the extension unloads). Left to the timer, it was lost
+        after shutdown() (_gone) - and a closed panel's timer saved and
+        published it at any later time, re-tuning whatever played then (a
+        restored track's first sample measured 6% high,
+        tests/test_media_player_eq_share_on_close.py)."""
+        timer = getattr(self, "_eq_share_timer", None)
+        if timer is not None and not sip.isdeleted(timer) and timer.isActive():
+            timer.stop()
+            self._save_shared_eq()
+
     def _save_shared_eq(self) -> None:
         if self._gone():
             return
@@ -6439,6 +6455,7 @@ class PlayerPanel(QWidget):
 
     def shutdown(self) -> None:
         """The extension unloads (or the window closes): save, then stop."""
+        self._flush_shared_eq()  # before _shut_down: _save_shared_eq saves nothing after it
         self._shut_down = True  # a probe answering later builds no engine
         self.attach_visualizer()  # its window and the screen go with the extension
         self._close_visual_settings()
@@ -6496,6 +6513,7 @@ class PlayerPanel(QWidget):
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt
         self.attach_visualizer()
         self._close_visual_settings()
+        self._flush_shared_eq()
         if self._state_path:
             self.save_state()
         self.engine.stop()

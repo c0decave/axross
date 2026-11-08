@@ -968,11 +968,16 @@ class TransferWorker(QObject):
         A destination that already exists under the source's name may be
         the source itself, reached over another protocol (axross's own
         WebDAV reverse-serve, FTP or SCP to localhost, sshfs plus SCP):
-        a move probes for that before it writes (:meth:`_refuse_aliased_direct`),
-        and a copy whose writer truncates at open would read back a short
-        source - the snapshot then restores it (see below). The integrity
-        check runs while the snapshot is still held, so a mismatch puts the
-        old destination back instead of leaving the corrupt copy.
+        a move or a copy probes for that before it writes
+        (:meth:`_refuse_aliased_direct`) - a move would delete the only
+        copy, a copy through a writer that truncates at open empties it.
+        Should the probe prove nothing, a copy that reads back a short
+        source restores the snapshot (see below). The integrity check runs
+        while the snapshot is still held, so a mismatch puts the old
+        destination back instead of leaving the corrupt copy. S3 and Azure
+        Blob keep no snapshot (they replace the object only at close): with
+        ``verify_checksum`` a server-side copy of the old object stands in
+        for it (:meth:`_back_up_committed_destination`).
         """
         source_backend = job.source_backend
         dest_backend = job.dest_backend
@@ -984,7 +989,10 @@ class TransferWorker(QObject):
             _rollback_direct_destination,
             _snapshot_direct_destination,
             source_size,
+            write_traits,
         )
+
+        traits = write_traits(dest_backend)
 
         # Outside the rollback: until the snapshot exists nothing has been
         # written, and a failed read-back of an existing destination
@@ -997,11 +1005,27 @@ class TransferWorker(QObject):
                 dest_backend,
                 job.dest_path,
             )
+        backup = None
+        #: The writer was opened: before that nothing of the destination
+        #: was touched, and a rollback could only do harm - on Google Drive
+        #: it wrote the snapshot of the file listed over the one the
+        #: refused open_write had just found under the name (ESTALE).
+        opened = False
         try:
             size_before = None
-            if destination_existed:
-                # Only an existing destination can be the source itself.
-                self._refuse_aliased_direct(job)
+            if destination_existed and not traits.append_only:
+                # Only an existing destination can be the source itself - not
+                # on a store that only adds (IMAP, Exchange: the probe would be
+                # one more message, which remove() cannot take back). A copy
+                # needs the probe only where a write can empty the source: S3
+                # and Azure Blob (they commit at close) have read it whole by then.
+                if job.move or not traits.commits_on_close:
+                    self._refuse_aliased_direct(job)
+                if traits.commits_on_close and job.verify_checksum:
+                    # Committed at close, the new object has replaced the old
+                    # one before the check runs: a mismatch left the corrupt
+                    # copy in its place, with nothing to put back.
+                    backup = self._back_up_committed_destination(job)
                 if destination_snapshot is not None and self._same_leaf_name(job):
                     # A writer that truncates at open, aimed at the source
                     # under another path, empties it before it is read: the
@@ -1011,6 +1035,7 @@ class TransferWorker(QObject):
             try:
                 with source_backend.open_read(job.source_path) as src:
                     dst = dest_backend.open_write(job.dest_path, append=False)
+                    opened = True
                     streamed = _StreamedHash(job, 0)
                     try:
                         while True:
@@ -1034,18 +1059,88 @@ class TransferWorker(QObject):
                         "as it was (it may be the source under another path)"
                     )
                 self._verify_integrity(job)
-            except BaseException:
-                _rollback_direct_destination(
-                    dest_backend,
-                    job.dest_path,
-                    destination_existed=destination_existed,
-                    destination_snapshot=destination_snapshot,
-                )
+            except BaseException as exc:
+                if backup is not None:
+                    kept, backup = backup, None
+                    if not self._put_back_committed_destination(job, kept, written=completed):
+                        if isinstance(exc, _ChecksumMismatch):
+                            raise _ChecksumMismatch(
+                                f"{exc}; the previous {job.dest_path} could not be put back "
+                                f"and is kept as {kept}"
+                            ) from exc
+                        raise
+                if opened:
+                    _rollback_direct_destination(
+                        dest_backend,
+                        job.dest_path,
+                        destination_existed=destination_existed,
+                        destination_snapshot=destination_snapshot,
+                    )
                 raise
         finally:
             if destination_snapshot is not None:
                 destination_snapshot.close()
+            if backup is not None:  # the check passed (or never ran: nothing written)
+                self._drop_destination_backup(job, backup)
         return transferred
+
+    @staticmethod
+    def _destination_backup_path(job: TransferJob) -> str:
+        dest_backend = job.dest_backend
+        dest_name = job.dest_path.rsplit(dest_backend.separator() or "/", 1)[-1]
+        return safe_join(
+            dest_backend,
+            dest_backend.parent(job.dest_path),
+            hidden_sibling_name(dest_name, f".previous-{job.job_id}",
+                                reserve=_PARTIAL_TAIL_BYTES),
+        )
+
+    @staticmethod
+    def _back_up_committed_destination(job: TransferJob) -> str:
+        """A server-side copy of the destination object (S3 CopyObject,
+        Azure Copy Blob - no byte through this machine) beside it, before
+        an upload that is checked afterwards replaces it; its path. One
+        that cannot be made refuses the transfer before anything is
+        written: the check was asked for, and without the copy its
+        failure would leave the corrupt upload in place of the original."""
+        dest_backend = job.dest_backend
+        try:
+            backup = TransferWorker._destination_backup_path(job)
+            copy = getattr(dest_backend, "copy", None)
+            if not callable(copy):
+                raise OSError("the backend has no server-side copy")
+            copy(job.dest_path, backup)
+        except Exception as exc:  # noqa: BLE001 - nothing was written yet
+            raise OSError(
+                f"cannot keep a copy of {job.dest_path} before it is replaced and checked "
+                f"({exc}); nothing was replaced"
+            ) from exc
+        log.debug("Kept %s as %s until the integrity check passes", job.dest_path, backup)
+        return backup
+
+    @staticmethod
+    def _put_back_committed_destination(job: TransferJob, backup: str, *, written: bool) -> bool:
+        """The transfer failed: the object *backup* holds goes back to the
+        destination (when the upload may have replaced it) and the copy is
+        removed. False when it could not be put back - the copy is kept."""
+        dest_backend = job.dest_backend
+        if written:
+            try:
+                dest_backend.copy(backup, job.dest_path)
+            except Exception as exc:  # noqa: BLE001 - the caller names the kept copy
+                log.error("Could not put %s back from %s: %s", job.dest_path, backup, exc)
+                return False
+            log.info("Put %s back as it was before the transfer", job.dest_path)
+        TransferWorker._drop_destination_backup(job, backup)
+        return True
+
+    @staticmethod
+    def _drop_destination_backup(job: TransferJob, backup: str) -> None:
+        try:
+            job.dest_backend.remove(backup)
+        except Exception as exc:  # noqa: BLE001 - a leftover copy loses nothing
+            log.warning("Could not remove the copy %s of the previous %s: %s",
+                        backup, job.dest_path, exc)
 
     def _do_transfer_with_temp(
         self,
@@ -1060,15 +1155,22 @@ class TransferWorker(QObject):
         source_backend = job.source_backend
         dest_backend = job.dest_backend
 
+        from core.server_ops import _discard_or_close_writer, write_traits
+
         temp_path = self._temp_destination_path(job)
         cleanup_temp = True
         keep_partial = False
         transferred = 0
+        # A partial is worth keeping only where open_write(append=True)
+        # really appends: Azure Files downloads it and uploads it whole
+        # again, and refuses one over 256 MiB - kept "for a resume", such a
+        # partial failed every later copy of the file.
+        real_append = write_traits(dest_backend).real_append
 
         try:
             resume_offset = 0
             live_size = 0
-            if job.resume and dest_backend.exists(temp_path):
+            if job.resume and real_append and dest_backend.exists(temp_path):
                 live_source = self._live_source_item(job)
                 live_size = int(getattr(live_source, "size", 0) or 0) if live_source else 0
                 if live_size:
@@ -1169,6 +1271,7 @@ class TransferWorker(QObject):
                 dst = dest_backend.open_write(temp_path, append=resume_offset > 0)
 
                 streamed = _StreamedHash(job, resume_offset)
+                completed = False
                 try:
                     transferred = resume_offset
                     if transferred > 0 and transferred < job.total_bytes:
@@ -1184,8 +1287,15 @@ class TransferWorker(QObject):
                         transferred += len(chunk)
                         progress_callback(transferred, job.total_bytes)
                     streamed.finish()
+                    completed = True
                 finally:
-                    dst.close()
+                    if completed or real_append:
+                        dst.close()  # an unfinished partial stays for a resume
+                    else:
+                        # A spooling writer (Azure Files) uploads at close:
+                        # a cancelled transfer uploaded its partial, for
+                        # nothing - no resume appends to it.
+                        _discard_or_close_writer(dst, completed=False)
 
             self._refuse_aliased_source(job, temp_path)
             # The temp file, before it replaces the destination: checked
@@ -1206,13 +1316,14 @@ class TransferWorker(QObject):
             # after a failed integrity check, holds the wrong bytes.
             raise
         except InterruptedError:
-            keep_partial = transferred > 0 or resume_offset > 0
+            keep_partial = real_append and (transferred > 0 or resume_offset > 0)
             raise
         except Exception as exc:
             # Kept for a resume - unless the destination is full: the
             # hidden partial is what fills it, and a resume needs the
             # room as well.
-            keep_partial = (transferred > 0 or resume_offset > 0) and not is_out_of_space(exc)
+            keep_partial = (real_append and (transferred > 0 or resume_offset > 0)
+                            and not is_out_of_space(exc))
             raise
         finally:
             if cleanup_temp and not keep_partial:
@@ -1291,17 +1402,21 @@ class TransferWorker(QObject):
 
     @staticmethod
     def _refuse_aliased_direct(job: TransferJob) -> None:
-        """:meth:`_refuse_aliased_source` for a move that writes straight to
-        its destination (WebDAV, FTP, SCP, Telnet, ADB, rsync, the cloud
-        stores): no temp file is written there, so an empty probe file named
-        with this job's id is written next to the destination BEFORE that is
-        touched, and looked for next to the source. Without it a move onto
-        the source's own folder
-        under another path uploaded the same bytes, passed the size checks
-        and deleted the only copy. A probe that cannot be written proves
-        nothing, so the move is refused as well; the probe is removed again.
+        """:meth:`_refuse_aliased_source` for a transfer that writes straight
+        to an existing destination of the source's name (WebDAV, FTP, SCP,
+        Telnet, ADB, rsync, the cloud stores): no temp file is written
+        there, so an empty probe file named with this job's id is written
+        next to the destination BEFORE that is touched, and looked for next
+        to the source. Without it a move onto the source's own folder under
+        another path uploaded the same bytes, passed the size checks and
+        deleted the only copy; a copy through a writer that truncates at
+        open emptied the source, and only a short copy with a size read
+        beforehand put it back (not for a symlink, or a source without a
+        stat). A probe that cannot be written or looked for proves nothing:
+        a move is refused then, a copy goes on (the rollback snapshot still
+        catches a short copy). The probe is removed again.
         """
-        if not job.move or not TransferWorker._same_leaf_name(job):
+        if not TransferWorker._same_leaf_name(job):
             return
         dest_backend = job.dest_backend
         dest_name = job.dest_path.rsplit(dest_backend.separator() or "/", 1)[-1]
@@ -1313,12 +1428,16 @@ class TransferWorker(QObject):
             )
             dest_backend.open_write(probe).close()
         except Exception as exc:  # noqa: BLE001 - unprovable means keep the source
+            if not job.move:
+                log.debug("No probe file next to %s (%s); copying without it",
+                          job.dest_path, exc)
+                return
             raise _SameEntry(
                 f"cannot rule out that {job.source_path} and {job.dest_path} are one "
                 f"file (no probe file could be written: {exc}); nothing was replaced"
             ) from exc
         try:
-            TransferWorker._refuse_if_seen_from_source(job, probe)
+            TransferWorker._refuse_if_seen_from_source(job, probe, unprovable_refuses=job.move)
         finally:
             try:
                 dest_backend.remove(probe)
@@ -1326,16 +1445,21 @@ class TransferWorker(QObject):
                 log.warning("Could not remove the probe file %s: %s", probe, exc)
 
     @staticmethod
-    def _refuse_if_seen_from_source(job: TransferJob, probe_path: str) -> None:
+    def _refuse_if_seen_from_source(
+        job: TransferJob, probe_path: str, *, unprovable_refuses: bool = True
+    ) -> None:
         """Raise :class:`_SameEntry` when the file *probe_path*, just
         written next to the destination, shows up next to the source too,
-        or when that cannot be checked."""
+        or (*unprovable_refuses*) when that cannot be checked."""
         src_backend = job.source_backend
         temp_name = probe_path.rsplit(job.dest_backend.separator() or "/", 1)[-1]
         try:
             probe = safe_join(src_backend, src_backend.parent(job.source_path), temp_name)
             visible = src_backend.exists(probe)
         except Exception as exc:  # noqa: BLE001 - unprovable means keep the source
+            if not unprovable_refuses:
+                log.debug("Cannot look for the probe next to %s (%s)", job.source_path, exc)
+                return
             raise _SameEntry(
                 f"cannot rule out that {job.source_path} and {job.dest_path} "
                 f"are one file ({exc}); nothing was replaced"

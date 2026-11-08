@@ -201,7 +201,8 @@ class PackResult:
     folders: int = 0
     bytes_in: int = 0
     bytes_out: int = 0
-    skipped: list[str] = field(default_factory=list)  # symlinks, by archive name
+    #: Left out, by archive name: symlinks, and what *refuse* turned down.
+    skipped: list[str] = field(default_factory=list)
 
 
 def default_name(names: list[str], folder: str = "") -> str:
@@ -240,7 +241,12 @@ def _mtime(item) -> float:
         return time.time()
 
 
-def _collect(backend, folder: str, names: list[str], cancel) -> tuple[list[_Entry], list[str]]:
+def _collect(
+    backend, folder: str, names: list[str], cancel, refuse=None
+) -> tuple[list[_Entry], list[str]]:
+    """The entries to pack and the archive names left out. *refuse(path)*:
+    true for a path that must not be read (core.mcp_groups: a secret such
+    as an SSH key) - checked for every name and everything below it."""
     try:
         listing = {i.name: i for i in backend.list_dir(folder)}
     except OSError as exc:
@@ -253,7 +259,7 @@ def _collect(backend, folder: str, names: list[str], cancel) -> tuple[list[_Entr
         nonlocal files
         if cancel is not None and cancel.is_set():
             raise PackCancelled("cancelled")
-        if getattr(item, "is_link", False):
+        if getattr(item, "is_link", False) or (refuse is not None and refuse(path)):
             skipped.append(arcname)
             return
         if item.is_dir:
@@ -548,10 +554,13 @@ def pack(
     *,
     progress: Callable[[int, int, str], None] | None = None,
     cancel: threading.Event | None = None,
+    refuse: Callable[[str], bool] | None = None,
 ) -> PackResult:
     """Pack *names* (entries of *folder*) into ``folder/archive_name +
     suffix``. *progress(done_files, total_files, name)* runs on the calling
-    thread; *cancel* stops at the next file or chunk."""
+    thread; *cancel* stops at the next file or chunk. *refuse(path)*: true
+    for a source (a name, or anything below one) that is left out and
+    listed in ``skipped`` instead."""
     fmt = FORMATS[options.fmt]
     ok, reason = fmt.available()
     if not ok:
@@ -564,7 +573,7 @@ def pack(
     if stem.lower().endswith(fmt.suffix):
         stem = stem[: -len(fmt.suffix)]
 
-    entries, skipped = _collect(backend, folder, names, cancel)
+    entries, skipped = _collect(backend, folder, names, cancel, refuse)
     if fmt.single and (len(entries) != 1 or entries[0].is_dir):
         raise PackError(f"{fmt.label} compresses exactly one file")
     total = sum(1 for e in entries if not e.is_dir)

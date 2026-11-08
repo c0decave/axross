@@ -148,6 +148,7 @@ class DeviceDialog(QDialog):
         self.client = client
         self.path = path
         self.gone = False
+        self._left = False  # see _leave
         self.reconnector = reconnector
         #: seams: Qt's outputs / inputs as (id, description), the players
         self._sink_lister = sink_lister
@@ -722,6 +723,23 @@ class DeviceDialog(QDialog):
             self._test.cancel()
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        self._leave()
+        super().closeEvent(event)
+
+    def done(self, result: int) -> None:  # noqa: D401 - Qt override
+        # reject() (Escape, the corner's [x]) ends here without a closeEvent
+        self._leave()
+        super().done(result)
+
+    def _leave(self) -> None:
+        """What leaving the dialog undoes, once however it is left: the
+        audio tests stop, the notifications it watches are switched off and
+        the client's signals no longer reach it. It lived in closeEvent
+        only, which Escape and the corner's [x] (reject()) never send: the
+        watched characteristics went on notifying, at the device's battery."""
+        if self._left:
+            return
+        self._left = True
         self._stop_audio_tests()
         # notifications cost the device's battery: stop the ones we started
         for char in self._characteristics():
@@ -735,7 +753,6 @@ class DeviceDialog(QDialog):
                 signal.disconnect(slot)
             except (TypeError, RuntimeError):
                 pass
-        super().closeEvent(event)
 
 
 def sip_alive(obj) -> bool:

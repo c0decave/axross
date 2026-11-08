@@ -37,7 +37,7 @@ import traceback
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QKeyEvent, QTextCursor
+from PyQt6.QtGui import QFont, QKeyEvent, QKeySequence, QTextCursor
 from PyQt6.QtWidgets import (
     QDockWidget,
     QLineEdit,
@@ -116,8 +116,11 @@ def _build_globals() -> dict:
     plus a few common stdlib aliases the user almost always wants."""
     import core.scripting as _scripting
 
+    # "__main__" as in Python's own interactive prompt: a script run here
+    # (.run, Run in Console, startup.py) with an `if __name__ == "__main__":`
+    # block runs it, as from --script, Run, the scheduler and script_run.
     return {
-        "__name__": "__axross_repl__",
+        "__name__": "__main__",
         "__doc__": "Axross embedded REPL — see axross.help()",
         "axross": _scripting,
     }
@@ -399,12 +402,18 @@ class ReplWidget(QPlainTextEdit):
         found while compiling a single statement"."""
         out_buf = io.StringIO()
         err_buf = io.StringIO()
+        # A whole script sees its own path as __file__ while it runs (and
+        # __name__ "__main__", the namespace's); the prompt's value after it.
+        missing = object()
+        saved_file = self._globals.get("__file__", missing)
         try:
             with contextlib.redirect_stdout(out_buf), contextlib.redirect_stderr(err_buf):
                 if filename is None:
                     more = self._console.runsource(source, "<repl>")
                 else:
                     more = False
+                    self._globals["__name__"] = "__main__"
+                    self._globals["__file__"] = filename
                     try:
                         compiled = compile(source, filename, "exec")
                     except (SyntaxError, ValueError, OverflowError):
@@ -417,6 +426,12 @@ class ReplWidget(QPlainTextEdit):
         except BaseException:  # noqa: BLE001 — show the exception inline
             err_buf.write(traceback.format_exc())
             more = False
+        finally:
+            if filename is not None:
+                if saved_file is missing:
+                    self._globals.pop("__file__", None)
+                else:
+                    self._globals["__file__"] = saved_file
         out_text = out_buf.getvalue()
         err_text = err_buf.getvalue()
         if out_text:
@@ -435,6 +450,10 @@ class ReplWidget(QPlainTextEdit):
 
     def _submit_current(self) -> None:
         line = self._current_input()
+        # A slash command is a line of its own at a fresh prompt; inside an
+        # open statement a line starting with "." is Python (a method
+        # chain's `.upper())`).
+        fresh = not self._buffer
         # End the current input line in the buffer first.
         self._append("\n")
         self._buffer.append(line)
@@ -443,10 +462,6 @@ class ReplWidget(QPlainTextEdit):
             if not self._history or self._history[-1] != line:
                 self._history.append(line)
                 self._append_history(line)
-            # Track this-session-only source for .save (slash-commands
-            # are filtered out — they're not Python).
-            if not line.lstrip().startswith("."):
-                self._session_source.append(line)
         self._history_idx = None
 
         # Slash commands run BEFORE the InteractiveConsole gets the
@@ -454,11 +469,23 @@ class ReplWidget(QPlainTextEdit):
         # vocabulary that doesn't pollute the Python namespace.
         # The dispatcher returns True if it handled the line; we then
         # short-circuit the normal exec path.
-        if self._maybe_dispatch_slash(line.strip()):
+        handled = False
+        if fresh:
+            try:
+                handled = self._maybe_dispatch_slash(line.strip())
+            except Exception as exc:  # noqa: BLE001 — the console must get its prompt back
+                log.warning("REPL slash command %r failed", line.strip(), exc_info=True)
+                self._append(f"{line.strip().split(' ', 1)[0]} failed: {exc}\n")
+                handled = True
+        if handled:
             self._buffer = []
             self._write_prompt(PROMPT)
             self.statement_executed.emit(line)
             return
+        if line.strip():
+            # This-session-only source for .save: every line Python got,
+            # none the slash dispatcher handled.
+            self._session_source.append(line)
 
         source = "\n".join(self._buffer)
         more = self._run_source(source)
@@ -571,6 +598,8 @@ REPL slash commands (typed at the prompt; not Python):
         cmd, _, arg = text[1:].partition(" ")
         cmd = cmd.strip().lower()
         arg = arg.strip()
+        if cmd in ("save", "load", "run", "delete") and arg.endswith(".py"):
+            arg = arg[:-3]  # `.load foo.py` names the script foo, as the folder shows it
         if cmd == "help":
             self._append(self._SLASH_HELP)
             return True
@@ -616,7 +645,7 @@ REPL slash commands (typed at the prompt; not Python):
 
             try:
                 src = _s.load_script(arg)
-            except OSError as exc:
+            except (OSError, ValueError, UnicodeDecodeError) as exc:
                 self._append(f"load failed: {exc}\n")
                 return True
             self._append(f"--- {arg} ---\n{src}\n")
@@ -758,20 +787,68 @@ REPL slash commands (typed at the prompt; not Python):
     # Key handling — the core widget contract
     # ------------------------------------------------------------------
 
-    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 — Qt
-        cursor_pos = self.textCursor().position()
-        # Reject any edit before the input start.
-        if cursor_pos < self._input_start and event.key() not in (
-            Qt.Key.Key_Right,
-            Qt.Key.Key_Left,
-            Qt.Key.Key_Up,
-            Qt.Key.Key_Down,
-            Qt.Key.Key_Home,
-            Qt.Key.Key_End,
-        ):
-            cursor = self.textCursor()
+    #: Keys that move, select or copy - never change the text.
+    _NON_EDIT_KEYS = frozenset({
+        Qt.Key.Key_Right, Qt.Key.Key_Left, Qt.Key.Key_Up, Qt.Key.Key_Down,
+        Qt.Key.Key_Home, Qt.Key.Key_End, Qt.Key.Key_PageUp, Qt.Key.Key_PageDown,
+        Qt.Key.Key_Shift, Qt.Key.Key_Control, Qt.Key.Key_Alt, Qt.Key.Key_Meta,
+        Qt.Key.Key_AltGr, Qt.Key.Key_CapsLock,
+    })
+
+    def _clamp_cursor_to_input(self) -> None:
+        """Before an edit: the cursor and its selection inside the input
+        line. A selection reaching into the scrollback (Ctrl+A, a mouse drag
+        from the banner) keeps only its part in the input; one wholly in the
+        scrollback, or a bare cursor there, goes to the end. Typing, Delete,
+        Backspace, Cut and Paste over it wiped the scrollback and the prompt
+        before, and the next Enter submitted nothing."""
+        cursor = self.textCursor()
+        start = self._input_start
+        anchor, position = cursor.anchor(), cursor.position()
+        if anchor >= start and position >= start:
+            return
+        high = max(anchor, position)
+        if not cursor.hasSelection() or high <= start:
             cursor.movePosition(QTextCursor.MoveOperation.End)
-            self.setTextCursor(cursor)
+        else:
+            cursor.setPosition(start)
+            cursor.setPosition(high, QTextCursor.MoveMode.KeepAnchor)
+        self.setTextCursor(cursor)
+
+    def _selection_in_scrollback(self) -> bool:
+        cursor = self.textCursor()
+        return cursor.hasSelection() and cursor.selectionStart() < self._input_start
+
+    def insertFromMimeData(self, source) -> None:  # noqa: N802 — Qt
+        # Paste (menu, middle click) and drop: into the input line only.
+        self._clamp_cursor_to_input()
+        super().insertFromMimeData(source)
+
+    def contextMenuEvent(self, event) -> None:  # noqa: N802 — Qt
+        menu = self.createStandardContextMenu(event.pos())
+        if self._selection_in_scrollback():
+            # Cut and Delete would remove scrollback text (and the prompt);
+            # Copy stays.
+            for action in menu.actions():
+                if action.objectName() in ("edit-cut", "edit-delete"):
+                    action.setEnabled(False)
+        menu.exec(event.globalPos())
+        menu.deleteLater()
+
+    def dropEvent(self, event) -> None:  # noqa: N802 — Qt
+        # Text dragged out of the scrollback is copied, never moved: a move
+        # deletes it at its source.
+        if event.source() is self:
+            event.setDropAction(Qt.DropAction.CopyAction)
+        super().dropEvent(event)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 — Qt
+        # Reject any edit before the input start: an editing key works on
+        # the input line only, also with a selection that starts before it.
+        if not (event.key() in self._NON_EDIT_KEYS
+                or event.matches(QKeySequence.StandardKey.Copy)
+                or event.matches(QKeySequence.StandardKey.SelectAll)):
+            self._clamp_cursor_to_input()
 
         key = event.key()
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
@@ -792,8 +869,10 @@ REPL slash commands (typed at the prompt; not Python):
             self.setTextCursor(cursor)
             return
         if key == Qt.Key.Key_Backspace:
-            # Don't let the user backspace into the prompt.
-            if self.textCursor().position() <= self._input_start:
+            # Don't let the user backspace into the prompt (a selection,
+            # clamped to the input above, is deleted as it is).
+            cursor = self.textCursor()
+            if not cursor.hasSelection() and cursor.position() <= self._input_start:
                 return
         if key == Qt.Key.Key_D and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             # Ctrl-D on an empty line clears the multi-line buffer or

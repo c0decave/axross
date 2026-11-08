@@ -197,3 +197,57 @@ def test_edge_a_direct_move_under_a_new_name_writes_no_probe(tmp_path):
     assert job.status == TransferStatus.DONE, job.error_message
     assert dest.written == ["/renamed.txt"]
     assert (tmp_path / "renamed.txt").read_bytes() == DATA and not src.exists()
+
+
+# -- copies (the probe ran for moves only) ---------------------------------------------
+
+
+def test_sad_a_direct_copy_onto_its_own_folder_is_refused_before_writing(tmp_path):
+    """The probe ran for moves only: a copy onto the source's own folder
+    under another path opened the source for writing - through a writer
+    that truncates at open, that emptied it - and only the snapshot of the
+    destination, read first, put the bytes back. Now nothing is written
+    there."""
+    src = tmp_path / "report.txt"
+    src.write_bytes(DATA)
+    dest = _OtherProtocol(tmp_path, truncating=True)
+    job = _run(src, dest, "/report.txt")
+    assert job.status == TransferStatus.ERROR
+    assert "same" in job.error_message
+    assert "/report.txt" not in dest.written  # only the probe was written
+    assert src.read_bytes() == DATA
+    assert sorted(os.listdir(tmp_path)) == ["report.txt"]  # the probe is gone
+
+
+def test_sad_a_direct_copy_of_a_symlink_onto_its_own_folder_keeps_the_target(tmp_path):
+    """A symlinked source has no size to compare (its own is the length of
+    its target's path), so the short copy the truncating writer made out of
+    the emptied target "succeeded": the target was left empty."""
+    target = tmp_path / "real.txt"
+    target.write_bytes(DATA)
+    src = tmp_path / "report.txt"
+    src.symlink_to("real.txt")
+    job = _run(src, _OtherProtocol(tmp_path, truncating=True), "/report.txt")
+    assert job.status == TransferStatus.ERROR
+    assert target.read_bytes() == DATA
+
+
+def test_edge_a_copy_whose_probe_cannot_be_written_still_copies(tmp_path):
+    """Guard (passes on the old code too): for a copy, a probe that cannot
+    be written proves nothing either way - the copy goes on, guarded by the
+    rollback snapshot, instead of being refused like a move."""
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    src = tmp_path / "a" / "report.txt"
+    src.write_bytes(DATA)
+    (tmp_path / "b" / "report.txt").write_bytes(b"old")
+
+    class NoProbe(_OtherProtocol):
+        def open_write(self, p, append=False):
+            if ".part-" in p:
+                raise PermissionError("no new files here")
+            return super().open_write(p, append)
+
+    job = _run(src, NoProbe(tmp_path / "b"), "/report.txt")
+    assert job.status == TransferStatus.DONE, job.error_message
+    assert (tmp_path / "b" / "report.txt").read_bytes() == DATA
