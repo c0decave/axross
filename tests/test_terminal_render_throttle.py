@@ -181,6 +181,9 @@ def test_edge_thousands_of_new_lines_set_the_text_once(monkeypatch):
     t.append_output("".join(f"row {i}\r\n" for i in range(TW.RENDER_REPLACE_LINES + 500)))
     assert len(sets) == 1
     t.append_output("one more\r\n")
+    # The next drawing waits as long as the last one took (the big one may
+    # take long on a loaded machine): draw what is pending, then compare.
+    t.flush_render()
     assert len(sets) == 1
     reference = _term()
     reference.attach_screen(type(t.screen)(t.screen.cols, t.screen.rows))
