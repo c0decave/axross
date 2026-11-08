@@ -71,7 +71,7 @@ def test_happy_triggering_the_entry_emits_the_request(pane):
     pane.open_duplicates_requested.connect(lambda: seen.append(True))
 
     action = next(
-        a for a in pane._build_context_menu().actions() if "Duplicate" in a.text()
+        a for a in pane._build_context_menu().actions() if "Duplicate" in a.text().replace("&", "")
     )
     action.trigger()
     APP.processEvents()

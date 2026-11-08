@@ -4465,7 +4465,7 @@
   "&Send Pane to Workspace": "&Pane an Workspace senden",
   "Ne&xt Workspace": "Nä&chster Workspace",
   "&Previous Workspace": "&Voriger Workspace",
-  "Dup&licate Finder…": "Dup&licate Finder…",
+  "Dup&licate Finder…": "Duplicate &Finder…",
   "Run the selected job now, without waiting for its time": "Den gewählten Job jetzt ausführen, ohne auf seine Zeit zu warten",
   "{name} started; its result shows here when it ends.": "{name} gestartet; das Ergebnis erscheint hier, wenn er endet.",
   "{name} is running already.": "{name} läuft bereits.",
