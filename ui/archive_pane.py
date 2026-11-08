@@ -130,6 +130,28 @@ def _split_segments(name: str) -> list[str]:
     return [seg for seg in normalised.split("/") if seg and seg != "."]
 
 
+def _cell_maker():
+    """``cell(text)``: a new read-only item with *text*.
+
+    Cloned from a read-only prototype: a clone is a plain C++
+    QStandardItem, so Qt's own setData calls (setText, the flags) stay in
+    C++ - a QStandardItem made in Python sends each of them through
+    Python (ui.markup_guard wraps the virtual setData), ~4x the time for
+    the 250,000 items of a 50,000-member archive. Python calls on a clone
+    (setData, setToolTip) still go through the guard."""
+    prototype = QStandardItem()
+    prototype.setEditable(False)
+    clone = prototype.clone
+
+    def cell(text: str = "") -> QStandardItem:
+        item = clone()
+        if text:
+            item.setText(text)
+        return item
+
+    return cell
+
+
 def _make_row(
     label: str,
     member: str,
@@ -138,24 +160,105 @@ def _make_row(
     compressed: str = "",
     ratio: str = "",
     modified: str = "",
+    cell=None,
 ) -> list[QStandardItem]:
     """Build one model row (five items). The Name item carries the full
     member name (or dir prefix) in ``UserRole``; every item is made
     non-editable — this is a read-only listing. The label is shown with
     controls and bidi overrides replaced (as the file table does):
     "invoice\u202efdp.exe" would read as "invoiceexe.pdf"."""
-    name_item = QStandardItem(sanitize_for_display(label))
+    cell = cell or _cell_maker()
+    name_item = cell(sanitize_for_display(label))
     name_item.setData(member, Qt.ItemDataRole.UserRole)
-    cells = [
-        name_item,
-        QStandardItem(size),
-        QStandardItem(compressed),
-        QStandardItem(ratio),
-        QStandardItem(modified),
-    ]
-    for cell in cells:
-        cell.setEditable(False)
-    return cells
+    return [name_item, cell(size), cell(compressed), cell(ratio), cell(modified)]
+
+
+#: Entries placed between two looks at the cancel callable.
+_CANCEL_EVERY = 2048
+
+
+class _Cancelled(Exception):
+    pass
+
+
+def archive_rows(entries: list[ArchiveEntry], cancel: Callable[[], bool] | None = None,
+                 ) -> list[list[QStandardItem]]:
+    """The top-level rows of :func:`build_archive_tree`'s tree, each with
+    its subtree, as items in no model yet - so they can be made on a
+    worker thread (no QObject, no signal is touched) and appended on the
+    GUI thread in one step per top-level row. Raises ``_Cancelled`` when
+    *cancel* turns true."""
+    cell = _cell_maker()
+    archive_tip = tr("An archive: double-click opens it here")
+    top: list[list[QStandardItem]] = []
+
+    # Cache of dir-prefix -> the folder's Name QStandardItem, so repeated
+    # path prefixes resolve to the same row and intermediate dirs are
+    # created exactly once.
+    dir_items: dict[str, QStandardItem] = {}
+
+    def _ensure_dir(prefix_segments: list[str]) -> QStandardItem | None:
+        """Return the Name item for the directory described by
+        *prefix_segments*, creating it (and any missing ancestors) on
+        demand. Empty segments → the top level (None marker)."""
+        if not prefix_segments:
+            return None
+        prefix = "/".join(prefix_segments) + "/"
+        existing = dir_items.get(prefix)
+        if existing is not None:
+            return existing
+        parent_item = _ensure_dir(prefix_segments[:-1])
+        row = _make_row(prefix_segments[-1], prefix, cell=cell)
+        if parent_item is None:
+            top.append(row)
+        else:
+            parent_item.appendRow(row)
+        name_item = row[COL_NAME]
+        dir_items[prefix] = name_item
+        return name_item
+
+    for count, entry in enumerate(entries):
+        if cancel is not None and count % _CANCEL_EVERY == 0 and cancel():
+            raise _Cancelled
+        segments = _split_segments(entry.name)
+        if not segments:
+            # Empty / root-only name — nothing meaningful to place.
+            continue
+        if entry.is_dir:
+            # Explicit directory entry: ensure the folder row exists. Use
+            # the entry's own member name (preserving its exact trailing
+            # form) on the UserRole if we are creating it fresh; the
+            # implied-prefix form is equivalent for selection purposes.
+            _ensure_dir(segments)
+            continue
+        # File entry: ensure parent dirs, then append the file row.
+        parent_item = _ensure_dir(segments[:-1])
+        row = _make_row(
+            segments[-1],
+            entry.name,
+            size=_fmt_size(entry.size),
+            compressed=_fmt_size(entry.compressed),
+            ratio=_fmt_ratio(entry),
+            modified=_fmt_mtime(entry.mtime),
+            cell=cell,
+        )
+        if is_supported_archive(entry.name):
+            row[COL_NAME].setToolTip(archive_tip)
+        if parent_item is None:
+            top.append(row)
+        else:
+            parent_item.appendRow(row)
+    return top
+
+
+def _tree_model(rows: list[list[QStandardItem]]) -> QStandardItemModel:
+    """A model with the headers and *rows* (from :func:`archive_rows`)."""
+    model = QStandardItemModel()
+    model.setHorizontalHeaderLabels([tr(h) for h in _HEADERS])
+    root = model.invisibleRootItem()
+    for row in rows:
+        root.appendRow(row)
+    return model
 
 
 def build_archive_tree(entries: list[ArchiveEntry]) -> QStandardItemModel:
@@ -178,61 +281,7 @@ def build_archive_tree(entries: list[ArchiveEntry]) -> QStandardItemModel:
 
     PURE: takes entries, returns a model. No file IO, no widget show.
     """
-    model = QStandardItemModel()
-    model.setHorizontalHeaderLabels([tr(h) for h in _HEADERS])
-    root = model.invisibleRootItem()
-
-    # Cache of dir-prefix -> the folder's Name QStandardItem, so repeated
-    # path prefixes resolve to the same row and intermediate dirs are
-    # created exactly once.
-    dir_items: dict[str, QStandardItem] = {}
-
-    def _ensure_dir(prefix_segments: list[str]) -> QStandardItem | None:
-        """Return the Name item for the directory described by
-        *prefix_segments*, creating it (and any missing ancestors) on
-        demand. Empty segments → the invisible root (None marker)."""
-        if not prefix_segments:
-            return None
-        prefix = "/".join(prefix_segments) + "/"
-        existing = dir_items.get(prefix)
-        if existing is not None:
-            return existing
-        parent_item = _ensure_dir(prefix_segments[:-1])
-        parent = parent_item if parent_item is not None else root
-        row = _make_row(prefix_segments[-1], prefix)
-        parent.appendRow(row)
-        name_item = row[COL_NAME]
-        dir_items[prefix] = name_item
-        return name_item
-
-    for entry in entries:
-        segments = _split_segments(entry.name)
-        if not segments:
-            # Empty / root-only name — nothing meaningful to place.
-            continue
-        if entry.is_dir:
-            # Explicit directory entry: ensure the folder row exists. Use
-            # the entry's own member name (preserving its exact trailing
-            # form) on the UserRole if we are creating it fresh; the
-            # implied-prefix form is equivalent for selection purposes.
-            _ensure_dir(segments)
-            continue
-        # File entry: ensure parent dirs, then append the file row.
-        parent_item = _ensure_dir(segments[:-1])
-        parent = parent_item if parent_item is not None else root
-        row = _make_row(
-            segments[-1],
-            entry.name,
-            size=_fmt_size(entry.size),
-            compressed=_fmt_size(entry.compressed),
-            ratio=_fmt_ratio(entry),
-            modified=_fmt_mtime(entry.mtime),
-        )
-        if is_supported_archive(entry.name):
-            row[COL_NAME].setToolTip(tr("An archive: double-click opens it here"))
-        parent.appendRow(row)
-
-    return model
+    return _tree_model(archive_rows(entries))
 
 
 #: A member a pane is to show once its listing is in (:func:`request_reveal`):
@@ -571,8 +620,18 @@ class ArchivePaneWidget(QWidget):
         self._list_job = ScanJob(self)
         self._list_job.finished.connect(self._on_listed)
         path = self._archive_path
-        # Cancel (closing the pane) stops a long tar listing between headers.
-        self._list_job.start(lambda cancelled, _report: list_archive(path, cancel=cancelled))
+
+        def work(cancelled, _report):
+            # Cancel (closing the pane) stops a long tar listing between
+            # headers. The tree's items are made here too: 250,000 of them
+            # for 50,000 members held the GUI thread 2 s.
+            entries = list_archive(path, cancel=cancelled)
+            try:
+                return entries, archive_rows(entries, cancel=cancelled)
+            except _Cancelled:
+                return entries, None
+
+        self._list_job.start(work)
 
     def _on_listed(self, kind: str, value, cancelled: bool) -> None:
         if cancelled:
@@ -580,7 +639,8 @@ class ArchivePaneWidget(QWidget):
         if kind == "error":
             self._listing_failed(value)
         else:
-            self._show_entries(value)
+            entries, rows = value
+            self._show_entries(entries, rows)
 
     def _listing_failed(self, exc: BaseException) -> None:
         basename = self.display_name()
@@ -602,10 +662,12 @@ class ArchivePaneWidget(QWidget):
         self._header_label.setText(basename)
         self._status_label.setText(self.load_error)
 
-    def _show_entries(self, entries) -> None:
+    def _show_entries(self, entries, rows=None) -> None:
+        """Show *entries*; *rows* are their tree's rows when the worker
+        made them (:func:`archive_rows`)."""
         self._entries = list(entries)
         basename = self.display_name()
-        model = build_archive_tree(self._entries)
+        model = _tree_model(rows) if rows is not None else build_archive_tree(self._entries)
         self._tree.setModel(model)
         self._tree.expandToDepth(0)
 

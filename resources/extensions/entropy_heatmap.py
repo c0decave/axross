@@ -111,4 +111,4 @@ def activate(api):
 
         api.run_in_background(lambda: block_entropies(ctx.backend, path), on_done=done)
 
-    api.add_context_action("Entropy Heatmap…", show, applies_to="single_file")
+    api.add_context_action("Entropy Heatmap…", show, applies_to="single_file", icon="heatmap")

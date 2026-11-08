@@ -138,7 +138,7 @@ def test_sad_delete_object_tagging_does_not_delete_the_object(srv, root):
         "acl",
         "tagging",
         "uploads",
-        "uploadId=u1&partNumber=1",
+        "uploadId=u1&partNumber=1&versionId=v1",
         "partNumber=1",
         "versionId=v1",
         "retention",
@@ -152,9 +152,23 @@ def test_sad_put_with_a_subresource_keeps_the_object(srv, root, query):
     assert (root / "b" / "a").read_bytes() == PRECIOUS
 
 
-@pytest.mark.parametrize("query", ["versionId=v1", "uploadId=u1", "acl", "retention"])
+@pytest.mark.parametrize("query", ["versionId=v1", "uploadId=u1&acl", "acl", "retention"])
 def test_sad_delete_with_a_subresource_keeps_the_object(srv, root, query):
     assert _req(srv, "DELETE", f"/b/a?{query}")[0] == 501
+    assert (root / "b" / "a").read_bytes() == PRECIOUS
+
+
+@pytest.mark.parametrize("method, query", [
+    ("PUT", "uploadId=u1&partNumber=1"),
+    ("PUT", "uploadId=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&partNumber=1"),
+    ("DELETE", "uploadId=u1"),
+])
+def test_sad_a_multipart_call_of_an_unknown_upload_keeps_the_object(srv, root, method, query):
+    """UploadPart / AbortMultipartUpload are served now (tests/
+    test_reverse_serve_continue.py); for an upload that does not exist
+    they are NoSuchUpload, and the object is neither replaced nor deleted."""
+    status, body = _req(srv, method, f"/b/a?{query}", b"not the object" if method == "PUT" else b"")
+    assert status == 404 and _code(body) == "NoSuchUpload"
     assert (root / "b" / "a").read_bytes() == PRECIOUS
 
 

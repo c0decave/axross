@@ -57,7 +57,7 @@ from core.remote_name import sanitize_for_display
 from core.thread_relay import GuiCall
 from ui.chat_rooms import RoomListPanel
 from ui.close_corner import add_close_corner
-from ui.icon_provider import icon, set_window_icon
+from ui.icon_provider import has_icon, icon, set_window_icon
 
 log = logging.getLogger(__name__)
 
@@ -426,12 +426,19 @@ class ChatWindow(QDialog):
 
 # --- accounts ------------------------------------------------------------------------
 
+def protocol_icon(protocol: C.Protocol) -> str:
+    """The icon of *protocol*'s own network (irc, matrix, xmpp), so its
+    windows tell themselves apart from another network's; the generic
+    bubble for a protocol without one."""
+    return protocol.name if has_icon(protocol.name) else "chat"
+
+
 class AccountEditor(QDialog):
     """The fields of one account, from its protocol's FieldSpecs."""
 
     def __init__(self, protocol: C.Protocol, account: C.Account | None, parent=None) -> None:
         super().__init__(parent)
-        set_window_icon(self, "chat")
+        set_window_icon(self, protocol_icon(protocol))
         self.protocol = protocol
         self.account = account or C.Account(protocol=protocol.name, name="")
         self.setWindowTitle(tr("{protocol} Account").format(protocol=protocol.title))
@@ -704,6 +711,19 @@ class ChatPanel(QWidget):
             self._conversation(account.account_id, conv.key)
         self._state(account.account_id, client.state, client.detail)
         return client
+
+    def show_missing(self, text: str, open_features=None, key: str = "extra:chat") -> None:
+        """*text* (what this network lacks here) where the conversations
+        go, with a link that opens Help > Features… at *key*, the feature
+        that installs it - before, a pip command to type was the only way.
+        Without *open_features* (no window to ask) the text alone."""
+        if open_features is None:
+            self.empty.setText(text)
+            return
+        self.empty.setTextFormat(Qt.TextFormat.RichText)
+        self.empty.setText(f'{html.escape(text)}<br><br><a href="{html.escape(key)}">'
+                           f'{html.escape(tr("Show in Features…"))}</a>')
+        self.empty.linkActivated.connect(lambda link: open_features(link))
 
     def connect_autostart(self) -> None:
         for client in self.clients.values():
@@ -1098,7 +1118,7 @@ class ChatPanel(QWidget):
 class AccountsDialog(QDialog):
     def __init__(self, panel: ChatPanel) -> None:
         super().__init__(panel)
-        set_window_icon(self, "chat")
+        set_window_icon(self, protocol_icon(panel.protocol))
         self.panel = panel
         self.setWindowTitle(tr("{protocol} Accounts").format(protocol=panel.protocol.title))
         layout = QVBoxLayout(self)

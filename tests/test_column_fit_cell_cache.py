@@ -256,6 +256,9 @@ def test_perf_sad_the_uncached_fit_is_caught_by_the_budget():
     dock = _dock(2000)
     try:
         dock._columns._cache_widths = False
+        # The former fit also measured Qt's default 1000 rows; the dock now
+        # samples TABLE_FIT_ROWS, which alone makes even the uncached fit cheap.
+        dock._table.horizontalHeader().setResizeContentsPrecision(1000)
         cost = _update_cost_ms(dock, updates=8) * 5  # 40 updates' worth
     finally:
         dock.close()

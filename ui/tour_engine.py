@@ -738,11 +738,12 @@ class ToursDialog(QDialog):
         self.video_button.setText(tr("Watch Video"))
 
     def _video_ready(self, path: str) -> None:
-        from PyQt6.QtCore import QUrl
-        from PyQt6.QtGui import QDesktopServices
+        from core.desktop_open import open_url
 
         self._video_done()
-        if not QDesktopServices.openUrl(QUrl.fromLocalFile(path)):
+        # core.desktop_open: the player starts with a clean environment
+        # (no LD_LIBRARY_PATH of a one-file binary), like every other opener.
+        if not open_url(path):
             self._video_failed(tr("No video player opened {path}.").format(path=path))
 
     def _video_failed(self, message: str) -> None:
@@ -770,7 +771,7 @@ class _VideoFetch(QObject):
     """core.tour_videos.fetch in a thread; the results come back as signals
     (queued to the dialog's thread)."""
 
-    progress = pyqtSignal(int, int)
+    progress = pyqtSignal(object, object)  # byte counts: object, not a 32-bit int
     finished_ok = pyqtSignal(str)
     failed = pyqtSignal(str)
 

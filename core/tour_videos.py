@@ -31,8 +31,8 @@ log = logging.getLogger(__name__)
 MANIFEST = Path(__file__).resolve().parent.parent / "resources" / "tours" / "tour_videos.json"
 #: A tour video is a few MB; anything much bigger is not one of ours.
 MAX_VIDEO_BYTES = 64 * 1024 * 1024
-_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.mp4$")
-_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.mp4")
+_SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 class VideoError(Exception):
@@ -52,7 +52,7 @@ class Video:
 def _manifest(path: Path | None = None) -> dict:
     try:
         data = json.loads((path or MANIFEST).read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
         log.info("tour videos: no manifest: %s", exc)
         return {}
     return data if isinstance(data, dict) else {}
@@ -79,9 +79,9 @@ def video_for(tour_id: str, language: str, *, manifest: Path | None = None) -> V
         if not isinstance(entry, dict):
             continue
         name, size, sha = entry.get("file"), entry.get("size"), entry.get("sha256")
-        if (isinstance(name, str) and _NAME.match(name) and isinstance(size, int)
+        if (isinstance(name, str) and _NAME.fullmatch(name) and isinstance(size, int)
                 and not isinstance(size, bool) and 0 < size <= MAX_VIDEO_BYTES
-                and isinstance(sha, str) and _SHA256.match(sha)):
+                and isinstance(sha, str) and _SHA256.fullmatch(sha)):
             return Video(tour_id, lang, name, base + name, size, sha)
         log.warning("tour videos: bad manifest entry %s/%s", lang, tour_id)
     return None

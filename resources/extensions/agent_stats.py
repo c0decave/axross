@@ -91,6 +91,8 @@ class StatsWindow(QWidget):
         from ui.icon_provider import set_window_icon
 
         set_window_icon(self, "stats")
+        from ui.handbook import install_help_key
+        install_help_key(self, "agent-stats")  # F1: its handbook section (a window of its own)
         self.setWindowTitle("Agent Stats")
         self.setObjectName("axAgentStats")
         self.counts = AgentStats()

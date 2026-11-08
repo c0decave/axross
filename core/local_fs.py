@@ -7,12 +7,15 @@ import shutil
 import stat as stat_module
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import IO
 
 from core import removal_cancel
 from core.backend import SessionLifecycle
 from models.file_item import FileItem, local_time
+
+_from_timestamp = datetime.fromtimestamp
 
 try:
     import grp
@@ -31,12 +34,18 @@ _group_cache: dict[int, tuple[float, str]] = {}
 _name_lock = threading.Lock()
 
 
+#: Per thread, while one LocalFS.list_dir runs: (uid -> owner, gid -> group)
+#: of that listing - a dict lookup per entry instead of the shared cache's
+#: lock and clock (two per entry: ~1 us of every entry's ~5 us).
+_listing = threading.local()
+
+
 def _cached_name(cache: dict, ident: int, lookup) -> str:
     now = time.monotonic()
-    with _name_lock:
-        hit = cache.get(ident)
-        if hit is not None and now - hit[0] < NAME_CACHE_TTL:
-            return hit[1]
+    # A dict read is atomic: the lock guards the writes (clear, then set).
+    hit = cache.get(ident)
+    if hit is not None and now - hit[0] < NAME_CACHE_TTL:
+        return hit[1]
     try:
         name = lookup(ident)
     except (KeyError, OverflowError, TypeError):
@@ -69,6 +78,12 @@ def clear_name_cache() -> None:
 
 
 log = logging.getLogger(__name__)
+
+
+#: The stat fields that can flag an entry hidden on this platform (none on
+#: Linux: a listing there skips the check for real stat results).
+_HIDDEN_FIELDS_HERE = tuple(
+    name for name in ("st_file_attributes", "st_flags") if hasattr(os.stat_result, name))
 
 
 def stat_hidden_flag(st) -> bool:
@@ -169,17 +184,22 @@ class LocalFS(SessionLifecycle):
 
     def list_dir(self, path: str) -> list[FileItem]:
         items: list[FileItem] = []
+        outer = getattr(_listing, "names", None)
+        _listing.names = ({}, {})  # owner / group names of this listing (see _listing)
         try:
             with os.scandir(path) as it:
+                append, to_item = items.append, self._entry_to_item
                 for entry in it:
                     try:
-                        items.append(self._entry_to_item(entry))
+                        append(to_item(entry))
                     except OSError as e:
                         log.warning("Cannot stat %s: %s", entry.path, e)
-                        items.append(unstattable_item(entry, e))
+                        append(unstattable_item(entry, e))
         except OSError as e:
             log.error("Cannot list %s: %s", path, e)
             raise
+        finally:
+            _listing.names = outer
         return items
 
     def stat(self, path: str) -> FileItem:
@@ -338,8 +358,9 @@ class LocalFS(SessionLifecycle):
         return self._stat_to_item(entry.name, st, full_path=entry.path)
 
     def _stat_to_item(self, name: str, st: os.stat_result, full_path: str = "") -> FileItem:
-        is_link = stat_module.S_ISLNK(st.st_mode)
-        is_dir = stat_module.S_ISDIR(st.st_mode)
+        mode = st.st_mode
+        is_link = stat_module.S_ISLNK(mode)
+        is_dir = stat_module.S_ISDIR(mode)
         link_target = ""
         if is_link and full_path:
             try:
@@ -347,10 +368,28 @@ class LocalFS(SessionLifecycle):
             except OSError:
                 pass
 
-        owner = owner_name(st.st_uid) if hasattr(st, "st_uid") else ""
-        group = group_name(st.st_gid) if hasattr(st, "st_gid") else ""
+        names = getattr(_listing, "names", None)
+        if names is None:
+            owner = owner_name(st.st_uid) if hasattr(st, "st_uid") else ""
+            group = group_name(st.st_gid) if hasattr(st, "st_gid") else ""
+        else:
+            owners, groups = names
+            uid, gid = getattr(st, "st_uid", None), getattr(st, "st_gid", None)
+            owner = owners.get(uid) if uid is not None else ""
+            if owner is None:
+                owner = owners[uid] = owner_name(uid)
+            group = groups.get(gid) if gid is not None else ""
+            if group is None:
+                group = groups[gid] = group_name(gid)
 
-        accessed = local_time(st.st_atime) if getattr(st, "st_atime", 0) else None
+        # local_time() inlined for the common case (two calls per entry).
+        mtime, atime = st.st_mtime, getattr(st, "st_atime", 0)
+        try:
+            modified = _from_timestamp(mtime)
+            accessed = _from_timestamp(atime) if atime else None
+        except (ValueError, OverflowError, OSError, TypeError):
+            modified = local_time(mtime)
+            accessed = local_time(atime) if atime else None
         created = None
         # On Linux st_ctime is inode-change-time; on macOS/Windows it
         # is birthtime. Prefer explicit birthtime when the platform
@@ -361,8 +400,8 @@ class LocalFS(SessionLifecycle):
         return FileItem(
             name=name,
             size=st.st_size,
-            modified=local_time(st.st_mtime),
-            permissions=st.st_mode & 0o7777,
+            modified=modified,
+            permissions=mode & 0o7777,
             is_dir=is_dir,
             is_link=is_link,
             link_target=link_target,
@@ -370,5 +409,6 @@ class LocalFS(SessionLifecycle):
             group=group,
             accessed=accessed,
             created=created,
-            attr_hidden=stat_hidden_flag(st),
+            attr_hidden=(stat_hidden_flag(st)
+                         if _HIDDEN_FIELDS_HERE or type(st) is not os.stat_result else False),
         )

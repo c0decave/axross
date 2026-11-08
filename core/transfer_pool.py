@@ -211,8 +211,9 @@ class JobScheduler:
 
     # -- the queue ------------------------------------------------------------
 
-    def put(self, job: TransferJob) -> None:
-        lane = tuple(
+    @staticmethod
+    def _lane_of(job: TransferJob) -> tuple:
+        return tuple(
             sorted(
                 {
                     id(b)
@@ -221,8 +222,23 @@ class JobScheduler:
                 }
             )
         )
+
+    def put(self, job: TransferJob) -> None:
+        lane = self._lane_of(job)
         with self._cond:
             self._lanes.setdefault(lane, deque()).append((next(self._seq), job))
+            self._cond.notify_all()
+
+    def put_many(self, jobs) -> None:
+        """:meth:`put` of every job in order, under one lock and one wake-up
+        (a walk's thousands of jobs: one put each woke the workers that many
+        times while the GUI thread queued them)."""
+        lanes = [(self._lane_of(job), job) for job in jobs]
+        if not lanes:
+            return
+        with self._cond:
+            for lane, job in lanes:
+                self._lanes.setdefault(lane, deque()).append((next(self._seq), job))
             self._cond.notify_all()
 
     def pending(self) -> int:

@@ -872,11 +872,16 @@ class AgentTab(QWidget):
             item.setCheckState(Qt.CheckState.Checked if text in chosen else Qt.CheckState.Unchecked)
             item.setToolTip(tip)
             self.groups.addItem(item)
+        found = self.dock.detected_servers()
+        if not found:
+            # Before the first scan (the dock shown): nothing to list, and
+            # the start is spared importing the dialogs below.
+            return
         from ui.agent_settings_dialog import free_name
         from ui.mcp_catalog_dialog import plain_tooltip
 
         names = {s.name for s in settings.mcp_servers}
-        for detected in self.dock.detected_servers():
+        for detected in found:
             # The name it gets when it is added (core.mcp_detect names may repeat).
             name = free_name(detected.name, names)
             names.add(name)
@@ -2853,6 +2858,8 @@ class AgentDock(ExtensionDock):
     def detected_servers(self) -> list:
         """The usable servers found on this machine that the settings do not
         have yet."""
+        if not self._detected:
+            return []  # nothing scanned yet (core.mcp_detect not imported for it)
         from core.mcp_detect import configured_as
 
         return [d for d in self._detected

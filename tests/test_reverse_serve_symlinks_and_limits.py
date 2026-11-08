@@ -151,7 +151,7 @@ def test_sad_content_length_is_digits_and_one_value(root, kind):
         for lengths, body in ((["+5"], b"abcde"), (["1_0"], b"0123456789"), (["3", "10"], b"abcdefghij")):
             framing = "".join(f"Content-Length: {n}\r\n" for n in lengths)
             out = _raw(server.port, (head + framing + "\r\n").encode() + body)
-            assert out.startswith(b"HTTP/1.0 400"), (lengths, out[:60])
+            assert out.startswith(b"HTTP/1.1 400"), (lengths, out[:60])
             assert not (root / "b" / "cl.txt").exists()
         out = _raw(server.port, (head + "Content-Length: 5\r\nContent-Length: 5\r\n\r\n").encode() + b"abcde")
         assert out.split(b" ", 2)[1] in (b"200", b"201")

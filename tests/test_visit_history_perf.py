@@ -8,6 +8,10 @@ learn whether the file had been taken in completely - and wrote it through
 call with a full history (200 hosts x 20 operations, 0.5 MB), measured.
 Now the completeness found by the first read is handed to ``_save`` and
 the text is encoded with ``json.dumps`` (the C encoder, the same bytes).
+
+Since 2026-11-08 a record only queues the visit: ``flush`` (a timer, at
+exit, before ``clear``) applies every queued one to the file as it is on
+disk and writes once - still 95 ms per mutating script call before.
 """
 
 from __future__ import annotations
@@ -34,7 +38,7 @@ class _Counting:
         self.writes = 0
 
     def __enter__(self):
-        read_text, replace = Path.read_text, VH.os.replace
+        read_text, read_bytes, replace = Path.read_text, Path.read_bytes, VH.os.replace
         counter = self
 
         def counted_read(p, *a, **kw):
@@ -42,12 +46,18 @@ class _Counting:
                 counter.reads += 1
             return read_text(p, *a, **kw)
 
+        def counted_read_bytes(p, *a, **kw):
+            if Path(p) == counter.path:
+                counter.reads += 1
+            return read_bytes(p, *a, **kw)
+
         def counted_replace(src, dst, *a, **kw):
             if Path(dst) == counter.path:
                 counter.writes += 1
             return replace(src, dst, *a, **kw)
 
         self._patches = [mock.patch.object(Path, "read_text", counted_read),
+                         mock.patch.object(Path, "read_bytes", counted_read_bytes),
                          mock.patch.object(VH.os, "replace", counted_replace)]
         for p in self._patches:
             p.start()
@@ -85,7 +95,9 @@ class RecordVisitCostTest(unittest.TestCase):
             for i in range(5):
                 VH.record_visit("sftp", "host7.example", "alice", path=f"/srv/f{i}",
                                 verb="copy", desc=f"copy f{i}")
-        self.assertEqual((count.reads, count.writes), (5, 5))
+            self.assertEqual((count.reads, count.writes), (0, 0))  # queued
+            self.assertTrue(VH.flush())
+        self.assertEqual((count.reads, count.writes), (1, 1))  # five visits, one write
         text = self.path.read_text(encoding="utf-8")
         former = io.StringIO()
         json.dump(json.loads(text), former, indent=2)  # what the streaming writer wrote
@@ -100,6 +112,7 @@ class RecordVisitCostTest(unittest.TestCase):
         self.path.write_bytes(content)
         with _Counting(self.path) as count:
             VH.record_visit("sftp", "new", "u")
+            VH.flush()
         self.assertEqual((count.reads, count.writes), (1, 1))
         self.assertEqual([c.read_bytes() for c in self.copies()], [content])
         self.assertEqual(sorted(v.host for v in VH.where_was_i()), ["a", "new"])
@@ -109,6 +122,7 @@ class RecordVisitCostTest(unittest.TestCase):
         with mock.patch.object(VH, "keep_unreadable_copy", return_value=False), \
                 _Counting(self.path) as count:
             VH.record_visit("sftp", "new", "u")  # never fails the caller
+            self.assertFalse(VH.flush())
         self.assertEqual((count.reads, count.writes), (1, 0))
         self.assertEqual(self.path.read_bytes(), b'[{"protocol": "sftp", "ho')
         partial = json.dumps([{"protocol": "sftp", "host": "a"}, 7]).encode()
@@ -124,7 +138,8 @@ class RecordVisitCostTest(unittest.TestCase):
         with _Counting(self.path) as count:
             VH.record_visit("sftp", "a", "u")
             VH.record_visit("sftp", "b", "u")
-        self.assertEqual((count.reads, count.writes), (1, 2))  # the first found no file
+            VH.flush()
+        self.assertEqual((count.reads, count.writes), (0, 1))  # no file to read yet
         with _Counting(self.path) as count:
             self.assertEqual(VH.clear("a"), 1)
         self.assertEqual((count.reads, count.writes), (1, 1))

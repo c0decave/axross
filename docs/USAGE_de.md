@@ -404,7 +404,7 @@ native Protokoll sie nicht kennt.
 | Identify File Type… | Rechtsklick (Auswahl) | Eine Zeile pro Eintrag: der echte Typ laut Inhalt (Magic Bytes über Qts MIME-Datenbank, puremagic, eine eingebaute Signaturtabelle), der MIME-Type, was die Endung behauptet, und ein hervorgehobenes *mismatch*, wenn sie sich widersprechen, Größe, bei Text Encoding und Zeilenenden. Liest höchstens 64 KiB je Datei über das Backend, außerhalb des GUI-Threads, mit 15 s Timeout je Datei — ein toter Remote gibt eine „timed out"-Zeile. Lokale Dateien zeigen auch die Beschreibung von `file(1)`, wenn es installiert ist. Scripting: `axross.file_type(b, path)`. |
 | Open Terminal Here | Rechtsklick (auch auf freie Fläche) | Öffnet eine Shell im Terminal-Dock im Ordner: ein gewählter Ordner, sonst der angezeigte. Lokale Panes bekommen eine lokale Shell, die in dem Ordner startet; SFTP-/SCP-Panes eine Shell auf derselben SSH-Verbindung, gefolgt von `cd -- '<ordner>'` (mit `shlex.quote` gequotet). Ausgegraut, mit dem Grund als Tooltip, bei Protokollen ohne Shell. |
 | Open External Terminal Here | Rechtsklick (lokale Panes) | Startet `$TERMINAL`, sonst das erste installierte von x-terminal-emulator, gnome-terminal, konsole, xfce4-terminal, alacritty, kitty, foot, wezterm, xterm — mit dem Ordner als Arbeitsverzeichnis, abgelöst, ohne Shell dazwischen. |
-| Duplicate Finder | Menü Ansicht | Gruppiert indizierte Dateien nach Content-Hash, die größte Verschwendung zuerst: jede Gruppe zeigt den Platz, den sie freigäbe, die Statuszeile die Summe. Leere Dateien und Gruppen, die nur Hardlinks einer Datei sind, bleiben verborgen, solange *Empty files* / *Hard links* nicht angehakt ist. *Filter* (Text oder Muster wie `*.jpg *.png`; `Strg+F`), *At least* (eine Größe) und *Sort* (freizugebender Platz, Größe, Kopien, Name, Ordner) grenzen die Liste ein; die Kopien einer Gruppe bleiben in Survivor-Reihenfolge (die erste bleibt). *Rebuild from Active Pane…* hasht den Ordner im Hintergrund mit Anzahl, Bytes und *Cancel*: Unveränderte Dateien werden nicht neu gehasht, seit dem letzten Scan verschwundene Dateien verlassen den Index, und der Bericht nennt Dateien, die nicht lesbar waren, Ordner, die sich nicht auflisten ließen, und übersprungene FIFOs, Sockets oder Geräte (nie gelesen: das könnte hängen). Ein Backend ohne eigene Content-Prüfsumme (SMB, einfaches FTP, WebDAV nur mit ETags) lässt seine Dateien stattdessen lesen — nur die, deren Größe eine andere Datei teilt, und nur so weit, wie ihre ersten 64 KiB übereinstimmen; ein ETag zählt nie als Hash. *Mark All Duplicates (keep first)* behält die älteste Kopie; *Mark, Keeping…* (auch im Kontextmenü) behält die neueste Kopie, den kürzesten Pfad oder eine Kopie in einem Ordner, oder markiert die Kopien in einem Ordner; ein Hardlink einer behaltenen Kopie wird nie markiert, und Hardlinks zählen nicht als freizugebender Platz. *Move Selected to Trash…* (`Del`) verschiebt die markierten Kopien in den axross-Trash, nachdem live geprüft ist, dass eine echte andere Kopie bleibt. `Enter` öffnet den enthaltenden Ordner, die Zeile unter der Liste zeigt die aktuelle Zeile vollständig (exakte Größe, Hash, Hardlinks), und `ax-cas://…`-URLs lassen sich kopieren. Tausende Gruppen erscheinen stückweise, während das Fenster bedienbar bleibt. |
+| Duplicate Finder | Menü Ansicht, `Strg+Umschalt+D` | Gruppiert indizierte Dateien nach Content-Hash und verschiebt überzählige Kopien in den Trash — siehe *Duplicate Finder* unter *Werkzeuge*. |
 | View Media… / View Selected Media… | Rechtsklick, Menü Ansicht | Bilder, PDFs und Videos des Ordners (optional rekursiv) oder der Auswahl als Overview-Grid, Viewer zum Durchklicken oder Slideshow — siehe *Editoren und Viewer*. |
 | Show / Remove / Export Metadata… | Rechtsklick | EXIF / GPS / XMP / IPTC, Office-Properties, PDF-Info, Audio-/Video-Tags der Auswahl — oder des ganzen Ordners, wenn nichts ausgewählt ist (Unterordner optional) — siehe *Datei-Metadata*. |
 | Cut / Paste | Rechtsklick (Paste auch auf freier Fläche), `Strg+X` / `Strg+V` | Cut merkt sich die Auswahl und entfernt nichts (die Einträge sind abgeblendet); Paste in einem beliebigen Pane verschiebt sie über die Übertragungen in dessen Ordner - siehe *Übertragungen*. Ein Cut ohne Paste lässt alles, wo es ist. |
@@ -654,8 +654,8 @@ eines floating Panels dockt es wieder an.
   `I` (oder der *Info*-Button) zeigt die Metadata des aktuellen
   Elements in einem Side-Panel, mit *Remove metadata* — auch im
   Bild-Viewer.
-- **Media Player** (mitgelieferte Extension, *Extensions → Extensions
-  verwalten…*) — ein Dock, das MP3, WAV, Ogg Vorbis, FLAC, Opus, AAC
+- **Media Player** (mitgelieferte Extension; ihr Werkzeugleisten-Knopf
+  oder *Extensions → Media Player* bietet an, sie einzuschalten) — ein Dock, das MP3, WAV, Ogg Vorbis, FLAC, Opus, AAC
   und mehr abspielt - und Internetradio: *URL…* fügt einen Stream über
   seine http-/https-Adresse hinzu (die .m3u-Playlist eines Senders nennt
   sie auch; in einem Stream gibt es keine Position zum Spulen). Tracks kommen per Rechtsklick → *Play in Media
@@ -731,8 +731,11 @@ eines floating Panels dockt es wieder an.
   weiter, und auf das Panel gezogene Dateien landen weiterhin in der
   Playlist. Visualisierung, ihre Farben und Optionen, eingeklappter
   Equalizer und eingeklappte Playlist kommen beim nächsten Start wieder.
-- **Chat** (mitgelieferte Extensions IRC, Matrix und XMPP, *Extensions →
-  Extensions verwalten…*) — der Konto-Editor bietet bekannte öffentliche Server
+- **Chat** (mitgelieferte Extensions IRC, Matrix und XMPP: unter
+  *Extensions → Extensions verwalten…* einschalten, dann zeigt und
+  verbirgt das Extensions-Menü das Panel jeder einzelnen; Matrix und XMPP
+  brauchen das Extra `chat`, das *Hilfe → Funktionen…* anbietet) — der
+  Konto-Editor bietet bekannte öffentliche Server
   in einer editierbaren Liste an (eigene jederzeit eintippbar): ein Stand
   liegt axross bei, *Refresh list* holt die öffentlichen Verzeichnisse
   (irssis Netzwerkliste, joinmatrix.org, die XMPP-Providers-Liste) über den
@@ -742,8 +745,8 @@ eines floating Panels dockt es wieder an.
   100 000 Kanäle). Ein Schloss an jedem Konto und Gespräch zeigt den Schutz:
   TLS zum Server, Ende-zu-Ende verschlüsselt (alle Schlüssel geprüft oder
   nicht) oder Klartext.
-- **Bluetooth** (mitgelieferte Extension, *Extensions → Extensions
-  verwalten…*) — ein Panel, um Lautsprecher, Kopfhörer und andere
+- **Bluetooth** (mitgelieferte Extension; *Tools → Bluetooth* bietet
+  an, sie einzuschalten) — ein Panel, um Lautsprecher, Kopfhörer und andere
   Bluetooth-Geräte über BlueZ (`bluetoothd`) am System-D-Bus zu
   verbinden; es startet kein Programm. Es zeigt den Adapter (bei
   mehreren: auswählen) mit dem Schalter *Powered*, und *Scan* listet, was
@@ -843,47 +846,8 @@ eines floating Panels dockt es wieder an.
   der Tab warum und bietet *Try Again*. Alles steht in `audio.json` wie
   bei **Bearbeiten → Einstellungen… → Audio** (dort bleiben Backend, Eingabegerät und
   die Tests), laufende Player folgen sofort.
-- **System Information** (mitgelieferte Extension, **Tools →
-  Systeminformationen…** bietet an, sie einzuschalten; danach auch *Extensions →
-  Systeminformationen…*) — ein Fenster mit allem über den Rechner, auf dem
-  axross läuft. *Overview*: Name, Hersteller, Modell und OS des Rechners
-  mit seinen Eckdaten (CPU-Threads, Speicher, Storage, Displays), und
-  Kacheln mit Ringen für CPU-Last, Speicher, Swap, das Root-Dateisystem
-  und den Akku (Ladung und Health), die heißesten Temperaturen auf einer
-  Farbskala (grün bis 60 °C, gelb, orange ab 80 °C oder der eigenen
-  High-Marke des Sensors, rot ab 90 °C oder Critical), Grafik mit den
-  angeschlossenen Displays und die Netzwerk-Interfaces mit ihrem
-  Live-Durchsatz; CPU und Speicher haben eine Sparkline der letzten zwei
-  Minuten. Ein Klick auf eine Kachel öffnet ihre Seite. Die Liste links
-  hat je eine Seite für *CPU* (Last je logischer CPU, P- und E-Cores,
-  Frequenzen, Caches, Befehlssatz-Features als Chips, die Sicht des
-  Kernels auf die CPU-Vulnerabilities), *Memory* (belegt, Cache und frei
-  als ein Balken, Swap), *Storage* (ein Balken je Disk mit ihren
-  Partitionen, Mount-Points und Belegung; Disks und Dateisysteme als
-  Tabellen), *Graphics & Displays* (Adapter, Ausgänge mit Name,
-  Auflösung, Bildrate und Größe des Monitors aus seiner EDID, eine Skizze
-  der Bildschirme), *Network* (Interfaces mit Art, Zustand, Speed oder
-  WLAN-Signal, Treiber und Traffic; Bluetooth-Adapter; Funkschalter),
-  *Audio* (Soundkarten, Codecs, PCM-Devices), *USB & Peripherals* (der
-  USB-Baum und die Eingabegeräte), *PCI* (der PCI-Baum, Namen aus
-  `pci.ids`), *Battery & Power*, *Sensors* (Temperaturen, Lüfter,
-  Spannungen), *System & OS* (Hersteller, Modell, Firmware, Secure Boot,
-  Kernel, Desktop, Versionen) und *Virtualisation* (Bare Metal, eine
-  virtuelle Maschine oder ein Container, mit den Indizien). Alles wird
-  ohne root und ohne ein Programm zu starten aus `/proc` und `/sys`
-  gelesen (unter Windows und macOS weniger: was Python und das optionale
-  psutil sagen); jede Quelle hat eine Frist, und ein Abschnitt, der sich
-  nicht lesen lässt, sagt warum - die anderen warten nicht darauf. Das
-  Suchfeld (`/`) filtert alle Seiten zugleich, die Liste zählt die
-  Treffer je Seite. *Copy Section*, *Copy All* und *Save Report…* (Text
-  oder JSON) exportieren das Gesammelte; *JSON Export* speichert alles als
-  JSON-Datei oder kopiert alles bzw. die gezeigte Seite als JSON (jeder
-  Wert, jede Tabelle, jeder Rohwert). Seriennummern, MAC- und
-  IP-Adressen und UUIDs sind auf dem Bildschirm und in jeder Kopie
-  verborgen, bis *Show identifiers* angehakt ist - solche Berichte landen
-  oft öffentlich. Live-Werte werden einmal pro Sekunde gelesen, solange
-  das Fenster zu sehen ist, nie im Hintergrund; *Refresh* sammelt alles
-  neu. Das Fenster behält seine Größe.
+- **System Information** (mitgelieferte Extension) — siehe
+  *Systeminformationen* unter *Mitgelieferte Extensions*.
 - **SSH-Terminal** — Tab-Dock neben den Übertragungen. Lokales PTY
   (`pty.fork()`) und remote-SSH-über-paramiko stehen beide bereit;
   die SSH-Variante reused die bestehende Verbindung.
@@ -934,6 +898,212 @@ die sich während des Bereinigens ändert, bleibt unangetastet. Im
 Video: das hieße ffprobe / ffmpeg auf den Dateiinhalt loszulassen.
 Skripte: `axross.metadata`, `axross.remove_metadata`,
 `axross.export_metadata` (siehe [SCRIPTING_de.md](SCRIPTING_de.md)).
+
+## Werkzeuge
+
+Fenster der Menüs *Ansicht* und *Tools*, die kein Panel sind. **F1** in
+jedem von ihnen öffnet seinen Teil dieses Abschnitts.
+
+### Duplicate Finder
+
+*Ansicht → Duplicate Finder…* (`Strg+Umschalt+D`; im Pane Rechtsklick →
+*Doppelte Dateien finden…*) arbeitet mit dem Duplikat-Index (`cas.sqlite`,
+siehe *Der Offline-Index*).
+Er gruppiert indizierte Dateien nach Content-Hash, die größte Verschwendung zuerst: jede Gruppe zeigt den Platz, den sie freigäbe, die Statuszeile die Summe. Leere Dateien und Gruppen, die nur Hardlinks einer Datei sind, bleiben verborgen, solange *Empty files* / *Hard links* nicht angehakt ist. *Filter* (Text oder Muster wie `*.jpg *.png`; `Strg+F`), *At least* (eine Größe) und *Sort* (freizugebender Platz, Größe, Kopien, Name, Ordner) grenzen die Liste ein; die Kopien einer Gruppe bleiben in Survivor-Reihenfolge (die erste bleibt). *Rebuild from Active Pane…* hasht den Ordner im Hintergrund mit Anzahl, Bytes und *Cancel*: Unveränderte Dateien werden nicht neu gehasht, seit dem letzten Scan verschwundene Dateien verlassen den Index, und der Bericht nennt Dateien, die nicht lesbar waren, Ordner, die sich nicht auflisten ließen, und übersprungene FIFOs, Sockets oder Geräte (nie gelesen: das könnte hängen). Ein Backend ohne eigene Content-Prüfsumme (SMB, einfaches FTP, WebDAV nur mit ETags) lässt seine Dateien stattdessen lesen — nur die, deren Größe eine andere Datei teilt, und nur so weit, wie ihre ersten 64 KiB übereinstimmen; ein ETag zählt nie als Hash. *Mark All Duplicates (keep first)* behält die älteste Kopie; *Mark, Keeping…* (auch im Kontextmenü) behält die neueste Kopie, den kürzesten Pfad oder eine Kopie in einem Ordner, oder markiert die Kopien in einem Ordner; ein Hardlink einer behaltenen Kopie wird nie markiert, und Hardlinks zählen nicht als freizugebender Platz. *Move Selected to Trash…* (`Del`) verschiebt die markierten Kopien in den axross-Trash, nachdem live geprüft ist, dass eine echte andere Kopie bleibt. `Enter` öffnet den enthaltenden Ordner, die Zeile unter der Liste zeigt die aktuelle Zeile vollständig (exakte Größe, Hash, Hardlinks), und `ax-cas://…`-URLs lassen sich kopieren. Tausende Gruppen erscheinen stückweise, während das Fenster bedienbar bleibt.
+
+*Ansicht → Duplikat-Index & Verlauf…* zeigt den Index für sich: jeder
+Neuaufbau wird als Scan festgehalten und mit Ordner, Backend, Beginn und
+Ende, den indizierten Dateien, den noch im Index stehenden Dateien, den
+Duplikatgruppen und seinem Status gelistet. *Duplikate zeigen* öffnet den
+Duplicate Finder auf den Gruppen dieses Scans, *Neu scannen* durchläuft
+denselben Ordner auf demselben Backend im Hintergrund noch einmal (mit
+*Abbrechen*; ein neuer Scan wird festgehalten), *Aus dem Index
+entfernen…* vergisst die Zeilen dieses Scans und *Ganzen Index leeren…*
+alle Zeilen - die Dateien selbst bleiben, wo sie sind. Zeilen, die
+indiziert wurden, bevor Scans festgehalten wurden, bilden einen Eintrag
+*früher*: er lässt sich zeigen und entfernen, nicht neu scannen (sein
+Ordner ist unbekannt).
+
+### Disk Usage
+
+*Ansicht → Disk Usage…* ist eine Tabelle mit der Kapazität jeder offenen
+Verbindung (jede Verbindung einmal, egal wie viele Panes sie zeigen):
+Backend, Protokoll, gesamt, belegt, frei und ein Balken des belegten
+Anteils. Die Abfragen laufen außerhalb des GUI-Threads, jede mit eigenem
+Timeout. Eine Verbindung, die keine Kapazität meldet (IMAP, LDAP, die
+meisten Cloud-Object-Stores) oder nicht rechtzeitig antwortet, zeigt
+*not supported* und keinen Balken - gemessen wurde nichts, und das ist
+nicht 0 %; die Zeile darunter zählt sie. *Aktualisieren* misst neu.
+
+### Geplante Jobs
+
+*Ansicht → Geplante Jobs…* startet ein gespeichertes Skript (das
+Scripts-Dock) in einem Intervall: dem Job einen Namen, den Namen des
+Skripts und ein Intervall geben (5 Minuten, 15 Minuten, 1 Stunde, 6
+Stunden, 1 Tag oder ein eigenes von mindestens 300 s) und *Hinzufügen*.
+Die Tabelle zeigt zu jedem Job Skript, Intervall, letzten Lauf, Status,
+nächsten Lauf und das Detail des letzten Laufs; *Ein- / ausschalten* und
+*Entfernen* wirken auf den gewählten Job. Jobs laufen nur, solange axross
+läuft (es prüft einmal pro Minute), jeder in einem Kindprozess wie ein
+Lauf aus dem Scripts-Dock, nicht interaktiv (eine Rückfrage wird
+abgelehnt, statt zu warten), höchstens 24 Stunden und 1 000 000 Zeichen
+Ausgabe pro Lauf. Ein Job, der noch läuft, wird nicht noch einmal
+gestartet; Termine, die verstrichen, während axross geschlossen war,
+ergeben einen Lauf, keinen Rückstau; nach 10 Fehlschlägen in Folge
+schaltet sich ein Job ab und nennt den Grund (*Ein- / ausschalten*
+schaltet ihn wieder ein). Der Sicherheitsmodus paranoid lehnt die Läufe
+ab. Skripte, die ein Job startet, tragen im Scripts-Dock `[scheduled]`.
+Die Jobs liegen in `~/.local/state/axross/jobs.json`.
+
+### Diagnose und Recovery-Scan
+
+- **Tools → Diagnose für aktives Pane…** prüft die Verbindung des
+  aktiven Panes: ihren Home-Ordner, ein Listing und ein Stat des
+  gezeigten Ordners und - nach einer Rückfrage, nie im Sicherheitsmodus
+  paranoid - eine Probe, die dort eine kleine Datei `.axross-diagnostic-*`
+  schreibt, umbenennt und löscht. Der Bericht nennt jede Prüfung als
+  `[OK]` oder `[FAIL]` mit ihrem Detail, Passwörter und Tokens
+  ausgelassen; er entsteht außerhalb des GUI-Threads.
+- **Tools → Recovery-Scan…** listet, was sich im Ordner des aktiven Panes
+  wiederherstellen lässt: temporäre Dateien, die ein unterbrochenes
+  atomares Schreiben zurückließ (`.tmp-*.tmp`, auch die älteren
+  `.axross-atomic-*.tmp`), und die Einträge im axross-Trash dieser
+  Verbindung mit ursprünglichem Pfad und Größe. Er entfernt nichts:
+  *Trash anzeigen…* stellt wieder her, und Reste, die älter als eine
+  Stunde sind, entfernt ein Pane, wenn es ihren Ordner öffnet.
+
+## Mitgelieferte Extensions
+
+axross bringt Extensions in `resources/extensions/` mit; jede ist zu
+Beginn ausgeschaltet, und *Extensions → Extensions verwalten…* schaltet
+sie ein und aus. Ein Werkzeugleisten-Knopf (Media Player, Ordner-Treemap,
+Laufwerksübersicht) und die Einträge *Tools → Audio-Mixer*, *Tools →
+Bluetooth* und *Tools → Systeminformationen…* bieten an, ihre Extension
+einzuschalten, wenn sie aus ist. Media Player, Chat, Bluetooth und
+Audio-Mixer beschreibt *Editoren und Viewer*, Agent Stats das *Agent-Dock*.
+Die übrigen: Laufwerksübersicht und Markdown Preview sind Panels,
+Checksum Manifest (*Create SHA256SUMS*), Forensic Tools (Disk-Images:
+Hashes, qemu-img, The Sleuth Kit, TestDisk, PhotoRec) und VirtualBox
+bringen Einträge im Kontextmenü. Wie Extensions vertraut, pausiert und
+geschrieben werden - und welche `api` sie bekommen - steht in
+[EXTENSIONS.md](EXTENSIONS.md) (englisch).
+
+### Arcade
+
+*Extensions → Arcade…* öffnet ein Fenster mit axross' eigenen vier
+kleinen Spielen: **Byte Chase** (jedes Bit eines Labyrinths einsammeln,
+während vier Daemons dich jagen; ein Root-Schlüssel dreht sie eine Weile
+um), **Tilt Maze** (100 Level in 10 Welten auf einem isometrischen Brett,
+die Leertaste springt über die Daemons und Gruben), **Rockfall** (40
+Höhlen in 5 Welten: unter fallenden Felsen nach Kristallen graben, dann
+rechtzeitig den Ausgang erreichen) und **Trail Runner** (Fahrer ziehen
+Mauern hinter sich her; 1-3 Computerfahrer oder zwei Spieler an einer
+Tastatur, die Leertaste gibt Schub). In der Auswahl wählen die Pfeile oder
+W A S D, Enter oder ein Klick startet; ein Spiel bietet *Bei Level 1
+beginnen*, *Bei Level n weitermachen* und einen *Weltcode*, der eine schon
+erreichte Welt öffnet. Im Spiel: Pfeile oder W A S D lenken, `P` pausiert,
+`M` schaltet stumm, `R` beginnt nach dem Spielende neu, Esc geht zurück zur
+Auswahl und schließt von dort das Fenster. Jedes Level wird erzeugt, Musik
+und Klänge werden synthetisiert und folgen der Ausgabe des Audio-Mixers;
+Bestwerte und Fortschritt liegen in `~/.config/axross/arcade.json` und
+`arcade-progress.json`.
+
+### Ordner-Treemap
+
+Ein Panel (der Werkzeugleisten-Knopf *Ordner-Treemap* oder *Extensions →
+Ordner-Treemap*), das den Ordner des aktiven Panes als Kästen zeichnet,
+deren Fläche die Größe ist: Dateien und Unterordner, die Unterordner im
+Hintergrund über die Verbindung summiert - höchstens 20 000 Einträge und
+12 Ebenen, Links auf Ordner werden nicht verfolgt. Eine Summe, die dort
+aufhörte, markiert der Tooltip mit *(at least)*; er nennt den Kasten und
+seine Größe. Ein Doppelklick auf einen Ordner-Kasten öffnet ihn im Pane;
+wer einen Ordner verlässt, bevor sein Durchlauf fertig ist, beendet
+diesen Durchlauf. Die Pause-Taste in der Titelleiste des Panels lässt es
+dem Pane nicht mehr folgen.
+
+### Entropy Heatmap
+
+Eine Datei rechts anklicken → *Entropy Heatmap…*: die Shannon-Entropie
+jedes 4-KiB-Blocks ihrer ersten 16 MiB als Farbstreifen - blau für Text,
+Tabellen und Padding, rot für komprimierte oder verschlüsselte Daten -
+mit dem Durchschnitt und dem höchsten Wert in Bit pro Byte und einem
+Urteil (*looks compressed or encrypted throughout*, der Anteil solcher
+Blöcke, *low entropy* oder *mixed content*). Die Datei wird im Hintergrund
+über ihre Verbindung gelesen, entfernte Dateien gehen also auch.
+
+### Backup Repositories
+
+Rechtsklick auf einen Ordner (oder auf nichts, für den gezeigten Ordner)
+→ *Backup Repository Info…* sagt, was ein **restic**-, **Borg**- oder
+**duplicity**-Repository enthält, ohne Passwort und auf jedem Backend,
+allein aus seinem Aufbau: bei restic die Zahl der Snapshots, Schlüssel,
+Indizes und Pack-Ordner; bei Borg die Klartext-`config` (Version, ID,
+Segment-Einstellungen, append-only, repokey oder keyfile) und die Zahl
+der Segmente; bei duplicity jede Backup-Kette mit ihren vollen und
+inkrementellen Backups, deren Zeiten, Volumes, Größe und
+Verschlüsselung. *Unlock…* fragt nach dem Passwort (und einer
+Borg-Schlüsseldatei, wenn das Repository eine hat) und listet die
+Snapshots oder Archive über das Werkzeug selbst (`restic snapshots`,
+`borg list`, `duplicity collection-status`) - nur lokale Repositories.
+Das Passwort geht in die Umgebung des Werkzeugs oder an die Eingabe von
+gpg, nie auf eine Kommandozeile, und wird nicht gespeichert; ins
+Repository wird nichts geschrieben.
+
+### Image Batch
+
+Bilder wählen (`.png .jpg .jpeg .webp .bmp .gif .tif .tiff`), Rechtsklick
+→ *Resize / Convert Images…*: die längste Kante in Pixeln (0 behält die
+Größe; nie vergrößert) und das Format (PNG, JPEG oder WebP). Die Kopien
+landen in einem Unterordner `resized`, als `name (2).jpg`, wenn ein Name
+vergeben ist - nichts wird überschrieben, die Originale bleiben
+unberührt. Fotos werden zuerst nach ihrer EXIF-Ausrichtung aufgerichtet;
+ein JPEG bekommt transparente Stellen auf Weiß. Bilder über 64 MiB und
+Dateien, die kein Bild sind, werden übersprungen und gezählt. Geht auf
+jedem Backend; das Pane lädt neu, wenn der Stapel fertig ist.
+
+### Systeminformationen
+
+**System Information** (mitgelieferte Extension, **Tools →
+Systeminformationen…** bietet an, sie einzuschalten; danach auch *Extensions →
+Systeminformationen…*) — ein Fenster mit allem über den Rechner, auf dem
+axross läuft. *Overview*: Name, Hersteller, Modell und OS des Rechners
+mit seinen Eckdaten (CPU-Threads, Speicher, Storage, Displays), und
+Kacheln mit Ringen für CPU-Last, Speicher, Swap, das Root-Dateisystem
+und den Akku (Ladung und Health), die heißesten Temperaturen auf einer
+Farbskala (grün bis 60 °C, gelb, orange ab 80 °C oder der eigenen
+High-Marke des Sensors, rot ab 90 °C oder Critical), Grafik mit den
+angeschlossenen Displays und die Netzwerk-Interfaces mit ihrem
+Live-Durchsatz; CPU und Speicher haben eine Sparkline der letzten zwei
+Minuten. Ein Klick auf eine Kachel öffnet ihre Seite. Die Liste links
+hat je eine Seite für *CPU* (Last je logischer CPU, P- und E-Cores,
+Frequenzen, Caches, Befehlssatz-Features als Chips, die Sicht des
+Kernels auf die CPU-Vulnerabilities), *Memory* (belegt, Cache und frei
+als ein Balken, Swap), *Storage* (ein Balken je Disk mit ihren
+Partitionen, Mount-Points und Belegung; Disks und Dateisysteme als
+Tabellen), *Graphics & Displays* (Adapter, Ausgänge mit Name,
+Auflösung, Bildrate und Größe des Monitors aus seiner EDID, eine Skizze
+der Bildschirme), *Network* (Interfaces mit Art, Zustand, Speed oder
+WLAN-Signal, Treiber und Traffic; Bluetooth-Adapter; Funkschalter),
+*Audio* (Soundkarten, Codecs, PCM-Devices), *USB & Peripherals* (der
+USB-Baum und die Eingabegeräte), *PCI* (der PCI-Baum, Namen aus
+`pci.ids`), *Battery & Power*, *Sensors* (Temperaturen, Lüfter,
+Spannungen), *System & OS* (Hersteller, Modell, Firmware, Secure Boot,
+Kernel, Desktop, Versionen) und *Virtualisation* (Bare Metal, eine
+virtuelle Maschine oder ein Container, mit den Indizien). Alles wird
+ohne root und ohne ein Programm zu starten aus `/proc` und `/sys`
+gelesen (unter Windows und macOS weniger: was Python und das optionale
+psutil sagen); jede Quelle hat eine Frist, und ein Abschnitt, der sich
+nicht lesen lässt, sagt warum - die anderen warten nicht darauf. Das
+Suchfeld (`/`) filtert alle Seiten zugleich, die Liste zählt die
+Treffer je Seite. *Copy Section*, *Copy All* und *Save Report…* (Text
+oder JSON) exportieren das Gesammelte; *JSON Export* speichert alles als
+JSON-Datei oder kopiert alles bzw. die gezeigte Seite als JSON (jeder
+Wert, jede Tabelle, jeder Rohwert). Seriennummern, MAC- und
+IP-Adressen und UUIDs sind auf dem Bildschirm und in jeder Kopie
+verborgen, bis *Show identifiers* angehakt ist - solche Berichte landen
+oft öffentlich. Live-Werte werden einmal pro Sekunde gelesen, solange
+das Fenster zu sehen ist, nie im Hintergrund; *Refresh* sammelt alles
+neu. Das Fenster behält seine Größe.
 
 ## Übertragungen-, Terminal- und Log-Dock
 
@@ -986,6 +1156,11 @@ gleichen Surface:
   paranoid, auch wenn in den *Einstellungen* gewählt, verweigert es.
 - **MCP** — wenn ``--mcp-allow-scripts`` gesetzt ist, ist das
   Surface auch über MCP-Tool-Calls erreichbar.
+- **Hilfe → Scripting-Leitfaden** — der Scripting-Leitfaden in axross
+  (SCRIPTING_de.md, in der Sprache der Oberfläche, wo es eine Fassung
+  gibt) und auf dem zweiten Tab die API-Referenz (der Text von
+  `axross.docs()`), mit Inhaltsverzeichnis und Suchfeld (Return findet
+  den nächsten Treffer).
 
 Quick examples:
 
@@ -1638,8 +1813,13 @@ bevor er eine Aufnahme hört). Antworten spricht eine lokale Piper-Stimme.
 
 **Tools → Mail-Docks…** richtet Agenten ein, die je ein Postfach beobachten (ein
 gespeichertes IMAP-, POP3- oder Exchange-Profil und ein Ordner). Jedes Dock hat ein
-eigenes Panel: was es beobachtet, wann es wieder läuft, sein Log, *Jetzt ausführen*,
-*Pause*, *Settings…*. Einstellungen: Intervall, die **Anweisungen** für jeden Lauf,
+eigenes Panel: was es beobachtet, wann es wieder läuft, sein Log (mit jedem
+Tool-Aufruf seines Agenten), *Jetzt ausführen*, *Stopp* (beendet den laufenden
+Durchgang; eine Mail, die auf Ihre Antwort wartet, wird nicht gesendet), *Pause* (bleibt
+beim nächsten Start erhalten, wie *Run on its timer* in den Einstellungen abzuwählen),
+*Einstellungen…* und *Drafts-Ordner öffnen* (die POP3-Entwürfe, in einem Pane). Ein
+geschlossenes Dock kommt über **Ansicht → Panels** zurück; das Fenster Mail-Docks legt
+Docks an, bearbeitet, zeigt und entfernt sie. Ein Dock braucht ein Postfach. Einstellungen: Intervall, die **Anweisungen** für jeden Lauf,
 LLM-Profil, **Sandbox**-Profil (Modell und Agent laufen darin, die Zugangsdaten des
 Postfachs nie), die **Sende-Regel** und der SMTP-Server.
 
@@ -1902,5 +2082,7 @@ Environment. Der Check beim Start läuft nicht mit
   Client-zu-Server-Fingerprint, den Axross sendet, plus Mitigations.
 - **Axross von einem LLM aus steuern?** [MCP_de.md](MCP_de.md) ist
   die kanonische Protokoll-Referenz.
+- **Extensions schreiben oder einschalten?** [EXTENSIONS.md](EXTENSIONS.md)
+  erklärt Vertrauen, Pausieren und die `api` der Extensions (englisch).
 - **Bauen oder beitragen?** [DEVELOPMENT.md](DEVELOPMENT.md) hat
   Test-Suite, Lab-Compose und Coverage-Matrix.

@@ -10,6 +10,7 @@ import signal
 import struct
 import sys
 import time
+from itertools import chain, islice
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -118,6 +119,16 @@ FONT_ZOOM_STEP = 1
 FONT_MIN_PT = 6
 FONT_MAX_PT = 28
 FONT_DEFAULT_PT = 10
+
+#: Output is drawn at most once per RENDER_INTERVAL_MS (about 60 times a
+#: second), and after a drawing that took longer, not before the same time
+#: again has passed: a flood leaves the window at least half of its time.
+#: The first drawing after a quiet spell is at once (an echo, a prompt).
+RENDER_INTERVAL_MS = 16
+#: From this many new lines on, one drawing sets the whole text anew:
+#: QPlainTextEdit inserts thousands of lines (and drops as many from the
+#: top) slower than it lays out a fresh document.
+RENDER_REPLACE_LINES = 2000
 
 
 def on_macos() -> bool:
@@ -229,6 +240,12 @@ class TerminalEmulator(QPlainTextEdit):
         self._redraw_timer.setSingleShot(True)
         self._redraw_timer.setInterval(0)
         self._redraw_timer.timeout.connect(lambda: self._render(full=True))
+        # Output drawings at most every RENDER_INTERVAL_MS (request_render).
+        self._render_pending = False
+        self._render_ready_at = 0.0
+        self._frame_timer = QTimer(self)
+        self._frame_timer.setSingleShot(True)
+        self._frame_timer.timeout.connect(self.flush_render)
         self.document().contentsChange.connect(self._on_contents_change)
         self._render(full=True)
 
@@ -342,11 +359,53 @@ class TerminalEmulator(QPlainTextEdit):
         if replies:
             self.data_ready.emit(replies)
         if render:
-            self._render()
+            self.request_render()
 
     def render(self) -> None:
-        """Show what the screen took in since the last drawing."""
+        """Show what the screen took in since the last drawing (at most
+        RENDER_INTERVAL_MS after it, see :meth:`request_render`)."""
+        self.request_render()
+
+    def request_render(self) -> None:
+        """Draw the screen now, or - within RENDER_INTERVAL_MS of the last
+        output drawing (or as long as that one took) - once when that time
+        is over: a flood is drawn about 60 times a second, not once per
+        piece. Reading the text (toPlainText, textCursor, find) draws
+        what is pending first."""
+        if self._frame_timer.isActive():
+            self._render_pending = True
+            return
+        wait = self._render_ready_at - time.monotonic()
+        if wait > 0:
+            self._render_pending = True
+            self._frame_timer.start(max(1, int(wait * 1000 + 0.999)))
+            return
+        self._throttled_render()
+
+    def flush_render(self) -> None:
+        """Draw a pending output drawing now (nothing when none is)."""
+        self._frame_timer.stop()
+        if self._render_pending:
+            self._throttled_render()
+
+    def _throttled_render(self) -> None:
+        started = time.monotonic()
         self._render()
+        ended = time.monotonic()
+        self._render_ready_at = ended + max(RENDER_INTERVAL_MS / 1000, ended - started)
+
+    # Python callers see the drawn screen, never one a pending drawing lags.
+    def toPlainText(self) -> str:  # noqa: N802 - Qt name
+        self.flush_render()
+        return super().toPlainText()
+
+    def textCursor(self) -> QTextCursor:  # noqa: N802 - Qt name
+        self.flush_render()
+        return super().textCursor()
+
+    def find(self, *args) -> bool:  # noqa: D102 - Qt's, after a pending drawing
+        self.flush_render()
+        return super().find(*args)
 
     def message(self, text: str) -> None:
         """A note of axross itself ("--- Session ended ---"): each line
@@ -456,17 +515,23 @@ class TerminalEmulator(QPlainTextEdit):
                 or shown[2] != alternate
                 or not 0 <= screen.scrolled_total - shown[1] <= len(screen.scrollback)
                 or doc.blockCount() < shown[3]
+                or screen.scrolled_total - shown[1] >= RENDER_REPLACE_LINES
             ):
-                history = [] if alternate else list(screen.scrollback)
-                self.setPlainText("\n".join(history + lines))
+                history = () if alternate else screen.scrollback
+                self.setPlainText("\n".join(chain(history, lines)))
             else:
                 new = screen.scrolled_total - shown[1]
-                added = list(screen.scrollback)[len(screen.scrollback) - new:] if new else []
+                # The last *new* lines of the scrollback, without copying
+                # all of it (a deque of up to DEFAULT_SCROLLBACK lines).
+                added = list(islice(reversed(screen.scrollback), new))[::-1] if new else []
                 cursor = QTextCursor(doc.findBlockByNumber(doc.blockCount() - shown[3]))
                 cursor.movePosition(QTextCursor.MoveOperation.End, QTextCursor.MoveMode.KeepAnchor)
                 cursor.insertText("\n".join(added + lines))
         finally:
             self._rendering = False
+            # Whatever asked for it, the document shows the screen now.
+            self._render_pending = False
+            self._frame_timer.stop()
         self._shown = (screen, screen.scrolled_total, alternate, len(lines))
         block = doc.findBlockByNumber(doc.blockCount() - len(lines) + row)
         caret = QTextCursor(block)

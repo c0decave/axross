@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import importlib
 import logging
+import os
 import shutil
 import threading
+import time
 from dataclasses import InitVar, dataclass, field, replace
 from enum import Enum, auto
 
@@ -552,8 +554,10 @@ class _ImportProbe:
     than ImportError propagates and is not cached, as the eager check did.
     """
 
-    def __init__(self, module: str) -> None:
+    def __init__(self, module: str, *more: str) -> None:
         self.module = module
+        #: Every package the backend needs: all must import.
+        self.modules = (module, *more)
         self._result: bool | None = None
         self._lock = threading.Lock()
 
@@ -571,26 +575,95 @@ class _ImportProbe:
             with self._lock:
                 if self._result is None:
                     try:
-                        __import__(self.module)
+                        for name in self.modules:
+                            __import__(name)
                         self._result = True
                     except ImportError:
                         self._result = False
         return self._result
 
 
-def _check_available(import_probe: str) -> _ImportProbe:
-    """Availability of a Python package, checked when first needed."""
-    return _ImportProbe(import_probe)
+def _check_available(import_probe: str, *more: str) -> _ImportProbe:
+    """Availability of Python packages (all of them), checked when first
+    needed. Pass every package here: a probe object is always true, so
+    joining two probes with "and" checked only the second - WebDAV
+    showed as available without requests."""
+    return _ImportProbe(import_probe, *more)
 
 
-def _check_command_available(*commands: str) -> bool:
-    """Check if all required system commands are present on PATH."""
-    return all(shutil.which(command) is not None for command in commands)
+#: PATH and the modification times of its folders, read at most once a
+#: second (:func:`_path_state`).
+_PATH_STATE: dict = {"at": float("-inf"), "value": None}
 
 
-def _check_any_command_available(*commands: str) -> bool:
-    """Check if at least one of the given system commands is present on PATH."""
-    return any(shutil.which(command) is not None for command in commands)
+def _path_state() -> tuple:
+    """What decides whether a command is found: PATH (and PATHEXT) and the
+    modification time of each of its folders - installing a program
+    changes its folder's. Read at most once a second."""
+    now = time.monotonic()
+    if _PATH_STATE["value"] is not None and now - _PATH_STATE["at"] < 1.0:
+        return _PATH_STATE["value"]
+    path = os.environ.get("PATH", os.defpath)
+    stamps = []
+    for folder in path.split(os.pathsep):
+        try:
+            stamps.append(os.stat(folder).st_mtime_ns)
+        except (OSError, ValueError):
+            stamps.append(None)
+    value = (path, os.environ.get("PATHEXT", ""), tuple(stamps))
+    _PATH_STATE.update(at=now, value=value)
+    return value
+
+
+class _CommandProbe(_ImportProbe):
+    """Deferred "are these programs on PATH?" check: every command of
+    *all_of* and, when given, at least one of *any_of*. Looked up when
+    ``available`` is first read and kept until PATH or one of its folders
+    changes (a program installed while axross runs is found then): the
+    Connection dialog asked shutil.which a dozen times on every open."""
+
+    def __init__(self, all_of: tuple[str, ...] = (), any_of: tuple[str, ...] = ()) -> None:
+        super().__init__(" ".join((*all_of, *any_of)))
+        self.all_of = tuple(all_of)
+        self.any_of = tuple(any_of)
+        self._state: tuple | None = None
+        #: How often PATH was searched (tests).
+        self.lookups = 0
+
+    def __call__(self) -> bool:
+        state = _path_state()
+        with self._lock:
+            if self._result is None or self._state != state:
+                self.lookups += 1
+                found = all(shutil.which(c) is not None for c in self.all_of)
+                if found and self.any_of:
+                    found = any(shutil.which(c) is not None for c in self.any_of)
+                self._result = found
+                self._state = state
+            return self._result
+
+
+def _check_command_available(*commands: str) -> _CommandProbe:
+    """All required system commands are present on PATH (checked when
+    first needed, again after PATH changed)."""
+    return _CommandProbe(all_of=commands)
+
+
+def _check_any_command_available(*commands: str) -> _CommandProbe:
+    """At least one of the given system commands is present on PATH."""
+    return _CommandProbe(any_of=commands)
+
+
+def recheck_missing() -> None:
+    """Ask the backends whose Python package was missing again on their
+    next read (one installed since is found); the found ones stay found.
+    The commands check themselves (:class:`_CommandProbe`). Much cheaper
+    than :func:`init_registry`, which the Connection dialog ran on every
+    open."""
+    for info in _registry.values():
+        probe = getattr(info, "_availability", None)
+        if type(probe) is _ImportProbe and probe._result is False:
+            probe.reset()
 
 
 def init_registry() -> None:
@@ -655,7 +728,7 @@ def init_registry() -> None:
             default_port=443,
             required_extra="webdav",
             # Self-hosted WebDAV impl: needs requests + defusedxml only.
-            available=_check_available("requests") and _check_available("defusedxml"),
+            available=_check_available("requests", "defusedxml"),
             capabilities=WEBDAV_CAPS,
             credential_kind=CredentialKind.PASSWORD,
         )
@@ -697,8 +770,8 @@ def init_registry() -> None:
             module="core.nfs_client",
             class_name="NfsSession",
             default_port=2049,
-            available=_check_command_available("mount", "umount")
-            and _check_any_command_available("mount.nfs", "mount.nfs4", "mount"),
+            available=_CommandProbe(all_of=("mount", "umount"),
+                                    any_of=("mount.nfs", "mount.nfs4", "mount")),
             install_hint="the mount and umount commands with NFS support (nfs-utils)",
             capabilities=NFS_CAPS,
             credential_kind=CredentialKind.NONE,

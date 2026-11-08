@@ -52,6 +52,7 @@ class UnreadableHistoryTest(unittest.TestCase):
                     old.unlink()
                 self.path.write_bytes(content)
                 VH.record_visit("sftp", "new", "u")
+                self.assertTrue(VH.flush())
                 self.assertEqual([c.read_bytes() for c in self.copies()], [content])
                 self.assertIn("new", [v.host for v in VH.where_was_i()])
 
@@ -59,6 +60,7 @@ class UnreadableHistoryTest(unittest.TestCase):
         self.path.write_bytes(b'[{"protocol": "sftp", "ho')
         with mock.patch.object(VH, "keep_unreadable_copy", return_value=False):
             VH.record_visit("sftp", "new", "u")  # never fails the caller
+            self.assertFalse(VH.flush())  # nor does the write, which is refused
         self.assertEqual(self.path.read_bytes(), b'[{"protocol": "sftp", "ho')
         partial = json.dumps([{"protocol": "sftp", "host": "a"}, 7]).encode()
         self.path.write_bytes(partial)

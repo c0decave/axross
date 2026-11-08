@@ -44,6 +44,21 @@ HISTORY_LIMIT = 5_000
 #: Conversations one account may hold (a server can make us join many).
 MAX_CONVERSATIONS = 2_000
 
+
+def modules_installed(*names: str) -> bool:
+    """Whether every top-level module of *names* can be imported, without
+    importing it (a chat library costs a few hundred ms and tens of MB;
+    a panel only needs to know whether to offer Help > Features…)."""
+    import importlib.util
+
+    for name in names:
+        try:
+            if importlib.util.find_spec(name) is None:
+                return False
+        except (ImportError, ValueError):
+            return False
+    return True
+
 # --- text from the network -------------------------------------------------------
 
 # Bidi overrides/isolates, zero-width and other format characters that can

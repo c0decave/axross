@@ -109,6 +109,8 @@ def test_sad_a_tampered_cached_file_is_fetched_again(tmp_path, cache, net):
 
 
 @pytest.mark.parametrize("entry", [
+    {"file": "a.mp4\n", "size": 10, "sha256": SHA},
+    {"file": "a.mp4", "size": 10, "sha256": SHA + "\n"},
     {"file": "../evil.mp4", "size": 10, "sha256": SHA},
     {"file": "a.exe", "size": 10, "sha256": SHA},
     {"file": "a.mp4", "size": 0, "sha256": SHA},
@@ -192,17 +194,17 @@ def _wait(predicate, seconds=5.0):
 
 
 def test_happy_watch_video_opens_the_checked_file(dialog, cache, monkeypatch):
-    from PyQt6.QtGui import QDesktopServices
+    import core.desktop_open as DO
 
     opened = []
-    monkeypatch.setattr(QDesktopServices, "openUrl", staticmethod(lambda url: opened.append(url) or True))
+    monkeypatch.setattr(DO, "open_url", lambda url: opened.append(url) or True)
     assert not dialog.video_button.isHidden()
     for i in range(dialog.list.topLevelItemCount()):
         if dialog.list.topLevelItem(i).data(0, 256) == "connect":
             dialog.list.setCurrentItem(dialog.list.topLevelItem(i))
     dialog.watch_selected()
     assert _wait(lambda: opened)
-    assert opened[0].toLocalFile() == str(cache / "axross-tour-en-connect.mp4")
+    assert opened[0] == str(cache / "axross-tour-en-connect.mp4")
     assert dialog.video_button.isEnabled()
 
 

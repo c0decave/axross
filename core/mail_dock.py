@@ -85,6 +85,9 @@ class MailDockConfig:
     def validate(self) -> None:
         if not self.name.strip():
             raise ValueError("a mail dock needs a name")
+        if not self.mailbox_profile.strip():
+            # A dock without one was saved and failed at every run.
+            raise ValueError("a mail dock needs a mailbox (a saved IMAP, POP3 or Exchange profile)")
         if self.send_policy not in SEND_POLICIES:
             raise ValueError(f"send policy must be one of {', '.join(SEND_POLICIES)}")
         if not 1 <= int(self.interval_minutes) <= 24 * 60:

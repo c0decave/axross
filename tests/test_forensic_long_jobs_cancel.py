@@ -58,7 +58,7 @@ class ThreadedApi:
         self.notes = []
         self.pending = []
 
-    def add_context_action(self, label, cb, applies_to="any", extensions=()):
+    def add_context_action(self, label, cb, applies_to="any", extensions=(), icon=None):
         self.actions[label] = cb
 
     def notify(self, text):

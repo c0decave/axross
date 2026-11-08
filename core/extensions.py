@@ -371,8 +371,6 @@ def begin_activation(info: ExtensionInfo) -> Path | None:
     its path, or None when it cannot be written - the load goes on
     without the guard, a start never fails over its marker."""
     global _CURRENT
-    from core.secure_storage import write_secret_file
-
     folder = activation_dir()
     marker = folder / f"{os.getpid()}.json"
     data = {
@@ -385,12 +383,32 @@ def begin_activation(info: ExtensionInfo) -> Path | None:
     try:
         folder.mkdir(parents=True, exist_ok=True)
         os.chmod(folder, 0o700)
-        write_secret_file(str(marker), json.dumps(data) + "\n")
+        _write_marker(marker, json.dumps(data) + "\n")
     except OSError as exc:
         log.warning("Extension %s runs without its startup marker: %s", info.ext_id, exc)
         marker = None
     _CURRENT = (info.ext_id, info.name, time.monotonic())
     return marker
+
+
+def _write_marker(path: Path, text: str) -> None:
+    """*text* to *path* atomically, mode 0600 - without fsync: the marker
+    has to outlive a hang or crash of this process, which the page cache
+    survives; an fsync per extension cost about 13 ms each, 0.2 s of a
+    start with all bundled extensions on."""
+    import tempfile
+
+    fd, tmp = tempfile.mkstemp(prefix=".", suffix=".tmp", dir=path.parent)  # 0o600
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def end_activation(marker: Path | None) -> None:

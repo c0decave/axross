@@ -65,6 +65,10 @@ COL_NAME, COL_FOLDER, COL_SIZE, COL_MODIFIED, COL_CATEGORY, COL_BACKEND, COL_SNI
 _HEADERS = ("Name", "Folder", "Size", "Modified", "Category", "Backend", "Snippet")
 #: Rows added per timer tick, so a flood of hits never freezes the window.
 _ROWS_PER_TICK = 500
+#: How often found rows are put in while a search runs, and the GUI time
+#: one such step may take (500 rows took ~150 ms).
+_DRAIN_INTERVAL_MS = 50
+_DRAIN_BUDGET_S = 0.03
 _SORT_ROLE = Qt.ItemDataRole.UserRole + 1
 _ROW_ROLE = Qt.ItemDataRole.UserRole
 _SIZE_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([kmgt]?)(?:i?b)?\s*$", re.IGNORECASE)
@@ -177,11 +181,14 @@ class FindFilesDialog(QDialog):
         self._index_db = index_db
         self._rows: list[tuple[FS.SearchScope, object]] = []
         self._queue: deque = deque()
+        #: The search's (kind, value, cancelled) while rows found before its
+        #: end still go in (see _on_finished); None otherwise.
+        self._finished: tuple | None = None
         self._started = 0.0
         self._job = ScanJob(self, interval_ms=120, formatter=self._progress_text)
         self._job.finished.connect(self._on_finished)
         self._drain_timer = QTimer(self)
-        self._drain_timer.setInterval(100)
+        self._drain_timer.setInterval(_DRAIN_INTERVAL_MS)
         self._drain_timer.timeout.connect(self._drain)
         self._build_ui()
         for choice in scopes:
@@ -361,7 +368,9 @@ class FindFilesDialog(QDialog):
         self.table.installEventFilter(self)
         from ui.column_fit import ColumnFitter
 
-        self._columns = ColumnFitter(self.table, fill=COL_FOLDER, keep=(COL_NAME,))
+        # Cell widths remembered: a batch of rows measures only its own.
+        self._columns = ColumnFitter(self.table, fill=COL_FOLDER, keep=(COL_NAME,),
+                                     cache_widths=True)
         root.addWidget(self.table, 1)
 
         self._strip = BusyStrip(self._job, self, cancel_text=tr("Stop"))
@@ -518,7 +527,8 @@ class FindFilesDialog(QDialog):
     # ------------------------------------------------------------------
     @property
     def is_running(self) -> bool:
-        return self._job.running
+        """The search runs - or its last rows are still going in."""
+        return self._job.running or self._finished is not None
 
     def start_search(self) -> None:
         try:
@@ -546,10 +556,15 @@ class FindFilesDialog(QDialog):
                     backend, hit.archive_path or hit.path)
 
             tagged = has_tag
+        # Sorting stays off while the rows come in and is switched on once
+        # the search ends (_sort_results): switched off and on around every
+        # batch, it sorted every row again ten times a second, and the
+        # columns were measured again after each of those sorts.
         self.table.setSortingEnabled(False)
         self.table.setRowCount(0)
-        self.table.setSortingEnabled(True)
         self._rows = []
+        self._finished = None
+        self._drain_timer.setInterval(_DRAIN_INTERVAL_MS)
         queue: deque = deque()
         self._queue = queue
         index_db = self._index_db
@@ -576,18 +591,35 @@ class FindFilesDialog(QDialog):
             found=state["indexed"], scanned=state["scanned"], path=shorten(state["path"]))
 
     def _drain(self, everything: bool = False) -> None:
+        """Rows for the hits found since the last call, appended as they
+        came (a running search is not sorted, see _sort_results): at most
+        _ROWS_PER_TICK and _DRAIN_BUDGET_S of GUI time unless *everything*.
+        Once the search has ended and the last row is in, it is finished
+        (_finish)."""
         queue = self._queue
-        if not queue:
-            return
-        self.table.setSortingEnabled(False)
-        try:
-            added = 0
-            while queue and (everything or added < _ROWS_PER_TICK):
-                scope, hit = queue.popleft()
-                self._append_row(scope, hit)
-                added += 1
-        finally:
-            self.table.setSortingEnabled(True)
+        if queue:
+            sorting = self.table.isSortingEnabled()
+            if sorting:  # rows added outside a search: keep them sorted
+                self.table.setSortingEnabled(False)
+            try:
+                added = 0
+                deadline = time.perf_counter() + _DRAIN_BUDGET_S
+                while queue and (everything or added < _ROWS_PER_TICK):
+                    scope, hit = queue.popleft()
+                    self._append_row(scope, hit)
+                    added += 1
+                    if not everything and added % 16 == 0 \
+                            and time.perf_counter() > deadline:
+                        break
+            finally:
+                if sorting:
+                    self.table.setSortingEnabled(True)
+        if not queue and self._finished is not None:
+            self._finish()
+
+    def _sort_results(self) -> None:
+        """The search is over: sort its rows once, by the header's column."""
+        self.table.setSortingEnabled(True)
 
     def _append_row(self, scope: FS.SearchScope, hit) -> None:
         index = len(self._rows)
@@ -618,8 +650,23 @@ class FindFilesDialog(QDialog):
             self.table.setItem(row, col, item)
 
     def _on_finished(self, kind: str, value, cancelled: bool) -> None:
+        """The search ended. The rows still queued go in in steps of
+        _DRAIN_BUDGET_S, one after the other (all at once held the window
+        for as long as thousands of rows take), then :meth:`_finish`."""
+        self._finished = (kind, value, cancelled)
+        if not self._queue:
+            self._finish()
+            return
+        self._drain_timer.setInterval(0)
+        if not self._drain_timer.isActive():
+            self._drain_timer.start()
+
+    def _finish(self) -> None:
+        kind, value, cancelled = self._finished
+        self._finished = None
         self._drain_timer.stop()
-        self._drain(everything=True)
+        self._drain_timer.setInterval(_DRAIN_INTERVAL_MS)
+        self._sort_results()
         if kind == "error":
             self.status_label.setText(tr("Search failed: {error}").format(error=value))
             return
@@ -778,6 +825,8 @@ class FindFilesDialog(QDialog):
     def _stop_all(self) -> None:
         self._job.abandon()
         self._drain_timer.stop()
+        self._finished = None
+        self._sort_results()
 
 
 def _split_display(scope: FS.SearchScope, hit) -> tuple[str, str]:

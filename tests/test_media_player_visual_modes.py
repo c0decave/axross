@@ -919,7 +919,7 @@ def test_happy_the_extension_menu_opens_the_visualizer_settings(tmp_path, monkey
         def add_dock(self, title, widget, **_kw):
             self.docks.append(widget)
 
-        def add_context_action(self, label, cb, applies_to="any", extensions=()):
+        def add_context_action(self, label, cb, applies_to="any", extensions=(), icon=None):
             pass
 
         def add_menu_action(self, label, cb, shortcut=None, **_kw):

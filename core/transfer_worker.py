@@ -105,13 +105,21 @@ def process_umask() -> int:
 
     os.umask() can only be read by setting it, which for a moment lets
     another thread create a file with the wrong mode; /proc avoids that.
+
+    Read anew on every call - the umask can change while axross runs (a
+    bracket such as adb's key generation, a script) - but as raw bytes:
+    a text-mode read of the ~60 lines cost ~80 µs, twice per copied file.
     """
     global _FALLBACK_UMASK
     try:
-        with open("/proc/self/status", encoding="ascii", errors="replace") as fh:
-            for line in fh:
-                if line.startswith("Umask:"):
-                    return int(line.split()[1], 8)
+        fd = os.open("/proc/self/status", os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+        try:
+            data = os.read(fd, 16384)
+        finally:
+            os.close(fd)
+        at = data.find(b"\nUmask:")
+        if at >= 0:
+            return int(data[at + 7 : data.index(b"\n", at + 7)].strip(), 8)
     except (OSError, ValueError, IndexError):
         pass
     if _FALLBACK_UMASK is None:
@@ -287,6 +295,32 @@ def _streamed_source_checksum(job: "TransferJob") -> str | None:
     return checksum
 
 
+def _may_compare(backend, path: str, other_backend, *, written: bool, against=None) -> bool:
+    """False when *backend* says (``checksum_kinds``) that its checksum of
+    *path* can only be of a kind :func:`_could_match` rejects against
+    *other_backend* - a storage fingerprint, an MD5 against a local file:
+    asking would be a request per file for a value that is never compared
+    (S3: a HEAD, WebDAV: a PROPFIND). The verdict is the same as with the
+    answer: the default check skips, a forced one streams both sides.
+    *written*: the file was just written by this transfer. *against*: the
+    other side's checksum when it is known already - only its algorithm
+    can be compared. A backend without the method, or one that does not
+    know, is asked."""
+    kinds_of = getattr(backend, "checksum_kinds", None)
+    if not callable(kinds_of):
+        return True
+    try:
+        kinds = kinds_of(path, written=written)
+    except Exception as exc:  # noqa: BLE001 - unknown: ask
+        log.debug("checksum_kinds of %s failed: %s", path, exc)
+        return True
+    if kinds is None:
+        return True
+    if against:
+        return against.partition(":")[0] in kinds
+    return any(_could_match(f"{kind}:", other_backend) for kind in kinds)
+
+
 def _native_checksum(backend, path: str, side: str):
     """``backend.checksum(path)``, or None when it fails."""
     try:
@@ -376,6 +410,14 @@ class TransferJob:
     # Failed" walks every failed row, and a second press must not queue
     # the same transfer again.
     retried: bool = False
+    # The destination's folder was made by the walk that queued this job
+    # (its mkdir succeeded: it was not there, so it held nothing). With
+    # if_exists "overwrite" a direct write then takes the destination as
+    # absent instead of asking the server per file whether there is one
+    # to snapshot (WebDAV: a PROPFIND, S3: a HEAD and a LIST). Never used
+    # for "fail" / "newer": a file that appeared since must still be
+    # found, and those modes look right before writing as before.
+    dest_folder_new: bool = False
 
     @property
     def eta_seconds(self) -> float:
@@ -418,6 +460,14 @@ class TransferWorker(QObject):
             self._scheduler.put(job)
             return
         self._queue.put(job)
+
+    def enqueue_many(self, jobs) -> None:
+        """:meth:`enqueue` of each of *jobs*, in order (one lock for all)."""
+        if self._scheduler is not None:
+            self._scheduler.put_many(jobs)
+            return
+        for job in jobs:
+            self._queue.put(job)
 
     def stop(self) -> None:
         self._running = False
@@ -541,6 +591,14 @@ class TransferWorker(QObject):
 
         speed_samples: deque[tuple[float, int]] = deque()
         last_progress_time = 0.0
+        # What the GUI was last told: the same (done, total) or speed again
+        # is not sent (a small file sent 6 signals, 3 of them repeats).
+        last_sent: list = [None, job.speed]
+
+        def send_progress(done: int, total: int) -> None:
+            if last_sent[0] != (done, total):
+                last_sent[0] = (done, total)
+                self.progress.emit(job.job_id, done, total)
 
         def progress_callback(transferred: int, total: int) -> None:
             nonlocal last_progress_time
@@ -568,8 +626,10 @@ class TransferWorker(QObject):
             # Rate-limit signal emission
             if now - last_progress_time >= PROGRESS_INTERVAL:
                 last_progress_time = now
-                self.progress.emit(job.job_id, transferred, total)
-                self.speed_update.emit(job.job_id, job.speed)
+                send_progress(transferred, total)
+                if job.speed != last_sent[1]:
+                    last_sent[1] = job.speed
+                    self.speed_update.emit(job.job_id, job.speed)
 
         try:
             renamed = self._move_by_rename(job)
@@ -581,7 +641,7 @@ class TransferWorker(QObject):
                 job.transferred_bytes = job.total_bytes = renamed
                 self._finish_journal(job, status="done")
                 job.status = TransferStatus.DONE
-                self.progress.emit(job.job_id, renamed, renamed)
+                send_progress(renamed, renamed)
                 self.job_finished.emit(job.job_id)
                 log.info("Transfer complete: %s (renamed)", job.filename)
                 return
@@ -597,7 +657,7 @@ class TransferWorker(QObject):
                 # Now, not only after DONE: progress signals queued before
                 # still carry the listing's size, and the GUI thread applies
                 # them to this job; the written size must come after them.
-                self.progress.emit(job.job_id, written, written)
+                send_progress(written, written)
 
             # The integrity check ran inside _do_transfer, before the copy
             # replaced the destination: the temp file is checked before the
@@ -627,7 +687,7 @@ class TransferWorker(QObject):
             self._finish_journal(job, status="done")
             job.status = TransferStatus.DONE
             # Final progress update
-            self.progress.emit(job.job_id, job.total_bytes, job.total_bytes)
+            send_progress(job.total_bytes, job.total_bytes)
             self.job_finished.emit(job.job_id)
             log.info("Transfer complete: %s", job.filename)
 
@@ -870,12 +930,17 @@ class TransferWorker(QObject):
         # local.
         streamed = _streamed_source_checksum(job)
         if _hashes_whole_local_file(src) and not _hashes_whole_local_file(dst):
-            dst_cs = _native_checksum(dst, dest_path, "Dest")
+            if _may_compare(dst, dest_path, src, written=True):
+                dst_cs = _native_checksum(dst, dest_path, "Dest")
             if _could_match(dst_cs, src):
                 src_cs = streamed or _native_checksum(src, job.source_path, "Source")
         else:
-            src_cs = streamed or _native_checksum(src, job.source_path, "Source")
-            if _could_match(src_cs, dst):
+            if streamed:
+                src_cs = streamed
+            elif _may_compare(src, job.source_path, dst, written=False):
+                src_cs = _native_checksum(src, job.source_path, "Source")
+            if _could_match(src_cs, dst) and _may_compare(dst, dest_path, src, written=True,
+                                                          against=src_cs):
                 dst_cs = _native_checksum(dst, dest_path, "Dest")
         # Native fast path: both sides returned non-empty values with
         # the same algo prefix. Use what the backend gave us.
@@ -1007,7 +1072,10 @@ class TransferWorker(QObject):
             present = self._check_existing_destination(job)
         if job.use_temp_file:
             return self._do_transfer_with_temp(job, progress_callback)
-        return self._do_transfer_direct(job, progress_callback, known_absent=present is False)
+        known_absent = present is False or (
+            job.dest_folder_new and job.if_exists == "overwrite" and not job.resume
+        )
+        return self._do_transfer_direct(job, progress_callback, known_absent=known_absent)
 
     @staticmethod
     def _check_existing_destination(job: TransferJob) -> bool | None:
@@ -1178,7 +1246,11 @@ class TransferWorker(QObject):
                                 f"and is kept as {kept}"
                             ) from exc
                         raise
-                if opened:
+                # A writer that commits only at close and never got there
+                # (S3, Azure Blob) left nothing of this transfer behind: a
+                # file now under the name is someone else's, not a partial
+                # to remove.
+                if opened and (completed or not traits.commits_on_close):
                     _rollback_direct_destination(
                         dest_backend,
                         job.dest_path,
@@ -1269,7 +1341,15 @@ class TransferWorker(QObject):
 
         from core.server_ops import _discard_or_close_writer, write_traits
 
+        # A temp name made now carries this job's id, which nothing has
+        # written yet: there is no leftover under it to look for (one
+        # round trip per file on a remote destination). A name the job
+        # brought along (a retry, an auto-resume) may have one.
+        fresh_temp = not job.temp_path and not job.resume
         temp_path = self._temp_destination_path(job)
+        # The source's mode less the umask, read once per job (it is
+        # needed before the write and again before the rename).
+        mode = copy_mode(job.source_mode)
         cleanup_temp = True
         keep_partial = False
         transferred = 0
@@ -1314,7 +1394,7 @@ class TransferWorker(QObject):
                         )
                     except OSError:
                         resume_offset = 0
-            elif dest_backend.exists(temp_path):
+            elif not fresh_temp and dest_backend.exists(temp_path):
                 dest_backend.remove(temp_path)
 
             if resume_offset > live_size:
@@ -1379,7 +1459,7 @@ class TransferWorker(QObject):
                         resume_offset = 0
                 mode_set = False
                 if resume_offset == 0:
-                    mode_set = self._precreate_private_temp(job, temp_path)
+                    mode_set = self._precreate_private_temp(job, temp_path, mode)
                 dst = dest_backend.open_write(temp_path, append=resume_offset > 0)
 
                 streamed = _StreamedHash(job, resume_offset)
@@ -1415,10 +1495,19 @@ class TransferWorker(QObject):
             # original had been.
             self._verify_integrity(job, temp_path)
             self._check_existing_destination(job)
-            if not mode_set:
-                self._apply_source_mode(job, temp_path)
-            self._finalize_temp_destination(dest_backend, temp_path, job.dest_path)
-            self._apply_source_mtime(job)
+            # Mode and time in one request where the backend can (SFTP: one
+            # SETSTAT on the temp file, whose time the rename keeps) - sent
+            # together with the rename where it can do that too.
+            timed, renamed = self._rename_with_attributes(
+                job, temp_path, None if mode_set else mode)
+            if not timed and not renamed:
+                timed = self._apply_source_attributes(job, temp_path, None if mode_set else mode)
+            if not timed and not mode_set:
+                self._apply_source_mode(job, temp_path if not renamed else job.dest_path, mode)
+            if not renamed:
+                self._finalize_temp_destination(dest_backend, temp_path, job.dest_path)
+            if not timed:
+                self._apply_source_mtime(job)
 
             cleanup_temp = False
             return transferred
@@ -1446,7 +1535,7 @@ class TransferWorker(QObject):
                     log.warning("Could not remove partial transfer %s", temp_path)
 
     @staticmethod
-    def _precreate_private_temp(job: TransferJob, temp_path: str) -> bool:
+    def _precreate_private_temp(job: TransferJob, temp_path: str, mode=-1) -> bool:
         """Give a fresh temp file the source's mode BEFORE any data lands
         when that mode is narrower than a default file's (a 0600 key):
         written first and chmod-ed after, the bytes would sit group- or
@@ -1455,8 +1544,10 @@ class TransferWorker(QObject):
         The owner gets write permission while the data goes in, as
         atomic_io gives its temp files (``_OWNER_WRITE``): created 0400
         (an AWS ``key.pem``) the temp file refused the write that follows
-        for every user but root. Such a mode is set after the write (False)."""
-        mode = copy_mode(job.source_mode)
+        for every user but root. Such a mode is set after the write (False).
+        *mode*: copy_mode() of the source's mode when the caller has it."""
+        if mode == -1:
+            mode = copy_mode(job.source_mode)
         if mode is None or mode & 0o044 == 0o044:
             return False
         from core.atomic_io import _OWNER_WRITE, _precreate_with_mode
@@ -1465,14 +1556,55 @@ class TransferWorker(QObject):
         return bool(mode & _OWNER_WRITE)
 
     @staticmethod
-    def _apply_source_mode(job: TransferJob, temp_path: str) -> None:
+    def _apply_source_mode(job: TransferJob, temp_path: str, mode=-1) -> None:
         """Best effort: a backend without chmod keeps its own default."""
-        mode = copy_mode(job.source_mode)
+        if mode == -1:
+            mode = copy_mode(job.source_mode)
         if mode is None:
             return
         from core.atomic_io import _restore_mode
 
         _restore_mode(job.dest_backend, temp_path, mode)
+
+    @staticmethod
+    def _rename_with_attributes(job: TransferJob, temp_path: str,
+                                mode: int | None) -> tuple[bool, bool]:
+        """Mode, time and the rename onto the destination in one round trip
+        where the backend offers ``rename_with_attributes`` (SFTP); called
+        after the integrity check and the last look at the destination,
+        exactly where the rename was. ``(attributes set, renamed)``; a
+        rename that failed leaves both to the steps that follow (the
+        finalize with its fallbacks, the attributes one by one).
+        """
+        combined = getattr(job.dest_backend, "rename_with_attributes", None)
+        if not job.source_mtime or not callable(combined):
+            return False, False
+        try:
+            timed = bool(combined(temp_path, job.dest_path, mode=mode, mtime=job.source_mtime))
+        except (OSError, NotImplementedError, ValueError) as exc:
+            log.debug("rename of %s with its attributes failed: %s", temp_path, exc)
+            return False, False
+        return timed, True
+
+    @staticmethod
+    def _apply_source_attributes(job: TransferJob, temp_path: str, mode: int | None) -> bool:
+        """Give the temp file *mode* (None: leave it) and the source's time
+        in ONE call, before the rename, where the backend offers
+        ``set_attributes(path, mode=, mtime=)`` (SFTP: a SETSTAT, a round
+        trip less per file than a chmod and a time set after the rename).
+        True when the time was set (and the mode, if one was given); False
+        when the caller sets them one by one, as before: no such call, no
+        source time, or a server that refused the pair (one that refuses
+        a mode change may still take the time on its own)."""
+        setter = getattr(job.dest_backend, "set_attributes", None)
+        if not job.source_mtime or not callable(setter):
+            return False
+        try:
+            setter(temp_path, mode=mode, mtime=job.source_mtime)
+        except (OSError, NotImplementedError, ValueError) as exc:
+            log.debug("cannot set mode and time of %s at once: %s", temp_path, exc)
+            return False
+        return True
 
     @staticmethod
     def _apply_source_mtime(job: TransferJob) -> None:

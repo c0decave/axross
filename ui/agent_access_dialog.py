@@ -34,6 +34,7 @@ from core import agent_access as X
 from core.agent_net import parse_host
 from core.i18n import tr
 from ui.close_corner import add_close_corner
+from ui.handbook import install_help_key
 from ui.icon_provider import set_window_icon
 
 FUNCTION_LABELS = {
@@ -312,6 +313,7 @@ class SessionAccessDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         set_window_icon(self, "shield")
+        install_help_key(self, "agent")  # F1: its handbook section (a window of its own)
         self.setWindowTitle(tr("Access of {title}").format(title=title))
         self.editor = AccessEditor(self)
         self.editor.load(access, folders, ceiling=ceiling, sandbox=sandbox)

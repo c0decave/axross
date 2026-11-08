@@ -175,7 +175,7 @@ AREAS: tuple[Area, ...] = (
     )),
     Area("extensions", "Extensions", (
         "axross.ext", "resources.extensions",
-        *_core("extensions", "system_info"),
+        *_core("extensions", "extension_code_cache", "system_info"),
         *_ui("extension_host", "extension_panels", "extensions_dialog", "system_info_window"),
     ), patterns=("resources.extensions.*", "axross_extension_*", "ui.arcade_*", "core.arcade*")),
     Area("ui", "User Interface", (

@@ -47,7 +47,12 @@ from core.redaction import redact_url
 from core.thread_relay import GuiCall
 from core.user_errors import describe
 from models.file_item import NAV_NAMES, FileItem
-from models.file_table_model import COL_NAME, FileSortProxyModel, FileTableModel
+from models.file_table_model import (
+    COL_NAME,
+    FileSortProxyModel,
+    FileTableModel,
+    prepare_listing,
+)
 from ui.column_fit import detach_header_selection
 from ui.pane_drag import PANE_MIME_TYPE, DraggableHeader, PaneDropZones
 from ui.scan_job import ScanJob
@@ -1443,7 +1448,14 @@ class FilePaneWidget(QWidget):
         if parent != path:
             items.insert(0, FileItem(name="..", is_dir=True))
         items.insert(0, FileItem(name=".", is_dir=True))
-        return path, items
+        # Sorted for the model's current sort and the filter's facts worked
+        # out here, off the GUI thread (models.file_table_model) - and the
+        # orphan-temp check _apply_listing makes (115 ms per 100,000 names).
+        from core import atomic_recovery as AR
+
+        listing = prepare_listing(items, self._model)
+        listing.has_orphan_name = AR.any_orphan_name(getattr(i, "name", "") for i in items)
+        return path, listing
 
     def _read_disk_usage(self, path: str):
         """``(total, used, free)`` or ``None``; safe on a worker thread."""
@@ -1515,7 +1527,10 @@ class FilePaneWidget(QWidget):
         # read-only mount) cannot break navigation.
         from core import atomic_recovery as AR
 
-        if AR.any_orphan_name(getattr(i, "name", "") for i in items):
+        orphan = getattr(items, "has_orphan_name", None)
+        if orphan is None:
+            orphan = AR.any_orphan_name(getattr(i, "name", "") for i in items)
+        if orphan:
             backend = self._backend
             threading.Thread(target=_sweep_orphans, args=(backend, path, list(items)),
                              name="orphan-sweep", daemon=True).start()
@@ -2230,15 +2245,13 @@ class FilePaneWidget(QWidget):
         sel = self._table.selectionModel()
         sel.blockSignals(True)
         self._table.selectAll()
-        # Deselect the "." and ".." rows
-        for row in range(self._proxy.rowCount()):
-            source_idx = self._proxy.mapToSource(self._proxy.index(row, 0))
-            item = self._model.get_item(source_idx.row())
-            if item and item.is_nav:
-                sel.select(
-                    self._proxy.index(row, 0),
-                    sel.SelectionFlag.Deselect | sel.SelectionFlag.Rows,
-                )  # each of them: "." and ".." may both be listed
+        # Deselect the "." and ".." rows - each of them: both may be listed.
+        # The proxy knows where they are (no look at every row).
+        for row in self._proxy.nav_rows():
+            sel.select(
+                self._proxy.index(row, 0),
+                sel.SelectionFlag.Deselect | sel.SelectionFlag.Rows,
+            )
         sel.blockSignals(False)
         self.selection_changed.emit()
 
@@ -2286,10 +2299,10 @@ class FilePaneWidget(QWidget):
         final = QItemSelection()
         dotdot_rows = []
         run_start = None
+        nav_rows = set(proxy.nav_rows())
         for row in range(rows):
-            item = self._model.get_item(proxy.mapToSource(proxy.index(row, 0)).row())
             take = not selected[row]
-            if item and item.is_nav:
+            if row in nav_rows:
                 dotdot_rows.append(row)
                 take = False
             if take and run_start is None:
@@ -2353,10 +2366,16 @@ class FilePaneWidget(QWidget):
 
     def _safe_item_path(self, item: FileItem, *, warn: bool = True) -> str | None:
         """Return the selected item's child path, rejecting hostile names."""
-        from core.path_policy import safe_join
+        from core.path_policy import BackendPathPolicy
 
+        # safe_join, with the backend's policy made once per backend, not
+        # once per name: a selection of 90,000 entries asked it 90,000 times.
+        backend = self._backend
+        held = getattr(self, "_path_policy_of", None)
+        if held is None or held[0] is not backend:
+            held = self._path_policy_of = (backend, BackendPathPolicy.for_backend(backend))
         try:
-            return safe_join(self._backend, self._current_path, item.name)
+            return held[1].join(self._current_path, item.name)
         except ValueError as exc:
             log.warning("Unsafe backend item name %r: %s", item.name, exc)
             if warn:
@@ -2507,9 +2526,7 @@ class FilePaneWidget(QWidget):
 
     def _items_text(self) -> str:
         """The status line's count: the entries, not the "." and ".." rows."""
-        items = self._model._items
-        count = len(items) - sum(1 for item in items if item.name in NAV_NAMES)
-        return tr_n(count, "{n} item", "{n} items")
+        return tr_n(self._model.entry_count(), "{n} item", "{n} items")
 
     def _list_views(self) -> list:
         """The table and, once made, the thumbnail view: both show the model."""
@@ -2557,7 +2574,10 @@ class FilePaneWidget(QWidget):
         proxy = self._proxy
         rows = []
         current_index = None
-        for row in range(self._model.rowCount()):
+        # The listing's names as one list (the model keeps it for the
+        # filter): no get_item call per row (100 ms per 100,000 entries).
+        listed = self._model.row_cache().names
+        for row in [r for r, name in enumerate(listed) if name in names]:
             item = self._model.get_item(row)
             if item is None or item.name not in names:
                 continue

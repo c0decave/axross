@@ -265,13 +265,25 @@ def test_sad_an_unavailable_scope_is_shown_but_not_searched(folder) -> None:
 # --- edge -------------------------------------------------------------------------
 
 
-def test_edge_stop_cancels_a_running_search_quickly(tmp_path) -> None:
+def test_edge_stop_cancels_a_running_search_quickly(tmp_path, monkeypatch) -> None:
     root = tmp_path / "wide"
     for d in range(150):
         sub = root / f"d{d}"
         sub.mkdir(parents=True)
         for f in range(20):
             (sub / f"f{f}.txt").write_text("needle\n")
+    # With one rg over the whole root the search took 0.1 s - over before
+    # Stop was clicked. A millisecond per entry keeps it running long
+    # enough to be stopped, on any host.
+    from core import file_search as FS
+
+    seen = FS._Run.seen
+
+    def slow_seen(self, path):
+        time.sleep(0.001)
+        seen(self, path)
+
+    monkeypatch.setattr(FS._Run, "seen", slow_seen)
     dlg = _dialog(root)
     dlg.contains_edit.setText("needle")
     # The whole search, as this host runs it now: "quickly" is measured

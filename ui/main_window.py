@@ -518,11 +518,13 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         quick_connect_action.setShortcut(QKeySequence("Ctrl+N"))
         quick_connect_action.setObjectName("axQuickConnectAction")
         quick_connect_action.triggered.connect(self._show_quick_connect)
+        self._menu_icon(quick_connect_action, "quick-connect")  # as on the toolbar
 
         connect_action = file_menu.addAction(tr("Connection &Manager…"))
         connect_action.setShortcut(QKeySequence("Ctrl+Shift+N"))
         connect_action.setObjectName("axConnectionManagerAction")
         connect_action.triggered.connect(self._on_connect)
+        self._menu_icon(connect_action, "connection-manager")
 
         ssh_menu = file_menu.addMenu(tr("Import SSH &Config"))
         ssh_default_action = ssh_menu.addAction(tr("From ~/.ssh/config"))
@@ -640,6 +642,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         for preset_name in PRESET_ORDER:
             act = layout_menu.addAction(preset_label(preset_name))
             act.triggered.connect(lambda _checked, n=preset_name: self.apply_layout_preset(n))
+            self._menu_icon(act, "toggle-layout")
         layout_menu.addSeparator()
         cycle_fwd = layout_menu.addAction(tr("Cycle Next"))
         cycle_fwd.setShortcut("Ctrl+Alt+L")
@@ -689,6 +692,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         view_menu.addSeparator()
 
         self._dock_view_menu = view_menu.addMenu(tr("P&anels"))
+        self._dock_view_menu.aboutToShow.connect(self._sync_mail_dock_view_actions)
         # The keyboard way between the window's areas - the panes, the
         # Transfers panel, every other panel in view. Tab in a file list
         # cycles the panes and Tab in the Console completes, so Tab alone
@@ -725,14 +729,17 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         self._view_selected_media_action.triggered.connect(
             lambda: self._view_media(selected_only=True)
         )
+        self._menu_icon(self._view_selected_media_action, "media-view")
 
         cas_action = view_menu.addAction(tr("&Duplicate Finder…"))
         cas_action.setShortcut(QKeySequence("Ctrl+Shift+D"))
         cas_action.triggered.connect(self._open_cas_duplicates)
+        self._menu_icon(cas_action, "duplicates")
 
         cas_history_action = view_menu.addAction(tr("Duplicate Index && History…"))
         cas_history_action.setToolTip(tr("Every scan of the duplicate index; remove or clear it"))
         cas_history_action.triggered.connect(self._open_cas_history)
+        self._menu_icon(cas_history_action, "duplicates")  # its window's icon
 
         disk_action = view_menu.addAction(tr("Dis&k Usage…"))
         self._disk_usage_action = disk_action
@@ -748,6 +755,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         sched_action = view_menu.addAction(tr("Scheduled &Jobs…"))
         sched_action.setToolTip(tr("Run scripts on a recurring schedule"))
         sched_action.triggered.connect(self._open_scheduler)
+        self._menu_icon(sched_action, "clock")
 
         view_menu.addSeparator()
 
@@ -814,21 +822,27 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             tr("Your files on many SMB hosts at once - host list, addresses or CIDR, one login, read only")
         )
         self._network_search_action.triggered.connect(self._show_network_search)
+        self._menu_icon(self._network_search_action, "globe")
         diag_action = tools_menu.addAction(tr("Run Active Pane &Diagnostics…"))
         diag_action.triggered.connect(self._run_active_pane_diagnostics)
+        self._menu_icon(diag_action, "diagnostics")
         recovery_action = tools_menu.addAction(tr("&Recovery Scan…"))
         recovery_action.triggered.connect(self._run_recovery_scan)
+        self._menu_icon(recovery_action, "recovery")
         editor_action = tools_menu.addAction(tr("Text &Editor"))
         editor_action.setToolTip(
             tr("The editor window: new files, local files and every file opened for editing")
         )
         editor_action.triggered.connect(lambda _checked=False: self.show_editor())
+        self._menu_icon(editor_action, "edit")
         # These four open Edit > Settings… on their page.
         network_action = tools_menu.addAction(tr("&Network && Proxy…"))
         network_action.setObjectName("axNetworkProxyAction")
         network_action.triggered.connect(lambda _checked=False: self._show_network_proxy())
+        self._menu_icon(network_action, "vpn")
         llm_action = tools_menu.addAction(tr("&LLM Profiles…"))
         llm_action.triggered.connect(lambda _checked=False: self._show_llm_profiles())
+        self._menu_icon(llm_action, "bot")  # the LLM's robot, as in its settings
         # sift's Analysis dock on the active pane's selection (else its folder).
         from ui.icon_provider import icon as _menu_icon
 
@@ -846,6 +860,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             tr("Open the Agent with a new conversation for the active pane's folder")
         )
         start_agent_action.triggered.connect(lambda _checked=False: self._new_agent_tab())
+        self._menu_icon(start_agent_action, "agent")
         self._new_agent_window_action = tools_menu.addAction(tr("New Agent W&indow"))
         self._new_agent_window_action.setToolTip(
             tr("A new Agent conversation in a panel of its own, for the active pane's folder")
@@ -853,13 +868,16 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         self._new_agent_window_action.triggered.connect(
             lambda _checked=False: self._new_agent_window()
         )
+        self._menu_icon(self._new_agent_window_action, "agent")
         # One entry per agent profile (core.agent_profiles), presets first.
         self._agent_profile_menu = tools_menu.addMenu(tr("New Agent Tab from &Profile"))
         self._agent_profile_menu.setToolTip(
             tr("A new Agent tab set up from an agent profile, for the active pane's folder"))
         self._agent_profile_menu.aboutToShow.connect(self._fill_agent_profile_menu)
+        self._menu_icon(self._agent_profile_menu.menuAction(), "agent")
         agent_settings_action = tools_menu.addAction(tr("A&gent Settings…"))
         agent_settings_action.triggered.connect(lambda _checked=False: self._show_agent_settings())
+        self._menu_icon(agent_settings_action, "agent")
         # Settings > Agent > MCP Servers: configure servers, Add from Catalog…
         mcp_action = tools_menu.addAction(tr("M&CP Servers…"))
         mcp_action.setObjectName("axMcpServersAction")
@@ -867,6 +885,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             tr("Configure the agent's MCP servers, or add one from a catalog (runs in podman)")
         )
         mcp_action.triggered.connect(lambda _checked=False: self._show_mcp_servers())
+        self._menu_icon(mcp_action, "mcp")
         # Agents that watch a mailbox each (ui/mail_docks.py) and the mail
         # analysis projects (ui/mail_project.py).
         mail_docks_action = tools_menu.addAction(tr("Mail D&ocks…"))
@@ -923,6 +942,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         metadata_settings_action.triggered.connect(
             lambda _checked=False: self._show_metadata_settings()
         )
+        self._menu_icon(metadata_settings_action, "metadata")
 
         # Extensions menu: three fixed entries; loaded extensions add theirs
         # below (ui.extension_host). Manage opens Settings > Extensions.
@@ -949,13 +969,16 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         handbook_action.setToolTip(tr("The user guide, at the part of the window you are in"))
         handbook_action.triggered.connect(lambda _checked=False: self.show_context_help())
         self._handbook_action = handbook_action
+        self._menu_icon(handbook_action, "book")
         tours_action = help_menu.addAction(tr("T&ours…"))
         tours_action.setObjectName("axToursAction")
         tours_action.setToolTip(tr("Guided tours over the window: the right way to use it"))
         tours_action.triggered.connect(lambda _checked=False: self.show_tours())
+        self._menu_icon(tours_action, "compass")
         shortcuts_action = help_menu.addAction(tr("&Keyboard Shortcuts"))
         shortcuts_action.setShortcut(QKeySequence("Ctrl+F1"))
         shortcuts_action.triggered.connect(self._show_shortcuts)
+        self._menu_icon(shortcuts_action, "keyboard")
         help_menu.addSeparator()
         features_action = help_menu.addAction(tr("Features…"))
         features_action.setObjectName("axFeaturesAction")
@@ -964,6 +987,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         features_action.triggered.connect(self._show_features)
         guide_action = help_menu.addAction(tr("&Scripting Guide"))
         guide_action.triggered.connect(self._show_scripting_guide)
+        self._menu_icon(guide_action, "scripts")
         third_party_action = help_menu.addAction(tr("&Third-Party Software…"))
         third_party_action.setToolTip(tr("The projects axross uses and ships, with their licences"))
         third_party_action.triggered.connect(self._show_third_party)
@@ -977,6 +1001,48 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         check_updates_action.triggered.connect(lambda _checked=False: self.check_for_updates())
         about_action = help_menu.addAction(tr("&About axross"))
         about_action.triggered.connect(self._show_about)
+        self._icon_plain_menu_entries()
+
+    #: Menu entries that open no window of their own, by their source text:
+    #: the icon of what they act on. Theme and layout choices (radio
+    #: entries with a check mark) stay without.
+    _PLAIN_MENU_ICONS = {
+        "From ~/.ssh/config": "key", "From File…": "file", "Paste Config Text…": "edit",
+        "Import &Profiles (JSON)…": "download", "&Export Profiles (JSON)…": "upload",
+        "&View All Profiles…": "connection-manager", "&Restore Last Session": "history",
+        "Re-&detect System Keyring": "lock", "&Quit": "x",
+        "&Undo Last Operation": "history", "&Index Active Folder…": "find-index",
+        "Show &Hidden Files": "folder", "Add &Local Pane": "computer",
+        "Zoom &In": "plus", "Zoom &Out": "x", "Zoom &Reset": "refresh",
+        "Split &Horizontal": "split-h", "Split &Vertical": "split-v", "&Close Pane": "close-pane",
+        "Move Pane &Left": "chevrons-right", "Move Pane &Right": "chevrons-right",
+        "&Open Extensions Folder": "folder", "&Reload Extensions": "refresh",
+        "&Third-Party Software…": "book", "Check for &Updates…": "download",
+        "&About axross": "features",
+        "Cycle Next": "chevrons-right", "Cycle Previous": "chevrons-right",
+        "Focus Next Area": "keyboard", "Focus Previous Area": "keyboard",
+        "&Next Pane\tTab": "chevrons-right", "&Previous Pane\tShift+Tab": "chevrons-right",
+    }
+
+    def _icon_plain_menu_entries(self) -> None:
+        """The icons of :data:`_PLAIN_MENU_ICONS`, matched by translated text
+        (the menus are built with tr(), so the same source text matches in
+        every language)."""
+        wanted = {tr(text).replace("&", ""): name for text, name in self._PLAIN_MENU_ICONS.items()}
+
+        def walk(menu) -> None:
+            for action in menu.actions():
+                sub = action.menu()
+                if sub is not None:
+                    walk(sub)
+                    continue
+                name = wanted.get(action.text().replace("&", ""))
+                if name and action.icon().isNull() and not action.isCheckable():
+                    self._menu_icon(action, name)
+
+        for action in self.menuBar().actions():
+            if action.menu() is not None:
+                walk(action.menu())
 
     def _setup_toolbar(self) -> None:
         toolbar = self.addToolBar("Main")
@@ -3026,9 +3092,14 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         if not hasattr(self, "_dock_view_menu"):
             return
         self._dock_view_menu.clear()
-        self._dock_view_menu.addAction(self._transfer_dock.toggleViewAction())
+        self._mail_dock_view_actions = []  # clear() deleted their separator
+        transfers_toggle = self._transfer_dock.toggleViewAction()
+        self._menu_icon(transfers_toggle, "download")
+        self._dock_view_menu.addAction(transfers_toggle)
         self._dock_view_menu.addAction(self._terminal_dock.toggleViewAction())
-        self._dock_view_menu.addAction(self._log_dock.toggleViewAction())
+        log_toggle = self._log_dock.toggleViewAction()
+        self._menu_icon(log_toggle, "log")
+        self._dock_view_menu.addAction(log_toggle)
         self._dock_view_menu.addAction(self._console_dock.toggleViewAction())
         scripts = getattr(self, "_scripts_dock", None)
         if scripts is not None:
@@ -3043,6 +3114,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             bm_toggle = sidebar.toggleViewAction()
             bm_toggle.setText(tr("&Bookmark Sidebar"))
             bm_toggle.setShortcut(QKeySequence("F12"))
+            self._menu_icon(bm_toggle, "bookmark")
             self._dock_view_menu.addAction(bm_toggle)
         # The archive dock is created lazily (on first preview), so its
         # toggle isn't part of the static rebuild above. Re-add it after
@@ -3062,9 +3134,38 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             self._dock_view_menu.addAction(agent_toggle)
             focus = getattr(self, "_focus_agent_action", None)
             if focus is not None:
+                self._menu_icon(focus, "agent")
                 self._dock_view_menu.addAction(focus)
         if getattr(self, "_archive_dock", None) is not None:
             self._register_archive_dock_view_action()
+        self._sync_mail_dock_view_actions()
+
+    def _sync_mail_dock_view_actions(self) -> None:
+        """Each mail dock's show / hide toggle in View > Panels, below the
+        others. Before, a closed mail dock came back only through Tools >
+        Mail Docks… > Show. Docks come and go (added, removed in the
+        manager), so the entries are made again each time the menu opens."""
+        menu = getattr(self, "_dock_view_menu", None)
+        if menu is None:
+            return
+        for action in getattr(self, "_mail_dock_view_actions", []):
+            try:
+                menu.removeAction(action)
+                if action.isSeparator():
+                    action.deleteLater()
+            except RuntimeError:  # its dock was removed and took it along
+                pass
+        self._mail_dock_view_actions = []
+        docks = getattr(self, "_mail_docks", None)
+        exts = [ext for ext, _panel in docks.panels.values()] if docks is not None else []
+        if not exts:
+            return
+        self._mail_dock_view_actions.append(menu.addSeparator())
+        for ext in exts:
+            toggle = ext.toggleViewAction()
+            self._menu_icon(toggle, "mail")
+            menu.addAction(toggle)
+            self._mail_dock_view_actions.append(toggle)
 
     def _setup_central(self) -> None:
         self._setup_workspaces()
@@ -7187,16 +7288,21 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         text = json.dumps(data, indent=2, ensure_ascii=False)
         self._show_text_dialog(f"All Profiles ({len(profiles)})", text, size=(600, 480))
 
-    def _show_text_dialog(self, title: str, text: str, *, size: tuple[int, int] = (720, 520)):
+    def _show_text_dialog(self, title: str, text: str, *, size: tuple[int, int] = (720, 520),
+                          icon: str = "file", help_topic: str | None = None):
         """*text* read-only in a window of its own (non-modal, like every
-        viewer: ui.viewer_window.show_independent). Returns the window."""
+        viewer: ui.viewer_window.show_independent). Returns the window.
+        *icon* names what the text is (the Diagnostics report shows the
+        pulse of its menu entry, not a blank page); F1 in it opens the
+        handbook at *help_topic* (None: the contents)."""
         from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QPlainTextEdit, QVBoxLayout
 
         from ui import viewer_window as VW
 
         dlg = QDialog(self)
         dlg.setWindowTitle(title)
-        set_window_icon(dlg, "file")
+        set_window_icon(dlg, icon)
+        self._install_window_help(dlg, help_topic)
         dlg.resize(*size)
         layout = QVBoxLayout(dlg)
         add_close_corner(dlg)
@@ -7240,7 +7346,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             QMessageBox.warning(self, tr("Diagnostics"),
                                 tr("Diagnostics failed:\n{error}").format(error=exc))
             return
-        self._show_text_dialog("Diagnostics", report.to_text())
+        self._show_text_dialog(tr("Diagnostics"), report.to_text(), icon="diagnostics",
+                               help_topic="diagnostics")
 
     def _run_recovery_scan(self) -> None:
         if self._active_pane is None:
@@ -7258,7 +7365,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             QMessageBox.warning(self, tr("Recovery Scan"),
                                 tr("Could not scan:\n{error}").format(error=exc))
             return
-        self._show_text_dialog("Recovery Scan", format_findings(findings))
+        self._show_text_dialog(tr("Recovery Scan"), format_findings(findings), icon="recovery",
+                               help_topic="diagnostics")
 
     def set_paranoid_mode(self, on: bool, *, announce: bool = False) -> None:
         """Switch the security mode (Settings > Security). The choice is
@@ -8194,8 +8302,10 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         add_action.setShortcuts([QKeySequence("F8"), QKeySequence("Ctrl+Shift+B")])
         add_action.triggered.connect(self._bookmark_active_dir)
 
+        self._menu_icon(add_action, "plus")
         manage_action = self._bookmarks_menu.addAction(tr("Manage Bookmarks…"))
         manage_action.triggered.connect(self._manage_bookmarks)
+        self._menu_icon(manage_action, "bookmark")
 
         nodes = self._bookmark_manager.tree()
         if nodes:
@@ -9029,20 +9139,30 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         # styles (Breeze, Windows11, ...) draw some controls themselves and
         # ignore parts of both.
         style = "Fusion" if tokens is not None else self._base_style_name
+        palette = themes.qpalette_for(tokens) if tokens is not None else self._base_palette
+        # The same sheet, style and palette again (the theme picked once
+        # more, the system scheme reported unchanged): nothing to repolish -
+        # a pass over every widget costs about 0.3 s. (app.style() is the
+        # style sheet's proxy while a sheet is set: its name says nothing.)
+        applied = (css, style, repr(tokens))
+        unchanged = (getattr(self, "_applied_theme", None) == applied
+                     and app.styleSheet() == css and app.palette() == palette)
+        self._applied_theme = applied
         with themes.collection_paused():
-            # The old sheet goes first, and the new one is set as a first
-            # one. Replacing a sheet repolishes every widget once more per
-            # widget above it (QStyleSheetStyle::repolish walks every widget
-            # and again its children): 4500 style, 9000 palette and up to
-            # 7000 font changes for the main window's 580 widgets, where
-            # this order sends 1900, 2400 and 1300 - about a third of the
-            # time. The style is set only when it changes (one more pass).
-            app.setStyleSheet("")
-            if style and app.style().name().lower() != style.lower():
-                app.setStyle(style)
-            app.setPalette(themes.qpalette_for(tokens) if tokens is not None
-                           else self._base_palette)
-            app.setStyleSheet(css)
+            if not unchanged:
+                # The old sheet goes first, and the new one is set as a
+                # first one. Replacing a sheet repolishes every widget once
+                # more per widget above it (QStyleSheetStyle::repolish walks
+                # every widget and again its children): 4500 style, 9000
+                # palette and up to 7000 font changes for the main window's
+                # 580 widgets, where this order sends 1900, 2400 and 1300 -
+                # about a third of the time. The style is set only when it
+                # changes (one more pass).
+                app.setStyleSheet("")
+                if style and app.style().name().lower() != style.lower():
+                    app.setStyle(style)
+                app.setPalette(palette)
+                app.setStyleSheet(css)
 
         # Re-apply pane border styles on top of the theme
         self._refresh_pane_styles()

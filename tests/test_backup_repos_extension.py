@@ -161,7 +161,7 @@ def test_happy_the_context_action_is_offered_for_one_folder():
     class Api:
         window = None
 
-        def add_context_action(self, label, cb, applies_to="any", extensions=()):
+        def add_context_action(self, label, cb, applies_to="any", extensions=(), icon=None):
             actions.append((label, applies_to))
 
     BR.activate(Api())
@@ -371,7 +371,7 @@ class SyncApi:
         self.window = QMainWindow()
         self.actions, self.notes = {}, []
 
-    def add_context_action(self, label, cb, applies_to="any", extensions=()):
+    def add_context_action(self, label, cb, applies_to="any", extensions=(), icon=None):
         self.actions[(label, applies_to)] = cb
 
     def run_in_background(self, work, on_done=None, on_error=None):

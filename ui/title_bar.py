@@ -183,7 +183,7 @@ class TitleBar(QObject):
         if frameless != own:
             # A new window flag hides a window that is on screen.
             visible = window.isVisible()
-            window.setWindowFlag(Qt.WindowType.FramelessWindowHint, own)
+            VW.set_window_flag(window, Qt.WindowType.FramelessWindowHint, own)
             if visible:
                 window.show()
         self._place()

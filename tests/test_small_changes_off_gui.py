@@ -140,7 +140,7 @@ def test_happy_recovery_scan_runs_off_the_gui_thread(tmp_path):
         def statusBar(self):  # noqa: N802 - Qt name
             return mock.MagicMock()
 
-        def _show_text_dialog(self, title, text):
+        def _show_text_dialog(self, title, text, **_how):
             self.shown.append(title)
 
     fs = Recording()

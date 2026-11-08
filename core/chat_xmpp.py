@@ -86,14 +86,23 @@ SAFE_SASL_MECHANISMS = ("SCRAM-SHA-512-PLUS", "SCRAM-SHA-256-PLUS", "SCRAM-SHA-1
 _ROOM_JID = _BARE_JID
 
 
-def libraries_missing() -> str | None:
+def libraries_missing(*, load: bool = True) -> str | None:
+    """Why the XMPP client cannot run here, or None. *load* False only
+    looks whether the packages are installed, without importing them (the
+    OMEMO libraries take a third of a second; the connect imports them)."""
+    if not load:
+        return None if C.modules_installed("omemo", "slixmpp", "twomemo") else _LIBRARIES_MISSING
     try:
         import omemo  # noqa: F401
         import slixmpp  # noqa: F401
         import twomemo  # noqa: F401
     except ImportError:
-        return "XMPP needs slixmpp and OMEMO: pip install 'axross[chat]'"
+        return _LIBRARIES_MISSING
     return None
+
+
+# Help > Features… installs it, as for every other extra.
+_LIBRARIES_MISSING = "XMPP needs slixmpp and OMEMO: install them in Help > Features… (Matrix and XMPP chat)"
 
 
 def oldmemo_available() -> bool:

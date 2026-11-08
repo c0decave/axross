@@ -52,6 +52,14 @@ Names starting with `.` or `_` and symbolic links are ignored. A source file
 larger than 512 KiB is refused. Which extensions are on is stored in
 `~/.config/axross/extensions.json` (mode 0600).
 **Extensions > Reload Extensions** runs the current source again.
+The compiled code is kept by the SHA-256 of the source
+(`~/.cache/axross/extension-code`, a 0700 folder; an entry that is not
+private to you is ignored), so a changed source is always compiled anew and
+an unchanged one is not compiled at every start. Switching a single-file
+extension off and on again with an unchanged source may use its module
+again when something still holds it (work of `run_in_background` still
+running, a thread of its own): its module-level variables then keep their
+values - reset what `activate` needs in `activate` or `deactivate`. Reload always runs the module anew.
 
 **Pausing.** An extension with a panel or event handlers can be paused with
 the pause button in its panel's title bar or **Extensions > Pause <name>**.
@@ -94,7 +102,7 @@ resources (files, sockets).
 | Call | What it does |
 |---|---|
 | `api.add_menu_action(label, callback, shortcut=None, icon=None)` | An entry in the Extensions menu; `icon` names an icon of `ui/icon_provider.py` (the window it opens). |
-| `api.add_context_action(label, callback, applies_to="any", extensions=())` | An entry in the file pane's right-click menu. `callback(ctx)`. `applies_to`: `any`, `folder` (nothing selected), `selection`, `files`, `folders`, `single_file`, `single_folder` (exactly one folder selected). `extensions=(".md",)` limits it by file name. |
+| `api.add_context_action(label, callback, applies_to="any", extensions=(), icon=None)` | An entry in the file pane's right-click menu. `callback(ctx)`. `applies_to`: `any`, `folder` (nothing selected), `selection`, `files`, `folders`, `single_file`, `single_folder` (exactly one folder selected). `extensions=(".md",)` limits it by file name; `icon` names an icon of `ui/icon_provider.py` (the window the entry opens). |
 | `api.add_dock(title, widget, icon="extensions")` | A panel on the right with the title bar of the built-in panels (float, [x], close all) and a Send to Workspace button (⇄); its show/hide entry goes into the Extensions menu, which reopens it after [x]. `icon` is the panel's own icon (title bar, menu entry, floating window); the puzzle piece is only the fallback. Returns the `QDockWidget`; see *Panels and workspaces* below. |
 | `api.on(event, callback)` | `callback(ctx)` on `selection_changed`, `path_changed` or `pane_activated` of the active pane. |
 | `api.run_in_background(work, on_done=None, on_error=None)` | `work()` on a worker thread, `on_done(result)` / `on_error(exc)` back on the GUI thread. Use it for anything that reads files or the network. |

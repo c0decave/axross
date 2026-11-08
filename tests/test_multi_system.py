@@ -265,6 +265,8 @@ class VisitHistoryTests(unittest.TestCase):
                 verb="list_dir",
                 desc=f"op-{i}",
             )
+            # Recording only queues; the load-mutate-save is the flush's.
+            visit_history.flush()
 
         threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
         with mock.patch.object(visit_history, "_load", side_effect=slow_load), mock.patch.object(

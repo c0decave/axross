@@ -84,7 +84,7 @@ def context_of(pane) -> ExtensionContext:
 @dataclass
 class _Registered:
     actions: list[QAction] = field(default_factory=list)
-    context: list[tuple[str, Callable, str, tuple[str, ...]]] = field(default_factory=list)
+    context: list[tuple[str, Callable, str, tuple[str, ...], str | None]] = field(default_factory=list)
     docks: list[QDockWidget] = field(default_factory=list)
     handlers: dict[str, list[Callable]] = field(default_factory=dict)
     agent_tools: list = field(default_factory=list)
@@ -138,6 +138,7 @@ class ExtensionAPI:
         *,
         applies_to: str = "any",
         extensions: tuple[str, ...] | list[str] = (),
+        icon: str | None = None,
     ) -> None:
         """An entry in the file pane's right-click menu.
 
@@ -146,11 +147,15 @@ class ExtensionAPI:
         ``folders`` (only files / only folders selected), ``single_file`` /
         ``single_folder`` (exactly one file / one folder selected).
         *extensions* (``(".md", ".txt")``) limits file entries by name.
+        *icon* names the entry's icon in ui.icon_provider - the icon of the
+        window the entry opens, so the entry and its window look alike
+        (None: no icon).
         """
         if applies_to not in APPLIES_TO:
             raise ValueError(f"applies_to must be one of {APPLIES_TO}, not {applies_to!r}")
         suffixes = tuple(str(e).lower() for e in extensions)
-        self._reg.context.append((str(label), callback, applies_to, suffixes))
+        self._reg.context.append((str(label), callback, applies_to, suffixes,
+                                  str(icon) if icon else None))
 
     def add_dock(self, title: str, widget: QWidget, *, icon: str = "extensions") -> QDockWidget:
         """A panel docked on the right, with the title bar of the built-in
@@ -678,8 +683,10 @@ class ExtensionHost(QObject):
 
     def reload(self) -> None:
         """Unload everything and load the switched-on extensions anew, from
-        their current source."""
+        their current source - every one run anew, none of their old
+        namespaces used again (:data:`_SPARE` is for switching on and off)."""
         self.unload_all()
+        _SPARE.clear()
         self._errors.clear()
         self.load_enabled(user_request=True)
 
@@ -743,7 +750,9 @@ class ExtensionHost(QObject):
         if callable(deactivate):
             self.call(api, deactivate, api)
         api._remove_all()
-        _forget_modules(f"axross_extension_{api.info.source}_{api.info.module_name}")
+        module_name = f"axross_extension_{api.info.source}_{api.info.module_name}"
+        _forget_modules(module_name)
+        _keep_spare(module_name, module)
         log.info("Extension unloaded: %s", ext_id)
 
     def unload_all(self) -> None:
@@ -842,16 +851,21 @@ class ExtensionHost(QObject):
         entries = []
         context = None
         for _module, api in self._loaded.values():
-            for label, callback, applies_to, suffixes in api._reg.context:
+            for label, callback, applies_to, suffixes, icon_name in api._reg.context:
                 if context is None:
                     context = context_of(pane)
                 if _applies(context, applies_to, suffixes):
-                    entries.append((api, label, callback))
+                    entries.append((api, label, callback, icon_name))
         if not entries:
             return
+        from ui.icon_provider import icon as _icon
+
         menu.addSeparator()
-        for api, label, callback in entries:
+        for api, label, callback, icon_name in entries:
             action = menu.addAction(label)
+            if icon_name:
+                action.setIcon(_icon(icon_name))
+                action.setProperty("axIcon", icon_name)
             # The menu is open a while: the extension may be gone by the click.
             action.triggered.connect(
                 lambda _checked=False, a=api, cb=callback, c=context:
@@ -877,8 +891,10 @@ class _SourceOnlyLoader(importlib.machinery.SourceFileLoader):
     and none is written into the user's extension folder."""
 
     def get_code(self, fullname):
+        from core import extension_code_cache as ECC
+
         path = self.get_filename(fullname)
-        return compile(self.get_data(path), path, "exec", dont_inherit=True)
+        return ECC.compile_source(self.get_data(path), path)
 
     def set_data(self, path, data, *, _mode=0o666):  # noqa: ARG002 - no byte code
         return None
@@ -908,25 +924,90 @@ if not any(f is _ExtensionSubmoduleFinder for f in sys.meta_path):
     sys.meta_path.insert(0, _ExtensionSubmoduleFinder)
 
 
+class _Alive:
+    """Lives exactly as long as the namespace of the extension module that
+    holds it (``__axross_alive__``): module -> namespace -> this -> module
+    is a cycle the garbage collector frees once nothing else holds it."""
+
+    __slots__ = ("module", "key", "__weakref__")
+
+    def __init__(self, module: types.ModuleType, key: str) -> None:
+        self.module = module
+        self.key = key
+
+
+#: Single-file extensions switched off whose namespace may still be alive:
+#: module name -> (source key, weak reference to its :class:`_Alive`). Work
+#: still running after the switch-off holds its callbacks and with them the
+#: namespace (the Media Player's audio probe runs for seconds in a thread;
+#: a thread of the extension's own); running the same source again then
+#: made a second copy each time - about 2.9 MB per off/on cycle of all
+#: bundled extensions. A namespace that is still alive is used again when
+#: the source is unchanged; one that nothing holds is freed as before.
+_SPARE: dict[str, tuple[str, weakref.ReferenceType]] = {}
+_SPARE_STATE = {"collected": True}
+
+
+def _keep_spare(module_name: str, module) -> None:
+    alive = getattr(module, "__dict__", {}).get("__axross_alive__")
+    if isinstance(alive, _Alive) and alive.module is module:
+        _SPARE[module_name] = (alive.key, weakref.ref(alive))
+        _SPARE_STATE["collected"] = False
+
+
+def _collect_spares() -> None:
+    """Free the spare namespaces nothing holds (once per batch of loads),
+    so whether a namespace is used again does not depend on when the
+    garbage collector last ran."""
+    if _SPARE and not _SPARE_STATE["collected"]:
+        import gc
+
+        gc.collect()
+        _SPARE_STATE["collected"] = True
+    for name, (_key, ref) in list(_SPARE.items()):
+        if ref() is None:
+            del _SPARE[name]
+
+
 def _exec_source(module_name: str, path: str) -> types.ModuleType:
     """Run the extension's current source as a module.
 
-    Compiled straight from the file, never from ``__pycache__``: a source
-    rewritten within the same second at the same size kept its old byte
-    code, so Reload ran the previous version. No byte code is written
-    into the user's extension folder either - neither for the module nor,
-    in a package, for its submodules (:class:`_ExtensionSubmoduleFinder`).
+    Compiled from the file's current bytes, never from ``__pycache__``: a
+    source rewritten within the same second at the same size kept its old
+    byte code, so Reload ran the previous version. The compiled code is
+    kept by the SHA-256 of the source (core.extension_code_cache), so an
+    unchanged source is not compiled again and a changed one never finds
+    the old code. No byte code is written into the user's extension folder
+    either - neither for the module nor, in a package, for its submodules
+    (:class:`_ExtensionSubmoduleFinder`). A single-file extension switched
+    off whose namespace is still alive is used again when its source is
+    unchanged (:data:`_SPARE`).
     """
+    from core import extension_code_cache as ECC
+
     source = Path(path).read_bytes()
+    key = ECC.source_key(source, path)
+    package = path.endswith("__init__.py")
+    spare = None if package else _SPARE.get(module_name)
+    if spare is not None:
+        _collect_spares()
+        spare = _SPARE.pop(module_name, None)
+        alive = spare[1]() if spare is not None else None
+        if alive is not None and alive.key == key and getattr(alive.module, "__file__", None) == path:
+            sys.modules[module_name] = alive.module
+            return alive.module
     module = types.ModuleType(module_name)
     module.__file__ = path
-    if path.endswith("__init__.py"):
+    if package:
         module.__path__ = [str(Path(path).parent)]  # its own submodules import
         module.__package__ = module_name
         _forget_modules(module_name)  # no submodule of an earlier load is reused
         importlib.invalidate_caches()  # a submodule added since is found
     sys.modules[module_name] = module
-    exec(compile(source, path, "exec", dont_inherit=True), module.__dict__)  # noqa: S102
+    code = ECC.compile_source(source, path, key=key)
+    exec(code, module.__dict__)  # noqa: S102
+    if not package:
+        module.__dict__["__axross_alive__"] = _Alive(module, key)
     return module
 
 

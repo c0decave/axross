@@ -69,7 +69,7 @@ class Api:
         self.widget = None
         self.notes: list = []
 
-    def add_context_action(self, label, cb, applies_to="any", extensions=()):
+    def add_context_action(self, label, cb, applies_to="any", extensions=(), icon=None):
         self.actions[label] = cb
 
     def add_dock(self, title, widget, icon=None):

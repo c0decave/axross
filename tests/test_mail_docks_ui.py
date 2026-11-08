@@ -35,10 +35,11 @@ def _spin(until, timeout=5.0):
 
 
 class FakeRunner:
-    def __init__(self, dock, *, ask_send, on_log):
-        self.dock, self.ask_send, self.on_log = dock, ask_send, on_log
+    def __init__(self, dock, *, ask_send, on_log, on_event=lambda event: None):
+        self.dock, self.ask_send, self.on_log, self.on_event = dock, ask_send, on_log, on_event
         self.answers = []
         self.closed = False
+        self.cancel = threading.Event()
 
     def run_once(self):
         self.on_log("looking")

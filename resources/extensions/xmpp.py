@@ -156,12 +156,13 @@ PROTOCOL = dataclasses.replace(X.PROTOCOL, handle_request=handle_request, show_s
 
 def activate(api):
     panel = ChatPanel(PROTOCOL)
-    missing = X.libraries_missing()
+    missing = X.libraries_missing(load=False)  # OMEMO only when it connects
     if missing:
-        panel.empty.setText(tr(missing))
+        # with a link to Help > Features…, which installs the chat extra
+        panel.show_missing(tr(missing), getattr(api.window, "_show_features", None))
     panel.attention.connect(api.notify)
     _PANELS.append(panel)
-    api.add_dock(tr("XMPP"), panel, icon="chat")
+    api.add_dock(tr("XMPP"), panel, icon="xmpp")
     panel.connect_autostart()
 
 

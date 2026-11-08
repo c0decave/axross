@@ -68,6 +68,7 @@ EXTRAS: dict[str, tuple[str, ...]] = {
 }
 
 #: Extras that are no backend: (extra, name, import probe, what it gives).
+#: A probe of several modules ("a,b") is there only when each of them is.
 _EXTRA_FEATURES = (
     ("sift", "File analysis (sift)", "sift", "the Analysis dock explains files"),
     ("archive", "7z and RAR archives", "py7zr", "open, list and extract .7z and .rar"),
@@ -83,6 +84,13 @@ _EXTRA_FEATURES = (
     ("ntp", "NTP time skew", "ntplib", "axross.time_skew"),
     ("fuse", "FUSE mount", "fuse", "mount a connection as a local folder"),
     ("media", "Equalizer and spectrum (numpy)", "numpy", "the Media Player's equalizer and spectrum"),
+    # The Matrix and XMPP panels pointed at "pip install" while every other
+    # extra is offered here (Matrix: core.chat_matrix.nio_missing, XMPP:
+    # core.chat_xmpp.libraries_missing - the same modules).
+    ("chat", "Matrix and XMPP chat (end-to-end encrypted)", "nio,vodozemac,slixmpp,omemo,twomemo",
+     "the Matrix and XMPP panels; IRC needs nothing extra"),
+    ("bluetooth-raw", "Bluetooth USB stick without BlueZ (Bumble)", "bumble",
+     "the Bluetooth panel drives a USB stick directly (it takes the stick from the system)"),
 )
 
 
@@ -210,7 +218,8 @@ def collect() -> list[Feature]:
     for extra, name, probe, use in _EXTRA_FEATURES:
         out.append(Feature(
             key=f"extra:{extra}", name=name, group="Files and analysis",
-            available=_importable(probe), pip_extra=extra, requirements=EXTRAS[extra], note=use,
+            available=all(_importable(m) for m in probe.split(",")), pip_extra=extra,
+            requirements=EXTRAS[extra], note=use,
         ))
     for tool in TOOLS:
         out.append(Feature(

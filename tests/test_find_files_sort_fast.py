@@ -55,6 +55,7 @@ def _dialog(hits, monkeypatch=None, former: bool = False):
     dialog._queue = collections.deque((scope, h) for h in hits)
     while dialog._queue:
         dialog._drain()
+    dialog._sort_results()  # as at the end of a search
     if former:
         monkeypatch.undo()
     return dialog

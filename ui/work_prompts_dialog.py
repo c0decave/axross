@@ -32,6 +32,7 @@ from core import agent_topics as AT
 from core.agent_settings import OFFERED_GROUPS
 from core.i18n import tr
 from ui.close_corner import add_close_corner
+from ui.handbook import install_help_key
 from ui.icon_provider import set_window_icon
 
 _NEED_LABELS = {
@@ -48,7 +49,8 @@ class WorkPromptsDialog(QDialog):
         """*new* (or a *task* to start from) opens an empty form; otherwise
         the first stored topic is shown."""
         super().__init__(parent)
-        set_window_icon(self, "book")
+        set_window_icon(self, "prompts")
+        install_help_key(self, "agent")  # F1: its handbook section (a window of its own)
         self.setWindowTitle(tr("My Topics"))
         self.resize(860, 560)
         self._topics: list[AT.Topic] = AT.load_user_topics()

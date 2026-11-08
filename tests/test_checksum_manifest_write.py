@@ -111,7 +111,7 @@ def test_edge_verify_of_an_empty_manifest_warns_that_nothing_was_checked(tmp_pat
         window = QMainWindow()
         actions: dict = {}
 
-        def add_context_action(self, label, cb, applies_to="any", extensions=()):
+        def add_context_action(self, label, cb, applies_to="any", extensions=(), icon=None):
             self.actions[label] = cb
 
         def notify(self, text):

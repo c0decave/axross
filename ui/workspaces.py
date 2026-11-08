@@ -54,7 +54,7 @@ from PyQt6.QtWidgets import (
 
 from core.i18n import tr
 from ui.pane_drag import PANE_MIME_TYPE
-from ui.icon_provider import set_window_icon
+from ui.icon_provider import icon, set_window_icon
 
 log = logging.getLogger(__name__)
 
@@ -885,6 +885,9 @@ class WorkspaceMixin:
         self._prev_workspace_action.setShortcut(QKeySequence("Ctrl+Alt+PgUp"))
         self._prev_workspace_action.triggered.connect(
             lambda _c=False: self.next_workspace(forward=False))
+        for action in (self._next_workspace_action, self._prev_workspace_action):
+            action.setIcon(icon("workspace"))
+            action.setProperty("axIcon", "workspace")  # redrawn on a theme switch
         # Window-wide: the menu is rebuilt each time it opens.
         for action in (self._new_workspace_action, self._new_terminal_workspace_action,
                        self._next_workspace_action, self._prev_workspace_action):

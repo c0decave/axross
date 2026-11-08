@@ -261,15 +261,31 @@ _WRITE_TRAITS = {
 _DEFAULT_TRAITS = WriteTraits()
 
 
+#: class name -> its traits, for names the registry knows (a registry entry
+#: never changes its class): the walk over the sorted registry was asked
+#: twice per transferred file.
+_TRAITS_BY_NAME: dict[str, WriteTraits] = {}
+
+
 def write_traits(backend) -> WriteTraits:
     """The :class:`WriteTraits` of *backend*, by its registry entry
     (matched by class name, as the registry is everywhere)."""
+    name = type(backend).__name__
+    known = _TRAITS_BY_NAME.get(name)
+    if known is not None:
+        return known
     from core import backend_registry
 
-    name = type(backend).__name__
+    found = False
     for info in backend_registry.all_backends():
-        if info.class_name == name and info.protocol_id in _WRITE_TRAITS:
+        if info.class_name != name:
+            continue
+        found = True
+        if info.protocol_id in _WRITE_TRAITS:
+            _TRAITS_BY_NAME[name] = _WRITE_TRAITS[info.protocol_id]
             return _WRITE_TRAITS[info.protocol_id]
+    if found:
+        _TRAITS_BY_NAME[name] = _DEFAULT_TRAITS
     return _DEFAULT_TRAITS
 
 

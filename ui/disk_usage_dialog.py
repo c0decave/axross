@@ -39,6 +39,7 @@ from core.i18n import tr, tr_n
 from ui.close_corner import add_close_corner
 from ui.format_utils import human_bytes
 from ui.thread_lifetime import detach_running_thread
+from ui.handbook import install_help_key
 from ui.icon_provider import set_window_icon
 
 log = logging.getLogger(__name__)
@@ -138,6 +139,7 @@ class DiskUsageDialog(QDialog):
     def __init__(self, backends, parent: QWidget | None = None, *, snapshot_fn=None):
         super().__init__(parent)
         set_window_icon(self, "disk-usage")
+        install_help_key(self, "disk-usage")  # F1: its handbook section (a window of its own)
         self._backends = list(backends)
         self._snapshot_fn = snapshot_fn or _default_snapshot
         self._rows: list[HostRow] = []

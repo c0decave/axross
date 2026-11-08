@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -12,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from core.redaction import _is_sensitive_key, redact, redact_path
+from core.redaction import _is_sensitive_key, redact, redact_path, redact_text
 from core.structured_log import log_event
 
 log = logging.getLogger(__name__)
@@ -21,6 +22,18 @@ _LOCK = threading.Lock()
 _DEFAULT_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state")) / "axross"
 JOURNAL_PATH = Path(os.environ.get("AXROSS_OPERATION_JOURNAL", _DEFAULT_DIR / "operations.jsonl"))
 MAX_READ_RECENT_BYTES = 4 * 1024 * 1024
+#: Above this size the journal becomes ``<name>.1`` (replacing the older
+#: one) and a new file starts: it grew without bound - 100 MB after a few
+#: benchmark copies - while only its last few MB are ever read.
+MAX_JOURNAL_BYTES = 16 * 1024 * 1024
+
+
+def _rotate(path: str) -> None:
+    """Move the journal at *path* to ``path.1`` (the previous one goes)."""
+    try:
+        os.replace(path, path + ".1")
+    except OSError as exc:
+        log.debug("operation journal not rotated: %s", exc)
 
 
 def _utc_now() -> str:
@@ -128,49 +141,223 @@ def current_batch() -> str:
     return getattr(_BATCH, "id", "") or ""
 
 
+#: Value types every caller in this code base builds ``details`` from. A
+#: tree of only these is redacted as it is; anything else goes through
+#: ``dataclasses.asdict`` first, as every event did before (it turns a
+#: nested dataclass into the dict that redaction then masks).
+_PLAIN_SCALARS = (str, int, float, bool, type(None))
+#: Whether redaction masks a top-level field by its name (none does today).
+_TOP_SENSITIVE = {name: _is_sensitive_key(name) for name in (
+    "operation_id", "phase", "operation", "timestamp", "status", "source", "dest", "backend",
+    "bytes_total", "bytes_done", "error", "details")}
+#: What _utc_now writes; nothing of this shape is a secret.
+_ISO_TIME = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,6})?([+-]\d\d:\d\d|Z)?")
+
+
+def _is_plain(value: Any) -> bool:
+    cls = type(value)
+    if cls in _PLAIN_SCALARS:
+        return True
+    if cls is dict:
+        return all(type(k) in _PLAIN_SCALARS and _is_plain(v) for k, v in value.items())
+    if cls is list:
+        return all(_is_plain(v) for v in value)
+    return False
+
+
+def _event_payload(event: JournalEvent, batch: str) -> dict[str, Any]:
+    """The redacted dict of *event* that is written as its line.
+
+    Built field by field, not with ``asdict``: its deep copy of every value
+    was a third of a small-file copy's worker time, and redaction copies
+    each dict and list again anyway. A ``details`` holding anything but
+    plain values takes the old way, so the line stays byte-identical."""
+    details = event.details
+    if batch and not (details or {}).get("batch"):
+        details = {**(details or {}), "batch": batch}
+    if type(event) is not JournalEvent or not _is_plain(details):
+        if details is not event.details:
+            event = JournalEvent(**{**asdict(event), "details": details})
+        return _redact_event(asdict(event))
+    payload: dict[str, Any] = {}
+    for key, value in (
+        ("operation_id", event.operation_id),
+        ("phase", event.phase),
+        ("operation", event.operation),
+        ("timestamp", event.timestamp),
+        ("status", event.status),
+        ("source", event.source),
+        ("dest", event.dest),
+        ("backend", event.backend),
+        ("bytes_total", event.bytes_total),
+        ("bytes_done", event.bytes_done),
+        ("error", event.error),
+    ):
+        cls = type(value)
+        if cls is str:
+            if key in _PATH_FIELDS:
+                value = redact_path(value)
+            elif key != "timestamp" or not _ISO_TIME.fullmatch(value):
+                # The ":" of an ISO time sent it through every redaction
+                # pattern (a third of an event's redaction), which leave
+                # such a string as it is.
+                value = redact_text(value)
+        elif cls is not int:
+            value = _redact_event(value, key)
+        payload[key] = "<redacted>" if _TOP_SENSITIVE[key] else value
+    payload["details"] = "<redacted>" if _TOP_SENSITIVE["details"] else _redact_event(details,
+                                                                                      "details")
+    return payload
+
+
+def _write_all(fd: int, data: bytes) -> None:
+    view = memoryview(data)
+    while view:
+        view = view[os.write(fd, view) :]
+
+
+class _JournalFile:
+    """The journal's file descriptor, kept open between events.
+
+    Opening, chmod-ing and closing the file for every event cost more than
+    the rest of a small-file copy's per-file work (three events per file).
+    The descriptor is kept, and before every write the path is checked to
+    still name the file it has open (one ``stat``): a journal that was
+    deleted, moved away or replaced is opened (or created) anew, so no
+    event goes into an unlinked file; a mode widened meanwhile is tightened
+    to 0600 again.
+
+    Every event is still written by one ``os.write`` before
+    :func:`append_event` returns. Nothing is held back in memory for a
+    later batch write: the events that tell an interrupted move from a
+    finished one (worker_start before the first byte, the finish after the
+    source was removed) must be in the file whenever the process dies after
+    them - killed, crashed, the power button - exactly as with the file
+    opened per event. Neither way calls fsync: a crash of the whole machine
+    keeps what the kernel had written back, as before.
+
+    Windows does not let a file that is open be deleted or replaced, so
+    there the file is opened per event as before.
+    """
+
+    _FLAGS = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_CLOEXEC", 0)
+    KEEP_OPEN = os.name != "nt"
+
+    def __init__(self) -> None:
+        self.path: str | None = None
+        self.fd = -1
+        self.ident: tuple[int, int] = (0, 0)
+
+    def close(self) -> None:
+        if self.fd >= 0:
+            try:
+                os.close(self.fd)
+            except OSError:
+                pass
+        self.fd, self.path, self.ident = -1, None, (0, 0)
+
+    @classmethod
+    def _open(cls, path: str) -> int:
+        try:
+            fd = os.open(path, cls._FLAGS, 0o600)
+        except FileNotFoundError:
+            # Create the directory only when it is missing, not per event.
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            fd = os.open(path, cls._FLAGS, 0o600)
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+        return fd
+
+    def _current(self, path: str) -> int:
+        """The open descriptor of *path*; (re)opened when the path does not
+        name the file this has open (another path, deleted, replaced)."""
+        if self.fd >= 0 and self.path == path:
+            try:
+                st = os.stat(path)
+            except OSError:
+                st = None
+            if st is not None and st.st_size > MAX_JOURNAL_BYTES:
+                _rotate(path)  # the open descriptor no longer names the path
+                st = None
+            if st is not None and (st.st_dev, st.st_ino) == self.ident:
+                if st.st_mode & 0o777 != 0o600:
+                    try:
+                        os.chmod(path, 0o600)
+                    except OSError:
+                        pass
+                return self.fd
+        self.close()
+        try:
+            if os.stat(path).st_size > MAX_JOURNAL_BYTES:
+                _rotate(path)  # a big journal from before this process
+        except OSError:
+            pass
+        fd = self._open(path)
+        try:
+            st = os.fstat(fd)
+        except OSError:
+            os.close(fd)
+            raise
+        self.fd, self.path, self.ident = fd, path, (st.st_dev, st.st_ino)
+        return fd
+
+    def write(self, path: str, data: bytes) -> None:
+        if not self.KEEP_OPEN:
+            try:
+                if os.stat(path).st_size > MAX_JOURNAL_BYTES:
+                    _rotate(path)
+            except OSError:
+                pass
+            fd = self._open(path)
+            try:
+                _write_all(fd, data)
+            finally:
+                os.close(fd)
+            return
+        fd = self._current(path)
+        try:
+            _write_all(fd, data)
+        except OSError:
+            self.close()  # the next event opens the file again
+            raise
+
+
+_FILE = _JournalFile()
+
+
 def append_event(event: JournalEvent, *, journal_path: Path | None = None) -> None:
     """Append one redacted JSONL event to the operation journal. Paths
     keep their real names (see ``_PATH_FIELDS``); the log line about the
-    event is redacted in full."""
+    event is redacted in full.
+
+    The line is in the file (handed to the kernel) when this returns, see
+    :class:`_JournalFile`. The log line is DEBUG for an event that went as
+    planned - the journal is the record of it, and three INFO lines per
+    copied file filled the log - and a WARNING for an error or a cancel."""
     if not _journal_enabled(journal_path):
         return
-    path = _target_path(journal_path)
-    batch = current_batch()
-    if batch and not (event.details or {}).get("batch"):
-        event = JournalEvent(**{**asdict(event), "details": {**(event.details or {}),
-                                                            "batch": batch}})
-    payload = _redact_event(asdict(event))
+    # A str, not a Path: parsing a Path per event cost more than its write.
+    path = os.fspath(journal_path) if journal_path is not None else os.fspath(_target_path(None))
+    payload = _event_payload(event, current_batch())
     line = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     data = (line + "\n").encode("utf-8")
     with _LOCK:
-        flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
-        try:
-            fd = os.open(path, flags, 0o600)
-        except FileNotFoundError:
-            # Create the directory only when it is missing, not per event.
-            path.parent.mkdir(parents=True, exist_ok=True)
-            fd = os.open(path, flags, 0o600)
-        try:
-            try:
-                os.chmod(path, 0o600)
-            except OSError:
-                pass
-            view = memoryview(data)
-            while view:
-                view = view[os.write(fd, view) :]
-        finally:
-            os.close(fd)
-    log_event(
-        log,
-        logging.INFO if event.status not in {"error", "cancelled"} else logging.WARNING,
-        f"operation_{event.phase}",
-        operation_id=event.operation_id,
-        operation=event.operation,
-        status=event.status,
-        source=event.source,
-        dest=event.dest,
-        error=event.error,
-    )
+        _FILE.write(path, data)
+    level = logging.WARNING if event.status in {"error", "cancelled"} else logging.DEBUG
+    if log.isEnabledFor(level):
+        log_event(
+            log,
+            level,
+            f"operation_{event.phase}",
+            operation_id=event.operation_id,
+            operation=event.operation,
+            status=event.status,
+            source=event.source,
+            dest=event.dest,
+            error=event.error,
+        )
 
 
 def start_operation(
@@ -259,15 +446,8 @@ def finish_operation(
     )
 
 
-def read_recent(limit: int = 200, *, journal_path: Path | None = None) -> list[dict]:
-    if not _journal_enabled(journal_path):
-        return []
-    count = int(limit)
-    if count <= 0:
-        return []
-    path = _target_path(journal_path)
-    if not path.exists():
-        return []
+def _tail_lines(path: Path) -> list[str]:
+    """The lines of the last :data:`MAX_READ_RECENT_BYTES` of *path*."""
     try:
         size = path.stat().st_size
         with path.open("rb") as handle:
@@ -279,7 +459,23 @@ def read_recent(limit: int = 200, *, journal_path: Path | None = None) -> list[d
         return []
     if len(data) > MAX_READ_RECENT_BYTES:
         data = data[-MAX_READ_RECENT_BYTES:]
-    lines = data.decode("utf-8", errors="replace").splitlines()
+    return data.decode("utf-8", errors="replace").splitlines()
+
+
+def read_recent(limit: int = 200, *, journal_path: Path | None = None) -> list[dict]:
+    """The last *limit* events, oldest first - from the rotated journal
+    (``.1``) too when the current one holds fewer."""
+    if not _journal_enabled(journal_path):
+        return []
+    count = int(limit)
+    if count <= 0:
+        return []
+    path = _target_path(journal_path)
+    lines = _tail_lines(path) if path.exists() else []
+    if len(lines) < count:
+        older = path.with_name(path.name + ".1")
+        if older.exists():
+            lines = _tail_lines(older) + lines
     out: list[dict] = []
     for line in lines[-count:]:
         try:

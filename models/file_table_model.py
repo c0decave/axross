@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 from html import escape
-from itertools import compress, islice
 
 from core.i18n import tr
 from PyQt6.QtCore import (
     QAbstractItemModel,
+    QAbstractProxyModel,
     QAbstractTableModel,
     QModelIndex,
-    QSortFilterProxyModel,
+    QObject,
+    QPersistentModelIndex,
+    QRegularExpression,
     Qt,
 )
 
@@ -16,7 +19,7 @@ from PyQt6.QtGui import QBrush, QColor, QFont, QPalette
 from PyQt6.QtWidgets import QApplication
 
 from core.remote_name import sanitize_for_display
-from models.file_item import FileItem
+from models.file_item import NAV_NAMES, FileItem
 from ui.format_utils import measured_bytes
 from ui.icon_provider import entry_icon
 from ui.themes import hidden_entry_color, is_hex_colour
@@ -37,31 +40,174 @@ def _italic() -> QFont:
         _ITALIC.setItalic(True)
     return _ITALIC
 
-_COLUMN_KEY = {
-    COL_NAME: lambda it: it.name.lower(),
-    COL_SIZE: lambda it: it.size,
-    COL_MODIFIED: lambda it: it.modified,
-    COL_PERMS: lambda it: it.permissions,
-    COL_OWNER: lambda it: it.owner,
-}
+
+# -- sorting --------------------------------------------------------------------------------
+#
+# The order: "." first, then "..", then folders, then files - each group
+# by the column's value, ascending. Descending is the same order reversed
+# (files first, "." last), ties keeping the order they had: what
+# QSortFilterProxyModel did with the former lessThan, and what
+# ``sorted(key=(group, value), reverse=True)`` does. Sorted by positions
+# with a precomputed value list (``sorted(rows, key=values.__getitem__)``):
+# no Python call per row or comparison, ~5x quicker than a tuple key per
+# item for 100,000 entries.
+
+def _column_values(items: list[FileItem], names: list[str], column: int,
+                   computed: dict[str, tuple[int, bool]] | None) -> list:
+    """The value column *column* sorts *items* by, one per item."""
+    if column == COL_NAME:
+        return [n.lower() for n in names]
+    if column == COL_SIZE:
+        if computed:
+            return [computed[it.name][0] if it.is_dir and it.name in computed else it.size
+                    for it in items]
+        return [it.size for it in items]
+    if column == COL_MODIFIED:
+        return [it.modified for it in items]
+    if column == COL_PERMS:
+        return [it.permissions for it in items]
+    if column == COL_OWNER:
+        return [it.owner for it in items]
+    return [0] * len(items)
 
 
-def _sort_key(column: int, computed: dict[str, tuple[int, bool]] | None = None):
-    """ "." and ".." first, then directories, then the column value — ascending.
-    Descending is the same key reversed, which (stable on both sides) is
-    exactly what QSortFilterProxyModel did with the former lessThan:
-    files before directories and ".." / "." last. A folder whose size
-    Calculate Size measured (*computed*) sorts by that size."""
-    listed = _COLUMN_KEY.get(column, lambda it: 0)
-    value = listed
-    if column == COL_SIZE and computed:
+def _groups(names: list[str], items: list[FileItem]) -> list[int]:
+    """The sort group of each item: 0 ".", 2 "..", 6 a folder, 7 a file -
+    the former key ``(not is_nav, name != ".", not is_dir)`` as one number
+    (is_nav is a name in NAV_NAMES)."""
+    return [(0 if n in NAV_NAMES else 4) + (0 if n == "." else 2) + (0 if d else 1)
+            for n, d in zip(names, [it.is_dir for it in items])]
 
-        def value(it):
-            if it.is_dir and it.name in computed:
-                return computed[it.name][0]
-            return listed(it)
 
-    return lambda it: (not it.is_nav, it.name != ".", not it.is_dir, value(it))
+#: Rows sorted per piece by :func:`sort_positions` with ``in_pieces``.
+_SORT_PIECE = 16384
+
+
+def sort_positions(items: list[FileItem], column: int, order: Qt.SortOrder,
+                   computed: dict[str, tuple[int, bool]] | None = None,
+                   names: list[str] | None = None,
+                   groups: list[int] | None = None,
+                   in_pieces: bool = False) -> list[int]:
+    """The positions of *items* in their sorted order (stable: ties keep
+    the order they have in *items*). *column* must be a valid column;
+    *names* and *groups* (of :class:`_RowCache`) are worked out when not
+    given.
+
+    *in_pieces* (the listing thread): sorted piece by piece, then the
+    sorted pieces merged - ~1.5x the work, but no single C call holds the
+    GIL longer than ~20 ms (one sort of 100,000 names held it 45 ms, and
+    the GUI thread waited that long)."""
+    descending = order == Qt.SortOrder.DescendingOrder
+    if names is None:
+        names = [it.name for it in items]
+    if groups is None:
+        groups = _groups(names, items)
+    values = _column_values(items, names, column, computed)
+    key = values.__getitem__
+    # By value, then (stable) by group: the same order as one sort by
+    # (group, value) - also reversed, where both passes keep ties in the
+    # order they had - with no tuple per row.
+    n = len(items)
+    if in_pieces and n > 2 * _SORT_PIECE:
+        positions = []
+        for start in range(0, n, _SORT_PIECE):
+            positions += sorted(range(start, min(n, start + _SORT_PIECE)), key=key,
+                                reverse=descending)
+        positions.sort(key=key, reverse=descending)  # merges the sorted runs
+    else:
+        positions = sorted(range(n), key=key, reverse=descending)
+    positions.sort(key=groups.__getitem__, reverse=descending)
+    return positions
+
+
+# -- what the filter reads ------------------------------------------------------------------
+
+#: Row classes (_RowCache.classes): "." / ".." (always shown), an entry,
+#: a hidden entry (shown only with hidden files on).
+_NAV, _ENTRY, _HIDDEN = 0, 1, 2
+
+
+def _row_class(item: FileItem) -> int:
+    if item.is_nav:
+        return _NAV
+    return _HIDDEN if item.is_hidden else _ENTRY
+
+
+class _RowCache:
+    """Per-row facts the filter reads, aligned with an item list: the
+    names, their casefolded forms (a case-insensitive filter compares
+    those, ``needle in folded[row]``, without a call per row), each row's
+    class and the rows shown while hidden entries are not. Worked out once
+    per listing - on the listing thread when it comes as a
+    :class:`PreparedListing` - and permuted with the items on a sort."""
+
+    __slots__ = ("items", "names", "folded", "classes", "unhidden", "groups")
+
+    def __init__(self, items: list[FileItem], names=None, folded=None, classes=None,
+                 unhidden=None, groups=None):
+        self.items = items
+        self.names = [it.name for it in items] if names is None else names
+        self.folded = [n.casefold() for n in self.names] if folded is None else folded
+        self.classes = [_row_class(it) for it in items] if classes is None else classes
+        self.unhidden = [i for i, c in enumerate(self.classes) if c != _HIDDEN] \
+            if unhidden is None else unhidden
+        #: The sort group of each row (see _groups).
+        self.groups = _groups(self.names, items) if groups is None else groups
+
+    def copy_for(self, items: list[FileItem]) -> _RowCache:
+        """The same facts for a copy of the item list (own lists: refresh
+        changes them in place)."""
+        return _RowCache(items, list(self.names), list(self.folded), list(self.classes),
+                         list(self.unhidden), list(self.groups))
+
+    def permuted(self, items: list[FileItem], positions: list[int]) -> _RowCache:
+        """The cache of *items* = the old items at *positions*."""
+        names, folded, classes, groups = self.names, self.folded, self.classes, self.groups
+        return _RowCache(items, [names[i] for i in positions], [folded[i] for i in positions],
+                         [classes[i] for i in positions], None,
+                         [groups[i] for i in positions])
+
+    def refresh(self, first: int, last: int) -> None:
+        """Rows *first*..*last* were replaced in place: read them again."""
+        items = self.items
+        for row in range(max(0, first), min(last, len(items) - 1) + 1):
+            item = items[row]
+            self.names[row] = item.name
+            self.folded[row] = item.name.casefold()
+            self.classes[row] = _row_class(item)
+            self.groups[row] = _groups([item.name], [item])[0]
+        self.unhidden = [i for i, c in enumerate(self.classes) if c != _HIDDEN]
+
+
+class PreparedListing(list):
+    """A listing (a list of FileItem, usable as one) with its sorted order
+    and filter facts already worked out - on the thread that listed it
+    (ui.file_pane ``_fetch_listing``), so showing 100,000 entries does not
+    sort them on the GUI thread. :meth:`FileTableModel.set_items` uses the
+    work when the sort is still the one it was done for and the list was
+    not changed since; otherwise it sorts as for a plain list."""
+
+    def __init__(self, items, sort_spec: tuple[int, Qt.SortOrder] | None):
+        super().__init__(items)
+        self.sort_spec = sort_spec
+        self._length = len(self)
+        listed = list(self)
+        cache = _RowCache(listed)
+        positions = None
+        if sort_spec is not None and 0 <= sort_spec[0] < len(COLUMNS):
+            positions = sort_positions(listed, *sort_spec, names=cache.names,
+                                       groups=cache.groups, in_pieces=True)
+        elif sort_spec is not None and sort_spec[1] == Qt.SortOrder.DescendingOrder:
+            # No valid column: the listing order, reversed for descending.
+            positions = list(range(len(listed) - 1, -1, -1))
+        if positions is not None:
+            listed = [listed[i] for i in positions]
+            cache = cache.permuted(listed, positions)
+        self.sorted_items = listed
+        self.cache = cache
+
+    def usable_for(self, sort_spec) -> bool:
+        return self.sort_spec == sort_spec and len(self) == self._length
 
 
 class FileTableModel(QAbstractTableModel):
@@ -88,6 +234,16 @@ class FileTableModel(QAbstractTableModel):
         #: dimmed until they are pasted or the cut is dropped. Kept across
         #: listings of the folder; the pane sets it.
         self._cut_names: frozenset[str] = frozenset()
+        #: The filter facts of _items (see row_cache).
+        self._cache: _RowCache | None = None
+        #: During a sort's layoutChanged: old row -> new row (FileSortProxyModel
+        #: maps its rows with it instead of filtering again).
+        self._moved: list[int] | None = None
+
+    @property
+    def sort_spec(self) -> tuple[int, Qt.SortOrder] | None:
+        """``(column, order)`` of the current sort, or None."""
+        return self._sort_spec
 
     @property
     def highlight_hidden(self) -> bool:
@@ -166,7 +322,11 @@ class FileTableModel(QAbstractTableModel):
         """Show *items*. Folder sizes Calculate Size measured go - unless
         *keep_sizes* (the same folder listed again by itself: after a change
         the watcher saw, after an operation): then those of folders still
-        there stay - a calculation can take minutes."""
+        there stay - a calculation can take minutes.
+
+        *items* may be a :class:`PreparedListing`: then the sort and the
+        filter facts worked out on the listing thread are taken as they
+        are, unless the sort changed meanwhile."""
         self.beginResetModel()
         if keep_sizes and self._computed:
             folders = {item.name for item in items if item.is_dir}
@@ -174,8 +334,27 @@ class FileTableModel(QAbstractTableModel):
         else:
             self._computed = {}
         self._listing = list(items)
-        self._items = self._sorted(self._listing)
+        sizes_matter = bool(self._computed) and self._sort_spec is not None \
+            and self._sort_spec[0] == COL_SIZE
+        if isinstance(items, PreparedListing) and not sizes_matter \
+                and items.usable_for(self._sort_spec):
+            self._items = list(items.sorted_items)
+            self._cache = items.cache.copy_for(self._items)
+        else:
+            self._items = self._sorted(self._listing)
+            self._cache = None
         self.endResetModel()
+
+    def row_cache(self) -> _RowCache:
+        """The filter facts of the current items (worked out on first use)."""
+        cache = self._cache
+        if cache is None or cache.items is not self._items:
+            cache = self._cache = _RowCache(self._items)
+        return cache
+
+    def entry_count(self) -> int:
+        """The entries listed, without the "." and ".." rows."""
+        return len(self._items) - self.row_cache().classes.count(_NAV)
 
     def set_computed_sizes(self, sizes: dict[str, tuple[int, bool]]) -> None:
         """Show the size Calculate Size measured for these folders of the
@@ -196,43 +375,62 @@ class FileTableModel(QAbstractTableModel):
     def computed_size(self, name: str) -> tuple[int, bool] | None:
         return self._computed.get(name)
 
-    def _sorted(self, items: list[FileItem]) -> list[FileItem]:
-        if self._sort_spec is None:
-            return list(items)
+    def _positions(self, items: list[FileItem]) -> list[int]:
+        """Positions of *items* in the current sort order."""
         column, order = self._sort_spec
         if not 0 <= column < len(COLUMNS):
             # Qt: no valid sort column means the source (listing) order,
             # reversed for descending (measured against the former proxy).
-            if order == Qt.SortOrder.DescendingOrder:
-                return self._listing[::-1]
-            return list(self._listing)
-        return sorted(
-            items,
-            key=_sort_key(column, self._computed),
-            reverse=order == Qt.SortOrder.DescendingOrder,
-        )
+            at = {id(item): row for row, item in enumerate(items)}
+            listing = self._listing[::-1] if order == Qt.SortOrder.DescendingOrder \
+                else self._listing
+            return [at[id(item)] for item in listing if id(item) in at]
+        cache = self._cache
+        if cache is not None and cache.items is items:
+            return sort_positions(items, column, order, self._computed,
+                                  names=cache.names, groups=cache.groups)
+        return sort_positions(items, column, order, self._computed)
+
+    def _sorted(self, items: list[FileItem]) -> list[FileItem]:
+        if self._sort_spec is None:
+            return list(items)
+        return [items[i] for i in self._positions(items)]
 
     def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:
-        """Sort in Python's ``sorted`` — one key per row instead of a Python
-        ``lessThan`` call per comparison (~275 000 for 20 000 rows)."""
+        """Sort in Python's ``sorted`` over precomputed values — no Python
+        call per row or comparison (a ``lessThan`` per comparison was
+        ~275 000 calls for 20 000 rows)."""
         self._sort_spec = (column, order)
         hint = QAbstractItemModel.LayoutChangeHint.VerticalSortHint
         self.layoutAboutToBeChanged.emit([], hint)
         # From the current order, like QSortFilterProxyModel's stable sort of
         # its current mapping: ties keep the order of the previous sort; only
         # a new listing (set_items) starts from the listing order.
-        old_row = {id(item): row for row, item in enumerate(self._items)}
-        new_items = self._sorted(self._items)
+        items = self._items
+        self.row_cache()  # names and groups for the sort; the filter reads it anyway
+        positions = self._positions(items)
+        if len(positions) != len(items):  # an item not in the listing: keep all
+            seen = set(positions)
+            positions += [i for i in range(len(items)) if i not in seen]
+        new_items = [items[i] for i in positions]
         new_row_of_old = [0] * len(new_items)
-        for row, item in enumerate(new_items):
-            new_row_of_old[old_row[id(item)]] = row
+        for row, old in enumerate(positions):
+            new_row_of_old[old] = row
+        cache = self._cache
+        self._cache = cache.permuted(new_items, positions) \
+            if cache is not None and cache.items is items else None
         self._items = new_items
         persistent = self.persistentIndexList()
-        self.changePersistentIndexList(
-            persistent,
-            [self.index(new_row_of_old[i.row()], i.column()) for i in persistent],
-        )
-        self.layoutChanged.emit([], hint)
+        if persistent:
+            self.changePersistentIndexList(
+                persistent,
+                [self.index(new_row_of_old[i.row()], i.column()) for i in persistent],
+            )
+        self._moved = new_row_of_old
+        try:
+            self.layoutChanged.emit([], hint)
+        finally:
+            self._moved = None
 
     def display_text(self, item: FileItem, col: int) -> str | None:
         """What column *col* shows for *item* (its DisplayRole)."""
@@ -276,10 +474,11 @@ class FileTableModel(QAbstractTableModel):
     def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
         if not index.isValid() or index.row() >= len(self._items):
             return None
+        return self.item_data(self._items[index.row()], index.column(), role)
 
-        item = self._items[index.row()]
-        col = index.column()
-
+    def item_data(self, item: FileItem, col: int, role: int):
+        """:meth:`data` of *item* in column *col* (FileSortProxyModel asks
+        this directly, without a source index per call)."""
         if role == Qt.ItemDataRole.DisplayRole:
             return self.display_text(item, col)
 
@@ -348,17 +547,47 @@ class FileTableModel(QAbstractTableModel):
         return Qt.DropAction.CopyAction | Qt.DropAction.MoveAction
 
 
-class FileSortProxyModel(QSortFilterProxyModel):
-    """Proxy model that sorts directories before files.
+def prepare_listing(items: list[FileItem], model: FileTableModel | None) -> PreparedListing:
+    """*items* as a :class:`PreparedListing` for *model*'s current sort -
+    for the listing thread (reads only the sort spec, a tuple)."""
+    return PreparedListing(items, model.sort_spec if model is not None else None)
 
-    Which rows it shows is worked out for the whole listing at once and
-    kept until the listing (the model's item list: a new listing or a
-    sort), the filter text or case, the hidden switch or the tag filter
-    changes; ``filterAcceptsRow`` then only looks the row up. Asking per
-    row (the source model, the item, the hidden rule, a QRegularExpression
-    wrapper each time) cost ~70 ms of every 20,000-entry listing, sort and
-    filter keystroke. A tag filter asks its predicate per row as before:
-    tags change without the listing changing.
+
+
+
+# -- the filter -----------------------------------------------------------------------------
+
+_FIXED, _REGEX = "fixed", "regex"
+_ROOT = QModelIndex()
+_LAYOUT_HINT = QAbstractItemModel.LayoutChangeHint.VerticalSortHint
+
+
+class FileSortProxyModel(QAbstractProxyModel):
+    """The rows of a FileTableModel the pane shows: "." and "..", the
+    entries whose name holds the filter text (case-insensitive in the
+    pane), hidden entries only when they are to be shown, and - with a
+    ``tag:<name>`` filter - only tagged entries. The source model sorts;
+    this proxy keeps its order and only leaves rows out.
+
+    Formerly a QSortFilterProxyModel: Qt called a Python
+    ``filterAcceptsRow`` for every row of every listing, sort and filter
+    keystroke (900,000 calls, 12.7 s, for nine keys over 100,000 entries).
+    Now the shown rows are one ascending list (``_rows``: proxy row ->
+    source row), worked out in one list comprehension over the casefolded
+    names the model keeps (``needle in folded[row]``); a filter text that
+    grows narrows the previous result instead of testing every row again.
+    A sort maps the shown rows through the sort's permutation. Selection
+    and current index follow their entries (a layout change that moves the
+    persistent indexes, as the former proxy's did).
+
+    The QSortFilterProxyModel calls the pane, the thumbnail view and tests
+    make are kept: ``setFilterFixedString`` / ``RegularExpression`` /
+    ``Wildcard``, ``setFilterCaseSensitivity``, ``filterRegularExpression``,
+    ``invalidate`` / ``invalidateFilter``, ``mapToSource`` /
+    ``mapFromSource``, ``sort``. A subclass that overrides
+    ``filterAcceptsRow`` gets it asked per row, as Qt did. A fixed text
+    compares casefolded names when case-insensitive: "STRASSE" also finds
+    "straße" (Qt compared simple case folds).
     """
 
     def __init__(self, parent=None):
@@ -368,53 +597,319 @@ class FileSortProxyModel(QSortFilterProxyModel):
         self._tag_filter = None
         #: The FileTableModel filtered, or None for another source model.
         self._file_model: FileTableModel | None = None
-        #: accepted[row] for the item list _accepted_for; None: work it out.
-        self._accepted: list[bool] | None = None
-        self._accepted_for: list[FileItem] | None = None
+        #: proxy row -> source row, ascending.
+        self._rows: list[int] = []
+        self._mode = _FIXED
+        self._text = ""
+        self._case = Qt.CaseSensitivity.CaseSensitive
+        self._regex: QRegularExpression | None = None  # made on first use
+        self._key_column = 0
+        self._sort_role = Qt.ItemDataRole.DisplayRole
+        self._sort_column = -1
+        self._sort_order = Qt.SortOrder.AscendingOrder
+        #: (cache, show_hidden, folded, needle, rows) of the last fixed-text pass.
+        self._last_pass = None
+        #: Over a source layout change: the source items before it (a
+        #: FileTableModel) or source persistent indexes (another model).
+        self._before_layout = None
+        self._connections: list = []
 
-    def _forget_accepted(self, *_args) -> None:
-        self._accepted = None
-        self._accepted_for = None
+    # -- source -----------------------------------------------------------------------------
 
     def setSourceModel(self, model) -> None:  # noqa: N802 - Qt override
-        self._forget_accepted()
-        if self._file_model is not None:
+        self.beginResetModel()
+        for signal, slot in self._connections:
             try:
-                self._file_model.dataChanged.disconnect(self._forget_accepted)
+                signal.disconnect(slot)
             except (TypeError, RuntimeError):
                 pass
-        self._file_model = model if isinstance(model, FileTableModel) else None
-        if self._file_model is not None:
-            # Before Qt's own connection: changed rows are filtered again
-            # by Qt, from the items as they are now.
-            self._file_model.dataChanged.connect(self._forget_accepted)
+        self._connections = []
         super().setSourceModel(model)
+        self._file_model = model if isinstance(model, FileTableModel) else None
+        self._last_pass = None
+        if model is not None:
+            reset = (self._source_about_to_reset, self._source_reset)
+            for signal, slot in (
+                (model.modelAboutToBeReset, reset[0]),
+                (model.modelReset, reset[1]),
+                (model.layoutAboutToBeChanged, self._source_layout_about_to_change),
+                (model.layoutChanged, self._source_layout_changed),
+                (model.dataChanged, self._source_data_changed),
+                (model.headerDataChanged, self.headerDataChanged),
+                (model.rowsAboutToBeInserted, reset[0]), (model.rowsInserted, reset[1]),
+                (model.rowsAboutToBeRemoved, reset[0]), (model.rowsRemoved, reset[1]),
+                (model.rowsAboutToBeMoved, reset[0]), (model.rowsMoved, reset[1]),
+                (model.columnsAboutToBeInserted, reset[0]), (model.columnsInserted, reset[1]),
+                (model.columnsAboutToBeRemoved, reset[0]), (model.columnsRemoved, reset[1]),
+                (model.columnsAboutToBeMoved, reset[0]), (model.columnsMoved, reset[1]),
+            ):
+                signal.connect(slot)
+                self._connections.append((signal, slot))
+        self._rows = self._compute_rows()
+        self.endResetModel()
 
-    # Every way the pane changes what is shown forgets the worked-out rows
-    # first: Qt filters again inside these calls.
-    def setFilterFixedString(self, *args) -> None:  # noqa: N802 - Qt override
-        self._forget_accepted()
-        super().setFilterFixedString(*args)
+    def _source_about_to_reset(self, *_args) -> None:
+        self.beginResetModel()
 
-    def setFilterRegularExpression(self, *args) -> None:  # noqa: N802 - Qt override
-        self._forget_accepted()
-        super().setFilterRegularExpression(*args)
+    def _source_reset(self, *_args) -> None:
+        self._last_pass = None
+        self._rows = self._compute_rows()
+        self.endResetModel()
 
-    def setFilterWildcard(self, *args) -> None:  # noqa: N802 - Qt override
-        self._forget_accepted()
-        super().setFilterWildcard(*args)
+    def _source_layout_about_to_change(self, *_args) -> None:
+        self.layoutAboutToBeChanged.emit([], _LAYOUT_HINT)
+        model = self._file_model
+        if model is not None:
+            self._before_layout = model._items
+            return
+        # Another source: hold the persistent indexes' source entries.
+        src, rows = self.sourceModel(), self._rows
+        self._before_layout = [
+            (idx, QPersistentModelIndex(src.index(rows[idx.row()], idx.column())))
+            for idx in self.persistentIndexList() if 0 <= idx.row() < len(rows)
+        ]
 
-    def setFilterCaseSensitivity(self, *args) -> None:  # noqa: N802 - Qt override
-        self._forget_accepted()
-        super().setFilterCaseSensitivity(*args)
+    def _source_layout_changed(self, *_args) -> None:
+        model = self._file_model
+        before, self._before_layout = self._before_layout, None
+        self._last_pass = None
+        old_rows = self._rows
+        if model is not None:
+            moved = model._moved
+            if moved is not None and len(moved) == len(model._items) \
+                    and all(0 <= row < len(moved) for row in old_rows[-1:]):
+                # A sort: the same entries are shown, in their new order.
+                self._show_rows(sorted(map(moved.__getitem__, old_rows)), old_rows,
+                                moved.__getitem__)
+            else:
+                old_items = before if before is not None else []
+                at = {id(item): row for row, item in enumerate(model._items)}
+                self._show_rows(self._compute_rows(), old_rows, lambda source: at.get(
+                    id(old_items[source])) if source < len(old_items) else None)
+        else:
+            self._rows = self._compute_rows()
+            held = before or []
+            if held:
+                self.changePersistentIndexList(
+                    [idx for idx, _source in held],
+                    [self._index_of_source(source.row(), idx.column()) if source.isValid()
+                     else QModelIndex() for idx, source in held])
+        self.layoutChanged.emit([], _LAYOUT_HINT)
 
-    def invalidateFilter(self) -> None:  # noqa: N802 - Qt override
-        self._forget_accepted()
-        super().invalidateFilter()
+    def _source_data_changed(self, top_left, bottom_right, roles=()) -> None:
+        model = self._file_model
+        if (model is not None
+                and (not roles or Qt.ItemDataRole.DisplayRole in roles)
+                and top_left.column() <= self._key_column <= bottom_right.column()):
+            # Rows replaced in place: what the filter reads may have changed.
+            cache = model._cache
+            if cache is not None and cache.items is model._items:
+                cache.refresh(top_left.row(), bottom_right.row())
+            self.invalidateFilter()
+        rows = self._rows
+        if not rows:
+            return
+        first = bisect_left(rows, top_left.row())
+        last = bisect_right(rows, bottom_right.row()) - 1
+        if first <= last:
+            self.dataChanged.emit(self.index(first, top_left.column()),
+                                  self.index(last, bottom_right.column()), list(roles or ()))
+
+    # -- which rows -------------------------------------------------------------------------
+
+    def _custom_rule(self) -> bool:
+        """A subclass (or a test) replaced filterAcceptsRow: ask it per row."""
+        return type(self).filterAcceptsRow is not _OWN_FILTER_ACCEPTS_ROW
+
+    def _compute_rows(self) -> list[int]:
+        model = self._file_model
+        if model is None:
+            src = self.sourceModel()
+            return list(range(src.rowCount())) if src is not None else []
+        if self._custom_rule():
+            accepts, root = self.filterAcceptsRow, QModelIndex()
+            return [row for row in range(model.rowCount()) if accepts(row, root)]
+        cache = model.row_cache()
+        candidates = range(len(cache.names)) if self._show_hidden else cache.unhidden
+        classes = cache.classes
+        tag = self._tag_filter
+        if tag is not None:
+            items = cache.items
+            candidates = [r for r in candidates if classes[r] == _NAV or tag(items[r])]
+        if self._mode == _FIXED:
+            if not self._text:
+                return list(candidates)
+            folded = self._case == Qt.CaseSensitivity.CaseInsensitive
+            names = cache.folded if folded else cache.names
+            needle = self._text.casefold() if folded else self._text
+            last = self._last_pass
+            if (tag is None and last is not None and last[0] is cache
+                    and last[1] == self._show_hidden and last[2] == folded and last[3] in needle):
+                # The text grew (or is the same): only the rows the previous
+                # text showed can still match.
+                candidates = last[4]
+            rows = [r for r in candidates if needle in names[r] or classes[r] == _NAV]
+            self._last_pass = (cache, self._show_hidden, folded, needle, rows) \
+                if tag is None else None
+            return rows
+        regex = self.filterRegularExpression()
+        if not regex.pattern():
+            return list(candidates)
+        match, names = regex.match, cache.names
+        return [r for r in candidates if classes[r] == _NAV or match(names[r]).hasMatch()]
+
+    def _proxy_row(self, source_row: int) -> int | None:
+        rows = self._rows
+        at = bisect_left(rows, source_row)
+        return at if at < len(rows) and rows[at] == source_row else None
+
+    def _index_of_source(self, source_row: int, column: int) -> QModelIndex:
+        row = self._proxy_row(source_row)
+        return self.createIndex(row, column) if row is not None else QModelIndex()
+
+    def _refilter(self) -> None:
+        """Work the shown rows out again; when they changed, a layout change
+        that keeps the selection and current row on their entries."""
+        new_rows = self._compute_rows()
+        if new_rows == self._rows:
+            return
+        old_rows = self._rows
+        self.layoutAboutToBeChanged.emit([], _LAYOUT_HINT)
+        self._show_rows(new_rows, old_rows, None)
+        self.layoutChanged.emit([], _LAYOUT_HINT)
+
+    def _show_rows(self, new_rows: list[int], old_rows: list[int], moved) -> None:
+        """Show *new_rows*; every persistent index goes to its entry's new
+        row (*moved*: old source row -> new source row or None; None: the
+        source rows stayed), or becomes invalid when its entry is no
+        longer shown."""
+        persistent = self.persistentIndexList()
+        self._rows = new_rows
+        if not persistent:
+            return
+        targets = []
+        invalid = QModelIndex()
+        for idx in persistent:
+            row = idx.row()
+            target = invalid
+            if 0 <= row < len(old_rows):
+                source = old_rows[row] if moved is None else moved(old_rows[row])
+                if source is not None:
+                    target = self._index_of_source(source, idx.column())
+            targets.append(target)
+        self.changePersistentIndexList(persistent, targets)
+
+    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:  # noqa: N802
+        """Whether source row *source_row* is shown - the rule for one row
+        (the proxy itself works it out for all rows at once)."""
+        if self._file_model is None:
+            return True
+        return self._accepts(self._file_model.get_item(source_row))
+
+    def _accepts(self, item: FileItem | None) -> bool:
+        if item is None:
+            return False
+        # "." and ".." are always visible
+        if item.is_nav:
+            return True
+        # Hidden files filter: dot names and entries the backend flags hidden
+        if not self._show_hidden and item.is_hidden:
+            return False
+        if self._tag_filter is not None and not self._tag_filter(item):
+            return False
+        if self._mode == _FIXED:
+            if not self._text:
+                return True
+            if self._case == Qt.CaseSensitivity.CaseInsensitive:
+                return self._text.casefold() in item.name.casefold()
+            return self._text in item.name
+        regex = self.filterRegularExpression()
+        return not regex.pattern() or regex.match(item.name).hasMatch()
+
+    def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:  # noqa: N802
+        """Never called: the source model sorts. Kept so code (and tests)
+        written against the former QSortFilterProxyModel still find it."""
+        return False
+
+    # -- the filter settings (QSortFilterProxyModel's calls) ---------------------------------
+
+    def _options(self) -> QRegularExpression.PatternOption:
+        if self._case == Qt.CaseSensitivity.CaseInsensitive:
+            return QRegularExpression.PatternOption.CaseInsensitiveOption
+        return QRegularExpression.PatternOption.NoPatternOption
+
+    def setFilterFixedString(self, text: str) -> None:  # noqa: N802 - Qt API
+        """Show the entries whose name holds *text* as written."""
+        self._mode, self._text, self._regex = _FIXED, str(text or ""), None
+        self._refilter()
+
+    def setFilterRegularExpression(self, pattern) -> None:  # noqa: N802 - Qt API
+        """A QRegularExpression brings its own case option (as in Qt); a
+        pattern string gets the current case sensitivity."""
+        if isinstance(pattern, QRegularExpression):
+            self._regex = QRegularExpression(pattern)
+            insensitive = bool(pattern.patternOptions()
+                               & QRegularExpression.PatternOption.CaseInsensitiveOption)
+            self._case = (Qt.CaseSensitivity.CaseInsensitive if insensitive
+                          else Qt.CaseSensitivity.CaseSensitive)
+        else:
+            self._regex = QRegularExpression(str(pattern or ""), self._options())
+        self._mode, self._text = _REGEX, ""
+        self.invalidateFilter()
+
+    def setFilterWildcard(self, pattern: str) -> None:  # noqa: N802 - Qt API
+        converted = QRegularExpression.wildcardToRegularExpression(
+            str(pattern or ""),
+            QRegularExpression.WildcardConversionOption.UnanchoredWildcardConversion)
+        self._regex = QRegularExpression(converted, self._options())
+        self._mode, self._text = _REGEX, ""
+        self.invalidateFilter()
+
+    def filterRegularExpression(self) -> QRegularExpression:  # noqa: N802 - Qt API
+        """The filter as a QRegularExpression (a fixed text escaped)."""
+        if self._regex is None:
+            self._regex = QRegularExpression(QRegularExpression.escape(self._text),
+                                             self._options())
+        return self._regex
+
+    def setFilterCaseSensitivity(self, case: Qt.CaseSensitivity) -> None:  # noqa: N802
+        if case == self._case:
+            return
+        self._case = case
+        if self._mode == _FIXED:
+            self._regex = None
+        elif self._regex is not None:
+            self._regex = QRegularExpression(self._regex.pattern(), self._options())
+        self.invalidateFilter()
+
+    def filterCaseSensitivity(self) -> Qt.CaseSensitivity:  # noqa: N802 - Qt API
+        return self._case
+
+    def setFilterKeyColumn(self, column: int) -> None:  # noqa: N802 - Qt API
+        """Kept for the former proxy's callers: the name is what is filtered."""
+        self._key_column = column
+
+    def filterKeyColumn(self) -> int:  # noqa: N802 - Qt API
+        return self._key_column
+
+    def setSortRole(self, role: int) -> None:  # noqa: N802 - Qt API
+        self._sort_role = role
+
+    def sortRole(self) -> int:  # noqa: N802 - Qt API
+        return self._sort_role
+
+    def sortColumn(self) -> int:  # noqa: N802 - Qt API
+        return self._sort_column
+
+    def sortOrder(self) -> Qt.SortOrder:  # noqa: N802 - Qt API
+        return self._sort_order
+
+    def invalidateFilter(self) -> None:  # noqa: N802 - Qt API
+        self._last_pass = None
+        self._refilter()
 
     def invalidate(self) -> None:
-        self._forget_accepted()
-        super().invalidate()
+        self.invalidateFilter()
 
     def set_tag_filter(self, predicate) -> None:
         self._tag_filter = predicate
@@ -429,92 +924,115 @@ class FileSortProxyModel(QSortFilterProxyModel):
         self._show_hidden = value
         self.invalidateFilter()
 
-    def _accepts(self, item: FileItem | None) -> bool:
-        """Whether *item* is shown: the rule, asked for one row."""
-        if item is None:
-            return False
-        # "." and ".." are always visible
-        if item.is_nav:
-            return True
-        # Hidden files filter: dot names and entries the backend flags hidden
-        if not self._show_hidden and item.is_hidden:
-            return False
-        if self._tag_filter is not None and not self._tag_filter(item):
-            return False
-        # Text filter from filter bar
-        regex = self.filterRegularExpression()
-        if regex.pattern():
-            return regex.match(item.name).hasMatch()
-        return True
-
-    def _work_out_accepted(self, items: list[FileItem]) -> list[bool]:
-        """:meth:`_accepts` for every item at once (no tag filter)."""
-        show_hidden = self._show_hidden
-        regex = self.filterRegularExpression()
-        if regex.pattern():
-            match = regex.match
-            return [
-                item.is_nav
-                or ((show_hidden or not item.is_hidden) and match(item.name).hasMatch())
-                for item in items
-            ]
-        if show_hidden:
-            return [True] * len(items)
-        return [item.is_nav or not item.is_hidden for item in items]
-
-    def source_rows(self, count: int) -> list[int]:
-        """The source rows of the first *count* rows shown, in order. The
-        proxy never sorts (the model does), so they are the accepted rows
-        in listing order - read from the worked-out rows when they are
-        current, else mapped row by row."""
-        model = self._file_model
-        accepted = self._accepted
-        if (
-            model is not None
-            and accepted is not None
-            and self._accepted_for is model._items
-            and len(accepted) == len(model._items)
-            and self.sortColumn() < 0
-        ):
-            return list(islice(compress(range(len(accepted)), accepted), max(0, count)))
-        return [self.mapToSource(self.index(row, 0)).row() for row in range(count)]
-
-    def source_rows_of(self, rows: list[int]) -> list[int]:
-        """The source rows of the shown *rows*, in their order - by index into
-        the accepted rows when they are current (as :meth:`source_rows`),
-        else mapped row by row."""
-        model = self._file_model
-        accepted = self._accepted
-        if (
-            model is not None
-            and accepted is not None
-            and self._accepted_for is model._items
-            and len(accepted) == len(model._items)
-            and self.sortColumn() < 0
-        ):
-            shown = list(compress(range(len(accepted)), accepted))
-            return [shown[row] for row in rows if 0 <= row < len(shown)]
-        return [self.mapToSource(self.index(row, 0)).row() for row in rows]
-
-    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:  # noqa: N802
-        model = self._file_model
-        if model is None:
-            return not isinstance(self.sourceModel(), FileTableModel) or self._accepts(
-                self.sourceModel().get_item(source_row))
-        items = model._items
-        accepted = self._accepted
-        if accepted is None or self._accepted_for is not items or len(accepted) != len(items):
-            if self._tag_filter is not None:
-                return self._accepts(model.get_item(source_row))
-            accepted = self._accepted = self._work_out_accepted(items)
-            self._accepted_for = items
-        return 0 <= source_row < len(accepted) and accepted[source_row]
-
     def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:
         """The source model sorts (see FileTableModel.sort); the proxy keeps
         its source order and only filters."""
+        self._sort_column, self._sort_order = column, order
         model = self.sourceModel()
-        if isinstance(model, FileTableModel):
+        if model is not None:
             model.sort(column, order)
-            return
-        super().sort(column, order)
+
+    # -- rows -------------------------------------------------------------------------------
+
+    def source_rows(self, count: int) -> list[int]:
+        """The source rows of the first *count* rows shown, in order."""
+        return self._rows[:max(0, count)]
+
+    def source_rows_of(self, rows: list[int]) -> list[int]:
+        """The source rows of the shown *rows*, in their order."""
+        shown = self._rows
+        n = len(shown)
+        return [shown[row] for row in rows if 0 <= row < n]
+
+    def nav_rows(self) -> list[int]:
+        """The shown rows of "." and ".." (the pane never selects them),
+        without a look at every row: they are first or last."""
+        model = self._file_model
+        if model is None:
+            return []
+        classes = model.row_cache().classes
+        nav = [source for source, c in enumerate(classes[:4]) if c == _NAV]
+        tail = max(4, len(classes) - 4)
+        nav += [tail + i for i, c in enumerate(classes[tail:]) if c == _NAV]
+        if len(nav) != classes.count(_NAV):  # an unsorted listing: anywhere
+            nav = [source for source, c in enumerate(classes) if c == _NAV]
+        return [row for row in map(self._proxy_row, nav) if row is not None]
+
+    # -- QAbstractItemModel -----------------------------------------------------------------
+
+    def index(self, row: int, column: int, parent: QModelIndex = _ROOT) -> QModelIndex:
+        if 0 <= row < len(self._rows) and 0 <= column < self.columnCount() \
+                and not parent.isValid():
+            return self.createIndex(row, column)
+        return QModelIndex()
+
+    def parent(self, *args):
+        if not args:
+            return QObject.parent(self)
+        return QModelIndex()
+
+    def sibling(self, row: int, column: int, index: QModelIndex) -> QModelIndex:
+        return self.index(row, column)
+
+    def rowCount(self, parent: QModelIndex = _ROOT) -> int:  # noqa: N802
+        return 0 if parent.isValid() else len(self._rows)
+
+    def columnCount(self, parent: QModelIndex = _ROOT) -> int:  # noqa: N802
+        if self._file_model is not None:
+            return 0 if parent.isValid() else len(COLUMNS)
+        src = self.sourceModel()
+        return src.columnCount() if src is not None and not parent.isValid() else 0
+
+    def hasChildren(self, parent: QModelIndex = _ROOT) -> bool:  # noqa: N802
+        return not parent.isValid() and bool(self._rows)
+
+    def mapToSource(self, proxy_index: QModelIndex) -> QModelIndex:  # noqa: N802
+        src = self.sourceModel()
+        if src is None or not proxy_index.isValid():
+            return QModelIndex()
+        row = proxy_index.row()
+        if not 0 <= row < len(self._rows):
+            return QModelIndex()
+        return src.index(self._rows[row], proxy_index.column())
+
+    def mapFromSource(self, source_index: QModelIndex) -> QModelIndex:  # noqa: N802
+        if not source_index.isValid():
+            return QModelIndex()
+        return self._index_of_source(source_index.row(), source_index.column())
+
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
+        model = self._file_model
+        if model is None:
+            src = self.sourceModel()
+            return src.data(self.mapToSource(index), role) if src is not None else None
+        rows = self._rows
+        row = index.row()
+        if not 0 <= row < len(rows) or not index.isValid():
+            return None
+        items = model._items
+        source = rows[row]
+        if source >= len(items):
+            return None
+        return model.item_data(items[source], index.column(), role)
+
+    def flags(self, index: QModelIndex) -> Qt.ItemFlag:
+        if self._file_model is not None:
+            return FileTableModel._VALID_FLAGS if index.isValid() \
+                else FileTableModel._INVALID_FLAGS
+        src = self.sourceModel()
+        return src.flags(self.mapToSource(index)) if src is not None \
+            else Qt.ItemFlag.NoItemFlags
+
+    def headerData(self, section: int, orientation: Qt.Orientation,  # noqa: N802
+                   role: int = Qt.ItemDataRole.DisplayRole):
+        src = self.sourceModel()
+        if src is None:
+            return None
+        if orientation == Qt.Orientation.Vertical:
+            if not 0 <= section < len(self._rows):
+                return None
+            section = self._rows[section]
+        return src.headerData(section, orientation, role)
+
+
+_OWN_FILTER_ACCEPTS_ROW = FileSortProxyModel.filterAcceptsRow

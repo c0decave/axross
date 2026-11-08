@@ -254,7 +254,8 @@ def activate(api):
 
         api.run_in_background(work, on_done=done)
 
-    api.add_context_action("Create SHA256SUMS", create, applies_to="any")
+    api.add_context_action("Create SHA256SUMS", create, applies_to="any", icon="shield")
     api.add_context_action(
-        "Verify SHA256SUMS", check, applies_to="single_file", extensions=("sha256sums", ".sha256")
+        "Verify SHA256SUMS", check, applies_to="single_file", extensions=("sha256sums", ".sha256"),
+        icon="shield",
     )

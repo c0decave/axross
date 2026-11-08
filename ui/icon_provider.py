@@ -236,6 +236,29 @@ _TOOL_ICONS = {
     # The robot of the Agent dock's title bar: the Agent dock. (Before, a
     # speech bubble with a plus that nothing else showed for the Agent.)
     "agent": _svg(_ROBOT),
+    # A plug: the MCP servers the Agent connects to (Tools > MCP Servers).
+    "mcp": _svg(
+        '<path d="M9 2v5M15 2v5"/><path d="M6 7h12v4a6 6 0 0 1-12 0z"/>'
+        '<path d="M12 17v5"/>',
+    ),
+    # Tiles with a plus: the MCP server catalogue, servers to add.
+    "mcp-catalog": _svg(
+        '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>'
+        '<rect x="3" y="14" width="7" height="7" rx="1"/><path d="M17.5 14v7M14 17.5h7"/>',
+    ),
+    # A clipboard of lines: the Agent's saved work prompts.
+    "prompts": _svg(
+        '<rect x="5" y="4" width="14" height="18" rx="2"/><rect x="9" y="2" width="6" height="4" rx="1"/>'
+        '<path d="M9 11h6M9 15h6M9 19h3"/>',
+    ),
+    # A pulse line: Tools > Run Active Pane Diagnostics and its report.
+    "diagnostics": _svg('<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>'),
+    # A life buoy: Tools > Recovery Scan (leftover swap, backup and
+    # partial files to rescue) and its report.
+    "recovery": _svg(
+        '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/>'
+        '<path d="M4.93 4.93l4.24 4.24M14.83 14.83l4.24 4.24M14.83 9.17l4.24-4.24M4.93 19.07l4.24-4.24"/>',
+    ),
     # sift's sieve: the Analysis dock. "analysis" is the toolbar button's id
     # (a saved toolbar order names it), so it stays and draws the sieve.
     "sift": _svg(_SIEVE),
@@ -314,6 +337,21 @@ _TOOL_ICONS = {
     "chat-rooms": _svg(
         '<path d="M4.5 9h6M4 14h6M6.5 5.5l-1 12M9.5 5.5l-1 12"/>'
         '<path d="M14 7h7M14 12h7M14 17h7"/>',
+    ),
+    # One per chat network, so three chat panels tell themselves apart in
+    # the docked-windows bar: IRC's channel sign in a bubble, Matrix's [m],
+    # XMPP's two bubbles of a conversation.
+    "irc": _svg(
+        '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'
+        '<path d="M9.5 7l-1 8M13.5 7l-1 8M7.5 9.5h7.5M7 12.5h7.5"/>',
+    ),
+    "matrix": _svg(
+        '<path d="M5 3H3v18h2"/><path d="M19 3h2v18h-2"/>'
+        '<path d="M8 16V9.5M8 11a2 2 0 0 1 4 0v5M12 11a2 2 0 0 1 4 0v5"/>',
+    ),
+    "xmpp": _svg(
+        '<path d="M14 9a2 2 0 0 1-2 2H6l-3 3V4a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2z"/>'
+        '<path d="M18 9h1a2 2 0 0 1 2 2v10l-3-3h-6a2 2 0 0 1-2-2v-1"/>',
     ),
     "mail": _svg(
         '<path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>'
@@ -783,6 +821,9 @@ _ICON_COLORS: dict[str, str | None] = {
     "bluetooth": "#3b82f6",  # Bluetooth blue
     "chat": "#26a69a",  # teal speech bubble
     "chat-rooms": "#26a69a",  # teal as the chat: its channel list
+    "irc": "#f7b731",  # yellow channel sign
+    "matrix": "#0dbd8b",  # Matrix green
+    "xmpp": "#5f9ee3",  # blue conversation
     "mail": "#e17055",  # terracotta envelope, apart from the blue inbox
     "mail-project": "#d9822b",  # amber: the envelope under the magnifier
     "log": "#5d9cec",  # steel blue page
@@ -832,6 +873,15 @@ _ICON_COLORS: dict[str, str | None] = {
     # The tool group; each reads on dark (#1e1e2e, >= 3:1) and light themes
     # (tests/test_toolbar_tool_buttons.py measures it).
     "agent": "#00b894",  # mint robot
+    # The same robot elsewhere (the Agent dock's title bar, Send to Agent,
+    # the LLM settings): had no colour and drew black, 1.16:1 on Modern Dark.
+    "bot": "#00b894",
+    "bot-off": "#95a5a6",  # grey: the analysis without an LLM
+    "mcp": "#45aaf2",  # sky-blue plug
+    "mcp-catalog": "#4b7bec",  # deeper blue tiles
+    "prompts": "#a29bfe",  # lilac clipboard
+    "diagnostics": "#e74c3c",  # red pulse
+    "recovery": "#ff9f1a",  # orange life buoy
     "sift": "#0984e3",  # blue sieve
     "analysis": "#0984e3",  # the same sieve: the Analysis dock is sift
     "find-files": "#2e86de",  # blue, beside the index search

@@ -40,6 +40,7 @@ from PyQt6.QtWidgets import (
 
 from core.i18n import tr
 from ui.arcade_chase_view import ChaseView
+from ui.handbook import install_help_key
 from ui.icon_provider import set_window_icon
 
 log = logging.getLogger(__name__)
@@ -190,6 +191,7 @@ class ArcadeWindow(QWidget):
     def __init__(self, parent=None, *, scores: Path = SCORES, progress: Path = PROGRESS, audio=None):
         super().__init__(parent, Qt.WindowType.Window)
         set_window_icon(self, "gamepad")
+        install_help_key(self, "arcade")  # F1: its handbook section (a window of its own)
         self.setWindowTitle(tr("Arcade"))
         self.resize(960, 680)
         self.scores_path = scores

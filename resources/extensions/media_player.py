@@ -632,7 +632,7 @@ def _owner_alive(folder: str) -> bool | None:
         with open(os.path.join(folder, _OWNER_FILE), encoding="utf-8") as fh:
             owner = json.loads(fh.read(4096))
         pid = owner["pid"]
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, RecursionError, KeyError, TypeError):
         return None
     if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
         return None
@@ -6797,4 +6797,5 @@ def activate(api):
         panel.add_remote(ctx.backend, paths, play_first=True,
                          failed=lambda exc: api.notify(f"Cannot play: {exc}"))
 
-    api.add_context_action("Play in Media Player", play, applies_to="files", extensions=AUDIO_SUFFIXES)
+    api.add_context_action("Play in Media Player", play, applies_to="files", extensions=AUDIO_SUFFIXES,
+                           icon="media-player")

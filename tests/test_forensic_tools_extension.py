@@ -139,7 +139,7 @@ def test_happy_the_actions_are_registered_for_images():
     class Api:
         window = None
 
-        def add_context_action(self, label, cb, applies_to="any", extensions=()):
+        def add_context_action(self, label, cb, applies_to="any", extensions=(), icon=None):
             actions.append((label, applies_to, extensions))
 
     FT.activate(Api())
@@ -282,7 +282,7 @@ def test_e2e_browse_opens_the_file_list_and_extracts(tmp_path, monkeypatch):
         window = QMainWindow()
         actions = {}
 
-        def add_context_action(self, label, cb, applies_to="any", extensions=()):
+        def add_context_action(self, label, cb, applies_to="any", extensions=(), icon=None):
             self.actions[label] = cb
 
         def run_in_background(self, work, on_done=None, on_error=None):
@@ -424,7 +424,7 @@ def _browse(tmp_path, monkeypatch, fls_text):
         window = QMainWindow()
         actions = {}
 
-        def add_context_action(self, label, cb, applies_to="any", extensions=()):
+        def add_context_action(self, label, cb, applies_to="any", extensions=(), icon=None):
             self.actions[label] = cb
 
         def run_in_background(self, work, on_done=None, on_error=None):
@@ -627,7 +627,7 @@ def test_sad_a_4k_sector_disk_is_browsed_at_the_partition_byte_offset(tmp_path, 
         window = QMainWindow()
         actions = {}
 
-        def add_context_action(self, label, cb, applies_to="any", extensions=()):
+        def add_context_action(self, label, cb, applies_to="any", extensions=(), icon=None):
             self.actions[label] = cb
 
         def run_in_background(self, work, on_done=None, on_error=None):
@@ -679,7 +679,7 @@ def test_edge_a_partition_off_the_512_byte_grid_is_refused_with_a_reason(tmp_pat
         window = QMainWindow()
         actions = {}
 
-        def add_context_action(self, label, cb, applies_to="any", extensions=()):
+        def add_context_action(self, label, cb, applies_to="any", extensions=(), icon=None):
             self.actions[label] = cb
 
         def run_in_background(self, work, on_done=None, on_error=None):

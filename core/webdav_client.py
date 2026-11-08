@@ -678,14 +678,20 @@ class _WebDavClient:
 # ---------------------------------------------------------------------------
 
 
+#: Guards WebDavSession._written_paths (transfer workers write in parallel).
+_WRITTEN_LOCK = threading.Lock()
+
+
 class _SpooledWriter:
     """Write to a temp file, then upload via PUT on close."""
 
-    def __init__(self, client: _WebDavClient, remote_path: str):
+    def __init__(self, client: _WebDavClient, remote_path: str, on_put=None):
         self._client = client
         self._remote_path = remote_path
         self._buf = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
         self._closed = False
+        #: Called with the remote path once the PUT went through.
+        self._on_put = on_put
 
     def write(self, data: bytes) -> int:
         return self._buf.write(data)
@@ -708,6 +714,8 @@ class _SpooledWriter:
             self._client.upload_from(self._buf, self._remote_path)
         finally:
             self._buf.close()
+        if self._on_put is not None:
+            self._on_put(self._remote_path)
 
     def discard(self) -> None:
         """Drop buffered bytes without uploading (transfer-cancel path)."""
@@ -976,10 +984,10 @@ class WebDavSession(SessionLifecycle):
                 raise OSError(
                     f"WebDAV append: existing file exceeds {cap // (1024 * 1024)} MiB cap"
                 )
-            writer = _SpooledWriter(self._client, self._norm(path))
+            writer = _SpooledWriter(self._client, self._norm(path), self._note_put)
             writer.write(existing)
             return writer
-        return _SpooledWriter(self._client, self._norm(path))
+        return _SpooledWriter(self._client, self._norm(path), self._note_put)
 
     def copy(self, src: str, dst: str) -> None:
         """WebDAV COPY method — server-side, no client bytes."""
@@ -1020,6 +1028,46 @@ class WebDavSession(SessionLifecycle):
     def open_version_read(self, path: str, version_id: str):
         raise OSError(f"{type(self).__name__} does not expose file version history")
 
+    # -- what checksum() of a file this session wrote answers ---------------
+    #: Paths this session PUT and has not been asked the checksum of yet.
+    _WRITTEN_KEPT = 256
+    #: Once written files proved to come back without the hash, still ask
+    #: for every this-many-th one: a server that hashes later (or only some
+    #: uploads) is noticed again.
+    RECHECK_WRITTEN_EVERY = 50
+    _written_paths: dict | None = None
+    #: algorithm -> True once a written file came back with it, False while
+    #: every one asked came back without it.
+    _written_hash: dict | None = None
+    _written_skips = 0
+
+    def _note_put(self, remote_path: str) -> None:
+        with _WRITTEN_LOCK:
+            written = self._written_paths
+            if written is None:
+                written = self._written_paths = {}
+            written[remote_path] = None
+            while len(written) > self._WRITTEN_KEPT:
+                written.pop(next(iter(written)), None)
+
+    def checksum_kinds(self, path: str = "", *, written: bool = False) -> frozenset[str] | None:
+        """What :meth:`checksum` (default algorithm) can answer for *path*.
+
+        Unknown (None) except for a file this session has just *written*
+        when the files it wrote before came back without a SHA-256: the
+        server keeps no hash of an upload (only Nextcloud and ownCloud
+        report ``oc:checksums``, and those only what an uploader sent, or
+        their own SHA1 / MD5 / Adler-32), so the answer is the ETag - a
+        storage fingerprint the transfer engine never compares. It then
+        skips the PROPFIND. Every RECHECK_WRITTEN_EVERY-th file is still
+        asked."""
+        if not written or (self._written_hash or {}).get("sha256") is not False:
+            return None
+        self._written_skips += 1
+        if self._written_skips % self.RECHECK_WRITTEN_EVERY == 0:
+            return None
+        return frozenset({"etag"})
+
     def checksum(self, path: str, algorithm: str = "sha256") -> str:
         """Return a content fingerprint.
 
@@ -1029,19 +1077,34 @@ class WebDavSession(SessionLifecycle):
         etags on mod_dav are inode-based and change with content, so
         they work as a fingerprint even if not technically a hash.
         """
+        norm = self._norm(path)
         try:
-            info = self._client.info(self._norm(path))
+            info = self._client.info(norm)
         except FileNotFoundError as exc:
             raise OSError(f"Cannot stat {path}: {exc}") from exc
         except WebDavRequestError as exc:
             raise OSError(f"Cannot stat {path}: {exc}") from exc
 
+        found = ""
         for entry in info.get("oc_checksums", []):
             if ":" not in entry:
                 continue
             algo, _, hexpart = entry.partition(":")
             if algo.lower() == algorithm.lower():
-                return f"{algorithm}:{hexpart.lower()}"
+                found = f"{algorithm}:{hexpart.lower()}"
+                break
+        with _WRITTEN_LOCK:
+            written = self._written_paths
+            was_written = written is not None and written.pop(norm, False) is None
+        if was_written:
+            # A file this session wrote: what the server keeps of uploads.
+            hashes = self._written_hash
+            if hashes is None:
+                hashes = self._written_hash = {}
+            key = algorithm.lower()
+            hashes[key] = bool(found) or hashes.get(key) is True
+        if found:
+            return found
 
         etag = info.get("etag", "")
         if etag:

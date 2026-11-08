@@ -80,9 +80,30 @@ def _fills(window: QWidget, avail: QRect) -> bool:
 # -- window state --------------------------------------------------------------
 
 
+def set_window_flag(window: QWidget, flag: Qt.WindowType, on: bool = True) -> None:
+    """Switch *flag* of the window *window* - cheaply before it is shown.
+
+    ``setWindowFlag`` reparents the widget: for one without its native
+    window yet, Qt treats that as a new parent and repolishes every child
+    under the application's style sheet - 10-20 ms for a dialog of 200
+    widgets, twice per dialog (Maximize, frameless title bar). A window
+    not created yet only needs the flags stored: they take effect when it
+    is first shown (Qt reads them then). A window already on screen still
+    goes through ``setWindowFlag`` (which hides it; the caller shows it
+    again)."""
+    flags = window.windowFlags()
+    wanted = flags | flag if on else flags & ~flag
+    if wanted == flags:
+        return
+    if window.isWindow() and not window.testAttribute(Qt.WidgetAttribute.WA_WState_Created):
+        window.overrideWindowFlags(wanted)
+        return
+    window.setWindowFlag(flag, on)
+
+
 def allow_maximize(window: QWidget) -> None:
     """Give *window* a Maximize button in its title bar."""
-    window.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
+    set_window_flag(window, Qt.WindowType.WindowMaximizeButtonHint, True)
 
 
 def _emulated_geometry(window: QWidget) -> QRect | None:

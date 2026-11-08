@@ -440,6 +440,104 @@ _ARCHIVE_ERRORS = (
 )
 
 
+#: An ignore pattern rg's --glob reads exactly as fnmatch does (no braces,
+#: no classes, no escapes): only those are handed to rg. Any other one is
+#: applied here alone - rg then searches more, never less.
+_PLAIN_GLOB = re.compile(r"[\w .*?+-]+")
+#: Candidates waiting for the root rg to report on them before the walk
+#: pauses (memory bound when rg is the slower side).
+_RG_WAITING_MAX = 20_000
+
+
+class _RgWalk:
+    """One ``rg`` that walks a local root itself - the regular files the
+    walk can yield, by rg's own threads - while the walk (fd or Python)
+    decides as before which files are candidates. Before: rg was started
+    once per 256 files the walk found, one after the other (118 runs for
+    30,000 files, slower than Python alone).
+
+    rg's walk covers at least the walk's regular files up to the content
+    cap: no ignore files, hidden entries when the query includes them
+    (always on Windows, where rg also hides by attribute), the same
+    depth, and only the ignore patterns it reads exactly as fnmatch does.
+    It never follows a symlink: a link the walk yields is searched by
+    name (:meth:`_Run._flush_rg`). Files larger than the cap are skipped
+    by rg (``--max-filesize``) and searched in their prefix by Python.
+
+    A reader thread collects ``path -> matching line``; :meth:`ask` answers
+    for one candidate once rg has reported on it: the line, or None for
+    "no match" (rg finished without naming it), or ``_PENDING``."""
+
+    def __init__(self, run: _Run, root: str) -> None:
+        q = run.q
+        argv = [run.rg, "--no-config", "--text", "--no-messages", "--max-count", "1",
+                "--with-filename", "--null", "--no-heading", "--no-line-number",
+                "--color", "never", "--encoding", "none", "--max-columns", "4096",
+                "--max-columns-preview", "--no-ignore",
+                "--max-filesize", str(run.limits.max_content_bytes)]
+        if q.include_hidden or os.name == "nt":
+            argv.append("--hidden")
+        if q.max_depth >= 0:
+            argv += ["--max-depth", str(q.max_depth + 1)]
+        plain = [p for p in q.ignore_dirs if _PLAIN_GLOB.fullmatch(p)]
+        if os.name == "nt" and plain:
+            argv.append("--glob-case-insensitive")
+        for pattern in plain:
+            argv += ["--glob", "!" + pattern]
+        argv.append("--case-sensitive" if q.case_sensitive else "--ignore-case")
+        if not q.contains_is_regex:
+            argv.append("--fixed-strings")
+        argv += ["--regexp", q.contains, "--", root]
+        self.tool = _ToolProcess(argv, run.cancel)
+        self.found: dict[str, str] = {}
+        #: Paths reported since the last :meth:`fresh` call.
+        self._fresh: list[str] = []
+        self._lock = threading.Lock()
+        self.done = threading.Event()
+        self._reader = threading.Thread(target=self._read, daemon=True, name="search-rg-walk")
+        self._reader.start()
+
+    def _read(self) -> None:
+        try:
+            for path, line in _parse_rg(self.tool.chunks()):
+                with self._lock:
+                    self.found[path] = line
+                    self._fresh.append(path)
+        except (OSError, ValueError):
+            pass
+        finally:
+            try:
+                self.tool.proc.wait()
+            except OSError:
+                pass
+            self.done.set()
+
+    def ask(self, path: str):
+        """The matching line of *path*, None (no match) or _PENDING."""
+        line = self.found.get(path)
+        if line is not None:
+            return line
+        return None if self.done.is_set() else _PENDING
+
+    def fresh(self) -> list[str]:
+        with self._lock:
+            out, self._fresh = self._fresh, []
+        return out
+
+    @property
+    def refused_pattern(self) -> bool:
+        """rg could not take the pattern (look-around, back references)."""
+        return (self.done.is_set() and self.tool.returncode == 2
+                and "regex" in self.tool.stderr.lower())
+
+    def close(self) -> None:
+        self.tool.close()
+        self._reader.join(timeout=2.0)
+
+
+_PENDING = object()
+
+
 # ---------------------------------------------------------------------------
 # The run
 # ---------------------------------------------------------------------------
@@ -550,6 +648,16 @@ class _Run:
             return
         pending: list[tuple[str, SearchHit]] = []
         pending_since = 0.0
+        #: A content search with rg: one rg over the root (see _RgWalk), and
+        #: the candidates it has not reported on yet (path -> hit).
+        rg_walk = None
+        waiting: dict[str, SearchHit] = {}
+        if self.rg and self.matcher is not None:
+            try:
+                rg_walk = _RgWalk(self, root)
+            except OSError as exc:
+                self.error(f"rg could not start ({exc}); searching without it")
+                self.rg = None
         entries = self._fd_entries(root) if self.fd else self._py_entries(root)
         try:
             for path, name, st in entries:
@@ -565,37 +673,52 @@ class _Run:
                     continue
                 if searched_inside and self.matcher is not None:
                     continue  # its members were searched; the container is no content hit
-                shown = self.categories(
-                    classify_local(path, wanted=self.wanted, use_sift=self.use_sift, name=name)
-                    if self.wanted
-                    else classify_name(name, path)
-                )
-                if shown is None:
-                    continue
-                hit = SearchHit(backend_label=_backend_name(scope.backend), path=path,
-                                size=st.st_size, mtime=st.st_mtime, category=shown)
                 if self.matcher is None:
-                    self.emit(scope, hit)
+                    hit = self._local_hit(scope, path, name, st)
+                    if hit is not None:
+                        self.emit(scope, hit)
                     continue
-                try:
-                    real = os.stat(path)
-                except OSError:
+                # A content search: the category is worked out for a file
+                # whose content matched, not for every file (classify_name
+                # was a third of a content search's time).
+                if stat_module.S_ISREG(st.st_mode):
+                    real = st  # lstat said regular: no second stat
+                else:
+                    try:
+                        real = os.stat(path)
+                    except OSError:
+                        continue
+                    if not stat_module.S_ISREG(real.st_mode):
+                        continue  # a FIFO, a device or a link to a folder: never opened
+                hit = SearchHit(backend_label=_backend_name(scope.backend), path=path,
+                                size=st.st_size, mtime=st.st_mtime, category="")
+                if real.st_size > self.limits.max_content_bytes or not self.rg:
+                    # Larger than the content cap: its prefix is searched
+                    # here, never by rg (which can only skip a file whole).
+                    self._scan_local(scope, path, hit)
                     continue
-                if not stat_module.S_ISREG(real.st_mode):
-                    continue  # a FIFO, a device or a link to a folder: never opened
-                if self.rg and real.st_size <= self.limits.max_content_bytes:
-                    if not pending:
-                        pending_since = time.monotonic()
-                    pending.append((path, hit))
-                    if len(pending) >= _RG_BATCH or time.monotonic() - pending_since > _RG_FLUSH_S:
-                        self._flush_rg(scope, pending)
+                if rg_walk is not None and real is st:
+                    self._ask_rg_walk(scope, rg_walk, waiting, path, hit)
                     continue
-                # Larger than the content cap: its prefix is searched here,
-                # never by rg (which can only skip a file whole).
-                self._scan_local(scope, path, hit)
+                # A symlink to a file (rg's walk does not follow links), or
+                # rg's walk is gone: rg by name, in batches.
+                if not pending:
+                    pending_since = time.monotonic()
+                pending.append((path, hit))
+                if len(pending) >= _RG_BATCH or time.monotonic() - pending_since > _RG_FLUSH_S:
+                    self._flush_rg(scope, pending)
             if pending:
                 self._flush_rg(scope, pending)
+            if rg_walk is not None:
+                while waiting and not rg_walk.done.wait(0.05):
+                    self.check()
+                    self._drain_rg_walk(scope, rg_walk, waiting)
+                self._drain_rg_walk(scope, rg_walk, waiting)
+                if waiting and rg_walk.refused_pattern:
+                    self._rg_refused(scope, waiting)
         finally:
+            if rg_walk is not None:
+                rg_walk.close()
             close = getattr(entries, "close", None)
             if close is not None:
                 close()
@@ -605,6 +728,67 @@ class _Run:
                 if content != label:
                     label = f"{label}+{content}"
             self.summary.engines[scope.label] = label
+
+    def _local_hit(self, scope: SearchScope, path: str, name: str, st) -> SearchHit | None:
+        """The hit of a local file, with its category - None when the
+        category filter drops it."""
+        shown = self.categories(
+            classify_local(path, wanted=self.wanted, use_sift=self.use_sift, name=name)
+            if self.wanted
+            else classify_name(name, path)
+        )
+        if shown is None:
+            return None
+        return SearchHit(backend_label=_backend_name(scope.backend), path=path,
+                         size=st.st_size, mtime=st.st_mtime, category=shown)
+
+    def _content_hit(self, scope: SearchScope, hit: SearchHit) -> None:
+        """*hit*'s content matched: its category now, then on to the caller."""
+        name = os.path.basename(hit.path)  # the walk's name of a local file
+        shown = self.categories(
+            classify_local(hit.path, wanted=self.wanted, use_sift=self.use_sift, name=name)
+            if self.wanted
+            else classify_name(name, hit.path)
+        )
+        if shown is None:
+            return
+        hit.category = shown
+        self.emit(scope, hit)
+
+    def _ask_rg_walk(self, scope: SearchScope, rg_walk: _RgWalk,
+                     waiting: dict[str, SearchHit], path: str, hit: SearchHit) -> None:
+        answer = rg_walk.ask(path)
+        if answer is _PENDING:
+            waiting[path] = hit
+            while len(waiting) >= _RG_WAITING_MAX and not rg_walk.done.wait(0.05):
+                self.check()
+                self._drain_rg_walk(scope, rg_walk, waiting)
+        elif answer is not None:
+            hit.snippet = self.matcher.snippet_for_line(answer)
+            self._content_hit(scope, hit)
+        elif rg_walk.refused_pattern:
+            self._rg_refused(scope, {path: hit})
+        if waiting:
+            self._drain_rg_walk(scope, rg_walk, waiting)
+
+    def _drain_rg_walk(self, scope: SearchScope, rg_walk: _RgWalk,
+                       waiting: dict[str, SearchHit]) -> None:
+        """Hand on the waiting candidates rg has reported a match in."""
+        finished = rg_walk.done.is_set()  # before fresh(): then it holds every report
+        for path in rg_walk.fresh():
+            hit = waiting.pop(path, None)
+            if hit is not None:
+                hit.snippet = self.matcher.snippet_for_line(rg_walk.found[path])
+                self._content_hit(scope, hit)
+        if finished and not rg_walk.refused_pattern:
+            waiting.clear()  # rg is through: what it did not name has no match
+
+    def _rg_refused(self, scope: SearchScope, waiting: dict[str, SearchHit]) -> None:
+        """rg's engine refused the pattern: Python searches from here on."""
+        self.rg = None
+        for path, hit in list(waiting.items()):
+            self._scan_local(scope, path, hit)
+        waiting.clear()
 
     def _path_allowed(self, parts: list[str]) -> bool:
         if self.q.max_depth >= 0 and len(parts) - 1 > self.q.max_depth:
@@ -709,7 +893,7 @@ class _Run:
             raise
         if snippet is not None:
             hit.snippet = snippet
-            self.emit(scope, hit)
+            self._content_hit(scope, hit)
 
     def _flush_rg(self, scope: SearchScope, pending: list[tuple[str, SearchHit]]) -> None:
         """Search *pending* with rg. When rg cannot run or refuses the
@@ -717,6 +901,11 @@ class _Run:
         again in this run."""
         batch = list(pending)
         pending.clear()
+        if not self.rg:
+            # rg refused the pattern meanwhile (_RgWalk): Python searches.
+            for path, hit in batch:
+                self._scan_local(scope, path, hit)
+            return
         by_path = dict(batch)
         argv = [self.rg, "--no-config", "--text", "--no-messages", "--max-count", "1",
                 "--with-filename", "--null", "--no-heading", "--no-line-number",
@@ -741,7 +930,7 @@ class _Run:
                 if hit is None:
                     continue
                 hit.snippet = self.matcher.snippet_for_line(line)
-                self.emit(scope, hit)
+                self._content_hit(scope, hit)
         self.check()
         if tool.returncode == 2 and "regex" in tool.stderr.lower():
             # A pattern rg's engine does not take (look-around, back

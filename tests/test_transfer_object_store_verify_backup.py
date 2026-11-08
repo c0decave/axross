@@ -69,9 +69,13 @@ class Store:
         self.copies.append((src, dst))
         self.objects[dst] = self.objects[src]
 
-    def md5(self, key: str) -> str:
+    def note_check(self, key: str) -> None:
+        """The destination is looked at after the upload: the check."""
         if self.seen_while_checking is None and key == "dst.txt" and self.uploads:
             self.seen_while_checking = dict(self.objects)
+
+    def md5(self, key: str) -> str:
+        self.note_check(key)
         return hashlib.md5(self.objects[key]).hexdigest()
 
 
@@ -99,6 +103,9 @@ class FakeS3:
     def get_object(self, Bucket, Key, **_kw):
         if Key not in self.store.objects:
             raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
+        # The forced check reads the object back (an S3 ETag is no SHA-256,
+        # so it is not asked for).
+        self.store.note_check(Key)
         return {"Body": io.BytesIO(self.store.objects[Key])}
 
     def upload_fileobj(self, fileobj, Bucket, Key, **_kw):

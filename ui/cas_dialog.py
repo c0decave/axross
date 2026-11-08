@@ -78,6 +78,7 @@ from core.i18n import tr, tr_n
 from ui.close_corner import add_close_corner
 from ui.plain_text import plain_tooltip
 from ui.scan_job import BusyStrip, ScanJob
+from ui.handbook import install_help_key
 from ui.icon_provider import set_window_icon
 
 log = logging.getLogger("ui.cas_dialog")
@@ -276,6 +277,7 @@ class CasDuplicatesDialog(QDialog):
         *scan_id* opens the finder on the duplicates of that scan."""
         super().__init__(parent)
         set_window_icon(self, "duplicates")
+        install_help_key(self, "duplicates")  # F1: its handbook section (a window of its own)
         self._scope: tuple = ("all", None) if scan_id is None else ("scan", int(scan_id))
         self._history_dialog = None
         self._active_pane = active_pane

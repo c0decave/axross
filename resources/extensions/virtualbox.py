@@ -246,6 +246,6 @@ def activate(api):
                               on_error=failed)
 
     api.add_context_action("Register in VirtualBox", do_register, applies_to="single_file",
-                           extensions=(".vbox",))
+                           extensions=(".vbox",), icon="computer")
     api.add_context_action("Attach to VirtualBox VM…", do_attach, applies_to="single_file",
-                           extensions=DISK_SUFFIXES)
+                           extensions=DISK_SUFFIXES, icon="computer")

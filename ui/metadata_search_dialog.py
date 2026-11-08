@@ -44,6 +44,7 @@ from core import metadata_index as MX
 from core.i18n import format_count, tr, tr_n
 from ui.close_corner import add_close_corner
 from ui.scan_job import BusyStrip, ScanJob
+from ui.handbook import install_help_key
 from ui.icon_provider import set_window_icon
 
 log = logging.getLogger("ui.metadata_search_dialog")
@@ -88,6 +89,7 @@ class MetadataSearchDialog(QDialog):
     def __init__(self, active_pane=None, parent=None) -> None:
         super().__init__(parent)
         set_window_icon(self, "find-index")
+        install_help_key(self, "index")  # F1: its handbook section (a window of its own)
         self._active_pane = active_pane
         self.setWindowTitle(tr("Find in Index"))
         self.resize(880, 560)

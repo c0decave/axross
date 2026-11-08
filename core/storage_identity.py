@@ -176,21 +176,51 @@ def same_entry(backend_a, path_a: str, backend_b, path_b: str) -> bool:
         return False
 
 
+def _same_local_entry(local_a: str, local_b: str) -> bool:
+    """:func:`_local_entry` of both paths equal, or one inode under both.
+
+    Without ``realpath`` (a Python walk with an lstat per path component,
+    on both paths, for every file a transfer copies), with the same
+    verdict: the entries are one entry when their names are equal and
+    their folders are one folder - ``stat`` of each folder follows its
+    symlinks as realpath does, and also sees a bind mount as the same
+    folder - or when the entries are one inode (lstat of the absolute
+    path: the kernel resolves the folder's symlinks itself, the last
+    component stays unfollowed)."""
+    head_a, name_a = os.path.split(os.path.abspath(local_a))
+    head_b, name_b = os.path.split(os.path.abspath(local_b))
+    entry_a, entry_b = os.path.join(head_a, name_a), os.path.join(head_b, name_b)
+    if entry_a == entry_b:
+        return True
+    # One file has more than one path: a bind mount, a share mounted
+    # twice, a case-insensitive filesystem (Docs/File.txt and
+    # docs/file.txt), a hard link, a symlinked folder. Paths cannot tell;
+    # the device and inode of the entries can. lstat, so a symlink stays
+    # its own entry.
+    try:
+        st_b = os.lstat(entry_b)
+    except OSError:
+        st_b = None
+    if st_b is not None:
+        try:
+            return os.path.samestat(os.lstat(entry_a), st_b)
+        except OSError:
+            return False
+    # No entry b (the usual destination): the same only as the same name
+    # in the same folder, which is then not there either.
+    if name_a != name_b:
+        return False
+    try:
+        return os.path.samestat(os.stat(head_a), os.stat(head_b))
+    except OSError:
+        return False
+
+
 def _same_entry(backend_a, path_a: str, backend_b, path_b: str) -> bool:
     local_a = _strict_local_path(backend_a, path_a)
     local_b = _strict_local_path(backend_b, path_b)
     if local_a and local_b:
-        entry_a, entry_b = _local_entry(local_a), _local_entry(local_b)
-        if entry_a == entry_b:
-            return True
-        # One file has more than one path: a bind mount, a share mounted
-        # twice, a case-insensitive filesystem (Docs/File.txt and
-        # docs/file.txt), a hard link. Paths cannot tell; the device and
-        # inode of the entries can. lstat, so a symlink stays its own entry.
-        try:
-            return os.path.samestat(os.lstat(entry_a), os.lstat(entry_b))
-        except OSError:
-            return False
+        return _same_local_entry(local_a, local_b)
     if local_a or local_b or not _same_view(backend_a, backend_b):
         return False
     return _norm_view_path(backend_a, path_a) == _norm_view_path(backend_b, path_b)

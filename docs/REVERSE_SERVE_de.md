@@ -113,6 +113,8 @@ geht, wenn die Clients ihm vertrauen (`aws --ca-bundle cert.pem`,
 | Path-Traversal | abgelehnt | Jeder Pfad wird normalisiert; `..`-Segmente, Segmente mit Backslash und Segmente, die mit einem Laufwerk (`C:`) beginnen, liefern 400, und jeder zusammengesetzte Pfad muss im Pfad-Flavour des Backends unter der Root bleiben (auch Windows-Pfade). |
 | Body-Cap | 8 GiB pro Request | Gegen Content-Length-Lügen. |
 | Body-Länge | `Content-Length` oder `Transfer-Encoding: chunked` | Ein Chunked-Body (`curl -T -`, `rclone rcat`) wird beim Streamen dekodiert, unter demselben Cap. Ein PUT mit keinem von beiden ist **411 Length Required**, die Datei bleibt wie sie war; beide zugleich, ein anderes Transfer-Coding oder kaputtes Chunk-Framing wird abgelehnt (400 / 501) und lässt die Datei ebenfalls stehen. |
+| aws-chunked | dekodiert | boto3 / aws-cli über HTTPS senden `Content-Encoding: aws-chunked` (Chunk-Frames mit nachgestellter Prüfsumme oder Chunk-Signaturen): Das Objekt sind die Daten in den Frames, genau `x-amz-decoded-content-length` Bytes; ein Body, der nicht dazu passt, wird abgelehnt (400 / 411) und lässt die Datei stehen. Chunk-Signaturen und Prüfsummen werden nicht geprüft, wie keine Signatur. |
+| HTTP | 1.1, Keep-Alive | Eine Verbindung trägt den nächsten Request nur, wenn der letzte Body bis zum Ende gelesen wurde (sonst wird sie geschlossen, mit `Connection: close`: ein ungelesener Body wird nie als Request genommen); sie wartet höchstens 5 s auf den nächsten, und das Stoppen des Servers schließt sie sofort. `Expect: 100-continue` wird erst beantwortet, wenn Token, Pfad, Read-only-Schalter und Größe geprüft sind - ein abgelehnter PUT bekommt seine endgültige Antwort, nie die Einladung, den Body zu senden. Ohne die 100 warteten boto3 und aws-cli 1 s pro PUT. |
 
 Reverse-Server prüft **kein** AWS-Signature-V4 — er liest aus einem
 signierten Request nur die Access Key ID und vergleicht sie mit dem
@@ -150,16 +152,50 @@ nie hineinkopiert.
 | `GET /<bucket>?location` (GetBucketLocation) | ✓ — die Default-Region (ein leeres `LocationConstraint`) |
 | `PUT /<bucket>/<key>` (PutObject) | ✓ — `If-None-Match: *` wird beachtet (412 `PreconditionFailed`, wenn der Key existiert; vor dem Schreiben geprüft, nicht atomar damit); `If-Match` und ein ETag in `If-None-Match` sind 501, die ETags sind synthetisch |
 | `PUT` mit `x-amz-copy-source` (CopyObject, UploadPartCopy) | ✗ - 501 `NotImplemented`, nichts wird geschrieben: `aws s3 mv` / `cp` zwischen zwei Keys und rclones Server-Side-Copy scheitern, statt eine leere Kopie zu schreiben (und bei `mv` danach die Quelle zu löschen) |
-| Jede Subresource (`?tagging`, `?acl`, `?uploads`, `?uploadId=`, `?partNumber=`, `?versionId=`, `?retention`, `?legal-hold`, `?versioning`, …) bei GET / HEAD / PUT / DELETE | ✗ - 501 `NotImplemented`; das Objekt wird weder geliefert noch ersetzt noch gelöscht. Presign-Parameter (`X-Amz-*`, `AWSAccessKeyId` / `Expires` / `Signature`), das `x-id` der SDKs und die ListObjects- / GetObject-Parameter werden bedient |
+| Jede andere Subresource (`?tagging`, `?acl`, `?versionId=`, `?retention`, `?legal-hold`, `?versioning`, ListParts `GET ?uploadId=`, …) bei GET / HEAD / PUT / DELETE / POST | ✗ - 501 `NotImplemented`; das Objekt wird weder geliefert noch ersetzt noch gelöscht. Presign-Parameter (`X-Amz-*`, `AWSAccessKeyId` / `Expires` / `Signature`), das `x-id` der SDKs und die ListObjects- / GetObject-Parameter werden bedient |
 | `DELETE /<bucket>/<key>` (DeleteObject) | ✓ |
 | `POST /<bucket>?delete` (DeleteObjects) | ✗ |
-| Multipart-Upload | ✗ |
+| Multipart-Upload (`POST ?uploads`, `PUT ?partNumber=&uploadId=`, `POST ?uploadId=`, `DELETE ?uploadId=`) | ✓ - siehe *Multipart-Upload* unten; ListParts / ListMultipartUploads und UploadPartCopy sind 501 |
 | Versioning | ✗ |
 | Tags / ACLs / Lifecycle | ✗ |
 | Signed URLs / V4-Auth | ✗ (Bearer only) |
 
-Path-Style only. Single-PUT-Uploads gekappt am Body-Limit (8 GiB);
-größere Objekte brauchen Multipart, was wir nicht sprechen.
+Path-Style only. Single-PUT-Uploads gekappt am Body-Limit (8 GiB).
+
+#### Multipart-Upload
+
+Uploads über der Multipart-Schwelle der SDKs (8 MiB bei boto3 und
+aws-cli, also `aws s3 cp` jeder größeren Datei) und restics Pack-Uploads
+nutzen ihn. Die Parts warten in einem privaten lokalen Ordner,
+`$XDG_CACHE_HOME/axross/s3-multipart/` (Modus 0700, abgelehnt, wenn er
+ein Link ist oder einem anderen Benutzer gehört), bis
+CompleteMultipartUpload sie in der genannten Reihenfolge über denselben
+Speicherweg wie ein PUT ins Objekt streamt: Das alte Objekt bleibt, bis
+jedes Byte angekommen ist. Die Grenzen:
+
+| Grenze | Wert |
+|---|---|
+| Gleichzeitig offene Uploads | 16 (einer mehr: 400 `InvalidRequest`) |
+| Parts pro Upload | 10.000 (Part-Nummern 1-10000) |
+| Bytes pro Upload und aller offenen Uploads zusammen | 8 GiB, das Single-PUT-Cap (400 `EntityTooLarge` / 503 `SlowDown`, gegen die `Content-Length` des Parts geprüft, bevor der Body gelesen wird) |
+| Untätiger Upload | wird nach 1 Stunde ohne Request mit seinen Parts verworfen |
+| Part-Liste (Complete) | höchstens 4 MiB, keine DTD / Entities, Part-Nummern aufsteigend, jedes ETag das für seinen Part gelieferte (sonst 400 `InvalidPart` / `MalformedXML`) |
+
+Ein Upload gehört zu seinem Bucket und Key (ein anderer Key mit seiner
+ID ist `NoSuchUpload`); ein zweimal hochgeladener Part ersetzt den
+ersten; in Complete nicht genannte Parts werden verworfen.
+AbortMultipartUpload, Complete und das Stoppen des Servers entfernen die
+Parts; Ordner, die ein axross hinterließ, das ohne Stoppen seines Servers
+endete, werden nach einem Tag entfernt. Complete antwortet sofort 200 und
+hält den Client mit einem Leerzeichen alle 10 s hin, während es das Objekt
+zusammensetzt (wie S3); ein Fehler danach ist ein `<Error>` in dieser 200,
+den die SDKs als Fehler melden, und der Upload bleibt, sodass Complete
+erneut versucht werden kann. Die Parts belegen lokalen Plattenplatz bis
+zum Cap: Auf einem Host mit wenig temporärem Platz die Part-Parallelität
+der Clients senken (`aws configure set default.s3.max_concurrent_requests
+2`) oder ihre Schwelle anheben, um große Dateien als einen PUT zu senden
+(`aws configure set default.s3.multipart_threshold 5GB`; boto3:
+`TransferConfig(multipart_threshold=...)`).
 
 ### WebDAV
 

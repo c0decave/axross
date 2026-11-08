@@ -798,14 +798,14 @@ def activate(api):
 
     exts = suffixes()
     api.add_context_action("Hash Image (MD5, SHA-1, SHA-256)", do_hash, applies_to="single_file",
-                           extensions=exts)
+                           extensions=exts, icon="forensics")
     api.add_context_action("Image Info (qemu-img)", do_info, applies_to="single_file",
-                           extensions=exts)
+                           extensions=exts, icon="forensics")
     api.add_context_action("Convert to Raw Image (qemu-img)…", do_convert,
-                           applies_to="single_file", extensions=exts)
+                           applies_to="single_file", extensions=exts, icon="forensics")
     api.add_context_action("Browse File System (Sleuth Kit)…", do_browse,
-                           applies_to="single_file", extensions=exts)
+                           applies_to="single_file", extensions=exts, icon="forensics")
     api.add_context_action("Recover Partitions (TestDisk)", terminal("testdisk"),
-                           applies_to="single_file", extensions=exts)
+                           applies_to="single_file", extensions=exts, icon="forensics")
     api.add_context_action("Carve Files (PhotoRec)", terminal("photorec"),
-                           applies_to="single_file", extensions=exts)
+                           applies_to="single_file", extensions=exts, icon="forensics")

@@ -9,7 +9,7 @@ from collections import OrderedDict
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QObject, QThread, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
 
 from core import backend_registry
 from core.capability_contracts import contract_for_backend
@@ -41,6 +41,8 @@ log = logging.getLogger(__name__)
 #: are never dropped - Retry Failed works on them.
 MAX_DONE_KEPT = 2000
 TRIM_SLACK = 200
+#: GUI time one event-loop turn spends registering a walk's jobs.
+WALK_COMMIT_SLICE_S = 0.01
 
 
 def _safe_basename(name: str, source_backend=None, dest_backend=None) -> str:
@@ -77,9 +79,16 @@ class _DestListings:
     def __init__(self, backend: FileBackend) -> None:
         self._backend = backend
         self._listings: dict[str, list] = {}
+        self._created: set[str] = set()
 
     def created(self, folder: str) -> None:
         self._listings[folder] = []
+        self._created.add(folder)
+
+    def was_created(self, folder: str) -> bool:
+        """True for a folder this batch made (its mkdir succeeded, so it
+        was not there and held nothing)."""
+        return folder in self._created
 
     def entries(self, folder: str) -> list:
         if folder not in self._listings:
@@ -300,6 +309,12 @@ class TransferManager(QObject):
         # walk may still run (core/thread_relay.py). On the GUI thread they
         # run at once.
         self._walk_done = GuiCall(self._finish_walk)
+        # Walks whose jobs are being registered slice by slice (_commit_walk),
+        # and whether a job finished meanwhile with nothing else left.
+        self._committing = 0
+        self._all_finished_owed = False
+        # id(walk) -> its jobs registered so far, queued at its end.
+        self._held: dict[int, list] = {}
         self._directory_error = GuiCall(self._emit_directory_error)
 
         # Worker threads. They share one queue (core.transfer_pool); with
@@ -431,6 +446,15 @@ class TransferManager(QObject):
                         tmp_size,
                     )
 
+        # A direct write into a folder this batch just made: no file was
+        # there to snapshot for a rollback (see TransferJob.dest_folder_new).
+        folder_new = bool(
+            not use_temp
+            and if_exists == IF_EXISTS_OVERWRITE
+            and dest_listing is not None
+            and dest_listing.was_created(dest_backend.parent(dest_path))
+        )
+
         job = TransferJob(
             source_path=source_path,
             dest_path=dest_path,
@@ -446,6 +470,7 @@ class TransferManager(QObject):
             source_mode=source_mode,
             source_mtime=source_mtime,
             batch_id=batch_id,
+            dest_folder_new=folder_new,
         )
 
         job.source_backend = source_backend
@@ -471,7 +496,7 @@ class TransferManager(QObject):
 
         self._register(job)
 
-        log.info(
+        log.debug(
             "Enqueued transfer: %s -> %s (%s bytes)",
             source_path,
             dest_path,
@@ -738,17 +763,70 @@ class TransferManager(QObject):
         self.directory_error.emit(path, reason)
 
     def _finish_walk(self, payload) -> None:
-        """GUI thread: register what a walk built, in its order."""
+        """GUI thread: register what a walk built, in its order.
+
+        A big walk is registered in slices of about WALK_COMMIT_SLICE_S,
+        one per event-loop turn (:meth:`_commit_walk`): 5 000 jobs at once
+        froze the window for 0.4 s. The walk counts as running (busy(),
+        unfinished()) until its last job is registered, and all_finished
+        waits for that too."""
+        walk, jobs, pending, move_dirs, move, on_done, error, on_error = payload
+        if self._shut_down:
+            if walk in self._walks:
+                self._walks.remove(walk)
+            return
+        if walk[2].is_set():
+            self._end_walk(payload, cancelled_from=0)
+            return
+        self._commit_walk(payload, 0)
+
+    def _commit_walk(self, payload, start: int) -> None:
+        """Register the walk's jobs from *start* on, until the slice is used
+        up (then again on the next event-loop turn) or all are in."""
+        walk, _jobs, pending, *_rest = payload
+        if self._shut_down:
+            if walk in self._walks:
+                self._walks.remove(walk)
+            self._committing = max(0, self._committing - (1 if start else 0))
+            self._held.pop(id(walk), None)
+            return
+        if walk[2].is_set():
+            # Cancel All between two slices: the rest is not queued.
+            self._end_walk(payload, cancelled_from=start)
+            return
+        if not start:
+            self._committing += 1
+        hold = self._held.setdefault(id(walk), [])
+        deadline = time.monotonic() + WALK_COMMIT_SLICE_S
+        index = start
+        while index < len(pending):
+            job, refusal = pending[index]
+            self._commit(job, refusal, hold=hold)
+            index += 1
+            if index < len(pending) and not index % 16 and time.monotonic() > deadline:
+                QTimer.singleShot(0, lambda: self._commit_walk(payload, index))
+                return
+        self._end_walk(payload)
+
+    def _end_walk(self, payload, *, cancelled_from: int | None = None) -> None:
+        """The walk is registered (or cancelled from job *cancelled_from*
+        on): its folders, the callbacks, walk_finished."""
         walk, jobs, pending, move_dirs, move, on_done, error, on_error = payload
         if walk in self._walks:
             self._walks.remove(walk)
-        if self._shut_down:
-            return
-        if walk[2].is_set():
+        # Only now do the workers get the walk's jobs, all at once: a caller's
+        # on_done (below) still sees them before any of them has ended, as
+        # when they were registered in one go (main_window tracks the tags
+        # of moved files there). Cancelled meanwhile, they end as cancelled.
+        self._release_held(walk)
+        if cancelled_from is not None:
+            if cancelled_from:
+                self._committing = max(0, self._committing - 1)
             # Cancel All ran while the walk was listing: queuing its jobs
             # now would carry out the transfer the user just cancelled.
-            log.info("Transfer walk cancelled: %d job(s) not queued", len(pending))
-            for job, refusal in pending:
+            rest = pending[cancelled_from:]
+            log.info("Transfer walk cancelled: %d job(s) not queued", len(rest))
+            for job, refusal in rest:
                 if refusal is None:
                     # Its operation was opened in the journal when it was
                     # built; close it instead of leaving it open for good.
@@ -757,8 +835,7 @@ class TransferManager(QObject):
                     TransferWorker._finish_journal(job, status="cancelled", error="Cancelled")
             jobs = []
         else:
-            for job, refusal in pending:
-                self._commit(job, refusal)
+            self._committing = max(0, self._committing - 1)  # _commit_walk counted it
             if error is not None:
                 # The walk stopped half way: what it built is queued, and
                 # on_done gets those jobs - not none, as if nothing ran.
@@ -766,6 +843,11 @@ class TransferManager(QObject):
             self._dirs_to_remove_after_move.extend(move_dirs)
             if move and self._active_count == 0 and self._queued_count == 0:
                 self._cleanup_move_dirs()
+        if self._all_finished_owed and not self._committing:
+            self._all_finished_owed = False
+            if self._active_count == 0 and self._queued_count == 0:
+                self._cleanup_move_dirs()
+                self.all_finished.emit()
         # on_error first: a caller learns the walk was partial before it
         # acts on the jobs on_done hands it.
         if error is not None and on_error is not None and not walk[2].is_set():
@@ -780,6 +862,17 @@ class TransferManager(QObject):
                 log.exception("Transfer walk callback failed")
         self.walk_finished.emit()
 
+    def _queue_empty(self) -> bool:
+        """Nothing running or waiting - and no walk half registered (its
+        next slice would queue more); then all_finished is owed to the end
+        of that walk."""
+        if self._active_count or self._queued_count:
+            return False
+        if self._committing:
+            self._all_finished_owed = True
+            return False
+        return True
+
     def _register(self, job: TransferJob, refusal: str | None = None) -> None:
         """Register and queue *job* - or, inside a background walk, keep
         it for the GUI thread (see transfer_files_in_background)."""
@@ -789,7 +882,9 @@ class TransferManager(QObject):
             return
         self._commit(job, refusal)
 
-    def _commit(self, job: TransferJob, refusal: str | None = None) -> None:
+    def _commit(self, job: TransferJob, refusal: str | None = None, *, hold=None) -> None:
+        """Register *job*; queue it for the workers now, or - *hold*, a
+        list - append it there for the caller to queue later."""
         self._jobs[job.job_id] = job
         if refusal is not None:  # a row that never runs
             self.job_added.emit(job)
@@ -797,7 +892,22 @@ class TransferManager(QObject):
             return
         self._queued_count += 1
         self.job_added.emit(job)
-        self._worker.enqueue(job)
+        if hold is not None:
+            hold.append(job)
+        else:
+            self._worker.enqueue(job)
+
+    def _release_held(self, walk) -> None:
+        """Queue the jobs a walk registered slice by slice (see _commit_walk)."""
+        held = self._held.pop(id(walk), None)
+        if not held:
+            return
+        many = getattr(self._worker, "enqueue_many", None)
+        if callable(many):
+            many(held)
+        else:
+            for job in held:
+                self._worker.enqueue(job)
 
     def _walk_cancelled(self) -> bool:
         """True inside a background walk that Cancel All stopped."""
@@ -1190,7 +1300,7 @@ class TransferManager(QObject):
         self._active_count += 1
         job = self._jobs.get(job_id)
         if job:
-            log.info("Transfer started: %s (%s)", job.filename, job_id)
+            log.debug("Transfer started: %s (%s)", job.filename, job_id)
         self.job_updated.emit(job_id)
 
     def _on_job_finished(self, job_id: str) -> None:
@@ -1199,9 +1309,9 @@ class TransferManager(QObject):
         if job:
             job.status = TransferStatus.DONE
             self._done_order[job_id] = None
-            log.info("Transfer finished: %s (%s)", job.filename, job_id)
+            log.debug("Transfer finished: %s (%s)", job.filename, job_id)
         self.job_finished.emit(job_id)
-        if self._active_count == 0 and self._queued_count == 0:
+        if self._queue_empty():
             self._cleanup_move_dirs()
             self.all_finished.emit()
         self._trim_done()
@@ -1230,7 +1340,7 @@ class TransferManager(QObject):
             job.error_message = error
             log.error("Transfer failed: %s (%s): %s", job.filename, job_id, error)
         self.job_error.emit(job_id, error)
-        if self._active_count == 0 and self._queued_count == 0:
+        if self._queue_empty():
             self._cleanup_move_dirs()
             self.all_finished.emit()
 

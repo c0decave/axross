@@ -294,12 +294,24 @@ symlinked folders. At most `MAX_CONNECTIONS` (64) connections at once
 (one more is answered 503 and closed before it is read); the request
 line and headers together have `HEADER_DEADLINE_S`, every read
 `REQUEST_TIMEOUT_S`. `Content-Length` is digits only and several must
-agree; chunked framing with `Content-Length` is refused.
+agree; chunked framing with `Content-Length` is refused. HTTP/1.1
+keep-alive: a connection takes another request only when the last body
+was read to its end (an unread body is never parsed as a request), waits
+`KEEPALIVE_IDLE_S` (5 s) for it, and the server's stop closes idle ones
+at once. `100 Continue` goes out only on the first body read, i.e. after
+auth, path, read-only and size checks. S3 multipart parts live in a 0700
+folder under `$XDG_CACHE_HOME/axross/s3-multipart` (a link or another
+owner is refused), capped at 16 uploads, 10,000 parts and 8 GiB per
+upload and in total, dropped after an idle hour, on abort and on stop;
+upload ids are 192-bit random and bound to bucket and key; the
+Complete part list is capped at 4 MiB and parsed without DTDs.
 
 **Known gaps to attack.** The symlink check runs before the use (a
 link swapped in between is not covered); PROPFIND / ListObjects still
 name a symlinked file and show what `stat` reports for it; non-local
-backends get the lexical check only.
+backends get the lexical check only. Kept-alive idle connections hold a
+`MAX_CONNECTIONS` slot for up to 5 s each; open multipart uploads can
+hold 8 GiB of local disk for an hour.
 
 ## MCP client: container servers and the agent sandbox relay
 

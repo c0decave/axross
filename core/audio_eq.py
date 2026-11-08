@@ -12,10 +12,27 @@ stays, the sound goes out as it is.
 
 from __future__ import annotations
 
-try:  # the equalizer needs numpy; playback does not
-    import numpy as np
-except ImportError:  # pragma: no cover - depends on the install
-    np = None
+import importlib.util
+
+#: numpy, imported the first time something is equalized (:func:`_numpy`):
+#: it costs about 170 ms and 20 MB, and a Media Player or Audio Mixer that
+#: is only switched on equalizes nothing. None until then, and for good
+#: when numpy is missing (the equalizer needs it; playback does not).
+np = None
+_NUMPY_STATE = {"tried": False}
+
+
+def _numpy():
+    """numpy (imported on the first call), or None when it is missing."""
+    global np
+    if np is None and not _NUMPY_STATE["tried"]:
+        _NUMPY_STATE["tried"] = True
+        try:
+            import numpy
+        except ImportError:  # pragma: no cover - depends on the install
+            return None
+        np = numpy
+    return np
 
 #: Centre frequencies of the ten bands (Hz).
 BANDS = (31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000)
@@ -36,8 +53,16 @@ HOP = FRAME // 2
 
 
 def available() -> bool:
-    """Whether sound can be equalized here (numpy is installed)."""
-    return np is not None
+    """Whether sound can be equalized here (numpy is installed) - without
+    importing numpy."""
+    if np is not None:
+        return True
+    if _NUMPY_STATE["tried"]:
+        return False
+    try:
+        return importlib.util.find_spec("numpy") is not None
+    except (ImportError, ValueError):
+        return False
 
 
 def gains_ok(value) -> bool:
@@ -78,7 +103,7 @@ def equalize_int16(pcm: bytes, rate: int, gains, channels: int = 1) -> bytes:
     equalizer at *gains*: as long as it was, the filter's latency taken
     off, clipped to int16. Unchanged without numpy, for flat gains or for
     nothing to do."""
-    if np is None or not pcm or is_flat(gains) or rate <= 0:
+    if not pcm or is_flat(gains) or rate <= 0 or _numpy() is None:
         return pcm
     samples = np.frombuffer(pcm[: len(pcm) - len(pcm) % (2 * channels)], dtype="<i2")
     if not len(samples):
@@ -94,6 +119,7 @@ def equalize_int16(pcm: bytes, rate: int, gains, channels: int = 1) -> bytes:
 def _gain_curve(gains_db, rate: int, n_fft: int):
     """Linear gain per rfft bin: the band gains interpolated over the log of
     the frequency, flat beyond the outer bands."""
+    _numpy()
     freqs = np.fft.rfftfreq(n_fft, 1.0 / rate)
     logf = np.log10(np.maximum(freqs, BANDS[0]))
     db = np.interp(logf, np.log10(BANDS), gains_db)
@@ -106,7 +132,7 @@ class Equalizer:
     :attr:`latency` samples, whatever the block sizes."""
 
     def __init__(self, rate: int = 44100, channels: int = 2) -> None:
-        if np is None:
+        if _numpy() is None:
             raise RuntimeError("the equalizer needs numpy (pip install numpy)")
         self.rate = rate
         self.channels = channels

@@ -1188,8 +1188,10 @@ class BluetoothHost(QWidget):
                     stick=self.source), self.source)
                 combo.model().item(combo.count() - 1).setEnabled(False)
         else:
-            combo.addItem(tr("USB stick directly - needs Bumble (pip install "
-                             "'axross[bluetooth-raw]')"), None)
+            # Help > Features… installs it, as every other extra (before:
+            # a pip command to type).
+            combo.addItem(tr("USB stick directly - needs Bumble: install it in Help > Features… "
+                             "(Bluetooth USB stick without BlueZ)"), None)
             item = combo.model().item(combo.count() - 1)
             item.setEnabled(False)
         combo.setCurrentIndex(max(0, combo.findData(self.source)))

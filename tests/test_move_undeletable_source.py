@@ -154,6 +154,13 @@ def win(tmp_path, monkeypatch):
     window = MainWindow()
     window._reconnect_timer.stop()
     yield window
+    # A test can end while its job still finishes (journal, signals): the
+    # close would then ask whether to cancel it, a modal that hung the run.
+    end = time.time() + 10
+    while window._transfer_manager.unfinished() and time.time() < end:
+        APP.processEvents()
+        time.sleep(0.01)
+    window._quit_with_transfers = True
     window.close()
     window.deleteLater()
 

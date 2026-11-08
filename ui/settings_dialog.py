@@ -1117,8 +1117,11 @@ class SettingsDialog(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        scroll.setWidget(page)
+        # The empty scroll area into the stack first: each new parent makes
+        # Qt repolish the whole subtree under the style sheet, so adding a
+        # filled one walked every widget of the page a second time.
         self.stack.addWidget(scroll)
+        scroll.setWidget(page)
         self._pages[page_id] = page
         self._scrolls[page_id] = scroll
         self._terms[page_id] = self._keywords[page_id] + _searchable_texts(page)

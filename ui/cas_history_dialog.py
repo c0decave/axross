@@ -37,6 +37,7 @@ from PyQt6.QtWidgets import (
 from core import cas as CAS
 from ui.close_corner import add_close_corner
 from ui.scan_job import BusyStrip, ScanJob
+from ui.handbook import install_help_key
 from ui.icon_provider import set_window_icon
 from core.i18n import tr, tr_n
 
@@ -83,6 +84,7 @@ class CasHistoryDialog(QDialog):
         backends is accepted too); a scan can only be re-scanned on one."""
         super().__init__(parent)
         set_window_icon(self, "duplicates")
+        install_help_key(self, "duplicates")  # F1: its handbook section (a window of its own)
         if isinstance(backends, dict):
             self._backends = dict(backends)
         else:

@@ -1,18 +1,20 @@
 """Mail docks in the window (Tools > Mail Docks…): one panel per dock -
-what it watches, when it runs next, its log, Run Now / Pause / Settings,
-and the mails it wants to send waiting for Send or Don't Send (send policy
-"ask", or a recipient outside "allowed"). core.mail_dock has the rules,
+what it watches, when it runs next, its log (with the agent's tool calls),
+Run Now / Stop / Pause / Settings / Open Drafts Folder, and the mails it
+wants to send waiting for Send or Don't Send (send policy "ask", or a
+recipient outside "allowed"). core.mail_dock has the rules,
 core.mail_dock_runner does a run on a thread of its own.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import json
 import logging
 import threading
 import time
 
-from PyQt6.QtCore import QObject, Qt, QTimer
+from PyQt6.QtCore import QObject, QSignalBlocker, Qt, QTimer
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -37,12 +39,40 @@ from core.i18n import tr
 from core.mail_dock_runner import MailDockRunner
 from core.thread_relay import GuiCall
 from ui.close_corner import add_close_corner
+from ui.handbook import install_help_key
 from ui.icon_provider import set_window_icon
 
 log = logging.getLogger(__name__)
 
 #: A mail waiting for the user's yes is declined after this long.
 APPROVAL_TIMEOUT_S = 30 * 60
+#: A tool call's arguments in the dock's log are cut after this many characters.
+EVENT_ARGS_CHARS = 160
+
+
+def event_text(event: dict) -> str | None:
+    """One line of the dock's log for an agent event (core.agent on_event):
+    the tool calls and their outcome, notices and a failed connection - what
+    the dock's agent did, not only its final answer. None for the rest
+    (usage counts, the streamed answer: the runner logs the answer)."""
+    kind = event.get("type")
+    if kind == "tool_call":
+        try:
+            args = json.dumps(event.get("args") or {}, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            args = ""
+        if len(args) > EVENT_ARGS_CHARS:
+            args = args[:EVENT_ARGS_CHARS] + "…"
+        return tr("Tool: {name} {args}").format(name=event.get("name", "?"), args=args).rstrip()
+    if kind == "tool_result" and event.get("outcome") not in (None, "ok"):
+        reason = event.get("reason") or event.get("detail") or ""
+        return tr("Tool {name}: {outcome} {reason}").format(
+            name=event.get("name", "?"), outcome=event.get("outcome"), reason=reason).rstrip()
+    if kind == "notice" and event.get("text"):
+        return str(event["text"])
+    if kind == "connection" and event.get("state") == "failed":
+        return tr("The LLM could not be reached: {detail}").format(detail=event.get("detail", ""))
+    return None
 
 
 class _Approval:
@@ -53,17 +83,25 @@ class _Approval:
 
 
 class MailDockPanel(QWidget):
-    """The content of one mail dock's panel."""
+    """The content of one mail dock's panel.
 
-    def __init__(self, dock: MD.MailDockConfig, *, runner_factory=MailDockRunner, edit=None, parent=None):
+    *save* stores the dock's settings when Pause changes them (the dock's
+    ``enabled``): a pause that was not saved came back unpaused at the next
+    start, while the same switch in the settings dialog stayed."""
+
+    def __init__(self, dock: MD.MailDockConfig, *, runner_factory=MailDockRunner, edit=None, save=None,
+                 parent=None):
         super().__init__(parent)
         self.dock = dock
         self._edit = edit
+        self._save = save
         self._pending: list[_Approval] = []
         self._post_log = GuiCall(self._log)
+        self._post_event = GuiCall(self._event)
         self._post_approval = GuiCall(self._show_approval)
         self._post_done = GuiCall(self._done)
-        self.runner = runner_factory(dock, ask_send=self._ask_send, on_log=self._post_log)
+        self.runner = runner_factory(dock, ask_send=self._ask_send, on_log=self._post_log,
+                                     on_event=self._post_event)
         self._running = False
         self.paused = not dock.enabled
         layout = QVBoxLayout(self)
@@ -73,13 +111,21 @@ class MailDockPanel(QWidget):
         row = QHBoxLayout()
         self.run_button = QPushButton(tr("Run Now"))
         self.run_button.clicked.connect(self.run_now)
+        self.stop_button = QPushButton(tr("Stop"))
+        self.stop_button.setToolTip(tr("Stop the run in progress; a mail waiting for your answer is not sent"))
+        self.stop_button.setEnabled(False)
+        self.stop_button.clicked.connect(self.stop)
         self.pause_button = QPushButton(tr("Pause"))
         self.pause_button.setCheckable(True)
         self.pause_button.setChecked(self.paused)
         self.pause_button.toggled.connect(self._toggle_pause)
         settings = QPushButton(tr("Settings…"))
         settings.clicked.connect(lambda: self._edit and self._edit(self))
-        for b in (self.run_button, self.pause_button, settings):
+        self.drafts_button = QPushButton(tr("Open Drafts Folder"))
+        self.drafts_button.setToolTip(
+            tr("The drafts of a POP3 mailbox (an IMAP mailbox keeps them in its Drafts folder)"))
+        self.drafts_button.clicked.connect(self.open_drafts_folder)
+        for b in (self.run_button, self.stop_button, self.pause_button, settings, self.drafts_button):
             row.addWidget(b)
         row.addStretch(1)
         layout.addLayout(row)
@@ -108,9 +154,21 @@ class MailDockPanel(QWidget):
     # -- settings and timer -----------------------------------------------------------------
 
     def apply(self, dock: MD.MailDockConfig) -> None:
+        """New settings: the interval, and "Run on its timer" as the pause -
+        before, unticking it changed nothing until the next start."""
         self.dock = self.runner.dock = dock
-        self.timer.start(int(dock.interval_minutes) * 60 * 1000)
-        self._next = time.time() + dock.interval_minutes * 60
+        self.paused = not dock.enabled
+        with QSignalBlocker(self.pause_button):
+            self.pause_button.setChecked(self.paused)
+        self._restart_timer()
+
+    def _restart_timer(self) -> None:
+        """The timer runs only while the dock is not paused."""
+        if self.paused:
+            self.timer.stop()
+        else:
+            self.timer.start(int(self.dock.interval_minutes) * 60 * 1000)
+            self._next = time.time() + self.dock.interval_minutes * 60
         self._status()
 
     def _status(self) -> None:
@@ -125,7 +183,54 @@ class MailDockPanel(QWidget):
 
     def _toggle_pause(self, paused: bool) -> None:
         self.paused = paused
-        self._status()
+        self.dock = self.runner.dock = dataclasses.replace(self.dock, enabled=not paused)
+        if self._save is not None:
+            try:
+                self._save(self.dock)
+            except OSError as exc:
+                self._log(tr("Could not save the setting: {error}").format(error=exc))
+        self._restart_timer()
+
+    def stop(self) -> None:
+        """Stop the run in progress (the runner's cancel; the agent stops at
+        its next step). A mail waiting for Send / Don't Send is not sent."""
+        if not self._running:
+            return
+        cancel = getattr(self.runner, "cancel", None)
+        if cancel is not None:
+            cancel.set()
+        self._decline_waiting()
+        self.stop_button.setEnabled(False)
+        self._log(tr("Stopping…"))
+
+    def drafts_folder(self):
+        """Where the dock's agent puts its drafts for a POP3 mailbox
+        (core.mail_dock.MailTools.draft)."""
+        from pathlib import Path
+
+        state = getattr(self.runner, "state_dir", None)
+        return Path(state if state is not None else MD.STATE_DIR / self.dock.dock_id) / "drafts"
+
+    def open_drafts_folder(self) -> None:
+        """The drafts folder in a pane of the window (made when missing)."""
+        folder = self.drafts_folder()
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            self._log(tr("Could not create {folder}: {error}").format(folder=folder, error=exc))
+            return
+        window = self.parentWidget()
+        while window is not None and not callable(getattr(window, "open_local_folder", None)):
+            window = window.parentWidget()  # the main window, also from a floating dock
+        opener = getattr(window, "open_local_folder", None)
+        if callable(opener):
+            opener(str(folder))
+        else:
+            from PyQt6.QtCore import QUrl
+
+            from core.desktop_open import open_url
+
+            open_url(QUrl.fromLocalFile(str(folder)))
 
     def _tick(self) -> None:
         self._next = time.time() + self.dock.interval_minutes * 60
@@ -139,6 +244,7 @@ class MailDockPanel(QWidget):
             return
         self._running = True
         self.run_button.setEnabled(False)
+        self.stop_button.setEnabled(True)
         self._status()
         threading.Thread(target=self._work, name=f"mail-dock-{self.dock.name}", daemon=True).start()
 
@@ -154,12 +260,18 @@ class MailDockPanel(QWidget):
     def _done(self, error: str) -> None:
         self._running = False
         self.run_button.setEnabled(True)
+        self.stop_button.setEnabled(False)
         if error:
             self._log(tr("The run failed: {error}").format(error=error))
         self._status()
 
     def _log(self, text: str) -> None:
         self.log_view.appendPlainText(f"{time.strftime('%H:%M')}  {text}")
+
+    def _event(self, event: dict) -> None:
+        text = event_text(event) if isinstance(event, dict) else None
+        if text:
+            self._log(text)
 
     # -- approvals ---------------------------------------------------------------------------
 
@@ -197,6 +309,16 @@ class MailDockPanel(QWidget):
             for w in (self.approvals, self.send_button, self.decline_button):
                 w.setVisible(False)
 
+    def _decline_waiting(self) -> None:
+        """Every mail waiting for an answer: not sent."""
+        for approval in self._pending:
+            approval.answer = False
+            approval.event.set()
+        self._pending.clear()
+        self.approvals.clear()
+        for w in (self.approvals, self.send_button, self.decline_button):
+            w.setVisible(False)
+
     def shutdown(self) -> None:
         self.timer.stop()
         for approval in self._pending:
@@ -211,6 +333,7 @@ class MailDockDialog(QDialog):
                  docks: list[str], parent=None):
         super().__init__(parent)
         set_window_icon(self, "mail")
+        install_help_key(self, "mail")
         self.setWindowTitle(tr("Mail Dock"))
         self._dock = dock
         form = QFormLayout(self)
@@ -294,6 +417,12 @@ class MailDockDialog(QDialog):
 
     def _accept(self) -> None:
         dock = self.config()
+        if not dock.mailbox_profile.strip():
+            # Before, a dock without a mailbox was saved and failed at every run.
+            QMessageBox.warning(self, tr("Mail Dock"), tr(
+                "A mail dock watches a mailbox: choose one. Without one in the list, first save "
+                "an IMAP, POP3 or Exchange connection in the Connection Manager."))
+            return
         try:
             dock.validate()
         except ValueError as exc:
@@ -359,7 +488,8 @@ class MailDocks(QObject):
         # The built-in panels' title bar, with the dock's own icon.
         ext.setTitleBarWidget(DockTitleBar(ext.windowTitle(), "mail", ext,
                                            reopen_hint="Tools → Mail Docks…"))
-        panel = MailDockPanel(dock, runner_factory=self.runner_factory, edit=self.edit_panel)
+        panel = MailDockPanel(dock, runner_factory=self.runner_factory, edit=self.edit_panel,
+                              save=self._save_dock)
         ext.setWidget(panel)
         add = getattr(self.window, "addDockWidget", None)
         if callable(add):
@@ -390,6 +520,17 @@ class MailDocks(QObject):
         if hasattr(bar, "set_title"):
             bar.set_title(ext.windowTitle())
 
+    def _save_dock(self, dock: MD.MailDockConfig) -> None:
+        """*dock*'s settings into the store, in its place among the others."""
+        self.store.save([dock if d.dock_id == dock.dock_id else d for d in self.store.load()])
+
+    def edit(self, dock_id: str) -> None:
+        """The settings of the dock *dock_id* (the manager's Edit…)."""
+        dock = next((d for d in self.store.load() if d.dock_id == dock_id), None)
+        if dock is None:
+            return
+        self.edit_panel(self._open(dock))
+
     def remove(self, dock_id: str) -> None:
         self.store.save([d for d in self.store.load() if d.dock_id != dock_id])
         ext, panel = self.panels.pop(dock_id, (None, None))
@@ -403,6 +544,7 @@ class MailDocks(QObject):
         dialog = QDialog(self.window)
         dialog.setWindowTitle(tr("Mail Docks"))
         set_window_icon(dialog, "mail")
+        install_help_key(dialog, "mail")
         layout = QVBoxLayout(dialog)
         layout.addWidget(QLabel(tr("Each mail dock is an agent that watches one mailbox and follows its "
                                    "instructions: read, analyse, draft, send as its policy allows, "
@@ -418,7 +560,12 @@ class MailDocks(QObject):
                 listing.addItem(item)
         fill()
         row = QHBoxLayout()
+        def selected() -> str | None:
+            item = listing.currentItem()
+            return item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+
         for label, action in ((tr("Add…"), lambda: (self.add(), fill())),
+                              (tr("Edit…"), lambda: selected() and (self.edit(selected()), fill())),
                               (tr("Show"), lambda: listing.currentItem() and self._open(next(
                                   d for d in self.store.load()
                                   if d.dock_id == listing.currentItem().data(Qt.ItemDataRole.UserRole)))),

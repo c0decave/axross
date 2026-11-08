@@ -26,6 +26,11 @@ from ui.icon_provider import set_window_icon
 
 log = logging.getLogger(__name__)
 
+#: Rows the column fit measures (see TransferDock._setup_ui).
+TABLE_FIT_ROWS = 100
+#: The overall bar is recomputed at most this often while jobs change.
+OVERALL_INTERVAL_MS = 250
+
 
 class _OverallBar(QProgressBar):
     """The overall progress bar; a click on it shows the current transfer."""
@@ -88,7 +93,10 @@ class TransferDock(QDockWidget):
         # ~14 s of GUI time here).
         self._overall_timer = QTimer(self)
         self._overall_timer.setSingleShot(True)
-        self._overall_timer.setInterval(50)
+        # 4 times a second: each pass walks every kept job and repaints the
+        # bar (~16 ms with 2000 jobs); at 20 a second it was a third of the
+        # GUI thread's time during a copy of many small files.
+        self._overall_timer.setInterval(OVERALL_INTERVAL_MS)
         self._overall_timer.timeout.connect(self._update_overall)
         # A job's row is drawn anew once per burst as well: 2000 small files
         # sent 10 000 updates, each a dataChanged the column fitter measured
@@ -133,6 +141,12 @@ class TransferDock(QDockWidget):
         # content; every divider stays draggable (ui.column_fit).
         from ui.column_fit import ColumnFitter
 
+        # The fit measures the rows on screen and their neighbours up to this
+        # many (Qt's default is 1000): a walk that queued 2000 jobs at once
+        # had 7 x 1000 new cells measured in one pass, a 0.5 s freeze. The
+        # rows of one queue look alike (a name, a size, a status), so a
+        # hundred show the widths as well as a thousand.
+        self._table.horizontalHeader().setResizeContentsPrecision(TABLE_FIT_ROWS)
         self._columns = ColumnFitter(self._table, fill=0, cache_widths=True, data_delay_ms=100)
 
         layout.addWidget(self._table, stretch=1)

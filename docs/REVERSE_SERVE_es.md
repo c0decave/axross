@@ -113,6 +113,8 @@ los clientes confían en él (`aws --ca-bundle cert.pem`,
 | Path traversal | rechazado | Cada path se normaliza; segmentos `..`, segmentos con barra invertida y segmentos que empiezan por una unidad (`C:`) devuelven 400, y cada path unido debe quedar bajo la raíz en el estilo de paths del backend (también paths de Windows). |
 | Cap del body | 8 GiB por request | Contra mentiras de Content-Length. |
 | Longitud del body | `Content-Length` o `Transfer-Encoding: chunked` | Un body chunked (`curl -T -`, `rclone rcat`) se decodifica mientras llega, bajo el mismo cap. Un PUT sin ninguno de los dos es **411 Length Required** y el fichero queda como estaba; los dos a la vez, otro transfer coding o un framing de chunks roto se rechaza (400 / 501) y también deja el fichero intacto. |
+| aws-chunked | decodificado | boto3 / aws-cli por HTTPS envían `Content-Encoding: aws-chunked` (frames de chunks con un checksum al final, o firmas de chunk): el objeto son los datos dentro de los frames, exactamente `x-amz-decoded-content-length` bytes; un body que no coincide se rechaza (400 / 411) y deja el fichero intacto. Las firmas de chunk y los checksums no se comprueban, como ninguna firma. |
+| HTTP | 1.1, keep-alive | Una conexión lleva el siguiente request solo si el último body se leyó hasta el final (si no, se cierra, con `Connection: close`: un body sin leer nunca se toma por un request); espera como mucho 5 s al siguiente, y parar el servidor la cierra al instante. `Expect: 100-continue` se responde solo después de comprobar el token, la ruta, el modo solo lectura y el tamaño - un PUT rechazado recibe su respuesta final, nunca una invitación a enviar el body. Sin el 100, boto3 y aws-cli esperaban 1 s por PUT. |
 
 El reverse-server **no** comprueba AWS Signature V4 — de una request
 firmada lee solo el access key id y lo compara con el token. aws-cli /
@@ -149,16 +151,50 @@ WebDAV sobre una carpeta existente se rechaza (409), nunca copia dentro.
 | `GET /<bucket>?location` (GetBucketLocation) | ✓ — la región por defecto (un `LocationConstraint` vacío) |
 | `PUT /<bucket>/<key>` (PutObject) | ✓ — `If-None-Match: *` se respeta (412 `PreconditionFailed` si la key existe; comprobado antes de escribir, no de forma atómica con ello); `If-Match` y un ETag en `If-None-Match` son 501, los ETags son sintéticos |
 | `PUT` con `x-amz-copy-source` (CopyObject, UploadPartCopy) | ✗ - 501 `NotImplemented`, no se escribe nada: `aws s3 mv` / `cp` entre dos keys y la copia server-side de rclone fallan en vez de escribir una copia vacía (y en `mv` borrar luego el origen) |
-| Cualquier subresource (`?tagging`, `?acl`, `?uploads`, `?uploadId=`, `?partNumber=`, `?versionId=`, `?retention`, `?legal-hold`, `?versioning`, …) en GET / HEAD / PUT / DELETE | ✗ - 501 `NotImplemented`; el objeto ni se devuelve, ni se reemplaza, ni se borra. Los parámetros de presign (`X-Amz-*`, `AWSAccessKeyId` / `Expires` / `Signature`), el `x-id` de los SDKs y los parámetros de ListObjects / GetObject se sirven |
+| Cualquier otro subresource (`?tagging`, `?acl`, `?versionId=`, `?retention`, `?legal-hold`, `?versioning`, ListParts `GET ?uploadId=`, …) en GET / HEAD / PUT / DELETE / POST | ✗ - 501 `NotImplemented`; el objeto ni se devuelve, ni se reemplaza, ni se borra. Los parámetros de presign (`X-Amz-*`, `AWSAccessKeyId` / `Expires` / `Signature`), el `x-id` de los SDKs y los parámetros de ListObjects / GetObject se sirven |
 | `DELETE /<bucket>/<key>` (DeleteObject) | ✓ |
 | `POST /<bucket>?delete` (DeleteObjects) | ✗ |
-| Multipart upload | ✗ |
+| Multipart upload (`POST ?uploads`, `PUT ?partNumber=&uploadId=`, `POST ?uploadId=`, `DELETE ?uploadId=`) | ✓ - ver *Multipart upload* abajo; ListParts / ListMultipartUploads y UploadPartCopy son 501 |
 | Versioning | ✗ |
 | Tags / ACLs / Lifecycle | ✗ |
 | Signed URLs / V4 auth | ✗ (Bearer only) |
 
-Solo path-style. Uploads single-PUT capados al body limit (8 GiB);
-objetos mayores requieren multipart, que no hablamos.
+Solo path-style. Uploads single-PUT capados al body limit (8 GiB).
+
+#### Multipart upload
+
+Lo usan los uploads por encima del umbral multipart de los SDKs (8 MiB
+en boto3 y aws-cli, o sea `aws s3 cp` de cualquier fichero mayor) y los
+uploads de packs de restic. Las partes esperan en una carpeta local
+privada, `$XDG_CACHE_HOME/axross/s3-multipart/` (modo 0700, rechazada si
+es un enlace o pertenece a otro usuario), hasta que
+CompleteMultipartUpload las vuelca, en el orden indicado, al objeto por
+el mismo camino que un PUT: el objeto anterior se mantiene hasta que
+llega cada byte. Los límites:
+
+| Límite | Valor |
+|---|---|
+| Uploads abiertos a la vez | 16 (uno más: 400 `InvalidRequest`) |
+| Partes por upload | 10.000 (números de parte 1-10000) |
+| Bytes por upload, y de todos los uploads abiertos juntos | 8 GiB, el cap de un PUT (400 `EntityTooLarge` / 503 `SlowDown`, comprobado contra el `Content-Length` de la parte antes de leer el body) |
+| Upload inactivo | se descarta con sus partes tras 1 hora sin request |
+| Lista de partes (Complete) | como mucho 4 MiB, sin DTD / entidades, números ascendentes, cada ETag el devuelto para su parte (si no, 400 `InvalidPart` / `MalformedXML`) |
+
+Un upload está ligado a su bucket y key (otra key con su id es
+`NoSuchUpload`); una parte subida dos veces reemplaza a la primera; las
+partes no listadas en Complete se descartan. AbortMultipartUpload,
+Complete y parar el servidor borran las partes; las carpetas que dejó un
+axross que terminó sin parar su servidor se borran al cabo de un día.
+Complete responde 200 enseguida y mantiene al cliente esperando con un
+espacio cada 10 s mientras compone el objeto (como S3); un fallo después
+es un `<Error>` dentro de ese 200, que los SDKs elevan como error, y el
+upload se mantiene, así que Complete puede reintentarse. Las partes
+ocupan disco local hasta el cap: en un host con poco espacio temporal,
+bajar la concurrencia de partes de los clientes (`aws configure set
+default.s3.max_concurrent_requests 2`) o subir su umbral para enviar
+ficheros grandes en un solo PUT (`aws configure set
+default.s3.multipart_threshold 5GB`; boto3:
+`TransferConfig(multipart_threshold=...)`).
 
 ### WebDAV
 

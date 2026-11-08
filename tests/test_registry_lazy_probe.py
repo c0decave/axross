@@ -103,10 +103,11 @@ class StartupTest(unittest.TestCase):
             """
             import builtins
             from core import backend_registry as BR
-            BR._check_available = lambda name: _eager(name)
-            def _eager(name):
+            BR._check_available = lambda *names: _eager(*names)
+            def _eager(*names):
                 try:
-                    __import__(name)
+                    for name in names:
+                        __import__(name)
                     return True
                 except ImportError:
                     return False
@@ -168,3 +169,20 @@ class ProbeTest(_TempModules):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_sad_a_backend_needing_two_packages_is_off_when_the_first_is_missing():
+    """WebDAV needs requests and defusedxml; ``probe_a and probe_b`` (a probe
+    object is always true) checked only defusedxml."""
+    from core import backend_registry as BR
+
+    probe = BR._check_available("zz_definitely_missing_mod", "json")
+    assert probe() is False
+    assert BR._check_available("json", "os")() is True
+
+
+def test_edge_no_backend_combines_probes_with_and():
+    import re
+
+    source = (Path(__file__).resolve().parents[1] / "core" / "backend_registry.py").read_text("utf-8")
+    assert not re.search(r"_check_available\([^)]*\)\s+(and|or)\s+_check_available", source)

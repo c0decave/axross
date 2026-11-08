@@ -30,7 +30,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.backend_registry import all_backends, init_registry
+from core.backend_registry import all_backends, ensure_initialized, recheck_missing
 from core.credentials import profile_name_problem
 from core.desktop_open import open_in_browser
 from core.i18n import tr
@@ -141,7 +141,11 @@ class ConnectionDialog(QDialog):
 
         self.setWindowTitle(tr("Connect to Server"))
         self.setMinimumWidth(500)
-        init_registry()
+        # Not init_registry() on every open (a dozen PATH searches): the
+        # commands check themselves when PATH changes, and a package missing
+        # so far is asked again (core.backend_registry.recheck_missing).
+        ensure_initialized()
+        recheck_missing()
         self._setup_ui()
 
         if profile:

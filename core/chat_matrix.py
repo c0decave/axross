@@ -57,14 +57,26 @@ _USER_ID = re.compile(r"@[a-z0-9._=\-/+]+:[A-Za-z0-9.\-:\[\]]+")
 _ROOM_REF = re.compile(r"[#!][^\s:]+:[A-Za-z0-9.\-:\[\]]+")
 
 
-def nio_missing() -> str | None:
-    """Why the Matrix client cannot run here, or None."""
+def nio_missing(*, load: bool = True) -> str | None:
+    """Why the Matrix client cannot run here, or None.
+
+    *load* False only looks whether the packages are installed, without
+    importing them: the panel asks when the extension is switched on, and
+    importing nio takes about half a second and 100 MB - the connect
+    imports it (in the chat runner's thread)."""
+    if not load:
+        return None if C.modules_installed("nio", "vodozemac") else _NIO_MISSING
     try:
         import nio  # noqa: F401
         import vodozemac  # noqa: F401
     except ImportError:
-        return "Matrix needs matrix-nio with encryption: pip install 'axross[chat]'"
+        return _NIO_MISSING
     return None
+
+
+# Help > Features… installs it (or names the axross-full build), as for
+# every other extra - not a pip command to type.
+_NIO_MISSING = "Matrix needs matrix-nio with encryption: install it in Help > Features… (Matrix and XMPP chat)"
 
 
 def full_user_id(user: str, homeserver: str) -> str:

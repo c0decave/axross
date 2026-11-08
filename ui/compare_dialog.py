@@ -19,8 +19,9 @@ from __future__ import annotations
 
 import logging
 
-from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QAbstractTableModel, QModelIndex, QObject, Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QComboBox,
     QDialog,
@@ -29,8 +30,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
-    QTableWidget,
-    QTableWidgetItem,
+    QTableView,
     QVBoxLayout,
     QWidget,
 )
@@ -96,6 +96,65 @@ def export_text(entries: list[ComparedEntry]) -> str:
     if len(lines) == 1:
         lines.append("# the two trees match")
     return "\n".join(lines) + "\n"
+
+
+class _EntriesModel(QAbstractTableModel):
+    """The rows the table shows: one per visible entry, each cell's text
+    worked out when the view asks for it (the rows on screen). Before, a
+    QTableWidgetItem per cell: "All" over 20,000 entries made 100,000 of
+    them on the GUI thread (~3 s)."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.entries: list[ComparedEntry] = []
+
+    def set_entries(self, entries: list[ComparedEntry]) -> None:
+        self.beginResetModel()
+        self.entries = list(entries)
+        self.endResetModel()
+
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+        return 0 if parent.isValid() else len(self.entries)
+
+    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+        return 0 if parent.isValid() else len(COLUMNS)
+
+    def cell_text(self, entry: ComparedEntry, col: int) -> str:
+        if col == 0:
+            return entry.rel_path
+        if col == 1:
+            return tr(STATUS_LABELS.get(entry.status, entry.status))
+        if col == 2:
+            return human_bytes(entry.left.size) if entry.left is not None else DASH
+        if col == 3:
+            return human_bytes(entry.right.size) if entry.right is not None else DASH
+        return tr(entry.reason)
+
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
+        row = index.row()
+        if not index.isValid() or not 0 <= row < len(self.entries):
+            return None
+        entry = self.entries[row]
+        if role == Qt.ItemDataRole.DisplayRole:
+            return self.cell_text(entry, index.column())
+        if role == Qt.ItemDataRole.UserRole:
+            return entry.rel_path
+        return None
+
+    def headerData(self, section: int, orientation: Qt.Orientation,  # noqa: N802
+                   role: int = Qt.ItemDataRole.DisplayRole):
+        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole \
+                and 0 <= section < len(COLUMNS):
+            return tr(COLUMNS[section])
+        return None
+
+
+class _EntriesTable(QTableView):
+    """The table of entries; ``rowCount()`` as the former QTableWidget had."""
+
+    def rowCount(self) -> int:  # noqa: N802 - the QTableWidget name
+        model = self.model()
+        return model.rowCount() if model is not None else 0
 
 
 class _CompareWorker(QObject):
@@ -201,16 +260,17 @@ class CompareDialog(QDialog):
         top.addWidget(self._refresh_btn)
         layout.addLayout(top)
 
-        self._table = QTableWidget(0, len(COLUMNS), self)
-        self._table.setHorizontalHeaderLabels([tr(c) for c in COLUMNS])
+        self._table = _EntriesTable(self)
+        self._rows = _EntriesModel(self._table)
+        self._table.setModel(self._rows)
         self._table.verticalHeader().setVisible(False)
-        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         from ui.column_fit import ColumnFitter
 
         # The first column takes the free width; every divider stays draggable.
         self._columns = ColumnFitter(self._table, fill=0)
-        self._table.itemDoubleClicked.connect(self._on_double_click)
+        self._table.doubleClicked.connect(self._on_double_click)
         layout.addWidget(self._table)
 
         actions = QHBoxLayout()
@@ -287,20 +347,7 @@ class CompareDialog(QDialog):
         self._stop_thread(done=True)
 
     def _populate(self) -> None:
-        visible = self.visible_entries()
-        self._table.setRowCount(len(visible))
-        for row, entry in enumerate(visible):
-            cells = (
-                entry.rel_path,
-                tr(STATUS_LABELS.get(entry.status, entry.status)),
-                human_bytes(entry.left.size) if entry.left is not None else DASH,
-                human_bytes(entry.right.size) if entry.right is not None else DASH,
-                tr(entry.reason),
-            )
-            for col, text in enumerate(cells):
-                item = QTableWidgetItem(text)
-                item.setData(Qt.ItemDataRole.UserRole, entry.rel_path)
-                self._table.setItem(row, col, item)
+        self._rows.set_entries(self.visible_entries())
         self._summary.setText(self._build_summary())
 
     def _build_summary(self) -> str:
@@ -344,17 +391,13 @@ class CompareDialog(QDialog):
     # -- selection + actions ---------------------------------------------
 
     def selected_entries(self) -> list[ComparedEntry]:
-        by_path = {e.rel_path: e for e in self.visible_entries()}
-        rows = {idx.row() for idx in self._table.selectedIndexes()}
-        out = []
-        for row in sorted(rows):
-            item = self._table.item(row, 0)
-            if item is None:
-                continue
-            entry = by_path.get(item.data(Qt.ItemDataRole.UserRole))
-            if entry is not None:
-                out.append(entry)
-        return out
+        """The entries of the selected rows, top to bottom (rows from the
+        selection's ranges: no index per selected cell)."""
+        entries = self._rows.entries
+        rows = set()
+        for selected in self._table.selectionModel().selection():
+            rows.update(range(selected.top(), selected.bottom() + 1))
+        return [entries[row] for row in sorted(rows) if 0 <= row < len(entries)]
 
     def absolute_path(self, side: str, rel_path: str) -> str:
         """Resolve a row to a full path on ``side``.
@@ -371,7 +414,7 @@ class CompareDialog(QDialog):
             path = backend.join(path, part) if backend is not None else f"{path}/{part}"
         return path
 
-    def _on_double_click(self, item: QTableWidgetItem) -> None:
+    def _on_double_click(self, _index: QModelIndex) -> None:
         self._reveal_selected()
 
     def _reveal_selected(self) -> None:

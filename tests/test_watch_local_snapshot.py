@@ -219,15 +219,22 @@ def many(tmp_path):
     return root
 
 
+#: The poll costs at most this share of the former one. The former one is
+#: LocalFS.list_dir + _snapshot_of, and list_dir itself got ~30% cheaper
+#: (owner names per listing, no lock per entry): the poll measured 0.48-0.60
+#: of it then, which a loaded host pushed past the earlier 0.65.
+POLL_SHARE = 0.75
+
+
 def test_perf_happy_a_poll_of_5000_entries_costs_well_under_the_former(many):
     fs = LocalFS()
     w = _watcher(fs, many)
     new, old = _costs_ms(w._snapshot, lambda: _former(fs, str(many)))
-    assert new < old * 0.65, (new, old)
+    assert new < old * POLL_SHARE, (new, old)
 
 
 def test_perf_sad_the_comparison_catches_a_poll_as_slow_as_before(many):
     """Negative control: the former poll against itself is not cheaper."""
     fs = LocalFS()
     again, old = _costs_ms(lambda: _former(fs, str(many)), lambda: _former(fs, str(many)))
-    assert not again < old * 0.65, (again, old)
+    assert not again < old * POLL_SHARE, (again, old)

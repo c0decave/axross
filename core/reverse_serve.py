@@ -11,8 +11,9 @@ Two server flavours in this module, sharing a single ``http.server``-
 based skeleton:
 
 * :class:`ReverseS3Server` — minimum-viable S3 API: ListBucket,
-  GetObject, PutObject, DeleteObject, HeadBucket, HeadObject.
-  Path-style addressing only (``/bucket/key`` — no virtual host
+  GetObject, PutObject, DeleteObject, HeadBucket, HeadObject and
+  multipart upload (Create / UploadPart / Complete / Abort, so uploads
+  above the SDKs' 8 MiB threshold work). Path-style addressing only (``/bucket/key`` — no virtual host
   parsing). Sufficient for ``aws s3 cp`` / ``aws s3 ls`` / restic /
   rclone with ``provider = Other``.
 * :class:`ReverseWebDAVServer` — minimum-viable WebDAV: GET, PUT,
@@ -47,9 +48,15 @@ The servers run in their own ``ThreadingHTTPServer`` thread; the
 caller stops them with ``server.shutdown()``. Multiple reverse-servers
 can run side-by-side on different ports.
 
+HTTP/1.1 with keep-alive (a connection waits KEEPALIVE_IDLE_S for its
+next request, and carries one only when the last body was read to its
+end); ``Expect: 100-continue`` is answered once the request passed auth
+and the path and size checks - boto3 and aws-cli otherwise wait a second
+per PUT.
+
 This is **not** a full S3 / WebDAV implementation. Anything beyond
 the verb table above returns 501 Not Implemented - in S3 also every
-subresource (``?tagging``, ``?acl``, ``?uploads``, ``?versionId=``, ...)
+other subresource (``?tagging``, ``?acl``, ``?versionId=``, ListParts, ...)
 and CopyObject (``x-amz-copy-source``), which a plain PUT / DELETE / GET
 would otherwise treat as the object itself. That's fine for
 the swiss-army-knife use case ("let restic back up to my SFTP via
@@ -66,17 +73,22 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import hmac
 import io
 import ipaddress
 import logging
 import ntpath
+import os
 import posixpath
 import re
 import secrets
+import shutil
 import socket
 import ssl
+import stat
 import sys
+import tempfile
 import threading
 import time
 import xml.etree.ElementTree as ET
@@ -105,6 +117,23 @@ HEADER_DEADLINE_S = 30.0
 #: Connections served at once; one more is answered 503 and closed (each
 #: holds a thread, also before it sent its token).
 MAX_CONNECTIONS = 64
+#: Seconds a kept-alive connection may wait for its next request before
+#: it is closed (and its MAX_CONNECTIONS slot freed); the first request
+#: of a connection has HEADER_DEADLINE_S.
+KEEPALIVE_IDLE_S = 5.0
+#: Multipart uploads (S3): open at once per server, parts per upload, and
+#: the bytes their parts may hold in the local temporary folder - per
+#: upload and for all open uploads together - which is the single-PUT cap.
+MULTIPART_MAX_UPLOADS = 16
+MULTIPART_MAX_PARTS = 10_000
+MULTIPART_MAX_BYTES = MAX_BODY_BYTES
+#: An upload without a request for this long is dropped with its parts.
+MULTIPART_IDLE_S = 3600.0
+#: Largest CompleteMultipartUpload body (the part list).
+MULTIPART_COMPLETE_MAX_BYTES = 4 * 1024 * 1024
+#: While CompleteMultipartUpload assembles the object, a space every this
+#: many seconds keeps the client's read timeout from firing (as S3 does).
+MULTIPART_COMPLETE_TICK_S = 10.0
 _DIGITS = re.compile(r"[0-9]+")
 MIN_WALK_DIR_VISITS = 128
 MAX_WALK_DIR_VISITS = 50_000
@@ -410,10 +439,27 @@ class _DeadlineIO(socket.SocketIO):
 
 
 class _BaseHandler(BaseHTTPRequestHandler):
-    """Common handler — auth, error-shape, logging."""
+    """Common handler — auth, error-shape, logging.
+
+    HTTP/1.1: a connection carries further requests (keep-alive) only
+    when the request's body was read to its end - a body left unread
+    would be parsed as the next request - and it waits KEEPALIVE_IDLE_S
+    for the next one. ``Expect: 100-continue`` is answered only when the
+    handler starts reading the body, i.e. after auth, the path and the
+    size checks passed: a refused request gets its final answer instead
+    and never an invitation to send the body.
+    """
 
     server_version = HEAD_BANNER
     sys_version = ""  # don't leak Python version
+    protocol_version = "HTTP/1.1"
+    #: The body reader of the current request (from _body_reader), the
+    #: request's "Expect: 100-continue", and whether 100 went out.
+    _body = None
+    _expect_continue = False
+    _continue_sent = False
+    _connection_header_sent = False
+    _requests_served = 0
 
     # Subclasses populate these:
     config: ServerConfig
@@ -428,17 +474,106 @@ class _BaseHandler(BaseHTTPRequestHandler):
             self.connection.settimeout(REQUEST_TIMEOUT_S)
         except OSError as exc:
             log.debug("reverse-server: cannot set socket timeout: %s", exc)
+        try:
+            # Headers and body go out in separate writes: on a kept-alive
+            # connection Nagle held the body back for the client's delayed
+            # ACK (40 ms per GET).
+            self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except (OSError, AttributeError) as exc:
+            log.debug("reverse-server: cannot set TCP_NODELAY: %s", exc)
         # The input through _DeadlineIO: the headers have one deadline.
         self.rfile.close()
         self._input = _DeadlineIO(self.connection, "rb")
         self.rfile = io.BufferedReader(self._input)
 
     def handle_one_request(self) -> None:
-        self._input.deadline = time.monotonic() + HEADER_DEADLINE_S
+        first = self._requests_served == 0
+        self._requests_served += 1
+        self.headers = None  # not the last request's (until parse_request)
+        self._body = None
+        self._expect_continue = False
+        self._continue_sent = False
+        self._connection_header_sent = False
+        now = time.monotonic()
+        # The first request has HEADER_DEADLINE_S from the connection's
+        # start; a kept-alive connection waits KEEPALIVE_IDLE_S for the
+        # first byte of the next one, then the headers get their deadline.
+        self._input.deadline = now + (HEADER_DEADLINE_S if first else KEEPALIVE_IDLE_S)
         try:
+            if not self._wait_for_request():
+                self.close_connection = True
+                return
+            if not first:
+                self._input.deadline = time.monotonic() + HEADER_DEADLINE_S
             super().handle_one_request()
         finally:
             self._input.deadline = None
+        if not self._body_consumed():
+            # Whatever the handler did not read of the body would be taken
+            # for the next request (request smuggling).
+            self.close_connection = True
+
+    def _wait_for_request(self) -> bool:
+        """Block until the next request's first byte (False: the client
+        closed, the wait timed out, or the server is stopping). While it
+        waits, the server's stop closes this connection at once."""
+        server = self.server
+        enter = getattr(server, "_enter_idle", None)
+        if enter is not None and not enter(self.connection):
+            return False
+        try:
+            return bool(self.rfile.peek(1))
+        except (TimeoutError, OSError, ValueError) as exc:  # ssl.SSLError is an OSError
+            log.debug("reverse-server: connection from %s ends: %s",
+                      self.client_address[0] if self.client_address else "?", exc)
+            return False
+        finally:
+            leave = getattr(server, "_leave_idle", None)
+            if leave is not None:
+                leave(self.connection)
+
+    def handle_expect_100(self) -> bool:
+        """``Expect: 100-continue``: not answered here (before auth); the
+        body reader sends 100 Continue on its first read."""
+        self._expect_continue = True
+        return True
+
+    def _send_continue(self) -> None:
+        if self._expect_continue and not self._continue_sent:
+            self._continue_sent = True
+            self.wfile.write(b"HTTP/1.1 100 Continue\r\n\r\n")
+            self.wfile.flush()
+
+    def _request_has_body(self) -> bool:
+        if self.headers is None:
+            return False
+        if self.headers.get_all("Transfer-Encoding"):
+            return True
+        values = [v.strip(" \t") for v in self.headers.get_all("Content-Length") or []]
+        return any(v not in ("", "0") for v in values)
+
+    def _body_consumed(self) -> bool:
+        """The request had no body, or its reader reached the end."""
+        if getattr(self, "headers", None) is None:
+            return True
+        if not self._request_has_body():
+            return True
+        return self._body is not None and self._body.done
+
+    def send_header(self, keyword: str, value: str) -> None:
+        if keyword.lower() == "connection":
+            self._connection_header_sent = True
+        super().send_header(keyword, value)
+
+    def end_headers(self) -> None:
+        # A body left (partly) unread ends the connection; say so, so the
+        # client does not send its next request into a closing socket.
+        if not self._body_consumed():
+            self.close_connection = True
+        if (self.close_connection and not self._connection_header_sent
+                and self.request_version != "HTTP/0.9"):
+            self.send_header("Connection", "close")
+        super().end_headers()
 
     def parse_request(self) -> bool:
         """Refuse DNS rebinding on loopback binds before any verb runs.
@@ -555,15 +690,23 @@ class _BaseHandler(BaseHTTPRequestHandler):
                 raise _BodyError(400, "the final transfer coding is not chunked")
             if codings != ["chunked"]:
                 raise _BodyError(501, f"unsupported transfer coding {', '.join(codings)!r}")
-            return _ChunkedBody(self.rfile)
+            return self._track_body(_ChunkedBody(self.rfile))
         if self.headers.get("Content-Length") in (None, ""):
             if length_required:
                 raise _BodyError(411, "Content-Length or Transfer-Encoding: chunked required")
-            return _RequestBody(self.rfile, 0)
+            return self._track_body(_RequestBody(self.rfile, 0))
         try:
-            return _RequestBody(self.rfile, self._content_length())
+            return self._track_body(_RequestBody(self.rfile, self._content_length()))
         except ValueError as exc:
             raise _BodyError(400, str(exc)) from exc
+
+    def _track_body(self, body):
+        """*body* as the request's body: its first read sends the
+        ``100 Continue`` the client may wait for, and its end decides
+        whether the connection can carry another request."""
+        self._body = body
+        body.before_read = self._send_continue
+        return body
 
     def _content_length(self, *, default: int | None = None) -> int:
         """The body length: digits only (int() took ``+5``, `` 5`` and
@@ -632,6 +775,15 @@ class _BaseHandler(BaseHTTPRequestHandler):
             _discard_or_close_writer(handle, completed=completed)
 
 
+def _before_read(body) -> None:
+    callback, body.before_read = body.before_read, None
+    if callback is not None:
+        try:
+            callback()
+        except OSError as exc:
+            raise ValueError(f"cannot answer 100-continue: {exc}") from exc
+
+
 class _RequestBody:
     """``read(size)`` over exactly ``length`` request-body bytes.
 
@@ -648,8 +800,16 @@ class _RequestBody:
         self._rfile = rfile
         self._length = length
         self._received = 0
+        #: Called once, before the first read (the 100 Continue).
+        self.before_read: Callable[[], None] | None = None
+
+    @property
+    def done(self) -> bool:
+        """Every announced byte was read."""
+        return self._received >= self._length
 
     def read(self, size: int = -1) -> bytes:
+        _before_read(self)
         left = self._length - self._received
         if left <= 0:
             return b""
@@ -683,6 +843,13 @@ class _ChunkedBody:
         self._left = 0  # bytes left in the current chunk
         self._received = 0
         self._done = False
+        #: Called once, before the first read (the 100 Continue).
+        self.before_read: Callable[[], None] | None = None
+
+    @property
+    def done(self) -> bool:
+        """The last chunk and the trailer were read."""
+        return self._done
 
     def _io(self, what: str, call):
         try:
@@ -721,6 +888,7 @@ class _ChunkedBody:
         raise ValueError("chunked request body: too many trailer lines")
 
     def read(self, size: int = -1) -> bytes:
+        _before_read(self)
         if self._done or size == 0:
             return b""
         if not self._left:
@@ -738,6 +906,430 @@ class _ChunkedBody:
         if not self._left and self._io("chunk end", lambda: self._rfile.read(2)) != b"\r\n":
             raise ValueError("chunked request body: chunk data not followed by CRLF")
         return chunk
+
+
+class _LineReader:
+    """``readline(limit)`` / ``read(n)`` over a body's ``read(size)``, for
+    :class:`_ChunkedBody` to decode a framing inside the body."""
+
+    def __init__(self, body) -> None:
+        self._body = body
+        self._buf = b""
+
+    def _fill(self) -> bool:
+        data = self._body.read(PUT_CHUNK)
+        self._buf += data
+        return bool(data)
+
+    def readline(self, limit: int) -> bytes:
+        while b"\n" not in self._buf and len(self._buf) < limit and self._fill():
+            pass
+        index = self._buf.find(b"\n", 0, limit)
+        end = index + 1 if index >= 0 else min(limit, len(self._buf))
+        line, self._buf = self._buf[:end], self._buf[end:]
+        return line
+
+    def read(self, n: int) -> bytes:
+        if not self._buf:
+            self._fill()
+        out, self._buf = self._buf[:n], self._buf[n:]
+        return out
+
+    def at_end(self) -> bool:
+        return not self._buf and not self._fill()
+
+
+class _AwsChunkedBody:
+    """``Content-Encoding: aws-chunked`` (the SDKs' streaming signatures
+    and trailing checksums - boto3 / aws-cli over HTTPS): the data inside
+    the request body's chunk frames, exactly ``x-amz-decoded-content-length``
+    bytes. Stored as it came, the frames and the checksum trailer ended up
+    in the object. Chunk signatures and checksums are not checked, as no
+    signature is (see _is_authed)."""
+
+    def __init__(self, outer, length: int) -> None:
+        self._outer = outer
+        self._length = length
+        self._lines = _LineReader(outer)
+        self._inner = _ChunkedBody(self._lines, cap=length)
+        self._ended = False
+
+    @property
+    def done(self) -> bool:
+        return self._ended and self._outer.done
+
+    def read(self, size: int = -1) -> bytes:
+        if self._ended:
+            return b""
+        chunk = self._inner.read(size)
+        if chunk:
+            return chunk
+        if self._inner._received != self._length:
+            raise ValueError(
+                f"aws-chunked request body: {self._inner._received} bytes, "
+                f"x-amz-decoded-content-length says {self._length}"
+            )
+        if not self._lines.at_end():
+            raise ValueError("aws-chunked request body: data after the last chunk")
+        self._ended = True
+        return b""
+
+
+def _content_codings(headers) -> list[str]:
+    return [
+        coding.strip().lower()
+        for value in headers.get_all("Content-Encoding") or []
+        for coding in value.split(",")
+        if coding.strip()
+    ]
+
+
+# ---------------------------------------------------------------------------
+# S3 multipart uploads
+# ---------------------------------------------------------------------------
+
+
+class _MultipartError(Exception):
+    """A multipart call refused: HTTP status, S3 error code, message."""
+
+    def __init__(self, status: int, s3_code: str, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+        self.s3_code = s3_code
+
+
+@dataclass
+class _Upload:
+    upload_id: str
+    bucket: str
+    key: str
+    folder: str
+    touched: float
+    #: part number -> (size, MD5 hex, file)
+    parts: dict[int, tuple[int, str, str]] = field(default_factory=dict)
+    #: Bytes of parts being received (reserved by their Content-Length)
+    #: and of the parts stored.
+    reserved: int = 0
+    used: int = 0
+    completing: bool = False
+
+
+def _multipart_cache_root() -> str:
+    """``$XDG_CACHE_HOME/axross/s3-multipart`` (an absolute
+    XDG_CACHE_HOME only), private to this user: a folder another user
+    could write to would let them swap a part before it is assembled."""
+    base = os.environ.get("XDG_CACHE_HOME", "").strip()
+    if not base or not os.path.isabs(base):
+        base = os.path.join(os.path.expanduser("~"), ".cache")
+    root = os.path.join(base, "axross", "s3-multipart")
+    os.makedirs(root, mode=0o700, exist_ok=True)
+    info = os.lstat(root)
+    if not stat.S_ISDIR(info.st_mode):
+        raise PermissionError(f"{root} is not a folder")
+    from core.posix_compat import effective_uid
+
+    uid = effective_uid()
+    if uid is not None:
+        if info.st_uid != uid:
+            raise PermissionError(f"{root} belongs to another user")
+        if info.st_mode & 0o077:
+            os.chmod(root, 0o700)
+    return root
+
+
+class _MultipartUploads:
+    """The multipart uploads of one S3 reverse-server. Parts are kept in
+    a private local folder until CompleteMultipartUpload assembles them
+    into the object (through the same atomic store as a PUT), and are
+    removed on complete, abort, after MULTIPART_IDLE_S without a request,
+    and when the server stops. At most MULTIPART_MAX_UPLOADS uploads,
+    MULTIPART_MAX_PARTS parts each, MULTIPART_MAX_BYTES per upload and for
+    all uploads together."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._uploads: dict[str, _Upload] = {}
+        self._root: str | None = None
+        self._bytes = 0  # reserved + used of every upload
+        self._closed = False
+
+    # -- folder ---------------------------------------------------------
+    def _server_folder(self) -> str:
+        if self._root is None:
+            cache = _multipart_cache_root()
+            _sweep_stale_multipart(cache)
+            self._root = tempfile.mkdtemp(prefix="srv-", dir=cache)
+        return self._root
+
+    # -- uploads --------------------------------------------------------
+    def _expire(self, now: float) -> list[_Upload]:
+        gone = [u for u in self._uploads.values()
+                if not u.reserved and not u.completing and now - u.touched > MULTIPART_IDLE_S]
+        for upload in gone:
+            self._drop(upload)
+            log.info("reverse-s3: multipart upload of %s/%s expired after %g s without a request",
+                     upload.bucket, upload.key, MULTIPART_IDLE_S)
+        return gone
+
+    def _drop(self, upload: _Upload) -> None:
+        """Out of the table (under the lock); the caller removes its folder."""
+        if self._uploads.pop(upload.upload_id, None) is not None:
+            self._bytes -= upload.used
+
+    def _get(self, upload_id: str, bucket: str, key: str) -> _Upload:
+        upload = self._uploads.get(upload_id)
+        if upload is None or upload.bucket != bucket or upload.key != key:
+            raise _MultipartError(404, "NoSuchUpload", "no such multipart upload")
+        if upload.completing:
+            raise _MultipartError(409, "OperationAborted",
+                                  "the multipart upload is being completed")
+        return upload
+
+    def create(self, bucket: str, key: str) -> str:
+        now = time.monotonic()
+        with self._lock:
+            if self._closed:
+                raise _MultipartError(503, "ServiceUnavailable", "the reverse-server is stopping")
+            expired = self._expire(now)
+            if len(self._uploads) >= MULTIPART_MAX_UPLOADS:
+                full = True
+            else:
+                full = False
+                folder = tempfile.mkdtemp(prefix="up-", dir=self._server_folder())
+                upload_id = secrets.token_urlsafe(24)
+                self._uploads[upload_id] = _Upload(upload_id, bucket, key, folder, now)
+        _remove_folders(expired)
+        if full:
+            raise _MultipartError(
+                400, "InvalidRequest",
+                f"{MULTIPART_MAX_UPLOADS} multipart uploads are in progress already; "
+                "complete or abort one first",
+            )
+        return upload_id
+
+    def reserve(self, upload_id: str, bucket: str, key: str, length: int) -> _Upload:
+        """Room for a part of *length* bytes, or _MultipartError."""
+        now = time.monotonic()
+        with self._lock:
+            expired = self._expire(now)
+            refusal = None
+            try:
+                upload = self._get(upload_id, bucket, key)
+            except _MultipartError as exc:
+                refusal = exc
+            else:
+                if upload.reserved + upload.used + length > MULTIPART_MAX_BYTES:
+                    refusal = _MultipartError(
+                        400, "EntityTooLarge",
+                        f"the parts of one upload may hold at most {MULTIPART_MAX_BYTES} bytes",
+                    )
+                elif self._bytes + length > MULTIPART_MAX_BYTES:
+                    refusal = _MultipartError(
+                        503, "SlowDown",
+                        f"the open multipart uploads hold {MULTIPART_MAX_BYTES} bytes already",
+                    )
+                else:
+                    upload.reserved += length
+                    upload.touched = now
+                    self._bytes += length
+        _remove_folders(expired)
+        if refusal is not None:
+            raise refusal
+        return upload
+
+    def commit_part(self, upload: _Upload, number: int, reserved: int,
+                    size: int, md5: str, path: str) -> bool:
+        """Keep a received part (it replaces one with its number); False
+        when the upload is gone or being completed - the caller removes
+        *path* then."""
+        old = None
+        with self._lock:
+            upload.reserved -= reserved
+            self._bytes -= reserved
+            if (self._uploads.get(upload.upload_id) is not upload or upload.completing):
+                return False
+            old = upload.parts.get(number)
+            upload.parts[number] = (size, md5, path)
+            upload.used += size
+            self._bytes += size
+            upload.touched = time.monotonic()
+            if old is not None:
+                upload.used -= old[0]
+                self._bytes -= old[0]
+        if old is not None:
+            try:
+                os.unlink(old[2])
+            except OSError:
+                pass
+        return True
+
+    def release(self, upload: _Upload, reserved: int) -> None:
+        with self._lock:
+            upload.reserved -= reserved
+            self._bytes -= reserved
+
+    def check(self, upload_id: str, bucket: str, key: str) -> None:
+        """NoSuchUpload (or OperationAborted) as _MultipartError, else None."""
+        with self._lock:
+            self._get(upload_id, bucket, key)
+
+    def begin_complete(self, upload_id: str, bucket: str, key: str,
+                       wanted: list[tuple[int, str]]) -> list[tuple[int, str, str]]:
+        """Mark the upload as completing and return the files of the parts
+        *wanted* (number, ETag), in order: (size, MD5 hex, file) each."""
+        with self._lock:
+            upload = self._get(upload_id, bucket, key)
+            if upload.reserved:
+                raise _MultipartError(409, "OperationAborted",
+                                      "a part of this upload is still being received")
+            chosen = []
+            for number, etag in wanted:
+                part = upload.parts.get(number)
+                if part is None or part[1] != etag:
+                    raise _MultipartError(
+                        400, "InvalidPart",
+                        f"part {number} was not uploaded or its ETag does not match",
+                    )
+                chosen.append(part)
+            upload.completing = True
+            upload.touched = time.monotonic()
+            return chosen
+
+    def end_complete(self, upload_id: str, *, ok: bool) -> None:
+        """After the assembly: done - the upload goes - or failed - it can
+        be completed again or aborted."""
+        with self._lock:
+            upload = self._uploads.get(upload_id)
+            if upload is None:
+                return
+            if not ok:
+                upload.completing = False
+                upload.touched = time.monotonic()
+                return
+            self._drop(upload)
+        _remove_folders([upload])
+
+    def abort(self, upload_id: str, bucket: str, key: str) -> None:
+        with self._lock:
+            upload = self._get(upload_id, bucket, key)
+            self._drop(upload)
+        _remove_folders([upload])
+
+    def close(self) -> None:
+        """The server stops: every upload and the folder go."""
+        with self._lock:
+            self._closed = True
+            uploads = list(self._uploads.values())
+            for upload in uploads:
+                self._drop(upload)
+            root, self._root = self._root, None
+        _remove_folders(uploads)
+        if root:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def open_count(self) -> int:
+        with self._lock:
+            return len(self._uploads)
+
+
+def _remove_folders(uploads) -> None:
+    for upload in uploads:
+        shutil.rmtree(upload.folder, ignore_errors=True)
+
+
+def _sweep_stale_multipart(cache: str) -> None:
+    """Remove the part folders an earlier axross left (it ended without
+    stopping its server): untouched for a day."""
+    limit = time.time() - 24 * 3600
+    try:
+        names = os.listdir(cache)
+    except OSError:
+        return
+    for name in names:
+        if not name.startswith("srv-"):
+            continue
+        path = os.path.join(cache, name)
+        try:
+            newest = os.lstat(path).st_mtime
+            for child in os.scandir(path):
+                newest = max(newest, child.stat(follow_symlinks=False).st_mtime)
+        except OSError:
+            continue
+        if newest < limit:
+            shutil.rmtree(path, ignore_errors=True)
+
+
+class _PartsReader:
+    """``read(size)`` over the part files, one after the other."""
+
+    def __init__(self, files: list[str]) -> None:
+        self._files = list(files)
+        self._handle = None
+
+    def read(self, size: int = -1) -> bytes:
+        size = PUT_CHUNK if size is None or size < 0 else size
+        while True:
+            if self._handle is None:
+                if not self._files:
+                    return b""
+                self._handle = open(self._files.pop(0), "rb")  # noqa: SIM115 - closed below
+            chunk = self._handle.read(size)
+            if chunk:
+                return chunk
+            self._handle.close()
+            self._handle = None
+
+    def close(self) -> None:
+        if self._handle is not None:
+            self._handle.close()
+            self._handle = None
+
+
+_PART_NUMBER = re.compile(r"[1-9][0-9]{0,4}")
+_UPLOAD_ID = re.compile(r"[A-Za-z0-9_-]{16,64}")
+_ETAG_HEX = re.compile(r"[0-9a-f]{32}")
+
+
+def _parse_complete_parts(data: bytes) -> list[tuple[int, str]]:
+    """The (part number, ETag) pairs of a CompleteMultipartUpload body,
+    strictly ascending; ValueError for anything else. No DTD is taken: an
+    entity declaration could expand a few bytes into gigabytes."""
+    if b"<!" in data.replace(b"<![CDATA[", b""):
+        raise ValueError("a document type or entity declaration is not accepted")
+    try:
+        root = ET.fromstring(data)
+    except ET.ParseError as exc:
+        raise ValueError(f"malformed XML: {exc}") from exc
+
+    def local(tag: str) -> str:
+        return tag.rpartition("}")[2]
+
+    if local(root.tag) != "CompleteMultipartUpload":
+        raise ValueError("the body is not a CompleteMultipartUpload document")
+    parts: list[tuple[int, str]] = []
+    for element in root:
+        if local(element.tag) != "Part":
+            continue
+        number = etag = None
+        for child in element:
+            name = local(child.tag)
+            text = (child.text or "").strip()
+            if name == "PartNumber":
+                number = text
+            elif name == "ETag":
+                etag = text.strip('"').lower()
+        if number is None or not _PART_NUMBER.fullmatch(number) or int(number) > MULTIPART_MAX_PARTS:
+            raise ValueError("a part without a valid PartNumber")
+        if etag is None or not _ETAG_HEX.fullmatch(etag):
+            raise ValueError(f"part {number} without a valid ETag")
+        if parts and int(number) <= parts[-1][0]:
+            raise ValueError("the parts are not in ascending order")
+        parts.append((int(number), etag))
+        if len(parts) > MULTIPART_MAX_PARTS:
+            raise ValueError("too many parts")
+    if not parts:
+        raise ValueError("no parts listed")
+    return parts
 
 
 # ---------------------------------------------------------------------------
@@ -772,6 +1364,13 @@ _GET_OBJECT_PARAMS = frozenset(
         "response-expires",
     }
 )
+
+
+#: UploadPart (PUT), AbortMultipartUpload (DELETE) and
+#: CompleteMultipartUpload (POST); CreateMultipartUpload is POST ?uploads.
+_UPLOAD_PART_PARAMS = frozenset({"partNumber", "uploadId"})
+_UPLOAD_ID_PARAMS = frozenset({"uploadId"})
+_CREATE_UPLOAD_PARAMS = frozenset({"uploads"})
 
 
 _SIGNING_PARAMS = frozenset(
@@ -861,7 +1460,8 @@ class _S3Handler(_BaseHandler):
         except (ValueError, PermissionError) as exc:
             self._s3_error(400, "InvalidArgument", str(exc))
             return
-        if self._s3_refuse_query(frozenset(), body=True):
+        part = self._query_has("uploadId")
+        if self._s3_refuse_query(_UPLOAD_PART_PARAMS if part else frozenset(), body=True):
             return
         if self.headers.get("x-amz-copy-source") is not None:
             # CopyObject / UploadPartCopy: storing the (empty) body as the
@@ -882,6 +1482,9 @@ class _S3Handler(_BaseHandler):
         if not bucket or not key:
             self._s3_error(400, "InvalidArgument", "PUT requires bucket and key")
             return
+        if part:
+            self._handle_upload_part(bucket, key)
+            return
         if urlparse(self.path).path.endswith("/"):
             # "dir/" is a folder marker (console "Create folder", rclone
             # directory markers); _parse_path dropped the slash.
@@ -901,7 +1504,8 @@ class _S3Handler(_BaseHandler):
         except (ValueError, PermissionError) as exc:
             self._s3_error(400, "InvalidArgument", str(exc))
             return
-        if self._s3_refuse_query(frozenset(), body=True):
+        abort = self._query_has("uploadId")
+        if self._s3_refuse_query(_UPLOAD_ID_PARAMS if abort else frozenset(), body=True):
             return
         if self.headers.get("If-Match") is not None:
             self._s3_error(501, "NotImplemented", "conditional DELETE is not implemented")
@@ -909,7 +1513,44 @@ class _S3Handler(_BaseHandler):
         if not bucket or not key:
             self._s3_error(400, "InvalidArgument", "DELETE requires key")
             return
+        if abort:
+            self._handle_abort_upload(bucket, key)
+            return
         self._handle_delete_object(bucket, key)
+
+    def do_POST(self) -> None:
+        """CreateMultipartUpload (``?uploads``) and CompleteMultipartUpload
+        (``?uploadId=``); every other POST (DeleteObjects ``?delete``, a
+        browser form upload) is 501."""
+        if not self._is_authed():
+            self._s3_error(403, "AccessDenied", "missing or bad bearer token")
+            return
+        if self.config.read_only:
+            self._s3_error(403, "AccessDenied", "read-only reverse-server")
+            return
+        try:
+            bucket, key = self._parse_path()
+        except (ValueError, PermissionError) as exc:
+            self._s3_error(400, "InvalidArgument", str(exc))
+            return
+        names = set(self._query_names())
+        if "uploads" in names:
+            allowed = _CREATE_UPLOAD_PARAMS
+        elif "uploadId" in names:
+            allowed = _UPLOAD_ID_PARAMS
+        else:
+            allowed = frozenset()
+        if self._s3_refuse_query(allowed, body=True):
+            return
+        if not allowed:
+            self._s3_error(501, "NotImplemented", "the reverse-server serves no such POST")
+            return
+        if not self._multipart_target_ok(bucket, key):
+            return
+        if "uploads" in names:
+            self._handle_create_upload(bucket, key)
+        else:
+            self._handle_complete_upload(bucket, key)
 
     # ------- helpers ---------------------------------------------------
 
@@ -1218,6 +1859,27 @@ class _S3Handler(_BaseHandler):
         self.send_header("Server", HEAD_BANNER)
         self.end_headers()
 
+    def _body_reader(self, *, length_required: bool = True):
+        """The base's reader, and inside it the data of an ``aws-chunked``
+        body (:class:`_AwsChunkedBody`)."""
+        body = super()._body_reader(length_required=length_required)
+        if "aws-chunked" not in _content_codings(self.headers):
+            return body
+        wrapped = _AwsChunkedBody(body, self._decoded_length())
+        self._body = wrapped
+        return wrapped
+
+    def _decoded_length(self) -> int:
+        raw = (self.headers.get("x-amz-decoded-content-length") or "").strip(" \t")
+        if not raw:
+            raise _BodyError(411, "aws-chunked without x-amz-decoded-content-length")
+        if not _DIGITS.fullmatch(raw):
+            raise _BodyError(400, f"invalid x-amz-decoded-content-length {raw[:40]!r}")
+        length = int(raw)
+        if length > MAX_BODY_BYTES:
+            raise _BodyError(400, f"x-amz-decoded-content-length {length} exceeds cap {MAX_BODY_BYTES}")
+        return length
+
     def _s3_body_error(self, exc: _BodyError) -> None:
         # The body is not read: the connection cannot carry another
         # request after it.
@@ -1335,6 +1997,244 @@ class _S3Handler(_BaseHandler):
         self.send_header("Server", HEAD_BANNER)
         self.send_header("Content-Length", "0")
         self.end_headers()
+
+    # ------- multipart upload -------------------------------------------
+
+    def _multipart_target_ok(self, bucket: str, key: str) -> bool:
+        """A multipart call names an object: bucket and key, not a folder
+        marker (``key/``); refused (False) else."""
+        if not bucket or not key or urlparse(self.path).path.endswith("/"):
+            self._s3_error(400, "InvalidArgument", "a multipart upload needs a bucket and a key "
+                           "that does not end in '/'")
+            return False
+        return True
+
+    def _multipart_failed(self, exc: _MultipartError) -> None:
+        self._s3_error(exc.status, exc.s3_code, str(exc))
+
+    def _uploads(self) -> _MultipartUploads:
+        return self.server.multipart_uploads()
+
+    def _handle_create_upload(self, bucket: str, key: str) -> None:
+        if self._request_has_body():
+            self._s3_error(400, "InvalidArgument", "CreateMultipartUpload takes no body")
+            return
+        if self.headers.get("x-amz-copy-source") is not None:
+            self._s3_error(501, "NotImplemented", "UploadPartCopy is not implemented")
+            return
+        try:
+            upload_id = self._uploads().create(bucket, key)
+        except _MultipartError as exc:
+            self._multipart_failed(exc)
+            return
+        except OSError as exc:
+            self._s3_failure("CreateMultipartUpload", exc)
+            return
+        body = (
+            "<?xml version='1.0' encoding='UTF-8'?>"
+            '<InitiateMultipartUploadResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">'
+            f"<Bucket>{_xml_escape(bucket)}</Bucket><Key>{_xml_escape(key)}</Key>"
+            f"<UploadId>{upload_id}</UploadId></InitiateMultipartUploadResult>"
+        ).encode("utf-8")
+        self._send_simple(200, body, content_type="application/xml")
+
+    def _upload_id(self) -> str | None:
+        upload_id = self._query_param("uploadId")
+        if not _UPLOAD_ID.fullmatch(upload_id):
+            self._s3_error(404, "NoSuchUpload", "no such multipart upload")
+            return None
+        return upload_id
+
+    def _handle_upload_part(self, bucket: str, key: str) -> None:
+        """UploadPart: the body, of the Content-Length it announced, into
+        the upload's folder - only once the part number, the upload and
+        the room for it are checked (and only then 100 Continue)."""
+        if not self._multipart_target_ok(bucket, key):
+            return
+        upload_id = self._upload_id()
+        if upload_id is None:
+            return
+        number_text = self._query_param("partNumber")
+        if not _PART_NUMBER.fullmatch(number_text) or int(number_text) > MULTIPART_MAX_PARTS:
+            self._s3_error(400, "InvalidArgument",
+                           f"partNumber must be 1 to {MULTIPART_MAX_PARTS}")
+            return
+        number = int(number_text)
+        framed = "aws-chunked" in _content_codings(self.headers)
+        if not framed and (self.headers.get_all("Transfer-Encoding")
+                           or self.headers.get("Content-Length") in (None, "")):
+            self._s3_error(411, "MissingContentLength", "UploadPart needs a Content-Length")
+            return
+        try:
+            body = self._body_reader()
+        except _BodyError as exc:
+            self._s3_body_error(exc)
+            return
+        length = body._length  # the part's own bytes (aws-chunked: the decoded length)
+        try:
+            upload = self._uploads().reserve(upload_id, bucket, key, length)
+        except _MultipartError as exc:
+            self._multipart_failed(exc)
+            return
+        path = os.path.join(upload.folder, f"part-{number:05d}-{secrets.token_hex(8)}")
+        digest = hashlib.md5(usedforsecurity=False)
+        kept = False
+        try:
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) \
+                | getattr(os, "O_BINARY", 0)
+            with os.fdopen(os.open(path, flags, 0o600), "wb") as handle:
+                while chunk := body.read(PUT_CHUNK):
+                    handle.write(chunk)
+                    digest.update(chunk)
+            kept = self._uploads().commit_part(upload, number, length, length,
+                                               digest.hexdigest(), path)
+            if not kept:
+                self._s3_error(404, "NoSuchUpload",
+                               "the multipart upload was completed or aborted meanwhile")
+                return
+        except ValueError as exc:  # the client did not deliver the body
+            self._uploads().release(upload, length)
+            self._s3_error(400, "IncompleteBody", str(exc))
+            return
+        except OSError as exc:
+            self._uploads().release(upload, length)
+            self._s3_failure(f"UploadPart {bucket}/{key} #{number}", exc)
+            return
+        finally:
+            if not kept:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+        self.send_response(200)
+        self.send_header("ETag", f'"{digest.hexdigest()}"')
+        self.send_header("Content-Length", "0")
+        self.send_header("Server", HEAD_BANNER)
+        self.end_headers()
+
+    def _handle_abort_upload(self, bucket: str, key: str) -> None:
+        if not self._multipart_target_ok(bucket, key):
+            return
+        upload_id = self._upload_id()
+        if upload_id is None:
+            return
+        try:
+            self._uploads().abort(upload_id, bucket, key)
+        except _MultipartError as exc:
+            self._multipart_failed(exc)
+            return
+        self.send_response(204)
+        self.send_header("Server", HEAD_BANNER)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def _handle_complete_upload(self, bucket: str, key: str) -> None:
+        """CompleteMultipartUpload: the listed parts, in order, become the
+        object through the PUT's store (the old object stays until every
+        byte arrived). The 200 goes out before the assembly - a space every
+        MULTIPART_COMPLETE_TICK_S keeps the client waiting - and a failure
+        after it is an ``<Error>`` in that 200, as S3 answers."""
+        upload_id = self._upload_id()
+        if upload_id is None:
+            return
+        if self.headers.get_all("Transfer-Encoding") or self.headers.get("Content-Length") in (None, ""):
+            self._s3_error(411, "MissingContentLength", "the part list needs a Content-Length")
+            return
+        try:
+            length = self._content_length()
+        except ValueError as exc:
+            self._s3_error(400, "InvalidArgument", str(exc))
+            return
+        if length > MULTIPART_COMPLETE_MAX_BYTES:
+            self._s3_error(400, "InvalidArgument",
+                           f"the part list is longer than {MULTIPART_COMPLETE_MAX_BYTES} bytes")
+            return
+        try:
+            self._uploads().check(upload_id, bucket, key)  # before the body is invited
+        except _MultipartError as exc:
+            self._multipart_failed(exc)
+            return
+        try:
+            body = self._body_reader()
+            data = b"".join(iter(lambda: body.read(PUT_CHUNK), b""))
+            wanted = _parse_complete_parts(data)
+        except _BodyError as exc:
+            self._s3_body_error(exc)
+            return
+        except ValueError as exc:
+            self._s3_error(400, "MalformedXML", str(exc))
+            return
+        uploads = self._uploads()
+        try:
+            chosen = uploads.begin_complete(upload_id, bucket, key, wanted)
+        except _MultipartError as exc:
+            self._multipart_failed(exc)
+            return
+        ok = False
+        try:
+            etag = hashlib.md5(usedforsecurity=False)
+            for _size, md5, _file in chosen:
+                etag.update(bytes.fromhex(md5))
+            etag_text = f'"{etag.hexdigest()}-{len(chosen)}"'
+            self.close_connection = True  # the 200 has no length: it ends the connection
+            self.send_response(200)
+            self.send_header("Content-Type", "application/xml")
+            self.send_header("Server", HEAD_BANNER)
+            self.end_headers()
+            self.wfile.flush()
+            error = self._assemble(bucket, key, [f for _s, _m, f in chosen])
+            ok = error is None
+            if ok:
+                result = (
+                    '<CompleteMultipartUploadResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">'
+                    f"<Location>/{quote(bucket)}/{quote(key)}</Location>"
+                    f"<Bucket>{_xml_escape(bucket)}</Bucket><Key>{_xml_escape(key)}</Key>"
+                    f"<ETag>{_xml_escape(etag_text)}</ETag></CompleteMultipartUploadResult>"
+                )
+            else:
+                code, message = error
+                result = f"<Error><Code>{code}</Code><Message>{_xml_escape(message)}</Message></Error>"
+            try:
+                # No XML declaration: after the spaces it would make the
+                # document malformed (a declaration must come first).
+                self.wfile.write(result.encode("utf-8"))
+            except OSError as exc:
+                log.debug("reverse-s3 CompleteMultipartUpload: client gone: %s", exc)
+        finally:
+            uploads.end_complete(upload_id, ok=ok)
+
+    def _assemble(self, bucket: str, key: str, files: list[str]) -> tuple[str, str] | None:
+        """Store the parts as the object; None, or (S3 code, message)."""
+        stop = threading.Event()
+
+        def tick() -> None:  # the only writer until the join below
+            while not stop.wait(MULTIPART_COMPLETE_TICK_S):
+                try:
+                    self.wfile.write(b" ")
+                except OSError:
+                    return
+
+        ticker = threading.Thread(target=tick, name="axross-reverse-s3-complete", daemon=True)
+        ticker.start()
+        reader = _PartsReader(files)
+        try:
+            path = self._backend_path_for(bucket, key)
+            backend = self.config.backend
+            parent = backend.parent(path) if hasattr(backend, "parent") else ""
+            if parent:
+                _mkdir_best_effort(backend, parent)
+            self._store_body(path, reader)
+        except PermissionError as exc:
+            log.warning("reverse-s3 CompleteMultipartUpload %s/%s refused: %s", bucket, key, exc)
+            return ("AccessDenied", str(exc))
+        except Exception as exc:  # noqa: BLE001 - any failed commit is an error, never a result
+            log.warning("reverse-s3 CompleteMultipartUpload %s/%s failed: %s", bucket, key, exc)
+            return ("InternalError", str(exc))
+        finally:
+            reader.close()
+            stop.set()
+            ticker.join()
+        return None
 
     # ------- query helpers --------------------------------------------
 
@@ -1903,7 +2803,48 @@ class _ReverseHTTPServer(ThreadingHTTPServer):
 
     def __init__(self, *args, **kwargs) -> None:
         self._slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
+        #: Connections waiting for their next request, closed at once by
+        #: server_close: a stopped server must not serve a kept-alive
+        #: connection any further.
+        self._idle_lock = threading.Lock()
+        self._idle: set = set()
+        self._stopping = False
+        #: S3 multipart uploads in progress (None: not used yet).
+        self.multipart: _MultipartUploads | None = None
         super().__init__(*args, **kwargs)
+
+    def _enter_idle(self, connection) -> bool:
+        with self._idle_lock:
+            if self._stopping:
+                return False
+            self._idle.add(connection)
+            return True
+
+    def _leave_idle(self, connection) -> None:
+        with self._idle_lock:
+            self._idle.discard(connection)
+
+    def multipart_uploads(self) -> _MultipartUploads:
+        with self._idle_lock:
+            if self.multipart is None:
+                self.multipart = _MultipartUploads()
+            return self.multipart
+
+    def server_close(self) -> None:
+        with self._idle_lock:
+            self._stopping = True
+            idle = list(self._idle)
+            uploads, self.multipart = self.multipart, None
+        for connection in idle:
+            try:
+                # The plain socket's shutdown, also under TLS: the waiting
+                # thread's read then ends, and with it the connection.
+                socket.socket.shutdown(connection, socket.SHUT_RDWR)
+            except OSError:
+                pass
+        super().server_close()
+        if uploads is not None:
+            uploads.close()
 
     def process_request(self, request, client_address) -> None:
         if not self._slots.acquire(blocking=False):

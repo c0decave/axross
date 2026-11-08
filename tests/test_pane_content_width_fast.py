@@ -191,19 +191,21 @@ def test_sad_an_empty_folder_needs_no_width():
 
 
 def _data_calls(pane, measure) -> int:
+    """Per-row answers of the model: item_data is what both the model's
+    data() and the proxy's data() ask (the proxy without a source index)."""
     calls = [0]
-    real = FileTableModel.data
+    real = FileTableModel.item_data
 
     def counted(self, *args):
         calls[0] += 1
         return real(self, *args)
 
-    FileTableModel.data = counted
+    FileTableModel.item_data = counted
     try:
         pane._content_widths = {}
         measure(pane, 0)
     finally:
-        FileTableModel.data = real
+        FileTableModel.item_data = real
     return calls[0]
 
 

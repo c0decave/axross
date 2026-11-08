@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 from core import agent_profiles as AP
 from core.i18n import tr
 from ui.close_corner import add_close_corner
+from ui.handbook import install_help_key
 from ui.icon_provider import set_window_icon
 
 
@@ -38,6 +39,7 @@ class ProfilePickerDialog(QDialog):
                  conversation: bool = False) -> None:
         super().__init__(parent)
         set_window_icon(self, "agent")
+        install_help_key(self, "agent")  # F1: its handbook section (a window of its own)
         self.setWindowTitle(tr("Apply Profile to {title}").format(title=title))
         self.resize(720, 460)
         self._profiles = list(profiles)

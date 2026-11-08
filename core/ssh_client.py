@@ -511,6 +511,11 @@ class SSHSession(SessionLifecycle):
         self._thread_sftp: dict[int, paramiko.SFTPClient] = {}
         self._sftp_lock = threading.Lock()
         self._known_hosts_path = Path.home() / ".ssh" / "known_hosts"
+        #: Why checksum() cannot work on this session, once the server said
+        #: so for good: the hash tool is not installed, or the server
+        #: refuses to run commands. Every later call answers at once
+        #: instead of opening a channel per file to hear it again.
+        self._checksum_unavailable: dict[str, str] = {}
 
     @property
     def name(self) -> str:
@@ -1123,6 +1128,86 @@ class SSHSession(SessionLifecycle):
         self.sftp.rename(src, dst)
 
     @_sftp_errors_as_oserror
+    def set_attributes(self, path: str, *, mode: int | None = None,
+                       mtime: float | None = None) -> None:
+        """Set *path*'s permission bits and/or modification time with ONE
+        SETSTAT (chmod and set_modified are a round trip each). As
+        set_modified, the access time becomes now."""
+        sftp = self.sftp
+        if not isinstance(sftp, paramiko.SFTPClient):  # a stand-in client (tests)
+            if mode is not None:
+                sftp.chmod(path, mode)
+            if mtime is not None:
+                sftp.utime(path, (time.time(), mtime))
+            return
+        from paramiko.sftp import CMD_SETSTAT
+
+        attr = paramiko.SFTPAttributes()
+        if mode is not None:
+            attr.st_mode = mode
+        if mtime is not None:
+            attr.st_atime, attr.st_mtime = time.time(), mtime
+        sftp._request(CMD_SETSTAT, sftp._adjust_cwd(path), attr)
+
+    def rename_with_attributes(self, src: str, dst: str, *, mode: int | None = None,
+                               mtime: float | None = None) -> bool:
+        """:meth:`set_attributes` of *src*, then :meth:`rename` of *src* to
+        *dst*, in ONE round trip: both requests go out together and the
+        server handles them in order (a transfer's temp file gets the
+        source's mode and time, then its name). Returns whether the
+        attributes were set; raises what :meth:`rename` raises - a refused
+        posix-rename is tried again as a plain RENAME, as there."""
+        sftp = self.sftp
+        if not isinstance(sftp, paramiko.SFTPClient):  # a stand-in client (tests)
+            try:
+                self.set_attributes(src, mode=mode, mtime=mtime)
+                attributes_set = True
+            except OSError:
+                attributes_set = False
+            self.rename(src, dst)
+            return attributes_set
+        return self._rename_with_attributes(sftp, src, dst, mode, mtime)
+
+    @_sftp_errors_as_oserror
+    def _rename_with_attributes(self, sftp, src, dst, mode, mtime) -> bool:
+        from paramiko.sftp import CMD_EXTENDED, CMD_SETSTAT
+
+        attr = paramiko.SFTPAttributes()
+        if mode is not None:
+            attr.st_mode = mode
+        if mtime is not None:
+            attr.st_atime, attr.st_mtime = time.time(), mtime
+        receiver = _AnswersByNumber()
+        old, new = sftp._adjust_cwd(src), sftp._adjust_cwd(dst)
+        try:
+            setstat = sftp._async_request(receiver, CMD_SETSTAT, old, attr)
+            rename = sftp._async_request(receiver, CMD_EXTENDED, "posix-rename@openssh.com",
+                                         old, new)
+            while setstat not in receiver.answers or rename not in receiver.answers:
+                sftp._read_response()
+        finally:
+            try:
+                while any(owner is receiver for owner in list(sftp._expecting.values())):
+                    sftp._read_response()
+            finally:
+                answers = dict(receiver.answers)
+                receiver.answers.clear()
+
+        def ok(num: int) -> bool:
+            t, msg = answers[num]
+            try:
+                sftp._convert_status(msg)
+            except OSError:
+                return False
+            return True
+
+        attributes_set = ok(setstat)
+        if not ok(rename):
+            log.debug("posix-rename %s -> %s refused, falling back", src, dst)
+            sftp.rename(src, dst)
+        return attributes_set
+
+    @_sftp_errors_as_oserror
     def set_modified(self, path: str, mtime: float) -> None:
         """Set *path*'s modification time (epoch seconds) by SETSTAT, so a
         copy keeps its source's time. SFTP v3 keeps whole seconds and sets
@@ -1502,6 +1587,14 @@ class SSHSession(SessionLifecycle):
         except paramiko.SSHException as exc:
             raise OSError(f"copy failed: {exc}") from exc
 
+    def checksum_kinds(self, path: str = "", *, written: bool = False) -> frozenset[str] | None:
+        """The algorithms :meth:`checksum` can answer with here: none once
+        the server said it cannot hash (see ``_checksum_unavailable``),
+        otherwise unknown (None) - the transfer engine then asks."""
+        if "sha256" in self._checksum_unavailable:
+            return frozenset()
+        return None
+
     def checksum(self, path: str, algorithm: str = "sha256") -> str:
         """Exec ``sha256sum`` / ``md5sum`` on the remote and parse the
         output. Cheap compared to SFTP streaming the whole file to us.
@@ -1509,6 +1602,11 @@ class SSHSession(SessionLifecycle):
         Falls back to returning ``""`` when the requested algorithm
         lacks a CLI tool on the remote — caller then has the option to
         do a client-side streaming hash via :meth:`open_read`.
+
+        A missing tool, and a server that refuses to run commands at all
+        (an exec request turned down - not a channel it would not open,
+        which can be a passing channel limit), are remembered for the
+        session: a copy of 500 files asked 500 times.
         """
         tool = {
             "sha256": "sha256sum",
@@ -1517,11 +1615,26 @@ class SSHSession(SessionLifecycle):
         }.get(algorithm)
         if not tool:
             return ""
+        known = self._checksum_unavailable.get(algorithm)
+        if known == "missing":
+            return ""
+        if known is not None:
+            raise OSError(f"checksum failed: {known}")
         if not self._transport or not self._transport.is_active():
             raise ConnectionError("SSH transport not active")
         try:
             chan = self._transport.open_session()
-            chan.exec_command(f"{tool} -- {shlex.quote(path)}")
+            try:
+                chan.exec_command(f"{tool} -- {shlex.quote(path)}")
+            except paramiko.SSHException as exc:
+                if self._transport.is_active():
+                    # The channel opened, the command was turned down (the
+                    # connection still stands): this server runs no commands.
+                    for name in ("sha256", "sha1", "md5"):
+                        self._checksum_unavailable[name] = (
+                            f"the server refuses to run commands ({exc})")
+                chan.close()
+                raise
             # paramiko's makefile("r") still yields bytes on some
             # builds; decode explicitly so the f-string below doesn't
             # embed a ``b'...'`` repr.
@@ -1541,6 +1654,7 @@ class SSHSession(SessionLifecycle):
                 # No such tool on this host: "" lets the caller hash the
                 # stream, as documented above.
                 log.debug("%s unavailable on %s: %s", tool, self._profile.host, stderr.strip())
+                self._checksum_unavailable[algorithm] = "missing"
                 return ""
             if rc != 0:
                 raise OSError(f"{tool} failed on {path}: rc={rc} stderr={stderr!r}")

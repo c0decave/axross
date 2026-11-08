@@ -919,6 +919,13 @@ class S3Session(SessionLifecycle):
                 return []
             raise OSError(f"S3 get_bucket_lifecycle: {exc}") from exc
 
+    def checksum_kinds(self, path: str = "", *, written: bool = False) -> frozenset[str]:
+        """What :meth:`checksum` can answer: an ETag, as ``md5:`` or as the
+        ``s3-etag:`` fingerprint - never a SHA-256. The transfer engine
+        skips the HEAD request when neither can be compared with the
+        other side (a local file has only its SHA-256)."""
+        return frozenset({"md5", "s3-etag"})
+
     def checksum(self, path: str, algorithm: str = "sha256") -> str:
         """Return the object ETag.
 

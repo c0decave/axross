@@ -403,7 +403,7 @@ cuyo protocolo nativo no las soporta.
 | Identify File Type… | Clic derecho (selección) | Una fila por entrada: el tipo real según el contenido (magic bytes vía la base MIME de Qt, puremagic, una tabla de firmas propia), el tipo MIME, lo que afirma la extensión y un *mismatch* resaltado cuando no coinciden, tamaño y, para texto, codificación y finales de línea. Lee como mucho 64 KiB por fichero a través del backend, fuera del hilo de la GUI, con 15 s de timeout por fichero — un remoto muerto da una fila «timed out». Los ficheros locales muestran también la descripción de `file(1)` si está instalado. Scripting: `axross.file_type(b, path)`. |
 | Open Terminal Here | Clic derecho (también en espacio vacío) | Abre una shell en el dock de terminal en la carpeta: una carpeta seleccionada, si no la que se muestra. Los paneles locales obtienen una shell local que arranca en esa carpeta; los paneles SFTP / SCP una shell en la misma conexión SSH seguida de `cd -- '<carpeta>'` (entrecomillado con `shlex.quote`). Desactivado, con el motivo como tooltip, en protocolos sin shell. |
 | Open External Terminal Here | Clic derecho (paneles locales) | Lanza `$TERMINAL`, si no el primero instalado de x-terminal-emulator, gnome-terminal, konsole, xfce4-terminal, alacritty, kitty, foot, wezterm, xterm — con la carpeta como directorio de trabajo, desacoplado, sin shell de por medio. |
-| Duplicate Finder | Menú View | Agrupa los archivos indexados por hash de contenido, primero el mayor desperdicio: cada grupo muestra el espacio que liberaría y la línea de estado el total. Los archivos vacíos y los grupos que solo son enlaces duros de un archivo quedan ocultos salvo que se marque *Empty files* / *Hard links*. *Filter* (texto o patrones como `*.jpg *.png`; `Ctrl+F`), *At least* (un tamaño) y *Sort* (espacio a liberar, tamaño, copias, nombre, carpeta) acotan la lista; las copias de un grupo siguen en orden de superviviente (la primera se conserva). *Rebuild from Active Pane…* calcula los hashes de la carpeta en segundo plano con recuentos, bytes y *Cancel*: los archivos sin cambios no se vuelven a leer, los que desaparecieron desde el último escaneo salen del índice, y el informe nombra los archivos que no se pudieron leer, las carpetas que no se pudieron listar y los FIFOs, sockets o dispositivos omitidos (nunca se leen: podría colgarse). Un backend sin checksum de contenido propio (SMB, FTP simple, WebDAV solo con ETags) hace leer sus archivos en su lugar — solo los que comparten tamaño con otro archivo, y solo mientras coincidan sus primeros 64 KiB; un ETag nunca cuenta como hash. *Mark All Duplicates (keep first)* conserva la copia más antigua; *Mark, Keeping…* (también en el menú contextual) conserva la copia más reciente, la ruta más corta o una copia dentro de una carpeta, o marca las copias dentro de una carpeta; un enlace duro de una copia conservada nunca se marca, y los enlaces duros no cuentan como espacio a liberar. *Move Selected to Trash…* (`Del`) mueve las copias marcadas a la papelera de axross tras comprobar en vivo que queda otra copia real. `Enter` abre la carpeta contenedora, la línea bajo la lista muestra la fila actual completa (tamaño exacto, hash, enlaces duros), y se pueden copiar URLs `ax-cas://…`. Miles de grupos aparecen por partes mientras la ventana sigue usable. |
+| Duplicate Finder | Menú View, `Ctrl+Shift+D` | Agrupa los archivos indexados por hash de contenido y mueve las copias sobrantes a la papelera — ver *Duplicate Finder* en *Herramientas*. |
 | View Media… / View Selected Media… | Click derecho, menú View | Imágenes, PDFs y vídeos de la carpeta (opcionalmente recursivo) o de la selección como grid overview, visor para ir pasando o slideshow — ver *Editores y visores*. |
 | Show / Remove / Export Metadata… | Click derecho | EXIF / GPS / XMP / IPTC, propiedades de Office, info de PDF, tags de audio / vídeo de la selección — o de toda la carpeta si no hay nada seleccionado (subcarpetas opcionales) — ver *Metadata de ficheros*. |
 | Cut / Paste | Click derecho (Paste también en el espacio vacío), `Ctrl+X` / `Ctrl+V` | Cut recuerda la selección y no elimina nada (las entradas se atenúan); Paste en cualquier panel las mueve a su carpeta por la cola de transferencias - ver *Transferencias*. Un cut que nunca se pega lo deja todo en su sitio. |
@@ -652,8 +652,8 @@ vuelve a acoplar.
   `I` (o el botón *Info*) muestra la metadata del elemento actual en
   un panel lateral, con *Remove metadata* — también en el visor de
   imágenes.
-- **Media Player** (extensión incluida, *Extensions → Manage
-  Extensions…*) — un dock que reproduce MP3, WAV, Ogg Vorbis, FLAC,
+- **Media Player** (extensión incluida; su botón de la barra de
+  herramientas o *Extensions → Media Player* ofrece activarla) — un dock que reproduce MP3, WAV, Ogg Vorbis, FLAC,
   Opus, AAC y más - y radio por internet: *URL…* añade un stream por su
   dirección http / https (la playlist .m3u de una emisora también los
   nombra; un stream no tiene posición a la que saltar). Las pistas se añaden con click derecho → *Play in
@@ -729,8 +729,10 @@ vuelve a acoplar.
   archivos soltados sobre el panel siguen llegando a la playlist. La
   visualización, sus colores y opciones, y el ecualizador y la playlist
   plegados vuelven en el siguiente inicio.
-- **Chat** (extensiones incluidas IRC, Matrix y XMPP, *Extensions → Manage
-  Extensions…*) — el editor de cuentas ofrece servidores públicos conocidos
+- **Chat** (extensiones incluidas IRC, Matrix y XMPP: se activan en
+  *Extensions → Manage Extensions…* y luego el menú Extensions muestra y
+  oculta el panel de cada una; Matrix y XMPP necesitan el extra `chat`,
+  que ofrece *Help → Features…*) — el editor de cuentas ofrece servidores públicos conocidos
   en una lista editable (siempre se puede escribir uno propio): una copia
   viene con axross, *Refresh list* descarga los directorios públicos (la
   lista de redes de irssi, joinmatrix.org, la lista XMPP Providers) a través
@@ -740,8 +742,8 @@ vuelve a acoplar.
   100 000 canales). Un candado junto a cada cuenta y conversación muestra la
   protección: TLS hasta el servidor, cifrado de extremo a extremo (todas las
   claves verificadas o no) o texto claro.
-- **Bluetooth** (extensión incluida, *Extensions → Manage
-  Extensions…*) — un panel para conectar altavoces, auriculares y otros
+- **Bluetooth** (extensión incluida; *Tools → Bluetooth* ofrece
+  activarla) — un panel para conectar altavoces, auriculares y otros
   dispositivos Bluetooth a través de BlueZ (`bluetoothd`) en el D-Bus del
   sistema; no se inicia ningún programa. Muestra el adaptador (si hay
   varios: elige uno) con el interruptor *Powered*, y *Scan* lista lo que
@@ -842,48 +844,8 @@ vuelve a acoplar.
   guarda en `audio.json` como en **Edit → Settings… → Audio** (que conserva
   el backend, el dispositivo de entrada y las pruebas) y los reproductores
   en marcha lo siguen al instante.
-- **System Information** (extensión incluida, **Tools → System
-  Information…** ofrece activarla; después también *Extensions → System
-  Information…*) — una ventana con todo sobre el ordenador en el que
-  corre axross. *Overview*: el nombre, fabricante, modelo y sistema del
-  ordenador con sus cifras clave (hilos de CPU, memoria, almacenamiento,
-  pantallas), y tarjetas con anillos para la carga de CPU, la memoria, el
-  swap, el sistema de archivos raíz y la batería (carga y salud), las
-  temperaturas más altas en una escala de color (verde hasta 60 °C,
-  ámbar, naranja desde 80 °C o la marca alta del propio sensor, rojo
-  desde 90 °C o crítica), la gráfica con las pantallas conectadas y las
-  interfaces de red con su caudal en vivo; CPU y memoria tienen una
-  sparkline de los dos últimos minutos. Un clic en una tarjeta abre su
-  página. La lista de la izquierda tiene una página para *CPU* (uso por
-  CPU lógica, núcleos P y E, frecuencias, cachés, las características del
-  juego de instrucciones como chips, la vista del kernel sobre las
-  vulnerabilidades de la CPU), *Memory* (en uso, caché y libre en una
-  barra, swap), *Storage* (una barra por disco con sus particiones,
-  puntos de montaje y uso; discos y sistemas de archivos como tablas),
-  *Graphics & Displays* (adaptadores, salidas con el nombre, la
-  resolución, la frecuencia y el tamaño del monitor según su EDID, un
-  esquema de las pantallas), *Network* (interfaces con tipo, estado,
-  velocidad o señal Wi-Fi, driver y tráfico; adaptadores Bluetooth;
-  interruptores de radio), *Audio* (tarjetas de sonido, códecs,
-  dispositivos PCM), *USB & Peripherals* (el árbol USB y los dispositivos
-  de entrada), *PCI* (el árbol PCI, nombres de `pci.ids`), *Battery &
-  Power*, *Sensors* (temperaturas, ventiladores, voltajes), *System & OS*
-  (fabricante, modelo, firmware, Secure Boot, kernel, escritorio,
-  versiones) y *Virtualisation* (máquina física, máquina virtual o
-  contenedor, con los indicios). Todo se lee de `/proc` y `/sys` sin root
-  y sin arrancar ningún programa (en Windows y macOS menos: lo que dicen
-  Python y el psutil opcional); cada fuente tiene un plazo, y una sección
-  que no se puede leer dice por qué - las demás no esperan. El campo de
-  búsqueda (`/`) filtra todas las páginas a la vez y la lista cuenta los
-  resultados por página. *Copy Section*, *Copy All* y *Save Report…*
-  (texto o JSON) exportan lo recogido; *JSON Export* guarda todo como
-  archivo JSON o copia todo / la página mostrada como JSON (cada valor,
-  tabla y lectura en bruto). Los números de serie, las
-  direcciones MAC e IP y los UUID quedan ocultos en pantalla y en cada
-  copia hasta marcar *Show identifiers* - estos informes se suelen pegar
-  en público. Los valores en vivo se leen una vez por segundo mientras la
-  ventana está a la vista, nunca oculta; *Refresh* lo recoge todo de
-  nuevo. La ventana conserva su tamaño.
+- **System Information** (extensión incluida) — ver *System Information*
+  en *Extensiones incluidas*.
 - **Terminal SSH** — dock con pestañas junto a la cola de
   transferencias. PTY local (`pty.fork()`) y SSH-remoto via
   paramiko están ambos disponibles; la variante SSH reusa la
@@ -937,6 +899,210 @@ sobre el contenido del fichero. Scripts: `axross.metadata`,
 `axross.remove_metadata`, `axross.export_metadata` (ver
 [SCRIPTING_es.md](SCRIPTING_es.md)).
 
+## Herramientas
+
+Ventanas de los menús *View* y *Tools* que no son un panel. **F1** en
+cada una abre su parte de esta sección.
+
+### Duplicate Finder
+
+*View → Duplicate Finder…* (`Ctrl+Shift+D`; en un panel, clic derecho →
+*Find Duplicate Files…*) trabaja con el índice de duplicados
+(`cas.sqlite`, ver *El índice offline*).
+Agrupa los archivos indexados por hash de contenido, primero el mayor desperdicio: cada grupo muestra el espacio que liberaría y la línea de estado el total. Los archivos vacíos y los grupos que solo son enlaces duros de un archivo quedan ocultos salvo que se marque *Empty files* / *Hard links*. *Filter* (texto o patrones como `*.jpg *.png`; `Ctrl+F`), *At least* (un tamaño) y *Sort* (espacio a liberar, tamaño, copias, nombre, carpeta) acotan la lista; las copias de un grupo siguen en orden de superviviente (la primera se conserva). *Rebuild from Active Pane…* calcula los hashes de la carpeta en segundo plano con recuentos, bytes y *Cancel*: los archivos sin cambios no se vuelven a leer, los que desaparecieron desde el último escaneo salen del índice, y el informe nombra los archivos que no se pudieron leer, las carpetas que no se pudieron listar y los FIFOs, sockets o dispositivos omitidos (nunca se leen: podría colgarse). Un backend sin checksum de contenido propio (SMB, FTP simple, WebDAV solo con ETags) hace leer sus archivos en su lugar — solo los que comparten tamaño con otro archivo, y solo mientras coincidan sus primeros 64 KiB; un ETag nunca cuenta como hash. *Mark All Duplicates (keep first)* conserva la copia más antigua; *Mark, Keeping…* (también en el menú contextual) conserva la copia más reciente, la ruta más corta o una copia dentro de una carpeta, o marca las copias dentro de una carpeta; un enlace duro de una copia conservada nunca se marca, y los enlaces duros no cuentan como espacio a liberar. *Move Selected to Trash…* (`Del`) mueve las copias marcadas a la papelera de axross tras comprobar en vivo que queda otra copia real. `Enter` abre la carpeta contenedora, la línea bajo la lista muestra la fila actual completa (tamaño exacto, hash, enlaces duros), y se pueden copiar URLs `ax-cas://…`. Miles de grupos aparecen por partes mientras la ventana sigue usable.
+
+*View → Duplicate Index & History…* muestra el índice por sí solo: cada
+reconstrucción queda registrada como un escaneo, listado con su carpeta,
+backend, inicio y fin, los archivos indexados, los que siguen en el
+índice, los grupos de duplicados y su estado. *Show Duplicates* abre el
+Duplicate Finder sobre los grupos de ese escaneo, *Re-scan* recorre otra
+vez la misma carpeta en el mismo backend en segundo plano (con *Cancel*;
+se registra un escaneo nuevo), *Remove from Index…* olvida las filas de
+ese escaneo y *Clear Whole Index…* todas las filas - los archivos se
+quedan donde están. Las filas indexadas antes de que se registraran los
+escaneos forman una entrada *earlier*: se puede mostrar y quitar, no
+volver a escanear (su carpeta es desconocida).
+
+### Disk Usage
+
+*View → Disk Usage…* es una tabla con la capacidad de cada conexión
+abierta (cada conexión una vez, la muestren cuantos paneles la muestren):
+backend, protocolo, total, usado, libre y una barra de la parte usada.
+Las consultas corren fuera del hilo de la GUI, cada una con su timeout.
+Una conexión que no informa capacidad (IMAP, LDAP, la mayoría de los
+object stores en la nube) o que no respondió a tiempo muestra *not
+supported* y ninguna barra - no se midió nada, y eso no es 0 %; la línea
+de abajo las cuenta. *Refresh* mide de nuevo.
+
+### Scheduled Jobs
+
+*View → Scheduled Jobs…* ejecuta un script guardado (el dock *Scripts*)
+a intervalos: dale al job un nombre, el nombre del script y un intervalo
+(5 minutos, 15 minutos, 1 hora, 6 horas, 1 día o uno propio de al menos
+300 s) y *Add*. La tabla muestra de cada job el script, el intervalo, la
+última ejecución, el estado, la próxima ejecución y el detalle de la
+última; *Enable / disable* y *Remove* actúan sobre el job seleccionado.
+Los jobs solo corren mientras axross está abierto (comprueba una vez por
+minuto), cada uno en un proceso hijo como una ejecución desde el dock
+Scripts, no interactivo (una pregunta se rechaza en lugar de esperar),
+como mucho 24 horas y 1 000 000 caracteres de salida por ejecución. Un
+job que sigue corriendo no se vuelve a iniciar; las citas perdidas con
+axross cerrado dan una ejecución, no una cola; tras 10 fallos seguidos un
+job se desactiva solo y dice por qué (*Enable / disable* lo vuelve a
+activar). El modo de seguridad paranoid rechaza las ejecuciones. Los
+scripts que ejecuta un job llevan `[scheduled]` en el dock Scripts. Los
+jobs se guardan en `~/.local/state/axross/jobs.json`.
+
+### Diagnóstico y Recovery Scan
+
+- **Tools → Run Active Pane Diagnostics…** comprueba la conexión del
+  panel activo: su carpeta home, un listado y un stat de la carpeta
+  mostrada y - tras una pregunta, nunca en el modo de seguridad
+  paranoid - una prueba que escribe, renombra y borra allí un pequeño
+  fichero `.axross-diagnostic-*`. El informe da cada comprobación como
+  `[OK]` o `[FAIL]` con su detalle, sin contraseñas ni tokens; corre
+  fuera del hilo de la GUI.
+- **Tools → Recovery Scan…** lista lo que se puede recuperar en la
+  carpeta del panel activo: ficheros temporales que dejó una escritura
+  atómica interrumpida (`.tmp-*.tmp`, también los antiguos
+  `.axross-atomic-*.tmp`) y las entradas de la papelera de axross de esa
+  conexión con su ruta original y tamaño. No borra nada: *Show Trash…*
+  restaura, y los restos de más de una hora los quita un panel al abrir
+  su carpeta.
+
+## Extensiones incluidas
+
+axross trae extensiones en `resources/extensions/`; todas empiezan
+desactivadas, y *Extensions → Manage Extensions…* las activa y
+desactiva. Un botón de la barra de herramientas (Media Player, Folder
+Treemap, Drives Overview) y las entradas *Tools → Audio Mixer*, *Tools →
+Bluetooth* y *Tools → System Information…* ofrecen activar su extensión
+cuando está desactivada. Media Player, Chat, Bluetooth y Audio Mixer se
+describen en *Editores y visores*, Agent Stats en *Dock Agent*. Las demás:
+Drives Overview y Markdown Preview son paneles; Checksum Manifest
+(*Create SHA256SUMS*), Forensic Tools (imágenes de disco: hashes,
+qemu-img, The Sleuth Kit, TestDisk, PhotoRec) y VirtualBox añaden
+entradas al menú contextual. Cómo se confía en las extensiones, cómo se
+pausan y se escriben - y la `api` que reciben - está en
+[EXTENSIONS.md](EXTENSIONS.md) (en inglés).
+
+### Arcade
+
+*Extensions → Arcade…* abre una ventana con los cuatro pequeños juegos
+propios de axross: **Byte Chase** (recoge cada bit de un laberinto
+mientras cuatro daemons te persiguen; una root key los da la vuelta un
+rato), **Tilt Maze** (100 niveles en 10 mundos sobre un tablero
+isométrico, Espacio salta sobre los daemons y los pozos), **Rockfall**
+(40 cuevas en 5 mundos: excava en busca de cristales bajo rocas que caen
+y llega a tiempo a la salida) y **Trail Runner** (los corredores dejan
+muros tras de sí; 1-3 corredores del ordenador o dos jugadores en un
+teclado, Espacio acelera). En el selector las flechas o W A S D eligen y
+Enter o un clic empieza; un juego ofrece *Start at level 1*, *Continue at
+level n* y un *world code* que abre un mundo ya alcanzado. En el juego:
+flechas o W A S D dirigen, `P` pausa, `M` silencia, `R` empieza de nuevo
+al terminar, Esc vuelve al selector y, desde allí, cierra la ventana.
+Cada nivel se genera, la música y los sonidos se sintetizan y siguen la
+salida del Audio Mixer; los récords y el progreso se guardan en
+`~/.config/axross/arcade.json` y `arcade-progress.json`.
+
+### Folder Treemap
+
+Un panel (el botón *Folder Treemap* de la barra de herramientas o
+*Extensions → Folder Treemap*) que dibuja la carpeta del panel activo como
+cajas cuya área es el tamaño: archivos y subcarpetas, las subcarpetas
+sumadas en segundo plano a través de la conexión - como mucho 20 000
+entradas y 12 niveles, sin seguir enlaces a carpetas. Una suma que se
+detuvo ahí lleva *(at least)* en el tooltip, que nombra la caja y su
+tamaño. Un doble clic en una caja de carpeta la abre en el panel; salir
+de una carpeta antes de que termine su recorrido lo detiene. El botón de
+pausa de la barra de título del panel deja de seguir al panel de
+archivos.
+
+### Entropy Heatmap
+
+Clic derecho en un fichero → *Entropy Heatmap…*: la entropía de Shannon
+de cada bloque de 4 KiB de sus primeros 16 MiB como franja de color -
+azul para texto, tablas y relleno, rojo para datos comprimidos o
+cifrados - con la media y el valor más alto en bits por byte y un
+veredicto (*looks compressed or encrypted throughout*, la parte de tales
+bloques, *low entropy* o *mixed content*). El fichero se lee en segundo
+plano a través de su conexión, así que los ficheros remotos también
+funcionan.
+
+### Backup Repositories
+
+Clic derecho en una carpeta (o en nada, para la carpeta mostrada) →
+*Backup Repository Info…* dice qué contiene un repositorio **restic**,
+**Borg** o **duplicity**, sin contraseña y en cualquier backend, solo por
+su estructura: de restic el número de snapshots, claves, índices y
+carpetas de packs; de Borg el `config` en claro (versión, id, ajustes de
+segmentos, append-only, repokey o keyfile) y el número de segmentos; de
+duplicity cada cadena de backups con sus backups completos e
+incrementales, sus horas, volúmenes, tamaño y cifrado. *Unlock…* pide la
+contraseña (y un fichero de clave de Borg cuando el repositorio lo usa) y
+lista los snapshots o archivos con la propia herramienta (`restic
+snapshots`, `borg list`, `duplicity collection-status`) - solo
+repositorios locales. La contraseña va al entorno de la herramienta o a
+la entrada de gpg, nunca a una línea de comandos, y no se guarda; en el
+repositorio no se escribe nada.
+
+### Image Batch
+
+Selecciona imágenes (`.png .jpg .jpeg .webp .bmp .gif .tif .tiff`), clic
+derecho → *Resize / Convert Images…*: el lado más largo en píxeles (0
+mantiene el tamaño; nunca se amplía) y el formato (PNG, JPEG o WebP). Las
+copias van a una subcarpeta `resized`, como `name (2).jpg` si el nombre ya
+existe - nada se sobrescribe y los originales quedan intactos. Las fotos
+se enderezan primero según su orientación EXIF; un JPEG recibe las partes
+transparentes sobre blanco. Las imágenes de más de 64 MiB y los ficheros
+que no son imagen se omiten y se cuentan. Funciona en cualquier backend;
+el panel se recarga al terminar el lote.
+
+### System Information
+
+**System Information** (extensión incluida, **Tools → System
+Information…** ofrece activarla; después también *Extensions → System
+Information…*) — una ventana con todo sobre el ordenador en el que
+corre axross. *Overview*: el nombre, fabricante, modelo y sistema del
+ordenador con sus cifras clave (hilos de CPU, memoria, almacenamiento,
+pantallas), y tarjetas con anillos para la carga de CPU, la memoria, el
+swap, el sistema de archivos raíz y la batería (carga y salud), las
+temperaturas más altas en una escala de color (verde hasta 60 °C,
+ámbar, naranja desde 80 °C o la marca alta del propio sensor, rojo
+desde 90 °C o crítica), la gráfica con las pantallas conectadas y las
+interfaces de red con su caudal en vivo; CPU y memoria tienen una
+sparkline de los dos últimos minutos. Un clic en una tarjeta abre su
+página. La lista de la izquierda tiene una página para *CPU* (uso por
+CPU lógica, núcleos P y E, frecuencias, cachés, las características del
+juego de instrucciones como chips, la vista del kernel sobre las
+vulnerabilidades de la CPU), *Memory* (en uso, caché y libre en una
+barra, swap), *Storage* (una barra por disco con sus particiones,
+puntos de montaje y uso; discos y sistemas de archivos como tablas),
+*Graphics & Displays* (adaptadores, salidas con el nombre, la
+resolución, la frecuencia y el tamaño del monitor según su EDID, un
+esquema de las pantallas), *Network* (interfaces con tipo, estado,
+velocidad o señal Wi-Fi, driver y tráfico; adaptadores Bluetooth;
+interruptores de radio), *Audio* (tarjetas de sonido, códecs,
+dispositivos PCM), *USB & Peripherals* (el árbol USB y los dispositivos
+de entrada), *PCI* (el árbol PCI, nombres de `pci.ids`), *Battery &
+Power*, *Sensors* (temperaturas, ventiladores, voltajes), *System & OS*
+(fabricante, modelo, firmware, Secure Boot, kernel, escritorio,
+versiones) y *Virtualisation* (máquina física, máquina virtual o
+contenedor, con los indicios). Todo se lee de `/proc` y `/sys` sin root
+y sin arrancar ningún programa (en Windows y macOS menos: lo que dicen
+Python y el psutil opcional); cada fuente tiene un plazo, y una sección
+que no se puede leer dice por qué - las demás no esperan. El campo de
+búsqueda (`/`) filtra todas las páginas a la vez y la lista cuenta los
+resultados por página. *Copy Section*, *Copy All* y *Save Report…*
+(texto o JSON) exportan lo recogido; *JSON Export* guarda todo como
+archivo JSON o copia todo / la página mostrada como JSON (cada valor,
+tabla y lectura en bruto). Los números de serie, las
+direcciones MAC e IP y los UUID quedan ocultos en pantalla y en cada
+copia hasta marcar *Show identifiers* - estos informes se suelen pegar
+en público. Los valores en vivo se leen una vez por segundo mientras la
+ventana está a la vista, nunca oculta; *Refresh* lo recoge todo de
+nuevo. La ventana conserva su tamaño.
+
 ## Dock de Transferencias / Terminal / Log
 
 - La franja inferior tiene tres pestañas: **Transfers**, **Terminal**,
@@ -989,6 +1155,11 @@ puertas al mismo surface:
   paranoid, también si se eligió en *Settings*, lo rechaza.
 - **MCP** — si ``--mcp-allow-scripts`` está activo, el surface
   también es alcanzable vía herramientas MCP.
+- **Help → Scripting Guide** — la guía de scripting dentro de axross
+  (SCRIPTING_es.md, en el idioma de la interfaz cuando hay versión) y,
+  en su segunda pestaña, la referencia de la API (el texto de
+  `axross.docs()`), con índice y un campo de búsqueda (Return busca la
+  siguiente coincidencia).
 
 Ejemplos:
 
@@ -1640,7 +1811,12 @@ Piper local.
 
 **Tools → Mail Docks…** configura agentes que vigilan cada uno un buzón (un perfil IMAP,
 POP3 o Exchange guardado y una carpeta). Cada dock tiene su panel: qué vigila, cuándo se
-ejecuta, su registro, *Run Now*, *Pause*, *Settings…*. Ajustes: el intervalo, las
+ejecuta, su registro (con cada llamada a herramienta de su agente), *Run Now*, *Stop*
+(termina la ejecución en curso; un correo que espera su respuesta no se envía), *Pause*
+(se conserva para el próximo inicio, como desmarcar *Run on its timer* en sus ajustes),
+*Settings…* y *Open Drafts Folder* (los borradores POP3, en un panel). Un dock cerrado
+vuelve con **View → Panels**; la ventana Mail Docks añade, edita, muestra y elimina docks.
+Un dock necesita un buzón. Ajustes: el intervalo, las
 **instrucciones** que sigue en cada ejecución, el perfil LLM, el perfil de **sandbox** (el
 modelo y el agente corren dentro; las credenciales del buzón nunca) y la **política de
 envío** con el servidor SMTP.
@@ -1893,6 +2069,8 @@ security mode; *Check Now* sigue funcionando.
   fingerprint cliente-a-servidor que Axross emite y cómo suprimirlo.
 - **¿Manejar Axross desde un LLM?** [MCP_es.md](MCP_es.md) es la
   referencia canónica del protocolo.
+- **¿Escribir o activar extensiones?** [EXTENSIONS.md](EXTENSIONS.md)
+  explica la confianza, la pausa y la `api` de las extensiones (en inglés).
 - **¿Construir o contribuir?** [DEVELOPMENT.md](DEVELOPMENT.md) tiene
   la suite de tests, el compose del lab, y la matriz de cobertura.
 - **¿Manual en alemán?** [USAGE_de.md](USAGE_de.md).

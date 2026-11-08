@@ -30,7 +30,7 @@ def activate(api):
     panel = ChatPanel(chat_irc.PROTOCOL)
     panel.attention.connect(api.notify)
     _PANELS.append(panel)
-    api.add_dock(tr("IRC"), panel, icon="chat")
+    api.add_dock(tr("IRC"), panel, icon="irc")
     panel.connect_autostart()
 
 

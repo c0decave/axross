@@ -140,4 +140,4 @@ def activate(api):
         )
 
     api.add_context_action("Resize / Convert Images…", batch, applies_to="files",
-                           extensions=SUFFIXES)
+                           extensions=SUFFIXES, icon="image")

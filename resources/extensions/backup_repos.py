@@ -467,7 +467,8 @@ def activate(api):
         api.run_in_background(lambda: basic_info(ctx.backend, folder), on_done=done,
                               on_error=lambda exc: api.notify(str(exc)))
 
-    api.add_context_action("Backup Repository Info…", show, applies_to="folder")
+    api.add_context_action("Backup Repository Info…", show, applies_to="folder", icon="archive")
     # One repository per window, each with its own password prompt: offered
     # for ONE selected folder, so no selected folder is silently skipped.
-    api.add_context_action("Backup Repository Info…", show, applies_to="single_folder")
+    api.add_context_action("Backup Repository Info…", show, applies_to="single_folder",
+                           icon="archive")

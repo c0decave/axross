@@ -165,3 +165,67 @@ def test_edge_readable_colour_moves_only_as_far_as_needed():
     finally:
         IP.set_tint(None)
         IP.set_backdrop(before)
+
+
+#: The themes the feature/icon/menu audit (2026-11-08) measured every icon on.
+AUDIT_THEMES = ("modern-light", "modern-dark", "hacker")
+#: Drawn under a theme tint only (ui.icon_provider.entry_icon): the tint, not
+#: their own colour, is what they show.
+TINT_ONLY = {"file-matrix", "folder-matrix"}
+
+
+def _icon_names_in_the_code() -> set[str]:
+    """Every icon name the code asks for by a literal: icon("x"),
+    _menu_icon(action, "x"), set_window_icon(w, "x"), icon="x" ..."""
+    import re
+
+    root = Path(__file__).resolve().parent.parent
+    pattern = re.compile(
+        r'''(?:\bicon|_ico|_menu_icon|set_window_icon|_icon)\(\s*(?:[^,()"']+,\s*)?["']([a-z][a-z0-9-]*)["']'''
+        r'''|\bicon(?:_name)?\s*=\s*["']([a-z][a-z0-9-]*)["']''')
+    names: set[str] = set()
+    files = [*(root / "ui").rglob("*.py"), *(root / "core").rglob("*.py"),
+             *(root / "resources" / "extensions").rglob("*.py")]
+    for path in files:
+        for match in pattern.finditer(path.read_text(encoding="utf-8")):
+            names.add(match.group(1) or match.group(2))
+    return names
+
+
+@pytest.mark.parametrize("theme", AUDIT_THEMES)
+def test_happy_every_icon_reads_on_the_window_and_its_menus(window, theme):
+    """Not only the toolbar's: every icon, on the window's background and
+    on the menus' and title bars' surface. The audit found the Agent dock's
+    robot (``bot``, no colour of its own: drawn black) at 1.16:1 on Modern
+    Dark - in its title bar, Send to Agent, the LLM settings."""
+    window._apply_theme(theme)
+    pump(0.2)
+    try:
+        _assert_every_icon_reads(theme)
+    finally:
+        # Hacker Mode's tint would stay for the tests after this one.
+        window._apply_theme(themes.DEFAULT_THEME)
+
+
+def _assert_every_icon_reads(theme: str) -> None:
+    tokens = themes.palette_tokens_for(themes.resolve(theme, themes.system_scheme()))
+    backgrounds = {tokens["bg"], tokens["surface"]}
+    used = _icon_names_in_the_code()
+    assert {"bot", "agent", "mail"} <= used  # the scan found the uses
+    assert used <= set(IP.ICONS), used - set(IP.ICONS)
+    weak = []
+    for name in sorted(set(IP.ICONS) - TINT_ONLY):
+        image = IP.icon(name).pixmap(32, 32).toImage()
+        opaque = Counter()
+        for x in range(image.width()):
+            for y in range(image.height()):
+                pixel = image.pixelColor(x, y)
+                if pixel.alpha() >= 250:
+                    opaque[(pixel.red(), pixel.green(), pixel.blue())] += 1
+        assert opaque, name  # something was drawn
+        stroke = _name(opaque.most_common(1)[0][0])
+        for back in backgrounds:
+            ratio = themes.contrast_ratio(stroke, back)
+            if ratio < 3.0:
+                weak.append((name, stroke, back, round(ratio, 2)))
+    assert weak == [], f"{theme}: {weak}"

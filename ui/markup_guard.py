@@ -275,9 +275,14 @@ def _wrap_text_at(cls, name: str, index: int, *, unless_plain: bool = False) -> 
 
     @functools.wraps(original)
     def wrapper(self, *args, **kwargs):
-        if len(args) > index and not (unless_plain and _is_plain(self)):
-            args = list(args)
-            args[index] = defuse(args[index])
+        # defuse() hands back anything but a str with a "<" as it is: the
+        # rest is not looked at (setToolTip runs for every item of a list).
+        if len(args) > index:
+            value = args[index]
+            if isinstance(value, str) and "<" in value \
+                    and not (unless_plain and _is_plain(self)):
+                args = list(args)
+                args[index] = defuse(value)
         return original(self, *args, **kwargs)
 
     setattr(cls, name, wrapper)
@@ -309,17 +314,39 @@ def _is_plain(widget) -> bool:
 
 def _wrap_role_data(cls, name: str, role_index: int, value_index: int) -> None:
     """Wrap ``cls.name`` (setData / setItemData) so a ToolTipRole value is
-    defused: ``combo.setItemData(i, text, ToolTipRole)`` and friends."""
+    defused: ``combo.setItemData(i, text, ToolTipRole)`` and friends -
+    positional or by keyword (``setData(text, role=ToolTipRole)``).
+
+    setData is virtual: once wrapped, sip routes Qt's own calls through
+    here too (setText, setEditable, setFlags, setIcon all set data) -
+    300,000 calls for a 50,000-member archive tree. So the common answer
+    comes first and costs no more than a type test: only a str holding a
+    "<" can be what defuse() changes (it hands every other value back
+    as it is), and only then is the role compared."""
     from PyQt6.QtCore import Qt
 
     original = getattr(cls, name)
-    tooltip = Qt.ItemDataRole.ToolTipRole
+    tooltip = int(Qt.ItemDataRole.ToolTipRole)
+    needed = max(role_index, value_index)
 
     @functools.wraps(original)
     def wrapper(self, *args, **kwargs):
-        if len(args) > max(role_index, value_index) and args[role_index] in (tooltip, int(tooltip.value)):
-            args = list(args)
-            args[value_index] = defuse(args[value_index])
+        if kwargs:
+            count = len(args)
+            value = args[value_index] if value_index < count else kwargs.get("value")
+            if isinstance(value, str) and "<" in value:
+                role = args[role_index] if role_index < count else kwargs.get("role")
+                if role == tooltip:
+                    if value_index < count:
+                        args = list(args)
+                        args[value_index] = defuse(value)
+                    else:
+                        kwargs["value"] = defuse(value)
+        elif len(args) > needed:
+            value = args[value_index]
+            if isinstance(value, str) and "<" in value and args[role_index] == tooltip:
+                args = list(args)
+                args[value_index] = defuse(value)
         return original(self, *args, **kwargs)
 
     setattr(cls, name, wrapper)

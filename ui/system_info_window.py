@@ -1984,6 +1984,12 @@ class SystemInfoWindow(QDialog):
                  live: bool = True) -> None:
         super().__init__(parent)
         set_window_icon(self, "system-info")
+        try:  # F1: its handbook section; the standalone export has no handbook
+            from ui.handbook import install_help_key
+
+            install_help_key(self, "system-info")
+        except ImportError:
+            pass
         self.setWindowFlag(Qt.WindowType.Window, True)
         self.setWindowTitle(tr("System Information"))
         self.setObjectName("axSystemInfo")

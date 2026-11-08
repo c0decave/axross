@@ -44,6 +44,11 @@ old code.
   HTML view, PST walks and the link scan are bounded; NFSv4.1 sessions
   recover. The mail dock no longer brings back a mail the agent already
   handled.
+- A tooltip set by keyword (`setData(..., role=ToolTipRole)`) was shown as
+  rich text; remote names in such tooltips are now defused like all others.
+- **WebDAV** showed as available when `requests` was missing; boto3
+  uploads to reverse-serve over HTTPS failed; the NFS check missed a
+  missing `umount`.
 - **Scripts and FTP.** `axross.save_profile` and `delete_profile` raise
   `OSError` when the profiles file could not be written (a full disk),
   instead of going on as if saved. An FTP file renamed to a path ending in
@@ -104,6 +109,43 @@ old code.
   keyboard of the language ("Strg+Umschalt+A").
 - The release is put together and checked by
   `scripts/assemble_release.py` (docs/PACKAGING.md, "Release flow").
+- **Faster.** With all bundled extensions on, the window shows in about
+  1.5 s instead of 3-4.7 s and uses 60 MB less: Matrix, XMPP and the
+  mixer load their libraries when first used, and compiled extension code
+  is cached by the SHA-256 of its source. Switching extensions off and on
+  no longer leaks memory. The terminal draws at most every 16 ms (`cat` of
+  4 MB: 3 s -> 0.7 s). The connection dialog opens in about 30 ms. Script
+  calls no longer rewrite the visit history each time.
+- **Many small files.** Uploads of small files need about one request per
+  file instead of three to six: 500 files over SFTP at 20 ms latency take
+  36 s instead of 96 s (WebDAV 13 s instead of 39 s, S3 26 s instead of
+  67 s); with Parallel transfers set to 4, SFTP takes 10 s. Local copies of
+  small files are about twice as fast, and the window no longer stalls
+  while thousands are queued. Integrity checks, the journal and "never
+  overwrite without asking" work as before.
+- **Big folders.** In a folder of 100,000 entries, typing in the filter takes
+  about 40 ms per key instead of 400 ms, Select All 4 ms instead of 300 ms,
+  and opening it no longer freezes the window. A 50,000-member archive
+  opens in about 0.1 s instead of 2 s; Compare's "All" view and the Find
+  Files result list fill without freezing; content search with ripgrep
+  runs one ripgrep over the folder (30,000 files: 3.4 s -> 0.6 s); a search
+  of the metadata index is 3-4x faster. The filter ignores case the
+  Unicode way ("strasse" finds "straße").
+- The operations journal starts a new file above 16 MB instead of growing
+  without end.
+- **Every menu entry has an icon**; the Agent's robot is visible on dark
+  themes; IRC, Matrix and XMPP have their own icons; F1 opens the handbook
+  in every tool window, and the handbook covers the tools and bundled
+  extensions.
+- **Mail docks**: switching the timer off pauses at once and Pause is kept;
+  a Stop button, the agent's tool calls in the log, Open Drafts Folder, an
+  Edit button, every mail dock under View > Panels; a dock without a
+  mailbox is refused.
+- Help > Features offers the chat (Matrix/XMPP) and raw Bluetooth extras
+  instead of telling you to run pip.
+- Reverse-serve speaks HTTP/1.1, answers `100-continue` after its checks
+  (boto3 and aws-cli no longer wait 1 s per upload) and takes multipart
+  uploads, within the same limits as a single upload.
 
 ## 0.15.176 - 2026-11-07
 

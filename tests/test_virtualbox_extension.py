@@ -130,7 +130,7 @@ def test_happy_the_context_actions_are_offered_for_the_right_files():
     class Api:
         window = None
 
-        def add_context_action(self, label, cb, applies_to="any", extensions=()):
+        def add_context_action(self, label, cb, applies_to="any", extensions=(), icon=None):
             actions.append((label, applies_to, extensions))
 
     VB.activate(Api())

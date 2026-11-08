@@ -351,7 +351,7 @@ class _RemoteApi:
     def add_dock(self, title, widget, **_kw):
         self.docks.append(widget)
 
-    def add_context_action(self, label, cb, applies_to="any", extensions=()):
+    def add_context_action(self, label, cb, applies_to="any", extensions=(), icon=None):
         self.actions[label] = cb
 
     def run_in_background(self, work, on_done=None, on_error=None):
