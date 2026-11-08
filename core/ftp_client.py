@@ -28,6 +28,7 @@ from core.path_policy import (
     MAX_RECURSIVE_DELETE_DEPTH,
     check_tree_depth,
     refuse_control_chars,
+    refuse_folder_path,
     safe_join,
 )
 from core.read_spool import READ_CHUNK, new_read_spool
@@ -1562,6 +1563,11 @@ class FtpSession(SessionLifecycle):
     @serialized
     def rename(self, src: str, dst: str) -> None:
         ftp = self._ensure_connected()
+        # The server canonicalizes the name: a file renamed to "x/" became
+        # a file "x". A folder may be named so; a source that is not there
+        # goes on to RNFR, which says so.
+        refuse_folder_path(dst, "rename to",
+                           source_is_file=lambda: self.exists(src) and not self.is_dir(src))
         try:
             ftp.rename(src, dst)
         except error_perm as e:

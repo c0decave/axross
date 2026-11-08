@@ -191,6 +191,7 @@ packages = [
     "resources.credits",
     "resources.i18n",
     "resources.chat_servers",
+    "resources.tours",
     "resources.handbook",
     "resources.handbook.patterns",
 ]
@@ -221,6 +222,7 @@ packages = [
 "resources.credits" = ["*.json"]
 "resources.i18n" = ["*.json"]
 "resources.chat_servers" = ["*.json"]
+"resources.tours" = ["*.json"]
 "resources.handbook" = ["USAGE.md", "USAGE_de.md", "USAGE_es.md"]
 "examples" = ["*.md"]
 "examples.scripting_api" = ["*.md"]

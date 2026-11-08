@@ -22,22 +22,23 @@ source tree:
 
 ## Quick reference
 
-| Output                                   | Size  | How to build                                       |
-|------------------------------------------|-------|----------------------------------------------------|
-| `dist/axross-<version>.tar.gz`           | varies | `python -m build`                                |
-| `dist/axross-<version>-py3-none-any.whl` | varies | `python -m build`                                |
-| `dist/axross-slim`                       | ~114 MB | `scripts/build_bundle.sh slim`                   |
-| `dist/axross-full`                       | ~132 MB | `scripts/build_bundle.sh full`                   |
-| `dist/axross-slim` (portable, glibc 2.34)| ~87 MB  | `scripts/build_bundle_docker.sh slim`            |
-| `dist/axross-full` (portable, glibc 2.34)| ~109 MB | `scripts/build_bundle_docker.sh full`            |
-| `dist/axross-slim-x86_64.AppImage`       | ~120 MB | `scripts/build_bundle.sh slim --appimage`        |
-| `dist/axross-full-x86_64.AppImage`       | ~140 MB | `scripts/build_bundle.sh full --appimage`        |
-| `axross-mcp:latest` (Docker)             | ~180 MB | `docker build -f Dockerfile.mcp -t axross-mcp:latest .` |
-| `localhost/axross-gui:latest` (podman)   | ~990 MB | `scripts/axross-podman.sh build` (`Dockerfile.gui`) |
+| Output | How to build | Where |
+|---|---|---|
+| `axross-<version>.tar.gz`, `axross-<version>-py3-none-any.whl` | `python -m build` | anywhere |
+| Linux `axross-base`, `axross-slim`, `axross-full` (+ `axross-media-player`, `axross-system-info`) for glibc 2.34 and 2.36, the packs, wheel and sdist - everything a release carries for Linux | `scripts/build_dist.sh` -> `dist/<version>/` | builder (see [Release flow](#release-flow)) |
+| One Linux binary on this machine | `scripts/build_bundle.sh slim\|full\|base [--appimage]` | any Linux |
+| One portable Linux binary (glibc 2.34) | `scripts/build_bundle_docker.sh slim\|full` | Linux with Docker or podman |
+| macOS and Windows `axross-slim`, `axross-full` | the `bundle` job of `cross-platform.yml`, started by a tag push | CI |
+| Optional packs (extras as wheels) | `scripts/build_packs.py` (part of `build_dist.sh`) | builder |
+| Release folder in the updater's asset names, `SHA256SUMS` signed | `scripts/assemble_release.py`, then `scripts/sign_release.py` | maintainer |
+| `axross-mcp:latest` (Docker) | `docker build -f Dockerfile.mcp -t axross-mcp:latest .` | Docker host |
+| `localhost/axross-gui:latest` (podman) | `scripts/axross-podman.sh build` (`Dockerfile.gui`) | podman host |
 
-**Sizes are realistic measurements** from a clean rebuild in a
-`/tmp` scratch dir, not hand-waves. UPX packs the slim ELF down
-from a ~180 MB unpacked form.
+Sizes depend on the flavour and the platform: slim is about 90-115 MB,
+full about 110-135 MB (UPX packs the Linux ELF). The [Release
+flow](#release-flow) below is the order in which a release is made; the
+[Self-update](#self-update-what-a-release-must-carry) section lists what
+it must carry for installed binaries to update.
 
 ## PyPI package
 

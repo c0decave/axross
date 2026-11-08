@@ -677,6 +677,17 @@ class ToursDialog(QDialog):
                                               QDialogButtonBox.ButtonRole.AcceptRole)
         self.start_button.setDefault(True)
         buttons.accepted.connect(self.start_selected)
+        # The narrated video of the selected tour (core.tour_videos): only
+        # when this axross knows the videos' release.
+        from core import tour_videos
+
+        self.video_button = buttons.addButton(tr("Watch Video"),
+                                              QDialogButtonBox.ButtonRole.ActionRole)
+        self.video_button.setToolTip(tr("Download the narrated video of this tour once and "
+                                        "play it in your video player"))
+        self.video_button.clicked.connect(lambda _checked=False: self.watch_selected())
+        self.video_button.setVisible(tour_videos.has_videos())
+        self._video_fetch: _VideoFetch | None = None
         buttons.rejected.connect(self.reject)
         layout = QVBoxLayout(self)
         layout.addWidget(intro)
@@ -693,6 +704,59 @@ class ToursDialog(QDialog):
         item = self.list.currentItem()
         return item.data(0, Qt.ItemDataRole.UserRole) if item is not None else ""
 
+    def watch_selected(self):
+        """Fetch (or take from the cache) the selected tour's video in the
+        interface language and open it with the system's video player.
+        The fetch runs in a thread; the button shows its progress."""
+        from core import tour_videos
+        from core.i18n import active
+
+        tour_id = self.selected_id()
+        video = tour_videos.video_for(tour_id, active().language) if tour_id else None
+        if video is None:
+            self.video_button.setToolTip(tr("This tour has no video yet."))
+            return None
+        if self._video_fetch is not None:
+            return self._video_fetch
+        fetch = _VideoFetch(video)
+        fetch.progress.connect(self._video_progress)
+        fetch.finished_ok.connect(self._video_ready)
+        fetch.failed.connect(self._video_failed)
+        self._video_fetch = fetch
+        self.video_button.setEnabled(False)
+        fetch.start()
+        return fetch
+
+    def _video_progress(self, done: int, total: int) -> None:
+        if total > 0:
+            self.video_button.setText(tr("Downloading… {percent} %").format(
+                percent=min(100, done * 100 // total)))
+
+    def _video_done(self) -> None:
+        self._video_fetch = None
+        self.video_button.setEnabled(True)
+        self.video_button.setText(tr("Watch Video"))
+
+    def _video_ready(self, path: str) -> None:
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtGui import QDesktopServices
+
+        self._video_done()
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(path)):
+            self._video_failed(tr("No video player opened {path}.").format(path=path))
+
+    def _video_failed(self, message: str) -> None:
+        from PyQt6.QtWidgets import QMessageBox
+
+        self._video_done()
+        QMessageBox.warning(self, tr("Tour video"),
+                            tr("The tour video could not be shown: {reason}").format(reason=message))
+
+    def done(self, result: int) -> None:  # noqa: D401 - Qt
+        if self._video_fetch is not None:
+            self._video_fetch.cancel.set()
+        super().done(result)
+
     def start_selected(self) -> TourRunner | None:
         tour_id = self.selected_id()
         if not tour_id:
@@ -700,6 +764,52 @@ class ToursDialog(QDialog):
         self.accept()
         starter = getattr(self._window, "start_tour", None)
         return starter(tour_id) if callable(starter) else None
+
+
+class _VideoFetch(QObject):
+    """core.tour_videos.fetch in a thread; the results come back as signals
+    (queued to the dialog's thread)."""
+
+    progress = pyqtSignal(int, int)
+    finished_ok = pyqtSignal(str)
+    failed = pyqtSignal(str)
+
+    def __init__(self, video) -> None:
+        # No Qt parent: the dialog (WA_DeleteOnClose) may be deleted while
+        # the thread still runs, and an object deleted with it would be
+        # emitted from. The thread holds this object until it ends; Qt
+        # drops queued signals to a receiver that is gone.
+        super().__init__()
+        import threading
+
+        self.video = video
+        self.cancel = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="tour-video", daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def _run(self) -> None:
+        from core import self_update, tour_videos
+
+        try:
+            path = tour_videos.fetch(self.video, progress=self._progress, cancel=self.cancel)
+        except self_update.Cancelled:
+            return
+        except tour_videos.VideoError as exc:
+            self._emit(self.failed, str(exc))
+        except Exception as exc:  # noqa: BLE001 - a thread must report, not die silently
+            log.exception("tour video fetch failed")
+            self._emit(self.failed, str(exc) or type(exc).__name__)
+        else:
+            self._emit(self.finished_ok, str(path))
+
+    def _progress(self, done: int, total: int) -> None:
+        self._emit(self.progress, done, total)
+
+    def _emit(self, signal, *args) -> None:
+        if not self.cancel.is_set():
+            signal.emit(*args)
 
 
 __all__ = [

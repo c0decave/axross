@@ -44,6 +44,15 @@ old code.
   HTML view, PST walks and the link scan are bounded; NFSv4.1 sessions
   recover. The mail dock no longer brings back a mail the agent already
   handled.
+- **Scripts and FTP.** `axross.save_profile` and `delete_profile` raise
+  `OSError` when the profiles file could not be written (a full disk),
+  instead of going on as if saved. An FTP file renamed to a path ending in
+  `/` is refused, as on every other backend; it used to become a file of
+  that name without the slash.
+- **Updates past 100 files.** The update check reads every asset of a
+  release, not only the first 100 GitHub lists: with the packs a release
+  has about 160, and the checksum file or a binary past the first 100 was
+  not found.
 - **FUSE mounts** report when the mount could not be made (no `/dev/fuse`,
   a busy mount point) instead of looking mounted.
 - **Windows checkout.** A file named `*.json` in 0.15.176 made the
@@ -76,6 +85,10 @@ old code.
 
 - **Help > Handbook** (F1, opened at the part of the window in use, in every
   window) and **Help > Tours** with six guided tours in English and German.
+- **Help > Tours > Watch Video**: a narrated video of each tour, in English
+  and German (IT terms spoken in English). Downloaded once from its own
+  GitHub release and played only when it matches the checksum axross
+  carries for it.
 - Pure-Python packs work at once, without a restart; **Update packs** fetches
   a re-issued pack manifest; the updater offers no install for a release
   that has no build for this binary.

@@ -62,3 +62,4 @@ recursive-include resources/mcp *.json
 recursive-include resources/credits *.json
 recursive-include resources/i18n *.json
 recursive-include resources/chat_servers *.json
+recursive-include resources/tours *.json

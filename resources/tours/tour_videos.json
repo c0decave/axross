@@ -1,0 +1,66 @@
+{
+ "_comment": "Written by scripts/tour_videos.py manifest: the release tag that carries the tour videos and each file's size and SHA-256. core.tour_videos downloads a video only from that release and keeps it only when it matches. No videos listed: Watch Video stays hidden.",
+ "tag": "tour-videos-1",
+ "videos": {
+  "de/automate": {
+   "file": "axross-tour-de-automate.mp4",
+   "size": 2291053,
+   "sha256": "786894f7486ed46289509694c9638ca9083ccf83e41026f88c9f05fcbe008cd0"
+  },
+  "de/connect": {
+   "file": "axross-tour-de-connect.mp4",
+   "size": 2504630,
+   "sha256": "0e018f84db1c7f3e325bc50ed3a474ee55fe9d7dd18fd27a7557b3cf8e3d30fb"
+  },
+  "de/copy-safely": {
+   "file": "axross-tour-de-copy-safely.mp4",
+   "size": 2458121,
+   "sha256": "9be5822fc1d6dc3c0569ff79e262a4b58d7706ac6d9bd96250415f7dc9a39cfa"
+  },
+  "de/extensions": {
+   "file": "axross-tour-de-extensions.mp4",
+   "size": 2211084,
+   "sha256": "dc1f0ad841bfbce3cca9f2dbb43e1020271db0a0b5794148f1fb856e269c2536"
+  },
+  "de/find-organize": {
+   "file": "axross-tour-de-find-organize.mp4",
+   "size": 2257005,
+   "sha256": "7c203cda64ec4c7b6cf113e84c3ebca9fd5ce0148975d684478f7560d5c969f8"
+  },
+  "de/getting-started": {
+   "file": "axross-tour-de-getting-started.mp4",
+   "size": 3349107,
+   "sha256": "f54b802e74a104adac3af3629371604600278903cfe1beabcd25a5c9f9386d9f"
+  },
+  "en/automate": {
+   "file": "axross-tour-en-automate.mp4",
+   "size": 1864883,
+   "sha256": "8ce35f028b30351247c06c24b01a233e39a73c18168e36120d24b28012081b8a"
+  },
+  "en/connect": {
+   "file": "axross-tour-en-connect.mp4",
+   "size": 2138520,
+   "sha256": "2dfdaee628f2faabc25287393f08177f560a3c04f2f0666e3fd6d8b5cf76145b"
+  },
+  "en/copy-safely": {
+   "file": "axross-tour-en-copy-safely.mp4",
+   "size": 2072789,
+   "sha256": "606bf7ce82b3ca2712c5989bbba2c9949b819f14ad0c4262943c2f1bc6ad8056"
+  },
+  "en/extensions": {
+   "file": "axross-tour-en-extensions.mp4",
+   "size": 1920570,
+   "sha256": "15cf2acb59ee8cc383de16595b7c54c9f57284caabaea7b71910b96117178e36"
+  },
+  "en/find-organize": {
+   "file": "axross-tour-en-find-organize.mp4",
+   "size": 1825655,
+   "sha256": "3adb6e274dc68f0bae4ef0846a47ce0442109a8f01b171417ddae4efb5e2c936"
+  },
+  "en/getting-started": {
+   "file": "axross-tour-en-getting-started.mp4",
+   "size": 2799889,
+   "sha256": "4632602fb5e10de21c8c50ae9f87fd8332a850ec1f644c4c13989c06f8430814"
+  }
+ }
+}

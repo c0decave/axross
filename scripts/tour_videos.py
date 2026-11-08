@@ -14,11 +14,22 @@ Two stages, because they need different environments:
             screenshots and speech into one MP4 per tour and language.
 
 German narration marks English words with braces - ``{Transfer Dock}`` -
-and those are spoken with English phonemes (espeak-ng "en-us") by the
-German voice, so IT terms keep their English pronunciation in one voice.
+and the German voice says them the English way, in one voice: each word
+from ``scripts/tour_pronunciation.json`` (a German spelling of the English
+sound, "Pane" -> "Pejn"), any other word with English phonemes (espeak-ng
+"en-us"). The spelling came out clearer: Whisper recognised 10 of 18 test
+terms spelt that way, 7 of 18 as English phonemes in the German voice.
 
     python scripts/tour_videos.py frames --out DIR [--lang en de]
     python scripts/tour_videos.py render --frames DIR --out DIR --voices DIR
+    python scripts/tour_videos.py manifest --videos DIR [--tag tour-videos-N]
+
+``manifest`` writes ``resources/tours/tour_videos.json`` (core.tour_videos):
+the release tag and each video's asset name, size and SHA-256, and copies
+the videos to ``DIR/release/`` under those names - the files to attach to
+that release (``gh release create TAG DIR/release/*.mp4``). A new tag for
+every new set of videos: an axross that pinned the old files keeps
+fetching them from the old release.
 
 The voices are the ones axross itself downloads (core.voice_models, SHA-256
 pinned); ``--voices`` is the folder holding ``piper-de-thorsten`` and
@@ -40,6 +51,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 NARRATION = ROOT / "scripts" / "tour_narration.json"
+PRONUNCIATION = ROOT / "scripts" / "tour_pronunciation.json"
 #: Window size of the screenshots (16:10; the handbook's small-screen size).
 SIZE = (1280, 800)
 #: Piper voice per language (core.voice_models ids).
@@ -50,6 +62,7 @@ PAUSE = 0.6
 FADE = 0.4
 
 _BRACED = re.compile(r"\{([^{}]+)\}")
+_WORD_GAP = re.compile(r"[\s-]+")
 
 
 # -- stage 1: frames ----------------------------------------------------------------------
@@ -72,6 +85,7 @@ def capture_frames(out: Path, languages: list[str]) -> Path:
                          ("XDG_STATE_HOME", ".local/state"), ("XDG_CACHE_HOME", ".cache")):
             os.environ[var] = str(home / sub)
         i18n.install(language)
+        demo_files(home)
         from ui.tours import TOURS
 
         window = first_start_window(home)
@@ -90,6 +104,26 @@ def capture_frames(out: Path, languages: list[str]) -> Path:
     path = out / "manifest.json"
     path.write_text(json.dumps(manifest, indent=1, ensure_ascii=False), encoding="utf-8")
     return path
+
+
+#: What the panes of the videos show: a home with a few everyday files
+#: (an empty one showed only .cache and .config, which looked like nothing).
+DEMO_TREE = {
+    "Documents/report-2026.pdf": 182_000, "Documents/invoice-0815.pdf": 64_000,
+    "Documents/notes.md": 2_400, "Pictures/holiday-01.jpg": 2_300_000,
+    "Pictures/holiday-02.jpg": 2_100_000, "Projects/website/index.html": 5_100,
+    "Projects/website/style.css": 1_800, "Music/demo.flac": 4_000_000,
+    "backup.tar.gz": 12_000_000, "todo.txt": 300, "server-setup.sh": 1_200,
+}
+
+
+def demo_files(home: Path) -> None:
+    """Fill *home* with :data:`DEMO_TREE` (sparse files of the given sizes)."""
+    for rel, size in DEMO_TREE.items():
+        path = home / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "wb") as f:
+            f.truncate(size)
 
 
 def first_start_window(home: Path):
@@ -168,18 +202,47 @@ def speech_parts(text: str, language: str) -> list[tuple[str, str]]:
     return [(k, t) for k, t in parts if t]
 
 
-def piper_input(text: str, language: str, phonemize) -> str:
-    """The text Piper reads: English parts of a German text as ``[[ phonemes ]]``.
-    *phonemize(lang, text)* returns espeak-ng phonemes as one string."""
+def load_respellings(language: str) -> dict[str, str]:
+    """``{english word: how the voice of *language* should read it}``."""
+    data = json.loads(PRONUNCIATION.read_text(encoding="utf-8"))
+    return {k.lower(): v for k, v in data.get(language, {}).items()}
+
+
+def english_words(part: str, respellings: dict[str, str]) -> list[tuple[str, str]]:
+    """``[(kind, text)]`` for one braced English term: words with a respelling
+    as "native" text, runs of the others as one "english" part."""
+    out: list[tuple[str, str]] = []
+    for word in _WORD_GAP.split(part.strip()):
+        if not word:
+            continue
+        spelt = respellings.get(word.lower())
+        kind, text = ("native", spelt) if spelt else ("english", word)
+        if out and out[-1][0] == kind:
+            out[-1] = (kind, f"{out[-1][1]} {text}")
+        else:
+            out.append((kind, text))
+    return out
+
+
+def piper_input(text: str, language: str, phonemize, respellings: dict | None = None) -> str:
+    """The text Piper reads: each English word of a German text as its
+    respelling, or else as ``[[ phonemes ]]``. *phonemize(lang, text)*
+    returns espeak-ng phonemes as one string."""
     out = []
     for kind, part in speech_parts(text, language):
-        if kind == "english":
-            lead = " " if part[:1].isspace() else ""
-            out.append(f"{lead}[[ {phonemize('en-us', part.strip())} ]] ")
-        else:
+        if kind != "english":
             out.append(part)
+            continue
+        lead = " " if part[:1].isspace() else ""
+        for sub, words in english_words(part, respellings or {}):
+            if sub == "native":
+                out.append(f"{lead}{words} ")
+            else:
+                out.append(f"{lead}[[ {phonemize('en-us', words)} ]] ")
+            lead = ""
     joined = re.sub(r"\s+", " ", "".join(out)).strip()
-    return re.sub(r"\]\] ([.,;:!?])", r"]]\1", joined)  # no space before punctuation
+    # no space before punctuation, after a phoneme block or a respelt word
+    return re.sub(r"(\]\]|\w) ([.,;:!?])", r"\1\2", joined)
 
 
 def plain_text(text: str) -> str:
@@ -208,6 +271,7 @@ def render(frames: Path, out: Path, voices: Path, languages: list[str] | None = 
         voice_dir = voices / VOICES[language]
         onnx = next(voice_dir.glob("*.onnx"))
         voice = PiperVoice.load(str(onnx))
+        respellings = load_respellings(language)
         for tour in tours:
             script = narration[tour["id"]]
             segments = [(frames / tour["intro_png"], script["intro"][language])]
@@ -216,20 +280,20 @@ def render(frames: Path, out: Path, voices: Path, languages: list[str] | None = 
             segments.append((frames / tour["intro_png"], script["outro"][language]))
             target = out / language / f"{tour['id']}.mp4"
             target.parent.mkdir(parents=True, exist_ok=True)
-            _render_tour(ffmpeg, voice, segments, language, phonemize, target)
+            _render_tour(ffmpeg, voice, segments, language, phonemize, respellings, target)
             made.append(target)
             print(f"{target}  ({_duration(target, ffmpeg):.0f} s, "
                   f"{target.stat().st_size / 1e6:.1f} MB)")
     return made
 
 
-def _render_tour(ffmpeg, voice, segments, language, phonemize, target: Path) -> None:
+def _render_tour(ffmpeg, voice, segments, language, phonemize, respellings, target: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="axross-tour-render-") as tmp:
         tmp_path = Path(tmp)
         clips = []
         for i, (png, text) in enumerate(segments):
             wav = tmp_path / f"{i:02d}.wav"
-            _speak(voice, piper_input(text, language, phonemize), wav)
+            _speak(voice, piper_input(text, language, phonemize, respellings), wav)
             seconds = _wav_seconds(wav) + PAUSE
             clip = tmp_path / f"{i:02d}.mp4"
             subprocess.run([
@@ -268,6 +332,38 @@ def _duration(path: Path, ffmpeg: str) -> float:
     return int(h) * 3600 + int(m) * 60 + float(s)
 
 
+TOUR_MANIFEST = ROOT / "resources" / "tours" / "tour_videos.json"
+
+
+def asset_name(language: str, tour_id: str) -> str:
+    """The release asset name of one video."""
+    return f"axross-tour-{language}-{tour_id}.mp4"
+
+
+def write_manifest(videos: Path, tag: str, target: Path = TOUR_MANIFEST) -> dict:
+    """Pin every ``videos/<lang>/<tour>.mp4`` in *target*; copy them to
+    ``videos/release/`` under their asset names."""
+    import hashlib
+    import shutil
+
+    release = videos / "release"
+    release.mkdir(parents=True, exist_ok=True)
+    pins = {}
+    for mp4 in sorted(videos.glob("*/*.mp4")):
+        language, tour_id = mp4.parent.name, mp4.stem
+        if language == "release":
+            continue
+        name = asset_name(language, tour_id)
+        shutil.copyfile(mp4, release / name)
+        pins[f"{language}/{tour_id}"] = {
+            "file": name, "size": mp4.stat().st_size,
+            "sha256": hashlib.sha256(mp4.read_bytes()).hexdigest()}
+    data = json.loads(target.read_text(encoding="utf-8")) if target.exists() else {}
+    data.update({"tag": tag, "videos": pins})
+    target.write_text(json.dumps(data, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    return data
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -279,9 +375,15 @@ def main(argv=None) -> int:
     r.add_argument("--out", type=Path, required=True)
     r.add_argument("--voices", type=Path, required=True)
     r.add_argument("--lang", nargs="+")
+    m = sub.add_parser("manifest", help="pin the rendered videos in resources/tours/tour_videos.json")
+    m.add_argument("--videos", type=Path, required=True)
+    m.add_argument("--tag", default="tour-videos-1")
     args = parser.parse_args(argv)
     if args.command == "frames":
         print(capture_frames(args.out, args.lang))
+    elif args.command == "manifest":
+        data = write_manifest(args.videos, args.tag)
+        print(f"{TOUR_MANIFEST}: {len(data['videos'])} videos for release {args.tag}")
     else:
         render(args.frames, args.out, args.voices, args.lang)
     return 0

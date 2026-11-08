@@ -44,13 +44,64 @@ def test_edge_subtitles_drop_the_pronunciation_marks():
         "Im Transfer Dock Retry Failed wählen."
 
 
+def test_happy_known_words_are_respelt_for_the_german_voice():
+    spelt = {"pane": "Pejn", "server": "Sörwer"}
+    text = TV.piper_input("Das {Pane} zeigt den {Server}.", "de", _fake_phonemes, spelt)
+    assert text == "Das Pejn zeigt den Sörwer."
+
+
+def test_edge_unknown_words_of_a_term_fall_back_to_phonemes():
+    spelt = {"retry": "Ritrei"}
+    text = TV.piper_input("Dann {Retry Failed Items}, fertig.", "de", _fake_phonemes, spelt)
+    assert text == "Dann Ritrei [[ <en-us:Failed Items> ]], fertig."
+
+
+def test_edge_hyphenated_terms_are_respelt_word_by_word():
+    spelt = TV.load_respellings("de")
+    assert TV.piper_input("Ein {One-File-Build}.", "de", _fake_phonemes, spelt) == \
+        "Ein Wann Fail Bild."
+
+
 def test_happy_every_narration_text_turns_into_speech_input():
-    """Every German text of the shipped narration yields raw-phoneme blocks
-    only for its braced parts, and no brace is left over."""
+    """Every German text of the shipped narration is speech input without a
+    brace left, and every English word in it has a respelling - a new term
+    in the narration needs one in scripts/tour_pronunciation.json (or it is
+    read as English phonemes, which came out less clear)."""
     narration = json.loads((ROOT / "scripts" / "tour_narration.json").read_text("utf-8"))
+    spelt = TV.load_respellings("de")
+    missing = set()
     for tour in narration["tours"].values():
         texts = [tour["intro"], tour["outro"], *tour["steps"].values()]
         for text in texts:
-            spoken = TV.piper_input(text["de"], "de", _fake_phonemes)
+            spoken = TV.piper_input(text["de"], "de", _fake_phonemes, spelt)
             assert "{" not in spoken and "}" not in spoken
-            assert spoken.count("[[") == text["de"].count("{")
+            for _kind, term in TV.speech_parts(text["de"], "de"):
+                missing |= {w for k, w in TV.english_words(term, spelt) if k == "english"} \
+                    if _kind == "english" else set()
+            without = TV.piper_input(text["de"], "de", _fake_phonemes)
+            assert without.count("[[") == text["de"].count("{")
+    assert not missing, f"no respelling for: {sorted(missing)}"
+
+
+def test_happy_the_manifest_pins_every_rendered_video(tmp_path):
+    import hashlib
+
+    for lang, tour in (("en", "connect"), ("de", "connect")):
+        (tmp_path / lang).mkdir(exist_ok=True)
+        (tmp_path / lang / f"{tour}.mp4").write_bytes(f"{lang}-{tour}".encode())
+    target = tmp_path / "tour_videos.json"
+    data = TV.write_manifest(tmp_path, "tour-videos-9", target)
+    assert data["tag"] == "tour-videos-9"
+    pin = data["videos"]["de/connect"]
+    assert pin == {"file": "axross-tour-de-connect.mp4", "size": len(b"de-connect"),
+                   "sha256": hashlib.sha256(b"de-connect").hexdigest()}
+    assert (tmp_path / "release" / "axross-tour-de-connect.mp4").read_bytes() == b"de-connect"
+    assert json.loads(target.read_text("utf-8")) == data
+
+
+def test_edge_a_second_run_does_not_pin_its_own_release_copies(tmp_path):
+    (tmp_path / "en").mkdir()
+    (tmp_path / "en" / "connect.mp4").write_bytes(b"x")
+    target = tmp_path / "m.json"
+    TV.write_manifest(tmp_path, "t-1", target)
+    assert list(TV.write_manifest(tmp_path, "t-1", target)["videos"]) == ["en/connect"]

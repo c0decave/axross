@@ -886,8 +886,8 @@ Needs: `--mcp-tools transfer` `--mcp-write` `--mcp-root DIR`.
 - `axross.ramfs(max_bytes: int | None = None) -> RamFsSession` — read-only. Return a fresh RamFS session — bytes never touch disk. ``max_bytes`` overrides the default per-instance cap.
 - `axross.list_profiles() -> list[str]` — read-only. Return the names of all saved connection profiles.
 - `axross.get_profile(name: str) -> ConnectionProfile | None` — read-only. Look up a saved :class:`ConnectionProfile` by name.
-- `axross.save_profile(profile: ConnectionProfile) -> None` — mutates. Persist a :class:`core.profiles.ConnectionProfile`. The profile object itself can be constructed via ``ConnectionProfile(name=..., protocol=..., host=...)`` — see ``help(core.profiles.ConnectionProfile)``.
-- `axross.delete_profile(name: str) -> None` — mutates. Delete a saved profile by name. No-op if the profile doesn't exist.
+- `axross.save_profile(profile: ConnectionProfile) -> None` — mutates · raises OSError. Persist a :class:`core.profiles.ConnectionProfile`. The profile object itself can be constructed via ``ConnectionProfile(name=..., protocol=..., host=...)`` — see ``help(core.profiles.ConnectionProfile)``. Raises OSError when the profiles file could not be written.
+- `axross.delete_profile(name: str) -> None` — mutates · raises OSError. Delete a saved profile by name. No-op if the profile doesn't exist. Raises OSError when the profiles file could not be written.
 - `axross.list_backends() -> list[str]` — read-only. Return the protocol IDs of every registered backend (sftp, smb, s3, …) regardless of whether the optional dependency is installed. Use :func:`available_backends` for the installed subset.
 - `axross.available_backends() -> list[str]` — read-only. Return the protocol IDs of backends whose dependencies are actually installed.
 

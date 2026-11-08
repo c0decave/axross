@@ -1421,11 +1421,12 @@ def remove_bookmark(index: int) -> None:
 def save_profile(profile: ConnectionProfile) -> None:
     """Persist a :class:`core.profiles.ConnectionProfile`. The profile
     object itself can be constructed via ``ConnectionProfile(name=...,
-    protocol=..., host=...)`` — see ``help(core.profiles.ConnectionProfile)``."""
+    protocol=..., host=...)`` — see ``help(core.profiles.ConnectionProfile)``.
+    Raises OSError when the profiles file could not be written."""
     from core.profiles import ProfileManager
 
     mgr = ProfileManager()
-    mgr.add(profile)
+    _raise_unsaved(mgr.add(profile, report_failure=False), "save_profile", profile)
     log.info(
         "axross.save_profile %r — protocol=%s host=%s user=%s",
         getattr(profile, "name", "?"),
@@ -1435,15 +1436,26 @@ def save_profile(profile: ConnectionProfile) -> None:
     )
 
 
+def _raise_unsaved(result, call: str, what) -> None:
+    """A script was told nothing when the profiles file was not written:
+    ProfileManager returns a SaveResult, which save_profile and
+    delete_profile dropped, so the change was gone at the next start."""
+    if not result:
+        name = getattr(what, "name", what)
+        raise OSError(f"axross.{call} {name!r}: not saved: "
+                      f"{result.reason or result.error or 'the profiles file was not written'}") \
+            from result.error
+
+
 @_api(mutates=True)
 def delete_profile(name: str) -> None:
     """Delete a saved profile by name. No-op if the profile doesn't
-    exist."""
+    exist. Raises OSError when the profiles file could not be written."""
     from core.profiles import ProfileManager
 
     mgr = ProfileManager()
     existed = name in mgr.list_names() if hasattr(mgr, "list_names") else True
-    mgr.remove(name)
+    _raise_unsaved(mgr.remove(name, report_failure=False), "delete_profile", name)
     if existed:
         log.info("axross.delete_profile %r", name)
     else:

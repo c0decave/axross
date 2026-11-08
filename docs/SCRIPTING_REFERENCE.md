@@ -110,11 +110,12 @@ to discover the available names.
 Persist a :class:`core.profiles.ConnectionProfile`. The profile
 object itself can be constructed via ``ConnectionProfile(name=...,
 protocol=..., host=...)`` — see ``help(core.profiles.ConnectionProfile)``.
+Raises OSError when the profiles file could not be written.
 
 ### `axross.delete_profile(name: 'str') -> 'None'`
 
 Delete a saved profile by name. No-op if the profile doesn't
-exist.
+exist. Raises OSError when the profiles file could not be written.
 
 ### `axross.list_backends() -> 'list[str]'`
 

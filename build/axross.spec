@@ -280,7 +280,7 @@ _RESOURCES = os.path.join(PROJECT_ROOT, "resources")
 # three times; tests/test_packaging.py::BundledResourcesTests asserts the
 # relationship rather than trusting this list.
 for sub in ("scripts", "wordlists", "logo", "icons", "i18n", "extensions", "voice", "mcp",
-            "credits", "chat_servers"):
+            "credits", "chat_servers", "tours"):
     src = os.path.join(_RESOURCES, sub)
     if os.path.isdir(src):
         datas.append((src, f"resources/{sub}"))

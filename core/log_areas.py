@@ -180,7 +180,7 @@ AREAS: tuple[Area, ...] = (
     ), patterns=("resources.extensions.*", "axross_extension_*", "ui.arcade_*", "core.arcade*")),
     Area("ui", "User Interface", (
         "ui", "models",
-        *_core("bookmarks", "visit_history", "guide_text", "handbook", "tour_offer"),
+        *_core("bookmarks", "visit_history", "guide_text", "handbook", "tour_offer", "tour_videos"),
         *_ui("bookmark_edit_dialog", "bookmark_manager_dialog", "bookmark_sidebar",
              "about_dialog", "close_corner", "code_editor", "column_fit", "column_prefs", "dock_fit",
              "dock_frame", "dock_titlebar", "drag_autoscroll", "editor_window", "features_dialog",

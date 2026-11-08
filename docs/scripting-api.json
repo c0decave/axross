@@ -559,10 +559,12 @@
         }
       ],
       "returns": "None",
-      "summary": "Persist a :class:`core.profiles.ConnectionProfile`. The profile object itself can be constructed via ``ConnectionProfile(name=..., protocol=..., host=...)`` — see ``help(core.profiles.ConnectionProfile)``.",
-      "doc": "Persist a :class:`core.profiles.ConnectionProfile`. The profile\nobject itself can be constructed via ``ConnectionProfile(name=...,\nprotocol=..., host=...)`` — see ``help(core.profiles.ConnectionProfile)``.",
+      "summary": "Persist a :class:`core.profiles.ConnectionProfile`. The profile object itself can be constructed via ``ConnectionProfile(name=..., protocol=..., host=...)`` — see ``help(core.profiles.ConnectionProfile)``. Raises OSError when the profiles file could not be written.",
+      "doc": "Persist a :class:`core.profiles.ConnectionProfile`. The profile\nobject itself can be constructed via ``ConnectionProfile(name=...,\nprotocol=..., host=...)`` — see ``help(core.profiles.ConnectionProfile)``.\nRaises OSError when the profiles file could not be written.",
       "examples": [],
-      "raises": [],
+      "raises": [
+        "OSError"
+      ],
       "mutates": true,
       "prompts": false
     },
@@ -579,10 +581,12 @@
         }
       ],
       "returns": "None",
-      "summary": "Delete a saved profile by name. No-op if the profile doesn't exist.",
-      "doc": "Delete a saved profile by name. No-op if the profile doesn't\nexist.",
+      "summary": "Delete a saved profile by name. No-op if the profile doesn't exist. Raises OSError when the profiles file could not be written.",
+      "doc": "Delete a saved profile by name. No-op if the profile doesn't\nexist. Raises OSError when the profiles file could not be written.",
       "examples": [],
-      "raises": [],
+      "raises": [
+        "OSError"
+      ],
       "mutates": true,
       "prompts": false
     },
