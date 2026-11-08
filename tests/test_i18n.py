@@ -451,7 +451,7 @@ def kept_terms_missing(source: str, translation: str) -> list[str]:
 
     src, dst = _bare(source), _bare(translation)
     return [term for term in KEEP_ENGLISH
-            if re.search(rf"\b{re.escape(term.casefold())}", src)
+            if re.search(rf"\b{re.escape(term.casefold())}(?:s|es|'s)?\b", src)
             and term.casefold() not in dst]
 
 
@@ -470,6 +470,16 @@ def test_edge_mnemonics_and_case_do_not_count():
     assert kept_terms_missing("Save && Quit", "Speichern && beenden") == []
     # a term only matches at a word start: "Spanel" names no panel
     assert kept_terms_missing("Spanel", "Etwas") == []
+
+
+def test_edge_a_term_matches_the_whole_word_not_a_longer_one():
+    """"configure" and "mounting" are no Config and no Mount: matching only
+    the word start forced "Config der MCP-Server bearbeiten" and "per
+    Config eingetragen" where German says "einrichten" and "eingetragen"."""
+    assert kept_terms_missing("Configure the MCP servers", "MCP-Server einrichten") == []
+    assert kept_terms_missing("mounting a disk image", "das Einhängen eines Images") == []
+    assert kept_terms_missing("Two Panes", "Zwei Fenster") == ["Pane"]  # the plural still counts
+    assert kept_terms_missing("the Pane's path", "der Pfad des Fensters") == ["Pane"]
 
 
 def test_sad_no_shipped_catalogue_translates_an_it_term():
