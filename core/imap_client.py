@@ -91,6 +91,13 @@ _LITERAL_CHUNK = 1024 * 1024
 #: a LIST of some 80,000 mailboxes, and is still nothing to hold in memory.
 _ANSWER_CAP = 8 * 1024 * 1024
 
+#: The one SEARCH line of a mailbox listing may be this long: imaplib's
+#: 1,000,000-byte line limit refused the ``UID SEARCH ALL`` answer of a
+#: mailbox of about 125,000 messages (an archive, Gmail's All Mail) and
+#: the mailbox could not be opened at all. 24 MiB carries some three
+#: million 7-digit UIDs; every other command keeps imaplib's limit.
+_SEARCH_LINE_CAP = 24 * 1024 * 1024
+
 #: What the answer to a message FETCH may carry besides the message itself
 #: (the FETCH framing, untagged EXISTS / FLAGS updates in between).
 _BODY_SLACK = 64 * 1024
@@ -143,10 +150,14 @@ class _LiteralInSteps:
     _axross_used = 0
     _axross_command = "the greeting"
     _axross_next_budget: int | None = None
+    _axross_maxline: int | None = None
+    _axross_next_maxline: int | None = None
 
     def _command(self, name, *args):
         self._axross_budget = self._axross_next_budget or _ANSWER_CAP
         self._axross_next_budget = None
+        self._axross_maxline = self._axross_next_maxline
+        self._axross_next_maxline = None
         self._axross_used = 0
         # "UID FETCH", not "UID"; never an argument (LOGIN's is the user).
         self._axross_command = f"{name} {args[0]}" if name == "UID" and args else name
@@ -181,12 +192,13 @@ class _LiteralInSteps:
 
     def readline(self):
         left = self._axross_budget - self._axross_used
-        line = self.file.readline(min(imaplib._MAXLINE, left) + 1)
+        maxline = self._axross_maxline or imaplib._MAXLINE
+        line = self.file.readline(min(maxline, left) + 1)
         self._axross_used += len(line)
         if self._axross_used > self._axross_budget:
             self._axross_over(self._axross_used)
-        if len(line) > imaplib._MAXLINE:
-            raise self.error("got more than %d bytes" % imaplib._MAXLINE)
+        if len(line) > maxline:
+            raise self.error("got more than %d bytes" % maxline)
         return line
 
 
@@ -195,6 +207,24 @@ def _expect_large_answer(imap, budget: int) -> None:
     (a message FETCH); every later one gets :data:`_ANSWER_CAP` again."""
     if isinstance(imap, _LiteralInSteps):
         imap._axross_next_budget = budget
+
+
+def _expect_long_line(imap, maxline: int) -> None:
+    """Let one line of the answer to the NEXT command sent on ``imap`` be
+    up to ``maxline`` bytes (and the answer that much more), instead of
+    imaplib's 1,000,000: the one-line answer to a ``UID SEARCH``. Every
+    later command gets imaplib's limit again."""
+    if isinstance(imap, _LiteralInSteps):
+        imap._axross_next_maxline = maxline
+        imap._axross_next_budget = _ANSWER_CAP + maxline
+
+
+def _has_capability(imap, name: str) -> bool:
+    """Whether the server announced capability *name* (e.g. ``UIDPLUS``).
+
+    Matched as a whole word: ``"MOVE" in caps`` took ``XMOVE`` for MOVE."""
+    name = name.upper()
+    return any(str(c).upper() == name for c in getattr(imap, "capabilities", ()) or ())
 
 
 class _IMAP4(_LiteralInSteps, imaplib.IMAP4):
@@ -447,8 +477,7 @@ def _expunge_one(imap, uid) -> tuple[str, list]:
     there.
     """
     uid = str(uid)
-    caps = getattr(imap, "capabilities", ()) or ()
-    if any(str(c).upper() == "UIDPLUS" for c in caps):
+    if _has_capability(imap, "UIDPLUS"):
         return imap.uid("EXPUNGE", uid)
     typ, data = imap.uid("SEARCH", None, "DELETED")
     flagged = b" ".join(data or []).split() if typ == "OK" else None
@@ -779,6 +808,7 @@ class ImapSession(SessionLifecycle):
             typ, data = self._login()
             if typ != "OK":
                 raise ConnectionError(f"IMAP LOGIN failed: {data}")
+            self._refresh_capabilities()
 
             # Detect hierarchy separator from LIST
             try:
@@ -805,6 +835,56 @@ class ImapSession(SessionLifecycle):
         except Exception:
             self._imap = None
             raise
+
+    def _refresh_capabilities(self) -> None:
+        """Ask for the capabilities again after login.
+
+        imaplib keeps the list the server gave before login, and many
+        servers (Dovecot among them) announce UIDPLUS, MOVE and UNSELECT
+        only to an authenticated client - every check for them answered
+        "not offered". A failed or empty answer keeps the old list."""
+        try:
+            typ, data = self._imap.capability()
+        except ImapAnswerTooLarge:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the old list still serves
+            log.debug("IMAP CAPABILITY after login failed: %s", exc)
+            return
+        if typ != "OK" or not isinstance(data, list):
+            return
+        words = b" ".join(_as_bytes(d) for d in data if d).decode("ascii", "replace").upper().split()
+        if words:
+            self._imap.capabilities = tuple(dict.fromkeys(words))
+
+    def _leave_selected(self, imap) -> None:
+        """Leave the selected mailbox without expunging anything.
+
+        CLOSE on a mailbox selected read-write expunges every message
+        flagged \\Deleted (RFC 3501 6.4.2): ones another client only
+        flagged (Outlook's "mark as deleted"), and the very messages
+        :func:`_expunge_one` refused to expunge on purpose. UNSELECT
+        (RFC 3691) leaves without an expunge; without it the mailbox is
+        EXAMINEd first - a CLOSE of a read-only mailbox removes nothing.
+        Best effort: a failure leaves the session to select again."""
+        mailbox = self._selected_mailbox
+        readonly = getattr(self, "_selected_readonly", True)
+        self._selected_mailbox = None
+        self._selected_readonly = True
+        if mailbox is None:
+            return
+        try:
+            if _has_capability(imap, "UNSELECT"):
+                imap.unselect()
+                return
+            if not readonly:
+                typ, _data = imap.select(_mailbox_arg(mailbox), readonly=True)
+                if typ != "OK":
+                    return  # a failed EXAMINE deselects (RFC 3501 6.3.1)
+            imap.close()
+        except ImapAnswerTooLarge:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the next SELECT replaces it
+            log.debug("IMAP: leaving mailbox %r failed: %s", mailbox, exc)
 
     def _ensure_connected(self) -> imaplib.IMAP4 | imaplib.IMAP4_SSL:
         """Return the IMAP connection, reconnecting if needed."""
@@ -1086,13 +1166,14 @@ class ImapSession(SessionLifecycle):
 
     @serialized
     def disconnect(self) -> None:
-        """Close the IMAP connection."""
+        """Close the IMAP connection.
+
+        LOGOUT alone: it leaves the selected mailbox without an expunge
+        (RFC 3501 6.4.2). The CLOSE sent before it expunged every message
+        flagged \\Deleted in a mailbox left selected read-write - by a
+        refused remove, a set_flags or a move - including ones another
+        client had only flagged."""
         if self._imap is not None:
-            try:
-                if self._selected_mailbox is not None:
-                    self._imap.close()
-            except Exception:
-                pass
             try:
                 self._imap.logout()
             except Exception:
@@ -1149,15 +1230,16 @@ class ImapSession(SessionLifecycle):
         self._select_mailbox(mailbox, readonly=True)
         imap = self._ensure_connected()
 
+        # The answer is one line of all UIDs: over imaplib's line limit
+        # from about 125,000 messages on.
+        _expect_long_line(imap, _SEARCH_LINE_CAP)
         typ, data = imap.uid("SEARCH", None, "ALL")
         if typ != "OK":
             raise OSError(f"IMAP UID SEARCH failed in {mailbox!r}: {data}")
 
-        uids_raw = data[0]
-        if not uids_raw or not uids_raw.strip():
+        uid_list = [uid for part in data or () if part for uid in _search_uids(part)]
+        if not uid_list:
             return []
-
-        uid_list = _search_uids(uids_raw)
         items: list[FileItem] = []
 
         # Fetch envelopes in batches to avoid overly long commands
@@ -1441,8 +1523,10 @@ class ImapSession(SessionLifecycle):
         if len(parsed) == 2:
             mailbox, uid = parsed[0], parsed[1]
             if uid is None:
-                log.debug("Ignoring remove for non-UID path: %s", path)
-                return  # Non-UID path (temp file etc.) — nothing to delete
+                # Only "<uid>[_subject].eml" names a message: no other name
+                # is there, and "removed" it was not. (A failed APPEND is
+                # never rolled back by name: the store only adds.)
+                raise FileNotFoundError(errno.ENOENT, "No such message", path)
             self._select_mailbox(mailbox, readonly=False)
             # stat()'s identity check, in this selection: "5_invoice.eml"
             # from a stale listing (or another mailbox) is not this
@@ -1500,13 +1584,10 @@ class ImapSession(SessionLifecycle):
 
     def _delete_mailbox(self, mailbox: str) -> tuple[str, list]:
         imap = self._ensure_connected()
-        # Unselect current mailbox if it's the one being deleted
+        # Leave the mailbox if it is the one being deleted - without the
+        # expunge of a CLOSE: a DELETE the server refuses keeps it whole.
         if self._selected_mailbox == mailbox:
-            try:
-                imap.close()
-            except Exception:
-                pass
-            self._selected_mailbox = None
+            self._leave_selected(imap)
         encoded = _mailbox_arg(mailbox)
         return imap.delete(encoded)
 
@@ -1516,6 +1597,10 @@ class ImapSession(SessionLifecycle):
         A single DELETE leaves the sub-mailboxes behind (RFC 3501 6.3.4),
         and Dovecot then lists the deleted parent as \\NonExistent.
         """
+        if mailbox not in self._mailbox_nodes():
+            self._mailbox_cache = None  # a mailbox made since the last LIST
+            if mailbox not in self._mailbox_nodes():
+                raise FileNotFoundError(errno.ENOENT, f"No such mailbox: {mailbox}", path)
         prefix = mailbox + self._hierarchy_sep
         children = sorted(
             (name for name in self._mailbox_names() if name.startswith(prefix)),
@@ -1573,11 +1658,7 @@ class ImapSession(SessionLifecycle):
             new_name = self._virtual_path_to_mailbox(dst)
             imap = self._ensure_connected()
             if self._selected_mailbox == old_name:
-                try:
-                    imap.close()
-                except Exception:
-                    pass
-                self._selected_mailbox = None
+                self._leave_selected(imap)
             old_enc = _mailbox_arg(old_name)
             new_enc = _mailbox_arg(new_name)
             typ, data = imap.rename(old_enc, new_enc)
@@ -1590,7 +1671,7 @@ class ImapSession(SessionLifecycle):
         if len(src_parsed) >= 3:
             raise OSError(f"Cannot rename or move a single attachment: {src!r}")
 
-        # Move message: copy to new mailbox, then delete from old
+        # Move a message to another mailbox
         if len(src_parsed) == 2 and len(dst_parsed) >= 1:
             src_mailbox, src_uid = src_parsed[0], src_parsed[1]
             if src_uid is None:
@@ -1598,31 +1679,23 @@ class ImapSession(SessionLifecycle):
             dst_mailbox = dst_parsed[0]
             if dst_mailbox is None:
                 raise OSError("Cannot move message to root")
-
-            self._select_mailbox(src_mailbox, readonly=False)
-            imap = self._ensure_connected()
-
-            dst_enc = _mailbox_arg(dst_mailbox)
-            typ, data = imap.uid("COPY", src_uid, dst_enc)
-            if typ != "OK":
-                raise OSError(f"Cannot copy UID {src_uid} to {dst_mailbox!r}: {data}")
-
-            # Delete from source
-            typ, data = imap.uid("STORE", src_uid, "+FLAGS", "(\\Deleted)")
-            if typ != "OK":
-                log.warning(
-                    "Could not mark UID %s as deleted after copy: %s",
-                    src_uid,
-                    data,
+            if dst_mailbox == src_mailbox:
+                # The name is the UID and the subject: neither changes,
+                # and a copy within the mailbox only made a new UID.
+                raise OSError(
+                    errno.ENOTSUP,
+                    f"A message cannot be renamed within its mailbox {src_mailbox!r}: "
+                    "its name is its UID and subject",
+                    src,
                 )
-            _expunge_one(imap, src_uid)
-            self._selected_mailbox = None
-            log.info(
-                "Moved message UID %s from %s to %s",
-                src_uid,
-                src_mailbox,
-                dst_mailbox,
-            )
+            self._select_mailbox(src_mailbox, readonly=False)
+            # remove()'s identity check: "2_invoice.eml" from a stale
+            # listing is not this mailbox's UID 2 when the subject differs,
+            # and a UID that is gone is FileNotFoundError - UID COPY of it
+            # answers OK with nothing copied.
+            leaf_name = [p for p in self.normalize(src).split("/") if p][-1]
+            self._selected_message_item(src_uid, leaf_name, src)
+            self._move_selected_message(src_uid, src_mailbox, dst_mailbox)
             return
 
         raise OSError(f"Cannot rename {src!r} to {dst!r}")
@@ -1913,39 +1986,76 @@ class ImapSession(SessionLifecycle):
     @serialized
     def move(self, uid: int, src_mailbox: str, dst_mailbox: str) -> None:
         """Move a message from ``src_mailbox`` to ``dst_mailbox`` by
-        UID. Uses the IMAP MOVE extension (RFC 6851) when the server
-        announces it; falls back to COPY + STORE \\Deleted + EXPUNGE
-        for pre-MOVE servers.
+        UID - see :meth:`_move_selected_message` for how. A UID that is
+        not there is FileNotFoundError, not a move of nothing.
 
         F32: mailbox names with CR/LF are refused before any wire
         byte is sent."""
         for label, val in (("src_mailbox", src_mailbox), ("dst_mailbox", dst_mailbox)):
             if "\r" in val or "\n" in val:
                 raise ValueError(f"IMAP move: {label} must not contain CR/LF. F32.")
-        imap = self._ensure_connected()
+        uid = str(int(uid))
         self._select_mailbox(src_mailbox, readonly=False)
-        # capability() ASKs the server; cache locally to avoid spam.
-        try:
-            typ, caps = imap.capability()
-            cap_str = (
-                b" ".join(caps).decode("ascii", errors="replace")
-                if isinstance(caps, list)
-                else str(caps)
-            )
-        except Exception:  # noqa: BLE001
-            cap_str = ""
-        dst_enc = _mailbox_arg(dst_mailbox)
-        if "MOVE" in cap_str.upper():
-            typ, data = imap.uid("MOVE", str(int(uid)), dst_enc)
-            if typ != "OK":
-                raise OSError(f"IMAP MOVE failed: {data}")
-            return
-        # Fallback: COPY then STORE \\Deleted + EXPUNGE.
-        typ, data = imap.uid("COPY", str(int(uid)), dst_enc)
+        typ, data = self._ensure_connected().uid("FETCH", uid, "(UID)")
         if typ != "OK":
-            raise OSError(f"IMAP COPY (move-fallback) failed: {data}")
-        self.set_flags(uid, ["\\Deleted"], mailbox=src_mailbox, mode="add")
-        _expunge_one(imap, str(int(uid)))
+            raise OSError(f"Cannot look up message UID {uid} in {src_mailbox!r}: {data}")
+        if not any(part for part in data or ()):
+            # UID MOVE / COPY of a UID that is not there answers OK.
+            raise FileNotFoundError(errno.ENOENT, f"No message UID {uid} in {src_mailbox!r}")
+        self._move_selected_message(uid, src_mailbox, dst_mailbox)
+
+    def _move_selected_message(self, uid: str, src_mailbox: str, dst_mailbox: str) -> None:
+        """Move message *uid* of the mailbox selected read-write,
+        *src_mailbox*, to *dst_mailbox*; the caller checked that it is
+        there.
+
+        MOVE (RFC 6851) when offered. Otherwise COPY, flag the original
+        \\Deleted and expunge only it (:func:`_expunge_one`): UID EXPUNGE
+        with UIDPLUS. A server with neither expunges by mailbox only, which
+        removes every message flagged \\Deleted - also ones another
+        client only flagged: the move is refused before anything is copied
+        when another message is flagged, and when one gets flagged in
+        between, the original is unflagged again and the OSError says the
+        copy is made but the original kept. It never reports a move that
+        left the message in both mailboxes."""
+        imap = self._ensure_connected()
+        dst_enc = _mailbox_arg(dst_mailbox)
+        if _has_capability(imap, "MOVE"):
+            typ, data = imap.uid("MOVE", uid, dst_enc)
+            if typ != "OK":
+                raise OSError(f"Cannot move message UID {uid} to {dst_mailbox!r}: {data}")
+            log.info("Moved message UID %s from %s to %s", uid, src_mailbox, dst_mailbox)
+            return
+        if not _has_capability(imap, "UIDPLUS"):
+            typ, data = imap.uid("SEARCH", None, "DELETED")
+            flagged = b" ".join(_as_bytes(d) for d in data or () if d).split() if typ == "OK" else None
+            if flagged is None or any(f.decode("ascii", "ignore") != uid for f in flagged):
+                raise OSError(
+                    errno.ENOTSUP,
+                    f"Cannot move message UID {uid} from {src_mailbox!r}: the server offers "
+                    "neither MOVE nor UIDPLUS, and other messages there are flagged deleted - "
+                    "removing the original would expunge them too. Nothing was moved.",
+                )
+        typ, data = imap.uid("COPY", uid, dst_enc)
+        if typ != "OK":
+            raise OSError(f"Cannot copy message UID {uid} to {dst_mailbox!r}: {data}")
+        kept = f"message UID {uid} was copied to {dst_mailbox!r} but stays in {src_mailbox!r}"
+        typ, data = imap.uid("STORE", uid, "+FLAGS", "(\\Deleted)")
+        if typ != "OK":
+            raise OSError(f"Move incomplete: {kept} (flagging it deleted failed: {data})")
+        typ, data = _expunge_one(imap, uid)
+        if typ != "OK":
+            try:
+                imap.uid("STORE", uid, "-FLAGS", "(\\Deleted)")
+            except ImapAnswerTooLarge:
+                raise
+            except Exception as exc:  # noqa: BLE001 - the error below says what is left
+                log.warning("IMAP: could not unflag UID %s again: %s", uid, exc)
+            raise OSError(
+                f"Move incomplete: {kept}: "
+                + b" ".join(_as_bytes(d) for d in data or ()).decode("utf-8", "replace")
+            )
+        log.info("Moved message UID %s from %s to %s", uid, src_mailbox, dst_mailbox)
 
     @_imap_errors_as_oserror
     @serialized

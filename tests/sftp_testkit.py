@@ -1,6 +1,13 @@
 """In-process SFTP server (paramiko) over a local directory, plus a TCP relay
 that adds latency — enough to test and measure SFTP transfer behaviour
-without a container."""
+without a container.
+
+Where the backend contract depends on it, the server answers as
+OpenSSH's sftp-server does: names are bytes on the wire (a latin-1 name
+is listed as stored and can be addressed by those bytes), a plain RENAME
+refuses an existing target while posix-rename@openssh.com replaces it,
+SETSTAT applies mode, times and size, and EACCES is
+SSH_FX_PERMISSION_DENIED."""
 
 from __future__ import annotations
 
@@ -11,7 +18,7 @@ import time
 
 import paramiko
 from paramiko import SFTPAttributes, SFTPHandle, SFTPServer, SFTPServerInterface
-from paramiko.sftp import SFTP_FAILURE, SFTP_NO_SUCH_FILE, SFTP_OK
+from paramiko.sftp import SFTP_FAILURE, SFTP_NO_SUCH_FILE, SFTP_OK, SFTP_PERMISSION_DENIED
 
 _HOST_KEY = None
 
@@ -39,18 +46,34 @@ class _Sftp(SFTPServerInterface):
         self.stats = stats if stats is not None else {}
 
     def _real(self, path: str) -> str:
-        return os.path.join(self.root, self.canonicalize(path).lstrip("/"))
+        real = os.path.join(self.root, self.canonicalize(path).lstrip("/"))
+        # OpenSSH hands the path to the system as sent: "file/" is
+        # ENOTDIR, not the file (canonicalize drops the slash).
+        if path.endswith("/") and path.strip("/"):
+            real += "/"
+        return real
 
     @staticmethod
     def _err(exc: OSError) -> int:
-        return SFTP_NO_SUCH_FILE if isinstance(exc, FileNotFoundError) else SFTP_FAILURE
+        """OpenSSH's errno_to_portable (sftp-server.c): ENOENT, ENOTDIR,
+        EBADF and ELOOP are SSH_FX_NO_SUCH_FILE; EPERM, EACCES
+        SSH_FX_PERMISSION_DENIED; the rest SSH_FX_FAILURE."""
+        import errno
+
+        if exc.errno in (errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP):
+            return SFTP_NO_SUCH_FILE
+        if exc.errno in (errno.EPERM, errno.EACCES):
+            return SFTP_PERMISSION_DENIED
+        return SFTP_FAILURE
 
     def list_folder(self, path):
         try:
             out = []
             for name in os.listdir(self._real(path)):
                 attr = SFTPAttributes.from_stat(os.lstat(os.path.join(self._real(path), name)))
-                attr.filename = name
+                # The stored bytes, as OpenSSH sends them (paramiko would
+                # encode a str strictly as UTF-8).
+                attr.filename = os.fsencode(name)
                 out.append(attr)
             return out
         except OSError as exc:
@@ -121,14 +144,29 @@ class _Sftp(SFTPServerInterface):
         return SFTP_OK
 
     def rename(self, oldpath, newpath):
+        """SSH_FXP_RENAME as OpenSSH's sftp-server (process_rename): an
+        existing target - a dangling link too - is SSH_FX_FAILURE, never
+        replaced (draft-ietf-secsh-filexfer-02 6.5)."""
+        old, new = self._real(oldpath), self._real(newpath)
         try:
-            os.rename(self._real(oldpath), self._real(newpath))
+            os.lstat(old)
+        except OSError as exc:
+            return self._err(exc)
+        if os.path.lexists(new):
+            return SFTP_FAILURE
+        try:
+            os.rename(old, new)
         except OSError as exc:
             return self._err(exc)
         return SFTP_OK
 
     def posix_rename(self, oldpath, newpath):
-        return self.rename(oldpath, newpath)
+        """posix-rename@openssh.com: rename(2), which replaces a target."""
+        try:
+            os.rename(self._real(oldpath), self._real(newpath))
+        except OSError as exc:
+            return self._err(exc)
+        return SFTP_OK
 
     def mkdir(self, path, attr):
         try:
@@ -145,7 +183,32 @@ class _Sftp(SFTPServerInterface):
         return SFTP_OK
 
     def chattr(self, path, attr):
+        """SSH_FXP_SETSTAT, applied as OpenSSH's sftp-server does: size,
+        permissions, owner and times, each when the request carries it."""
+        real = self._real(path)
+        try:
+            if attr._flags & attr.FLAG_SIZE:
+                os.truncate(real, attr.st_size)
+            if attr._flags & attr.FLAG_PERMISSIONS:
+                os.chmod(real, attr.st_mode & 0o7777)
+            if attr._flags & attr.FLAG_UIDGID:
+                os.chown(real, attr.st_uid, attr.st_gid)
+            if attr._flags & attr.FLAG_AMTIME:
+                os.utime(real, (attr.st_atime, attr.st_mtime))
+        except OSError as exc:
+            return self._err(exc)
         return SFTP_OK
+
+
+class _BytesPathSftpServer(SFTPServer):
+    """paramiko's SFTP subsystem with request paths decoded as Python
+    decodes a local file name (``surrogateescape``): paramiko decodes
+    them strictly as UTF-8, so a client asking for a latin-1 name - which
+    OpenSSH serves as the bytes it is - got the connection dropped."""
+
+    def _process(self, t, request_number, msg):
+        msg.get_text = lambda: msg.get_string().decode("utf-8", "surrogateescape")
+        return super()._process(t, request_number, msg)
 
 
 class _Auth(paramiko.ServerInterface):
@@ -198,7 +261,7 @@ class SftpServer:
             for key in self.extra_host_keys:
                 t.add_server_key(key)
             root, stats = self.root, self.stats
-            t.set_subsystem_handler("sftp", SFTPServer, _Sftp, root=root, stats=stats)
+            t.set_subsystem_handler("sftp", _BytesPathSftpServer, _Sftp, root=root, stats=stats)
             try:
                 t.start_server(server=_Auth())
             except (paramiko.SSHException, OSError, EOFError):

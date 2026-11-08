@@ -82,14 +82,17 @@ def test_edge_places_are_joined_per_component():
 def test_happy_the_sandbox_mounts_existing_protected_places_read_only(home):
     (home / ".bashrc").write_text("# shell\n")
     (home / ".ssh").mkdir()
-    mounts = dict(AS._agent_mounts(AS.SandboxProfile(name="t"), str(home), True))
-    assert mounts[str(home)] is True
+    plan = {p: (rw, kind) for p, rw, kind in
+            AS._mount_plan(AS.SandboxProfile(name="t"), str(home), True)}
+    mounts = {p: rw for p, (rw, _kind) in plan.items()}
     assert mounts[str(home / ".bashrc")] is False
     assert mounts[str(home / ".ssh")] is False
-    # Missing files get no placeholder: the engine would create an empty one
-    # in the real home (a crash leaving ~/.bash_profile hides ~/.profile);
-    # the worker's refusal guards them, missing folders get a read-only tmpfs.
-    assert str(home / ".gitconfig") not in mounts  # a missing file: no host placeholder
+    # A missing file gets no placeholder on the host (a crash leaving an
+    # empty ~/.bash_profile hides ~/.profile): the home is a read-only frame
+    # in the sandbox, so nothing can be made in it (core.agent_sandbox).
+    assert plan[str(home)] == (False, "frame")
+    assert plan[str(home / ".gitconfig")] == (False, "absent")
+    assert not (home / ".gitconfig").exists()
     order = [p for p, _rw in AS._agent_mounts(AS.SandboxProfile(name="t"), str(home), True)]
     assert order.index(str(home)) < order.index(str(home / ".bashrc"))  # parents first
 

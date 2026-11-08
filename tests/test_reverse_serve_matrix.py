@@ -352,10 +352,14 @@ def test_edge_propfind_depth_0_does_not_list_the_children(dav):
     assert status == 207 and len(propfind_hrefs(body)) == 1
 
 
-def test_edge_propfind_depth_infinity_answers_like_depth_1(dav, tree):
+def test_sad_propfind_depth_infinity_is_refused_as_finite_depth_only(dav, tree):
+    """RFC 4918 9.1: 403 with propfind-finite-depth. Answered like depth 1,
+    a client took the first level for the whole tree."""
     tree.backend.mkdir(tree.path("docs/sub"))
     tree.write("docs/sub/deep.txt", b"d")
     status, _, body = http(dav, "PROPFIND", "/docs", headers={"Depth": "infinity"})
+    assert status == 403 and b"propfind-finite-depth" in body
+    status, _, body = http(dav, "PROPFIND", "/docs", headers={"Depth": "1"})
     hrefs = propfind_hrefs(body)
     assert status == 207 and any(h.rstrip("/").endswith("/sub") for h in hrefs)
     assert not any(h.endswith("deep.txt") for h in hrefs)

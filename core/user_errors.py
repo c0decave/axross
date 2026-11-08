@@ -103,12 +103,65 @@ def _by_errno(exc: OSError, subject: str) -> str | None:
     return None
 
 
+def _chain(exc: BaseException) -> list[BaseException]:
+    """*exc* and the exceptions it was raised from (``raise ... from``) or
+    while handling, outermost first: "Cannot connect to h:22: [Errno 111]
+    ..." is a ``ConnectionError`` whose cause is the ConnectionRefusedError
+    that says what happened."""
+    chain: list[BaseException] = []
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen and len(chain) < 8:
+        chain.append(current)
+        seen.add(id(current))
+        if current.__cause__ is not None:
+            current = current.__cause__
+        elif not current.__suppress_context__ and _wraps_its_context(current):
+            current = current.__context__
+        else:
+            current = None
+    return chain
+
+
+def _wraps_its_context(exc: BaseException) -> bool:
+    """A connection error raised inside an ``except`` (paramiko's "Error
+    reading SSH protocol banner") is about that error. A ValueError raised
+    there is a message of its own and keeps it."""
+    return isinstance(exc, OSError) or "SSHException" in _names(exc)
+
+
 def describe(exc: BaseException, what: str = "") -> str:
     """One sentence for *exc*, with a next step. *what* names the thing the
     failed operation was about (a path, a host); without it the exception's
-    own file name or host is used where it has one."""
+    own file name or host is used where it has one.
+
+    A wrapper whose cause is known ("Cannot resolve host 'x': [Errno -2]
+    ...", raised from the socket.gaierror) gets the cause's sentence; only
+    when nothing in the chain is recognised is the outer text shown. A
+    refusal written for the user (``*Refused`` / ``*Denied``) keeps its
+    own text."""
+    chain = [exc] if _written_for_user(exc) else _chain(exc)
+    subject = what or next((s for s in (_subject(e, "") for e in chain) if s), "")
+    for link in chain:
+        text = _classify(link, subject)
+        if text:
+            return text
+    own = _own_text(exc)
+    if own:
+        return own
+    return tr("The operation failed without saying why. The Log panel may show more.")
+
+
+def _written_for_user(exc: BaseException) -> bool:
+    return any(n.endswith(("Refused", "Denied")) for n in _names(exc))
+
+
+_SSH_HANDSHAKE_TEXTS = ("No existing session", "Negotiation timed out", "Negotiation failed")
+
+
+def _classify(exc: BaseException, subject: str) -> str | None:
+    """The sentence for one exception of the chain, or None."""
     names = _names(exc)
-    subject = _subject(exc, what)
     host = subject or tr("The server")
 
     # --- SSH host keys (core.ssh_client), most specific first -------------
@@ -139,6 +192,21 @@ def describe(exc: BaseException, what: str = "") -> str:
                   "unlock your keyring (SecretService, KWallet, KeePassXC) and try again."
                   ).format(reason=_own_text(exc) or tr("no keyring answered"))
 
+    # --- SSH handshake (paramiko.SSHException by its text) ----------------
+    if "SSHException" in names:
+        text = str(exc)
+        if text.startswith(_SSH_HANDSHAKE_TEXTS):
+            # paramiko's start_client(timeout=...) returns at the time-out
+            # without an error; the next call then says "No existing session".
+            return tr("{host} did not finish the SSH handshake in time. Check that an SSH "
+                      "server listens on that port and the network connection, then try "
+                      "again.").format(host=host)
+        if text.startswith("Error reading SSH protocol banner") and not (
+            exc.__cause__ or exc.__context__
+        ):
+            return tr("{host} did not answer as an SSH server. Check the port and that an "
+                      "SSH server runs there.").format(host=host)
+
     # --- time-outs --------------------------------------------------------
     if names & _TIMEOUT_NAMES:
         return tr("{host} did not answer in time. Check the network connection and that "
@@ -148,7 +216,12 @@ def describe(exc: BaseException, what: str = "") -> str:
     if isinstance(exc, ConnectionRefusedError) or getattr(exc, "errno", None) == errno.ECONNREFUSED:
         return tr("{host} refused the connection. Check the host name and the port, and "
                   "that the service runs there.").format(host=host)
-    if "gaierror" in names:
+    if "gaierror" in names or (
+        isinstance(exc, ConnectionError) and str(exc).startswith("Cannot resolve host")
+    ):
+        if subject:
+            return tr("The host name {host} could not be resolved. Check its spelling and "
+                      "the network connection (DNS).").format(host=subject)
         return tr("The host name could not be resolved. Check its spelling and the "
                   "network connection (DNS).")
     if names & _DROPPED_NAMES:
@@ -160,12 +233,5 @@ def describe(exc: BaseException, what: str = "") -> str:
 
     # --- file system --------------------------------------------------------
     if isinstance(exc, OSError) and exc.errno is not None:
-        text = _by_errno(exc, subject)
-        if text:
-            return text
-
-    # --- refusals: their text is written for the user ---------------------
-    own = _own_text(exc)
-    if own:
-        return own
-    return tr("The operation failed without saying why. The Log panel may show more.")
+        return _by_errno(exc, subject)
+    return None

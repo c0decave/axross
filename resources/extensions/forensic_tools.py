@@ -67,6 +67,21 @@ class ToolError(RuntimeError):
     pass
 
 
+class ToolMissing(ToolError):
+    """A program the tool runs is not installed; *tool* names it."""
+
+    def __init__(self, tool: str, text: str):
+        super().__init__(text)
+        self.tool = tool
+
+
+def feature_key(tool: str) -> str | None:
+    """The Help > Features entry (core.features) that installs *tool*."""
+    from core import features as F
+
+    return next((f"tool:{t.key}" for t in F.TOOLS if tool in t.commands), None)
+
+
 class Cancelled(ToolError):
     """The user pressed Cancel."""
 
@@ -84,7 +99,7 @@ def suffixes() -> tuple[str, ...]:
 def need(tool: str) -> str:
     found = shutil.which(tool)
     if found is None:
-        raise ToolError(f"{tool} is not installed (package: {PACKAGES.get(tool, tool)}).")
+        raise ToolMissing(tool, f"{tool} is not installed (package: {PACKAGES.get(tool, tool)}).")
     return found
 
 
@@ -441,7 +456,7 @@ def activate(api):
     )
 
     from core import disk_image as DI
-    from core.i18n import tr
+    from core.i18n import tr, tr_n
     from resources.extensions._pane import refresh_pane
     from ui.plain_text import plain_message
 
@@ -541,28 +556,40 @@ def activate(api):
 
     def local(ctx):
         if not ctx.is_local:
-            api.notify("this tool needs the image on this computer")
+            api.notify(tr("this tool needs the image on this computer"))
             return None
         return ctx.paths[0]
+
+    def missing(exc) -> bool:
+        """A program that is not installed: say so with "Show in
+        Features…", which shows how to install it. True when it was that."""
+        key = feature_key(exc.tool) if isinstance(exc, ToolMissing) else None
+        if key is None:
+            return False
+        from ui.features_dialog import offer_features
+
+        offer_features(api.window, key, tr("{tool} is not installed (package: {package}).").format(
+            tool=exc.tool, package=PACKAGES.get(exc.tool, exc.tool)))
+        return True
 
     def warn(title):
         # An error names the image (or says what a tool printed about it):
         # shown as plain text, never as markup.
-        return lambda exc: plain_message(api.window, QMessageBox.Icon.Warning, title,
-                                         str(exc)).exec()
+        return lambda exc: missing(exc) or plain_message(api.window, QMessageBox.Icon.Warning, title,
+                                                         str(exc)).exec()
 
     def do_hash(ctx):
         path = ctx.paths[0]
-        api.notify(f"hashing {os.path.basename(path)}…")
+        api.notify(tr("hashing {name}…").format(name=os.path.basename(path)))
 
         def done(result):
             text = "\n".join(f"{k}: {v}" for k, v in result.items())
             # The path is the first line: as AutoText a name such as
             # "evidence<br><br>MD5: 0123…<!--.dd" rendered as markup, showing
             # forged hashes and hiding the real ones below a comment.
-            box = plain_message(api.window, QMessageBox.Icon.Information, "Hash Image",
+            box = plain_message(api.window, QMessageBox.Icon.Information, tr("Hash Image"),
                                 f"{path}\n\n{text}", QMessageBox.StandardButton.NoButton)
-            copy = box.addButton("Copy", QMessageBox.ButtonRole.ActionRole)
+            copy = box.addButton(tr("Copy"), QMessageBox.ButtonRole.ActionRole)
             box.addButton(QMessageBox.StandardButton.Close)
             box.exec()
             if box.clickedButton() is copy:
@@ -572,7 +599,7 @@ def activate(api):
             reads = _WatchedReads(ctx.backend, dialog.cancel_event.is_set, dialog.report)
             return hash_image(reads, path)
 
-        job("Hash Image", tr("Hashing\n{path}").format(path=path), work, done, percent=False)
+        job(tr("Hash Image"), tr("Hashing\n{path}").format(path=path), work, done, percent=False)
 
     def do_info(ctx):
         path = local(ctx)
@@ -580,35 +607,39 @@ def activate(api):
             return
 
         def done(info):
-            lines = [f"{k}: {DI.human_size(v) if isinstance(v, int) else v}"
-                     for k, v in info.items()]
-            plain_message(api.window, QMessageBox.Icon.Information, "Image Info",
+            def shown(v):
+                if isinstance(v, int):
+                    return DI.human_size(v)
+                return tr(v) if v in ("yes", "no") else v
+
+            lines = [f"{tr(k)}: {shown(v)}" for k, v in info.items()]
+            plain_message(api.window, QMessageBox.Icon.Information, tr("Image Info"),
                           f"{path}\n\n" + "\n".join(lines)).exec()
 
         api.run_in_background(lambda: image_info(path), on_done=done,
-                              on_error=warn("Image Info"))
+                              on_error=warn(tr("Image Info")))
 
     def do_convert(ctx):
         path = local(ctx)
         if path is None:
             return
         target = raw_target(path)
-        if plain_message(api.window, QMessageBox.Icon.Question, "Convert to Raw Image",
-                         f"Write a raw copy of\n{path}\nto\n{target}?",
+        if plain_message(api.window, QMessageBox.Icon.Question, tr("Convert to Raw Image"),
+                         tr("Write a raw copy of\n{path}\nto\n{target}?").format(path=path, target=target),
                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No).exec() \
                 != QMessageBox.StandardButton.Yes:
             return
-        api.notify(f"converting to {os.path.basename(target)}…")
+        api.notify(tr("converting to {name}…").format(name=os.path.basename(target)))
 
         def done(written):
-            api.notify(f"wrote {written}")
+            api.notify(tr("wrote {path}").format(path=written))
             refresh_pane(ctx.pane)  # not blocking; skipped for a pane closed meanwhile
 
         def work(dialog):
             with job_hooks(dialog.report, dialog.cancel_event.is_set):
                 return convert_to_raw(path, target)
 
-        job("Convert to Raw Image",
+        job(tr("Convert to Raw Image"),
             tr("Converting\n{path}\nto\n{target}").format(path=path, target=target),
             work, done, percent=True)
 
@@ -630,7 +661,7 @@ def activate(api):
 
         def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):  # noqa: N802
             if role == Qt.ItemDataRole.DisplayRole and orientation == Qt.Orientation.Horizontal:
-                return self.HEADERS[section]
+                return tr(self.HEADERS[section])
             return None
 
         def data(self, index, role=Qt.ItemDataRole.DisplayRole):
@@ -643,8 +674,8 @@ def activate(api):
             if column == 1:
                 return e.inode
             if column == 2:
-                return {"d": "folder", "r": "file", "l": "link"}.get(e.kind, e.kind)
-            return ("yes" + (" (reallocated)" if e.reallocated else "")) if e.deleted else ""
+                return {"d": tr("folder"), "r": tr("file"), "l": tr("link")}.get(e.kind, e.kind)
+            return (tr("yes (reallocated)") if e.reallocated else tr("yes")) if e.deleted else ""
 
     class BrowseDialog(QDialog):
         def __init__(self, image, sector, entries):
@@ -657,10 +688,10 @@ def activate(api):
             self.resize(820, 520)
             layout = QVBoxLayout(self)
             deleted = sum(e.deleted for e in entries)
-            layout.addWidget(QLabel(f"{len(entries)} entries, {deleted} deleted "
-                                    f"(partition at sector {sector})"))
+            layout.addWidget(QLabel(tr("{n} entries, {deleted} deleted (partition at sector {sector})").format(
+                n=len(entries), deleted=deleted, sector=sector)))
             self.filter = QLineEdit()
-            self.filter.setPlaceholderText("Filter paths…")
+            self.filter.setPlaceholderText(tr("Filter paths…"))
             self.filter.textChanged.connect(self.apply_filter)
             layout.addWidget(self.filter)
             self.model = EntryModel(entries, self)
@@ -679,9 +710,9 @@ def activate(api):
             self.table.resizeColumnsToContents()
             layout.addWidget(self.table, 1)
             buttons = QHBoxLayout()
-            extract_button = QPushButton("Extract…")
+            extract_button = QPushButton(tr("Extract…"))
             extract_button.clicked.connect(self.extract_selected)
-            close = QPushButton("Close")
+            close = QPushButton(tr("Close"))
             close.clicked.connect(self.close)
             buttons.addStretch(1)
             buttons.addWidget(extract_button)
@@ -707,14 +738,15 @@ def activate(api):
             picked = [e for e in self.selected() if not e.is_dir]
             if not picked:
                 return
-            folder = QFileDialog.getExistingDirectory(self, "Extract into")
+            folder = QFileDialog.getExistingDirectory(self, tr("Extract into"))
             if not folder:
                 return
             image, sector = self.image, self.sector
             api.run_in_background(
                 lambda: extract(image, picked, folder, sector),
-                on_done=lambda written: api.notify(f"extracted {len(written)} file(s) to {folder}"),
-                on_error=warn("Extract"))
+                on_done=lambda written: api.notify(tr_n(len(written), "extracted {n} file to {folder}",
+                                                        "extracted {n} files to {folder}", folder=folder)),
+                on_error=warn(tr("Extract")))
 
     def do_browse(ctx):
         path = local(ctx)
@@ -728,14 +760,14 @@ def activate(api):
                 container_hint(info)
                 return
             if not parts:
-                QMessageBox.information(api.window, "Browse File System",
-                                        "No partition or file system found in this image.")
+                QMessageBox.information(api.window, tr("Browse File System"),
+                                        tr("No partition or file system found in this image."))
                 return
             part = parts[0]
             if len(parts) > 1:
                 labels = [f"{p.number}: {p.filesystem or p.type_name} {p.label} "
                           f"({DI.human_size(p.size)})" for p in parts]
-                choice, ok = QInputDialog.getItem(api.window, "Browse File System", "Partition:",
+                choice, ok = QInputDialog.getItem(api.window, tr("Browse File System"), tr("Partition:"),
                                                   labels, editable=False)
                 if not ok:
                     return
@@ -744,27 +776,27 @@ def activate(api):
             # sector size (TSK reads a raw image with 512 unless -b names
             # another): a 4Kn disk's LBAs would land an eighth of the way in.
             if part.start % TSK_SECTOR:
-                QMessageBox.warning(api.window, "Browse File System",
-                                    f"Partition {part.number} does not start on a 512-byte "
-                                    "boundary; The Sleuth Kit cannot be pointed at it.")
+                QMessageBox.warning(api.window, tr("Browse File System"),
+                                    tr("Partition {n} does not start on a 512-byte boundary; "
+                                       "The Sleuth Kit cannot be pointed at it.").format(n=part.number))
                 return
             sector = part.start // TSK_SECTOR
             api.run_in_background(
                 lambda: list_files(path, sector),
                 on_done=lambda entries: _show(path, sector, entries),
-                on_error=warn("Browse File System"))
+                on_error=warn(tr("Browse File System")))
 
         def container_hint(info):
             # A qcow2, VMDK, dynamic VDI, VHD(X) or E01 keeps its partitions
             # inside a container The Sleuth Kit cannot read: say how to get
             # at them (core.disk_image's note) instead of "nothing found".
-            box = plain_message(api.window, QMessageBox.Icon.Information, "Browse File System",
+            box = plain_message(api.window, QMessageBox.Icon.Information, tr("Browse File System"),
                                 f"{os.path.basename(path)}: {info.description}.\n\nThe Sleuth "
                                 "Kit cannot read the partitions inside this container. "
                                 f"{info.note}", QMessageBox.StandardButton.NoButton)
             convert = None
             if info.kind in QEMU_CONVERTS:
-                convert = box.addButton("Convert to Raw…", QMessageBox.ButtonRole.ActionRole)
+                convert = box.addButton(tr("Convert to Raw…"), QMessageBox.ButtonRole.ActionRole)
             box.addButton(QMessageBox.StandardButton.Close)
             box.exec()
             if convert is not None and box.clickedButton() is convert:
@@ -777,7 +809,7 @@ def activate(api):
             api.window._forensic_browse_dialog = dialog
 
         api.run_in_background(lambda: DI.inspect_path(path), on_done=got_layout,
-                              on_error=warn("Browse File System"))
+                              on_error=warn(tr("Browse File System")))
 
     def terminal(tool):
         def start(ctx):
@@ -787,11 +819,12 @@ def activate(api):
             try:
                 exe = need(tool)
             except ToolError as exc:
-                plain_message(api.window, QMessageBox.Icon.Warning, tool, str(exc)).exec()
+                if not missing(exc):
+                    plain_message(api.window, QMessageBox.Icon.Warning, tool, str(exc)).exec()
                 return
             opener = getattr(api.window, "open_terminal_command", None)
             if opener is None:
-                api.notify("this axross cannot start a terminal command")
+                api.notify(tr("this axross cannot start a terminal command"))
                 return
             opener([exe, path], cwd=os.path.dirname(path), label=f"{tool}: {os.path.basename(path)}")
         return start

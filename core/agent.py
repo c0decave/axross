@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import dataclasses
 import errno
+import functools
 import hashlib
 import json
 import logging
@@ -760,6 +761,71 @@ def refusal_reason(outcome: str, text: str, *, files_read_only: bool = False) ->
     return ""
 
 
+@functools.lru_cache(maxsize=1)
+def _tool_kinds() -> dict[str, tuple[str, bool]]:
+    """tool name -> (group, write) of every tool axross can offer an agent."""
+    import tempfile
+
+    from core import mcp_groups, mcp_server
+    from core.local_fs import LocalFS
+
+    tools = mcp_server._build_tools(LocalFS(), allow_write=True, root=tempfile.gettempdir(),
+                                    tool_groups=frozenset(mcp_groups.GROUPS), allow_exec=True)
+    return {t.name: (str(getattr(t, "group", "core")), bool(getattr(t, "write", False)))
+            for t in tools}
+
+
+def unavailable_switch(name: str, *, groups, allow_write: bool, allow_exec: bool,
+                       files_read_only: bool, functions=None, extension_tools=None,
+                       mcp_servers=()) -> tuple[str, str]:
+    """Which switch keeps the tool *name* the agent asked for from a tab,
+    as ``(kind, value)`` for the user (not the model):
+
+    ``("group", g)`` tick the tool group *g* under Tools; ``("write", "")``
+    tick "Allow changes to files"; ``("exec", "")`` "Allow remote commands";
+    ``("read_only", "")`` Files read-only is on; ``("ext", ext_id)`` tick the
+    extension's line; ``("mcp", server)`` tick the server's line;
+    ``("access", function)`` the axross function is off in Agent Settings >
+    Access; ``("offered", full_name)`` it is offered under another name;
+    ``("unknown", "")`` axross has no such tool.
+
+    *extension_tools*: {full tool name: extension id} of every extension
+    with agent tools; *mcp_servers*: the enabled servers' names."""
+    groups = set(groups or ())
+    for full, ext_id in (extension_tools or {}).items():
+        if name in (full, full.rpartition("__")[2]):
+            if f"ext:{ext_id}" not in groups:
+                return "ext", ext_id
+            if functions is not None and "extensions" not in functions:
+                return "access", "extensions"
+            return "offered", full
+    server, sep, _tool = name.partition("__")
+    if sep and server in set(mcp_servers):
+        if f"mcp:{server}" not in groups:
+            return "mcp", server
+        if functions is not None and "mcp_servers" not in functions:
+            return "access", "mcp_servers"
+    kind = _tool_kinds().get(name)
+    if kind is None:
+        return "unknown", ""
+    group, write = kind
+    if (write or group == "exec") and files_read_only:
+        return "read_only", ""
+    if group == "exec":
+        if functions is not None and "remote_commands" not in functions:
+            return "access", "remote_commands"
+        return ("exec", "") if not allow_exec else ("unknown", "")
+    if group == "remote" and functions is not None and "saved_profiles" not in functions:
+        return "access", "saved_profiles"
+    from core.agent_profiles import OFFERED_GROUPS
+
+    if group in OFFERED_GROUPS and group not in groups:
+        return "group", group
+    if write and not allow_write:
+        return "write", ""
+    return "unknown", ""
+
+
 def changes_files(write: bool, group: str) -> bool:
     """Whether a tool may change files: a mutating one, or one of the exec
     group (a remote command can change anything)."""
@@ -1170,7 +1236,12 @@ class Agent:
         spec = self._host.get(name)
         external = (self._external or {}).get(name)
         if tool is None and spec is None and external is None:
-            return name, "unavailable", f"error: the tool {name!r} is not available to you"
+            # A model often drops the "<owner>__" of an extension's or MCP
+            # server's tool: name the one it may have meant.
+            meant = sorted(n for n in (*self._tools, *(self._external or {}))
+                           if n.endswith(f"__{name}")) if name else []
+            hint = f"; did you mean {meant[0]!r}?" if len(meant) == 1 else ""
+            return name, "unavailable", f"error: the tool {name!r} is not available to you{hint}"
         try:
             args = json.loads(raw) if isinstance(raw, str) else raw
         except (ValueError, RecursionError):

@@ -128,3 +128,212 @@ def make_session(fake: FakeSmbClient):
     s._host, s._share, s._port = "h", "s", 445
     s._prefix = "\\\\h\\s"
     return s
+
+
+# -- a stateful smbclient over a local folder ------------------------------------
+
+UNC_PREFIX = "\\\\h\\s"
+
+
+class LocalSmbClient:
+    """``smbclient`` over a local folder, for the conformance suite.
+
+    Behaves like smbclient 1.17 against a Windows / Samba server where the
+    backend contract depends on it: every path goes through
+    ``ntpath.normpath`` (smbclient._pool.get_smb_tree - a trailing
+    backslash is dropped), and every failure is the SMBOSError smbprotocol
+    raises for the NT status the server answers (NAME_NOT_FOUND ->
+    ENOENT, NAME_COLLISION -> EEXIST, ACCESS_DENIED -> errno 0, ...), not
+    an OSError subclass. A rename does not replace an existing name.
+    """
+
+    def __init__(self, root: str) -> None:
+        self.root = root
+        self.path = types.SimpleNamespace(
+            isdir=self._isdir, exists=self._exists, lexists=self._lexists, islink=self._islink
+        )
+
+    @staticmethod
+    def _error(status: int, unc: str):
+        from smbprotocol.exceptions import SMBOSError
+
+        return SMBOSError(status, unc)
+
+    def _local(self, unc: str) -> str:
+        import ntpath
+        import os
+
+        norm = ntpath.normpath(unc)
+        if not norm.lower().startswith(UNC_PREFIX.lower()):
+            raise ValueError(f"not on this share: {unc!r}")
+        rel = norm[len(UNC_PREFIX):].lstrip("\\")
+        return os.path.join(self.root, *[p for p in rel.split("\\") if p])
+
+    def _missing(self, unc: str, local: str):
+        import os
+
+        from smbprotocol.header import NtStatus
+
+        status = (NtStatus.STATUS_OBJECT_NAME_NOT_FOUND if os.path.isdir(os.path.dirname(local))
+                  else NtStatus.STATUS_OBJECT_PATH_NOT_FOUND)
+        return self._error(status, unc)
+
+    def stat(self, unc, follow_symlinks=True, **_kw):
+        import os
+
+        from smbprotocol.header import NtStatus
+
+        local = self._local(unc)
+        try:
+            return os.stat(local) if follow_symlinks else os.lstat(local)
+        except FileNotFoundError:
+            raise self._missing(unc, local) from None
+        except NotADirectoryError:
+            raise self._error(NtStatus.STATUS_OBJECT_PATH_NOT_FOUND, unc) from None
+
+    def lstat(self, unc, **kw):
+        return self.stat(unc, follow_symlinks=False, **kw)
+
+    def _answers(self, fn, unc, **kw):
+        try:
+            return fn(unc, **kw)
+        except OSError as e:
+            if e.errno == 2:
+                return None
+            raise
+
+    def _exists(self, unc, **kw):
+        return self._answers(self.stat, unc, **kw) is not None
+
+    def _lexists(self, unc, **kw):
+        return self._answers(self.lstat, unc, **kw) is not None
+
+    def _isdir(self, unc, **kw):
+        import stat as S
+
+        st = self._answers(self.stat, unc, **kw)
+        return st is not None and S.S_ISDIR(st.st_mode)
+
+    def _islink(self, unc, **kw):
+        import stat as S
+
+        st = self._answers(self.lstat, unc, **kw)
+        return st is not None and S.S_ISLNK(st.st_mode)
+
+    def scandir(self, unc, **_kw):
+        import ntpath
+        import os
+
+        from smbprotocol.header import NtStatus
+
+        local = self._local(unc)
+        if not os.path.lexists(local):
+            raise self._missing(unc, local)
+        if not os.path.isdir(local):
+            raise self._error(NtStatus.STATUS_NOT_A_DIRECTORY, unc)
+        out = []
+        for e in os.scandir(local):
+            st = os.lstat(e.path)
+            attrs = 0x10 if e.is_dir(follow_symlinks=False) else 0x20
+            if e.is_symlink():
+                attrs |= 0x400
+            info = types.SimpleNamespace(
+                last_write_time=datetime.fromtimestamp(st.st_mtime, timezone.utc),
+                file_attributes=attrs,
+                end_of_file=st.st_size,
+            )
+            entry = types.SimpleNamespace(name=e.name, path=ntpath.normpath(unc) + "\\" + e.name,
+                                          smb_info=info)
+            entry.is_symlink = (lambda link=e.is_symlink(): link)
+            out.append(entry)
+        return iter(out)
+
+    def listdir(self, unc, **kw):
+        return [e.name for e in self.scandir(unc, **kw)]
+
+    def mkdir(self, unc, **_kw):
+        import os
+
+        from smbprotocol.header import NtStatus
+
+        local = self._local(unc)
+        if os.path.lexists(local):
+            raise self._error(NtStatus.STATUS_OBJECT_NAME_COLLISION, unc)
+        if not os.path.isdir(os.path.dirname(local)):
+            raise self._error(NtStatus.STATUS_OBJECT_PATH_NOT_FOUND, unc)
+        os.mkdir(local)
+
+    def rmdir(self, unc, **_kw):
+        import os
+
+        from smbprotocol.header import NtStatus
+
+        local = self._local(unc)
+        if os.path.islink(local):
+            os.unlink(local)  # FILE_OPEN_REPARSE_POINT: the link goes
+            return
+        if not os.path.lexists(local):
+            raise self._missing(unc, local)
+        if not os.path.isdir(local):
+            raise self._error(NtStatus.STATUS_NOT_A_DIRECTORY, unc)
+        if os.listdir(local):
+            raise self._error(NtStatus.STATUS_DIRECTORY_NOT_EMPTY, unc)
+        os.rmdir(local)
+
+    def remove(self, unc, **_kw):
+        import os
+
+        from smbprotocol.header import NtStatus
+
+        local = self._local(unc)
+        if not os.path.lexists(local):
+            raise self._missing(unc, local)
+        if os.path.isdir(local) and not os.path.islink(local):
+            raise self._error(NtStatus.STATUS_FILE_IS_A_DIRECTORY, unc)
+        os.unlink(local)
+
+    def rename(self, src, dst, **_kw):
+        import os
+
+        from smbprotocol.header import NtStatus
+
+        s, d = self._local(src), self._local(dst)
+        if not os.path.lexists(s):
+            raise self._missing(src, s)
+        if os.path.lexists(d):
+            raise self._error(NtStatus.STATUS_OBJECT_NAME_COLLISION, dst)
+        if not os.path.isdir(os.path.dirname(d)):
+            raise self._error(NtStatus.STATUS_OBJECT_PATH_NOT_FOUND, dst)
+        if os.path.isdir(s) and (d + os.sep).startswith(s + os.sep):
+            raise self._error(NtStatus.STATUS_INVALID_PARAMETER, src)
+        os.rename(s, d)
+
+    def utime(self, unc, times=None, **_kw):
+        import os
+
+        os.utime(self._local(unc), times)
+
+    def open_file(self, unc, mode="rb", **_kw):
+        import os
+
+        from smbprotocol.header import NtStatus
+
+        local = self._local(unc)
+        if os.path.isdir(local):
+            raise self._error(NtStatus.STATUS_FILE_IS_A_DIRECTORY, unc)
+        if "r" in mode and not os.path.exists(local):
+            raise self._missing(unc, local)
+        if not os.path.isdir(os.path.dirname(local)):
+            raise self._error(NtStatus.STATUS_OBJECT_PATH_NOT_FOUND, unc)
+        return open(local, mode)
+
+    def delete_session(self, *a, **k):
+        pass
+
+
+def make_local_session(root: str):
+    """``(session, fake)``: an SmbSession whose ``smbclient`` is a
+    :class:`LocalSmbClient` over *root*. The caller patches
+    ``core.smb_client.smbclient`` with the fake."""
+    fake = LocalSmbClient(root)
+    return make_session(fake), fake

@@ -120,8 +120,10 @@ def test_sad_re_enabling_a_self_disabled_job_starts_its_failure_count_over(tmp_p
     dlg.deleteLater()
 
 
-def test_sad_a_custom_interval_below_five_minutes_is_not_accepted(tmp_path):
+def test_sad_a_custom_interval_below_five_minutes_is_not_accepted(tmp_path, monkeypatch):
     from ui.scheduler_dialog import SchedulerDialog
+
+    monkeypatch.setattr(SchedulerDialog, "_saved_scripts", staticmethod(lambda: ["mirror"]))
 
     store = JobStore(tmp_path / "jobs.json")
     dlg = SchedulerDialog(store)

@@ -67,10 +67,37 @@ except ImportError:  # pragma: no cover — optional dep
 _PS_COMMAND_PREFIX = "powershell -encodedcommand "
 _COMMAND_LINE_LIMIT = 8190
 
+#: Put in front of every script of the file operations. pywinrm opens the
+#: shell with code page 437 (WINRS_CODEPAGE), so powershell.exe wrote its
+#: redirected stdout in the OEM code page, which was read as UTF-8:
+#: "Präsentation.pptx" came back as "Pr\ufffdsentation.pptx" and could not
+#: be opened, stat'ed or deleted. The setter can fail where there is no
+#: console; names travel base64-encoded as well (``Name64``) and output
+#: that is no UTF-8 is read as code page 437 (:func:`_decode_output`).
+_UTF8_OUTPUT = (
+    "try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch { }; "
+    "$OutputEncoding = New-Object System.Text.UTF8Encoding $false\n"
+)
+
+#: The code page pywinrm opens its shell with (winrm.Protocol.open_shell).
+_SHELL_CODEPAGE = "cp437"
+
+
+def _decode_output(raw: bytes | None) -> str:
+    """powershell.exe's output as text: UTF-8 (what :data:`_UTF8_OUTPUT`
+    asks for), else the shell's code page 437 - never U+FFFD in a name."""
+    raw = raw or b""
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        text = raw.decode(_SHELL_CODEPAGE, errors="replace")
+    return text.lstrip("\ufeff")
+
 
 def _ps_command_length(script: str) -> int:
-    """Length of the command line ``Session.run_ps(script)`` sends."""
-    utf16_len = len(script.encode("utf_16_le"))
+    """Length of the command line ``_run_ps(script)`` sends (through
+    ``Session.run_ps``, with :data:`_UTF8_OUTPUT` in front)."""
+    utf16_len = len((_UTF8_OUTPUT + script).encode("utf_16_le"))
     return len(_PS_COMMAND_PREFIX) + 4 * -(-utf16_len // 3)
 
 
@@ -95,7 +122,7 @@ def _max_chunk_bytes(path_expr: str) -> int:
     Derived from the real template: every base64 character adds two
     UTF-16LE bytes, i.e. 8/3 characters of the outer base64."""
     room = (_COMMAND_LINE_LIMIT - len(_PS_COMMAND_PREFIX)) // 4 * 3 // 2
-    b64_chars = room - len(_write_script(path_expr, "", append=True))
+    b64_chars = room - len(_UTF8_OUTPUT) - len(_write_script(path_expr, "", append=True))
     return max(0, b64_chars // 4 * 3)
 
 
@@ -133,6 +160,15 @@ def _ps_decode(b64: str) -> str:
 # never reads like this.
 _NOT_FOUND = "AXROSS-NOT-FOUND"
 _DESTINATION_TAKEN = "AXROSS-DESTINATION-EXISTS"
+_NOT_A_DIRECTORY = "AXROSS-NOT-A-DIRECTORY"
+
+#: The base64 of an entry's name in UTF-8, for the listing and stat rows:
+#: ASCII, whatever code page the output is written in.
+_NAME64 = "[Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes({}.Name))"
+
+#: PowerShell's English message for a missing path (ItemNotFoundException),
+#: for the scripts that cannot tell it apart themselves.
+_PATH_NOT_FOUND_TEXT = ("Cannot find path", "because it does not exist")
 
 
 def _b64(value: str) -> str:
@@ -314,11 +350,13 @@ class WinRMSession(SessionLifecycle):
     def home(self) -> str:
         # Best effort: ask PS for $HOME. Falls back to C:\Users\<user>.
         try:
-            out = self._run_ps("Write-Output $HOME")
-            home = out.strip()
+            out = self._run_ps(
+                "[Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes([string]$HOME))"
+            )
+            home = base64.b64decode(out.strip(), validate=True).decode("utf-8")
             if home:
                 return home
-        except OSError as exc:
+        except (OSError, ValueError) as exc:  # binascii.Error, UnicodeDecodeError
             log.debug("WinRM home(): falling back (%s)", exc)
         return f"C:\\Users\\{self._username}" if self._username else "C:\\"
 
@@ -329,10 +367,16 @@ class WinRMSession(SessionLifecycle):
         path_b64 = _b64(self.normalize(path))
         script = f"""
             $p = {_ps_decode(path_b64)}
+            $dir = $null
+            try {{ $dir = Get-Item -Force -LiteralPath $p -ErrorAction Stop }}
+            catch [System.Management.Automation.ItemNotFoundException] {{ }}
+            if ($null -eq $dir) {{ Write-Output '{_NOT_FOUND}'; return }}
+            if (-not $dir.PSIsContainer) {{ Write-Output '{_NOT_A_DIRECTORY}'; return }}
             $items = Get-ChildItem -Force -LiteralPath $p -ErrorAction Stop
             $items | ForEach-Object {{
               [PSCustomObject]@{{
                 Name = $_.Name
+                Name64 = {_NAME64.format("$_")}
                 IsDir = $_.PSIsContainer
                 Size = if ($_.PSIsContainer) {{ 0 }} else {{ $_.Length }}
                 Mtime = $_.LastWriteTimeUtc.ToString('o')
@@ -341,7 +385,13 @@ class WinRMSession(SessionLifecycle):
               }}
             }} | ConvertTo-Json -Compress -Depth 2
         """
-        out = self._run_ps(script)
+        out = self._run_ps_at(path, script)
+        if out.strip() == _NOT_FOUND:
+            raise FileNotFoundError(errno.ENOENT, "WinRM list_dir: not found", path)
+        if out.strip() == _NOT_A_DIRECTORY:
+            # Get-ChildItem of a file answers the file itself: it was
+            # listed as a folder holding itself.
+            raise NotADirectoryError(errno.ENOTDIR, "WinRM list_dir: not a folder", path)
         items = [self._parse_listing_row(row) for row in self._parse_json_array(out)]
         return [item for item in items if item.name]  # a row without a name names nothing
 
@@ -358,6 +408,7 @@ class WinRMSession(SessionLifecycle):
             if ($null -eq $item) {{ Write-Output '{_NOT_FOUND}' }} else {{
             [PSCustomObject]@{{
               Name = $item.Name
+              Name64 = {_NAME64.format("$item")}
               IsDir = $item.PSIsContainer
               Size = if ($item.PSIsContainer) {{ 0 }} else {{ $item.Length }}
               Mtime = $item.LastWriteTimeUtc.ToString('o')
@@ -409,8 +460,14 @@ class WinRMSession(SessionLifecycle):
     def remove(self, path: str, recursive: bool = False) -> None:
         path_b64 = _b64(self.normalize(path))
         flag = "-Recurse" if recursive else ""
-        script = f"Remove-Item -Force {flag} -LiteralPath {_ps_decode(path_b64)} -ErrorAction Stop"
-        self._run_ps(script)
+        script = (
+            f"try {{ Remove-Item -Force {flag} -LiteralPath {_ps_decode(path_b64)} "
+            f"-ErrorAction Stop }} "
+            f"catch [System.Management.Automation.ItemNotFoundException] "
+            f"{{ Write-Output '{_NOT_FOUND}' }}"
+        )
+        if self._run_ps_at(path, script).strip() == _NOT_FOUND:
+            raise FileNotFoundError(errno.ENOENT, "WinRM remove: not found", path)
 
     def rename(self, src: str, dst: str) -> None:
         """Move-Item, refused when *dst* exists (FileExistsError).
@@ -465,13 +522,19 @@ class WinRMSession(SessionLifecycle):
         path_b64 = _b64(self.normalize(path))
         script = f"""
             $p = {_ps_decode(path_b64)}
+            $item = $null
+            try {{ $item = Get-Item -Force -LiteralPath $p -ErrorAction Stop }}
+            catch [System.Management.Automation.ItemNotFoundException] {{ }}
+            if ($null -eq $item) {{ Write-Output '{_NOT_FOUND}'; return }}
             $bytes = [IO.File]::ReadAllBytes($p)
             if ($bytes.Length -gt {MAX_READ_BYTES}) {{
               throw "WinRM open_read: file too large ($($bytes.Length) bytes)"
             }}
             [Convert]::ToBase64String($bytes)
         """
-        out = self._run_ps(script).strip()
+        out = self._run_ps_at(path, script).strip()
+        if out == _NOT_FOUND:
+            raise FileNotFoundError(errno.ENOENT, "WinRM open_read: not found", path)
         try:
             data = base64.b64decode(out, validate=True)
         except Exception as exc:
@@ -567,13 +630,42 @@ class WinRMSession(SessionLifecycle):
     # Server-side helpers
     # ------------------------------------------------------------------
     def copy(self, src: str, dst: str) -> None:
+        """Copy-Item; a folder with all it holds (-Recurse).
+
+        Without -Recurse, Copy-Item copied a folder as an empty folder and
+        succeeded - an MCP copy, a script or a WebDAV COPY lost the whole
+        content. A file replaces a file at *dst* (as the other backends'
+        copy does); a folder at *dst*, or any *dst* for a folder, is
+        FileExistsError: Copy-Item would put the copy INTO the folder or
+        merge the two. server_side_copy(overwrite=True) goes on with its
+        guarded stream copy then. -Force: hidden and read-only entries."""
         src_b64 = _b64(self.normalize(src))
         dst_b64 = _b64(self.normalize(dst))
-        script = (
-            f"Copy-Item -Force -LiteralPath {_ps_decode(src_b64)} "
-            f"-Destination {_ps_decode(dst_b64)} -ErrorAction Stop"
-        )
-        self._run_ps(script)
+        script = f"""
+            $s = {_ps_decode(src_b64)}
+            $d = {_ps_decode(dst_b64)}
+            $item = $null
+            try {{ $item = Get-Item -Force -LiteralPath $s -ErrorAction Stop }}
+            catch [System.Management.Automation.ItemNotFoundException] {{ }}
+            if ($null -eq $item) {{ Write-Output '{_NOT_FOUND}'; return }}
+            $taken = $null
+            try {{ $taken = Get-Item -Force -LiteralPath $d -ErrorAction Stop }}
+            catch [System.Management.Automation.ItemNotFoundException] {{ }}
+            if ($null -ne $taken -and ($item.PSIsContainer -or $taken.PSIsContainer)) {{
+              Write-Output '{_DESTINATION_TAKEN}'
+            }} elseif ($item.PSIsContainer) {{
+              Copy-Item -Recurse -Force -LiteralPath $s -Destination $d -ErrorAction Stop
+            }} else {{
+              Copy-Item -Force -LiteralPath $s -Destination $d -ErrorAction Stop
+            }}
+        """
+        out = self._run_ps_at(src, script).strip()
+        if out == _NOT_FOUND:
+            raise FileNotFoundError(errno.ENOENT, "WinRM copy: the source is not there", src)
+        if out == _DESTINATION_TAKEN:
+            raise FileExistsError(
+                errno.EEXIST, f"WinRM copy {src} -> {dst}: the destination exists", dst
+            )
 
     def checksum(self, path: str, algorithm: str = "sha256") -> str:
         algo = (algorithm or "sha256").upper()
@@ -734,18 +826,34 @@ class WinRMSession(SessionLifecycle):
     # ------------------------------------------------------------------
     # PowerShell runner
     # ------------------------------------------------------------------
-    def _run_ps(self, script: str) -> str:
+    def _run_ps_at(self, path: str, script: str) -> str:
+        """:meth:`_run_ps` for a script about *path*: FileNotFoundError when
+        it failed because PowerShell found no such path. Only the English
+        message says so; the scripts catch ItemNotFoundException
+        themselves where they can and answer a marker."""
         try:
-            result = self._session.run_ps(script)
+            return self._run_ps(script)
+        except FileNotFoundError:
+            raise
+        except OSError as exc:
+            if all(part in str(exc) for part in _PATH_NOT_FOUND_TEXT):
+                raise FileNotFoundError(errno.ENOENT, str(exc), path) from exc
+            raise
+
+    def _run_ps(self, script: str) -> str:
+        """Run a file-operation script; its stdout as text (UTF-8 asked
+        for, see :data:`_UTF8_OUTPUT`). A failed script is an OSError."""
+        try:
+            result = self._session.run_ps(_UTF8_OUTPUT + script)
         except (InvalidCredentialsError, WinRMTransportError) as exc:
             raise OSError(f"WinRM transport error: {exc}") from exc
         except Exception as exc:  # noqa: BLE001 — pywinrm raises various
             raise OSError(f"WinRM run_ps failed: {exc}") from exc
         if result.status_code != 0:
-            stderr = (result.std_err or b"").decode("utf-8", errors="replace").strip()
-            stdout = (result.std_out or b"").decode("utf-8", errors="replace").strip()
+            stderr = _decode_output(result.std_err).strip()
+            stdout = _decode_output(result.std_out).strip()
             raise OSError(f"WinRM ps rc={result.status_code}: {stderr or stdout or '<no output>'}")
-        return (result.std_out or b"").decode("utf-8", errors="replace")
+        return _decode_output(result.std_out)
 
     # ------------------------------------------------------------------
     # Parsers
@@ -786,8 +894,15 @@ class WinRMSession(SessionLifecycle):
                 mtime = mtime.replace(tzinfo=timezone.utc)
         except (ValueError, AttributeError):
             mtime = datetime.fromtimestamp(0)
+        name = as_str(row.get("Name"))
+        name64 = row.get("Name64")
+        if isinstance(name64, str) and name64:
+            try:
+                name = base64.b64decode(name64, validate=True).decode("utf-8")
+            except ValueError:  # binascii.Error, UnicodeDecodeError: keep Name
+                pass
         return FileItem(
-            name=as_str(row.get("Name")),
+            name=name,
             size=as_size(row.get("Size")),
             modified=mtime,
             is_dir=bool(row.get("IsDir")),

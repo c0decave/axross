@@ -1,6 +1,6 @@
-# Uso de Axross
+# Uso de axross
 
-Esta guía cubre lo que puedes hacer con Axross una vez que está
+Esta guía cubre lo que puedes hacer con axross una vez que está
 corriendo. Para la instalación, ver [INSTALL.md](../INSTALL.md); el
 manual en alemán es [USAGE_de.md](USAGE_de.md).
 
@@ -8,7 +8,7 @@ Idiomas: [English](USAGE.md) · [Deutsch](USAGE_de.md) · **Español**
 
 ## De un vistazo
 
-Axross es un gestor de ficheros estilo Total Commander para más de 30
+axross es un gestor de ficheros estilo Total Commander para más de 30
 protocolos, construido en torno a tres ideas:
 
 - **Layout multi-panel.** Divide horizontal o verticalmente en
@@ -18,7 +18,7 @@ protocolos, construido en torno a tres ideas:
   atómicas, overlays cifrados, línea temporal de versiones,
   almacenamiento direccionable por contenido — todo funciona en
   cada protocolo, incluso aquellos cuya API nativa no lo soporta.
-- **Modo servidor MCP.** Axross puede correr headless y exponer
+- **Modo servidor MCP.** axross puede correr headless y exponer
   cualquier backend configurado como herramientas MCP, de modo que
   un cliente LLM puede manejarlo. Solo lectura por defecto;
   `--mcp-write` opt-in para mutaciones.
@@ -94,7 +94,7 @@ JSON de perfil mismo nunca lleva credenciales en plano.
   (Import Client JSON…). Los tokens se cachean
   en `~/.config/axross/<provider>_token.json` con `0o600` desde el
   origen. Los proxies de perfil cubren el tráfico API/token que
-  controla Axross; la página externa de consent del navegador puede
+  controla axross; la página externa de consent del navegador puede
   usar la configuración proxy del navegador o del sistema. Receta de
   registro de app por proveedor:
   [OAUTH_SETUP.md](../OAUTH_SETUP.md).
@@ -107,7 +107,7 @@ JSON de perfil mismo nunca lleva credenciales en plano.
   soporte SOCKS/HTTP limpio avisan en vez de ignorar campos de proxy
   en silencio. S3 solo usa HTTP-CONNECT; Rsync puede pasar
   `proxy_username` mediante OpenBSD `nc`, pero no `proxy_password`.
-  Las sesiones SDK basadas en requests que controla Axross ignoran
+  Las sesiones SDK basadas en requests que controla axross ignoran
   `HTTP_PROXY` / `HTTPS_PROXY` del entorno del proceso; el perfil es
   la fuente de la ruta.
 - **Servidores de producción.** *Production (confirm destructive
@@ -381,7 +381,7 @@ cuyo protocolo nativo no las soporta.
 | `core.metadata_index` | Búsqueda offline SQLite por nombre / ext / tamaño / mtime. Un fichero: `$AXROSS_METADATA_DB`, si no `$XDG_DATA_HOME/axross/metadata.sqlite`, si no `~/.local/share/axross/metadata.sqlite` (un índice que ya está allí sigue en uso). Solo lo llena *Index Active Folder…*, nunca la navegación; guarda por entrada la conexión, el path, nombre, tamaño, extensión y fechas, sin contenido. La búsqueda por extensión, tamaño y fecha usa índices de SQLite; la de un trozo del nombre lee todas las filas. sift no construye ningún índice ni busca: es un analizador de ficheros. |
 | `core.previews` | Thumbnailer local de imágenes con allow-list MIME, caps de tamaño y gate del límite de allocation Qt. F3 / doble-click. |
 | `core.archive` | Extracción segura de zip / tar / 7z (`.zip .xpi .jar .war .apk .epub .docx .xlsx .odt .tar .tar.gz .tgz .tar.bz2 .tbz2 .tar.xz .txz .7z`). Guards contra zip-slip / bomba / metadata mentirosa; las entradas symlink y hardlink (tar, y symlinks de ZIP) se omiten - nunca se crean ni se siguen - y el resultado las nombra; `.7z` requiere el extra `[archive]`. |
-| `core.elevated_io` | Lectura local con privilegios vía `pkexec` — Axross nunca mantiene el privilegio. Entrada "Open as root…" en el menú contextual. |
+| `core.elevated_io` | Lectura local con privilegios vía `pkexec` — axross nunca mantiene el privilegio. Entrada "Open as root…" en el menú contextual. |
 | `core.fuse_mount` | Montaje FUSE de cualquier FileBackend. Solo lectura por defecto; `writeable=True` habilita create / write / unlink / mkdir / rename. Extra opcional `[fuse]`. |
 | `core.mcp_server` | Servidor MCP JSON-RPC con framing stdio que expone el backend configurado como herramientas. `--mcp-write` añade herramientas mutadoras, capadas a un root a prueba de path-traversal. |
 
@@ -907,7 +907,7 @@ cada una abre su parte de esta sección.
 ### Duplicate Finder
 
 *View → Duplicate Finder…* (`Ctrl+Shift+D`; en un panel, clic derecho →
-*Find Duplicate Files…*) trabaja con el índice de duplicados
+*Duplicate Finder…*) trabaja con el índice de duplicados
 (`cas.sqlite`, ver *El índice offline*).
 Agrupa los archivos indexados por hash de contenido, primero el mayor desperdicio: cada grupo muestra el espacio que liberaría y la línea de estado el total. Los archivos vacíos y los grupos que solo son enlaces duros de un archivo quedan ocultos salvo que se marque *Empty files* / *Hard links*. *Filter* (texto o patrones como `*.jpg *.png`; `Ctrl+F`), *At least* (un tamaño) y *Sort* (espacio a liberar, tamaño, copias, nombre, carpeta) acotan la lista; las copias de un grupo siguen en orden de superviviente (la primera se conserva). *Rebuild from Active Pane…* calcula los hashes de la carpeta en segundo plano con recuentos, bytes y *Cancel*: los archivos sin cambios no se vuelven a leer, los que desaparecieron desde el último escaneo salen del índice, y el informe nombra los archivos que no se pudieron leer, las carpetas que no se pudieron listar y los FIFOs, sockets o dispositivos omitidos (nunca se leen: podría colgarse). Un backend sin checksum de contenido propio (SMB, FTP simple, WebDAV solo con ETags) hace leer sus archivos en su lugar — solo los que comparten tamaño con otro archivo, y solo mientras coincidan sus primeros 64 KiB; un ETag nunca cuenta como hash. *Mark All Duplicates (keep first)* conserva la copia más antigua; *Mark, Keeping…* (también en el menú contextual) conserva la copia más reciente, la ruta más corta o una copia dentro de una carpeta, o marca las copias dentro de una carpeta; un enlace duro de una copia conservada nunca se marca, y los enlaces duros no cuentan como espacio a liberar. *Move Selected to Trash…* (`Del`) mueve las copias marcadas a la papelera de axross tras comprobar en vivo que queda otra copia real. `Enter` abre la carpeta contenedora, la línea bajo la lista muestra la fila actual completa (tamaño exacto, hash, enlaces duros), y se pueden copiar URLs `ax-cas://…`. Miles de grupos aparecen por partes mientras la ventana sigue usable.
 
@@ -1139,7 +1139,7 @@ nuevo. La ventana conserva su tamaño.
 
 ## Scripting y REPL embebida
 
-Axross trae una superficie Python curada (``axross.*``) con 122
+axross trae una superficie Python curada (``axross.*``) con 122
 nombres públicos (111 funciones + 11 clases: los tipos de resultado
 de los helpers de red, grep y archivos, NonInteractiveError). Tres
 puertas al mismo surface:
@@ -1290,7 +1290,7 @@ aquí" que una pane SSH, sobre la misma conexión.
 
 Las contraseñas guardadas van al keyring del sistema (Secret-
 Service / KWallet / Windows Credential Locker / macOS Keychain /
-plug-in Secret-Service de KeePassXC). Axross sondea un backend
+plug-in Secret-Service de KeePassXC). axross sondea un backend
 funcional al primer uso. Cualquier otro backend de keyring sirve
 también, siempre que no pida nada en la terminal (por ejemplo
 keyring-pass o keyrings.cryptfile configurados en ``keyringrc.cfg``);
@@ -1310,7 +1310,7 @@ siguiente ``store_password`` rehace la detección automáticamente).
 
 ## Servidor MCP
 
-Axross puede correr como servidor Model Context Protocol de modo que
+axross puede correr como servidor Model Context Protocol de modo que
 un cliente LLM (Claude Desktop, Cline, un agente propio) pueda manejar
 cualquier backend configurado a través de una superficie de
 herramientas JSON-RPC.
@@ -2066,8 +2066,8 @@ security mode; *Check Now* sigue funcionando.
 - **¿Solo conectar?** [OAUTH_SETUP.md](../OAUTH_SETUP.md) recorre los
   registros de app de almacenamiento en la nube.
 - **¿Operando en redes hostiles?** [OPSEC.md](OPSEC.md) lista cada
-  fingerprint cliente-a-servidor que Axross emite y cómo suprimirlo.
-- **¿Manejar Axross desde un LLM?** [MCP_es.md](MCP_es.md) es la
+  fingerprint cliente-a-servidor que axross emite y cómo suprimirlo.
+- **¿Manejar axross desde un LLM?** [MCP_es.md](MCP_es.md) es la
   referencia canónica del protocolo.
 - **¿Escribir o activar extensiones?** [EXTENSIONS.md](EXTENSIONS.md)
   explica la confianza, la pausa y la `api` de las extensiones (en inglés).

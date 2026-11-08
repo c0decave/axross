@@ -406,8 +406,12 @@ for Exchange it returns the backend's lightweight message dicts::
 
 ### `axross.imap_move(backend: 'FileBackend', uid: 'int', src_mailbox: 'str', dst_mailbox: 'str') -> 'None'`
 
-Move an IMAP message by UID. Uses MOVE if the server supports
-it, COPY+\Deleted+EXPUNGE otherwise. See ``ImapSession.move``.
+Move an IMAP message by UID. Uses MOVE if the server supports it;
+otherwise COPY, flag the source \Deleted and expunge it - by UID
+(UIDPLUS), or with a plain EXPUNGE only when no other message in the
+source mailbox is flagged \Deleted (it would be expunged too); in
+that case the move is refused before anything is copied. A stale UID
+raises FileNotFoundError. See ``ImapSession.move``.
 
 ### `axross.imap_set_flags(backend: 'FileBackend', uid: 'int', flags: 'list[str]', *, mailbox: 'str' = 'INBOX', mode: 'str' = 'set') -> 'None'`
 

@@ -32,6 +32,7 @@ from urllib.parse import quote, unquote, urlsplit
 
 from core.append_helpers import read_existing_for_append
 from core.backend import SessionLifecycle
+from core.path_policy import refuse_folder_path
 from core.redaction import redact_url
 from models.file_item import FileItem
 
@@ -870,6 +871,7 @@ class WebDavSession(SessionLifecycle):
         return items
 
     def stat(self, path: str) -> FileItem:
+        folder_only = path.endswith("/") and bool(path.strip("/"))
         path = self._norm(path)
         try:
             info = self._client.info(path)
@@ -877,6 +879,9 @@ class WebDavSession(SessionLifecycle):
             raise FileNotFoundError(errno.ENOENT, f"Cannot stat {path}: {e}", path) from e
         except WebDavRequestError as e:
             raise OSError(f"Cannot stat {path}: {e}") from e
+        if folder_only and not info["isdir"]:
+            # The slash is normalized away: "g/" answered with the file g.
+            raise NotADirectoryError(errno.ENOTDIR, f"Cannot stat {path}/: not a folder", path)
         name = posixpath.basename(path.rstrip("/")) or path
         return FileItem(
             name=name,
@@ -936,6 +941,10 @@ class WebDavSession(SessionLifecycle):
 
     def rename(self, src: str, dst: str) -> None:
         _refuse_unlistable_name(dst)
+        # The path is normalized before the MOVE: a file renamed to "x/"
+        # became a FILE x. A folder may be named so.
+        refuse_folder_path(dst, "rename to",
+                           source_is_file=lambda: self.exists(src) and not self.is_dir(src))
         try:
             self._guarded_move_or_copy(self._client.move, src, dst, "rename")
         except WebDavRequestError as e:
@@ -1086,11 +1095,12 @@ class WebDavSession(SessionLifecycle):
             raise OSError(f"Cannot stat {path}: {exc}") from exc
 
         found = ""
-        for entry in info.get("oc_checksums", []):
-            if ":" not in entry:
-                continue
-            algo, _, hexpart = entry.partition(":")
-            if algo.lower() == algorithm.lower():
+        # Nextcloud / ownCloud put every checksum of a file into ONE
+        # <oc:checksum>, separated by blanks ("SHA1:.. MD5:.. ADLER32:..").
+        tokens = [token for entry in info.get("oc_checksums", []) for token in entry.split()]
+        for token in tokens:
+            algo, sep, hexpart = token.partition(":")
+            if sep and hexpart and algo.lower() == algorithm.lower():
                 found = f"{algorithm}:{hexpart.lower()}"
                 break
         with _WRITTEN_LOCK:

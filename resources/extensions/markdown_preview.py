@@ -153,7 +153,7 @@ def activate(api):
     view = Preview()
     view.setOpenExternalLinks(False)  # a click never leaves axross unasked
     view.setOpenLinks(False)
-    view.setPlaceholderText("Select a Markdown file (.md) to preview it here.")
+    view.setPlaceholderText(tr("Select a Markdown file (.md) to preview it here."))
     api.add_dock("Markdown Preview", view, icon="markdown")
     #: Counts the reads started: only the last one's result or error is shown.
     state = {"generation": 0}
@@ -190,7 +190,7 @@ def activate(api):
         def failed(exc):
             if state["generation"] != generation:
                 return  # a late error must not replace the newer preview
-            view.setPlainText(f"Cannot read {path}: {exc}")
+            view.setPlainText(tr("Cannot read {path}: {error}").format(path=path, error=exc))
 
         api.run_in_background(
             work,

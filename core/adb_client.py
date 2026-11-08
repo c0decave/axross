@@ -745,10 +745,28 @@ class AdbSession(SessionLifecycle):
                 os.unlink(local_path)
             except OSError:
                 pass
-            raise OSError(
-                f"ADB pull({path}) from {self._label}: {exc}",
-            ) from exc
+            raise self._pull_refused(path, exc) from exc
         return _CleanupOnClose(open(local_path, "rb"), local_path)
+
+    def _pull_refused(self, path: str, exc: BaseException) -> OSError:
+        """A failed pull typed by what *path* is (adb's sync error text
+        is not stable across versions): missing is FileNotFoundError, a
+        folder IsADirectoryError; a dropped connection stays an OSError
+        (the probe fails too)."""
+        from core.exec_util import refused_as
+
+        def kind():
+            item = self.stat(path)
+            return "dir" if item.is_dir else "other"
+
+        def probe():
+            try:
+                return kind()
+            except (FileNotFoundError, NotADirectoryError):
+                return None
+
+        return refused_as(f"ADB pull({path}) from {self._label}", path, str(exc), probe,
+                          wanted="file")
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
         if append:

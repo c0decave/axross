@@ -507,6 +507,12 @@ def main() -> int:
         from core.analysis_worker import _child_main
 
         return _child_main()
+    if sys.argv[1:2] == ["--regex-worker"]:
+        # The MCP grep tool's matcher (core.regex_worker starts it): no GUI,
+        # stdin/stdout are its channel. The frozen build's "python -c".
+        from core.regex_worker import _child_main as regex_worker_main
+
+        return regex_worker_main()
     if sys.argv[1:] == ["--voice-worker"]:
         # Speech synthesis and recognition for the Agent dock
         # (core.voice_worker starts it): no GUI, stdin/stdout are its channel.

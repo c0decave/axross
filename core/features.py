@@ -30,6 +30,8 @@ import shutil
 import sys
 from dataclasses import dataclass
 
+from core.i18n import tr
+
 #: The pip extras of pyproject.toml without "all" (a test holds them equal).
 EXTRAS: dict[str, tuple[str, ...]] = {
     "smb": ("smbprotocol>=1.13",),
@@ -254,7 +256,8 @@ def voice_features() -> list[Feature]:
         out.append(Feature(
             key=f"voice:{model.id}", name=model.title, group="Voice",
             available=VM.installed(model), download=model.id,
-            note=f"{model.size / 1e6:.0f} MB download, pinned SHA-256, into {VM.model_dir(model)}",
+            note=tr("{size} MB download, pinned SHA-256, into {path}").format(
+                size=f"{model.size / 1e6:.0f}", path=VM.model_dir(model)),
         ))
     return out
 
@@ -295,8 +298,9 @@ def how_to_get(feature: Feature, *, family: str | None = None) -> str:
         from core import voice_models as VM
 
         model = VM.model(feature.download)
-        size = f" ({model.size / 1e6:.0f} MB)" if model is not None else ""
-        return f"Download Model{size}"
+        if model is None:
+            return tr("Download Model")
+        return tr("Download Model ({size} MB)").format(size=f"{model.size / 1e6:.0f}")
     if feature.pip_extra:
         return f"pip install axross[{feature.pip_extra}]"
     tool = feature.tool
@@ -305,8 +309,9 @@ def how_to_get(feature: Feature, *, family: str | None = None) -> str:
         package = tool.packages.get(family)
         if package and family in _INSTALLERS:
             return _INSTALLERS[family].format(pkg=package)
-        return f"the {' / '.join(tool.commands)} command ({tool.name})"
-    return feature.note or "nothing to install"
+        return tr("the {commands} command ({name})").format(
+            commands=" / ".join(tool.commands), name=tool.name)
+    return tr(feature.note) if feature.note else tr("nothing to install")
 
 
 def is_frozen() -> bool:

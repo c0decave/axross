@@ -198,6 +198,11 @@ class ShortcutsDialog(QDialog):
         layout.addWidget(buttons)
         self.tree.setFocus()
         add_close_corner(self)
+        # F1 here: the handbook on the handbook and its keys (it did nothing:
+        # the main window's F1 does not reach a modal dialog).
+        from ui.handbook import install_help_key
+
+        self.help_shortcut = install_help_key(self, "handbook")
 
     def _apply_filter(self, text: str) -> None:
         words = text.lower().split()

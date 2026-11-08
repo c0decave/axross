@@ -315,13 +315,27 @@ class MailProjectDialog(QDialog):
         name, ok = QInputDialog.getItem(self, tr("Import from Mailbox"), tr("Mailbox profile:"), names, 0, False)
         if not ok:
             return
+        profile, project = pm.get(name), self.project
+        # POP3 keeps all its mail at "/"; IMAP and Exchange start at the INBOX.
         folder, ok = QInputDialog.getText(self, tr("Import from Mailbox"), tr("Folder (with its sub-folders):"),
-                                          text="/INBOX")
+                                          text="/" if profile.protocol == "pop3" else "/INBOX")
         if not ok:
             return
-        profile, project = pm.get(name), self.project
-        self._run_import(f"{name}:{folder}",
-                         lambda cancel: project.import_backend(self._connect(profile), folder, cancel=cancel))
+        connect = self._connect
+
+        def run(cancel):
+            backend = connect(profile)
+            try:
+                return project.import_backend(backend, folder, cancel=cancel)
+            finally:
+                # The import's own connection: kept open it held the
+                # mailbox (a POP3 server locks it) until the app quit.
+                try:
+                    backend.close()
+                except Exception:  # noqa: BLE001 - the import result counts
+                    log.debug("Mail Project: closing the mailbox failed", exc_info=True)
+
+        self._run_import(f"{name}:{folder}", run)
 
     def refresh(self) -> None:
         if self.project is None:

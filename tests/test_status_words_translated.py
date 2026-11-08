@@ -125,7 +125,8 @@ def test_happy_the_pane_status_strings_are_german(tmp_path, german, monkeypatch)
         pane.set_pane_role("target")
         assert pane._role_label.text() == "ZIEL"
         pane._show_disk_usage((4 * 1024 ** 3, 1024 ** 3, 3 * 1024 ** 3))
-        assert pane._disk_label.text() == "Frei: 3.0 GB / 4.0 GB (25 % belegt)"
+        # The German decimal comma (core.i18n.format_decimal, review round 4).
+        assert pane._disk_label.text() == "Frei: 3,0 GB / 4,0 GB (25 % belegt)"
     finally:
         pane.deleteLater()
 

@@ -91,6 +91,7 @@ log = logging.getLogger(__name__)
 
 #: Journal events Ctrl+Z reads (core.operation_journal caps the read at
 #: 4 MiB as well): enough for the batch of a move of a few thousand files.
+#: A larger batch is read whole before it is undone (core.undo.complete_batch).
 UNDO_JOURNAL_EVENTS = 20000
 
 
@@ -319,6 +320,31 @@ def _desktop_font_size() -> int:
     return _DESKTOP_FONT_PT
 
 
+def _already_in(source_backend, paths, dest_backend, dest_dir: str) -> set[str]:
+    """The *paths* whose folder is *dest_dir* itself (core.storage_identity:
+    proven the same entry, not merely the same text): copying them there
+    would write each file onto itself."""
+    from core.storage_identity import same_entry
+
+    verdict: dict[str, bool] = {}
+    here = set()
+    for path in paths:
+        try:
+            folder = source_backend.parent(path)
+        except Exception:  # noqa: BLE001 - no parent known: not provably here
+            continue
+        if folder not in verdict:
+            verdict[folder] = same_entry(source_backend, folder, dest_backend, dest_dir)
+        if verdict[folder]:
+            here.add(path)
+    return here
+
+
+class _Translated(str):
+    """A text already in the interface language (built from translated
+    parts): not looked up in the catalogue a second time."""
+
+
 class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
     """Main application window with file panes."""
 
@@ -327,7 +353,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self.setWindowTitle("Axross")
+        self.setWindowTitle("axross")
         self.resize(1200, 700)
         _desktop_font_size()  # before a stored zoom changes the font
 
@@ -1013,15 +1039,15 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         "Re-&detect System Keyring": "lock", "&Quit": "x",
         "&Undo Last Operation": "history", "&Index Active Folder…": "find-index",
         "Show &Hidden Files": "folder", "Add &Local Pane": "computer",
-        "Zoom &In": "plus", "Zoom &Out": "x", "Zoom &Reset": "refresh",
+        "Zoom &In": "plus", "Zoom &Out": "minus", "Zoom &Reset": "refresh",
         "Split &Horizontal": "split-h", "Split &Vertical": "split-v", "&Close Pane": "close-pane",
-        "Move Pane &Left": "chevrons-right", "Move Pane &Right": "chevrons-right",
+        "Move Pane &Left": "chevrons-left", "Move Pane &Right": "chevrons-right",
         "&Open Extensions Folder": "folder", "&Reload Extensions": "refresh",
         "&Third-Party Software…": "book", "Check for &Updates…": "download",
         "&About axross": "features",
-        "Cycle Next": "chevrons-right", "Cycle Previous": "chevrons-right",
-        "Focus Next Area": "keyboard", "Focus Previous Area": "keyboard",
-        "&Next Pane\tTab": "chevrons-right", "&Previous Pane\tShift+Tab": "chevrons-right",
+        "Cycle Next": "chevrons-right", "Cycle Previous": "chevrons-left",
+        "Focus Next Area": "chevrons-right", "Focus Previous Area": "chevrons-left",
+        "&Next Pane\tTab": "chevrons-right", "&Previous Pane\tShift+Tab": "chevrons-left",
     }
 
     def _icon_plain_menu_entries(self) -> None:
@@ -1237,8 +1263,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         buttons = [
             (self._agent_dock.toggleViewAction(), "agent", "Agent: tasks for the LLM agent"),
             (self._analysis_dock.toggleViewAction(), "analysis",
-             tr("{title}: what the selected file is (Ctrl+Shift+I)").format(
-                 title=tr(ANALYSIS_DOCK_TITLE))),
+             _Translated(tr("{title}: what the selected file is (Ctrl+Shift+I)").format(
+                 title=tr(ANALYSIS_DOCK_TITLE)))),
             (self._terminal_dock.toggleViewAction(), "terminal", "Terminal panel"),
             (self._find_files_action, "find-files", "Find Files (Alt+F7)"),
             (self._scripts_dock.toggleViewAction(), "scripts",
@@ -1254,8 +1280,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             action.triggered.connect(
                 lambda _checked=False, e=ext_id, t=title: self._toggle_extension_tool(e, t))
             self._extension_buttons[ext_id] = action
-            buttons.append((action, icon_name,
-                            tr("{title} (extension)").format(title=tr(title))))
+            buttons.append((action, icon_name, _Translated(
+                tr("{title} (extension)").format(title=tr(title)))))
             if icon_name == "media-player":
                 # The equalizer: what plays and how (Settings > Audio).
                 buttons.append((self._av_settings_action, "audio-settings",
@@ -1268,7 +1294,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             toolbar.addSeparator()
         for action, icon_name, tip in buttons:
             toolbar.addAction(action)
-            action.setToolTip(tr(tip))
+            # A tip built from translated parts is not looked up again.
+            action.setToolTip(tip if isinstance(tip, _Translated) else tr(tip))
             action.setProperty("axIcon", icon_name)
             action.setProperty(TOOL_ID_PROPERTY, icon_name)
             action.setIcon(_ico(icon_name))
@@ -4352,12 +4379,25 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
     def _open_scheduler(self) -> None:
         from ui.scheduler_dialog import SchedulerDialog
 
-        dlg = SchedulerDialog(self._job_store(), parent=self)
+        dlg = SchedulerDialog(self._job_store(), parent=self, run_now=self._run_job_now)
         dlg.exec()
         # Pick up edits without waiting for the next tick.
         self._scheduler_jobs = self._with_running_flags(self._job_store().load())
         if getattr(self, "_scripts_dock", None) is not None:
             self._scripts_dock.refresh()  # the [scheduled] markers
+
+    def _run_job_now(self, job) -> bool:
+        """Scheduled Jobs > Run Now: start *job* at once; False while it
+        still runs (never twice at a time)."""
+        from dataclasses import replace
+
+        self._scheduler_jobs = self._with_running_flags(self._job_store().load())
+        if any(j.job_id == job.job_id and j.running for j in self._scheduler_jobs):
+            return False
+        self._scheduler_jobs = [replace(j, running=True) if j.job_id == job.job_id else j
+                                for j in self._scheduler_jobs]
+        self._run_scheduled_job(job)
+        return True
 
     def _with_running_flags(self, jobs: list, *, finished: str = "") -> list:
         """*jobs* as loaded from the store, with the in-process ``running``
@@ -4541,7 +4581,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         that held the window. The question in between stays here.
         """
         from core.operation_journal import read_recent
-        from core.undo import gone_reason, pick_undoable, undoable
+        from core.undo import complete_batch, gone_reason, pick_undoable, undoable
 
         if getattr(self, "_undo_busy", False):
             self._undo_status("An undo is still running.")
@@ -4567,7 +4607,9 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             return entry is not None and bool(gone_reason(candidate, entry[0]))
 
         self._undo_status("Looking for the operation to undo…")
-        self._undo_step(lambda: pick_undoable(plans, set(by_label), gone=_gone),
+        # A batch is read whole (or refused) on the worker: the newest
+        # events may hold only the last part of a big move.
+        self._undo_step(lambda: complete_batch(pick_undoable(plans, set(by_label), gone=_gone)),
                         lambda kind, value: self._undo_picked(plans, kind, value))
 
     def _undo_status(self, text: str) -> None:
@@ -4614,6 +4656,9 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                     tr("Nothing to undo"),
                     tr("No recent operation on a currently open connection can be reversed."),
                 )
+            return
+        if not plan.reversible:  # a batch too large to undo (core.undo.complete_batch)
+            QMessageBox.information(self, tr("Cannot undo"), plan.reason)
             return
 
         refusal = self._undo_refusal(plan, self._backends_by_label())
@@ -7572,6 +7617,27 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         if dest_dir is None:
             dest_dir = target.current_path
         source_backend, dest_backend = source.backend, target.backend
+        # Both panes on one folder (the first start shows the home folder
+        # twice): F5 offered to overwrite each file with itself and ended
+        # "0 copied, 1 failed". Such names are left out, and said so.
+        here = _already_in(source_backend, paths, dest_backend, dest_dir)
+        if here:
+            paths = [p for p in paths if p not in here]
+            message = (
+                tr("Nothing moved: the source and the destination are the same folder ({folder})."
+                   " Open another folder in the target pane first.")
+                if move else
+                tr("Nothing copied: the source and the destination are the same folder ({folder})."
+                   " Open another folder in the target pane first.")
+            ).format(folder=dest_dir)
+            if paths:
+                message = tr_n(len(here), "{n} item left out: it is already in {folder}.",
+                               "{n} items left out: they are already in {folder}.",
+                               folder=dest_dir)
+            self.statusBar().showMessage(message, 10000)
+            if not paths:
+                log.info("Transfer not queued: %d item(s) already in %s", len(here), dest_dir)
+                return
         cancel_epoch = self._transfer_manager.cancel_epoch
         check = ScanJob(self)
         self._conflict_checks.add(check)
@@ -7637,6 +7703,9 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             plan = self._resolve_transfer_conflicts(dest_backend, value)
             if plan is None:
                 log.info("Transfer cancelled at the conflict prompt")
+                self.statusBar().showMessage(
+                    tr("Move cancelled: nothing was moved.") if move
+                    else tr("Copy cancelled: nothing was copied."), 8000)
                 return
             if not self._target_production_ok(target, value, plan, len(paths), move_now):
                 return
@@ -9030,8 +9099,9 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             return html.escape(tr(text), quote=False)
 
         def rows(pairs) -> str:
-            return "".join(f"<tr><td><b>{e(name)}</b></td><td>{e(what)}</td></tr>"
-                           for name, what in pairs)
+            # The protocols' names are names ("SFTP / SCP"): not looked up.
+            return "".join(f"<tr><td><b>{html.escape(name, quote=False)}</b></td>"
+                           f"<td>{e(what)}</td></tr>" for name, what in pairs)
 
         def items(pairs) -> str:
             return "".join(f"<li><b>{e(name)}</b> — {e(what)}</li>" for name, what in pairs)

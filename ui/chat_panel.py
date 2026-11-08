@@ -965,7 +965,10 @@ class ChatPanel(QWidget):
             else:
                 menu.addAction(tr("Connect"), client.connect_account)
             menu.addAction(tr("Edit Account…"), lambda: self._edit(account_id))
-        menu.exec(self.tree.viewport().mapToGlobal(pos))
+        try:
+            menu.exec(self.tree.viewport().mapToGlobal(pos))
+        finally:
+            menu.deleteLater()  # else every right click leaves it behind
 
     def _edit(self, account_id: str) -> None:
         client = self.clients.get(account_id)

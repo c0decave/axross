@@ -118,7 +118,9 @@ class ExtensionAPI:
     ) -> QAction:
         """An entry in the Extensions menu; *icon* names one of
         ui.icon_provider's icons (the window or panel it opens)."""
-        action = QAction(str(label), self._host.window)
+        # Through tr(): a bundled extension's label has its entry in the
+        # language catalogues (resources/i18n), anyone else's stays as is.
+        action = QAction(_tr(str(label)), self._host.window)
         if icon:
             from ui.icon_provider import icon as _icon
 
@@ -178,9 +180,10 @@ class ExtensionAPI:
 
         window = self._host.window
         ext_id = self.info.ext_id
-        dock = ExtensionDock(str(title), window, ext_id)
+        title = _tr(str(title))
+        dock = ExtensionDock(title, window, ext_id)
         dock.setObjectName(f"{EXTENSION_DOCK_PREFIX}{ext_id}-{len(self._reg.docks)}")
-        bar = ExtensionPanelTitleBar(str(title), dock, icon_name=str(icon))
+        bar = ExtensionPanelTitleBar(title, dock, icon_name=str(icon))
         dock.setTitleBarWidget(bar)
         dock.setWidget(widget)
         window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
@@ -546,7 +549,7 @@ class ExtensionHost(QObject):
         from core.i18n import tr
 
         ext_id = api.info.ext_id
-        action = QAction(tr("Pause {name}").format(name=api.info.name), self.window)
+        action = QAction(tr("Pause {name}").format(name=tr(api.info.name)), self.window)
         action.setCheckable(True)
         action.setChecked(ext_id in self._paused)
         action.setProperty("axPauseExtension", ext_id)
@@ -862,7 +865,7 @@ class ExtensionHost(QObject):
 
         menu.addSeparator()
         for api, label, callback, icon_name in entries:
-            action = menu.addAction(label)
+            action = menu.addAction(_tr(label))
             if icon_name:
                 action.setIcon(_icon(icon_name))
                 action.setProperty("axIcon", icon_name)
@@ -871,6 +874,12 @@ class ExtensionHost(QObject):
                 lambda _checked=False, a=api, cb=callback, c=context:
                     self.call(a, cb, c) if self.is_live(a) else None
             )
+
+
+def _tr(text: str) -> str:
+    from core.i18n import tr
+
+    return tr(text)
 
 
 def _forget_modules(module_name: str) -> None:

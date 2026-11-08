@@ -553,12 +553,28 @@ class _FtpServer:
     """A small threaded FTP server over a local folder (RFC 959 + MLSD /
     MLST / SIZE / MDTM, RFC 3659), one thread per connection: FtpSession
     opens extra connections for transfers. tests/ has only scripted FTP
-    servers (tests/ftp_fuzz_server.py) and ones without STOR or RNFR."""
+    servers (tests/ftp_fuzz_server.py) and ones without STOR or RNFR.
 
-    def __init__(self, root: Path):
+    It answers LIST / NLST as vsftpd, pure-ftpd and proftpd do: ``ls``
+    of the argument, so a FILE's listing is that file, dot entries only
+    with ``-a`` (vsftpd's force_dot_files=NO), and ``ls -l`` dates on
+    the server's wall clock (SERVER_TZ). MLSD of a file is 501 (RFC 3659
+    7.1). ``mlsd=False`` leaves MLST / MLSD out, as vsftpd does.
+
+    ``dash_a``: "ls" takes ``-a`` as ls does; "refuse" answers 501 to an
+    argument that starts with "-"; "literal" takes "-a x" for a path.
+    ``pasv_host``: the address the 227 reply names. ``commands`` keeps
+    every command line received."""
+
+    def __init__(self, root: Path, *, mlsd: bool = True, dash_a: str = "ls",
+                 pasv_host: str = "127,0,0,1"):
         import socket
 
         self.root = root
+        self.mlsd = mlsd
+        self.dash_a = dash_a
+        self.pasv_host = pasv_host
+        self.commands: list[str] = []
         self._sock = socket.create_server(("127.0.0.1", 0))
         self.port = self._sock.getsockname()[1]
         threading.Thread(target=self._accept, daemon=True).start()
@@ -588,6 +604,17 @@ class _FtpServer:
         when = datetime.fromtimestamp(st.st_mtime, timezone.utc).strftime("%Y%m%d%H%M%S")
         return f"type={kind};size={st.st_size};modify={when};"
 
+    @staticmethod
+    def _ls_line(p: Path, name: str) -> str:
+        from zoneinfo import ZoneInfo
+
+        st = os.lstat(p)
+        kind = "l" if os.path.islink(p) else ("d" if os.path.isdir(p) else "-")
+        when = datetime.fromtimestamp(st.st_mtime, ZoneInfo(SERVER_TZ))
+        if kind == "l":
+            name = f"{name} -> {os.readlink(p)}"
+        return f"{kind}rw-r--r--   1 ftp ftp {st.st_size:>8} {when:%b %d %H:%M} {name}"
+
     def _serve(self, conn):
         import socket
 
@@ -604,6 +631,12 @@ class _FtpServer:
             pasv = None
             return c
 
+        def no_data():
+            nonlocal pasv
+            if pasv:
+                pasv.close()
+                pasv = None
+
         send("220 conformance ftpd")
         while True:
             raw = f.readline()
@@ -612,6 +645,7 @@ class _FtpServer:
             line = raw.rstrip(b"\r\n").decode("utf-8", "surrogateescape")
             verb, _, arg = line.partition(" ")
             verb = verb.upper()
+            self.commands.append(line)
             try:
                 if verb in ("USER",):
                     send("331 password")
@@ -619,9 +653,17 @@ class _FtpServer:
                     send("230 in")
                 elif verb == "FEAT":
                     send("211-Features")
-                    for feat in (" MLST type*;size*;modify*;", " UTF8", " SIZE", " MDTM"):
+                    feats = (" UTF8", " SIZE", " MDTM")
+                    if self.mlsd:
+                        feats = (" MLST type*;size*;modify*;", *feats)
+                    for feat in feats:
                         send(feat)
                     send("211 End")
+                elif verb in ("MLST", "MLSD") and not self.mlsd:
+                    send("500 unknown command")
+                    no_data()
+                elif verb == "OPTS" and arg.upper().startswith("MLST") and not self.mlsd:
+                    send("501 no")
                 elif verb in ("OPTS", "TYPE", "NOOP", "MODE", "STRU"):
                     send("200 ok")
                 elif verb == "PWD":
@@ -636,7 +678,7 @@ class _FtpServer:
                 elif verb == "PASV":
                     pasv = socket.create_server(("127.0.0.1", 0))
                     port = pasv.getsockname()[1]
-                    send(f"227 Entering Passive Mode (127,0,0,1,{port >> 8},{port & 255})")
+                    send(f"227 Entering Passive Mode ({self.pasv_host},{port >> 8},{port & 255})")
                 elif verb == "MLST":
                     path, real = self._real(cwd, arg)
                     if not os.path.lexists(real):
@@ -645,18 +687,47 @@ class _FtpServer:
                         send("250-Listing")
                         send(f" {self._facts(real)} {path}")
                         send("250 End")
-                elif verb in ("MLSD", "LIST", "NLST"):
+                elif verb == "MLSD":
                     path, real = self._real(cwd, arg)
+                    if not os.path.lexists(real):
+                        send("550 not found")
+                        no_data()
+                        continue
                     if not real.is_dir():
-                        send("550 not a folder")
-                        if pasv:
-                            pasv.close()
-                            pasv = None
+                        send("501 not a folder")
+                        no_data()
                         continue
                     send("150 here")
                     c = data_conn()
                     for name in sorted(os.listdir(real)):
-                        entry = self._facts(real / name) + " " + name if verb == "MLSD" else name
+                        entry = self._facts(real / name) + " " + name
+                        c.sendall(entry.encode("utf-8", "surrogateescape") + b"\r\n")
+                    c.close()
+                    send("226 done")
+                elif verb in ("LIST", "NLST"):
+                    if self.dash_a == "refuse" and arg.startswith("-"):
+                        send("501 options not supported")
+                        no_data()
+                        continue
+                    show_all = self.dash_a == "ls" and (arg == "-a" or arg.startswith("-a "))
+                    if show_all:
+                        arg = arg[2:].lstrip()
+                    path, real = self._real(cwd, arg)
+                    if not os.path.lexists(real):
+                        send("550 not found")
+                        no_data()
+                        continue
+                    if real.is_dir():
+                        entries = [(real / n, n) for n in sorted(os.listdir(real))
+                                   if show_all or not n.startswith(".")]
+                        if show_all:
+                            entries = [(real, "."), (real.parent, ".."), *entries]
+                    else:
+                        entries = [(real, arg)]  # ls prints the argument as given
+                    send("150 here")
+                    c = data_conn()
+                    for p, name in entries:
+                        entry = self._ls_line(p, name) if verb == "LIST" else name
                         c.sendall(entry.encode("utf-8", "surrogateescape") + b"\r\n")
                     c.close()
                     send("226 done")
@@ -739,18 +810,39 @@ class _FtpServer:
         conn.close()
 
 
-def _ftp(tmp_path):
+def _ftp(tmp_path, *, mlsd: bool = True):
     from core.ftp_client import FtpSession
 
     root = tmp_path / "ftp"
     root.mkdir()
-    srv = _FtpServer(root)
+    srv = _FtpServer(root, mlsd=mlsd)
     s = FtpSession("127.0.0.1", srv.port, "u", "p")
-    return Target("ftp", s, "/", root, cleanup=[s.close, srv.close])
+    name = "ftp" if mlsd else "ftp_vsftpd"
+    return Target(name, s, "/", root, cleanup=[s.close, srv.close])
+
+
+def _smb(tmp_path):
+    pytest.importorskip("smbprotocol")
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from smb_fake_client import make_local_session
+
+    from core import smb_client
+
+    root = tmp_path / "smb"
+    root.mkdir()
+    s, fake = make_local_session(str(root))
+    patch = mock.patch.object(smb_client, "smbclient", fake)
+    patch.start()
+    return Target("smb", s, "/", root, cleanup=[patch.stop])
 
 
 MAKERS = {
+    "smb": _smb,
     "ftp": _ftp,
+    # vsftpd: no MLST / MLSD; names, types and dates come from NLST / LIST.
+    "ftp_vsftpd": lambda tmp_path: _ftp(tmp_path, mlsd=False),
     "nfs": _nfs,
     "iscsi": _iscsi,
     "mtp": _mtp,
@@ -770,14 +862,79 @@ MAKERS = {
 }
 
 
+# -- cloud drives (section of the cloud fixes) ---------------------------------
+#
+# Google Drive, OneDrive, Dropbox and Azure Files over the in-memory fakes
+# tests/fake_gdrive.py, fake_onedrive.py, fake_dropbox.py and
+# fake_azure_files.py, which answer with the SDKs' own error types. Azure
+# Blob is _azure_blob above. Their legitimate differences are in their caps
+# (core.backend_registry), none is a known gap.
+
+
+def _cloud_fakes():
+    import sys
+
+    here = str(Path(__file__).resolve().parent)
+    if here not in sys.path:
+        sys.path.insert(0, here)
+
+
+def _gdrive(tmp_path):
+    pytest.importorskip("googleapiclient")
+    _cloud_fakes()
+    import fake_gdrive
+
+    return Target("gdrive", fake_gdrive.make_session(), "/")
+
+
+def _onedrive(tmp_path):
+    pytest.importorskip("requests")
+    _cloud_fakes()
+    import fake_onedrive
+
+    return Target("onedrive", fake_onedrive.make_session(), "/")
+
+
+def _dropbox(tmp_path):
+    pytest.importorskip("dropbox")
+    _cloud_fakes()
+    import fake_dropbox
+
+    return Target("dropbox", fake_dropbox.make_session(), "/")
+
+
+def _azure_files(tmp_path):
+    pytest.importorskip("azure.storage.fileshare")
+    _cloud_fakes()
+    import fake_azure_files
+
+    return Target("azure_files", fake_azure_files.make_session(), "/")
+
+
+MAKERS.update(gdrive=_gdrive, onedrive=_onedrive, dropbox=_dropbox, azure_files=_azure_files)
+
+
 # -- known gaps ----------------------------------------------------------------
 
 #: (test, backend) -> what the backend does wrong. These are bugs, not
 #: legitimate differences (those are in the caps); each runs as a strict
-#: xfail, so a fix shows up as XPASS and its line here must go. Empty: the
-#: 28 gaps the suite found (Azure Blob, RamFS, SQLite, Telnet, RSH, NFS,
-#: iSCSI, NFS user space, ADB) are fixed.
-KNOWN_GAPS: dict[tuple[str, str], str] = {}
+#: xfail, so a fix shows up as XPASS and its line here must go. The 28
+#: gaps of round 3 are fixed; these are what the cases added in the final
+#: protocol review found in backends that review did not change.
+KNOWN_GAPS: dict[tuple[str, str], str] = {
+    **{
+        ("test_a_file_with_a_trailing_slash_is_no_folder", name): (
+            "stat('file/') answers with the file (the slash is normalized away)"
+        )
+        for name in ("iscsi", "nfs", "nfs_user_v3", "nfs_user_v4", "ramfs", "sqlite")
+    },
+    ("test_list_dir_of_a_file_is_not_a_directory", "iscsi"): (
+        "list_dir of a file is a bare OSError, not NotADirectoryError"
+    ),
+    ("test_not_found_is_said_as_such_by_open_read_and_list_dir", "iscsi"): (
+        "open_read / list_dir of a missing path is a bare OSError"
+    ),
+}
 
 
 # -- fixtures and helpers ------------------------------------------------------
@@ -848,6 +1005,16 @@ def test_not_found_is_said_as_such(t):
         b.list_dir(nope)
 
 
+def test_not_found_is_said_as_such_by_open_read_and_list_dir(t):
+    """open_read / list_dir of a missing path is FileNotFoundError, not a
+    bare OSError: the transfer engine, the pane and FUSE tell "not there"
+    from "failed" by the class."""
+    with pytest.raises(FileNotFoundError):
+        t.backend.open_read(t.J("nope")).read()
+    with pytest.raises(FileNotFoundError):
+        t.backend.list_dir(t.J("nope"))
+
+
 @pytest.mark.parametrize("recursive", [False, True])
 def test_remove_of_a_missing_path_is_file_not_found(t, recursive):
     with pytest.raises(FileNotFoundError):
@@ -869,6 +1036,14 @@ def test_mkdir_of_an_existing_folder_keeps_its_content(t):
         t.backend.mkdir(t.J("d"))
     except FileExistsError:
         pass                                     # refusing is fine too
+    _seed_intact(t)
+
+
+def test_mkdir_over_a_file_is_file_exists_and_keeps_the_file(t):
+    if getattr(t.caps, "name_holds_file_and_folder", False):
+        pytest.skip(f"{t.name}: a file and a folder may share a name")
+    with pytest.raises(FileExistsError):
+        t.backend.mkdir(t.J("g"))
     _seed_intact(t)
 
 
@@ -942,6 +1117,14 @@ def test_file_and_folder_are_told_apart(t):
         b.list_dir(t.J("g"))
 
 
+def test_list_dir_of_a_file_is_not_a_directory(t):
+    """Not the file as its own child (what NLST / ls of a file answers)."""
+    with pytest.raises(NotADirectoryError):
+        t.backend.list_dir(t.J("g"))
+    with pytest.raises(NotADirectoryError):
+        t.backend.list_dir(t.J("d", "f"))
+
+
 def test_a_file_cannot_be_written_over_a_folder(t):
     """Refused - unless the caps say a file and a folder can share the
     name (an object store): then the file comes beside the folder, and
@@ -969,6 +1152,25 @@ def test_a_file_destination_ending_in_a_slash_is_refused(t):
     with pytest.raises(OSError):
         _write(t, t.J("t") + "/", b"data")
     assert "t" not in {i.name for i in t.backend.list_dir(t.root) if not i.is_dir}
+
+
+def test_a_file_renamed_to_a_path_ending_in_a_slash_is_refused(t):
+    """rename(2) of a file to "x/" is ENOTDIR; a backend that drops the
+    slash made a FILE x."""
+    with pytest.raises(OSError):
+        t.backend.rename(t.J("g"), t.J("x") + "/")
+    _seed_intact(t)
+    assert "x" not in _names(t)
+
+
+def test_a_file_with_a_trailing_slash_is_no_folder(t):
+    """stat(2) of "file/" is ENOTDIR. A protocol that can only say "no
+    such file" (SFTP maps ENOTDIR to SSH_FX_NO_SUCH_FILE) may; answering
+    with the file may not."""
+    if getattr(t.caps, "name_holds_file_and_folder", False):
+        pytest.skip(f"{t.name}: 'g/' is a folder prefix of its own")
+    with pytest.raises((NotADirectoryError, FileNotFoundError)):
+        t.backend.stat(t.J("g") + "/")
 
 
 # -- names ---------------------------------------------------------------------
@@ -1004,6 +1206,22 @@ def test_unicode_names_round_trip(t, name):
     _write(t, path, name.encode())
     assert name in _names(t)
     assert _read(t, path) == name.encode()
+
+
+def test_dot_files_are_listed_and_removed_with_their_folder(t):
+    """vsftpd and pure-ftpd leave dot entries out of a listing unless
+    asked for them (``-a``): a folder copy left .htaccess behind and a
+    recursive delete stopped at a folder that was not empty."""
+    b = t.backend
+    _write(t, t.J("d", ".htaccess"), b"deny")
+    b.mkdir(t.J("d", ".git"))
+    _write(t, t.J("d", ".git", "HEAD"), b"ref")
+    assert {".htaccess", ".git"} <= _names(t, t.J("d"))
+    assert _names(t, t.J("d", ".git")) == {"HEAD"}
+    if t.caps.can_recursive_delete:
+        b.remove(t.J("d"), recursive=True)
+        assert b.exists(t.J("d")) is False
+        assert _read(t, t.J("g")) == b"other"
 
 
 # -- symlinks ------------------------------------------------------------------
@@ -1057,8 +1275,11 @@ def test_modification_times_are_the_clients_local_time(t):
     naive is off by the zone difference; stat and the listing agree."""
     now = datetime.now()
     st = t.backend.stat(t.J("g")).modified
-    listed = next(i for i in t.backend.list_dir(t.root) if i.name == "g").modified
-    for when in (st, listed):
+    listing = {i.name: i.modified for i in t.backend.list_dir(t.root)}
+    listed = listing["g"]
+    # A folder's time too: without MLSD an FTP folder has only its LIST
+    # date, which servers print on their own clock.
+    for when in (st, listed, listing["d"]):
         assert when.tzinfo is None
         if not _is_unknown(when):
             assert abs(when - now) < timedelta(minutes=10), f"{when} vs now {now}"

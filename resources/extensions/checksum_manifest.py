@@ -61,6 +61,16 @@ def manifest_text(backend, folder: str, names: list[str]) -> str:
     return "\n".join(lines) + ("\n" if lines else "")
 
 
+def merged_manifest(old_text: str, new_text: str) -> str:
+    """*old_text* with the lines of *new_text* added or put in place of
+    the old line for the same name; sorted by name. Lines of the old
+    manifest that do not parse are dropped."""
+    entries = dict((name, digest) for digest, name in parse_manifest(old_text))
+    entries.update((name, digest) for digest, name in parse_manifest(new_text))
+    lines = [manifest_line(entries[name], name) for name in sorted(entries)]
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
 def _unescape(name: str) -> str | None:
     out = []
     chars = iter(name)
@@ -171,6 +181,33 @@ def _write(backend, path: str, text: str) -> None:
         raise
 
 
+def ask_existing(parent, folder: str, count: int) -> str | None:
+    """A manifest is there already: "update" (the lines of the *count*
+    files hashed now added or renewed, the others kept), "replace" or None
+    (Cancel). Before, an existing manifest was never written."""
+    from PyQt6.QtWidgets import QMessageBox
+
+    from ui.plain_text import plain_message
+
+    box = plain_message(
+        parent, QMessageBox.Icon.Question, tr("Create SHA256SUMS"),
+        tr("{name} already exists in {folder}.\n\nUpdate: add or renew the lines of the "
+           "{n} file(s) hashed now and keep the others.\nReplace: write a new {name} "
+           "with only them.").format(name=MANIFEST_NAME, folder=_shown(folder), n=count),
+        QMessageBox.StandardButton.NoButton)
+    update = box.addButton(tr("Update"), QMessageBox.ButtonRole.AcceptRole)
+    replace = box.addButton(tr("Replace"), QMessageBox.ButtonRole.DestructiveRole)
+    box.addButton(QMessageBox.StandardButton.Cancel)
+    box.setDefaultButton(update)
+    box.exec()
+    clicked = box.clickedButton()
+    if clicked is update:
+        return "update"
+    if clicked is replace:
+        return "replace"
+    return None
+
+
 def _shown(name: str) -> str:
     """*name* as it can be shown: a byte that is no UTF-8 (held as a
     surrogate escape) as U+FFFD."""
@@ -185,10 +222,15 @@ def activate(api):
         # held the window), and the pane is shown again without blocking.
         backend, folder = ctx.backend, ctx.folder
         chosen = [i.name for i in ctx.items if not i.is_dir and i.name not in ("..", ".")]
+        folders = [i.name for i in ctx.items if i.is_dir and i.name not in ("..", ".")]
         whole_folder = not ctx.items  # nothing selected: every file of the folder
+        if not chosen and len(folders) == 1:
+            # One folder selected: its files, the manifest in it (before:
+            # "no files to checksum").
+            folder, whole_folder = backend.join(folder, folders[0]), True
         target = backend.join(folder, MANIFEST_NAME)
 
-        def work():
+        def work(mode="new"):
             files = chosen
             if whole_folder:
                 files = [
@@ -198,23 +240,34 @@ def activate(api):
                 ]
             if not files:
                 return ("none", 0)
-            if backend.exists(target):
-                return ("exists", 0)
-            _write(backend, target, manifest_text(backend, folder, files))
+            if mode == "new" and backend.exists(target):
+                return ("exists", len(files))
+            text = manifest_text(backend, folder, files)
+            if mode == "update":
+                with backend.open_read(target) as fh:
+                    old = fh.read(16 * 1024 * 1024).decode("utf-8", "surrogateescape")
+                text = merged_manifest(old, text)
+            _write(backend, target, text)
             return ("written", len(files))
 
         def done(result):
             kind, count = result
             if kind == "none":
-                api.notify("no files to checksum")
+                api.notify(tr("no files to checksum"))
                 return
             if kind == "exists":
-                api.notify(f"{MANIFEST_NAME} already exists here - not overwritten")
+                mode = ask_existing(api.window, folder, count)
+                if mode is None:
+                    api.notify(tr("{name} already exists here - not overwritten").format(
+                        name=MANIFEST_NAME))
+                    return
+                api.run_in_background(lambda: work(mode), on_done=done)
                 return
-            api.notify(f"wrote {MANIFEST_NAME} for {count} file(s)")
+            api.notify(tr("wrote {name} for {n} file(s)").format(name=MANIFEST_NAME, n=count))
             refresh_pane(ctx.pane)
 
-        api.notify(f"hashing {len(chosen)} file(s)…" if chosen else "hashing the folder…")
+        api.notify(tr("hashing {n} file(s)…").format(n=len(chosen)) if chosen
+                   else tr("hashing the folder…"))
         api.run_in_background(work, on_done=done)
 
     def check(ctx):

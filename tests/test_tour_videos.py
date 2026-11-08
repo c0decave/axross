@@ -214,7 +214,7 @@ def test_sad_watch_video_reports_a_bad_file(dialog, net, monkeypatch):
     _, state = net
     state["body"] = b"y" * len(BODY)
     warned = []
-    monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: warned.append(a[2])))
+    monkeypatch.setattr(QMessageBox, "exec", lambda box: warned.append(box.text()) or 0)
     for i in range(dialog.list.topLevelItemCount()):
         if dialog.list.topLevelItem(i).data(0, 256) == "connect":
             dialog.list.setCurrentItem(dialog.list.topLevelItem(i))

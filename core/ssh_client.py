@@ -101,6 +101,28 @@ LISTING_READDIRS_IN_FLIGHT = 16
 RMTREE_REMOVES_IN_FLIGHT = 16
 
 
+def wire_path(path: str | bytes) -> bytes:
+    """*path* as the bytes an SFTP request carries: UTF-8, with the lone
+    surrogates of a name that is not UTF-8 (``surrogateescape``, how
+    listings and local file names decode them) back as the raw bytes."""
+    if isinstance(path, bytes):
+        return path
+    return path.encode("utf-8", errors="surrogateescape")
+
+
+class _SurrogateSftpClient(paramiko.SFTPClient):
+    """paramiko's SFTP client with paths encoded by :func:`wire_path`.
+
+    paramiko encodes every path strictly as UTF-8 (util.b, in
+    ``_adjust_cwd``, which every request with a path passes through), so
+    a name listed from a latin-1 folder could be seen but not used: stat,
+    open, rename and remove raised UnicodeEncodeError - or, decoded with
+    replacement characters, asked for a name that is not there."""
+
+    def _adjust_cwd(self, path):
+        return super()._adjust_cwd(wire_path(path))
+
+
 class _AnswersByNumber:
     """Receives the answers to pipelined requests (registered as their
     owner, so paramiko hands each one over, whoever reads it) and keeps
@@ -127,16 +149,17 @@ def _listdir_attr(sftp: paramiko.SFTPClient, path: str) -> list[paramiko.SFTPAtt
     SFTP v3 names are bytes and OpenSSH sends them as stored, so a latin-1
     name is ordinary; paramiko decodes each strictly as UTF-8
     (Message.get_text) and one such name made the whole folder unlistable
-    with UnicodeDecodeError. Names are decoded with ``errors="replace"`` -
-    the FTP backend's choice for the same case: the entry shows, and
-    addressing it fails cleanly on the server.
+    with UnicodeDecodeError. Names are decoded with ``surrogateescape``,
+    as Python decodes a local file name: ``caf\\xe9.txt`` lists as
+    ``"caf\\udce9.txt"``, and :class:`_SurrogateSftpClient` encodes it back
+    to the same bytes, so the entry can be opened, renamed and removed.
     """
     from collections import deque
 
     from paramiko.sftp import CMD_CLOSE, CMD_HANDLE, CMD_NAME, CMD_OPENDIR, CMD_READDIR, CMD_STATUS
 
     def text(raw: bytes) -> str:
-        return raw.decode("utf-8", errors="replace")
+        return raw.decode("utf-8", errors="surrogateescape")
 
     t, msg = sftp._request(CMD_OPENDIR, sftp._adjust_cwd(path))
     if t != CMD_HANDLE:
@@ -847,7 +870,7 @@ class SSHSession(SessionLifecycle):
             # Room for two read-ahead windows: with paramiko's 2 MiB default
             # the server could send only 2 MiB of the 8 MiB a window asks
             # for per round trip (a download at 20 ms: ~52 MB/s, not ~90).
-            return paramiko.SFTPClient.from_transport(
+            return _SurrogateSftpClient.from_transport(
                 self._transport, window_size=2 * ReadAheadRaw.MAX_WINDOW
             )
         except paramiko.ChannelException as exc:
@@ -886,7 +909,18 @@ class SSHSession(SessionLifecycle):
     @_sftp_errors_as_oserror
     def list_dir(self, path: str) -> list[FileItem]:
         items: list[FileItem] = []
-        for attr in self._list_attrs(path):
+        try:
+            attrs = self._list_attrs(path)
+        except OSError as exc:
+            # OpenSSH answers OPENDIR of a file with SSH_FX_NO_SUCH_FILE
+            # (its errno_to_portable maps ENOTDIR there), others with a
+            # bare failure: the entry itself says whether it is a file.
+            if not isinstance(exc, PermissionError) and self._is_non_folder(path):
+                raise NotADirectoryError(
+                    errno.ENOTDIR, f"Cannot list {path}: not a folder", path
+                ) from exc
+            raise
+        for attr in attrs:
             items.append(self._attr_to_item(attr))
         # Only names no POSIX folder can hold go. A backslash, control
         # character or bidi override is kept: a listing without the entry
@@ -896,6 +930,15 @@ class SSHSession(SessionLifecycle):
         from core.path_policy import drop_impossible_names
 
         return drop_impossible_names(items, origin=f"SFTP {path}")
+
+    def _is_non_folder(self, path: str) -> bool:
+        """True when *path* is there and is no folder (by stat, so a link
+        to a folder is one). Any failure answers False."""
+        try:
+            mode = self.sftp.stat(path.rstrip("/") or "/").st_mode
+        except Exception:  # noqa: BLE001 - no answer is not "a file"
+            return False
+        return mode is not None and not stat_module.S_ISDIR(mode)
 
     @_sftp_errors_as_oserror
     def stat(self, path: str) -> FileItem:
@@ -1117,7 +1160,24 @@ class SSHSession(SessionLifecycle):
                 return
             except OSError as e:
                 log.debug("posix-rename %s -> %s failed, falling back: %s", src, dst, e)
-        self.sftp.rename(src, dst)
+        self._plain_rename(src, dst)
+
+    def _plain_rename(self, src: str, dst: str) -> None:
+        """SSH_FXP_RENAME. OpenSSH refuses an existing *dst* with a bare
+        SSH_FX_FAILURE ("Failure"): named FileExistsError when *dst* is
+        there, as rename_no_replace promises."""
+        try:
+            self.sftp.rename(src, dst)
+        except OSError as exc:
+            if isinstance(exc, FileNotFoundError):
+                raise
+            try:
+                self.sftp.lstat(dst)
+            except Exception:  # noqa: BLE001 - not there, or no answer: the original error
+                raise exc from None
+            raise FileExistsError(
+                errno.EEXIST, f"Cannot rename {src} -> {dst}: the target exists ({exc})", dst
+            ) from exc
 
     @_sftp_errors_as_oserror
     def rename_no_replace(self, src: str, dst: str) -> None:
@@ -1125,7 +1185,7 @@ class SSHSession(SessionLifecycle):
         exists (``rename`` tries posix-rename first, which replaces it):
         a move within the server that must not overwrite a file that
         appeared after the check (core.transfer_worker)."""
-        self.sftp.rename(src, dst)
+        self._plain_rename(src, dst)
 
     @_sftp_errors_as_oserror
     def set_attributes(self, path: str, *, mode: int | None = None,
@@ -1204,7 +1264,7 @@ class SSHSession(SessionLifecycle):
         attributes_set = ok(setstat)
         if not ok(rename):
             log.debug("posix-rename %s -> %s refused, falling back", src, dst)
-            sftp.rename(src, dst)
+            self._plain_rename(src, dst)
         return attributes_set
 
     @_sftp_errors_as_oserror
@@ -1274,8 +1334,8 @@ class SSHSession(SessionLifecycle):
         target = self.sftp.readlink(path) or ""
         if isinstance(target, bytes):
             # paramiko hands back the raw bytes of a target that is not
-            # UTF-8 (sftp_client._to_unicode); names are decoded leniently.
-            target = target.decode("utf-8", errors="replace")
+            # UTF-8 (sftp_client._to_unicode); decoded as listed names are.
+            target = target.decode("utf-8", errors="surrogateescape")
         return target
 
     # SFTP speaks symlinks natively (paramiko's sftp.symlink); hardlinks
@@ -1290,7 +1350,8 @@ class SSHSession(SessionLifecycle):
         POINTS TO, ``dest`` is where the link is created. We mirror
         os.symlink's order (target, link_path)."""
         try:
-            self.sftp.symlink(target, link_path)
+            # The target is sent as given, not through _adjust_cwd.
+            self.sftp.symlink(wire_path(target), link_path)
         except OSError:
             raise
         except Exception as exc:  # noqa: BLE001 — paramiko IOError etc.

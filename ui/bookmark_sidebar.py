@@ -595,7 +595,11 @@ class BookmarkTreeEditing:
             self._tree.clearSelection()
             self._tree.setCurrentItem(item)
             item.setSelected(True)
-        self._build_menu(node).exec(self._tree.viewport().mapToGlobal(pos))
+        menu = self._build_menu(node)
+        try:
+            menu.exec(self._tree.viewport().mapToGlobal(pos))
+        finally:
+            menu.deleteLater()  # else every right click leaves it behind
 
     # ------------------------------------------------------------------
     # Actions

@@ -94,7 +94,7 @@ SECTIONS: dict[str, str] = {
 }
 
 BUILT_IN_HANDBOOK = """\
-# Using Axross
+# Using axross
 
 The handbook's files are not part of this installation. Read it online:
 {url}

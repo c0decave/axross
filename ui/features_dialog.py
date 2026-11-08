@@ -49,10 +49,20 @@ from core.thread_relay import GuiCall
 from ui.close_corner import add_close_corner
 from ui.scan_job import ScanJob
 from ui.icon_provider import set_window_icon
+from ui.screen_fit import fit_size
 
 log = logging.getLogger(__name__)
 
 _COLUMNS = ("Feature", "Group", "Status", "How to get it")
+
+
+def _note(feature: F.Feature) -> str:
+    """The tooltip of a feature: its note in the interface language. A
+    model's note comes translated (it names its size and folder); a note
+    that names the API (``axross.whois``) is code and stays."""
+    if feature.download or feature.note.startswith("axross."):
+        return feature.note
+    return tr(feature.note)
 
 
 def _qprocess_runner(owner):
@@ -94,7 +104,7 @@ class FeaturesDialog(QDialog):
         self._downloader = downloader or _voice_download
         self._download_cancel: threading.Event | None = None
         self.setWindowTitle(tr("Features"))
-        self.resize(980, 620)
+        self.resize(fit_size((980, 620), parent))
         self._runner = runner or _qprocess_runner(self)
         self._process = None
         if version is None:
@@ -206,10 +216,12 @@ class FeaturesDialog(QDialog):
         shown = [f for f in self._features if not (self.missing_only.isChecked() and f.available)]
         self.table.setRowCount(len(shown))
         for row, feature in enumerate(shown):
-            name = QTableWidgetItem(feature.name)
+            # The names, groups and notes are English in core.features (the
+            # Connection Manager's protocol names among them): translated here.
+            name = QTableWidgetItem(tr(feature.name))
             name.setData(Qt.ItemDataRole.UserRole, feature)
             if feature.note:
-                name.setToolTip(feature.note)
+                name.setToolTip(_note(feature))
             state = QTableWidgetItem(tr("Installed") if feature.available else tr("Missing"))
             how = QTableWidgetItem("" if feature.available else F.how_to_get(feature, family=self._family))
             for col, item in enumerate((name, QTableWidgetItem(tr(feature.group)), state, how)):

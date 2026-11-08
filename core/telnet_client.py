@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import binascii
 import codecs
+import errno
 import io
 import logging
 import posixpath
@@ -1584,6 +1585,13 @@ class TelnetSession(SessionLifecycle):
             # the basename list. The output is just names — no
             # size/perms/mtime — but it lets the user navigate.
             if "command not found" not in str(exc).lower() and "not found" not in str(exc).lower():
+                if isinstance(exc, CommandFailed):
+                    from core.exec_util import refused_as
+
+                    # A missing path is FileNotFoundError, a file
+                    # NotADirectoryError (by what the path is).
+                    raise refused_as(f"Telnet list_dir({path})", path, str(exc)[:600],
+                                     lambda: self._path_kind(path), wanted="dir") from exc
                 raise
             return self._list_dir_via_glob(path)
 
@@ -1624,6 +1632,13 @@ class TelnetSession(SessionLifecycle):
         """A refusal is typed by its wording (core.exec_util.ls_error, as
         SCP): a missing path was a CommandFailed, which the callers that
         need "not there" could not tell from "cannot tell"."""
+        item = self._stat(path)
+        # _path() drops the slash: "g/" answered with the file g.
+        if path.endswith("/") and path.strip("/") and not (item.is_dir or item.is_link):
+            raise NotADirectoryError(errno.ENOTDIR, f"Telnet stat({path}): not a folder", path)
+        return item
+
+    def _stat(self, path: str) -> FileItem:
         from core.exec_util import ls_error
 
         path = self._path(path)
@@ -1672,7 +1687,14 @@ class TelnetSession(SessionLifecycle):
         return self._path_kind(path) is not None
 
     def mkdir(self, path: str) -> None:
-        self._exec(f"mkdir -p {shell_path(self._path(path))}")
+        from core.exec_util import refused_as
+
+        path = self._path(path)
+        output, code = self._exec_raw(f"mkdir -p {shell_path(path)}")
+        if code != 0:
+            # mkdir -p over a FILE: FileExistsError, not a CommandFailed.
+            raise refused_as(f"Telnet mkdir({path})", path, output.strip()[:500] or f"exit {code}",
+                             lambda: self._path_kind(path), wanted="absent")
 
     def remove(self, path: str, recursive: bool = False) -> None:
         """FileNotFoundError for a path that is not there (``rm -f`` said
@@ -1716,7 +1738,7 @@ class TelnetSession(SessionLifecycle):
         if self._caps.transfer_method == "base64":
             output, code = shell.execute(f"base64 < {qpath}", timeout=TRANSFER_TIMEOUT)
             if code != 0:
-                raise OSError(f"Cannot read {path}: base64 failed (exit {code})")
+                raise self._read_refused(path, f"base64 failed (exit {code})")
             # Decode base64 — output may have whitespace/newlines
             try:
                 data = base64.b64decode(output.replace("\n", "").replace(" ", ""))
@@ -1725,7 +1747,7 @@ class TelnetSession(SessionLifecycle):
         elif self._caps.transfer_method == "xxd":
             output, code = shell.execute(f"xxd -p < {qpath}", timeout=TRANSFER_TIMEOUT)
             if code != 0:
-                raise OSError(f"Cannot read {path}: xxd failed (exit {code})")
+                raise self._read_refused(path, f"xxd failed (exit {code})")
             try:
                 data = bytes.fromhex(output.replace("\n", "").replace(" ", ""))
             except Exception as e:
@@ -1733,7 +1755,7 @@ class TelnetSession(SessionLifecycle):
         elif self._caps.transfer_method == "uuencode":
             output, code = shell.execute(f"uuencode - - < {qpath}", timeout=TRANSFER_TIMEOUT)
             if code != 0:
-                raise OSError(f"Cannot read {path}: uuencode failed (exit {code})")
+                raise self._read_refused(path, f"uuencode failed (exit {code})")
             try:
                 data = _uu_decode(output)
             except ValueError as e:
@@ -1744,6 +1766,14 @@ class TelnetSession(SessionLifecycle):
         buf = io.BytesIO(data)
         buf.seek(0)
         return buf
+
+    def _read_refused(self, path: str, message: str) -> OSError:
+        """A failed read typed by what *path* is: the redirect's wording
+        differs per shell, and the stream may hold nothing else."""
+        from core.exec_util import refused_as
+
+        return refused_as(f"Cannot read {path}", path, message,
+                          lambda: self._path_kind(path), wanted="file")
 
     def _read_raw(self, shell: _ShellSession, path: str, qpath: str) -> bytes:
         """Raw ``cat`` read - text only - framed by markers of its own.

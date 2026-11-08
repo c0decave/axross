@@ -42,6 +42,7 @@ from core import snapshot_browser as SB
 from ui.close_corner import add_close_corner
 from ui.scan_job import BusyStrip, ScanJob
 from ui.icon_provider import set_window_icon
+from ui.plain_text import as_written
 from core.i18n import tr, tr_n
 
 log = logging.getLogger("ui.snapshot_browser_dialog")
@@ -326,8 +327,10 @@ class SnapshotBrowserDialog(QDialog):
         reply = QMessageBox.question(
             self,
             tr("Restore Version"),
-            tr("Overwrite the current contents of\n{path}\nwith version {version_id} "
-                "({when})?\n\nThis is destructive on the backend.").format(path=self._path, version_id=entry.version_id, when=_format_when(entry.modified)),
+            as_written(tr("Overwrite the current contents of\n{path}\nwith version {version_id} "
+                "({when})?\n\nThis is destructive on the backend.").format(
+                    path=self._path, version_id=entry.version_id,
+                    when=_format_when(entry.modified))),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:

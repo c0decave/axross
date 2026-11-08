@@ -166,7 +166,7 @@ def test_sad_select_all_then_typing_keeps_the_scrollback_and_the_prompt(repl):
     repl.selectAll()
     _key(repl, Qt.Key.Key_C, "", Qt.KeyboardModifier.ControlModifier)   # Copy keeps the selection
     assert repl.textCursor().selectionStart() == 0
-    assert QApplication.clipboard().text().startswith("Axross embedded REPL")
+    assert QApplication.clipboard().text().startswith("axross embedded REPL")
     _key(repl, Qt.Key.Key_Z, "z")
     assert repl.toPlainText() == scrollback + "z"
     assert repl._current_input() == "z"

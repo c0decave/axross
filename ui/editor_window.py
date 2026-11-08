@@ -42,6 +42,7 @@ from core.text_document import TextDocument
 from ui.code_editor import TEXT_ONLY, CodeEditor, language_for
 from ui.scan_job import ScanJob
 from ui.icon_provider import set_window_icon
+from ui.plain_text import as_written
 
 log = logging.getLogger(__name__)
 
@@ -588,8 +589,8 @@ class EditorWindow(QMainWindow):
             if result == "conflict":
                 answer = QMessageBox.question(
                     self, tr("File Changed"),
-                    tr("{path} was changed since it was opened. Overwrite it with your version?").format(
-                        path=tab.path),
+                    as_written(tr("{path} was changed since it was opened. Overwrite it with "
+                                  "your version?").format(path=tab.path)),
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                     QMessageBox.StandardButton.No,
                 )
@@ -662,7 +663,8 @@ class EditorWindow(QMainWindow):
                 "{path} is a folder. Choose a file name.").format(path=path))
             return False
         if exists and QMessageBox.question(
-                self, tr("Save As"), tr("{path} already exists. Replace it?").format(path=path),
+                self, tr("Save As"),
+                as_written(tr("{path} already exists. Replace it?").format(path=path)),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return False
@@ -764,7 +766,8 @@ class EditorWindow(QMainWindow):
         if tab is None or tab.untitled:
             return  # an untitled tab has no file to read again
         if tab.is_modified() and QMessageBox.question(
-                self, tr("Reload"), tr("Discard your changes to {name}?").format(name=tab.name),
+                self, tr("Reload"),
+                as_written(tr("Discard your changes to {name}?").format(name=tab.name)),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
@@ -784,7 +787,8 @@ class EditorWindow(QMainWindow):
         if not tab.is_modified():
             return True
         answer = QMessageBox.question(
-            self, tr("Unsaved Changes"), tr("Save the changes to {name}?").format(name=tab.name),
+            self, tr("Unsaved Changes"),
+            as_written(tr("Save the changes to {name}?").format(name=tab.name)),
             QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard
             | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,

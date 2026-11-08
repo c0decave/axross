@@ -24,6 +24,14 @@ Two parts, installed once when the ``ui`` package is imported
   instead. axross' own rich texts do neither, so they render as before; a
   hostile one reads as what it is. A label set to ``PlainText`` is left
   alone.
+* **Links in message boxes.** A QMessageBox label opens links in the web
+  browser on a click (``openExternalLinks``), and its texts carry names
+  from outside: a remote file named ``x<br><b>verified</b> <a
+  href=https://evil.example>report</a>`` turned the Checksum and Overwrite
+  questions into a fake notice with a live link. A message box text that
+  holds a link is shown as written (:func:`defuse_message`) - axross' own
+  message boxes hold none - and the labels of a box made in Python do not
+  open links.
 * **Text views.** ``QTextEdit`` / ``QTextBrowser`` (the agent transcript,
   Markdown Preview, the scripting guide, the analysis dock) load images
   through :func:`_safe_load_resource`: Qt resources, ``data:`` URLs and
@@ -239,6 +247,27 @@ def defuse(text):
     return f"{_DEFUSED_HEAD}{html.escape(text)}{_DEFUSED_TAIL}"
 
 
+#: A start tag of a link (``<a href=…>``, ``<A\nhref=…>``).
+_LINK_TAG = re.compile(r"<\s*a(?=[\s>/])", re.IGNORECASE)
+
+
+def holds_link(text) -> bool:
+    """True when *text* would be rendered as rich text with a link in it."""
+    if not isinstance(text, str) or "<" not in text or not _LINK_TAG.search(text):
+        return False
+    from PyQt6.QtCore import Qt
+
+    return bool(Qt.mightBeRichText(text))
+
+
+def defuse_message(text):
+    """:func:`defuse` for a message box text: a link (opened in the browser
+    on a click) is shown as written too."""
+    if holds_link(text):
+        return f"{_DEFUSED_HEAD}{html.escape(text)}{_DEFUSED_TAIL}"
+    return defuse(text)
+
+
 def original_of(text):
     """The text :func:`defuse` was given for *text*, or *text* itself."""
     if isinstance(text, str) and text.startswith(_DEFUSED_HEAD) and text.endswith(_DEFUSED_TAIL):
@@ -269,9 +298,12 @@ def _wrap_set_text_format(cls, getters_setters) -> None:
 
 # -- the wrappers ---------------------------------------------------------------------------
 
-def _wrap_text_at(cls, name: str, index: int, *, unless_plain: bool = False) -> None:
-    """Wrap ``cls.name`` so its positional argument *index* is defused."""
+def _wrap_text_at(cls, name: str, index: int, *, unless_plain: bool = False,
+                  fn=None, after=None) -> None:
+    """Wrap ``cls.name`` so its positional argument *index* is defused
+    (by *fn*, default :func:`defuse`); *after(self)* runs after the call."""
     original = getattr(cls, name)
+    fn = fn or defuse
 
     @functools.wraps(original)
     def wrapper(self, *args, **kwargs):
@@ -282,22 +314,26 @@ def _wrap_text_at(cls, name: str, index: int, *, unless_plain: bool = False) -> 
             if isinstance(value, str) and "<" in value \
                     and not (unless_plain and _is_plain(self)):
                 args = list(args)
-                args[index] = defuse(value)
-        return original(self, *args, **kwargs)
+                args[index] = fn(value)
+        result = original(self, *args, **kwargs)
+        if after is not None:
+            after(self)
+        return result
 
     setattr(cls, name, wrapper)
 
 
-def _wrap_static_text_at(cls, name: str, index: int) -> None:
+def _wrap_static_text_at(cls, name: str, index: int, fn=None) -> None:
     original = getattr(cls, name)
+    fn = fn or defuse
 
     @functools.wraps(original)
     def wrapper(*args, **kwargs):
         if len(args) > index:
             args = list(args)
-            args[index] = defuse(args[index])
+            args[index] = fn(args[index])
         if "text" in kwargs:
-            kwargs["text"] = defuse(kwargs["text"])
+            kwargs["text"] = fn(kwargs["text"])
         return original(*args, **kwargs)
 
     setattr(cls, name, staticmethod(wrapper))
@@ -352,19 +388,36 @@ def _wrap_role_data(cls, name: str, role_index: int, value_index: int) -> None:
     setattr(cls, name, wrapper)
 
 
-def _wrap_init_strings(cls) -> None:
+def _wrap_init_strings(cls, fn=None, after=None) -> None:
     """Defuse every str argument of ``cls(...)`` (QLabel(text, parent),
-    QMessageBox(icon, title, text, ...)): the text format is AutoText then."""
+    QMessageBox(icon, title, text, ...)): the text format is AutoText then.
+    *fn* defuses (default :func:`defuse`); *after(self)* runs at the end."""
     original = cls.__init__
+    fn = fn or defuse
 
     @functools.wraps(original)
     def wrapper(self, *args, **kwargs):
-        args = [defuse(a) if isinstance(a, str) else a for a in args]
+        args = [fn(a) if isinstance(a, str) else a for a in args]
         if "text" in kwargs:
-            kwargs["text"] = defuse(kwargs["text"])
+            kwargs["text"] = fn(kwargs["text"])
         original(self, *args, **kwargs)
+        if after is not None:
+            after(self)
 
     cls.__init__ = wrapper
+
+
+def _no_external_links(box) -> None:
+    """The labels of message box *box* do not open links in the browser
+    (QMessageBox turns ``openExternalLinks`` on for them)."""
+    from PyQt6.QtWidgets import QLabel
+
+    try:
+        for label in box.findChildren(QLabel):
+            if label.openExternalLinks():
+                label.setOpenExternalLinks(False)
+    except RuntimeError:  # the C++ object is gone
+        pass
 
 
 def _local_path(url) -> str | None:
@@ -449,13 +502,14 @@ def install() -> None:
     _wrap_init_strings(QLabel)
     _wrap_text_at(QLabel, "setText", 0, unless_plain=True)
     _wrap_set_text_format(QLabel, (("text", "setText"),))
-    _wrap_init_strings(QMessageBox)
+    _wrap_init_strings(QMessageBox, defuse_message, _no_external_links)
     for name in ("setText", "setInformativeText"):
-        _wrap_text_at(QMessageBox, name, 0, unless_plain=True)
+        _wrap_text_at(QMessageBox, name, 0, unless_plain=True, fn=defuse_message,
+                      after=_no_external_links)
     _wrap_set_text_format(QMessageBox, (("text", "setText"),
                                         ("informativeText", "setInformativeText")))
     for name in ("warning", "critical", "information", "question", "about"):
-        _wrap_static_text_at(QMessageBox, name, 2)
+        _wrap_static_text_at(QMessageBox, name, 2, defuse_message)
     _wrap_static_text_at(QToolTip, "showText", 1)
     for cls in (QWidget, QAction, QListWidgetItem, QStandardItem):
         _wrap_text_at(cls, "setToolTip", 0)
@@ -475,5 +529,5 @@ def install() -> None:
 
 
 __all__ = ["MAX_CELLS", "MAX_FONT_PX","MAX_IMAGE_BYTES", "MAX_INDENT_DEPTH", "MAX_LENGTH_PX", "MAX_SPAN",
-           "MAX_TABLE_DEPTH", "asks_for_resource", "bombs_layout", "defuse", "install",
-           "original_of"]
+           "MAX_TABLE_DEPTH", "asks_for_resource", "bombs_layout", "defuse", "defuse_message",
+           "holds_link", "install", "original_of"]

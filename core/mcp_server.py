@@ -361,6 +361,9 @@ import re as _re_preflight  # noqa: E402 — intentionally near the inline doc-b
 
 _REDOS_NESTED_QUANTIFIER = _re_preflight.compile(r"\([^)]*[+*][^)]*\)\s*[+*]")
 del _re_preflight
+# Seconds the grep tool's pattern may run on one file (in its child
+# process, core.regex_worker) before the call is refused as a ReDoS.
+GREP_REGEX_SECONDS_PER_FILE = 5.0
 # Emit a progress notification every N entries during walk(). 50 is a
 # compromise: often enough to keep a slow client informed, rare enough
 # that the notification overhead stays below 2% of the per-entry cost
@@ -1206,6 +1209,74 @@ def _refuse_configured_root(path: str, root: str, operation: str) -> None:
         )
 
 
+def _confine_local(backend, backends: dict | None, roots: tuple, *,
+                   allow_secret_reads: bool = False):
+    """*backend* and the *backends* registry with every plain LocalFS
+    replaced by a :class:`core.confined_fs.ConfinedLocalFS` beneath *roots*.
+    A read through a symlink that is a path's last component is refused for
+    the secret files unless *allow_secret_reads*."""
+    from core import confined_fs
+
+    def follow_check(path: str) -> None:
+        if allow_secret_reads:
+            return
+        from core import protected_places
+
+        reason = protected_places.read_refusal(path)
+        if reason is not None:
+            raise PermissionError(reason)
+
+    def confine(candidate):
+        if confined_fs.confinable(candidate):
+            return confined_fs.ConfinedLocalFS(roots, follow_check=follow_check)
+        return candidate
+
+    confined = confine(backend)
+    if backends:
+        backends = {
+            bid: (confined if b is backend else confine(b)) for bid, b in backends.items()
+        }
+    return confined, backends
+
+
+#: Held by every mutating file tool while it runs (core.mcp_server
+#: _serialize_mutations): two calls of one client - the HTTP transport and
+#: tasks/start run them in threads - cannot interleave a rename + symlink
+#: with another call's check and write. Defence in depth beside
+#: core.confined_fs, and the only guard where there is no dir_fd (Windows).
+_MUTATION_LOCK = threading.RLock()
+#: Mutating tools that do not touch this machine's files themselves, or run
+#: for minutes: commands on remote hosts, the user's own LLM, scripts.
+_UNSERIALIZED_GROUPS = frozenset({"exec", "agent"})
+_UNSERIALIZED_TOOLS = frozenset({"script_run"})
+
+
+def _serialized(handler):
+    def run(args, ctx):
+        while not _MUTATION_LOCK.acquire(timeout=0.2):
+            if ctx is not None and ctx.is_cancelled:
+                raise CancelledError("cancelled while waiting for another write to finish")
+        try:
+            return handler(args, ctx)
+        finally:
+            _MUTATION_LOCK.release()
+
+    run.__wrapped__ = handler
+    return run
+
+
+def _serialize_mutations(tools: list) -> None:
+    """Run every mutating file tool under :data:`_MUTATION_LOCK`."""
+    for tool in tools:
+        if (
+            tool.write
+            and tool.group not in _UNSERIALIZED_GROUPS
+            and tool.name not in _UNSERIALIZED_TOOLS
+            and not getattr(tool.handler, "__wrapped__", None)
+        ):
+            tool.handler = _serialized(tool.handler)
+
+
 def _exec_allowed_by_policy() -> bool:
     """The security mode's word on remote command execution (paranoid: no)."""
     from core.security_mode import current_policy
@@ -1277,6 +1348,14 @@ def _build_tools(
         raise ValueError("extra_roots need a root")
     read_roots = (root, *(path for path, _ in extras)) if root is not None else ()
     write_roots = (write_root, *(path for path, writable in extras if writable))
+    if read_roots:
+        # The checks below look at a path as a string; the local file
+        # system then opens it beneath its root's descriptor without
+        # following a symlink (core.confined_fs), so a folder of the path
+        # swapped for a link between the check and the use is refused,
+        # not followed out of the root or into a protected place.
+        backend, backends = _confine_local(backend, backends, read_roots,
+                                           allow_secret_reads=allow_secret_reads)
 
     def _confined(path: str, roots: tuple, enforce=None) -> str:
         """*enforce* (default _enforce_root) against the first root that
@@ -2098,7 +2177,7 @@ def _build_tools(
                 "(ReDoS risk). Rewrite without '(…+)+' / '(…*)*' shapes."
             )
         try:
-            regex = re.compile(pattern)
+            re.compile(pattern)
         except re.error as exc:
             raise ValueError(f"grep: bad regex {pattern!r}: {exc}") from exc
         scope = _call_scope(backend)
@@ -2114,6 +2193,53 @@ def _build_tools(
         matches: list[dict] = []
         unreadable: list[dict] = []
         queue: list[tuple[str, int]] = [(start, 0)]
+        # The shape check above misses most catastrophic patterns
+        # ((?:(a)+)+$, (a|a)+$, (a+){2,}$ ran 10-20 s on 27 characters, and
+        # re cannot be interrupted): the lines are matched in a child
+        # process that is killed once one file takes longer than
+        # GREP_REGEX_SECONDS_PER_FILE, or when the call is cancelled.
+        from core import regex_worker
+
+        matchers: list = []  # started at the first file: an empty walk starts no child
+
+        def _matching_lines(text: str, limit: int) -> list[int]:
+            if not matchers:
+                matchers.append(regex_worker.RegexMatcher(
+                    pattern,
+                    seconds_per_text=GREP_REGEX_SECONDS_PER_FILE,
+                    is_cancelled=lambda: ctx.is_cancelled,
+                ))
+            return matchers[0].matching_lines(text, limit)
+
+        try:
+            files_scanned = _grep_walk(
+                backend, _matching_lines, scope, refuse_secret, start, max_depth, max_matches,
+                matches, unreadable, queue, ctx,
+            )
+        except regex_worker.RegexTimeout as exc:
+            raise ValueError(
+                f"grep: the pattern ran longer than {GREP_REGEX_SECONDS_PER_FILE:g} s on one "
+                "file and was stopped; it backtracks catastrophically (ReDoS). "
+                "Rewrite it without nested or overlapping repetition."
+            ) from exc
+        except regex_worker.RegexCancelled as exc:
+            raise CancelledError("grep cancelled") from exc
+        finally:
+            for matcher in matchers:
+                matcher.close()
+        truncated = len(matches) >= max_matches
+        return {
+            "matches": matches,
+            "files_scanned": files_scanned,
+            "truncated": truncated,
+            "unreadable": unreadable,
+            "complete": not truncated and not unreadable,
+        }
+
+    def _grep_walk(backend, matching_lines, scope, refuse_secret, start, max_depth,
+                   max_matches, matches, unreadable, queue, ctx) -> int:
+        """grep's walk: fills *matches* / *unreadable*, returns the number
+        of files scanned. *matching_lines(text, limit)* runs the pattern."""
         files_scanned = 0
         while queue and len(matches) < max_matches:
             ctx.check_cancel()
@@ -2158,28 +2284,24 @@ def _build_tools(
                 if isinstance(raw, str):
                     raw = raw.encode("utf-8", errors="replace")
                 text = raw.decode("utf-8", errors="replace")
-                for lineno, line in enumerate(text.splitlines(), start=1):
-                    if regex.search(line):
-                        matches.append(
-                            {
-                                "path": full,
-                                "line_no": lineno,
-                                # Trim long lines so one pathological
-                                # minified .js file doesn't blow up the
-                                # response payload.
-                                "line": line[:500],
-                            }
-                        )
-                        if len(matches) >= max_matches:
-                            break
-        truncated = len(matches) >= max_matches
-        return {
-            "matches": matches,
-            "files_scanned": files_scanned,
-            "truncated": truncated,
-            "unreadable": unreadable,
-            "complete": not truncated and not unreadable,
-        }
+                hits = matching_lines(text, max_matches - len(matches))
+                if not hits:
+                    continue
+                lines = text.splitlines()
+                for lineno in hits:
+                    matches.append(
+                        {
+                            "path": full,
+                            "line_no": lineno,
+                            # Trim long lines so one pathological
+                            # minified .js file doesn't blow up the
+                            # response payload.
+                            "line": lines[lineno - 1][:500],
+                        }
+                    )
+                    if len(matches) >= max_matches:
+                        break
+        return files_scanned
 
     def _preview(args, ctx):
         """Generate a thumbnail of *path* via ``core.previews`` and
@@ -2339,9 +2461,14 @@ def _build_tools(
                     data = content.encode("utf-8")
                 else:
                     data = base64.b64decode(content_b64, validate=True)
-                from core.atomic_io import atomic_write
+                confined_write = getattr(backend, "confined_atomic_write", None)
+                if confined_write is not None:
+                    # Temp file + rename relative to the folder's descriptor.
+                    confined_write(safe, data)
+                else:
+                    from core.atomic_io import atomic_write
 
-                atomic_write(backend, safe, data)
+                    atomic_write(backend, safe, data)
             except BaseException as exc:
                 _audit("write_file", "refused", path=path, error=type(exc).__name__)
                 raise
@@ -2735,6 +2862,25 @@ def _build_tools(
                 what = "symbolic" if kind == "symlink" else "hard"
                 raise OSError(f"{type(backend).__name__} has no {what} links")
 
+        def _refuse_link_target(target, safe_link: str, active_backend) -> None:
+            """PermissionError unless *target* (relative to the link's
+            folder) resolves inside a writable root, outside its read-only
+            folders and outside the protected places - nor to a folder that
+            holds one (the home folder, ~/.config)."""
+            import os.path as op
+
+            if _is_remote(active_backend):
+                return
+            if not isinstance(target, str) or "\x00" in target:
+                raise ValueError("symlink target must be a string without NUL")
+            where = target if op.isabs(target) else op.join(op.dirname(safe_link), target)
+            try:
+                # realpath walks the links in it the way the kernel will.
+                resolved = _write_path(op.realpath(where), active_backend)
+                _refuse_protected(resolved, entry=True)
+            except PermissionError as exc:
+                raise PermissionError(f"symlink target {target!r} is refused: {exc}") from exc
+
         def _symlink(args, ctx):
             backend = _resolve_backend(args)
             target = args.get("target")
@@ -2742,17 +2888,18 @@ def _build_tools(
             if not target or not link_path:
                 raise ValueError("symlink requires target + link_path")
             _require_links(backend, "symlink")
-            # The link itself must live under the root. The target is
-            # intentionally allowed to be dangling or outside-root,
-            # but later read/write tools resolve symlinks with
-            # _enforce_root before following them, so this does not
-            # create a read escape.
+            # The link itself must live under the root, and so must what
+            # it points to: a link to ~/.config/autostart or to the home
+            # folder, renamed over a folder another call had just checked,
+            # led that call's write there (core.confined_fs refuses that
+            # now as well). The target may be dangling.
             _audit("symlink", "attempt", target=target, link_path=link_path)
             try:
                 # An entry: a link at a missing ~/.config would lead every
                 # later write around ~/.config/autostart.
                 safe_link = _entry_path(link_path, backend)
                 _refuse_root(safe_link, backend, "symlink link_path")
+                _refuse_link_target(target, safe_link, backend)
                 backend.symlink(target, safe_link)
             except BaseException as exc:
                 _audit(
@@ -3335,7 +3482,7 @@ def _build_tools(
                 out.append(
                     {
                         "id": bid,
-                        "class": type(b).__name__,
+                        "class": getattr(b, "display_class", None) or type(b).__name__,
                         "name": getattr(b, "name", "") or "",
                         "is_default": bid == _default_id,
                         "remote": False,
@@ -3391,6 +3538,7 @@ def _build_tools(
     # here rather than at each _Tool() site so the table is easy to
     # reason about and tune in one place.
     _apply_default_timeouts(tools)
+    _serialize_mutations(tools)
     return tools
 
 
@@ -3639,6 +3787,10 @@ def _build_resources(backend, *, root: str | None = None,
     """Construct the resources catalogue. Separated from
     :func:`_build_tools` so tests can drive one without the other
     and the HTTP transport can share them trivially."""
+    if root is not None:
+        # Opened beneath the root without following a swapped-in symlink.
+        backend, _ = _confine_local(backend, None, (root,),
+                                    allow_secret_reads=allow_secret_reads)
     return _ResourceCatalog(backend=backend, root=root or "/",
                             allow_secret_reads=allow_secret_reads)
 

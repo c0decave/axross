@@ -36,6 +36,7 @@ Requires the ``rsh`` system binary on PATH (Debian package:
 
 from __future__ import annotations
 
+import errno
 import io
 import logging
 import posixpath
@@ -319,7 +320,10 @@ class RshSession(SessionLifecycle):
         # and parse defensively.
         from core.exec_util import ls_dir_operand
 
-        out = self._run_remote(f"ls -la {shlex.quote(ls_dir_operand(path))}")
+        try:
+            out = self._run_remote(f"ls -la {shlex.quote(ls_dir_operand(path))}")
+        except OSError as exc:
+            raise self._refused(f"rsh list_dir({path})", path, exc, wanted="dir") from exc
         items: list[FileItem] = []
         for raw, rest in ls_records(out.decode("utf-8", "replace"), _LS_RE.match):
             item = _parse_ls_line(raw, rest)
@@ -328,7 +332,31 @@ class RshSession(SessionLifecycle):
             items.append(item)
         return items
 
+    def _kind(self, path: str) -> str | None:
+        """"dir", "other" or None (not there), by :meth:`stat`."""
+        try:
+            return "dir" if self.stat(path).is_dir else "other"
+        except (FileNotFoundError, NotADirectoryError):
+            return None
+
+    def _refused(self, where: str, path: str, exc: OSError, *, wanted: str) -> OSError:
+        """*exc* of a failed command on *path*, typed by what *path* is
+        (core.exec_util.refused_as); a timeout or a cut connection keeps
+        its own error."""
+        if isinstance(exc, (TimeoutError, ConnectionError)):
+            return exc
+        from core.exec_util import refused_as
+
+        return refused_as(where, path, str(exc), lambda: self._kind(path), wanted=wanted)
+
     def stat(self, path: str) -> FileItem:
+        item = self._stat(path)
+        # normalize() drops the slash: "g/" answered with the file g.
+        if path.endswith("/") and path.strip("/") and not (item.is_dir or item.is_link):
+            raise NotADirectoryError(errno.ENOTDIR, f"rsh stat({path}): not a folder", path)
+        return item
+
+    def _stat(self, path: str) -> FileItem:
         path = _validate_path(self.normalize(path))
         if path == "/":
             return FileItem(
@@ -392,7 +420,10 @@ class RshSession(SessionLifecycle):
         # One byte past the cap tells "exactly at the cap" from "cut by it":
         # a truncated file must fail, not arrive as a shorter file.
         cmd = f"head -c {MAX_FILE_BYTES + 1} -- {shlex.quote(path)}"
-        data = self._run_remote(cmd)
+        try:
+            data = self._run_remote(cmd)
+        except OSError as exc:
+            raise self._refused(f"rsh read({path})", path, exc, wanted="file") from exc
         if len(data) > MAX_FILE_BYTES:
             raise RshError(
                 f"rsh read of {path}: file is larger than the {MAX_FILE_BYTES} byte cap "
@@ -430,7 +461,11 @@ class RshSession(SessionLifecycle):
 
     def mkdir(self, path: str) -> None:
         path = _validate_path(self.normalize(path))
-        self._run_remote(f"mkdir -p -- {shlex.quote(path)}")
+        try:
+            self._run_remote(f"mkdir -p -- {shlex.quote(path)}")
+        except OSError as exc:
+            # mkdir -p over a FILE: FileExistsError, not a bare OSError.
+            raise self._refused(f"rsh mkdir({path})", path, exc, wanted="absent") from exc
 
     def rename(self, src: str, dst: str) -> None:
         from core.path_policy import refuse_folder_path

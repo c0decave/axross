@@ -34,6 +34,35 @@ MCP servers, extension tools - is confirmed by axross itself, which
 trusts nothing the worker says. A change inside the sandbox's own
 writable folder is confirmed by the worker; a subverted worker could
 skip that, which is why the level decides what is writable at all.
+
+Protected places (core.protected_places: shell and session start files,
+autostart, the agent's and axross's own settings and caches, ...) inside a
+writable folder are mounted read-only - also the ones that do not exist
+yet, or a compromised worker creates ``~/.bash_profile`` or
+``~/.config/autostart/x.desktop`` and runs code on the host at the next
+login:
+
+* A missing protected **folder** is an empty read-only tmpfs at its path.
+  The engine makes its mount point (an empty folder) on the host; it is
+  removed when the last sandbox using it has ended (:func:`_release_mount_points`).
+* A missing protected **file** gets no mount point on the host: an empty
+  ``~/.bash_profile`` left there by a crash makes bash skip ``~/.profile``
+  at every later login, an empty ``~/.xsession`` ends the session. Instead
+  the folder it would be made in (the nearest existing one: the home
+  folder for ``~/.bash_profile``, ``~/.pip`` or the home folder for
+  ``~/.pip/pip.conf``) becomes a **frame**: in the sandbox it is a tmpfs of
+  its own holding a mount of each of its entries (the host's, writable as
+  the folder is, the protected ones read-only; a symlink as the same link)
+  and is made read-only once they are mounted. Nothing can be created,
+  removed or renamed directly in that folder inside the sandbox - the
+  agent works in the folders below it, and in the files already there -
+  while the host's folder is not touched. Prevention, not detection: no
+  file the worker could create there is ever looked for afterwards.
+  bubblewrap remounts the tmpfs read-only; podman and docker make it 0555
+  and owned by the container's root, which the worker (another user,
+  without capabilities) cannot write to. A container engine cannot make
+  a symlink, so a symlink entry is left out there, as is an entry with a
+  colon in its name (``-v`` cannot carry one).
 """
 
 from __future__ import annotations
@@ -377,12 +406,22 @@ def _inside(path: str, folder: str) -> bool:
     return path == folder or path.startswith(folder.rstrip(os.sep) + os.sep)
 
 
+#: Most entries of one frame folder mounted (a home folder with more is
+#: shown with the first ones only, in name order).
+MAX_FRAME_ENTRIES = 4096
+
+
 def _mount_plan(
     profile: SandboxProfile, root: str, writable: bool, extra=()
 ) -> list[tuple[str, bool, str]]:
     """:func:`_agent_mounts` with how each is mounted: ``"bind"`` (the path
-    itself), ``"dir"`` (a missing protected folder: an empty read-only
-    one) or ``"file"`` (a missing protected file: an empty read-only one)."""
+    itself), ``"dir"`` (a missing protected folder: an empty read-only one),
+    ``"frame"`` (a folder that holds a missing protected file: an empty
+    folder of the sandbox's own, read-only, holding its entries), ``"entry"``
+    (an entry of a frame: the host's, if it is still there), ``"link"`` (a
+    symlink entry of a frame: the same link) or ``"absent"`` (a missing
+    protected file in a frame: not mounted, the read-only frame keeps it
+    from being made). See the module docstring."""
     extra_rw = writable and profile.rules.extra_writable
     mounts = [(root, writable), *profile.effective_mounts(),
               *((os.path.abspath(p), bool(rw) and extra_rw) for p, rw in extra)]
@@ -394,11 +433,10 @@ def _mount_plan(
     # the agent's own settings, ...) stay read-only inside a writable mount:
     # the worker's own refusal is no guard once the worker is compromised.
     # A missing folder too, or the agent creates it (~/.config/autostart/x.desktop):
-    # an empty read-only folder takes its place. A missing *file* is not
-    # mounted: the engine would create its mount point on the host, and an
-    # empty ~/.bash_profile left behind by a crash hides ~/.profile from every
-    # later login (an empty ~/.vimrc switches off vim's defaults). The
-    # worker's own refusal (core.protected_places) guards those.
+    # an empty read-only folder takes its place. A missing *file* gets no
+    # mount point on the host (an empty ~/.bash_profile left behind by a crash
+    # hides ~/.profile from every later login): the folder it would be made
+    # in becomes a frame instead, in which nothing can be created.
     from core import protected_places
 
     writable_roots = [p for p, rw in seen.items() if rw]
@@ -410,6 +448,8 @@ def _mount_plan(
             seen[place], kinds[place] = False, "bind"
         else:
             missing.append((place, folder))
+    frames: dict[str, bool] = {}  # frame -> whether its entries are writable
+    absent: list[str] = []
     for place, folder in sorted(missing, key=lambda item: item[0].count(os.sep)):
         holder = max((p for p in seen if _inside(place, p)), key=len)
         if not seen[holder]:
@@ -417,48 +457,44 @@ def _mount_plan(
         ancestor = os.path.dirname(place)
         while not os.path.lexists(ancestor):
             ancestor = os.path.dirname(ancestor)
-        if not _inside(os.path.realpath(ancestor), os.path.realpath(holder)):
+        real_ancestor, real_holder = os.path.realpath(ancestor), os.path.realpath(holder)
+        if not _inside(real_ancestor, real_holder):
             continue  # reached through a link that leaves the writable folder
-        if not folder:
-            continue  # see above: never an empty file on the host
-        seen[place], kinds[place] = False, "dir"
+        if folder:
+            seen[place], kinds[place] = False, "dir"
+            continue
+        if not os.path.isdir(real_ancestor):
+            continue  # a file where its folder would be: nothing can be made there
+        # The folder the file would be made in, as the sandbox names it
+        # (through a link to a folder of the same mount: that folder).
+        frame = os.path.normpath(os.path.join(holder, os.path.relpath(real_ancestor, real_holder)))
+        if frame not in frames:
+            base = max((p for p in seen if _inside(frame, p) and kinds[p] == "bind"), key=len)
+            frames[frame] = seen[base]
+        absent.append(place)
+    for frame in frames:
+        seen[frame], kinds[frame] = False, "frame"
+    for place in absent:
+        seen[place], kinds[place] = False, "absent"
+    for frame, rw in frames.items():
+        try:
+            with os.scandir(frame) as it:
+                names = sorted(entry.name for entry in it)
+        except OSError as exc:
+            log.warning("agent sandbox: cannot list %s (%s): it is mounted empty", frame, exc)
+            continue
+        if len(names) > MAX_FRAME_ENTRIES:
+            log.warning("agent sandbox: %s holds %d entries; the sandbox sees the first %d",
+                        frame, len(names), MAX_FRAME_ENTRIES)
+            names = names[:MAX_FRAME_ENTRIES]
+        for name in names:
+            path = os.path.join(frame, name)
+            if path in seen:
+                continue  # mounted on its own (a protected place, a folder of the profile)
+            seen[path] = rw
+            kinds[path] = "link" if os.path.islink(path) else "entry"
     ordered = sorted(seen.items(), key=lambda item: (item[0].rstrip(os.sep).count(os.sep), item[0]))
     return [(path, rw, kinds[path]) for path, rw in ordered]
-
-
-_EMPTY_LOCK = threading.Lock()
-_EMPTY_DIR: list[str] = []
-
-
-def _empty_file() -> str:
-    """An empty read-only file in a private temporary folder: what a
-    missing protected file is mounted from (made again if a cleaner took it)."""
-    import tempfile
-
-    with _EMPTY_LOCK:
-        if _EMPTY_DIR and os.path.isfile(os.path.join(_EMPTY_DIR[0], "empty")):
-            return os.path.join(_EMPTY_DIR[0], "empty")
-        folder = tempfile.mkdtemp(prefix="axross-agent-empty-")
-        path = os.path.join(folder, "empty")
-        with open(path, "wb"):
-            pass
-        os.chmod(path, 0o444)
-        os.chmod(folder, 0o500)
-        if not _EMPTY_DIR:
-            import atexit
-
-            atexit.register(_remove_empty_file)
-        _EMPTY_DIR[:] = [folder]
-        return path
-
-
-def _remove_empty_file() -> None:
-    for folder in _EMPTY_DIR:
-        try:
-            os.chmod(folder, 0o700)
-            shutil.rmtree(folder, ignore_errors=True)
-        except OSError:
-            pass
 
 
 #: Host paths a running sandbox's engine made as mount points of missing
@@ -476,8 +512,8 @@ def _mount_points(plan) -> list[str]:
     with _POINTS_LOCK:
         in_use = set(_POINTS_IN_USE)
     for path, _rw, kind in plan:
-        if kind == "bind" and path not in in_use:
-            continue
+        if kind == "absent" or (kind == "bind" and path not in in_use):
+            continue  # an absent file gets no mount point
         chain = []
         current = path
         while current not in points and (not os.path.lexists(current) or current in in_use):
@@ -594,13 +630,29 @@ def _bwrap_command(profile: SandboxProfile, root: str, writable: bool, inner: li
         argv += ["--ro-bind", path, path]
     for var, value in _host_xdg_env():
         argv += ["--setenv", var, value]
+    frames = []
     for path, rw, kind in _mount_plan(profile, root, writable, extra):
         if kind == "dir":
             argv += ["--tmpfs", path, "--remount-ro", path]
-        elif kind == "file":
-            argv += ["--ro-bind", _empty_file(), path]
+        elif kind == "frame":
+            # Read-only once everything in it is mounted (below): bwrap makes
+            # the mount points of its entries in this tmpfs, not on the host.
+            argv += ["--tmpfs", path]
+            frames.append(path)
+        elif kind == "entry":
+            # "-try": an entry removed since the plan is left out, not fatal.
+            argv += ["--bind-try" if rw else "--ro-bind-try", path, path]
+        elif kind == "absent":
+            continue  # kept from being made by its read-only frame
+        elif kind == "link":
+            try:
+                argv += ["--symlink", os.readlink(path), path]
+            except OSError:
+                pass  # gone since the plan
         else:
             argv += ["--bind" if rw else "--ro-bind", path, path]
+    for path in frames:
+        argv += ["--remount-ro", path]
     argv += ["--chdir", root, "--", *inner]
     if profile.network == "full":
         if _pasta_works():
@@ -642,8 +694,18 @@ def _container_command(profile: SandboxProfile, engine: str, root: str, writable
     for path, rw, kind in _mount_plan(profile, root, writable, extra):
         if kind == "dir":
             argv.append(f"--tmpfs={path}:ro,nosuid,nodev,noexec")
-        elif kind == "file":
-            argv += ["-v", f"{_empty_file()}:{path}:ro"]
+        elif kind == "frame":
+            # The engine makes its entries' mount points (as the container's
+            # root); the worker - another user without capabilities - can
+            # create nothing in a 0555 folder of root's.
+            argv.append(f"--tmpfs={path}:rw,nosuid,nodev,noexec,mode=0555")
+        elif kind == "absent":
+            continue  # kept from being made by its frame
+        elif kind == "link":
+            continue  # a container engine cannot make a symlink: left out
+        elif kind == "entry" and ":" in path:
+            log.warning("agent sandbox: %s cannot be named to %s (a colon): left out", path,
+                        engine)
         else:
             argv += ["-v", f"{path}:{path}:{'rw' if rw else 'ro'}"]
     argv += [f"--workdir={root}"]

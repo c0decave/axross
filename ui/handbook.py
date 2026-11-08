@@ -46,6 +46,7 @@ from core.i18n import tr
 from ui import guide_view
 from ui.close_corner import add_close_corner
 from ui.icon_provider import set_window_icon
+from ui.screen_fit import fit_size
 
 log = logging.getLogger(__name__)
 
@@ -98,6 +99,10 @@ class HandbookDialog(QDialog):
 
         self.contents = QTreeWidget()
         self.contents.setHeaderHidden(True)
+        # Every row one height: without it the rows below the first screen
+        # kept the height measured before the style's padding applied and
+        # came out squeezed together (showEvent lays them out again).
+        self.contents.setUniformRowHeights(True)
         self.contents.itemActivated.connect(self._go_to_item)
         self.contents.itemClicked.connect(self._go_to_item)
         split = QSplitter()
@@ -132,7 +137,7 @@ class HandbookDialog(QDialog):
         layout.addWidget(split, 1)
         layout.addWidget(buttons)
         add_close_corner(self)
-        self.resize(1060, 700)
+        self.resize(fit_size((1060, 700), parent))
         self._show(self.handbook)
         # F1 in the handbook: its own section, about the handbook and the
         # tours (core.handbook.SECTIONS["handbook"]) - in this window.
@@ -209,7 +214,18 @@ class HandbookDialog(QDialog):
         scroll range yet, and the heading landed at the bottom of the view
         instead of the top."""
         super().showEvent(event)
+        # The contents' rows were measured when they were filled, before
+        # the window's style (its item padding) applied: lay them out again
+        # now, all at the height of the first (uniform rows).
+        self.contents.doItemsLayout()
+        QTimer.singleShot(0, self._relayout_contents)
         QTimer.singleShot(0, self._scroll_to_target)
+
+    def _relayout_contents(self) -> None:
+        try:
+            self.contents.doItemsLayout()
+        except RuntimeError:  # closed (WA_DeleteOnClose) before the timer ran
+            pass
 
     def _select_in_contents(self, heading: str) -> None:
         found = self.contents.findItems(heading, Qt.MatchFlag.MatchExactly

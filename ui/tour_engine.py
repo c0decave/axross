@@ -746,12 +746,27 @@ class ToursDialog(QDialog):
         if not open_url(path):
             self._video_failed(tr("No video player opened {path}.").format(path=path))
 
-    def _video_failed(self, message: str) -> None:
+    def _video_failed(self, error) -> None:
+        """A message in the interface language - "not published yet", the
+        network sentence of core.user_errors, or a generic one with the
+        detail - and Start Tour as the alternative: the tour shows the same
+        steps in the app itself. The technical text is in the log."""
         from PyQt6.QtWidgets import QMessageBox
 
         self._video_done()
-        QMessageBox.warning(self, tr("Tour video"),
-                            tr("The tour video could not be shown: {reason}").format(reason=message))
+        sentence = error.user_text() if hasattr(error, "user_text") else str(error)
+        box = QMessageBox(QMessageBox.Icon.Warning, tr("Tour video"), sentence,
+                          QMessageBox.StandardButton.NoButton, self)
+        box.setInformativeText(tr("Start Tour shows the same steps in axross itself."))
+        start = box.addButton(tr("Start Tour"), QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(tr("Close"), QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(start)
+        try:
+            box.exec()
+            if box.clickedButton() is start and self.selected_id():
+                self.start_selected()
+        finally:
+            box.deleteLater()
 
     def done(self, result: int) -> None:  # noqa: D401 - Qt
         if self._video_fetch is not None:
@@ -773,7 +788,7 @@ class _VideoFetch(QObject):
 
     progress = pyqtSignal(object, object)  # byte counts: object, not a 32-bit int
     finished_ok = pyqtSignal(str)
-    failed = pyqtSignal(str)
+    failed = pyqtSignal(object)  # a core.tour_videos.VideoError, or a sentence
 
     def __init__(self, video) -> None:
         # No Qt parent: the dialog (WA_DeleteOnClose) may be deleted while
@@ -798,10 +813,11 @@ class _VideoFetch(QObject):
         except self_update.Cancelled:
             return
         except tour_videos.VideoError as exc:
-            self._emit(self.failed, str(exc))
+            log.info("tour video %s: %s", self.video.name, exc)
+            self._emit(self.failed, exc)
         except Exception as exc:  # noqa: BLE001 - a thread must report, not die silently
             log.exception("tour video fetch failed")
-            self._emit(self.failed, str(exc) or type(exc).__name__)
+            self._emit(self.failed, tour_videos.VideoError(str(exc) or type(exc).__name__))
         else:
             self._emit(self.finished_ok, str(path))
 

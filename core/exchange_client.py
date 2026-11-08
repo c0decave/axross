@@ -26,7 +26,7 @@ Scope
 Email-as-file only. Calendar / Contacts / Tasks intentionally
 deferred — they don't fit the FileBackend protocol cleanly.
 
-* V1: read + message delete.
+* V1: read + message delete (into Deleted Items, as Outlook does).
 * V2 (this module): mkdir (create folder), rename (same-parent
   folder rename), copy (message move between folders) and
   open_write (upload a new RFC 822 message into a folder). V2
@@ -755,6 +755,17 @@ class ExchangeSession(SessionLifecycle):
     # Mutation
     # ------------------------------------------------------------------
     def remove(self, path: str, recursive: bool = False) -> None:
+        """Delete a message the way Outlook and OWA do: into Deleted Items.
+
+        exchangelib's ``Item.delete()`` is EWS ``DeleteType=HardDelete``:
+        the message skips Deleted Items and "Recover deleted items", gone
+        for the user at once - while the same Delete in Outlook, OWA or
+        the phone app only moves it. ``move_to_trash()``
+        (``MoveToDeletedItems``) is used instead; a message that is in
+        Deleted Items already is ``soft_delete()``d (``SoftDelete``: into
+        Recoverable Items, what Outlook does there). Either way the
+        message is gone from the folder, as remove() promises, and stays
+        recoverable for the mailbox's retention time."""
         parts = _split_path(path)
         if not parts:
             raise OSError("Exchange remove: cannot remove root")
@@ -763,7 +774,10 @@ class ExchangeSession(SessionLifecycle):
             msg_id, _ = _parse_msg_segment(parts[-1])
             msg = self._fetch_message(folder, msg_id)
             try:
-                msg.delete()
+                if self._is_deleted_items(folder):
+                    msg.soft_delete()
+                else:
+                    msg.move_to_trash()
             except Exception as exc:  # noqa: BLE001
                 raise OSError(f"Exchange delete: {exc}") from exc
             return
@@ -1036,6 +1050,22 @@ class ExchangeSession(SessionLifecycle):
                 continue
             out.append(FileItem(name=name, is_dir=True))
         return out
+
+    def _is_deleted_items(self, folder) -> bool:
+        """Whether *folder* is the mailbox's Deleted Items (``account.trash``,
+        found by its well-known name whatever the display language). A
+        lookup that fails answers False: the message is then moved there."""
+        try:
+            trash = self._account.trash
+        except Exception as exc:  # noqa: BLE001 - exchangelib raises various
+            log.debug("Exchange: Deleted Items lookup failed: %s", exc)
+            return False
+        if trash is None:
+            return False
+        if trash is folder:
+            return True
+        trash_id = getattr(trash, "id", None)
+        return trash_id is not None and trash_id == getattr(folder, "id", None)
 
     def _resolve_folder(self, parts: list[str]):
         try:

@@ -31,7 +31,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import proxy_settings
-from core.i18n import tr
+from core.i18n import tr, tr_n
 from core.proxy import compose_proxy_type, parse_proxy_type
 from ui.close_corner import add_close_corner
 from ui.icon_provider import set_window_icon
@@ -381,7 +381,8 @@ class _ProxyForm:
         QMessageBox.information(
             self,
             tr("Use for all profiles"),
-            tr("{n} profile(s) now use the default proxy.").format(n=len(changed)),
+            tr_n(len(changed), "{n} profile now uses the default proxy.",
+                 "{n} profiles now use the default proxy."),
         )
 
 

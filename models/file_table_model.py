@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from bisect import bisect_left, bisect_right
 from html import escape
 
@@ -560,6 +561,28 @@ def prepare_listing(items: list[FileItem], model: FileTableModel | None) -> Prep
 _FIXED, _REGEX = "fixed", "regex"
 _ROOT = QModelIndex()
 _LAYOUT_HINT = QAbstractItemModel.LayoutChangeHint.VerticalSortHint
+#: Up to this (runs x (persistent indexes + runs / 2)) a filter change is
+#: reported run by run (see FileSortProxyModel._refilter).
+_RUN_WORK = 20_000
+
+
+_MISSING_RUN = re.compile(b"\\x00+")
+
+
+def _kept(rows: list[int], others: set[int]) -> bytes:
+    """One byte per entry of *rows*: 1 when its row is in *others*, else 0
+    (worked out in C, as the runs below)."""
+    return bytes(map(others.__contains__, rows))
+
+
+def _run_count(kept: bytes) -> int:
+    """How many runs of 0 *kept* holds."""
+    return kept.count(b"\x01\x00") + kept.startswith(b"\x00")
+
+
+def _missing_runs(kept: bytes) -> list[tuple[int, int]]:
+    """The runs of 0 in *kept* as ``(first, last)`` positions."""
+    return [(m.start(), m.end() - 1) for m in _MISSING_RUN.finditer(kept)]
 
 
 class FileSortProxyModel(QAbstractProxyModel):
@@ -577,8 +600,9 @@ class FileSortProxyModel(QAbstractProxyModel):
     names the model keeps (``needle in folded[row]``); a filter text that
     grows narrows the previous result instead of testing every row again.
     A sort maps the shown rows through the sort's permutation. Selection
-    and current index follow their entries (a layout change that moves the
-    persistent indexes, as the former proxy's did).
+    and current index follow their entries: a filter change is reported as
+    rows removed and inserted (see _refilter), a sort as a layout change
+    that moves the persistent indexes, as the former proxy's did.
 
     The QSortFilterProxyModel calls the pane, the thumbnail view and tests
     make are kept: ``setFilterFixedString`` / ``RegularExpression`` /
@@ -768,15 +792,71 @@ class FileSortProxyModel(QAbstractProxyModel):
         return self.createIndex(row, column) if row is not None else QModelIndex()
 
     def _refilter(self) -> None:
-        """Work the shown rows out again; when they changed, a layout change
-        that keeps the selection and current row on their entries."""
+        """Work the shown rows out again; when they changed, say so as rows
+        removed and rows inserted - one signal pair per contiguous run.
+
+        Not as a plain layout change: QItemSelectionModel takes a shortcut
+        over a layout change while one range selects the whole table (more
+        than 1000 cells) - it selects the whole table again afterwards, or
+        keeps the range from its first to its last entry - so Show Hidden
+        Files selected the dot files between "." and the last entry, and a
+        filter switch selected entries never selected. Over removals and
+        insertions every selected entry still shown stays selected and no
+        other one is, as with the former QSortFilterProxyModel.
+
+        A selection model, though, walks all its ranges for every removal
+        and insertion - through this Python ``parent()`` - and every removal
+        inside a selected range adds a range: thousands of runs under a big
+        selection took half a minute. Past _RUN_WORK, the first run is
+        still reported as such (the selection model then holds its selection
+        as ranges, which ends its shortcut) and the rest as one layout
+        change that moves every persistent index to its entry's new row."""
         new_rows = self._compute_rows()
-        if new_rows == self._rows:
-            return
         old_rows = self._rows
-        self.layoutAboutToBeChanged.emit([], _LAYOUT_HINT)
-        self._show_rows(new_rows, old_rows, None)
-        self.layoutChanged.emit([], _LAYOUT_HINT)
+        if new_rows == old_rows:
+            return
+        # 0 in kept_old: no longer shown; 0 in kept_new: shown now. A text
+        # that grew only removes, one that shrank only adds: one pass then.
+        if len(new_rows) <= len(old_rows):
+            kept_old = _kept(old_rows, set(new_rows))
+            kept_new = (b"\x01" * len(new_rows) if kept_old.count(b"\x01") == len(new_rows)
+                        else _kept(new_rows, set(old_rows)))
+        else:
+            kept_new = _kept(new_rows, set(old_rows))
+            kept_old = (b"\x01" * len(old_rows) if kept_new.count(b"\x01") == len(old_rows)
+                        else _kept(old_rows, set(new_rows)))
+        runs = _run_count(kept_old) + _run_count(kept_new)
+        rows = list(old_rows)
+        self._rows = rows
+        if runs > 1 and runs * (len(self.persistentIndexList()) + runs // 2) > _RUN_WORK:
+            last = kept_old.rfind(b"\x00")
+            if last >= 0:  # the last run removed
+                first = kept_old.rfind(b"\x01", 0, last) + 1
+                self.beginRemoveRows(_ROOT, first, last)
+                del rows[first:last + 1]
+                self.endRemoveRows()
+            else:  # the first run inserted
+                first = kept_new.find(b"\x00")
+                last = kept_new.find(b"\x01", first)
+                last = (len(kept_new) if last < 0 else last) - 1
+                self.beginInsertRows(_ROOT, first, last)
+                rows[first:first] = new_rows[first:last + 1]
+                self.endInsertRows()
+            self.layoutAboutToBeChanged.emit([], _LAYOUT_HINT)
+            self._show_rows(new_rows, rows, None)
+            self.layoutChanged.emit([], _LAYOUT_HINT)
+            return
+        # From the last run back: the rows before a run keep their place.
+        for first, last in reversed(_missing_runs(kept_old)):
+            self.beginRemoveRows(_ROOT, first, last)
+            del rows[first:last + 1]
+            self.endRemoveRows()
+        # Now the rows kept, in order; each run goes in at its final place.
+        for first, last in _missing_runs(kept_new):
+            self.beginInsertRows(_ROOT, first, last)
+            rows[first:first] = new_rows[first:last + 1]
+            self.endInsertRows()
+        self._rows = new_rows
 
     def _show_rows(self, new_rows: list[int], old_rows: list[int], moved) -> None:
         """Show *new_rows*; every persistent index goes to its entry's new

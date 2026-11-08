@@ -47,11 +47,13 @@ FORBIDDEN = "◎↑⌂☆↻◉→~/()…<>[]+&*;–—"
 FORBIDDEN_SEQUENCES = (" - ", "--", "e.g.", "...")
 
 #: IT terms the German text keeps in English; each must be in braces.
+#: Not "Profile": the German window says "Profil" (tests/test_i18n.py
+#: KEPT_STEMS), and so does the German voice.
 IT_TERMS = (
     "Agent", "API", "Bookmark", "Build", "Bytes", "Client", "Connection Manager",
     "Console", "Countdown", "Dock", "Download", "Drag and Drop", "Extension",
     "Feature", "Fingerprint", "Host", "Job", "Keyring", "Layout", "Login", "Pack",
-    "Pane", "Plugin", "Profile", "Prompt", "Proxies", "Proxy", "Release", "Remote",
+    "Pane", "Plugin", "Prompt", "Proxies", "Proxy", "Release", "Remote",
     "Script", "Server", "Shortcut", "Sync", "Tab", "Tag", "Task", "Tool", "Tooltip",
     "Transfer", "Trash", "Upload", "Workspace", "Escape", "Enter", "Python", "axross",
 )

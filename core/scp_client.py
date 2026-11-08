@@ -825,7 +825,19 @@ class SCPSession(SessionLifecycle):
         from core.exec_util import ls_dir_operand
 
         ls, utc = self._ls("-la")
-        output = self._exec(f"{ls} {shell_path(ls_dir_operand(path))}")
+        try:
+            output = self._exec(f"{ls} {shell_path(ls_dir_operand(path))}")
+        except (TimeoutError, ConnectionError):
+            raise
+        except OSError as exc:
+            if exc.errno is not None:
+                raise
+            from core.exec_util import refused_as
+
+            # A failed ls: a missing path is FileNotFoundError, a file
+            # NotADirectoryError (by what the path is, not the wording).
+            raise refused_as(f"SCP list_dir({path})", path, str(exc)[:600],
+                             lambda: self._path_kind(path), wanted="dir") from exc
         if not output.strip():
             # ls -la of a folder prints at least "."; Rebex's shell answers a
             # missing path with nothing and exit 0.
@@ -840,6 +852,13 @@ class SCPSession(SessionLifecycle):
         )
 
     def stat(self, path: str) -> FileItem:
+        item = self._stat(path)
+        # _path() drops the slash: "g/" answered with the file g.
+        if path.endswith("/") and path.strip("/") and not (item.is_dir or item.is_link):
+            raise NotADirectoryError(errno.ENOTDIR, f"SCP stat({path}): not a folder", path)
+        return item
+
+    def _stat(self, path: str) -> FileItem:
         path = self._path(path)
         qpath = shell_path(path)
         if self._caps.has_stat_gnu:
@@ -896,7 +915,15 @@ class SCPSession(SessionLifecycle):
         return self._path_kind(path) is not None
 
     def mkdir(self, path: str) -> None:
-        self._exec(f"mkdir -p {shell_path(self._path(path))}")
+        from core.exec_util import refused_as
+
+        path = self._path(path)
+        output, code = self._exec_raw(f"mkdir -p {shell_path(path)}")
+        if code != 0:
+            # mkdir -p over a FILE: "File exists" - FileExistsError, so a
+            # caller tells it from a refused permission.
+            raise refused_as(f"SCP mkdir({path})", path, output.strip()[:500],
+                             lambda: self._path_kind(path), wanted="absent")
 
     def remove(self, path: str, recursive: bool = False) -> None:
         """FileNotFoundError for a path that is not there (``rm -f`` said
@@ -910,6 +937,10 @@ class SCPSession(SessionLifecycle):
             raise ls_error(f"SCP remove({path})", output.strip()[:500] or f"exit {code}")
 
     def rename(self, src: str, dst: str) -> None:
+        from core.path_policy import refuse_folder_path
+
+        # _path() drops the slash: a file renamed to "x/" became a FILE x.
+        refuse_folder_path(dst, "rename to", source_is_file=lambda: self._path_kind(src) == "other")
         cmd = rename_command(self._path(src), self._path(dst))
         output, code = self._exec_tree_op(cmd)
         if code != 0:
@@ -962,8 +993,14 @@ class SCPSession(SessionLifecycle):
                 except binascii.Error as exc:
                     raise OSError(f"Cannot decode {path}: {exc}") from exc
             if code != 0:
+                from core.exec_util import refused_as
+
                 detail = err.decode("utf-8", "replace").strip()[:500]
-                raise OSError(f"Cannot read {path}: {tool} failed (exit {code}) {detail}".rstrip())
+                raise refused_as(
+                    f"Cannot read {path}", path,
+                    f"{tool} failed (exit {code}) {detail}".rstrip(),
+                    lambda: self._path_kind(path), wanted="file",
+                )
             if carry:
                 raise OSError(f"Cannot decode {path}: base64 output ends mid-group")
         except BaseException:

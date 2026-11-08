@@ -10,6 +10,7 @@ from __future__ import annotations
 import errno
 import logging
 import posixpath
+import re
 import tempfile
 import time
 from datetime import datetime
@@ -17,8 +18,9 @@ from typing import IO
 
 from core.answer_fields import as_size
 from core.append_helpers import read_existing_for_append
+from core import cloud_http
 from core.backend import SessionLifecycle
-from core.path_policy import safe_leaf
+from core.path_policy import refuse_folder_path, safe_leaf
 from core.read_spool import spool_chunks
 from models.file_item import FileItem
 
@@ -56,6 +58,90 @@ def _is_not_found(exc: BaseException) -> bool:
     return isinstance(exc, ResourceNotFoundError)
 
 
+#: "Name not unique" (ENOTUNIQ where the platform has it).
+_ENOTUNIQ = getattr(errno, "ENOTUNIQ", errno.EIO)
+
+#: Azure error codes and the errno each stands for (the HTTP status
+#: decides for a code not listed, cloud_http.errno_for_status).
+_CODE_ERRNO = {
+    "BlobNotFound": errno.ENOENT,
+    "ResourceNotFound": errno.ENOENT,
+    "ParentNotFound": errno.ENOENT,
+    "ContainerNotFound": errno.ENOENT,
+    "ShareNotFound": errno.ENOENT,
+    "BlobAlreadyExists": errno.EEXIST,
+    "ResourceAlreadyExists": errno.EEXIST,
+    "ContainerAlreadyExists": errno.EEXIST,
+    "DirectoryNotEmpty": errno.ENOTEMPTY,
+    "AuthorizationFailure": errno.EACCES,
+    "AuthorizationPermissionMismatch": errno.EACCES,
+    "AuthorizationResourceTypeMismatch": errno.EACCES,
+    "InsufficientAccountPermissions": errno.EACCES,
+    "ReadOnlyAttribute": errno.EACCES,
+    "ShareSizeLimitReached": errno.ENOSPC,
+    "ShareQuotaExceeded": errno.ENOSPC,
+    "FileShareQuotaExceeded": errno.ENOSPC,
+    "InsufficientStorage": errno.ENOSPC,
+    "ServerBusy": errno.EAGAIN,
+    "OperationTimedOut": errno.ETIMEDOUT,
+    "LeaseIdMissing": errno.EBUSY,
+    "LeaseAlreadyPresent": errno.EBUSY,
+    "SharingViolation": errno.EBUSY,
+    "InvalidResourceName": errno.EINVAL,
+    "ConditionNotMet": errno.ESTALE,
+}
+
+
+def _error_code(exc: BaseException) -> str:
+    code = getattr(exc, "error_code", None)
+    code = getattr(code, "value", code)
+    if isinstance(code, str) and code:
+        return code
+    found = re.search(r"ErrorCode:\s*(\w+)", str(exc))
+    return found.group(1) if found else ""
+
+
+def _azure_error(exc: BaseException, message: str, filename: str | None = None, *,
+                 type_mismatch: int = errno.EISDIR) -> OSError:
+    """*message* as the typed OSError of an Azure SDK failure: not found
+    FileNotFoundError, exists FileExistsError, a refused SAS
+    PermissionError, a full share ENOSPC, throttled EAGAIN ... The SDK's
+    HttpResponseError is no OSError - it left the writers' close() and the
+    editor's "Cannot save" never saw it. *type_mismatch*: what
+    ResourceTypeMismatch (a file where a folder is, or the other way
+    round) means for the call."""
+    if isinstance(exc, OSError) and isinstance(exc.errno, int) and exc.errno:
+        return cloud_http.rewrap(exc, message, filename)
+    code = _error_code(exc)
+    if code == "ResourceTypeMismatch":
+        return cloud_http.oserror(type_mismatch, message, filename)
+    if code in _CODE_ERRNO:
+        return cloud_http.oserror(_CODE_ERRNO[code], message, filename)
+    name = type(exc).__name__
+    if name == "ResourceNotFoundError":
+        return cloud_http.oserror(errno.ENOENT, message, filename)
+    if name == "ResourceExistsError":
+        return cloud_http.oserror(errno.EEXIST, message, filename)
+    if name == "ClientAuthenticationError":
+        return cloud_http.oserror(errno.EACCES, message, filename)
+    if name == "ResourceModifiedError":
+        return cloud_http.oserror(errno.ESTALE, message, filename)
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        return cloud_http.status_oserror(status, message, filename)
+    if name in ("ServiceRequestTimeoutError", "ServiceResponseTimeoutError"):
+        return cloud_http.oserror(errno.ETIMEDOUT, message, filename)
+    if name in ("ServiceRequestError", "ServiceResponseError"):
+        return cloud_http.oserror(errno.ECONNRESET, message, filename)
+    return cloud_http.oserror(errno.EIO, message, filename)
+
+
+def _client_name(client, attr: str) -> str:
+    """The blob / file name an SDK client is for, for a message."""
+    name = getattr(client, attr, None)
+    return name if isinstance(name, str) else ""
+
+
 def _is_not_a_directory(exc: BaseException) -> bool:
     """A directory probe of an Azure Files path that is absent, or that is
     a file (ResourceTypeMismatch)."""
@@ -91,7 +177,7 @@ def _each_page_once(paged, what: str):
         token = pages.continuation_token
         if token:
             if token in seen:
-                raise OSError(f"{what}: the server repeats a paging marker")
+                raise OSError(errno.EPROTO, f"{what}: the server repeats a paging marker")
             seen.add(token)
 
 
@@ -150,6 +236,7 @@ def _axross_azure_transport_kwargs(
         from azure.core.pipeline.transport import RequestsTransport
     except ImportError as exc:
         raise OSError(
+            errno.ENOTSUP,
             "Azure proxy configured but requests/azure-core transport "
             "is unavailable; refusing to connect without the proxy"
         ) from exc
@@ -168,8 +255,9 @@ def _axross_azure_transport_kwargs(
 class _BlobSpooledWriter:
     """Write to a temp file, then upload to Azure Blob on close."""
 
-    def __init__(self, blob_client):
+    def __init__(self, blob_client, path: str = ""):
         self._blob_client = blob_client
+        self._path = path or _client_name(blob_client, "blob_name")
         self._buf = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
         self._closed = False
 
@@ -192,6 +280,9 @@ class _BlobSpooledWriter:
         try:
             self._buf.seek(0)
             self._blob_client.upload_blob(self._buf, overwrite=True)
+        except Exception as exc:
+            raise _azure_error(exc, f"Cannot upload {self._path}: {cloud_http.reason(exc)}",
+                               self._path or None) from exc
         finally:
             self._buf.close()
 
@@ -218,8 +309,9 @@ class _BlobSpooledWriter:
 class _ShareSpooledWriter:
     """Write to a temp file, then upload to Azure Files share on close."""
 
-    def __init__(self, file_client):
+    def __init__(self, file_client, path: str = ""):
         self._file_client = file_client
+        self._path = path or _client_name(file_client, "file_name")
         self._buf = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
         self._closed = False
 
@@ -245,6 +337,9 @@ class _ShareSpooledWriter:
             size = self._buf.seek(0, 2)
             self._buf.seek(0)
             self._file_client.upload_file(self._buf, length=size)
+        except Exception as exc:
+            raise _azure_error(exc, f"Cannot upload {self._path}: {cloud_http.reason(exc)}",
+                               self._path or None) from exc
         finally:
             self._buf.close()
 
@@ -284,9 +379,10 @@ def _wait_for_copy(get_properties, timeout: float = 300.0) -> None:
         if status == "success":
             return
         if status in ("failed", "aborted"):
-            raise OSError(f"Copy failed with status '{status}': {props.copy.status_description}")
+            raise OSError(errno.EIO,
+                          f"Copy failed with status '{status}': {props.copy.status_description}")
         if time.monotonic() > deadline:
-            raise OSError(f"Copy timed out after {timeout}s (status: {status})")
+            raise OSError(errno.ETIMEDOUT, f"Copy timed out after {timeout}s (status: {status})")
         time.sleep(0.5)
 
 
@@ -389,7 +485,7 @@ class AzureBlobSession(SessionLifecycle):
             self._container = self._service.get_container_client(container)
             self._container.get_container_properties()
         except Exception as e:
-            raise OSError(f"Cannot access Azure Blob container '{container}': {e}") from e
+            raise _azure_error(e, f"Cannot access Azure Blob container '{container}': {cloud_http.reason(e)}") from e
 
         log.info("Azure Blob connected: container=%s, account=%s", container, account_name)
 
@@ -462,7 +558,7 @@ class AzureBlobSession(SessionLifecycle):
                         )
                     )
         except Exception as e:
-            raise OSError(f"Cannot list {path}: {e}") from e
+            raise _azure_error(e, f"Cannot list {path}: {cloud_http.reason(e)}") from e
 
         if not seen_any:
             # Nothing under the prefix - not even a folder marker: no folder
@@ -495,7 +591,7 @@ class AzureBlobSession(SessionLifecycle):
             props = self._container.get_blob_client(key).get_blob_properties()
         except Exception as e:
             if not _is_not_found(e):
-                raise OSError(f"Cannot stat {path}: {e}") from e
+                raise _azure_error(e, f"Cannot stat {path}: {cloud_http.reason(e)}") from e
         else:
             modified = props.last_modified or datetime.fromtimestamp(0)
             if _is_folder_placeholder(getattr(props, "metadata", None)):
@@ -514,7 +610,7 @@ class AzureBlobSession(SessionLifecycle):
             if list(page):
                 return FileItem(name=name, is_dir=True)
         except Exception as e:
-            raise OSError(f"Cannot stat {path}: {e}") from e
+            raise _azure_error(e, f"Cannot stat {path}: {cloud_http.reason(e)}") from e
 
         raise FileNotFoundError(errno.ENOENT, "Not found", path)
 
@@ -532,14 +628,14 @@ class AzureBlobSession(SessionLifecycle):
             if list(page):
                 return True
         except Exception as e:
-            raise OSError(f"Cannot check {path}: {e}") from e
+            raise _azure_error(e, f"Cannot check {path}: {cloud_http.reason(e)}") from e
         # An empty Data Lake folder is only its placeholder blob.
         try:
             props = self._container.get_blob_client(key.rstrip("/")).get_blob_properties()
         except Exception as e:
             if _is_not_found(e):
                 return False
-            raise OSError(f"Cannot check {path}: {e}") from e
+            raise _azure_error(e, f"Cannot check {path}: {cloud_http.reason(e)}") from e
         return _is_folder_placeholder(getattr(props, "metadata", None))
 
     def exists(self, path: str) -> bool:
@@ -555,7 +651,7 @@ class AzureBlobSession(SessionLifecycle):
             return True
         except Exception as e:
             if not _is_not_found(e):
-                raise OSError(f"Cannot check {path}: {e}") from e
+                raise _azure_error(e, f"Cannot check {path}: {cloud_http.reason(e)}") from e
 
         return self.is_dir(path)
 
@@ -568,7 +664,7 @@ class AzureBlobSession(SessionLifecycle):
             blob_client = self._container.get_blob_client(key)
             blob_client.upload_blob(b"", overwrite=True)
         except Exception as e:
-            raise OSError(f"Cannot create directory {path}: {e}") from e
+            raise _azure_error(e, f"Cannot create directory {path}: {cloud_http.reason(e)}") from e
 
     def remove(self, path: str, recursive: bool = False) -> None:
         key = self._to_key(path)
@@ -591,7 +687,7 @@ class AzureBlobSession(SessionLifecycle):
                     blob_client = self._container.get_blob_client(target)
                     blob_client.delete_blob()
                 except Exception as e:
-                    raise OSError(f"Cannot remove {path}: {e}") from e
+                    raise _azure_error(e, f"Cannot remove {path}: {cloud_http.reason(e)}") from e
             else:
                 try:
                     self._remove_prefix(prefix)
@@ -601,7 +697,7 @@ class AzureBlobSession(SessionLifecycle):
                 except OSError:
                     raise
                 except Exception as e:
-                    raise OSError(f"Cannot remove {path}: {e}") from e
+                    raise _azure_error(e, f"Cannot remove {path}: {cloud_http.reason(e)}") from e
         else:
             try:
                 blob_client = self._container.get_blob_client(key)
@@ -612,7 +708,7 @@ class AzureBlobSession(SessionLifecycle):
                     raise FileNotFoundError(
                         errno.ENOENT, f"Cannot remove {path}: not found", path
                     ) from e
-                raise OSError(f"Cannot remove {path}: {e}") from e
+                raise _azure_error(e, f"Cannot remove {path}: {cloud_http.reason(e)}") from e
 
     def _refuse_non_empty(self, prefix: str, path: str) -> None:
         """ENOTEMPTY when any blob besides the folder marker *prefix* lies
@@ -622,7 +718,7 @@ class AzureBlobSession(SessionLifecycle):
             pages = self._container.list_blobs(name_starts_with=prefix, results_per_page=2)
             page = list(next(pages.by_page(), []))
         except Exception as e:
-            raise OSError(f"Cannot remove {path}: {e}") from e
+            raise _azure_error(e, f"Cannot remove {path}: {cloud_http.reason(e)}") from e
         if any(getattr(blob, "name", None) != prefix for blob in page):
             raise OSError(errno.ENOTEMPTY, f"Directory not empty: {path}", path)
 
@@ -637,7 +733,7 @@ class AzureBlobSession(SessionLifecycle):
         except Exception as e:
             if _is_not_found(e):
                 return None
-            raise OSError(f"Cannot check {path}: {e}") from e
+            raise _azure_error(e, f"Cannot check {path}: {cloud_http.reason(e)}") from e
         return "folder" if _is_folder_placeholder(getattr(props, "metadata", None)) else "file"
 
     # Blob Batch: at most 256 sub-requests per batch request.
@@ -726,6 +822,7 @@ class AzureBlobSession(SessionLifecycle):
                 # Moving the folder tree would leave the file behind and
                 # moving the file would not be what a folder rename means.
                 raise OSError(
+                    _ENOTUNIQ,
                     f"Cannot rename {src}: both a file and a folder are named "
                     f"{posixpath.basename(src_key)!r} here; the name does not say which one"
                 )
@@ -741,7 +838,7 @@ class AzureBlobSession(SessionLifecycle):
                     )
                     self._wait_for_copy(placeholder)
                 except Exception as e:
-                    raise OSError(f"Cannot rename {src} -> {dst}: {e}") from e
+                    raise _azure_error(e, f"Cannot rename {src} -> {dst}: {cloud_http.reason(e)}") from e
             old_prefix = src_key.rstrip("/") + "/"
             new_prefix = dst_key.rstrip("/") + "/"
             try:
@@ -754,7 +851,7 @@ class AzureBlobSession(SessionLifecycle):
             except OSError:
                 raise
             except Exception as e:
-                raise OSError(f"Cannot rename {src} -> {dst}: {e}") from e
+                raise _azure_error(e, f"Cannot rename {src} -> {dst}: {cloud_http.reason(e)}") from e
             for blob in blobs:
                 new_name = new_prefix + blob.name[len(old_prefix) :]
                 src_blob = self._container.get_blob_client(blob.name)
@@ -764,12 +861,12 @@ class AzureBlobSession(SessionLifecycle):
                     self._wait_for_copy(dst_blob)
                     src_blob.delete_blob()
                 except Exception as e:
-                    raise OSError(f"Cannot rename {src} -> {dst}: {e}") from e
+                    raise _azure_error(e, f"Cannot rename {src} -> {dst}: {cloud_http.reason(e)}") from e
             if kind == "folder":
                 try:
                     self._container.get_blob_client(src_key).delete_blob()
                 except Exception as e:
-                    raise OSError(f"Cannot rename {src} -> {dst}: {e}") from e
+                    raise _azure_error(e, f"Cannot rename {src} -> {dst}: {cloud_http.reason(e)}") from e
         else:
             try:
                 src_blob = self._container.get_blob_client(src_key)
@@ -778,7 +875,7 @@ class AzureBlobSession(SessionLifecycle):
                 self._wait_for_copy(dst_blob)
                 src_blob.delete_blob()
             except Exception as e:
-                raise OSError(f"Cannot rename {src} -> {dst}: {e}") from e
+                raise _azure_error(e, f"Cannot rename {src} -> {dst}: {cloud_http.reason(e)}") from e
 
     @staticmethod
     def _wait_for_copy(dst_blob, timeout: float = 300.0) -> None:
@@ -796,7 +893,7 @@ class AzureBlobSession(SessionLifecycle):
         except OSError:
             raise
         except Exception as e:
-            raise OSError(f"Cannot read {path}: {e}") from e
+            raise _azure_error(e, f"Cannot read {path}: {cloud_http.reason(e)}") from e
 
     _MAX_APPEND_EXISTING_SIZE = 256 * 1024 * 1024  # see s3_client.py
 
@@ -815,12 +912,13 @@ class AzureBlobSession(SessionLifecycle):
             )
             if len(existing) > cap:
                 raise OSError(
+                    errno.EFBIG,
                     f"Azure Blob append: existing object exceeds {cap // (1024 * 1024)} MiB cap"
                 )
-            writer = _BlobSpooledWriter(blob_client)
+            writer = _BlobSpooledWriter(blob_client, path)
             writer.write(existing)
             return writer
-        return _BlobSpooledWriter(blob_client)
+        return _BlobSpooledWriter(blob_client, path)
 
     # -- path helpers --------------------------------------------------------
 
@@ -842,13 +940,13 @@ class AzureBlobSession(SessionLifecycle):
     # -- unsupported ---------------------------------------------------------
 
     def chmod(self, path: str, mode: int) -> None:
-        raise OSError("Azure Blob Storage does not support Unix permissions")
+        raise OSError(errno.ENOTSUP, "Azure Blob Storage does not support Unix permissions")
 
     def readlink(self, path: str) -> str:
-        raise OSError("Azure Blob Storage does not support symlinks")
+        raise OSError(errno.ENOTSUP, "Azure Blob Storage does not support symlinks")
 
     def disk_usage(self, path: str) -> tuple[int, int, int]:
-        raise OSError("Azure Blob Storage does not support disk usage queries")
+        raise OSError(errno.ENOTSUP, "Azure Blob Storage does not support disk usage queries")
 
     # ------------------------------------------------------------------
     # Azure Blob-specific verbs (API_GAPS round 2)
@@ -881,7 +979,7 @@ class AzureBlobSession(SessionLifecycle):
         except OSError:
             raise
         except Exception as e:
-            raise OSError(f"Cannot list snapshots of {path}: {e}") from e
+            raise _azure_error(e, f"Cannot list snapshots of {path}: {cloud_http.reason(e)}") from e
         return out
 
     def snapshot_create(self, path: str, metadata: dict[str, str] | None = None) -> str:
@@ -901,7 +999,7 @@ class AzureBlobSession(SessionLifecycle):
             blob = self._container.get_blob_client(key)
             result = blob.create_snapshot(metadata=metadata)
         except Exception as e:
-            raise OSError(f"Cannot snapshot {path}: {e}") from e
+            raise _azure_error(e, f"Cannot snapshot {path}: {cloud_http.reason(e)}") from e
         # SDK returns a dict; ``snapshot`` is the timestamp ID.
         snapshot = (
             result.get("snapshot") if isinstance(result, dict) else getattr(result, "snapshot", "")
@@ -928,7 +1026,7 @@ class AzureBlobSession(SessionLifecycle):
                 lease_id=proposed_lease_id,
             )
         except Exception as e:
-            raise OSError(f"Cannot lease {path}: {e}") from e
+            raise _azure_error(e, f"Cannot lease {path}: {cloud_http.reason(e)}") from e
         log.info(
             "Azure lease acquired: container=%s blob=%s id=%s duration=%s",
             self._container_name,
@@ -947,7 +1045,7 @@ class AzureBlobSession(SessionLifecycle):
             blob = self._container.get_blob_client(key)
             BlobLeaseClient(blob, lease_id=lease_id).release()
         except Exception as e:
-            raise OSError(f"Cannot release the lease on {path}: {e}") from e
+            raise _azure_error(e, f"Cannot release the lease on {path}: {cloud_http.reason(e)}") from e
         log.info(
             "Azure lease released: container=%s blob=%s id=%s",
             self._container_name,
@@ -971,7 +1069,7 @@ class AzureBlobSession(SessionLifecycle):
             blob = self._container.get_blob_client(key)
             blob.set_standard_blob_tier(tier)
         except Exception as e:
-            raise OSError(f"Cannot set the tier of {path}: {e}") from e
+            raise _azure_error(e, f"Cannot set the tier of {path}: {cloud_http.reason(e)}") from e
         log.info(
             "Azure tier_set: container=%s blob=%s tier=%s",
             self._container_name,
@@ -1000,6 +1098,7 @@ class AzureBlobSession(SessionLifecycle):
 
         if not self._account_key:
             raise OSError(
+                errno.ENOTSUP,
                 "sas_url requires an account-key auth (not token-based) "
                 "— SAS signing needs the symmetric key locally"
             )
@@ -1089,7 +1188,7 @@ class AzureBlobSession(SessionLifecycle):
             stream = blob.download_blob(version_id=version_id)
             return _spool_checked(stream, f"Cannot read {path}@{version_id}")
         except Exception as exc:
-            raise OSError(f"Azure open_version_read failed: {exc}") from exc
+            raise _azure_error(exc, f"Azure open_version_read failed: {cloud_http.reason(exc)}") from exc
 
     def copy(self, src: str, dst: str) -> None:
         """Azure Blob Copy Blob — server-side."""
@@ -1102,7 +1201,7 @@ class AzureBlobSession(SessionLifecycle):
             dst_blob.start_copy_from_url(src_blob.url)
             self._wait_for_copy(dst_blob)
         except Exception as exc:
-            raise OSError(f"Azure copy {src} -> {dst} failed: {exc}") from exc
+            raise _azure_error(exc, f"Azure copy {src} -> {dst} failed: {cloud_http.reason(exc)}") from exc
 
     def checksum(self, path: str, algorithm: str = "sha256") -> str:
         """Return Azure's Content-MD5 property (Base64-encoded in
@@ -1112,7 +1211,7 @@ class AzureBlobSession(SessionLifecycle):
             blob = self._container.get_blob_client(key)
             props = blob.get_blob_properties()
         except Exception as exc:
-            raise OSError(f"Cannot stat {path}: {exc}") from exc
+            raise _azure_error(exc, f"Cannot stat {path}: {cloud_http.reason(exc)}") from exc
         cs = getattr(props.content_settings, "content_md5", None)
         if not cs:
             return ""
@@ -1224,7 +1323,7 @@ class AzureFilesSession(SessionLifecycle):
             self._share = self._service.get_share_client(share_name)
             self._share.get_share_properties()
         except Exception as e:
-            raise OSError(f"Cannot access Azure Files share '{share_name}': {e}") from e
+            raise _azure_error(e, f"Cannot access Azure Files share '{share_name}': {cloud_http.reason(e)}") from e
 
         log.info("Azure Files connected: share=%s, account=%s", share_name, account_name)
 
@@ -1293,11 +1392,20 @@ class AzureFilesSession(SessionLifecycle):
                         )
                     )
         except Exception as e:
-            raise OSError(f"Cannot list {path}: {e}") from e
+            error = _azure_error(e, f"Cannot list {path}: {cloud_http.reason(e)}", path,
+                                 type_mismatch=errno.ENOTDIR)
+            if isinstance(error, FileNotFoundError) and dir_path and self._is_file(path):
+                # List Directories of a FILE's path answers 404.
+                raise NotADirectoryError(errno.ENOTDIR, f"Cannot list {path}: a file",
+                                         path) from e
+            raise error from e
 
         return items
 
     def stat(self, path: str) -> FileItem:
+        return cloud_http.no_file_as_folder(path, self._stat(path))
+
+    def _stat(self, path: str) -> FileItem:
         rel = self._to_path(path)
         base_name = posixpath.basename(rel) or path
 
@@ -1313,7 +1421,7 @@ class AzureFilesSession(SessionLifecycle):
             props = file_client.get_file_properties()
         except Exception as e:
             if not _is_not_a_directory(e):
-                raise OSError(f"Cannot stat {path}: {e}") from e
+                raise _azure_error(e, f"Cannot stat {path}: {cloud_http.reason(e)}") from e
         else:
             modified = props.get("last_modified") or datetime.fromtimestamp(0)
             return FileItem(
@@ -1328,7 +1436,7 @@ class AzureFilesSession(SessionLifecycle):
         except Exception as e:
             if _is_not_a_directory(e):
                 raise FileNotFoundError(errno.ENOENT, "Not found", path) from e
-            raise OSError(f"Cannot stat {path}: {e}") from e
+            raise _azure_error(e, f"Cannot stat {path}: {cloud_http.reason(e)}") from e
         modified = props.get("last_modified") or datetime.fromtimestamp(0)
         return FileItem(
             name=base_name,
@@ -1349,7 +1457,7 @@ class AzureFilesSession(SessionLifecycle):
         except Exception as e:
             if _is_not_a_directory(e):
                 return False
-            raise OSError(f"Cannot check {path}: {e}") from e
+            raise _azure_error(e, f"Cannot check {path}: {cloud_http.reason(e)}") from e
 
     def exists(self, path: str) -> bool:
         """Only "not found" means False; any other failure is an OSError."""
@@ -1367,7 +1475,7 @@ class AzureFilesSession(SessionLifecycle):
         except Exception as e:
             if _is_not_found(e):
                 return False
-            raise OSError(f"Cannot check {path}: {e}") from e
+            raise _azure_error(e, f"Cannot check {path}: {cloud_http.reason(e)}") from e
 
     # -- mutations -----------------------------------------------------------
 
@@ -1378,7 +1486,7 @@ class AzureFilesSession(SessionLifecycle):
             dir_client.create_directory()
             log.debug("Azure Files mkdir: %s", rel)
         except Exception as e:
-            raise OSError(f"Cannot create directory {path}: {e}") from e
+            raise _azure_error(e, f"Cannot create directory {path}: {cloud_http.reason(e)}") from e
 
     def remove(self, path: str, recursive: bool = False) -> None:
         rel = self._to_path(path)
@@ -1390,13 +1498,13 @@ class AzureFilesSession(SessionLifecycle):
                 except OSError:
                     raise
                 except Exception as e:
-                    raise OSError(f"Cannot remove {path}: {e}") from e
+                    raise _azure_error(e, f"Cannot remove {path}: {cloud_http.reason(e)}") from e
             else:
                 try:
                     dir_client = self._share.get_directory_client(rel)
                     dir_client.delete_directory()
                 except Exception as e:
-                    raise OSError(f"Cannot remove {path}: {e}") from e
+                    raise _azure_error(e, f"Cannot remove {path}: {cloud_http.reason(e)}") from e
         else:
             parent_dir = posixpath.dirname(rel)
             file_name = posixpath.basename(rel)
@@ -1406,7 +1514,7 @@ class AzureFilesSession(SessionLifecycle):
                 )
                 file_client.delete_file()
             except Exception as e:
-                raise OSError(f"Cannot remove {path}: {e}") from e
+                raise _azure_error(e, f"Cannot remove {path}: {cloud_http.reason(e)}") from e
 
     def _remove_dir_recursive(self, dir_path: str) -> None:
         """Recursively remove all files and subdirectories."""
@@ -1418,6 +1526,7 @@ class AzureFilesSession(SessionLifecycle):
                 name = safe_leaf(item["name"])
             except ValueError as exc:
                 raise OSError(
+                    errno.EPROTO,
                     f"Azure Files remove: unsafe child name {item.get('name')!r}: {exc}"
                 ) from exc
             child_path = posixpath.join(dir_path, name) if dir_path else name
@@ -1429,6 +1538,8 @@ class AzureFilesSession(SessionLifecycle):
         dir_client.delete_directory()
 
     def rename(self, src: str, dst: str) -> None:
+        # _to_path() drops the slash: "x/" named the FILE x.
+        refuse_folder_path(dst, "rename to", source_is_file=lambda: not self.stat(src).is_dir)
         src_rel = self._to_path(src)
         dst_rel = self._to_path(dst)
 
@@ -1444,7 +1555,7 @@ class AzureFilesSession(SessionLifecycle):
                 src_client = self._share.get_directory_client(parent_dir).get_file_client(file_name)
                 src_client.rename_file(dst_rel)
         except Exception as e:
-            raise OSError(f"Cannot rename {src} -> {dst}: {e}") from e
+            raise _azure_error(e, f"Cannot rename {src} -> {dst}: {cloud_http.reason(e)}") from e
 
     # -- read / write --------------------------------------------------------
 
@@ -1460,10 +1571,11 @@ class AzureFilesSession(SessionLifecycle):
         except OSError:
             raise
         except Exception as e:
-            raise OSError(f"Cannot read {path}: {e}") from e
+            raise _azure_error(e, f"Cannot read {path}: {cloud_http.reason(e)}") from e
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
-        rel = self._to_path(path)
+        # _to_path() drops the slash: "x/" was written as the FILE x.
+        rel = self._to_path(refuse_folder_path(path))
         parent_dir = posixpath.dirname(rel)
         file_name = posixpath.basename(rel)
 
@@ -1481,12 +1593,13 @@ class AzureFilesSession(SessionLifecycle):
             )
             if len(existing) > cap:
                 raise OSError(
+                    errno.EFBIG,
                     f"Azure Files append: existing file exceeds {cap // (1024 * 1024)} MiB cap"
                 )
-            writer = _ShareSpooledWriter(file_client)
+            writer = _ShareSpooledWriter(file_client, path)
             writer.write(existing)
             return writer
-        return _ShareSpooledWriter(file_client)
+        return _ShareSpooledWriter(file_client, path)
 
     # -- path helpers --------------------------------------------------------
 
@@ -1508,16 +1621,17 @@ class AzureFilesSession(SessionLifecycle):
     # -- unsupported ---------------------------------------------------------
 
     def chmod(self, path: str, mode: int) -> None:
-        raise OSError("Azure Files does not support Unix permissions")
+        raise OSError(errno.ENOTSUP, "Azure Files does not support Unix permissions")
 
     def readlink(self, path: str) -> str:
-        raise OSError("Azure Files does not support symlinks")
+        raise OSError(errno.ENOTSUP, "Azure Files does not support symlinks")
 
     def disk_usage(self, path: str) -> tuple[int, int, int]:
-        raise OSError("Azure Files does not support disk usage queries")
+        raise OSError(errno.ENOTSUP, "Azure Files does not support disk usage queries")
 
     def copy(self, src: str, dst: str) -> None:
         """Azure Files start_copy_from_url between two paths in the share."""
+        refuse_folder_path(dst, "copy to")
         try:
             src_parent, src_name = self._split(src)
             dst_parent, dst_name = self._split(dst)
@@ -1528,7 +1642,7 @@ class AzureFilesSession(SessionLifecycle):
             dst_file.start_copy_from_url(src_file.url)
             _wait_for_copy(dst_file.get_file_properties)
         except Exception as exc:
-            raise OSError(f"Azure Files copy {src} -> {dst} failed: {exc}") from exc
+            raise _azure_error(exc, f"Azure Files copy {src} -> {dst} failed: {cloud_http.reason(exc)}") from exc
 
     def checksum(self, path: str, algorithm: str = "sha256") -> str:
         try:
@@ -1536,7 +1650,7 @@ class AzureFilesSession(SessionLifecycle):
             file_client = self._share.get_directory_client(parent).get_file_client(name)
             props = file_client.get_file_properties()
         except Exception as exc:
-            raise OSError(f"Cannot stat {path}: {exc}") from exc
+            raise _azure_error(exc, f"Cannot stat {path}: {cloud_http.reason(exc)}") from exc
         cs = getattr(props.content_settings, "content_md5", None)
         if not cs:
             return ""
@@ -1545,6 +1659,16 @@ class AzureFilesSession(SessionLifecycle):
         return "md5:" + binascii.hexlify(bytes(cs)).decode("ascii")
 
     # -- internal ------------------------------------------------------------
+
+    def _is_file(self, path: str) -> bool:
+        """True when *path* is a file; False for anything else, a failed
+        probe included (the caller has its own error to raise)."""
+        parent, name = self._split(path)
+        try:
+            self._share.get_directory_client(parent).get_file_client(name).get_file_properties()
+        except Exception:  # noqa: BLE001 - "no" is the answer for any failure
+            return False
+        return True
 
     def _to_path(self, path: str) -> str:
         """Convert a UI path to a relative directory/file path (no leading slash)."""

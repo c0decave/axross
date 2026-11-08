@@ -32,6 +32,12 @@ MAX_ITEMS = 100_000
 DEFAULT_TAGS = (("Important", "#d9534f"), ("Review later", "#f0ad4e"))
 
 
+def _default_name(name: str) -> str:
+    from core.i18n import tr
+
+    return tr(name)
+
+
 def tags_file() -> Path:
     return Path.home() / ".config" / "axross" / "tags.json"
 
@@ -99,7 +105,10 @@ class TagStore:
     def __init__(self, path: Path) -> None:
         self._path = path
         self._lock = threading.RLock()
-        self._tags: list[Tag] = [Tag(n, c) for n, c in DEFAULT_TAGS]
+        # The defaults in the interface language: a new German user starts
+        # with "Wichtig" and "Später ansehen". Only where no tags file exists
+        # yet (the first start); a saved file keeps its names.
+        self._tags: list[Tag] = [Tag(_default_name(n), c) for n, c in DEFAULT_TAGS]
         self._items: dict[tuple[str, str], TaggedFile] = {}
         # batch(): nesting depth and whether a write was held back.
         self._batch_depth = 0

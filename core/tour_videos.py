@@ -36,7 +36,61 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 class VideoError(Exception):
-    """The video could not be fetched or did not match its pin; the text is for the user."""
+    """The video could not be fetched or did not match its pin.
+
+    ``str()`` is the technical text (for the log); :meth:`user_text` is the
+    translated sentence for the message box. *kind* is ``"unpublished"``
+    (the release or the file answers 404), ``"network"`` (no connection,
+    no name resolution, no answer in time), ``"checksum"``, ``"disk"`` or
+    ``"other"``; *cause* is the network error behind a ``"network"`` one."""
+
+    def __init__(self, message: str, *, kind: str = "other", name: str = "",
+                 cause: BaseException | None = None) -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.name = name
+        self.cause = cause
+
+    def user_text(self) -> str:
+        from core.i18n import tr
+
+        if self.kind == "unpublished":
+            return tr("This tour video is not published yet.")
+        if self.kind == "network":
+            from core.user_errors import describe
+
+            return describe(self.cause or self)
+        if self.kind == "checksum":
+            return tr("The downloaded video does not match the checksum axross expects, so "
+                      "it was not kept. Try again later.")
+        if self.kind == "disk":
+            from core.user_errors import describe
+
+            return describe(self.cause or self, self.name)
+        return tr("The tour video could not be downloaded ({reason}).").format(reason=str(self))
+
+
+def _from_update_error(exc: BaseException, name: str) -> VideoError:
+    """A VideoError of the right kind for an error of core.self_update.fetch.
+
+    self_update raises its UpdateError ``from None``: the HTTP or network
+    error is still its ``__context__``."""
+    import urllib.error
+
+    inner = exc.__context__
+    if isinstance(inner, urllib.error.HTTPError):
+        if inner.code in (404, 410):
+            return VideoError(str(exc), kind="unpublished", name=name)
+        return VideoError(str(exc), kind="other", name=name)
+    if isinstance(inner, urllib.error.URLError):
+        reason = inner.reason
+        return VideoError(str(exc), kind="network", name=name,
+                          cause=reason if isinstance(reason, BaseException) else inner)
+    if isinstance(inner, (OSError, TimeoutError)):
+        return VideoError(str(exc), kind="network", name=name, cause=inner)
+    if " answered HTTP 404" in str(exc) or " answered HTTP 410" in str(exc):
+        return VideoError(str(exc), kind="unpublished", name=name)
+    return VideoError(str(exc), kind="other", name=name)
 
 
 @dataclass(frozen=True)
@@ -136,7 +190,8 @@ def fetch(video: Video, *, opener=None, progress: Callable[[int, int], None] | N
     try:
         folder.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        raise VideoError(f"Cannot create {folder}: {exc.strerror or exc}") from exc
+        raise VideoError(f"Cannot create {folder}: {exc.strerror or exc}", kind="disk",
+                         name=str(folder), cause=exc) from exc
     digest = hashlib.sha256()
     fd, tmp_name = tempfile.mkstemp(prefix=".part-", suffix=".mp4", dir=folder)
     tmp = Path(tmp_name)
@@ -150,16 +205,17 @@ def fetch(video: Video, *, opener=None, progress: Callable[[int, int], None] | N
                                     total=video.size, cancel=cancel)
         if got != video.size or digest.hexdigest() != video.sha256:
             raise VideoError(f"{video.name} does not match the checksum axross expects; "
-                             "it was not kept.")
+                             "it was not kept.", kind="checksum", name=video.name)
         target = folder / video.name
         os.replace(tmp, target)
         return target
     except self_update.Cancelled:
         raise
     except self_update.UpdateError as exc:
-        raise VideoError(str(exc)) from exc
+        raise _from_update_error(exc, video.name) from exc
     except OSError as exc:
-        raise VideoError(f"Cannot save {video.name}: {exc.strerror or exc}") from exc
+        raise VideoError(f"Cannot save {video.name}: {exc.strerror or exc}", kind="disk",
+                         name=str(folder / video.name), cause=exc) from exc
     finally:
         tmp.unlink(missing_ok=True)
 

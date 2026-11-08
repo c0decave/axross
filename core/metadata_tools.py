@@ -378,6 +378,14 @@ def _read_fields(kind: str, local_path: str, cancel: _CancelView):
 # ---------------------------------------------------------------------------
 
 
+def _stat_size(backend, path: str) -> int:
+    """The file's size as the backend reports it; 0 when it cannot say."""
+    try:
+        return int(getattr(backend.stat(path), "size", 0) or 0)
+    except Exception:  # noqa: BLE001 - the report says why it read nothing
+        return 0
+
+
 def read_metadata(backend, path: str, *, cancel=None) -> MetadataReport:
     """The metadata of one file. Never raises for what the file contains:
     an unreadable or hostile file comes back with ``error`` set."""
@@ -386,10 +394,12 @@ def read_metadata(backend, path: str, *, cancel=None) -> MetadataReport:
     report = MetadataReport(path=path, name=name, kind=kind)
     if kind is None:
         report.error = "not a supported file type"
+        report.size = _stat_size(backend, path)   # was 0 for any file not read
         return report
     cap = capabilities()[kind]
     if not cap.read:
         report.error = cap.reason
+        report.size = _stat_size(backend, path)
         return report
     view = _CancelView(cancel)
     source = None

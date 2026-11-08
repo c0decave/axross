@@ -92,6 +92,15 @@ _SLASH = re.compile(r"/([A-Za-z0-9-]*)(?:\s+(.*))?\Z", re.DOTALL)
 #: The Tools-list lines of further MCP servers: "mcp:<name>" (agent profiles
 #: write them into a session's groups too).
 MCP_PREFIX = AP.MCP_PREFIX
+def tab_label(session) -> str:
+    """A tab's label: the task it ran first; before that the agent profile
+    it was made from (seven tabs from seven presets all read "New task"),
+    else "New task" (translated)."""
+    if session.title != "New task":
+        return session.title
+    return session.agent_profile or tr("New task")
+
+
 #: The Tools-list lines of extensions with agent tools: "ext:<extension id>".
 EXT_PREFIX = "ext:"
 #: The Tools-list lines of MCP servers found on this machine (core.mcp_detect)
@@ -358,6 +367,7 @@ class AgentTab(QWidget):
         self._conversation = False
         self._hotkey_down = False
         self._refusals_said: set[str] = set()
+        self._hints_said: set[str] = set()
         #: What the transcript shows, in order: ``{who, text, muted, kind}``
         #: (also lines that are not kept, the voice's notes).
         self._entries: list[dict] = []
@@ -420,6 +430,15 @@ class AgentTab(QWidget):
         self.profile_notes.linkActivated.connect(self.profile_notes_link)
         self.profile_notes.hide()
         layout.addWidget(self.profile_notes)
+        # Which switch a tool the agent asked for needs (unavailable_hint),
+        # with a link to it: the transcript only says it in words.
+        self.setup_hint = QLabel()
+        self.setup_hint.setTextFormat(Qt.TextFormat.RichText)
+        self.setup_hint.setWordWrap(True)
+        self.setup_hint.setStyleSheet("color: #b9770e;")
+        self.setup_hint.linkActivated.connect(self.profile_notes_link)
+        self.setup_hint.hide()
+        layout.addWidget(self.setup_hint)
         self.bypass_label = QLabel(tr("Bypass: changes and commands run without asking."))
         self.bypass_label.setStyleSheet("color: #c0392b; font-weight: bold;")
         self.bypass_label.hide()
@@ -765,6 +784,8 @@ class AgentTab(QWidget):
         self._store(save=False)
         self._update_access_tip()
         self.show_profile_report(res)
+        if self.session.title == "New task":
+            self.title_changed.emit(tab_label(self.session))   # the profile's name
         self.changed.emit()
 
     def show_profile_report(self, res: AP.Resolution | None) -> None:
@@ -781,8 +802,15 @@ class AgentTab(QWidget):
         if res.notes:
             # The notes are what Agent Settings said then: after changing them,
             # applying again takes what they allow now.
-            lines.append('<a href="apply:again">' + html.escape(tr("Apply Profile again"))
+            links = []
+            if res.access_cut:
+                # A fresh install has the axross functions off: every preset
+                # said so, without the way to the switch.
+                links.append('<a href="settings:access">'
+                             + html.escape(tr("Open Agent Settings > Access…")) + "</a>")
+            links.append('<a href="apply:again">' + html.escape(tr("Apply Profile again"))
                          + "</a>")
+            lines.append(" · ".join(links))
         for missing in res.missing:
             target = html.escape(f"{missing.kind}:{missing.name}", quote=True)
             line = html.escape(AP.missing_text(missing))
@@ -798,10 +826,90 @@ class AgentTab(QWidget):
         return [f"{m.kind}:{m.name}" for m in (res.missing if res else ())
                 if m.why == "not installed"]
 
+    def unavailable_hint(self, name: str) -> tuple[str, str]:
+        """For the user: why the tool *name* the agent asked for is not in
+        this tab, naming the switch to change, and the link target that
+        shows it ("tools:show", "settings:access" or "")."""
+        settings = self.dock.agent_settings
+        ext_tools = {}
+        for ext_id, _ext_name in self.dock.extension_owners():
+            for tool in self.dock.extension_tools([ext_id]):
+                ext_tools[tool.name] = ext_id
+        owners = dict(self.dock.extension_owners())
+        kind, value = A.unavailable_switch(
+            name, groups=self.session.groups, allow_write=self.allow_write.isChecked(),
+            allow_exec=self.allow_exec.isChecked(), files_read_only=self.files_read_only(),
+            functions=self.functions(), extension_tools=ext_tools,
+            mcp_servers=[s.name for s in settings.mcp_servers if s.enabled])
+        tools = tr("Tools ▸")
+        if kind == "group":
+            text = tr('The agent asked for "{tool}", a tool of the group "{group}": tick '
+                      '"{group}" under {tools} in this tab, then send the task again.')
+            return text.format(tool=name, group=value, tools=tools), "tools:show"
+        if kind == "write":
+            text = tr('The agent asked for "{tool}", which changes files: tick "{switch}" under '
+                      '{tools} in this tab, then send the task again.')
+            return text.format(tool=name, switch=tr("Allow changes to files"), tools=tools), "tools:show"
+        if kind == "exec":
+            text = tr('The agent asked for "{tool}", which runs remote commands: tick "{switch}" '
+                      'under {tools} in this tab, then send the task again.')
+            return text.format(tool=name, switch=tr("Allow remote commands"), tools=tools), "tools:show"
+        if kind == "read_only":
+            text = tr('The agent asked for "{tool}", which changes files, and "{switch}" is on '
+                      'in this tab.')
+            return text.format(tool=name, switch=tr("Files read-only")), ""
+        if kind in ("ext", "mcp"):
+            line = (EXT_PREFIX if kind == "ext" else MCP_PREFIX) + value
+            owner = owners.get(value, value) if kind == "ext" else value
+            text = (tr('The agent asked for "{tool}", a tool of the extension {owner}: tick '
+                       '"{line}" under {tools} in this tab, then send the task again.')
+                    if kind == "ext" else
+                    tr('The agent asked for "{tool}", a tool of the MCP server {owner}: tick '
+                       '"{line}" under {tools} in this tab, then send the task again.'))
+            return text.format(tool=name, owner=owner, line=line, tools=tools), "tools:show"
+        if kind == "access":
+            text = tr('The agent asked for "{tool}", which needs "{function}": switch it on in '
+                      'Agent Settings > Access.')
+            return text.format(tool=name, function=tr(AP.FUNCTION_NAMES.get(value, value))), \
+                "settings:access"
+        if kind == "offered":
+            return tr('The agent asked for "{tool}"; this tab offers it as "{full}" (the model '
+                      'was told).').format(tool=name, full=value), ""
+        return tr('The agent asked for "{tool}", a tool axross does not have.').format(tool=name), ""
+
+    def _say_unavailable(self, name: str) -> None:
+        if name in self._hints_said:
+            return
+        self._hints_said.add(name)
+        try:
+            text, target = self.unavailable_hint(name)
+        except Exception:  # noqa: BLE001 - the hint must not break the transcript
+            log.debug("agent: no hint for the unavailable tool %r", name, exc_info=True)
+            return
+        self._append(tr("axross:"), text, muted=True)
+        link = ""
+        if target == "tools:show":
+            link = tr("Show the Tools")
+        elif target == "settings:access":
+            link = tr("Open Agent Settings > Access…")
+        self.setup_hint.setText(html.escape(text) + (
+            f' <a href="{html.escape(target, quote=True)}">{html.escape(link)}</a>' if link else ""))
+        self.setup_hint.show()
+
     def profile_notes_link(self, target: str):
         """An Install from Catalog… link: the catalog, on the category (or
-        searching the server's name). Returns the dialog."""
+        searching the server's name). Returns the dialog. "tools:show" opens
+        the tab's Tools, "settings:<tab>" Edit > Settings… > Agent on that
+        tab (Access, where the axross functions are switched on)."""
         kind, _sep, name = str(target).partition(":")
+        if kind == "tools":
+            self.tools_button.setChecked(True)
+            return None
+        if kind == "settings":
+            opener = getattr(self.window(), "open_settings", None)
+            if callable(opener):
+                opener("agent", name or None)
+            return None
         if kind == "category":
             return self.dock.install_from_catalog(self, category=name)
         if kind == "server":
@@ -1754,6 +1862,8 @@ class AgentTab(QWidget):
             self._agent_key = key
         self._cancel.clear()
         self._refusals_said = set()
+        self._hints_said = set()
+        self.setup_hint.hide()
         self.input.clear()
         context = self._context_text()
         self.clear_attachments()
@@ -1913,6 +2023,8 @@ class AgentTab(QWidget):
             line = f"{event.get('name')}: {event.get('outcome')}"
             self._append("←", f"{line} - {detail}" if isinstance(detail, str) and detail else line,
                          muted=True)
+            if event.get("outcome") == "unavailable":
+                self._say_unavailable(str(event.get("name") or ""))
             reason = event.get("reason")
             if reason in A.REFUSAL_REASONS and reason not in self._refusals_said:
                 self._refusals_said.add(reason)
@@ -2171,8 +2283,7 @@ class AgentDock(ExtensionDock):
     def _add_tab(self, session: AgentSession) -> AgentTab:
         tab = self._make_tab(session)
         # The default title is a label (translated); a task's own title is its text.
-        index = self.tabs.addTab(tab, tr(session.title) if session.title == "New task"
-                                 else session.title)
+        index = self.tabs.addTab(tab, tab_label(session))
         self.tabs.setCurrentIndex(index)
         return tab
 
@@ -2570,8 +2681,7 @@ class AgentDock(ExtensionDock):
             return None
         tab = panel.tab
         self._panels.remove(panel)
-        index = self.tabs.addTab(tab, tr(tab.session.title) if tab.session.title == "New task"
-                                 else tab.session.title)
+        index = self.tabs.addTab(tab, tab_label(tab.session))
         self.tabs.setTabToolTip(index, tab.session.title)
         self.tabs.setCurrentIndex(index)
         tab.show()

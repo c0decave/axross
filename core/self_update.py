@@ -139,9 +139,12 @@ VARIANT_PATH = ("axross", VARIANT_FILE)
 VARIANTS = ("glibc-2.34", "glibc-2.36")
 
 MAX_API_BYTES = 1 << 20
-#: GitHub lists at most 100 assets per answer; a release with its packs has
-#: more (about 160 pack wheels), so the rest is read page by page, up to
-#: this many assets in all (the asset list's pages: ASSETS_PAGE each).
+#: The assets of a release: GitHub's answer to ``releases/latest`` carries
+#: every one, sorted by name ignoring case (measured 2026-11-08 on releases
+#: of 22 and 991 assets). Should an answer ever end at exactly ASSETS_PAGE
+#: entries - a full page, as the asset list hands them out - the rest is
+#: read from the asset list's pages (ASSETS_PAGE each), up to MAX_ASSETS
+#: assets in all; an asset listed twice is kept once.
 MAX_ASSETS = 500
 ASSETS_PAGE = 100
 MAX_SUMS_BYTES = 64 << 10
@@ -379,20 +382,27 @@ def parse_release(data) -> Release:
     tag = data.get("tag_name")
     version = parse_version(tag)
     if version is None:
-        raise UpdateError(f"the latest release's tag {clean_text(tag, 40)!r} is not a version")
+        raise UpdateError(
+            f"GitHub names {clean_text(tag, 40)!r} as the latest release of {REPOSITORY}, "
+            "which is not an axross version (vX.Y.Z), so no update can be offered; "
+            f"download a new version from {RELEASES_PREFIX}")
     page = data.get("html_url")
     if page != f"{RELEASES_PREFIX}tag/{tag}":
         raise UpdateError("the latest release names no page of c0decave/axross")
     raw_assets = data.get("assets")
     if not isinstance(raw_assets, list):
         raise UpdateError("the latest release has no list of files")
-    assets = tuple(a for a in (_asset(r, tag) for r in raw_assets[:MAX_ASSETS]) if a is not None)
+    assets: dict[str, Asset] = {}
+    for raw in raw_assets[:MAX_ASSETS]:
+        asset = _asset(raw, tag)
+        if asset is not None:
+            assets.setdefault(asset.name, asset)  # listed twice: the first one
     return Release(
         version="%d.%d.%d" % version,
         tag=tag,
         page_url=page,
         notes=clean_text(data.get("body"), MAX_NOTES_CHARS, lines=True),
-        assets=assets,
+        assets=tuple(assets.values()),
     )
 
 
@@ -585,20 +595,29 @@ def check(current: str | None = None, *, opener=None, timeout: float = API_TIMEO
 
 
 def _read_more_assets(data: dict, opener, timeout: float) -> None:
-    """Append the release's further asset pages to ``data["assets"]``.
+    """Complete ``data["assets"]`` from the release's asset pages - only
+    when the answer looks cut off at one page: exactly ASSETS_PAGE assets.
+    GitHub's answer holds every asset of the release (see MAX_ASSETS); one
+    of fewer or more is complete and makes no further request.
 
     The address is built here from the repository and the release's numeric
-    id, never taken from the answer; every page is size-bounded, and the
-    whole list stops at MAX_ASSETS. A page that fails ends the reading: the
-    assets read so far stay, and a missing SHA256SUMS refuses the update
-    later as before."""
+    id, never taken from the answer; every page is size-bounded, the pages
+    stop at MAX_ASSETS assets (MAX_ASSETS // ASSETS_PAGE pages), at a short
+    or empty page and at a page that brings nothing new. An asset already
+    listed (the same id or the same name) is not added again. A page that
+    fails ends the reading: the assets read so far stay, and a missing
+    SHA256SUMS refuses the update later as before."""
     raw = data.get("assets")
     release_id = data.get("id")
-    if (not isinstance(raw, list) or len(raw) < ASSETS_PAGE
+    if (not isinstance(raw, list) or len(raw) != ASSETS_PAGE
             or not isinstance(release_id, int) or isinstance(release_id, bool) or release_id <= 0):
         return
-    page = 2
-    while len(raw) < MAX_ASSETS:
+    seen: set = set()
+    for entry in raw:
+        seen |= _asset_keys(entry)
+    for page in range(2, MAX_ASSETS // ASSETS_PAGE + 1):
+        if len(raw) >= MAX_ASSETS:
+            return
         url = (f"https://api.github.com/repos/{REPOSITORY}/releases/{release_id}/assets"
                f"?per_page={ASSETS_PAGE}&page={page}")
         try:
@@ -611,10 +630,29 @@ def _read_more_assets(data: dict, opener, timeout: float) -> None:
             return
         if not isinstance(more, list) or not more:
             return
-        raw.extend(more[:MAX_ASSETS - len(raw)])
-        if len(more) < ASSETS_PAGE:
+        added = 0
+        for entry in more[:ASSETS_PAGE]:
+            keys = _asset_keys(entry)
+            if not keys or keys & seen or len(raw) >= MAX_ASSETS:
+                continue
+            seen |= keys
+            raw.append(entry)
+            added += 1
+        if len(more) < ASSETS_PAGE or not added:
             return
-        page += 1
+
+
+def _asset_keys(entry) -> set:
+    """What makes an asset entry the same as another: its id and its name."""
+    if not isinstance(entry, dict):
+        return set()
+    keys = set()
+    asset_id, name = entry.get("id"), entry.get("name")
+    if isinstance(asset_id, int) and not isinstance(asset_id, bool):
+        keys.add(("id", asset_id))
+    if isinstance(name, str):
+        keys.add(("name", name))
+    return keys
 
 
 # -- download, verify, replace -----------------------------------------------------------

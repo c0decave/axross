@@ -1199,6 +1199,14 @@ def device_sink_format(device):
     return qt_format(*chosen)
 
 
+def no_audio_device() -> bool:
+    """The audio check (core.multimedia_probe) found no output device."""
+    from core import multimedia_probe
+
+    result = multimedia_probe.cached()
+    return bool(result is not None and result.ok and not result.outputs)
+
+
 def routed_sink_format(_desired=None):
     """The sink format for the output device chosen in Settings > Audio
     (the system's default when none is)."""
@@ -2612,7 +2620,10 @@ class EqEngine(QObject):
         one message instead of an error on every tick. What the old stream
         held is not played again."""
         if self._sink_reopens >= MAX_SINK_REOPENS:
-            self._fail(tr("The sound card's stream keeps closing; playback stopped"))
+            # Not "the stream keeps closing" when there is nothing to play to.
+            self._fail(tr("No audio device: this computer has no sound card or other output to "
+                          "play to") if no_audio_device()
+                       else tr("The sound card's stream keeps closing; playback stopped"))
             return
         self._sink_reopens += 1
         log.warning("Media Player: the sound card's stream was gone; opening it again")
@@ -3501,6 +3512,8 @@ class Visualizer(QWidget):
         super().mouseMoveEvent(event)
 
     def contextMenuEvent(self, event) -> None:  # noqa: N802 - Qt
+        if self.menu is not None:
+            self.menu.deleteLater()  # one menu per right click, not one more each time
         self.menu = self.build_menu()
         self.menu.popup(event.globalPos())
         event.accept()

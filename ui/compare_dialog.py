@@ -300,9 +300,12 @@ class CompareDialog(QDialog):
         actions.addWidget(self._export_btn)
 
         actions.addStretch(1)
+        # A row of its own, wrapped: beside the buttons the German summary
+        # was cut off at the window's edge ("…, 31 id").
         self._summary = QLabel(self)
         self._summary.setProperty("role", "muted")
-        actions.addWidget(self._summary)
+        self._summary.setWordWrap(True)
+        layout.addWidget(self._summary)
         layout.addLayout(actions)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)

@@ -117,6 +117,7 @@ def test_sad_an_existing_manifest_is_not_overwritten(tmp_path):
     (tmp_path / "SHA256SUMS").write_text("keep")
     api = Api()
     CM.activate(api)
+    CM.ask_existing = lambda *a: None   # Cancel in the Update / Replace question
     create = next(f for label, f in api.entries.items() if "Create" in str(label))
     create(SimpleNamespace(items=[], backend=WatchedFS(), folder=str(tmp_path), pane=None))
     assert (tmp_path / "SHA256SUMS").read_text() == "keep"

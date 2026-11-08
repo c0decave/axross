@@ -74,7 +74,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import cas as CAS
-from core.i18n import tr, tr_n
+from core.i18n import format_decimal, tr, tr_n
 from ui.close_corner import add_close_corner
 from ui.plain_text import plain_tooltip
 from ui.scan_job import BusyStrip, ScanJob
@@ -145,8 +145,8 @@ def _format_size(n: int) -> str:
     for unit in ("KiB", "MiB", "GiB", "TiB"):
         value /= 1024
         if value < 1024:
-            return f"{value:.1f} {unit}"
-    return f"{value / 1024:.1f} PiB"
+            return f"{format_decimal(value)} {unit}"
+    return f"{format_decimal(value / 1024)} PiB"
 
 
 def _split_path(path: str) -> tuple[str, str]:
@@ -378,7 +378,8 @@ class CasDuplicatesDialog(QDialog):
         filter_row.addWidget(QLabel(tr("At least:"), self))
         self._min_size_combo = QComboBox(self)
         for label, size in MIN_SIZES:
-            self._min_size_combo.addItem(tr(label), size)
+            # "1 KiB" is a size, no label: only "Any size" is translated.
+            self._min_size_combo.addItem(tr(label) if size == 0 else label, size)
         self._min_size_combo.setToolTip(tr("Hide groups of files smaller than this"))
         self._min_size_combo.currentIndexChanged.connect(lambda _i: self._apply_view())
         filter_row.addWidget(self._min_size_combo)
@@ -1266,7 +1267,11 @@ class CasDuplicatesDialog(QDialog):
         item = self._tree.itemAt(pos)
         if item is not None and not item.isSelected():
             self._tree.setCurrentItem(item)
-        self.build_context_menu(item).exec(self._tree.viewport().mapToGlobal(pos))
+        menu = self.build_context_menu(item)
+        try:
+            menu.exec(self._tree.viewport().mapToGlobal(pos))
+        finally:
+            menu.deleteLater()  # else every right click leaves it behind
 
     def build_context_menu(self, item) -> QMenu:
         """The right-click menu for *item* (a file row, a group row or None)."""

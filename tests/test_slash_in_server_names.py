@@ -79,7 +79,7 @@ def _message(mid, **kw):
         has_attachments=True,
         attachments=[SimpleNamespace(name="a.pdf", size=3, content=b"pdf")],
         mime_content=b"Subject: Report\r\n\r\nbody",
-        delete=lambda: deleted.append(mid),
+        move_to_trash=lambda: deleted.append(mid),  # remove() goes to Deleted Items
         deleted=deleted,
     )
     return msg

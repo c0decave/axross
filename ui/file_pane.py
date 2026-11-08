@@ -41,7 +41,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.file_type import BINARY_SIGNATURES
-from core.i18n import tr, tr_n
+from core.i18n import format_decimal, tr, tr_n
 from core.open_limits import describe_limit, max_open_bytes
 from core.redaction import redact_url
 from core.thread_relay import GuiCall
@@ -54,6 +54,7 @@ from models.file_table_model import (
     prepare_listing,
 )
 from ui.column_fit import detach_header_selection
+from ui.format_utils import backend_label
 from ui.pane_drag import PANE_MIME_TYPE, DraggableHeader, PaneDropZones
 from ui.scan_job import ScanJob
 
@@ -2733,7 +2734,7 @@ class FilePaneWidget(QWidget):
         type_label = tr({"local": "LOCAL", "remote": "REMOTE", "root": "ROOT"}[session_type])
         self.refresh_security()
         self._header_label.setText(
-            f"<b>{escape(self._backend.name)}</b> <small>[{type_label}]</small>"
+            f"<b>{escape(backend_label(self._backend.name))}</b> <small>[{type_label}]</small>"
         )
         _set_style(
             self._header_label,
@@ -2795,9 +2796,9 @@ class FilePaneWidget(QWidget):
         def _fmt(b: float) -> str:
             for unit in ("B", "KB", "MB", "GB", "TB"):
                 if abs(b) < 1024:
-                    return f"{b:.1f} {unit}" if unit != "B" else f"{b} {unit}"
+                    return f"{format_decimal(b)} {unit}" if unit != "B" else f"{b} {unit}"
                 b /= 1024
-            return f"{b:.1f} PB"
+            return f"{format_decimal(b)} PB"
 
         pct = int((used / total) * 100) if total else 0
         self._disk_label.setText(tr("Free: {free} / {total} ({pct}% used)").format(
@@ -3761,7 +3762,8 @@ class FilePaneWidget(QWidget):
             entry(command, tr(label), lambda _checked=False, a=meta_action: self.open_metadata(a))
         # Acts on the folder you are standing in: offered with nothing selected.
         entry(
-            "duplicates", tr("Find Duplicate Fi&les…"), self.open_duplicates_requested.emit
+            # One name with View > Duplicate Finder… (the same window).
+            "duplicates", tr("Dup&licate Finder…"), self.open_duplicates_requested.emit
         )
         if self.receivers(self.find_files_requested) > 0:
             find = entry(
@@ -4002,7 +4004,15 @@ class FilePaneWidget(QWidget):
         # user actually clicked, every time.
         from PyQt6.QtGui import QCursor
 
-        self._build_context_menu().exec(QCursor.pos())
+        # Without a deleteLater every right click left the menu, its
+        # submenus and ~70 actions on the pane for good - and the actions'
+        # slots kept switched-off extensions' modules alive. Triggered
+        # entries run inside exec(), so the menu is no longer needed after.
+        menu = self._build_context_menu()
+        try:
+            menu.exec(QCursor.pos())
+        finally:
+            menu.deleteLater()
 
     # -- packing ------------------------------------------------------------
     _QUICK_PACK = (("zip", "Pack as ZIP"), ("tar.gz", "Pack as .tar.gz"),
@@ -4020,7 +4030,7 @@ class FilePaneWidget(QWidget):
             action = menu.addAction(tr(label))
             ok, reason = PK.FORMATS[fmt_id].available()
             action.setEnabled(ok)
-            action.setToolTip(reason)
+            action.setToolTip(tr(reason) if reason else "")
             action.triggered.connect(lambda _checked=False, f=fmt_id: self.pack_selection(f))
         files = [i for i in selected if not i.is_dir and not i.is_nav]
         if len(selected) == 1 and len(files) == 1:
@@ -4029,7 +4039,7 @@ class FilePaneWidget(QWidget):
                 action = menu.addAction(tr(label))
                 ok, reason = PK.FORMATS[fmt_id].available()
                 action.setEnabled(ok)
-                action.setToolTip(reason)
+                action.setToolTip(tr(reason) if reason else "")
                 action.triggered.connect(lambda _checked=False, f=fmt_id: self.pack_selection(f))
         menu.setToolTipsVisible(True)
         menu.addSeparator()
@@ -5015,11 +5025,14 @@ class FilePaneWidget(QWidget):
         if digest:
             self._present_checksum(full_path, algo, digest, "native")
             return
+        from ui.plain_text import as_written
+
+        # The name is the backend's: shown as written, never as markup.
         reply = QMessageBox.question(
             self,
             tr("Checksum"),
-            tr("{name}: this backend has no native checksum.\n\n"
-               "Compute SHA-256 by reading the entire file?").format(name=item.name),
+            as_written(tr("{name}: this backend has no native checksum.\n\n"
+                          "Compute SHA-256 by reading the entire file?").format(name=item.name)),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
@@ -5338,7 +5351,10 @@ class FilePaneWidget(QWidget):
                 action.setEnabled(False)
             else:
                 action.toggled.connect(lambda visible, c=col: self._toggle_column(c, visible))
-        menu.exec(QCursor.pos())
+        try:
+            menu.exec(QCursor.pos())
+        finally:
+            menu.deleteLater()
 
     def _toggle_column(self, col: int, visible: bool) -> None:
         if getattr(self, "_column_prefs", None) is None:
@@ -5812,10 +5828,13 @@ class FilePaneWidget(QWidget):
             backend = self._backend
             if self._wait(lambda: backend.exists(existing), tr("Checking {name}…").format(
                     name=existing.rsplit('/', 1)[-1])):
+                from ui.plain_text import as_written
+
                 reply = QMessageBox.question(
                     self,
                     tr("Overwrite?"),
-                    tr("'{name}' already exists. Overwrite?").format(name=existing.rsplit('/', 1)[-1]),
+                    as_written(tr("'{name}' already exists. Overwrite?").format(
+                        name=existing.rsplit('/', 1)[-1])),
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 )
                 if reply != QMessageBox.StandardButton.Yes:
@@ -5835,12 +5854,14 @@ class FilePaneWidget(QWidget):
                 tr("Could not encrypt file:\n{error}").format(error=describe(exc)),
             )
             return
+        from ui.plain_text import as_written
+
         QMessageBox.information(
             self,
             tr("Encrypted"),
-            f"{item.name} → {dst_path.rsplit('/', 1)[-1]}\n\n"
-            + tr("Original plaintext is still in place — delete it manually "
-                 "when you've verified the encrypted copy decrypts cleanly."),
+            as_written(f"{item.name} → {dst_path.rsplit('/', 1)[-1]}\n\n"
+                       + tr("Original plaintext is still in place — delete it manually "
+                            "when you've verified the encrypted copy decrypts cleanly.")),
         )
         self.refresh_after_change()
 
@@ -5887,10 +5908,12 @@ class FilePaneWidget(QWidget):
         try:
             if self._wait(lambda: backend.exists(dst_path),
                           tr("Checking {name}…").format(name=dst_name)):
+                from ui.plain_text import as_written
+
                 reply = QMessageBox.question(
                     self,
                     tr("Overwrite?"),
-                    tr("'{name}' already exists. Overwrite?").format(name=dst_name),
+                    as_written(tr("'{name}' already exists. Overwrite?").format(name=dst_name)),
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 )
                 if reply != QMessageBox.StandardButton.Yes:

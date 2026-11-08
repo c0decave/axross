@@ -1,6 +1,6 @@
-# Axross — Bedienung
+# axross — Bedienung
 
-Diese Anleitung beschreibt, was du mit Axross tun kannst, sobald es
+Diese Anleitung beschreibt, was du mit axross tun kannst, sobald es
 läuft. Installation: siehe [INSTALL.md](../INSTALL.md). Sie ist das
 deutsche Handbuch von axross; *Hilfe → Handbuch* (**F1**) zeigt sie.
 
@@ -8,7 +8,7 @@ Sprachen: [English](USAGE.md) · **Deutsch** · [Español](USAGE_es.md)
 
 ## Auf einen Blick
 
-Axross ist ein Total-Commander-artiger Dateimanager für mehr als 30
+axross ist ein Total-Commander-artiger Dateimanager für mehr als 30
 Protokolle, gebaut um drei Ideen herum:
 
 - **Multi-Pane-Layout.** Beliebig viele Panes, horizontal oder
@@ -18,7 +18,7 @@ Protokolle, gebaut um drei Ideen herum:
   verschlüsselte Overlays, Versions-Timeline, Content-Addressable-Storage —
   alles funktioniert auf jedem Protokoll, auch dort, wo das native API
   es nicht kennt.
-- **MCP-Server-Modus.** Axross kann headless laufen und jedes
+- **MCP-Server-Modus.** axross kann headless laufen und jedes
   konfigurierte Backend als MCP-Tools exponieren — ein LLM-Client kann
   es dann steuern. Read-only by default; opt-in `--mcp-write` für
   Mutationen.
@@ -97,7 +97,7 @@ Profil-JSON selbst enthält nie Klartext-Credentials.
   JSON…). Tokens werden unter
   `~/.config/axross/<provider>_token.json` mit `0o600` ab Geburt
   gespeichert. Profil-Proxies gelten für API-/Token-Traffic, den
-  Axross selbst kontrolliert; die externe Browser-Consent-Seite kann
+  axross selbst kontrolliert; die externe Browser-Consent-Seite kann
   Browser- oder System-Proxy-Settings verwenden. App-Registrierung pro Anbieter:
   [OAUTH_SETUP.md](../OAUTH_SETUP.md).
 - **Proxy-Support.** Per Profil SOCKS5 / SOCKS4 / HTTP-CONNECT für
@@ -109,7 +109,7 @@ Profil-JSON selbst enthält nie Klartext-Credentials.
   statt Proxy-Felder still zu ignorieren. S3 ist nur über HTTP-CONNECT
   proxyfähig; Rsync kann über OpenBSD `nc` `proxy_username`, aber kein
   `proxy_password` transportieren. Requests-basierte SDK-Sessions, die
-  Axross kontrolliert, ignorieren `HTTP_PROXY` / `HTTPS_PROXY` aus der
+  axross kontrolliert, ignorieren `HTTP_PROXY` / `HTTPS_PROXY` aus der
   Prozess-Umgebung; das Profil ist die Quelle der Route.
 - **Produktionsserver.** *Produktion (destruktive Operationen mit
   Countdown bestätigen)* in der Gruppe Connection von Connect to Server
@@ -310,9 +310,9 @@ Durchlauf, der mittendrin abbricht, sagt, wie viel eingereiht wurde.
 - **Resume.** Fehlgeschlagene Übertragungen können fortgesetzt werden;
   die Teilbytes auf dem Ziel werden wiederaufgenommen. Eine Übertragung,
   die an einem vollen Ziel scheitert, löscht ihre Teildatei.
-- **Retry.** „Retry Failed" wiederholt jede fehlgeschlagene Übertragung der
+- **Wiederholen.** „Fehlgeschlagene wiederholen“ wiederholt jede fehlgeschlagene Übertragung der
   Warteschlange, jede genau einmal.
-- **Cancel All** stoppt auch eine Kopie oder einen Move, dessen
+- **Alle abbrechen** stoppt auch eine Kopie oder einen Move, dessen
   Ordner-Walk noch läuft: keine seiner Dateien kommt in die Queue.
 - **Moves auf einem Server.** Ein Move, dessen Quelle und Ziel auf
   derselben Verbindung liegen (Drop auf einen Ordner im selben Pane, F6
@@ -324,17 +324,17 @@ Durchlauf, der mittendrin abbricht, sagt, wie viel eingereiht wurde.
 - **Änderungszeiten.** Eine Kopie behält die Änderungszeit der Quelle
   auf lokalen Platten, SFTP (ganze Sekunden), SMB und FTP-Servern, die
   `MFMT` anbieten. WebDAV und S3 können sie nicht setzen: Die Kopie dort
-  trägt die Upload-Zeit, die Compare Panes und *Overwrite if Newer* als
-  die neuere lesen. *Overwrite if Newer* vergleicht ganze Sekunden.
+  trägt die Upload-Zeit, die *Panes vergleichen* und *Überschreiben, wenn neuer* als
+  die neuere lesen. *Überschreiben, wenn neuer* vergleicht ganze Sekunden.
 - **Was passiert ist.** Ist eine Kopie oder ein Move fertig, fasst die
   Statusleiste zusammen: „2 kopiert, 1 übersprungen (Ziel behalten)",
   „3 übersprungen (Ziele nicht älter)", Fehler mitgezählt. Der
   Gesamtbalken des Docks endet nur dann auf *Fertig*, wenn jeder Job des
   Durchgangs gut ausging, sonst rot auf „N fehlgeschlagen" /
   „N abgebrochen".
-- **Undo.** *Bearbeiten → Letzte Aktion widerrufen* (`Strg+Z`) macht den neuesten
-  Move oder Move to Trash rückgängig, dessen Verbindung offen ist, und
-  zwar ganz: ein F5 / F6 / Drop / Paste oder ein Move to Trash einer
+- **Widerrufen.** *Bearbeiten → Letzte Aktion widerrufen* (`Strg+Z`) macht den neuesten
+  Move oder *In den Trash verschieben* rückgängig, dessen Verbindung offen ist, und
+  zwar ganz: ein F5 / F6 / Drop / Paste oder ein *In den Trash verschieben* einer
   Auswahl ist eine Operation und eine Frage. Ein verschobener Ordner
   kommt mit seinen Ordnern zurück (die der Move angelegt hat, werden
   entfernt, wenn sie leer sind, die Quellordner neu angelegt) und mit
@@ -382,7 +382,7 @@ native Protokoll sie nicht kennt.
 | `core.metadata_index` | Offline-SQLite-Suche nach Name / Ext / Größe / mtime. Eine Datei: `$AXROSS_METADATA_DB`, sonst `$XDG_DATA_HOME/axross/metadata.sqlite`, sonst `~/.local/share/axross/metadata.sqlite` (ein Index, der schon dort liegt, bleibt in Gebrauch). Gefüllt nur über *Index Active Folder…*, nicht durchs Browsen — Details im Handbuch, Abschnitt *Metadata-Index*. |
 | `core.previews` | Lokaler Bild-Thumbnailer mit MIME-Allowlist, Größenkappen, Qt-Allocator-Gate. F3 / Doppelklick. |
 | `core.archive` | Sichere Entpackung von zip / tar / 7z (`.zip .xpi .jar .war .apk .epub .docx .xlsx .odt .tar .tar.gz .tgz .tar.bz2 .tbz2 .tar.xz .txz .7z`). Zip-Slip-/Bomb-/Lying-Metadata-Guards; Symlink- und Hardlink-Einträge (tar, und ZIP-Symlinks) werden ausgelassen - nie angelegt oder verfolgt - und das Ergebnis nennt sie; `.7z` braucht das `[archive]`-Extra. |
-| `core.elevated_io` | `pkexec`-gated lokales Lesen für `/etc/shadow` & Co. — Axross hält selbst keine Privilegien. „Open as root…"-Kontextmenü. |
+| `core.elevated_io` | `pkexec`-gated lokales Lesen für `/etc/shadow` & Co. — axross hält selbst keine Privilegien. „Open as root…"-Kontextmenü. |
 | `core.fuse_mount` | FUSE-Mount jedes Backends. Read-only by default; `writeable=True` aktiviert create / write / unlink / mkdir / rename. Optionales `[fuse]`-Extra. |
 | `core.mcp_server` | Stdio-JSON-RPC-MCP-Server, der das konfigurierte Backend als Tools exponiert. `--mcp-write` ergänzt mutierende Tools, gecappt auf einen pfad-traversal-sicheren Root. |
 
@@ -408,8 +408,8 @@ native Protokoll sie nicht kennt.
 | View Media… / View Selected Media… | Rechtsklick, Menü Ansicht | Bilder, PDFs und Videos des Ordners (optional rekursiv) oder der Auswahl als Overview-Grid, Viewer zum Durchklicken oder Slideshow — siehe *Editoren und Viewer*. |
 | Show / Remove / Export Metadata… | Rechtsklick | EXIF / GPS / XMP / IPTC, Office-Properties, PDF-Info, Audio-/Video-Tags der Auswahl — oder des ganzen Ordners, wenn nichts ausgewählt ist (Unterordner optional) — siehe *Datei-Metadata*. |
 | Cut / Paste | Rechtsklick (Paste auch auf freier Fläche), `Strg+X` / `Strg+V` | Cut merkt sich die Auswahl und entfernt nichts (die Einträge sind abgeblendet); Paste in einem beliebigen Pane verschiebt sie über die Übertragungen in dessen Ordner - siehe *Übertragungen*. Ein Cut ohne Paste lässt alles, wo es ist. |
-| Move to Trash | Rechtsklick | Universaler Papierkorb. Läuft wie Delete Permanently: im Hintergrund, mit derselben zweiten Rückfrage für Hidden Entries. |
-| Delete Permanently | Rechtsklick, `Del` | Zählt zuerst abseits des GUI-Threads, was wegfällt (Ordner, Dateien, Bytes, Hidden Entries), dann die Rückfrage. Ein ausgewählter Ordner mit Hidden Entries (Dotfiles oder Hidden-Flag des Backends) - oder einer, den die Prüfung nicht vollständig lesen konnte - braucht ein zweites OK mit No als Default. Das Löschen läuft im Hintergrund: die Statuszeile zeigt den Fortschritt, Cancel hält beim nächsten Eintrag an - auch innerhalb eines Ordners, der lokal, per SMB, SFTP oder FTP gelöscht wird; die Statuszeile sagt dann, wie viel von diesem Ordner schon weg ist (Gelöschtes bleibt gelöscht; ein Server, der einen ganzen Ordner mit einem Request löscht, etwa WebDAV oder S3, löscht diesen Ordner zu Ende) - Fehler werden je Eintrag gemeldet, danach wird der Ordner neu geladen. Ein Pfad, der gerade gelöscht wird, wird abgewiesen, auch aus dem anderen Pane. |
+| In den Trash verschieben | Rechtsklick | Universaler Papierkorb. Läuft wie *Endgültig löschen*: im Hintergrund, mit derselben zweiten Rückfrage für versteckte Einträge. |
+| Endgültig löschen | Rechtsklick, `Entf` | Zählt zuerst abseits des GUI-Threads, was wegfällt (Ordner, Dateien, Bytes, Hidden Entries), dann die Rückfrage. Ein ausgewählter Ordner mit Hidden Entries (Dotfiles oder Hidden-Flag des Backends) - oder einer, den die Prüfung nicht vollständig lesen konnte - braucht ein zweites OK mit No als Default. Das Löschen läuft im Hintergrund: die Statuszeile zeigt den Fortschritt, Cancel hält beim nächsten Eintrag an - auch innerhalb eines Ordners, der lokal, per SMB, SFTP oder FTP gelöscht wird; die Statuszeile sagt dann, wie viel von diesem Ordner schon weg ist (Gelöschtes bleibt gelöscht; ein Server, der einen ganzen Ordner mit einem Request löscht, etwa WebDAV oder S3, löscht diesen Ordner zu Ende) - Fehler werden je Eintrag gemeldet, danach wird der Ordner neu geladen. Ein Pfad, der gerade gelöscht wird, wird abgewiesen, auch aus dem anderen Pane. |
 | Show Trash… | Rechtsklick | Wiederherstellen / Permanent-Löschen-Dialog. |
 | Show Versions… | Rechtsklick | Snapshot-Browser — Save Version As, Restore as Current. |
 | Show Checksum… | Rechtsklick | Native-Checksum (S3 ETag, Drive md5, ssh sha256sum…) mit Stream-Hash-Fallback. |
@@ -1140,7 +1140,7 @@ neu. Das Fenster behält seine Größe.
 
 ## Scripting & eingebettete REPL
 
-Axross liefert ein kuratiertes Python-Surface (``axross.*``) mit
+axross liefert ein kuratiertes Python-Surface (``axross.*``) mit
 122 öffentlichen Namen (111 Funktionen + 11 Klassen: die Result-Typen
 der Network-, Grep- und Archiv-Helper, NonInteractiveError). Drei Wege zum
 gleichen Surface:
@@ -1299,7 +1299,7 @@ mehrere installiert, nimmt axross das, das keyring selbst zuerst
 nimmt. Klartextdateien (``PlaintextKeyring``) und das
 ``EncryptedKeyring`` von keyrings.alt, das sein Master-Passwort im
 Terminal abfragt, werden nicht genutzt. Ohne brauchbares Backend ist
-"Save in keyring" deaktiviert mit konkreter Install-Hilfe:
+„Im Keyring speichern“ deaktiviert mit konkreter Install-Hilfe:
 
 - **Arch:** ``sudo pacman -S gnome-keyring`` (oder kwallet,
   oder keepassxc)
@@ -1312,7 +1312,7 @@ versuchen — der nächste ``store_password`` re-checkt automatisch).
 
 ## MCP-Server
 
-Axross läuft wahlweise als Model-Context-Protocol-Server, sodass ein
+axross läuft wahlweise als Model-Context-Protocol-Server, sodass ein
 LLM-Client (Claude Desktop, Cline, ein eigener Agent) jedes
 konfigurierte Backend über JSON-RPC-Tools steuern kann.
 
@@ -2079,8 +2079,8 @@ Environment. Der Check beim Start läuft nicht mit
 - **Nur verbinden?** [OAUTH_SETUP.md](../OAUTH_SETUP.md) führt durch
   die Cloud-Storage-App-Registrierungen.
 - **Auf feindlichen Netzen?** [OPSEC.md](OPSEC.md) listet jeden
-  Client-zu-Server-Fingerprint, den Axross sendet, plus Mitigations.
-- **Axross von einem LLM aus steuern?** [MCP_de.md](MCP_de.md) ist
+  Client-zu-Server-Fingerprint, den axross sendet, plus Mitigations.
+- **axross von einem LLM aus steuern?** [MCP_de.md](MCP_de.md) ist
   die kanonische Protokoll-Referenz.
 - **Extensions schreiben oder einschalten?** [EXTENSIONS.md](EXTENSIONS.md)
   erklärt Vertrauen, Pausieren und die `api` der Extensions (englisch).

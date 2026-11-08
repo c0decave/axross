@@ -145,7 +145,7 @@ class BusyStrip(QWidget):
     """The status line: bar + text + Cancel, hidden while no job runs."""
 
     def __init__(
-        self, job: ScanJob, parent: QWidget | None = None, cancel_text: str = "Cancel scan"
+        self, job: ScanJob, parent: QWidget | None = None, cancel_text: str | None = None
     ) -> None:
         super().__init__(parent)
         layout = QHBoxLayout(self)
@@ -158,7 +158,10 @@ class BusyStrip(QWidget):
         self.label = QLabel("", self)
         self.label.setProperty("role", "muted")
         layout.addWidget(self.label, stretch=1)
-        self.cancel_button = QPushButton(tr(cancel_text), self)
+        # *cancel_text* comes translated (the callers pass tr("Stop")):
+        # translating it again looked "Stopp" up as English.
+        self.cancel_button = QPushButton(
+            cancel_text if cancel_text is not None else tr("Cancel scan"), self)
         self.cancel_button.setToolTip(tr("Stop what is running"))
         self.cancel_button.clicked.connect(job.cancel)
         layout.addWidget(self.cancel_button)

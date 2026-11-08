@@ -43,6 +43,14 @@ def stores(tmp_path, monkeypatch):
     # space a label could wrap at.
     deep = tmp_path / ("a-rather-long-folder-name-" * 6) / "axross" / "analysis-cache"
     monkeypatch.setattr(AS, "cache_dir", lambda: deep)
+    # The default size on a screen it fits: since review round 4 the
+    # dialog is capped at a smaller screen (offscreen is 800x600).
+    from PyQt6.QtCore import QRect
+
+    from ui import screen_fit
+
+    monkeypatch.setattr(screen_fit, "available_geometry",
+                        lambda widget=None: QRect(0, 0, 1280, 800))
     s = isolate(tmp_path, monkeypatch)
     yield s
     s.restore()

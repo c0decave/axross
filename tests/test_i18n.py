@@ -445,6 +445,13 @@ def _bare(text: str) -> str:
     return text.replace("&&", "\0").replace("&", "").replace("\0", "&").casefold()
 
 
+#: A kept term whose German word shares its stem: "Profile" is German as
+#: well, as "Profil" (ein Profil, die Profile, den Profilen, des Profils).
+#: Keeping the English word broke the grammar ("ein Profile", "das aktive
+#: LLM-Profile"); the German stem keeps the term recognisable.
+KEPT_STEMS = {"Profile": "Profil"}
+
+
 def kept_terms_missing(source: str, translation: str) -> list[str]:
     """The KEEP_ENGLISH terms in *source* that *translation* lost."""
     import re
@@ -452,12 +459,38 @@ def kept_terms_missing(source: str, translation: str) -> list[str]:
     src, dst = _bare(source), _bare(translation)
     return [term for term in KEEP_ENGLISH
             if re.search(rf"\b{re.escape(term.casefold())}(?:s|es|'s)?\b", src)
-            and term.casefold() not in dst]
+            and KEPT_STEMS.get(term, term).casefold() not in dst]
 
 
 def test_happy_a_kept_term_survives_translation():
     assert kept_terms_missing("&Close Pane", "Pane &schließen") == []
     assert kept_terms_missing("Unmount FUSE", "FUSE unmounten") == []
+
+
+def test_happy_profile_may_be_the_german_profil():
+    """German grammar: "ein Profil", "das aktive LLM-Profil", "des Profils"."""
+    assert kept_terms_missing("Delete profile", "Profil löschen") == []
+    assert kept_terms_missing("the active LLM profile", "das aktive LLM-Profil") == []
+    assert kept_terms_missing("No saved profiles.", "Keine gespeicherten Profile.") == []
+    assert kept_terms_missing("the profile's endpoint", "der Endpoint des Profils") == []
+
+
+def test_sad_profile_translated_away_is_still_reported():
+    assert kept_terms_missing("Delete profile", "Eintrag löschen") == ["Profile"]
+
+
+def test_edge_no_german_text_says_ein_profile():
+    """The English plural in a German sentence ("ein Profile", "je
+    Profile", "aus Profile") was the grammar bug of review round 4."""
+    import json
+    import re
+
+    path = Path(__file__).resolve().parent.parent / "resources/i18n/de.json"
+    bad = {k: v for k, v in json.loads(path.read_text(encoding="utf-8")).items()
+           if re.search(r"\b(ein|eines|einem|das|dem|des|dieses|diesem|kein|je|sein|"
+                        r"seinem|aus|Neuer Tab aus|jedes)\s+(\S+-)?&?Profiles?\b", v)
+           or re.search(r"[A-Za-z]-Profiles\b|\bProfiles\b", v)}
+    assert bad == {}, "\n".join(f"{k!r} -> {v!r}" for k, v in bad.items())
 
 
 def test_sad_a_translated_term_is_reported():

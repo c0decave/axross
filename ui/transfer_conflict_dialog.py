@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from core.i18n import tr
+from core.i18n import tr, tr_n
 from core.transfer_conflicts import ConflictAction, TransferConflict
 from ui.close_corner import add_close_corner
 from ui.format_utils import format_size
@@ -78,7 +78,11 @@ class TransferConflictDialog(QDialog):
         layout.addLayout(grid)
 
         self.apply_all = QCheckBox(
-            tr("Do this for the remaining {n} conflict(s)").format(n=remaining)
+            tr_n(
+                remaining,
+                "Do this for the remaining conflict as well",
+                "Do this for the remaining {n} conflicts",
+            )
         )
         self.apply_all.setVisible(remaining > 0)
         layout.addWidget(self.apply_all)
@@ -102,13 +106,25 @@ class TransferConflictDialog(QDialog):
         self.buttons[ConflictAction.RENAME].setToolTip(
             tr("Keep both: the new one gets a free name such as “name (1).ext”")
         )
-        self.buttons[ConflictAction.SKIP].setDefault(True)
         cancel = QPushButton(tr("Cancel"))
         cancel.setToolTip(tr("Cancel the whole transfer; nothing is copied"))
         cancel.clicked.connect(self.reject)
         row.addWidget(cancel)
         layout.addLayout(row)
         add_close_corner(self)
+        # Enter must never replace a file: Skip is the default and has the
+        # focus. A QPushButton in a dialog is "auto default", so whichever
+        # button had the focus (the first one, Overwrite) became the default
+        # and Enter pressed it.
+        skip = self.buttons[ConflictAction.SKIP]
+        for button in [*self.buttons.values(), cancel]:
+            button.setAutoDefault(button is skip)
+        skip.setDefault(True)
+        skip.setFocus()
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt API
+        super().showEvent(event)
+        self.buttons[ConflictAction.SKIP].setFocus()
 
     def _choose(self, action: ConflictAction) -> None:
         # isHidden, not isVisible: the box counts while the dialog is up.

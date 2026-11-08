@@ -63,6 +63,20 @@ def fit_window(window: QWidget) -> None:
         window.resize(size.boundedTo(limit))
 
 
+def keep_on_screen(window: QWidget) -> None:
+    """Move *window* (its frame) back onto the available screen area when
+    it reaches past an edge - after it grew by itself (Connect to Server
+    widens to its form once shown, and stood off a 1024x600 screen)."""
+    avail = available_geometry(window)
+    if not avail.isValid():
+        return
+    frame = window.frameGeometry()
+    x = max(avail.left(), min(frame.x(), avail.x() + avail.width() - frame.width()))
+    y = max(avail.top(), min(frame.y(), avail.y() + avail.height() - frame.height()))
+    if (x, y) != (frame.x(), frame.y()):
+        window.move(x, y)
+
+
 class FitScrollArea(QScrollArea):
     """A frameless scroll area that asks for its content's full size while
     the screen has room for it (a plain QScrollArea asks for at most 24

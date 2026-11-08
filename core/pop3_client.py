@@ -182,6 +182,9 @@ class Pop3Session(SessionLifecycle):
     # let the UI hide context-menu entries that would otherwise raise.
     supports_symlinks = False
     supports_hardlinks = False
+    #: One flat list of messages at "/" - no INBOX nor any other folder.
+    #: Mail docks and the Mail Project read "/" whatever folder is named.
+    FLAT_MAILBOX = True
 
     def __init__(
         self,
@@ -341,7 +344,9 @@ class Pop3Session(SessionLifecycle):
         return "/"
 
     def join(self, *parts: str) -> str:
-        cleaned = [p.strip("/") for p in parts if p]
+        # Strip first, then drop the empty ones: join("/", "1_x.eml") gave
+        # "//1_x.eml", which no message path matches.
+        cleaned = [c for c in (p.strip("/") for p in parts if p) if c]
         if not cleaned:
             return "/"
         return "/" + "/".join(cleaned)

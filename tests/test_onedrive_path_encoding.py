@@ -106,7 +106,10 @@ class OneDrivePathEncodingTest(unittest.TestCase):
 
     def test_sad_hash_question_and_percent_reach_the_server_intact(self) -> None:
         self.s.open_read("/notes#2.txt").read()
-        self.s.list_dir("/what?")
+        # An empty listing asks whether the path is a folder at all (the
+        # fake's item is a file): Graph lists a file's children as empty.
+        with self.assertRaises(NotADirectoryError):
+            self.s.list_dir("/what?")
         self.s.stat("/a%20b.txt")
         with self.s.open_write("/up load#1.bin") as fh:
             fh.write(b"x")
@@ -115,6 +118,7 @@ class OneDrivePathEncodingTest(unittest.TestCase):
             [
                 "/v1.0/me/drive/root:/notes%232.txt:/content",
                 "/v1.0/me/drive/root:/what%3F:/children",
+                "/v1.0/me/drive/root:/what%3F",
                 "/v1.0/me/drive/root:/a%2520b.txt",
                 "/v1.0/me/drive/root:/up%20load%231.bin:/content",
             ],

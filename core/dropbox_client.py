@@ -23,8 +23,10 @@ from typing import IO
 
 from core import auth_prompt
 from core.append_helpers import read_existing_for_append
+from core import cloud_http
 from core.backend import SessionLifecycle
 from core.desktop_open import open_in_browser
+from core.path_policy import refuse_folder_path
 from core.read_spool import spool_response
 from core.secure_storage import adopt_legacy_secret_file, write_secret_file
 from models.file_item import FileItem
@@ -58,6 +60,10 @@ _DEFAULT_TOKEN_PATH = os.path.expanduser("~/.config/axross/dropbox_token.json")
 #: files/upload takes at most 150 MiB per request; a larger file goes
 #: through an upload session.
 _SINGLE_UPLOAD_MAX = 150 * 1024 * 1024
+#: The SDK retries a 429 (RateLimitError, honouring its backoff) without
+#: end by default - a throttled account parked a transfer and its Cancel
+#: for good. 5xx it retries max_retries_on_error (4) times itself.
+_RATE_LIMIT_RETRIES = cloud_http.ATTEMPTS - 1
 #: Bytes per upload-session request (a multiple of 4 MiB, as Dropbox asks).
 _UPLOAD_CHUNK = 8 * 1024 * 1024
 
@@ -87,30 +93,130 @@ except ImportError:  # pragma: no cover - SDK absent: nothing to guard
     pass
 
 
+#: Route-error tags (the nested stone unions of an ApiError) and the
+#: errno each stands for; the first tag of the chain found here decides,
+#: "conflict" is read with the tag after it (see _api_errno).
+_TAG_ERRNO = {
+    "not_found": errno.ENOENT,
+    "not_folder": errno.ENOTDIR,
+    "not_file": errno.EISDIR,
+    "insufficient_space": errno.ENOSPC,
+    "insufficient_quota": errno.ENOSPC,
+    "no_write_permission": errno.EACCES,
+    "restricted_content": errno.EACCES,
+    "team_folder": errno.EACCES,
+    "no_permission": errno.EACCES,
+    "access_denied": errno.EACCES,
+    "email_unverified": errno.EACCES,
+    "malformed_path": errno.EINVAL,
+    "disallowed_name": errno.EINVAL,
+    "cant_move_folder_into_itself": errno.EINVAL,
+    "cant_copy_shared_folder": errno.EINVAL,
+    "cant_nest_shared_folder": errno.EINVAL,
+    "cant_move_shared_folder": errno.EINVAL,
+    "duplicated_or_nested_paths": errno.EINVAL,
+    "cant_transfer_ownership": errno.EINVAL,
+    "invalid_revision": errno.EINVAL,
+    "too_many_files": errno.EFBIG,
+    "payload_too_large": errno.EFBIG,
+    "too_many_write_operations": errno.EAGAIN,
+    "too_many_requests": errno.EAGAIN,
+    "operation_suppressed": errno.EAGAIN,
+    "locked": errno.EBUSY,
+}
+
+
+def _route_tags(error) -> list[str]:
+    """The tags of a route error's nested unions, outermost first:
+    ``UploadError.path(UploadWriteFailed(reason=WriteError.conflict(
+    WriteConflictError.folder)))`` -> ["path", "conflict", "folder"]."""
+    tags: list[str] = []
+    cur = error
+    for _depth in range(10):
+        tag = getattr(cur, "_tag", None)
+        if not isinstance(tag, str):
+            reason = getattr(cur, "reason", None)  # a struct: UploadWriteFailed
+            if reason is None or reason is cur:
+                break
+            cur = reason
+            continue
+        tags.append(tag)
+        cur = getattr(cur, "_value", None)
+        if cur is None:
+            break
+    return tags
+
+
+def _api_errno(exc: BaseException) -> int:
+    """The errno of a dropbox ApiError. A write conflict is EEXIST - the
+    name is taken - except an upload onto a FOLDER (EISDIR) and a file
+    where a parent folder should be (ENOTDIR)."""
+    error = getattr(exc, "error", None)
+    tags = _route_tags(error)
+    if "conflict" in tags:
+        kind = tags[tags.index("conflict") + 1] if tags.index("conflict") + 1 < len(tags) else ""
+        if kind == "file_ancestor":
+            return errno.ENOTDIR
+        if kind == "folder" and "Upload" in type(error).__name__:
+            return errno.EISDIR
+        return errno.EEXIST
+    for tag in tags:
+        if tag in _TAG_ERRNO:
+            return _TAG_ERRNO[tag]
+    return errno.EIO
+
+
+def _sdk_errno(exc: BaseException) -> int:
+    """The errno of anything the SDK raised from inside a call."""
+    if isinstance(exc, ApiError):
+        return _api_errno(exc)
+    name = type(exc).__name__
+    if name == "AuthError":
+        return errno.EACCES
+    if name == "RateLimitError":
+        return errno.EAGAIN
+    if name == "BadInputError":
+        return errno.EINVAL
+    if name == "PathRootError":
+        return errno.EINVAL
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        return cloud_http.errno_for_status(status)
+    if isinstance(exc, TimeoutError) or "Timeout" in name:
+        return errno.ETIMEDOUT
+    if isinstance(exc, ConnectionError) or "ConnectionError" in name:
+        return errno.ECONNRESET
+    if isinstance(exc, _SDK_ANSWER_ERRORS):
+        return errno.EPROTO  # an answer of the wrong shape
+    return errno.EIO
+
+
+def _sdk_error(exc: BaseException, message: str, filename: str | None = None) -> OSError:
+    """*message* as the typed OSError of an SDK failure. An OSError with
+    an errno (already typed by _GuardedDropbox) keeps it."""
+    if isinstance(exc, OSError) and isinstance(exc.errno, int) and exc.errno:
+        return cloud_http.rewrap(exc, message, filename)
+    return cloud_http.oserror(_sdk_errno(exc), message, filename)
+
+
 def _is_not_found(exc: BaseException) -> bool:
-    """True for the route error that says nothing is at the path:
+    """True for the answer that says nothing is at the path:
     ``path/not_found``, or ``path/not_folder`` (a file where the path
     needs a folder). restricted_content, locked, malformed_path, a 403
     and the rest describe a refusal, not an absence."""
-    error = getattr(exc, "error", None)
-    try:
-        if not error.is_path():
-            return False
-        lookup = error.get_path()
-        return bool(lookup.is_not_found() or lookup.is_not_folder())
-    except AttributeError:
-        return False
+    return isinstance(exc, (FileNotFoundError, NotADirectoryError))
 
 
 class _GuardedDropbox:
-    """The SDK client, with every call failing as ApiError or OSError.
+    """The SDK client, with every call failing as a typed OSError.
 
-    ApiError passes unchanged (the methods below turn it into an OSError
-    with their own message; is_dir / exists read only a not-found
-    ApiError as "no", see _is_not_found); any
-    other failure inside an SDK call becomes an OSError, which is what
-    the pane and the transfer layer handle. Only the SDK call is
-    guarded: errors in this module's own code are not masked.
+    ApiError, the SDK's HTTP errors (401 / 429 / 5xx), a dropped
+    connection and an answer of the wrong shape all become the OSError
+    subclass of their errno (_sdk_errno): FileNotFoundError for
+    path/not_found, FileExistsError for a write conflict,
+    PermissionError, ENOSPC for insufficient_space ... The SDK error is
+    the ``__cause__``. Only the SDK call is guarded: errors in this
+    module's own code are not masked.
     """
 
     def __init__(self, dbx) -> None:
@@ -124,10 +230,15 @@ class _GuardedDropbox:
         def call(*args, **kwargs):
             try:
                 return attr(*args, **kwargs)
-            except ApiError:
-                raise
-            except _SDK_ANSWER_ERRORS as exc:
-                raise OSError(f"Dropbox {name} failed: {type(exc).__name__}: {exc}") from exc
+            except OSError as exc:
+                if isinstance(exc.errno, int) and exc.errno:
+                    raise
+                # requests' own errors are OSErrors without an errno.
+                raise _sdk_error(exc, f"Dropbox {name} failed: {exc}") from exc
+            except (ApiError,) + _SDK_ANSWER_ERRORS as exc:
+                raise _sdk_error(
+                    exc, f"Dropbox {name} failed: {type(exc).__name__}: {exc}"
+                ) from exc
 
         return call
 
@@ -168,6 +279,13 @@ class _SpooledWriter:
                 )
             else:
                 self._upload_in_session(size)
+        except Exception as exc:
+            # The editor's "Cannot save" and atomic_write's callers catch
+            # OSError: no SDK exception leaves close().
+            raise _sdk_error(
+                exc, f"Cannot upload {self._remote_path}: {cloud_http.reason(exc)}",
+                self._remote_path,
+            ) from exc
         finally:
             self._buf.close()
 
@@ -273,6 +391,7 @@ class DropboxSession(SessionLifecycle):
                     oauth2_refresh_token=refresh_token,
                     app_key=self._app_key,
                     app_secret=self._app_secret or None,
+                    max_retries_on_rate_limit=_RATE_LIMIT_RETRIES,
                 )
                 self._apply_session_overrides(self._dbx)
                 # Validate / refresh
@@ -286,7 +405,10 @@ class DropboxSession(SessionLifecycle):
                         exc,
                     )
             elif access_token:
-                self._dbx = dropbox.Dropbox(oauth2_access_token=access_token)
+                self._dbx = dropbox.Dropbox(
+                    oauth2_access_token=access_token,
+                    max_retries_on_rate_limit=_RATE_LIMIT_RETRIES,
+                )
                 self._apply_session_overrides(self._dbx)
                 try:
                     self._dbx.users_get_current_account()
@@ -335,12 +457,13 @@ class DropboxSession(SessionLifecycle):
         else:
             log.error("Dropbox authorization needs a window or a terminal to ask for the code")
             raise OSError(
+                errno.EACCES,
                 "Dropbox authorization requires interactive input. "
                 f"Open this URL, complete the flow, and retry: {authorize_url}"
             )
 
         if not auth_code:
-            raise OSError("Dropbox authorization cancelled: no code provided")
+            raise OSError(errno.ECANCELED, "Dropbox authorization cancelled: no code provided")
 
         oauth_result = auth_flow.finish(auth_code)
 
@@ -349,6 +472,7 @@ class DropboxSession(SessionLifecycle):
             oauth2_refresh_token=oauth_result.refresh_token,
             app_key=self._app_key,
             app_secret=self._app_secret or None,
+            max_retries_on_rate_limit=_RATE_LIMIT_RETRIES,
         )
         self._apply_session_overrides(self._dbx)
 
@@ -381,6 +505,7 @@ class DropboxSession(SessionLifecycle):
                 return
         if proxies:
             raise OSError(
+                errno.ENOTSUP,
                 "Dropbox proxy configured but the SDK requests-session "
                 "hook is unavailable; refusing direct traffic."
             ) from last_error
@@ -492,7 +617,7 @@ class DropboxSession(SessionLifecycle):
 
     def _ensure_connected(self):
         if self._dbx is None:
-            raise OSError("Not connected to Dropbox")
+            raise OSError(errno.ENOTCONN, "Not connected to Dropbox")
         return _GuardedDropbox(self._dbx)
 
     @staticmethod
@@ -529,11 +654,11 @@ class DropboxSession(SessionLifecycle):
                     break
                 # A cursor handed back twice would page forever.
                 if result.cursor in cursors:
-                    raise OSError(f"Cannot list {path}: the server repeats a paging cursor")
+                    raise OSError(errno.EPROTO, f"Cannot list {path}: the server repeats a paging cursor")
                 cursors.add(result.cursor)
                 result = dbx.files_list_folder_continue(result.cursor)
-        except ApiError as exc:
-            raise OSError(f"Cannot list {path}: {exc}") from exc
+        except OSError as exc:
+            raise _sdk_error(exc, f"Cannot list {path}: {cloud_http.reason(exc)}", path) from exc
 
         return items
 
@@ -542,6 +667,9 @@ class DropboxSession(SessionLifecycle):
     # ------------------------------------------------------------------
 
     def stat(self, path: str) -> FileItem:
+        return cloud_http.no_file_as_folder(path, self._stat(path))
+
+    def _stat(self, path: str) -> FileItem:
         dbx = self._ensure_connected()
         api_path = self._api_path(path)
 
@@ -552,8 +680,8 @@ class DropboxSession(SessionLifecycle):
         try:
             md = dbx.files_get_metadata(api_path)
             return self._entry_to_item(md)
-        except ApiError as exc:
-            raise OSError(f"Cannot stat {path}: {exc}") from exc
+        except OSError as exc:
+            raise _sdk_error(exc, f"Cannot stat {path}: {cloud_http.reason(exc)}", path) from exc
 
     def is_dir(self, path: str) -> bool:
         """False only for "not found"; any other route error (locked,
@@ -563,10 +691,10 @@ class DropboxSession(SessionLifecycle):
             return True
         try:
             md = self._ensure_connected().files_get_metadata(api_path)
-        except ApiError as exc:
+        except OSError as exc:
             if _is_not_found(exc):
                 return False
-            raise OSError(f"Cannot check {path}: {exc}") from exc
+            raise _sdk_error(exc, f"Cannot check {path}: {cloud_http.reason(exc)}", path) from exc
         return isinstance(md, FolderMetadata)
 
     def exists(self, path: str) -> bool:
@@ -578,10 +706,10 @@ class DropboxSession(SessionLifecycle):
             return True
         try:
             self._ensure_connected().files_get_metadata(api_path)
-        except ApiError as exc:
+        except OSError as exc:
             if _is_not_found(exc):
                 return False
-            raise OSError(f"Cannot check {path}: {exc}") from exc
+            raise _sdk_error(exc, f"Cannot check {path}: {cloud_http.reason(exc)}", path) from exc
         return True
 
     # ------------------------------------------------------------------
@@ -593,8 +721,8 @@ class DropboxSession(SessionLifecycle):
         api_path = self._api_path(path)
         try:
             dbx.files_create_folder_v2(api_path)
-        except ApiError as exc:
-            raise OSError(f"Cannot create directory {path}: {exc}") from exc
+        except OSError as exc:
+            raise _sdk_error(exc, f"Cannot create directory {path}: {cloud_http.reason(exc)}", path) from exc
 
     def remove(self, path: str, recursive: bool = False) -> None:
         dbx = self._ensure_connected()
@@ -607,15 +735,17 @@ class DropboxSession(SessionLifecycle):
                 if page.entries or page.has_more:
                     raise OSError(errno.ENOTEMPTY, f"Directory not empty: {path}", path)
             dbx.files_delete_v2(api_path)
-        except ApiError as exc:
-            raise OSError(f"Cannot remove {path}: {exc}") from exc
+        except OSError as exc:
+            raise _sdk_error(exc, f"Cannot remove {path}: {cloud_http.reason(exc)}", path) from exc
 
     def rename(self, src: str, dst: str) -> None:
         dbx = self._ensure_connected()
+        # The API path drops the slash: "x/" named the FILE x.
+        refuse_folder_path(dst, "rename to", source_is_file=lambda: not self.stat(src).is_dir)
         try:
             dbx.files_move_v2(self._api_path(src), self._api_path(dst))
-        except ApiError as exc:
-            raise OSError(f"Cannot rename {src} -> {dst}: {exc}") from exc
+        except OSError as exc:
+            raise _sdk_error(exc, f"Cannot rename {src} -> {dst}: {cloud_http.reason(exc)}", None) from exc
 
     # ------------------------------------------------------------------
     # Read / write
@@ -626,8 +756,8 @@ class DropboxSession(SessionLifecycle):
         api_path = self._api_path(path)
         try:
             _metadata, response = dbx.files_download(api_path)
-        except ApiError as exc:
-            raise OSError(f"Cannot read {path}: {exc}") from exc
+        except OSError as exc:
+            raise _sdk_error(exc, f"Cannot read {path}: {cloud_http.reason(exc)}", path) from exc
         # The SDK streams a download: spooled, not one bytes object in RAM.
         return spool_response(response, what=f"Cannot read {path}")
 
@@ -636,7 +766,8 @@ class DropboxSession(SessionLifecycle):
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
         dbx = self._ensure_connected()
-        api_path = self._api_path(path)
+        # The API path drops the slash: "x/" was written as the FILE x.
+        api_path = self._api_path(refuse_folder_path(path))
         if append:
             cap = self._MAX_APPEND_EXISTING_SIZE
             existing = read_existing_for_append(
@@ -649,6 +780,7 @@ class DropboxSession(SessionLifecycle):
             )
             if len(existing) > cap:
                 raise OSError(
+                    errno.EFBIG,
                     f"Dropbox append: existing file exceeds {cap // (1024 * 1024)} MiB cap"
                 )
             writer = _SpooledWriter(dbx, api_path)
@@ -680,10 +812,10 @@ class DropboxSession(SessionLifecycle):
     # ------------------------------------------------------------------
 
     def chmod(self, path: str, mode: int) -> None:
-        raise OSError("Dropbox does not support Unix permissions")
+        raise OSError(errno.ENOTSUP, "Dropbox does not support Unix permissions")
 
     def readlink(self, path: str) -> str:
-        raise OSError("Dropbox does not support symlinks")
+        raise OSError(errno.ENOTSUP, "Dropbox does not support symlinks")
 
     # ------------------------------------------------------------------
     # Disk usage
@@ -738,15 +870,20 @@ class DropboxSession(SessionLifecycle):
             md, resp = dbx.files_download(self._api_path(path), rev=version_id)
             return spool_response(resp, what=f"Cannot read {path}@{version_id}")
         except Exception as exc:
-            raise OSError(f"Dropbox open_version_read failed: {exc}") from exc
+            raise _sdk_error(exc, f"Dropbox open_version_read failed: {cloud_http.reason(exc)}", path) from exc
 
     def copy(self, src: str, dst: str) -> None:
         """Dropbox files_copy_v2 — server-side."""
         dbx = self._ensure_connected()
+        refuse_folder_path(dst, "copy to", source_is_file=lambda: not self.stat(src).is_dir)
         try:
             dbx.files_copy_v2(self._api_path(src), self._api_path(dst))
-        except Exception as exc:
-            raise OSError(f"Dropbox copy {src} -> {dst} failed: {exc}") from exc
+        except OSError as exc:
+            # A taken name is FileExistsError (to/conflict): server_side_copy
+            # then replaces it through a backup when asked to overwrite.
+            raise _sdk_error(
+                exc, f"Dropbox copy {src} -> {dst} failed: {cloud_http.reason(exc)}"
+            ) from exc
 
     # ------------------------------------------------------------------
     # Dropbox-specific verbs (slice 5 of API_GAPS)
@@ -767,7 +904,6 @@ class DropboxSession(SessionLifecycle):
         with ``shared_link_already_exists`` otherwise — we map that
         to a ``list_shared_links`` lookup).
         """
-        from dropbox.exceptions import ApiError
         from dropbox.sharing import (
             RequestedVisibility,
             SharedLinkSettings,
@@ -790,8 +926,8 @@ class DropboxSession(SessionLifecycle):
                 "public" if public else "team_only",
             )
             return url
-        except ApiError as exc:
-            err_text = str(exc)
+        except (OSError, ApiError) as exc:  # _GuardedDropbox: the ApiError is the cause
+            err_text = f"{exc} {exc.__cause__!r}"
             # If a link already exists, look it up + return that one.
             if "shared_link_already_exists" in err_text:
                 existing = dbx.sharing_list_shared_links(
@@ -801,7 +937,7 @@ class DropboxSession(SessionLifecycle):
                 if existing.links:
                     log.info("Dropbox shared_link_create: %s (re-using existing)", path)
                     return existing.links[0].url
-            raise OSError(f"Dropbox shared_link_create({path}): {exc}") from exc
+            raise _sdk_error(exc, f"Dropbox shared_link_create({path}): {cloud_http.reason(exc)}", path) from exc
 
     def shared_link_revoke(self, url: str) -> None:
         """Revoke a previously-issued shared link by URL."""
@@ -809,7 +945,7 @@ class DropboxSession(SessionLifecycle):
         try:
             dbx.sharing_revoke_shared_link(url)
         except Exception as exc:  # noqa: BLE001
-            raise OSError(f"Dropbox shared_link_revoke: {exc}") from exc
+            raise _sdk_error(exc, f"Dropbox shared_link_revoke: {cloud_http.reason(exc)}") from exc
 
     def account_info(self) -> dict:
         """Return basic account metadata (display_name, email,
@@ -847,7 +983,7 @@ class DropboxSession(SessionLifecycle):
         try:
             meta = dbx.files_get_metadata(self._api_path(path))
         except Exception as exc:
-            raise OSError(f"Cannot stat {path}: {exc}") from exc
+            raise _sdk_error(exc, f"Cannot stat {path}: {cloud_http.reason(exc)}", path) from exc
         ch = getattr(meta, "content_hash", None)
         if not ch:
             return ""

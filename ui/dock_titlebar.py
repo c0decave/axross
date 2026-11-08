@@ -33,6 +33,30 @@ from ui import window_move
 from ui.icon_provider import icon, set_window_icon
 
 
+class ElidedTitle(QLabel):
+    """A one-line title cut with "…" when the bar is too narrow (a plain
+    QLabel cut it off mid-letter); the whole title is then its tooltip.
+    ``text()`` stays the whole title."""
+
+    def paintEvent(self, _event) -> None:  # noqa: N802 - Qt
+        from PyQt6.QtGui import QPainter
+
+        rect = self.contentsRect()
+        full = self.text()
+        shown = self.fontMetrics().elidedText(full, Qt.TextElideMode.ElideRight, rect.width())
+        tip = full if shown != full else ""
+        if self.toolTip() != tip:
+            self.setToolTip(tip)
+        painter = QPainter(self)
+        self.style().drawItemText(painter, rect, int(self.alignment() | Qt.AlignmentFlag.AlignVCenter),
+                                  self.palette(), self.isEnabled(), shown, self.foregroundRole())
+
+    def shown_text(self) -> str:
+        """The title as painted at the current width."""
+        return self.fontMetrics().elidedText(self.text(), Qt.TextElideMode.ElideRight,
+                                             self.contentsRect().width())
+
+
 class DockTitleBar(QWidget):
     """Title bar installed on a QDockWidget via
     ``dock.setTitleBarWidget(DockTitleBar(...))``.
@@ -91,7 +115,7 @@ class DockTitleBar(QWidget):
         # The panel shows the same icon when it floats or is tabbed.
         set_window_icon(dock, icon_name)
 
-        self._title_label = QLabel(title, self)
+        self._title_label = ElidedTitle(title, self)
         self._title_label.setTextFormat(Qt.TextFormat.PlainText)
         # The title may be cut rather than widen the panel: the buttons
         # are what must stay reachable, and a long title (a conversation's)

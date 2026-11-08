@@ -7,6 +7,8 @@ import time
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QGridLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
+from core.i18n import tr, tr_n
+
 EXTENSION = {
     "name": "Agent Stats",
     "version": "1.0",
@@ -93,28 +95,28 @@ class StatsWindow(QWidget):
         set_window_icon(self, "stats")
         from ui.handbook import install_help_key
         install_help_key(self, "agent-stats")  # F1: its handbook section (a window of its own)
-        self.setWindowTitle("Agent Stats")
+        self.setWindowTitle(tr("Agent Stats"))
         self.setObjectName("axAgentStats")
         self.counts = AgentStats()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
-        self.state = QLabel("Idle")
+        self.state = QLabel(tr("Idle"))
         layout.addWidget(self.state)
         grid = QGridLayout()
         grid.addWidget(QLabel(""), 0, 0)
-        grid.addWidget(QLabel("All"), 0, 1)
-        grid.addWidget(QLabel("Last tab"), 0, 2)
+        grid.addWidget(QLabel(tr("All")), 0, 1)
+        grid.addWidget(QLabel(tr("Last tab")), 0, 2)
         self._labels: dict[str, tuple[QLabel, QLabel]] = {}
         for row, (key, label) in enumerate(FIELDS, start=1):
             total, last = QLabel("0"), QLabel("0")
             for widget in (total, last):
                 widget.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            grid.addWidget(QLabel(label), row, 0)
+            grid.addWidget(QLabel(tr(label)), row, 0)
             grid.addWidget(total, row, 1)
             grid.addWidget(last, row, 2)
             self._labels[key] = (total, last)
         layout.addLayout(grid)
-        reset = QPushButton("Reset")
+        reset = QPushButton(tr("Reset"))
         reset.clicked.connect(self.reset)
         layout.addWidget(reset)
         from ui.close_corner import add_close_corner
@@ -137,7 +139,7 @@ class StatsWindow(QWidget):
             mine.setText(_number(last.get(key, 0)))
         running = len(self.counts.running)
         self.state.setText(
-            f"Running: {running} tab{'s' if running != 1 else ''}" if running else "Idle"
+            tr_n(running, "Running: {n} tab", "Running: {n} tabs") if running else tr("Idle")
         )
 
     def stats(self) -> dict:

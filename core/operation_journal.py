@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -13,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from core.posix_compat import fchmod_private
 from core.redaction import _is_sensitive_key, redact, redact_path, redact_text
 from core.structured_log import log_event
 
@@ -34,6 +36,57 @@ def _rotate(path: str) -> None:
         os.replace(path, path + ".1")
     except OSError as exc:
         log.debug("operation journal not rotated: %s", exc)
+
+
+@contextlib.contextmanager
+def _rotation_lock(path: str):
+    """An exclusive ``flock`` on the journal's folder for as long as the
+    block runs (POSIX; on Windows only this process's lock is held). The
+    folder, not the journal: the rename moves the journal away, and a lock
+    file beside it would be one more file in the user's state folder.
+
+    The GUI and an MCP server write one journal. Both saw it above the
+    limit, both rotated: the second rename moved the first one's fresh
+    journal over ``.1`` - the whole rotated history was gone."""
+    try:
+        import fcntl
+    except ImportError:  # Windows
+        yield
+        return
+    flags = (os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0))
+    try:
+        fd = os.open(os.path.dirname(os.path.abspath(path)), flags)
+    except OSError as exc:
+        log.debug("operation journal: no rotation lock: %s", exc)
+        yield
+        return
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)  # releases the flock
+
+
+def _rotate_if_large(path: str, size: int | None = None) -> bool:
+    """Rotate the journal at *path* when it is above MAX_JOURNAL_BYTES -
+    decided again under :func:`_rotation_lock`, so of two processes only
+    one rotates. *size*: the size the caller saw (None: stat it). True
+    when the path may name another file now."""
+    if size is None:
+        try:
+            size = os.stat(path).st_size
+        except OSError:
+            return False
+    if size <= MAX_JOURNAL_BYTES:
+        return False
+    with _rotation_lock(path):
+        try:
+            if os.stat(path).st_size <= MAX_JOURNAL_BYTES:
+                return True  # another process rotated it meanwhile
+        except OSError:
+            return True
+        _rotate(path)
+    return True
 
 
 def _utc_now() -> str:
@@ -240,7 +293,10 @@ class _JournalFile:
     there the file is opened per event as before.
     """
 
-    _FLAGS = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_CLOEXEC", 0)
+    # O_NOFOLLOW: a symlink planted at the journal's path is not written
+    # through (nor given mode 0600).
+    _FLAGS = (os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_CLOEXEC", 0)
+              | getattr(os, "O_NOFOLLOW", 0))
     KEEP_OPEN = os.name != "nt"
 
     def __init__(self) -> None:
@@ -265,7 +321,7 @@ class _JournalFile:
             os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
             fd = os.open(path, cls._FLAGS, 0o600)
         try:
-            os.chmod(path, 0o600)
+            fchmod_private(fd, 0o600)  # the file opened, not what the path names now
         except OSError:
             pass
         return fd
@@ -278,22 +334,17 @@ class _JournalFile:
                 st = os.stat(path)
             except OSError:
                 st = None
-            if st is not None and st.st_size > MAX_JOURNAL_BYTES:
-                _rotate(path)  # the open descriptor no longer names the path
-                st = None
+            if st is not None and _rotate_if_large(path, st.st_size):
+                st = None  # the open descriptor may no longer name the path
             if st is not None and (st.st_dev, st.st_ino) == self.ident:
                 if st.st_mode & 0o777 != 0o600:
                     try:
-                        os.chmod(path, 0o600)
+                        fchmod_private(self.fd, 0o600)
                     except OSError:
                         pass
                 return self.fd
         self.close()
-        try:
-            if os.stat(path).st_size > MAX_JOURNAL_BYTES:
-                _rotate(path)  # a big journal from before this process
-        except OSError:
-            pass
+        _rotate_if_large(path)  # a big journal from before this process
         fd = self._open(path)
         try:
             st = os.fstat(fd)
@@ -305,11 +356,7 @@ class _JournalFile:
 
     def write(self, path: str, data: bytes) -> None:
         if not self.KEEP_OPEN:
-            try:
-                if os.stat(path).st_size > MAX_JOURNAL_BYTES:
-                    _rotate(path)
-            except OSError:
-                pass
+            _rotate_if_large(path)
             fd = self._open(path)
             try:
                 _write_all(fd, data)
@@ -487,6 +534,90 @@ def read_recent(limit: int = 200, *, journal_path: Path | None = None) -> list[d
     return out
 
 
+#: read_batch reads at most this much of each journal file (from its end).
+MAX_READ_BATCH_BYTES = 4 * MAX_JOURNAL_BYTES
+#: A batch whose first event is this close to the start of what is left of
+#: the journal (the rotated ``.1`` - older ones are gone) may have begun
+#: before it: other operations write in between, rarely this many lines.
+_BATCH_EDGE_LINES = 64
+
+
+def _scan_batch(path: Path, needle: bytes, events: list[dict],
+                lines_before: int) -> tuple[int, int | None, bool]:
+    """Append the events of *path* that hold *needle* or are an undo to
+    *events*; return (lines read, index of the first line holding
+    *needle* counted from *lines_before*, whether read from its start)."""
+    undo = b'"operation":"undo"'
+    first: int | None = None
+    count = 0
+    try:
+        with path.open("rb") as handle:
+            size = os.fstat(handle.fileno()).st_size
+            from_start = size <= MAX_READ_BATCH_BYTES
+            if not from_start:
+                handle.seek(size - MAX_READ_BATCH_BYTES)
+                handle.readline()
+            for line in handle:
+                has = needle in line
+                if has or undo in line:
+                    try:
+                        item = json.loads(line)
+                    except (ValueError, RecursionError):
+                        item = None
+                    if isinstance(item, dict):
+                        events.append(item)
+                        if has and first is None:
+                            first = lines_before + count
+                count += 1
+    except OSError:
+        return count, first, False
+    return count, first, from_start
+
+
+def read_batch(batch_id: str, *, journal_path: Path | None = None) -> tuple[list[dict], bool]:
+    """Every event the journal still holds that names *batch_id* (its
+    entries, and every undo), oldest first, from the rotated journal and
+    the current one - and whether that is the whole batch.
+
+    For an undo of a batch larger than what read_recent reads: built from
+    its newest entries only, it put back part of a move and recorded the
+    whole batch as undone - the rest could never be undone. Not whole: the
+    batch's first event is at the start of what is left of the journal (or
+    not found), so its oldest entries may be gone."""
+    if not batch_id or not _journal_enabled(journal_path):
+        return [], False
+    path = _target_path(journal_path)
+    older = path.with_name(path.name + ".1")
+    needle = json.dumps(batch_id).encode("utf-8")
+    events: list[dict] = []
+    first: int | None = None
+    from_start = False
+    for _attempt in range(3):
+        try:
+            before = os.stat(path).st_ino
+        except OSError:
+            before = None
+        events, first, lines, from_start = [], None, 0, False
+        files = [p for p in (older, path) if p.exists()]
+        for index, each in enumerate(files):
+            read, found, whole = _scan_batch(each, needle, events, lines)
+            if index == 0:
+                # The start of the history only for a journal never rotated.
+                from_start = whole and each == path
+            if first is None:
+                first = found
+            lines += read
+        try:
+            after = os.stat(path).st_ino
+        except OSError:
+            after = None
+        if before == after:
+            break  # not rotated while it was read
+    if first is None:
+        return events, False
+    return events, from_start or first >= _BATCH_EDGE_LINES
+
+
 __all__ = [
     "JOURNAL_PATH",
     "JournalEvent",
@@ -496,6 +627,7 @@ __all__ = [
     "journal_batch",
     "new_batch_id",
     "new_operation_id",
+    "read_batch",
     "read_recent",
     "record_phase",
     "start_operation",

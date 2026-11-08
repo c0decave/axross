@@ -1,6 +1,6 @@
-# Using Axross
+# Using axross
 
-This guide covers what you can do once Axross is running. For
+This guide covers what you can do once axross is running. For
 installation see [INSTALL.md](../INSTALL.md); the German manual is
 [USAGE_de.md](USAGE_de.md).
 
@@ -8,7 +8,7 @@ Languages: **English** · [Deutsch](USAGE_de.md) · [Español](USAGE_es.md)
 
 ## At a glance
 
-Axross is a Total-Commander-style file manager for 30+ protocols,
+axross is a Total-Commander-style file manager for 30+ protocols,
 built around three ideas:
 
 - **Multi-pane layout.** Split horizontally / vertically into as many
@@ -18,7 +18,7 @@ built around three ideas:
   overlays, version timeline, content-addressable storage — all of
   these work on every protocol, even the ones whose native API
   doesn't support them.
-- **MCP server mode.** Axross can run headless and expose any
+- **MCP server mode.** axross can run headless and expose any
   configured backend as MCP tools, so an LLM client can drive it.
   Read-only by default; opt-in `--mcp-write` for mutations.
 
@@ -92,7 +92,7 @@ profile goes, with its stored password.
   create where; Google's client file fills both fields (Import Client JSON…).
   Tokens are cached at
   `~/.config/axross/<provider>_token.json` with `0o600` from birth.
-  Profile proxies cover Axross-owned API/token traffic; the external
+  Profile proxies cover axross-owned API/token traffic; the external
   browser consent page may use browser or system proxy settings.
   See [OAUTH_SETUP.md](../OAUTH_SETUP.md) for the per-provider app
   registration recipe.
@@ -374,7 +374,7 @@ native protocol doesn't support them.
 | `core.previews` | Local image thumbnailer with strict MIME allow-list, size caps, and a Qt-allocation gate. F3 / double-click. |
 | `core.archive` | Safe extraction of zip / tar / 7z and single compressed files (`.zip .xpi .jar .war .apk .epub .docx .xlsx .odt .tar .tar.gz .tgz .tar.bz2 .tbz2 .tar.xz .txz .tar.zst .tzst .7z .gz .bz2 .xz .zst`). Zip-slip / bomb / lying-metadata guards; symlink and hardlink members (tar, and ZIP symlinks) are left out - never created or followed - and the result names them; `.7z` needs the `[archive]` extra, zstd Python 3.14 or that extra. |
 | `core.packer` | Right-click → **Pack**: zip, tar.gz / .zst / .xz / .bz2, 7z (optionally AES-256 with encrypted file names), or one file as .gz / .zst / .xz / .bz2 — from any backend, never overwriting (`name (2).zip`), never leaving a half-written archive. |
-| `core.elevated_io` | `pkexec`-gated local read for `/etc/shadow` etc. — Axross never holds the privilege itself. "Open as root…" context-menu entry. |
+| `core.elevated_io` | `pkexec`-gated local read for `/etc/shadow` etc. — axross never holds the privilege itself. "Open as root…" context-menu entry. |
 | `core.fuse_mount` | FUSE mount any FileBackend. Read-only by default; `writeable=True` enables create / write / unlink / mkdir / rename. Optional `[fuse]` extra. |
 | `core.mcp_server` | Stdio-framed JSON-RPC MCP server exposing the configured backend as tools. `--mcp-write` adds mutating tools, capped to a path-traversal-safe root. |
 
@@ -1121,7 +1121,7 @@ gathers everything again. The window keeps its size.
 
 ## Scripting & embedded REPL
 
-Axross ships a curated Python surface (``axross.*``) of 122 public
+axross ships a curated Python surface (``axross.*``) of 122 public
 names: 111 functions covering every backend, plus 11 classes (the
 result types of the network, grep and archive helpers, and
 NonInteractiveError). Same
@@ -1248,9 +1248,9 @@ loopback tunnel). HTTP-only libraries (botocore, svn) are fronted by a
 loopback shim, so SOCKS, HTTPS and NTLM work for them too. Rsync uses
 OpenBSD `nc`; `proxy_username` can be passed, but `proxy_password`
 is rejected because `nc` has no safe non-interactive password flag.
-Requests-based SDK sessions controlled by Axross ignore process-level
+Requests-based SDK sessions controlled by axross ignore process-level
 `HTTP_PROXY` / `HTTPS_PROXY`; the profile proxy is the route source of
-truth. OAuth browser consent pages are external to Axross and may follow
+truth. OAuth browser consent pages are external to axross and may follow
 browser/system proxy settings.
 Unsupported backends warn: ramfs/sqlite (local/in-process),
 nfs/iscsi/mtp (kernel/USB transports), tftp/slp (UDP),
@@ -1302,7 +1302,7 @@ right-click as an SSH pane, on the same connection.
 
 Saved passwords go to the OS keyring (Secret-Service / KWallet /
 Windows Credential Locker / macOS Keychain / KeePassXC's Secret-
-Service plug-in). Axross probes for a working backend on first
+Service plug-in). axross probes for a working backend on first
 use. Any other keyring backend works as well, as long as it needs
 no terminal input (for example keyring-pass or keyrings.cryptfile set
 up through ``keyringrc.cfg``); when several are installed, the one
@@ -1322,7 +1322,7 @@ next ``store_password`` auto-rechecks).
 
 ## MCP server
 
-Axross can run as a Model Context Protocol server so an LLM client
+axross can run as a Model Context Protocol server so an LLM client
 (Claude Desktop, Cline, a custom agent) can drive any configured
 backend through a JSON-RPC tool surface.
 
@@ -1836,8 +1836,9 @@ content is marked as untrusted in every tool result; a mail cannot add recipient
 change the policy. `dock_report` leaves a note for another dock (*Reports to* limits
 which); the other dock reads it at its next run, which a note alone starts. A run with
 no new mail and no notes asks the model nothing. A mail counts as handled once the
-agent read, analysed or answered it - one it only saw in `mail_list_new`, or one of a
-run that failed or was stopped, is new again at the next run. SMTP: STARTTLS or TLS with the
+agent read, analysed or answered it, and every mail `mail_list_new` listed counts as
+handled once the run ends with an answer; after a run that failed or was stopped, a mail
+it only listed is new again at the next run. SMTP: STARTTLS or TLS with the
 certificate checked, plain only to this machine; the password is kept in the keyring.
 
 **Tools → Mail Project…** imports `.eml` and Outlook `.msg` files, Outlook data files
@@ -2072,8 +2073,8 @@ environment or in the paranoid security mode; *Check Now* still works.
 - **Just want to connect?** [OAUTH_SETUP.md](../OAUTH_SETUP.md) walks
   you through the cloud-storage app registrations.
 - **Running on hostile networks?** [OPSEC.md](OPSEC.md) lists every
-  client-to-server fingerprint Axross emits and how to suppress it.
-- **Driving Axross from an LLM?** [MCP.md](MCP.md) is the canonical
+  client-to-server fingerprint axross emits and how to suppress it.
+- **Driving axross from an LLM?** [MCP.md](MCP.md) is the canonical
   protocol reference.
 - **Writing or switching on extensions?** [EXTENSIONS.md](EXTENSIONS.md)
   covers trust, pausing and the extension `api`.

@@ -865,29 +865,37 @@ class WorkspaceMixin:
         menu.aboutToShow.connect(self._fill_workspace_menu)
         # New Workspace > With File List / With Terminal; the submenu stays,
         # the Workspace menu itself is rebuilt each time it opens.
-        self._new_workspace_menu = QMenu(tr("New Workspace"), self)
-        self._new_workspace_action = self._new_workspace_menu.addAction(tr("With File List"))
+        self._new_workspace_menu = QMenu(tr("&New Workspace"), self)
+        self._new_workspace_menu.setIcon(icon("workspace"))
+        self._new_workspace_action = self._new_workspace_menu.addAction(tr("With &File List"))
+        self._new_workspace_action.setIcon(icon("folder"))
         self._new_workspace_action.setShortcut(QKeySequence("Ctrl+Alt+N"))
         self._new_workspace_action.triggered.connect(lambda _c=False: self.new_workspace())
         self._new_terminal_workspace_action = self._new_workspace_menu.addAction(
-            tr("With Terminal"))
+            tr("With &Terminal"))
+        self._new_terminal_workspace_action.setIcon(icon("terminal"))
         self._new_terminal_workspace_action.setShortcut(QKeySequence("Ctrl+Alt+Shift+N"))
         self._new_terminal_workspace_action.triggered.connect(
             lambda _c=False: self.new_workspace(start=START_TERMINAL))
-        self._add_terminal_pane_action = QAction(tr("Add Terminal Pane"), self)
+        self._add_terminal_pane_action = QAction(tr("Add &Terminal Pane"), self)
+        self._add_terminal_pane_action.setIcon(icon("terminal"))
         self._add_terminal_pane_action.setToolTip(
             tr("A local shell beside the panes of this workspace"))
         self._add_terminal_pane_action.triggered.connect(lambda _c=False: self.add_terminal_pane())
-        self._next_workspace_action = menu.addAction(tr("Next Workspace"))
+        self._next_workspace_action = menu.addAction(tr("Ne&xt Workspace"))
         self._next_workspace_action.setShortcut(QKeySequence("Ctrl+Alt+PgDown"))
         self._next_workspace_action.triggered.connect(lambda _c=False: self.next_workspace())
-        self._prev_workspace_action = menu.addAction(tr("Previous Workspace"))
+        self._prev_workspace_action = menu.addAction(tr("&Previous Workspace"))
         self._prev_workspace_action.setShortcut(QKeySequence("Ctrl+Alt+PgUp"))
         self._prev_workspace_action.triggered.connect(
             lambda _c=False: self.next_workspace(forward=False))
-        for action in (self._next_workspace_action, self._prev_workspace_action):
-            action.setIcon(icon("workspace"))
-            action.setProperty("axIcon", "workspace")  # redrawn on a theme switch
+        for action, name in ((self._next_workspace_action, "chevrons-right"),
+                             (self._prev_workspace_action, "chevrons-left"),
+                             (self._new_workspace_action, "folder"),
+                             (self._new_terminal_workspace_action, "terminal"),
+                             (self._add_terminal_pane_action, "terminal")):
+            action.setIcon(icon(name))
+            action.setProperty("axIcon", name)  # redrawn on a theme switch
         # Window-wide: the menu is rebuilt each time it opens.
         for action in (self._new_workspace_action, self._new_terminal_workspace_action,
                        self._next_workspace_action, self._prev_workspace_action):
@@ -899,19 +907,20 @@ class WorkspaceMixin:
         menu.clear()
         menu.addMenu(self._new_workspace_menu)
         menu.addAction(self._add_terminal_pane_action)
-        menu.addMenu(self._workspace_panel_menu())
-        menu.addAction(tr("Rename Workspace…")).triggered.connect(
-            lambda _c=False: self._ask_rename_workspace())
+        panels = menu.addMenu(self._workspace_panel_menu())
+        panels.setIcon(icon("extensions"))
+        rename = menu.addAction(icon("edit"), tr("&Rename Workspace…"))
+        rename.triggered.connect(lambda _c=False: self._ask_rename_workspace())
         ws = self._current_ws
-        detach = menu.addAction(tr("Detach to Window"))
+        detach = menu.addAction(icon("window-restore"), tr("&Detach to Window"))
         detach.setEnabled(ws.window is None
                           and sum(w.window is None for w in self._workspaces) > 1)
         detach.triggered.connect(lambda _c=False, w=ws: self.detach_workspace(w))
-        close = menu.addAction(tr("Close Workspace"))
+        close = menu.addAction(icon("x"), tr("&Close Workspace"))
         close.setEnabled(len(self._workspaces) > 1)
         close.triggered.connect(lambda _c=False, w=ws: self.close_workspace(w))
         menu.addSeparator()
-        move = menu.addMenu(tr("Send Pane to Workspace"))
+        move = menu.addMenu(icon("move-right"), tr("&Send Pane to Workspace"))
         move.setEnabled(self._pane_to_move() is not None)
         move.aboutToShow.connect(lambda m=move: self._fill_move_menu(m))
         self._fill_move_menu(move)

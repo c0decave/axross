@@ -243,6 +243,14 @@ def _is_ipv6_literal(host: str) -> bool:
     return True
 
 
+def _host_error(message: str, host: str) -> ConnectionError:
+    """A ConnectionError that names its host (``.host``), so the sentence
+    of core.user_errors.describe() can name it too."""
+    error = ConnectionError(message)
+    error.host = host
+    return error
+
+
 def _resolve_target_host(
     host: str,
     port: int,
@@ -252,9 +260,9 @@ def _resolve_target_host(
     try:
         addr_infos = socket.getaddrinfo(host, port, family, socket.SOCK_STREAM)
     except socket.gaierror as e:
-        raise ConnectionError(f"Cannot resolve host {host!r}: {e}") from e
+        raise _host_error(f"Cannot resolve host {host!r}: {e}", host) from e
     if not addr_infos:
-        raise ConnectionError(f"Cannot resolve host {host!r} for requested address family")
+        raise _host_error(f"Cannot resolve host {host!r} for requested address family", host)
     return addr_infos[0][4][0]
 
 
@@ -1395,9 +1403,9 @@ def create_direct_socket(
     try:
         addr_infos = socket.getaddrinfo(host, port, family, socket.SOCK_STREAM)
     except socket.gaierror as e:
-        raise ConnectionError(f"Cannot resolve host {host!r}: {e}") from e
+        raise _host_error(f"Cannot resolve host {host!r}: {e}", host) from e
     if not addr_infos:
-        raise ConnectionError(f"Cannot resolve host: {host}")
+        raise _host_error(f"Cannot resolve host: {host}", host)
 
     last_error: Exception | None = None
     for af, socktype, proto, canonname, sockaddr in addr_infos:
@@ -1413,4 +1421,6 @@ def create_direct_socket(
             if s is not None:
                 s.close()
 
-    raise ConnectionError(f"Cannot connect to {host}:{port}: {last_error}")
+    # Chained: core.user_errors.describe() turns the cause (refused, timed
+    # out, unreachable) into a sentence; the text stays for the log.
+    raise _host_error(f"Cannot connect to {host}:{port}: {last_error}", host) from last_error

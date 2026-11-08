@@ -24,6 +24,16 @@ def plain_tooltip(text: str) -> str:
     return f"<qt style='white-space:pre-wrap'>{html.escape(text)}</qt>"
 
 
+def as_written(text: str) -> str:
+    """*text* for a QMessageBox (or any AutoText label) so it shows exactly
+    as written: escaped inside a rich-text block that keeps its spaces and
+    line breaks. For the static ``QMessageBox.question()`` and friends,
+    which guess the format and cannot be told PlainText: a remote file name
+    interpolated into their text was rendered - line breaks, styled fake
+    notices and live links (the Checksum and Overwrite questions)."""
+    return f"<qt style='white-space:pre-wrap'>{html.escape(text or '', quote=False)}</qt>"
+
+
 def set_plain(label, text: str | None = None):
     """Make *label* (a QLabel) show its text as plain text - optionally
     setting *text* - and return it."""

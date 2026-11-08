@@ -1050,7 +1050,12 @@ def _stat_for(adapter, path: str, *, writeable: bool = False) -> dict:
             item = _link_target_item(adapter.backend, full, item)
     except OSError as exc:
         log.debug("stat(%s) failed: %s", full, exc)
-        raise FuseOSError(_stat_errno(exc))
+        code = _stat_errno(exc)
+        if code == errno.EIO and _untyped(exc) and _confirmed_missing(adapter.backend, full):
+            # Some backends still say "not found" with a bare OSError;
+            # exists() is False only for a definitive "not there".
+            code = errno.ENOENT
+        raise FuseOSError(code)
     result = _stat_dict(item, writeable=writeable)
     adapter._stat.put(path, result)
     return result
@@ -1114,20 +1119,43 @@ def _stat_errno(exc: OSError) -> int:
 
     Only "not found" may be ENOENT: the kernel then lets O_CREAT create
     the name, and create() starts an empty buffer whose commit replaces
-    the file that was there all along. A timeout or a dropped connection
-    is EIO. A bare OSError without errno stays ENOENT: several backends
-    say "not found" that way.
+    the file that was there all along - an ``echo x >> log`` during one
+    429 / 503 / dropped connection replaced the log with "x". So only a
+    FileNotFoundError, an ENOENT, or an ENOTDIR (a component of the path
+    is a file: nothing is there either) is ENOENT. A bare OSError
+    without errno - what most backends raise for a timeout, a 4xx / 5xx
+    reply or a closed connection - is EIO, like every errno this does
+    not name.
     """
     if isinstance(exc, PermissionError):
         return errno.EACCES
     if isinstance(exc, (TimeoutError, ConnectionError)):
         return errno.EIO
-    code = getattr(exc, "errno", None)
-    if code is None or code in (errno.ENOENT, errno.ENOTDIR):
+    if isinstance(exc, (FileNotFoundError, NotADirectoryError)):
         return errno.ENOENT
-    if code == errno.ELOOP:
-        return errno.ELOOP
+    code = getattr(exc, "errno", None)
+    if code in (errno.ENOENT, errno.ENOTDIR):
+        return errno.ENOENT
+    if code in (errno.EACCES, errno.EPERM):
+        return errno.EACCES
+    if code in (errno.ELOOP, errno.ENAMETOOLONG):
+        return code
     return errno.EIO
+
+
+def _untyped(exc: OSError) -> bool:
+    """True for an OSError that says nothing of its cause: no errno and
+    the bare class (not a subclass such as TimeoutError)."""
+    return type(exc) is OSError and not isinstance(getattr(exc, "errno", None), int)
+
+
+def _confirmed_missing(backend, full: str) -> bool:
+    """True when ``backend.exists`` says *full* is not there. A backend
+    that cannot answer, or answers with an error, confirms nothing."""
+    try:
+        return backend.exists(full) is False
+    except Exception:  # noqa: BLE001 - no answer is not "missing"
+        return False
 
 
 # --------------------------------------------------------------------------

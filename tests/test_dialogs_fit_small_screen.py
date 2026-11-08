@@ -1,10 +1,15 @@
-"""Every window the menus open fits a 1280x800 screen.
+"""Every window the menus open fits a 1280x800 screen - and a 1024x600 one.
 
 Reported: Connect to Server asked for 947 px (minimum height 947: OK and
 Cancel off a 768 or 800 px screen), the About box was 967 px high (1009
 px in German), System Information opened at exactly 1180x800 - its title
 bar and bottom edge off the screen. ui.screen_fit caps them: the Connect
 form and the About text scroll, default window sizes stop at the screen.
+
+UX review round 4 (1024x600, a netbook or a small VM window): Settings
+opened at 980x660, the Handbook at 1060x700 and Features at 980x620, each
+taller than the screen, and Connect to Server widened itself once shown
+without moving back: its right and bottom edge stood off the screen.
 """
 
 from __future__ import annotations
@@ -38,6 +43,9 @@ APP = QApplication.instance() or QApplication([])
 SCREEN = QRect(0, 0, 1280, 800)
 #: What a window may take of it with its title bar and frame drawn.
 LIMIT = QSize(1240, 760)
+#: The small screen of review round 4, and its limit.
+SMALL_SCREEN = QRect(0, 0, 1024, 600)
+SMALL_LIMIT = QSize(984, 560)
 
 #: Entries that quit, change the layout or the panes, or start work -
 #: none of them opens a window of its own.
@@ -63,7 +71,13 @@ def pump(seconds: float = 0.0, rounds: int = 5) -> None:
 
 
 @pytest.fixture
-def window(tmp_path, monkeypatch):
+def screen():
+    """The screen the windows open on: 1280x800 unless a test says else."""
+    return SCREEN
+
+
+@pytest.fixture
+def window(tmp_path, monkeypatch, screen):
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -71,7 +85,7 @@ def window(tmp_path, monkeypatch):
     from ui import screen_fit
 
     monkeypatch.setattr(MW.MainWindow, "_SESSION_FILE", home / "session.json")
-    monkeypatch.setattr(screen_fit, "available_geometry", lambda widget=None: QRect(SCREEN))
+    monkeypatch.setattr(screen_fit, "available_geometry", lambda widget=None: QRect(screen))
 
     def fake_exec(self, *args, **kwargs):
         self.show()
@@ -107,7 +121,7 @@ def window(tmp_path, monkeypatch):
     win = MW.MainWindow()
     win._reconnect_timer.stop()
     win.apply_first_start_layout()
-    win.resize(1280, 800)
+    win.resize(screen.width(), screen.height())
     win.show()
     pump(0.3)
     try:
@@ -134,23 +148,27 @@ def _entries(menu, path):
             yield here, action
 
 
-def _fits(size: QSize) -> bool:
-    return size.width() <= LIMIT.width() and size.height() <= LIMIT.height()
+def _fits(size: QSize, limit: QSize = LIMIT) -> bool:
+    return size.width() <= limit.width() and size.height() <= limit.height()
 
 
 @pytest.mark.timeout(240)
 def test_happy_every_window_the_menus_open_fits_1280x800(window):
-    seen = {id(w) for w in APP.topLevelWidgets()}
+    # Marked on the widget, not kept as id(): a closed and deleted window's
+    # id() came back for a later one (About axross), which then counted as
+    # seen and the walk "never opened" it - now and then.
+    for widget in APP.topLevelWidgets():
+        widget.setProperty("axFitSeen", True)
     opened, too_big, quiet = [], [], []
 
     def collect(path) -> bool:
         found = False
         for widget in APP.topLevelWidgets():
-            if (sip.isdeleted(widget) or id(widget) in seen or widget is window
+            if (sip.isdeleted(widget) or widget.property("axFitSeen") or widget is window
                     or isinstance(widget, QMenu)
                     or not widget.isVisible() or not widget.windowTitle()):
                 continue
-            seen.add(id(widget))
+            widget.setProperty("axFitSeen", True)
             where = " > ".join(path)
             opened.append(where)
             for what, size in (("size", widget.size()), ("minimum", widget.minimumSize()),
@@ -212,3 +230,82 @@ def test_edge_about_scrolls_its_text_within_the_screen(window):
     assert _fits(dialog.size()), dialog.size()
     assert "axross" in dialog.text_browser.toPlainText()
     dialog.close()
+
+
+# -- 1024x600 ------------------------------------------------------------------
+
+
+def _settings(win):
+    from ui.settings_dialog import SettingsDialog
+
+    return SettingsDialog(win, window=win)
+
+
+def _handbook(win):
+    from ui.handbook import HandbookDialog
+
+    return HandbookDialog(win)
+
+
+def _features(win):
+    from ui.features_dialog import FeaturesDialog
+
+    return FeaturesDialog(win)
+
+
+@pytest.mark.parametrize("screen", [SMALL_SCREEN])
+@pytest.mark.parametrize("make", [_settings, _handbook, _features],
+                         ids=["settings", "handbook", "features"])
+def test_happy_settings_handbook_and_features_fit_1024x600(window, make):
+    dialog = make(window)
+    try:
+        dialog.show()
+        pump(0.2)
+        assert _fits(dialog.size(), SMALL_LIMIT), dialog.size()
+        assert _fits(dialog.minimumSizeHint(), SMALL_LIMIT), dialog.minimumSizeHint()
+        assert _fits(dialog.minimumSize(), SMALL_LIMIT), dialog.minimumSize()
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+
+
+@pytest.mark.parametrize("screen", [SMALL_SCREEN])
+def test_sad_connect_to_server_stays_on_a_1024x600_screen(window, monkeypatch):
+    """It widens to its form once shown; it must not stand off the edge."""
+    from core.profiles import ProfileManager
+    from ui import screen_fit
+    from ui.connection_dialog import ConnectionDialog
+
+    dialog = ConnectionDialog(ProfileManager(), window)
+    dialog.move(600, 300)  # where a window manager may put it before it grows
+    dialog.show()
+    pump(0.2)
+    frame = dialog.frameGeometry()
+    assert _fits(dialog.size(), SMALL_LIMIT), dialog.size()
+    assert SMALL_SCREEN.contains(frame.topLeft()), frame
+    assert frame.right() <= SMALL_SCREEN.right() and frame.bottom() <= SMALL_SCREEN.bottom(), frame
+    dialog._proxy_group.setChecked(True)
+    pump(0.2)
+    frame = dialog.frameGeometry()
+    assert frame.right() <= SMALL_SCREEN.right() and frame.bottom() <= SMALL_SCREEN.bottom(), frame
+    dialog.close()
+    assert screen_fit.available_geometry() == SMALL_SCREEN
+
+
+def test_edge_keep_on_screen_moves_only_a_window_past_an_edge():
+    from PyQt6.QtWidgets import QWidget
+
+    from ui import screen_fit
+
+    with mock.patch.object(screen_fit, "available_geometry",
+                           lambda widget=None: QRect(SMALL_SCREEN)):
+        widget = QWidget()
+        widget.resize(400, 300)
+        widget.move(100, 100)
+        screen_fit.keep_on_screen(widget)
+        assert (widget.x(), widget.y()) == (100, 100)
+        widget.move(900, 500)
+        screen_fit.keep_on_screen(widget)
+        frame = widget.frameGeometry()
+        assert frame.right() <= SMALL_SCREEN.right() and frame.bottom() <= SMALL_SCREEN.bottom()
+        widget.deleteLater()

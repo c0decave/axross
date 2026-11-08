@@ -817,7 +817,7 @@ def init_registry() -> None:
             class_name="OneDriveSession",
             default_port=443,
             required_extra="onedrive",
-            available=_check_available("msal"),
+            available=_check_available("msal", "requests"),
             capabilities=CLOUD_CAPS,
             credential_kind=CredentialKind.OAUTH,
         )
@@ -832,7 +832,7 @@ def init_registry() -> None:
             class_name="OneDriveSession",
             default_port=443,
             required_extra="onedrive",
-            available=_check_available("msal"),
+            available=_check_available("msal", "requests"),
             capabilities=CLOUD_CAPS,
             credential_kind=CredentialKind.OAUTH,
         )
@@ -847,7 +847,7 @@ def init_registry() -> None:
             class_name="GDriveSession",
             default_port=443,
             required_extra="gdrive",
-            available=_check_available("googleapiclient"),
+            available=_check_available("googleapiclient", "google_auth_oauthlib"),
             capabilities=CLOUD_CAPS,
             credential_kind=CredentialKind.OAUTH,
         )
@@ -1002,7 +1002,7 @@ def init_registry() -> None:
             class_name="GitFsSession",
             default_port=0,
             required_extra="git",
-            available=_check_available("dulwich"),
+            available=_check_available("dulwich", "urllib3"),
             capabilities=GIT_CAPS,
             credential_kind=CredentialKind.NONE,
         )

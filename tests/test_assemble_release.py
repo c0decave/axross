@@ -79,6 +79,9 @@ def make_dist(root: Path, version: str = VERSION, *, variants=SU.VARIANTS, pytho
         (dist / sdist).write_bytes(b"\x1f\x8b sdist")
         sums_of(dist, [wheel, sdist])
         (dist / "BUILD-INFO.md").write_text("# build\n")
+        (dist / "NATIVE-COMPONENTS.md").write_text(
+            "<!-- native-components -->\n## Native components in the Linux binaries\n\n"
+            "- libfake 1.0\n")
         standalone = dist / "standalone"
         standalone.mkdir()
         tool = f"axross_media_player-{version}-py3-none-any.whl"
@@ -89,16 +92,32 @@ def make_dist(root: Path, version: str = VERSION, *, variants=SU.VARIANTS, pytho
     return dist
 
 
+def wheel_bytes(package: str) -> bytes:
+    """A small wheel (a zip, the same bytes every time)."""
+    import io
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(zipfile.ZipInfo(f"{package}/__init__.py", (2020, 1, 1, 0, 0, 0)),
+                    f"NAME = {package!r}\n")
+    return buf.getvalue()
+
+
 def make_packs(folder: Path, version: str = VERSION, *, blobs=2, pypi=True) -> Path:
+    """packs/ as scripts/build_packs.py writes it. *pypi*: every wheel has a
+    PyPI address (True), none (False), or ``pypi(i)`` says (the address
+    itself when it returns a string)."""
     folder.mkdir(parents=True)
     entries = {}
     for i in range(blobs):
         name = f"dep{i}-1.0-py3-none-any.whl"
-        data = f"wheel {i}".encode() * 10
+        data = wheel_bytes(f"dep{i}")
         (folder / name).write_bytes(data)
+        hosted = pypi(i) if callable(pypi) else pypi
+        address = hosted if isinstance(hosted, str) else \
+            f"https://files.pythonhosted.org/packages/ab/cd/{name}" if hosted else ""
         entries[name] = {"distribution": f"dep{i}", "sha256": hashlib.sha256(data).hexdigest(),
-                         "size": len(data),
-                         "pypi": f"https://files.pythonhosted.org/packages/{name}" if pypi else ""}
+                         "size": len(data), "pypi": address}
     manifest = {"format": 1, "version": version, "platform": "linux-x86_64",
                 "units": {"cloud": {"kind": "extra", "title": "Cloud", "needs": [],
                                     "blobs": sorted(entries)}},
@@ -139,6 +158,17 @@ def write_key(path: Path, key: Ed25519PrivateKey) -> Path:
     return path
 
 
+@pytest.fixture(autouse=True)
+def changelog(tmp_path, monkeypatch):
+    """The CHANGELOG.md the release notes start from (a released section)."""
+    path = tmp_path / "CHANGELOG.md"
+    path.write_text("# Changelog\n\n## 10.0.0 - 2027-01-01\n\n- Later.\n\n"
+                    f"## {VERSION} - 2026-11-09\n\n### Fixed\n\n- **Updates.** A fix.\n\n"
+                    "## 9.9.8 - 2026-11-01\n\n- Older.\n")
+    monkeypatch.setattr(AR, "CHANGELOG", path, raising=False)
+    return path
+
+
 @pytest.fixture
 def field_key(tmp_path, monkeypatch):
     """A throwaway key, pinned and in the field (as the old key is today)."""
@@ -170,8 +200,8 @@ def test_happy_everything_assembled_signed_and_checked(tmp_path, field_key, caps
             "axross-media-player", "axross-system-info-glibc2.36",
             f"axross-{VERSION}-py3-none-any.whl", f"axross-{VERSION}.tar.gz",
             f"axross_media_player-{VERSION}-py3-none-any.whl",
-            f"packs-{VERSION}.json", "dep0-1.0-py3-none-any.whl", "SHA256SUMS",
-            "SHA256SUMS.sig"} <= names
+            f"packs-{VERSION}.json", "SHA256SUMS", "SHA256SUMS.sig"} <= names
+    assert not any(n.startswith("dep") for n in names)  # on PyPI: a base fetches them there
     # the per-folder sums and the CI .sha256 are gone; nothing else came along
     assert not any(n.endswith(".sha256") or n.startswith("BUILD-") for n in names)
     data = (out / "assets" / "SHA256SUMS").read_bytes()
@@ -193,8 +223,8 @@ def test_happy_everything_assembled_signed_and_checked(tmp_path, field_key, caps
 def test_happy_the_upload_lists_put_the_updaters_assets_first(tmp_path, field_key):
     _key, key_file = field_key
     out = tmp_path / "rel"
-    assert run("--version", VERSION, "--dist", make_dist(tmp_path), "--ci", make_ci(tmp_path),
-               "--out", out, "--key", key_file) == 0
+    assert run("--version", VERSION, "--dist", make_dist(tmp_path, pypi=False),
+               "--ci", make_ci(tmp_path), "--out", out, "--key", key_file) == 0
     first = (out / "upload-1.txt").read_text().split()
     then = (out / "upload-2.txt").read_text().split()
     assert first[:2] == ["assets/SHA256SUMS", "assets/SHA256SUMS.sig"]
@@ -382,19 +412,6 @@ def test_happy_a_dry_run_with_a_throwaway_key(tmp_path, capsys):
     assert "the signing key alone" in report and "XX" not in report
 
 
-def test_sad_pack_wheels_past_the_first_100_assets_need_a_pypi_address(tmp_path, capsys):
-    """The updater reads the first 100 assets the API lists
-    (core.self_update.parse_release); a wheel past them can only come from
-    PyPI."""
-    dist = make_dist(tmp_path, blobs=AR.API_ASSETS, pypi=False)
-    assert run("--version", VERSION, "--dist", dist, "--out", tmp_path / "a") == 1
-    assert "has no PyPI address" in capsys.readouterr().out
-    assert not (tmp_path / "a" / "upload-1.txt").exists()  # nothing to upload from
-    dist2 = make_dist(tmp_path / "2", blobs=AR.API_ASSETS)
-    assert run("--version", VERSION, "--dist", dist2, "--out", tmp_path / "b") == 0
-    assert "a base fetches it from PyPI" in capsys.readouterr().out
-
-
 def test_edge_asset_names_are_the_updaters(tmp_path):
     """Every name assemble_release gives a binary the updater serves is
     asset_name's; the download-only ones follow the same pattern."""
@@ -413,7 +430,7 @@ def test_edge_the_ci_artifact_names_match_the_workflow():
 
 
 def test_happy_check_mode_reads_a_downloaded_draft(tmp_path, field_key):
-    """As step 7 of the release flow: the assets as gh release download
+    """As step 9 of the release flow: the assets as gh release download
     writes them (flat), with or without the upload lists next to them."""
     import shutil
 
@@ -445,3 +462,312 @@ def test_happy_the_release_flow_is_the_scripted_one():
     assert "build_bundle.sh" not in flow and "three flavours" not in flow
     assert flow.index("--repository testpypi") < flow.index("--draft=false") \
         < flow.rindex("twine upload")
+
+
+def test_happy_the_release_flow_has_the_final_reviews_steps():
+    """The final release review: the full suite run locally (python-app.yml
+    runs five files), a green cross-platform bundle run of a ci/ branch
+    before the tag, the tour videos as a prerelease that never becomes
+    Latest - before the app release -, notes.md written by the assembler,
+    and the draft checked in GitHub's own order."""
+    text = (ROOT / "docs" / "PACKAGING.md").read_text(encoding="utf-8")
+    flow = text[text.index("## Release flow"):text.index("## Self-update: what a release")]
+    for needle in ("pytest -q -p no:cacheprovider", 'HEAD:refs/heads/ci/$VERSION',
+                   "--prerelease --latest=false", "releases/latest --jq .tag_name",
+                   "--notes-file notes.md", "--api-json", "--release-id",
+                   "--pack-wheels unhosted", "sorted by name, ignoring case"):
+        assert needle in flow, needle
+    assert "upload-1.txt first keeps" not in flow and "the test suite) must be green" not in flow
+    assert flow.index("refs/heads/ci/") < flow.index('git tag -s "v$VERSION"')
+    assert flow.index("--prerelease --latest=false") < flow.index("--draft --verify-tag") \
+        < flow.index("--api-json")
+    doc = (ROOT / "scripts" / "tour_videos.py").read_text(encoding="utf-8")
+    assert "--prerelease --latest=false" in doc and "gh release create TAG" not in doc
+
+
+
+# -- the order GitHub lists the assets in (final release review) ---------------------
+
+
+def github_listing(folder: Path, version: str = VERSION, *, order=None, body: str = "") -> dict:
+    """The release as GitHub's API answers for it: every asset, sorted by name
+    ignoring case (measured on cli/cli and astral-sh/python-build-standalone),
+    a draft's untagged download URLs."""
+    files = sorted((p for p in folder.iterdir() if p.is_file() and p.name not in AR.NOT_ASSETS),
+                   key=lambda p: p.name.lower())
+    if order is not None:
+        files = [folder / n for n in order]
+    return {"id": 4242, "tag_name": f"v{version}", "draft": True, "body": body,
+            "assets": [{"id": 9000 + i, "name": p.name, "size": p.stat().st_size,
+                        "state": "uploaded",
+                        "digest": "sha256:" + hashlib.sha256(p.read_bytes()).hexdigest(),
+                        "browser_download_url": f"https://github.com/c0decave/axross/releases/"
+                                                f"download/untagged-1a2b/{p.name}"}
+                       for i, p in enumerate(files)]}
+
+
+def _position(listing: dict, name: str) -> int:
+    return [a["name"] for a in listing["assets"]].index(name) + 1
+
+
+def test_sad_too_many_assets_put_sha256sums_past_the_first_100_and_are_refused(tmp_path, capsys):
+    """GitHub lists the assets by name, not in upload order: with 160 pack
+    wheels attached SHA256SUMS sorts past the first 100, where the updater
+    of 0.14.136 never looks - every installed binary would refuse the update
+    ("has no SHA256SUMS"). The old check modelled the upload order and let
+    it pass."""
+    out = tmp_path / "rel"
+    dist = make_dist(tmp_path, blobs=160, pypi=False)
+    assert run("--version", VERSION, "--dist", dist, "--ci", make_ci(tmp_path), "--out", out) == 1
+    report = capsys.readouterr().out
+    assert "SHA256SUMS: asset" in report and "GitHub's order (by name, ignoring case)" in report
+    assert "0.14.136 (every binary in use) reads only the first 100" in report
+    assert not (out / "upload-1.txt").exists()  # nothing to upload from
+    assert _position(github_listing(out / "assets"), "SHA256SUMS") > AR.API_ASSETS
+
+
+def test_sad_attaching_every_wheel_is_refused_and_the_default_attaches_few(tmp_path, capsys):
+    """The 0.15.177 case: about 160 pack wheels, all on PyPI but a few built
+    from an sdist. --pack-wheels all makes 180 assets and is refused; the
+    default attaches the few without a PyPI address and stays far below 100."""
+    dist = make_dist(tmp_path, blobs=160, pypi=lambda i: i % 40 != 0)  # 4 without
+    ci = make_ci(tmp_path)
+    assert run("--version", VERSION, "--dist", dist, "--ci", ci, "--out", tmp_path / "all",
+               "--pack-wheels", "all") == 1
+    assert "SHA256SUMS: asset" in capsys.readouterr().out
+    out = tmp_path / "few"
+    assert run("--version", VERSION, "--dist", dist, "--ci", ci, "--out", out) == 0
+    report = capsys.readouterr().out
+    names = assets_of(out)
+    assert {n for n in names if n.startswith("dep")} == {
+        f"dep{i}-1.0-py3-none-any.whl" for i in (0, 40, 80, 120)}
+    assert len(names) < AR.API_ASSETS
+    assert "4 attached" in report and "156 fetched from PyPI" in report
+    assert "156 more pack wheels not attached" in report
+    sums = SU.parse_sums((out / "assets" / "SHA256SUMS").read_text())
+    assert set(sums) == names - {"SHA256SUMS"}  # the PyPI wheels: in the signed manifest only
+
+
+def test_happy_e2e_a_base_installs_attached_and_pypi_wheels(tmp_path, field_key):
+    """core.packs installs a unit from the assembled release: the attached
+    wheel from the release, the others from files.pythonhosted.org, each
+    checked against the signed manifest."""
+    from core import packs as P
+
+    _key, key_file = field_key
+    dist = make_dist(tmp_path, blobs=3, pypi=lambda i: i != 1)
+    out = tmp_path / "rel"
+    assert run("--version", VERSION, "--dist", dist, "--out", out, "--key", key_file) == 0
+    assert "dep1-1.0-py3-none-any.whl" in assets_of(out) and "dep0-1.0-py3-none-any.whl" \
+        not in assets_of(out)
+    listing = github_listing(out / "assets")
+    for entry in listing["assets"]:
+        entry["browser_download_url"] = f"{SU.DOWNLOAD_PREFIX}v{VERSION}/{entry['name']}"
+    listing["html_url"] = f"{SU.RELEASES_PREFIX}tag/v{VERSION}"
+    release = SU.parse_release(listing)
+    manifest = json.loads((dist / "packs" / f"packs-{VERSION}.json").read_text())
+    pypi = {e["pypi"]: dist / "packs" / n for n, e in manifest["blobs"].items() if e["pypi"]}
+    fetched = []
+
+    def fetch(url, max_bytes, hosts=None):
+        fetched.append((url.split("/")[2], url.rsplit("/", 1)[1]))
+        path = pypi[url] if url in pypi else out / "assets" / url.rsplit("/", 1)[1]
+        return path.read_bytes()[:max_bytes]
+    done = P.install(release, ["cloud"], fetch=fetch, root=tmp_path / "packs")
+    assert sorted(done) == sorted(manifest["blobs"])
+    assert ("github.com", "dep1-1.0-py3-none-any.whl") in fetched
+    assert ("files.pythonhosted.org", "dep0-1.0-py3-none-any.whl") in fetched
+    assert ("files.pythonhosted.org", "dep2-1.0-py3-none-any.whl") in fetched
+
+
+def test_edge_a_pypi_address_core_packs_would_not_use_means_attached(tmp_path):
+    """Only an https address on files.pythonhosted.org that names the file
+    itself counts; any other wheel is attached."""
+    odd = {0: "http://files.pythonhosted.org/packages/dep0-1.0-py3-none-any.whl",
+           1: "https://evil.example/packages/dep1-1.0-py3-none-any.whl",
+           2: "https://files.pythonhosted.org/packages/other-1.0-py3-none-any.whl",
+           3: True}
+    dist = make_dist(tmp_path, blobs=4, pypi=lambda i: odd[i])
+    out = tmp_path / "rel"
+    assert run("--version", VERSION, "--dist", dist, "--out", out) == 0
+    assert {n for n in assets_of(out) if n.startswith("dep")} == {
+        "dep0-1.0-py3-none-any.whl", "dep1-1.0-py3-none-any.whl", "dep2-1.0-py3-none-any.whl"}
+
+
+def test_sad_a_pypi_wheel_that_differs_from_the_manifest_is_refused(tmp_path, capsys):
+    """Not attached, still checked: the manifest must name the very file
+    the gate checked, or a base's download from PyPI fails."""
+    dist = make_dist(tmp_path)
+    (dist / "packs" / "dep1-1.0-py3-none-any.whl").write_bytes(wheel_bytes("other"))
+    (dist / "packs" / "SHA256SUMS").unlink()
+    assert run("--version", VERSION, "--dist", dist, "--out", tmp_path / "rel") == 1
+    assert "packs/dep1-1.0-py3-none-any.whl differs from" in capsys.readouterr().err
+
+
+def test_edge_every_updaters_asset_is_held_to_the_first_100():
+    """The names the 0.14.136 updater and this tree's pick, for every
+    platform, flavour and variant - and SHA256SUMS, its signature."""
+    names = AR.updater_assets(VERSION)
+    assert CONTRACT | {"SHA256SUMS", "SHA256SUMS.sig", f"packs-{VERSION}.json"} == names
+    assert set(AR.FIELD_UPDATER_ASSETS) <= CONTRACT
+
+
+def test_edge_the_orders_cover_both_case_foldings_and_the_upload():
+    names = ["SHA256SUMS", "a_b", "aB", "ab", "axross-full"]
+    orders = AR.listing_orders(names, upload=["ab"])
+    assert orders["GitHub's order (by name, ignoring case)"] == [
+        "a_b", "aB", "ab", "axross-full", "SHA256SUMS"]
+    assert orders["by name, folded to upper case"] == [  # "_" sorts after "X" there
+        "aB", "ab", "axross-full", "a_b", "SHA256SUMS"]
+    assert orders["by name, byte order"][0] == "SHA256SUMS"
+    assert orders["the upload order"][0] == "ab"
+
+
+# -- --check against what GitHub holds -----------------------------------------------
+
+
+def _assembled(tmp_path, field_key, **dist_kwargs) -> Path:
+    _key, key_file = field_key
+    out = tmp_path / "rel"
+    assert run("--version", VERSION, "--dist", make_dist(tmp_path, **dist_kwargs),
+               "--ci", make_ci(tmp_path), "--out", out, "--key", key_file) == 0
+    return out
+
+
+def test_happy_check_reads_the_order_from_githubs_answer(tmp_path, field_key, capsys):
+    out = _assembled(tmp_path, field_key)
+    api = tmp_path / "release.json"
+    api.write_text(json.dumps(github_listing(out / "assets", body=(out / "notes.md").read_text())))
+    capsys.readouterr()
+    assert run("--version", VERSION, "--check", out / "assets", "--api-json", api,
+               "--require-all") == 0
+    report = capsys.readouterr().out
+    assert "GitHub's answer" in report and "is modelled" not in report
+    # the asset list, as gh api --paginate writes its pages (one after the other)
+    entries = github_listing(out / "assets")["assets"]
+    api.write_text(json.dumps(entries[:10]) + "\n" + json.dumps(entries[10:]))
+    assert run("--version", VERSION, "--check", out / "assets", "--api-json", api) == 0
+
+
+def test_sad_check_against_github_finds_what_was_not_uploaded_or_differs(tmp_path, field_key,
+                                                                          capsys):
+    out = _assembled(tmp_path, field_key)
+    listing = github_listing(out / "assets")
+    listing["assets"] = [a for a in listing["assets"] if a["name"] != "axross-slim-glibc2.36"]
+    next(a for a in listing["assets"] if a["name"] == "axross-full")["size"] += 1
+    next(a for a in listing["assets"] if a["name"] == "axross-base")["digest"] = "sha256:" + "0" * 64
+    listing["assets"].append(dict(listing["assets"][0], name="axross-old-leftover", id=1))
+    api = tmp_path / "release.json"
+    api.write_text(json.dumps(listing))
+    capsys.readouterr()
+    assert run("--version", VERSION, "--check", out / "assets", "--api-json", api) == 1
+    report = capsys.readouterr().out
+    for needle in ("axross-slim-glibc2.36: in the folder, not among GitHub's assets",
+                   "axross-full: GitHub states", "axross-base: GitHub's digest",
+                   "axross-old-leftover: an asset on GitHub"):
+        assert needle in report, needle
+
+
+def test_sad_check_uses_githubs_order_not_the_upload_lists(tmp_path, field_key, capsys):
+    """The upload lists put SHA256SUMS first; what counts is where GitHub
+    lists it. The old --check read the local upload lists only."""
+    _key, key_file = field_key
+    out = tmp_path / "rel"
+    assert run("--version", VERSION, "--dist", make_dist(tmp_path, blobs=160, pypi=False),
+               "--ci", make_ci(tmp_path), "--out", out, "--key", key_file) == 1
+    names = sorted((p.name for p in (out / "assets").iterdir()), key=str.lower)
+    for listed in ("upload-1.txt", "upload-2.txt"):  # as the old flow had them
+        first = [n for n in names if not n.startswith("dep")]
+        (out / listed).write_text("".join(f"assets/{n}\n" for n in (
+            first if listed == "upload-1.txt" else [n for n in names if n.startswith("dep")])))
+    api = tmp_path / "release.json"
+    api.write_text(json.dumps(github_listing(out / "assets")))
+    capsys.readouterr()
+    assert run("--version", VERSION, "--check", out, "--api-json", api) == 1
+    report = capsys.readouterr().out
+    assert "SHA256SUMS: asset" in report and "in GitHub's answer" in report
+
+
+def test_happy_release_id_reads_the_json_with_gh_on_github_com(tmp_path, field_key, monkeypatch,
+                                                               capsys):
+    out = _assembled(tmp_path, field_key)
+    api = tmp_path / "release.json"
+    api.write_text(json.dumps(github_listing(out / "assets")))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "calls.txt"
+    gh = bin_dir / "gh"
+    gh.write_text(f'#!/bin/sh\necho "$GH_HOST $*" >> {calls}\ncat {api}\n')
+    gh.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+    monkeypatch.setenv("GH_HOST", "ghe.example.invalid")
+    assert run("--version", VERSION, "--check", out, "--release-id", "4242") == 0
+    assert calls.read_text().split() == ["github.com", "api", "repos/c0decave/axross/releases/4242"]
+    capsys.readouterr()
+    assert run("--version", VERSION, "--check", out, "--release-id", "../x") == 1
+    assert "the release's number" in capsys.readouterr().err
+
+
+def test_sad_an_api_answer_over_1_mib_is_refused(tmp_path, field_key):
+    out = _assembled(tmp_path, field_key)
+    report = AR.check_release(out / "assets", VERSION, keys=None, notes="x" * SU.MAX_API_BYTES)
+    assert any("the updater takes at most 1048576" in p for p in report.problems)
+    assert not any("1048576" in p for p in AR.check_release(out / "assets", VERSION,
+                                                            keys=None).problems)
+
+
+# -- notes.md ------------------------------------------------------------------------
+
+
+def test_happy_notes_md_is_written_from_the_changelog(tmp_path, field_key):
+    """Step 7 creates the release with --notes-file notes.md: the assembler
+    writes it (nothing did before)."""
+    key, _key_file = field_key
+    out = _assembled(tmp_path, field_key)
+    notes = (out / "notes.md").read_text()
+    assert notes.startswith("### Fixed\n\n- **Updates.** A fix.\n")
+    assert "Later." not in notes and "Older." not in notes
+    assert "<!-- native-components -->" in notes and "libfake 1.0" in notes
+    assert "## Assets" in notes and "`axross-slim-windows-x64.exe`" in notes
+    assert "2 more come from PyPI" in notes
+    assert "## How to verify" in notes and public_key_b64(key) in notes
+    sums = SU.parse_sums((out / "assets" / "SHA256SUMS").read_text())
+    assert f"{sums['axross-full']}  axross-full" in notes
+    assert "notes.md" not in assets_of(out)
+
+
+def test_happy_the_verify_commands_of_the_notes_work(tmp_path, field_key):
+    import re
+    import shutil
+    import subprocess
+
+    if not shutil.which("openssl") or not shutil.which("sha256sum"):
+        pytest.skip("needs openssl and sha256sum")
+    out = _assembled(tmp_path, field_key)
+    script = re.search(r"```bash\n(.*?)```", (out / "notes.md").read_text(), re.S).group(1)
+    ok = subprocess.run(["bash", "-e", "-c", script], cwd=out / "assets", capture_output=True,
+                        text=True)
+    assert ok.returncode == 0, ok.stderr
+    with open(out / "assets" / "SHA256SUMS", "a") as fh:
+        fh.write("# changed\n")
+    bad = subprocess.run(["bash", "-e", "-c", script], cwd=out / "assets", capture_output=True)
+    assert bad.returncode != 0
+
+
+def test_sad_require_all_refuses_a_changelog_still_unreleased(tmp_path, changelog, capsys):
+    changelog.write_text(f"# Changelog\n\n## Unreleased ({VERSION})\n\n- A fix.\n")
+    out = tmp_path / "rel"
+    assert run("--version", VERSION, "--dist", make_dist(tmp_path), "--ci", make_ci(tmp_path),
+               "--out", out, "--require-all") == 1
+    assert f"'## Unreleased ({VERSION})' - turn it into '## {VERSION} - <date>'" in \
+        capsys.readouterr().err
+    changelog.write_text("# Changelog\n\n## 9.9.8 - 2026-11-01\n\n- Older.\n")
+    assert run("--version", VERSION, "--dist", make_dist(tmp_path / "2"), "--ci",
+               make_ci(tmp_path / "2"), "--out", out, "--require-all") == 1
+    assert f"no section '## {VERSION} - <date>'" in capsys.readouterr().err
+
+
+def test_edge_changelog_section_stops_at_the_next_version():
+    text = "# C\n\n## 1.2.30 - x\n\n- no\n\n## 1.2.3 - y\n\nyes\n\n## 1.2.2\n\nno\n"
+    assert AR.changelog_section(text, "1.2.3") == ("## 1.2.3 - y", "yes")
+    assert AR.changelog_section(text, "1.2.4") is None

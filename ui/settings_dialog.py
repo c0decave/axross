@@ -106,6 +106,7 @@ from core.i18n import tr
 from ui import themes, window_prefs
 from ui.close_corner import add_close_corner
 from ui.icon_provider import set_window_icon
+from ui.screen_fit import fit_size
 
 log = logging.getLogger(__name__)
 
@@ -958,6 +959,12 @@ _ID_ROLE = Qt.ItemDataRole.UserRole
 _SUB_ROLE = Qt.ItemDataRole.UserRole + 1
 
 
+def _known(text: str) -> str | None:
+    from core.i18n import active
+
+    return active().known(text)
+
+
 def _searchable_texts(widget: QWidget) -> list[str]:
     """Every setting name a page shows: labels, check boxes, radio buttons,
     group titles, tab titles and combo box entries."""
@@ -983,7 +990,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         set_window_icon(self, "settings")
         self.setWindowTitle(tr("Settings"))
-        self.resize(980, 660)
+        self.resize(fit_size((980, 660), parent))
         self._window = window
         # A page is built when it is first shown, asked for or searched
         # (_page_built): one page at opening, not fifteen.
@@ -1086,10 +1093,12 @@ class SettingsDialog(QDialog):
         for page_id, title, factory, keywords, subs in self._categories():
             self._factories[page_id] = factory
             self._titles[page_id] = title
-            # Each keyword in English and in the interface language: a
-            # German user types "Sprache", not "language".
+            # Each keyword in English and, where the catalogue has it, in the
+            # interface language: a German user types "Sprache", not
+            # "language". "tmpfs" or "socks" need no entry.
             self._keywords[page_id] = [title.lower()] + [
-                term for k in keywords for term in dict.fromkeys((k.lower(), tr(k).lower()))]
+                term for k in keywords
+                for term in dict.fromkeys((k.lower(), (_known(k) or k).lower()))]
             self._subs[page_id] = subs
             item = QTreeWidgetItem([title])
             item.setData(0, _ID_ROLE, page_id)

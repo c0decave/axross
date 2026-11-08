@@ -48,6 +48,7 @@ import re
 from dataclasses import dataclass, field
 
 from core.agent_access import FUNCTIONS, NETWORKS, SessionAccess, clean_hosts, network_choices
+from core.i18n import tr
 from core.mcp_client import MAX_CATEGORY  # longest category text, as a server keeps it
 
 log = logging.getLogger(__name__)
@@ -358,6 +359,9 @@ class Resolution:
     #: What Agent Settings (the ceiling) or a gone name changed, one line each.
     notes: list[str] = field(default_factory=list)
     missing: list[Missing] = field(default_factory=list)
+    #: Agent Settings > Access kept axross functions the profile wants: the
+    #: notes link to that page.
+    access_cut: bool = False
 
     def apply_to(self, session, profile_name: str) -> None:
         """Set *session* (core.agent_session.AgentSession) as resolved; its
@@ -421,15 +425,19 @@ def resolve(profile: AgentProfile, settings, *, llm_names=None, modes=None) -> R
     # axross functions, within the ceiling.
     master = profile.axross and bool(getattr(ceiling, "axross_functions", False))
     if profile.axross and not master:
-        notes.append("axross functions are off in Agent Settings > Access: the tab gets none "
-                     "(" + ", ".join(FUNCTION_NAMES[f] for f in profile.functions) + ")."
+        out.access_cut = True
+        notes.append(tr("axross functions are off in Agent Settings > Access: the tab gets none "
+                        "({names}). Switch them on there to use them.").format(
+                            names=", ".join(tr(FUNCTION_NAMES[f]) for f in profile.functions))
                      if profile.functions else
-                     "axross functions are off in Agent Settings > Access: the tab gets none.")
+                     tr("axross functions are off in Agent Settings > Access: the tab gets none. "
+                        "Switch them on there to use them."))
     functions = tuple(f for f in profile.functions if getattr(ceiling, f, False))
     cut = [f for f in profile.functions if f not in functions]
     if master and cut:
-        notes.append("Off in Agent Settings > Access: "
-                     + ", ".join(FUNCTION_NAMES[f] for f in cut) + ".")
+        out.access_cut = True
+        notes.append(tr("Off in Agent Settings > Access: {names}.").format(
+            names=", ".join(tr(FUNCTION_NAMES[f]) for f in cut)))
     network = profile.network
     choices = network_choices(sandbox) if profile.sandbox else network_choices(None)
     if network not in choices:

@@ -63,7 +63,8 @@ def test_sad_bwrap_mounts_a_missing_protected_folder_as_an_empty_read_only_one(h
     assert place in [argv[j + 1] for j, a in enumerate(argv) if a == "--tmpfs"]
     k = argv.index(place)
     assert argv[k - 1] == "--tmpfs" and argv[k + 1:k + 3] == ["--remount-ro", place]
-    assert argv.index("--bind") < k  # after the home it lies in
+    assert argv.index("--bind-try") < k  # after the ~/.config it lies in
+    assert argv[argv.index("--bind-try") + 1] == str(home / ".config")
     assert not os.path.exists(place)  # nothing is made by building the command
 
 
@@ -71,7 +72,8 @@ def test_sad_a_missing_protected_file_gets_no_placeholder_on_the_host(home):
     """A missing file is not mounted: the engine would create its mount
     point in the real home, and an empty ~/.bash_profile left by a crash
     hides ~/.profile from every later login (an empty ~/.vimrc switches off
-    vim's defaults). The worker's refusal guards those names."""
+    vim's defaults). The home is a read-only frame in the sandbox instead
+    (core.agent_sandbox; tests/test_secfix_sandbox_missing_files.py)."""
     argv = _argv("bubblewrap", home)
     sources = {dest: src for src, dest in _after(argv, "--ro-bind")}
     for rel in (".bash_profile", ".claude.json", ".pip/pip.conf", ".vimrc"):
@@ -85,7 +87,9 @@ def test_sad_a_missing_protected_file_gets_no_placeholder_on_the_host(home):
 @pytest.mark.parametrize("engine", ["podman", "docker"])
 def test_sad_containers_mount_missing_places_read_only_too(home, engine):
     argv = _argv(engine, home)
-    assert f"{home}:{home}:rw" in argv
+    # The home holds missing protected files: a frame (core.agent_sandbox).
+    assert f"--tmpfs={home}:rw,nosuid,nodev,noexec,mode=0555" in argv
+    assert f"{home / '.config'}:{home / '.config'}:rw" in argv
     assert any(a.startswith(f"--tmpfs={home / '.config' / 'autostart'}:ro") for a in argv)
     assert any(a.startswith(f"--tmpfs={home / '.local' / 'bin'}:ro") for a in argv)
     assert not [v for v in argv if v.endswith(f":{home / '.bash_profile'}:ro")]

@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.i18n import tr
+from core.i18n import tr, tr_n
 from core.subprocess_env import clean_child_env
 from ui.plain_text import plain_tooltip, set_plain
 
@@ -377,7 +377,8 @@ class PieChart(QWidget):
         painter.fillRect(self.rect(), self.palette().base())
         drive = self.drive
         if drive is None or not drive.total or drive.used is None:
-            text = "Select a drive" if drive is None else f"{drive.mount}: size unknown"
+            text = (tr("Select a drive") if drive is None
+                    else tr("{mount}: size unknown").format(mount=drive.mount))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, text)
             return
         side = min(self.width(), self.height() - 40) - 20
@@ -390,8 +391,9 @@ class PieChart(QWidget):
         painter.setPen(self.palette().text().color())
         painter.drawText(
             QRectF(0, box.bottom() + 4, self.width(), 30), Qt.AlignmentFlag.AlignCenter,
-            f"{drive.mount}: {human(drive.used)} used of {human(drive.total)} "
-            f"({drive.percent:.0f} %), {human(free)} free",
+            tr("{mount}: {used} used of {total} ({percent} %), {free} free").format(
+                mount=drive.mount, used=human(drive.used), total=human(drive.total),
+                percent=f"{drive.percent:.0f}", free=human(free)),
         )
 
 
@@ -431,7 +433,7 @@ class BarChart(QWidget):
             if bar:
                 painter.fillRect(QRectF(label, y + 3, used, self.ROW - 8), QColor(USED_COLOUR))
                 painter.fillRect(QRectF(label + used, y + 3, bar - used, self.ROW - 8), QColor(FREE_COLOUR))
-            note = f"{drive.percent:.0f} %" if drive.percent is not None else "unknown"
+            note = f"{drive.percent:.0f} %" if drive.percent is not None else tr("unknown")
             painter.drawText(QRectF(label + bar + 6, y, 80, self.ROW - 4),
                              Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, note)
 
@@ -446,9 +448,9 @@ class DrivesPanel(QWidget):
         self._drives: list[Drive] = []
         layout = QVBoxLayout(self)
         top = QHBoxLayout()
-        self.refresh_button = QPushButton("Refresh")
+        self.refresh_button = QPushButton(tr("Refresh"))
         self.refresh_button.clicked.connect(refresh)
-        self.show_system = QCheckBox("Show system and memory mounts")
+        self.show_system = QCheckBox(tr("Show system and memory mounts"))
         self.show_system.toggled.connect(lambda _on: self._fill())
         self.status = set_plain(QLabel(""))  # an error names a mount
         top.addWidget(self.refresh_button)
@@ -457,7 +459,8 @@ class DrivesPanel(QWidget):
         top.addWidget(self.status)
         layout.addLayout(top)
         self.table = QTableWidget(0, len(COLUMNS))
-        self.table.setHorizontalHeaderLabels(list(COLUMNS))
+        # "Mount" stays (a kept IT term; the catalogue's "Mount" is the verb).
+        self.table.setHorizontalHeaderLabels([c if c == "Mount" else tr(c) for c in COLUMNS])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -494,7 +497,7 @@ class DrivesPanel(QWidget):
         table.setRowCount(len(drives))
         for row, drive in enumerate(drives):
             use = (f"{drive.percent:.0f} %" if drive.percent is not None
-                   else (drive.error or "unknown"))
+                   else (drive.error or tr("unknown")))
             cells = (
                 QTableWidgetItem(drive.mount), QTableWidgetItem(drive.label),
                 QTableWidgetItem(drive.device),
@@ -512,7 +515,8 @@ class DrivesPanel(QWidget):
         self.bars.set_drives(drives)
         self.pie.set_drive(None)
         known = sum(d.total or 0 for d in drives)
-        self.status.setText(f"{len(drives)} drives, {human(known)} in all")
+        self.status.setText(tr_n(len(drives), "{n} drive, {size} in all", "{n} drives, {size} in all",
+                                 size=human(known)))
 
     def _drive_at(self, row: int) -> Drive | None:
         item = self.table.item(row, COL_MOUNT)
@@ -537,7 +541,7 @@ def activate(api):
             return
         state["busy"] = True
         state["again"] = False
-        panel.status.setText("Measuring…")
+        panel.status.setText(tr("Measuring…"))
         show_system = panel.show_system.isChecked()
 
         def finish() -> None:
@@ -550,7 +554,7 @@ def activate(api):
             finish()
 
         def failed(exc):
-            panel.status.setText(f"Cannot list the drives: {exc}")
+            panel.status.setText(tr("Cannot list the drives: {error}").format(error=exc))
             finish()
 
         api.run_in_background(lambda: measure_shown(list_drives(), show_system),
@@ -559,10 +563,10 @@ def activate(api):
     def open_folder(path: str) -> None:
         ctx = api.current()
         if ctx is None or ctx.pane is None:
-            api.notify("No file pane to open the drive in.")
+            api.notify(tr("No file pane to open the drive in."))
             return
         if not ctx.is_local:
-            api.notify("The active pane is a remote connection; activate a local pane first.")
+            api.notify(tr("The active pane is a remote connection; activate a local pane first."))
             return
         ctx.pane.navigate_async(path)
 

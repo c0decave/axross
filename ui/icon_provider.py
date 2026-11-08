@@ -314,6 +314,8 @@ _TOOL_ICONS = {
     ),
     # The toolbar's overflow button (more buttons than fit).
     "chevrons-right": _svg('<polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/>'),
+    # The mirror of chevrons-right: Move Pane Left, Cycle Previous, Previous Pane.
+    "chevrons-left": _svg('<polyline points="11 17 6 12 11 7"/><polyline points="18 17 13 12 18 7"/>'),
     # Buttons that once were emoji (no emoji font on a plain Linux install).
     "pin": _svg('<line x1="12" y1="17" x2="12" y2="22"/>'
                 '<path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24z"/>'),
@@ -588,6 +590,8 @@ _BOOKMARK_ICONS = {
     "plus": _svg(
         '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
     ),
+    # "plus" without its upright: Zoom Out (it showed the close cross "x").
+    "minus": _svg('<line x1="5" y1="12" x2="19" y2="12"/>'),
     "edit": _svg(
         '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>'
         '<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>',
@@ -814,6 +818,7 @@ ICONS: dict[str, str] = {**_TOOL_ICONS, **_BOOKMARK_ICONS, **_EMOJI_ICONS, **_TH
 # part of the menubar chrome.
 _ICON_COLORS: dict[str, str | None] = {
     "chevrons-right": "#95a5a6",
+    "chevrons-left": "#95a5a6",
     "pin": "#e67e22",
     "mic": "#e74c3c",
     "speaker": "#3498db",
@@ -949,6 +954,7 @@ _ICON_COLORS: dict[str, str | None] = {
     "upload": "#e67e22",  # orange
     "settings": "#7f8c8d",  # grey
     "plus": "#27ae60",  # green
+    "minus": "#e67e22",  # orange: the opposite of plus
     "edit": "#f39c12",  # gold
     "trash": "#e74c3c",  # red
     # Emoji set.

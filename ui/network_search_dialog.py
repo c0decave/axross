@@ -373,7 +373,10 @@ class NetworkSearchDialog(QDialog):
         if self._analyse_hit is not None:
             menu.addAction(tr("Analyse with sift"), self.analyse_selected)
         menu.addAction(tr("Copy UNC Path"), self.copy_selected)
-        menu.exec(self.results_table.viewport().mapToGlobal(pos))
+        try:
+            menu.exec(self.results_table.viewport().mapToGlobal(pos))
+        finally:
+            menu.deleteLater()  # else every right click leaves it behind
 
     def export_csv(self, path: str) -> None:
         with open(path, "w", newline="", encoding="utf-8") as fh:

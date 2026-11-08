@@ -23,7 +23,8 @@ from core.answer_fields import as_dict, as_list, as_size, as_str, as_utc_datetim
 from core.append_helpers import read_existing_for_append
 from core.backend import SessionLifecycle
 from core.desktop_open import install_clean_webbrowser
-from core.path_policy import safe_leaf
+from core import cloud_http
+from core.path_policy import refuse_folder_path, safe_leaf
 from core.read_spool import new_read_spool
 from core.secure_storage import adopt_legacy_secret_file, write_secret_file
 from models.file_item import FileItem
@@ -50,6 +51,76 @@ def _http_status(exc: BaseException) -> int | None:
     except (TypeError, ValueError):
         return None
 
+#: 403 reasons that are a rate limit ("try later"), and the ones that
+#: say the storage is full.
+_RATE_LIMIT_REASONS = ("userRateLimitExceeded", "rateLimitExceeded")
+_QUOTA_REASONS = ("storageQuotaExceeded", "quotaExceeded", "teamDriveFileLimitExceeded")
+#: "Name not unique": a name several items of one folder hold.
+_ENOTUNIQ = getattr(errno, "ENOTUNIQ", errno.EIO)
+#: Pages of one name lookup at most (a page may be empty while more follow).
+_LOOKUP_MAX_PAGES = 100
+
+
+def _error_text(exc: BaseException) -> str:
+    content = getattr(exc, "content", b"")
+    if isinstance(content, bytes):
+        content = content.decode("utf-8", "replace")
+    return f"{content} {exc}" if isinstance(content, str) else str(exc)
+
+
+def _is_retryable(exc: BaseException, idempotent: bool) -> bool:
+    """A request worth sending again: 429, a 403 rate limit, and - when
+    sending it twice does no harm - a 5xx or a dropped connection."""
+    status = _http_status(exc)
+    if status is None:
+        # httplib2 / socket failures: OSError (TimeoutError, ConnectionError ...)
+        return idempotent and isinstance(exc, (TimeoutError, ConnectionError))
+    if status == 429:
+        return True
+    if status == 403:
+        return any(r in _error_text(exc) for r in _RATE_LIMIT_REASONS)
+    return idempotent and status in cloud_http.RETRYABLE_STATUSES
+
+
+def _run(request, *, idempotent: bool = True):
+    """``request.execute()`` with bounded retries (cloud_http) on what
+    Drive documents as "try again": 429, the 403 rate limits, 5xx.
+    googleapiclient's own retry (``num_retries``) defaults to none, and
+    it ignores Retry-After. A resumable upload request resumes where its
+    session stands when it is executed again. The last failure is raised
+    as it came; :func:`_drive_error` types it."""
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            return request.execute()
+        except Exception as exc:
+            if attempt >= cloud_http.ATTEMPTS or not _is_retryable(exc, idempotent):
+                raise
+            resp = getattr(exc, "resp", None)
+            retry_after = None
+            if resp is not None and hasattr(resp, "get"):
+                retry_after = cloud_http.retry_after_seconds(resp.get("retry-after"))
+            log.debug("Google Drive request failed (%s); retry %d", exc, attempt)
+            cloud_http.pause(attempt, retry_after)
+
+
+def _drive_error(exc: BaseException, message: str, filename: str | None = None) -> OSError:
+    """*message* as the typed OSError of a failed Drive request: 404
+    FileNotFoundError, 403 PermissionError (ENOSPC for a full storage,
+    EAGAIN for a rate limit), 429 / 5xx EAGAIN / EIO ... (cloud_http)."""
+    status = _http_status(exc)
+    if status is None:
+        return cloud_http.rewrap(exc, message, filename)
+    if status == 403:
+        text = _error_text(exc)
+        if any(r in text for r in _QUOTA_REASONS):
+            return cloud_http.oserror(errno.ENOSPC, message, filename)
+        if any(r in text for r in _RATE_LIMIT_REASONS):
+            return cloud_http.oserror(errno.EAGAIN, message, filename)
+    return cloud_http.status_oserror(status, message, filename)
+
+
 _FOLDER_MIME = "application/vnd.google-apps.folder"
 _FILE_FIELDS = "files(id,name,mimeType,size,modifiedTime)"
 #: Bytes per download request. googleapiclient's default is 100 MiB, each
@@ -66,7 +137,8 @@ def _download_spooled(request) -> IO[bytes]:
         downloader = MediaIoBaseDownload(spool, request, chunksize=_DOWNLOAD_CHUNK)
         done = False
         while not done:
-            _, done = downloader.next_chunk()
+            # The library's own retry of a 429 / 5xx chunk (backoff).
+            _, done = downloader.next_chunk(num_retries=cloud_http.ATTEMPTS - 1)
         spool.seek(0)
     except BaseException:
         spool.close()
@@ -108,20 +180,26 @@ class _SpooledWriter:
                 mimetype="application/octet-stream",
                 resumable=True,
             )
+            # A resumable upload: executed again after a 429 / 5xx, the
+            # request resumes its session - the file is made once.
             if self._existing_id:
-                self._service.files().update(
+                _run(self._service.files().update(
                     fileId=self._existing_id,
                     media_body=media,
-                ).execute()
+                ))
             else:
                 body = {
                     "name": self._file_name,
                     "parents": [self._parent_id],
                 }
-                self._service.files().create(
+                _run(self._service.files().create(
                     body=body,
                     media_body=media,
-                ).execute()
+                ))
+        except Exception as exc:
+            # The SDK's HttpError is no OSError: the editor's "Cannot save"
+            # and atomic_write's caller catch OSError.
+            raise _drive_error(exc, f"Cannot upload {self._file_name}: {exc}") from exc
         finally:
             self._buf.close()
 
@@ -290,6 +368,7 @@ class GDriveSession(SessionLifecycle):
             if requests_proxies:
                 if oauth_session is None:
                     raise OSError(
+                        errno.ENOTSUP,
                         "Google Drive proxy configured but the OAuth "
                         "session hook is unavailable; refusing direct "
                         "token traffic."
@@ -379,6 +458,7 @@ class GDriveSession(SessionLifecycle):
             from google_auth_httplib2 import AuthorizedHttp
         except ImportError as exc:
             raise OSError(
+                errno.ENOTSUP,
                 "Google Drive proxy requires httplib2 + google-auth-httplib2 "
                 "(both come with the [gdrive] extra).",
             ) from exc
@@ -470,38 +550,62 @@ class GDriveSession(SessionLifecycle):
     def _lookup_child(self, parent_id: str, name: str, path: str) -> str:
         """The id of the one item called *name* in folder *parent_id*,
         asked of the server (not the cache). FileNotFoundError when there
-        is none; OSError when the answer fails or names several."""
+        is none; OSError when the answer fails, and ENOTUNIQ when it names
+        several.
+
+        Every page is read: Drive documents that files.list may answer
+        fewer items than pageSize - even none - while a nextPageToken
+        says more follow. The first page alone read as "not found", and
+        open_write / mkdir then made a second item of the name.
+        """
         query = (
             f"'{parent_id}' in parents "
             f"and name = '{self._escape_query(name)}' "
             f"and trashed = false"
         )
-        try:
-            resp = (
-                self._service.files()
-                .list(
-                    q=query,
-                    fields="files(id,name,mimeType)",
-                    pageSize=2,
+        ids: list[str] = []
+        page_token = ""
+        seen_tokens: set[str] = set()
+        for _page in range(_LOOKUP_MAX_PAGES):
+            kwargs = dict(q=query, fields="nextPageToken,files(id,name,mimeType)", pageSize=2)
+            if page_token:
+                kwargs["pageToken"] = page_token
+            try:
+                resp = as_dict(_run(self._service.files().list(**kwargs)))
+            except Exception as e:
+                raise _drive_error(e, f"Cannot resolve path '{path}': {e}") from e
+            for entry in as_list(resp.get("files")):
+                entry = as_dict(entry)
+                # A name query may match regardless of case; the folder
+                # can hold "Report.txt" beside "report.txt".
+                if "name" in entry and entry.get("name") != name:
+                    continue
+                ids.append(as_str(entry.get("id")))
+            if len(ids) > 1:
+                # Drive allows several files of one name in a folder; any
+                # pick could delete, read or overwrite the wrong one.
+                raise OSError(
+                    _ENOTUNIQ,
+                    f"Cannot resolve path '{path}': at least 2 files named {name!r} "
+                    f"in one folder",
+                    path,
                 )
-                .execute()
-            )
-        except Exception as e:
-            raise OSError(f"Cannot resolve path '{path}': {e}") from e
-
-        files = as_list(as_dict(resp).get("files"))
-        if not files:
-            raise FileNotFoundError(f"Not found: {path}")
-        if len(files) > 1:
-            # Drive allows several files of one name in a folder; any
-            # pick could delete, read or overwrite the wrong one.
-            raise OSError(
-                f"Cannot resolve path '{path}': at least 2 files named {name!r} in one folder"
-            )
-        file_id = as_str(as_dict(files[0]).get("id"))
-        if not file_id:
-            raise OSError(f"Cannot resolve path '{path}': the answer carries no file id")
-        return file_id
+            page_token = as_str(resp.get("nextPageToken"))
+            if not page_token:
+                break
+            if page_token in seen_tokens:
+                raise OSError(errno.EPROTO,
+                              f"Cannot resolve path '{path}': the server repeats a page token")
+            seen_tokens.add(page_token)
+        else:
+            raise OSError(errno.EPROTO, f"Cannot resolve path '{path}': the name query does "
+                          f"not end after {_LOOKUP_MAX_PAGES} pages")
+        if not ids:
+            raise FileNotFoundError(errno.ENOENT, "Not found", path)
+        if not ids[0]:
+            raise OSError(errno.EPROTO,
+                          f"Cannot resolve path '{path}': the answer carries no file id")
+        return ids[0]
 
     def _existing_child(self, parent_id: str, name: str, path: str) -> str | None:
         """The id *name* already has in folder *parent_id*, None when it is
@@ -512,6 +616,16 @@ class GDriveSession(SessionLifecycle):
             return self._lookup_child(parent_id, name, path)
         except FileNotFoundError:
             return None
+
+    @staticmethod
+    def _new_leaf(name: str, path: str, action: str) -> str:
+        """*name* as the name of a new item; EINVAL for one the listing
+        would drop (a control character, a slash, "..": safe_leaf) - the
+        item would be made, and never be seen again."""
+        try:
+            return safe_leaf(name)
+        except ValueError as exc:
+            raise OSError(errno.EINVAL, f"Cannot {action} {path}: {exc}", path) from exc
 
     @staticmethod
     def _escape_query(name: str) -> str:
@@ -529,30 +643,28 @@ class GDriveSession(SessionLifecycle):
         """True when the folder *folder_id* holds anything not trashed."""
         try:
             resp = (
-                self._service.files()
+                _run(self._service.files()
                 .list(
                     q=f"'{folder_id}' in parents and trashed = false",
                     fields="files(id)",
                     pageSize=1,
-                )
-                .execute()
+                ))
             )
         except Exception as e:
-            raise OSError(f"Cannot list {path}: {e}") from e
+            raise _drive_error(e, f"Cannot list {path}: {e}") from e
         if not isinstance(resp, dict) or not isinstance(resp.get("files", []), list):
-            raise OSError(f"Cannot list {path}: the answer is not a file list")
+            raise OSError(errno.EPROTO, f"Cannot list {path}: the answer is not a file list")
         return bool(resp.get("files")) or bool(as_str(resp.get("nextPageToken")))
 
     def _get_metadata(self, file_id: str) -> dict:
         """Fetch metadata for a single file ID."""
         try:
             meta = (
-                self._service.files()
+                _run(self._service.files()
                 .get(
                     fileId=file_id,
                     fields="id,name,mimeType,size,modifiedTime",
-                )
-                .execute()
+                ))
             )
         except Exception as e:
             if _http_status(e) == 404:
@@ -560,9 +672,9 @@ class GDriveSession(SessionLifecycle):
                 raise FileNotFoundError(
                     errno.ENOENT, f"Cannot get metadata for {file_id}: not found", file_id
                 ) from e
-            raise OSError(f"Cannot get metadata for {file_id}: {e}") from e
+            raise _drive_error(e, f"Cannot get metadata for {file_id}: {e}") from e
         if not isinstance(meta, dict):
-            raise OSError(f"Cannot get metadata for {file_id}: the answer is not a JSON object")
+            raise OSError(errno.EPROTO, f"Cannot get metadata for {file_id}: the answer is not a JSON object")
         return meta
 
     # ------------------------------------------------------------------
@@ -578,6 +690,7 @@ class GDriveSession(SessionLifecycle):
         if self._service is None:
             return False
         try:
+            # No retries: a liveness check answers now.
             self._service.about().get(fields="user").execute()
             return True
         except Exception as exc:  # noqa: BLE001 - any failure means not connected
@@ -597,27 +710,28 @@ class GDriveSession(SessionLifecycle):
 
         items: list[FileItem] = []
         ids: dict[str, list[str]] = {}
+        listed = 0
         page_token: str | None = None
         seen_tokens: set[str] = set()
 
         while True:
             try:
                 resp = (
-                    self._service.files()
+                    _run(self._service.files()
                     .list(
                         q=f"'{folder_id}' in parents and trashed = false",
                         fields=f"nextPageToken,{_FILE_FIELDS}",
                         pageSize=1000,
                         pageToken=page_token,
-                    )
-                    .execute()
+                    ))
                 )
             except Exception as e:
-                raise OSError(f"Cannot list {path}: {e}") from e
+                raise _drive_error(e, f"Cannot list {path}: {e}") from e
 
             if not isinstance(resp, dict) or not isinstance(resp.get("files", []), list):
-                raise OSError(f"Cannot list {path}: the answer is not a file list")
+                raise OSError(errno.EPROTO, f"Cannot list {path}: the answer is not a file list")
             for f in resp.get("files", []):
+                listed += 1
                 if not isinstance(f, dict):
                     continue
                 file_id = as_str(f.get("id"))
@@ -652,8 +766,13 @@ class GDriveSession(SessionLifecycle):
                 break
             # A token handed back twice would page forever.
             if page_token in seen_tokens:
-                raise OSError(f"Cannot list {path}: the server repeats a page token")
+                raise OSError(errno.EPROTO, f"Cannot list {path}: the server repeats a page token")
             seen_tokens.add(page_token)
+
+        if not listed and folder_id != "root" and \
+                self._get_metadata(folder_id).get("mimeType") != _FOLDER_MIME:
+            # "'<id>' in parents" of a FILE is an empty answer, not an error.
+            raise NotADirectoryError(errno.ENOTDIR, f"Cannot list {path}: a file", path)
 
         # Cache the child paths for future lookups - only names that one
         # file holds: a shared name stays out, so _resolve_path finds it
@@ -674,6 +793,9 @@ class GDriveSession(SessionLifecycle):
         return items
 
     def stat(self, path: str) -> FileItem:
+        return cloud_http.no_file_as_folder(path, self._stat(path))
+
+    def _stat(self, path: str) -> FileItem:
         file_id = self._resolve_path(path)
         meta = self._get_metadata(file_id)
         is_dir = meta.get("mimeType") == _FOLDER_MIME
@@ -714,7 +836,7 @@ class GDriveSession(SessionLifecycle):
     def mkdir(self, path: str) -> None:
         path = self.normalize(path)
         parent_path = self.parent(path)
-        dir_name = posixpath.basename(path)
+        dir_name = self._new_leaf(posixpath.basename(path), path, "create directory")
         parent_id = self._resolve_path(parent_path)
         if self._existing_child(parent_id, dir_name, path) is not None:
             raise FileExistsError(errno.EEXIST, f"Cannot create directory {path}: it exists", path)
@@ -726,15 +848,14 @@ class GDriveSession(SessionLifecycle):
         }
         try:
             result = (
-                self._service.files()
+                _run(self._service.files()
                 .create(
                     body=body,
                     fields="id",
-                )
-                .execute()
+                ), idempotent=False)
             )
         except Exception as e:
-            raise OSError(f"Cannot create directory {path}: {e}") from e
+            raise _drive_error(e, f"Cannot create directory {path}: {e}") from e
 
         # The folder exists now; without an id in the answer it is
         # simply resolved by name on the next lookup.
@@ -751,20 +872,26 @@ class GDriveSession(SessionLifecycle):
             if self._has_children(file_id, path):
                 raise OSError(errno.ENOTEMPTY, f"Directory not empty: {path}", path)
         try:
-            self._service.files().delete(fileId=file_id).execute()
+            _run(self._service.files().delete(fileId=file_id))
         except Exception as e:
-            raise OSError(f"Cannot remove {path}: {e}") from e
+            raise _drive_error(e, f"Cannot remove {path}: {e}") from e
         self._invalidate_cache(path)
         log.info("Removed: %s", path)
 
     def rename(self, src: str, dst: str) -> None:
+        # normalize() drops the slash: "x/" named the FILE x.
+        refuse_folder_path(dst, "rename to", source_is_file=lambda: not self.stat(src).is_dir)
         src = self.normalize(src)
         dst = self.normalize(dst)
         file_id = self._resolve_for_change(src, "rename")
         if src == dst:
             return
+        if dst.startswith(src.rstrip("/") + "/"):
+            # rename(2) answers EINVAL; Drive would cut the folder off
+            # from the tree (a parent that is its own descendant).
+            raise OSError(errno.EINVAL, f"Cannot move the folder {src} into itself ({dst})", dst)
 
-        new_name = posixpath.basename(dst)
+        new_name = self._new_leaf(posixpath.basename(dst), dst, "rename to")
         src_parent = self.parent(src)
         dst_parent = self.parent(dst)
         # A rename never replaces: like SMB, a taken name is FileExistsError,
@@ -778,22 +905,22 @@ class GDriveSession(SessionLifecycle):
         try:
             if src_parent == dst_parent:
                 # Simple rename within the same folder
-                self._service.files().update(
+                _run(self._service.files().update(
                     fileId=file_id,
                     body={"name": new_name},
-                ).execute()
+                ))
             else:
                 # Move to a different folder and optionally rename
                 old_parent_id = self._resolve_path(src_parent)
                 new_parent_id = self._resolve_path(dst_parent)
-                self._service.files().update(
+                _run(self._service.files().update(
                     fileId=file_id,
                     body={"name": new_name},
                     addParents=new_parent_id,
                     removeParents=old_parent_id,
-                ).execute()
+                ))
         except Exception as e:
-            raise OSError(f"Cannot rename {src} -> {dst}: {e}") from e
+            raise _drive_error(e, f"Cannot rename {src} -> {dst}: {e}") from e
 
         self._invalidate_cache(src)
         self._path_cache[dst] = file_id
@@ -804,12 +931,13 @@ class GDriveSession(SessionLifecycle):
         try:
             return _download_spooled(self._service.files().get_media(fileId=file_id))
         except Exception as e:
-            raise OSError(f"Cannot read {path}: {e}") from e
+            raise _drive_error(e, f"Cannot read {path}: {e}") from e
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
-        path = self.normalize(path)
+        # normalize() drops the slash: "x/" was written as the FILE x.
+        path = self.normalize(refuse_folder_path(path))
         parent_path = self.parent(path)
-        file_name = posixpath.basename(path)
+        file_name = self._new_leaf(posixpath.basename(path), path, "write")
         parent_id = self._resolve_path(parent_path, fresh=True)
 
         # Check if file already exists (for update vs create). Only "not
@@ -823,6 +951,9 @@ class GDriveSession(SessionLifecycle):
             existing_id = self._resolve_for_change(path, "overwrite")
         except FileNotFoundError:
             pass
+        if existing_id and self._get_metadata(existing_id).get("mimeType") == _FOLDER_MIME:
+            # files.update with media on a folder fails only at close().
+            raise IsADirectoryError(errno.EISDIR, f"Cannot write {path}: a folder", path)
 
         writer = _SpooledWriter(self._service, file_name, parent_id, existing_id=existing_id)
 
@@ -844,6 +975,7 @@ class GDriveSession(SessionLifecycle):
             )
             if len(data) > cap:
                 raise OSError(
+                    errno.EFBIG,
                     f"GDrive append: existing file exceeds {cap // (1024 * 1024)} MiB cap"
                 )
             writer.write(data)
@@ -872,15 +1004,15 @@ class GDriveSession(SessionLifecycle):
         return "/"
 
     def chmod(self, path: str, mode: int) -> None:
-        raise OSError("Google Drive does not support Unix permissions")
+        raise OSError(errno.ENOTSUP, "Google Drive does not support Unix permissions")
 
     def readlink(self, path: str) -> str:
-        raise OSError("Google Drive does not support symlinks")
+        raise OSError(errno.ENOTSUP, "Google Drive does not support symlinks")
 
     def disk_usage(self, path: str) -> tuple[int, int, int]:
         """Return (total, used, free) bytes from the Drive storage quota."""
         try:
-            about = self._service.about().get(fields="storageQuota").execute()
+            about = _run(self._service.about().get(fields="storageQuota"))
             quota = about.get("storageQuota", {})
             limit = int(quota.get("limit", 0))
             usage = int(quota.get("usage", 0))
@@ -910,13 +1042,13 @@ class GDriveSession(SessionLifecycle):
                 )
                 if page_token:
                     kwargs["pageToken"] = page_token
-                resp = as_dict(self._service.revisions().list(**kwargs).execute())
+                resp = as_dict(_run(self._service.revisions().list(**kwargs)))
                 revs.extend(r for r in as_list(resp.get("revisions")) if isinstance(r, dict))
                 page_token = as_str(resp.get("nextPageToken"))
                 if not page_token:
                     break
                 if page_token in seen_tokens:
-                    raise OSError("the server repeats a page token")
+                    raise OSError(errno.EPROTO, "the server repeats a page token")
                 seen_tokens.add(page_token)
         except Exception as exc:
             log.warning("GDrive list_versions(%s) failed: %s", path, exc)
@@ -954,28 +1086,29 @@ class GDriveSession(SessionLifecycle):
             )
             return _download_spooled(req)
         except Exception as exc:
-            raise OSError(f"GDrive open_version_read failed: {exc}") from exc
+            raise _drive_error(exc, f"GDrive open_version_read failed: {exc}") from exc
 
     def copy(self, src: str, dst: str) -> None:
         """Drive files.copy — server-side. A taken name is FileExistsError:
         Drive would add a second item of it, and server_side_copy streams
         over the existing file instead when asked to overwrite."""
+        refuse_folder_path(dst, "copy to", source_is_file=lambda: not self.stat(src).is_dir)
         src_id = self._resolve_path(src)
         # Fresh, as open_write: a cached parent id renamed on the web since
         # put the copy into the folder that now has another name.
         dst_parent = self._resolve_path(self.parent(dst), fresh=True)
-        dst_name = posixpath.basename(dst.rstrip("/"))
+        dst_name = self._new_leaf(posixpath.basename(dst.rstrip("/")), dst, "copy to")
         if self._existing_child(dst_parent, dst_name, dst) is not None:
             raise FileExistsError(
                 errno.EEXIST, f"Drive copy {src} -> {dst}: the target exists", dst
             )
         try:
-            self._service.files().copy(
+            _run(self._service.files().copy(
                 fileId=src_id,
                 body={"name": dst_name, "parents": [dst_parent]},
-            ).execute()
+            ), idempotent=False)
         except Exception as exc:
-            raise OSError(f"Drive copy {src} -> {dst} failed: {exc}") from exc
+            raise _drive_error(exc, f"Drive copy {src} -> {dst} failed: {exc}") from exc
 
     # ------------------------------------------------------------------
     # Drive-specific verbs (slice 5 of API_GAPS)
@@ -1017,24 +1150,22 @@ class GDriveSession(SessionLifecycle):
             body["allowFileDiscovery"] = bool(allow_discovery)
         try:
             perm = as_dict(
-                self._service.permissions()
+                _run(self._service.permissions()
                 .create(
                     fileId=fid,
                     body=body,
                     fields="id",
-                )
-                .execute()
+                ), idempotent=False)
             )
             meta = as_dict(
-                self._service.files()
+                _run(self._service.files()
                 .get(
                     fileId=fid,
                     fields="webViewLink,webContentLink",
-                )
-                .execute()
+                ))
             )
         except Exception as exc:
-            raise OSError(f"Cannot share {path}: {exc}") from exc
+            raise _drive_error(exc, f"Cannot share {path}: {exc}") from exc
         url = as_str(meta.get("webViewLink")) or as_str(meta.get("webContentLink"))
         # The path, never the link: an "anyone" link opens the file for
         # whoever reads the log.
@@ -1053,10 +1184,10 @@ class GDriveSession(SessionLifecycle):
     def share_revoke(self, path: str, permission_id: str) -> None:
         """Remove a permission previously granted via share()."""
         fid = self._resolve_path(path)
-        self._service.permissions().delete(
+        _run(self._service.permissions().delete(
             fileId=fid,
             permissionId=permission_id,
-        ).execute()
+        ))
 
     def permissions_list(self, path: str) -> list[dict]:
         """List every permission on a file (incl. owners + inherited
@@ -1073,9 +1204,9 @@ class GDriveSession(SessionLifecycle):
             if page_token:
                 kwargs["pageToken"] = page_token
             try:
-                resp = as_dict(self._service.permissions().list(**kwargs).execute())
+                resp = as_dict(_run(self._service.permissions().list(**kwargs)))
             except Exception as exc:
-                raise OSError(f"Cannot list permissions of {path}: {exc}") from exc
+                raise _drive_error(exc, f"Cannot list permissions of {path}: {exc}") from exc
             for p in as_list(resp.get("permissions")):
                 if not isinstance(p, dict):
                     continue
@@ -1092,7 +1223,7 @@ class GDriveSession(SessionLifecycle):
             if not page_token:
                 break
             if page_token in seen_tokens:
-                raise OSError(f"Cannot list permissions of {path}: the server repeats a page token")
+                raise OSError(errno.EPROTO, f"Cannot list permissions of {path}: the server repeats a page token")
             seen_tokens.add(page_token)
         return out
 
@@ -1113,15 +1244,14 @@ class GDriveSession(SessionLifecycle):
                 "md5": "md5Checksum",
             }.get(algorithm, "md5Checksum")
             meta = (
-                self._service.files()
+                _run(self._service.files()
                 .get(
                     fileId=fid,
                     fields=f"{field},md5Checksum",
-                )
-                .execute()
+                ))
             )
         except Exception as exc:
-            raise OSError(f"Cannot stat {path}: {exc}") from exc
+            raise _drive_error(exc, f"Cannot stat {path}: {exc}") from exc
         meta = as_dict(meta)
         val = as_str(meta.get(field))
         actual_algo = algorithm if field != "md5Checksum" else "md5"

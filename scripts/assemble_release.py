@@ -3,7 +3,9 @@
 
     assemble_release.py --out DIR [--dist DIST] [--ci CI] [--packs PACKS]
                         [--version X.Y.Z] [--key KEY.pem] [--require-all]
+                        [--pack-wheels unhosted|all] [--changelog CHANGELOG.md]
     assemble_release.py --check DIR [--version X.Y.Z] [--require-all]
+                        [--api-json RELEASE.json | --release-id ID]
 
 Inputs (each may be missing; what is missing is named, ``--require-all``
 refuses then):
@@ -21,6 +23,8 @@ refuses then):
   the web page hands them out (``<artifact>.zip``).
 * ``PACKS`` - ``packs-<version>.json`` and the wheels it lists
   (default ``DIST/packs``).
+* ``DIST/NATIVE-COMPONENTS.md`` (scripts/native_inventory.py --notes) and
+  the version's section of ``CHANGELOG.md`` - for the release notes.
 
 Output, ``DIR`` (must not exist or be empty):
 
@@ -34,22 +38,46 @@ Output, ``DIR`` (must not exist or be empty):
   checked against their files and dropped; one ``SHA256SUMS`` takes their
   place, first line ``# axross-release X.Y.Z``, a line for every asset.
   With ``--key`` it is signed (scripts/sign_release.py: ``SHA256SUMS.sig``).
-* ``DIR/upload-1.txt``, ``DIR/upload-2.txt`` - the assets in upload order:
-  first what the updater needs, then the pack wheels. The updater reads only
-  the first 100 assets the API lists (core.self_update.parse_release); a
-  pack wheel past them is fetched from PyPI instead.
+* The pack wheels: ``--pack-wheels unhosted`` (the default) attaches only
+  the wheels whose manifest entry names no PyPI address (built from an
+  sdist); every other wheel stays off the release - an axross-base fetches
+  it from files.pythonhosted.org and checks it against the SHA-256 and size
+  of the signed manifest (core.packs). The local file is still checked
+  against the manifest. ``--pack-wheels all`` attaches every wheel (about
+  160: too many for the binaries of 0.14.136, see below - refused then).
+* ``DIR/upload-1.txt``, ``DIR/upload-2.txt`` - the assets to upload: what
+  the updater needs, then the pack wheels. The order of the upload does not
+  decide where an asset is listed: GitHub lists a release's assets sorted
+  by name, ignoring case.
+* ``DIR/notes.md`` - the release notes: the version's CHANGELOG.md section,
+  the native components, the assets and how to verify them.
 
 Then the result is checked through core.self_update and core.packs
 themselves: for every platform, machine, flavour and variant the release
 serves, an installed binary of that kind (detect_install, with and without
 the bundle's marker files - the binaries of 0.14.136 have no variant file)
 must find its asset, the asset its line in SHA256SUMS; the release must
-parse (parse_release) with every asset the updater needs among the first
-100; the pack manifest must be what signed_manifest accepts, every wheel
-what it names; and the signature must verify with the keys the binaries in
-use pin (scripts/sign_release.py FIELD_KEYS) - ``--allow-new-key`` checks
-against TRUSTED_KEYS instead, ``--allow-unpinned`` (a dry run with a
-throwaway key) against the signing key alone, both with a warning.
+parse (parse_release), and the answer of the API stay within the updater's
+1 MiB. The binaries in use (0.14.136) read only the first 100 assets of the
+answer, so SHA256SUMS, SHA256SUMS.sig, the pack manifest and every asset
+any updater picks (core.self_update.asset_name of 0.14.136 and of this
+tree, every platform, flavour and variant) must be among the first 100 -
+in GitHub's order (by name, ignoring case), folded to upper case instead,
+in byte order and in the upload order alike; refused otherwise. The pack
+manifest must be what signed_manifest accepts, every wheel what it names
+(attached, or on PyPI); and the signature must verify with the keys the
+binaries in use pin (scripts/sign_release.py FIELD_KEYS) -
+``--allow-new-key`` checks against TRUSTED_KEYS instead,
+``--allow-unpinned`` (a dry run with a throwaway key) against the signing
+key alone, both with a warning.
+
+``--check DIR`` repeats the checks on a folder of assets (an assembled one,
+or a draft that ``gh release download`` fetched). With ``--api-json FILE``
+(the release as ``gh api repos/c0decave/axross/releases/<id>`` returns it,
+or its asset list, also ``--paginate``'d) or ``--release-id ID`` (runs that
+``gh api`` itself, on github.com) the order, names, sizes and digests of the
+assets are GitHub's own, not modelled: every file of the folder must be
+listed, every listed asset be in the folder.
 
 Nothing is uploaded. Exit status: 0 done, 1 refused, 2 usage.
 """
@@ -59,11 +87,14 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import hashlib
+import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
+import urllib.parse
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -83,12 +114,27 @@ CI_SYSTEMS = {
     ("Windows", "X64"): ("win32", "amd64", "windows-x64"),
 }
 _CI_ARTIFACT = re.compile(r"axross-(base|slim|full)-([A-Za-z]+)-([A-Za-z0-9]+)")
-#: The upload order (never assets; a downloaded draft may hold them).
+#: The upload lists and the notes (never assets; a downloaded draft may hold them).
 UPLOAD_LISTS = ("upload-1.txt", "upload-2.txt")
+NOTES = "notes.md"
+NOT_ASSETS = (*UPLOAD_LISTS, NOTES)
+CHANGELOG = ROOT / "CHANGELOG.md"
 #: What the binaries in use can reach: before 0.15.177 the updater read only
-#: the first 100 assets of the API's answer (0.15.177 reads the asset pages,
-#: but the release that brings it must reach the older ones first).
+#: the first 100 assets of the API's answer (core.self_update.parse_release
+#: of 0.14.136: ``raw_assets[:100]``). GitHub lists the assets sorted by
+#: name, ignoring case - not in upload order - so what the old updater needs
+#: must sort into the first 100.
 API_ASSETS = 100
+#: The asset names the updater of 0.14.136 (every binary in the field)
+#: picks: its asset_name knew only full and slim, and no glibc variant.
+FIELD_UPDATER_ASSETS = ("axross-full", "axross-slim", "axross-slim-macos-arm64",
+                        "axross-slim-windows-x64.exe")
+#: Bytes of an asset entry in GitHub's answer besides name, size, URL and
+#: digest (ids, uploader, dates, labels: about 1.7 KB in all on cli/cli).
+API_ENTRY_EXTRA = 1600
+#: GitHub takes release notes of at most 125000 characters.
+MAX_NOTES = 120000
+PACK_WHEELS = ("unhosted", "all")
 _CHUNK = 1 << 20
 
 _ELF_X86_64 = 62
@@ -128,6 +174,7 @@ class Plan:
     dropped: list[str] = field(default_factory=list)  # checksum files replaced by SHA256SUMS
     skipped: list[str] = field(default_factory=list)  # found, not published (and why)
     manifest: dict | None = None
+    from_pypi: list[str] = field(default_factory=list)  # pack wheels a base fetches from PyPI
 
     def add(self, item: Item) -> None:
         for other in self.items:
@@ -230,7 +277,26 @@ def collect_python(dist: Path, plan: Plan) -> None:
                 plan.skipped.append(f"standalone/{path.name}: not a release asset")
 
 
-def collect_packs(packs: Path, plan: Plan) -> None:
+def pypi_address(blob: str, entry) -> str:
+    """The PyPI address the manifest names for *blob*, when core.packs can
+    fetch it there (https, files.pythonhosted.org, the file's own name);
+    "" otherwise."""
+    url = entry.get("pypi") if isinstance(entry, dict) else None
+    if not isinstance(url, str) or not url:
+        return ""
+    try:
+        parts = urllib.parse.urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return ""
+    if parts.scheme != "https" or parts.hostname not in P.PYPI_HOSTS or port not in (None, 443) \
+            or "@" in parts.netloc or parts.query or parts.fragment \
+            or not parts.path.endswith("/" + blob):
+        return ""
+    return url
+
+
+def collect_packs(packs: Path, plan: Plan, wheels: str = "unhosted") -> None:
     name = P.manifest_name(plan.version)
     manifest_path = packs / name
     if not packs.is_dir() or not manifest_path.is_file():
@@ -252,6 +318,13 @@ def collect_packs(packs: Path, plan: Plan) -> None:
             raise Refused(f"packs/{blob}: named in {name} but not there - build the packs again")
         if sums.get(blob) not in (None, entry["sha256"]):
             raise Refused(f"packs/{blob}: packs/SHA256SUMS and {name} disagree")
+        if wheels == "unhosted" and pypi_address(blob, entry):
+            # Not attached: a base fetches it from PyPI and checks it against
+            # the manifest - so the manifest must name this very file.
+            if path.stat().st_size != entry["size"] or _sha256_file(path) != entry["sha256"]:
+                raise Refused(f"packs/{blob} differs from {name} - build the packs again")
+            plan.from_pypi.append(blob)
+            continue
         plan.add(Item(blob, "pack", f"packs/{blob}", path, expected=entry["sha256"],
                       expected_size=entry["size"]))
     for path in sorted(packs.iterdir()):
@@ -450,13 +523,90 @@ def installs():
                        True)
 
 
+def updater_assets(version: str) -> set[str]:
+    """What an updater looks for in a release: SHA256SUMS, its signature, the
+    pack manifest and the binary of every platform, flavour and variant -
+    as the updater of 0.14.136 names them and as this tree's does."""
+    names = {SU.SUMS_NAME, SU.SIG_NAME, P.manifest_name(version), *FIELD_UPDATER_ASSETS}
+    for platform, machine in (("linux", "x86_64"), *((p, m) for p, m, _s in CI_SYSTEMS.values())):
+        for flavor in SU.FLAVORS:
+            for variant in SU.VARIANTS:
+                name = SU.asset_name(platform, machine, flavor, variant)
+                if name:
+                    names.add(name)
+    return names
+
+
+#: The orders the API may list a release's assets in; the first is GitHub's
+#: (measured: by name, ignoring case). The others are checked as well, so
+#: that a detail of the collation (is "_" before or after a letter?) cannot
+#: push an asset the updater needs past the first API_ASSETS.
+MODELLED_ORDERS = {
+    "GitHub's order (by name, ignoring case)": lambda n: (n.lower(), n),
+    "by name, folded to upper case": lambda n: (n.upper(), n),
+    "by name, byte order": lambda n: (n, ""),
+}
+
+
+def listing_orders(names, upload: list[str] | None = None) -> dict[str, list[str]]:
+    """*names* in every order the API may list them in (and the upload order)."""
+    names = set(names)
+    orders = {label: sorted(names, key=key) for label, key in MODELLED_ORDERS.items()}
+    if upload:
+        listed = [n for n in dict.fromkeys(upload) if n in names]
+        orders["the upload order"] = listed + sorted(names - set(listed))
+    return orders
+
+
+def read_api_assets(data) -> tuple[dict | None, list]:
+    """(the release, its asset entries) of what ``gh api`` returned: a
+    release object, its asset list, or the pages of that list (``--paginate``
+    writes them one after the other, ``--slurp`` as a list of lists)."""
+    if isinstance(data, dict):
+        if not isinstance(data.get("assets"), list):
+            raise Refused("the release JSON has no list of assets")
+        return data, list(data["assets"])
+    if isinstance(data, list):
+        entries = []
+        for entry in data:
+            entries.extend(entry if isinstance(entry, list) else [entry])
+        return None, entries
+    raise Refused("the API JSON is neither a release nor a list of assets")
+
+
+def load_api_json(text: str) -> tuple[dict | None, list]:
+    decoder = json.JSONDecoder()
+    docs, pos = [], 0
+    try:
+        while True:
+            while pos < len(text) and text[pos].isspace():
+                pos += 1
+            if pos >= len(text):
+                break
+            doc, pos = decoder.raw_decode(text, pos)
+            docs.append(doc)
+    except ValueError as exc:
+        raise Refused(f"the API JSON does not parse: {exc}") from None
+    if not docs:
+        raise Refused("the API JSON is empty")
+    if len(docs) == 1:
+        return read_api_assets(docs[0])
+    if not all(isinstance(d, list) for d in docs):
+        raise Refused("the API JSON holds more than one release")
+    return read_api_assets(docs)
+
+
 def check_release(assets: Path, version: str, *, keys: tuple[str, ...] | None,
-                  order: tuple[list[str], list[str]] | None = None) -> Report:
+                  order: tuple[list[str], list[str]] | None = None,
+                  api: tuple[dict | None, list] | None = None, notes: str = "") -> Report:
     """Check the assets in *assets* through core.self_update and core.packs.
     *keys*: the signature must verify with them (None: no signature
-    needed; one that is there is still checked against the field keys)."""
+    needed; one that is there is still checked against the field keys).
+    *order*: the upload lists; *api*: GitHub's own listing of the release
+    (read_api_assets) - else the order is modelled (listing_orders);
+    *notes*: the release notes (they count to the API answer's size)."""
     report = Report()
-    files = {p.name: p for p in assets.iterdir() if p.is_file() and p.name not in UPLOAD_LISTS}
+    files = {p.name: p for p in assets.iterdir() if p.is_file() and p.name not in NOT_ASSETS}
     sums_path = files.pop(SU.SUMS_NAME, None)
     sig_path = files.pop(SU.SIG_NAME, None)
     if sums_path is None:
@@ -483,20 +633,79 @@ def check_release(assets: Path, version: str, *, keys: tuple[str, ...] | None,
         if sums[name] != digests[name]:
             report.problems.append(f"{name}: its {SU.SUMS_NAME} line does not match the file")
 
-    # The release as the API will list it, in upload order: parse_release
-    # checks every name, size and URL, and reads the first API_ASSETS only.
     paths = {**files, SU.SUMS_NAME: sums_path, **({SU.SIG_NAME: sig_path} if sig_path else {})}
-    first, then = order or (sorted(paths), [])
-    listed = [n for n in dict.fromkeys([*first, *then]) if n in paths]
-    listed += sorted(set(paths) - set(listed))
+    digests[SU.SUMS_NAME] = _sha256_file(sums_path)
+    if sig_path is not None:
+        digests[SU.SIG_NAME] = _sha256_file(sig_path)
+    upload = [*order[0], *order[1]] if order else None
+    orders = listing_orders(paths, upload)
     tag = f"v{version}"
-    api = {"tag_name": tag, "html_url": f"{SU.RELEASES_PREFIX}tag/{tag}", "body": "",
-           "assets": [{"name": n, "size": paths[n].stat().st_size,
-                       "browser_download_url": f"{SU.DOWNLOAD_PREFIX}{tag}/{n}",
-                       "digest": "sha256:" + (digests.get(n) or _sha256_file(paths[n]))}
-                      for n in listed][:API_ASSETS]}  # what an installed binary sees
+    api_size = None
+    if api is not None:
+        # What GitHub holds: every asset of the folder, nothing else, the
+        # same bytes - and its own order.
+        release_json, entries = api
+        real, seen = [], set()
+        for entry in entries:
+            name = entry.get("name") if isinstance(entry, dict) else None
+            if not isinstance(name, str):
+                report.problems.append("GitHub lists an asset without a name")
+                continue
+            if name in seen:
+                report.problems.append(f"GitHub lists {name} twice")
+                continue
+            seen.add(name)
+            real.append(name)
+            if name not in paths:
+                report.problems.append(f"{name}: an asset on GitHub, not in {assets} "
+                                       "(left over, or not downloaded)")
+                continue
+            if entry.get("size") != paths[name].stat().st_size:
+                report.problems.append(f"{name}: GitHub states {entry.get('size')} bytes, the "
+                                       f"file has {paths[name].stat().st_size}")
+            digest = entry.get("digest")
+            if isinstance(digest, str) and digest.startswith("sha256:") \
+                    and digest[len("sha256:"):].lower() != digests[name]:
+                report.problems.append(f"{name}: GitHub's digest is not the file's")
+            if entry.get("state", "uploaded") != "uploaded":
+                report.problems.append(f"{name}: its upload is {entry.get('state')!r}, "
+                                       "not finished")
+        for name in sorted(set(paths) - seen):
+            report.problems.append(f"{name}: in the folder, not among GitHub's assets "
+                                   "(not uploaded)")
+        if release_json is not None:
+            if release_json.get("tag_name") != tag:
+                report.problems.append(f"the release's tag is {release_json.get('tag_name')!r}, "
+                                       f"not {tag}")
+            api_size = len(json.dumps(release_json, separators=(",", ":")).encode())
+            notes = notes or str(release_json.get("body") or "")
+        modelled = orders[next(iter(MODELLED_ORDERS))]
+        if [n for n in real if n in paths] != [n for n in modelled if n in seen]:
+            report.warnings.append("GitHub lists the assets in another order than the modelled "
+                                   "one (by name, ignoring case): checked in both")
+        orders = {"GitHub's answer": real + [n for n in modelled if n not in seen], **orders}
+    else:
+        report.warnings.append("the order of the assets is modelled, not GitHub's: "
+                               "check the uploaded draft with --api-json or --release-id")
+
+    # The release as the new updater reads it (every asset): parse_release
+    # checks every name, size and URL.
+    listed = [n for n in next(iter(orders.values())) if n in paths]
+    api_answer = {"tag_name": tag, "html_url": f"{SU.RELEASES_PREFIX}tag/{tag}", "body": notes,
+                  "assets": [{"name": n, "size": paths[n].stat().st_size,
+                              "browser_download_url": f"{SU.DOWNLOAD_PREFIX}{tag}/{n}",
+                              "digest": "sha256:" + digests[n]} for n in listed]}
+    if len(listed) > SU.MAX_ASSETS:
+        report.problems.append(f"{len(listed)} assets: the updater reads at most {SU.MAX_ASSETS}")
+    estimate = len(json.dumps(api_answer, separators=(",", ":")).encode()) \
+        + API_ENTRY_EXTRA * len(listed)
+    for size, what in ((estimate, "about"), (api_size, "")):
+        if size is not None and size > SU.MAX_API_BYTES:
+            report.problems.append(f"the API's answer for the release has {what} {size} bytes "
+                                   f"({len(listed)} assets and the notes); the updater takes at "
+                                   f"most {SU.MAX_API_BYTES}")
     try:
-        release = SU.parse_release(api)
+        release = SU.parse_release(api_answer)
     except SU.UpdateError as exc:
         report.problems.append(f"the release does not parse: {exc}")
         return report
@@ -504,9 +713,26 @@ def check_release(assets: Path, version: str, *, keys: tuple[str, ...] | None,
         report.problems.append(f"the tag {tag} parses as {release.version}")
     reachable = {a.name for a in release.assets}
     for name in listed:
-        if name not in reachable and name not in then:
-            report.problems.append(f"{name}: the updater does not see it (one of more than "
-                                   f"{API_ASSETS} assets, or a name it refuses)")
+        if name not in reachable:
+            report.problems.append(f"{name}: a name the updater refuses")
+
+    # The binaries in use (0.14.136) read the first API_ASSETS of the answer
+    # only: what any updater needs must be among them, in every order.
+    needed = updater_assets(version) & set(paths)
+    late: dict[str, list[str]] = {}
+    for label, names in orders.items():
+        first = set(names[:API_ASSETS])
+        for name in sorted(needed - first):
+            late.setdefault(name, []).append(f"asset {names.index(name) + 1} of {len(names)} "
+                                             f"in {label}")
+    for name, where in sorted(late.items()):
+        report.problems.append(
+            f"{name}: {'; '.join(where)} - the updater of 0.14.136 (every binary in use) reads "
+            f"only the first {API_ASSETS} assets and misses it (attach fewer files: "
+            "--pack-wheels unhosted)")
+    if not late:
+        report.lines.append(f"{len(listed)} assets: everything an updater needs is among the "
+                            f"first {API_ASSETS} in {', '.join(orders)}")
 
     # The signature, with the keys the binaries in use pin.
     if sig_path is not None:
@@ -579,23 +805,86 @@ def check_release(assets: Path, version: str, *, keys: tuple[str, ...] | None,
             report.problems.append(f"packs: {exc}")
         else:
             blobs = manifest.get("blobs") or {}
+            hosted = 0
             for blob, entry in sorted(blobs.items()):
                 if blob not in files:
-                    report.problems.append(f"packs: {blob} is in {name} but not an asset")
+                    if pypi_address(blob, entry):
+                        hosted += 1  # core.packs fetches it there, checked by the manifest
+                    else:
+                        report.problems.append(f"packs: {blob} is in {name} but neither an "
+                                               "asset nor on PyPI: no base can fetch it")
                 elif entries.get(blob) != entry["sha256"] or digests[blob] != entry["sha256"] \
                         or files[blob].stat().st_size != entry["size"]:
                     report.problems.append(f"packs: {blob} differs from {name}")
-                elif blob not in reachable and not entry.get("pypi"):
-                    report.problems.append(f"packs: {blob} is past the first {API_ASSETS} assets "
-                                           "and has no PyPI address: no base can fetch it")
-                elif blob not in reachable:
-                    report.warnings.append(f"packs: {blob} is past the first {API_ASSETS} "
-                                           "assets: a base fetches it from PyPI")
             report.lines.append(f"{name}: {len(manifest.get('units') or {})} units, "
-                                f"{len(blobs)} wheels, every one in {SU.SUMS_NAME}")
+                                f"{len(blobs)} wheels: {len(blobs) - hosted} attached (each in "
+                                f"{SU.SUMS_NAME}), {hosted} fetched from PyPI against the "
+                                "manifest")
     else:
         report.missing.append(f"no {name}: an axross-base of {version} cannot add anything")
     return report
+
+
+# -- the release notes ---------------------------------------------------------------
+
+
+def changelog_section(text: str, version: str) -> tuple[str, str] | None:
+    """(heading, body) of *version*'s section of CHANGELOG.md: ``## X.Y.Z -
+    <date>``, or still ``## Unreleased (X.Y.Z)``."""
+    heading = re.compile(rf"## (?:{re.escape(version)}(?![0-9.])|Unreleased \({re.escape(version)}\))")
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if heading.match(line)), None)
+    if start is None:
+        return None
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    return lines[start], "\n".join(lines[start + 1:end]).strip()
+
+
+def release_notes(version: str, plan: Plan, section: str, native: str, signer: str) -> str:
+    """notes.md: the CHANGELOG section, the native components, the assets
+    and how to check them."""
+    def names(kind):
+        return ", ".join(f"`{i.name}`" for i in sorted(plan.items, key=lambda i: i.name)
+                         if i.kind == kind)
+    parts = [section or f"axross {version}."]
+    if native:
+        parts.append(native.strip())
+    assets = ["## Assets", ""]
+    for kind, what in (("binary", "One-file binaries (they update themselves)"),
+                       ("download", "One-file binaries to download (no self-update)"),
+                       ("tool", "The tools as programs of their own"),
+                       ("python", "Python packages (the same as on PyPI)")):
+        if names(kind):
+            assets.append(f"- {what}: {names(kind)}")
+    if plan.manifest is not None:
+        attached = sum(1 for i in plan.items if i.kind == "pack")
+        assets.append(f"- Packs, what an axross-base adds: `{P.manifest_name(version)}` and "
+                      f"{attached} wheels attached here; {len(plan.from_pypi)} more come from "
+                      "PyPI (files.pythonhosted.org), each checked against the SHA-256 and "
+                      "size the signed manifest names")
+    assets.append(f"- `{SU.SUMS_NAME}`: the SHA-256 of every asset; `{SU.SIG_NAME}`: its "
+                  "Ed25519 signature")
+    parts.append("\n".join(assets))
+    verify = ["## How to verify", "", "```bash", f"sha256sum --check --ignore-missing {SU.SUMS_NAME}"]
+    if signer:
+        verify += [
+            "# the signature: the raw Ed25519 signature of SHA256SUMS by the release key",
+            "{ printf '\\060\\052\\060\\005\\006\\003\\053\\145\\160\\003\\041\\000'; "
+            f"printf '%s' '{signer}' | base64 -d; }} > axross-release-key.der",
+            "openssl pkeyutl -verify -pubin -keyform DER -inkey axross-release-key.der -rawin "
+            f"-in {SU.SUMS_NAME} -sigfile {SU.SIG_NAME}",
+            "```", "",
+            f"The release key `{signer}` is the one the binaries pin "
+            "(`TRUSTED_KEYS` in `core/self_update.py`); the binaries check the signature "
+            "themselves before an update."]
+    else:
+        verify += ["```", "", f"This release is not signed: no {SU.SIG_NAME}."]
+    sums = [f"{i.sha256}  {i.name}" for i in sorted(plan.items, key=lambda i: i.name)
+            if i.kind in ("binary", "download", "tool", "python")]
+    if sums:
+        verify += ["", "The binaries and packages:", "", "```", *sums, "```"]
+    parts.append("\n".join(verify))
+    return "\n\n".join(parts) + "\n"
 
 
 # -- the run ---------------------------------------------------------------------------
@@ -630,6 +919,37 @@ def _verify_keys(args, signer: str | None) -> tuple[str, ...] | None:
     return field_keys() if args.key else None
 
 
+def _notes_inputs(args, plan: Plan) -> tuple[str, str]:
+    """(the CHANGELOG section, the native components) for notes.md; what is
+    missing goes into plan.missing (--require-all refuses then)."""
+    path = args.changelog or CHANGELOG
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        text = ""
+        plan.missing.append(f"{path}: {exc.strerror} (the release notes)")
+    found = changelog_section(text, plan.version) if text else None
+    section = ""
+    if found is None and text:
+        plan.missing.append(f"no section '## {plan.version} - <date>' in {path} (the release "
+                            "notes start from it)")
+    elif found is not None:
+        heading, section = found
+        if heading.startswith("## Unreleased"):
+            plan.missing.append(f"{path}: '{heading}' - turn it into '## {plan.version} - "
+                                "<date>' first (step 1 of the release flow)")
+    native = ""
+    if args.dist is not None and any(i.kind == "binary" and i.system == "linux"
+                                     for i in plan.items):
+        native_path = args.dist / "NATIVE-COMPONENTS.md"
+        if native_path.is_file():
+            native = native_path.read_text(encoding="utf-8")
+        else:
+            plan.missing.append(f"{native_path} (scripts/native_inventory.py --notes: the native "
+                                "components of the release notes)")
+    return section, native
+
+
 def assemble(args) -> int:
     version = args.version
     plan = Plan(version)
@@ -643,7 +963,7 @@ def assemble(args) -> int:
         plan.missing.append("the Linux binaries, wheel and sdist (--dist: build_dist.sh's folder)")
     packs = args.packs or (dist / "packs" if dist is not None else None)
     if packs is not None:
-        collect_packs(packs, plan)
+        collect_packs(packs, plan, args.pack_wheels)
     else:
         plan.missing.append(f"packs/{P.manifest_name(version)} (--packs)")
     if args.ci is not None:
@@ -654,6 +974,7 @@ def assemble(args) -> int:
         plan.missing.append("the macOS and Windows binaries (--ci: the bundle job's artifacts)")
     if not plan.items:
         raise Refused("nothing to assemble")
+    notes_inputs = _notes_inputs(args, plan)
     if plan.missing and args.require_all:
         raise Refused("--require-all: missing " + "; ".join(plan.missing))
     out = args.out
@@ -662,15 +983,29 @@ def assemble(args) -> int:
     assets = out / "assets"
     assets.mkdir(parents=True, exist_ok=True)
     try:
-        return _write_and_check(args, plan, out, assets)
+        return _write_and_check(args, plan, out, assets, notes_inputs)
     except BaseException:
         shutil.rmtree(assets, ignore_errors=True)  # nothing half-assembled is left to upload
-        for name in UPLOAD_LISTS:
+        for name in NOT_ASSETS:
             (out / name).unlink(missing_ok=True)
         raise
 
 
-def _write_and_check(args, plan: Plan, out: Path, assets: Path) -> int:
+def _signing_key(data: bytes, sig: Path, signer: str | None) -> str:
+    """The public key *sig* verifies with (TRUSTED_KEYS, or the dry run's)."""
+    if not sig.is_file():
+        return ""
+    for key in (*([signer] if signer else []), *SU.TRUSTED_KEYS):
+        try:
+            SU.verify_signature(data, sig.read_bytes(), keys=(key,))
+        except SU.SignatureError:
+            continue
+        return key
+    return ""
+
+
+def _write_and_check(args, plan: Plan, out: Path, assets: Path,
+                     notes_inputs: tuple[str, str]) -> int:
     version = plan.version
     for item in plan.items:
         copy_item(item, assets / item.name)
@@ -697,12 +1032,22 @@ def _write_and_check(args, plan: Plan, out: Path, assets: Path) -> int:
         first.remove(SU.SIG_NAME)
     (out / "upload-1.txt").write_text("".join(f"assets/{n}\n" for n in first), encoding="utf-8")
     (out / "upload-2.txt").write_text("".join(f"assets/{n}\n" for n in then), encoding="utf-8")
+    section, native = notes_inputs
+    notes = release_notes(version, plan, section, native,
+                          _signing_key(sums.read_bytes(), assets / SU.SIG_NAME, signer))
+    if len(notes) > MAX_NOTES:
+        raise Refused(f"the release notes have {len(notes)} characters; GitHub takes 125000 "
+                      f"(this script at most {MAX_NOTES})")
+    (out / NOTES).write_text(notes, encoding="utf-8")
 
     total = sum(i.size for i in plan.items)
     packs_count = sum(1 for i in plan.items if i.kind == "pack")
     print(f"axross {version} -> {assets}")
     print(f"  {len(plan.items) - packs_count} assets + {packs_count} pack wheels, "
           f"{_human(total)}, {SU.SUMS_NAME} with {len(plan.items)} lines")
+    if plan.from_pypi:
+        print(f"  {len(plan.from_pypi)} more pack wheels not attached: an axross-base fetches "
+              "them from PyPI, checked against the manifest (--pack-wheels all attaches them)")
     for item in sorted((i for i in plan.items if i.kind != "pack"), key=lambda i: i.name):
         note = " (download only: the updater has none for it)" if item.kind == "download" else ""
         print(f"  {item.name:38s} {_human(item.size):>10s}  {item.sha256[:16]}  "
@@ -716,15 +1061,15 @@ def _write_and_check(args, plan: Plan, out: Path, assets: Path) -> int:
                 print(f"  {entry}")
 
     keys = _verify_keys(args, signer)
-    report = check_release(assets, version, keys=keys, order=(first, then))
+    report = check_release(assets, version, keys=keys, order=(first, then), notes=notes)
     if args.allow_new_key or args.allow_unpinned:
         report.warnings.append("checked against " + ("the signing key alone"
                                if args.allow_unpinned else "TRUSTED_KEYS") +
                                ", not the field keys: installed binaries of 0.14.136 and older "
                                "refuse this release")
     _print_report(report)
-    print(f"Upload: upload-1.txt ({len(first)} files) first, then upload-2.txt "
-          f"({len(then)} pack wheels); docs/PACKAGING.md, \"Release flow\"")
+    print(f"Upload: upload-1.txt ({len(first)} files), upload-2.txt ({len(then)} pack wheels), "
+          f"notes {out / NOTES}; docs/PACKAGING.md, \"Release flow\"")
     why = ""
     if report.problems:
         why = f"{len(report.problems)} problems"
@@ -739,27 +1084,52 @@ def _write_and_check(args, plan: Plan, out: Path, assets: Path) -> int:
     return 0
 
 
+def github_release_json(release_id: str) -> str:
+    """``gh api repos/c0decave/axross/releases/<id>`` on github.com (read only)."""
+    if not release_id.isascii() or not release_id.isdigit():
+        raise Refused(f"--release-id {release_id!r}: the release's number (gh release view "
+                      "TAG --json databaseId --jq .databaseId)")
+    gh = shutil.which("gh")
+    if gh is None:
+        raise Refused("--release-id needs the GitHub CLI (gh); or pass --api-json FILE")
+    env = {**os.environ, "GH_HOST": "github.com"}
+    try:
+        proc = subprocess.run([gh, "api", f"repos/{SU.REPOSITORY}/releases/{release_id}"],
+                              capture_output=True, text=True, timeout=120, env=env)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise Refused(f"gh api: {exc}") from None
+    if proc.returncode != 0:
+        raise Refused(f"gh api repos/{SU.REPOSITORY}/releases/{release_id}: "
+                      f"{proc.stderr.strip()[-400:]}")
+    return proc.stdout
+
+
 def check_only(args) -> int:
     folder = args.check
     assets = folder / "assets" if (folder / "assets").is_dir() else folder
     order = None
-    if (folder / "upload-1.txt").is_file():
+    lists = folder if (folder / "upload-1.txt").is_file() else assets
+    if (lists / "upload-1.txt").is_file():
         def names(path):
             return [Path(line).name for line in path.read_text(encoding="utf-8").split()]
-        order = (names(folder / "upload-1.txt"), names(folder / "upload-2.txt")
-                 if (folder / "upload-2.txt").is_file() else [])
-    else:  # the order upload_order gives: the manifest's wheels last
-        manifest_path = assets / P.manifest_name(args.version)
+        order = (names(lists / "upload-1.txt"), names(lists / "upload-2.txt")
+                 if (lists / "upload-2.txt").is_file() else [])
+    api = None
+    if args.api_json is not None:
         try:
-            blobs = set(P.parse_manifest(manifest_path.read_bytes()).get("blobs") or {})
-        except (OSError, P.PackError):
-            blobs = set()
-        rest = sorted(p.name for p in assets.iterdir()
-                      if p.is_file() and p.name not in blobs and p.name not in UPLOAD_LISTS)
-        order = (sorted(rest, key=lambda n: n not in (SU.SUMS_NAME, SU.SIG_NAME)), sorted(blobs))
-    keys =SU.TRUSTED_KEYS if args.allow_new_key else field_keys()
+            api = load_api_json(args.api_json.read_text(encoding="utf-8"))
+        except OSError as exc:
+            raise Refused(f"{args.api_json}: {exc.strerror}") from None
+    elif args.release_id is not None:
+        api = load_api_json(github_release_json(args.release_id))
+    notes = ""
+    for place in (folder, assets):
+        if (place / NOTES).is_file():
+            notes = (place / NOTES).read_text(encoding="utf-8")
+            break
+    keys = SU.TRUSTED_KEYS if args.allow_new_key else field_keys()
     report = check_release(assets, args.version, keys=keys if (assets / SU.SIG_NAME).exists()
-                           or args.require_all else None, order=order)
+                           or args.require_all else None, order=order, api=api, notes=notes)
     print(f"axross {args.version}: {assets}")
     _print_report(report)
     if report.problems or (args.require_all and report.missing):
@@ -778,14 +1148,23 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description="Assemble the GitHub release assets and check them as the updater will.")
     mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--out", type=Path, help="new folder for assets/ and the upload lists")
+    mode.add_argument("--out", type=Path, help="new folder for assets/, the upload lists and "
+                      "notes.md")
     mode.add_argument("--check", type=Path, metavar="DIR",
-                      help="only check an assembled folder (DIR or DIR/assets)")
+                      help="only check an assembled folder (DIR or DIR/assets) or a downloaded "
+                           "draft")
     parser.add_argument("--version", default=None,
                         help="the release's version (default: axross/_version.py)")
     parser.add_argument("--dist", type=Path, help="scripts/build_dist.sh's folder, dist/<version>")
     parser.add_argument("--ci", type=Path, help="the bundle job's artifacts (folders or .zip)")
     parser.add_argument("--packs", type=Path, help="the packs folder (default: DIST/packs)")
+    parser.add_argument("--pack-wheels", choices=PACK_WHEELS, default="unhosted",
+                        help="unhosted (default): attach only the pack wheels without a PyPI "
+                             "address, a base fetches the others from PyPI; all: attach every "
+                             "wheel")
+    parser.add_argument("--changelog", type=Path, default=None,
+                        help="the CHANGELOG.md the release notes start from (default: this "
+                             "tree's)")
     parser.add_argument("--key", type=Path, help="sign SHA256SUMS with this key "
                         "(scripts/sign_release.py; a key of FIELD_KEYS)")
     parser.add_argument("--packs-issue", type=int, default=None, metavar="N",
@@ -797,10 +1176,18 @@ def main(argv=None) -> int:
                              "checks against that key alone")
     parser.add_argument("--require-all", action="store_true",
                         help="refuse unless every binary, the packs, wheel and sdist are there")
+    github = parser.add_mutually_exclusive_group()
+    github.add_argument("--api-json", type=Path, metavar="FILE",
+                        help="--check: GitHub's release JSON (gh api repos/c0decave/axross/"
+                             "releases/<id>) or asset list - its order, sizes and digests")
+    github.add_argument("--release-id", metavar="ID",
+                        help="--check: read that JSON with gh api on github.com")
     args = parser.parse_args(argv)
     args.version = args.version or _default_version()
     if SU.parse_version(args.version) is None or args.version.startswith("v"):
         parser.error(f"--version {args.version!r}: X.Y.Z")
+    if args.check is None and (args.api_json is not None or args.release_id is not None):
+        parser.error("--api-json and --release-id go with --check")
     try:
         return check_only(args) if args.check is not None else assemble(args)
     except Refused as exc:

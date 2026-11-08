@@ -544,7 +544,11 @@ class MetadataDialog(QDialog):
         row = self.table.rowAt(pos.y())
         if row >= 0 and not self.table.selectionModel().isRowSelected(row):
             self.table.selectRow(row)
-        self.build_context_menu().exec(self.table.viewport().mapToGlobal(pos))
+        menu = self.build_context_menu()
+        try:
+            menu.exec(self.table.viewport().mapToGlobal(pos))
+        finally:
+            menu.deleteLater()  # else every right click leaves it behind
 
     def export(self) -> None:
         if not self._reports:

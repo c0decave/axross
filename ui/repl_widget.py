@@ -121,7 +121,7 @@ def _build_globals() -> dict:
     # block runs it, as from --script, Run, the scheduler and script_run.
     return {
         "__name__": "__main__",
-        "__doc__": "Axross embedded REPL — see axross.help()",
+        "__doc__": "axross embedded REPL — see axross.help()",
         "axross": _scripting,
     }
 
@@ -292,7 +292,7 @@ class ReplWidget(QPlainTextEdit):
     def _print_banner(self) -> None:
         py = sys.version.split()[0]
         self._append(
-            f"Axross embedded REPL · Python {py}\n"
+            f"axross embedded REPL · Python {py}\n"
             "Type axross.help() for the cheat-sheet · Tab completes names · "
             "Ctrl-D / exit() to close.\n",
         )

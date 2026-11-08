@@ -406,18 +406,76 @@ class GitFsSession(SessionLifecycle):
         self._tunnels = []
 
     def _fetch_origin(self) -> None:
-        """Fetch from origin, honouring the profile proxy when set."""
-        if not self._transport_kwargs:
-            porcelain.fetch(self._repo, remote_location=self._connect_url)
-            return
-        # ``porcelain.fetch`` has no pool_manager hook, so go through the
-        # transport directly (it never updates refs for a bare URL anyway).
+        """Fetch from origin, honouring the profile proxy when set, and
+        bring the cache's refs up to the remote's.
+
+        ``porcelain.fetch(remote_location=<URL>)`` updated no ref: given a
+        URL, not the remote's name, dulwich has no remote to file the
+        refs under. The objects arrived, the refs stayed at clone time,
+        and a session showed - and committed on top of - the clone-time
+        content for ever. The refs are set here: see
+        :meth:`_update_from_remote_refs`."""
         client, path = get_transport_and_path(
             self._connect_url,
             config=self._repo.get_config_stack(),
             **self._transport_kwargs,
         )
-        client.fetch(path.encode() if isinstance(path, str) else path, self._repo)
+        result = client.fetch(path.encode() if isinstance(path, str) else path, self._repo)
+        self._update_from_remote_refs(getattr(result, "refs", None) or {})
+
+    _REMOTE_PREFIX = b"refs/remotes/origin/"
+
+    def _update_from_remote_refs(self, remote_refs: dict) -> None:
+        """File a fetch's answer under ``refs/remotes/origin/*``, and move
+        each local branch that has nothing of its own along with it.
+
+        * ``refs/remotes/origin/<b>`` = the remote's ``refs/heads/<b>``;
+          a remote-tracking ref of a branch the remote no longer has goes.
+        * ``refs/heads/<b>`` is fast-forwarded when it is an ancestor of
+          the remote's tip: no commit made here is lost. A branch with
+          commits of its own (not pushed yet) keeps them; a diverged one
+          is left as it is and _commit_modification refuses to build on
+          it until it is merged.
+        * a tag the cache does not have yet is added; one it has stays.
+        Refs whose objects the fetch did not bring are skipped."""
+        refs = self._repo.refs
+        store = self._repo.object_store
+        upstream: dict[bytes, bytes] = {}
+        remote_branches: set[bytes] = set()
+        for ref, sha in remote_refs.items():
+            if not isinstance(ref, bytes) or not sha or ref.endswith(b"^{}"):
+                continue
+            if ref.startswith(b"refs/heads/"):
+                remote_branches.add(ref[len(b"refs/heads/") :])
+            if sha not in store:
+                continue
+            if ref.startswith(b"refs/heads/"):
+                upstream[ref[len(b"refs/heads/") :]] = sha
+            elif ref.startswith(b"refs/tags/") and ref not in refs:
+                refs[ref] = sha
+        for name, sha in upstream.items():
+            refs[self._REMOTE_PREFIX + name] = sha
+            local_ref = b"refs/heads/" + name
+            try:
+                local = refs[local_ref]
+            except KeyError:
+                local = None
+            if local is None or local == sha:
+                continue
+            if self._is_ancestor(local, sha):
+                refs.set_if_equals(local_ref, local, sha)
+                log.debug("Git-FS: %s fast-forwarded to %s", name.decode("utf-8", "replace"),
+                          _short_sha(sha))
+            elif not self._is_ancestor(sha, local):
+                log.warning(
+                    "Git-FS: local branch %s has diverged from origin (%s vs %s); "
+                    "it is shown as it is here",
+                    name.decode("utf-8", "replace"), _short_sha(local), _short_sha(sha),
+                )
+        if remote_branches:
+            for ref in list(refs.keys(base=self._REMOTE_PREFIX)):
+                if ref != b"HEAD" and ref not in remote_branches:
+                    del refs[self._REMOTE_PREFIX + ref]
 
     def _git_config_value(self, section: str, key: str) -> str:
         try:

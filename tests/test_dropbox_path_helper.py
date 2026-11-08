@@ -85,10 +85,15 @@ class DropboxPathHelperTest(unittest.TestCase):
         )
 
     def test_edge_paths_map_like_the_core_calls(self) -> None:
-        # Relative and trailing-slash forms map to the API form that
-        # list_dir/open_read use: leading "/", no trailing "/".
-        self.s.copy("a.txt", "/dir/")
-        self.assertEqual(self.dbx.calls, [("files_copy_v2", "/a.txt", "/dir")])
+        # Relative forms map to the API form that list_dir/open_read use:
+        # a leading "/".
+        self.s.copy("a.txt", "dir/b.txt")
+        self.assertEqual(self.dbx.calls, [("files_copy_v2", "/a.txt", "/dir/b.txt")])
+        # A FILE copied to a name ending in "/" is refused: the API form
+        # drops the slash, and the copy became the file "/dir".
+        with self.assertRaises(IsADirectoryError):
+            self.s.copy("a.txt", "/dir/")
+        self.assertNotIn("files_copy_v2", [c[0] for c in self.dbx.calls[1:]])
 
 
 if __name__ == "__main__":

@@ -326,6 +326,22 @@ class MailDockPanel(QWidget):
         self.runner.close()
 
 
+#: Item data role marking a combo entry for a saved name that is gone.
+_MISSING_ROLE = Qt.ItemDataRole.UserRole + 1
+
+
+def _select_saved(combo: QComboBox, name: str) -> None:
+    """Select the entry for the saved *name*; a name the list no longer
+    has is added as "<name> (missing)" and selected, never replaced by the
+    first entry."""
+    index = combo.findData(name)
+    if index < 0 and name:
+        combo.addItem(tr("{name} (missing)").format(name=name), name)
+        index = combo.count() - 1
+        combo.setItemData(index, True, _MISSING_ROLE)
+    combo.setCurrentIndex(max(0, index))
+
+
 class MailDockDialog(QDialog):
     """The settings of one mail dock."""
 
@@ -339,8 +355,9 @@ class MailDockDialog(QDialog):
         form = QFormLayout(self)
         self.name = QLineEdit(dock.name)
         self.mailbox = QComboBox()
-        self.mailbox.addItems(mailboxes)
-        self.mailbox.setCurrentText(dock.mailbox_profile)
+        for name in mailboxes:
+            self.mailbox.addItem(name, name)
+        _select_saved(self.mailbox, dock.mailbox_profile)
         self.folder = QLineEdit(dock.folder)
         self.interval = QSpinBox()
         self.interval.setRange(1, 1440)
@@ -352,12 +369,12 @@ class MailDockDialog(QDialog):
         self.llm.addItem(tr("(the active LLM profile)"), "")
         for name in llms:
             self.llm.addItem(name, name)
-        self.llm.setCurrentIndex(max(0, self.llm.findData(dock.llm_profile)))
+        _select_saved(self.llm, dock.llm_profile)
         self.sandbox = QComboBox()
         self.sandbox.addItem(tr("(no sandbox)"), "")
         for name in sandboxes:
             self.sandbox.addItem(name, name)
-        self.sandbox.setCurrentIndex(max(0, self.sandbox.findData(dock.sandbox)))
+        _select_saved(self.sandbox, dock.sandbox)
         self.policy = QComboBox()
         for key, label in (("never", tr("Never send - drafts only")),
                            ("ask", tr("Ask me before each mail")),
@@ -405,7 +422,7 @@ class MailDockDialog(QDialog):
         def names(text):
             return [p.strip() for p in text.split(",") if p.strip()]
         return dataclasses.replace(
-            self._dock, name=self.name.text().strip(), mailbox_profile=self.mailbox.currentText(),
+            self._dock, name=self.name.text().strip(), mailbox_profile=self.mailbox.currentData() or "",
             folder=self.folder.text().strip() or "INBOX", interval_minutes=self.interval.value(),
             instructions=self.instructions.toPlainText().strip(), llm_profile=self.llm.currentData() or "",
             sandbox=self.sandbox.currentData() or "", send_policy=self.policy.currentData(),
@@ -415,7 +432,24 @@ class MailDockDialog(QDialog):
             report_to=names(self.report_to.text()), dns_checks=self.dns_checks.isChecked(),
             enabled=self.enabled.isChecked())
 
+    def missing_choices(self) -> list[str]:
+        """The saved mailbox / LLM / sandbox names this dialog shows as
+        "(missing)": renamed or deleted since the dock was set up."""
+        return [f"{label} {combo.currentData()}"
+                for label, combo in ((tr("Mailbox:"), self.mailbox), (tr("LLM:"), self.llm),
+                                     (tr("Sandbox:"), self.sandbox))
+                if combo.currentData(_MISSING_ROLE)]
+
     def _accept(self) -> None:
+        missing = self.missing_choices()
+        if missing:
+            # Before, OK put the first entry in place of a name that is gone:
+            # a renamed sandbox profile became "(no sandbox)" without a word.
+            QMessageBox.warning(self, tr("Mail Dock"), tr(
+                "This dock names a mailbox, LLM or sandbox profile that no longer exists:\n\n"
+                "{names}\n\nChoose one from the list (or \"{none}\" on purpose) before "
+                "saving.").format(names="\n".join(missing), none=tr("(no sandbox)")))
+            return
         dock = self.config()
         if not dock.mailbox_profile.strip():
             # Before, a dock without a mailbox was saved and failed at every run.
@@ -426,10 +460,18 @@ class MailDockDialog(QDialog):
         try:
             dock.validate()
         except ValueError as exc:
-            QMessageBox.warning(self, tr("Mail Dock"), str(exc))
+            # validate() speaks English (core); its sentences are in the catalogue.
+            QMessageBox.warning(self, tr("Mail Dock"), tr(str(exc)))
             return
-        if self.smtp_password.text():
-            MD.store_smtp_password(dock, self.smtp_password.text())
+        if self.smtp_password.text() and not MD.store_smtp_password(dock, self.smtp_password.text()):
+            # Before, the password was dropped without a word when no
+            # keyring was usable, and every send failed at its login.
+            from core import credentials
+
+            QMessageBox.warning(self, tr("Mail Dock"), tr(
+                "The SMTP password was not saved: no usable keyring.\n\n{why}\n\nThe other "
+                "settings are saved; enter the password again once the keyring works.").format(
+                    why=credentials.keyring_status_message()))
         self.result_dock = dock
         self.accept()
 

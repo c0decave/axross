@@ -651,7 +651,7 @@ class ExtensionPanelsMixin:
         on screen; made once (the Workspace menu is rebuilt on each open)."""
         menu = self.__dict__.get("_ax_workspace_panel_menu")
         if menu is None:
-            menu = QMenu(tr("Add Extension Panel"), self)
+            menu = QMenu(tr("Add &Extension Panel"), self)
             menu.aboutToShow.connect(
                 lambda m=menu: self.fill_add_extension_panel_menu(m, self._current_ws))
             self.__dict__["_ax_workspace_panel_menu"] = menu

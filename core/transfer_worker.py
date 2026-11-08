@@ -363,6 +363,10 @@ class TransferJob:
     speed: float = 0.0
     status: TransferStatus = TransferStatus.PENDING
     error_message: str = ""
+    #: The exception behind ``error_message`` (traceback dropped): the
+    #: Transfers panel shows core.user_errors.describe() of it, in the
+    #: interface language; the raw text stays in the log and the tooltip.
+    error: BaseException | None = field(default=None, repr=False, compare=False)
     cancel_event: Event = field(default_factory=Event)
     filename: str = ""
     source_backend: object = field(default=None, repr=False)
@@ -432,6 +436,18 @@ class TransferJob:
             return 0.0
         return min(100.0, (self.transferred_bytes / self.total_bytes) * 100.0)
 
+
+def _without_traceback(exc: BaseException) -> BaseException:
+    """*exc* (and the exceptions it was raised from) without their
+    tracebacks: a failed job keeps its exception for the Transfers panel,
+    not the frames - and with them the backends - of the worker."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        current.__traceback__ = None
+        current = current.__cause__ or current.__context__
+    return exc
 
 class TransferWorker(QObject):
     """Processes transfer jobs from a queue, emitting progress signals.
@@ -716,6 +732,7 @@ class TransferWorker(QObject):
 
         except Exception as e:
             job.error_message = str(e)
+            job.error = _without_traceback(e)
             self._finish_journal(job, status="error", error=str(e))
             job.status = TransferStatus.ERROR
             self.job_error.emit(job.job_id, str(e))

@@ -233,7 +233,8 @@ FEATURES: tuple[Feature, ...] = (
         "Connections & backends",
         "backend-cloud",
         "OneDrive / SharePoint / Google Drive / Dropbox",
-        ["core/onedrive_client.py", "core/gdrive_client.py", "core/dropbox_client.py"],
+        ["core/onedrive_client.py", "core/gdrive_client.py", "core/dropbox_client.py",
+         "core/cloud_http.py"],
         [
             (
                 "tests/test_onedrive_path_encoding.py::OneDrivePathEncodingTest::test_happy_plain_names_are_unchanged",
@@ -1040,7 +1041,8 @@ FEATURES: tuple[Feature, ...] = (
         "MCP & agent",
         "mcp-server",
         "MCP server (stdio / HTTP, capability groups)",
-        ["core/mcp_server.py", "core/mcp_http.py", "core/mcp_groups.py"],
+        ["core/mcp_server.py", "core/mcp_http.py", "core/mcp_groups.py", "core/confined_fs.py",
+         "core/regex_worker.py"],
         [
             ("tests/test_mcp_groups_e2e.py::test_happy_stdio_server_serves_every_group", "process"),
             ("tests/test_mcp_groups_e2e.py::test_happy_http_server_serves_every_group", "process"),

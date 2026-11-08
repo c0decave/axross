@@ -83,7 +83,7 @@ AREAS: tuple[Area, ...] = (
     Area("protocols.webdav", "WebDAV", _core("webdav_client")),
     Area("protocols.cloud", "Cloud Storage (S3, Azure, Google Drive, Dropbox, OneDrive)",
          _core("s3_client", "azure_client", "gdrive_client", "dropbox_client",
-               "onedrive_client", "oauth_help")),
+               "onedrive_client", "oauth_help", "cloud_http")),
     Area("protocols.nfs", "NFS / iSCSI", _core("nfs_client", "nfs3_rpc", "nfs4_rpc", "nfs_user_client",
                                                "iscsi_client")),
     Area("protocols.mail", "Mail / News (IMAP, POP3, NNTP, Exchange, mail docks and projects)",
@@ -149,7 +149,7 @@ AREAS: tuple[Area, ...] = (
         *_ui("mcp_catalog_dialog"),
     )),
     Area("mcp.server", "MCP Server (axross as a server)",
-         _core("mcp_server", "mcp_http", "mcp_groups")),
+         _core("mcp_server", "mcp_http", "mcp_groups", "confined_fs", "regex_worker")),
     Area("scripting", "Scripting", (
         *_core("scripting", "script_runner", "ui_helpers", "llm_guide"),
         *_ui("repl_widget", "script_editor", "scripting_guide", "scripts_dock"),

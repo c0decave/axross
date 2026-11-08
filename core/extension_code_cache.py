@@ -6,7 +6,9 @@ same size kept its old byte code). Compiling all bundled extensions took
 about 270 ms of every start, though their sources rarely change. This cache
 keeps that guarantee - the key is the SHA-256 of the source itself (with its
 path, the Python version and the optimisation level), so a changed source
-can never find the old code - and saves the compile.
+can never find the old code - and saves the compile. A file of a one-file
+binary's bundle is keyed by its path in the bundle (it unpacks to a new
+folder at every start); code read back is given the path it runs from.
 
 Where: in memory for this process, and on POSIX in
 ``$XDG_CACHE_HOME/axross/extension-code`` (an absolute XDG_CACHE_HOME only,
@@ -14,9 +16,21 @@ else ``~/.cache``). Code from that folder runs in axross, so it is read only
 when the folder is a real directory (no symlink) owned by the user that no
 one else may write to, and the file a regular file owned by the user that
 no one else may read or write; anything else is ignored (and compiled
-anew). Whoever can write there could already change the user's extensions.
-Each entry also carries the SHA-256 of its payload: a truncated or damaged
-file is compiled anew, never run. Windows keeps the in-memory cache only.
+anew). Windows keeps the in-memory cache only.
+
+Each entry is authenticated: it carries an HMAC-SHA256 of its key and
+payload under a random secret of this user (:data:`SECRET_NAME` in
+``~/.config/axross``, 32 bytes, 0600). A plain checksum stopped only
+damage: the key is the hash of public inputs, so whoever could write in
+the cache folder - an agent or an MCP client allowed to write in the home
+folder - planted byte code for a bundled extension and axross ran it at the
+next start. An entry without the right MAC is compiled anew, never run.
+The secret is made once with O_EXCL (a private temporary file linked to its
+name, so no reader sees half of one) and used only when it is a regular
+file of this user no one else may read or write, in a folder no one else
+may write to; when it cannot be read or made safely, only the in-memory
+cache is used. Both folders are protected places (core.protected_places):
+no MCP tool writes there, and the agent sandbox mounts them read-only.
 
 Entries are written at most :data:`MAX_ENTRIES` deep; the oldest go first.
 """
@@ -24,10 +38,12 @@ Entries are written at most :data:`MAX_ENTRIES` deep; the oldest go first.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import importlib.util
 import logging
 import marshal
 import os
+import secrets
 import stat
 import sys
 import tempfile
@@ -43,7 +59,13 @@ log = logging.getLogger(__name__)
 MAX_ENTRIES = 256
 #: The largest entry read back (bytes); larger is ignored.
 MAX_ENTRY_BYTES = 32 * 1024 * 1024
-_MAGIC = b"AXEC1\n"
+# AXEC1 entries carried a plain SHA-256 of the payload: never read again.
+_MAGIC = b"AXEC2\n"
+#: The HMAC secret's file name in ~/.config/axross.
+SECRET_NAME = "extension-code.key"
+_SECRET_BYTES = 32
+#: The secret once looked up: ``[bytes]``, or ``[None]`` (none to be had safely).
+_SECRET: list = []
 _SUFFIX = ".code"
 _MEMORY: dict[str, types.CodeType] = {}
 _MEMORY_LIMIT = 128
@@ -63,12 +85,109 @@ def _disk_allowed() -> bool:
     return os.name == "posix" and hasattr(os, "geteuid")
 
 
+def secret_path() -> Path:
+    """Where the HMAC secret of the cache entries lives (a protected place)."""
+    return Path.home() / ".config" / "axross" / SECRET_NAME
+
+
+def _read_secret_file(path: Path) -> bytes | None:
+    """The secret at *path* when it can be trusted, else None. A missing
+    file raises FileNotFoundError."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+    try:
+        st = os.fstat(fd)
+        if (not stat.S_ISREG(st.st_mode) or st.st_uid != effective_uid()
+                or st.st_mode & 0o077 or st.st_size != _SECRET_BYTES):
+            log.warning("The extension code cache secret %s is not private to this user: "
+                        "the disk cache is not used", path)
+            return None
+        data = os.read(fd, _SECRET_BYTES + 1)
+    finally:
+        os.close(fd)
+    return data if len(data) == _SECRET_BYTES else None
+
+
+def _make_secret(folder: Path) -> bytes | None:
+    """A new secret in *folder*, made atomically: a private temporary file
+    (O_EXCL, 0600) linked to its name - which fails when another process
+    was first (None: read that one)."""
+    fd, tmp = tempfile.mkstemp(prefix=".", suffix=".tmp", dir=folder)
+    try:
+        secret = secrets.token_bytes(_SECRET_BYTES)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(secret)
+            fh.flush()
+            os.fsync(fh.fileno())
+        try:
+            os.link(tmp, folder / SECRET_NAME)
+        except FileExistsError:
+            return None
+        return secret
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def _secret() -> bytes | None:
+    """This user's HMAC secret, made at the first use; None when it cannot
+    be read or made safely (the disk cache is not used then)."""
+    with _LOCK:
+        if _SECRET:
+            return _SECRET[0]
+    path = secret_path()
+    secret = None
+    try:
+        if _private_dir(path.parent, create=True):
+            try:
+                secret = _read_secret_file(path)
+            except FileNotFoundError:
+                secret = _make_secret(path.parent)
+                if secret is None:
+                    secret = _read_secret_file(path)
+    except OSError as exc:
+        log.debug("Extension code cache secret not available: %s", exc)
+        secret = None
+    with _LOCK:
+        _SECRET[:] = [secret]
+    return secret
+
+
+def _mac(secret: bytes, key: str, payload: bytes) -> bytes:
+    return hmac.new(secret, _MAGIC + key.encode("ascii") + b"\n" + payload,
+                    hashlib.sha256).digest()
+
+
+def _key_path(path: str) -> str:
+    """*path* as the key names it. A one-file binary (PyInstaller) unpacks
+    to a new random ``/tmp/_MEIxxxx`` at every start: a file of the bundle
+    is named by its path in the bundle, or the cache never hit there and
+    every start wrote the bundled extensions' code anew."""
+    base = getattr(sys, "_MEIPASS", "") if getattr(sys, "frozen", False) else ""
+    if base:
+        absolute, bundle = os.path.abspath(path), os.path.abspath(base)
+        if absolute.startswith(bundle.rstrip(os.sep) + os.sep):
+            return "<bundle>/" + os.path.relpath(absolute, bundle).replace(os.sep, "/")
+    return path
+
+
+def _named(code: types.CodeType, path: str) -> types.CodeType:
+    """*code* (and the code objects in it) with ``co_filename`` *path*: code
+    read back from a bundle unpacked elsewhere names the file it runs from."""
+    if code.co_filename == path:
+        return code
+    consts = tuple(_named(c, path) if isinstance(c, types.CodeType) else c
+                   for c in code.co_consts)
+    return code.replace(co_filename=path, co_consts=consts)
+
+
 def source_key(source: bytes, path: str) -> str:
     """The key of *source* compiled as *path* by this Python."""
     h = hashlib.sha256()
     h.update(importlib.util.MAGIC_NUMBER)
     h.update(f"{sys.implementation.cache_tag}|{sys.flags.optimize}|".encode())
-    h.update(os.fsencode(path))
+    h.update(os.fsencode(_key_path(path)))
     h.update(b"\0")
     h.update(source)
     return h.hexdigest()
@@ -87,6 +206,7 @@ def compile_source(source: bytes, path: str, *, key: str | None = None) -> types
     code = _read(key) if _disk_allowed() else None
     if code is not None:
         stats["disk"] += 1
+        code = _named(code, path)
     else:
         code = compile(source, path, "exec", dont_inherit=True)
         stats["compiled"] += 1
@@ -100,8 +220,10 @@ def compile_source(source: bytes, path: str, *, key: str | None = None) -> types
 
 
 def clear_memory() -> None:
+    """Forget the compiled code and the secret (looked up again at the next use)."""
     with _LOCK:
         _MEMORY.clear()
+        _SECRET.clear()
 
 
 def _private_dir(folder: Path, *, create: bool) -> bool:
@@ -122,6 +244,9 @@ def _private_dir(folder: Path, *, create: bool) -> bool:
 
 
 def _read(key: str) -> types.CodeType | None:
+    secret = _secret()
+    if secret is None:
+        return None
     folder = cache_dir()
     if not _private_dir(folder, create=False):
         return None
@@ -150,8 +275,9 @@ def _read(key: str) -> types.CodeType | None:
     stored_key = data[len(_MAGIC):len(_MAGIC) + 64].decode("ascii", "replace")
     digest = data[len(_MAGIC) + 65:head]
     payload = data[head:]
-    if stored_key != key or hashlib.sha256(payload).digest() != digest:
-        log.info("Extension code cache entry %s is damaged: compiled anew", path)
+    if stored_key != key or not hmac.compare_digest(_mac(secret, key, payload), digest):
+        log.info("Extension code cache entry %s is damaged or not made here: compiled anew",
+                 path)
         return None
     try:
         code = marshal.loads(payload)
@@ -161,13 +287,16 @@ def _read(key: str) -> types.CodeType | None:
 
 
 def _write(key: str, code: types.CodeType) -> None:
+    secret = _secret()
+    if secret is None:
+        return
     folder = cache_dir()
     try:
         if not _private_dir(folder, create=True):
             return
         payload = marshal.dumps(code)
         data = (_MAGIC + key.encode("ascii") + b"\n"
-                + hashlib.sha256(payload).digest() + payload)
+                + _mac(secret, key, payload) + payload)
         fd, tmp = tempfile.mkstemp(prefix=".", suffix=".tmp", dir=folder)  # 0o600
         try:
             with os.fdopen(fd, "wb") as fh:

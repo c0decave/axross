@@ -94,6 +94,14 @@ class MailDockConfig:
             raise ValueError("the interval is 1 to 1440 minutes")
         if self.send_policy != "never" and not (self.smtp_host and self.from_address):
             raise ValueError("sending needs an SMTP server and a From address")
+        if self.send_policy != "never" and self.smtp_security == "plain":
+            from core.mail_send import _is_local
+
+            # Refused at every send anyway (core.mail_send); refused here so the
+            # dock is not saved with a setting that fails at each run.
+            if not _is_local(self.smtp_host.strip()):
+                raise ValueError("SMTP without TLS is only allowed to this machine; "
+                                 "choose STARTTLS or TLS for a remote server")
 
 
 class MailDockStore:
@@ -125,23 +133,25 @@ class MailDockStore:
         os.replace(tmp, self.path)
 
 
-def smtp_password(dock: MailDockConfig) -> str:
-    try:
-        import keyring
+def _smtp_entry(dock: MailDockConfig) -> str:
+    return f"mail-dock-smtp:{dock.dock_id}"
 
-        return keyring.get_password("axross", f"mail-dock-smtp:{dock.dock_id}") or ""
-    except Exception:  # noqa: BLE001 - no keyring: no password
-        return ""
+
+def smtp_password(dock: MailDockConfig) -> str:
+    """The dock's SMTP password from the keyring, '' when none is stored
+    (or no keyring is usable). Through core.credentials like a connection
+    profile's password: never a keyring that asks on the terminal."""
+    from core import credentials
+
+    return credentials.get_password(_smtp_entry(dock)) or ""
 
 
 def store_smtp_password(dock: MailDockConfig, password: str) -> bool:
-    try:
-        import keyring
+    """Store the dock's SMTP password; False when no usable keyring took it
+    (the caller tells the user - it is not kept anywhere else)."""
+    from core import credentials
 
-        keyring.set_password("axross", f"mail-dock-smtp:{dock.dock_id}", password)
-        return True
-    except Exception:  # noqa: BLE001
-        return False
+    return credentials.store_password(_smtp_entry(dock), password)
 
 
 # --- between docks -------------------------------------------------------------------
@@ -183,7 +193,11 @@ class Mailbox:
     """One folder of a mail backend, with the dock's memory of what it saw."""
 
     def __init__(self, backend, folder: str, state_file: Path):
-        self.backend, self.folder, self.state_file = backend, folder.strip("/") or "INBOX", state_file
+        # POP3 lists its mail at "/" and has no INBOX: the dock reads "/"
+        # there, whatever folder its settings name (default "INBOX").
+        flat = bool(getattr(backend, "FLAT_MAILBOX", False))
+        self.backend, self.state_file = backend, state_file
+        self.folder = "" if flat else (folder.strip("/") or "INBOX")
         self._seen: set[str] = set()
         self._ids: dict[str, str] = {}       # short id -> backend path
         try:
@@ -197,8 +211,11 @@ class Mailbox:
         tmp.write_text(json.dumps({"seen": sorted(self._seen)[-50_000:]}), encoding="utf-8")
         os.replace(tmp, self.state_file)
 
+    def _dir(self) -> str:
+        return "/" + self.folder
+
     def _items(self) -> list:
-        items = [i for i in self.backend.list_dir("/" + self.folder)
+        items = [i for i in self.backend.list_dir(self._dir())
                  if not i.is_dir and i.name.lower().endswith(".eml")]
         items.sort(key=lambda i: i.modified)
         return items
@@ -230,9 +247,10 @@ class Mailbox:
     def mark_seen(self, msg_id: str) -> None:
         """Remember the message *msg_id* (an id :meth:`new` or
         :meth:`recent` gave, or a bare ``.eml`` name) as handled: the agent
-        read, analysed or answered it. Listing alone marks nothing - a run
-        that fails, is cancelled or crashes after ``mail_list_new`` leaves
-        the mail new for the next run."""
+        read, analysed or answered it, or (core.mail_dock_runner) listed it in
+        a run that ended with an answer. A run that fails, is cancelled or
+        crashes after ``mail_list_new`` leaves a mail it only listed new for
+        the next run."""
         name = self._ids.get(msg_id) or (msg_id if msg_id.endswith(".eml") else "")
         if _bare_name(name) and name not in self._seen:
             self._seen.add(name)
@@ -253,13 +271,13 @@ class Mailbox:
         name = self._ids.get(msg_id) or (msg_id if msg_id.endswith(".eml") else "")
         if not _bare_name(name):
             raise KeyError(f"no message {msg_id!r} - use an id mail_list_new or mail_list gave")
-        folder = "/" + self.folder
+        folder = self._dir()
         path = self.backend.join(folder, name)
         if posixpath.dirname(posixpath.normpath(path)) != posixpath.normpath(folder):
-            raise KeyError(f"no message {msg_id!r} in {self.folder}")
+            raise KeyError(f"no message {msg_id!r} in {self.folder or '/'}")
         with self.backend.open_read(path) as f:
             data = f.read(MAX_MESSAGE + 1)
-        return parse_any(data, name, f"{self.folder}/{name}")
+        return parse_any(data, name, f"{self.folder}/{name}" if self.folder else name)
 
 
 def _bare_name(name: str) -> bool:
@@ -525,7 +543,9 @@ class MailTools:
         return [
             FunctionTool("mail_list_new", "The messages that arrived in this dock's mailbox since it last "
                          "looked: id, from, subject, date, attachments, suspicion score. A message counts as "
-                         "handled once mail_read or mail_analyse opened it; one not opened is listed again.",
+                         "handled once mail_read, mail_analyse or a reply opened it, and every listed one "
+                         "once this run ends with an answer; after a failed or stopped run the ones not "
+                         "opened are listed again.",
                          {"type": "object", "properties": {}}, self.list_new, group="mail"),
             FunctionTool("mail_list", "The newest messages of the mailbox folder (id, date).",
                          {"type": "object", "properties": {"limit": {"type": "integer", "minimum": 1,

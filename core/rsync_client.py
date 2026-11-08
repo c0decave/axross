@@ -983,8 +983,20 @@ class RsyncSession(SessionLifecycle):
         replacing namesakes, before the source was deleted. A file over a
         file is replaced, as rename does elsewhere. A destination that
         cannot be checked raises: unknown is not "free".
+
+        A rename onto itself changes nothing, as rename(2): the copy went
+        onto the source, and the delete that follows removed the only
+        copy. A folder moved into itself is refused (EINVAL).
         """
+        same_src, same_dst = self.normalize(src), self.normalize(dst)
+        if same_src == same_dst:
+            self.stat(src)  # FileNotFoundError when there is nothing to rename
+            return
         src_is_dir = self.is_dir(src)
+        if src_is_dir and same_dst.startswith(same_src.rstrip("/") + "/"):
+            raise OSError(
+                errno.EINVAL, f"Cannot move the folder {src} into itself ({dst})", dst
+            )
         try:
             dst_item = self.stat(dst)
         except FileNotFoundError:

@@ -107,6 +107,9 @@ class _ListEntry:
     size: int
     modified: datetime | None  # UTC; None when the date cannot be read
     rest: str  # the name, for a link "name -> target"
+    #: The line names an hour and minute (a date within the last six
+    #: months); an older one names the year only.
+    has_time: bool = False
 
 
 def _list_mode(chars: str) -> int:
@@ -180,6 +183,7 @@ def _parse_unix_list_details(
                 size=int(m.group("size")),
                 modified=_list_date(m.group("month"), m.group("day"), m.group("when"), now),
                 rest=m.group("rest"),
+                has_time=":" in m.group("when"),
             )
         )
     return entries
@@ -225,6 +229,66 @@ def _unix_entry(
         elif rest == name:
             found.add((kind, ""))
     return found.pop() if len(found) == 1 else None
+
+
+def _nlst_all(ftp, path: str) -> list[str]:
+    """``NLST`` of *path* including its dot entries.
+
+    vsftpd (force_dot_files=NO, its default) and pure-ftpd leave names
+    that start with a dot out of a plain NLST / LIST unless the client
+    passes ``-a``: a folder copy left .htaccess / .env / .git behind and a
+    recursive delete failed on RMD with them still there. ``NLST -a``
+    first; a server that refuses the option, answers with nothing (it may
+    have looked for a path "-a ..."), or names entries that begin with
+    "-a" (it took the option for part of the path) gets the plain NLST,
+    whose answer - or refusal - stands."""
+    try:
+        names = ftp.nlst(f"-a {path}")
+    except error_perm:
+        names = []
+    if names and not any(n.startswith("-a") for n in names):
+        return names
+    return ftp.nlst(path)
+
+
+def _list_lines_all(ftp, path: str) -> tuple[str | None, list[str]]:
+    """``(final reply, lines)`` of ``LIST -a`` of *path*, as
+    :func:`_nlst_all` does for NLST: the plain ``LIST`` answers when the
+    option is refused or the answer is empty. A refusal of the plain LIST
+    is raised (error_perm)."""
+    lines: list[str] = []
+    try:
+        reply = ftp.retrlines(f"LIST -a {path}", lines.append)
+    except error_perm:
+        lines = []
+    else:
+        if any(line.strip() and not line.startswith("total ") for line in lines):
+            return reply, lines
+        lines = []
+    reply = ftp.retrlines(f"LIST {path}", lines.append)
+    return reply, lines
+
+
+#: The largest offset of a server's LIST clock from UTC that is taken
+#: for one (UTC-12 .. UTC+14).
+_MAX_ZONE_OFFSET = timedelta(hours=14)
+
+
+def _list_zone_offset(pairs: list[tuple[datetime, datetime]]) -> timedelta | None:
+    """How far a server's LIST dates are off UTC, from ``(MDTM, LIST
+    date)`` pairs of the same files: MDTM is UTC (RFC 3659 3), LIST
+    prints the server's wall clock (proftpd, pure-ftpd, IIS, vsftpd with
+    use_localtime=YES). Rounded to the quarter hour (LIST drops the
+    seconds); the offset most files agree on, None without one."""
+    votes: dict[int, int] = {}
+    for mdtm, listed in pairs:
+        quarters = round((mdtm - listed).total_seconds() / 900)
+        if abs(quarters) * 900 <= _MAX_ZONE_OFFSET.total_seconds():
+            votes[quarters] = votes.get(quarters, 0) + 1
+    if not votes:
+        return None
+    best = max(votes.items(), key=lambda kv: kv[1])[0]
+    return timedelta(seconds=best * 900)
 
 
 def _is_not_found_reply(exc: BaseException) -> bool:
@@ -649,25 +713,25 @@ class _FtpProxyMixin:
         We rebuild that here, swapping the data-socket constructor.
 
         ftplib's ``makepasv`` defends against FTP-bounce by replacing
-        the PASV-announced host with ``self.sock.getpeername()[0]``
-        unless ``trust_server_pasv_ipv4_address`` is set. Under a
-        proxy, ``getpeername()`` returns the *proxy's* IP — using
-        that would route the data connection to the proxy host
-        instead of the FTP server. Force-trust the announced host
-        for the proxy path; the proxy + the SSRF guard already
-        enforce a stricter invariant than the bounce check would.
+        the PASV-announced host with ``self.sock.getpeername()[0]``.
+        Under a proxy, ``getpeername()`` is the *proxy's* address, so
+        the control connection's host (``self.host``, which the proxy
+        dialled) takes its place - never the host the reply names.
         """
         from core.proxy import create_proxy_socket
 
         size = None
         if self.passiveserver:
-            self.trust_server_pasv_ipv4_address = True
-            host, port = self.makepasv()
-            # Belt + braces: when the announced host happens to be
-            # the proxy's own IP (mis-configured server), override it
-            # with the original ftp.host the user typed.
-            if host == self.sock.getpeername()[0]:
-                host = self.host
+            # Only the port of the PASV / EPSV reply is used: the data
+            # connection goes to the host the control connection goes
+            # to, through the proxy. The host a 227 reply names may be a
+            # NAT'ed server's private address, or - from a hostile server
+            # or a MITM on cleartext FTP - any host the proxy can reach
+            # (169.254.169.254, intranet hosts): the proxy would fetch it
+            # as the download, or receive the upload.
+            self.trust_server_pasv_ipv4_address = False
+            _announced, port = self.makepasv()
+            host = self.host
             conn = create_proxy_socket(
                 self._axross_proxy,
                 host,
@@ -1169,9 +1233,25 @@ class FtpSession(SessionLifecycle):
 
         # Fallback: NLST + individual stat
         try:
-            names = ftp.nlst(path)
+            names = _nlst_all(ftp, path)
         except error_perm as e:
+            refused = self._read_refused(path, e)
+            if isinstance(refused, FileNotFoundError):
+                raise FileNotFoundError(errno.ENOENT, f"Cannot list {path}: {e}", path) from e
             raise OSError(f"Cannot list {path}: {e}") from e
+        names = [n for n in names if (posixpath.basename(n.rstrip("/")) or n) not in (".", "..")]
+        # NLST (and LIST) of a FILE answers with that file - vsftpd,
+        # pure-ftpd and proftpd run ls on the argument; MLSD of a file is
+        # 501 / 550 and lands here too. One name that is the path's own
+        # is a folder only when CWD enters it (a folder "a" in "a" is).
+        leaf = posixpath.basename(path.rstrip("/"))
+        if (
+            len(names) == 1
+            and leaf
+            and posixpath.basename(names[0].rstrip("/")) == leaf
+            and not self._cwd_reaches(ftp, path)
+        ):
+            raise NotADirectoryError(errno.ENOTDIR, "Not a directory", path)
         # vsftpd answers NLST of a missing folder with an empty listing,
         # not 550: an empty answer counts only when CWD reaches the folder.
         if not names and not self._cwd_reaches(ftp, path):
@@ -1189,6 +1269,10 @@ class FtpSession(SessionLifecycle):
         # every entry is probed with stat(), whose CWD follows a symbolic
         # link - LIST is also the only source that says which are links.
         details = self._unix_listing(ftp, path) if names else None
+        # Dates LIST alone gives (folders; files without MDTM) are put on
+        # the server's clock offset that MDTM and LIST of its files show.
+        list_dated: list[int] = []
+        clock_pairs: list[tuple[datetime, datetime]] = []
         for full_path in names:
             entry_name = posixpath.basename(full_path) or full_path
             if entry_name in (".", ".."):
@@ -1199,6 +1283,11 @@ class FtpSession(SessionLifecycle):
             detail = _entry_detail(details, entry_name)
             if detail is not None and detail.kind in ("-", "d"):
                 modified = self._mdtm(ftp, stat_path) if detail.kind == "-" else None
+                if detail.modified is not None and detail.has_time:
+                    if modified is not None:
+                        clock_pairs.append((modified, detail.modified))
+                    else:
+                        list_dated.append(len(items))
                 items.append(
                     FileItem(
                         name=entry_name,
@@ -1233,6 +1322,12 @@ class FtpSession(SessionLifecycle):
             except OSError:
                 items.append(FileItem(name=entry_name, is_link=is_link, **extra))
 
+        offset = _list_zone_offset(clock_pairs) if list_dated else None
+        if offset:
+            for index in list_dated:
+                items[index] = dataclasses.replace(
+                    items[index], modified=items[index].modified + offset
+                )
         return items
 
     @staticmethod
@@ -1244,9 +1339,9 @@ class FtpSession(SessionLifecycle):
         directory)" on a 226, or a refusal, is a PermissionError; entries
         LIST shows that NLST left out are an OSError. Neither is read as
         an empty folder."""
-        lines: list[str] = []
         try:
-            reply = ftp.retrlines(f"LIST {path}", lines.append)
+            # LIST -a: a folder that holds only dot entries is not empty.
+            reply, lines = _list_lines_all(ftp, path)
         except error_perm as e:
             raise PermissionError(errno.EACCES, f"Cannot list {path}: {e}", path) from e
         if isinstance(reply, str) and _LIST_FAILED_REPLY.search(reply):
@@ -1337,6 +1432,14 @@ class FtpSession(SessionLifecycle):
     @_ftp_errors_as_oserror
     @serialized
     def stat(self, path: str) -> FileItem:
+        item = self._stat(path)
+        # The server resolves "g/" to the file g (MLST, SIZE, MDTM): a
+        # path ending in "/" names a folder, as stat(2) has it.
+        if path.endswith("/") and path.strip("/") and not item.is_dir:
+            raise NotADirectoryError(errno.ENOTDIR, f"Cannot stat {path}: not a folder", path)
+        return item
+
+    def _stat(self, path: str) -> FileItem:
         ftp = self._ensure_connected()
         name = posixpath.basename(path) or path
         size = 0
@@ -1387,7 +1490,7 @@ class FtpSession(SessionLifecycle):
         if not name:
             return True  # the root
         try:
-            names = ftp.nlst(posixpath.dirname(trimmed) or "/")
+            names = _nlst_all(ftp, posixpath.dirname(trimmed) or "/")
         except error_perm as e:
             if _is_not_found_reply(e):
                 return False  # no parent folder
@@ -1603,7 +1706,7 @@ class FtpSession(SessionLifecycle):
         except error_perm as e:
             # "550 No such file": answered, the connection is fine.
             done(ftp)
-            raise OSError(f"Cannot read {path}: {e}") from e
+            raise self._read_refused(path, e) from e
         except BaseException:
             _close_quietly(ftp)
             raise
@@ -1765,6 +1868,18 @@ class FtpSession(SessionLifecycle):
             self._separate_cap = None
         return [ftp for ftp, _released_at in idle]
 
+    def _read_refused(self, path: str, exc: error_perm) -> OSError:
+        """The OSError for a refused RETR: 550 says "not there" and "may
+        not" alike, so only exists() names a FileNotFoundError."""
+        if _is_not_found_reply(exc):
+            try:
+                there = self.exists(path)
+            except Exception:  # noqa: BLE001 - no answer: not "missing"
+                there = None
+            if there is False:
+                return FileNotFoundError(errno.ENOENT, f"Cannot read {path}: {exc}", path)
+        return OSError(f"Cannot read {path}: {exc}")
+
     @serialized
     def _open_read_shared(self, path: str) -> IO[bytes]:
         """The whole download on the shared connection, under the session
@@ -1776,7 +1891,7 @@ class FtpSession(SessionLifecycle):
             ftp.retrbinary(f"RETR {path}", buf.write)
         except error_perm as e:
             buf.close()
-            raise OSError(f"Cannot read {path}: {e}") from e
+            raise self._read_refused(path, e) from e
         except BaseException:
             buf.close()
             raise

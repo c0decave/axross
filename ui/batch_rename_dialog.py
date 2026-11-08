@@ -29,6 +29,7 @@ from core.path_policy import hidden_sibling_name
 from core.server_ops import rename_target_taken
 from ui.close_corner import add_close_corner
 from ui.icon_provider import set_window_icon
+from ui.plain_text import as_written
 from core.i18n import tr
 
 if TYPE_CHECKING:
@@ -268,8 +269,8 @@ class BatchRenameDialog(QDialog):
             QMessageBox.warning(
                 self,
                 tr("Conflict"),
-                tr("Target '{name}' already exists and is not part of the rename set.").format(
-                    name=outcome[1]),
+                as_written(tr("Target '{name}' already exists and is not part of the rename "
+                              "set.").format(name=outcome[1])),
             )
             self._update_preview()
             return
@@ -278,7 +279,8 @@ class BatchRenameDialog(QDialog):
             QMessageBox.warning(
                 self,
                 tr("Rename Errors"),
-                tr("Renamed {renamed}, failed {n}:\n").format(renamed=renamed, n=len(errors)) + "\n".join(errors[:10]),
+                as_written(tr("Renamed {renamed}, failed {n}:\n").format(
+                    renamed=renamed, n=len(errors)) + "\n".join(errors[:10])),
             )
         self.accept()
 

@@ -44,6 +44,7 @@ class _Window:
     _on_scheduled_job_finished = mw.MainWindow._on_scheduled_job_finished
     _open_scheduler = mw.MainWindow._open_scheduler
     _with_running_flags = mw.MainWindow._with_running_flags
+    _run_job_now = mw.MainWindow._run_job_now
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -86,8 +87,8 @@ def _dialog_doing(monkeypatch, action) -> None:
     real_dialog = SD.SchedulerDialog
 
     class _Dialog:
-        def __init__(self, store, parent=None):
-            self.real = real_dialog(store)
+        def __init__(self, store, parent=None, *, run_now=None):
+            self.real = real_dialog(store, run_now=run_now)
 
         def exec(self):
             action(self.real)
@@ -151,7 +152,8 @@ def test_happy_the_placeholder_names_a_script_the_runner_accepts(tmp_path):
     assert ".py" not in dlg._target_edit.placeholderText()
 
 
-def test_happy_a_target_typed_with_py_is_stored_as_the_script_name(tmp_path):
+def test_happy_a_target_typed_with_py_is_stored_as_the_script_name(tmp_path, monkeypatch):
+    monkeypatch.setattr(SD.SchedulerDialog, "_saved_scripts", staticmethod(lambda: ["mirror"]))
     store = JobStore(tmp_path / "jobs.json")
     dlg = SD.SchedulerDialog(store)
     dlg._name_edit.setText("nightly")

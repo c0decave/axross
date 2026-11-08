@@ -46,7 +46,7 @@ from ui.network_proxy_dialog import (
     transport_index,
 )
 from ui.scan_job import ScanJob
-from ui.screen_fit import FitScrollArea, fit_size, fit_window
+from ui.screen_fit import FitScrollArea, fit_size, fit_window, keep_on_screen
 from ui.icon_provider import set_window_icon
 
 log = logging.getLogger(__name__)
@@ -819,6 +819,7 @@ class ConnectionDialog(QDialog):
         if want > self.height():
             self.resize(self.width(), want)
             fit_window(self)
+            keep_on_screen(self)
 
     def _show_oauth_help(self, proto: str) -> None:
         from html import escape
@@ -871,7 +872,7 @@ class ConnectionDialog(QDialog):
         if isinstance(parent_layout, QFormLayout):
             label = parent_layout.labelForField(widget)
             if label and isinstance(label, QLabel):
-                label.setText(text)
+                label.setText(tr(text))
 
     def _update_auth_fields(self) -> None:
         is_pw = self._auth_password.isChecked()
@@ -887,7 +888,8 @@ class ConnectionDialog(QDialog):
         from pathlib import Path
 
         default_dir = str(Path.home() / ".ssh")
-        path, _ = QFileDialog.getOpenFileName(self, "Select SSH Key", default_dir, "All Files (*)")
+        path, _ = QFileDialog.getOpenFileName(
+            self, tr("Select SSH Key"), default_dir, tr("All Files (*)"))
         if path:
             self._key_file.setText(path)
 
@@ -1706,6 +1708,9 @@ class ConnectionDialog(QDialog):
             # scrolled while the screen had room for all of it.
             self._sized_once = True
             self.resize(fit_size(self.sizeHint().expandedTo(self.size()), self))
+            # Grown after Qt placed it: back onto the screen (it stood off
+            # the right and bottom edge of a 1024x600 screen).
+            keep_on_screen(self)
 
     def done(self, result: int) -> None:  # noqa: D102 - Qt override
         self._label_job.abandon()  # an answer still coming relabels no closed dialog
@@ -1793,7 +1798,7 @@ class ConnectionDialog(QDialog):
 
         default_dir = str(Path.home() / ".ssh")
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select SSH Config File", default_dir, "All Files (*)"
+            self, tr("Select SSH Config File"), default_dir, tr("All Files (*)")
         )
         if not path:
             return

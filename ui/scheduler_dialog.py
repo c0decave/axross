@@ -16,6 +16,7 @@ import logging
 import uuid
 from datetime import datetime
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -113,8 +114,10 @@ def job_row(job: Job, *, now: datetime | None = None) -> dict[str, str]:
 class SchedulerDialog(QDialog):
     """List, add and remove recurring jobs."""
 
-    def __init__(self, store: JobStore, parent: QWidget | None = None):
+    def __init__(self, store: JobStore, parent: QWidget | None = None, *, run_now=None):
         super().__init__(parent)
+        #: run_now(job) -> bool starts *job* at once (False: it is running).
+        self._run_now = run_now
         set_window_icon(self, "clock")
         install_help_key(self, "scheduler")  # F1: its handbook section (a window of its own)
         self.store = store
@@ -149,6 +152,13 @@ class SchedulerDialog(QDialog):
 
         self._target_edit = QLineEdit(self)
         self._target_edit.setPlaceholderText(tr("Saved script name, e.g. mirror"))
+        # The saved scripts to pick from (a job for a name no script has
+        # was accepted and failed at every run).
+        from PyQt6.QtWidgets import QCompleter
+
+        self._script_completer = QCompleter(self._saved_scripts(), self)
+        self._script_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self._target_edit.setCompleter(self._script_completer)
         form.addWidget(self._target_edit)
 
         self._interval_box = QComboBox(self)
@@ -183,6 +193,12 @@ class SchedulerDialog(QDialog):
         self._remove_btn = QPushButton(tr("Remove"), self)
         self._remove_btn.clicked.connect(self._on_remove)
         actions.addWidget(self._remove_btn)
+
+        self._run_btn = QPushButton(tr("Run Now"), self)
+        self._run_btn.setToolTip(tr("Run the selected job now, without waiting for its time"))
+        self._run_btn.clicked.connect(self._on_run_now)
+        self._run_btn.setVisible(self._run_now is not None)
+        actions.addWidget(self._run_btn)
 
         actions.addStretch(1)
         self._status = QLabel(self)
@@ -284,11 +300,32 @@ class SchedulerDialog(QDialog):
         index = sorted(rows)[0]
         return self._jobs[index] if index < len(self._jobs) else None
 
+    @staticmethod
+    def _saved_scripts() -> list[str]:
+        from core import scripting
+
+        try:
+            return scripting.list_scripts()
+        except OSError:
+            return []
+
     def _on_add(self) -> None:
         name = self._name_edit.text().strip()
         target = self._target_edit.text().strip()
         if not name or not target:
             QMessageBox.information(self, tr("Add job"), tr("A name and a target are required."))
+            return
+        try:
+            script = script_target(target)
+        except ValueError as exc:
+            QMessageBox.warning(self, tr("Add job"), str(exc))
+            return
+        scripts = self._saved_scripts()
+        if script not in scripts:
+            QMessageBox.warning(self, tr("Add job"), tr(
+                "There is no saved script {name!r}. Save it in the Script Editor first, or "
+                "choose one of: {scripts}").format(
+                    name=script, scripts=", ".join(scripts) or tr("(no saved scripts)")))
             return
         interval = self._custom_spin.value() or int(self._interval_box.currentData())
         try:
@@ -311,6 +348,16 @@ class SchedulerDialog(QDialog):
             QMessageBox.StandardButton.No,
         ) == QMessageBox.StandardButton.Yes:
             self.remove_job(job.job_id)
+
+    def _on_run_now(self) -> None:
+        job = self._selected_job()
+        if job is None or self._run_now is None:
+            return
+        if self._run_now(job):
+            self._status.setText(tr("{name} started; its result shows here when it ends.").format(
+                name=job.name))
+        else:
+            self._status.setText(tr("{name} is running already.").format(name=job.name))
 
     def _on_toggle(self) -> None:
         job = self._selected_job()

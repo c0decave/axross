@@ -69,6 +69,12 @@ class Node:
     parent: int
 
 
+#: What a damaged (or crafted) file makes the readers raise: each costs one
+#: message, attachment or folder, never the rest of the file.
+_DAMAGE = (PstError, struct.error, zlib.error, IndexError, KeyError, ValueError,
+           TypeError, OverflowError, UnicodeError, RecursionError)
+
+
 @dataclass
 class PstMessage:
     folder: str
@@ -108,6 +114,8 @@ class PstFile:
         self._walk(bbt_ib, 0x80, 0)
         self._walk(nbt_ib, 0x81, 0)
         del self._visited
+        #: "folder <nid>: why" for each folder :meth:`folders` could not read
+        self.folder_errors: list[str] = []
 
     def close(self) -> None:
         self._f.close()
@@ -292,7 +300,10 @@ class PstFile:
             if nid & 0x1F == NID_TYPE_NORMAL_FOLDER:
                 try:
                     props = self.properties(node.data, node.sub)
-                except (PstError, struct.error):
+                except _DAMAGE as exc:
+                    # A damaged folder (a block that does not inflate, an
+                    # index past its data) aborted the whole file before.
+                    self.folder_errors.append(f"folder {nid:#x}: {type(exc).__name__}: {exc}"[:300])
                     continue
                 names[nid] = str(props.get(0x3001, "") or f"folder-{nid:#x}")
                 parents[nid] = node.parent
@@ -314,9 +325,10 @@ class PstFile:
                 continue
             node = self.nodes[nid]
             try:
-                yield self.message(nid, folders.get(node.parent, ""))
-            except (PstError, struct.error, zlib.error) as exc:
-                yield PstMessage(folders.get(node.parent, ""), nid, {"error": str(exc)})
+                msg = self.message(nid, folders.get(node.parent, ""))
+            except _DAMAGE as exc:
+                msg = PstMessage(folders.get(node.parent, ""), nid, {"error": f"{type(exc).__name__}: {exc}"})
+            yield msg
 
     def message(self, nid: int, folder: str = "") -> PstMessage:
         node = self.nodes[nid]
@@ -334,7 +346,7 @@ class PstFile:
                     ad, asub = sub[anid]
                     try:
                         msg.attachments.append(self.properties(ad, asub))
-                    except PstError as exc:
+                    except _DAMAGE as exc:
                         msg.attachments.append({"error": str(exc)})
         return msg
 

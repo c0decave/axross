@@ -147,11 +147,14 @@ class FileItem:
             return ""
         if self.stat_error:
             return "?"
+        from core.i18n import format_decimal
+
         size: float = self.size
         for unit in ("B", "KB", "MB", "GB", "TB"):
             if abs(size) < 1024:
                 if unit == "B":
                     return f"{size} {unit}"
-                return f"{size:.1f} {unit}"
+                # The language's decimal mark: "1,1 MB" in German.
+                return f"{format_decimal(size)} {unit}"
             size /= 1024
-        return f"{size:.1f} PB"
+        return f"{format_decimal(size)} PB"

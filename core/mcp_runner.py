@@ -317,6 +317,98 @@ _NODE_VALUED = frozenset({"-r", "--require", "--import", "--loader", "--experime
                           "--inspect-port", "--openssl-config", "--icu-data-dir"})
 
 
+#: ssh-family programs whose ``-o`` options can name a command run on THIS
+#: host (``ssh -o ProxyCommand="sh -c '…'" x``).
+_SSH_PROGRAMS = frozenset({"ssh", "scp", "sftp", "autossh"})
+_SSH_COMMAND_OPTIONS = frozenset({"proxycommand", "localcommand", "knownhostscommand"})
+#: git config keys (``git -c key=value``) whose value is a command git runs.
+_GIT_COMMAND_KEYS = frozenset({
+    "core.sshcommand", "core.pager", "core.editor", "core.fsmonitor", "core.hookspath",
+    "core.gitproxy", "core.askpass", "credential.helper", "diff.external", "gpg.program",
+    "gpg.ssh.program", "gpg.x509.program", "sequence.editor", "protocol.ext.allow",
+    "protocol.allow", "uploadpack.packobjectshook", "pager.log", "web.browser",
+    "remote.origin.uploadpack", "remote.origin.receivepack",
+})
+#: git options whose value is a program run for the transport.
+_GIT_COMMAND_OPTIONS = frozenset({"--upload-pack", "--receive-pack", "--exec",
+                                  "--config-env"})
+#: gdb options whose value is a gdb command (``shell id`` runs one).
+_GDB_CODE_OPTIONS = frozenset({"-ex", "--ex", "-eval-command", "--eval-command", "-iex",
+                               "--iex", "-init-eval-command", "--init-eval-command"})
+#: php -d settings that cannot load or run anything.
+_PHP_HARMLESS_SETTINGS = frozenset({
+    "memory_limit", "display_errors", "display_startup_errors", "error_reporting",
+    "max_execution_time", "date.timezone", "html_errors", "log_errors", "output_buffering",
+    "short_open_tag", "default_charset", "precision", "serialize_precision",
+    "implicit_flush", "zend.assertions", "assert.active",
+})
+
+
+def _command_option(program: str, rest: list[str]) -> RunnerPlan | None:
+    """A program whose options carry a command or code for THIS host:
+    ``ssh -o ProxyCommand=…``, ``git -c core.sshCommand=…`` / an ``ext::``
+    URL, ``gdb -ex 'shell …'``, ``php -d auto_prepend_file=https://…``.
+    They were classified as "runs as it is"."""
+    def refused(option: str) -> RunnerPlan:
+        return _unreadable(f"{program} {option}",
+                           f"{program} {option} runs a command from its command line")
+
+    if program in _SSH_PROGRAMS:
+        for k, arg in enumerate(rest):
+            if arg == "--":
+                break
+            if arg == "-o" and k + 1 < len(rest):
+                value = rest[k + 1]
+            elif arg.startswith("-o") and len(arg) > 2:
+                value = arg[2:]
+            else:
+                continue
+            # "ProxyCommand=…", "ProxyCommand …" (ssh_config takes both)
+            parts = re.split(r"\s*=\s*|\s+", value.strip(), maxsplit=1)
+            key = parts[0].lower()
+            setting = parts[1] if len(parts) > 1 else ""
+            if key in _SSH_COMMAND_OPTIONS and setting.strip().strip("'\"").lower() != "none":
+                return refused(f"-o {key}")
+        return None
+    if program == "git":
+        for k, arg in enumerate(rest):
+            if "ext::" in arg:
+                return refused("ext::")
+            name = arg.split("=", 1)[0]
+            if name in _GIT_COMMAND_OPTIONS and arg.startswith("-"):
+                return refused(name)
+            if arg == "-c" and k + 1 < len(rest):
+                key, _, value = rest[k + 1].partition("=")
+                key = key.strip().lower()
+                if key in _GIT_COMMAND_KEYS or key.endswith((".uploadpack", ".receivepack",
+                                                              ".proxy", ".command",
+                                                              ".textconv", ".driver",
+                                                              ".clean", ".smudge",
+                                                              ".process", ".helper")) \
+                        or (key.startswith("alias.") and value.lstrip().startswith("!")):
+                    return refused(f"-c {key}")
+        return None
+    if program == "gdb":
+        for arg in rest:
+            if arg.split("=", 1)[0] in _GDB_CODE_OPTIONS:
+                return refused(arg.split("=", 1)[0])
+        return None
+    if program == "php":
+        for k, arg in enumerate(rest):
+            if arg == "--" or not arg.startswith("-") or arg == "-":
+                break
+            if arg == "-d" and k + 1 < len(rest):
+                setting = rest[k + 1]
+            elif arg.startswith("-d") and len(arg) > 2:
+                setting = arg[2:]
+            else:
+                continue
+            if setting.split("=", 1)[0].strip().lower() not in _PHP_HARMLESS_SETTINGS:
+                return refused("-d")
+        return None
+    return None
+
+
 def _unreadable(runner: str, why: str) -> RunnerPlan:
     return RunnerPlan(runner, why_not=f"{why}: it may download code, so it is treated as a "
                                       "command that does - not converted")
@@ -343,7 +435,7 @@ def _unwrap(program: str, argv: list[str], depth: int):
     if _PYTHONS.fullmatch(program):
         return _python(program, rest, depth)
     if program in _CODE_INTERPRETERS:
-        return _code_interpreter(program, rest)
+        return _command_option(program, rest) or _code_interpreter(program, rest)
     if program in _PLAIN_PREFIXES:
         return _prefix(program, rest, depth)
     if program in _VALUE_PREFIXES:
@@ -851,7 +943,7 @@ def _direct(program: str, argv: list[str], depth: int) -> RunnerPlan | None:
     if program in _PACKAGE_TOOLS:
         return RunnerPlan(f"{program} {M.clean_text(sub, 20)}".strip(),
                           why_not=f"{program} fetches or installs what it runs: not converted")
-    return None
+    return _command_option(program, rest)
 
 
 #: The server name in a container's --name / --label (core.mcp_client's names).

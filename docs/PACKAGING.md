@@ -556,19 +556,46 @@ VERSION=0.15.177
 
 1. **maintainer** - prepare the commit. `axross/_version.py` says
    `$VERSION`; `CHANGELOG.md` turns "Unreleased" into `## $VERSION -
-   <date>` (the release notes start from it). Merge to `main`; the "Python
-   application" workflow (`python-app.yml`, the test suite) must be green
-   on that commit.
+   <date>` (the release notes start from it: `assemble_release.py
+   --require-all` refuses a section still called "Unreleased"). Run the
+   **full** test suite locally - the "Python application" workflow
+   (`python-app.yml`) runs only five test files, not the suite:
 
-2. **maintainer** - tag that commit and push the tag:
+   ```bash
+   .venv/bin/pip install -e ".[all]" -r dev-requirements.txt
+   QT_QPA_PLATFORM=offscreen .venv/bin/pytest -q -p no:cacheprovider -rfE -n auto tests
+   ```
+
+   (`-n auto` needs pytest-xdist; single-process the run takes about half an
+   hour.) Merge to `main`; `python-app.yml` must be green on that commit.
+
+2. **maintainer** - before the tag, a green **cross-platform build** of that
+   commit: the macOS and Windows binaries have not been built since
+   0.14.136, and `bundle` runs only after `smoke` passed on all three
+   systems. A push to a `ci/` branch starts `cross-platform.yml` without a
+   tag:
+
+   ```bash
+   git push origin "HEAD:refs/heads/ci/$VERSION"
+   RUN=$(gh run list --workflow cross-platform.yml --branch "ci/$VERSION" --limit 1 \
+         --json databaseId --jq '.[0].databaseId')
+   gh run watch "$RUN" --exit-status    # smoke on Linux, macOS, Windows, then bundle
+   gh run view "$RUN" --json jobs --jq '.jobs[] | "\(.name) \(.conclusion)"'
+   ```
+
+   Every `smoke` and every `bundle` job must say `success` (four bundle
+   jobs: slim and full on macOS and Windows). Fix and push again until it
+   is; tag only a commit with a green run.
+
+3. **maintainer** - tag that commit and push the tag:
 
    ```bash
    git tag -s "v$VERSION" -m "axross $VERSION" && git push origin "v$VERSION"
    ```
 
-3. **CI** - the tag starts `cross-platform.yml`: the smoke tests on Linux,
-   macOS and Windows, then the `bundle` job builds the macOS and Windows
-   one-file binaries, slim and full. Its artifacts are
+4. **CI** - the tag starts `cross-platform.yml` again: the smoke tests on
+   Linux, macOS and Windows, then the `bundle` job builds the macOS and
+   Windows one-file binaries, slim and full. Its artifacts are
    `axross-<flavor>-<runner.os>-<runner.arch>` - `axross-slim-macOS-ARM64`,
    `axross-full-macOS-ARM64`, `axross-slim-Windows-X64`,
    `axross-full-Windows-X64` - each with `axross-<flavor>[.exe]` and its
@@ -581,7 +608,7 @@ VERSION=0.15.177
    gh run download "$RUN" -D "dist/$VERSION-ci"
    ```
 
-4. **builder** - build the Linux binaries, the packs, wheel and sdist from
+5. **builder** - build the Linux binaries, the packs, wheel and sdist from
    the tag (`build_dist.sh` builds `HEAD`, a clean `git archive`, after the
    supply-chain gate passed):
 
@@ -595,10 +622,9 @@ VERSION=0.15.177
    `axross-media-player`, `axross-system-info`), `packs/` (the wheels and
    `packs-$VERSION.json`), `standalone/`, the wheel
    `axross-$VERSION-py3-none-any.whl`, the sdist `axross-$VERSION.tar.gz`,
-   `SUPPLY-CHAIN.md` and `BUILD-INFO.md`. Copy that folder to the
-   maintainer's machine.
+   `SUPPLY-CHAIN.md` and `BUILD-INFO.md`.
 
-5. **builder, or any current distribution** - the Linux binaries against
+6. **builder, or any current distribution** - the Linux binaries against
    a current host (see "What comes from the host"), and the native
    components for THIRD_PARTY_LICENSES.md and the release notes (fails when
    a typed credits version disagrees):
@@ -614,7 +640,32 @@ VERSION=0.15.177
        dist/$VERSION/glibc-2.34/axross-slim --notes "dist/$VERSION/NATIVE-COMPONENTS.md"
    ```
 
-6. **maintainer** - assemble, sign and check the release, with the
+   Copy `dist/$VERSION/` (with `NATIVE-COMPONENTS.md`) to the
+   maintainer's machine.
+
+7. **maintainer** - the **tour videos**, before the app release and only
+   when `resources/tours/tour_videos.json` names a tag that has no release
+   yet (a new set of videos gets a new tag, see `scripts/tour_videos.py`).
+   They go into a release of their own that must **never become
+   "Latest"**: the updater reads `releases/latest`, and a tag such as
+   `tour-videos-1` is no version - every installed binary's check would
+   fail until the next app release. So: a prerelease, and `--latest=false`:
+
+   ```bash
+   TOURS=$(python3 -c 'import json; print(json.load(open("resources/tours/tour_videos.json"))["tag"])')
+   gh release create "$TOURS" --prerelease --latest=false \
+       --title "axross tour videos ($TOURS)" \
+       --notes "The narrated videos of Help > Tours; axross downloads them on demand." \
+       VIDEOS/release/*.mp4
+   gh api repos/c0decave/axross/releases/latest --jq .tag_name   # still a vX.Y.Z tag
+   ```
+
+   (`VIDEOS` is the folder `scripts/tour_videos.py manifest --videos`
+   wrote.) If the last command prints anything but a version tag, fix it at
+   once: `gh release edit "$TOURS" --prerelease --latest=false` and
+   `gh release edit v<the previous version> --latest`.
+
+8. **maintainer** - assemble, sign and check the release, with the
    **field key**: a key of `FIELD_KEYS` in `scripts/sign_release.py`, the
    key the binaries in use pin (for 0.15.177 that is the first key,
    `rJX0yymA5/...`; see "Key rotation" below):
@@ -629,24 +680,42 @@ VERSION=0.15.177
    the contract below, checks every input against the checksum its build
    wrote and drops those files (the per-folder `SHA256SUMS`, the CI's
    `.sha256`), writes one `SHA256SUMS` (first line `# axross-release
-   $VERSION`, a line for every binary, pack wheel, the manifest, wheel and
-   sdist), signs it through `scripts/sign_release.py` and then checks the
-   result through `core.self_update` and `core.packs` themselves: every
-   kind of installed binary (platform, machine, flavour, glibc variant,
-   with and without the marker files of older bundles) finds its asset and
-   its line, the signature verifies with the field keys alone, the pack
-   manifest is what a base accepts, and everything the updater needs is
-   among the first 100 assets the API lists. It refuses on any problem;
-   `--require-all` also refuses when an input is missing (without it, a
-   partial release - Linux only, no packs - is assembled and the summary
-   names what is missing). `--check dist/release-$VERSION` repeats the
-   checks on an assembled folder. A re-issue of the pack manifest under
-   the same version adds `--packs-issue N` (see below).
+   $VERSION`, a line for every binary, attached pack wheel, the manifest,
+   wheel and sdist), signs it through `scripts/sign_release.py`, writes
+   `dist/release-$VERSION/notes.md` (the `CHANGELOG.md` section,
+   `NATIVE-COMPONENTS.md`, the assets, how to verify them with their
+   checksums) and then checks the result through `core.self_update` and
+   `core.packs` themselves: every kind of installed binary (platform,
+   machine, flavour, glibc variant, with and without the marker files of
+   older bundles) finds its asset and its line, the signature verifies with
+   the field keys alone, the pack manifest is what a base accepts, the
+   API's answer stays within the updater's 1 MiB, and everything an
+   updater needs is among the **first 100 assets** of the API's answer.
+   GitHub lists a release's assets **sorted by name, ignoring case** - not
+   in upload order (measured 2026-11-08: `releases/latest` returns every
+   asset in one answer, in that order) - and the updater of 0.14.136, in
+   every installed binary, reads only the first 100. `SHA256SUMS` sorts
+   after every `axross-*`, `dep*` and `packs-*` name: with all ~160 pack
+   wheels attached it would be asset 151 of 180, and every installed
+   binary would refuse the update. So the pack wheels are attached only
+   when PyPI does not have them (`--pack-wheels unhosted`, the default:
+   those built from an sdist, whose manifest entry names no PyPI address);
+   a base fetches every other wheel from `files.pythonhosted.org` and
+   checks it against the SHA-256 and size of the signed manifest
+   (`core.packs`). The release then has well under 100 assets (about 25).
+   `--pack-wheels all` attaches every wheel and is refused while it pushes
+   anything the updater needs past the first 100 (checked in GitHub's
+   order, folded to upper case, in byte order and in upload order).
+   It refuses on any problem; `--require-all` also refuses when an input
+   is missing (without it, a partial release - Linux only, no packs - is
+   assembled and the summary names what is missing). A re-issue of the
+   pack manifest under the same version adds `--packs-issue N` (see
+   below).
 
-7. **maintainer** - a **draft** release with the assets. The updater asks
+9. **maintainer** - a **draft** release with the assets. The updater asks
    for `releases/latest`, which never returns a draft, so nothing installed
-   sees it yet. The updater's assets go first, the pack wheels after them
-   (the updater reads the first 100 assets the API lists):
+   sees it yet. Then the draft as GitHub holds it is checked against the
+   assembled folder - GitHub's own order, names, sizes and digests:
 
    ```bash
    (cd "dist/release-$VERSION" &&
@@ -654,16 +723,18 @@ VERSION=0.15.177
         --notes-file notes.md $(cat upload-1.txt) &&
     gh release upload "v$VERSION" $(cat upload-2.txt))
    gh release download "v$VERSION" -D "dist/draft-$VERSION"
-   cp "dist/release-$VERSION"/upload-*.txt "dist/draft-$VERSION/"
+   ID=$(gh release view "v$VERSION" --json databaseId --jq .databaseId)
+   gh api "repos/c0decave/axross/releases/$ID" > "dist/draft-$VERSION.json"
    .venv/bin/python scripts/assemble_release.py --version "$VERSION" \
-       --check "dist/draft-$VERSION" --require-all
+       --check "dist/draft-$VERSION" --api-json "dist/draft-$VERSION.json" --require-all
    ```
 
-   `dist/release-$VERSION/notes.md`: the `CHANGELOG.md` section,
-   `NATIVE-COMPONENTS.md` and the checksums of the summary. The last
-   command checks what GitHub actually holds (names, bytes, signature).
+   (`--release-id "$ID"` instead of `--api-json` runs that `gh api`
+   itself, on github.com.) The check refuses an asset that is not
+   uploaded, one left over on GitHub, a size or digest that differs, and
+   anything an updater needs past the first 100 in GitHub's order.
 
-8. **maintainer** - TestPyPI, then a clean install from it:
+10. **maintainer** - TestPyPI, then a clean install from it:
 
    ```bash
    A="dist/release-$VERSION/assets"
@@ -676,7 +747,7 @@ VERSION=0.15.177
    /tmp/axross-testpypi/bin/axross --version
    ```
 
-9. **maintainer** - publish the GitHub release
+11. **maintainer** - publish the GitHub release
    (`gh release edit "v$VERSION" --draft=false --latest`), then check
    that an **installed 0.14.136 binary updates**: on a machine that is not
    the builder, take `axross-full` (and `axross-slim`) of the v0.14.136
@@ -686,8 +757,16 @@ VERSION=0.15.177
    macOS and on Windows where one is at hand. If it refuses, turn the
    release back into a draft at once (`gh release edit "v$VERSION"
    --draft=true`): installed binaries then see the previous release again.
+   Before that, the release GitHub now calls the latest must be this one:
 
-10. **maintainer** - PyPI, last: an upload there cannot be replaced.
+   ```bash
+   gh api repos/c0decave/axross/releases/latest --jq .tag_name     # v$VERSION
+   ID=$(gh release view "v$VERSION" --json databaseId --jq .databaseId)
+   .venv/bin/python scripts/assemble_release.py --version "$VERSION" \
+       --check "dist/draft-$VERSION" --release-id "$ID" --require-all
+   ```
+
+12. **maintainer** - PyPI, last: an upload there cannot be replaced.
 
     ```bash
     .venv/bin/twine upload "$A/axross-$VERSION.tar.gz" "$A/axross-$VERSION-py3-none-any.whl"
@@ -718,7 +797,10 @@ prereleases are ignored) and rely on this contract - a release that breaks
 it is refused by every installed binary, nothing is replaced:
 
 * **Tag** `vX.Y.Z` (numeric, no suffix). Only a higher `X.Y.Z` than the
-  running one is offered.
+  running one is offered. The release GitHub marks "Latest" must be such
+  a release: one under another tag (the tour videos' `tour-videos-N`)
+  stops every check ("... is not an axross version") - it is created as a
+  prerelease with `--latest=false` (step 7).
 * **Asset names**, exactly: `axross-full`, `axross-slim`, `axross-base`
   (Linux x86-64, glibc 2.34 - the AlmaLinux 9 build), `axross-full-glibc2.36`,
   `axross-slim-glibc2.36`, `axross-base-glibc2.36` (the Debian 12 build),
@@ -730,23 +812,32 @@ it is refused by every installed binary, nothing is replaced:
   without the variant file is a glibc-2.34 one (every binary before
   0.15.166), one without the flavour file is recognised by a file name
   starting with `axross-full` / `axross-slim`.
-* **Packs** (`core/packs.py`, docs/PACKS.md): the
-  contents of `dist/<version>/packs/` - every wheel an axross-base can add
-  and `packs-<version>.json` - as assets of the same release, each with a
+* **Packs** (`core/packs.py`, docs/PACKS.md): `packs-<version>.json`
+  from `dist/<version>/packs/` as an asset of the same release, with a
   line in the release's `SHA256SUMS`. The manifest names every unit (a pip
   extra, a bundled extension, a feature group) with its wheels, their
-  sizes, SHA-256 and PyPI addresses. A base checks the signature of
-  `SHA256SUMS`, the manifest against it and every wheel against both before
-  it unpacks anything; an update of a binary brings its installed units
-  along (the new release's) before the new binary is fetched.
+  sizes, SHA-256 and PyPI addresses. A wheel the manifest gives no PyPI
+  address (built from an sdist) is an asset as well, with its line in
+  `SHA256SUMS`; the others are fetched from `files.pythonhosted.org` (an
+  asset of the same name would be taken first). A base checks the
+  signature of `SHA256SUMS`, the manifest against it and every wheel
+  against the manifest (and an attached one against `SHA256SUMS` too)
+  before it unpacks anything; an update of a binary brings its installed
+  units along (the new release's) before the new binary is fetched.
   Platforms without an asset (Linux aarch64, an axross-full on macOS) only
   get the notice with the release page.
+* **At most 100 assets that matter**: GitHub lists the assets sorted by
+  name, ignoring case; the updater of 0.14.136 reads only the first 100 of
+  the answer, so `SHA256SUMS`, `SHA256SUMS.sig` and every binary asset
+  above must sort into them (`scripts/assemble_release.py` refuses
+  otherwise). The updater from 0.15.177 on reads every asset of the answer
+  (and the asset pages, should an answer end at exactly 100).
 * **`SHA256SUMS`** among the assets of the same release, in `sha256sum`
-  format, with one line per binary (`scripts/assemble_release.py`, step 6
+  format, with one line per binary (`scripts/assemble_release.py`, step 8
   of the release flow). No line for the
   binary, or a different hash: refused. GitHub's own `digest` of an asset,
   where the API gives one, must agree with it as well.
-* **`SHA256SUMS.sig`**, the detached signature of `SHA256SUMS` (step 6):
+* **`SHA256SUMS.sig`**, the detached signature of `SHA256SUMS` (step 8):
   the **raw 64-byte Ed25519 signature** of the exact bytes of
   `SHA256SUMS` (not base64, nothing normalised - CRLF or a missing final
   newline are signed as they are). The binaries pin the public release
@@ -825,7 +916,8 @@ it is refused by every installed binary, nothing is replaced:
   2026-10-25; `objects.githubusercontent.com` before). Only these four
   hosts, only https, at most five redirects; bounds: 1 MiB for the API
   answer, 64 KiB for `SHA256SUMS`, 64 bytes for `SHA256SUMS.sig`, 1 GiB
-  for a binary, which must have exactly the size the API states.
+  for a binary, which must have exactly the size the API states. A base
+  fetches a pack wheel that is not an asset from `files.pythonhosted.org`.
 
 A distribution package (deb, rpm, a container image) must not replace
 itself: start it with `AXROSS_NO_UPDATE_CHECK=1` in the environment (no

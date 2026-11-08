@@ -53,7 +53,7 @@ from PyQt6.QtWidgets import (
 
 from core import file_categories as FC
 from core import file_search as FS
-from core.i18n import tr
+from core.i18n import format_decimal, tr
 from core.search_federation import SearchQuery
 from ui.close_corner import add_close_corner
 from ui.scan_job import BusyStrip, ScanJob, shorten
@@ -93,9 +93,9 @@ def _format_size(n: int) -> str:
     value = float(max(n, 0))
     for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
         if value < 1024 or unit == "TiB":
-            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
+            return f"{value:.0f} {unit}" if unit == "B" else f"{format_decimal(value)} {unit}"
         value /= 1024
-    return f"{value:.1f} TiB"
+    return f"{format_decimal(value)} TiB"
 
 
 def _format_when(epoch: float) -> str:
@@ -757,7 +757,11 @@ class FindFilesDialog(QDialog):
     def _show_context_menu(self, pos) -> None:
         if self.table.itemAt(pos) is None:
             return
-        self._build_context_menu().exec(self.table.viewport().mapToGlobal(pos))
+        menu = self._build_context_menu()
+        try:
+            menu.exec(self.table.viewport().mapToGlobal(pos))
+        finally:
+            menu.deleteLater()  # else every right click leaves it behind
 
     def _copy_paths(self, entries: list) -> None:
         QApplication.clipboard().setText("\n".join(hit.path for _scope, hit in entries))
@@ -787,7 +791,7 @@ class FindFilesDialog(QDialog):
             return False
         if name is None:
             default = self.name_edit.text().strip() or ", ".join(
-                FC.label(c) for c in query.categories) or tr("Search")
+                tr(FC.label(c)) for c in query.categories) or tr("Search")
             name, ok = QInputDialog.getText(self, tr("Save as Smart Folder"), tr("Name:"),
                                             text=default)
             if not ok:

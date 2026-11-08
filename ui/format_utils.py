@@ -20,24 +20,33 @@ def human_bytes(n: int) -> str:
     reports nonsense should show up as nonsense in one cell, not take
     the whole dialog down.
     """
+    from core.i18n import format_decimal
+
     value = float(n)
     for unit in _UNITS:
         if abs(value) < 1024.0 or unit == _UNITS[-1]:
             if unit == "B":
                 return f"{int(value)} B"
-            return f"{value:.1f} {unit}"
+            return f"{format_decimal(value)} {unit}"
         value /= 1024.0
-    return f"{value:.1f} {_UNITS[-1]}"
+    return f"{format_decimal(value)} {_UNITS[-1]}"
 
 
 def format_size(n: int) -> str:
     """Exact byte count, plus the human form once it adds information.
 
-    Below 1 KB the two are the same number, so the suffix is omitted.
+    Below 1 KB the two are the same number, so the suffix is omitted. The
+    count has the language's thousands separator and the word its plural
+    ("1 byte", "1.536 Bytes (1,5 KB)" in German).
     """
+    from core.i18n import DEFAULT_LANGUAGE, active, format_count, tr_n
+
+    # English keeps the bare number ("2048 bytes"), as before.
+    count = str(n) if active().language == DEFAULT_LANGUAGE else format_count(n)
+    exact = tr_n(n, "{count} byte", "{count} bytes", count=count)
     if abs(n) < 1024:
-        return f"{n} bytes"
-    return f"{n} bytes ({human_bytes(n)})"
+        return exact
+    return f"{exact} ({human_bytes(n)})"
 
 
 def measured_bytes(n: int, incomplete: bool = False) -> str:
@@ -47,4 +56,14 @@ def measured_bytes(n: int, incomplete: bool = False) -> str:
     return ("≥ " if incomplete else "") + human_bytes(n)
 
 
-__all__ = ["format_size", "human_bytes", "measured_bytes"]
+def backend_label(name: str) -> str:
+    """A backend's name for display. The local file system's name stays
+    "Local" in core (bookmarks, tags and sessions key on it); the pane
+    shows it in the interface language. Remote names ("user@host") are
+    data and shown as they are."""
+    from core.i18n import tr
+
+    return tr("Local") if name == "Local" else name
+
+
+__all__ = ["backend_label", "format_size", "human_bytes", "measured_bytes"]

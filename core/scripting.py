@@ -1802,8 +1802,12 @@ def imap_search(backend: FileBackend, criteria: str = "ALL", *, mailbox: str = "
 
 @_api(mutates=True)
 def imap_move(backend: FileBackend, uid: int, src_mailbox: str, dst_mailbox: str) -> None:
-    """Move an IMAP message by UID. Uses MOVE if the server supports
-    it, COPY+\\Deleted+EXPUNGE otherwise. See ``ImapSession.move``."""
+    """Move an IMAP message by UID. Uses MOVE if the server supports it;
+    otherwise COPY, flag the source \\Deleted and expunge it - by UID
+    (UIDPLUS), or with a plain EXPUNGE only when no other message in the
+    source mailbox is flagged \\Deleted (it would be expunged too); in
+    that case the move is refused before anything is copied. A stale UID
+    raises FileNotFoundError. See ``ImapSession.move``."""
     if not hasattr(backend, "move") or not hasattr(backend, "set_flags"):
         raise TypeError(f"backend {type(backend).__name__} is not an IMAP session")
     log.info(

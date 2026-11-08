@@ -345,7 +345,13 @@ def run_script_job(
 
     require("saved script execution", current_policy().allow_scripts)
     name = script_target(job.target)
-    scripting.load_script(name)  # a missing script fails here, before a child starts
+    try:
+        scripting.load_script(name)  # a missing script fails here, before a child starts
+    except FileNotFoundError:
+        # Not "[Errno 2] No such file or directory: '/home/…/scripts/x.py'".
+        raise RuntimeError(
+            f"the saved script {name!r} does not exist (any more): save it in the Script "
+            "Editor under that name, or remove this job") from None
     run = script_runner.run_bounded(
         name,
         timeout_s=timeout_s,

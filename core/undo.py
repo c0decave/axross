@@ -550,6 +550,8 @@ def undoable(events: list[dict]) -> list[UndoPlan]:
     starts: dict[str, dict] = {}
     undone: set[str] = set()
     undone_batches: set[str] = set()
+    #: Undone batches whose undo record lists the parts it reversed.
+    with_parts: set[str] = set()
     for event in events:
         if not isinstance(event, dict):
             continue
@@ -564,6 +566,8 @@ def undoable(events: list[dict]) -> list[UndoPlan]:
             target = details.get("undone")
             if isinstance(target, str) and target:
                 undone.add(target)
+                if isinstance(details.get("parts"), list):
+                    with_parts.add(target)
             for key, into in (("by", undone), ("parts", undone),
                               ("by_batches", undone_batches)):
                 listed = details.get(key)
@@ -580,7 +584,11 @@ def undoable(events: list[dict]) -> list[UndoPlan]:
             log.debug("undo: skipping malformed journal row: %s", exc)
     plans = [p for p in plans
              if p.operation_id not in undone and p.batch not in undone_batches]
-    plans = [p for p in plans if not p.batch or p.batch not in undone]
+    # An undone batch hides the entries its undo reversed (listed above)
+    # and those it could never reverse (a file the move failed on); one it
+    # did not list - not among the events the undo was built from - stays.
+    plans = [p for p in plans if not p.batch or p.batch not in undone
+             or (p.batch in with_parts and p.reversible)]
     plans.reverse()
     return _group_batches(plans)
 
@@ -674,6 +682,47 @@ def _batch_plan(batch: str, parts: list[UndoPlan]) -> UndoPlan:
     )
 
 
+def complete_batch(plan: UndoPlan | None, *, journal_path=None) -> UndoPlan | None:
+    """*plan* - when it is a batch - built again from every entry of the
+    batch the journal holds, or refused when its oldest entries are gone.
+
+    :func:`undoable` sees the events it is given: Ctrl+Z reads the newest
+    of the journal, which held the last 3,000 files of a move of 8,000.
+    Undone from those, the move put them back and recorded the batch as
+    undone - the other 5,000 were never offered again. So the batch is
+    read whole (core.operation_journal.read_batch); a batch that reaches
+    past the start of what is left of the journal is refused, with nothing
+    changed, rather than undone in part."""
+    if plan is None or plan.action != "batch" or not plan.batch:
+        return plan
+    from core.i18n import tr_n
+    from core.operation_journal import read_batch
+
+    events, whole = read_batch(plan.batch, journal_path=journal_path)
+    if whole:
+        # Its entries, without those an undo the newest events did not
+        # show has reversed already (then maybe one entry: offered as such).
+        mine = [p for p in undoable(events) if p.batch == plan.batch]
+        return next((p for p in mine if p.operation_id == plan.batch),
+                    mine[0] if mine else None)
+    files = sum(1 for p in plan.parts if p.action != "folder_back")
+    if plan.operation == "trash":
+        reason = tr_n(files, "This Move to Trash of more than {n} item is too large to undo "
+                             "here: the operation journal no longer holds its first entries. "
+                             "Nothing was changed.",
+                      "This Move to Trash of more than {n} items is too large to undo "
+                      "here: the operation journal no longer holds its first entries. "
+                      "Nothing was changed.")
+    else:
+        reason = tr_n(files, "This move of more than {n} file is too large to undo here: the "
+                             "operation journal no longer holds its first entries. "
+                             "Nothing was changed.",
+                      "This move of more than {n} files is too large to undo here: the "
+                      "operation journal no longer holds its first entries. "
+                      "Nothing was changed.")
+    return replace(plan, reversible=False, reason=reason)
+
+
 def _roots(parts) -> list[UndoPlan]:
     """The entries of a batch the user picked: those not inside a folder
     the batch moved too (by their original path)."""
@@ -763,6 +812,7 @@ __all__ = [
     "apply_batch_folders",
     "apply_undo",
     "batch_transfer_pairs",
+    "complete_batch",
     "gone_reason",
     "pick_undoable",
     "plan_undo",

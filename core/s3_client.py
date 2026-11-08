@@ -57,6 +57,20 @@ def _is_not_found(exc: Exception) -> bool:
     return code in ("404", "NoSuchKey", "NotFound")
 
 
+def _lists_anything(resp: dict) -> bool:
+    """Whether a ListObjectsV2 answer names any key or prefix. KeyCount
+    is optional in S3-compatible stores (older Ceph RGW, some MinIO
+    gateways leave it out): without it every folder looked absent - an
+    empty listing that is_dir() said was no folder, and a recursive
+    delete that called it "not found"."""
+    if "KeyCount" in resp:
+        try:
+            return int(resp["KeyCount"]) > 0
+        except (TypeError, ValueError):
+            pass
+    return bool(resp.get("Contents") or resp.get("CommonPrefixes"))
+
+
 # CopyObject copies at most 5 GiB in one request; a bigger object is copied
 # with a multipart upload whose parts are UploadPartCopy byte ranges.
 _MAX_SINGLE_COPY = 5 * 1024**3
@@ -436,7 +450,7 @@ class S3Session(SessionLifecycle):
                 Prefix=key.rstrip("/") + "/",
                 MaxKeys=1,
             )
-            if resp.get("KeyCount", 0) > 0:
+            if _lists_anything(resp):
                 return FileItem(name=name, is_dir=True)
         except (ClientError, Exception) as e:
             raise OSError(f"Cannot stat {path}: {e}") from e
@@ -460,7 +474,7 @@ class S3Session(SessionLifecycle):
             )
         except Exception as e:
             raise OSError(f"Cannot check {path}: {e}") from e
-        return resp.get("KeyCount", 0) > 0
+        return _lists_anything(resp)
 
     def exists(self, path: str) -> bool:
         """Only a not-found answer means False. Any other failure (503
@@ -725,7 +739,18 @@ class S3Session(SessionLifecycle):
         try:
             resp = self._s3.get_object(Bucket=self._bucket, Key=key)
             return _spool_body(resp["Body"], f"Cannot read {path}")
-        except (ClientError, Exception) as e:
+        except Exception as e:
+            if isinstance(e, ClientError) and _is_not_found(e):
+                # NoSuchKey: no object - maybe a folder (a prefix).
+                try:
+                    folder = self.is_dir(path)
+                except OSError:
+                    folder = False
+                if folder:
+                    raise IsADirectoryError(
+                        errno.EISDIR, f"Cannot read {path}: it is a folder", path
+                    ) from e
+                raise FileNotFoundError(errno.ENOENT, f"Cannot read {path}: {e}", path) from e
             raise OSError(f"Cannot read {path}: {e}") from e
 
     # Hard cap on "download existing then re-upload" append semantics.

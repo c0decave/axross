@@ -23,7 +23,12 @@ from typing import IO
 from core import removal_cancel
 from core.backend import SessionLifecycle
 from core.client_identity import SMB_CLIENT_NAME
-from core.path_policy import MAX_RECURSIVE_DELETE_DEPTH, check_tree_depth, safe_join
+from core.path_policy import (
+    MAX_RECURSIVE_DELETE_DEPTH,
+    check_tree_depth,
+    refuse_folder_path,
+    safe_join,
+)
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
@@ -103,6 +108,47 @@ _SMB_FAILURES: tuple[type[BaseException], ...] = (
 )
 
 
+
+
+# NT statuses smbprotocol's SMBOSError gives errno 0 ("Unknown NtStatus")
+# that have a POSIX meaning ([MS-ERREF] 2.3.1).
+_NT_ERRNO = {
+    0xC0000022: errno.EACCES,  # STATUS_ACCESS_DENIED
+    0xC0000121: errno.EACCES,  # STATUS_CANNOT_DELETE
+    0xC0000056: errno.EACCES,  # STATUS_DELETE_PENDING
+    0xC0000043: errno.EBUSY,  # STATUS_SHARING_VIOLATION (also EPERM in smbprotocol)
+    0xC000007F: errno.ENOSPC,  # STATUS_DISK_FULL
+    0xC0000033: errno.EINVAL,  # STATUS_OBJECT_NAME_INVALID
+    0xC0000034: errno.ENOENT,  # STATUS_OBJECT_NAME_NOT_FOUND
+    0xC000003A: errno.ENOENT,  # STATUS_OBJECT_PATH_NOT_FOUND
+    0xC0000035: errno.EEXIST,  # STATUS_OBJECT_NAME_COLLISION
+    0xC00000BA: errno.EISDIR,  # STATUS_FILE_IS_A_DIRECTORY
+    0xC0000103: errno.ENOTDIR,  # STATUS_NOT_A_DIRECTORY
+    0xC0000101: errno.ENOTEMPTY,  # STATUS_DIRECTORY_NOT_EMPTY
+}
+
+
+def _smb_error(exc: BaseException, what: str, path: str) -> OSError:
+    """*exc* as the OSError the backend contract names: smbprotocol's
+    SMBOSError carries the errno of its NT status, but is no
+    FileNotFoundError / FileExistsError / ...; ``OSError(errno, ...)``
+    is. A plain ``OSError(str)`` lost the cause, so a caller could not
+    tell "not there" (create it) from "denied" or a dropped connection.
+    A failure without a POSIX meaning stays a plain OSError; a timeout
+    or connection error keeps its class."""
+    code = getattr(exc, "errno", None) if isinstance(exc, OSError) else None
+    status = getattr(exc, "ntstatus", None)
+    if not code and isinstance(status, int):
+        code = _NT_ERRNO.get(status)
+    if isinstance(status, int):
+        detail = f"{getattr(exc, 'strerror', None) or exc} [NtStatus 0x{status:08x}]"
+    else:
+        detail = str(exc) or type(exc).__name__
+    if isinstance(code, int) and code in errno.errorcode:
+        return OSError(code, f"{what}: {detail}", path)
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return type(exc)(f"{what}: {detail}")
+    return OSError(f"{what}: {detail}")
 
 
 def _is_not_found(exc: BaseException) -> bool:
@@ -593,7 +639,7 @@ class SmbSession(SessionLifecycle):
                 # not a link.
                 items.append(dataclasses.replace(item, is_link=True) if is_link else item)
         except _SMB_FAILURES as e:
-            raise OSError(f"Cannot list {path}: {e}") from e
+            raise _smb_error(e, f"Cannot list {path}", path) from e
         return items
 
     def stat(self, path: str) -> FileItem:
@@ -601,9 +647,14 @@ class SmbSession(SessionLifecycle):
         try:
             st = smbclient.stat(unc, **self._kw)
             name = path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1] or path
-            return self._stat_to_item(name, st)
+            item = self._stat_to_item(name, st)
         except _SMB_FAILURES as e:
-            raise OSError(f"Cannot stat {path}: {e}") from e
+            raise _smb_error(e, f"Cannot stat {path}", path) from e
+        # smbclient normalizes the trailing backslash away: "g/" answered
+        # with the file g. A path ending in "/" names a folder (stat(2)).
+        if path.endswith("/") and path.strip("/") and not item.is_dir:
+            raise NotADirectoryError(errno.ENOTDIR, f"Cannot stat {path}: not a folder", path)
+        return item
 
     def is_dir(self, path: str) -> bool:
         """False only for "not found" (smbclient answers ENOENT with
@@ -619,7 +670,7 @@ class SmbSession(SessionLifecycle):
         except _SMB_FAILURES as e:
             if _is_not_found(e):
                 return False
-            raise OSError(f"Cannot check {path}: {e}") from e
+            raise _smb_error(e, f"Cannot check {path}", path) from e
 
     def exists(self, path: str) -> bool:
         """Whether the entry itself is there - lstat, as on every other
@@ -633,13 +684,13 @@ class SmbSession(SessionLifecycle):
         except _SMB_FAILURES as e:
             if _is_not_found(e):
                 return False
-            raise OSError(f"Cannot check {path}: {e}") from e
+            raise _smb_error(e, f"Cannot check {path}", path) from e
 
     def mkdir(self, path: str) -> None:
         try:
             smbclient.mkdir(self._unc(path), **self._kw)
         except _SMB_FAILURES as e:
-            raise OSError(f"Cannot create directory {path}: {e}") from e
+            raise _smb_error(e, f"Cannot create directory {path}", path) from e
 
     def remove(self, path: str, recursive: bool = False) -> None:
         unc = self._unc(path)
@@ -654,7 +705,7 @@ class SmbSession(SessionLifecycle):
             else:
                 smbclient.remove(unc, **self._kw)
         except _SMB_FAILURES as e:
-            raise OSError(f"Cannot remove {path}: {e}") from e
+            raise _smb_error(e, f"Cannot remove {path}", path) from e
 
     def _is_reparse_point(self, unc: str) -> bool:
         """A symlink, junction or mount point (the entry itself, not its
@@ -694,6 +745,10 @@ class SmbSession(SessionLifecycle):
         smbclient.rmdir(self._unc(path), **self._kw)
 
     def rename(self, src: str, dst: str) -> None:
+        # smbclient drops the trailing backslash: a file renamed to "x/"
+        # became a FILE x. A folder may be named so.
+        refuse_folder_path(dst, "rename to",
+                           source_is_file=lambda: self._exists_quietly(src) and not self.is_dir(src))
         try:
             smbclient.rename(self._unc(src), self._unc(dst), **self._kw)
         except _SMB_FAILURES as e:
@@ -704,7 +759,7 @@ class SmbSession(SessionLifecycle):
                 raise FileExistsError(
                     errno.EEXIST, f"Cannot rename {src} -> {dst}: target exists ({e})", dst
                 ) from e
-            raise OSError(f"Cannot rename {src} -> {dst}: {e}") from e
+            raise _smb_error(e, f"Cannot rename {src} -> {dst}", src) from e
 
     def rename_no_replace(self, src: str, dst: str) -> None:
         """``rename`` already refuses an existing *dst* (smbclient.rename
@@ -720,7 +775,7 @@ class SmbSession(SessionLifecycle):
             atime = smbclient.stat(unc, **self._kw).st_atime
             smbclient.utime(unc, times=(atime, mtime), **self._kw)
         except _SMB_FAILURES as e:
-            raise OSError(f"Cannot set the modification time of {path}: {e}") from e
+            raise _smb_error(e, f"Cannot set the modification time of {path}", path) from e
 
     def _exists_quietly(self, path: str) -> bool:
         try:
@@ -730,17 +785,26 @@ class SmbSession(SessionLifecycle):
             return False
 
     def open_read(self, path: str) -> IO[bytes]:
+        if path.endswith("/") and path.strip("/"):
+            # smbclient would open the FILE "x" for "x/"; a folder is
+            # refused by the server (EISDIR) either way.
+            if not self.is_dir(path):
+                if not self._exists_quietly(path):
+                    raise FileNotFoundError(errno.ENOENT, f"Cannot read {path}: not found", path)
+                raise NotADirectoryError(errno.ENOTDIR, f"Cannot read {path}: not a folder", path)
         try:
             return smbclient.open_file(self._unc(path), mode="rb", **self._kw)
         except _SMB_FAILURES as e:
-            raise OSError(f"Cannot read {path}: {e}") from e
+            raise _smb_error(e, f"Cannot read {path}", path) from e
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
+        # smbclient drops the trailing backslash: "t/" was written as a FILE t.
+        refuse_folder_path(path)
         mode = "ab" if append else "wb"
         try:
             return smbclient.open_file(self._unc(path), mode=mode, **self._kw)
         except _SMB_FAILURES as e:
-            raise OSError(f"Cannot write {path}: {e}") from e
+            raise _smb_error(e, f"Cannot write {path}", path) from e
 
     def normalize(self, path: str) -> str:
         # Use forward slashes for UI

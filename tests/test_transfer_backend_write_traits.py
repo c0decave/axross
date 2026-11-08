@@ -370,7 +370,7 @@ def _exchange():
                               datetime_received=datetime(2026, 1, 2, tzinfo=timezone.utc),
                               mime_content=MIME, has_attachments=False)
     deleted: list[bool] = []
-    message.delete = lambda: deleted.append(True)
+    message.move_to_trash = lambda: deleted.append(True)  # remove(): into Deleted Items
     session = object.__new__(EC.ExchangeSession)
 
     def resolve(parts):

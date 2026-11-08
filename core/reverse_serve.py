@@ -129,6 +129,10 @@ MULTIPART_MAX_PARTS = 10_000
 MULTIPART_MAX_BYTES = MAX_BODY_BYTES
 #: An upload without a request for this long is dropped with its parts.
 MULTIPART_IDLE_S = 3600.0
+#: When MULTIPART_MAX_UPLOADS are open, a new one drops the least recently
+#: used upload idle this long: abandoned uploads (a killed client) blocked
+#: every multipart upload for MULTIPART_IDLE_S.
+MULTIPART_EVICT_IDLE_S = 120.0
 #: Largest CompleteMultipartUpload body (the part list).
 MULTIPART_COMPLETE_MAX_BYTES = 4 * 1024 * 1024
 #: While CompleteMultipartUpload assembles the object, a space every this
@@ -366,6 +370,58 @@ def _http_date(epoch: float) -> str:
     return formatdate(epoch, usegmt=True)
 
 
+_BYTE_RANGE = re.compile(r"bytes[ \t]*=[ \t]*(\d*)[ \t]*-[ \t]*(\d*)[ \t]*", re.IGNORECASE)
+
+
+def _single_range(header: str | None, size: int):
+    """The byte range a ``Range`` header asks of a *size*-byte object:
+    ``(start, end)`` (inclusive), ``"unsatisfiable"`` (416), or ``None``
+    to answer the whole object - no header, a multi-range request (RFC 9110
+    14.2: a server may ignore Range; one 200 with the whole object is what
+    a client of one range would misplace, and no client of the S3 and
+    WebDAV tools asks several), or a header that is no byte range."""
+    if not header:
+        return None
+    match = _BYTE_RANGE.fullmatch(header.strip())
+    if match is None:
+        return None
+    first, last = match.group(1), match.group(2)
+    if first == "" and last == "":
+        return None
+    if first == "":
+        suffix = int(last)
+        if suffix == 0 or size == 0:
+            return "unsatisfiable"
+        return max(0, size - suffix), size - 1
+    start = int(first)
+    end = size - 1 if last == "" else min(int(last), size - 1)
+    if last != "" and int(last) < start:
+        return None  # syntactically invalid: ignored (RFC 9110 14.1.1)
+    if start >= size:
+        return "unsatisfiable"
+    return start, end
+
+
+def _skip(handle, count: int) -> int:
+    """Move *handle* *count* bytes on (seek, else read and drop); the
+    bytes it could skip."""
+    if count <= 0:
+        return 0
+    try:
+        if handle.seekable():
+            handle.seek(count, io.SEEK_CUR)
+            return count
+    except (AttributeError, OSError, ValueError):
+        pass
+    skipped = 0
+    while skipped < count:
+        chunk = handle.read(min(PUT_CHUNK, count - skipped))
+        if not chunk:
+            break
+        skipped += len(chunk)
+    return skipped
+
+
 def _iso_date(epoch: float) -> str:
     """ISO-8601 with milliseconds — the format S3 LIST returns."""
     t = time.gmtime(epoch)
@@ -589,6 +645,11 @@ class _BaseHandler(BaseHTTPRequestHandler):
         self._input.deadline = None  # the headers are read: the body has the per-read timeout
         if not ok:
             return False
+        if self._malformed_headers():
+            log.warning("reverse-server: malformed header section refused")
+            self.close_connection = True
+            self._send_simple(400, b"malformed header line")
+            return False
         if not _is_local_bind(self.config.bind):
             return True
         host = self.headers.get("Host")
@@ -604,6 +665,24 @@ class _BaseHandler(BaseHTTPRequestHandler):
             self._send_simple(403, refused.encode("utf-8"))
             return False
         return True
+
+    def _malformed_headers(self) -> bool:
+        """A header line without a colon ends the parsed headers (the
+        email parser takes the rest for a body): a ``Content-Length`` or
+        ``Transfer-Encoding`` after it was not seen, and the request's
+        body was then read as the next request. An obsolete line folding
+        is refused too (RFC 9112 5.2)."""
+        headers = self.headers
+        if headers is None:
+            return False
+        if getattr(headers, "defects", None):
+            return True
+        try:
+            if headers.get_payload():
+                return True
+        except (TypeError, AttributeError):
+            pass
+        return any("\n" in value or "\r" in value for value in headers.values())
 
     # --------------------------------- helpers ---------------------------
 
@@ -653,8 +732,101 @@ class _BaseHandler(BaseHTTPRequestHandler):
         self.send_header("Server", HEAD_BANNER)
         self.send_header("Date", _http_date(time.time()))
         self.end_headers()
-        if body:
+        # A HEAD answer has no body (its Content-Length is the GET's): the
+        # bytes would be read as the start of the next response.
+        if body and self.command != "HEAD":
             self.wfile.write(body)
+
+    def _send_file(self, handle, item, extra_headers=()) -> None:
+        """Answer a GET with the file *handle* reads: 200 with the whole
+        file, or 206 with the single byte range ``Range`` asks (416 when
+        it lies past the end).
+
+        ``Content-Length`` comes from the stat (*item*); the body is never
+        longer. A file that grew between the stat and the read sent its
+        new bytes past the stated length, and on a kept-alive connection
+        the client read them as the answer to its NEXT request (a log
+        holding an HTTP response forged the next file's content). Any
+        mismatch, shorter or longer, ends the connection. A stat that
+        reports no size (0) while the file has data (Gopher, TFTP without
+        tsize) gets a chunked body (a close-delimited one for HTTP/1.0)."""
+        size = _entry_size(item)
+        modified = _http_date(_entry_mtime(item))
+        first = b""
+        if size == 0:
+            first = handle.read(PUT_CHUNK)
+        if first:
+            self._send_unsized(handle, first, modified, extra_headers)
+            return
+        wanted = _single_range(self.headers.get("Range"), size) if size else None
+        if_range = self.headers.get("If-Range")
+        if wanted is not None and if_range is not None and if_range.strip() != modified:
+            wanted = None  # the client's copy is another version: the whole file
+        if wanted == "unsatisfiable":
+            self.send_response(416)
+            self.send_header("Content-Range", f"bytes */{size}")
+            self.send_header("Content-Length", "0")
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Server", HEAD_BANNER)
+            self.end_headers()
+            return
+        start, end = (0, size - 1) if wanted is None else wanted
+        length = end - start + 1 if size else 0
+        if wanted is not None and _skip(handle, start) != start:
+            self._send_simple(500, b"the file is shorter than its size")
+            self.close_connection = True
+            return
+        self.send_response(200 if wanted is None else 206)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(length))
+        if wanted is not None:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Last-Modified", modified)
+        for name, value in extra_headers:
+            self.send_header(name, value)
+        self.send_header("Server", HEAD_BANNER)
+        self.end_headers()
+        sent = 0
+        while sent < length:
+            chunk = handle.read(min(PUT_CHUNK, length - sent))
+            if not chunk:
+                break
+            self.wfile.write(chunk)
+            sent += len(chunk)
+        if sent != length or (wanted is None and handle.read(1)):
+            # Shorter: the client waits for bytes that never come. Longer:
+            # what is left was not sent, and what was sent is no snapshot.
+            log.warning("reverse-%s GET: the file changed while it was sent "
+                        "(%d bytes sent, %d stated); connection closed",
+                        self._flavour_name(), sent, length)
+            self.close_connection = True
+
+    def _send_unsized(self, handle, first: bytes, modified: str, extra_headers) -> None:
+        """A file whose stat said 0 bytes but which has data: chunked."""
+        chunked = self.request_version != "HTTP/1.0"
+        if not chunked:
+            self.close_connection = True  # the body ends where the connection does
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        if chunked:
+            self.send_header("Transfer-Encoding", "chunked")
+        self.send_header("Last-Modified", modified)
+        for name, value in extra_headers:
+            self.send_header(name, value)
+        self.send_header("Server", HEAD_BANNER)
+        self.end_headers()
+        chunk = first
+        total = 0
+        while chunk:
+            total += len(chunk)
+            if total > MAX_BODY_BYTES:
+                self.close_connection = True
+                return  # no last chunk: the client sees a cut body
+            self.wfile.write(b"%x\r\n%s\r\n" % (len(chunk), chunk) if chunked else chunk)
+            chunk = handle.read(PUT_CHUNK)
+        if chunked:
+            self.wfile.write(b"0\r\n\r\n")
 
     def _send_failure(self, what: str, exc: OSError) -> None:
         """A stat or listing that failed: 403 for a refusal, 500 else -
@@ -930,8 +1102,11 @@ class _LineReader:
         return line
 
     def read(self, n: int) -> bytes:
-        if not self._buf:
-            self._fill()
+        """Up to *n* bytes - fewer only at the body's end. Handing back
+        what the buffer held refused a valid aws-chunked body whose CR
+        after a chunk was the last byte of a fill (read(2) gave b"\\r")."""
+        while len(self._buf) < n and self._fill():
+            pass
         out, self._buf = self._buf[:n], self._buf[n:]
         return out
 
@@ -1091,6 +1266,17 @@ class _MultipartUploads:
             if self._closed:
                 raise _MultipartError(503, "ServiceUnavailable", "the reverse-server is stopping")
             expired = self._expire(now)
+            if len(self._uploads) >= MULTIPART_MAX_UPLOADS:
+                idle = [u for u in self._uploads.values()
+                        if not u.reserved and not u.completing
+                        and now - u.touched > MULTIPART_EVICT_IDLE_S]
+                if idle:
+                    oldest = min(idle, key=lambda u: u.touched)
+                    self._drop(oldest)
+                    expired.append(oldest)
+                    log.info("reverse-s3: multipart upload of %s/%s dropped for a new one "
+                             "(idle %.0f s, %d uploads open)", oldest.bucket, oldest.key,
+                             now - oldest.touched, MULTIPART_MAX_UPLOADS)
             if len(self._uploads) >= MULTIPART_MAX_UPLOADS:
                 full = True
             else:
@@ -1815,24 +2001,13 @@ class _S3Handler(_BaseHandler):
         if getattr(item, "is_dir", False):
             self._s3_error(404, "NoSuchKey", "key is a directory")
             return
-        size = _entry_size(item)
         try:
             handle = self.config.backend.open_read(path)
         except OSError as exc:
             self._s3_error(500, "InternalError", str(exc))
             return
         try:
-            self.send_response(200)
-            self.send_header("Content-Type", "application/octet-stream")
-            self.send_header("Content-Length", str(size))
-            self.send_header("Last-Modified", _http_date(_entry_mtime(item)))
-            self.send_header("Server", HEAD_BANNER)
-            self.end_headers()
-            while True:
-                chunk = handle.read(PUT_CHUNK)
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
+            self._send_file(handle, item)
         finally:
             try:
                 handle.close()
@@ -1855,6 +2030,7 @@ class _S3Handler(_BaseHandler):
         self.send_response(200)
         self.send_header("Content-Type", "application/octet-stream")
         self.send_header("Content-Length", str(_entry_size(item)))
+        self.send_header("Accept-Ranges", "bytes")
         self.send_header("Last-Modified", _http_date(_entry_mtime(item)))
         self.send_header("Server", HEAD_BANNER)
         self.end_headers()
@@ -2421,6 +2597,7 @@ class _DAVHandler(_BaseHandler):
         else:
             self.send_header("Content-Type", "application/octet-stream")
             self.send_header("Content-Length", str(_entry_size(item)))
+            self.send_header("Accept-Ranges", "bytes")
             self.send_header("Last-Modified", _http_date(_entry_mtime(item)))
         self.send_header("Server", HEAD_BANNER)
         self.end_headers()
@@ -2455,17 +2632,7 @@ class _DAVHandler(_BaseHandler):
             self._send_simple(500, str(exc).encode("utf-8"))
             return
         try:
-            self.send_response(200)
-            self.send_header("Content-Type", "application/octet-stream")
-            self.send_header("Content-Length", str(_entry_size(item)))
-            self.send_header("Last-Modified", _http_date(_entry_mtime(item)))
-            self.send_header("Server", HEAD_BANNER)
-            self.end_headers()
-            while True:
-                chunk = handle.read(PUT_CHUNK)
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
+            self._send_file(handle, item)
         finally:
             try:
                 handle.close()
@@ -2635,7 +2802,17 @@ class _DAVHandler(_BaseHandler):
         path = self._backend_path()
         if path is None:
             return
-        depth = self.headers.get("Depth", "1").strip()
+        depth = self.headers.get("Depth", "1").strip().lower()
+        if depth == "infinity":
+            # RFC 4918 9.1: a server may refuse it so. Answered as depth 1,
+            # a client took the first level for the whole tree.
+            self._send_simple(
+                403,
+                b'<?xml version="1.0" encoding="utf-8"?>'
+                b'<D:error xmlns:D="DAV:"><D:propfind-finite-depth/></D:error>',
+                content_type="application/xml; charset=utf-8",
+            )
+            return
         try:
             item = _stat_entry(self.config.backend, path)
         except OSError as exc:
@@ -2645,7 +2822,7 @@ class _DAVHandler(_BaseHandler):
             self._send_simple(404)
             return
         items: list[tuple[str, Any]] = [(self._url_for(path), item)]
-        if depth in ("1", "infinity") and getattr(item, "is_dir", False):
+        if depth == "1" and getattr(item, "is_dir", False):
             try:
                 entries = _list_entries(self.config.backend, path)
             except OSError as exc:

@@ -30,8 +30,14 @@ bundled extensions and `core/features.py`, as today's tests do for the extras.
   needs system ones), content-addressed by SHA-256. Shared dependencies are one blob
   (cryptography is downloaded once, whatever needs it).
 - `packs-<version>.json`: every unit -> its blobs (name, version, platform, SHA-256, size,
-  URL on the GitHub release, PyPI's URL of the same file as the fallback); signed through
-  the release's `SHA256SUMS` (below) - the base carries only the pinned public key.
+  PyPI's URL of the same file, and the URL on the GitHub release for a blob PyPI does not
+  have); signed through the release's `SHA256SUMS` (below) - the base carries only the
+  pinned public key. A blob that is on PyPI is fetched from `files.pythonhosted.org` and
+  checked against the manifest's SHA-256 and size; only the others are attached to the
+  GitHub release (`scripts/assemble_release.py --pack-wheels unhosted`, the default): GitHub
+  lists a release's files by name, and installed binaries read only the first 100, so a
+  release with every wheel attached pushed `SHA256SUMS` out of their sight. An axross-base
+  that can reach github.com but not files.pythonhosted.org cannot add such packs.
 - axross-slim / axross-full: base + the slim / all units pre-installed, built as today.
   The wheel and sdist on PyPI: unchanged (pip installs extras as today).
 

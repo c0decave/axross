@@ -144,6 +144,41 @@ def path_kind(where: str, output: str, code: int) -> str | None:
     raise err
 
 
+#: What the operation needs *path* to be, and the error for each other
+#: kind: open_read a file, list_dir a folder, mkdir nothing at all.
+_REFUSED_AS = {
+    "file": {None: (FileNotFoundError, errno.ENOENT, "not found"),
+             "dir": (IsADirectoryError, errno.EISDIR, "is a folder")},
+    "dir": {None: (FileNotFoundError, errno.ENOENT, "not found"),
+            "other": (NotADirectoryError, errno.ENOTDIR, "not a folder")},
+    "absent": {"dir": (FileExistsError, errno.EEXIST, "exists"),
+               "other": (FileExistsError, errno.EEXIST, "a file of that name exists")},
+}
+
+
+def refused_as(where: str, path: str, message: str, kind, *, wanted: str) -> OSError:
+    """The OSError for a shell command on *path* that failed with
+    *message* - typed by what *path* turns out to be, asked with
+    ``kind()`` (``"dir"`` / ``"other"`` / None, as :func:`path_kind`)
+    only now that the command failed. ``wanted`` is ``"file"``
+    (open_read: missing is FileNotFoundError, a folder IsADirectoryError),
+    ``"dir"`` (list_dir: NotADirectoryError for a file) or ``"absent"``
+    (mkdir: FileExistsError). A redirect's wording differs per shell
+    (dash: "cannot open x: No such file"), and some transports carry no
+    stderr at all, so the wording alone could not type it. When the
+    probe fails, or the kind is the wanted one, :func:`ls_error` types
+    the message."""
+    try:
+        found = kind()
+    except Exception:  # noqa: BLE001 - no answer: the wording decides
+        return ls_error(where, message)
+    typed = _REFUSED_AS[wanted].get(found)
+    if typed is None:
+        return ls_error(where, message)
+    cls, code, why = typed
+    return cls(code, f"{where}: {why} ({message})" if message else f"{where}: {why}", path)
+
+
 def capped(
     returncode: int, stdout: bytes, stderr: bytes, stdout_cap: int, stderr_cap: int
 ) -> ExecResult:

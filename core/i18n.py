@@ -295,6 +295,14 @@ class Translator:
         """Translate ``text``, or return it unchanged."""
         return self._entries.get(text, text)
 
+    def known(self, text: str) -> str | None:
+        """The translation of ``text``, or None when the catalogue has none.
+
+        For words that are no label and need no entry: the search terms of
+        Settings ("tmpfs", "socks") are matched in English and, where the
+        catalogue has one, in the interface language."""
+        return self._entries.get(text)
+
     def __len__(self) -> int:
         return len(self._entries)
 
@@ -381,6 +389,14 @@ def format_count(n: int) -> str:
     return f"{int(n):,}".replace(",", _THOUSANDS.get(active().language, ","))
 
 
+def format_decimal(value: float, digits: int = 1) -> str:
+    """*value* with *digits* decimals and the active language's decimal
+    mark: "1.5" in English, "1,5" in German and the other shipped
+    catalogues (sizes such as "1,1 MB", durations such as "2,5 s")."""
+    text = f"{value:.{digits}f}"
+    return text if active().language == DEFAULT_LANGUAGE else text.replace(".", ",")
+
+
 #: Key names as the keyboard of each language prints them ("Strg+Umschalt+A").
 #: Qt's own .qm catalogues, which would do this, are not shipped.
 _KEY_NAMES = {
@@ -412,6 +428,7 @@ def tr_keys(keys: str) -> str:
 __all__ = [
     "CATALOGUE_DIR",
     "format_count",
+    "format_decimal",
     "MIN_CATALOGUE_ENTRIES",
     "available_languages",
     "catalogue_size",

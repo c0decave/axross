@@ -28,7 +28,7 @@ def status_text(job: TransferJob) -> str:
     if job.skipped:
         return tr("skipped")
     word = tr(STATUS_WORDS.get(job.status, job.status.value))
-    reason = _reason(job)
+    reason = _sentence(job)
     return f"{word}: {reason.splitlines()[0]}" if reason else word
 
 
@@ -39,6 +39,19 @@ def _reason(job: TransferJob) -> str:
         return ""
     reason = (job.error_message or "").strip()
     return "" if reason.casefold() == "cancelled" else reason
+
+
+def _sentence(job: TransferJob) -> str:
+    """:func:`_reason` as core.user_errors.describe() says it, in the
+    interface language, when the job kept its exception ("[Errno 13]
+    Permission denied: '/x'" -> "Permission denied for /x. ...")."""
+    reason = _reason(job)
+    error = getattr(job, "error", None)
+    if not reason or error is None or job.status != TransferStatus.ERROR:
+        return reason
+    from core.user_errors import describe
+
+    return describe(error) or reason
 
 
 class TransferModel(QAbstractTableModel):
@@ -160,7 +173,12 @@ class TransferModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.ToolTipRole and col == COL_STATUS:
             reason = _reason(job)
             if reason:
-                return f"{tr(STATUS_WORDS.get(job.status, job.status.value))}\n{reason}"
+                word = tr(STATUS_WORDS.get(job.status, job.status.value))
+                sentence = _sentence(job)
+                # The sentence, and the raw text of the error under it.
+                if sentence != reason:
+                    return f"{word}: {sentence}\n{reason}"
+                return f"{word}\n{reason}"
             return None
 
         if role == Qt.ItemDataRole.UserRole and col == COL_PROGRESS:
@@ -185,13 +203,15 @@ class TransferModel(QAbstractTableModel):
 
     @staticmethod
     def _format_size(size: float) -> str:
+        from core.i18n import format_decimal
+
         for unit in ("B", "KB", "MB", "GB"):
             if abs(size) < 1024:
                 if unit == "B":
                     return f"{int(size)} {unit}"
-                return f"{size:.1f} {unit}"
+                return f"{format_decimal(size)} {unit}"
             size /= 1024
-        return f"{size:.1f} TB"
+        return f"{format_decimal(size)} TB"
 
     @staticmethod
     def _format_eta(seconds: float) -> str:

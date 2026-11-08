@@ -27,9 +27,19 @@ terms spelt that way, 7 of 18 as English phonemes in the German voice.
 ``manifest`` writes ``resources/tours/tour_videos.json`` (core.tour_videos):
 the release tag and each video's asset name, size and SHA-256, and copies
 the videos to ``DIR/release/`` under those names - the files to attach to
-that release (``gh release create TAG DIR/release/*.mp4``). A new tag for
-every new set of videos: an axross that pinned the old files keeps
-fetching them from the old release.
+that release. A new tag for every new set of videos: an axross that pinned
+the old files keeps fetching them from the old release.
+
+The videos' release must never become GitHub's "Latest" release: the
+updater (core.self_update) reads ``releases/latest``, and a tag such as
+``tour-videos-1`` is no version - every update check would fail. So it is
+a prerelease, created with ``--latest=false``, before the app release
+(docs/PACKAGING.md, "Release flow", step 7)::
+
+    gh release create tour-videos-1 --prerelease --latest=false \
+        --title "axross tour videos (tour-videos-1)" \
+        --notes "The narrated videos of Help > Tours." DIR/release/*.mp4
+    gh api repos/c0decave/axross/releases/latest --jq .tag_name  # still vX.Y.Z
 
 The voices are the ones axross itself downloads (core.voice_models, SHA-256
 pinned); ``--voices`` is the folder holding ``piper-de-thorsten`` and
@@ -375,7 +385,8 @@ def main(argv=None) -> int:
     r.add_argument("--out", type=Path, required=True)
     r.add_argument("--voices", type=Path, required=True)
     r.add_argument("--lang", nargs="+")
-    m = sub.add_parser("manifest", help="pin the rendered videos in resources/tours/tour_videos.json")
+    m = sub.add_parser("manifest", help="pin the rendered videos in resources/tours/tour_videos.json "
+                       "(their release: a prerelease, --latest=false)")
     m.add_argument("--videos", type=Path, required=True)
     m.add_argument("--tag", default="tour-videos-1")
     args = parser.parse_args(argv)
@@ -384,6 +395,11 @@ def main(argv=None) -> int:
     elif args.command == "manifest":
         data = write_manifest(args.videos, args.tag)
         print(f"{TOUR_MANIFEST}: {len(data['videos'])} videos for release {args.tag}")
+        print(f"attach them to a prerelease that never becomes Latest:\n"
+              f"  gh release create {args.tag} --prerelease --latest=false "
+              f"--title 'axross tour videos ({args.tag})' --notes 'The narrated videos of "
+              f"Help > Tours.' {args.videos / 'release'}/*.mp4\n"
+              f"  gh api repos/c0decave/axross/releases/latest --jq .tag_name  # still vX.Y.Z")
     else:
         render(args.frames, args.out, args.voices, args.lang)
     return 0

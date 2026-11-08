@@ -1,15 +1,18 @@
 """Places under the home folder the agent never writes, moves or deletes.
 
 Changed, they run code or widen the agent's rights with no prompt: its own
-settings and MCP servers, shell and session start files, autostart entries,
-user services, commands on PATH, Python start hooks, Git and pip settings,
-SSH and GnuPG keys. core.mcp_server refuses tool writes there whatever the
-root, and core.agent_sandbox mounts them read-only - the missing ones too,
-as empty read-only places (an agent would otherwise create them).
+settings and MCP servers, its caches of code it runs (compiled extension
+code, downloaded updates, MCP server discovery: ``~/.cache/axross``), shell
+and session start files, autostart entries, user services, commands on
+PATH, Python start hooks, Git and pip settings, SSH and GnuPG keys.
+core.mcp_server refuses tool writes there whatever the root, and
+core.agent_sandbox mounts them read-only - the missing ones too, so that an
+agent cannot create them (how: see that module).
 
-Places under ``~/.config``, ``~/.local/share`` and ``~/.local/state`` are
-also protected where ``$XDG_CONFIG_HOME``, ``$XDG_DATA_HOME`` and
-``$XDG_STATE_HOME`` move them (both locations count).
+Places under ``~/.config``, ``~/.local/share``, ``~/.local/state`` and
+``~/.cache`` are also protected where ``$XDG_CONFIG_HOME``,
+``$XDG_DATA_HOME``, ``$XDG_STATE_HOME`` and ``$XDG_CACHE_HOME`` move them
+(both locations count).
 
 A path names a place when it is the place or lies inside it, compared
 component by component (Windows separators included), case-insensitively
@@ -34,6 +37,9 @@ import sys
 #: Folders (relative to the home folder, "/"-separated).
 HOME_DIRS = (
     ".config/axross", ".local/share/axross", ".local/state/axross",
+    # code axross runs from its cache: compiled extensions (core.extension_code_cache),
+    # updates (update/) and MCP server discovery (mcp-discover/)
+    ".cache/axross",
     ".config/autostart", ".config/autostart-scripts", ".config/systemd",
     ".config/environment.d", ".config/fish",
     ".config/plasma-workspace", ".config/git", ".config/pip", ".config/containers",
@@ -65,6 +71,7 @@ XDG_PLACES = (
     (".config", "XDG_CONFIG_HOME", "AXROSS_AGENT_HOST_XDG_CONFIG_HOME"),
     (".local/share", "XDG_DATA_HOME", "AXROSS_AGENT_HOST_XDG_DATA_HOME"),
     (".local/state", "XDG_STATE_HOME", "AXROSS_AGENT_HOST_XDG_STATE_HOME"),
+    (".cache", "XDG_CACHE_HOME", "AXROSS_AGENT_HOST_XDG_CACHE_HOME"),
 )
 
 def _case_insensitive() -> bool:
@@ -196,15 +203,18 @@ def refusal(path: str, *, entry: bool = False, environ=os.environ) -> str | None
 # Read, these turn "read my files" into the user's accounts: axross's OAuth
 # refresh tokens (Google Drive, OneDrive, Dropbox), its MCP HTTP token, its
 # chat accounts' encryption keys and sync tokens, Bluetooth link keys, the
-# ADB key it made, and the SSH and GnuPG private keys. core.mcp_server
-# refuses to hand their contents to a tool (read_file, grep, checksum,
-# preview, copies, the groups' readers) unless the operator opts in.
+# ADB key it made, the key of its extension code cache, and the SSH and
+# GnuPG private keys. core.mcp_server refuses to hand their contents to a
+# tool (read_file, grep, checksum, preview, copies, the groups' readers)
+# unless the operator opts in.
 
 #: Folders whose every file is secret (relative to the home folder).
 SECRET_DIRS = (".local/state/axross/chat", ".gnupg/private-keys-v1.d",
                ".gnupg/openpgp-revocs.d")
 #: Secret files (relative to the home folder).
 SECRET_FILES = (".gnupg/secring.gpg", ".android/adbkey",
+                # the key that authenticates the extension code cache
+                ".config/axross/extension-code.key",
                 ".local/share/axross/bluetooth-direct-keys.json")
 #: ``(folder, patterns)``: the entries of *folder* whose name matches
 #: (core.connection_manager names a token file ``gdrive_token.<profile>-<hash>.json``,

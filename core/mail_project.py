@@ -38,6 +38,10 @@ log = logging.getLogger(__name__)
 
 MAIL_SUFFIXES = {".eml", ".msg"}
 PST_SUFFIXES = {".pst", ".ost"}
+#: While an import runs, index rows are committed in batches of this many
+#: messages or after this many seconds, whichever comes first.
+COMMIT_EVERY = 200
+COMMIT_SECONDS = 1.0
 MBOX_SUFFIXES = {".mbox", ".mbx", ".mbs"}
 
 _README = """# Mail project
@@ -95,10 +99,69 @@ class MailProject:
         self._lock = threading.Lock()
         self._db = sqlite3.connect(str(self.folder / "index.sqlite"), check_same_thread=False)
         self._db.executescript(_SCHEMA)
+        # Imports running (each a thread of the dialog): while one runs, rows
+        # are committed in batches and DNS answers are kept for the import.
+        self._imports = 0
+        self._uncommitted = 0
+        self._last_commit = time.monotonic()
+        self._dns_cache: dict = {}
 
     def close(self) -> None:
         with self._lock:
+            try:
+                self._db.commit()
+            except sqlite3.ProgrammingError:   # closed already
+                pass
             self._db.close()
+
+    @contextlib.contextmanager
+    def _importing(self):
+        """One import: rows are committed every :data:`COMMIT_EVERY`
+        messages or :data:`COMMIT_SECONDS` (once per message took 219 s for
+        2000 mails), and at its end - a crash loses at most that batch of
+        index rows, which the next import of the same mail adds again. The
+        DNS answers (SPF / DKIM / DMARC) are asked once per name per import."""
+        with self._lock:
+            self._imports += 1
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._imports -= 1
+                if not self._imports:
+                    self._dns_cache.clear()
+
+    def _commit_locked(self, *, force: bool = False) -> None:
+        if not self._uncommitted and not force:
+            return
+        if (force or not self._imports or self._uncommitted >= COMMIT_EVERY
+                or time.monotonic() - self._last_commit >= COMMIT_SECONDS):
+            self._db.commit()
+            self._uncommitted = 0
+            self._last_commit = time.monotonic()
+
+    def _dns_lookup(self, lookup):
+        """*lookup* answering each (name, type) once while an import runs:
+        ten mails of one domain asked the same records ten times, each up to
+        the resolver's timeout when DNS does not answer."""
+        if not self._imports:
+            return lookup
+        cache = self._dns_cache
+
+        def cached(name: str, rtype: str):
+            key = (str(name).lower().rstrip("."), rtype)
+            hit = cache.get(key)
+            if hit is None:
+                try:
+                    hit = (True, list(lookup(name, rtype)))
+                except Exception as exc:  # noqa: BLE001 - kept and raised again
+                    hit = (False, exc)
+                cache[key] = hit
+            if hit[0]:
+                return list(hit[1])
+            raise hit[1]
+
+        return cached
 
     def __enter__(self):
         return self
@@ -127,7 +190,7 @@ class MailProject:
         if self.dns:
             from core import mail_dns
 
-            lookup = self.dns if callable(self.dns) else mail_dns._lookup_default
+            lookup = self._dns_lookup(self.dns if callable(self.dns) else mail_dns._lookup_default)
             try:
                 found, dns_result = mail_dns.dns_check(msg, lookup)
                 report.findings.extend(found)
@@ -145,7 +208,8 @@ class MailProject:
                  msg.date.isoformat() if msg.date else "", msg.size, report.score,
                  sum(f.severity == "high" for f in report.findings),
                  sum(f.severity == "warn" for f in report.findings), msg.message_id, time.time()))
-            self._db.commit()
+            self._uncommitted += 1
+            self._commit_locked()
         return sha
 
     def _add(self, data: bytes, source: str, name: str, result: ImportResult) -> None:
@@ -170,27 +234,42 @@ class MailProject:
         def full() -> bool:
             return result.added + result.known >= limit or (cancel is not None and cancel())
 
-        for raw in paths:
-            for kind, path in _walk(Path(raw)):
-                if full():
-                    break
-                if kind == "file":
-                    try:
-                        if path.stat().st_size > MAX_MESSAGE:
-                            result.skipped += 1
-                            result.errors.append(f"{path}: larger than {MAX_MESSAGE} bytes")
-                            continue
-                        self._add(path.read_bytes(), str(path), path.name, result)
-                    except OSError as exc:
-                        result.errors.append(f"{path}: {exc}")
-                elif kind == "pst":
-                    self._import_pst(path, result, full)
-                elif kind == "mbox":
-                    self._import_mailbox(mailbox.mbox(str(path), create=False), str(path), result, full)
-                elif kind == "maildir":
-                    self._import_mailbox(mailbox.Maildir(str(path), create=False), str(path), result, full)
-        self._log(", ".join(map(str, paths)), result)
+        with self._importing():
+            self._import_paths(paths, result, full)
         return result
+
+    def _import_paths(self, paths: list[str], result: ImportResult, full) -> None:
+        try:
+            for raw in paths:
+                for kind, path in _walk(Path(raw)):
+                    if full():
+                        break
+                    try:
+                        self._import_one(kind, path, result, full)
+                    except Exception as exc:  # noqa: BLE001 - one damaged file must not end the import
+                        log.warning("Mail Project: %s could not be read", path, exc_info=True)
+                        result.errors.append(f"{path}: {type(exc).__name__}: {exc}"[:300])
+        finally:
+            # Also when cancelled or a file failed: the log and index.csv
+            # show what this import added.
+            self._log(", ".join(map(str, paths)), result)
+
+    def _import_one(self, kind: str, path: Path, result: ImportResult, full) -> None:
+        if kind == "file":
+            try:
+                if path.stat().st_size > MAX_MESSAGE:
+                    result.skipped += 1
+                    result.errors.append(f"{path}: larger than {MAX_MESSAGE} bytes")
+                    return
+                self._add(path.read_bytes(), str(path), path.name, result)
+            except OSError as exc:
+                result.errors.append(f"{path}: {exc}")
+        elif kind == "pst":
+            self._import_pst(path, result, full)
+        elif kind == "mbox":
+            self._import_mailbox(mailbox.mbox(str(path), create=False), str(path), result, full)
+        elif kind == "maildir":
+            self._import_mailbox(mailbox.Maildir(str(path), create=False), str(path), result, full)
 
     def _import_pst(self, path: Path, result: ImportResult, full) -> None:
         """Each message of an Outlook data file, rebuilt as .eml (core.pst)."""
@@ -205,19 +284,24 @@ class MailProject:
             result.errors.append(f"{path}: {exc}")
             return
         with pst:
-            for msg in pst.messages():
-                if full():
-                    return
-                label = f"{path}#{msg.folder}/{msg.nid:#x}"
-                if "error" in msg.props:
-                    result.errors.append(f"{label}: {msg.props['error']}")
-                    continue
-                try:
-                    data = to_eml(msg, str(path))
-                except Exception as exc:  # noqa: BLE001 - one message the rebuild cannot take
-                    result.errors.append(f"{label}: {type(exc).__name__}: {exc}"[:300])
-                    continue
-                self._add(data, label, "", result)
+            try:
+                for msg in pst.messages():
+                    if full():
+                        return
+                    label = f"{path}#{msg.folder}/{msg.nid:#x}"
+                    if "error" in msg.props:
+                        result.errors.append(f"{label}: {msg.props['error']}")
+                        continue
+                    try:
+                        data = to_eml(msg, str(path))
+                    except Exception as exc:  # noqa: BLE001 - one message the rebuild cannot take
+                        result.errors.append(f"{label}: {type(exc).__name__}: {exc}"[:300])
+                        continue
+                    self._add(data, label, "", result)
+            finally:
+                # Folders that could not be read (their messages are listed
+                # without a folder name): counted, not lost without a word.
+                result.errors.extend(f"{path}: {problem}" for problem in pst.folder_errors)
 
     def _import_mailbox(self, box, label: str, result: ImportResult, full) -> None:
         try:
@@ -239,6 +323,17 @@ class MailProject:
                        limit: int = 100_000, cancel=None) -> ImportResult:
         """The .eml messages an IMAP / POP3 / Exchange backend lists in *folder*."""
         result = ImportResult()
+        if getattr(backend, "FLAT_MAILBOX", False):
+            folder = "/"    # POP3: all mail is at "/", "/INBOX" lists nothing
+        with self._importing():
+            try:
+                self._import_backend(backend, folder, result, recursive, limit, cancel)
+            finally:
+                self._log(f"{getattr(backend, 'name', 'backend')}:{folder}", result)
+        return result
+
+    def _import_backend(self, backend, folder: str, result: ImportResult, recursive: bool,
+                        limit: int, cancel) -> None:
         stack = [folder]
         while stack and result.added + result.known < limit and not (cancel and cancel()):
             current = stack.pop()
@@ -267,15 +362,13 @@ class MailProject:
                 self._add(data, f"{getattr(backend, 'name', 'backend')}:{path}", item.name, result)
                 if result.added + result.known >= limit:
                     break
-        self._log(f"{getattr(backend, 'name', 'backend')}:{folder}", result)
-        return result
 
     def _log(self, what: str, result: ImportResult) -> None:
         with self._lock:
             self._db.execute("INSERT INTO imports VALUES (?,?,?,?,?,?)",
                              (time.time(), what[:2000], result.added, result.known, result.skipped,
                               json.dumps(result.errors[:200])))
-            self._db.commit()
+            self._commit_locked(force=True)
         self.write_csv()
 
     # --- reading -------------------------------------------------------------------

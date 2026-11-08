@@ -42,6 +42,10 @@ class VBoxError(RuntimeError):
     pass
 
 
+class VBoxMissing(VBoxError):
+    """VBoxManage is not installed (or not where VirtualBox puts it)."""
+
+
 @dataclass
 class Controller:
     name: str
@@ -147,7 +151,7 @@ def attach_argvs(exe: str, vm: str, ctl: Controller, path: str) -> list[list[str
 def register(path: str, exe: str | None = None) -> str:
     exe = exe or vboxmanage()
     if exe is None:
-        raise VBoxError("VBoxManage was not found - is VirtualBox installed?")
+        raise VBoxMissing("VBoxManage was not found - is VirtualBox installed?")
     run(register_argv(exe, path))
     return path
 
@@ -156,7 +160,7 @@ def attach(path: str, vm: str, controller: str, exe: str | None = None) -> str:
     """Attach *path* to *vm* on *controller*; the slot used, as text."""
     exe = exe or vboxmanage()
     if exe is None:
-        raise VBoxError("VBoxManage was not found - is VirtualBox installed?")
+        raise VBoxMissing("VBoxManage was not found - is VirtualBox installed?")
     state, controllers = parse_machine(run([exe, "showvminfo", vm, "--machinereadable"]))
     ctl = next((c for c in controllers if c.name == controller), None)
     if ctl is None:
@@ -170,13 +174,28 @@ def attach(path: str, vm: str, controller: str, exe: str | None = None) -> str:
 def activate(api):
     from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
+    from core.i18n import tr
     from ui.plain_text import plain_item, plain_message
 
     def local_path(ctx):
         if not ctx.is_local:
-            api.notify("VirtualBox needs a local file")
+            api.notify(tr("VirtualBox needs a local file"))
             return None
         return ctx.paths[0]
+
+    def not_installed() -> None:
+        """VBoxManage is missing: say so with "Show in Features…", which
+        shows how to install VirtualBox."""
+        from ui.features_dialog import offer_features
+
+        offer_features(api.window, "tool:virtualbox",
+                       tr("VBoxManage was not found - is VirtualBox installed?"))
+
+    def register_failed(exc):
+        if isinstance(exc, VBoxMissing):
+            not_installed()
+            return
+        plain_message(api.window, QMessageBox.Icon.Warning, tr("Register in VirtualBox"), str(exc)).exec()
 
     def do_register(ctx):
         path = local_path(ctx)
@@ -184,9 +203,9 @@ def activate(api):
             return
         api.run_in_background(
             lambda: register(path),
-            on_done=lambda p: api.notify(f"registered {os.path.basename(p)} in VirtualBox"),
-            on_error=lambda exc: plain_message(api.window, QMessageBox.Icon.Warning,
-                                               "Register in VirtualBox", str(exc)).exec(),
+            on_done=lambda p: api.notify(tr("registered {name} in VirtualBox").format(
+                name=os.path.basename(p))),
+            on_error=register_failed,
         )
 
     def do_attach(ctx):
@@ -195,17 +214,16 @@ def activate(api):
             return
         exe = vboxmanage()
         if exe is None:
-            QMessageBox.warning(api.window, "Attach to VirtualBox VM",
-                                "VBoxManage was not found - is VirtualBox installed?")
+            not_installed()
             return
 
         def got_vms(vms):
             if not vms:
-                api.notify("VirtualBox has no machines")
+                api.notify(tr("VirtualBox has no machines"))
                 return
             labels = [name for name, _uuid in vms]
-            choice, ok = plain_item(api.window, "Attach to VirtualBox VM",
-                                    f"Attach {os.path.basename(path)} to:", labels)
+            choice, ok = plain_item(api.window, tr("Attach to VirtualBox VM"),
+                                    tr("Attach {name} to:").format(name=os.path.basename(path)), labels)
             if not ok:
                 return
             uuid = vms[labels.index(choice)][1]
@@ -218,28 +236,28 @@ def activate(api):
         def got_machine(name, uuid, state, controllers):
             usable = disk_controllers(controllers)
             if not usable:
-                plain_message(api.window, QMessageBox.Icon.Warning, "Attach to VirtualBox VM",
-                              f"{name} has no controller with a free port.").exec()
+                plain_message(api.window, QMessageBox.Icon.Warning, tr("Attach to VirtualBox VM"),
+                              tr("{name} has no controller with a free port.").format(name=name)).exec()
                 return
             ctl = usable[0]
             if len(usable) > 1:
                 labels = [f"{c.name} ({c.type})" for c in usable]
-                choice, ok = QInputDialog.getItem(api.window, "Attach to VirtualBox VM",
-                                                  "Controller:", labels, editable=False)
+                choice, ok = QInputDialog.getItem(api.window, tr("Attach to VirtualBox VM"),
+                                                  tr("Controller:"), labels, editable=False)
                 if not ok:
                     return
                 ctl = usable[labels.index(choice)]
             if state == "running":
-                api.notify(f"{name} is running: the port must be hot-pluggable")
+                api.notify(tr("{name} is running: the port must be hot-pluggable").format(name=name))
             api.run_in_background(
                 lambda: attach(path, uuid, ctl.name, exe),
-                on_done=lambda slot: api.notify(
-                    f"attached {os.path.basename(path)} to {name}: {slot}"),
+                on_done=lambda slot: api.notify(tr("attached {file} to {name}: {slot}").format(
+                    file=os.path.basename(path), name=name, slot=slot)),
                 on_error=failed,
             )
 
         def failed(exc):
-            plain_message(api.window, QMessageBox.Icon.Warning, "Attach to VirtualBox VM",
+            plain_message(api.window, QMessageBox.Icon.Warning, tr("Attach to VirtualBox VM"),
                           str(exc)).exec()
 
         api.run_in_background(lambda: parse_vms(run([exe, "list", "vms"])), on_done=got_vms,

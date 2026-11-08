@@ -44,16 +44,18 @@ def block_entropies(backend, path: str, *, block: int = BLOCK, limit: int = MAX_
 
 
 def verdict(values: list[float]) -> str:
+    from core.i18n import tr
+
     if not values:
-        return "empty file"
+        return tr("empty file")
     high = sum(1 for v in values if v > 7.5) / len(values)
     if high > 0.9:
-        return "looks compressed or encrypted throughout"
+        return tr("looks compressed or encrypted throughout")
     if high > 0.2:
-        return f"{high:.0%} of the blocks look compressed or encrypted"
+        return tr("{share} of the blocks look compressed or encrypted").format(share=f"{high:.0%}")
     if max(values) < 5.0:
-        return "low entropy: text, tables or padding"
-    return "mixed content"
+        return tr("low entropy: text, tables or padding")
+    return tr("mixed content")
 
 
 def heat_image(values: list[float], width: int = 720, height: int = 60):
@@ -78,7 +80,9 @@ def activate(api):
     def show(ctx):
         item = next(i for i in ctx.items if not i.is_dir)
         path = ctx.backend.join(ctx.folder, item.name)
-        api.notify(f"measuring {item.name}…")
+        from core.i18n import tr
+
+        api.notify(tr("measuring {name}…").format(name=item.name))
 
         def done(result):
             from PyQt6.QtCore import Qt
@@ -90,18 +94,18 @@ def activate(api):
             from ui.icon_provider import set_window_icon
 
             set_window_icon(dialog, "heatmap")
-            dialog.setWindowTitle(f"Entropy — {item.name}")
+            dialog.setWindowTitle(tr("Entropy — {name}").format(name=item.name))
             layout = QVBoxLayout(dialog)
             strip = QLabel()
             strip.setPixmap(QPixmap.fromImage(heat_image(values)))
             layout.addWidget(strip)
             avg = sum(values) / len(values) if values else 0.0
-            text = (
-                f"{len(values)} blocks of {BLOCK} bytes, average {avg:.2f} bits/byte, "
-                f"max {max(values, default=0):.2f}.\n{verdict(values)}."
-            )
+            text = tr("{n} blocks of {block} bytes, average {avg} bits/byte, max {max}.").format(
+                n=len(values), block=BLOCK, avg=f"{avg:.2f}", max=f"{max(values, default=0):.2f}")
+            text += f"\n{verdict(values)}."
             if more:
-                text += f"\nOnly the first {MAX_BYTES // (1024 * 1024)} MiB were measured."
+                text += "\n" + tr("Only the first {n} MiB were measured.").format(
+                    n=MAX_BYTES // (1024 * 1024))
             layout.addWidget(QLabel(text))
             from ui.close_corner import add_close_corner
 

@@ -115,6 +115,17 @@ import pytest  # noqa: E402
 import unittest  # noqa: E402
 import unittest.case  # noqa: E402
 
+
+def pytest_configure(config):
+    """core.cloud_http pauses before it retries a 429 / 5xx answer (seconds,
+    up to the server's Retry-After): every test of a fake cloud service that
+    answers errors would wait. Set once for the run, without a fixture;
+    tests that look at the pauses patch ``cloud_http._sleep`` themselves."""
+    from core import cloud_http
+
+    cloud_http._sleep = lambda _seconds: None
+
+
 #: subTest parameter values execnet can send from an xdist worker as they are.
 _PLAIN = (str, int, float, bool, type(None))
 _original_sub_test = unittest.TestCase.subTest

@@ -66,7 +66,7 @@ from core.archive import (
     list_archive,
     strip_archive_extension,
 )
-from core.i18n import tr, tr_n
+from core.i18n import format_decimal, tr, tr_n
 from core.remote_name import sanitize_for_display
 from ui.icon_provider import set_window_icon
 
@@ -94,8 +94,8 @@ def _fmt_size(n: int) -> str:
     for unit in ("KiB", "MiB", "GiB", "TiB"):
         val /= 1024
         if val < 1024:
-            return f"{val:.1f} {unit}"
-    return f"{val:.1f} PiB"
+            return f"{format_decimal(val)} {unit}"
+    return f"{format_decimal(val)} PiB"
 
 
 def _fmt_ratio(entry: ArchiveEntry) -> str:
@@ -865,7 +865,11 @@ class ArchivePaneWidget(QWidget):
         return menu
 
     def _show_context_menu(self, pos) -> None:
-        self.build_context_menu().exec(self._tree.viewport().mapToGlobal(pos))
+        menu = self.build_context_menu()
+        try:
+            menu.exec(self._tree.viewport().mapToGlobal(pos))
+        finally:
+            menu.deleteLater()  # else every right click leaves it on the pane
 
     def member_entry(self, member: str) -> ArchiveEntry | None:
         return next((e for e in self._entries if e.name == member), None)
