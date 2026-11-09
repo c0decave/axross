@@ -11,6 +11,7 @@ contents, so it runs everywhere.
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -30,6 +31,53 @@ NO_LICENCE_FILE_IN_WHEEL = {"ctranslate2", "dnspython", "fusepy", "manuf", "toke
 #: neither ``rpm -qL`` nor ``rpm -qd`` of the package or of the other packages
 #: built from its source rpm lists one (checked in the builder image).
 NO_LICENCE_TEXT_IN_RPM = {"libxcb", "lz4-libs", "sqlite-libs", "xcb-util-keysyms"}
+
+
+#: LIBRARIES.txt's package of a libpython that is the building interpreter's
+#: own (scripts/bundle_licenses.BUILD_PYTHON: python-build-standalone in a
+#: sysroot build); its licence is CPython's LICENSE.txt.
+BUILD_PYTHON = "python"
+#: LIBRARIES.txt's package of a top-level library a wheel ships
+#: (scripts/bundle_licenses.WHEEL_PREFIX): its licences are the wheel's.
+WHEEL_PREFIX = "wheel:"
+#: Wheels that ship another project's library without its licence: the
+#: file the build adds below the wheel's licence folder
+#: (scripts/bundle_licenses.WHEEL_LIBRARY_NOTICES).
+WHEEL_LIBRARY_NOTICE = {"libusb-package": "libusb/COPYING"}
+
+
+def system_licence_problems(toc, listed: dict[str, str]) -> list[str]:
+    """What a binary lacks for its top-level libraries: each needs a
+    package in LIBRARIES.txt (*listed*: library -> package) and that
+    package's licence files under licenses/system/<package>/; the building
+    interpreter's libpython needs CPython's LICENSE.txt there, a library a
+    wheel ships (``wheel:<name>``) the wheel's licence files under
+    licenses/python/<name>-<version>/."""
+    names = {name for _, name in toc}
+    missing = []
+    for kind, name in toc:
+        if kind != "b" or "/" in name or not name.startswith("lib"):
+            continue
+        package = listed.get(name)
+        if not package or package == "-":
+            missing.append(f"system {name}: no package")
+        elif package.startswith(WHEEL_PREFIX):
+            dist = package[len(WHEEL_PREFIX):]
+            folder = re.compile(rf"^licenses/python/({re.escape(dist)}-[^-/]+)/")
+            folders = {m.group(1) for m in map(folder.match, names) if m}
+            notice = WHEEL_LIBRARY_NOTICE.get(dist)
+            if not folders and dist not in NO_LICENCE_FILE_IN_WHEEL:
+                missing.append(f"system {name}: no licence files of the wheel {dist}")
+            elif notice and not any(f"licenses/python/{f}/{notice}" in names for f in folders):
+                missing.append(f"system {name}: no licenses/python/{dist}-*/{notice}")
+        elif package == BUILD_PYTHON:
+            if f"licenses/system/{BUILD_PYTHON}/LICENSE.txt" not in names:
+                missing.append(f"system {name}: no licenses/system/{BUILD_PYTHON}/LICENSE.txt")
+        elif package in NO_LICENCE_TEXT_IN_RPM:
+            continue
+        elif not any(n.startswith(f"licenses/system/{package}/") for n in names):
+            missing.append(f"system {name}: no licence files of {package}")
+    return missing
 
 
 def _entries(*raw: dict) -> list[T.Entry]:
@@ -107,6 +155,42 @@ def test_sad_an_entry_found_in_a_binary_it_does_not_list_is_reported():
 
 
 # --- classifier: edge ------------------------------------------------------
+
+
+def test_happy_the_build_python_s_libpython_passes_with_cpython_s_licence():
+    toc = [("b", "libpython3.12.so.1.0"), ("b", "libkrb5.so.3"),
+           ("x", "licenses/system/python/LICENSE.txt"),
+           ("x", "licenses/system/krb5-libs/LICENSE")]
+    listed = {"libpython3.12.so.1.0": "python", "libkrb5.so.3": "krb5-libs"}
+    assert system_licence_problems(toc, listed) == []
+
+
+def test_sad_the_build_python_s_libpython_without_its_licence_is_reported():
+    toc = [("b", "libpython3.12.so.1.0"), ("x", "licenses/system/python/PYTHON.json"),
+           ("b", "libstray.so.1")]
+    assert system_licence_problems(toc, {"libpython3.12.so.1.0": "python",
+                                         "libstray.so.1": "-"}) == [
+        "system libpython3.12.so.1.0: no licenses/system/python/LICENSE.txt",
+        "system libstray.so.1: no package"]
+
+
+def test_happy_a_library_a_wheel_ships_passes_with_the_wheel_s_licences():
+    toc = [("b", "libusb-1.0.so"), ("b", "libthing.so.2"),
+           ("x", "licenses/python/libusb-package-1.0.26.4/LICENSE"),
+           ("x", "licenses/python/libusb-package-1.0.26.4/libusb/COPYING"),
+           ("x", "licenses/python/some-wheel-2.0/LICENSE.txt")]
+    listed = {"libusb-1.0.so": "wheel:libusb-package", "libthing.so.2": "wheel:some-wheel"}
+    assert system_licence_problems(toc, listed) == []
+
+
+def test_sad_a_wheel_library_without_its_licences_is_reported():
+    toc = [("b", "libusb-1.0.so"), ("b", "libthing.so.2"),
+           ("x", "licenses/python/libusb-package-1.0.26.4/LICENSE"),
+           ("x", "licenses/python/some-wheel-old-1.0/LICENSE")]
+    listed = {"libusb-1.0.so": "wheel:libusb-package", "libthing.so.2": "wheel:some-wheel"}
+    assert system_licence_problems(toc, listed) == [
+        "system libusb-1.0.so: no licenses/python/libusb-package-*/libusb/COPYING",
+        "system libthing.so.2: no licence files of the wheel some-wheel"]
 
 
 def test_edge_bootstrap_and_symlink_entries_are_ignored():
@@ -187,15 +271,7 @@ def test_release_the_binary_carries_the_licence_texts(flavor, path):
     else:
         missing.append("licenses/system/LIBRARIES.txt")
         listed = {}
-    for kind, name in toc:
-        if kind == "b" and "/" not in name and name.startswith("lib"):
-            package = listed.get(name)
-            if not package or package == "-":
-                missing.append(f"system {name}: no rpm package")
-            elif package in NO_LICENCE_TEXT_IN_RPM:
-                continue
-            elif not any(n.startswith(f"licenses/system/{package}/") for n in names):
-                missing.append(f"system {name}: no licence files of {package}")
+    missing += system_licence_problems(toc, listed)
     for required in ("licenses/voice/COPYING", "licenses/voice/SOURCE-OFFER.txt",
                      "licenses/search-tools/ripgrep-LICENSE-MIT"):
         if flavor == "axross-full" and required not in names:

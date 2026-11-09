@@ -730,6 +730,21 @@ the old code.
   repository impossible to check out on Windows, so 0.15.176 had no macOS
   or Windows binaries. It is gone, and a test keeps every file name valid
   on Windows and macOS.
+- **The Linux binaries carry the licence texts of their system libraries
+  again.** Since the binaries are built against unpacked AlmaLinux 9 and
+  Debian 12 packages instead of in a container, `rpm` found none of these
+  libraries. `licenses/system/` had no licence files (the LGPL texts and
+  others), and every library was listed without package or version. The
+  unpacking now records which package each file is from, and the build
+  takes the package, its version and its licence files from that record.
+  For Debian these are the packages' `copyright` files. The Python library
+  itself now comes from the CPython the build runs with, not from a
+  package, and the binaries carry that CPython's licence text in
+  `licenses/system/python/`, together with the licences of the libraries
+  linked into it (OpenSSL, libffi, SQLite, zlib and more). These come from
+  python-build-standalone's archive of the same build, checked against a
+  pinned SHA-256. libusb, which the Bluetooth support ships, now comes with
+  its LGPL-2.1 text.
 - **IMAP keeps mail that other programs only marked as deleted.**
   Disconnecting, or renaming or deleting the open mailbox, after a refused
   delete, a flag change or a move no longer purges every message flagged

@@ -25,6 +25,7 @@ READERS = (
     "scripts/lock_scan_tools.sh",
     "security/supply_chain_gate.py",
     "scripts/export_supply_chain_gate.py",
+    "scripts/bundle_licenses.py",
 )
 # build/<name> references; <system>.txt placeholders and outputs are not inputs
 _REF = re.compile(r"build/([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?)")

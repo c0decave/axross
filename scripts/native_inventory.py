@@ -11,7 +11,14 @@ version typed in resources/credits/third_party.json disagrees with them.
 A version is read, in this order, and each row says from where:
 
 ``rpm``      the builder image's package (licenses/system/LIBRARIES.txt,
-             written by scripts/bundle_licenses.py)
+             written by scripts/bundle_licenses.py) - of the AlmaLinux 9
+             sysroot of scripts/build_dist.sh too
+``deb``      the same for a Debian 12 sysroot build (licenses/system/SYSTEM.txt
+             names the package format)
+``cpython``  libpython of the interpreter the build ran with, no package's
+             (LIBRARIES.txt package ``python``): python-build-standalone
+             (a top-level library a wheel ships - ``wheel:<name>`` in
+             LIBRARIES.txt - reads ``wheel``: the wheel's version)
 ``wheel``    the library is the wheel's own (Qt in PyQt6-Qt6): the wheel version
 ``sbom``     the wheel's SBOM (licenses/python/<wheel>/sboms/)
 ``file``     a version string inside the file
@@ -139,6 +146,29 @@ def system_packages(text: str) -> dict[str, tuple[str, str]]:
     return out
 
 
+def package_format(text: str) -> str:
+    """licenses/system/SYSTEM.txt (``<format>\t<system>``, a sysroot build)
+    -> ``rpm`` or ``deb``; without the file (the builder image) ``rpm``."""
+    word = text.split("\t", 1)[0].strip() if text else ""
+    return word if word in ("rpm", "deb") else "rpm"
+
+
+#: LIBRARIES.txt's package of the building interpreter's own libpython
+#: (scripts/bundle_licenses.BUILD_PYTHON)
+BUILD_PYTHON = "python"
+#: LIBRARIES.txt's package of a top-level library a wheel ships:
+#: ``wheel:<distribution>`` (scripts/bundle_licenses.WHEEL_PREFIX)
+WHEEL_PREFIX = "wheel:"
+
+
+def system_source(package: str, version: str, fmt: str) -> tuple[str, str]:
+    """(read from, shipped by) of a library LIBRARIES.txt lists."""
+    if package == BUILD_PYTHON:
+        return ("cpython" if version else "",
+                f"python-build-standalone {version}".rstrip())
+    return (fmt if version else "", f"{fmt} {package}" if package else "builder image")
+
+
 def wheel_versions(names: Iterable[str]) -> dict[str, str]:
     """Normalised distribution name -> version, from the licence folders
     and ``*.dist-info`` folders of the bundle."""
@@ -242,6 +272,10 @@ def inventory(archive: Archive, entries: Sequence[T.Entry]) -> list[NativeFile]:
     except (KeyError, UnicodeDecodeError):
         listing = ""
     system = system_packages(listing)
+    try:
+        fmt = package_format(archive.read("licenses/system/SYSTEM.txt").decode("utf-8"))
+    except (KeyError, UnicodeDecodeError):
+        fmt = "rpm"
     sboms: dict[str, list[tuple[str, str, str]]] = {}
     for name in names:
         m = _WHEEL_DIR.match(name)
@@ -283,8 +317,14 @@ def inventory(archive: Archive, entries: Sequence[T.Entry]) -> list[NativeFile]:
         fam = family(name)
         if "/" not in name:
             package, version = system.get(name, ("", ""))
-            evidence = "rpm" if version else ""
-            shipped = f"rpm {package}" if package else "builder image"
+            if package.startswith(WHEEL_PREFIX):  # the wheel's own library, at the top
+                dist = T.normalise_name(package[len(WHEEL_PREFIX):])
+                version = version or wheels.get(dist, "")
+                rows.append(NativeFile(name, entry.id if entry else "", "", version,
+                                       "wheel" if version else "",
+                                       f"wheel {dist} {version}".rstrip(), "library"))
+                continue
+            evidence, shipped = system_source(package, version, fmt)
             if not version:
                 version = soname_version(name) or ""
                 evidence = "soname" if version else ""
@@ -338,10 +378,9 @@ def inventory(archive: Archive, entries: Sequence[T.Entry]) -> list[NativeFile]:
             lib = next((n for n in system if n.startswith("libpython")), "")
             package, version = system.get(lib, ("", ""))
             cpython = next((e for e in entries if e.id == "cpython"), None)
+            evidence, shipped = system_source(package, version, fmt)
             rows.append(NativeFile(folder, cpython.id if cpython else "", "", version,
-                                   "rpm" if version else "",
-                                   f"rpm {package}" if package else "builder image",
-                                   "extension", len(members)))
+                                   evidence, shipped, "extension", len(members)))
             continue
         dist = _owner_wheel(members[0], wheels, entries)
         own = _own_wheel(entry, dist)
@@ -361,6 +400,14 @@ def inventory(archive: Archive, entries: Sequence[T.Entry]) -> list[NativeFile]:
     return rows
 
 
+def _upstream(version: str) -> str:
+    """The upstream part of a package version: no epoch (Debian's "2:"),
+    no release ("-10.el9_8", "-2+deb12u2"), no Debian repack suffix."""
+    version = version.split(":", 1)[1] if re.match(r"^\d+:", version) else version
+    version = version.split("-", 1)[0]
+    return re.split(r"[+~]", version, maxsplit=1)[0]
+
+
 def version_conflicts(inventories: Mapping[str, Sequence[NativeFile]],
                       entries: Sequence[T.Entry]) -> list[str]:
     """Entries whose typed ``version`` matches none of the versions the
@@ -370,7 +417,7 @@ def version_conflicts(inventories: Mapping[str, Sequence[NativeFile]],
         for row in rows:
             if row.component and row.version and row.evidence not in ("soname", ""):
                 version = row.version.split("-", 1)[0] if row.evidence in ("rpm", "sbom") \
-                    else row.version
+                    else _upstream(row.version) if row.evidence == "deb" else row.version
                 seen.setdefault(row.component, []).append(version)
     out = []
     for entry in entries:
@@ -423,7 +470,7 @@ _ORDER = {"library": 0, "program": 2, "extension": 3, "static": 4}
 
 
 def _sort_key(row: NativeFile):
-    rank = _ORDER[row.kind] + (0 if row.shipped_by.startswith("rpm") or
+    rank = _ORDER[row.kind] + (0 if row.shipped_by.startswith(("rpm ", "deb ")) or
                                row.shipped_by == "builder image" else 1) * (row.kind == "library")
     return (rank, row.shipped_by.casefold(), row.path.casefold(), row.label.casefold())
 
@@ -461,6 +508,13 @@ def render_files(inventories: Mapping[str, Sequence[NativeFile]],
         "resources/credits/third_party.json names.",
         "",
     ]
+    evidences = {r.evidence for rows in inventories.values() for r in rows}
+    extra = ("`deb` the Debian package of the target system, " if "deb" in evidences else "") + \
+        ("`cpython` the libpython of the Python the build ran with, " if "cpython" in evidences
+         else "")
+    if extra:
+        lines[2] = lines[2].replace("`rpm` the builder image's package, ",
+                                    "`rpm` the builder image's package, " + extra)
     table = []
     for key, per in sorted(merged.items(), key=lambda kv: _sort_key(next(iter(kv[1].values())))):
         row = next(iter(per.values()))

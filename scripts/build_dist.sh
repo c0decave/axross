@@ -246,6 +246,15 @@ build_bootloader() {
 }
 
 if [[ "$ONLY" != "wheel" ]]; then
+    # libpython is python-build-standalone's, and so are the libraries linked
+    # into it (OpenSSL, libffi, SQLite, ...): their licence texts come from the
+    # full archive of the same build, hash-pinned in build/python-standalone.txt;
+    # scripts/bundle_licenses.py puts them into licenses/system/python/
+    echo ">>> python-build-standalone licence texts (build/python-standalone.txt)"
+    "$BVENV/bin/python" -I "$SRC/scripts/python_licences.py" "$SRC/build/python-standalone.txt" \
+        "$WORK/python-licences" --python "$PY" \
+        || { echo "the python-build-standalone licence texts could not be fetched" >&2; exit 1; }
+    export AXROSS_PYTHON_LICENSES="$WORK/python-licences"
     IFS=, read -r -a VARIANT_LIST <<<"$VARIANTS"
     IFS=, read -r -a FLAVOR_LIST <<<"$FLAVORS"
     for variant in "${VARIANT_LIST[@]}"; do

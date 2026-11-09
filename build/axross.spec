@@ -435,8 +435,9 @@ a.datas = TOC(entry for entry in a.datas if not dropped_data(entry[0]) and not d
 # Licence texts of everything kept above (scripts/bundle_licenses.py): every
 # bundled Python distribution's own licence files under licenses/python/, and
 # for every library the builder system contributes the licence files of its
-# rpm package under licenses/system/, with licenses/system/LIBRARIES.txt
-# naming the package of each library. tests/test_third_party_bundle.py checks
+# package under licenses/system/ (rpm in a container; in a sysroot build of
+# scripts/build_dist.sh the sysroot's FILES.json), with
+# licenses/system/LIBRARIES.txt naming the package of each library. tests/test_third_party_bundle.py checks
 # a built binary for them.
 a.datas = TOC(list(a.datas) + licence_datas(a, os.path.join(workpath, "licenses")))
 

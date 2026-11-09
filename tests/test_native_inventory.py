@@ -355,6 +355,104 @@ def test_edge_unmatched_auditwheel_components_still_appear():
     assert any(r.kind == "static" and r.label == "libcom_err" for r in rows)
 
 
+# --- a sysroot build (scripts/build_dist.sh) ---------------------------------
+# The libraries' packages come from the sysroot's FILES.json; SYSTEM.txt
+# (scripts/bundle_licenses.py) names their format.
+
+
+def _debian_bundle() -> FakeArchive:
+    bundle = _bundle()
+    bundle.files["licenses/system/LIBRARIES.txt"] = (
+        "libssl.so.3\tlibssl3\t3.0.22-1~deb12u2\n"
+        "libcrypto.so.3\tlibssl3\t3.0.22-1~deb12u2\n"
+        "libz.so.1\tzlib1g\t1:1.2.13.dfsg-1\n").encode()
+    bundle.files["licenses/system/SYSTEM.txt"] = b"deb\tdebian12\n"
+    return bundle
+
+
+def test_happy_a_debian_sysroot_build_says_deb_with_package_and_version():
+    rows = _by_path(N.inventory(_debian_bundle(), ENTRIES))
+    ssl = rows["libssl.so.3"]
+    assert (ssl.version, ssl.evidence, ssl.shipped_by) == \
+        ("3.0.22-1~deb12u2", "deb", "deb libssl3")
+    assert rows["libz.so.1"].shipped_by == "deb zlib1g"
+    text = N.render_files({"axross-full": list(rows.values())}, ENTRIES)
+    assert "`deb` the Debian package of the target system" in text
+    # the AlmaLinux sysroot's rows read as the builder image's did
+    alma = _bundle()
+    alma.files["licenses/system/SYSTEM.txt"] = b"rpm\talmalinux9\n"
+    rows = _by_path(N.inventory(alma, ENTRIES))
+    assert (rows["libssl.so.3"].evidence, rows["libssl.so.3"].shipped_by) == \
+        ("rpm", "rpm openssl-libs")
+    assert "`deb`" not in N.render_files({"axross-full": list(rows.values())}, ENTRIES)
+
+
+def test_sad_an_unknown_package_format_counts_as_rpm():
+    assert N.package_format("") == "rpm"
+    assert N.package_format("pacman\tarch\n") == "rpm"
+    assert N.package_format("deb\tdebian12\n") == "deb"
+
+
+def test_edge_a_debian_version_compares_without_epoch_and_revision():
+    entries = _entries({"id": "zlib", "name": "zlib", "version": "1.2.13",
+                        "match": {"libraries": ["libz"]}})
+    row = N.NativeFile("libz.so.1", "zlib", "", "1:1.2.13.dfsg-1", "deb", "deb zlib1g",
+                       "library")
+    assert N.version_conflicts({"axross-full": [row]}, entries) == []
+    newer = N.NativeFile("libz.so.1", "zlib", "", "1:1.3+dfsg-1", "deb", "deb zlib1g", "library")
+    assert N.version_conflicts({"axross-full": [newer]}, entries) == \
+        ["zlib: typed 1.2.13, the binary has 1.3"]
+
+
+def test_happy_the_build_python_s_libpython_says_python_build_standalone():
+    bundle = _bundle()
+    bundle.files["licenses/system/LIBRARIES.txt"] = (
+        LIBRARIES_TXT.replace("libpython3.12.so.1.0\tpython3.12-libs\t3.12.15-1.el9_8",
+                              "libpython3.12.so.1.0\tpython\t3.12.8")).encode()
+    bundle.files["licenses/system/SYSTEM.txt"] = b"rpm\talmalinux9\n"
+    rows = _by_path(N.inventory(bundle, ENTRIES))
+    lib = rows["libpython3.12.so.1.0"]
+    assert (lib.version, lib.evidence, lib.shipped_by) == \
+        ("3.12.8", "cpython", "python-build-standalone 3.12.8")
+    dynload = rows["python3.12/lib-dynload/"]
+    assert (dynload.version, dynload.evidence, dynload.shipped_by) == \
+        ("3.12.8", "cpython", "python-build-standalone 3.12.8")
+    # the AlmaLinux packages' rows stay rpm rows
+    assert (rows["libssl.so.3"].evidence, rows["libssl.so.3"].shipped_by) == \
+        ("rpm", "rpm openssl-libs")
+    text = N.render_files({"axross-full": list(rows.values())}, ENTRIES)
+    assert "`cpython` the libpython of the Python the build ran with" in text
+
+
+def test_edge_a_build_python_row_without_version_keeps_its_origin():
+    assert N.system_source("python", "", "deb") == ("", "python-build-standalone")
+    assert N.system_source("libssl3", "3.0.22-1", "deb") == ("deb", "deb libssl3")
+    assert N.system_source("", "", "rpm") == ("", "builder image")
+
+
+def test_happy_a_library_a_wheel_ships_at_the_top_reads_wheel():
+    bundle = _bundle()
+    bundle.files["libusb-1.0.so"] = ELF
+    bundle.files["licenses/python/libusb-package-1.0.26.4/LICENSE"] = b"Apache-2.0"
+    bundle.files["licenses/system/LIBRARIES.txt"] = \
+        (LIBRARIES_TXT + "libusb-1.0.so\twheel:libusb-package\t1.0.26.4\n").encode()
+    rows = _by_path(N.inventory(bundle, ENTRIES))
+    usb = rows["libusb-1.0.so"]
+    assert (usb.version, usb.evidence, usb.shipped_by) == \
+        ("1.0.26.4", "wheel", "wheel libusb-package 1.0.26.4")
+    assert rows["libssl.so.3"].shipped_by == "rpm openssl-libs"
+
+
+def test_edge_a_wheel_row_without_version_takes_the_licence_folder_s():
+    bundle = _bundle()
+    bundle.files["libthing.so"] = ELF
+    bundle.files["licenses/python/some-wheel-2.0/LICENSE"] = b"MIT"
+    bundle.files["licenses/system/LIBRARIES.txt"] = \
+        (LIBRARIES_TXT + "libthing.so\twheel:some-wheel\t-\n").encode()
+    row = _by_path(N.inventory(bundle, ENTRIES))["libthing.so"]
+    assert (row.version, row.evidence, row.shipped_by) == ("2.0", "wheel", "wheel some-wheel 2.0")
+
+
 # --- release: the built binaries -------------------------------------------
 
 

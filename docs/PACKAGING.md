@@ -182,6 +182,47 @@ One spec file handles both flavours via the
   `pytest`, `tkinter`, `sphinx`, `jupyter`, `IPython`, `notebook`.
 * **UPX** — on by default with `libQt6*.so*` and `libicu*.so*`
   excluded because Qt plugins break when packed.
+* **Licence texts** — `scripts/bundle_licenses.py` copies each bundled
+  system library's package licence files into `licenses/system/<package>/`
+  and lists library, package and version in `licenses/system/LIBRARIES.txt`.
+  In a container build, `rpm` names the package. A sysroot build
+  (`scripts/build_dist.sh`) has no package database, so the package comes
+  from the sysroot's `FILES.json`, which `scripts/sysroot_fetch.py` writes
+  while unpacking: which package wrote each file and symlink, with each
+  package's version and source package. The licence files are the
+  package's own files under `/usr/share/licenses/` (AlmaLinux) or its
+  `/usr/share/doc/<package>/copyright` (Debian). When the package has none,
+  the files of the sysroot's other packages built from the same source
+  package are taken. `licenses/system/SYSTEM.txt` names the format (`rpm`
+  or `deb`), and `scripts/native_inventory.py` shows it in each row. An
+  `AXROSS_TARGET_ROOT` without `FILES.json` stops the build. A
+  `libpython` that no package owns and that belongs to the interpreter
+  running the build (in `build_dist.sh`, uv's python-build-standalone
+  CPython) gets the package `python` with that interpreter's version. Its
+  `lib/python3.X/LICENSE.txt` goes to `licenses/system/python/`. uv's
+  installation lacks the licences of what is linked into libpython
+  (OpenSSL, libffi, SQLite, XZ, zlib, ...). So `build_dist.sh` runs
+  `scripts/python_licences.py`, which fetches the *full* archive of the
+  same python-build-standalone build. Its URL and SHA-256 are pinned in
+  `build/python-standalone.txt`, and the hash is checked before the archive
+  is read. The script refuses a pin of another CPython version, or of
+  another release than the one uv recorded in its `BUILD` file. Only
+  `python/PYTHON.json` (which names the licence of each linked library) and
+  the files of `python/licenses/` are kept. They go to
+  `licenses/system/python/` and `licenses/system/python/licenses/`
+  (`AXROSS_PYTHON_LICENSES`). PYTHON.json carries no versions of those
+  libraries, so LIBRARIES.txt and the inventory do not list them one by
+  one. The inventory shows libpython as `cpython`, shipped by
+  `python-build-standalone <version>`. A new `PYTHON_VERSION` needs a new
+  pin (`uv python list <version> --show-urls` names the release).
+  A top-level library that a wheel ships (libusb-package's
+  `libusb-1.0.so`) is listed as `wheel:<distribution>` with the wheel's
+  version. Its licence files are the wheel's, under `licenses/python/`,
+  and the inventory reads it as `wheel`. When a wheel lacks the licence of
+  the library it carries, a tracked text is added: libusb-package has only
+  its own Apache-2.0 text, so libusb's LGPL-2.1 `COPYING` and `AUTHORS`
+  (v1.0.26) come from `build/licenses/libusb/`
+  (`WHEEL_LIBRARY_NOTICES` in `scripts/bundle_licenses.py`).
 
 ### Dynamic backend imports
 

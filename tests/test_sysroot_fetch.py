@@ -343,3 +343,91 @@ def test_edge_gpgv_reports_its_status_on_stdout(monkeypatch, tmp_path):
     monkeypatch.setattr(SF.subprocess, "run", run)
     SF.gpgv(tmp_path / "x.sig", [], detached_data=tmp_path / "x")
     assert seen["args"][1:3] == ["--status-fd", "1"]
+
+
+# -- FILES.json: which package each file is from (scripts/bundle_licenses.py) ------------------
+# A sysroot has no rpm or dpkg database; without this record the bundle's
+# system libraries went out without their licence texts.
+
+def test_happy_an_rpm_unpack_names_what_it_wrote(tmp_path):
+    root = tmp_path / "root"
+    (root / "usr/lib64").mkdir(parents=True)
+    os.symlink("usr/lib64", root / "lib64")
+    rpm = tmp_path / "x.rpm"
+    rpm.write_bytes(rpm_bytes([("./usr/share/licenses/krb5-libs/", 0o40755, 1, b""),
+                               ("./usr/share/licenses/krb5-libs/LICENSE", 0o100644, 1, b"MIT"),
+                               ("./lib64/libkrb5.so.3.3", 0o100755, 1, b"\x7fELF"),
+                               ("./usr/lib64/libkrb5.so.3", 0o120777, 1, b"libkrb5.so.3.3")]))
+    written = SF.unpack_rpm(rpm, root)
+    # folders are not files; lib64/ of a usrmerged root is recorded as usr/lib64/
+    assert written == ["usr/share/licenses/krb5-libs/LICENSE", "usr/lib64/libkrb5.so.3.3",
+                       "usr/lib64/libkrb5.so.3"]
+
+
+def test_happy_a_deb_unpack_names_files_links_and_hard_links(monkeypatch, tmp_path):
+    data = tar_bytes([("./usr/", "dir", None),
+                      ("./usr/share/doc/libx/copyright", "file", b"(c)"),
+                      ("./usr/lib/libx.so.1.0", "file", b"\x7fELF"),
+                      ("./usr/lib/libx.so.1", "symlink", "libx.so.1.0"),
+                      ("./usr/lib/libx-copy.so", "hardlink", "./usr/lib/libx.so.1.0")])
+    monkeypatch.setattr(SF.subprocess, "run", lambda *a, **k: type("R", (), {"stdout": data})())
+    root = tmp_path / "root"
+    root.mkdir()
+    assert SF.unpack_deb(tmp_path / "x.deb", root) == [
+        "usr/share/doc/libx/copyright", "usr/lib/libx.so.1.0", "usr/lib/libx.so.1",
+        "usr/lib/libx-copy.so"]
+
+
+def _alma_main(monkeypatch, tmp_path, rpms: dict[str, list]) -> dict:
+    """sysroot_fetch.main for almalinux9 on local rpms (no network): the
+    index names them, the packages folder already holds them."""
+    import hashlib
+    import json
+
+    out = tmp_path / "sysroot"
+    (out / "packages").mkdir(parents=True)
+    index = {}
+    for name, (version, source, entries) in rpms.items():
+        data = rpm_bytes(entries)
+        (out / "packages" / f"{name}.rpm").write_bytes(data)
+        index[name] = {"Version": version, "_source": source, "_source_version": version,
+                       "_evr": (0, *version.split("-", 1)),
+                       "SHA256": hashlib.sha256(data).hexdigest(),
+                       "_url": f"https://mirror.invalid/{name}.rpm"}
+    monkeypatch.setattr(SF, "alma_index", lambda work: index)
+    monkeypatch.setattr(SF, "get", lambda url: pytest.fail(f"fetched {url}"))
+    listing = tmp_path / "list.txt"
+    listing.write_text("# comment\n" + "\n".join(rpms) + "\n")
+    assert SF.main(["x", "almalinux9", str(out), "--list", str(listing)]) == 0
+    return json.loads((out / "FILES.json").read_text())
+
+
+def test_happy_main_writes_which_package_each_file_is_from(monkeypatch, tmp_path):
+    manifest = _alma_main(monkeypatch, tmp_path, {
+        "filesystem": ("3.16-5.el9", "filesystem", [
+            ("./usr/lib64/", 0o40755, 1, b""), ("./lib64", 0o120777, 1, b"usr/lib64")]),
+        "krb5-libs": ("1.21.1-10.el9_8", "krb5", [
+            ("./lib64/libkrb5.so.3.3", 0o100755, 1, b"\x7fELF"),
+            # absolute: relink_absolute makes it relative, its name stays
+            ("./usr/lib64/libkrb5.so.3", 0o120777, 1, b"/usr/lib64/libkrb5.so.3.3"),
+            ("./usr/share/licenses/krb5-libs/LICENSE", 0o100644, 1, b"MIT")]),
+    })
+    assert manifest["system"] == "almalinux9"
+    assert manifest["files"] == {"lib64": "filesystem",
+                                 "usr/lib64/libkrb5.so.3": "krb5-libs",
+                                 "usr/lib64/libkrb5.so.3.3": "krb5-libs",
+                                 "usr/share/licenses/krb5-libs/LICENSE": "krb5-libs"}
+    assert manifest["packages"]["krb5-libs"] == {"version": "1.21.1-10.el9_8", "source": "krb5"}
+    link = tmp_path / "sysroot/root/usr/lib64/libkrb5.so.3"
+    assert os.readlink(link) == "libkrb5.so.3.3"  # relinked, still recorded under its name
+
+
+def test_edge_a_file_a_later_package_replaces_is_that_package_s(monkeypatch, tmp_path):
+    manifest = _alma_main(monkeypatch, tmp_path, {
+        "first": ("1-1", "first", [("./usr/lib64/libshared.so", 0o120777, 1, b"libone.so"),
+                                   ("./usr/share/doc/first/COPYING", 0o100644, 1, b"GPL")]),
+        "second": ("2-1", "second", [("./usr/lib64/libshared.so", 0o120777, 1, b"libtwo.so")]),
+    })
+    assert manifest["files"]["usr/lib64/libshared.so"] == "second"
+    assert manifest["files"]["usr/share/doc/first/COPYING"] == "first"
+    assert os.readlink(tmp_path / "sysroot/root/usr/lib64/libshared.so") == "libtwo.so"

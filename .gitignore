@@ -32,6 +32,8 @@ build/*
 !build/capa-rules.txt
 !build/capa-sigs.txt
 !build/standalone.spec
+!build/python-standalone.txt
+!build/licenses/
 build-tmp/
 *.whl
 

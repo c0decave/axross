@@ -27,7 +27,9 @@ usr/lib64 works and nothing leads outside); files keep their permission bits (bi
 absolute symlinks are made relative to the root, so nothing in it points
 at this machine's files. Everything is unpacked into OUT/root (no scripts
 run, no owners set);
-OUT/PACKAGES.txt lists "name version" of what was taken. The standard
+OUT/PACKAGES.txt lists "name version" of what was taken, OUT/FILES.json
+which package each file and symlink under OUT/root is from (the licence
+texts of a bundled library: scripts/bundle_licenses.py). The standard
 library does all of it except gpgv (in every Debian image) and zstd-packed
 RPMs (``pip install zstandard``).
 """
@@ -265,12 +267,20 @@ def _write_file(target: Path, data: bytes, mode: int) -> None:
     os.chmod(target, (mode & 0o755) | 0o600)  # its x bits (binutils run), never set-id
 
 
-def unpack_deb(path: Path, dest: Path) -> None:
+def _installed(dest: Path, target: Path) -> str:
+    """*target*'s name relative to *dest* (folders resolved: lib64/x of a
+    usrmerged root is usr/lib64/x), as FILES.json records it."""
+    return target.relative_to(dest).as_posix()
+
+
+def unpack_deb(path: Path, dest: Path) -> list[str]:
     """A .deb's data.tar.* into *dest*: regular files with their permission
     bits, folders, symlinks, hard links as copies; devices and anything that
-    would leave *dest* are skipped."""
+    would leave *dest* are skipped. Returns the names (relative to *dest*)
+    of the files and symlinks it wrote."""
     tar = subprocess.run(["dpkg-deb", "--fsys-tarfile", str(path)], capture_output=True,
                          check=True).stdout
+    written: list[str] = []
     with tempfile.TemporaryFile() as tmp:
         tmp.write(tar)
         tmp.seek(0)
@@ -286,14 +296,18 @@ def unpack_deb(path: Path, dest: Path) -> None:
                 elif member.isreg():
                     data = archive.extractfile(member).read()
                     _write_file(target, data, member.mode)
+                    written.append(_installed(dest, target))
                 elif member.issym():
                     target.parent.mkdir(parents=True, exist_ok=True)
                     _replace(target)
                     os.symlink(member.linkname, target)
+                    written.append(_installed(dest, target))
                 elif member.islnk():
                     source = safe_target(dest, member.linkname)
                     if source is not None and source.is_file() and not source.is_symlink():
                         _write_file(target, source.read_bytes(), source.stat().st_mode)
+                        written.append(_installed(dest, target))
+    return written
 
 
 def relink_absolute(root: Path) -> int:
@@ -520,8 +534,9 @@ def _decompress(data: bytes) -> bytes:
     return data
 
 
-def unpack_rpm(path: Path, dest: Path) -> None:
-    """An .rpm's payload (cpio newc) into *dest*."""
+def unpack_rpm(path: Path, dest: Path) -> list[str]:
+    """An .rpm's payload (cpio newc) into *dest*. Returns the names
+    (relative to *dest*) of the files and symlinks it wrote."""
     data = path.read_bytes()
     offset = 96  # the lead
     for padded in (True, False):  # the signature header, then the header
@@ -533,6 +548,7 @@ def unpack_rpm(path: Path, dest: Path) -> None:
             offset += (-offset) % 8
     cpio = _decompress(data[offset:])
     pending: dict[tuple, tuple[list[Path], int]] = {}  # hard links waiting for their data
+    written: list[str] = []
     i = 0
     while i + 110 <= len(cpio):
         if cpio[i:i + 6] not in (b"070701", b"070702"):
@@ -559,20 +575,42 @@ def unpack_rpm(path: Path, dest: Path) -> None:
             target.parent.mkdir(parents=True, exist_ok=True)
             _replace(target)
             os.symlink(body.decode("utf-8", "surrogateescape"), target)
+            written.append(_installed(dest, target))
         elif kind == stat.S_IFREG:
             key = (dev_major, dev_minor, ino)
             names = pending.pop(key, ([], mode))[0] + [target]
             if filesize or nlink <= 1:
                 for t in names:  # newc carries a hard link's data with its last name
                     _write_file(t, body, mode)
+                    written.append(_installed(dest, t))
             else:
                 pending[key] = (names, mode)
     for names, mode in pending.values():  # hard links of an empty file
         for t in names:
             _write_file(t, b"", mode)
+            written.append(_installed(dest, t))
+    return written
 
 
 # -- main -----------------------------------------------------------------------------------
+
+def write_files_manifest(out: Path, system: str, owners: dict[str, str],
+                         index: dict[str, dict], names: list[str]) -> Path:
+    """OUT/FILES.json: which package each file and symlink under OUT/root
+    came from, and each package's version and source package - what an rpm
+    or dpkg database would tell. scripts/bundle_licenses.py reads it for the
+    licence files and LIBRARIES.txt of the libraries a build bundles from
+    the root. A name a later package replaced belongs to that package; one
+    that is gone (a folder now) is left out."""
+    root = out / "root"
+    files = {rel: pkg for rel, pkg in sorted(owners.items()) if os.path.lexists(root / rel)}
+    packages = {name: {"version": index[name]["Version"],
+                       "source": index[name].get("_source", name)} for name in names}
+    path = out / "FILES.json"
+    path.write_text(json.dumps({"system": system, "files": files, "packages": packages},
+                               indent=0, sort_keys=True) + "\n")
+    return path
+
 
 def main(argv: list[str]) -> int:
     if len(argv) < 3 or argv[1] not in ("debian12", "almalinux9"):
@@ -596,6 +634,7 @@ def main(argv: list[str]) -> int:
     if missing:
         raise SystemExit(f"not in the repositories: {' '.join(missing)}")
     taken, records = [], []
+    owners: dict[str, str] = {}  # file under the root -> the package that wrote it last
     for name in names:
         entry = index[name]
         dest = packages / entry["_url"].rsplit("/", 1)[1]
@@ -604,7 +643,8 @@ def main(argv: list[str]) -> int:
             if sha256(data) != entry["SHA256"]:
                 raise SystemExit(f"{name}: the package does not match its index")
             dest.write_bytes(data)
-        (unpack_deb if system == "debian12" else unpack_rpm)(dest, root)
+        for written in (unpack_deb if system == "debian12" else unpack_rpm)(dest, root):
+            owners[written] = name
         taken.append(f"{name} {entry['Version']}")
         # RPM versions with their epoch ("1:3.5.8-2.el9_8"), as OSV compares them
         epoch = entry.get("_evr", (0,))[0] if system == "almalinux9" else 0
@@ -614,7 +654,8 @@ def main(argv: list[str]) -> int:
         records.append({"name": name, "version": full, "source": entry.get("_source", name),
                         "source_version": src_full,
                         "sha256": entry["SHA256"], "file": dest.name})
-    relink_absolute(root)
+    relink_absolute(root)  # link targets change, the names FILES.json records do not
+    write_files_manifest(out, system, owners, index, names)
     (out / "PACKAGES.txt").write_text("\n".join(taken) + "\n")
     # for the supply-chain gate (security/supply_chain_gate.py check-system)
     ecosystem = "Debian:12" if system == "debian12" else "AlmaLinux:9"

@@ -1,0 +1,14 @@
+# The python-build-standalone archive whose licence texts go into the Linux
+# binaries (scripts/python_licences.py, run by scripts/build_dist.sh): the
+# "full" archive of the very build uv installs as CPython $PYTHON_VERSION
+# (uv python list 3.12.8 --show-urls: release 20250115, pgo+lto). Only the
+# full archives carry PYTHON.json and python/licenses/ - the licences of
+# what is linked into libpython (OpenSSL, libffi, SQLite, XZ, zlib, bzip2,
+# mpdecimal, Expat, ncurses, libedit, Tcl/Tk, ...). The SHA-256 is the one
+# the release publishes next to the archive (<archive>.sha256), checked
+# against the downloaded file. A new PYTHON_VERSION in build_dist.sh needs
+# a new pin here: the script refuses a pin of another version or release.
+version 3.12.8
+release 20250115
+url https://github.com/astral-sh/python-build-standalone/releases/download/20250115/cpython-3.12.8%2B20250115-x86_64-unknown-linux-gnu-pgo%2Blto-full.tar.zst
+sha256 fb3dda384590b22514b5f8103ed2d9c0591dd89c8ab8138b5eb6f3169df70dcd

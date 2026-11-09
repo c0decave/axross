@@ -303,9 +303,11 @@ them) into the bundle under `licenses/python/<name>-<version>/`
 ## Native libraries and data inside the binaries
 
 Shared libraries come from the Python wheels (Qt, Pillow, PyAV, psycopg,
-numpy, CTranslate2) and from the builder image (AlmaLinux 9). For every
-library the builder image contributes, the build copies the licence files of
-its rpm package into `licenses/system/<package>/` and names the package in
+numpy, CTranslate2) and from the build system's packages (AlmaLinux 9 for
+glibc 2.34, Debian 12 for glibc 2.36). For every library these packages
+contribute, the build copies the licence files of its package (rpm:
+`/usr/share/licenses/`, Debian: its `copyright` file) into
+`licenses/system/<package>/` and names the package and its version in
 `licenses/system/LIBRARIES.txt`. For the wheels' libraries the bundle has
 what the wheel itself ships under `licenses/python/`: Pillow and numpy list
 the licences of the libraries they bundle; the PyQt6-Qt6 wheel carries only
