@@ -214,7 +214,19 @@ def _too_large_style(css: str) -> bool:
 
 def _too_many_cells(text: str) -> bool:
     """The tables of *text* lay out more than :data:`MAX_CELLS` grid cells."""
-    from core.mail_html import TableGrid
+    try:
+        from core.mail_html import TableGrid
+    except ImportError:
+        # A tool exported on its own (export_standalone) carries no mail
+        # module: count every cell at its largest span instead - stricter,
+        # never looser.
+        cells = 0
+        for match in _GRID_TAG.finditer(text):
+            if match.group(1) or match.group(2).lower() not in ("td", "th"):
+                continue
+            cells += MAX_SPAN * MAX_SPAN if re.search(r"(?:col|row)span", match.group(0),
+                                                      re.IGNORECASE) else 1
+        return cells > MAX_CELLS
 
     grids: list[TableGrid] = []
     cost = 0

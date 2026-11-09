@@ -131,7 +131,9 @@ def test_happy_the_menu_refresh_loads_in_the_background(tmp_path):
     pane.navigate(str(tmp_path))
     try:
         menu = pane._build_context_menu()
-        refresh = next(a for a in menu.actions() if a.text().replace("&", "") == "Refresh")
+        from tests.menu_walk import all_actions  # Refresh sits under More now
+
+        refresh = next(a for a in all_actions(menu) if a.text().replace("&", "") == "Refresh")
         calls: list[str] = []
         pane.navigate = lambda *a, **k: calls.append("sync")
         pane.navigate_async = lambda *a, **k: calls.append("async")
