@@ -663,17 +663,36 @@ groups (§9) see it as outside the root. A symlink to a secret is
 resolved and refused. Names stay listable (`list_dir`, `walk`, `stat`,
 `search`). In the agent sandbox the host's home counts too.
 Anywhere (a project folder too): a file holding a private key or a
-password database by its first 4 KiB (`-----BEGIN … PRIVATE KEY-----`,
-OpenSSH, PuTTY, KeePass), and files secret by their name (`.env`, `.env.*`
-except `.example`/`.sample`/`.template`/`.dist`, `.netrc`,
-`.git-credentials`, `.pgpass`, `*.tfstate`, `*.kdbx`, `id_rsa`,
-`id_ed25519`, `id_ecdsa`, `*.ppk`, `*.p12`, `*.pfx`); below `/proc` a
+password database (a KeePass signature at its start; `-----BEGIN …
+PRIVATE KEY-----`, OpenSSH or PuTTY in its first MiB - also after the
+certificates of a bundle), and files secret by their name (`.env`,
+`.env.*` except `.example`/`.sample`/`.template`/`.dist`, `*.env`,
+`.envrc`, `.netrc`, `.git-credentials`, `.pgpass`, `.npmrc`, `.pypirc`,
+`.htpasswd`, `*.tfstate`, `*.kdbx`, `id_rsa`, `id_ed25519`, `id_ecdsa` and
+their copies such as `id_rsa.bak`, `*.ppk`, `*.p12`, `*.pfx`,
+`kubeconfig`, `credentials.json`, `client_secret*.json`, `secrets.yaml`,
+`secrets.json`, `.aws/credentials`, `.docker/config.json`,
+`.kube/config`); below `/proc` a
 process's `environ`, `cmdline`, `mem`, `maps`, `fd` and the like and all of
 `/proc/self` (a root of `/` would hand out axross's API keys), and
 `/run/secrets`. `chmod` refuses a file with other hard links.
 `--mcp-allow-secret-reads` (stdio only) switches the check off; the
 agent's own tools always keep it. The write side (§2, the protected
-places of `core.protected_places`) is a list of its own and unchanged.
+places of `core.protected_places`) is a list of its own and unchanged by
+this switch. Besides the home's start files and Git's code files (in any
+case: `head`, `.GIT`), it refuses at any depth the project files other
+programs run code from - the folders `.claude`, `.vscode`, `.cursor`,
+`.idea`, `.zed`, `.devcontainer`, `.husky` (and `.fleet`, `.gemini`,
+`.codex`, `.windsurf`, `.roo`, `.kiro`, `.amazonq`, `.continue`, `.theia`)
+and `.mcp.json`, `.devcontainer.json`, `*.code-workspace`,
+`.pre-commit-config.yaml`, `lefthook.yml`, `.overcommit.yml` - the folder a
+repository's `core.hooksPath` names (its config, `~/.gitconfig`,
+`/etc/gitconfig`, `GIT_CONFIG_*`) and the files its config includes. It
+also refuses the files an enabled MCP server of Agent Settings runs on this
+machine (its script; beside a Python script any module file, which Python
+would import first: `core.mcp_script_pin`) - and that server does not start
+with files that changed since the user confirmed them, until the user says
+so (USAGE.md, MCP servers).
 
 Every name a path goes by is checked - as typed, after each symlink on
 the way, and resolved - on both sides: a key behind

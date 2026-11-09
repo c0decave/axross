@@ -24,7 +24,7 @@ Rechner – im selben Fenster und mit denselben Handgriffen.
   selbst nicht können.
 - **Ein KI-Programm kann mitarbeiten.** axross kann ohne Fenster als
   MCP-Server laufen; ein LLM-Programm wie Claude Desktop erreicht dann
-  über axross deine Verbindungen. Es darf erst einmal nur lesen -
+  über axross deine Verbindungen. Es darf erst einmal nur lesen –
   Schreiben erlaubst du ausdrücklich mit `--mcp-write` (siehe
   [MCP-Server](#mcp-server)).
 
@@ -50,11 +50,11 @@ Rechner – im selben Fenster und mit denselben Handgriffen.
   echte Fenster: *Erste Schritte*, *Mit einem Server verbinden*, *Sicher
   kopieren und synchronisieren*, *Finden und ordnen*, *Automatisieren* und
   *Extensions und Funktionen*. Eine Tour dunkelt das Fenster um den Teil
-  ab, den sie erklärt, und rahmt ihn ein – der Teil bleibt bedienbar -,
+  ab, den sie erklärt, und rahmt ihn ein – der Teil bleibt bedienbar –,
   daneben steht ein Kasten mit *Schritt k von n*, **Zurück**, **Weiter**
   und **Tour beenden**; **Esc** beendet die Tour auch. Ein Schritt, dessen
   Teil nicht im Fenster ist (ein Dock oder eine Extension ausgeschaltet,
-  ein Pane geschlossen, eine Toolbar ausgeblendet), wird übersprungen, und
+  ein Pane geschlossen, eine Symbolleiste ausgeblendet), wird übersprungen, und
   der nächste Schritt sagt, welche übersprungen wurden; ein geschlossenes
   Agent-, Scripts- oder Console-Dock wird für seinen Schritt geöffnet und
   am Ende der Tour wieder geschlossen.
@@ -68,14 +68,15 @@ Rechner – im selben Fenster und mit denselben Handgriffen.
 
 Im Connection Manager (Strg+Umschalt+N) legst du Profile an; die
 Schnellverbindung (Strg+N) öffnet ein gespeichertes. Jedes Profil
-wählt ein Protokoll und speichert Host / Username / Auth / Proxy /
-protokollspezifische Optionen. Sensible Felder (Passwörter,
-OAuth-Secrets, Azure-Connection-Strings) gehen in den OS-Keyring; die
-Profil-JSON selbst enthält nie Klartext-Credentials.
+wählt ein Protokoll und speichert Host, Benutzername, Anmeldung, Proxy und
+die Optionen des Protokolls. Sensible Felder (Passwörter,
+OAuth-Secrets, Azure-Verbindungszeichenfolgen) gehen in den Schlüsselbund
+des Systems (Keyring); die Profil-JSON selbst enthält nie Zugangsdaten im
+Klartext.
 
-- **Wo sich eine Verbindung öffnet.** Solange das Ziel-Pane unbenutzt ist -
+- **Wo sich eine Verbindung öffnet.** Solange das Ziel-Pane unbenutzt ist –
   ein lokales Pane, noch im Home-Ordner, nicht weiternavigiert, nichts
-  ausgewählt, kein Filter getippt -, öffnet sich eine neue Verbindung an
+  ausgewählt, kein Filter getippt –, öffnet sich eine neue Verbindung an
   seiner Stelle; beim ersten Start bekommt der Server so die rechte Hälfte
   des Fensters statt eines dritten, schmalen Panes. Das letzte lokale Pane
   wird nie ersetzt: eine zweite Verbindung öffnet sich neben der ersten.
@@ -86,7 +87,7 @@ Profil-JSON selbst enthält nie Klartext-Credentials.
   Rechtsklick auf ein Profil in der Schnellverbindung → *In neuem Pane
   verbinden*.
 
-- **Wie eine Verbindung geschützt ist.** Ein Symbol neben jeder Verbindung -
+- **Wie eine Verbindung geschützt ist.** Ein Symbol neben jeder Verbindung –
   im Pane-Kopf, im Workspace-Tab (seine schwächste Verbindung), an
   Bookmarks, in der Schnellverbindung – zeigt Klartext, nur signiert, TLS (mit einer
   Schwäche), SSH-verschlüsselt oder Ende-zu-Ende; der Tooltip sagt genau was
@@ -204,7 +205,7 @@ Profil-JSON selbst enthält nie Klartext-Credentials.
   Speichern abgelehnt (aktualisieren und wiederholen). Noch nicht
   gepushte Commits werden auf den neuen Stand von origin gesetzt, wenn
   sie andere Dateien betreffen; sonst bleiben sie auf einem neuen Branch
-  `axross/unpushed-<Datum>-<Zeit>` – die Meldung nennt ihn -, und der
+  `axross/unpushed-<Datum>-<Zeit>` – die Meldung nennt ihn –, und der
   Branch zeigt den Stand von origin: Öffne den neuen Branch, um deine
   Dateien zurückzukopieren. Dieser Branch wird unter demselben Namen
   nach origin gepusht und überlebt so einen gelöschten Cache; lehnt
@@ -271,7 +272,7 @@ PgUp** schalten durch, und jeder behält sein eigenes Quell- und Ziel-Pane.
   Workspace oder Fensters ziehen. File-Panes und Terminal-Panes lassen
   sich gleich ziehen (ein Terminal-Pane auch über seinen ⇄-Button); ein
   Workspace, dessen letztes Pane geht, schließt; hält man ein gezogenes Pane
-  eine halbe Sekunde über einen Workspace-Tab, öffnet sich dieser Tab —
+  eine halbe Sekunde über einen Workspace-Tab, öffnet sich dieser Tab –
   so erreicht ein Pane auch einen Workspace im Hintergrund.
 - **Extension-Panels** (Media Player, Drives Overview, Markdown Preview,
   …) sind auf allen Workspaces, bis man eines auf einen Workspace legt:
@@ -300,7 +301,7 @@ PgUp** schalten durch, und jeder behält sein eigenes Quell- und Ziel-Pane.
   Dock behält seinen Platz, erscheint aber nur, solange sein Workspace im
   Fenster ist (ein abgelöster Workspace: solange er der aktuelle ist);
   wird es auf einem anderen Workspace geöffnet (Ansicht → Panels, sein
-  Toolbar-Knopf), kommt sein Workspace nach vorn. Auf seinem Workspace
+  Symbolleisten-Knopf), kommt sein Workspace nach vorn. Auf seinem Workspace
   geschlossen bleibt es zu; schließt der Workspace, gilt es wieder für
   alle. Die Bindung kommt beim nächsten Start wieder.
 - **Workspace schließen** schließt ihn mit seinen Panes (nach Rückfrage);
@@ -320,7 +321,7 @@ PgUp** schalten durch, und jeder behält sein eigenes Quell- und Ziel-Pane.
 Beim Beenden speichert axross das Layout in `session.json`; der
 nächste Start baut es automatisch wieder auf:
 
-- den Splitter-Baum mit seinen Größen, die Window-Geometry, das
+- die Aufteilung der Panes mit ihren Größen, Größe und Lage des Fensters, das
   Dock-Layout (welche Docks offen sind und wo, und welche Tabs axross
   selbst gemacht hat) und das Theme;
 - lokale Panes auf ihren Ordnern – ein inzwischen gelöschter Ordner
@@ -329,7 +330,7 @@ nächste Start baut es automatisch wieder auf:
   Ordner, in dem die alte Shell stand (Home, wenn er fehlt).
 
 **Ein Start verbindet nie.** Ein Pane oder Terminal eines gespeicherten
-Connection-Profils kommt als Placeholder zurück, *Not connected —
+Verbindungsprofils kommt als Platzhalter zurück, *Nicht verbunden –
 &lt;Profil&gt;*, mit einem **Neu verbinden**-Button. Bei einem File-Pane
 verbindet Reconnect genau wie das Öffnen des Profils über die Schnellverbindung
 (Passwort-Prompt, Host-Key-Prüfung) und setzt das Pane an die Stelle
@@ -357,7 +358,7 @@ Remote-Panes.
   Tabellen und Terminal-Zeilen breit.
 - Brauchen die Docks einer Spalte mehr Höhe, als die Spalte hat – jedes
   einen brauchbaren Teil seines Inhalts (200 px, oder alles, wenn es
-  weniger braucht), nicht nur seine Titelleiste -, werden benachbarte
+  weniger braucht), nicht nur seine Titelleiste –, werden benachbarte
   Docks zu Tabs zusammengelegt, bis sie passen; die Tabs stehen unten
   an der Gruppe. Nichts überlappt, auch wenn ein Window Manager das
   Fenster kleiner hält (Tiling, maximiert).
@@ -423,7 +424,12 @@ ein Durchlauf, der mittendrin abbricht, sagt, wie viel eingereiht wurde.
 - **Fortsetzen.** Fehlgeschlagene Übertragungen lassen sich fortsetzen;
   die schon übertragenen Bytes am Ziel werden weiterverwendet. Eine
   Übertragung, die an einem vollen Ziel scheitert, löscht ihre
-  Teildatei.
+  Teildatei. Auf der lokalen Platte wird die Teildatei nur fortgesetzt,
+  solange sie eine normale Datei von Ihnen mit nur einem Namen ist (nie
+  durch einen Link, den jemand in einem geteilten Ordner an ihre Stelle
+  gesetzt hat), und jede temporäre Datei wird über den einen Deskriptor
+  geschrieben, mit dem sie geöffnet wurde, angelegt mit den Rechten der
+  Quelle (ein 0600-Schlüssel ist nie für andere lesbar, keinen Moment).
 - **Wiederholen.** *Fehlgeschlagene wiederholen* startet jede
   fehlgeschlagene Übertragung der Warteschlange erneut, jede genau
   einmal.
@@ -520,7 +526,7 @@ Archiv-Preview) und bei einem Archiv *Entpacken…*; dann *Kopieren*
 kopieren*, *Ins Ziel-Pane verschieben*, *Packen ▸*; *In den Papierkorb
 verschieben* (`Entf`) und *Endgültig löschen* (`Umschalt+Entf`); *Neuer
 Ordner*, *Neue Datei…*; *Eigenschaften…*, *Analysieren ▸* (Dateityp,
-Disk-Image, Prüfsumme, Versionen, Größe, sift, Duplicate Finder, In diesem
+Disk-Image, Prüfsumme, Versionen, Größe, sift, Duplikatsuche, In diesem
 Ordner suchen) und *Weitere ▸*: *Aktualisieren*, Ansicht, Medien ansehen…,
 Bookmark, Papierkorb anzeigen…, *Pfad kopieren*, *Links ▸* (Link-Ziel, neuer
 Symlink / Hardlink / XLink), *Metadaten ▸*, *Tags ▸*, Terminals, FUSE,
@@ -546,12 +552,12 @@ seiner Beschriftung.
 | Dateityp erkennen… | Rechtsklick (Auswahl) | Eine Zeile pro Eintrag: der echte Typ laut Inhalt (Magic Bytes über Qts MIME-Datenbank, puremagic, eine eingebaute Signaturtabelle), der MIME-Typ, was die Endung behauptet, und eine hervorgehobene *Abweichung*, wenn sie sich widersprechen, Größe, bei Text die Zeichenkodierung und die Zeilenenden. Liest höchstens 64 KiB je Datei über das Backend, außerhalb des GUI-Threads, mit 15 s Zeitlimit je Datei – ein Server, der nicht antwortet, ergibt eine Zeile „timed out“. Lokale Dateien zeigen auch die Beschreibung von `file(1)`, wenn es installiert ist. Skripte: `axross.file_type(b, path)`. |
 | Terminal hier öffnen | Rechtsklick (auch auf freie Fläche) | Öffnet eine Shell im Terminal-Dock im Ordner: ein gewählter Ordner, sonst der angezeigte. Lokale Panes bekommen eine lokale Shell, die in dem Ordner startet; SFTP-/SCP-Panes eine Shell auf derselben SSH-Verbindung, gefolgt von `cd -- '<ordner>'` (mit `shlex.quote` maskiert). Ausgegraut, mit dem Grund als Tooltip, bei Protokollen ohne Shell. |
 | Externes Terminal hier öffnen | Rechtsklick (lokale Panes) | Startet `$TERMINAL`, sonst das erste installierte von x-terminal-emulator, gnome-terminal, konsole, xfce4-terminal, alacritty, kitty, foot, wezterm, xterm – mit dem Ordner als Arbeitsverzeichnis, eigenständig, ohne Shell dazwischen. |
-| Duplicate Finder | Menü Ansicht, `Strg+Umschalt+D` | Gruppiert indizierte Dateien nach Inhalts-Hash und verschiebt überzählige Kopien in den Papierkorb – siehe *Duplicate Finder* unter *Werkzeuge*. |
+| Duplikatsuche | Menü Ansicht, `Strg+Umschalt+D` | Gruppiert indizierte Dateien nach Inhalts-Hash und verschiebt überzählige Kopien in den Papierkorb – siehe *Duplikatsuche* unter *Werkzeuge*. |
 | Medien ansehen… / Ausgewählte Medien ansehen… | Rechtsklick, Menü Ansicht | Bilder, PDFs und Videos des Ordners (optional rekursiv) oder der Auswahl als Übersichtsraster, Viewer zum Durchklicken oder Diashow – siehe *Editoren und Viewer*. |
 | Metadaten anzeigen… / entfernen… / exportieren… | Rechtsklick | EXIF / GPS / XMP / IPTC, Office-Eigenschaften, PDF-Info, Audio-/Video-Tags der Auswahl – oder des ganzen Ordners, wenn nichts ausgewählt ist (Unterordner optional) – siehe *Datei-Metadaten*. |
 | Kopieren / Ausschneiden / Einfügen | Rechtsklick (Einfügen auch auf freier Fläche), `Strg+C` / `Strg+X` / `Strg+V` | Kopieren merkt sich die Auswahl für Einfügen und legt ihre Pfade als Text für andere Programme in die Zwischenablage; Ausschneiden merkt sich die Auswahl und entfernt nichts (die Einträge sind abgeblendet); Einfügen in einem beliebigen Pane kopiert die kopierten Einträge oder verschiebt die ausgeschnittenen über die Übertragungen in dessen Ordner – siehe *Übertragungen*. Ausgeschnitten, aber nie eingefügt, bleibt alles, wo es ist. *Weitere ▸ Pfad kopieren* legt nur die Pfade in die Zwischenablage. |
 | In den Papierkorb verschieben | Rechtsklick, `Entf` | Ein Papierkorb auf jeder Verbindung (ein Ordner `.axross-trash` im Home der Verbindung, er geht also überall, wo die Verbindung umbenennen kann; *Papierkorb anzeigen…* holt die Einträge zurück). Nur lesende Protokolle und solche ohne Umbenennen – Gopher, LDAP, NNTP, PJL, POP3, SLP, SVN, TFTP, WMI – haben keinen; dort fragt `Entf` stattdessen, ob endgültig gelöscht werden soll. Läuft wie *Endgültig löschen*: im Hintergrund, mit derselben zweiten Rückfrage für versteckte Einträge. |
-| Endgültig löschen | Rechtsklick, `Umschalt+Entf` | Zählt zuerst abseits des GUI-Threads, was wegfällt (Ordner, Dateien, Bytes, versteckte Einträge), dann die Rückfrage – mit **Nein** als Standardknopf, `Eingabe` behält also die Dateien. Ein ausgewählter Ordner mit versteckten Einträgen (Dotfiles oder vom Backend als versteckt markiert) – oder einer, den die Prüfung nicht vollständig lesen konnte – braucht ein zweites OK mit *Nein* als Standard. Das Löschen läuft im Hintergrund: die Statuszeile zeigt den Fortschritt, *Abbrechen* hält beim nächsten Eintrag an – auch innerhalb eines Ordners, der lokal, per SMB, SFTP oder FTP gelöscht wird (SFTP entfernt die Dateien eines Ordners in Gruppen von 16 gleichzeitigen Anfragen und hält nach der laufenden Gruppe an); die Statuszeile sagt dann, wie viel von diesem Ordner schon weg ist (Gelöschtes bleibt gelöscht; ein Server, der einen ganzen Ordner mit einer Anfrage löscht, etwa WebDAV oder S3, löscht diesen Ordner zu Ende) – Fehler werden je Eintrag gemeldet, danach wird der Ordner neu geladen. Ein Pfad, der gerade gelöscht wird, wird abgewiesen, auch aus dem anderen Pane. |
+| Endgültig löschen | Rechtsklick, `Umschalt+Entf` | Zählt zuerst abseits des GUI-Threads, was wegfällt (Ordner, Dateien, Bytes, versteckte Einträge), dann die Rückfrage – mit **Nein** als Standardknopf, `Eingabe` behält also die Dateien. Ein ausgewählter Ordner mit versteckten Einträgen (Dotfiles oder vom Backend als versteckt markiert) – oder einer, den die Prüfung nicht vollständig lesen konnte – braucht ein zweites OK mit *Nein* als Standard. Das Löschen läuft im Hintergrund: die Statuszeile zeigt den Fortschritt, *Abbrechen* hält beim nächsten Eintrag an – auch innerhalb eines Ordners, der lokal, per SMB, SFTP oder FTP gelöscht wird (SFTP entfernt die Dateien eines Ordners in Gruppen von 16 gleichzeitigen Anfragen und hält nach der laufenden Gruppe an); die Statuszeile sagt dann, wie viel von diesem Ordner schon weg ist (Gelöschtes bleibt gelöscht; ein Server, der einen ganzen Ordner mit einer Anfrage löscht, etwa WebDAV oder S3, löscht diesen Ordner zu Ende) – Fehler werden je Eintrag gemeldet, danach wird der Ordner neu geladen. Ein Pfad, der gerade gelöscht wird, wird abgewiesen, auch aus dem anderen Pane. Drei Löschvorgänge fragen noch einmal, jeweils mit eigener Erklärung und **Nein** als Standard: INBOX auf einem IMAP-Server, auf dem alle Ordner darunter liegen (Courier, Cyrus, Dovecot mit dem Präfix `INBOX.`) – *Ja* löscht diese Ordner, INBOX und ihre Nachrichten bleiben, denn kein IMAP-Server löscht INBOX; ein DFS-Link auf SMB – *Ja* löscht den Inhalt der Freigabe, auf die er zeigt (die Frage nennt sie), der Link selbst bleibt; und auf WinRM/WMI ein Name nur aus Punkten und Leerzeichen, den Windows als den Ordner darüber liest. *Nein* löscht nichts. Ein Skript sagt Ja mit `keep_namespace_root=True`, `follow_dfs_link=True` oder `confirm_alias=True`; der Agent und MCP-Clients können das nicht, sie bekommen die Erklärung und sagen sie dir. |
 | Papierkorb anzeigen… | Rechtsklick | Dialog zum Wiederherstellen und endgültigen Löschen. |
 | Versionen anzeigen… | Rechtsklick | Versionsliste – *Version speichern unter…*, *Als aktuelle wiederherstellen*. |
 | Prüfsumme anzeigen… | Rechtsklick | Die Prüfsumme, die der Server selbst liefert (S3 ETag, Drive md5, ssh sha256sum…), sonst ein Hash über die gelesenen Daten. |
@@ -634,7 +640,7 @@ Fenster zeigt die Index-Datei.
   nach jedem indizierten Pfad unter dem Ordner und entfernt die Zeilen,
   deren Datei fehlt.
 - **Wie er durchsucht wird.** Teilstring im Namen (ohne Groß/Klein in
-  jeder Schrift: „ärger“ findet `Ärger.txt`, „strasse“ findet `Straße.pdf` -
+  jeder Schrift: „ärger“ findet `Ärger.txt`, „strasse“ findet `Straße.pdf` –
   auch im MCP-Werkzeug `search`), Endung, Größen- und Zeitraum, eine
   Verbindung. Endung, Größe und Datum nutzen SQLite-Indizes; ein
   Namens-Teilstring (`LIKE '%…%'`) kann keinen nutzen und liest jede Zeile.
@@ -659,7 +665,7 @@ finden (`core.file_search`, `core.file_categories`, `core.archive`).
 
 - **Wofür Dateien finden sift nutzt.** Mit installiertem Extra fragt der Filter
   *Typen* `sift.detect` nach lokalen Dateien, deren Name nichts sagt (keine
-  Endung, die eine Vorlage beansprucht), und ordnet die erkannte Art —
+  Endung, die eine Vorlage beansprucht), und ordnet die erkannte Art –
   Bild, PDF, DOCX, Archiv, SQLite, E-Mail, Quellcode, … – einer Vorlage zu.
   Entfernte Dateien und Archiv-Member werden nur nach Name und Ordner
   eingeordnet. Es gibt keinen Schalter: Dateien finden nutzt sift, wenn es da ist.
@@ -686,8 +692,11 @@ finden (`core.file_search`, `core.file_categories`, `core.archive`).
 - **Live-Filter** in der Pfadleiste filtert die Liste in Echtzeit.
   **Strg+F** springt ins Filterfeld; **Esc** dort löscht den Filter und
   kehrt zur Liste zurück. Esc in der Liste stoppt zuerst einen laufenden
-  Load, löscht dann einen aktiven Filter, dann die Auswahl, dann einen
-  wartenden Cut dieses Panes.
+  Ladevorgang, löscht dann einen aktiven Filter, dann die Auswahl, dann ein
+  wartendes Ausschneiden dieses Panes.
+- **Strg+L** springt ins Pfadfeld – auch aus dem Filterfeld heraus, und
+  Strg+F von dort zurück ins Filterfeld; **Esc** im Pfadfeld verwirft das
+  Getippte, zeigt wieder den aktuellen Ordner und kehrt zur Liste zurück.
 - **Bookmarks** als linkes Dock; F8 setzt Bookmark, F12 toggelt das
   Dock. Ordner, die aus einem Pane ins Dock gezogen werden (freie
   Fläche, Gruppe oder zwischen zwei Einträge), werden dort zu Bookmarks,
@@ -700,7 +709,7 @@ finden (`core.file_search`, `core.file_categories`, `core.archive`).
 - **Terminal-Bookmarks** öffnen eine Shell statt eines Ordners: eine
   lokale Shell, eine auf einem SSH-Profile (SFTP/SCP) oder eine auf einem
   bloßen Host – *SSH-Host (ohne Profil)*: Host oder IP-Adresse, Port (22),
-  User, optional eine Key-Datei —, optional mit Arbeitsverzeichnis, in
+  User, optional eine Key-Datei –, optional mit Arbeitsverzeichnis, in
   das gewechselt wird. Angelegt über den ☆-Button eines Terminal-Panes
   (*Bookmark für dieses Terminal*) oder *Neues Terminal-Bookmark…* im
   Rechtsklickmenü der Sidebar; ein Klick öffnet ein Terminal-Pane neben
@@ -783,7 +792,7 @@ eines floating Panels dockt es wieder an.
   ein Video spielt bis zum Ende), Esc zurück zur Overview, nochmal
   Esc schließt. **Entf** (Delete) löscht die gezeigte Datei (oder
   das ausgewählte Tile) nach einer Rückfrage; das Bild oder ein Tile
-  auf eine Pane ziehen verschiebt es dorthin, mit Strg wird kopiert -
+  auf eine Pane ziehen verschiebt es dorthin, mit Strg wird kopiert –
   wie ein Drag aus der Pane, aus der der Viewer kam (in einem
   hineingezoomten Bild pannt der Drag stattdessen). Der
   Bild-Viewer kann beides auch. Funktioniert auf jedem Backend: Remote-Dateien
@@ -791,12 +800,15 @@ eines floating Panels dockt es wieder an.
   kopiert und danach gelöscht; zu große, verschlüsselte oder kaputte
   Dateien zeigen den Grund statt des Inhalts. SVG wird nur ohne
   DOCTYPE/Entities, Skripte und Verweise nach außen gerendert, in
-  einem eigenen Prozess, der nach 10 Sekunden beendet wird. Der
+  einem eigenen Prozess, der nach 10 Sekunden beendet wird – auch ein
+  SVG, das wie ein Bild heißt (`x.png`); Vorschaubilder im Pane
+  zeichnen nie eines, auch kein PDF, das wie ein Bild heißt (der
+  Viewer zeigt von so einem PDF die erste Seite, wie bei einem PDF). Der
   Der Sicherheitsmodus paranoid sperrt den Viewer.
   `I` (oder der *Info*-Button) zeigt die Metadata des aktuellen
   Elements in einer Seitenleiste, mit *Metadaten entfernen* – auch im
   Bild-Viewer.
-- **Media Player** (mitgelieferte Extension; ihr Werkzeugleisten-Knopf
+- **Media Player** (mitgelieferte Extension; ihr Symbolleisten-Knopf
   oder *Extensions → Media Player* bietet an, sie einzuschalten) – ein Dock, das MP3, WAV, Ogg Vorbis, FLAC, Opus, AAC
   und mehr abspielt – und Internetradio: *URL…* fügt einen Stream über
   seine http-/https-Adresse hinzu (die .m3u-Playlist eines Senders nennt
@@ -805,7 +817,7 @@ eines floating Panels dockt es wieder an.
   liefern ihre Audiodateien sortiert, höchstens 2000, 6 Ebenen tief,
   Links auf Ordner werden einmal verfolgt; auch .m4b, .wv, .webm und
   weitere Formate, die die Engine abspielt, zählen; was keinen Track
-  ergibt – kein Audio, nicht lesbar, zu tief -, nennt der Hinweis mit
+  ergibt – kein Audio, nicht lesbar, zu tief –, nennt der Hinweis mit
   Anzahl, Dateien neben gefundenen Tracks wie Cover nicht; Remote-Dateien
   werden abseits des GUI-Threads in einen temporären Ordner kopiert,
   je Datei höchstens 512 MB, je Drop 2 GB). Zeilen lassen sich per
@@ -878,7 +890,7 @@ eines floating Panels dockt es wieder an.
   liegt axross bei, *Liste aktualisieren* holt die öffentlichen Verzeichnisse
   (irssis Netzwerkliste, joinmatrix.org, die XMPP-Providers-Liste) über den
   Proxy und speichert sie. Verbunden öffnet *Channel List* / *Room
-  Directory* / *Group Chats* rechts die öffentlichen Kanäle des Servers -
+  Directory* / *Group Chats* rechts die öffentlichen Kanäle des Servers –
   Filter, Sortierung, Doppelklick tritt bei (IRC LIST in Portionen, höchstens
   100 000 Kanäle). Ein Schloss an jedem Konto und Gespräch zeigt den Schutz:
   TLS zum Server, Ende-zu-Ende verschlüsselt (alle Schlüssel geprüft oder
@@ -936,10 +948,10 @@ eines floating Panels dockt es wieder an.
   oder verdoppeln sie leicht. *Test…* (oder der Tab *Verbindung* der
   Details) enthält die Verbindungsoptionen und Tests: ein einzelnes Profil
   verbinden oder trennen (*Audio playback (A2DP)*, *Headset with
-  microphone (HFP)*, *Media controls*, HID, PAN, serielle Schnittstelle -
+  microphone (HFP)*, *Media controls*, HID, PAN, serielle Schnittstelle –
   die das Gerät anbietet); *Automatisch neu verbinden, wenn die Verbindung abbricht* (axross verbindet das Gerät nach 2, 5, 15, 30 und 60 s wieder,
   solange es läuft; ein Trennen, das du auslöst, ist kein Abbruch;
-  gespeichert in `~/.config/axross/bluetooth.json`); *Verbindung testen* -
+  gespeichert in `~/.config/axross/bluetooth.json`); *Verbindung testen* –
   verbindet bei Bedarf und berichtet, jeweils mit Zeit: die Verbindung,
   das Auflösen der Dienste, die Antwortzeit einiger GATT-Lesezugriffe
   (BLE) und bei Lautsprecher oder Headset das Erscheinen seines
@@ -996,7 +1008,8 @@ exportieren…** wirkt auf die ausgewählten Dateien und Ordner, ohne Auswahl
 auf den Ordner selbst. Das Metadaten-Fenster zeigt je Datei eine Zeile,
 ihre Felder hintereinander als `key: value`; Doppelklick oder Rechtsklick
 → *Eigenschaften…* öffnet alle Felder dieser Datei, gruppiert und eins pro
-Zeile, Rechtsklick → *Metadaten entfernen* bereinigt nur die ausgewählten
+Zeile (bei sehr vielen oder sehr langen Feldern die ersten, dazu wie viele
+fehlen; *Kopieren* kopiert alle), Rechtsklick → *Metadaten entfernen* bereinigt nur die ausgewählten
 Dateien. Dazu Filter, *Kopieren* (die Felder der ausgewählten Dateien als
 Text), *Exportieren…* (JSON oder CSV) und *Metadaten entfernen* für alle
 gelisteten Dateien. Ordner werden flach gelesen;
@@ -1041,18 +1054,18 @@ Skripte: `axross.metadata`, `axross.remove_metadata`,
 Fenster der Menüs *Ansicht* und *Tools*, die kein Panel sind. **F1** in
 jedem von ihnen öffnet seinen Teil dieses Abschnitts.
 
-### Duplicate Finder
+### Duplikatsuche
 
-*Ansicht → Duplicate Finder…* (`Strg+Umschalt+D`; im Pane Rechtsklick →
-*Doppelte Dateien finden…*) arbeitet mit dem Duplikat-Index (`cas.sqlite`,
+*Ansicht → Duplikatsuche…* (`Strg+Umschalt+D`; im Pane Rechtsklick →
+*Analysieren → Duplikatsuche…*) arbeitet mit dem Duplikat-Index (`cas.sqlite`,
 siehe *Der Offline-Index*).
 Er gruppiert indizierte Dateien nach Inhalts-Hash, die größte Verschwendung zuerst: jede Gruppe zeigt den Platz, den sie freigäbe, die Statuszeile die Summe. Leere Dateien und Gruppen, die nur Hardlinks einer Datei sind, bleiben verborgen, solange *Leere Dateien* / *Hardlinks* nicht angehakt ist. *Filter* (Text oder Muster wie `*.jpg *.png`; `Strg+F`), *Mindestens* (eine Größe) und *Sortieren* (freizugebender Platz, Größe, Kopien, Name, Ordner) grenzen die Liste ein; die Kopien einer Gruppe stehen in der Reihenfolge, in der sie behalten werden (die erste bleibt). *Aus aktivem Pane neu aufbauen…* hasht den Ordner im Hintergrund mit Anzahl, Bytes und *Abbrechen*: Unveränderte Dateien werden nicht neu gehasht, seit dem letzten Scan verschwundene Dateien verlassen den Index, und der Bericht nennt Dateien, die nicht lesbar waren, Ordner, die sich nicht auflisten ließen, und übersprungene FIFOs, Sockets oder Geräte (nie gelesen: das könnte hängen). Ein Backend ohne eigene Inhalts-Prüfsumme (SMB, einfaches FTP, WebDAV nur mit ETags) lässt seine Dateien stattdessen lesen – nur die, deren Größe eine andere Datei teilt, und nur so weit, wie ihre ersten 64 KiB übereinstimmen; ein ETag zählt nie als Hash. *Alle Duplikate markieren (erste behalten)* behält die älteste Kopie; *Markieren und behalten…* (auch im Kontextmenü) behält die neueste Kopie, den kürzesten Pfad oder eine Kopie in einem Ordner, oder markiert die Kopien in einem Ordner; ein Hardlink einer behaltenen Kopie wird nie markiert, und Hardlinks zählen nicht als freizugebender Platz. *Auswahl in den Papierkorb verschieben…* (`Entf`) verschiebt die markierten Kopien in den axross-Papierkorb, nachdem live geprüft ist, dass eine echte andere Kopie bleibt. `Eingabe` öffnet den enthaltenden Ordner, die Zeile unter der Liste zeigt die aktuelle Zeile vollständig (exakte Größe, Hash, Hardlinks), und `ax-cas://…`-URLs lassen sich kopieren. Tausende Gruppen erscheinen stückweise, während das Fenster bedienbar bleibt.
 
 *Ansicht → Duplikat-Index & Verlauf…* zeigt den Index für sich: jeder
 Neuaufbau wird als Scan festgehalten und mit Ordner, Backend, Beginn und
 Ende, den indizierten Dateien, den noch im Index stehenden Dateien, den
-Duplikatgruppen und seinem Status gelistet. *Duplikate zeigen* öffnet den
-Duplicate Finder auf den Gruppen dieses Scans, *Neu scannen* durchläuft
+Duplikatgruppen und seinem Status gelistet. *Duplikate zeigen* öffnet die
+Duplikatsuche auf den Gruppen dieses Scans, *Neu scannen* durchläuft
 denselben Ordner auf demselben Backend im Hintergrund noch einmal (mit
 *Abbrechen*; ein neuer Scan wird festgehalten), *Aus dem Index
 entfernen…* vergisst die Zeilen dieses Scans und *Ganzen Index leeren…*
@@ -1061,9 +1074,9 @@ indiziert wurden, bevor Scans festgehalten wurden, bilden einen Eintrag
 *früher*: er lässt sich zeigen und entfernen, nicht neu scannen (sein
 Ordner ist unbekannt).
 
-### Disk Usage
+### Speicherbelegung
 
-*Ansicht → Disk Usage…* ist eine Tabelle mit der Kapazität jeder offenen
+*Ansicht → Speicherbelegung…* ist eine Tabelle mit der Kapazität jeder offenen
 Verbindung (jede Verbindung einmal, egal wie viele Panes sie zeigen):
 Backend, Protokoll, gesamt, belegt, frei und ein Balken des belegten
 Anteils. Die Abfragen laufen außerhalb des GUI-Threads, jede mit eigenem
@@ -1113,7 +1126,7 @@ Die Jobs liegen in `~/.local/state/axross/jobs.json`.
 
 axross bringt Extensions in `resources/extensions/` mit; jede ist zu
 Beginn ausgeschaltet, und *Extensions → Extensions verwalten…* schaltet
-sie ein und aus. Ein Werkzeugleisten-Knopf (Media Player, Ordner-Treemap,
+sie ein und aus. Ein Symbolleisten-Knopf (Media Player, Ordner-Treemap,
 Laufwerksübersicht) und die Einträge *Tools → Audio-Mixer*, *Tools →
 Bluetooth* und *Tools → Systeminformationen…* bieten an, ihre Extension
 einzuschalten, wenn sie aus ist. Media Player, Chat, Bluetooth und
@@ -1147,7 +1160,7 @@ Bestwerte und Fortschritt liegen in `~/.config/axross/arcade.json` und
 
 ### Ordner-Treemap
 
-Ein Panel (der Werkzeugleisten-Knopf *Ordner-Treemap* oder *Extensions →
+Ein Panel (der Symbolleisten-Knopf *Ordner-Treemap* oder *Extensions →
 Ordner-Treemap*), das den Ordner des aktiven Panes als Kästen zeichnet,
 deren Fläche die Größe ist: Dateien und Unterordner, die Unterordner im
 Hintergrund über die Verbindung summiert – höchstens 20 000 Einträge und
@@ -1162,7 +1175,7 @@ dem Pane nicht mehr folgen.
 
 Eine Datei rechts anklicken → *Entropie-Heatmap…*: die Shannon-Entropie
 jedes 4-KiB-Blocks ihrer ersten 16 MiB als Farbstreifen – blau für Text,
-Tabellen und Padding, rot für komprimierte oder verschlüsselte Daten -
+Tabellen und Padding, rot für komprimierte oder verschlüsselte Daten –
 mit dem Durchschnitt und dem höchsten Wert in Bit pro Byte und einem
 Urteil (*durchgehend komprimiert oder verschlüsselt*, der Anteil solcher
 Blöcke, *niedrige Entropie* oder *gemischter Inhalt*). Die Datei wird im Hintergrund
@@ -1406,7 +1419,7 @@ Icon und axross-Glyph als Fenster-Icon.
 
 Der headless-Prompt von ``confirm()`` fragt nur, wenn stdin ein
 Terminal ist. Ohne Mensch – Cron, Pipe, der Kindprozess des
-Scripts-Docks, ein MCP-``script_run`` oder ``AXROSS_NONINTERACTIVE=1`` —
+Scripts-Docks, ein MCP-``script_run`` oder ``AXROSS_NONINTERACTIVE=1`` –
 wirft er ``axross.NonInteractiveError``, statt den Default zu nehmen;
 ``assume_yes=True`` antwortet dort ohne Rückfrage mit Ja.
 
@@ -1537,7 +1550,7 @@ diesen Text, zugeklappt.
 
 **Die Lampe** in der Title-Bar des Docks zeigt, ob das LLM des Tabs
 antwortet: **grün** – der letzte Request an seinen Endpoint (eine
-Modell-Liste oder ein Request einer Aufgabe) hat geklappt; **orange** -
+Modell-Liste oder ein Request einer Aufgabe) hat geklappt; **orange** –
 einer läuft; **rot** – er ist gescheitert, es gibt kein Profil, oder der
 Endpoint ist remote und hat noch keinen Consent (gefragt wird erst bei
 der ersten Aufgabe). Der Tooltip nennt Endpoint, Modell und Grund; ein
@@ -1594,10 +1607,10 @@ Programme führen Code von dort aus. Soll der Agent einen dieser Ordner
 des MCP-Servers) oder als zusätzlichen Ordner (`~/.config/myapp`); die
 Orte der Liste oben bleiben darin geschützt, und das ganze Home
 freizugeben hebt nichts auf. zsh-Dateien in `$ZDOTDIR` (aus `~/.zshenv`
-gelesen) zählen als Startdateien, und die Git-Dateien, die Code ausführen -
+gelesen) zählen als Startdateien, und die Git-Dateien, die Code ausführen –
 `.git/config`, `.git/hooks`, `.git/info`, `.git/commondir` (es lenkt Git auf
 Konfiguration und Hooks eines anderen Ordners), `gitdir`, `.gitmodules` eines
-Repositorys, ein `.git`-Eintrag selbst -, werden überall abgelehnt, auch in
+Repositorys, ein `.git`-Eintrag selbst –, werden überall abgelehnt, auch in
 einem Bare-Repository (`x.git/hooks`) und in jedem Ordner, den Git für ein
 Repository hält (`HEAD`, `objects/` und `refs/`; das letzte der drei wird in
 einem Ordner, der noch keins ist, nicht angelegt – eine Datei `objects` oder
@@ -1605,7 +1618,24 @@ einem Ordner, der noch keins ist, nicht angelegt – eine Datei `objects` oder
 nicht entpackt); ebenso `.hg/hgrc` und `.hg/hgrc-not-shared` von Mercurial,
 `.sl/config` von Sapling, `.jj/repo` von Jujutsu, `_darcs/prefs/defaults` von
 darcs und `.bzr/branch/branch.conf` von Breezy (und die Ordner `.hg`, `.sl`,
-`_darcs`, `.bzr` selbst). Jeder Name eines Pfads zählt: wie
+`_darcs`, `.bzr` selbst). Diese Namen zählen in jeder Schreibweise (`head`,
+`.GIT`): auf einem FAT- oder exFAT-Stick, einer SMB-Freigabe oder in einem
+casefold-Ordner bekommt Git für `HEAD` auch `head`. Projektdateien, aus
+denen andere Programme Code ausführen, werden ebenfalls in jeder Tiefe
+abgelehnt: die Ordner `.claude`, `.vscode`, `.cursor`, `.idea`, `.zed`,
+`.devcontainer`, `.husky`, `.fleet`, `.gemini`, `.codex`, `.windsurf`,
+`.roo`, `.kiro`, `.amazonq`, `.continue`, `.theia` (Hooks, Tasks beim
+Öffnen des Ordners, MCP-Server, Start- und Dev-Container-Befehle) und die
+Dateien `.mcp.json`, `.devcontainer.json`, `*.code-workspace`,
+`.pre-commit-config.yaml`, `lefthook.yml` (und seine Varianten) und
+`.overcommit.yml`; ebenso der Ordner, den `core.hooksPath` eines
+Repositorys nennt (`.githooks`, `.husky/_` von husky; auch aus
+`~/.gitconfig`, `/etc/gitconfig` oder `GIT_CONFIG_*`), und eine Datei, die
+seine Konfiguration einbindet (`include.path = ../.gitconfig`) – der nächste
+`git commit` führt sie aus. Soll der Agent einen solchen Ordner ändern
+(`.vscode` eines Projekts), gib genau diesen Ordner als Wurzel oder
+zusätzlichen Ordner frei: es zählen nur die Namen unterhalb eines
+freigegebenen Ordners. Jeder Name eines Pfads zählt: wie
 getippt, nach jedem Symlink auf dem Weg und aufgelöst – und das Ziel eines
 Symlinks an diesen Orten (GNU stow: `~/.config/kitty -> ~/dotfiles/kitty`)
 ist geschützt wie der Ort selbst, außer du gibst dieses Ziel frei. Eine
@@ -1615,7 +1645,8 @@ Sandbox werden die versteckten Einträge eines beschreibbaren Home nur lesend
 eingehängt, und kein neuer kann angelegt werden, die Ziele solcher Symlinks
 sind nur lesbar; Git-Konfiguration, Hooks, `info` und `commondir` des
 Agenten-Ordners und der Repositorys einen Ordner darunter sind ebenfalls nur
-lesbar, und ein `.git/commondir`, das der Agent dort anlegt, wird am Ende
+lesbar, ebenso die dort vorhandenen Projekteinstellungen und Hook-Ordner von
+oben, und ein `.git/commondir`, das der Agent dort anlegt, wird am Ende
 seiner Aufgabe beiseitegelegt (umbenannt in
 `commondir.set-aside-by-axross-<Zeit>`), ebenso eine `.git/config.worktree`
 und `commondir` und `config.worktree` der Git-Ordner von Submodulen und
@@ -1644,11 +1675,15 @@ Geheimnis (`~/.ssh/id_ed25519 -> ~/keys/id_ed25519`) macht sein Ziel
 geheim, und ein Hardlink auf eine geheime Datei wird auch nicht gelesen.
 Überall – auch in einem Projektordner – liest der Agent keinen privaten
 Schlüssel und keine Passwort-Datenbank, die er am Inhalt erkennt
-(`-----BEGIN … PRIVATE KEY-----`, ein OpenSSH- oder PuTTY-Schlüssel, eine
-KeePass-Datenbank), und keine Dateien, die ihrem Namen nach Zugangsdaten
-enthalten (`.env`, `.env.*` außer `.env.example`/`.sample`/`.template`,
-`.netrc`, `.git-credentials`, `.pgpass`, `*.tfstate`, `*.kdbx`,
-`id_rsa`/`id_ed25519`/`id_ecdsa`, `*.ppk`, `*.p12`, `*.pfx`). Mit einer
+(`-----BEGIN … PRIVATE KEY-----` im ersten MiB, auch nach den Zertifikaten
+eines Bundles, ein OpenSSH- oder PuTTY-Schlüssel, eine KeePass-Datenbank),
+und keine Dateien, die ihrem Namen nach Zugangsdaten enthalten (`.env`,
+`.env.*` außer `.env.example`/`.sample`/`.template`, `*.env`, `.envrc`,
+`.netrc`, `.git-credentials`, `.pgpass`, `.npmrc`, `.pypirc`, `.htpasswd`,
+`*.tfstate`, `*.kdbx`, `id_rsa`/`id_ed25519`/`id_ecdsa` und ihre Kopien
+(`id_rsa.bak`), `*.ppk`, `*.p12`, `*.pfx`, `kubeconfig`,
+`credentials.json`, `client_secret*.json`, `secrets.yaml`, `secrets.json`,
+`.aws/credentials`, `.docker/config.json`, `.kube/config`). Mit einer
 Wurzel, die `/proc` enthält (`--mcp-root /`), werden Umgebung,
 Befehlszeile, Speicher, Maps und offene Dateien eines Prozesses
 (`/proc/<pid>/environ`, …, `/proc/self`) und `/run/secrets` ebenfalls nicht
@@ -1675,7 +1710,7 @@ ungelesen. Das ganze Home freizugeben hebt nichts auf;
 Geheimnissen auf.
 
 **Dateien schreibgeschützt** (in der oberen Zeile des Tabs, und für jeden Tab in
-Agent-Einstellungen → Zugriff): der Agent liest Dateien, ändert aber keine —
+Agent-Einstellungen → Zugriff): der Agent liest Dateien, ändert aber keine –
 kein Schreiben, Löschen oder Verschieben, keine Remote Commands (ein
 Command kann Dateien ändern), Extra-Ordner read-only, keine schreibenden
 Tools von MCP-Servern oder Extensions, und eine Sandbox mountet nichts
@@ -1690,7 +1725,7 @@ schreibbarer Ordner, ein Programm auf diesem Rechner, ein HTTP-Server,
 eine von Hand geschriebene podman-Zeile) bietet nur die Tools an, die er
 als read-only markiert, und gar keins, wenn er vor jedem Aufruf fragt.
 
-**Themen ▸** füllt das Eingabefeld mit einer vorbereiteten Aufgabe —
+**Themen ▸** füllt das Eingabefeld mit einer vorbereiteten Aufgabe –
 System inventory, Install or update software (im Plan-Mode), Service
 status, Collect logs, Disk usage, Summarise a folder, Read data out,
 Review a config folder, Free disk space (mit den Tools des Duplicate
@@ -1755,7 +1790,7 @@ fasst alles zusammen.
 
 **Agent-Profile** richten einen Tab in einem Schritt ein: LLM-Profil,
 Prompt-Profil, Protection Mode, Sandbox, Tool-Gruppen, axross-Funktionen
-(Hauptschalter, Funktionen, Netzwerk), *Dateien schreibgeschützt*, *Änderungen an Dateien erlauben* / *Remote-Befehle erlauben* und die MCP-Server, die er anbietet —
+(Hauptschalter, Funktionen, Netzwerk), *Dateien schreibgeschützt*, *Änderungen an Dateien erlauben* / *Remote-Befehle erlauben* und die MCP-Server, die er anbietet –
 gewählt **nach Kategorie** (die Catalog-Kategorie, aus der ein Server
 installiert wurde, z. B. *Security: Reverse Engineering*; *Kategorie* in
 Agent-Einstellungen → MCP-Server setzt eine von Hand) und/oder **nach Name**
@@ -1835,7 +1870,7 @@ podman und docker brauchen das Image: `scripts/axross-podman.sh
 agent-image` ([PACKAGING.md](PACKAGING.md)).
 
 **MCP-Server** (Agent-Einstellungen → MCP-Server): weitere MCP-Server – ein
-Programm (stdio) oder ein HTTP-Endpunkt —, deren Tools ein Tab als
+Programm (stdio) oder ein HTTP-Endpunkt –, deren Tools ein Tab als
 `<server>__<tool>` anbieten kann. *Testen* listet ihre Tools. Ein Server
 auf „always“ fragt bei jedem Aufruf; „writes“ lässt Tools, die der
 Server als read-only markiert, ohne Frage laufen. Ein Programm kann in
@@ -1851,7 +1886,27 @@ Sandbox-Profil oder „Vertrauenswürdig“* und wird beim Start abgelehnt,
 bis es in einem Sandbox-Profil läuft oder du *Vertrauenswürdig: läuft so,
 wie es ist, auf diesem Rechner* ankreuzt (dann läuft es mit deinen
 Rechten; gespeichert als `"trusted": true`). „Vertrauenswürdig“ lässt nie
-einen Befehl, der Code herunterlädt, auf diesen Rechner (siehe unten). Der Token eines HTTP-Servers liegt im Keyring. Ein
+einen Befehl, der Code herunterlädt, auf diesen Rechner (siehe unten).
+Kein reiner Starter sind auch: `python -m` mit einem Modul, das kein
+MCP-Server-Paket ist (`mcp_…`, `…_mcp`, `…_mcp_server`; `-m timeit -s`,
+`-m pdb -c`, `-m http.server` führen Code aus ihrer Zeile aus), ein Skript
+aus Pythons eigener Bibliothek, der Interpreter einer virtuellen Umgebung
+(eine `pyvenv.cfg` daneben oder darüber; die venv, aus der axross selbst
+läuft, zählt als installiert) und eine Umgebung, die Code lädt (auch
+`HOME`, `XDG_CONFIG_HOME`, `PYTHONPYCACHEPREFIX`, `BASH_FUNC_…`,
+`GIT_CONFIG_…`, `GIT_SSH_COMMAND`, `PAGER`, `OPENSSL_CONF`) – mit
+„Vertrauenswürdig“ laufen sie trotzdem, das entscheidest du. **Seine
+Dateien sind festgehalten:** Beim Speichern eines Programm-Servers, der
+eine deiner Dateien auf diesem Rechner ausführt (sein Skript, bei Python
+auch die Moduldateien daneben, die Python zuerst importiert), merkt sich
+axross ihre SHA-256 (`"pin"`), und der Agent darf sie nicht ändern und
+kein Modul daneben anlegen. Haben sie sich trotzdem geändert, startet der
+Server nicht, und axross fragt *MCP-Server mit geänderten Dateien
+ausführen?* mit der Liste: *Mit diesen Dateien ausführen* bestätigt sie,
+*Nicht jetzt* lässt ihn aus; *Dateien bestätigen* (neben
+„Vertrauenswürdig“) tut dasselbe in den Einstellungen. Ausschalten oder
+Beenden wartet nie auf einen Server, der nicht mehr liest: Er bekommt
+SIGTERM, dann SIGKILL, und ein Aufruf scheitert nach seinem Timeout. Der Token eines HTTP-Servers liegt im Keyring. Ein
 getippter Befehl, der Code herunterlädt (`npx …`, `uvx …`, `docker run
 …`), wird nie als Programm auf diesem Rechner gespeichert: *In einem Container installieren* baut ihn in rootless podman (ohne Netz), oder der Grund, warum
 das nicht geht, wird gezeigt. Eine von Hand bearbeitete Einstellungsdatei mit
@@ -1869,7 +1924,7 @@ dem Host:
   mitgelieferte Katalog (geht offline: die MCP-Referenz-Server fetch,
   filesystem, git, memory, sequentialthinking, time und everything; die
   eigenen Server der Hersteller für GitHub – nur lesend, Repositories,
-  Issues und Pull Requests -, Playwright, MarkItDown und Brave Search;
+  Issues und Pull Requests –, Playwright, MarkItDown und Brave Search;
   DuckDuckGo-Suche; drei Security-Server, vuln-nist, shodan und rea.
   Images sind per Digest gepinnt und kommen nur aus Dockers kuratiertem
   `mcp/*`-Namespace und von GitHubs eigenem
@@ -1887,7 +1942,7 @@ dem Host:
   Registry, npm, pypi, Remote, kein Digest) wird mit Grund abgelehnt.
   Solange der Hub nicht antwortet, sagt die Statuszeile *not reachable or
   not published yet*, und die anderen Quellen arbeiten wie gewohnt.
-- **Discover** (standardmäßig an): kuratierte Awesome-Listen zum Stöbern -
+- **Discover** (standardmäßig an): kuratierte Awesome-Listen zum Stöbern –
   [R00T-Kim/awesome-offensive-mcp](https://github.com/R00T-Kim/awesome-offensive-mcp)
   (CC0; ein Snapshot liegt axross bei, Discover geht also offline) und
   [wong2/awesome-mcp-servers](https://github.com/wong2/awesome-mcp-servers)
@@ -1928,7 +1983,7 @@ dem Host:
 
 **Auf diesem Rechner erkannt** (Agent-Einstellungen → MCP-Server und die
 Tools-Liste jedes Agent-Tabs): MCP-Server, die hier schon eingerichtet
-sind, werden mit einer Checkbox angeboten, ohne einen Befehl zu tippen -
+sind, werden mit einer Checkbox angeboten, ohne einen Befehl zu tippen –
 die Server von Claude Desktop (`claude_desktop_config.json`), Claude Code
 (`~/.claude.json`, auch je Projekt, und `.mcp.json` im Ordner des Tabs),
 VS Code (`settings.json` → `mcp.servers`,
@@ -2102,7 +2157,7 @@ rechts die Seite der gewählten, darüber ein Feld, das eine Einstellung
 |---|---|
 | Allgemein | Sprache (gilt ab dem nächsten Start), Layout der letzten Session beim Start wiederherstellen, wann ein Pane aktiv wird (per Klick oder nach 0,5–3 s Maus im Pane), die Tour „Erste Schritte“ beim nächsten Start anbieten (siehe [Handbuch und Touren](#handbuch-und-touren)) |
 | Darstellung | Theme, kompakter Modus, einfarbige Symbole, Symbolfarben (*Wie das Theme*; *Eigene Farben in jedem Theme* – auch in Hacker und Amber, die jedes Symbol in einer Farbe zeichnen; *Eine Farbe* nach Wahl), Schriftgröße (Zoom), versteckte Dateien hervorheben und ihre Farbe (eine Farbe, die auf dem Theme schwer lesbar ist, erst nach Rückfrage) |
-| Werkzeugleiste | Die Knöpfe nach Kategorie gruppieren, die Farbe jeder Kategorie hinter ihren Knöpfen zeigen, die Farbe jeder Kategorie (Verbindungen, Fenster & Panes, Dateien & Suche, Medien, LLM & Agent, Tools & System, Extensions), *Auf Standard zurücksetzen* |
+| Symbolleiste | Die Knöpfe nach Kategorie gruppieren, die Farbe jeder Kategorie hinter ihren Knöpfen zeigen, die Farbe jeder Kategorie (Verbindungen, Fenster & Panes, Dateien & Suche, Medien, LLM & Agent, Tools & System, Extensions), *Auf Standard zurücksetzen* |
 | Dateien & Panes | Versteckte Dateien anzeigen, Größenlimit beim Öffnen, parallele Übertragungen, RAM-Workspaces (an / aus, Größenlimit, frei gehaltener Speicher) und temporäre Dateien im RAM (gilt ab dem nächsten Start) |
 | Netzwerk & Proxy | Der Standard-Proxy, die Ausnahmen (*Kein Proxy für*), ein PAC-Skript, ein Test |
 | LLM-Profile | Die LLM-Server des Agent-Docks und des Docks *Analyse (sift)*; *Modelle abrufen* öffnet eine Liste mit Größe, Parametern, Quantisierung und dem geladenen Modell, soweit der Server sie meldet |
@@ -2111,7 +2166,7 @@ rechts die Seite der gewählten, darüber ein Feld, das eine Einstellung
 | Stimme | Antworten vorlesen, gesprochene Sprache, die Stimme jeder Sprache (Download, Anhören) und wie sie spricht (Tempo, Tonhöhe, Ausdruck, Rhythmusvariation, Lautstärke, Pause zwischen Sätzen), Mikrofon-Modus, Haltetaste, erkannten Text einfügen oder senden, die Pause, die das Sprechen beendet |
 | Audio | Audio-Backend (Automatisch, PipeWire, PulseAudio; das Backend dieses Laufs wird gezeigt, eine Änderung gilt ab dem nächsten Start), Ausgabegerät und Lautstärke (skaliert alles, was axross abspielt) mit *Testton abspielen*, Eingabegerät und Lautstärke (Verstärkung) mit *Mikrofon testen* (eine Pegelanzeige) und *3 s aufnehmen und abspielen*, das Ergebnis der Audio-Prüfung und *Audio erneut prüfen* |
 | Metadaten | Wie *Metadaten entfernen* schreibt, vorher fragen |
-| Suche | Gleichzeitig durchsuchte Hosts von *Auf Netzwerk-Hosts suchen*; wo der Offline-Index und der Index des Duplicate Finders liegen |
+| Suche | Gleichzeitig durchsuchte Hosts von *Auf Netzwerk-Hosts suchen*; wo der Offline-Index und der Index der Duplikatsuche liegen |
 | Sicherheit | Paranoider Sicherheitsmodus (bleibt für den nächsten Start; `AXROSS_SECURITY_MODE` in der Umgebung hat Vorrang), das sudo-Passwort merken |
 | Extensions | Welche Extensions eingeschaltet sind |
 | Updates | Beim Start nach Updates suchen, Updates automatisch herunterladen, *Jetzt prüfen*, die letzte Prüfung (siehe [Updates](#updates)) |
@@ -2266,7 +2321,7 @@ Environment. Der Check beim Start läuft nicht mit
 
 - `~/.config/axross/profiles.json` – Verbindungsprofile (`0o600`).
 - `~/.config/axross/bookmarks.json` – Bookmark-Bar.
-- `~/.config/axross/session.json` – Pane-Layout, Window-Geometry und
+- `~/.config/axross/session.json` – Pane-Layout, Größe und Lage des Fensters und
   Dock-Layout beim letzten Beenden; beim Start wiederhergestellt,
   außer *Beim Start das Layout der letzten Session wiederherstellen*
   (Einstellungen → Allgemein) ist aus. Das `window`-Objekt hält auch das Aussehen (Theme,

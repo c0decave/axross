@@ -8,6 +8,40 @@ if TYPE_CHECKING:  # the name of a type hint only
     from models.file_version import FileVersion
 
 
+class ConfirmationRequired(PermissionError):
+    """A remove that would do more than its path suggests: nothing was
+    deleted, and only a person can say go ahead.
+
+    Review round 9: a recursive remove of INBOX on a server whose folders
+    all live below it (``kind`` ``"imap_namespace_root"``), of a DFS link
+    whose contents live on another share (``"dfs_link"``), and - on a
+    Windows backend - of a name Windows reads as the folder above it
+    (``"windows_alias"``). ``explanation`` says what Yes would do,
+    translated; ``option`` is the keyword argument of ``remove()`` that
+    says yes (``remove(path, recursive=True, **{option: True})``);
+    ``details`` holds counts and targets for the question.
+
+    The file pane asks and runs the remove again with ``option`` on Yes;
+    a script may pass it; the agent and MCP clients never do - they get
+    the explanation as the error and tell the person.
+    """
+
+    def __init__(self, kind: str, path: str, explanation: str, *, option: str,
+                 details: dict | None = None) -> None:
+        import errno
+
+        from core.i18n import tr
+
+        hint = tr("Nothing was deleted. Delete in a file pane asks about it; a script "
+                  "can pass {option}=True to remove().").format(option=option)
+        super().__init__(errno.EPERM, f"{explanation} {hint}", path)
+        self.kind = kind
+        self.path = path
+        self.explanation = explanation
+        self.option = option
+        self.details = dict(details or {})
+
+
 @runtime_checkable
 class FileBackend(Protocol):
     """Interface for file system backends (local and remote)."""

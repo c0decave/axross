@@ -680,19 +680,40 @@ Capability-Gruppen (§9) sehen sie als außerhalb des Roots. Ein Symlink
 auf ein Geheimnis wird aufgelöst und verweigert. Namen bleiben
 auflistbar (`list_dir`, `walk`, `stat`, `search`). In der Agent-Sandbox
 zählt das Home des Hosts mit. Überall (auch in einem Projektordner): eine
-Datei, deren erste 4 KiB einen privaten Schlüssel oder eine
-Passwort-Datenbank zeigen (`-----BEGIN … PRIVATE KEY-----`, OpenSSH,
-PuTTY, KeePass), und Dateien, die ihr Name als geheim ausweist (`.env`,
-`.env.*` außer `.example`/`.sample`/`.template`/`.dist`, `.netrc`,
-`.git-credentials`, `.pgpass`, `*.tfstate`, `*.kdbx`, `id_rsa`,
-`id_ed25519`, `id_ecdsa`, `*.ppk`, `*.p12`, `*.pfx`); unter `/proc`
+Datei mit einem privaten Schlüssel oder einer Passwort-Datenbank (eine
+KeePass-Signatur am Anfang; `-----BEGIN … PRIVATE KEY-----`, OpenSSH oder
+PuTTY im ersten MiB – auch nach den Zertifikaten eines Bundles), und
+Dateien, die ihr Name als geheim ausweist (`.env`, `.env.*` außer
+`.example`/`.sample`/`.template`/`.dist`, `*.env`, `.envrc`, `.netrc`,
+`.git-credentials`, `.pgpass`, `.npmrc`, `.pypirc`, `.htpasswd`,
+`*.tfstate`, `*.kdbx`, `id_rsa`, `id_ed25519`, `id_ecdsa` und ihre Kopien
+wie `id_rsa.bak`, `*.ppk`, `*.p12`, `*.pfx`, `kubeconfig`,
+`credentials.json`, `client_secret*.json`, `secrets.yaml`,
+`secrets.json`, `.aws/credentials`, `.docker/config.json`,
+`.kube/config`); unter `/proc`
 `environ`, `cmdline`, `mem`, `maps`, `fd` und Ähnliches eines Prozesses und
 ganz `/proc/self` (eine Wurzel `/` gäbe sonst die API-Schlüssel von axross
 heraus) sowie `/run/secrets`. `chmod` verweigert eine Datei mit weiteren
 Hardlinks. `--mcp-allow-secret-reads` (nur stdio)
 schaltet die Prüfung ab; die eigenen Tools des Agenten behalten sie
 immer. Die Schreibseite (§2, die geschützten Orte von
-`core.protected_places`) ist eine eigene Liste und unverändert.
+`core.protected_places`) ist eine eigene Liste, die dieser Schalter nicht
+ändert. Neben den Startdateien des Home und den Code-Dateien von Git (in
+jeder Schreibweise: `head`, `.GIT`) verweigert sie in jeder Tiefe die
+Projektdateien, aus denen andere Programme Code ausführen – die Ordner
+`.claude`, `.vscode`, `.cursor`, `.idea`, `.zed`, `.devcontainer`,
+`.husky` (und `.fleet`, `.gemini`, `.codex`, `.windsurf`, `.roo`, `.kiro`,
+`.amazonq`, `.continue`, `.theia`) sowie `.mcp.json`,
+`.devcontainer.json`, `*.code-workspace`, `.pre-commit-config.yaml`,
+`lefthook.yml`, `.overcommit.yml` –, den Ordner, den `core.hooksPath`
+eines Repositorys nennt (seine Konfiguration, `~/.gitconfig`,
+`/etc/gitconfig`, `GIT_CONFIG_*`), und die Dateien, die seine
+Konfiguration einbindet. Sie lehnt auch die Dateien ab, die ein eingeschalteter MCP-Server der
+Agent-Einstellungen auf diesem Rechner ausführt (sein Skript; neben einem
+Python-Skript jede Moduldatei, die Python zuerst importieren würde:
+`core.mcp_script_pin`) – und dieser Server startet mit Dateien, die sich
+seit der Bestätigung geändert haben, erst, wenn der Benutzer es sagt
+(USAGE_de.md, MCP-Server).
 
 Jeder Name eines Pfads wird geprüft - wie getippt, nach jedem Symlink auf
 dem Weg und aufgelöst -, auf beiden Seiten: ein Schlüssel hinter

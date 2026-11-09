@@ -33,6 +33,53 @@ the old code.
 
 ### Fixed
 
+- **A copy of a local file that got shorter while it was read fails**
+  instead of ending "done" with the short file, as a move already did:
+  the destination (an existing file too) stays as it was, and Retry or a
+  new copy takes the file as it is then.
+- **Two axross windows copying the same file no longer tear the copy.**
+  When the second one took over the first one's stalled partial file and
+  found other bytes in it, it now starts under a new name instead of
+  rewriting the file the stalled copy still writes to - for every
+  destination, SFTP and SMB included.
+- **Copying a file again right after Cancel continues the cancelled
+  copy** instead of starting at 0 and leaving the hidden partial file
+  behind; one that is not continued is removed once the new copy is done.
+  A server whose clock is hours ahead no longer keeps partial files from
+  being continued for those hours.
+- **Undoing a folder move whose file was renamed since** says "b.txt is
+  no longer where the move put it" instead of "[Errno 2] No such file or
+  directory".
+- **`axross --script` shows the script's own traceback**, without the
+  frames of axross around it, as the Scripts panel does.
+- **The agent transcript says "error" once** for a tool that failed
+  ("read_file: error - no such file", not "error - error: ...").
+
+- **Drop-downs and number fields show their arrows in Modern Light and
+  Dark.** The modern themes had removed the arrow of every drop-down and
+  the up/down arrows of every number field; chevrons in the theme's colour
+  are back (fainter when disabled or at the end of the range).
+- **Quick Connect and the toolbar's right-click menu show their group
+  headings** ("Recent", "All Profiles", "Panels", "Toolbars") as bold
+  entries; the headings were not drawn at all before.
+- **Ctrl+Z right after Delete Permanently says that the delete cannot be
+  undone**, instead of "the most recent operation (undo) cannot be
+  reversed"; the next Ctrl+Z reaches the operation before it.
+- **Esc in the path bar puts the current folder back and returns to the
+  file list; Ctrl+L and Ctrl+F also work from the filter and path fields.**
+- **The empty Transfers panel takes one row**, about 24 px less of a small
+  screen.
+- **German:** errors are German too when copying into a folder that was
+  removed, connecting an S3 profile without a bucket or a WebDAV profile
+  without a URL; the time left reads "3 min 12 s"; the trash window and
+  Properties say "Lokal", the trash window shows sizes as the panes do
+  ("4,0 KB") and file or folder instead of an id cut to "…"; the menus say
+  "Duplikatsuche…" and "Speicherbelegung…", and one word, "Symbolleiste",
+  for the toolbars; the handbook uses one dash in prose and German words
+  where it mixed in English ones; the scripting guide names the German
+  buttons and keys. The memory bar in System Information writes "61%" in
+  English.
+
 - **Every entry of the right-click menus has an underlined letter.** The
   pane's right-click menu (Paste, Pack, Analyse, More and its Links,
   Metadata and Tags submenus), Quick Connect and the toolbar's right-click
@@ -731,9 +778,113 @@ the old code.
 - **A streamed download that breaks names the file.** The error read
   "('Connection broken: IncompleteRead(…)', …)"; it now says "Cannot read
   /path: Connection broken: …" and keeps its type and error number.
+- **Removing INBOX asks first instead of deleting every other mail folder
+  and then failing.** On Courier, Cyrus and Dovecot with the `INBOX.`
+  prefix every folder lives below INBOX, and an IMAP server never deletes
+  INBOX itself: a recursive remove of INBOX deleted Sent, Archive and
+  Drafts and then failed. Now nothing is deleted before a question that
+  says how many folders would go; Yes deletes them and keeps INBOX and its
+  messages, without an error. The root of the personal namespace the
+  server names is asked about the same way. Renaming INBOX still moves its
+  messages, as RFC 3501 has it.
+- **The root guard knows Windows' other ways to name a root.** On WinRM
+  and WMI (and local Windows paths) a UNC share (`\\fs\share`,
+  `\\host\C$`), a device path (`\\?\C:\`, `\\.\C:\`,
+  `\\?\UNC\fs\share`), a provider-qualified path (`FileSystem::C:\`),
+  any PowerShell drive (`HKLM:\`, `Cert:\`) and `C:\...` or `C:\ ` (Windows
+  drops trailing dots and spaces) passed the guard; they count as roots
+  now. A last name made only of dots and spaces, which Windows reads as
+  the folder above it, is asked about before a delete and refused as a
+  rename. Such names stay ordinary names on every other backend.
+- **Deleting a DFS link asks first.** smbclient follows the link, so
+  removing it with its contents deleted everything in the share it leads
+  to without a word. The question now names that target share; Yes
+  deletes the contents there and keeps the link.
+- **The agent and MCP clients cannot say yes for you.** Those three
+  questions reach them as an error with the explanation; a script says
+  yes with `keep_namespace_root=True`, `follow_dfs_link=True` or
+  `confirm_alias=True` on `axross.remove()`.
+- **Checksums on Windows OpenSSH ask once.** cmd.exe and PowerShell say
+  "'sha256sum' is not recognized …" with exit code 1, and every file of a
+  copy opened one more command channel to hear it again; the answer is
+  remembered for the session now.
+- **A long rsync download is not swept by a second axross.** The sweep of
+  stale spools removed a download folder whose own time was a day old even
+  while the file in it was being written; every file in it must be a day
+  old too now.
 
 ### Security
 
+- **The agent rewrote the script of an MCP server run on this machine.**
+  With *Allow changes to files* and a root holding the script of your own
+  server (`python3 ~/projects/my-mcp/server.py`), it could rewrite
+  `server.py` or put a `json.py` beside it, and axross ran them with your
+  rights at the server's next start. Saving such a server now pins its
+  files (SHA-256 of the script and of the module files beside a Python
+  script); the agent may not change them, and a start with changed files
+  asks you first (*Run with these files* / *Not now*; *Confirm files* in
+  Agent Settings → MCP Servers).
+- **A server that stopped reading froze axross.** Answering its pings
+  blocked the reader: a call waited past its timeout and switching the
+  server off or quitting hung for 20 s. Its input now has a writer of its
+  own; a call fails within its timeout, closing sends SIGTERM first and
+  waits 2 s at most.
+- **Inline code passed as a "pure launcher".** `python -m timeit -s
+  <code>`, `python -m pdb -c '!<code>'`, `…/lib/python3.x/timeit.py` and
+  `node --experimental-config-file` ran code from their line without a
+  sandbox. `python -m` now runs on this machine as it is only for an MCP
+  server's package (`mcp_…`, `…_mcp`); an interpreter in a virtual
+  environment (its `.pth` files run), and an environment with `HOME`,
+  `XDG_CONFIG_HOME`, `PYTHONPYCACHEPREFIX`, `BASH_FUNC_…`, `GIT_CONFIG_…`,
+  `GIT_SSH_COMMAND`, `PAGER`, `OPENSSL_CONF` and the like need a sandbox
+  profile or your *Trusted* mark.
+- **The agent wrote project files other programs run as code.** Claude
+  Code's `.claude/settings.json` (a SessionStart hook), VS Code's
+  `.vscode/tasks.json`, `settings.json` and `mcp.json`, Cursor's
+  `.cursor/mcp.json` and JetBrains' `.idea` were writable; in a repository
+  whose config sets `core.hooksPath` (`.githooks`, husky's `.husky/_`) the
+  agent wrote and made executable `.githooks/pre-commit`, which the user's
+  next `git commit` ran. These folders (also `.zed`, `.devcontainer`,
+  `.husky` and other editors' and agents' settings), `.mcp.json`,
+  `.pre-commit-config.yaml`, `lefthook.yml`, the folder `core.hooksPath`
+  names (in the repository's, the global or the system config) and a file
+  the repository's config includes are now refused at any depth, and are
+  read-only in the agent sandbox.
+- **A shared download folder could turn a resumed download into a
+  write to ~/.bashrc.** In a folder others may write to (a group share
+  without the sticky bit), another user swapped the claimed partial for a
+  link to ~/.bashrc just after axross claimed it; the copy restarted and
+  wrote the download through the link. A fresh copy of a 0600 key was
+  created 0644 and chmod-ed by name, so anyone could open it meanwhile and
+  read the key later. A local temp file is now created exclusively, never
+  through a link, with its mode from the start, or the partial opened once
+  without following a link and only while it is a regular file of yours
+  with one name and the length compared; the bytes go through that one
+  descriptor, and a temp file whose name now points elsewhere is not
+  renamed into place. Saving a file (atomic writes) does the same.
+- **Other local users and axross's own folders.** The clean-up of stale
+  spool folders works through the folder's descriptor (a spool folder
+  swapped for a link to ~/Documents emptied it); rsync downloads into a
+  private folder when the destination folder is shared (renamed away and
+  replaced by a link, it put the download into ~/.config/autostart); the
+  update cache, the packs and the MCP run folders are refused when a link
+  of another user's, a folder others may write to (also through a second
+  link, a group-writable folder of another group, or a POSIX ACL) lies
+  anywhere on the way to them.
+- **The release script checks the build's commit.** assemble_release.py
+  refuses a Linux dist whose BUILD-INFO.md names another commit than the
+  release tag (a `ci/` branch's or a hand-started run, an older builder's
+  dist).
+- **Git's names in any case.** On a case-insensitive volume (a FAT or exFAT
+  stick, an SMB share, a casefold folder) Git opening `HEAD` gets `head`:
+  an archive member or file `head` beside a config, `objects/` and `refs/`
+  made a repository. Git's names are now compared case-folded everywhere.
+- **More secrets recognised in projects:** a private key after the
+  certificates of a bundle (looked for in the first MiB, not 4 KiB),
+  `.envrc`, `*.env`, `.npmrc`, `.pypirc`, `.htpasswd`, `kubeconfig`,
+  `credentials.json`, `secrets.yaml`, `.aws/credentials`,
+  `.docker/config.json`, `.kube/config` and copies like `id_rsa.bak` are
+  no longer handed to the agent.
 - **Text from outside that froze the window again.** A mail whose words
   were joined by no-break spaces (U+00A0, U+202F, U+2007) was one line of
   128,000 characters for Qt (Hebrew and Latin: 44 s); an agent answer of
@@ -751,6 +902,23 @@ the old code.
 - **An SVG that costs more than it counts** (an 8.8 KB filled path drawn
   100 times: 23 s; others minutes) is now drawn in a child process that is
   killed after 10 s (the media viewer shows why).
+- **An SVG named like a picture was drawn in the window's own process.**
+  `x.png` holding an SVG went to Qt's own SVG reader, past the SVG checks
+  and the child process (2 KB: 14 s; 2.2 KB: more than 90 s); a PDF named
+  like a picture went to Qt's PDF reader the same way. A picture is now
+  decoded only by the raster format its content shows; an SVG goes through
+  the SVG checks and the child process (media viewer) or is not drawn
+  (thumbnails in the pane); a PDF is not drawn as a picture - the media
+  viewer shows its first page the way it shows a PDF.
+- **Markup checks that cost more than the markup.** The check of a style
+  in a name (`<span style="aaa…">`, a remote file shown in Permissions)
+  took quadratic time: 16 KB 5.8 s, 64 KB 79 s; it is now linear. Rich
+  text longer than 4096 characters in a label, tooltip or message box is
+  shown as written (nested `<div>`/`<b>`/`<center>`, 60-100 KB: 28-39 s).
+- **Metadata Properties of a hostile file** (2000 text chunks of Hebrew
+  and Latin joined by no-break spaces: 11.6 s) cuts each value as the mail
+  view does and lays out a bounded amount; the rest is counted, *Copy*
+  still copies every field.
 
 - **A host-run MCP server imported code from the folder axross was started
   in.** A pure launcher (`python3 -m mcp_server_time`) inherited axross's

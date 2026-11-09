@@ -98,7 +98,10 @@ Help > Features… lists the units with size and what they bring; *Add* download
 missing blobs (GitHub release asset, else PyPI - the same file: the SHA-256 decides),
 checks each hash against the signed manifest, unpacks into
 `~/.local/share/axross/packs/<version>/<blob>/` (0700, never over an existing one) and
-adds them to `sys.path` at the next start (and at once for pure-Python units: every wheel
+adds them to `sys.path` at the next start - only while no one else can change that
+folder: a folder other users may write to, a symbolic link of another user's or a POSIX
+ACL that lets someone else write, anywhere on the way to it (each link followed), keeps
+the packs out (and at once for pure-Python units: every wheel
 `py3-none-any`; the window says "ready to use", a unit with a native wheel waits for the
 restart). *Remove* retires a unit's blobs that no other installed unit uses; their
 folders are deleted at the next start, so what this session loaded or loads later

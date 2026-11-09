@@ -103,12 +103,13 @@ def _shown(menu: QMenu) -> None:
 
 
 def _letters(menu: QMenu, path: str = "") -> tuple[list, list]:
-    from ui.mnemonics import mnemonic_of
+    from ui.mnemonics import is_header, mnemonic_of
 
     missing, clashes = [], []
     seen: dict[str, str] = {}
     for action in menu.actions():
-        if action.isSeparator() or not action.isVisible() or not action.text():
+        if (action.isSeparator() or not action.isVisible() or not action.text()
+                or is_header(action)):  # a heading is never picked (round 9)
             continue
         letter = mnemonic_of(action.text())
         if letter is None:
@@ -607,14 +608,60 @@ def test_happy_the_connection_manager_says_connect_and_folds_the_proxy(window):
         dialog.deleteLater()
 
 
-def test_edge_the_german_handbook_uses_one_dash_in_prose():
-    text = (ROOT / "docs/USAGE_de.md").read_text(encoding="utf-8")
-    fence = False
+def _prose_paragraphs(text):
+    """(first line number, paragraph) of a Markdown text with the wrapped
+    lines of a paragraph or list item joined - a dash pair that breaks
+    across lines (" -" at a line end) is only seen whole. Code fences,
+    indented code, tables and headings are left out; inline code spans
+    become "x"."""
+    paragraphs, current, first, fence = [], [], 0, False
+
+    def flush():
+        if current:
+            paragraphs.append((first, " ".join(current)))
+            current.clear()
+
     for number, line in enumerate(text.splitlines(), 1):
-        if line.lstrip().startswith("```"):
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            flush()
             fence = not fence
             continue
-        if fence:
+        if (fence or not stripped or stripped.startswith(("|", "#"))
+                or line.startswith("    ") and not current):
+            flush()
             continue
-        prose = re.sub(r"``.*?``|`[^`]*`", "x", line)
-        assert not re.search(r"\S (-|—) \S", prose), (number, line)
+        item = re.match(r"(?:[-*+]|\d+[.)])\s+(.*)", stripped)
+        if item:
+            flush()
+            stripped = item.group(1)
+        stripped = stripped.lstrip("> ")
+        if not current:
+            first = number
+        current.append(stripped)
+    flush()
+    return [(n, re.sub(r"``.*?``|`[^`]*`", "x", p)) for n, p in paragraphs]
+
+
+# A hyphen or em dash standing alone as a dash: after a word and followed
+# by a space, punctuation or the end of the paragraph ("lesen - Schreiben",
+# "bedienbar -,"). A hyphen glued to a word ("Ein- und Ausgabe", "--flag")
+# is not one.
+_LONE_DASH = re.compile(r"(?<=\S)\s+[-—](?=\s|[,.;:!?)]|$)")
+
+
+def test_edge_the_german_handbook_uses_one_dash_in_prose():
+    text = (ROOT / "docs/USAGE_de.md").read_text(encoding="utf-8")
+    found = [f"line {number}: …{prose[max(0, m.start() - 40):m.end() + 20]}…"
+             for number, prose in _prose_paragraphs(text)
+             for m in _LONE_DASH.finditer(prose)]
+    assert found == [], "a hyphen or em dash used as a dash:\n" + "\n".join(found)
+
+
+def test_sad_the_dash_check_sees_a_pair_broken_across_lines():
+    sample = ("Es darf erst einmal nur lesen -\nSchreiben erlaubst du.\n\n"
+              "- rahmt ihn ein – der Teil bleibt bedienbar -,\n  daneben steht\n\n"
+              "```\nls - x\n```\n\n| Strg + - | kleiner |\n\n"
+              "Ein- und Ausgabe, `a - b` und --flag sind keine.\n")
+    hits = [prose for _n, prose in _prose_paragraphs(sample) if _LONE_DASH.search(prose)]
+    assert len(hits) == 2, hits

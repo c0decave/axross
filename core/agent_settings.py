@@ -236,9 +236,32 @@ class AgentSettings:
             raw = json.loads(Path(path or settings_file()).read_text(encoding="utf-8"))
         except (OSError, ValueError, RecursionError):
             return cls()
-        return cls.from_dict(raw)
+        out = cls.from_dict(raw)
+        if out.pin_servers():
+            # Settings of an older axross: its host-run servers' files are
+            # pinned as they are now, once (core.mcp_script_pin).
+            try:
+                out.save(path)
+            except OSError:
+                pass
+        return out
+
+    def pin_servers(self) -> int:
+        """Pin the files of each host-run server whose pin is missing or is
+        for another server line (the user changed it here): saving it is the
+        user's confirmation. A pin for this line stays as it is - files that
+        changed since are confirmed only by the user (Confirm files)."""
+        from core import mcp_script_pin as PIN
+
+        count = 0
+        for server in self.mcp_servers:
+            if PIN.needs_pin(server) and not PIN.current(server):
+                server.pin = PIN.compute(server.command)
+                count += 1
+        return count
 
     def save(self, path: Path | None = None) -> None:
+        self.pin_servers()
         path = Path(path or settings_file())
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(path.name + ".tmp")

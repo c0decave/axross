@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from core import read_spool, transfer_hooks
+from core.local_fs import create_private_file, open_own_partial, same_entry
+from core.posix_compat import fchmod_private
 from core.path_policy import hidden_sibling_name, safe_join
 
 if TYPE_CHECKING:
@@ -532,8 +534,9 @@ class TransferJob:
     # found, and those modes look right before writing as before.
     dest_folder_new: bool = False
     # Set by the worker while it runs: the source's size before a move
-    # copied it (None for a copy or when unknown) - a copy that comes out
-    # shorter is not committed (see _refuse_short_move) - and whether the
+    # copied it, or a copy read a local file (None for other copies or
+    # when unknown) - a copy that comes out shorter is not committed (see
+    # _refuse_short_move, _refuse_short_local_copy) - and whether the
     # integrity check compared the bytes (then the temp file's size needs
     # no second look before the rename).
     move_source_size: int | None = field(default=None, repr=False, compare=False)
@@ -551,6 +554,40 @@ class TransferJob:
         if self.total_bytes <= 0:
             return 0.0
         return min(100.0, (self.transferred_bytes / self.total_bytes) * 100.0)
+
+
+def _local_partial_problem(path: str) -> str:
+    """Why the local partial *path* is not resumed ("" = it may be): not a
+    regular file of this user with one name (looked at without following
+    a link) - a file system that shows another owner (a CIFS or vfat mount
+    with uid=) restarts the copy instead of failing it."""
+    from core.local_fs import own_file_problem
+
+    try:
+        return own_file_problem(os.lstat(path))
+    except OSError as exc:
+        return str(exc)
+
+
+def _set_mode_through(fh, mode: int) -> None:
+    """*mode* onto the open file *fh*; best effort, as a chmod by name was
+    (vfat, a FUSE mount may refuse it - the file then stays as created)."""
+    try:
+        fchmod_private(fh.fileno(), mode)
+    except OSError as exc:
+        log.debug("could not set mode %04o on %s: %s", mode, getattr(fh, "name", "?"), exc)
+
+
+def _private_local(backend) -> bool:
+    """Whether *backend* is the local file system whose temp files are
+    written through one checked descriptor (core.local_fs.open_own_partial,
+    create_private_file): LocalFS with its own open_write, not a subclass
+    that confines or redirects writes, nor a test's stand-in."""
+    check = getattr(backend, "private_writes", None)
+    try:
+        return bool(callable(check) and check())
+    except Exception:  # noqa: BLE001 - a stand-in without the method's state
+        return False
 
 
 def _is_local(backend) -> bool:
@@ -1199,8 +1236,11 @@ class TransferWorker(QObject):
 
     @staticmethod
     def _move_source_size(job: TransferJob) -> int | None:
-        """The source's size before a move copies it (None for a copy)."""
-        if not job.move or job.source_backend is None:
+        """The source's size before a move copies it, or a copy reads a
+        file on this machine's disk (None for other copies): a copy of a
+        local file cut while it was read is not committed either
+        (:meth:`_refuse_short_local_copy`)."""
+        if job.source_backend is None or not (job.move or _is_local(job.source_backend)):
             return None
         from core.server_ops import source_size
 
@@ -1754,15 +1794,19 @@ class TransferWorker(QObject):
         or the live size of a resume); only a copy short of it costs one
         stat of the source, which decides: a source that shrank meanwhile
         was copied as it is now. A source whose size cannot be read (a
-        symlink, a mail store's estimate, a failed stat) is not refused,
-        nor a local one: its reads fail rather than end early, and sysfs
+        symlink, a mail store's estimate, a failed stat) is not refused;
+        a local one is compared with its size from before the copy
+        (:meth:`_refuse_short_local_copy`), not stat-ed again - and sysfs
         lists 4096 bytes for attributes that read a few - on a remote
         machine too (SFTP, SCP, a shell): /sys, /proc and /dev are not
         refused there - only under those folders, only on a backend whose
         "/" is a machine's root and only for a file listed with such a
         file's size (:func:`_is_pseudo_source`). Called before the copy
         replaces the destination, so the destination stays as it was."""
-        if expected <= 0 or transferred >= expected or _is_local(job.source_backend):
+        if _is_local(job.source_backend):
+            TransferWorker._refuse_short_local_copy(job, transferred)
+            return
+        if expected <= 0 or transferred >= expected:
             return
         if _is_pseudo_source(job.source_backend, job.source_path, expected):
             return
@@ -1775,6 +1819,30 @@ class TransferWorker(QObject):
             errno.EIO,
             f"only {transferred} of {live} bytes of {job.source_path} were read; "
             f"the copy is incomplete and {job.dest_path} was left as it was",
+        )
+
+    @staticmethod
+    def _refuse_short_local_copy(job: TransferJob, transferred: int) -> None:
+        """Fail a copy of a file on this machine's disk that came out
+        shorter than the file was before the copy (``move_source_size``):
+        the file was cut while it was read, and the short copy was
+        committed as DONE - over an existing destination too (review round
+        9). Reported as a failed transfer; Retry or a new copy takes the
+        file as it is then. A move is left to :meth:`_refuse_short_move`,
+        a kernel pseudo file (sysfs lists 4096 bytes) is not failed."""
+        before = job.move_source_size
+        if job.move or before is None or transferred >= before:
+            return
+        if _is_pseudo_source(job.source_backend, job.source_path, before):
+            return
+        from core.i18n import tr
+
+        raise _ShortRead(
+            errno.EIO,
+            tr("only {copied} of {size} bytes of {source} could be read: the file got "
+               "shorter while it was copied. The copy is incomplete and was not saved; "
+               "{dest} was left as it was").format(
+                copied=transferred, size=before, source=job.source_path, dest=job.dest_path),
         )
 
     @staticmethod
@@ -1882,6 +1950,14 @@ class TransferWorker(QObject):
         real_append = write_traits(dest_backend).real_append
         #: Partials this job writes: no other job of this process adopts them.
         live: list[str] = []
+        # A local destination is written through ONE descriptor, opened
+        # without following a link and checked (review round 9): in a
+        # folder others may write to, the claimed partial's name could be
+        # swapped for a symlink to ~/.bashrc between the claim and an open
+        # by path, which then wrote the download into it.
+        private_local = _private_local(dest_backend)
+        #: The temp file written (its fstat), compared before the rename.
+        written = None
 
         try:
             if not fresh_temp:
@@ -1965,6 +2041,19 @@ class TransferWorker(QObject):
                         job.source_path,
                     )
                     resume_offset = 0
+                    # Under a fresh name, as for another fingerprint: the
+                    # stalled writer of another process may still hold this
+                    # partial open, and a restart into the same file let
+                    # both write it - a torn copy, committed (review round 9).
+                    temp_path = self._restart_under_fresh_partial(job, temp_path, live)
+                if private_local and resume_offset > 0:
+                    problem = _local_partial_problem(temp_path)
+                    if problem:
+                        # Never appended to (core.local_fs.open_own_partial
+                        # refuses it again at the open, should it change).
+                        log.warning("Not resuming %s: %s; restarting transfer",
+                                    temp_path, problem)
+                        resume_offset = 0
                 # Decide the offset BEFORE seeking: a source left seeked to a
                 # discarded partial's size copies only the tail.
                 if job.total_bytes > 0 and resume_offset == job.total_bytes:
@@ -1979,7 +2068,14 @@ class TransferWorker(QObject):
                     self._verify_integrity(job, temp_path)
                     self._refuse_changed_partial(job, temp_path, transferred)
                     free = self._check_existing_destination(job) is False
-                    self._apply_source_mode(job, temp_path)
+                    if private_local:
+                        # The mode through a checked descriptor: a chmod by
+                        # name follows a link put there (~/.ssh/id_rsa 0644).
+                        with self._open_local_temp(temp_path, resume_offset, mode) as fh:
+                            written = os.fstat(fh.fileno())
+                        self._refuse_swapped_partial(job, temp_path, written)
+                    else:
+                        self._apply_source_mode(job, temp_path)
                     self._finalize_temp_destination(dest_backend, temp_path, job.dest_path,
                                                     no_replace=free)
                     self._apply_source_mtime(job)
@@ -1999,10 +2095,15 @@ class TransferWorker(QObject):
                         )
                         resume_offset = 0
                 mode_set = False
-                if resume_offset == 0:
-                    mode_set = self._precreate_private_temp(job, temp_path, mode)
-                with transfer_hooks.active(hooks):
-                    dst = dest_backend.open_write(temp_path, append=resume_offset > 0)
+                if private_local:
+                    dst = self._open_local_temp(temp_path, resume_offset, mode)
+                    written = os.fstat(dst.fileno())
+                    mode_set = mode is not None
+                else:
+                    if resume_offset == 0:
+                        mode_set = self._precreate_private_temp(job, temp_path, mode)
+                    with transfer_hooks.active(hooks):
+                        dst = dest_backend.open_write(temp_path, append=resume_offset > 0)
                 _copy_starts(progress_callback)
 
                 streamed = _StreamedHash(job, resume_offset)
@@ -2048,6 +2149,8 @@ class TransferWorker(QObject):
             self._verify_integrity(job, temp_path)
             # Another job appending to the same partial is found here.
             self._refuse_changed_partial(job, temp_path, transferred)
+            if written is not None:
+                self._refuse_swapped_partial(job, temp_path, written)
             # "fail" / "newer" onto a free name: the rename must not replace
             # a file that appears after this look (a check and then rename()
             # replaced it on LocalFS and SFTP).
@@ -2150,6 +2253,74 @@ class TransferWorker(QObject):
         log.debug("Claimed partial %s as %s", temp_path, own_path)
         job.temp_path = own_path
         return own_path
+
+    @staticmethod
+    def _restart_under_fresh_partial(job: TransferJob, temp_path: str, live: list) -> str:
+        """Remove the partial *temp_path* whose bytes are not the source's
+        and return a new temp path no one else has: a name of the same shape
+        with a random id in the job id's place (this job's own name may be
+        the very one just claimed). Added to *live*, set on the job."""
+        dest_backend = job.dest_backend
+        try:
+            dest_backend.remove(temp_path)
+        except Exception as exc:  # noqa: BLE001 - left behind; the copy goes on elsewhere
+            log.warning("Could not remove the mismatched partial %s: %s", temp_path, exc)
+        sep = dest_backend.separator() or "/"
+        dest_name = job.dest_path.rsplit(sep, 1)[-1]
+        fingerprint = (partial_fingerprint(temp_path.rsplit(sep, 1)[-1], dest_name)
+                       or job.source_fingerprint)
+        parent = dest_backend.parent(job.dest_path)
+        while True:
+            fresh = safe_join(dest_backend, parent,
+                              partial_name(dest_name, uuid.uuid4().hex[:JOB_ID_LEN], fingerprint))
+            if fresh != temp_path and _claim_live_partial(fresh):
+                break
+        live.append(fresh)
+        job.temp_path = fresh
+        return fresh
+
+    @staticmethod
+    def _open_local_temp(temp_path: str, resume_offset: int, mode: int | None):
+        """The local temp file, open through one descriptor: a resume
+        appends to the partial only while it is a regular file of this
+        user with one name, as long as compared (never through a link put
+        in its place); a copy from the start removes whatever is under the
+        name (a link goes, not what it points to) and creates the file anew,
+        exclusively, never readable by more than *mode* allows (review
+        round 9: created 0644 and chmod-ed later, a 0600 key could be
+        opened by others meanwhile). The resumed file gets *mode* too."""
+        if resume_offset > 0:
+            try:
+                fh = open_own_partial(temp_path, expect_size=resume_offset)
+            except PermissionError as exc:
+                from core.i18n import tr
+
+                raise _PartialChanged(errno.EIO, tr(
+                    "The partial file {path} was changed or replaced by a link before it "
+                    "could be continued; nothing was written to it.").format(path=temp_path)
+                ) from exc
+            if mode is not None:
+                _set_mode_through(fh, mode)
+            return fh
+        try:
+            os.unlink(temp_path)
+        except FileNotFoundError:
+            pass
+        return create_private_file(temp_path, mode)
+
+    @staticmethod
+    def _refuse_swapped_partial(job: TransferJob, temp_path: str, written) -> None:
+        """Raise :class:`_PartialChanged` when *temp_path* no longer names
+        the file written through its descriptor (*written*, its fstat):
+        the rename would put whatever was put there (a link to a file of
+        the user's) in the destination's place."""
+        if same_entry(temp_path, written):
+            return
+        from core.i18n import tr
+
+        raise _PartialChanged(errno.EIO, tr(
+            "The partial file {path} was replaced while it was written; {dest} was left "
+            "as it was.").format(path=temp_path, dest=job.dest_path))
 
     @staticmethod
     def _refuse_changed_partial(job: TransferJob, temp_path: str, transferred: int) -> None:

@@ -280,12 +280,13 @@ def execute_source(source: str, filename: str, namespace: dict | None = None) ->
     return 0
 
 
-def _script_traceback_text() -> str:
-    """The current exception without this module's own frames: the user
-    wants to see their script, not the runner around it."""
+def _script_traceback_text(skip: tuple[str, ...] = ()) -> str:
+    """The current exception without this module's own frames, nor those
+    of the files in *skip* (``axross --script``'s main.py) above them: the
+    user wants to see their script, not the runner around it."""
     etype, exc, tb = sys.exc_info()
-    here = os.path.abspath(__file__)
-    while tb is not None and os.path.abspath(tb.tb_frame.f_code.co_filename) == here:
+    runner = {os.path.abspath(__file__), *(os.path.abspath(path) for path in skip)}
+    while tb is not None and os.path.abspath(tb.tb_frame.f_code.co_filename) in runner:
         tb = tb.tb_next
     return "".join(traceback.format_exception(etype, exc, tb))
 

@@ -56,6 +56,7 @@ from core.i18n import tr
 from ui.close_corner import add_close_corner
 from ui.scan_job import BusyStrip, ScanJob, shorten
 from ui.icon_provider import set_window_icon
+from ui.plain_text import layout_cost, shown_length
 
 log = logging.getLogger("ui.metadata_dialog")
 
@@ -70,6 +71,15 @@ SUMMARY_CHARS = 2_000
 TOOLTIP_FIELDS = 20
 #: Characters of one value in Properties; longer ones end with a note.
 DETAIL_VALUE_CHARS = 20_000
+#: What Properties lays out at most, in characters of plain words
+#: (ui.plain_text.layout_cost: a right-to-left run or a change of script
+#: inside a long word counts as RUN_COST characters). The fields after it
+#: are named by a count; Copy still copies every field. A PNG with 2000
+#: text chunks of Hebrew and Latin joined by no-break spaces kept the GUI
+#: thread 11.6 s.
+MAX_DETAIL_COST = 256 * 1024
+#: Rows Properties shows at most (each is a table row Qt lays out).
+MAX_DETAIL_ROWS = 600
 _KEPT_COLOUR = QColor(128, 128, 128)
 _SEP = " · "
 
@@ -620,6 +630,13 @@ class MetadataDialog(QDialog):
 # ---------------------------------------------------------------------------
 
 
+def _cut(text: str, limit: int) -> str:
+    """*text* as Properties lays it out: cut by :func:`shown_length` at
+    most *limit* characters, a cut text ending with "…"."""
+    end = shown_length(text, limit)
+    return text if end >= len(text) else text[:end] + "…"
+
+
 def _details_html(report: MT.MetadataReport) -> str:
     """Every field of *report*, grouped, one per line. All text is escaped:
     the values come from the file."""
@@ -631,23 +648,44 @@ def _details_html(report: MT.MetadataReport) -> str:
             f'<tr><td colspan="2"><b>{esc(tr("Error"))}:</b> {esc(report.error)}</td></tr>'
         )
     group = None
-    for f in report.fields:
-        if f.group != group:
+    budget = MAX_DETAIL_COST
+    left_out = 0
+    for index, f in enumerate(report.fields):
+        # Laid out only within the budget: each text cut where the mail
+        # view cuts one (right-to-left runs, changes of script, words joined
+        # by no-break spaces), and what is shown summed up across fields.
+        name = _cut(f.name, 256)
+        heading = _cut(f.group, 256) if f.group != group else None
+        end = shown_length(f.value, DETAIL_VALUE_CHARS)
+        cost = (layout_cost(f.value, end) + layout_cost(name) + 64
+                + (layout_cost(heading) + 64 if heading is not None else 0))
+        if index and (cost > budget or len(rows) + 2 > MAX_DETAIL_ROWS):
+            left_out = len(report.fields) - index
+            break
+        budget -= cost
+        if heading is not None:
             group = f.group
             rows.append(
                 '<tr><td colspan="2" style="padding-top:10px">'
-                f"<b>{esc(group)}</b></td></tr>"
+                f"<b>{esc(heading)}</b></td></tr>"
             )
         value = f.value
-        if len(value) > DETAIL_VALUE_CHARS:
-            value = value[:DETAIL_VALUE_CHARS] + "… " + tr("({n} more characters)").format(
-                n=len(f.value) - DETAIL_VALUE_CHARS
+        if end < len(value):
+            value = value[:end] + "… " + tr("({n} more characters)").format(
+                n=len(f.value) - end
             )
         style = f' style="color:{kept_colour}"' if not f.removable else ""
         note = f' <i>({esc(tr("kept"))})</i>' if not f.removable else ""
         rows.append(
-            f'<tr{style}><td valign="top" width="32%">{esc(f.name)}{note}</td>'
+            f'<tr{style}><td valign="top" width="32%">{esc(name)}{note}</td>'
             f'<td valign="top">{esc(value).replace(chr(10), "<br>")}</td></tr>'
+        )
+    if left_out:
+        rows.append(
+            '<tr><td colspan="2" style="padding-top:10px"><i>'
+            + esc(tr("{n} more field(s) are not shown here; Copy copies every field.").format(
+                n=left_out))
+            + "</i></td></tr>"
         )
     if not report.fields and not report.error:
         rows.append(f'<tr><td colspan="2">{esc(tr("no metadata"))}</td></tr>')

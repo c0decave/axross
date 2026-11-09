@@ -175,6 +175,39 @@ VCS_CODE = ((".hg", (("hgrc",), ("hgrc-not-shared",), ("sharedpath",))),
             (".jj", (("repo",), ("repo", "config.toml"))),
             ("_darcs", (("prefs", "defaults"),)),
             (".bzr", (("branch", "branch.conf"), ("branch", "location"))))
+#: Folders of a project (at any depth) whose files other programs run as
+#: code when the user opens the project, starts a session in it or commits:
+#: Claude Code's ``.claude/settings*.json`` (hooks, MCP servers), VS Code's
+#: ``.vscode/tasks.json`` (a task run on folder open), ``settings.json``
+#: (tool paths, terminal environment), ``launch.json`` and ``mcp.json``,
+#: Cursor's, Gemini's, Codex's, Windsurf's, Roo's, Kiro's, Amazon Q's and
+#: Continue's MCP configs, JetBrains run configurations (``.idea``, Fleet's
+#: ``.fleet``), Zed's tasks, a dev container's ``postCreateCommand``
+#: (``.devcontainer``) and husky's Git hooks (``.husky``). The agent writes
+#: none of them, wherever they are (core.mcp_server; read-only in the agent
+#: sandbox where they exist).
+PROJECT_CODE_DIRS = (".claude", ".vscode", ".cursor", ".idea", ".zed", ".devcontainer",
+                     ".husky", ".fleet", ".gemini", ".codex", ".windsurf", ".roo", ".kiro",
+                     ".amazonq", ".continue", ".theia")
+#: Files of a project (at any depth, :mod:`fnmatch` patterns) other programs
+#: run code from: project MCP servers (``.mcp.json``), a dev container
+#: (``.devcontainer.json``), a VS Code workspace (``*.code-workspace``:
+#: settings and tasks), and the hook managers pre-commit, lefthook and
+#: overcommit, whose installed Git hook reads them at every commit.
+PROJECT_CODE_FILES = (".mcp.json", ".devcontainer.json", "*.code-workspace",
+                      ".pre-commit-config.yaml", ".pre-commit-config.yml",
+                      "lefthook.yml", "lefthook.yaml", ".lefthook.yml", ".lefthook.yaml",
+                      "lefthook-local.yml", "lefthook-local.yaml", ".lefthook-local.yml",
+                      ".lefthook-local.yaml", ".overcommit.yml")
+#: Git's global and system configs (besides ``$GIT_CONFIG_GLOBAL`` and
+#: ``$GIT_CONFIG_SYSTEM``): read for ``core.hooksPath`` and their includes.
+GIT_GLOBAL_CONFIGS = (".gitconfig", ".config/git/config")
+GIT_SYSTEM_CONFIG = "/etc/gitconfig"
+#: Most bytes of one Git config read, most config files (with includes)
+#: read for one repository, deepest include chain.
+MAX_GIT_CONFIG_BYTES = 256 * 1024
+MAX_GIT_CONFIGS = 32
+MAX_GIT_INCLUDE_DEPTH = 5
 #: axross's trash folder (core.trash): no tool writes there wherever it is
 #: (a planted entry is restored by the user with axross's rights), and its
 #: contents are secret (a trashed key is still a key).
@@ -1009,7 +1042,11 @@ def _git_shaped(path: str, memo: dict) -> bool:
 
 
 def _fold_name(name: str) -> str:
-    return name.casefold() if _case_insensitive() else name
+    """*name* case-folded - on every platform: Git, Mercurial and the tools
+    of :data:`PROJECT_CODE_DIRS` open their files by name, and on a
+    case-insensitive volume (a FAT or exFAT stick, an SMB share, an ext4
+    folder with casefold) Linux returns ``head`` for ``HEAD`` as well."""
+    return name.casefold()
 
 
 def _path_parts(path: str) -> list[str]:
@@ -1028,6 +1065,8 @@ def _git_code(ck: tuple[str, ...], path: str | None = None, memo: dict | None = 
     made on the way (a copy's or an archive's) cannot complete one: ``HEAD``
     and the config are files, and whichever comes second is refused."""
     names = {n.casefold() for n in GIT_CODE_NAMES}
+    # Compared case-folded on every platform (:func:`_fold_name`).
+    ck = tuple(_fold_name(part) for part in ck)
     if ck and ck[-1] in {n.casefold() for n in GIT_TREE_NAMES}:
         return True
     for i, part in enumerate(ck):
@@ -1035,13 +1074,14 @@ def _git_code(ck: tuple[str, ...], path: str | None = None, memo: dict | None = 
             # The file itself, or a folder on its way (the .hg folder, as
             # with .git: a folder renamed to .hg brings its hgrc along).
             tail = ck[i + 1:]
-            if part == folder and any(rel[:len(tail)] == tail for rel in rels):
+            if part == folder.casefold() and any(
+                    tuple(r.casefold() for r in rel[:len(tail)]) == tail for rel in rels):
                 return True
     parts = _path_parts(path) if path is not None else None
     if parts is not None and len(parts) != len(ck):
         parts = None
     memo = {} if memo is None else memo
-    fold = str.casefold if _case_insensitive() else str
+    fold = _fold_name
 
     def real(i: int) -> str:
         return os.sep + os.sep.join(parts[:i + 1]) if os.name == "posix" else \
@@ -1067,7 +1107,7 @@ def _git_code(ck: tuple[str, ...], path: str | None = None, memo: dict | None = 
         if not (named or shaped or head):
             continue
         if i == last_i:
-            if part == GIT_DIR or shaped or (head and holds_code(real(i))):
+            if part == GIT_DIR.casefold() or shaped or (head and holds_code(real(i))):
                 return True
             continue
         if head:
@@ -1100,6 +1140,250 @@ def _git_message(path: str) -> str:
             "would make a folder a repository; .hg/hgrc, .hg/hgrc-not-shared, .sl/config, "
             ".jj/repo, _darcs/prefs/defaults, .bzr/branch/branch.conf): Git, Mercurial, "
             "Sapling, Jujutsu, darcs and Breezy run code from them")
+
+
+def _folded_keys(path: str) -> list[tuple[str, ...]]:
+    """The case-folded keys of *path* as named and resolved."""
+    out = [tuple(_fold_name(part) for part in _key(path))]
+    real = os.path.realpath(path)
+    if real != path:
+        folded = tuple(_fold_name(part) for part in _key(real))
+        if folded not in out:
+            out.append(folded)
+    return out
+
+
+def _project_code(ck: tuple[str, ...], grants=()) -> str | None:
+    """The :data:`PROJECT_CODE_DIRS` folder *ck* lies in (or is) or the
+    :data:`PROJECT_CODE_FILES` file it is (as named in *ck*), or None.
+    Compared case-folded (:func:`_fold_name`). Only the names below the
+    longest of the granted folders (*grants*, keys) *ck* lies in count: a
+    root the user chose inside such a folder (a Claude Code worktree in
+    ``.claude/worktrees``) is the user's to grant."""
+    import fnmatch
+
+    dirs = {d.casefold() for d in PROJECT_CODE_DIRS}
+    start = max((len(g) for g in grants if ck[:len(g)] == g), default=0)
+    for part in ck[start:]:
+        if _fold_name(part) in dirs:
+            return part
+    if len(ck) > start:
+        last = _fold_name(ck[-1])
+        if any(fnmatch.fnmatchcase(last, pattern.casefold()) for pattern in PROJECT_CODE_FILES):
+            return ck[-1]
+    return None
+
+
+def _project_message(path: str, name: str) -> str:
+    return (f"{path}: the agent does not change {name}: other programs run code from a "
+            "project's tool settings (.claude, .vscode, .cursor, .idea, .zed, "
+            ".devcontainer, .husky and the like, .mcp.json, .pre-commit-config.yaml, "
+            "lefthook.yml) when the project is opened, a session starts in it or the "
+            "user commits")
+
+
+def _git_value(raw: str) -> str:
+    """A Git config value as Git reads it: quotes removed, escapes resolved,
+    a comment (``#`` or ``;`` outside quotes) cut off."""
+    out: list[str] = []
+    quoted = False
+    i = 0
+    while i < len(raw):
+        char = raw[i]
+        if char == "\\" and i + 1 < len(raw):
+            out.append({"n": "\n", "t": "\t", "b": "\b"}.get(raw[i + 1], raw[i + 1]))
+            i += 2
+            continue
+        if char == '"':
+            quoted = not quoted
+        elif char in "#;" and not quoted:
+            break
+        else:
+            out.append(char)
+        i += 1
+    return "".join(out).strip()
+
+
+_GIT_SECTION = None
+
+
+def _git_config_read(path: str) -> list[tuple[str, str, str]]:
+    """``(section, key, value)`` of the Git config file *path* (section and
+    key lower-case, a subsection dropped; :data:`MAX_GIT_CONFIG_BYTES` at
+    most); empty when it cannot be read."""
+    import re
+
+    global _GIT_SECTION
+    if _GIT_SECTION is None:
+        _GIT_SECTION = re.compile(r'\[\s*([A-Za-z0-9.-]+)(?:\s+"(?:[^"\\\n]|\\.)*")?\s*\]')
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read(MAX_GIT_CONFIG_BYTES)
+    except (OSError, ValueError):
+        return []
+    text = data.decode("utf-8", "replace").replace("\\\r\n", "").replace("\\\n", "")
+    out: list[tuple[str, str, str]] = []
+    section = ""
+    for line in text.splitlines():
+        rest = line.strip()
+        match = _GIT_SECTION.match(rest)
+        if match:
+            section = match.group(1).casefold()
+            rest = rest[match.end():].strip()
+        if not rest or rest[0] in "#;":
+            continue
+        key, eq, raw = rest.partition("=")
+        key = key.strip().casefold()
+        if key:
+            out.append((section, key, _git_value(raw) if eq else "true"))
+    return out
+
+
+def _git_config_path(value: str, base: str, home: str) -> str | None:
+    """A path value of a Git config (``core.hooksPath``, ``include.path``)
+    as Git takes it: ``~/`` is the home folder, a relative one lies in
+    *base*."""
+    if not value:
+        return None
+    if value == "~" or value.startswith("~/"):
+        value = home + value[1:]
+    elif value.startswith("~"):
+        value = os.path.expanduser(value)
+        if value.startswith("~"):
+            return None
+    return os.path.normpath(os.path.join(base, value))
+
+
+def _git_config_values(files: list[str], home: str) -> tuple[list[str], list[str]]:
+    """``(core.hooksPath values, config files read)`` of the Git configs
+    *files* and the files they include (``include.path``,
+    ``includeIf.*.path`` - every condition taken as met), at most
+    :data:`MAX_GIT_CONFIGS` files :data:`MAX_GIT_INCLUDE_DEPTH` deep. A
+    value is as written; each comes with nothing about its file (a relative
+    hooksPath lies in the work tree whichever file sets it)."""
+    hooks: list[str] = []
+    read: list[str] = []
+    queue = [(path, 0) for path in files]
+    while queue and len(read) < MAX_GIT_CONFIGS:
+        path, depth = queue.pop(0)
+        if path in read:
+            continue
+        read.append(path)
+        for section, key, value in _git_config_read(path):
+            if section == "core" and key == "hookspath" and value:
+                hooks.append(value)
+            elif section in ("include", "includeif") and key == "path" and \
+                    depth < MAX_GIT_INCLUDE_DEPTH:
+                included = _git_config_path(value, os.path.dirname(path), home)
+                if included is not None:
+                    queue.append((included, depth + 1))
+    return hooks, read
+
+
+def _git_global_configs(environ, home: str) -> list[str]:
+    """Git's global and system config files for *environ*."""
+    files: list[str] = []
+    if environ.get("GIT_CONFIG_SYSTEM"):
+        files.append(environ["GIT_CONFIG_SYSTEM"])
+    elif not environ.get("GIT_CONFIG_NOSYSTEM"):
+        files.append(GIT_SYSTEM_CONFIG)
+    if environ.get("GIT_CONFIG_GLOBAL"):
+        files.append(environ["GIT_CONFIG_GLOBAL"])
+    else:
+        xdg = environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
+        files += [os.path.join(home, GIT_GLOBAL_CONFIGS[0]), os.path.join(xdg, "git", "config")]
+    return files
+
+
+def _git_env_hooks(environ) -> list[str]:
+    """``core.hooksPath`` set through ``GIT_CONFIG_COUNT`` / ``GIT_CONFIG_KEY_<n>`` /
+    ``GIT_CONFIG_VALUE_<n>``."""
+    try:
+        count = min(int(environ.get("GIT_CONFIG_COUNT") or 0), 1024)
+    except ValueError:
+        return []
+    return [environ.get(f"GIT_CONFIG_VALUE_{n}", "") for n in range(count)
+            if environ.get(f"GIT_CONFIG_KEY_{n}", "").casefold() == "core.hookspath"
+            and environ.get(f"GIT_CONFIG_VALUE_{n}")]
+
+
+def _repo_git_dirs(root: str) -> list[str]:
+    """The Git folders of the work tree *root*: its ``.git`` folder, or the
+    one a ``gitdir:`` file names, and the folder that one's ``commondir``
+    names (a worktree's or submodule's repository)."""
+    git = os.path.join(root, GIT_DIR)
+    if os.path.isdir(git):
+        git_dir = git
+    else:
+        try:
+            with open(git, "rb") as fh:
+                line = fh.read(4096).decode("utf-8", "replace").splitlines()[0]
+        except (OSError, ValueError, IndexError):
+            return []
+        if not line.startswith("gitdir:"):
+            return []
+        git_dir = os.path.normpath(os.path.join(root, line[len("gitdir:"):].strip()))
+    out = [git_dir]
+    try:
+        with open(os.path.join(git_dir, "commondir"), "rb") as fh:
+            common = fh.read(4096).decode("utf-8", "replace").strip()
+    except (OSError, ValueError):
+        common = ""
+    if common:
+        out.append(os.path.normpath(os.path.join(git_dir, common)))
+    return out
+
+
+def git_hook_places(root: str, environ=os.environ, *, global_hooks=None) -> list[str]:
+    """The folders Git runs hooks from for the work tree *root*, besides its
+    ``.git/hooks`` (``core.hooksPath`` of its own config - ``.githooks``,
+    husky's ``.husky/_`` - or of the global and system configs and
+    ``GIT_CONFIG_*``), and the files its config includes
+    (``include.path = ../.gitconfig``: a file of the work tree that is read
+    as Git's settings). Empty when *root* holds no ``.git`` entry.
+    *global_hooks*: the global hooksPath values when already read."""
+    if not os.path.lexists(os.path.join(root, GIT_DIR)):
+        return []
+    home = environ.get("HOME") or os.path.expanduser("~")
+    files: list[str] = []
+    for git_dir in _repo_git_dirs(root):
+        files += [os.path.join(git_dir, "config"), os.path.join(git_dir, "config.worktree")]
+    hooks, read = _git_config_values(files, home)
+    if global_hooks is None:
+        global_hooks = _git_config_values(_git_global_configs(environ, home), home)[0] \
+            + _git_env_hooks(environ)
+    out: list[str] = []
+    for value in hooks + list(global_hooks):
+        path = _git_config_path(value, root, home)
+        if path is not None and path not in out:
+            out.append(path)
+    # The included files (the repository's own config files are Git
+    # folders' and refused anyway).
+    for path in read[len(files):]:
+        if path not in out:
+            out.append(path)
+    return out
+
+
+def project_code_entries(folder: str, environ=os.environ) -> list[str]:
+    """The entries of *folder* other programs run code from that exist
+    (:data:`PROJECT_CODE_DIRS`, :data:`PROJECT_CODE_FILES`) and the existing
+    hook folders and included config files of the repository it is
+    (:func:`git_hook_places`) - for core.agent_sandbox, which mounts them
+    read-only."""
+    out: list[str] = []
+    try:
+        with os.scandir(folder) as it:
+            names = [entry.name for entry in it]
+    except OSError:
+        names = []
+    for name in sorted(names)[:MAX_HIDDEN_ENTRIES]:
+        if _project_code((name,)) is not None:
+            out.append(os.path.join(folder, name))
+    for path in git_hook_places(folder, environ):
+        if os.path.lexists(path) and path not in out:
+            out.append(path)
+    return out
 
 
 def _link_target_denials(environ, areas, home_keys) -> list[tuple[tuple[str, ...], tuple[str, ...]]]:
@@ -1147,6 +1431,43 @@ def write_checker(environ=os.environ, *, granted=(), members: bool = False):
     home_keys = [_key(h) for h in homes(environ)]
     targets = _link_target_denials(environ, areas, home_keys)
     readlink = _memo_readlink()
+    home = environ.get("HOME") or os.path.expanduser("~")
+    global_hooks = _git_config_values(_git_global_configs(environ, home), home)[0] \
+        + _git_env_hooks(environ)
+    # Absolute global hooksPath folders count for every path; a relative
+    # one in each work tree (git_hook_places).
+    global_keys: list[tuple[str, ...]] = []
+    for value in global_hooks:
+        hook_path = _git_config_path(value, os.sep, home)
+        if hook_path is not None and (value.startswith("~") or os.path.isabs(value)):
+            global_keys += _folded_keys(hook_path)
+    repo_memo: dict[str, list[tuple[str, ...]]] = {}
+    from core.mcp_script_pin import write_guard  # files host-run MCP servers run
+
+    mcp_files = write_guard(environ)
+
+    def repo_keys(folder: str) -> list[tuple[str, ...]]:
+        keys = repo_memo.get(folder)
+        if keys is None:
+            keys = []
+            for hook_path in git_hook_places(folder, environ, global_hooks=global_hooks):
+                keys += _folded_keys(hook_path)
+            repo_memo[folder] = keys
+        return keys
+
+    def hook_place(candidate: str, ck: tuple[str, ...]) -> bool:
+        fk = tuple(_fold_name(part) for part in ck)
+        if any(fk[:len(k)] == k for k in global_keys):
+            return True
+        folder = os.path.dirname(candidate)
+        for _ in range(256):
+            if any(fk[:len(k)] == k for k in repo_keys(folder)):
+                return True
+            parent = os.path.dirname(folder)
+            if parent == folder:
+                break
+            folder = parent
+        return False
 
     def check(path: str, *, entry: bool = False) -> str | None:
         # Looked up afresh for every path: an archive's members are made
@@ -1168,6 +1489,10 @@ def write_checker(environ=os.environ, *, granted=(), members: bool = False):
                 return (f"{path}: the agent does not write Python start files "
                         f"({', '.join(START_NAMES)}): Python runs them at every start")
         keyed = [(_key(c), c) for c in candidates]
+        for candidate in candidates:
+            refused = mcp_files(candidate, entry)
+            if refused:
+                return refused.replace(candidate, path, 1)
         for pk, place in places:
             for ck, _c in keyed:
                 if ck[:len(pk)] == pk:
@@ -1178,6 +1503,14 @@ def write_checker(environ=os.environ, *, granted=(), members: bool = False):
         for ck, candidate in keyed:
             if _git_code(ck, candidate, shape_memo):
                 return _git_message(path)
+            project = _project_code(ck, grants)
+            if project is not None:
+                return _project_message(path, project)
+            if hook_place(candidate, ck):
+                return (f"{path}: the agent does not change Git hooks or the settings Git "
+                        "reads: the folder core.hooksPath names (.githooks, .husky/_) and "
+                        "the files a repository's config includes - the next git commit "
+                        "or checkout runs code from them")
             if _system_secret(ck):
                 return (f"{path}: the agent does not change a process's memory, environment "
                         "or open files below /proc, nor /run/secrets")
@@ -1338,9 +1671,17 @@ SECRET_UNLESS = ((".ssh", ("*.pub", "known_hosts", "known_hosts.old", "authorize
 #: (it holds every resource's secrets), password databases, dotenv files
 #: (``.env``, ``.env.production``; not their ``.example`` and the like).
 SECRET_NAMES_ANYWHERE = (".git-credentials", ".netrc", "_netrc", ".pgpass", ".env", ".env.*",
-                         "*.tfstate", "*.tfstate.backup", "*.kdbx", "*.kdb", "id_rsa",
-                         "id_dsa", "id_ecdsa", "id_ed25519", "id_ecdsa_sk", "id_ed25519_sk",
-                         "*.ppk", "*.p12", "*.pfx")
+                         "*.env", ".envrc", "*.tfstate", "*.tfstate.backup", "*.kdbx", "*.kdb",
+                         "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "id_ecdsa_sk",
+                         "id_ed25519_sk", "id_rsa[._~-]*", "id_dsa[._~-]*", "id_ecdsa[._~-]*",
+                         "id_ed25519[._~-]*", "*.ppk", "*.p12", "*.pfx", ".npmrc", ".pypirc",
+                         ".htpasswd", ".htdigest", "kubeconfig", "*.kubeconfig",
+                         "kubeconfig.y*ml", "credentials.json", "client_secret*.json",
+                         "secrets.y*ml", "secrets.json", "*.secrets.y*ml")
+#: ``(folder, file)`` that is secret wherever it is (a project's copy of
+#: ``~/.aws/credentials``, ``~/.docker/config.json``, ``~/.kube/config``).
+SECRET_PATHS_ANYWHERE = ((".aws", "credentials"), (".docker", "config.json"),
+                         (".kube", "config"))
 SECRET_NAMES_ANYWHERE_UNLESS = ("*.example", "*.sample", "*.template", "*.dist", "*.defaults",
                                 "*.tpl", "*.pub")
 #: How much of a file :func:`_secret_content` looks at, and what makes it a
@@ -1348,6 +1689,10 @@ SECRET_NAMES_ANYWHERE_UNLESS = ("*.example", "*.sample", "*.template", "*.dist",
 #: bundle or after OpenSSL's "Bag Attributes"), a PuTTY key, a KeePass
 #: database (KeePass 1 and KDBX signatures).
 SECRET_CONTENT_HEAD = 4096
+#: How far :func:`_secret_content` looks for a PEM private key: a
+#: certificate bundle (haproxy's cert + chain + key, a fullchain with the
+#: key last) has it after several KiB.
+SECRET_CONTENT_SCAN = 1024 * 1024
 _SECRET_CONTENT = None
 _KEEPASS_MAGIC = (b"\x03\xd9\xa2\x9a\x67\xfb\x4b\xb5", b"\x03\xd9\xa2\x9a\x65\xfb\x4b\xb5",
                   b"\x03\xd9\xa2\x9a\x66\xfb\x4b\xb5")
@@ -1360,15 +1705,27 @@ def _secret_anywhere(name: str) -> bool:
             and not _secret_name(name, SECRET_NAMES_ANYWHERE_UNLESS))
 
 
+def _secret_path_anywhere(ck: tuple[str, ...]) -> bool:
+    """Whether *ck* ends in one of :data:`SECRET_PATHS_ANYWHERE`."""
+    if len(ck) < 2:
+        return False
+    tail = (ck[-2].casefold(), ck[-1].casefold())
+    return any(tail == (folder, name) for folder, name in SECRET_PATHS_ANYWHERE)
+
+
 def _secret_content(path: str) -> bool:
     """Whether the regular file *path* holds a private key or a password
-    database by its first bytes (:data:`SECRET_CONTENT_HEAD`)."""
+    database: a KeePass signature at its start, a PEM or OpenSSH private
+    key or a PuTTY key in its first :data:`SECRET_CONTENT_SCAN` bytes."""
     global _SECRET_CONTENT
     import re
 
     if _SECRET_CONTENT is None:
+        # Any characters of one line around "PRIVATE KEY" (a no-break space
+        # in the header does not hide the key below it); bounded, so the
+        # search stays linear.
         _SECRET_CONTENT = re.compile(
-            rb"-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY[A-Z ]{0,10}-----|^PuTTY-User-Key-File-",
+            rb"-----BEGIN[^\r\n]{1,60}?PRIVATE KEY[^\r\n]{0,20}?-----|^PuTTY-User-Key-File-",
             re.MULTILINE)
     try:
         fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
@@ -1381,11 +1738,23 @@ def _secret_content(path: str) -> bool:
         if not stat_module.S_ISREG(os.fstat(fd).st_mode):
             return False
         head = os.read(fd, SECRET_CONTENT_HEAD)
+        if head[:8] in _KEEPASS_MAGIC or _SECRET_CONTENT.search(head) is not None:
+            return True
+        # Further on, in chunks that overlap by more than a header's length.
+        done, tail = len(head), head[-128:]
+        while len(head) and done < SECRET_CONTENT_SCAN:
+            head = os.read(fd, min(256 * 1024, SECRET_CONTENT_SCAN - done))
+            done += len(head)
+            chunk = tail + head
+            if (b"PRIVATE KEY" in chunk or b"PuTTY-User-Key-File-" in chunk) and \
+                    _SECRET_CONTENT.search(chunk) is not None:
+                return True
+            tail = chunk[-128:]
+        return False
     except OSError:
         return False
     finally:
         os.close(fd)
-    return head[:8] in _KEEPASS_MAGIC or _SECRET_CONTENT.search(head) is not None
 
 
 #: ``/proc/<pid>/...`` entries that hand out a process's secrets: its
@@ -1597,11 +1966,13 @@ def secret_checker(environ=os.environ, *, granted=()):
                 return (f"{path}: the agent does not read a process's environment, command "
                         "line, memory or open files below /proc, nor /run/secrets: they "
                         "hold API keys and tokens")
-            if ck and _secret_anywhere(ck[-1]):
+            if ck and (_secret_anywhere(ck[-1]) or _secret_path_anywhere(ck)):
                 return (f"{path}: the agent does not read this file: by its name it holds "
-                        "credentials, keys or secrets wherever it is (.env, .netrc, "
-                        ".git-credentials, .pgpass, *.tfstate, *.kdbx, id_rsa, *.ppk, "
-                        "*.p12)")
+                        "credentials, keys or secrets wherever it is (.env, *.env, .envrc, "
+                        ".netrc, .git-credentials, .pgpass, .npmrc, .pypirc, .htpasswd, "
+                        "*.tfstate, *.kdbx, id_rsa and its copies, *.ppk, *.p12, kubeconfig, "
+                        "credentials.json, secrets.yaml, .aws/credentials, "
+                        ".docker/config.json, .kube/config)")
         try:
             st = os.stat(chain[-1])
         except OSError:

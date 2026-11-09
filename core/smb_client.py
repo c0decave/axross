@@ -902,12 +902,31 @@ class SmbSession(SessionLifecycle):
         except _SMB_FAILURES as e:
             raise _smb_error(e, f"Cannot create directory {path}", path) from e
 
-    def remove(self, path: str, recursive: bool = False) -> None:
+    def remove(self, path: str, recursive: bool = False, *,
+               follow_dfs_link: bool = False) -> None:
+        """Remove *path*; a folder with *recursive* with everything in it.
+
+        smbclient follows a DFS link, so its contents are those of the
+        share it leads to: a recursive remove of the link itself raises
+        :class:`~core.backend.ConfirmationRequired` before anything is
+        deleted. With ``follow_dfs_link=True`` it does what Explorer does
+        - the contents of the TARGET go, through the link; the link itself
+        stays (it is removed in the DFS management)."""
         unc = self._unc(path)
+        dfs = None
         try:
             if self.is_dir(path):
                 if recursive and not self._is_reparse_point(unc):
-                    self._rmdir_recursive(path)
+                    dfs = self._dfs_link_target(unc)
+                    if dfs is None:
+                        self._rmdir_recursive(path)
+                    elif follow_dfs_link:
+                        log.warning("Deleting the contents of DFS link %s (target %s), "
+                                    "confirmed", path, dfs[1] or "unknown")
+                        # A link that could not be asked about may be none:
+                        # then the folder goes as well.
+                        self._rmdir_recursive(path, keep_self=dfs[0] == "link")
+                        dfs = None
                 else:
                     # A link to a directory goes as the link: smbclient
                     # deletes with FILE_OPEN_REPARSE_POINT, never the target.
@@ -916,6 +935,66 @@ class SmbSession(SessionLifecycle):
                 smbclient.remove(unc, **self._kw)
         except _SMB_FAILURES as e:
             raise _smb_error(e, f"Cannot remove {path}", path) from e
+        if dfs is not None:
+            raise self._dfs_question(path, *dfs)
+
+    def _dfs_question(self, path: str, kind: str, target: str):
+        from core.backend import ConfirmationRequired
+        from core.i18n import tr
+
+        if kind == "link":
+            text = tr("{path} is a DFS link to {target}. Deleting it with its contents deletes "
+                      "everything in {target} – the files on that share, not only the link. "
+                      "Yes deletes the contents there; the link itself stays (it is removed in "
+                      "the DFS management).").format(path=path, target=target)
+        else:
+            text = tr("{path} is on a DFS share, and the server could not say whether it is a "
+                      "DFS link ({error}). If it is one, deleting it with its contents deletes "
+                      "everything on the share it leads to. Yes deletes it with its "
+                      "contents.").format(path=path, error=target)
+        return ConfirmationRequired(
+            "dfs_link", path, text, option="follow_dfs_link",
+            details={"target": target if kind == "link" else "", "known": kind == "link"},
+        )
+
+    def _share_is_dfs(self) -> bool:
+        """Whether the share is part of a DFS namespace (SMB2_SHARE_CAP_DFS
+        of its tree connect): only such a share holds DFS links."""
+        pool = getattr(smbclient, "_pool", None)
+        if pool is None:  # an smbclient without its connection pool
+            return False
+        tree, _path = pool.get_smb_tree(self._prefix, **self._kw)
+        return bool(getattr(tree, "is_dfs_share", False))
+
+    def _dfs_link_target(self, unc: str) -> tuple[str, str] | None:
+        """``("link", target)`` when *unc* is a DFS link itself (not a path
+        below one), ``("unknown", error)`` when its DFS share could not say,
+        None otherwise.
+
+        smbclient follows the referral of a link, so lstat sees the target
+        folder - no reparse point - and a recursive remove emptied the
+        share the link leads to. The referral names the link it was asked
+        for, its preferred target first."""
+        try:
+            if not self._share_is_dfs():
+                return None
+        except _SMB_FAILURES as exc:  # cannot tell: the remove decides
+            log.debug("SMB DFS check of %s: %s", unc, exc)
+            return None
+        try:
+            entries = self._dfs_lookup(unc)
+        except _SMB_FAILURES as exc:
+            log.debug("SMB DFS referral of %s failed: %s", unc, exc)
+            return ("unknown", str(exc) or type(exc).__name__)
+
+        def below_host(text: str) -> list[str]:
+            return [part.lower() for part in text.strip("\\").split("\\")[1:] if part]
+
+        wanted = below_host(unc)
+        for dfs_path, target, root, _ttl in entries or ():
+            if not root and below_host(dfs_path) == wanted:
+                return ("link", "\\\\" + target.lstrip("\\"))
+        return None
 
     def _is_reparse_point(self, unc: str) -> bool:
         """A symlink, junction or mount point (the entry itself, not its
@@ -927,7 +1006,9 @@ class SmbSession(SessionLifecycle):
 
     _MAX_TREE_DEPTH = MAX_RECURSIVE_DELETE_DEPTH
 
-    def _rmdir_recursive(self, path: str, depth: int = 0) -> None:
+    def _rmdir_recursive(self, path: str, depth: int = 0, *, keep_self: bool = False) -> None:
+        """Remove everything in *path*, then *path* itself unless
+        *keep_self* (the contents of a DFS link: the link stays)."""
         check_tree_depth(path, depth, self._MAX_TREE_DEPTH)
         children = []
         for item in self.list_dir(path):
@@ -952,7 +1033,8 @@ class SmbSession(SessionLifecycle):
             else:
                 smbclient.remove(self._unc(child), **self._kw)
             removal_cancel.removed(child)
-        smbclient.rmdir(self._unc(path), **self._kw)
+        if not keep_self:
+            smbclient.rmdir(self._unc(path), **self._kw)
 
     def rename(self, src: str, dst: str) -> None:
         # smbclient drops the trailing backslash: a file renamed to "x/"

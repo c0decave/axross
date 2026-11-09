@@ -226,6 +226,34 @@ def _ask_call(parent, name: str, args: dict) -> bool:
         box.deleteLater()
 
 
+def _ask_files(parent, name: str, files: list) -> bool:
+    """Whether the MCP server *name* may run with *files* as they are now:
+    they changed since the user confirmed them (core.mcp_script_pin) - an
+    agent may have changed them, or the user did."""
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setWindowTitle(tr("Run the MCP server with changed files?"))
+    box.setTextFormat(Qt.TextFormat.PlainText)  # file names may be anyone's
+    box.setText(tr(
+        "The MCP server {name} runs files on this machine with your rights. These changed "
+        "since you confirmed them (or were never confirmed):").format(name=name))
+    shown = [_visible(str(f)) for f in files[:10]]
+    if len(files) > 10:
+        shown.append(tr("… and {n} more").format(n=len(files) - 10))
+    box.setInformativeText("\n".join(shown) + "\n\n" + tr(
+        "If you did not change them yourself, an agent or a program may have: look at them "
+        "first. Run {name} with the files as they are now? (Not now: it stays off until you "
+        "confirm them in Agent Settings → MCP Servers.)").format(name=name))
+    run = box.addButton(tr("Run with these files"), QMessageBox.ButtonRole.AcceptRole)
+    later = box.addButton(tr("Not now"), QMessageBox.ButtonRole.RejectRole)
+    box.setDefaultButton(later)
+    try:
+        box.exec()
+        return box.clickedButton() is run
+    finally:
+        box.deleteLater()
+
+
 def _ask_remote(parent, profile: LP.LLMProfile, host: str) -> bool:
     box = QMessageBox(parent)
     box.setIcon(QMessageBox.Icon.Warning)
@@ -2125,7 +2153,12 @@ class AgentTab(QWidget):
             self._append("→", f"{event.get('name')} {args[:300]}", muted=True)
         elif kind == "tool_result":
             detail = event.get("detail")
-            line = f"{event.get('name')}: {event.get('outcome')}"
+            outcome = str(event.get("outcome"))
+            if isinstance(detail, str) and detail.startswith(f"{outcome}:"):
+                # The tool's text starts with its outcome: "error - error:
+                # …" said it twice (review round 9).
+                detail = detail[len(outcome) + 1:].strip()
+            line = f"{event.get('name')}: {outcome}"
             self._append("←", f"{line} - {detail}" if isinstance(detail, str) and detail else line,
                          muted=True)
             if event.get("outcome") == "unavailable":
@@ -2230,6 +2263,7 @@ class AgentDock(ExtensionDock):
         key_lookup: Callable[[str], str] | None = None,
         confirm_remote: Callable[[LP.LLMProfile, str], bool] | None = None,
         confirm_call: Callable[[str, dict], bool] | None = None,
+        confirm_files: Callable[[str, list], bool] | None = None,
         root_provider: Callable[[], str] | None = None,
         agent_settings_loader: Callable[[], AGS.AgentSettings] | None = None,
         session_store: SessionStore | None = None,
@@ -2266,12 +2300,20 @@ class AgentDock(ExtensionDock):
         self.key_lookup = key_lookup or LP.get_api_key
         self.confirm_remote = confirm_remote or (lambda p, h: _ask_remote(self, p, h))
         self.confirm_call = confirm_call or (lambda n, a: _ask_call(self, n, a))
+        #: ``confirm_files(server, files) -> bool``: run a host-run MCP
+        #: server whose files changed since they were confirmed?
+        self.confirm_files = confirm_files or (lambda n, f: _ask_files(self, n, f))
+        self._asking_files: set = set()
+        #: name -> the files the user said Not now to (not asked again).
+        self._declined_files: dict = {}
+        self._ask_files_later = GuiCall(self._confirm_changed_files)
         #: ``ask_user(question) -> answer or None`` for the agent's questions.
         self.ask_user = lambda question: _ask_user(self, question)
         self.root_provider = root_provider or (lambda: os.path.expanduser("~"))
         self._load_agent_settings = agent_settings_loader or AGS.AgentSettings.load
         self._save_agent_settings = agent_settings_saver or (lambda s: s.save())
         self.agent_settings = self._load_agent_settings()
+        self.agent_settings.pin_servers()  # what an older axross saved (core.mcp_script_pin)
         #: Finds the MCP servers on this machine (core.mcp_detect); what it
         #: found last.
         self._mcp_detector = mcp_detector
@@ -2961,6 +3003,7 @@ class AgentDock(ExtensionDock):
     def reload_settings(self) -> None:
         """Agent Settings were saved: every tab offers what they say now."""
         self.agent_settings = self._load_agent_settings()
+        self.agent_settings.pin_servers()  # what an older axross saved (core.mcp_script_pin)
         self.voice.reload()
         self.update_voice_look()
         self.mcp_pool.keep_only([s for s in self.agent_settings.mcp_servers if s.enabled])
@@ -2974,8 +3017,40 @@ class AgentDock(ExtensionDock):
         """The tools of the enabled servers *names*, and one error line per
         server that failed (core.mcp_client.McpClientPool.tools: *cancel*
         ends a starting server, *on_start* is told its name)."""
-        return self.mcp_pool.tools(self._servers(names), wrap_for=self._mcp_wrap,
-                                   cancel=cancel, on_start=on_start)
+        out = self.mcp_pool.tools(self._servers(names), wrap_for=self._mcp_wrap,
+                                  cancel=cancel, on_start=on_start)
+        take = getattr(self.mcp_pool, "take_unconfirmed", None)
+        pending = take() if take is not None else {}
+        if pending:  # from a tab's worker thread: the question is the GUI's
+            self._ask_files_later(pending)
+        return out
+
+    def _confirm_changed_files(self, pending: dict) -> None:
+        """Ask about each server whose files changed (core.mcp_client
+        .McpFilesChanged); Yes pins them as they are now and saves - the
+        next request of a tab starts it."""
+        from core import mcp_script_pin as PIN
+
+        for name, files in pending.items():
+            if name in self._asking_files or self._declined_files.get(name) == tuple(files):
+                continue
+            self._asking_files.add(name)
+            try:
+                if not self.confirm_files(name, list(files)):
+                    self._declined_files[name] = tuple(files)
+                    continue
+                settings = self._load_agent_settings()
+                if not PIN.confirm(settings, name):
+                    continue
+                try:
+                    self._save_agent_settings(settings)
+                except OSError as exc:
+                    QMessageBox.warning(self, tr("Run the MCP server with changed files?"),
+                                        tr("The settings could not be saved:") + f"\n{exc}")
+                    continue
+                self.reload_settings()
+            finally:
+                self._asking_files.discard(name)
 
     def external_signature(self, groups) -> tuple:
         """What the chosen servers and extensions are now: a change starts
@@ -3179,6 +3254,7 @@ class AgentDock(ExtensionDock):
                 "added:").format(name=config.name) + f"\n{type(exc).__name__}")
             return None
         settings.mcp_servers.append(config)
+        settings.pin_servers()  # the user added it: its files as they are now
         try:
             self._save_agent_settings(settings)
         except OSError as exc:

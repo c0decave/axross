@@ -757,21 +757,119 @@ def private_dir_problem(folder: Path, *, create: bool = True) -> str:
     if st.st_mode & 0o022:
         return (f"{folder} is writable by other users: not used "
                 f"(make it private: chmod 700 '{folder}')")
-    # Both the parents as written and those of the real path (a symlinked
-    # ~/.cache leads elsewhere): whoever may write any of them could rename
-    # the folder away and put another in its place.
-    chains = [folder.parent]
-    try:
-        real = Path(os.path.realpath(folder)).parent
-    except (OSError, ValueError):
-        real = None
-    if real is not None and real != folder.parent:
-        chains.append(real)
-    for parent in chains:
-        problem = _parents_problem(parent, folder, uid)
-        if problem:
-            return problem
+    # Every folder the path is looked up in - from / along the path as
+    # written and through each symlink on the way (a symlinked ~/.cache
+    # leads elsewhere, maybe over a second link): whoever may write any of
+    # them could rename the folder (or a link) away and put another in its
+    # place; a link of another user's he can repoint at any time (review
+    # round 9: XDG_DATA_HOME in /tmp, its name his link to ~/.local/share).
+    return _walk_problem(folder, uid)
+
+
+#: Symbolic links followed by _walk_problem before it gives up (Linux's limit).
+_MAX_LINK_HOPS = 40
+
+
+def _walk_problem(folder: Path, uid: int) -> str:
+    """Why someone else could change what *folder* names ("" = no one can):
+    a folder in which a component of it is looked up fails
+    :func:`_folder_problem`, or a symbolic link on the way belongs to another
+    user (only its owner may repoint it; in a sticky folder that is all it
+    takes). The components are resolved one by one, as the kernel does."""
+    parts = list(Path(os.path.abspath(folder)).parts)
+    if not parts:
+        return ""
+    current = Path(parts.pop(0))
+    pending, hops, checked = parts, 0, set()
+    while pending:
+        name = pending.pop(0)
+        if name in ("", "."):
+            continue
+        if name == "..":
+            current = current.parent
+            continue
+        if current not in checked:
+            problem = _folder_problem(current, folder, uid)
+            if problem:
+                return problem
+            checked.add(current)
+        candidate = current / name
+        try:
+            st = os.lstat(candidate)
+            target = os.readlink(candidate) if stat.S_ISLNK(st.st_mode) else None
+        except OSError:
+            return ""  # gone meanwhile: what uses the folder fails on its own
+        if target is None:
+            current = candidate
+            continue
+        if st.st_uid not in (uid, 0):
+            return (f"{candidate} is a symbolic link of another user: {folder} is not used "
+                    "(another user can point it anywhere; remove it and make a folder or a "
+                    "link of your own there)")
+        hops += 1
+        if hops > _MAX_LINK_HOPS:
+            return f"{candidate}: too many symbolic links: {folder} is not used"
+        target_parts = list(Path(target).parts)
+        if os.path.isabs(target):
+            current = Path(target_parts.pop(0))
+        pending = target_parts + pending
     return ""
+
+
+def _folder_problem(parent: Path, folder: Path, uid: int) -> str:
+    """Why *parent*, a folder on the way to *folder*, lets someone else
+    replace its entries ("" = it does not): another owner than this user
+    or root, a world-writable folder without the sticky bit, a folder its
+    group may write to without the sticky bit (unless the group is the
+    user's own: a user private group), or an ACL entry that lets another
+    user or group write to it."""
+    try:
+        pst = os.lstat(parent)
+    except OSError:
+        return ""
+    sticky = pst.st_mode & 0o1000
+    lead = f"{parent} can be changed by other users: {folder} is not used"
+    if pst.st_uid not in (uid, 0):
+        return (f"{lead} ({parent} belongs to another user: choose a folder of your own, "
+                "e.g. unset XDG_CACHE_HOME / XDG_DATA_HOME / XDG_STATE_HOME)")
+    if sticky:
+        return ""
+    if pst.st_mode & 0o002 or (pst.st_mode & 0o020 and not _private_group(pst.st_gid, uid)):
+        return f"{lead} (make it private: chmod go-w '{parent}')"
+    if _acl_lets_others_write(parent, uid):
+        return (f"{lead} (an ACL lets others write to it: getfacl '{parent}' shows it, "
+                f"setfacl -b '{parent}' removes it)")
+    return ""
+
+
+#: system.posix_acl_access (linux/posix_acl_xattr.h): version 2, then
+#: entries of (tag u16, permissions u16, id u32), little-endian.
+_ACL_USER, _ACL_GROUP, _ACL_MASK, _ACL_WRITE = 0x02, 0x08, 0x10, 0x02
+
+
+def _acl_lets_others_write(path: Path, uid: int) -> bool:
+    """Whether *path*'s POSIX ACL gives write permission to a named user
+    other than this one or to a named group (through the mask). Its mode's
+    group bits are only the mask then: a ``user:65534:rwx`` entry on a
+    folder of the user's private group passed the mode check (review
+    round 9). False where there is no such ACL or it cannot be read."""
+    getxattr = getattr(os, "getxattr", None)
+    if getxattr is None:
+        return False
+    try:
+        raw = getxattr(path, "system.posix_acl_access", follow_symlinks=False)
+    except OSError:
+        return False
+    import struct
+
+    if len(raw) < 4 or (len(raw) - 4) % 8 or struct.unpack_from("<I", raw)[0] != 2:
+        return False
+    entries = [struct.unpack_from("<HHI", raw, 4 + 8 * i) for i in range((len(raw) - 4) // 8)]
+    mask = next((perm for tag, perm, _ in entries if tag == _ACL_MASK), 0o7)
+    return any(perm & mask & _ACL_WRITE and (
+        (tag == _ACL_USER and ident != uid)
+        or (tag == _ACL_GROUP and not _private_group(ident, uid)))
+        for tag, perm, ident in entries)
 
 
 def _private_group(gid: int, uid: int) -> bool:
@@ -786,28 +884,6 @@ def _private_group(gid: int, uid: int) -> bool:
     except (ImportError, KeyError, OSError):
         return False
     return group.gr_name == name and set(group.gr_mem) <= {name}
-
-
-def _parents_problem(parent: Path, folder: Path, uid: int) -> str:
-    """Why a parent of *folder* (from *parent* up to /) lets someone else
-    replace it ("" = none does): another owner than this user or root, a
-    world-writable folder without the sticky bit, or one of this user's
-    folders that its group may write (unless the group is the user's own)."""
-    for _ in range(64):
-        try:
-            pst = os.stat(parent)
-        except OSError:
-            break
-        sticky = pst.st_mode & 0o1000
-        if pst.st_uid not in (uid, 0) or (pst.st_mode & 0o002 and not sticky) or \
-                (pst.st_uid == uid and pst.st_mode & 0o020 and not sticky
-                 and not _private_group(pst.st_gid, uid)):
-            return (f"{parent} can be changed by other users: {folder} is not used "
-                    f"(make it private: chmod go-w '{parent}')")
-        if parent.parent == parent:
-            break
-        parent = parent.parent
-    return ""
 
 
 def _plain_mode(path: Path) -> int:

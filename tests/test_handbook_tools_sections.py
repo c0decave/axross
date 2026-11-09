@@ -24,8 +24,10 @@ DOCS = ROOT / "docs"
 #: English heading -> (German, Spanish) heading at the same place.
 SECTIONS = {
     "## Tools": ("## Werkzeuge", "## Herramientas"),
-    "### Duplicate Finder": ("### Duplicate Finder", "### Duplicate Finder"),
-    "### Disk Usage": ("### Disk Usage", "### Disk Usage"),
+    # German names since UX review round 9 (the menus' "Duplikatsuche…" and
+    # "Speicherbelegung…").
+    "### Duplicate Finder": ("### Duplikatsuche", "### Duplicate Finder"),
+    "### Disk Usage": ("### Speicherbelegung", "### Disk Usage"),
     "### Scheduled Jobs": ("### Geplante Jobs", "### Scheduled Jobs"),
     "### Diagnostics and Recovery Scan": ("### Diagnose und Recovery-Scan",
                                           "### Diagnóstico y Recovery Scan"),
@@ -90,9 +92,11 @@ def test_happy_each_section_says_where_the_tool_is(name):
     # The German handbook names each tool by its German label (de.json).
     german = json.loads((Path(__file__).resolve().parents[1] / "resources/i18n/de.json")
                         .read_text(encoding="utf-8"))
+    # The menu entries' catalogue keys carry their letter.
+    menu_keys = {"Duplicate Finder…": "&Duplicate Finder…", "Disk Usage…": "Dis&k Usage…"}
     for heading, needle in where.items():
         if name == "USAGE_de.md":
-            needle = german.get(needle, needle).replace("&", "")
+            needle = german.get(menu_keys.get(needle, needle), needle).replace("&", "")
         body = " ".join(_section(text, own[english.index(heading)]).split())
         assert needle in body, (name, heading, needle)
     assert "Scheduled Jobs…" in text or "Geplante Jobs…" in text, name

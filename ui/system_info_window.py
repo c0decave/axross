@@ -1612,7 +1612,7 @@ class StackBar(QWidget):
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(colour)
             p.drawRoundedRect(QRectF(x, y + fm.height() / 2 - 5, 10, 10), 2, 2)
-            text = f"{tr(label)} {SI.human_bytes(value)} ({100 * value / total:.0f} %)"
+            text = f"{tr(label)} {SI.human_bytes(value)} ({format_percent(100 * value / total)})"
             p.setPen(self.palette().color(QPalette.ColorRole.Text))
             p.drawText(QRectF(x + 16, y, fm.horizontalAdvance(text) + 4, fm.height() + 2),
                        Qt.AlignmentFlag.AlignVCenter, text)

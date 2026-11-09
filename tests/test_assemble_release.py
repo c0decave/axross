@@ -32,6 +32,8 @@ from tests.fake_github import FakeGitHub, FakeHttpsHandler, FakeRelease, newer_t
 from tests.fake_github import public_key_b64  # noqa: E402
 
 VERSION = "9.9.9"
+#: The commit the fake tag v9.9.9 points at, and the fake dists are built from.
+BUILD_COMMIT = "0123abcd" + "e" * 32
 CONTRACT = {  # docs/PACKAGING.md, "Asset names"
     "axross-full", "axross-slim", "axross-base",
     "axross-full-glibc2.36", "axross-slim-glibc2.36", "axross-base-glibc2.36",
@@ -78,7 +80,9 @@ def make_dist(root: Path, version: str = VERSION, *, variants=SU.VARIANTS, pytho
         (dist / wheel).write_bytes(b"PK\x03\x04 wheel")
         (dist / sdist).write_bytes(b"\x1f\x8b sdist")
         sums_of(dist, [wheel, sdist])
-        (dist / "BUILD-INFO.md").write_text("# build\n")
+        (dist / "BUILD-INFO.md").write_text(
+            f"# axross {version} - build\n\nFrom commit {BUILD_COMMIT[:8]}, a clean `git archive` "
+            "of HEAD, by scripts/build_dist.sh.\n")
         (dist / "NATIVE-COMPONENTS.md").write_text(
             "<!-- native-components -->\n## Native components in the Linux binaries\n\n"
             "- libfake 1.0\n")
@@ -167,6 +171,14 @@ def changelog(tmp_path, monkeypatch):
                     "## 9.9.8 - 2026-11-01\n\n- Older.\n")
     monkeypatch.setattr(AR, "CHANGELOG", path, raising=False)
     return path
+
+
+@pytest.fixture(autouse=True)
+def release_tag(monkeypatch):
+    """This tree's tag v<version>: BUILD_COMMIT (the real tree has no v9.9.9)."""
+    tags = {VERSION: BUILD_COMMIT}
+    monkeypatch.setattr(AR, "tag_commit", tags.get, raising=False)
+    return tags
 
 
 @pytest.fixture
@@ -868,3 +880,69 @@ def test_sad_the_linux_artifact_both_unpacked_and_zipped_is_refused(tmp_path, ca
     (ci / f"{AR.CI_LINUX}.zip").write_bytes(b"PK\x05\x06" + b"\0" * 18)
     assert run("--version", VERSION, "--ci", ci, "--out", tmp_path / "rel") == 1
     assert "keep one" in capsys.readouterr().err
+
+
+# -- the build's commit (review round 9) ---------------------------------------------
+
+
+def test_sad_a_linux_dist_built_from_another_commit_is_refused(tmp_path, field_key, capsys):
+    """A ci/ branch's run, a hand-started one or an older builder's dist is
+    not the tag's build: BUILD-INFO.md's commit decides, before anything is
+    written."""
+    _key, key_file = field_key
+    dist, out = make_dist(tmp_path), tmp_path / "rel"
+    info = dist / "BUILD-INFO.md"
+    info.write_text(info.read_text().replace(BUILD_COMMIT[:8], "deadbeef"))
+    assert run("--version", VERSION, "--dist", dist, "--ci", make_ci(tmp_path), "--out", out,
+               "--key", key_file) == 1
+    err = capsys.readouterr().err
+    assert "built from commit deadbeef" in err and BUILD_COMMIT[:12] in err
+    assert not out.exists()
+
+
+def test_sad_the_ci_linux_artifact_of_another_commit_is_refused(tmp_path, capsys, release_tag):
+    release_tag[VERSION] = "f" * 40  # the tag moved on after the run that built it
+    ci, out = make_ci_with_linux(tmp_path), tmp_path / "rel"
+    assert run("--version", VERSION, "--ci", ci, "--out", out) == 1
+    assert f"ci/{AR.CI_LINUX}/ was built from commit {BUILD_COMMIT[:8]}" in capsys.readouterr().err
+
+
+def test_edge_without_the_tag_or_the_commit_line_it_is_named_missing(tmp_path, field_key, capsys,
+                                                                      release_tag):
+    _key, key_file = field_key
+    del release_tag[VERSION]
+    args = ("--version", VERSION, "--ci", make_ci(tmp_path), "--key", key_file)
+    dist = make_dist(tmp_path)
+    assert run(*args, "--dist", dist, "--out", tmp_path / "rel1") == 0
+    assert f"the tag v{VERSION} in this repository" in capsys.readouterr().out
+    assert run(*args, "--dist", dist, "--out", tmp_path / "rel2", "--require-all") == 1
+    assert f"the tag v{VERSION} in this repository" in capsys.readouterr().err
+    release_tag[VERSION] = BUILD_COMMIT
+    (dist / "BUILD-INFO.md").write_text("# build\n")
+    assert run(*args, "--dist", dist, "--out", tmp_path / "rel3", "--require-all") == 1
+    assert "BUILD-INFO.md naming the commit" in capsys.readouterr().err
+
+
+def test_happy_tag_commit_reads_the_repositorys_tag(tmp_path, monkeypatch):
+    """tag_commit asks git for refs/tags/v<version> of the tree it runs in."""
+    import shutil
+    import subprocess
+
+    if shutil.which("git") is None:
+        pytest.skip("no git")
+    monkeypatch.undo()  # the real tag_commit
+    repo = tmp_path / "repo"
+    env = {"PATH": __import__("os").environ.get("PATH", ""), "HOME": str(tmp_path),
+           "GIT_CONFIG_NOSYSTEM": "1", "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.org",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.org"}
+    for argv in (["init", "-q", str(repo)], ["-C", str(repo), "commit", "-q", "--allow-empty",
+                                               "-m", "x"],
+                 ["-C", str(repo), "tag", "-a", "-m", "release", f"v{VERSION}"]):
+        subprocess.run(["git", *argv], check=True, env=env, capture_output=True)
+    head = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], check=True, env=env,
+                          capture_output=True, text=True).stdout.strip()
+    for key in [k for k in __import__("os").environ if k.startswith("GIT_")]:
+        monkeypatch.delenv(key)
+    monkeypatch.setattr(AR, "ROOT", repo)
+    assert AR.tag_commit(VERSION) == head  # the annotated tag's commit, not the tag object
+    assert AR.tag_commit("9.9.10") is None

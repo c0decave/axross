@@ -901,6 +901,83 @@ def _indicator_css(key: str) -> str:
     )
 
 
+# Drop-down and spin box arrows of the modern themes: the template styles
+# the combo box's drop-down button and the spin box frame, and once a
+# sub-control is styled Fusion no longer draws its arrow - Modern Light and
+# Dark showed drop-downs without an arrow and number fields without up/down
+# arrows (UX review round 9). A chevron image in the muted text colour
+# (``text`` on hover, part way to the surface when disabled or at the end
+# of the range) gives them back.
+_CHEVRON_DOWN_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="6" viewBox="0 0 10 6">'
+    '<path d="M1 1 L5 5 L9 1" fill="none" stroke="{colour}" stroke-width="1.6"'
+    ' stroke-linecap="round" stroke-linejoin="round"/></svg>'
+)
+_CHEVRON_UP_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="6" viewBox="0 0 10 6">'
+    '<path d="M1 5 L5 1 L9 5" fill="none" stroke="{colour}" stroke-width="1.6"'
+    ' stroke-linecap="round" stroke-linejoin="round"/></svg>'
+)
+
+
+def _mix(a: str, b: str, share: float = 0.5) -> str:
+    """``#rrggbb`` part way from *a* to *b* (``share`` of *b*)."""
+    ca = [int(a[i:i + 2], 16) for i in (1, 3, 5)]
+    cb = [int(b[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#" + "".join(f"{round(x + (y - x) * share):02x}" for x, y in zip(ca, cb))
+
+
+def _arrow_css(tokens: dict[str, str]) -> str:
+    """Chevron arrows for QComboBox and QSpinBox / QDoubleSpinBox of a
+    modern theme (see _CHEVRON_DOWN_SVG); empty when the images cannot be
+    written (Qt then draws no arrow, as before)."""
+    colours = {
+        "normal": tokens["text_muted"],
+        "hover": tokens["text"],
+        "off": _mix(tokens["text_muted"], tokens["surface"], 0.55),
+    }
+    images = {}
+    for name, template in (("down", _CHEVRON_DOWN_SVG), ("up", _CHEVRON_UP_SVG)):
+        for state, colour in colours.items():
+            path = _mark_file(template, f"chevron-{name}", colour)
+            if path is None:
+                return ""
+            images[name, state] = path
+
+    def rule(selectors: str, name: str, state: str, extra: str = "") -> str:
+        return f'{selectors} {{\n    image: url("{images[name, state]}");\n{extra}}}\n'
+
+    def each(sub: str) -> str:
+        return f"QSpinBox::{sub}, QDoubleSpinBox::{sub}"
+
+    size = "    width: 10px;\n    height: 6px;\n"
+    return (
+        "\n"
+        + rule("QComboBox::down-arrow", "down", "normal", size)
+        + rule("QComboBox::down-arrow:hover, QComboBox::down-arrow:on", "down", "hover")
+        + rule("QComboBox::down-arrow:disabled", "down", "off")
+        + "QSpinBox, QDoubleSpinBox {\n    padding-right: 22px;\n}\n"
+        + f"{each('up-button')}, {each('down-button')} {{\n"
+        "    subcontrol-origin: border;\n"
+        "    width: 20px;\n"
+        "    border: none;\n"
+        "    background: transparent;\n"
+        "}\n"
+        + f"{each('up-button')} {{\n    subcontrol-position: top right;\n}}\n"
+        + f"{each('down-button')} {{\n    subcontrol-position: bottom right;\n}}\n"
+        + f"{each('up-button:hover')}, {each('down-button:hover')} {{\n"
+        f"    background-color: {tokens['surface_alt']};\n"
+        f"    border-radius: {tokens['radius']};\n"
+        "}\n"
+        + rule(each("up-arrow"), "up", "normal", size)
+        + rule(each("down-arrow"), "down", "normal", size)
+        + rule(each("up-arrow:hover"), "up", "hover")
+        + rule(each("down-arrow:hover"), "down", "hover")
+        + rule(f"{each('up-arrow:disabled')}, {each('up-arrow:off')}", "up", "off")
+        + rule(f"{each('down-arrow:disabled')}, {each('down-arrow:off')}", "down", "off")
+    )
+
+
 def _menu_check_css(key: str) -> str:
     """A checkable menu entry with an icon showed no on/off state: Qt draws
     the icon where the check mark goes (View > Panels: Transfers on and
@@ -963,7 +1040,8 @@ def stylesheet_for(theme: object, system_scheme: str | None, compact: bool = Fal
     """Complete application stylesheet for *theme*."""
     resolved = resolve(theme, system_scheme)
     if resolved in _MODERN_VARIANTS:
-        css = build_modern_qss(_MODERN_VARIANTS[resolved]) + _indicator_css(resolved)
+        tokens = _MODERN_VARIANTS[resolved]
+        css = build_modern_qss(tokens) + _indicator_css(resolved) + _arrow_css(tokens)
     elif resolved in ("classic", "dark"):
         css = DARK_THEME + _CLASSIC_MUTED_DARK + _classic_extra_css("classic")
         css += _indicator_css("classic")

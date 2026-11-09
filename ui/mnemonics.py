@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 
+from PyQt6.QtGui import QAction, QFont
 from PyQt6.QtWidgets import QMenu
 
 _MNEMONIC = re.compile(r"&([^&\s])")
@@ -43,10 +44,37 @@ def with_mnemonic(text: str, taken: set[str]) -> str:
     return text
 
 
+#: Marks a menu's heading entry (see add_header): no letter, never picked.
+HEADER = "axMenuHeader"
+
+
+def is_header(action: QAction) -> bool:
+    """True for a heading entry made by :func:`add_header`."""
+    return bool(action.property(HEADER))
+
+
+def add_header(menu: QMenu, text: str, before: QAction | None = None) -> QAction:
+    """A heading in *menu*: a disabled entry in bold. ``QMenu.addSection``
+    is a separator whose text Fusion does not draw - Quick Connect's
+    "Recent" and "All Profiles" were two bare lines (UX review round 9).
+    With *before* it is put above that entry instead of at the end."""
+    action = QAction(text.replace("&", "&&"), menu)
+    action.setEnabled(False)
+    action.setProperty(HEADER, True)
+    font = QFont(action.font())
+    font.setBold(True)
+    action.setFont(font)
+    if before is None:
+        menu.addAction(action)
+    else:
+        menu.insertAction(before, action)
+    return action
+
+
 def assign(menu: QMenu) -> None:
     """Give every entry of *menu* without a mnemonic a free one."""
     actions = [a for a in menu.actions()
-               if not a.isSeparator() and a.text() and a.isVisible()]
+               if not a.isSeparator() and a.text() and a.isVisible() and not is_header(a)]
     taken = {m for a in actions if (m := mnemonic_of(a.text())) is not None}
     for action in actions:
         text = action.text()
@@ -80,4 +108,4 @@ def install(menu: QMenu, *, now: bool = True) -> None:
         on_show()
 
 
-__all__ = ["assign", "install", "mnemonic_of", "with_mnemonic"]
+__all__ = ["HEADER", "add_header", "assign", "install", "is_header", "mnemonic_of", "with_mnemonic"]

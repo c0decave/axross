@@ -35,11 +35,11 @@ LLM-Agent eigene Skripte schreiben und ausführen kann.
 
 | Weg | Wann | Einstieg |
 |---|---|---|
-| **Scripts-Dock** | Skripte in der GUI schreiben, speichern, verwalten und starten | *View > Panels > Scripts* (neben *Console*) |
+| **Scripts-Dock** | Skripte in der GUI schreiben, speichern, verwalten und starten | *Ansicht → Panels → Skripte* (neben *Konsole*) |
 | **Console-Dock** (REPL) | Interaktives Erkunden in der GUI | Unteres Dock, Tab *Console* |
 | **`axross --script <datei> [argumente…]`** | Headless / Cron / CI | `axross --script myscript.py` |
 | **REPL-Slash-Commands** | Skripte am Prompt speichern / laden / starten | `.save name`, `.run name` |
-| **Scheduled Jobs** | Ein gespeichertes Skript im Intervall starten | *View > Scheduled Jobs…* |
+| **Scheduled Jobs** | Ein gespeichertes Skript im Intervall starten | *Ansicht → Geplante Jobs…* |
 | **MCP `script_*`-Tools** | Ein LLM-Agent steuert axross | Mit `--mcp-allow-scripts` starten |
 
 Alle Wege nutzen darunter dasselbe Modul `core.scripting` — was im
@@ -49,8 +49,8 @@ Oberfläche) und die vollständige API-Referenz in der App; *F1* listet
 die Tasten des Scripts-Docks und die Slash-Commands.
 
 Jeder Weg führt ein Skript als `__main__` aus: `__name__ == "__main__"`
-und `__file__` ist der Skriptpfad - `axross --script`, Run, der
-Scheduler, `script_run` und ebenso **Run in Console**, `.run` und
+und `__file__` ist der Skriptpfad – `axross --script`, Ausführen, der
+Scheduler, `script_run` und ebenso **In der Konsole ausführen**, `.run` und
 `axross.run_script()` (in der Console nur während des Laufs; der Prompt
 hat kein `__file__`). Ein Block `if __name__ == "__main__":` läuft auf
 jedem davon.
@@ -67,7 +67,7 @@ abgelehnt (Exit 2). Ein ausdrückliches `--script` gewinnt gegen
 
 ## Das Scripts-Dock
 
-*View > Panels > Scripts* öffnet die Skriptverwaltung, als Tab neben
+*Ansicht → Panels → Skripte* öffnet die Skriptverwaltung, als Tab neben
 der Console. Links: die gespeicherten Skripte
 (`~/.config/axross/scripts/`) und die mitgelieferten **Examples**. In
 der Mitte: ein Python-Editor mit Syntax-Highlighting, Zeilennummern
@@ -77,15 +77,15 @@ Laufs.
 
 | Aktion | Was sie tut |
 |---|---|
-| **New** | Legt `<name>.py` aus einer kurzen Vorlage an (Namen: Buchstaben, Ziffern, `_`, `-`) |
-| **Save** (Ctrl+S) | Schreibt den Editor-Text (Mode 0600). Ein geändertes Skript zeigt `*` |
-| **Save As…** | Speichert den Editor-Text unter neuem Namen; die Originaldatei bleibt unverändert |
-| **Rename…** / **Delete** | Datei umbenennen oder löschen; Delete fragt vorher |
-| **Run** (Ctrl+Return) | Speichert ungesicherte Änderungen und startet das Skript dann **in einem eigenen Python-Prozess** |
-| **Stop** | Beendet den Lauf; ist er nach 3 s nicht zu Ende, per Kill |
-| **Run in Console** | Führt das gespeicherte Skript im Live-Namespace der Console aus (wie `.run`) |
-| **Copy to My Scripts** | Legt eine editierbare Kopie eines mitgelieferten Examples an (Examples sind read-only); an ihrem Ende steht der Aufruf des Examples als auskommentierter "Try it"-Abschnitt |
-| **Run** / **Run in Console** auf einem Example | Zeigt den Usage-Aufruf des Examples zum Anpassen (Pfade, Hosts, Profile) und führt das Example damit aus |
+| **Neu** | Legt `<name>.py` aus einer kurzen Vorlage an (Namen: Buchstaben, Ziffern, `_`, `-`) |
+| **Speichern** (Strg+S) | Schreibt den Editor-Text (Mode 0600). Ein geändertes Skript zeigt `*` |
+| **Speichern unter…** | Speichert den Editor-Text unter neuem Namen; die Originaldatei bleibt unverändert |
+| **Umbenennen…** / **Löschen** | Datei umbenennen oder löschen; Löschen fragt vorher |
+| **Ausführen** (Strg+Eingabe) | Speichert ungesicherte Änderungen und startet das Skript dann **in einem eigenen Python-Prozess** |
+| **Stopp** | Beendet den Lauf; ist er nach 3 s nicht zu Ende, per Kill |
+| **In der Konsole ausführen** | Führt das gespeicherte Skript im Live-Namespace der Console aus (wie `.run`) |
+| **In Meine Skripte kopieren** | Legt eine editierbare Kopie eines mitgelieferten Examples an (Examples sind read-only); an ihrem Ende steht der Aufruf des Examples als auskommentierter "Try it"-Abschnitt |
+| **Ausführen** / **In der Konsole ausführen** auf einem Example | Zeigt den Usage-Aufruf des Examples zum Anpassen (Pfade, Hosts, Profile) und führt das Example damit aus |
 
 So verhält sich ein Lauf:
 
@@ -106,13 +106,13 @@ So verhält sich ein Lauf:
   `axross.NonInteractiveError`, statt für Sie zu antworten
   (`assume_yes=True` antwortet ohne Rückfrage mit Ja), und
   `axross.message()` schreibt in die Ausgabe. Skripte, die Dialoge
-  brauchen, laufen mit **Run in Console** — dann auf dem GUI-Thread,
+  brauchen, laufen mit **In der Konsole ausführen** – dann auf dem GUI-Thread,
   und das Fenster wartet, bis sie fertig sind.
 - Skripte, die ein Scheduled Job startet, tragen `[scheduled]`;
   Umbenennen oder Löschen warnt vorher, weil der Job sie beim Namen
   nennt.
-- Im Sicherheitsmodus **paranoid** (*Edit > Settings > Security*) sind
-  Run und Run in Console deaktiviert (der Tooltip sagt warum); `.run`
+- Im Sicherheitsmodus **paranoid** (*Bearbeiten → Einstellungen → Sicherheit*) sind
+  Ausführen und In der Konsole ausführen deaktiviert (der Tooltip sagt warum); `.run`
   und der Kindprozess verweigern ebenso, und auch `axross --script`
   (Exit 2) - ob der Modus dort gewählt oder mit `AXROSS_SECURITY_MODE`
   gesetzt wurde, das bei beiden gewinnt.
@@ -168,6 +168,23 @@ Copy/write/encrypt verweigern vorhandene Ziele standardmäßig.
 `overwrite=True` nur übergeben, wenn das Ersetzen gewollt ist.
 `remove()` und `trash()` verlangen `confirm=True`, damit Headless-Skripte
 nicht versehentlich löschen.
+
+Manches Löschen tut mehr, als der Pfad vermuten lässt; dann wirft
+`remove()` `ConfirmationRequired` (ein `PermissionError`; nichts wird
+gelöscht), dessen Meldung das Schlüsselwort für das Ja nennt:
+
+```python
+# IMAP, alle Ordner unter INBOX: löscht diese Ordner, INBOX und ihre Mails bleiben
+axross.remove(b, "/INBOX", recursive=True, confirm=True, keep_namespace_root=True)
+# SMB-DFS-Link: löscht den Inhalt der Freigabe, auf die er zeigt; der Link bleibt
+axross.remove(b, "/links/proj", recursive=True, confirm=True, follow_dfs_link=True)
+# WinRM/WMI: ein letzter Name nur aus Punkten und Leerzeichen ist unter Windows der Ordner darüber
+axross.remove(b, "C:\\data\\...", recursive=True, confirm=True, confirm_alias=True)
+```
+
+Die Dateiansicht stellt stattdessen dieselbe Frage. Der Agent und
+MCP-Clients können diese Schlüsselwörter nicht übergeben: Sie bekommen die
+Erklärung als Fehler.
 
 ### Verschlüsselung + Archive
 
@@ -242,9 +259,9 @@ axross.security_mode("paranoid")  # sperrt Vorschauen, Skripte und Legacy-Protok
 
 ### Duplikat-Index
 
-Der Index des Duplicate Finders (*View > Duplicate Finder…*,
-Ctrl+Shift+D) und seine Scan-Historie (*View > Duplicate Index &
-History…*). Jede Gruppe listet ihre Kopien in Behalten-Reihenfolge: die
+Der Index der Duplikatsuche (*Ansicht → Duplikatsuche…*,
+Strg+Umschalt+D) und seine Scan-Historie (*Ansicht → Duplikat-Index &
+Verlauf…*). Jede Gruppe listet ihre Kopien in Behalten-Reihenfolge: die
 nach Änderungszeit älteste zuerst, bei Gleichstand der kürzere, dann
 der alphabetisch erste Pfad; Kopien ohne Zeit kommen zuletzt.
 
@@ -287,9 +304,9 @@ Interpreter-Namespace nie.
 32 Beispiel-Skripte unter `resources/scripts/`. Jedes definiert
 Funktionen; der `Usage::`-Block seines Docstrings zeigt den Aufruf, eine
 Datei, die so wie sie ist gestartet wird, gibt also nichts aus. In der
-GUI stehen sie im Scripts-Dock unter **Examples**: **Run** oder **Run in
-Console** zeigt diesen Aufruf zum Anpassen und führt das Example damit
-aus, **Copy to My Scripts** legt eine editierbare Kopie mit dem Aufruf
+GUI stehen sie im Skripte-Dock unter **Examples**: **Ausführen** oder **In der
+Konsole ausführen** zeigt diesen Aufruf zum Anpassen und führt das Example damit
+aus, **In Meine Skripte kopieren** legt eine editierbare Kopie mit dem Aufruf
 als auskommentiertem "Try it"-Abschnitt an. Ein Lauf, der nur
 Funktionen definiert hat, sagt das in der Statuszeile.
 

@@ -42,6 +42,38 @@ _DIGEST_HEX_LEN = {"sha256": 64, "sha1": 40, "md5": 32}
 COMMAND_NOT_FOUND = (126, 127)
 
 
+def _not_found_patterns(tool: str) -> tuple[re.Pattern[str], ...]:
+    name = re.escape(tool)
+    return (
+        # bash "bash: line 1: sha256sum: command not found", dash / busybox
+        # "sh: 1: sha256sum: not found" - the whole line, so that the tool's
+        # own complaint about a FILE named like that does not count.
+        re.compile(rf"(?:^|[\s:]){name}: (?:command )?not found\s*$", re.M),
+        # zsh "zsh:1: command not found: sha256sum"
+        re.compile(rf"command not found: {name}\s*$", re.M),
+        # Windows OpenSSH with cmd.exe as its shell (exit 1):
+        # "'sha256sum' is not recognized as an internal or external command"
+        re.compile(rf"^'{name}' is not recognized as an internal or external command", re.M),
+        # ... and with PowerShell: "The term 'sha256sum' is not recognized
+        # as the name of a cmdlet" (PowerShell 7: "as a name of a cmdlet")
+        re.compile(rf"The term '{name}' is not recognized as (?:the|a) name", re.M),
+    )
+
+
+def command_missing(returncode: int, stderr: str, tool: str) -> bool:
+    """Whether a remote command failed because *tool* does not exist there.
+
+    A POSIX shell says so with exit 126/127; cmd.exe and PowerShell (the
+    shells of Windows OpenSSH) exit 1 and say it only in words - without
+    them a copy of 500 files opened 500 channels to hear the same answer.
+    """
+    if returncode in COMMAND_NOT_FOUND:
+        return True
+    if returncode == 0 or not stderr:
+        return False
+    return any(p.search(stderr) for p in _not_found_patterns(tool))
+
+
 def digest_from_sum_output(output: str, algorithm: str) -> str:
     """The lowercase hex digest in ``sha256sum`` / ``md5sum`` output, or "".
 

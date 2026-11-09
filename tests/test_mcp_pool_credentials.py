@@ -27,6 +27,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core import mcp_client as C  # noqa: E402
+from core.mcp_script_pin import pinned  # noqa: E402
 
 SCRIPT = textwrap.dedent("""
     import json, os, sys
@@ -112,8 +113,8 @@ def _http_config(http, **kw) -> C.McpServerConfig:
 def _stdio_config(tmp_path) -> C.McpServerConfig:
     script = tmp_path / "server.py"
     script.write_text(SCRIPT)
-    return C.McpServerConfig(name="prog", command=(sys.executable, str(script)),
-                             secret_env=("API_KEY",), timeout=30)
+    return pinned(C.McpServerConfig(name="prog", command=(sys.executable, str(script)),
+                                    secret_env=("API_KEY",), timeout=30))
 
 
 # -- happy ---------------------------------------------------------------------------

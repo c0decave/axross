@@ -147,7 +147,7 @@ AREAS: tuple[Area, ...] = (
     Area("mcp", "MCP"),
     Area("mcp.client", "MCP Client (servers the agent uses)", (
         *_core("mcp_client", "mcp_catalog", "mcp_detect", "mcp_discover", "mcp_install",
-               "mcp_runner", "mcp_egress"),
+               "mcp_runner", "mcp_egress", "mcp_script_pin"),
         *_ui("mcp_catalog_dialog"),
     )),
     Area("mcp.server", "MCP Server (axross as a server)",

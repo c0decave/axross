@@ -204,11 +204,13 @@ def test_sad_an_agent_task_that_fails_logs_its_end_with_the_error(tmp_path, capl
 
 def test_happy_an_mcp_server_logs_up_and_closed(tmp_path, caplog):
     from core import mcp_client as C
+    from core.mcp_script_pin import pinned
     from tests.test_mcp_client import FAKE
 
     script = tmp_path / "fake_mcp.py"
     script.write_text(FAKE)
-    config = C.McpServerConfig(name="fake", command=(sys.executable, str(script), "normal"))
+    config = pinned(C.McpServerConfig(name="fake",
+                                      command=(sys.executable, str(script), "normal")))
     with caplog.at_level(logging.INFO, logger="core.mcp_client"):
         client = C.McpClient(config)
         client.close()
@@ -219,11 +221,13 @@ def test_happy_an_mcp_server_logs_up_and_closed(tmp_path, caplog):
 
 def test_sad_an_mcp_server_that_does_not_start_says_why(tmp_path, caplog):
     from core import mcp_client as C
+    from core.mcp_script_pin import pinned
     from tests.test_mcp_client import FAKE
 
     script = tmp_path / "fake_mcp.py"
     script.write_text(FAKE)
-    config = C.McpServerConfig(name="dying", command=(sys.executable, str(script), "die"))
+    config = pinned(C.McpServerConfig(name="dying",
+                                      command=(sys.executable, str(script), "die")))
     with caplog.at_level(logging.INFO, logger="core.mcp_client"):
         with pytest.raises(C.McpClientError):
             C.McpClient(config)

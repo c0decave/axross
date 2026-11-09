@@ -583,7 +583,11 @@ class _RemovalResult:
     line per failed entry, ``not_attempted`` entries a cancel (or a stop)
     kept, ``aborted`` when an unexpected exception stopped the run, and
     ``partial`` - ``(name, removed inside)`` - for a folder a cancel
-    stopped halfway: part of it is gone, the folder and the rest stay."""
+    stopped halfway: part of it is gone, the folder and the rest stay.
+    ``questions`` - ``(name, path, is_dir, ConfirmationRequired)`` - the
+    entries the backend wants a yes for (INBOX of an IMAP server whose
+    folders live below it, a DFS link): nothing of them was deleted, and
+    they are counted in ``not_attempted``."""
 
     def __init__(
         self,
@@ -592,15 +596,18 @@ class _RemovalResult:
         not_attempted: int,
         aborted: bool,
         partial: tuple[str, int] | None = None,
+        questions: list | None = None,
     ) -> None:
         self.done = done
         self.errors = errors
         self.not_attempted = not_attempted
         self.aborted = aborted
         self.partial = partial
+        self.questions = list(questions or ())
 
 
-def _run_removal(backend, entries, trash: bool, cancelled, report) -> _RemovalResult:
+def _run_removal(backend, entries, trash: bool, cancelled, report,
+                 options: dict | None = None) -> _RemovalResult:
     """Remove (or move to the trash) each ``(name, path, is_dir)`` in turn.
 
     Runs on a worker thread. *cancelled* is checked between entries, and -
@@ -618,15 +625,27 @@ def _run_removal(backend, entries, trash: bool, cancelled, report) -> _RemovalRe
     from core.operation_journal import journal_batch, new_batch_id
 
     with journal_batch(new_batch_id() if trash else "", begin="trash", entries=len(entries)):
-        return _run_removal_entries(backend, entries, trash, cancelled, report)
+        result = _run_removal_entries(backend, entries, trash, cancelled, report, options)
+    if not trash and (result.done or result.partial):
+        # Ctrl+Z after it says the delete cannot be undone (core.undo).
+        from core.undo import record_delete
+
+        record_delete(backend, [path for _name, path, _is_dir in entries],
+                      result.done + (1 if result.partial else 0))
+    return result
 
 
-def _run_removal_entries(backend, entries, trash: bool, cancelled, report) -> _RemovalResult:
+def _run_removal_entries(backend, entries, trash: bool, cancelled, report,
+                         options: dict | None = None) -> _RemovalResult:
+    """*options*: ``{path: {keyword: True}}`` - the yes the person gave to
+    a backend's question (:class:`core.backend.ConfirmationRequired`)."""
     from core import removal_cancel as RC
     from core import trash as T
+    from core.backend import ConfirmationRequired
     from core.user_errors import describe
 
     done, errors, attempted, aborted = 0, [], 0, False
+    questions: list = []
     partial: tuple[str, int] | None = None
     what = "Trash" if trash else "Delete"
     for index, (name, path, is_dir) in enumerate(entries):
@@ -644,7 +663,16 @@ def _run_removal_entries(backend, entries, trash: bool, cancelled, report) -> _R
                 T.trash(backend, path)
             else:
                 with RC.cancellable_removal(cancelled, inside):
-                    backend.remove(path, recursive=is_dir)
+                    backend.remove(path, recursive=is_dir, **(options or {}).get(path, {}))
+        except ConfirmationRequired as exc:
+            if trash:
+                errors.append(f"{name}: {describe(exc)}")
+                continue
+            # Nothing of it was deleted: asked about once the run is over.
+            log.info("Delete of %s needs a yes (%s)", path, exc.kind)
+            questions.append((name, path, is_dir, exc))
+            attempted -= 1
+            continue
         except RC.RemovalCancelled as exc:
             if exc.removed:
                 partial = (name, exc.removed)
@@ -663,7 +691,7 @@ def _run_removal_entries(backend, entries, trash: bool, cancelled, report) -> _R
             break
         done += 1
         log.info("%s: %s", "Trashed" if trash else "Deleted", path)
-    return _RemovalResult(done, errors, len(entries) - attempted, aborted, partial)
+    return _RemovalResult(done, errors, len(entries) - attempted, aborted, partial, questions)
 
 
 # Buttons the pane handles itself: the two side buttons walk the history,
@@ -5047,9 +5075,11 @@ class FilePaneWidget(QWidget):
         ctx["phase"] = "remove"
         backend, entries, trash, token = ctx["backend"], ctx["entries"], ctx["trash"], ctx["token"]
 
+        options = ctx.get("options")
+
         def work(cancelled, report):
             try:
-                return _run_removal(backend, entries, trash, cancelled, report)
+                return _run_removal(backend, entries, trash, cancelled, report, options)
             finally:
                 _release_removal(token)
 
@@ -5065,6 +5095,14 @@ class FilePaneWidget(QWidget):
         self._end_removal(ctx)
         trash, total = ctx["trash"], len(ctx["entries"])
         errors = list(ctx["unsafe"])
+        questions = value.questions if kind == "done" else []
+        if questions:
+            # Asked below: neither done nor "kept" by a cancel.
+            total -= len(questions)
+            value.not_attempted -= len(questions)
+        if kind == "done" and questions and not total and not errors:
+            self._ask_removal_questions(ctx, questions)
+            return
         if kind == "error":  # _run_removal catches per entry; this is a defect
             log.error("%s failed: %s", ctx["title"], value)
             errors.append(str(value))
@@ -5126,6 +5164,62 @@ class FilePaneWidget(QWidget):
                 as_written(tr_n(len(errors), "{n} item failed:", "{n} items failed:") + "\n"
                            + _dialog_lines(errors[:10])),
             )
+        if questions:
+            self._ask_removal_questions(ctx, questions)
+
+    def _ask_removal_questions(self, ctx: dict, questions: list) -> None:
+        """Ask about each entry the backend would not delete without a yes
+        (:class:`core.backend.ConfirmationRequired`: what Yes does is in its
+        explanation), default No; the ones answered Yes are deleted again
+        with the backend's keyword for it. No deletes nothing and shows no
+        error."""
+        from ui.plain_text import as_written
+
+        confirmed: list[tuple[str, str, bool]] = []
+        options: dict[str, dict[str, bool]] = {}
+        for name, path, is_dir, exc in questions:
+            if self._shutting_down or self._backend is not ctx["backend"]:
+                return
+            reply = QMessageBox.question(
+                self,
+                ctx["title"],
+                as_written(f"{exc.explanation}\n\n" + tr("Go ahead?")),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                confirmed.append((name, path, is_dir))
+                options[path] = {exc.option: True}
+            else:
+                log.info("Delete of %s declined (%s)", path, exc.kind)
+        if not confirmed or self._shutting_down or self._removal_ctx:
+            return
+        backend = ctx["backend"]
+        if self._backend is not backend:
+            self.status_message(tr("Nothing was deleted: the connection changed meanwhile."))
+            return
+        token, busy = _claim_removal(backend, [path for _n, path, _d in confirmed])
+        if token is None:
+            QMessageBox.warning(
+                self,
+                ctx["title"],
+                as_written(tr("Not started: these paths are already being deleted or moved "
+                              "to the trash:\n{paths}").format(paths=_dialog_lines(busy[:10]))),
+            )
+            return
+        again = {
+            "phase": "remove",
+            "trash": False,
+            "title": ctx["title"],
+            "backend": backend,
+            "entries": confirmed,
+            "unsafe": [],
+            "names": "",
+            "token": token,
+            "options": options,
+        }
+        self._removal_ctx = again
+        self._start_removal_phase(again)
 
     def _note_after_refresh(self, text: str) -> None:
         """Show *text* and reload the folder; the reload's "N items" line
@@ -6498,6 +6592,13 @@ class FilePaneWidget(QWidget):
         else:
             self._drop_own_cut()
 
+    def _escape_in_path(self) -> None:
+        """Esc in the path bar: drop what was typed (the bar shows the
+        current folder again) and go back to the list."""
+        self._path_edit.setText(self._current_path)
+        view = self._thumbs if self.view_mode == "thumbnails" else self._table
+        view.setFocus(Qt.FocusReason.ShortcutFocusReason)
+
     def _escape_in_filter(self) -> None:
         """Esc in the filter line: clear the filter and go back to the list
         (the thumbnails in that view)."""
@@ -6517,6 +6618,29 @@ class FilePaneWidget(QWidget):
         ):
             self._escape_in_filter()
             return True
+
+        if (
+            event.type() == QEvent.Type.KeyPress
+            and watched in (self._path_edit, self._filter_edit)
+            and event.modifiers() in (Qt.KeyboardModifier.NoModifier,
+                                      Qt.KeyboardModifier.ControlModifier)
+        ):
+            # Esc in the path bar went nowhere, and Ctrl+L / Ctrl+F only
+            # worked from the list (UX review round 9): Esc puts the
+            # current folder back and returns to the list; either key
+            # moves between the two lines.
+            key, ctrl = event.key(), event.modifiers() == Qt.KeyboardModifier.ControlModifier
+            if key == Qt.Key.Key_Escape and not ctrl and watched is self._path_edit:
+                self._escape_in_path()
+                return True
+            if key == Qt.Key.Key_L and ctrl:
+                self._path_edit.setFocus(Qt.FocusReason.ShortcutFocusReason)
+                self._path_edit.selectAll()
+                return True
+            if key == Qt.Key.Key_F and ctrl:
+                self._filter_edit.setFocus(Qt.FocusReason.ShortcutFocusReason)
+                self._filter_edit.selectAll()
+                return True
 
         # Keyboard shortcuts when the table (or its viewport) has focus
         if event.type() == QEvent.Type.KeyPress and watched in self._key_views():

@@ -1010,13 +1010,27 @@ def move(
 
 @_api(mutates=True, prompts=True)
 def remove(
-    backend: FileBackend, path: str, *, recursive: bool = False, confirm: bool = False
+    backend: FileBackend, path: str, *, recursive: bool = False, confirm: bool = False,
+    keep_namespace_root: bool = False, follow_dfs_link: bool = False,
+    confirm_alias: bool = False,
 ) -> str:
     """Delete ``path`` from ``backend`` after an explicit opt-in.
 
     This scripting helper deliberately refuses to run unless
     ``confirm=True`` is passed. Use :func:`preview_delete` first and
     pair this with :func:`confirm` in interactive scripts.
+
+    A few removes do more than the path suggests and raise
+    ``ConfirmationRequired`` (a PermissionError; nothing is deleted)
+    whose message names the keyword that says yes:
+
+    * ``keep_namespace_root=True`` - IMAP: a recursive remove of INBOX (or
+      the personal namespace root) where every folder lives below it
+      deletes those folders; INBOX itself and its messages stay.
+    * ``follow_dfs_link=True`` - SMB: a recursive remove of a DFS link
+      deletes the contents of the share it leads to; the link stays.
+    * ``confirm_alias=True`` - Windows backends: a last name made only of
+      dots and spaces, which Windows reads as the folder above it.
 
     Returns the pre-operation preview summary when available.
     """
@@ -1038,11 +1052,14 @@ def remove(
         recursive,
         f" ({summary})" if summary else "",
     )
+    yes = {name: True for name, given in (("keep_namespace_root", keep_namespace_root),
+                                          ("follow_dfs_link", follow_dfs_link),
+                                          ("confirm_alias", confirm_alias)) if given is True}
     with _mutation_gate(
         backend,
-        f"remove {path!r} recursive={recursive}",
+        f"remove {path!r} recursive={recursive}" + "".join(f" {k}=True" for k in yes),
     ):
-        backend.remove(path, recursive=recursive)
+        backend.remove(path, recursive=recursive, **yes)
     _record_backend_visit(
         backend,
         path,

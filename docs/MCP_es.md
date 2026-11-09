@@ -684,19 +684,39 @@ como ilegible; `copy`, `bulk_copy`, `rename` y `hardlink` no lo aceptan
 fuera del root. Un symlink a un secreto se resuelve y se rechaza. Los
 nombres se siguen listando (`list_dir`, `walk`, `stat`, `search`). En el
 sandbox del agente cuenta también el home del host. En cualquier sitio
-(también en una carpeta de proyecto): un fichero cuyos primeros 4 KiB
-muestran una clave privada o una base de contraseñas (`-----BEGIN …
-PRIVATE KEY-----`, OpenSSH, PuTTY, KeePass), y los ficheros secretos por su
-nombre (`.env`, `.env.*` salvo `.example`/`.sample`/`.template`/`.dist`,
-`.netrc`, `.git-credentials`, `.pgpass`, `*.tfstate`, `*.kdbx`, `id_rsa`,
-`id_ed25519`, `id_ecdsa`, `*.ppk`, `*.p12`, `*.pfx`); bajo `/proc` el
+(también en una carpeta de proyecto): un fichero con una clave privada o
+una base de contraseñas (una firma de KeePass al principio; `-----BEGIN …
+PRIVATE KEY-----`, OpenSSH o PuTTY en su primer MiB, también tras los
+certificados de un bundle), y los ficheros secretos por su nombre (`.env`,
+`.env.*` salvo `.example`/`.sample`/`.template`/`.dist`, `*.env`,
+`.envrc`, `.netrc`, `.git-credentials`, `.pgpass`, `.npmrc`, `.pypirc`,
+`.htpasswd`, `*.tfstate`, `*.kdbx`, `id_rsa`, `id_ed25519`, `id_ecdsa` y
+sus copias como `id_rsa.bak`, `*.ppk`, `*.p12`, `*.pfx`, `kubeconfig`,
+`credentials.json`, `client_secret*.json`, `secrets.yaml`,
+`secrets.json`, `.aws/credentials`, `.docker/config.json`,
+`.kube/config`); bajo `/proc` el
 `environ`, `cmdline`, `mem`, `maps`, `fd` y similares de un proceso y todo
 `/proc/self` (una raíz `/` entregaría las claves de API de axross), y
 `/run/secrets`. `chmod` rechaza un fichero con otros hard links.
 `--mcp-allow-secret-reads` (solo stdio) desactiva la comprobación; las
 herramientas propias del agente la mantienen siempre. El lado de
 escritura (§2, los lugares protegidos de `core.protected_places`) es
-una lista aparte y no cambia.
+una lista aparte que este interruptor no cambia. Además de los ficheros de
+inicio del home y los ficheros de código de Git (sin distinguir
+mayúsculas: `head`, `.GIT`), rechaza a cualquier profundidad los ficheros
+de proyecto desde los que otros programas ejecutan código - las carpetas
+`.claude`, `.vscode`, `.cursor`, `.idea`, `.zed`, `.devcontainer`,
+`.husky` (y `.fleet`, `.gemini`, `.codex`, `.windsurf`, `.roo`, `.kiro`,
+`.amazonq`, `.continue`, `.theia`) y `.mcp.json`, `.devcontainer.json`,
+`*.code-workspace`, `.pre-commit-config.yaml`, `lefthook.yml`,
+`.overcommit.yml` -, la carpeta que nombra `core.hooksPath` de un
+repositorio (su configuración, `~/.gitconfig`, `/etc/gitconfig`,
+`GIT_CONFIG_*`) y los ficheros que su configuración incluye. También rechaza los ficheros que un servidor MCP activado de los ajustes
+del agente ejecuta en esta máquina (su script; junto a un script de Python
+cualquier fichero de módulo, que Python importaría primero:
+`core.mcp_script_pin`) - y ese servidor no arranca con ficheros que han
+cambiado desde que el usuario los confirmó, hasta que el usuario lo diga
+(USAGE_es.md, servidores MCP).
 
 Se comprueba cada nombre de una ruta - tal como se escribe, tras cada
 symlink del camino y resuelto - en ambos lados: una clave detrás de

@@ -577,6 +577,55 @@ def _imap_utf7_encode(text: str) -> bytes:
     return bytes(result)
 
 
+def _namespace_group(raw: str) -> str:
+    """The first of the three groups of a NAMESPACE answer (the personal
+    namespaces), "" for NIL."""
+    if not raw.startswith("("):
+        return ""
+    depth, quoted, escaped = 0, False, False
+    for index, char in enumerate(raw):
+        if quoted:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                quoted = False
+        elif char == '"':
+            quoted = True
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return raw[: index + 1]
+    return ""
+
+
+_NAMESPACE_ENTRY = re.compile(
+    r'\(\s*"((?:[^"\\]|\\.)*)"\s+(?:"((?:[^"\\]|\\.)*)"|NIL)', re.IGNORECASE)
+
+
+def _imap_unquote(text: str) -> str:
+    return re.sub(r"\\(.)", r"\1", text)
+
+
+def _personal_namespace_roots(data) -> set[str]:
+    """The personal namespace prefixes of a NAMESPACE answer, each without
+    its trailing separator: ``(("INBOX." ".")) NIL NIL`` gives {"INBOX"},
+    ``(("" "/")) NIL NIL`` nothing (the prefix is the root itself)."""
+    raw = b" ".join(_as_bytes(d) for d in data or () if d).decode("utf-8", "replace").strip()
+    roots: set[str] = set()
+    for prefix, sep in _NAMESPACE_ENTRY.findall(_namespace_group(raw)):
+        name = _imap_utf7_decode(_imap_unquote(prefix).encode("utf-8"))
+        sep = _imap_unquote(sep)
+        while sep and name.endswith(sep):
+            name = name[: -len(sep)]
+        if name:
+            roots.add(name)
+    return roots
+
+
 def _imap_utf7_decode(data: bytes) -> str:
     """Decode a modified UTF-7 (IMAP) mailbox name to a Python string."""
     import base64
@@ -840,6 +889,7 @@ class ImapSession(SessionLifecycle):
         # whatever the previous connection had open.
         self._selected_mailbox = None
         self._selected_readonly = True
+        self._namespace_roots = None  # asked again on the new connection
         try:
             if self._use_ssl:
                 from core.tls_context import client_tls_context
@@ -1581,11 +1631,21 @@ class ImapSession(SessionLifecycle):
 
     @_imap_errors_as_oserror
     @serialized
-    def remove(self, path: str, recursive: bool = False) -> None:
+    def remove(self, path: str, recursive: bool = False, *,
+               keep_namespace_root: bool = False) -> None:
         """Delete a message or mailbox.
 
         For messages: mark \\Deleted and expunge.
         For mailboxes: delete the mailbox via IMAP DELETE.
+
+        INBOX, and the root of the personal namespace (NAMESPACE), hold
+        every other folder on many servers (Courier, Cyrus, Dovecot with
+        ``prefix = INBOX.``): a recursive remove of one raises
+        :class:`~core.backend.ConfirmationRequired` before anything is
+        deleted. With ``keep_namespace_root=True`` the folders below it
+        go, deepest first; INBOX itself and its messages stay (no server
+        deletes INBOX, RFC 3501 6.3.4), another namespace root goes last
+        when the server lets it.
         """
         parsed = self._parse_path(path)
 
@@ -1593,6 +1653,8 @@ class ImapSession(SessionLifecycle):
             raise OSError("Cannot remove root")
 
         if len(parsed) == 1:
+            if self._remove_namespace_root(parsed[0], path, recursive, keep_namespace_root):
+                return
             self._remove_mailbox_tree(parsed[0], path, recursive)
             return
 
@@ -1646,6 +1708,125 @@ class ImapSession(SessionLifecycle):
             return
 
         raise OSError(f"Cannot remove: {path!r}")
+
+    def _personal_namespace_roots(self) -> set[str]:
+        """The mailboxes that hold the whole personal namespace: its prefix
+        from NAMESPACE (RFC 2342) without the separator - "INBOX" on
+        Courier, Cyrus and Dovecot with ``prefix = INBOX.``. Asked once a
+        connection; a server without NAMESPACE has none."""
+        known = getattr(self, "_namespace_roots", None)
+        if known is not None:
+            return known
+        imap = self._ensure_connected()
+        if not _has_capability(imap, "NAMESPACE") or not hasattr(imap, "namespace"):
+            self._namespace_roots = set()
+            return self._namespace_roots
+        try:
+            typ, data = imap.namespace()
+        except ImapAnswerTooLarge:
+            raise
+        except Exception as exc:  # noqa: BLE001 - INBOX is refused all the same
+            log.debug("IMAP NAMESPACE failed: %s", exc)
+            return set()
+        if typ != "OK":
+            return set()
+        self._namespace_roots = _personal_namespace_roots(data)
+        return self._namespace_roots
+
+    def _namespace_root(self, mailbox: str) -> tuple[str | None, str]:
+        """``("inbox" | "prefix" | None, name)``: whether *mailbox* is INBOX
+        (any case, with or without a trailing separator) or the root of
+        the personal namespace, and its name without the separator."""
+        sep = self._hierarchy_sep or "/"
+        bare = mailbox
+        while sep and bare.endswith(sep) and bare != sep:
+            bare = bare[: -len(sep)]
+        if bare.upper() == "INBOX":
+            return "inbox", bare
+        if bare and bare in self._personal_namespace_roots():
+            return "prefix", bare
+        return None, bare
+
+    def _sub_mailboxes_of(self, bare: str, *, inbox: bool) -> list[str]:
+        """Every mailbox below *bare*, deepest first (INBOX in any case)."""
+        sep = self._hierarchy_sep or "/"
+        self._mailbox_cache = None  # the question counts what is there now
+        size = len(bare) + len(sep)
+
+        def below(name: str) -> bool:
+            head = name[: len(bare)]
+            if inbox:
+                return head.upper() == "INBOX" and name[len(bare): size] == sep
+            return head == bare and name[len(bare): size] == sep
+
+        return sorted((name for name in self._mailbox_names() if below(name)),
+                      key=lambda name: name.count(sep), reverse=True)
+
+    def _remove_namespace_root(self, mailbox: str, path: str, recursive: bool,
+                               confirmed: bool) -> bool:
+        """Remove INBOX or the namespace root *mailbox* - True when done
+        here, False when it is neither (or an ordinary non-recursive remove
+        of a namespace root). Nothing is deleted before the question."""
+        kind, bare = self._namespace_root(mailbox)
+        if kind is None:
+            return False
+        from core.i18n import tr, tr_n
+
+        children = self._sub_mailboxes_of(bare, inbox=kind == "inbox")
+        if kind == "inbox" and (not recursive or not children):
+            raise PermissionError(
+                errno.EPERM,
+                tr("The mailbox {name} is the INBOX: an IMAP server never deletes it. "
+                   "Nothing was deleted.").format(name=repr(mailbox)),
+                path,
+            )
+        if not recursive:
+            return False  # the namespace root on its own: the server decides
+        if not confirmed:
+            from core.backend import ConfirmationRequired
+
+            if kind == "inbox":
+                text = tr_n(
+                    len(children),
+                    "{name} is the INBOX. An IMAP server never deletes the INBOX, and on "
+                    "this server {n} other folder lives below it. Yes deletes that folder "
+                    "with all its messages; the INBOX itself and the messages in it stay.",
+                    "{name} is the INBOX. An IMAP server never deletes the INBOX, and on "
+                    "this server {n} other folders live below it. Yes deletes those folders "
+                    "with all their messages; the INBOX itself and the messages in it stay.",
+                    name=mailbox)
+            else:
+                text = tr_n(
+                    len(children),
+                    "{name} is the root of the personal namespace: {n} folder of the account "
+                    "lives below it. Yes deletes it with all its messages, then {name} "
+                    "itself if the server allows it.",
+                    "{name} is the root of the personal namespace: {n} folders of the account "
+                    "live below it. Yes deletes them with all their messages, then {name} "
+                    "itself if the server allows it.",
+                    name=mailbox)
+            raise ConfirmationRequired(
+                "imap_namespace_root", path, text, option="keep_namespace_root",
+                details={"mailbox": mailbox, "inbox": kind == "inbox",
+                         "subfolders": len(children), "names": children[:20]},
+            )
+        try:
+            for child in children:
+                typ, data = self._delete_mailbox(child)
+                if typ != "OK":
+                    raise OSError(f"Cannot delete mailbox {child!r}: {data}")
+                log.info("Deleted mailbox: %s", child)
+            if kind == "prefix" and bare in self._mailbox_names():
+                typ, data = self._delete_mailbox(bare)
+                if typ == "OK":
+                    log.info("Deleted mailbox: %s", bare)
+                else:  # the folders below it are gone: that was the point
+                    log.info("Namespace root %s kept by the server: %s", bare, data)
+        finally:
+            self._mailbox_cache = None
+        if kind == "inbox":
+            log.info("Deleted the %d folders below %s; INBOX kept", len(children), mailbox)
+        return True
 
     def _is_hierarchy_only(self, mailbox: str) -> bool:
         """A name that only holds sub-mailboxes and cannot be opened.

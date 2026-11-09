@@ -75,8 +75,10 @@ class FakeDropbox:
 
     def _lookup_error(self, low):
         # an ancestor that is a file -> not_folder, else not_found
+        # dirname("//x") is "//", and dirname("//") "//" again: stop when it
+        # no longer shrinks (a guard sweep with "//" spun here forever).
         parent = posixpath.dirname(low)
-        while parent not in ("", "/"):
+        while parent not in ("", "/") and parent.strip("/"):
             if parent in self.nodes and not self.nodes[parent]["is_dir"]:
                 return F.LookupError.not_folder
             parent = posixpath.dirname(parent)
@@ -86,7 +88,7 @@ class FakeDropbox:
         """Create missing parents; a file in the way is a conflict."""
         parent = posixpath.dirname(display)
         chain = []
-        while parent not in ("", "/"):
+        while parent not in ("", "/") and parent.strip("/"):
             chain.append(parent)
             parent = posixpath.dirname(parent)
         for p in reversed(chain):

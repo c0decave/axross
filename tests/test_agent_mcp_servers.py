@@ -22,6 +22,7 @@ from core import agent_sandbox as SB  # noqa: E402
 from core import agent_settings as AGS  # noqa: E402
 from core import mcp_client as C  # noqa: E402
 from core.llm_profiles import LLMProfile  # noqa: E402
+from core.mcp_script_pin import pinned  # noqa: E402
 from tests.test_agent_loop import _call, _Fake, _tool_messages  # noqa: E402
 from tests.test_mcp_client import FAKE  # noqa: E402
 
@@ -58,9 +59,9 @@ def pool(tmp_path):
     script = tmp_path / "fake_mcp.py"
     script.write_text(FAKE)
     pool = C.McpClientPool(token_lookup=lambda name: "")
-    pool.config = lambda **kw: C.McpServerConfig(
+    pool.config = lambda **kw: pinned(C.McpServerConfig(
         name="fake", command=(sys.executable, str(script), "normal"), **kw
-    )
+    ))
     yield pool
     pool.close_all()
 

@@ -480,7 +480,10 @@ def test_edge_a_server_that_ignores_its_input_stops_on_sigterm(tmp_path):
         "'protocolVersion': '2024-11-05', 'capabilities': {}, 'serverInfo': {}}}) + '\\n')\n"
         "sys.stdout.flush()\n"
         "while True:\n    time.sleep(1)\n")  # EOF ignored; SIGTERM ends it (default action)
-    client = C.McpClient(C.McpServerConfig(name="s", command=(sys.executable, str(script))))
+    from core.mcp_script_pin import pinned
+
+    client = C.McpClient(pinned(C.McpServerConfig(name="s",
+                                                  command=(sys.executable, str(script)))))
     proc = client._transport._proc
     start = time.monotonic()
     client.close()
@@ -493,9 +496,14 @@ def test_edge_a_stuck_container_is_removed_by_name(tmp_path, monkeypatch):
     podman = fake_podman(tmp_path, monkeypatch, server_mode="stuck")
     config = I.install(_entry(), I.InstallChoice(name="s"))
     client = C.McpClient(config)
+    started = time.monotonic()
     client.close()
+    assert time.monotonic() - started < C.CLOSE_WAIT + 1  # the GUI thread is not held
     (run,) = podman.calls("run")
     name = next(a for a in run if a.startswith("--name=")).split("=", 1)[1]
+    end = time.monotonic() + 15  # SIGKILL and the removal follow in the background
+    while ["rm", "-f", "-t", "0", name] not in podman.calls("rm") and time.monotonic() < end:
+        time.sleep(0.1)
     assert ["rm", "-f", "-t", "0", name] in podman.calls("rm")
     assert name.startswith("axross-mcp-s-") and C.TOKEN_RUN not in name
 

@@ -165,7 +165,7 @@ def test_happy_labels_with_small_spans_and_tables_stay_rich_text():
     from ui import markup_guard as MG
 
     for text in ("<table><tr><td colspan=2><b>Error</b></td></tr>"
-                 + "<tr><td>name</td><td>value</td></tr>" * 200 + "</table>",
+                 + "<tr><td>name</td><td>value</td></tr>" * 100 + "</table>",  # < MAX_RICH_CHARS
                  "<table><tr><td colspan=8 rowspan=8>x</td></tr></table>",
                  "<font size=7>big</font>", "<hr size=4>"):
         assert not MG.bombs_layout(text), text[:80]

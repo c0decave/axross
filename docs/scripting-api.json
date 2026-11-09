@@ -696,7 +696,7 @@
     {
       "name": "remove",
       "group": "File I/O",
-      "signature": "remove(backend: FileBackend, path: str, *, recursive: bool = False, confirm: bool = False) -> str",
+      "signature": "remove(backend: FileBackend, path: str, *, recursive: bool = False, confirm: bool = False, keep_namespace_root: bool = False, follow_dfs_link: bool = False, confirm_alias: bool = False) -> str",
       "parameters": [
         {
           "name": "backend",
@@ -723,11 +723,32 @@
           "annotation": "bool",
           "required": false,
           "default": false
+        },
+        {
+          "name": "keep_namespace_root",
+          "kind": "keyword_only",
+          "annotation": "bool",
+          "required": false,
+          "default": false
+        },
+        {
+          "name": "follow_dfs_link",
+          "kind": "keyword_only",
+          "annotation": "bool",
+          "required": false,
+          "default": false
+        },
+        {
+          "name": "confirm_alias",
+          "kind": "keyword_only",
+          "annotation": "bool",
+          "required": false,
+          "default": false
         }
       ],
       "returns": "str",
       "summary": "Delete ``path`` from ``backend`` after an explicit opt-in.",
-      "doc": "Delete ``path`` from ``backend`` after an explicit opt-in.\n\nThis scripting helper deliberately refuses to run unless\n``confirm=True`` is passed. Use :func:`preview_delete` first and\npair this with :func:`confirm` in interactive scripts.\n\nReturns the pre-operation preview summary when available.",
+      "doc": "Delete ``path`` from ``backend`` after an explicit opt-in.\n\nThis scripting helper deliberately refuses to run unless\n``confirm=True`` is passed. Use :func:`preview_delete` first and\npair this with :func:`confirm` in interactive scripts.\n\nA few removes do more than the path suggests and raise\n``ConfirmationRequired`` (a PermissionError; nothing is deleted)\nwhose message names the keyword that says yes:\n\n* ``keep_namespace_root=True`` - IMAP: a recursive remove of INBOX (or\n  the personal namespace root) where every folder lives below it\n  deletes those folders; INBOX itself and its messages stay.\n* ``follow_dfs_link=True`` - SMB: a recursive remove of a DFS link\n  deletes the contents of the share it leads to; the link stays.\n* ``confirm_alias=True`` - Windows backends: a last name made only of\n  dots and spaces, which Windows reads as the folder above it.\n\nReturns the pre-operation preview summary when available.",
       "examples": [],
       "raises": [
         "PermissionError"
@@ -6925,6 +6946,12 @@
           "signature": "local_path(path: str) -> str",
           "returns": "str",
           "summary": "The path on this machine's filesystem (see core.storage_identity)."
+        },
+        {
+          "name": "private_writes",
+          "signature": "private_writes() -> bool",
+          "returns": "bool",
+          "summary": "Whether :func:`create_private_file` and :func:`open_own_partial` may stand in for :meth:`open_write` on this backend: only where open_write is LocalFS's own (a subclass that confines or redirects its writes keeps them)."
         },
         {
           "name": "rename_no_replace",

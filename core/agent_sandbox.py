@@ -489,6 +489,22 @@ def _writable_repos(writable_roots) -> list[str]:
     return out
 
 
+def _project_folders(writable_roots) -> list[str]:
+    """Each writable folder and its folders one level down
+    (:data:`MAX_FRAME_ENTRIES` of them at most per folder)."""
+    out: list[str] = []
+    for root in writable_roots:
+        try:
+            with os.scandir(root) as it:
+                names = sorted(e.name for e in it if e.is_dir(follow_symlinks=False))
+        except OSError:
+            names = []
+        for folder in [root] + [os.path.join(root, n) for n in names[:MAX_FRAME_ENTRIES]]:
+            if folder not in out:
+                out.append(folder)
+    return out
+
+
 def _git_guard(repo: str) -> tuple[list[str], list[str]]:
     """``(entries to mount read-only, missing folders to make read-only)``
     of the repository *repo* (:data:`GIT_GUARD_NAMES`, also in its
@@ -661,6 +677,16 @@ def _mount_plan(
         missing += [(path, True) for path in missing_dirs]
         for path in candidates:
             if os.path.lexists(path) and path not in seen:
+                seen[path], kinds[path] = False, "bind"
+    # Other programs run code from a project's tool settings (.claude,
+    # .vscode, .devcontainer, .husky, .mcp.json, .pre-commit-config.yaml)
+    # and from the folder core.hooksPath names: those of each writable
+    # folder and its folders one level down are read-only (the worker
+    # refuses to write them anywhere: core.protected_places).
+    for folder in _project_folders(writable_roots):
+        for path in protected_places.project_code_entries(folder):
+            if path not in seen and os.path.lexists(path) and any(
+                    _inside(path, r) for r in writable_roots):
                 seen[path], kinds[path] = False, "bind"
     frames: dict[str, bool] = {}  # frame -> whether its entries are writable
     absent: list[str] = []

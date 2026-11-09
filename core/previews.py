@@ -171,6 +171,12 @@ class PreviewTooLarge(PreviewError):
     """File exceeds MAX_INPUT_SIZE or MAX_DIMENSION."""
 
 
+class PreviewIsPdf(PreviewNotAvailable):
+    """The file's content is a PDF document (whatever its name says): the
+    picture decoders do not draw it; the media viewer shows its first page
+    through its PDF path (core.media_load)."""
+
+
 class PreviewDecodeFailed(PreviewError):
     """The decoder couldn't produce an image even though the file
     passed the gate checks (malformed PNG, corrupted JPEG, etc.)."""
@@ -508,9 +514,62 @@ def _png_bytes(image) -> bytes:
     return bytes(buf.data())
 
 
-def _read_raster(abs_path: str, edge: int):
+# Qt image formats the raster path decodes in this process. A file whose
+# content Qt takes for anything else goes to Pillow's own format list, or
+# - SVG, PDF - is refused here: an SVG under a raster name (x.png) was
+# drawn in-process by Qt's svg imageformat plugin, past svg_refusal() and
+# the killable svg_worker child (2 KB: 14 s, 2.2 KB: more than 90 s).
+_QT_RASTER_FORMATS: frozenset[str] = frozenset(
+    {"png", "jpeg", "jpg", "gif", "bmp", "webp", "tiff", "tif", "ppm", "pgm", "pbm"}
+)
+_QT_SVG_FORMATS: frozenset[str] = frozenset({"svg", "svgz"})
+_QT_REFUSED_FORMATS: frozenset[str] = frozenset({"pdf"})
+
+
+def _content_format(abs_path: str) -> str:
+    """The image format Qt reads from the first bytes of *abs_path*
+    (``"png"``, ``"svg"``, ``"pdf"``... or ``""``): the plugins' cheap
+    content checks only, nothing is decoded."""
+    try:
+        from PyQt6.QtGui import QImageReader
+    except ImportError as exc:  # pragma: no cover
+        raise PreviewNotAvailable(f"PyQt6.QtGui unavailable: {exc}") from exc
+    sniff = QImageReader(abs_path)
+    sniff.setDecideFormatFromContent(True)
+    return bytes(sniff.format()).decode("ascii", "replace").lower()
+
+
+def _raster_route(abs_path: str, *, allow_svg: bool) -> str:
+    """``"svg"`` when the content is an SVG the caller may draw (through
+    :func:`_render_svg`, its gate and its killable worker), else the Qt
+    raster format to decode it with (``""``: Pillow). Vector content under
+    a raster name is never drawn in this process."""
+    fmt = _content_format(abs_path)
+    if fmt in _QT_SVG_FORMATS:
+        if allow_svg:
+            return "svg"
+        raise PreviewNotAvailable(f"{abs_path}: the content is an SVG drawing, not a raster image")
+    if fmt == "pdf":
+        raise PreviewIsPdf(f"{abs_path}: the content is a PDF document, not an image")
+    if fmt in _QT_REFUSED_FORMATS:
+        raise PreviewNotAvailable(f"{abs_path}: the content is a {fmt.upper()} document, not an image")
+    return fmt if fmt in _QT_RASTER_FORMATS else ""
+
+
+def _read_raster(abs_path: str, edge: int, fmt: str | None = None):
     """Decode *abs_path* scaled to fit *edge*: ``(QImage, None)`` from Qt, or
-    ``(None, pillow_image)`` from the Pillow fallback (not yet encoded)."""
+    ``(None, pillow_image)`` from the Pillow fallback (not yet encoded).
+
+    *fmt* is the raster format :func:`_raster_route` found (worked out here
+    when not given). Qt decodes with that format's handler only, so a file
+    swapped for an SVG or a PDF after the check fails instead of being
+    drawn; an empty *fmt* goes to Pillow (its own format list)."""
+    if fmt is None:
+        fmt = _raster_route(abs_path, allow_svg=False)
+    if fmt not in _QT_RASTER_FORMATS:
+        if fmt:
+            raise PreviewNotAvailable(f"{abs_path}: no raster decoder for {fmt!r}")
+        return None, _decode_with_pillow(abs_path, edge, encode=False)
     try:
         from PyQt6.QtCore import QSize
         from PyQt6.QtGui import QImage, QImageReader
@@ -524,8 +583,9 @@ def _read_raster(abs_path: str, edge: int):
         # Older Qt without this API: rely on MAX_DIMENSION gate instead.
         log.debug("QImageReader.setAllocationLimit unavailable: %s", exc)
 
-    reader = QImageReader(abs_path)
-    reader.setDecideFormatFromContent(True)
+    reader = QImageReader(abs_path, fmt.encode("ascii"))
+    # That format's handler only: no content detection, no other plugin.
+    reader.setAutoDetectImageFormat(False)
     # Upright as the camera meant it (EXIF orientation): a phone photo
     # stored sideways was shown, and thumbnailed, sideways. The scaled
     # size below is in stored orientation, which is what Qt applies it to.
@@ -816,10 +876,11 @@ def thumbnail(
                 from_cache=True,
             )
 
-    if mime == SVG_MIME:
+    route = "svg" if mime == SVG_MIME else _raster_route(abs_path, allow_svg=allow_svg)
+    if route == "svg":
         image, pillow = _render_svg(abs_path, edge), None
     else:
-        image, pillow = _read_raster(abs_path, edge)
+        image, pillow = _read_raster(abs_path, edge, route)
     if pillow is not None:
         data = _pillow_png(pillow, abs_path)
         out_w, out_h = pillow.size
@@ -853,9 +914,10 @@ def decode_image(
     """
     abs_path, _st, mime = _checked_source(backend, path, allow_svg=allow_svg)
     edge = max(16, min(int(max_edge), MAX_DIMENSION))
-    if mime == SVG_MIME:
+    route = "svg" if mime == SVG_MIME else _raster_route(abs_path, allow_svg=allow_svg)
+    if route == "svg":
         return _render_svg(abs_path, edge)
-    image, pillow = _read_raster(abs_path, edge)
+    image, pillow = _read_raster(abs_path, edge, route)
     if image is not None:
         return image
     return _qimage_from_pillow(pillow)
@@ -926,6 +988,7 @@ __all__ = [
     "decode_image",
     "guess_mime",
     "open_externally",
+    "PreviewIsPdf",
     "svg_refusal",
     "thumbnail",
 ]

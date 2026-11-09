@@ -56,7 +56,9 @@ def test_happy_e2e_the_dock_shows_the_reason(env):
     tab._on_event({"type": "tool_result", "name": "remote_exec", "outcome": "error",
                    "reason": "", "detail": "error: this sandbox reaches no remote host"})
     text = tab.transcript.toPlainText()
-    assert "remote_exec: error - error: this sandbox reaches no remote host" in text
+    # the repeated "error:" is dropped (round-9 files review)
+    assert "remote_exec: error - this sandbox reaches no remote host" in text
+    assert "error - error" not in text
 
 
 # --- sad ------------------------------------------------------------------

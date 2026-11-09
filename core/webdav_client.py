@@ -880,6 +880,20 @@ class WebDavSession(SessionLifecycle):
                 "Install with: pip install axross[webdav]"
             )
 
+        scheme = urlsplit((url or "").strip()).scheme.lower()
+        if scheme not in ("http", "https"):
+            # A profile without a URL (Quick Connect) ended in "Cannot
+            # connect to WebDAV server: Invalid URL '/': No scheme
+            # supplied." - English and no next step (UX review round 9).
+            from core.i18n import tr
+
+            if not (url or "").strip():
+                message = tr("The WebDAV profile has no server address. Open it in the "
+                             "Connection Manager and enter its URL (https://…).")
+            else:
+                message = tr("{url} is not a WebDAV address: it starts with https:// "
+                             "or http://.").format(url=redact_url(url.strip()))
+            raise OSError(errno.EINVAL, message)
         self._url = url.rstrip("/")
         self._display_url = redact_url(self._url)
         self._username = username

@@ -170,14 +170,61 @@ def _ours(st, now: float, age: float) -> bool:
     return (uid is None or st.st_uid == uid) and now - st.st_mtime > age
 
 
-def _remove_stale_folder(path: str, now: float, age: float) -> bool:
+#: The sweep works in a spool folder through its descriptor (opened without
+#: following a link) where the system can: listing and unlinking by path
+#: followed a symlink swapped in for the folder after its lstat (review
+#: round 9: a spool folder next to a download in a shared folder, swapped
+#: for a link to ~/Documents, emptied ~/Documents).
+_FD_SWEEP = (os.open in os.supports_dir_fd and os.unlink in os.supports_dir_fd
+             and os.listdir in os.supports_fd and hasattr(os, "O_DIRECTORY")
+             and hasattr(os, "O_NOFOLLOW"))
+
+
+def _remove_stale_folder(path: str, now: float, age: float,
+                         seen: os.stat_result | None = None) -> bool:
     """A spool folder (rsync's download folder) holding only regular
-    files of ours: those and the folder go. Anything else stays."""
+    files of ours, none touched for *age* seconds either: those and the
+    folder go. Anything else stays - a download into it that runs for
+    longer than *age* leaves the folder's own time old, its file's new.
+    *seen*: the folder's lstat; the folder opened must be that one."""
+    if not _FD_SWEEP:
+        return _remove_stale_folder_by_path(path, now, age)
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+                     | getattr(os, "O_CLOEXEC", 0))
+    except OSError:
+        return False
+    try:
+        if seen is not None and not os.path.samestat(os.fstat(fd), seen):
+            return False
+        names = os.listdir(fd)
+        for name in names:
+            st = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            if not stat.S_ISREG(st.st_mode) or not _ours(st, now, age):
+                return False
+        for name in names:
+            os.unlink(name, dir_fd=fd)
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+    try:
+        # By name: a link put there now is no folder (ENOTDIR), a folder
+        # put there with anything in it is not empty - neither goes.
+        os.rmdir(path)
+    except OSError:
+        return False
+    return True
+
+
+def _remove_stale_folder_by_path(path: str, now: float, age: float) -> bool:
+    """:func:`_remove_stale_folder` where no descriptor can stand for the
+    folder (Windows)."""
     try:
         names = os.listdir(path)
         for name in names:
             st = os.lstat(os.path.join(path, name))
-            if not stat.S_ISREG(st.st_mode) or not _ours(st, now, -1):
+            if not stat.S_ISREG(st.st_mode) or not _ours(st, now, age):
                 return False
         for name in names:
             os.unlink(os.path.join(path, name))
@@ -214,12 +261,59 @@ def sweep_stale_spools(directory: str | None, *, age: float = STALE_SPOOL_AGE,
                 os.unlink(path)
             except OSError:
                 continue
-        elif not (stat.S_ISDIR(st.st_mode) and _remove_stale_folder(path, now, age)):
+        elif not (stat.S_ISDIR(st.st_mode) and _remove_stale_folder(path, now, age, st)):
             continue
         removed += 1
     if removed:
         log.info("Removed %d stale spool file(s) from %s", removed, folder)
     return removed
+
+
+def others_may_replace_in(folder: str | None) -> bool:
+    """Whether someone else may rename or replace the entries of *folder*
+    (None: the temp folder): another owner than this user or root, or a
+    folder its group (unless the user's own) or everyone may write to
+    without the sticky bit - a shared download folder. A folder made there
+    can be renamed away and a symlink put in its place."""
+    from core.posix_compat import effective_uid
+
+    uid = effective_uid()
+    if uid is None:
+        return False  # no owners and modes to go by (Windows)
+    try:
+        st = os.stat(folder or tempfile.gettempdir())
+    except OSError:
+        return True
+    if st.st_mode & stat.S_ISVTX:
+        return st.st_uid not in (uid, 0)
+    if st.st_uid not in (uid, 0) or st.st_mode & 0o002:
+        return True
+    if st.st_mode & 0o020:
+        from core.self_update import _private_group
+
+        return not _private_group(st.st_gid, uid)
+    return False
+
+
+def private_spool_folder() -> str | None:
+    """A folder no one else can change for a spool that is a FOLDER (rsync
+    writes its download into one by name): ``$XDG_CACHE_HOME/axross/spool``
+    (made 0700, checked as core.self_update.private_dir_problem checks the
+    update cache), else the temp folder (None) when that is sticky or
+    private. OSError when neither is."""
+    from core.self_update import private_dir_problem
+    from core.xdg_dirs import base_dir
+
+    folder = base_dir("XDG_CACHE_HOME") / "axross" / "spool"
+    problem = private_dir_problem(folder)
+    if not problem:
+        return str(folder)
+    if not others_may_replace_in(None):
+        return None
+    from core.i18n import tr
+
+    raise OSError(errno.EACCES, tr(
+        "No private folder for the download's temporary copy: {problem}").format(problem=problem))
 
 
 def named_spool_dir() -> str | None:

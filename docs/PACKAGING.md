@@ -770,9 +770,13 @@ VERSION=0.15.177
    order, folded to upper case, in byte order and in upload order).
    It refuses on any problem; `--require-all` also refuses when an input
    is missing (without it, a partial release - Linux only, no packs - is
-   assembled and the summary names what is missing). A re-issue of the
-   pack manifest under the same version adds `--packs-issue N` (see
-   below).
+   assembled and the summary names what is missing). The Linux dist
+   must be the tag's build: a `BUILD-INFO.md` naming another commit
+   ("From commit ...") than this repository's tag `v$VERSION` is refused
+   (the `linux` job also builds `ci/` branches and runs by hand); without
+   the tag, or without that line, the check is named as missing. A
+   re-issue of the pack manifest under the same version adds
+   `--packs-issue N` (see below).
 
 9. **maintainer** - a **draft** release with the assets. The updater asks
    for `releases/latest`, which never returns a draft, so nothing installed

@@ -432,8 +432,12 @@ def test_sad_a_stored_language_that_is_no_text_is_ignored_not_a_crash(tmp_path):
 #: must name the thing the way the tool, the docs and every conversation
 #: about it name it ("Close Pane" is not "Fenster schließen" - a pane is
 #: not a window). Matched case-insensitively, mnemonic "&" removed.
+#: "Duplicate Finder" and "Disk Usage" were on this list; they are the names
+#: of two windows, not IT terms a German user knows in English, and the
+#: German menus showed them as the only English entries among German ones
+#: (UX review round 9): "Duplikatsuche" and "Speicherbelegung" now.
 KEEP_ENGLISH = (
-    "Bookmark", "Connection Manager", "Config", "Disk Usage", "Duplicate Finder",
+    "Bookmark", "Connection Manager", "Config",
     "Extension", "FUSE", "Hardlink", "Hex", "Jobs", "Keyring", "Layout", "Mount",
     "Pane", "Panel", "Preset", "Preview", "Profile", "Recovery", "Session",
     "Shell", "Shortcuts", "Symlink", "Theme", "Tools", "Workspace",

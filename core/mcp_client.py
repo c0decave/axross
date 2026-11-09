@@ -35,6 +35,7 @@ import hashlib
 import json
 import logging
 import os
+import queue
 import re
 import signal
 import subprocess
@@ -62,6 +63,14 @@ MAX_MESSAGE_BYTES = 16 * 1024 * 1024
 STDERR_LINES = 20
 STDERR_LINE_BYTES = 4096
 STDERR_CHUNK = 64 * 1024
+#: Messages waiting for the server to read its input, at most: a server
+#: that stops reading never holds a thread of axross - the writer thread
+#: waits for it alone, a request finds no room and fails within its timeout,
+#: answers to the server's pings are dropped.
+WRITE_QUEUE = 64
+#: Seconds :meth:`_Stdio.close` waits for the server to end after SIGTERM;
+#: the rest (SIGKILL, the cleanup) runs in the background.
+CLOSE_WAIT = 2.0
 MAX_NAME = 64
 TRANSPORTS = ("stdio", "http")
 CONFIRMS = ("always", "writes")
@@ -100,6 +109,17 @@ class McpClientError(RuntimeError):
 
 class McpCancelled(McpClientError):
     """Stop came while the server was starting: it was ended."""
+
+
+class McpFilesChanged(McpClientError):
+    """The files a host-run server runs changed since the user confirmed
+    them, or were never confirmed (core.mcp_script_pin): not started - the
+    user is asked whether to run it with them (ui.agent_dock)."""
+
+    def __init__(self, message: str, server: str, files: list[str]) -> None:
+        super().__init__(message)
+        self.server = server
+        self.files = list(files)
 
 
 #: Seconds a server may take to start - to answer ``initialize`` and list
@@ -141,6 +161,9 @@ class McpServerConfig:
     #: stdio: the user marked the program trusted - it runs on this machine
     #: as it is, without a sandbox profile (see :meth:`host_run_problem`).
     trusted: bool = False
+    #: stdio, run on this machine: the SHA-256 of the files it runs as the
+    #: user confirmed them (core.mcp_script_pin; set when Settings saves it).
+    pin: dict = field(default_factory=dict)
 
     def problems(self) -> list[str]:
         out = []
@@ -200,7 +223,7 @@ class McpServerConfig:
         from core.mcp_runner import code_env, host_launcher, launcher_place_problem
 
         tail = ("it starts only in a sandbox profile or a container, or when the server is "
-                "marked trusted")
+                "marked trusted - your decision: Agent Settings → MCP Servers → Trusted")
         if not host_launcher(self.command):
             program = clean_text(str(self.command[0]), 60)
             return (f"{program} is no known launcher (an interpreter running a script on disk "
@@ -246,7 +269,8 @@ class McpServerConfig:
     def signature(self) -> tuple:
         return (self.transport, tuple(self.command), tuple(sorted(self.env.items())), self.url,
                 self.bearer, self.timeout, self.sandbox, self.confirm, self.container,
-                tuple(self.secret_env), tuple(self.egress), self.trusted)
+                tuple(self.secret_env), tuple(self.egress), self.trusted,
+                tuple(sorted((self.pin or {}).get("files", {}).items())))
 
     def to_dict(self) -> dict:
         return {
@@ -266,6 +290,7 @@ class McpServerConfig:
             "package": dict(self.package),
             "category": self.category,
             "trusted": self.trusted,
+            "pin": dict(self.pin),
         }
 
     @classmethod
@@ -311,6 +336,9 @@ class McpServerConfig:
             out.package = {k: v[:PACKAGE_KEYS[k]] for k, v in package.items()
                            if k in PACKAGE_KEYS and isinstance(v, str)}
         out.category = clean_category(data.get("category"))
+        from core.mcp_script_pin import clean as clean_pin
+
+        out.pin = clean_pin(data.get("pin"))
         problems = out.problems()
         if problems:
             log.warning("mcp client: the server %r of the settings is left out: %s",
@@ -468,11 +496,13 @@ class _Stdio:
         except OSError as exc:
             raise McpClientError(f"cannot start {argv[0]}: {exc}") from None
         self._lock = threading.Lock()
-        self._write_lock = threading.Lock()
         self._waiting: dict[int, dict] = {}
         self._closed = False
+        self._input_closed = False
+        self._outbox: queue.Queue = queue.Queue(maxsize=WRITE_QUEUE)
         self.stderr: list[str] = []
         threading.Thread(target=self._read, daemon=True, name="mcp-client-stdio").start()
+        threading.Thread(target=self._send, daemon=True, name="mcp-client-stdin").start()
         threading.Thread(target=self._drain, daemon=True, name="mcp-client-stderr").start()
 
     def _drain(self) -> None:
@@ -505,14 +535,45 @@ class _Stdio:
     def _keep(self, raw: bytes) -> None:
         self.stderr = (self.stderr + [raw.decode("utf-8", "replace").rstrip()])[-STDERR_LINES:]
 
-    def _write(self, message: dict) -> None:
-        data = (json.dumps(message, ensure_ascii=False) + "\n").encode("utf-8")
-        with self._write_lock:
+    def _send(self) -> None:
+        """The only writer of the server's input: blocked alone when the
+        server stops reading. Ends - closing the input - at the end mark
+        of :meth:`close` or when the input is gone; a waiting request then
+        hears it at once."""
+        stdin = self._proc.stdin
+        while True:
+            data = self._outbox.get()
+            if data is None:
+                break
             try:
-                self._proc.stdin.write(data)
-                self._proc.stdin.flush()
-            except (BrokenPipeError, OSError, ValueError):
-                raise McpClientError("the server closed its input") from None
+                stdin.write(data)
+                stdin.flush()
+            except (OSError, ValueError):
+                break
+        with self._lock:
+            self._input_closed = True
+            waiting = list(self._waiting.values())
+        for slot in waiting:
+            slot["event"].set()
+        try:
+            stdin.close()
+        except (OSError, ValueError):
+            pass
+
+    def _write(self, message: dict, *, timeout: float | None = None) -> None:
+        """Queue *message* for the server; :data:`WRITE_QUEUE` messages
+        waiting already (a server that does not read) -> an error within
+        *timeout* (None: at once)."""
+        data = (json.dumps(message, ensure_ascii=False) + "\n").encode("utf-8")
+        if self._input_closed:
+            raise McpClientError("the server closed its input")
+        try:
+            if timeout is None:
+                self._outbox.put_nowait(data)
+            else:
+                self._outbox.put(data, timeout=max(0.0, timeout))
+        except queue.Full:
+            raise McpClientError("the server does not read its input") from None
 
     def _read(self) -> None:
         while True:
@@ -543,6 +604,15 @@ class _Stdio:
             waiting = list(self._waiting.values())
         for slot in waiting:
             slot["event"].set()
+        self._stop_writer()
+
+    def _stop_writer(self) -> None:
+        """The end mark for the writer thread (it ends at once, or when the
+        server's end breaks the write it waits in)."""
+        try:
+            self._outbox.put_nowait(None)
+        except queue.Full:
+            pass
 
     def _answer_server(self, message: dict) -> None:
         """A request of the server: ping is answered, anything else refused."""
@@ -554,9 +624,9 @@ class _Stdio:
             reply = {"jsonrpc": "2.0", "id": message["id"],
                      "error": {"code": -32601, "message": "axross offers no client features"}}
         try:
-            self._write(reply)
+            self._write(reply)  # never waits: the reader must go on reading
         except McpClientError:
-            pass
+            log.debug("mcp client: an answer to the server was dropped (it does not read)")
 
     def request(self, ident: int, message: dict, *, timeout: float | None = None) -> dict:
         limit = self._timeout if timeout is None else timeout
@@ -565,19 +635,26 @@ class _Stdio:
             if self._closed:
                 raise McpClientError(self._ended())
             self._waiting[ident] = slot
+        deadline = time.monotonic() + limit
         try:
-            self._write(message)
-            if not slot["event"].wait(limit):
+            try:
+                self._write(message, timeout=limit)
+            except McpClientError:
+                raise McpClientError(f"no answer within {limit:g} s: the server does not "
+                                     "read its input") from None
+            if not slot["event"].wait(max(0.0, deadline - time.monotonic())):
                 raise McpClientError(f"no answer within {limit:g} s")
         finally:
             with self._lock:
                 self._waiting.pop(ident, None)
         if slot["reply"] is None:
+            if self._input_closed and not self._closed:
+                raise McpClientError("the server closed its input")
             raise McpClientError(self._ended())
         return slot["reply"]
 
     def notify(self, message: dict) -> None:
-        self._write(message)
+        self._write(message, timeout=self._timeout)
 
     def _ended(self) -> str:
         tail = " | ".join(line for line in self.stderr if line)[-400:]
@@ -588,6 +665,7 @@ class _Stdio:
         once (a waiting request sees the end of its output), SIGKILL and the
         cleanup after 3 s - in the background, Stop does not wait."""
         proc = self._proc
+        self._stop_writer()
 
         def end() -> None:
             _signal_group(proc, signal.SIGTERM)
@@ -610,32 +688,37 @@ class _Stdio:
         threading.Thread(target=end, daemon=True, name="mcp-client-abort").start()
 
     def close(self) -> None:
-        """End of input first; then SIGTERM (podman passes it on to the
-        container, whose --init hands it to the server); then SIGKILL - and
-        the cleanup (a container left behind by a killed podman)."""
+        """SIGTERM to the server's process group first (podman passes it
+        on to the container, whose --init hands it to the server), then the
+        end of its input - never a write that waits for a server which does
+        not read (the writer thread closes the input). Waits
+        :data:`CLOSE_WAIT` s at most (called on the GUI thread: switching a
+        server off, quitting); SIGKILL and the cleanup (a container left
+        behind by a killed podman) follow in a background thread that
+        Python waits for at exit."""
         proc = self._proc
+        _signal_group(proc, signal.SIGTERM)
+        self._stop_writer()  # a stuck writer ends when the server does
         try:
-            proc.stdin.close()
-        except OSError:
-            pass
-        try:
-            proc.wait(timeout=3)
+            proc.wait(timeout=CLOSE_WAIT)
             return
         except subprocess.TimeoutExpired:
             pass
-        proc.terminate()
-        try:
-            proc.wait(timeout=3)
-            return
-        except subprocess.TimeoutExpired:
-            pass
-        proc.kill()
-        proc.wait(timeout=3)
-        if self._cleanup is not None:
+
+        def end() -> None:
+            _signal_group(proc, signal.SIGKILL)
             try:
-                self._cleanup()
-            except Exception:  # noqa: BLE001 - cleanup is best effort
-                log.warning("mcp client: cleanup after a killed server failed", exc_info=True)
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                log.warning("mcp client: a closed server did not end")
+            if self._cleanup is not None:
+                try:
+                    self._cleanup()
+                except Exception:  # noqa: BLE001 - cleanup is best effort
+                    log.warning("mcp client: cleanup after a killed server failed",
+                                exc_info=True)
+
+        threading.Thread(target=end, name="mcp-client-close").start()
 
 
 def _signal_group(proc, sig) -> None:
@@ -931,6 +1014,14 @@ class McpClient:
             host = config.host_run_problem(sandboxed=wrap is not None)
             if host:
                 refused.append(host)
+            elif wrap is None and not refused:
+                # The files it runs as the user confirmed them (an agent
+                # may change files under its MCP root): core.mcp_script_pin.
+                from core.mcp_script_pin import start_check
+
+                why, files = start_check(config)
+                if why:
+                    raise McpFilesChanged(why, config.name, files)
             if refused:
                 raise McpClientError("; ".join(refused))
             values = secrets_of(config) if secrets is None else {
@@ -1128,6 +1219,9 @@ class McpClientPool:
         self._lock = threading.Lock()
         self._clients: dict[str, tuple[tuple, McpClient, list]] = {}
         self._always: set = set()
+        #: Servers not started because their files changed (McpFilesChanged):
+        #: name -> the files, until :meth:`take_unconfirmed`.
+        self._unconfirmed: dict[str, list[str]] = {}
 
     def tools(self, configs, *, wrap_for=None, cancel: threading.Event | None = None,
               on_start: Callable[[str], None] | None = None,
@@ -1147,9 +1241,20 @@ class McpClientPool:
                                             cancel=cancel, on_start=on_start))
             except McpCancelled:
                 break
+            except McpFilesChanged as exc:
+                errors.append(f"{config.name}: {exc}")
+                with self._lock:
+                    self._unconfirmed[config.name] = exc.files
             except McpClientError as exc:
                 errors.append(f"{config.name}: {exc}")
         return tools, errors
+
+    def take_unconfirmed(self) -> dict[str, list[str]]:
+        """The servers whose files changed since the last call (name ->
+        files): the GUI asks the user about them."""
+        with self._lock:
+            out, self._unconfirmed = self._unconfirmed, {}
+        return out
 
     def _tools_of(self, config: McpServerConfig, wrap_for, *, cancel=None,
                   on_start=None) -> list[ExternalTool]:

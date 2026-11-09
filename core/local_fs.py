@@ -230,6 +230,94 @@ def rename_no_replace(src: str, dst: str, *, src_dir_fd: int | None = None,
     os.rename(src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
 
 
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_O_CLOEXEC = getattr(os, "O_CLOEXEC", 0)
+_O_BINARY = getattr(os, "O_BINARY", 0)
+_O_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
+
+
+def own_file_problem(st: os.stat_result) -> str:
+    """Why the file *st* describes is not one this user alone writes ("" =
+    it is): a regular file of this user with one name. A symlink, a
+    device or FIFO, another user's file or a second hard link put in place
+    of a partial in a folder others can write to would take the bytes meant
+    for it (review round 9)."""
+    if not stat_module.S_ISREG(st.st_mode):
+        return "it is not a regular file"
+    from core.posix_compat import effective_uid
+
+    uid = effective_uid()
+    if uid is not None and st.st_uid != uid:
+        return "it belongs to another user"
+    if st.st_nlink != 1:
+        return "it has other hard links"
+    return ""
+
+
+def create_private_file(path: str, mode: int | None = None) -> IO[bytes]:
+    """A NEW file at *path*, open for writing: FileExistsError when anything
+    (a symlink too) is there already. With *mode* it is created 0600 and
+    given *mode* through its descriptor before a byte is written - never
+    readable by more than *mode* allows, not for a moment (a 0600 key copied
+    through a 0644 temp file could be opened by anyone meanwhile); without,
+    it gets a new file's default mode (0666 less the umask). The handle
+    writes into that file whatever its name is made to point to later."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW | _O_CLOEXEC | _O_BINARY
+    fd = os.open(path, flags, 0o666 if mode is None else 0o600)
+    try:
+        if mode is not None:
+            from core.posix_compat import fchmod_private
+
+            try:
+                fchmod_private(fd, mode & 0o7777)
+            except OSError as exc:  # vfat, a FUSE mount: the file stays 0600
+                log.debug("could not set mode %04o on %s: %s", mode, path, exc)
+        return os.fdopen(fd, "wb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def open_own_partial(path: str, *, expect_size: int | None = None) -> IO[bytes]:
+    """The existing file *path*, open to append to it - only when it is
+    :func:`own_file_problem`-clean and (with *expect_size*) still as long
+    as when it was looked at. A symbolic link there is never followed and
+    a FIFO never blocks the open: PermissionError either way, nothing
+    written. Keep writing through the handle; never reopen the path (a
+    name in a shared folder can be swapped for a link at any moment)."""
+    flags = os.O_WRONLY | os.O_APPEND | _O_NOFOLLOW | _O_CLOEXEC | _O_BINARY | _O_NONBLOCK
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.EMLINK, errno.ENXIO):
+            raise PermissionError(errno.EPERM, f"{path} is not a regular file of this user "
+                                  "(a link or a pipe was put in its place); not written",
+                                  path) from exc
+        raise
+    try:
+        st = os.fstat(fd)
+        problem = own_file_problem(st)
+        if not problem and expect_size is not None and st.st_size != expect_size:
+            problem = f"it holds {st.st_size} bytes, not the {expect_size} compared"
+        if problem:
+            raise PermissionError(errno.EPERM, f"{path}: {problem}; not written", path)
+        if _O_NONBLOCK:
+            os.set_blocking(fd, True)
+        return os.fdopen(fd, "ab")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def same_entry(path: str, st: os.stat_result) -> bool:
+    """Whether *path* (not followed) still names the file *st* describes."""
+    try:
+        now = os.lstat(path)
+    except OSError:
+        return False
+    return os.path.samestat(now, st)
+
+
 class LocalFS(SessionLifecycle):
     """Local filesystem backend implementing the FileBackend protocol."""
 
@@ -360,6 +448,13 @@ class LocalFS(SessionLifecycle):
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
         return open(path, "ab" if append else "wb")
+
+    def private_writes(self) -> bool:
+        """Whether :func:`create_private_file` and :func:`open_own_partial`
+        may stand in for :meth:`open_write` on this backend: only where
+        open_write is LocalFS's own (a subclass that confines or redirects
+        its writes keeps them)."""
+        return getattr(self.open_write, "__func__", None) is _STOCK_OPEN_WRITE
 
     def normalize(self, path: str) -> str:
         return os.path.normpath(os.path.abspath(path))
@@ -500,3 +595,8 @@ class LocalFS(SessionLifecycle):
             attr_hidden=(stat_hidden_flag(st)
                          if _HIDDEN_FIELDS_HERE or type(st) is not os.stat_result else False),
         )
+
+
+#: LocalFS.open_write as defined here: a backend whose open_write is anything
+#: else (a subclass, a patch) keeps it for its temp files (private_writes).
+_STOCK_OPEN_WRITE = LocalFS.open_write

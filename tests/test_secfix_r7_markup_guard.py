@@ -90,8 +90,10 @@ def test_sad_sizes_that_add_up_are_shown_as_written():
 def test_happy_long_rich_text_is_as_large_as_its_words():
     """A long paragraph or many lines are wide or tall because of their
     words, not the markup: rendered as before."""
-    paragraph = "<b>Note</b>: " + "word " * 2000
-    lines = "<p style='color:#888'>" + "<br>".join(f"line {i}" for i in range(600)) + "</p>"
+    # (each under MAX_RICH_CHARS: a longer rich text is shown as written,
+    # tests/test_r9_content_caps.py)
+    paragraph = "<b>Note</b>: " + "word " * 800
+    lines = "<p style='color:#888'>" + "<br>".join(f"line {i}" for i in range(300)) + "</p>"
     for text in (paragraph, lines,
                  "<table width='100%' cellpadding='3'><tr><td>a</td><td>b</td></tr></table>",
                  "<p style='margin:2px 0; font-size:14px'>x</p>"):

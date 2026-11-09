@@ -28,6 +28,19 @@ name character, drive roots count after normalising, and a ``..``
 component is refused in remove and in both paths of rename (whoever
 resolves it - smbclient, Remove-Item, the server - decides where it
 lands). The root is no rename destination either.
+
+Review round 9: on a backend whose separator is ``\\`` (WinRM, WMI,
+LocalFS on Windows) the guard knew only drive letters. Windows and
+PowerShell reach a root in more ways: a UNC share (``\\\\fs\\share``,
+``\\\\host\\C$``), a device path (``\\\\?\\C:\\``, ``\\\\.\\C:\\``,
+``\\\\?\\UNC\\fs\\share``), a provider-qualified path
+(``FileSystem::C:\\``), any PSDrive (``HKLM:\\``, ``Cert:\\``), and Win32
+drops trailing dots and spaces of the last name (``C:\\...`` and ``C:\\ ``
+are ``C:\\``). Those count as roots there now. A last name made only of
+dots and spaces names the folder above it: remove asks first
+(:class:`~core.backend.ConfirmationRequired`, yes is ``confirm_alias=True``),
+rename refuses. A POSIX backend keeps its rules: ``a.`` and ``...`` are
+ordinary names there.
 """
 
 from __future__ import annotations
@@ -36,8 +49,11 @@ import contextvars
 import errno
 import functools
 import inspect
+import logging
 import posixpath
 import re
+
+log = logging.getLogger(__name__)
 
 #: Ids of the backends inside a guarded call in this thread / task: their
 #: calls on themselves are not checked again.
@@ -48,9 +64,20 @@ _DRIVE_ROOT = re.compile(r"[A-Za-z]:/?")
 _DRIVE = re.compile(r"/?[A-Za-z]:")
 _SLASHES = re.compile(r"/+")
 _SEPARATORS = re.compile(r"[/\\]")
+#: Windows (backend separator ``\\``): a provider qualifier
+#: (``FileSystem::``, ``Microsoft.PowerShell.Core\\FileSystem::``), a
+#: device prefix (``\\\\?\\``, ``\\\\.\\``, ``\\??\\``), its UNC form, a
+#: drive or any PSDrive (``C:``, ``HKLM:``, ``Cert:``).
+_PROVIDER = re.compile(r"(?:[\w.]+[\\/])?[\w.]+::")
+_DEVICE = re.compile(r"(?:[\\/]{2}[?.]|[\\/]\?\?)(?:[\\/]|$)")
+_DEVICE_UNC = re.compile(r"UNC(?:[\\/]|$)", re.IGNORECASE)
+_PSDRIVE = re.compile(r"[\\/]?[^\\/:]+:")
 #: Marks a wrapper, so that a subclass inheriting it is not wrapped twice.
 _GUARDED = "_axross_backend_guard"
 GUARDED_METHODS = ("remove", "rename", "open_read", "stat", "list_dir")
+#: The keyword of ``remove()`` - taken by the guard, never passed on - that
+#: says yes to a Windows name that names the folder above it.
+CONFIRM_ALIAS = "confirm_alias"
 
 
 def _separator(backend) -> str:
@@ -76,6 +103,76 @@ def _backslash_separates(backend) -> bool:
     return policy.separator == "\\" or not policy.literal_backslash
 
 
+def _windows_rules(backend) -> bool:
+    """Whether *backend* resolves paths the Windows way (separator ``\\``:
+    WinRM, WMI, LocalFS on Windows)."""
+    return _separator(backend) == "\\"
+
+
+def _win32_trimmed(name: str) -> str:
+    """*name* as Win32 opens it: trailing dots and spaces dropped (``.``
+    and ``..`` are names of their own)."""
+    return name if name in (".", "..") else name.rstrip(". ")
+
+
+def _windows_split(path: str) -> tuple[str, list[str]]:
+    """``(volume, names)`` of *path* as Windows and PowerShell resolve
+    it. The volume is a drive or PSDrive (``c:``, ``hklm:``), a UNC share
+    (``//server/share``), a device (``//./volume{...}``) or "" for a path
+    on the current one; the names follow it, ``""`` first when the path
+    is absolute on its volume."""
+    provider = _PROVIDER.match(path)
+    if provider:
+        path = path[provider.end():]
+    device = _DEVICE.match(path)
+    if device:
+        path = path[device.end():]
+        unc = _DEVICE_UNC.match(path)
+        if unc:
+            path = "\\\\" + path[unc.end():]
+        else:
+            # \\?\C:\, \\.\Volume{...}\, \\.\PhysicalDrive0: the first name is
+            # the volume.
+            head, *names = _SEPARATORS.split(path)
+            return "//./" + head.rstrip(":").lower(), [""] + names if names else []
+    if len(path) >= 2 and path[0] in "\\/" and path[1] in "\\/":
+        names = _SEPARATORS.split(path)[2:]
+        server = names.pop(0) if names else ""
+        share = names.pop(0) if names else ""
+        return f"//{server}/{share}".lower(), [""] + names if names else []
+    drive = _PSDRIVE.match(path)
+    if drive:
+        return drive.group().lstrip("\\/").lower(), _SEPARATORS.split(path[drive.end():])
+    return "", _SEPARATORS.split(path)
+
+
+def _windows_root(path: str) -> bool:
+    _volume, names = _windows_split(path)
+    if names:
+        # Win32 drops the trailing dots and spaces of the LAST name only
+        # (one that ends the path; "...\\" is a name of its own).
+        names = [*names[:-1], _win32_trimmed(names[-1])]
+    rest = "/".join(names)
+    return posixpath.normpath(_SLASHES.sub("/", rest)) in ("/", ".") if rest else True
+
+
+def windows_alias_of(backend, path) -> str | None:
+    """On a Windows backend: the folder *path* really names when its last
+    name is made only of dots and spaces (not ``.`` or ``..``) - Win32
+    drops trailing dots and spaces of the last name, so ``C:\\data\\...``
+    and ``C:\\data\\ `` are ``C:\\data``. None for any other path, and on
+    every POSIX backend, where ``...`` is an ordinary name."""
+    if not isinstance(path, str) or not _windows_rules(backend):
+        return None
+    _volume, names = _windows_split(path)
+    if not names:
+        return None
+    last = names[-1]
+    if not last or last in (".", "..") or last.strip(". "):
+        return None
+    return path[: len(path) - len(last)].rstrip("\\/") or path[:1]
+
+
 def is_root_path(backend, path) -> bool:
     """Whether *path* names the root of *backend*: ``/`` however written
     (``//``, ``/.``, ``/a/..``), the empty path or ``.``, and - wherever a
@@ -84,6 +181,8 @@ def is_root_path(backend, path) -> bool:
     ``C:\\``, ``c:/.``, ``C:\\Users\\..``)."""
     if not isinstance(path, str):
         return False
+    if _windows_rules(backend):
+        return _windows_root(path)
     if _backslash_separates(backend):
         path = _SLASHES.sub("/", path.replace("\\", "/"))
         drive = _DRIVE.match(path)
@@ -103,6 +202,8 @@ def has_parent_component(backend, path) -> bool:
     takes one."""
     if not isinstance(path, str) or ".." not in path:
         return False
+    if _windows_rules(backend):
+        return ".." in _windows_split(path)[1]
     if not _backslash_separates(backend):
         return ".." in path.split("/")
     drive = _DRIVE.match(path.replace("\\", "/"))
@@ -158,7 +259,12 @@ def _refuse_file_with_slash(backend, path: str) -> None:
         return
 
 
-def _refuse_root(backend, path, action: str) -> None:
+def _refuse_root(backend, path, action: str, *, ask: bool = False,
+                 confirmed_alias: bool = False) -> None:
+    """PermissionError for the root and a ``..`` component; for a Windows
+    name that names the folder above (:func:`windows_alias_of`) a
+    question (``ask``: remove) or a refusal (rename) - or nothing when
+    the person said yes (``confirmed_alias``)."""
     if is_root_path(backend, path):
         raise PermissionError(
             errno.EPERM,
@@ -171,6 +277,32 @@ def _refuse_root(backend, path, action: str) -> None:
             f"{type(backend).__name__}: refusing to {action} a path with '..' in it",
             path,
         )
+    means = windows_alias_of(backend, path)
+    if means is None:
+        return
+    from core.i18n import tr
+
+    if confirmed_alias:
+        log.warning("%s: %s of %r confirmed; Windows acts on %r", type(backend).__name__,
+                    action, path, means)
+        return
+    if ask:
+        from core.backend import ConfirmationRequired
+
+        raise ConfirmationRequired(
+            "windows_alias", path,
+            tr("Windows reads {path} as {means}: its last name is made only of dots and "
+               "spaces, which Windows drops. Yes deletes {means} with everything in it – "
+               "not an entry of that name.").format(path=path, means=means),
+            option=CONFIRM_ALIAS, details={"means": means},
+        )
+    raise PermissionError(
+        errno.EPERM,
+        tr("{backend}: refusing to {action} {path}: Windows drops the dots and spaces its "
+           "last name is made of, so it names {means}").format(
+            backend=type(backend).__name__, action=action, path=path, means=means),
+        path,
+    )
 
 
 def _path_argument(args, kwargs, name: str, index: int = 0):
@@ -192,12 +324,15 @@ def _wrap(name: str, method):
         inside = _INSIDE.get()
         key = id(self)
         if key in inside:
+            if name == "remove":
+                kwargs.pop(CONFIRM_ALIAS, None)
             return method(self, *args, **kwargs)
         token = _INSIDE.set(inside | {key})
         try:
             path = _path_argument(args, kwargs, first)
             if name == "remove":
-                _refuse_root(self, path, "remove")
+                _refuse_root(self, path, "remove", ask=True,
+                             confirmed_alias=kwargs.pop(CONFIRM_ALIAS, False) is True)
             elif name == "rename":
                 _refuse_root(self, path, "rename")
                 # Nor onto the root or past it: rename(x, "//") hid the
@@ -234,4 +369,5 @@ def guard_class(cls) -> None:
         setattr(cls, name, _wrap(name, method))
 
 
-__all__ = ["GUARDED_METHODS", "guard_class", "has_parent_component", "is_root_path"]
+__all__ = ["CONFIRM_ALIAS", "GUARDED_METHODS", "guard_class", "has_parent_component",
+           "is_root_path", "windows_alias_of"]

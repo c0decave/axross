@@ -1663,11 +1663,29 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                 return  # a saved layout keeps the height the user gave it
             self._transfer_area_height = dock.height()
             self._transfer_area_compact = True
+            dock.fit_idle_minimum()
+            self._bottom_tabs_compact(dock, True)
             self.resizeDocks([dock], [dock.minimumSizeHint().height()], vertical)
         elif not dock.idle and self._transfer_area_compact:
             self._transfer_area_compact = False
+            self._bottom_tabs_compact(dock, False)
             height = max(self._transfer_area_height, self.TRANSFER_AREA_MIN)
             self.resizeDocks([dock], [min(height, max(self.height() // 3, 120))], vertical)
+
+    def _bottom_tabs_compact(self, dock, compact: bool) -> None:
+        """The tabs sharing the idle Transfers dock's place may be as low as
+        its one row while it is in front: a tab group is never lower than
+        its tallest tab's least height, and the other bottom panels' scroll
+        areas ask for 58 px - the empty Transfers panel kept 86 px of a
+        600 px screen (UX review round 9). Back to their own least height
+        when the area grows again."""
+        from ui.dock_frame import PanelFrame
+
+        least = dock.widget().minimumHeight() if compact else 0
+        for other in self.tabifiedDockWidgets(dock):
+            frame = other.widget()
+            if isinstance(frame, PanelFrame):
+                frame.setMinimumHeight(least)
 
     def _on_transfer_dock_shown(self, visible: bool) -> None:
         """Another tab of the bottom area came to the front: it gets the
@@ -1678,6 +1696,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         if self._transfer_area_compact:
             self._transfer_area_compact = False
             dock = self._transfer_dock
+            self._bottom_tabs_compact(dock, False)
             height = max(self._transfer_area_height, self.TRANSFER_AREA_MIN)
             others = [d for d in self.tabifiedDockWidgets(dock) if d.isVisible()]
             if others and not dock.isFloating():
@@ -4924,6 +4943,16 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                 QMessageBox.information(self, tr("Nothing to undo"), noted(
                     tr("No other recent operation on a currently open connection can be "
                        "reversed.")))
+            elif newest is not None and newest.operation == "undo":
+                # "The most recent operation (undo) cannot be reversed: an
+                # undo is not itself undoable" said nothing useful (UX
+                # review round 9).
+                QMessageBox.information(
+                    self,
+                    tr("Nothing to undo"),
+                    tr("Nothing more to undo: no earlier operation on a currently open "
+                       "connection can be reversed."),
+                )
             elif newest is not None and not newest.reversible:
                 QMessageBox.information(
                     self,
@@ -4932,6 +4961,15 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                        "{reason}").format(operation=operation_name(newest.operation),
                                           reason=newest.reason),
                 )
+                if newest.operation == "delete":
+                    # Said once: the next Ctrl+Z reaches the operation
+                    # before it (core.undo.pick_undoable stops here).
+                    from core.undo import record_skipped
+
+                    try:
+                        record_skipped(newest, newest.reason)
+                    except Exception as exc:  # noqa: BLE001 - said again next time, no harm
+                        log.warning("undo: could not journal the told delete: %s", exc)
             else:
                 QMessageBox.information(
                     self,
@@ -5287,6 +5325,19 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             if wait.get("batch"):
                 wait["pending"].discard(job_id)
                 job = self._transfer_manager.get_job(job_id)
+                failure = getattr(job, "error", None)
+                if (isinstance(failure, FileNotFoundError)
+                        and getattr(failure, "filename", None) == job.source_path):
+                    # Renamed or removed since the check before the send:
+                    # the sentence that check gives, not "[Errno 2] No such
+                    # file or directory" (review round 9).
+                    name = job.source_path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+                    error = tr("{name} is no longer where the move put it").format(
+                        name=name or job.source_path)
+                elif failure is not None:
+                    from core.user_errors import describe
+
+                    error = describe(failure)
                 wait["failed"].append(f"{job.source_path if job else job_id}: {error}")
                 if not wait["pending"]:
                     self._undo_waits.remove(wait)
@@ -6095,9 +6146,13 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             on_delete=self._delete_connection_config,
         )
 
+        # Headings as bold disabled entries: a section's text is not drawn
+        # by Fusion (UX review round 9).
+        from ui import mnemonics
+
         # Recent profiles (with number shortcuts 1-8)
         if self._recent_profiles:
-            menu.addSection(tr("Recent"))
+            mnemonics.add_header(menu, tr("Recent"))
             for i, name in enumerate(self._recent_profiles[:8]):
                 profile = self._profile_manager.get(name)
                 if not profile:
@@ -6110,7 +6165,9 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         # All saved profiles
         all_names = self._profile_manager.list_names()
         if all_names:
-            menu.addSection(tr("All Profiles"))
+            if not menu.isEmpty():
+                menu.addSeparator()
+            mnemonics.add_header(menu, tr("All Profiles"))
             for name in all_names:
                 profile = self._profile_manager.get(name)
                 if not profile:
@@ -6130,8 +6187,6 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         manager_action.setShortcutVisibleInContextMenu(True)
         manager_action.triggered.connect(lambda _checked=False: self._on_connect())
         # Every entry gets an underlined letter (UX review round 8).
-        from ui import mnemonics
-
         mnemonics.install(menu, now=False)
         return menu
 
@@ -8069,7 +8124,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                     self,
                     title,
                     tr("Could not check {dest} for existing names, so nothing was "
-                       "queued:\n{error}").format(dest=dest_dir, error=value),
+                       "queued:\n{error}").format(dest=dest_dir, error=describe(value)),
                 )
                 return
             if (
@@ -10204,6 +10259,18 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         """Qt's right-click menu of the toolbars and docks, plus "Reset
         Toolbar Order"."""
         menu = super().createPopupMenu() or QMenu(self)
+        # Qt's two groups - the panels, a separator, the toolbars - get a
+        # heading each (bold, disabled; UX review round 9).
+        from ui import mnemonics
+
+        entries = [a for a in menu.actions() if a.isVisible()]
+        split = next((i for i, a in enumerate(entries) if a.isSeparator()), None)
+        docks = entries[:split] if split is not None else entries
+        bars = entries[split + 1:] if split is not None else []
+        if docks:
+            mnemonics.add_header(menu, tr("Panels"), before=docks[0])
+        if bars:
+            mnemonics.add_header(menu, tr("Toolbars"), before=bars[0])
         if getattr(self, "_toolbar_reorder", None):
             if menu.actions():
                 menu.addSeparator()
@@ -10211,8 +10278,6 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             reset.setToolTip(tr("Put the toolbar buttons back in their default order"))
             reset.triggered.connect(lambda _checked=False: self.reset_toolbar_order())
         # Underlined letters here too (UX review round 8).
-        from ui import mnemonics
-
         mnemonics.install(menu, now=False)
         return menu
 

@@ -991,7 +991,8 @@ _PYTHON_PLAIN = frozenset("uIEsSBOPqR")
 #: node options (``--name`` / ``--name=value``) that load nothing.
 _NODE_PLAIN = re.compile(r"--(?:enable-source-maps|no-warnings|no-deprecation|trace-warnings"
                          r"|max-old-space-size=\d+|stack-size=\d+|unhandled-rejections=\w+"
-                         r"|experimental-(?!loader|network-imports|policy|import)[a-z-]+"
+                         r"|experimental-(?!loader|network-imports|policy|import|config-file|default-config|sea-config)"
+                         r"[a-z-]+"
                          r"|no-experimental-[a-z-]+)")
 #: java options that load nothing: a system property (none that names a
 #: class loader, a code base or a configuration to load, no URL) or a size.
@@ -1014,6 +1015,45 @@ _TOOL_MODULES = frozenset({"jupyter", "notebook", "ipykernel", "IPython", "pip_r
                            "hatch", "conda", "mamba", "pixi", "virtualenv", "venv",
                            "ensurepip", "setuptools", "easy_install", "pip", "pipx", "uv"})
 _WINDOWS_ABSOLUTE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
+#: The modules ``python -m`` may name in a pure launcher: an MCP server's
+#: package by its usual names (``mcp_server_git``, ``mcp_x_server``,
+#: ``x_mcp``, ``x_mcp_server``) - never a module of Python itself. The
+#: standard library is full of modules that run code from their line or
+#: serve files (``-m timeit -s <code>``, ``-m pdb -c '!<code>'``,
+#: ``-m http.server``, ``-m pickle`` …): any other module is contained.
+_MCP_MODULE = re.compile(r"(?:mcp_[a-z0-9_]*[a-z0-9]|[a-z0-9_]*[a-z0-9]_mcp(?:_server)?)",
+                         re.IGNORECASE)
+#: A script of Python's own standard library (``/usr/lib/python3.11/
+#: timeit.py``, ``C:\\Python312\\Lib\\pdb.py``): it reads code from its
+#: line like ``-m`` would; site-packages and dist-packages below it are not.
+_STDLIB_SCRIPT = re.compile(r"[\\/](?:lib(?:64)?[\\/](?:python|pypy)[0-9][0-9.]*|python[0-9]+[\\/]lib)"
+                            r"[\\/](?!(?:.*[\\/])?(?:site|dist)-packages[\\/])", re.IGNORECASE)
+
+
+def mcp_module(name: str) -> bool:
+    """*name* (``python -m`` 's module) is an MCP server's package that
+    may run as a pure launcher (see :data:`_MCP_MODULE`)."""
+    import sys
+
+    if not re.fullmatch(r"[A-Za-z_][\w]*(?:\.[A-Za-z_]\w*)*", name or ""):
+        return False
+    top = name.split(".", 1)[0]
+    return bool(_MCP_MODULE.fullmatch(top)) and top not in _TOOL_MODULES \
+        and top not in getattr(sys, "stdlib_module_names", ())
+
+
+def _stdlib_script(word: str) -> bool:
+    """*word* is a script of Python's standard library (as written or
+    resolved)."""
+    import os
+
+    if _STDLIB_SCRIPT.search(word):
+        return True
+    try:
+        real = os.path.realpath(word)
+    except (OSError, ValueError):
+        return False
+    return bool(_STDLIB_SCRIPT.search(real))
 
 
 def _absolute(word: str) -> bool:
@@ -1036,38 +1076,51 @@ def host_launcher(argv) -> bool:
     ``dotnet srv.dll``, ``bash srv.sh``) and nothing in its line is a runner.
     Such a server runs on this machine as it is; anything else is contained
     by default (see :data:`_SCRIPT_LAUNCHERS`)."""
+    return launcher_script(argv) is not None
+
+
+def launcher_script(argv) -> str | None:
+    """The script a pure launcher (:func:`host_launcher`) runs, as written
+    in *argv*; "" for ``python -m <MCP server package>`` (no script of its
+    own), None when *argv* is no pure launcher. ``-m`` with any other
+    module and Python's own library scripts are none (they run code from
+    their line: ``-m timeit -s``, ``-m pdb -c``, ``…/lib/python3.x/
+    timeit.py -s``); so is an inline-code option anywhere before the script
+    (``-c``, ``-e``, ``--eval``, ``-p``, ``-r`` … are no plain options)."""
     words = [str(a) for a in (argv or ())]
     if len(words) < 2 or downloading_runner(words) is not None:
-        return False
+        return None
     program, rest = _program(words), words[1:]
     if _PYTHONS.fullmatch(program):
         i = 0
         while i < len(rest) and rest[i].startswith("-") and rest[i] != "-":
             letters = rest[i][1:]
             if letters == "m":
-                return i + 1 < len(rest) and \
-                    re.fullmatch(r"[A-Za-z_][\w.]*", rest[i + 1]) is not None and \
-                    rest[i + 1].split(".", 1)[0] not in _TOOL_MODULES
+                return "" if i + 1 < len(rest) and mcp_module(rest[i + 1]) else None
             if not letters or not set(letters) <= _PYTHON_PLAIN:
-                return False
+                return None
             i += 1
-        return i < len(rest) and _script_word(rest[i])
+        if i < len(rest) and _script_word(rest[i]) and not _stdlib_script(rest[i]):
+            return rest[i]
+        return None
     if program in _NODES:
         i = 0
         while i < len(rest) and _NODE_PLAIN.fullmatch(rest[i]):
             i += 1
-        return i < len(rest) and _script_word(rest[i])
+        return rest[i] if i < len(rest) and _script_word(rest[i]) else None
     if program == "java":
         i = 0
         while i < len(rest) and _JAVA_PLAIN.fullmatch(rest[i]):
             i += 1
-        return rest[i:i + 1] == ["-jar"] and i + 1 < len(rest) \
-            and _script_word(rest[i + 1]) and rest[i + 1].lower().endswith(".jar")
+        if rest[i:i + 1] == ["-jar"] and i + 1 < len(rest) \
+                and _script_word(rest[i + 1]) and rest[i + 1].lower().endswith(".jar"):
+            return rest[i + 1]
+        return None
     if program == "dotnet":
-        return _script_word(rest[0]) and rest[0].lower().endswith(".dll")
+        return rest[0] if _script_word(rest[0]) and rest[0].lower().endswith(".dll") else None
     if program in _SCRIPT_LAUNCHERS:
-        return _script_word(rest[0])
-    return False
+        return rest[0] if _script_word(rest[0]) else None
+    return None
 
 
 #: Environment variables that make an interpreter (or the loader) run code
@@ -1084,9 +1137,24 @@ _CODE_ENV = frozenset({
     "PHPRC", "PHP_INI_SCAN_DIR", "DOTNET_STARTUP_HOOKS", "DOTNET_ADDITIONAL_DEPS",
     "GCONV_PATH", "R_PROFILE", "R_PROFILE_USER", "R_ENVIRON", "R_ENVIRON_USER", "R_LIBS",
     "R_LIBS_USER",
+    # where start files and user site-packages are read from (a home of
+    # one's own brings its own ~/.local/lib/python3.x/site-packages/*.pth,
+    # ~/.bashrc, ~/.gitconfig), compiled modules, Python's own library
+    "HOME", "USERPROFILE", "XDG_CONFIG_HOME", "PYTHONPYCACHEPREFIX", "PYTHONPLATLIBDIR",
+    # Git run by the server: settings with commands (core.fsmonitor,
+    # core.sshCommand), its programs, the commands it starts
+    "GIT_CONFIG", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_PARAMETERS", "GIT_SSH", "GIT_SSH_COMMAND", "GIT_EXEC_PATH", "GIT_ASKPASS",
+    "SSH_ASKPASS", "GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_EXTERNAL_DIFF",
+    "GIT_PROXY_COMMAND", "GIT_DIR", "GIT_TEMPLATE_DIR", "PAGER", "EDITOR", "VISUAL",
+    # modules other libraries load (OpenSSL providers and engines, PerlIO layers)
+    "OPENSSL_CONF", "OPENSSL_MODULES", "OPENSSL_ENGINES", "PERLIO", "NODE_COMPILE_CACHE",
 })
-_CODE_ENV_PREFIX = re.compile(r"(?:LD_|DYLD_|LUA_INIT|LUA_PATH|LUA_CPATH|CORECLR_|COR_PROFILER)",
-                              re.IGNORECASE)
+#: Prefixes of such names: the loader's, and bash's exported functions
+#: (``BASH_FUNC_cut%%`` replaces the command ``cut`` in a script), Git's
+#: numbered settings (``GIT_CONFIG_KEY_0``/``GIT_CONFIG_VALUE_0``).
+_CODE_ENV_PREFIX = re.compile(r"(?:LD_|DYLD_|LUA_INIT|LUA_PATH|LUA_CPATH|CORECLR_|COR_PROFILER"
+                              r"|BASH_FUNC_|GIT_CONFIG_)", re.IGNORECASE)
 
 
 def code_env(env) -> list[str]:
@@ -1127,6 +1195,42 @@ def _system_owned(path: str) -> bool:
     return False
 
 
+def _venv_problem(found: str, home: str) -> str:
+    """Why the interpreter *found* (as found, before symlinks) belongs to a
+    virtual environment its user can change ("" = it does not): Python
+    takes its prefix - site-packages and their ``.pth`` files - from the
+    unresolved path, so ``.venv/bin/python3`` -> ``/usr/bin/python3`` runs
+    the venv's code. A ``pyvenv.cfg`` next to it or one folder up makes it
+    one; it counts as installed only when it is the one axross itself runs
+    from, under a version manager's folder, or when the venv and its
+    site-packages belong to root and no one else may write them."""
+    import glob
+    import os
+
+    folder = os.path.dirname(os.path.abspath(found))
+    venv = next((d for d in (folder, os.path.dirname(folder))
+                 if os.path.isfile(os.path.join(d, "pyvenv.cfg"))), "")
+    if not venv:
+        return ""
+    import sys
+
+    if os.path.realpath(venv) == os.path.realpath(sys.prefix):
+        return ""  # axross's own: whoever changes it changes axross itself
+    for place in _MANAGED_HOME:
+        if os.path.realpath(venv).startswith(os.path.join(home, place) + os.sep):
+            return ""
+    from core.posix_compat import effective_uid
+
+    if effective_uid() is not None:
+        parts = [os.path.join(venv, "pyvenv.cfg"), os.path.realpath(venv)]
+        parts += glob.glob(os.path.join(glob.escape(venv), "lib*", "*", "site-packages"))
+        parts += glob.glob(os.path.join(glob.escape(venv), "Lib", "site-packages"))
+        if all(_system_owned(os.path.realpath(p)) for p in parts):
+            return ""
+    return (f"{M.clean_text(str(found), 60)} belongs to a virtual environment "
+            f"({M.clean_text(venv, 120)}) whose packages its user can change")
+
+
 def launcher_place_problem(program: str, path: str | None = None) -> str:
     """Why the launcher *program* (a server line's first word) may not run
     a server on this machine as it is ("" = it may): it must be found -
@@ -1151,6 +1255,10 @@ def launcher_place_problem(program: str, path: str | None = None) -> str:
     found = word if _absolute(word) else shutil.which(word, path=path)
     if not found or not os.path.isfile(found):
         return f"{shown} is not found on the server's PATH"
+    home = os.path.realpath(os.path.expanduser("~"))
+    venv = _venv_problem(found, home)
+    if venv:
+        return venv
     if effective_uid() is None:
         return ""  # no owners to read here (Windows)
     real = os.path.realpath(found)
@@ -1158,7 +1266,6 @@ def launcher_place_problem(program: str, path: str | None = None) -> str:
         return ""
     if real.startswith(_MANAGED_SYSTEM):
         return ""
-    home = os.path.realpath(os.path.expanduser("~"))
     for place in _MANAGED_HOME:
         if real.startswith(os.path.join(home, place) + os.sep):
             return ""

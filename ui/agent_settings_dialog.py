@@ -1510,6 +1510,19 @@ class _AgentSettingsForm:
             "java -jar …) starts without a sandbox profile. Any other program starts in its "
             "sandbox profile, or when you mark it trusted here – then it runs with your rights."))
         form.addRow("", self.server_trusted_check)
+        self.server_pin_button = QPushButton(tr("Confirm files"))
+        self.server_pin_button.setToolTip(tr(
+            "A program run on this machine starts only with the files you confirmed: its script "
+            "and, for Python, the modules beside it (an agent could change them). Saving a new "
+            "command confirms them; after a change you checked, confirm them again here."))
+        self.server_pin_button.clicked.connect(lambda _c=False: self.confirm_server_files())
+        self.server_pin_label = QLabel()
+        self.server_pin_label.setWordWrap(True)
+        self.server_pin_label.setTextFormat(Qt.TextFormat.PlainText)
+        pin_row = QHBoxLayout()
+        pin_row.addWidget(self.server_pin_button, 0)
+        pin_row.addWidget(self.server_pin_label, 1)
+        form.addRow("", pin_row)
         self.server_url_edit = QLineEdit()
         self.server_url_edit.setPlaceholderText("http://127.0.0.1:7331/messages")
         form.addRow(tr("URL"), self.server_url_edit)
@@ -1777,6 +1790,7 @@ class _AgentSettingsForm:
         try:
             self.server_test_label.clear()
             self.server_test_label.setToolTip("")
+            self.server_pin_label.clear()
             if not 0 <= row < len(self.settings.mcp_servers):
                 self._server = None
                 self.server_form.setEnabled(False)
@@ -1838,6 +1852,7 @@ class _AgentSettingsForm:
         self.server_sandbox_combo.setToolTip(
             tr("A container server runs in podman – it is its own sandbox") if container else "")
         self.server_trusted_check.setEnabled(stdio and not container)
+        self.server_pin_button.setEnabled(stdio and not container)
         allowlist = container and any(MC.TOKEN_EGRESS in a for a in self._server.command)
         self.server_egress_edit.setEnabled(bool(allowlist))
         self.uninstall_button.setEnabled(container)
@@ -2055,11 +2070,34 @@ class _AgentSettingsForm:
         self.server_list.setCurrentRow(min(row, len(self.settings.mcp_servers) - 1))
         self._show_server(self.server_list.currentRow())
 
+    def confirm_server_files(self) -> None:
+        """Pin the files the shown server runs on this machine as they are
+        now (core.mcp_script_pin) - the user looked at them."""
+        from core import mcp_script_pin as PIN
+
+        self._store_server()
+        if self._server is None:
+            return
+        if not PIN.needs_pin(self._server):
+            self._server.pin = {}
+            self.server_pin_label.setText(tr("Nothing to confirm: it runs no file of yours "
+                                             "on this machine"))
+            return
+        self._server.pin = PIN.compute(self._server.command)
+        self.server_pin_label.setText(tr("Confirmed: {n} files").format(
+            n=len(self._server.pin.get("files", {}))))
+
     def test_server(self) -> None:
         """Connect the shown server in the background and list its tools."""
         self._store_server()
         if self._server is None:
             return
+        from core import mcp_script_pin as PIN
+
+        if PIN.needs_pin(self._server) and not PIN.current(self._server):
+            # A new or changed command: testing it is confirming its files
+            # (as saving would); changed files of a confirmed line are not.
+            self._server.pin = PIN.compute(self._server.command)
         server = MC.McpServerConfig.from_dict(self._server.to_dict()) or self._server
         problems = server.problems()
         if problems:

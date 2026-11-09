@@ -1059,18 +1059,32 @@ class RsyncSession(SessionLifecycle):
         "skipping non-regular file" or "skipping directory", so the
         download goes into an empty temp directory and only a regular
         file that actually arrived there counts as read."""
-        from core.read_spool import named_spool_dir, remove_quietly, spool_name_prefix
+        from core.read_spool import (
+            named_spool_dir,
+            others_may_replace_in,
+            private_spool_folder,
+            remove_quietly,
+            spool_name_prefix,
+        )
 
         url = self._build_url(_literal_source(path))
         # In the spool folder (not /tmp, a tmpfs), hidden; removed on
         # every path, and swept the next run after a crash.
         folder = named_spool_dir()
+        if others_may_replace_in(folder):
+            # rsync writes into the folder BY NAME: in a shared download
+            # folder another user could rename it away and put a link to
+            # ~/.config/autostart in its place (review round 9).
+            folder = private_spool_folder()
         tmpdir = tempfile.mkdtemp(prefix=spool_name_prefix("rsync"), dir=folder)
+        made = os.lstat(tmpdir)
         try:
             # A stall limit, not a wall clock: rsync's own --timeout ends a
             # transfer that moved nothing for that long; a cap on the whole
             # run failed every file that takes longer than 5 minutes.
             self._run_rsync([f"--timeout={STALL_TIMEOUT}", "-L", url, tmpdir + os.sep], timeout=None)
+            if not os.path.samestat(os.lstat(tmpdir), made):
+                raise OSError(f"rsync read {path}: its download folder {tmpdir} was replaced")
             arrived = [os.path.join(tmpdir, n) for n in os.listdir(tmpdir)]
             if len(arrived) != 1 or not os.path.isfile(arrived[0]):
                 raise OSError(f"rsync read {path}: not a regular file")

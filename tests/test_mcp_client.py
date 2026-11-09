@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from core import mcp_client as C
+from core.mcp_script_pin import pinned
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -83,7 +84,8 @@ def fake_server(tmp_path):
     script.write_text(FAKE)
 
     def config(mode="normal", **kw):
-        return C.McpServerConfig(name="fake", command=(sys.executable, str(script), mode), **kw)
+        return pinned(C.McpServerConfig(name="fake", command=(sys.executable, str(script), mode),
+                                        **kw))
 
     return config
 
@@ -95,13 +97,13 @@ def _own_stdio(root, **kw):
         # The test venv's user site: a variable that loads code, so the
         # server runs on the host only when it is marked trusted (round 8).
         kw.setdefault("trusted", True)
-    return C.McpServerConfig(
+    return pinned(C.McpServerConfig(
         name="own",
         command=(sys.executable, str(ROOT / "main.py"), "--mcp-server", "--mcp-root", str(root)),
         env=env,
         timeout=60,
         **kw,
-    )
+    ))
 
 
 class _HttpOwn:

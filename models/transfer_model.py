@@ -255,14 +255,17 @@ class TransferModel(QAbstractTableModel):
 
     @staticmethod
     def _format_eta(seconds: float) -> str:
+        """Time left, short: "7s", "3m 12s", "1h 5m" - in German "7 s",
+        "3 min 12 s", "1 Std. 5 min" (the units read in the language;
+        UX review round 9)."""
         if seconds < 60:
-            return f"{int(seconds)}s"
+            return tr("{s}s").format(s=int(seconds))
         if seconds < 3600:
             m, s = divmod(int(seconds), 60)
-            return f"{m}m {s}s"
+            return tr("{m}m {s}s").format(m=m, s=s)
         h, remainder = divmod(int(seconds), 3600)
         m, s = divmod(remainder, 60)
-        return f"{h}h {m}m"
+        return tr("{h}h {m}m").format(h=h, m=m)
 
 
 class ProgressBarDelegate(QStyledItemDelegate):

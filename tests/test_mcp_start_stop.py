@@ -14,6 +14,7 @@ import pytest
 
 from core import agent as A
 from core import mcp_client as C
+from core.mcp_script_pin import pinned
 from core.llm_profiles import LLMProfile
 from tests.test_agent_loop import _Fake
 from tests.test_agent_tabs import APP, Env
@@ -31,8 +32,9 @@ def sleeper(tmp_path):
 
     def config(**kw):
         kw.setdefault("timeout", 120)
-        return C.McpServerConfig(name="sleepy",
-                                 command=(sys.executable, str(script), str(pid_file)), **kw)
+        return pinned(C.McpServerConfig(name="sleepy",
+                                        command=(sys.executable, str(script), str(pid_file)),
+                                        **kw))
 
     config.pid_file = pid_file
     return config

@@ -165,6 +165,22 @@ Copy/write/encrypt refuse existing targets by default. Pass
 `trash()` require `confirm=True` so headless scripts do not delete on
 accident.
 
+A few removes do more than the path suggests, and `remove()` raises
+`ConfirmationRequired` (a `PermissionError`; nothing is deleted) whose
+message names the keyword that says yes:
+
+```python
+# IMAP, every folder below INBOX: deletes those folders, INBOX and its mail stay
+axross.remove(b, "/INBOX", recursive=True, confirm=True, keep_namespace_root=True)
+# SMB DFS link: deletes the contents of the share it leads to; the link stays
+axross.remove(b, "/links/proj", recursive=True, confirm=True, follow_dfs_link=True)
+# WinRM/WMI: a last name of only dots and spaces is the folder above it on Windows
+axross.remove(b, "C:\\data\\...", recursive=True, confirm=True, confirm_alias=True)
+```
+
+The file pane asks the same question instead. The agent and MCP clients
+cannot pass these keywords: they get the explanation as the error.
+
 ### Encryption + archives
 
 ```python

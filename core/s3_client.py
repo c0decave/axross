@@ -451,13 +451,22 @@ class S3Session(SessionLifecycle):
         # Validate bucket name before connecting
         import re
 
+        # Shown as it is in the "Connection Failed" box (core.user_errors
+        # keeps an EINVAL's own text): translated, not the raw English.
+        from core.i18n import tr
+
+        if not bucket.strip():
+            raise OSError(
+                errno.EINVAL,
+                tr("The S3 profile names no bucket. Open it in the Connection Manager "
+                   "and enter the bucket name or paste the bucket's URL."),
+            )
         if not re.fullmatch(r"^[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9]$", bucket):
             raise OSError(
                 errno.EINVAL,
-                f"Invalid S3 bucket name '{bucket}'. "
-                "Bucket names must be 3-63 characters, lowercase letters, digits, "
-                "hyphens, and dots only. If you have a full URL, just paste it — "
-                "it will be parsed automatically."
+                tr("Invalid S3 bucket name '{bucket}'. Bucket names have 3 to 63 "
+                   "characters: lowercase letters, digits, hyphens and dots. A full "
+                   "URL can be pasted as it is.").format(bucket=bucket),
             )
 
         # A boto3 Session of this S3Session's own. boto3.client() would

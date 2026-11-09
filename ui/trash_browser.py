@@ -42,11 +42,11 @@ log = logging.getLogger("ui.trash_browser")
 
 
 def _format_size(n: int) -> str:
-    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
-        if n < 1024:
-            return f"{n:.0f} {unit}"
-        n //= 1024
-    return f"{n:.0f} PiB"
+    """The size as the panes show it ("4,0 KB" in German): the window
+    had its own "4 KiB" (UX review round 9)."""
+    from ui.format_utils import human_bytes
+
+    return human_bytes(n)
 
 
 class TrashBrowserDialog(QDialog):
@@ -56,8 +56,12 @@ class TrashBrowserDialog(QDialog):
         super().__init__(parent)
         set_window_icon(self, "trash")
         self._backend = backend
+        from ui.format_utils import backend_label
+
+        # "Papierkorb – Local" in German: the name goes through the pane's
+        # display label (UX review round 9).
         self.setWindowTitle(tr("Trash – {name}").format(
-            name=getattr(backend, "name", type(backend).__name__)))
+            name=backend_label(getattr(backend, "name", type(backend).__name__))))
         self.resize(720, 420)
         self._build_ui()
         self._reload()
@@ -77,7 +81,11 @@ class TrashBrowserDialog(QDialog):
         root.addWidget(self._info)
 
         self._table = QTableWidget(0, 4, self)
-        self._table.setHorizontalHeaderLabels([tr("Original Path"), tr("Size"), tr("Trashed At"), tr("ID")])
+        # The fourth column showed the entry's id, elided to "…" - nothing a
+        # user reads; it is the path's tooltip now and the column says
+        # whether the entry is a file or a folder (UX review round 9).
+        self._table.setHorizontalHeaderLabels(
+            [tr("Original Path"), tr("Size"), tr("Trashed At"), tr("Type")])
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -165,6 +173,8 @@ class TrashBrowserDialog(QDialog):
             path_item = QTableWidgetItem(e.original_path)
             # Stash the entry on the row so buttons can grab it back.
             path_item.setData(Qt.ItemDataRole.UserRole, e)
+            path_item.setToolTip(tr("{path}\nTrash ID: {id}").format(
+                path=e.original_path, id=e.trash_id))
             self._table.setItem(row, 0, path_item)
             self._table.setItem(row, 1, QTableWidgetItem(_format_size(e.size)))
             when = (
@@ -173,7 +183,7 @@ class TrashBrowserDialog(QDialog):
                 else str(e.trashed_at)
             )
             self._table.setItem(row, 2, QTableWidgetItem(when))
-            self._table.setItem(row, 3, QTableWidgetItem(e.trash_id))
+            self._table.setItem(row, 3, QTableWidgetItem(tr("Folder") if e.is_dir else tr("File")))
         self._info.setText(tr_n(len(entries), "{n} entry in trash.", "{n} entries in trash."))
 
     def _selected_entries(self) -> list:

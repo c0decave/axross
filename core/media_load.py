@@ -272,6 +272,10 @@ def thumbnail(backend, item: MediaItem, *, cancel: threading.Event, edge: int = 
             result = P.thumbnail(
                 _decoder_backend(backend), f.path, edge=edge, use_cache=local, allow_svg=True
             )
+        except P.PreviewIsPdf:
+            # A PDF named like a picture: its first page, drawn the way a
+            # .pdf is (the picture decoders never draw a PDF).
+            return render_pdf_page(f.path, 0, edge)
         except P.PreviewError as exc:
             raise MediaUnavailable(_preview_reason(exc)) from exc
         except PermissionError as exc:
@@ -363,6 +367,9 @@ def prepare(
             image = P.decode_image(
                 _decoder_backend(backend), f.path, max_edge=max_edge, allow_svg=True
             )
+        except P.PreviewIsPdf:
+            # A PDF named like a picture: its first page, as a .pdf's is drawn.
+            return Prepared(item, image=render_pdf_page(f.path, 0, max_edge))
         except P.PreviewError as exc:
             raise MediaUnavailable(_preview_reason(exc)) from exc
         except PermissionError as exc:

@@ -109,16 +109,48 @@ class _DestListings:
 #: still running (another axross, a job of this one): it is not resumed.
 RESUME_IDLE_SECONDS = 30.0
 
+#: A partial's time further ahead of this machine's clock than this is a
+#: clock out of step (an FTP server listing local time as UTC), not a write
+#: that is still going on: it says nothing about how recent the write was.
+RESUME_CLOCK_SKEW_SECONDS = 600.0
+
 
 def _idle_long_enough(item, now: float) -> bool:
     """The listing says *item* was last written RESUME_IDLE_SECONDS ago or
-    more; an unknown or future time counts as recent."""
+    more. An unknown time counts as recent; so does a time ahead of this
+    machine's clock, but only by up to RESUME_CLOCK_SKEW_SECONDS: a server
+    clock hours ahead kept every partial on it from being resumed for those
+    hours (review round 9)."""
     modified = getattr(item, "modified", None)
     try:
         stamp = float(modified.timestamp()) if modified is not None else 0.0
     except (AttributeError, OSError, OverflowError, ValueError):
         stamp = 0.0
-    return stamp > 0 and now - stamp >= RESUME_IDLE_SECONDS
+    if stamp <= 0:
+        return False
+    if stamp - now > RESUME_CLOCK_SKEW_SECONDS:
+        return True
+    return now - stamp >= RESUME_IDLE_SECONDS
+
+
+def _same_destination(backend_a, backend_b) -> bool:
+    """Whether two destination backends show one namespace: the same
+    session, this machine's disk (two LocalFS - each pane has its own), or
+    two sessions of one kind to the same server and port."""
+    if backend_a is None or backend_b is None:
+        return False
+    if backend_a is backend_b:
+        return True
+    from core.local_fs import LocalFS
+
+    if type(backend_a) is LocalFS and type(backend_b) is LocalFS:
+        return True
+    from core.storage_identity import _same_view
+
+    try:
+        return _same_view(backend_a, backend_b)
+    except Exception:  # noqa: BLE001 - unknown: not the same
+        return False
 
 
 def _probe_resumable_temp(
@@ -127,6 +159,7 @@ def _probe_resumable_temp(
     listings: _DestListings | None = None,
     fingerprint: str = "",
     busy: Callable[[], set[str]] | frozenset[str] | set[str] = frozenset(),
+    owned: Callable[[], set[str]] | frozenset[str] | set[str] = frozenset(),
 ) -> tuple[str, int] | None:
     """Look for a partial ``.<name>.part-<job id>-<fingerprint>`` sibling
     of *dest_path* on the backend. Returns ``(temp_path, size)`` for a
@@ -141,7 +174,11 @@ def _probe_resumable_temp(
     a job of this process now, and not one written to within the last
     RESUME_IDLE_SECONDS - a second copy of a file adopted the first one's
     live partial and both appended to it (review round 8). The worker then
-    claims it by a rename before it appends.
+    claims it by a rename before it appends. A partial in *owned* (or what
+    it returns) was kept by a job of this manager that has ended: nobody
+    writes it, so it is adopted however recently written - a copy started
+    again right after Cancel restarted from 0 and left the cancelled
+    partial behind (review round 9).
 
     This is best-effort: any backend error while probing disables
     auto-resume (we restart from scratch) rather than surfacing the
@@ -186,7 +223,9 @@ def _probe_resumable_temp(
             if tmp_path in busy or partial_in_use(tmp_path):
                 log.info("Not resuming %s: another transfer is writing it", tmp_path)
                 continue
-            if not _idle_long_enough(item, now):
+            if callable(owned):
+                owned = owned()
+            if tmp_path not in owned and not _idle_long_enough(item, now):
                 log.info("Not resuming %s: it was written to in the last %d s",
                          tmp_path, int(RESUME_IDLE_SECONDS))
                 continue
@@ -367,6 +406,12 @@ class TransferManager(QObject):
         # Done jobs in the order they finished (an ordered set): the
         # oldest are dropped beyond MAX_DONE_KEPT.
         self._done_order: OrderedDict[str, None] = OrderedDict()
+        # The jobs that write through a temp file and have not finished, by
+        # destination path: a later job for that path may resume or
+        # supersede the partial of one that failed or was cancelled
+        # (_partials_ended, _remove_superseded_partials). Their status is
+        # read when asked - the worker sets it before its signal arrives.
+        self._temp_jobs_by_dest: dict[str, list[TransferJob]] = {}
         self._queued_count = 0
         self._active_count = 0
         self._dirs_to_remove_after_move: list[tuple] = []  # (backend, dir_path)
@@ -510,7 +555,8 @@ class TransferManager(QObject):
         resume_temp_path = ""
         if use_temp:
             probe = _probe_resumable_temp(dest_backend, dest_path, dest_listing, fingerprint,
-                                          self._partials_in_use)
+                                          self._partials_in_use,
+                                          lambda: self._partials_ended(dest_backend, dest_path))
             if probe is not None:
                 tmp_path, tmp_size = probe
                 # Only treat as resumable if the partial is non-empty
@@ -986,6 +1032,7 @@ class TransferManager(QObject):
             self.job_added.emit(job)
             self.job_error.emit(job.job_id, refusal)
             return
+        self._index_temp_job(job)
         self._queued_count += 1
         self.job_added.emit(job)
         if hold is not None:
@@ -1415,6 +1462,7 @@ class TransferManager(QObject):
             log.debug("operation journal retry start failed: %s", exc)
 
         self._jobs[new_job.job_id] = new_job
+        self._index_temp_job(new_job)
         self._queued_count += 1
         self.job_added.emit(new_job)
         self._worker.enqueue(new_job)
@@ -1426,6 +1474,48 @@ class TransferManager(QObject):
         """Temp paths of this manager's jobs that are queued or running."""
         return {j.temp_path for j in list(self._jobs.values())
                 if j.temp_path and j.status in (TransferStatus.PENDING, TransferStatus.ACTIVE)}
+
+    def _index_temp_job(self, job: TransferJob) -> None:
+        if job.use_temp_file:
+            self._temp_jobs_by_dest.setdefault(job.dest_path, []).append(job)
+
+    def _ended_for(self, dest_path: str) -> list[TransferJob]:
+        """The failed or cancelled jobs of this manager, still listed, that
+        wrote *dest_path* through a temp file."""
+        return [j for j in list(self._temp_jobs_by_dest.get(dest_path, ()))
+                if j.temp_path and j.status in (TransferStatus.ERROR, TransferStatus.CANCELLED)
+                and self._jobs.get(j.job_id) is j]
+
+    def _partials_ended(self, dest_backend: object, dest_path: str) -> set[str]:
+        """Temp paths for *dest_path* on *dest_backend* of this manager's
+        jobs that failed or were cancelled: their worker has let go of them."""
+        return {j.temp_path for j in self._ended_for(dest_path)
+                if _same_destination(j.dest_backend, dest_backend)}
+
+    def _remove_superseded_partials(self, done: TransferJob) -> None:
+        """The partials that failed or cancelled jobs of this manager kept
+        for *done*'s destination, now that *done* committed it: nothing
+        would resume them, and the hidden ``.name.part-…`` stayed beside
+        the finished copy (review round 9: copy, Cancel, copy again)."""
+        jobs = self._temp_jobs_by_dest.get(done.dest_path)
+        if jobs is not None:
+            # Done: it has no partial any more, and the index keeps no row
+            # Clear Finished or the trim of done jobs drops (by identity:
+            # jobs are dataclasses, == compares every field).
+            jobs[:] = [j for j in jobs if j is not done]
+            if not jobs:
+                del self._temp_jobs_by_dest[done.dest_path]
+        ended = self._ended_for(done.dest_path)
+        if done.skipped or done.dest_backend is None or not ended:
+            return
+        in_use = self._partials_in_use()
+        # By the temp path, not partial_kept(): a job cancelled before its
+        # first progress signal arrived counts no bytes, yet kept them.
+        # One no longer there is passed over (_remove_partials).
+        stale = [j for j in ended
+                 if _same_destination(j.dest_backend, done.dest_backend)
+                 and j.temp_path != done.temp_path and j.temp_path not in in_use]
+        self._remove_partials([(j.dest_backend, j.temp_path) for j in stale])
 
     @staticmethod
     def partial_kept(job: TransferJob) -> str:
@@ -1470,6 +1560,10 @@ class TransferManager(QObject):
         in_use = {j.temp_path for j in self._jobs.values() if j.temp_path}
         self._remove_partials([(b, p) for b, p in partials if p not in in_use])
         self._done_order.clear()
+        # Only the jobs still listed (queued or running) stay indexed.
+        self._temp_jobs_by_dest = {
+            path: kept for path, jobs in self._temp_jobs_by_dest.items()
+            if (kept := [j for j in jobs if self._jobs.get(j.job_id) is j])}
         # No failed move is left to retry, so no kept folder will empty.
         self._kept_move_dirs.clear()
 
@@ -1553,6 +1647,7 @@ class TransferManager(QObject):
             job.status = TransferStatus.DONE
             self._done_order[job_id] = None
             log.debug("Transfer finished: %s (%s)", job.filename, job_id)
+            self._remove_superseded_partials(job)
         self.job_finished.emit(job_id)
         if self._queue_empty():
             self._cleanup_move_dirs()

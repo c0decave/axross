@@ -211,7 +211,9 @@ class TransferDock(QDockWidget):
         # In a scroll area (ui.dock_frame), as the Terminal and the Log: with
         # a larger font the bottom row outgrew the room left of the right
         # dock column, and Qt laid the bottom area under that column.
-        self.setWidget(framed(container, self))
+        self._frame = framed(container, self)
+        self._container = container
+        self.setWidget(self._frame)
 
     @property
     def idle(self) -> bool:
@@ -225,7 +227,28 @@ class TransferDock(QDockWidget):
         self._table.setVisible(not idle)
         self._overall_progress.setVisible(not idle)
         self._idle_label.setVisible(idle)
+        self.fit_idle_minimum()
         self.idle_changed.emit(idle)
+
+    def changeEvent(self, event) -> None:  # noqa: N802 - Qt
+        super().changeEvent(event)
+        from PyQt6.QtCore import QEvent
+
+        if event.type() in (QEvent.Type.StyleChange, QEvent.Type.FontChange):
+            # A theme or font switch changes the idle row's height.
+            QTimer.singleShot(0, self.fit_idle_minimum)
+
+    def fit_idle_minimum(self) -> None:
+        """Idle, the dock is one row: its scroll area asked for 58 px
+        (QAbstractScrollArea's least, room for two scroll bars) around a
+        34 px row - the empty panel took 86 px of a 600 px screen (UX
+        review round 9). The row's own height is the least then; with jobs
+        the scroll area's again. Called again once the dock is styled (the
+        row's height depends on the theme's font and padding)."""
+        frame = getattr(self, "_frame", None)
+        if frame is None:
+            return
+        frame.setMinimumHeight(self._container.minimumSizeHint().height() if self._idle else 0)
 
     def _on_job_added(self, job: TransferJob) -> None:
         self._set_idle(False)

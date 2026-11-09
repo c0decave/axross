@@ -25,7 +25,7 @@ import paramiko
 from core import removal_cancel
 from core.backend import SessionLifecycle
 from core.client_identity import SSH_LOCAL_VERSION, apply_paramiko_banner_override
-from core.exec_util import COMMAND_NOT_FOUND, digest_from_sum_output
+from core.exec_util import command_missing, digest_from_sum_output
 from core.path_policy import MAX_RECURSIVE_DELETE_DEPTH, check_tree_depth, safe_join
 from core.profiles import ConnectionProfile
 from core.proxy import (
@@ -2032,7 +2032,7 @@ class SSHSession(SessionLifecycle):
         output = result.stdout.decode("utf-8", errors="replace")
         stderr = result.stderr.decode("utf-8", errors="replace")
         rc = result.returncode
-        if rc in COMMAND_NOT_FOUND:
+        if command_missing(rc, stderr, "df"):
             log.debug("df unavailable on %s: %s", self._profile.host, stderr.strip())
             return (0, 0, 0)
         if rc != 0:
@@ -2310,9 +2310,10 @@ class SSHSession(SessionLifecycle):
         output = result.stdout.decode("utf-8", errors="replace")
         stderr = result.stderr.decode("utf-8", errors="replace")
         rc = result.returncode
-        if rc in COMMAND_NOT_FOUND:
-            # No such tool on this host: "" lets the caller hash the
-            # stream, as documented above.
+        if command_missing(rc, stderr, tool):
+            # No such tool on this host (exit 126/127, or the words of
+            # cmd.exe / PowerShell on Windows OpenSSH, which exit 1): ""
+            # lets the caller hash the stream, as documented above.
             log.debug("%s unavailable on %s: %s", tool, self._profile.host, stderr.strip())
             self._checksum_unavailable[algorithm] = "missing"
             return ""

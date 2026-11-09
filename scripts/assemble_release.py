@@ -266,6 +266,57 @@ def collect_linux(dist: Path, plan: Plan) -> None:
                 plan.skipped.append(f"{variant}/{path.name}: not a release asset")
 
 
+#: BUILD-INFO.md's line naming the commit (scripts/build_dist.sh: "From commit
+#: <short hash>, a clean `git archive` of HEAD").
+_BUILD_COMMIT = re.compile(r"^From commit ([0-9a-f]{7,64})\b", re.MULTILINE)
+
+
+def build_commit(dist: Path) -> str | None:
+    """The commit *dist*'s BUILD-INFO.md says it was built from; None without one."""
+    try:
+        with open(dist / "BUILD-INFO.md", "rb") as fh:
+            text = fh.read(65536).decode("utf-8", "replace")
+    except OSError:
+        return None
+    match = _BUILD_COMMIT.search(text)
+    return match.group(1) if match else None
+
+
+def tag_commit(version: str) -> str | None:
+    """The commit this repository's tag ``v<version>`` points at; None
+    without such a tag (or without git)."""
+    try:
+        done = subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", "--verify", "--quiet",
+             f"refs/tags/v{version}^{{commit}}"],
+            capture_output=True, text=True, timeout=60, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    commit = done.stdout.strip()
+    return commit if done.returncode == 0 and re.fullmatch(r"[0-9a-f]{40,64}", commit) else None
+
+
+def check_build_commit(dist: Path, label: str, plan: Plan) -> None:
+    """The Linux dist must be built from the release tag's commit: the
+    linux job also builds ci/ branches and runs by hand, and an artifact of
+    such a run (or a builder's older dist) is otherwise indistinguishable
+    (review round 9). Refused on a mismatch; a dist without BUILD-INFO.md's
+    commit, or a tree without the tag, is named as missing (--require-all
+    refuses it then)."""
+    built = build_commit(dist)
+    if built is None:
+        plan.missing.append(f"{label}BUILD-INFO.md naming the commit it was built from")
+        return
+    tagged = tag_commit(plan.version)
+    if tagged is None:
+        plan.missing.append(f"the tag v{plan.version} in this repository (to check that "
+                            f"{label} was built from it)")
+        return
+    if not tagged.startswith(built):
+        raise Refused(f"{label} was built from commit {built}, but the tag v{plan.version} "
+                      f"is commit {tagged[:12]}: not this release's build")
+
+
 def collect_python(dist: Path, plan: Plan) -> None:
     sums = _folder_sums(dist, plan, ".") if any(dist.glob("axross-*")) else {}
     for name in (f"axross-{plan.version}-py3-none-any.whl", f"axross-{plan.version}.tar.gz"):
@@ -1034,6 +1085,7 @@ def _assemble(args, stack: contextlib.ExitStack) -> int:
     if dist is not None:
         if not dist.is_dir():
             raise Refused(f"{dist} is not a folder")
+        check_build_commit(dist, f"ci/{CI_LINUX}/" if dist == ci_dist else f"{dist}/", plan)
         collect_linux(dist, plan)
         collect_python(dist, plan)
     else:

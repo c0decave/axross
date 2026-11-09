@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core import mcp_client as C  # noqa: E402
 from core import mcp_runner as R  # noqa: E402
+from core.mcp_script_pin import pinned  # noqa: E402
 
 _SERVER = '''
 import json, os, sys
@@ -70,9 +71,10 @@ def test_sad_a_module_in_the_folder_axross_was_started_from_is_not_imported(
         tmp_path, state_home, monkeypatch):
     repo = tmp_path / "cloned-repo"
     marker = tmp_path / "PLANTED_RAN"
-    _module(repo, "axross_r8_cwd_probe", marker, "planted")
+    # An MCP server's package name (round 9: only those are pure with -m).
+    _module(repo, "mcp_r8_cwd_probe", marker, "planted")
     monkeypatch.chdir(repo)
-    config = C.McpServerConfig(name="time", command=(sys.executable, "-m", "axross_r8_cwd_probe"))
+    config = C.McpServerConfig(name="time", command=(sys.executable, "-m", "mcp_r8_cwd_probe"))
     assert config.host_run_problem() == ""  # a pure launcher: it runs on the host ...
     with pytest.raises(C.McpClientError, match="No module named"):
         C.McpClient(config)
@@ -86,7 +88,8 @@ def test_happy_a_host_run_server_starts_in_its_private_empty_folder(tmp_path, st
     script.parent.mkdir()
     script.write_text(_SERVER.format(marker=str(marker), tag="srv"))
     monkeypatch.chdir(tmp_path)
-    client = C.McpClient(C.McpServerConfig(name="srv-1", command=(sys.executable, str(script))))
+    client = C.McpClient(pinned(C.McpServerConfig(name="srv-1",
+                                                  command=(sys.executable, str(script)))))
     try:
         assert client.server_info["name"] == "srv"
     finally:

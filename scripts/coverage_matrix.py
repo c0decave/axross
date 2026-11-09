@@ -1063,6 +1063,7 @@ FEATURES: tuple[Feature, ...] = (
             "core/mcp_discover.py",
             "core/mcp_runner.py",
             "core/mcp_egress.py",
+            "core/mcp_script_pin.py",
             "ui/mcp_catalog_dialog.py",
         ],
         [

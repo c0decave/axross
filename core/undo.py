@@ -95,6 +95,7 @@ _OPERATION_NAMES = {
     "metadata_remove": "metadata removal",
     "atomic_write": "file save",
     "undo": "undo",
+    "delete": "permanent delete",
 }
 
 
@@ -300,16 +301,19 @@ def _refuse_replaced(plan: UndoPlan, backend) -> None:
 
 
 def unchanged_parts(plan: UndoPlan, backend) -> tuple[UndoPlan, list[str]]:
-    """*plan* (a batch) without the moved entries whose destination is no
-    longer what the move put there (:func:`replaced_reason`), and those
-    as failures ("path: reason"). Run before the transfer engine takes
-    the rest back (the renames of apply_batch_files check themselves)."""
+    """*plan* (a batch) without the moved entries that are gone from where
+    the move put them or are no longer what it put there
+    (:func:`_moved_gone_reason`), and those as failures ("path: reason").
+    Run before the transfer engine takes the rest back (the renames of
+    apply_batch_files check themselves): a file renamed inside a moved
+    folder came back as a raw "[Errno 2] No such file or directory"
+    (review round 9)."""
     if plan.action != "batch":
         return plan, []
     kept: list[UndoPlan] = []
     failures: list[str] = []
     for part in plan.parts:
-        reason = replaced_reason(part, backend) if part.action == "transfer_back" else ""
+        reason = _moved_gone_reason(part, backend) if part.action == "transfer_back" else ""
         if reason:
             failures.append(f"{part.source or part.dest}: {reason}")
         else:
@@ -433,6 +437,12 @@ def plan_undo(event: dict) -> UndoPlan:
             direction=str(details.get("direction", "")),
             source_backend=str(details.get("source_backend", "")),
         )
+
+    if operation == "delete":
+        # Journaled by the pane's Delete Permanently so that Ctrl+Z right
+        # after it names it, instead of the operation before (UX review
+        # round 9: "the last operation (undo) cannot be reversed").
+        return _refuse(event, _tr("the items were deleted for good, not moved to the trash"))
 
     if operation == "transfer":
         return _refuse(
@@ -1017,6 +1027,23 @@ def _moved_gone_reason(plan: UndoPlan, backend) -> str:
         return ""
 
 
+def record_delete(backend, paths: list[str], removed: int) -> None:
+    """Journal a permanent delete of *removed* entries (the first of
+    *paths* named): nothing to reverse, but Ctrl+Z after it says so
+    (:func:`plan_undo`). A journal that cannot be written is logged only -
+    the delete has happened."""
+    from core.operation_journal import finish_operation, new_operation_id
+
+    if removed <= 0 or not paths:
+        return
+    label = getattr(backend, "name", "") or type(backend).__name__
+    try:
+        finish_operation(new_operation_id(), "delete", status="done", source=str(paths[0]),
+                         backend=str(label), details={"entries": int(removed)})
+    except Exception as exc:  # noqa: BLE001 - the delete itself is done
+        log.warning("undo: could not journal the permanent delete: %s", exc)
+
+
 def record_skipped(plan: UndoPlan, reason: str) -> None:
     """Journal that *plan* could not be undone and was skipped (its moved
     entry is gone or was replaced, see :func:`gone_reason`): like
@@ -1055,7 +1082,11 @@ def pick_undoable(
     Non-reversible entries are skipped too — a copy sitting on top of
     the stack should not block undoing the move underneath it — and so
     is a plan *gone* says can no longer be carried out (see
-    :func:`gone_reason`).
+    :func:`gone_reason`). A permanent delete is the exception: Ctrl+Z
+    right after one must say that it cannot be undone, not offer to undo
+    something older the user may not remember (None here; the caller
+    reports it and journals it as skipped with :func:`record_skipped`,
+    so the next Ctrl+Z reaches the operation before it).
     """
     labels = set(available_backends)
     if not labels:
@@ -1064,6 +1095,8 @@ def pick_undoable(
         # an empty set, which is a StopIteration on Ctrl+Z.
         return None
     for plan in plans:  # already newest-first
+        if not plan.reversible and plan.operation == "delete":
+            return None
         if not plan.reversible:
             continue
         if plan.backend and plan.backend not in labels:
@@ -1086,6 +1119,7 @@ __all__ = [
     "gone_reason",
     "operation_name",
     "pick_undoable",
+    "record_delete",
     "plan_undo",
     "record_skipped",
     "record_undone",

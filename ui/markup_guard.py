@@ -155,8 +155,12 @@ _STYLE_ATTRIBUTE = re.compile(r"\bstyle\s*=\s*(?:\"([^\"]*)\"?|'([^']*)'?|([^\s>
                               re.IGNORECASE)
 _STYLE_BLOCK = re.compile(r"<\s*style\b[^>]*>(.*?)(?:<\s*/\s*style|\Z)",
                           re.IGNORECASE | re.DOTALL)
-#: a CSS declaration
-_DECLARATION = re.compile(r"(-?[a-z][a-z-]*)\s*:\s*([^;{}]*)", re.IGNORECASE)
+#: what ends a CSS declaration
+_DECLARATION_END = re.compile(r"[;{}]")
+#: a character of a CSS property name
+_PROPERTY_CHAR = re.compile(r"[a-z-]", re.IGNORECASE)
+#: a CSS property name (checked on the run before a colon only)
+_PROPERTY = re.compile(r"-?[a-z][a-z-]*", re.IGNORECASE)
 #: properties whose unitless number Qt multiplies: -> pixels per unit
 _UNITLESS = {"-qt-block-indent": 40.0, "-qt-list-indent": 40.0, "line-height": 14.0}
 _NESTING = re.compile(r"<\s*(/?)\s*(table|blockquote|ul|ol|dl)\b", re.IGNORECASE)
@@ -212,13 +216,43 @@ def _plain_css(css: str) -> str:
     return css
 
 
+def _declarations(css: str):
+    """``(property, value)`` of each CSS declaration in *css*: per part
+    between ``;``, ``{`` and ``}``, the first colon with a property name
+    right before it (white space between allowed), the value the rest of
+    the part. Linear in *css* - the regex this replaces,
+    ``(-?[a-z][a-z-]*)\\s*:\\s*([^;{}]*)``, finds the same pairs but tried
+    every letter of a long run of letters: a 16 KB style value kept the
+    GUI thread 5.8 s, 32 KB 20 s."""
+    start = 0
+    size = len(css)
+    while start <= size:
+        end_match = _DECLARATION_END.search(css, start)
+        end = end_match.start() if end_match else size
+        colon = css.find(":", start, end)
+        while colon != -1:
+            stop = colon
+            while stop > start and css[stop - 1].isspace():
+                stop -= 1
+            first = stop
+            while first > start and _PROPERTY_CHAR.match(css, first - 1):
+                first -= 1
+            # the name starts at the first "-?letter" of that run
+            name = _PROPERTY.search(css, first, stop)
+            if name is not None and name.end() == stop:
+                yield name.group(0), css[colon + 1:end].lstrip()
+                break
+            colon = css.find(":", colon + 1, end)
+        start = end + 1
+
+
 def _too_large_style(css: str) -> bool:
     css = _plain_css(css)
-    for match in _DECLARATION.finditer(css):
-        prop = match.group(1).lower()
+    for prop, value in _declarations(css):
+        prop = prop.lower()
         font = prop in ("font", "font-size")
         limit = MAX_FONT_PX if font else MAX_LENGTH_PX
-        for length in _LENGTH.finditer(match.group(2)):
+        for length in _LENGTH.finditer(value):
             value, unit = _number(length.group(1)), (length.group(2) or "").lower()
             if unit == "%":
                 # a percentage of the font for a font or a line; of the
@@ -522,12 +556,29 @@ def _as_written(text: str) -> str:
     return f"{_DEFUSED_HEAD}{html.escape(text)}{_DEFUSED_TAIL}"
 
 
+#: The longest text rendered as rich text in a label, a tooltip or a
+#: message box; a longer one is shown as written. axross' own rich texts
+#: there are far shorter. Qt lays out nested tags in quadratic time, and
+#: the allowed ones the checks above do not count (``<div>``, ``<b><i><u>``,
+#: ``<center>``) nest freely: 60-100 KB of them kept the GUI thread 28-39 s.
+MAX_RICH_CHARS = 4096
+
+
+def too_long(text) -> bool:
+    """True when *text* would be rendered as rich text and is longer than
+    :data:`MAX_RICH_CHARS` (a text already escaped to show as written
+    excluded)."""
+    if not isinstance(text, str) or len(text) <= MAX_RICH_CHARS or "<" not in text:
+        return False
+    return _rich(text) and not _escaped_only(text)
+
+
 def defuse(text):
-    """*text*, or - when Qt would render it as rich text that loads a
-    resource, asks for an absurd size or holds markup the guard cannot
-    vouch for (:func:`unvouched`) - the same text escaped, so it shows
-    exactly as written."""
-    if unvouched(text) or asks_for_resource(text) or bombs_layout(text):
+    """*text*, or - when Qt would render it as rich text that is longer than
+    :data:`MAX_RICH_CHARS`, loads a resource, asks for an absurd size or
+    holds markup the guard cannot vouch for (:func:`unvouched`) - the same
+    text escaped, so it shows exactly as written."""
+    if too_long(text) or unvouched(text) or asks_for_resource(text) or bombs_layout(text):
         return _as_written(text)
     return text
 
@@ -928,6 +979,6 @@ def install() -> None:
 
 
 __all__ = ["MAX_CELLS", "MAX_FONT_PX", "MAX_IMAGE_BYTES", "MAX_INDENT_DEPTH", "MAX_LENGTH_PX",
-           "MAX_RENDER_HEIGHT_PX", "MAX_RENDER_WIDTH_PX", "MAX_SIZE", "MAX_SPAN",
+           "MAX_RENDER_HEIGHT_PX", "MAX_RENDER_WIDTH_PX", "MAX_RICH_CHARS", "MAX_SIZE", "MAX_SPAN",
            "MAX_TABLE_DEPTH", "asks_for_resource", "bombs_layout", "defuse", "defuse_message",
-           "holds_link", "install", "original_of", "show_as_written"]
+           "holds_link", "install", "original_of", "show_as_written", "too_long"]

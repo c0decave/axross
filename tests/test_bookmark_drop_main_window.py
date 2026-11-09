@@ -451,7 +451,8 @@ class UnavailableTargetTest(_Window):
         self.transfer_drop(self.left, [self.a / "f.txt"], bm)
         self.settle()
         self.assertEqual(len(self.warnings), 1, self.warnings)
-        self.assertIn("connection closed", self.warnings[0])
+        # described, not the raw exception text (round-9 UX review)
+        self.assertIn("connection was closed", self.warnings[0])
         self.assertTrue((self.a / "f.txt").exists())
         self.assertEqual(self.win._transfer_manager.all_jobs(), [])
 

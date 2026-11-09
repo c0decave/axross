@@ -113,9 +113,13 @@ def _status_refused(tag, arg):
 
 
 def test_sad_a_failed_status_does_not_delete_the_mailbox(session):
-    server, s = session(STATUS=_status_refused)
+    # Not INBOX: that one is refused before any question (review round 9).
+    server, s = session(
+        STATUS=_status_refused,
+        LIST=b'* LIST (\\HasNoChildren) "/" "INBOX"\r\n* LIST (\\HasNoChildren) "/" "Work"\r\n',
+    )
     with pytest.raises(OSError, match="Cannot tell whether"):
-        s.remove("/INBOX")
+        s.remove("/Work")
     assert not any(" DELETE " in c for c in server.commands)
 
 

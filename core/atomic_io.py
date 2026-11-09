@@ -244,6 +244,53 @@ def _is_local(backend) -> bool:
     return isinstance(backend, LocalFS)
 
 
+def _private_local(backend) -> bool:
+    """LocalFS with its own open_write (core.local_fs.LocalFS.private_writes):
+    its temp file is created exclusively, never through a link, and written
+    through that one descriptor."""
+    check = getattr(backend, "private_writes", None)
+    try:
+        return bool(callable(check) and check())
+    except Exception:  # noqa: BLE001 - a stand-in without the method's state
+        return False
+
+
+def _open_temp(backend, tmp: str, previous_mode: int | None):
+    """``(handle, its fstat or None)`` of the new temp file *tmp*.
+
+    On the local file system it is created exclusively (O_EXCL, no link
+    followed), 0600, and given *previous_mode* through its descriptor
+    before a byte lands - created with the umask's 0644 and chmod-ed by name
+    afterwards, anyone could open a secret's temp file in between and read
+    it later through that descriptor, and a link swapped in under the name
+    took the chmod and the bytes (review round 9). Elsewhere: precreated
+    with the mode, then opened by name, as before."""
+    if _private_local(backend):
+        from core.local_fs import create_private_file
+
+        fh = create_private_file(tmp, previous_mode)
+        try:
+            return fh, os.fstat(fh.fileno())
+        except BaseException:
+            fh.close()
+            raise
+    if previous_mode is not None:
+        _precreate_with_mode(backend, tmp, previous_mode | _OWNER_WRITE)
+    return backend.open_write(tmp), None
+
+
+def _refuse_swapped_temp(tmp: str, written) -> None:
+    """OSError when the local temp file *tmp* is no longer the file written
+    through its descriptor (*written*): the rename would put what was put
+    there in the target's place."""
+    if written is None:
+        return
+    from core.local_fs import same_entry
+
+    if not same_entry(tmp, written):
+        raise OSError(errno.EIO, f"the temp file {tmp} was replaced while it was written", tmp)
+
+
 def _keep_identity_reason(backend, path: str) -> str | None:
     """Why a save to the local file *path* must write INTO the file
     instead of renaming a new one over it; ``None`` when a rename loses
@@ -512,12 +559,12 @@ def atomic_write(backend, path: str, data: bytes) -> None:
     # comes from _resolve_destination, i.e. from the file, not a link.
     carried = True
     try:
-        if previous_mode is not None:
-            _precreate_with_mode(backend, tmp, previous_mode | _OWNER_WRITE)
-        with backend.open_write(tmp) as f:
+        f, written = _open_temp(backend, tmp, previous_mode)
+        with f:
             f.write(data)
-        if previous_mode is not None and not previous_mode & _OWNER_WRITE:
+        if written is None and previous_mode is not None and not previous_mode & _OWNER_WRITE:
             _restore_mode(backend, tmp, previous_mode)
+        _refuse_swapped_temp(tmp, written)
         carried = _carry_local_attributes(backend, path, tmp)
         owned = carried and _carry_remote_owner(backend, path, tmp)
         carried = carried and owned
@@ -607,9 +654,8 @@ def atomic_write_stream(
 
     tmp = _temp_sibling(backend, path)
     try:
-        if previous_mode is not None:
-            _precreate_with_mode(backend, tmp, previous_mode | _OWNER_WRITE)
-        with backend.open_write(tmp) as f:
+        f, written = _open_temp(backend, tmp, previous_mode)
+        with f:
             while True:
                 chunk = reader.read(chunk_size)
                 if not chunk:
@@ -618,8 +664,9 @@ def atomic_write_stream(
                 bytes_done += len(chunk)
                 if on_chunk:
                     on_chunk(bytes_done)
-        if previous_mode is not None and not previous_mode & _OWNER_WRITE:
+        if written is None and previous_mode is not None and not previous_mode & _OWNER_WRITE:
             _restore_mode(backend, tmp, previous_mode)
+        _refuse_swapped_temp(tmp, written)
         from core.server_ops import _finalize_temp_destination
 
         _finalize_temp_destination(backend, tmp, path)

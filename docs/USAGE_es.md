@@ -394,7 +394,12 @@ recorrido que se detiene a medias dice cuánto se encoló.
 - **Resume.** Las transferencias fallidas pueden reanudarse; los
   bytes parciales en el destino se retoman donde quedaron. Una
   transferencia que falla porque el destino está lleno borra su
-  fichero parcial.
+  fichero parcial. En el disco local el parcial solo se continúa
+  mientras sea un fichero normal suyo con un solo nombre (nunca a través
+  de un enlace que otro haya puesto en su lugar en una carpeta
+  compartida), y cada fichero temporal se escribe por el descriptor con
+  que se abrió, creado con el modo del origen (una clave 0600 nunca es
+  legible por otros, ni un instante).
 - **Retry.** "Retry Failed" reintenta cada transferencia en estado
   de error, cada una una sola vez.
 - **Cancel All** detiene también una copia o un move cuyo recorrido
@@ -633,6 +638,10 @@ propio Find Files de axross (`core.file_search`, `core.file_categories`,
   borra el filtro y vuelve a la lista. Esc en la lista detiene primero
   un load en curso, luego borra un filtro activo, luego la selección y
   luego un cut pendiente de ese panel.
+- **Ctrl+L** salta al campo de la ruta - también desde el campo del
+  filtro, y Ctrl+F desde allí vuelve al filtro; **Esc** en el campo de la
+  ruta descarta lo escrito, muestra de nuevo la carpeta actual y vuelve a
+  la lista.
 - **Marcadores** como dock izquierdo; F8 marca el path actual, F12
   alterna el dock. Las carpetas arrastradas desde un pane al dock
   (espacio libre, un grupo o entre dos entradas) se convierten allí en
@@ -736,7 +745,10 @@ vuelve a acoplar.
   elemento demasiado grande, cifrado o roto muestra el motivo. El SVG
   solo se renderiza sin DOCTYPE/entidades, scripts ni referencias
   fuera del fichero, en un proceso aparte que se detiene a los 10
-  segundos. El modo `paranoid` bloquea el visor.
+  segundos, también un SVG con nombre de imagen (`x.png`); las
+  miniaturas del panel nunca dibujan uno, ni un PDF con nombre de
+  imagen (el visor muestra la primera página de ese PDF como la de
+  un PDF). El modo `paranoid` bloquea el visor.
   `I` (o el botón *Info*) muestra la metadata del elemento actual en
   un panel lateral, con *Remove metadata* — también en el visor de
   imágenes.
@@ -1558,7 +1570,24 @@ un fichero `objects` o `refs` cuenta tanto como una carpeta, y una entrada de
 archivo llamada `HEAD` no se extrae); igual `.hg/hgrc` y
 `.hg/hgrc-not-shared` de Mercurial, `.sl/config` de Sapling, `.jj/repo` de
 Jujutsu, `_darcs/prefs/defaults` de darcs y `.bzr/branch/branch.conf` de
-Breezy (y las carpetas `.hg`, `.sl`, `_darcs`, `.bzr` mismas). Cuenta cada nombre de
+Breezy (y las carpetas `.hg`, `.sl`, `_darcs`, `.bzr` mismas). Estos nombres
+cuentan sin distinguir mayúsculas (`head`, `.GIT`): en una memoria FAT o
+exFAT, un recurso SMB o una carpeta casefold Git recibe `head` al abrir
+`HEAD`. Los archivos de proyecto desde los que otros programas ejecutan
+código se rechazan también a cualquier profundidad: las carpetas `.claude`,
+`.vscode`, `.cursor`, `.idea`, `.zed`, `.devcontainer`, `.husky`, `.fleet`,
+`.gemini`, `.codex`, `.windsurf`, `.roo`, `.kiro`, `.amazonq`, `.continue`,
+`.theia` (hooks, tareas al abrir la carpeta, servidores MCP, órdenes de
+arranque y de dev container) y los archivos `.mcp.json`,
+`.devcontainer.json`, `*.code-workspace`, `.pre-commit-config.yaml`,
+`lefthook.yml` (y sus variantes) y `.overcommit.yml`; igual la carpeta que
+nombra `core.hooksPath` de un repositorio (`.githooks`, `.husky/_` de husky;
+también desde `~/.gitconfig`, `/etc/gitconfig` o `GIT_CONFIG_*`) y un
+archivo que su configuración incluye (`include.path = ../.gitconfig`): el
+siguiente `git commit` los ejecuta. Para que el agente cambie una de esas
+carpetas (`.vscode` de un proyecto), concede esa carpeta misma como raíz o
+carpeta adicional: solo cuentan los nombres por debajo de una carpeta
+concedida. Cuenta cada nombre de
 una ruta: tal como se escribe, tras cada symlink del camino y resuelto - y el
 destino de un symlink en esos sitios (GNU stow: `~/.config/kitty ->
 ~/dotfiles/kitty`) se protege como el sitio mismo, salvo que concedas ese
@@ -1567,7 +1596,9 @@ cambiarían también; escribe una copia con otro nombre). En el sandbox las
 entradas ocultas de una carpeta personal con escritura se montan de solo
 lectura y no se puede crear ninguna nueva, los destinos de esos symlinks son
 de solo lectura; la configuración, los hooks, `info` y `commondir` de Git de
-la carpeta del agente y de los repositorios una carpeta más abajo también, y
+la carpeta del agente y de los repositorios una carpeta más abajo también,
+igual que los ajustes de proyecto y las carpetas de hooks de arriba que
+existan ahí, y
 un `.git/commondir` que el agente cree ahí se aparta al terminar su tarea
 (renombrado a `commondir.set-aside-by-axross-<hora>`), igual que un
 `.git/config.worktree` y el `commondir` y `config.worktree` de las carpetas
@@ -1593,11 +1624,15 @@ herramienta. Un symlink a un secreto (`~/.ssh/id_ed25519 ->
 ~/keys/id_ed25519`) hace secreto su destino, y un hard link a un archivo
 secreto tampoco se lee. En cualquier sitio - también en una carpeta de
 proyecto - el agente no lee una clave privada ni una base de contraseñas
-reconocida por su contenido (`-----BEGIN … PRIVATE KEY-----`, una clave
-OpenSSH o PuTTY, una base de KeePass) ni archivos que por su nombre guardan
-credenciales (`.env`, `.env.*` salvo `.env.example`/`.sample`/`.template`,
-`.netrc`, `.git-credentials`, `.pgpass`, `*.tfstate`, `*.kdbx`,
-`id_rsa`/`id_ed25519`/`id_ecdsa`, `*.ppk`, `*.p12`, `*.pfx`). Con una raíz
+reconocida por su contenido (`-----BEGIN … PRIVATE KEY-----` en el primer
+MiB, también tras los certificados de un bundle, una clave OpenSSH o PuTTY,
+una base de KeePass) ni archivos que por su nombre guardan credenciales
+(`.env`, `.env.*` salvo `.env.example`/`.sample`/`.template`, `*.env`,
+`.envrc`, `.netrc`, `.git-credentials`, `.pgpass`, `.npmrc`, `.pypirc`,
+`.htpasswd`, `*.tfstate`, `*.kdbx`, `id_rsa`/`id_ed25519`/`id_ecdsa` y sus
+copias (`id_rsa.bak`), `*.ppk`, `*.p12`, `*.pfx`, `kubeconfig`,
+`credentials.json`, `client_secret*.json`, `secrets.yaml`, `secrets.json`,
+`.aws/credentials`, `.docker/config.json`, `.kube/config`). Con una raíz
 que contiene `/proc` (`--mcp-root /`) tampoco se leen el entorno, la línea
 de órdenes, la memoria, los maps y los ficheros abiertos de un proceso
 (`/proc/<pid>/environ`, …, `/proc/self`) ni `/run/secrets`. El sandbox solo

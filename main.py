@@ -928,7 +928,15 @@ def _run(args) -> int:
         # first - the slot then died with a NameError, the process aborted.
         global _script_namespace
         _script_namespace = {}
-        status = execute_source(source, filename, _script_namespace)
+        try:
+            status = execute_source(source, filename, _script_namespace)
+        except Exception:  # noqa: BLE001 - shown like the interpreter would
+            # As the Scripts dock shows it: the script's own frames, not
+            # main.py's and the runner's above them (review round 9).
+            from core.script_runner import _script_traceback_text
+
+            sys.stderr.write(_script_traceback_text(skip=(__file__,)))
+            status = 1
         # A script that built Qt objects of its own and left them: they go
         # before PyQt's exit walk, which crashes when one of their
         # destructors calls into Python (core.qt_exit).

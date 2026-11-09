@@ -307,7 +307,11 @@ class PropertiesDialog(QDialog):
         if key == "Created":
             return _format_time(item.created)
         if key == "Backend":
-            return getattr(self._backend, "name", None) or DASH
+            from ui.format_utils import backend_label
+
+            # "Backend: Local" in German (UX review round 9).
+            name = getattr(self._backend, "name", None)
+            return backend_label(name) if name else DASH
         return DASH
 
     def _selection_text(self) -> str:

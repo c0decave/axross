@@ -228,5 +228,97 @@ class SecondaryTextSelectionAndDisabledTest(_QtCase):
             themes.contrast_ratio("#000000", fixed.color(role.Highlight).name()), 4.5)
 
 
+class DropDownAndSpinArrowsTest(_QtCase):
+    """UX review round 9: in Modern Light and Dark a drop-down had no arrow
+    and a number field no up/down arrows (the template's
+    ``QComboBox::drop-down { border: none; }`` and the styled spin box
+    frame switch Fusion's arrows off). Every theme must draw them."""
+
+    THEMES = ("modern-light", "modern-dark", "classic", "default", "hacker", "amber")
+
+    def setUp(self) -> None:
+        self._cache = tempfile.mkdtemp()
+        self._env = mock.patch.dict(os.environ, {"XDG_CACHE_HOME": self._cache})
+        self._env.start()
+
+    def tearDown(self) -> None:
+        self._env.stop()
+        __import__("shutil").rmtree(self._cache, ignore_errors=True)
+
+    def _arrow_contrast(self, theme: str, widget, *, at: str = "both") -> float:
+        """Best contrast between a pixel in the arrow area (the right 24 px,
+        inside the frame) and the field's own background (left inside)."""
+        from ui import themes
+
+        # On the widget, not the application: an application-wide sheet
+        # re-polishes every widget earlier tests of this process left
+        # behind, two dozen times here (a worker crashed on it).
+        widget.setStyleSheet(themes.stylesheet_for(theme, None))
+        tokens = themes.palette_tokens_for(theme)
+        widget.setPalette(themes.qpalette_for(tokens) if tokens
+                          else self.app.style().standardPalette())
+        widget.resize(200, 34)
+        widget.show()
+        self.app.processEvents()
+        img = widget.grab().toImage()
+        widget.hide()
+        widget.deleteLater()
+        h, w = img.height(), img.width()
+        bg = TA._rgb(img, 6, h // 2)
+        rows = {"both": range(3, h - 3), "up": range(3, h // 2),
+                "down": range(h // 2, h - 3)}[at]
+        best = 1.0
+        for y in rows:
+            for x in range(w - 24, w - 3):
+                best = max(best, TA.contrast(TA._rgb(img, x, y), bg))
+        return best
+
+    def test_happy_every_theme_draws_the_drop_down_arrow(self) -> None:
+        from PyQt6.QtWidgets import QComboBox
+
+        for theme in self.THEMES:
+            combo = QComboBox()
+            combo.addItems(["SFTP", "FTP"])
+            ratio = self._arrow_contrast(theme, combo)
+            self.assertGreaterEqual(ratio, 3.0, f"{theme}: no visible drop-down arrow")
+
+    def test_happy_every_theme_draws_both_spin_box_arrows(self) -> None:
+        from PyQt6.QtWidgets import QDoubleSpinBox, QSpinBox
+
+        for theme in self.THEMES:
+            for cls in (QSpinBox, QDoubleSpinBox):
+                for half in ("up", "down"):
+                    spin = cls()
+                    spin.setRange(0, 100)
+                    spin.setValue(22)
+                    ratio = self._arrow_contrast(theme, spin, at=half)
+                    self.assertGreaterEqual(
+                        ratio, 3.0, f"{theme}: {cls.__name__} has no visible {half} arrow")
+
+    def test_sad_the_modern_rules_name_an_image_for_every_arrow(self) -> None:
+        from ui import themes
+
+        for theme in ("modern-light", "modern-dark"):
+            css = themes.stylesheet_for(theme, None)
+            for selector in ("QComboBox::down-arrow", "QSpinBox::up-arrow",
+                             "QSpinBox::down-arrow", "QDoubleSpinBox::up-arrow",
+                             "QDoubleSpinBox::down-arrow"):
+                rule = re.search(re.escape(selector) + r"[^{]*\{([^}]*)\}", css)
+                self.assertIsNotNone(rule, f"{theme}: {selector}")
+                image = re.search(r'image: url\("([^"]+)"\)', rule.group(1))
+                self.assertIsNotNone(image, f"{theme}: {selector}")
+                self.assertTrue(Path(image.group(1)).is_file(), image.group(1))
+
+    def test_edge_an_arrow_at_the_end_of_the_range_is_fainter_not_gone(self) -> None:
+        from PyQt6.QtWidgets import QSpinBox
+
+        for theme in ("modern-light", "modern-dark"):
+            spin = QSpinBox()
+            spin.setRange(0, 10)
+            spin.setValue(0)  # the down arrow is "off"
+            ratio = self._arrow_contrast(theme, spin, at="down")
+            self.assertGreater(ratio, 1.3, f"{theme}: the off arrow vanished")
+
+
 if __name__ == "__main__":
     unittest.main()

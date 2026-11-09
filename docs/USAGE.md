@@ -385,6 +385,11 @@ list, and a walk that stops part-way says how much was queued.
 - **Resume.** Failed transfers can be resumed; partial bytes on the
   destination are picked up where they left off. A transfer that
   failed because the destination is full removes its partial file.
+  On the local disk the partial is continued only while it is a regular
+  file of yours with one name (never through a link someone put in its
+  place in a shared folder), and every temp file is written through the
+  one descriptor it was opened with, created with the source's mode
+  (a 0600 key is never readable by others, not for a moment).
 - **Retry.** "Retry Failed" replays every error-state transfer in
   the queue, each failed transfer once.
 - **Cancel All** also stops a copy or move whose folder walk is
@@ -485,7 +490,7 @@ The right-click menu is one column. **Open** comes first (a folder opens in the 
 | Open External Terminal Here | Right-click (local panes) | Starts `$TERMINAL`, else the first installed of x-terminal-emulator, gnome-terminal, konsole, xfce4-terminal, alacritty, kitty, foot, wezterm, xterm — with the folder as working directory, detached, no shell involved. |
 | Copy / Cut / Paste | Right-click (Paste also on empty space), `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy remembers the selection for Paste and puts its paths on the clipboard as text for other programs; Cut remembers the selection and removes nothing (the entries are dimmed); Paste in any pane copies the copied entries, or moves the cut ones, into its folder through the transfer queue - see *Transfers*. A cut never pasted leaves everything in place. *More ▸ Copy Path* puts only the paths on the clipboard. |
 | Move to Trash | Right-click, `Del` | Universal recycle bin (a folder `.axross-trash` in the connection's home, so it works wherever the connection can rename; read-only protocols and ones without rename - Gopher, LDAP, NNTP, PJL, POP3, SLP, SVN, TFTP, WMI - have none, and there `Del` asks for a permanent delete instead). Runs like Delete Permanently: in the background, with the same second question for hidden entries. |
-| Delete Permanently | Right-click, `Shift+Del` | First counts what will go (folders, files, size, hidden entries) off the GUI thread, then asks - with **No** as the default button, so `Enter` keeps the files. A selected folder that holds hidden entries (dotfiles, or a backend's hidden flag) - or one the check could not fully read - needs a second OK whose default is No. The removal runs in the background: the status line shows the progress, Cancel stops at the next entry - also inside a folder being deleted on a local path, SMB, SFTP or FTP (SFTP removes a folder's files in batches of 16 requests at once and stops after the running batch), and the status line then says how much of that folder went (removed entries stay removed; a server that deletes a whole folder in one request, such as WebDAV or S3, finishes that folder first) - failures are listed per entry, and the folder is reloaded at the end. A path that is already being deleted is refused, also from the other pane. |
+| Delete Permanently | Right-click, `Shift+Del` | First counts what will go (folders, files, size, hidden entries) off the GUI thread, then asks - with **No** as the default button, so `Enter` keeps the files. A selected folder that holds hidden entries (dotfiles, or a backend's hidden flag) - or one the check could not fully read - needs a second OK whose default is No. The removal runs in the background: the status line shows the progress, Cancel stops at the next entry - also inside a folder being deleted on a local path, SMB, SFTP or FTP (SFTP removes a folder's files in batches of 16 requests at once and stops after the running batch), and the status line then says how much of that folder went (removed entries stay removed; a server that deletes a whole folder in one request, such as WebDAV or S3, finishes that folder first) - failures are listed per entry, and the folder is reloaded at the end. A path that is already being deleted is refused, also from the other pane. Three deletes ask once more, each with its own explanation and **No** as the default: INBOX on an IMAP server whose folders all live below it (Courier, Cyrus, Dovecot with the `INBOX.` prefix) - Yes deletes those folders, INBOX and its messages stay, because no IMAP server deletes INBOX; a DFS link on SMB - Yes deletes the contents of the share it leads to (named in the question), the link itself stays; and on WinRM/WMI a name made only of dots and spaces, which Windows reads as the folder above it. No deletes nothing. A script says yes with `keep_namespace_root=True`, `follow_dfs_link=True` or `confirm_alias=True`; the agent and MCP clients cannot, they get the explanation and tell you. |
 | Show Trash… | Right-click | Restore / permanently-delete dialog. |
 | Show Versions… | Right-click | Snapshot browser — Save Version As, Restore as Current. |
 | Show Checksum… | Right-click | Native checksum (S3 ETag, Drive md5, ssh sha256sum…) with stream-hash fallback. |
@@ -622,6 +627,9 @@ archives, is axross' own Find Files (`core.file_search`,
   the filter and goes back to the list. Esc in the list stops a running
   load first, then clears an active filter, then the selection, then
   drops a pending Cut of that pane.
+- **Ctrl+L** jumps to the path field - from the filter field too, and
+  Ctrl+F from there back to the filter; **Esc** in the path field drops
+  what was typed, shows the current folder again and goes back to the list.
 - **Bookmarks** (left dock, or the toolbar's bookmark button) for
   one-click navigation; F8 bookmarks the current path (name, icon,
   colour and group are chosen in the dialog), F12 toggles the dock.
@@ -750,7 +758,10 @@ bar docks it again.
   too large, encrypted or broken shows the reason instead. SVG is
   rendered only when it has no DOCTYPE/entities, scripts or
   references outside the file, and in a separate process that is
-  stopped after 10 seconds. `paranoid` mode blocks the viewer.
+  stopped after 10 seconds - also an SVG named like a picture
+  (`x.png`); thumbnails in the pane never draw one, nor a PDF named
+  like a picture (the viewer shows such a PDF's first page as it draws
+  a PDF). `paranoid` mode blocks the viewer.
   `I` (or the *Info* button) shows the current item's metadata in a
   side panel, with *Remove metadata* — in the image viewer too.
 - **Media Player** (bundled extension; its toolbar button or
@@ -945,7 +956,9 @@ Metadata…** acts on the selected files and folders, or on the folder
 itself when nothing is selected. The metadata window shows one row per
 file with its fields one after another as `key: value`; a double-click
 or right-click → *Properties…* opens every field of that file, grouped
-and one per line, and right-click → *Remove Metadata* cleans only the
+and one per line (a file with very many or very long fields shows the
+first ones and says how many more there are; *Copy* copies them all),
+and right-click → *Remove Metadata* cleans only the
 selected files. It has a filter, *Copy* (the fields of the selected
 files as text), *Export…* (JSON or CSV) and *Remove Metadata* for every
 file listed. Folders are read flat;
@@ -990,8 +1003,8 @@ of them opens its part of this section.
 
 ### Duplicate Finder
 
-*View → Duplicate Finder…* (`Ctrl+Shift+D`; right-click → *Find
-Duplicate Files…* in a pane) works on the duplicate index (`cas.sqlite`,
+*View → Duplicate Finder…* (`Ctrl+Shift+D`; right-click → *Analyse →
+Duplicate Finder…* in a pane) works on the duplicate index (`cas.sqlite`,
 see *The offline index*).
 It groups indexed files by content hash, largest waste first: each group shows the space it would free, the status line the total. Empty files and groups that are only hard links of one file are hidden unless *Empty files* / *Hard links* is ticked. *Filter* (text, or patterns like `*.jpg *.png`; `Ctrl+F`), *At least* (a size) and *Sort* (space to reclaim, size, copies, name, folder) narrow the list; the copies of a group stay in survivor order (the first is kept). *Rebuild from Active Pane…* hashes the folder in the background with counts, bytes and *Cancel*: unchanged files are not hashed again, files gone since the last scan leave the index, and the report names files that could not be read, folders that could not be listed and FIFOs, sockets or devices that were skipped (never read: that could hang). A backend without a content checksum (SMB, plain FTP, WebDAV with ETags only) has its files read instead — only those that share their size with another file, and only as far as their first 64 KiB match; an ETag never counts as a hash. *Mark All Duplicates (keep first)* keeps the oldest copy; *Mark, Keeping…* (also in the right-click menu) keeps the newest copy, the shortest path or a copy inside a folder, or marks the copies inside a folder; a hard link of a kept copy is never marked, and hard links do not count as space to reclaim. *Move Selected to Trash…* (`Del`) moves the marked copies to the axross trash after a live re-check that a genuine other copy survives. `Enter` opens the containing folder, the line under the list shows the current row in full (exact size, hash, hard links), and `ax-cas://…` URLs can be copied. Thousands of groups appear a chunk at a time while the window stays usable.
 
@@ -1578,7 +1591,22 @@ counts as much as a folder, and an archive member named `HEAD` is not
 extracted); likewise Mercurial's `.hg/hgrc` and `.hg/hgrc-not-shared`,
 Sapling's `.sl/config`, Jujutsu's `.jj/repo`, darcs's
 `_darcs/prefs/defaults` and Breezy's `.bzr/branch/branch.conf` (and the
-`.hg`, `.sl`, `_darcs`, `.bzr` folders themselves). Every name a path goes by counts: as
+`.hg`, `.sl`, `_darcs`, `.bzr` folders themselves). These names count in
+any case (`head`, `.GIT`): on a FAT or exFAT stick, an SMB share or a
+casefold folder Git opening `HEAD` gets `head`. Project files other
+programs run code from are refused at any depth as well: the folders
+`.claude`, `.vscode`, `.cursor`, `.idea`, `.zed`, `.devcontainer`,
+`.husky`, `.fleet`, `.gemini`, `.codex`, `.windsurf`, `.roo`, `.kiro`,
+`.amazonq`, `.continue`, `.theia` (hooks, tasks run on folder open, MCP
+servers, launch and dev-container commands) and the files `.mcp.json`,
+`.devcontainer.json`, `*.code-workspace`, `.pre-commit-config.yaml`,
+`lefthook.yml` (and its variants) and `.overcommit.yml`; so are the
+folder a repository's `core.hooksPath` names (`.githooks`, husky's
+`.husky/_`; also set in `~/.gitconfig`, `/etc/gitconfig` or
+`GIT_CONFIG_*`) and a file its config includes (`include.path =
+../.gitconfig`) - the next `git commit` runs them. To let the agent change
+such a folder (`.vscode` of one project), make that folder itself its root
+or an extra folder: only the names below a granted folder count. Every name a path goes by counts: as
 typed, after each symlink on the way, and resolved - and the target of a
 symlink in those places (GNU stow: `~/.config/kitty -> ~/dotfiles/kitty`)
 is protected like the place itself, unless you grant that target. A file
@@ -1587,7 +1615,8 @@ write a copy under a new name). In the sandbox the hidden entries of a
 writable home are mounted read-only and no new one can be made, the
 targets of such symlinks are read-only; the Git config, hooks, info and
 `commondir` of the agent's folder and of the repositories one folder below
-it are read-only too, and a `.git/commondir` the agent makes there is set
+it are read-only too, as are the project settings and hooks folders above
+that exist there, and a `.git/commondir` the agent makes there is set
 aside (renamed `commondir.set-aside-by-axross-<time>`) when its task ends,
 like a `.git/config.worktree` and the `commondir` and `config.worktree` of
 the submodules' and worktrees' Git folders (`.git/modules/<name>`,
@@ -1612,11 +1641,16 @@ key, and what is restored from the trash is put back with axross's rights.
 A link to a secret (`~/.ssh/id_ed25519 -> ~/keys/id_ed25519`) makes its
 target secret, and a hard link to a secret file is not read either.
 Anywhere - also in a project folder - the agent does not read a private key
-or password database found by its contents (`-----BEGIN … PRIVATE KEY-----`,
-an OpenSSH or PuTTY key, a KeePass database) or files that by their name
-hold credentials (`.env`, `.env.*` but not `.env.example`/`.sample`/
-`.template`, `.netrc`, `.git-credentials`, `.pgpass`, `*.tfstate`,
-`*.kdbx`, `id_rsa`/`id_ed25519`/`id_ecdsa`, `*.ppk`, `*.p12`, `*.pfx`).
+or password database found by its contents (`-----BEGIN … PRIVATE KEY-----`
+in the first MiB, also after the certificates of a bundle, an OpenSSH or
+PuTTY key, a KeePass database) or files that by their name hold
+credentials (`.env`, `.env.*` but not `.env.example`/`.sample`/
+`.template`, `*.env`, `.envrc`, `.netrc`, `.git-credentials`, `.pgpass`,
+`.npmrc`, `.pypirc`, `.htpasswd`, `*.tfstate`, `*.kdbx`,
+`id_rsa`/`id_ed25519`/`id_ecdsa` and their copies (`id_rsa.bak`),
+`*.ppk`, `*.p12`, `*.pfx`, `kubeconfig`, `credentials.json`,
+`client_secret*.json`, `secrets.yaml`, `secrets.json`, `.aws/credentials`,
+`.docker/config.json`, `.kube/config`).
 With a root that holds `/proc` (`--mcp-root /`) a process's environment,
 command line, memory, maps and open files (`/proc/<pid>/environ`, …,
 `/proc/self`) and `/run/secrets` are not read either. The sandbox hides
@@ -1800,28 +1834,49 @@ without asking. A program can run in a sandbox profile; one without
 says *runs on this machine, not in a container*. **Contained by
 default:** without a sandbox profile only a pure launcher starts - an
 interpreter running a script or a module already on disk (`node
-/srv/server.js`, `python3 -u /srv/server.py`, `python -m module`, `java
--jar /srv/x.jar`, `dotnet /srv/x.dll`, `bash /srv/x.sh`,
+/srv/server.js`, `python3 -u /srv/server.py`, `python -m mcp_server_git`,
+`java -jar /srv/x.jar`, `dotnet /srv/x.dll`, `bash /srv/x.sh`,
 `ruby`/`perl`/`php` with a script). The script is named by its absolute
-path; the interpreter is found on the server's PATH and must be installed
-by the system (owned by root, writable by no one else) or a version
-manager (`~/.nvm`, `~/.pyenv`, `~/.asdf`, mise, Homebrew …) - not
-`./python3` or a `node` in `~/Downloads`. A server whose environment loads
-code (`BASH_ENV`, `NODE_OPTIONS`, `PERL5OPT`, `PYTHONPATH`, `RUBYOPT`,
-`LD_PRELOAD`, `JAVA_TOOL_OPTIONS` …; the details show their values, tokens
-hidden) is no pure launcher, and neither is a package or build tool run
+path and is no script of Python's own library (`…/lib/python3.x/timeit.py`
+reads code from its line); `python -m` names an MCP server's package
+(`mcp_…`, `…_mcp`, `…_mcp_server`) - any other module (`-m timeit -s`,
+`-m pdb -c`, `-m http.server` …) is contained. The interpreter is found on
+the server's PATH and must be installed by the system (owned by root,
+writable by no one else) or a version manager (`~/.nvm`, `~/.pyenv`,
+`~/.asdf`, mise, Homebrew …) - not `./python3`, a `node` in `~/Downloads`
+or the interpreter of a virtual environment (a `pyvenv.cfg` beside or above
+it: its packages run first; the venv axross itself runs from counts as
+installed). A server whose environment loads code (`BASH_ENV`,
+`NODE_OPTIONS`, `PERL5OPT`, `PYTHONPATH`, `RUBYOPT`, `LD_PRELOAD`,
+`JAVA_TOOL_OPTIONS`, `HOME`, `XDG_CONFIG_HOME`, `PYTHONPYCACHEPREFIX`,
+`BASH_FUNC_…`, `GIT_CONFIG_…`, `GIT_SSH_COMMAND`, `GIT_EXEC_PATH`, `PAGER`,
+`OPENSSL_CONF` …; the details show their values, tokens hidden) is no
+pure launcher, and neither is a package or build tool run
 by an interpreter (`ruby …/bundle`, `python -m jupyter`; the downloading
 ones - `python -m tox`, `node …/yarn/lib/cli.js`, `perl …/cpan`,
 `php composer.phar` - are refused like `npx`). A program server run on
 this machine starts in its own empty folder
 (`$XDG_STATE_HOME/axross/mcp-run/<server>`, 0700), never in the folder
 axross was started from, and `python -m` with `PYTHONSAFEPATH=1`; of its
-stderr the last 20 lines, each cut at 4 KiB, are kept.
+stderr the last 20 lines, each cut at 4 KiB, are kept. **Its files are
+pinned:** saving a program server that runs a file of yours on this
+machine (its script; for a Python script also the module files beside it,
+which Python imports first) records their SHA-256 in the settings
+(`"pin"`), and the agent may not change them or add a module beside them.
+When they changed anyway - you edited the script, or something else did -
+the server does not start and axross asks *Run the MCP server with changed
+files?*, listing them: *Run with these files* confirms them, *Not now*
+leaves it off; *Confirm files* (beside *Trusted*) does the same in the
+settings. Switching a server off or quitting never waits for a server
+that stopped reading: it gets SIGTERM, then SIGKILL, and a call to it
+fails within its timeout.
 Any other program - a binary, a build tool (`bazel run`, `make`, `mix
 run`, `swift run` …), a package manager - says *not started: needs a
 sandbox profile or Trusted* and is refused at its start until it runs in
 a sandbox profile or you tick *Trusted: runs on this machine as it is*
-(then it runs with your rights; the mark is saved as `"trusted": true`).
+(then it runs with your rights; the mark is saved as `"trusted": true`) -
+your decision, also for an interpreter in a venv, a `python -m` module or
+an environment that loads code.
 Trusted never lets a command that downloads code onto this machine
 (below). An http server's token
 is kept in the keyring. A typed command that downloads code (`npx …`,
