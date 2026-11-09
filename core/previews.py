@@ -594,6 +594,10 @@ _SVG_DATA_IMAGE = (b"data:image/png", b"data:image/jpeg", b"data:image/gif", b"d
 _SVG_LOCAL_URL = re.compile(r"url\(\s*[\"']?\s*#([^)\"'\s]*)")
 
 
+class _DuplicateId(Exception):
+    """Two elements of an SVG carry the same id."""
+
+
 def _svg_expansion(data: bytes) -> str | None:
     """Why the references of *data* draw too much (see
     :data:`MAX_SVG_USE_EXPANSION`), or ``None``. A streaming parse that
@@ -615,7 +619,12 @@ def _svg_expansion(data: bytes) -> str | None:
         for key, value in attrs.items():
             local = key.rsplit(":", 1)[-1].lower()
             if local == "id":
-                ids.setdefault(value, index)
+                # Counted is the element an id names first; QtSvg draws
+                # the last one: an empty <g id=a/> before the real fan-out
+                # group drew 10^6 elements past a cap of 20000 (9.4 s).
+                # Ids name one element each - two with one id is refused.
+                if ids.setdefault(value, index) != index:
+                    raise _DuplicateId(value)
             elif local == "href" and value.strip().startswith("#"):
                 own += (value.strip()[1:],)
             elif "url(" in value:
@@ -635,6 +644,8 @@ def _svg_expansion(data: bytes) -> str | None:
     parser.StartDoctypeDeclHandler = refuse_declarations
     try:
         parser.Parse(data, True)
+    except _DuplicateId as exc:
+        return f"SVG gives two elements the same id ({str(exc)[:64]!r})"
     except (expat.ExpatError, ValueError) as exc:
         return f"SVG is not well-formed XML ({exc})"
     if not refs:

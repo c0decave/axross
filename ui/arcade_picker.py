@@ -157,12 +157,12 @@ class ArcadePicker(QWidget):
             accent = QColor(ACCENTS[self.kinds[self.selected]])
             AC.glow_text(p, QRectF(0, 22, self.width(), 52), "AXROSS ARCADE", AC.font(30, weight=QFont.Weight.Black),
                          QColor("#f8fafc"), halo=QColor(accent.red(), accent.green(), accent.blue(), 110))
-            AC.glow_text(p, QRectF(0, 72, self.width(), 24), tr("axross's own games - four of them"),
+            AC.glow_text(p, QRectF(0, 72, self.width(), 24), tr("axross's own games – four of them"),
                          AC.font(10.5, weight=QFont.Weight.DemiBold), QColor("#94a3b8"))
             for i, r in enumerate(self.card_rects()):
                 self._card(p, r, self.kinds[i], i == self.selected, now)
             AC.glow_text(p, QRectF(0, self.height() - 40, self.width(), 26),
-                         tr("Arrows or W A S D choose - Enter or a click starts - Esc closes"),
+                         tr("Arrows or W A S D choose – Enter or a click starts – Esc closes"),
                          AC.font(9.5, weight=QFont.Weight.DemiBold), QColor("#94a3b8"))
         finally:
             p.end()

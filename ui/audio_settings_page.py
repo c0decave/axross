@@ -223,7 +223,7 @@ class AudioPage(QWidget):
         #: The rest of the sound settings live in the Audio Mixer panel.
         self.mixer_hint = QLabel(tr(
             "A volume, mute and output per source (Media Player, Agent voice, media "
-            "preview), the equalizer and the system's sound server: Tools > Audio Mixer."))
+            "preview), the equalizer and the system's sound server: Tools → Audio Mixer."))
         self.mixer_hint.setWordWrap(True)
         layout.addWidget(self.mixer_hint)
 
@@ -391,7 +391,7 @@ class AudioPage(QWidget):
         elif self._checking or result is None:
             self.active_label.setText(tr("checking…"))
         else:
-            self.active_label.setText(tr("none - audio is off"))
+            self.active_label.setText(tr("none – audio is off"))
         note = tr("A change of the backend takes effect when axross restarts.")
         own = users_audio_backend()
         if own is not None:

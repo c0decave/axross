@@ -103,7 +103,7 @@ class CasHistoryDialog(QDialog):
 
         intro = QLabel(
             tr("Every scan that built the Duplicate Finder's index. Removing a scan or "
-            "clearing the index only forgets index rows — files are never touched.")
+            "clearing the index only forgets index rows – files are never touched.")
         )
         intro.setProperty("role", "muted")
         intro.setWordWrap(True)
@@ -258,7 +258,7 @@ class CasHistoryDialog(QDialog):
         if kind == "error":
             QMessageBox.warning(self, tr("Re-scan"), tr("Re-scan failed:\n{value}").format(value=value))
         elif cancelled:
-            self._status.setText(tr("Cancelled — {value} file(s) indexed under {rescan_root}").format(value=value, rescan_root=self._rescan_root))
+            self._status.setText(tr("Cancelled – {value} file(s) indexed under {rescan_root}").format(value=value, rescan_root=self._rescan_root))
         else:
             self._status.setText(tr("Indexed {value} file(s) under {rescan_root}").format(value=value, rescan_root=self._rescan_root))
         stats = getattr(self, "_rescan_stats", None)
@@ -325,7 +325,7 @@ class CasHistoryDialog(QDialog):
         finally:
             QApplication.restoreOverrideCursor()
         self.reload()
-        self._status.setText(tr("Index cleared — {removed} row(s) removed").format(removed=removed))
+        self._status.setText(tr("Index cleared – {removed} row(s) removed").format(removed=removed))
         self.index_changed.emit()
 
     # A running re-scan must not outlive the dialog.

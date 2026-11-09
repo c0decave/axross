@@ -287,7 +287,7 @@ class ConnectionDialogProxyModeTest(_QtCase):
         dialog = self._dialog()
         texts = [box.itemText(i) for box in dialog.findChildren(QComboBox)
                  for i in range(box.count())]
-        self.assertIn("Default proxy (Tools > Network & Proxy)", texts)
+        self.assertIn("Default proxy (Tools → Network & Proxy)", texts)
         self.assertEqual([t for t in texts if "&&" in t], [])
 
     def test_new_profile_is_direct_without_a_default_proxy(self) -> None:

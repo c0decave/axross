@@ -88,7 +88,7 @@ GETTING_STARTED = Tour(
     (
         TourStep(
             "Panes side by side",
-            "Each pane shows one folder on its own connection - local files, SFTP, SMB, S3 "
+            "Each pane shows one folder on its own connection – local files, SFTP, SMB, S3 "
             "or any other. Ctrl+Shift+H and Ctrl+Shift+V split the active pane, Ctrl+W "
             "closes it; Tab and Shift+Tab in a file list move to the next pane.",
             _panes,
@@ -113,8 +113,8 @@ GETTING_STARTED = Tour(
         ),
         TourStep(
             "Connect to a server",
-            "Connection Manager (Ctrl+Shift+N) makes a profile - protocol, host, login, "
-            "proxy - and connects; Quick Connect (Ctrl+N) opens a saved profile at once. "
+            "Connection Manager (Ctrl+Shift+N) makes a profile – protocol, host, login, "
+            "proxy – and connects; Quick Connect (Ctrl+N) opens a saved profile at once. "
             "Each connection opens in a pane of its own, so a server and your local files "
             "sit side by side.",
             ("axToolbarConnectionManager", "axConnectionManagerAction"),
@@ -122,7 +122,7 @@ GETTING_STARTED = Tour(
         TourStep(
             "Copy between panes",
             "Select files and press F5 (Copy to Target) or F6 (Move to Target), or drag "
-            "them onto the other pane - a drag moves, with Ctrl it copies. Before anything "
+            "them onto the other pane – a drag moves, with Ctrl it copies. Before anything "
             "is queued, axross asks about every name that already exists: overwrite, "
             "overwrite if newer, skip or rename. Nothing is replaced without your answer.",
             "axCopyToTargetAction",
@@ -130,16 +130,16 @@ GETTING_STARTED = Tour(
         TourStep(
             "The transfer queue",
             "Every copy and move runs here in the background, with progress, speed and the "
-            "time left - you can keep working, even close the pane. Retry Failed resumes "
+            "time left – you can keep working, even close the pane. Retry Failed resumes "
             "what failed, Cancel All stops the queue, and a right click on a job offers "
             "Cancel, Retry and Open destination folder.",
             "axTransferDock",
         ),
         TourStep(
             "Undo",
-            "Edit > Undo Last Operation (Ctrl+Z) reverses the newest move or Move to Trash "
+            "Edit → Undo Last Operation (Ctrl+Z) reverses the newest move or Move to Trash "
             "whose connection is open. A copy cannot be undone, and Undo says so instead of "
-            "guessing - so when in doubt, move to the trash rather than delete.",
+            "guessing – so when in doubt, move to the trash rather than delete.",
             "axUndoAction",
         ),
     ),
@@ -172,12 +172,12 @@ CONNECT = Tour(
             "Save in keyring stores the password in the system keyring (Secret Service, "
             "KWallet, KeePassXC, the macOS Keychain or the Windows Credential Locker); the "
             "profile file never holds it. No keyring found? Install one, for example "
-            "gnome-keyring, then File > Re-detect System Keyring.",
+            "gnome-keyring, then File → Re-detect System Keyring.",
             "axReDetectKeyringAction",
         ),
         TourStep(
             "How the connection is protected",
-            "The icon at the left of a pane's header says how its connection is protected - "
+            "The icon at the left of a pane's header says how its connection is protected – "
             "cleartext, signed only, TLS, SSH or end-to-end; its tooltip says whether that "
             "was negotiated or only configured. The first SSH connection to a host shows "
             "its key fingerprint: compare it with the server's before you trust it.",
@@ -186,8 +186,8 @@ CONNECT = Tour(
         ),
         TourStep(
             "Proxies",
-            "Tools > Network & Proxy… (also Edit > Settings… > Network & Proxy) sets the "
-            "default proxy - SOCKS5, SOCKS4, HTTP CONNECT or HTTPS - with a bypass list and a "
+            "Tools → Network & Proxy… (also Edit → Settings… → Network & Proxy) sets the "
+            "default proxy – SOCKS5, SOCKS4, HTTP CONNECT or HTTPS – with a bypass list and a "
             "PAC script; Test proxy says which stage fails. A profile uses it or a proxy of "
             "its own (Proxy Settings in Connection Manager). A connection that cannot go "
             "through the proxy fails instead of going direct.",
@@ -205,7 +205,7 @@ COPY_SAFELY = Tour(
         TourStep(
             "Check the target first",
             "F5 and F6 go to the pane marked TARGET, with the green border; the pane you work "
-            "in is marked SOURCE. ◎ in another pane's header makes that pane the target - "
+            "in is marked SOURCE. ◎ in another pane's header makes that pane the target – "
             "set it before you copy, and the files land where you meant them to. One pane "
             "only? Split it first (Ctrl+Shift+H).",
             _target_button,
@@ -229,7 +229,7 @@ COPY_SAFELY = Tour(
         ),
         TourStep(
             "Compare before you sync",
-            "View > Compare Panes… compares the active pane's folder with the target pane's. "
+            "View → Compare Panes… compares the active pane's folder with the target pane's. "
             "Identical files are hidden; a file on one side only can be copied over. Sync… "
             "shows exactly what it would do before it does anything, and On conflict starts "
             "at Ask me (nothing is overwritten).",
@@ -260,21 +260,21 @@ FIND_ORGANIZE = Tour(
     (
         TourStep(
             "Find Files",
-            "Edit > Find Files… (Alt+F7) searches folders on every open connection at once - "
+            "Edit → Find Files… (Alt+F7) searches folders on every open connection at once – "
             "by name, type, content, size and date, also inside archives. Results stream in "
             "while it runs; Save as Smart Folder… keeps the search in the bookmarks.",
             "axFindFilesAction",
         ),
         TourStep(
             "The live filter",
-            "Ctrl+F filters the folder you are in as you type - the quickest way to a file "
+            "Ctrl+F filters the folder you are in as you type – the quickest way to a file "
             "you can see. tag:<name> shows only the files with that tag.",
             _in_active_pane("axPaneFilter"),
         ),
         TourStep(
             "Tags",
-            "Right click > Tags marks files on any connection with a coloured tag (Important, "
-            "Review later, or a new one). View > Tagged Files… lists the files of every tag "
+            "Right click → Tags marks files on any connection with a coloured tag (Important, "
+            "Review later, or a new one). View → Tagged Files… lists the files of every tag "
             "and goes to them. Tags follow files you move in axross.",
             "axTaggedFilesAction",
         ),
@@ -288,9 +288,9 @@ FIND_ORGANIZE = Tour(
         ),
         TourStep(
             "Workspaces",
-            "A workspace is a pane layout of its own: Workspace > New Workspace (Ctrl+Alt+N) "
-            "opens one, Ctrl+Alt+PgDown and PgUp switch between them. Keep one per job - a "
-            "server, a project - each with its own source and target pane; Detach to Window "
+            "A workspace is a pane layout of its own: Workspace → New Workspace (Ctrl+Alt+N) "
+            "opens one, Ctrl+Alt+PgDown and PgUp switch between them. Keep one per job – a "
+            "server, a project – each with its own source and target pane; Detach to Window "
             "puts one on another screen.",
             "axWorkspaceMenu",
         ),
@@ -305,10 +305,10 @@ AUTOMATE = Tour(
     (
         TourStep(
             "The Agent",
-            "A local LLM - LM Studio, Ollama, vLLM, llama.cpp or any OpenAI-compatible "
-            "server - works with axross's file tools in the folder shown at the top of its "
+            "A local LLM – LM Studio, Ollama, vLLM, llama.cpp or any OpenAI-compatible "
+            "server – works with axross's file tools in the folder shown at the top of its "
             "tab. Choose the LLM profile first; a server that is not on this machine or its "
-            "network asks before the first task. View > Panels > Agent shows or hides it.",
+            "network asks before the first task. View → Panels → Agent shows or hides it.",
             "axAgentDock",
             reveal=True,
         ),
@@ -324,15 +324,15 @@ AUTOMATE = Tour(
         TourStep(
             "Scripts",
             "Write Python against axross.* and save it here; Run starts the script in its "
-            "own process and Stop ends it. Help > Scripting Guide has the API; axross "
-            "--script FILE runs a script without the window, View > Scheduled Jobs… on an "
+            "own process and Stop ends it. Help → Scripting Guide has the API; axross "
+            "--script FILE runs a script without the window, View → Scheduled Jobs… on an "
             "interval.",
             "axScriptsDock",
             reveal=True,
         ),
         TourStep(
             "The console",
-            "A Python prompt with axross ready - axross.help() lists what there is. .run "
+            "A Python prompt with axross ready – axross.help() lists what there is. .run "
             "<name> runs a saved script here, and the variables it sets stay at the prompt.",
             "axConsoleDock",
             reveal=True,
@@ -340,8 +340,8 @@ AUTOMATE = Tour(
         TourStep(
             "MCP",
             "axross --mcp-server lets an LLM client such as Claude Desktop or Cline use your "
-            "connections as MCP tools - read-only, unless --mcp-write adds the write tools, "
-            "kept to one folder. Tools > MCP Servers… is the other direction: MCP servers "
+            "connections as MCP tools – read-only, unless --mcp-write adds the write tools, "
+            "kept to one folder. Tools → MCP Servers… is the other direction: MCP servers "
             "whose tools the Agent may use.",
             "axMcpServersAction",
         ),
@@ -356,16 +356,16 @@ EXTENSIONS = Tour(
     (
         TourStep(
             "Features",
-            "Help > Features… lists every optional part - protocols, file analysis, "
-            "archives, tools such as ripgrep or rsync - as installed or missing, and how to "
+            "Help → Features… lists every optional part – protocols, file analysis, "
+            "archives, tools such as ripgrep or rsync – as installed or missing, and how to "
             "get it. Install Selected names the pip command before it runs; a one-file build "
             "links its axross-full download instead.",
             "axFeaturesAction",
         ),
         TourStep(
             "Packs",
-            "In a one-file build, Features… > Packs… adds or removes signed units of this release "
-            "- a protocol, an extension, voice. The release's signature, the pack list and every "
+            "In a one-file build, Features… → Packs… adds or removes signed units of this release "
+            "– a protocol, an extension, voice. The release's signature, the pack list and every "
             "file's SHA-256 are checked before anything is unpacked; a pure-Python unit is ready "
             "at once, others after the next start.",
             "axHelpMenu",
@@ -373,13 +373,13 @@ EXTENSIONS = Tour(
         TourStep(
             "Extensions",
             "Extensions are Python plugins and run with your rights, so every one starts "
-            "switched off. Extensions > Manage Extensions… switches them on (and off); the "
+            "switched off. Extensions → Manage Extensions… switches them on (and off); the "
             "paranoid security mode loads none.",
             "axManageExtensionsAction",
         ),
         TourStep(
             "Your own extensions",
-            "Extensions > Open Extensions Folder opens ~/.config/axross/extensions/: a "
+            "Extensions → Open Extensions Folder opens ~/.config/axross/extensions/: a "
             "<name>.py there appears in the manager as user:<name>. Reload Extensions runs "
             "the current source again; an extension that hangs a start is skipped at the "
             "next one.",
@@ -387,8 +387,8 @@ EXTENSIONS = Tour(
         ),
         TourStep(
             "Settings and help",
-            "Edit > Settings… (Ctrl+,) holds every setting; the field above the list finds "
-            "one by name. F1 opens the handbook at the part of the window you are in - also "
+            "Edit → Settings… (Ctrl+,) holds every setting; the field above the list finds "
+            "one by name. F1 opens the handbook at the part of the window you are in – also "
             "on a settings page.",
             "axSettingsAction",
         ),

@@ -51,15 +51,15 @@ ORDER = (LEVEL_CLEARTEXT, LEVEL_UNKNOWN, LEVEL_E2E_FAILED, LEVEL_SIGNED, LEVEL_T
 
 #: One short title per level (the first line of a tooltip, a legend).
 TITLES = {
-    LEVEL_LOCAL: "Local - no network",
+    LEVEL_LOCAL: "Local – no network",
     LEVEL_UNKNOWN: "Protection unknown",
-    LEVEL_CLEARTEXT: "Cleartext - anyone on the network can read it",
-    LEVEL_SIGNED: "Signed, not encrypted - readable on the network",
+    LEVEL_CLEARTEXT: "Cleartext – anyone on the network can read it",
+    LEVEL_SIGNED: "Signed, not encrypted – readable on the network",
     LEVEL_TLS_WEAK: "TLS with a weakness",
     LEVEL_TLS: "TLS encrypted",
     LEVEL_ENCRYPTED: "Encrypted",
-    LEVEL_E2E_FAILED: "End-to-end encrypted - could not be decrypted",
-    LEVEL_E2E_UNVERIFIED: "End-to-end encrypted - not every key verified",
+    LEVEL_E2E_FAILED: "End-to-end encrypted – could not be decrypted",
+    LEVEL_E2E_UNVERIFIED: "End-to-end encrypted – not every key verified",
     LEVEL_E2E: "End-to-end encrypted, keys verified",
 }
 
@@ -81,7 +81,7 @@ class SecurityInfo:
         return TITLES.get(self.level, TITLES[LEVEL_UNKNOWN])
 
 
-LOCAL = SecurityInfo(LEVEL_LOCAL, "Local files - nothing goes over a network", True)
+LOCAL = SecurityInfo(LEVEL_LOCAL, "Local files – nothing goes over a network", True)
 UNKNOWN = SecurityInfo(LEVEL_UNKNOWN, "How this connection is protected is not known")
 
 

@@ -390,7 +390,7 @@ class ChaseView(AC.ArcadeView):
         sub = QColor("#99f6e4")
         sub.setAlphaF(reveal)
         AC.glow_text(p, QRectF(rect.left(), off.y() + box.height() + 4, rect.width(), 26),
-                     tr("collect every bit - turn the daemons with a root key"), AC.font(10.5), sub)
+                     tr("collect every bit – turn the daemons with a root key"), AC.font(10.5), sub)
         AC.intro_hint(p, rect, t, QColor("#5eead4"))
 
     def _title_assets(self, rect: QRectF):

@@ -83,7 +83,7 @@ class _Row:
         # device's normal level was nowhere to be seen (beyond it amplifies).
         self.slider.setTickPosition(QSlider.TickPosition.TicksBelow)
         self.slider.setTickInterval(NORMAL_PERCENT)
-        self.slider.setToolTip(tr("Volume - the mark is 100 %, the normal level; "
+        self.slider.setToolTip(tr("Volume – the mark is 100 %, the normal level; "
                                   "above it the sound is amplified"))
         self.value = QLabel("")
         self.value.setMinimumWidth(42)
@@ -272,7 +272,7 @@ class SystemMixerPage(QWidget):
             if fresh or row is None:
                 row = _Row(self, grid, index + 1, stream.index)
                 combo = QComboBox()
-                combo.setToolTip(tr("The device it uses - choose one to move it there"))
+                combo.setToolTip(tr("The device it uses – choose one to move it there"))
                 row.set_extra(combo)
                 key = stream.index
                 row.slider.valueChanged.connect(

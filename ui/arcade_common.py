@@ -586,9 +586,9 @@ class ArcadeView(QWidget):
         """(title, hint) of the overlay, ("", "") for none."""
         g = self.game
         if self.paused:
-            return tr("Paused"), tr("P goes on - M mutes - Esc goes back")
+            return tr("Paused"), tr("P goes on – M mutes – Esc goes back")
         if getattr(g, "completed", False):
             return tr("All done!"), tr("Esc goes back")
         if getattr(g, "over", False):
-            return tr("Game over"), tr("R plays again - Esc goes back")
+            return tr("Game over"), tr("R plays again – Esc goes back")
         return "", ""

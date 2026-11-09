@@ -1247,9 +1247,9 @@ def output_hint(backend: str) -> str:
     others = [label for label in BACKEND_LABELS.values() if label != backend]
     if len(others) == 1:
         return tr("Choose the {backend} backend or another output device in "
-                  "Edit > Settings… > Audio.").format(backend=others[0])
+                  "Edit → Settings… → Audio.").format(backend=others[0])
     return tr("Choose a backend (PulseAudio or PipeWire) or another output device in "
-              "Edit > Settings… > Audio.")
+              "Edit → Settings… → Audio.")
 
 
 class PlaybackMonitor:
@@ -1298,7 +1298,7 @@ class PlaybackMonitor:
             # The sound card waited for audio: the feed is behind.
             if speed < 0.05:
                 text = tr("The Media Player delivered no audio (measured over {seconds:g} s) "
-                          "while the sound card{via} waited for it - playback stands. The sound "
+                          "while the sound card{via} waited for it – playback stands. The sound "
                           "card is not the cause.").format(seconds=MONITOR_WINDOW_SECONDS, via=via)
             else:
                 text = tr("The Media Player could not deliver audio fast enough: it played at "
@@ -1306,7 +1306,7 @@ class PlaybackMonitor:
                           "card{via} waited for more. The sound card is not the cause.").format(
                               speed=speed, seconds=MONITOR_WINDOW_SECONDS, via=via)
         elif speed < 0.05:
-            text = tr("The sound card takes no audio{via} - playback stands. {hint}").format(
+            text = tr("The sound card takes no audio{via} – playback stands. {hint}").format(
                 via=via, hint=output_hint(backend))
         else:
             text = tr("The sound card plays at x{speed:.2f} speed{via} (measured over {seconds:g} s)"
@@ -3306,7 +3306,7 @@ class Visualizer(QWidget):
         self.set_mode(self.MODES[(self.MODES.index(self.mode) + 1) % len(self.MODES)])
 
     def _update_tooltip(self) -> None:
-        self.setToolTip(tr("{name} - click for the next visualization, double-click for "
+        self.setToolTip(tr("{name} – click for the next visualization, double-click for "
                            "fullscreen, right-click for more").format(
             name=tr(VISUALIZER_NAMES[self.mode])))
 
@@ -4539,7 +4539,7 @@ class VisualizerWindow(QWidget):
         from ui.icon_provider import set_window_icon
 
         set_window_icon(self, "media-player")
-        self.setWindowTitle(tr("Media Player - Visualization"))
+        self.setWindowTitle(tr("Media Player – Visualization"))
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -4919,7 +4919,7 @@ class PlayerPanel(QWidget):
                                         "answers"))
         self.retry_button.clicked.connect(self.retry_audio)
         self.audio_settings_button = QPushButton(tr("Audio Settings…"))
-        self.audio_settings_button.setToolTip(tr("Edit > Settings… > Audio: backend, devices, "
+        self.audio_settings_button.setToolTip(tr("Edit → Settings… → Audio: backend, devices, "
                                                  "volume and a test"))
         self.audio_settings_button.clicked.connect(self._open_audio_settings)
         audio_row = QHBoxLayout()
@@ -5786,7 +5786,7 @@ class PlayerPanel(QWidget):
                                  "played.").format(name=name, reason=reason))
             self.visualizer.timer.stop()
             return
-        self.note.setText(tr("Cannot play {name}: {reason} - skipped.").format(name=name,
+        self.note.setText(tr("Cannot play {name}: {reason} – skipped.").format(name=name,
                                                                                reason=reason))
         # Not from inside the engine's signal: a list of broken files would
         # recurse one level per file.

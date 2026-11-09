@@ -75,6 +75,22 @@ except ImportError:  # pragma: no cover — optional dep
     ADB_SHELL_AVAILABLE = False
 
 
+def _adb_tcp_module(proxy):
+    """The adb_shell module whose ``socket.create_connection`` an ADB TCP
+    connect calls (core.proxy.routed_create_connection routes it); None
+    without a proxy. A proxy that cannot be honoured is refused: never
+    a direct connection instead."""
+    if not getattr(proxy, "enabled", False):
+        return None
+    try:
+        import adb_shell.transport.tcp_transport as tcp_transport  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise OSError(
+            "ADB over a proxy needs the adb-shell package (pip install adb-shell)"
+        ) from exc
+    return tcp_transport
+
+
 # Default path for the ADB RSA keypair. Matches what the system
 # ``adb`` binary uses so the user doesn't get a second "allow
 # debugging" prompt from our backend after having already approved
@@ -350,14 +366,15 @@ class _AdbPushOnClose:
     def __init__(self, session: "AdbSession", remote_path: str):
         self._session = session
         self._remote_path = remote_path
-        import tempfile
+        import weakref
 
-        self._tmp = tempfile.NamedTemporaryFile(
-            prefix="axross-adb-",
-            delete=False,
-            mode="w+b",
-        )
+        from core.read_spool import new_named_spool, remove_quietly
+
+        # In the spool folder (not /tmp, a tmpfs), and removed even when
+        # the writer is dropped without close() or discard().
+        self._tmp = new_named_spool(prefix="axross-adb-", delete=False)
         self._tmp_path = self._tmp.name
+        self._cleanup = weakref.finalize(self, remove_quietly, self._tmp_path)
         self._closed = False
 
     def write(self, data: bytes) -> int:
@@ -385,10 +402,10 @@ class _AdbPushOnClose:
             return
         self._closed = True
         try:
-            self._tmp.flush()
-        finally:
-            self._tmp.close()
-        try:
+            try:
+                self._tmp.flush()  # a full disk fails here: removed all the same
+            finally:
+                self._tmp.close()
             self._session._push_file(self._tmp_path, self._remote_path)
         finally:
             try:
@@ -477,7 +494,7 @@ class AdbSession(SessionLifecycle):
         self._conn_lock = threading.Lock()
         ensure_adb_key(adb_key_path)
         self._signer = _load_signer(adb_key_path)
-        from core.proxy import ProxyConfig, patched_create_connection
+        from core.proxy import ProxyConfig, routed_create_connection
 
         self._proxy = ProxyConfig(
             proxy_type=proxy_type or "none",
@@ -507,13 +524,14 @@ class AdbSession(SessionLifecycle):
             self._label = f"{host}:{port}"
         try:
             # adb_shell.transport.tcp_transport.TcpTransport.connect()
-            # uses ``socket.create_connection`` under the hood. The
-            # patched_create_connection scope routes that through the
-            # SOCKS / HTTP proxy. After connect returns, the socket is
-            # owned by adb_shell and stays patched — but the patch
-            # reverts here, which is fine because subsequent IO
-            # reuses the existing socket directly.
-            with patched_create_connection(self._proxy):
+            # calls ``socket.create_connection`` of its own module. It is
+            # routed through the SOCKS / HTTP proxy for THIS thread only
+            # (core.proxy.routed_create_connection): the old process-wide
+            # patch sent every other thread's connection (ftplib,
+            # imaplib, ...) to the ADB proxy for as long as the connect
+            # waited - up to the "Allow USB debugging?" tap on the phone.
+            # The socket it made stays adb_shell's; later I/O reuses it.
+            with routed_create_connection(_adb_tcp_module(self._proxy), self._proxy):
                 self._device.connect(
                     rsa_keys=[self._signer],
                     auth_timeout_s=connect_timeout,
@@ -718,7 +736,7 @@ class AdbSession(SessionLifecycle):
         it. The caller is responsible for closing — we clean the
         tempfile via a small wrapper that unlinks on close.
         """
-        import tempfile as _tf
+        from core.read_spool import new_named_spool, remove_quietly
 
         _checked(path)
         kind = self.__dict__.get("_special_paths", {}).get(posixpath.normpath(path))
@@ -730,23 +748,28 @@ class AdbSession(SessionLifecycle):
                 f"ADB: {path} is not a regular file ({_SPECIAL_NAMES[kind]}); not read",
                 path,
             )
-        local = _tf.NamedTemporaryFile(
-            prefix="axross-adb-",
-            delete=False,
-            mode="w+b",
-        )
+        # In the spool folder (not /tmp, a tmpfs), removed on every path.
+        local = new_named_spool(prefix="axross-adb-", delete=False)
         local_path = local.name
         local.close()
         try:
             with self._conn_lock:
                 self._device.pull(path, local_path)
-        except Exception as exc:
-            try:
-                os.unlink(local_path)
-            except OSError:
-                pass
-            raise self._pull_refused(path, exc) from exc
-        return _CleanupOnClose(open(local_path, "rb"), local_path)
+        except BaseException as exc:
+            remove_quietly(local_path)
+            if isinstance(exc, Exception):
+                raise self._pull_refused(path, exc) from exc
+            raise
+        try:
+            handle = open(local_path, "rb")
+        except BaseException:
+            remove_quietly(local_path)
+            raise
+        if os.name == "posix":
+            # The open handle keeps the bytes: no name left behind should
+            # the caller never close it.
+            remove_quietly(local_path)
+        return _CleanupOnClose(handle, local_path)
 
     def _pull_refused(self, path: str, exc: BaseException) -> OSError:
         """A failed pull typed by what *path* is (adb's sync error text

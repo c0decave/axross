@@ -504,6 +504,7 @@ red-team que se pensó. Los tests de MCP están en
 | `tests/test_mcp_error_redaction.py` | Los secretos en textos de error del backend se redactan (tools/call, tareas, recursive_checksum). |
 | `tests/test_mcp_http_bearer_token.py` | HTTP sin TLS rechaza peticiones sin token bearer (401, `/health` exento), el fichero del token es 0600 y nunca se escribe a través de un symlink, `--mcp-http` siempre sirve con token. |
 | `tests/test_mcp_http_hardening.py` | DNS rebinding (Host/Origin), tope de sesiones y expulsión por inactividad, params/ids malformados, flags TLS incompletos, cliente TCP inactivo vs. accept. |
+| `tests/test_secfix_r7_host_header.py` | `Host` leído estrictamente como `host[:puerto]` (`localhost:1@evil`, rutas, espacios, IPv6 sin corchetes rechazados); dos cabeceras `Host`/`Origin` rechazadas (MCP HTTP y reverse-serve). |
 | `tests/test_mcp_http_sse_lifecycle.py` | Un flujo SSE por sesión, DELETE/expulsión lo terminan, replay al reconectar. |
 | `tests/test_mcp_search_root.py` | `search` nunca devuelve rutas indexadas fuera de la raíz. |
 | `tests/test_mcp_tasks_limits.py` | Rate limit de `tasks/start`, tope de tareas en ejecución, timeout de la herramienta. |
@@ -687,6 +688,25 @@ sandbox del agente cuenta también el home del host.
 herramientas propias del agente la mantienen siempre. El lado de
 escritura (§2, los lugares protegidos de `core.protected_places`) es
 una lista aparte y no cambia.
+
+Se comprueba cada nombre de una ruta - tal como se escribe, tras cada
+symlink del camino y resuelto - en ambos lados: una clave detrás de
+`~/.ssh/id_ed25519 -> ~/keys/id_ed25519` se rechaza con cualquiera de los
+dos nombres, y `~/dotfiles/kitty/kitty.conf` no se escribe cuando
+`~/.config/kitty` apunta ahí (concede el destino para permitirlo). Un hard
+link a un fichero secreto no se lee; un fichero con otros hard links no se
+escribe (en su sitio cambiarían también los otros nombres - quizá
+`~/.bashrc` o un `.git/config`).
+
+**Default-deny al leer.** Además de los secretos, el contenido de una
+entrada oculta del home (`~/.config/<app>`, `~/.mozilla`, ...) y de
+`~/snap` (también `~/Library`, `%APPDATA%`) no se entrega salvo que el
+operador conceda esa carpeta: un `--mcp-root` en ese sitio (para el
+agente: su carpeta o una carpeta adicional ahí; basta de solo lectura;
+los secretos dentro siguen sin leerse).
+Un root de todo el home no levanta nada. Los nombres se siguen listando;
+los demás ficheros se leen como antes. `--mcp-allow-secret-reads`
+también lo levanta.
 
 ---
 

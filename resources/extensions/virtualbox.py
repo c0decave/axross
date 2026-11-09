@@ -151,7 +151,7 @@ def attach_argvs(exe: str, vm: str, ctl: Controller, path: str) -> list[list[str
 def register(path: str, exe: str | None = None) -> str:
     exe = exe or vboxmanage()
     if exe is None:
-        raise VBoxMissing("VBoxManage was not found - is VirtualBox installed?")
+        raise VBoxMissing("VBoxManage was not found – is VirtualBox installed?")
     run(register_argv(exe, path))
     return path
 
@@ -160,7 +160,7 @@ def attach(path: str, vm: str, controller: str, exe: str | None = None) -> str:
     """Attach *path* to *vm* on *controller*; the slot used, as text."""
     exe = exe or vboxmanage()
     if exe is None:
-        raise VBoxMissing("VBoxManage was not found - is VirtualBox installed?")
+        raise VBoxMissing("VBoxManage was not found – is VirtualBox installed?")
     state, controllers = parse_machine(run([exe, "showvminfo", vm, "--machinereadable"]))
     ctl = next((c for c in controllers if c.name == controller), None)
     if ctl is None:
@@ -189,7 +189,7 @@ def activate(api):
         from ui.features_dialog import offer_features
 
         offer_features(api.window, "tool:virtualbox",
-                       tr("VBoxManage was not found - is VirtualBox installed?"))
+                       tr("VBoxManage was not found – is VirtualBox installed?"))
 
     def register_failed(exc):
         if isinstance(exc, VBoxMissing):

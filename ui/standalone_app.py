@@ -56,7 +56,7 @@ def install_excepthook(title: str) -> None:
             if app is not None and not app.closingDown() and app.thread() == QThread.currentThread():
                 from core.i18n import tr
 
-                QMessageBox.critical(None, tr("{title} - Unexpected Error").format(title=title),
+                QMessageBox.critical(None, tr("{title} – Unexpected Error").format(title=title),
                                      f"{exc_type.__name__}: {exc}")
                 return
         except Exception:  # noqa: BLE001 - the hook itself must never fail
@@ -105,6 +105,8 @@ def apply_theme(app) -> str:
     if tokens is not None:
         app.setStyle("Fusion")
         app.setPalette(themes.qpalette_for(tokens))
+    else:  # Light Mode keeps the desktop's palette, with a readable selection
+        app.setPalette(themes.readable_palette(app.palette()))
     app.setStyleSheet(themes.stylesheet_for(theme, scheme, compact=prefs.compact))
     from ui import title_bar
 

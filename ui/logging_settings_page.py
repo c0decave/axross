@@ -83,7 +83,7 @@ class LoggingPage(QWidget):
 
         self.enabled_check = QCheckBox(tr("Logging on"))
         self.enabled_check.setToolTip(tr(
-            "Off writes nothing at all - log file, terminal, Log dock - until it is "
+            "Off writes nothing at all – log file, terminal, Log dock – until it is "
             "switched on again. Applied at once."))
         layout.addWidget(self.enabled_check)
 

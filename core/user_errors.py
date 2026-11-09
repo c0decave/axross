@@ -81,8 +81,8 @@ def _by_errno(exc: OSError, subject: str) -> str | None:
     if code == getattr(errno, "EDQUOT", -1):
         return tr("The disk quota is used up. Free some space, or ask for a larger quota.")
     if code == errno.EROFS:
-        return tr("{name} is on a read-only file system. Save it to another place.").format(
-            name=name)
+        return tr("{name} is on a read-only file system: nothing can be written there. "
+                  "Choose a folder on another drive or share.").format(name=name)
     if code == errno.EEXIST:
         return tr("{name} already exists. Choose another name, or remove the old one first."
                   ).format(name=name)
@@ -172,6 +172,13 @@ def _classify(exc: BaseException, subject: str) -> str | None:
         return tr("The host key of {host} has changed since the last connection. That can "
                   "be an attack: check the new fingerprint with the server's administrator "
                   "before you trust it.").format(host=getattr(exc, "host", host))
+    if "UnknownHostKeyError" in names and getattr(exc, "declined", False):
+        # The user said No to "Trust Host Key?" a moment ago: "Use Connect
+        # to review its fingerprint" read as if nothing had been asked
+        # (UX review round 7).
+        return tr("You did not trust the host key of {host}, so axross did not connect. "
+                  "To connect, try again and compare the fingerprint with the server's "
+                  "administrator before you trust it.").format(host=getattr(exc, "host", host))
     if "UnknownHostKeyError" in names:
         return tr("{host} has a new host key that axross has not seen yet. Use Connect to "
                   "review its fingerprint and trust it.").format(host=getattr(exc, "host", host))
@@ -208,6 +215,9 @@ def _classify(exc: BaseException, subject: str) -> str | None:
                       "SSH server runs there.").format(host=host)
 
     # --- time-outs --------------------------------------------------------
+    if "SlowServerTimeout" in names:
+        return tr("{host} is still connected but did not answer for a long time; it may "
+                  "be busy or stuck. Try again later.").format(host=host)
     if names & _TIMEOUT_NAMES:
         return tr("{host} did not answer in time. Check the network connection and that "
                   "the server is running, then try again.").format(host=host)

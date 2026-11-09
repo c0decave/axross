@@ -181,7 +181,7 @@ class PresenceDialog(QDialog):
         self.timeline_label.setTextFormat(Qt.TextFormat.PlainText)
         lower_layout.addWidget(self.timeline_label)
         self.timeline = Timeline()
-        self.timeline.setToolTip(tr("Green: in range. Grey: somebody was scanning - outside "
+        self.timeline.setToolTip(tr("Green: in range. Grey: somebody was scanning – outside "
                                     "the grey nobody looked."))
         lower_layout.addWidget(self.timeline)
         lower_layout.addWidget(self.sessions, 1)

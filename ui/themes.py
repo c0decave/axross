@@ -622,8 +622,10 @@ QPushButton:default {{
 QPushButton:default:hover {{
     background-color: {accent_hover};
 }}
-QPushButton:disabled {{
+QPushButton:disabled, QPushButton:default:disabled {{
     color: {text_muted};
+    background-color: transparent;
+    border: 1px dashed {border};
 }}
 QCheckBox, QRadioButton {{
     spacing: 8px;
@@ -752,6 +754,13 @@ def build_modern_qss(tokens: dict[str, str]) -> str:
 _CLASSIC_MUTED_DARK = '\nQLabel[role="muted"] {\n    color: #a6adc8;\n}\n'
 _CLASSIC_MUTED_LIGHT = '\nQLabel[role="muted"] {\n    color: #666666;\n}\n'
 
+
+def _muted_css(resolved: str) -> str:
+    """Secondary text in the theme's own muted colour: Hacker and Amber
+    showed their hints in Classic's grey-blue."""
+    colour = _CLASSIC_PALETTE_TOKENS[resolved]["text_muted"]
+    return f'\nQLabel[role="muted"] {{\n    color: {colour};\n}}\n'
+
 _MODERN_VARIANTS = {"modern-light": MODERN_LIGHT, "modern-dark": MODERN_DARK}
 
 # Added to the classic stylesheets above (which stay as they were):
@@ -770,9 +779,17 @@ _CLASSIC_EXTRA_COLOURS: dict[str, tuple[str, str, str, str]] = {
 
 def _classic_extra_css(resolved: str) -> str:
     divider, checked_bg, checked_border, checked_text = _CLASSIC_EXTRA_COLOURS[resolved]
+    muted = _CLASSIC_PALETTE_TOKENS[resolved]["text_muted"]
     return (
         "\nQHeaderView::section:horizontal {\n"
         f"    border-right: 1px solid {divider};\n"
+        "}\n"
+        # A disabled button looked like an enabled one: the sheet sets one
+        # colour for both (UX review round 7). Muted text, no fill, dashed.
+        "QPushButton:disabled {\n"
+        f"    color: {muted};\n"
+        "    background-color: transparent;\n"
+        f"    border: 1px dashed {checked_border};\n"
         "}\n"
         "QPushButton:checked {\n"
         f"    background-color: {checked_bg};\n"
@@ -932,10 +949,10 @@ def stylesheet_for(theme: object, system_scheme: str | None, compact: bool = Fal
         css = DARK_THEME + _CLASSIC_MUTED_DARK + _classic_extra_css("classic")
         css += _indicator_css("classic")
     elif resolved == "hacker":
-        css = HACKER_THEME + _CLASSIC_MUTED_DARK + _classic_extra_css("hacker")
+        css = HACKER_THEME + _muted_css("hacker") + _classic_extra_css("hacker")
         css += _indicator_css("hacker")
     elif resolved == "amber":
-        css = AMBER_THEME + _CLASSIC_MUTED_DARK + _classic_extra_css("amber")
+        css = AMBER_THEME + _muted_css("amber") + _classic_extra_css("amber")
         css += _indicator_css("amber")
     else:
         css = _CLASSIC_MUTED_LIGHT + _NATIVE_HEADER_CSS + _indicator_css("native")
@@ -1054,6 +1071,28 @@ def qpalette_for(tokens: dict[str, str]):
 
 #: WCAG AA for normal text: the least contrast a text colour may have.
 MIN_TEXT_CONTRAST = 4.5
+
+
+def readable_palette(palette):
+    """*palette* (the desktop's, kept by Light Mode) with a selection that
+    reaches MIN_TEXT_CONTRAST: Fusion's own highlight #308cc6 under white
+    text is 3.7:1 (UX review round 7). The highlight is darkened (on a light
+    selection text: lightened) step by step until the selected text reads;
+    a palette that reads already comes back unchanged."""
+    from PyQt6.QtGui import QColor, QPalette
+
+    out = QPalette(palette)
+    role = QPalette.ColorRole
+    for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
+        text = out.color(group, role.HighlightedText)
+        back = QColor(out.color(group, role.Highlight))
+        dark_text = _relative_luminance(text.name()) < 0.5
+        for _step in range(40):
+            if contrast_ratio(text.name(), back.name()) >= MIN_TEXT_CONTRAST:
+                break
+            back = back.lighter(108) if dark_text else back.darker(108)
+        out.setColor(group, role.Highlight, back)
+    return out
 
 
 def is_hex_colour(value: object) -> bool:

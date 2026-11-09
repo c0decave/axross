@@ -56,14 +56,14 @@ TUNING_LABELS = {
                                          "less is flatter, more is livelier."),
     "rhythm": ("Rhythm variation", "How much the length of the sounds varies (Piper's noise "
                                    "width scale): less is more even."),
-    "volume": ("Volume", "A share of the output volume of Edit > Settings… > Audio."),
+    "volume": ("Volume", "A share of the output volume of Edit → Settings… → Audio."),
     "pause": ("Pause between sentences", "Silence between two sentences."),
 }
 
 MODE_LABELS = {
-    "push_to_talk": "Push-to-talk - hold the microphone button or the hold key",
-    "toggle": "Toggle - click to start, click again or pause to end",
-    "conversation": "Conversation - listens again after each spoken answer",
+    "push_to_talk": "Push-to-talk – hold the microphone button or the hold key",
+    "toggle": "Toggle – click to start, click again or pause to end",
+    "conversation": "Conversation – listens again after each spoken answer",
 }
 AFTER_LABELS = {"insert": "Put it into the task field", "send": "Send it at once"}
 
@@ -161,8 +161,8 @@ class VoicePage(QWidget):
         form.addRow(tr("Pause that ends speaking"), self.silence_spin)
         note = QLabel(tr(
             "German speech says English terms in English. Voices are downloaded here or in "
-            "Help > Features…, group Voice, which also has the speech recognition models. "
-            "Which server recognises speech is set per LLM profile (LLM… > Advanced). The "
+            "Help → Features…, group Voice, which also has the speech recognition models. "
+            "Which server recognises speech is set per LLM profile (LLM… → Advanced). The "
             "microphone is off in the paranoid security mode; confirmations are always "
             "clicked, never spoken."))
         note.setWordWrap(True)

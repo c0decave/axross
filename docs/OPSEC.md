@@ -68,6 +68,17 @@ atomic temp files (already unavoidable — you need per-write
 uniqueness) and TLS session keys (protocol-mandated). Everything
 else aims for boring and uniform.
 
+## SSH keepalive
+
+SSH keepalive is off by default (profile field `ssh_keepalive_interval`
+= 0, as OpenSSH's own default): a fixed cadence on an idle connection
+is a cross-session fingerprint. axross sends a keepalive request only on
+demand - when an SFTP request or a command it runs on the server (the
+checksum after an upload, a server-side copy) has heard nothing for the
+profile's SFTP time-out (60 s by default). It is the request OpenSSH's
+`ServerAliveInterval` sends (`keepalive@openssh.com`, want-reply), once
+per silence, to tell a slow server from a dead network.
+
 ## The update check at start
 
 The one-file binaries ask `api.github.com` for the latest axross release

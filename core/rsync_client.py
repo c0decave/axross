@@ -25,6 +25,7 @@ import shutil
 import stat as stat_module
 import subprocess
 import tempfile
+import weakref
 from datetime import datetime
 from typing import IO, Callable
 
@@ -406,7 +407,12 @@ class _RsyncWriter:
     def __init__(self, session: "RsyncSession", remote_path: str):
         self._session = session
         self._remote_path = remote_path
-        self._tmp = tempfile.NamedTemporaryFile(delete=False)
+        from core.read_spool import new_named_spool, remove_quietly
+
+        # In the spool folder (not /tmp, a tmpfs), and removed even when
+        # the writer is dropped without close() or discard().
+        self._tmp = new_named_spool(prefix="axross-rsync-", delete=False)
+        self._cleanup = weakref.finalize(self, remove_quietly, self._tmp.name)
         self._closed = False
 
     # -- IO[bytes] interface --------------------------------------------------
@@ -427,8 +433,8 @@ class _RsyncWriter:
         if self._closed:
             return
         self._closed = True
-        self._tmp.close()
         try:
+            self._tmp.close()  # a full disk fails here: removed all the same
             self._session._upload(self._tmp.name, self._remote_path)
         finally:
             try:
@@ -1053,8 +1059,12 @@ class RsyncSession(SessionLifecycle):
         "skipping non-regular file" or "skipping directory", so the
         download goes into an empty temp directory and only a regular
         file that actually arrived there counts as read."""
+        from core.read_spool import remove_quietly, spool_dir
+
         url = self._build_url(_literal_source(path))
-        tmpdir = tempfile.mkdtemp(prefix="axross-rsync-")
+        # In the spool folder (not /tmp, a tmpfs); removed on every path.
+        folder = spool_dir()
+        tmpdir = tempfile.mkdtemp(prefix="axross-rsync-", dir=folder)
         try:
             # A stall limit, not a wall clock: rsync's own --timeout ends a
             # transfer that moved nothing for that long; a cap on the whole
@@ -1063,13 +1073,21 @@ class RsyncSession(SessionLifecycle):
             arrived = [os.path.join(tmpdir, n) for n in os.listdir(tmpdir)]
             if len(arrived) != 1 or not os.path.isfile(arrived[0]):
                 raise OSError(f"rsync read {path}: not a regular file")
-            fd, tmp_name = tempfile.mkstemp(prefix="axross-rsync-")
+            fd, tmp_name = tempfile.mkstemp(prefix="axross-rsync-", dir=folder)
             os.close(fd)
-            os.replace(arrived[0], tmp_name)
+            try:
+                os.replace(arrived[0], tmp_name)
+            except BaseException:
+                remove_quietly(tmp_name)
+                raise
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
-        fh = open(tmp_name, "rb")
+        try:
+            fh = open(tmp_name, "rb")
+        except BaseException:
+            remove_quietly(tmp_name)
+            raise
         # Wrap so the temp file is cleaned up when the handle is closed
         return _TempFileReader(fh, tmp_name)
 

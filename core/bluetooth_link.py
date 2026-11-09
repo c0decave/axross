@@ -516,7 +516,7 @@ class ConnectionTest(QObject):
 
     def _sink_missing(self) -> None:
         self.steps.append(Step("Audio output", tr(
-            "none appeared within {seconds:g} s - is the A2DP profile available?").format(
+            "none appeared within {seconds:g} s – is the A2DP profile available?").format(
             seconds=self._sink_timeout), False))
         self._done()
 

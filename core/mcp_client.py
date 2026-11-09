@@ -133,6 +133,9 @@ class McpServerConfig:
     #: The catalog category it was installed from, or one set by hand
     #: (Agent profiles choose servers by it: core.agent_profiles).
     category: str = ""
+    #: stdio: the user marked the program trusted - it runs on this machine
+    #: as it is, without a sandbox profile (see :meth:`host_run_problem`).
+    trusted: bool = False
 
     def problems(self) -> list[str]:
         out = []
@@ -174,6 +177,30 @@ class McpServerConfig:
         return [f"{plan.runner} downloads code when it starts: it runs only in a container "
                 f"(Install in a Container)"]
 
+    def host_run_problem(self, sandboxed: bool | None = None) -> str:
+        """Why this stdio program may not start as it is on this machine
+        ("" = it may). Contained by default (core.mcp_runner.host_launcher):
+        only a known pure launcher (an interpreter running a script or a
+        module on disk) runs without a sandbox profile; any other program -
+        a build tool, a package manager, a binary - starts in its sandbox
+        profile or a container, or when the user marked the server trusted.
+        Not part of :meth:`problems`: such a server is kept in the settings
+        and refused at its start (McpClient), with this reason.
+        *sandboxed* overrides "has a sandbox profile" (the caller's wrap)."""
+        if self.transport != "stdio" or not self.command or self.container or self.trusted:
+            return ""
+        if self.sandbox if sandboxed is None else sandboxed:
+            return ""
+        from core.mcp_catalog import clean_text
+        from core.mcp_runner import host_launcher
+
+        if host_launcher(self.command):
+            return ""
+        program = clean_text(str(self.command[0]), 60)
+        return (f"{program} is no known launcher (an interpreter running a script on disk): "
+                "it starts only in a sandbox profile or a container, or when the server is "
+                "marked trusted")
+
     def files_risk(self) -> str:
         """Why the server may change the user's files ("" = it cannot): only
         a container server on axross's own podman line with no network and
@@ -205,7 +232,7 @@ class McpServerConfig:
     def signature(self) -> tuple:
         return (self.transport, tuple(self.command), tuple(sorted(self.env.items())), self.url,
                 self.bearer, self.timeout, self.sandbox, self.confirm, self.container,
-                tuple(self.secret_env), tuple(self.egress))
+                tuple(self.secret_env), tuple(self.egress), self.trusted)
 
     def to_dict(self) -> dict:
         return {
@@ -224,6 +251,7 @@ class McpServerConfig:
             "egress": list(self.egress),
             "package": dict(self.package),
             "category": self.category,
+            "trusted": self.trusted,
         }
 
     @classmethod
@@ -242,7 +270,7 @@ class McpServerConfig:
         for key in ("url", "sandbox"):
             if isinstance(data.get(key), str):
                 setattr(out, key, data[key])
-        for key in ("bearer", "enabled"):
+        for key in ("bearer", "enabled", "trusted"):
             if isinstance(data.get(key), bool):
                 setattr(out, key, data[key])
         if data.get("confirm") in CONFIRMS:
@@ -823,6 +851,9 @@ class McpClient:
         self._next = 0
         if config.transport == "stdio":
             refused = config.containment_problems()
+            host = config.host_run_problem(sandboxed=wrap is not None)
+            if host:
+                refused.append(host)
             if refused:
                 raise McpClientError("; ".join(refused))
             values = secrets_of(config) if secrets is None else {

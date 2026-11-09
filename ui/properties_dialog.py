@@ -249,7 +249,7 @@ class PropertiesDialog(QDialog):
         # anything else it stays hidden so the row does not suggest an
         # action that would do nothing.
         self._calc_btn = QPushButton(tr("Calculate"), page)
-        self._calc_btn.setToolTip(tr("Walk the directory and total up its contents"))
+        self._calc_btn.setToolTip(tr("Walk the folder and total up its contents"))
         self._calc_btn.clicked.connect(self._start_size_walk)
         cheap = getattr(self._backend, "has_cheap_recursive_walk", False)
         self._calc_btn.setVisible((self._multi or self._item.is_dir) and not cheap)
@@ -280,7 +280,7 @@ class PropertiesDialog(QDialog):
         if key == "Type":
             if item.is_link:
                 return tr("Symlink")
-            return tr("Directory") if item.is_dir else tr("File")
+            return tr("Folder") if item.is_dir else tr("File")
         if key == "Link target":
             return item.link_target or DASH
         if key == "Size":
@@ -314,7 +314,7 @@ class PropertiesDialog(QDialog):
         from core.fs_summary import describe
 
         if self._summary is None:
-            return tr_n(len(self._items), "{n} item — not counted yet", "{n} items — not counted yet")
+            return tr_n(len(self._items), "{n} item – not counted yet", "{n} items – not counted yet")
         return tr_n(len(self._items), "{n} item selected: {what}", "{n} items selected: {what}",
                     what=describe(self._summary))
 

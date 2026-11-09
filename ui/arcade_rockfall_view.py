@@ -409,7 +409,7 @@ class RockfallView(AC.ArcadeView):
             c2 = QColor("#e2e8f0")
             c2.setAlphaF(min(1.0, self.intro * 1.6))
             AC.glow_text(p, QRectF(0, self.height() * 0.32 + 48, self.width(), 26),
-                         tr("{n} crystals - then the exit").format(n=g.quota), AC.font(11), c2)
+                         tr("{n} crystals – then the exit").format(n=g.quota), AC.font(11), c2)
 
     def end_message(self):
         if self.game.completed and not self.paused:
@@ -476,7 +476,7 @@ class RockfallView(AC.ArcadeView):
         sub = QColor("#fcd9a8")
         sub.setAlphaF(max(0.0, min(1.0, (t - 0.65) * 4)))
         AC.glow_text(p, QRectF(rect.left(), base_y + size * 0.45 + 52, rect.width(), 26),
-                     tr("dig for crystals - mind the rocks"), AC.font(10.5), sub)
+                     tr("dig for crystals – mind the rocks"), AC.font(10.5), sub)
         AC.intro_hint(p, rect, t, QColor("#ffd166"))
 
     def _title_assets(self, rect: QRectF):

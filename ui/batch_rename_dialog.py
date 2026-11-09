@@ -61,7 +61,7 @@ class BatchRenameDialog(QDialog):
         self._base_path = base_path
         self._items = items
 
-        self.setWindowTitle(tr("Batch Rename — {n} files").format(n=len(items)))
+        self.setWindowTitle(tr("Batch Rename – {n} files").format(n=len(items)))
         self.setMinimumWidth(600)
         self.setMinimumHeight(400)
         self._setup_ui()

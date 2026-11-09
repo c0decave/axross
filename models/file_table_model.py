@@ -1002,6 +1002,26 @@ class FileSortProxyModel(QAbstractProxyModel):
         self._tag_filter = predicate
         self.invalidateFilter()
 
+    def entry_counts(self) -> tuple[int, int, int]:
+        """``(shown, hidden, filtered_out)``: the entries shown (not "."
+        and ".."), the hidden ones left out while hidden entries are not
+        shown, and the ones the filter text or tag leaves out.
+
+        The pane's count said "10 items" while 7 were shown, and a folder
+        that looked empty "1 item" for a hidden .part file (UX review
+        round 7)."""
+        model = self._file_model
+        if model is None:
+            src = self.sourceModel()
+            return (self.rowCount(), 0, (src.rowCount() if src is not None else 0)
+                    - self.rowCount())
+        cache = model.row_cache()
+        nav = cache.classes.count(_NAV)
+        entries = len(cache.classes) - nav
+        shown = max(0, len(self._rows) - nav)
+        hidden = 0 if self._show_hidden else len(cache.classes) - len(cache.unhidden)
+        return shown, hidden, max(0, entries - hidden - shown)
+
     @property
     def show_hidden(self) -> bool:
         return self._show_hidden

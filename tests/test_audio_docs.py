@@ -80,9 +80,21 @@ def test_sad_the_buttons_the_docs_name_exist():
         assert f'tr("{label}")' in player, label
 
 
-def test_edge_no_german_label_for_an_it_term_in_the_german_guide():
-    """KEINE EINDEUTSCHUNGEN: the German guide says Backend, Device, Volume
-    as the page does."""
+def test_edge_the_german_guide_names_the_audio_page_as_it_shows():
+    """The German guide names what the German page shows: Backend (an IT
+    term the page keeps), Gerät and Lautstärke under Ausgabe and Eingabe -
+    "Output-Device und Volume" were words the German window never shows
+    (UX review round 7; the test asked for the English words before)."""
+    from core import i18n
+
+    i18n.install("de")
+    try:
+        shown = {i18n.tr("Backend"), i18n.tr("Device"), i18n.tr("Volume")}
+    finally:
+        i18n.install("en")
+    assert shown == {"Backend", "Gerät", "Lautstärke"}
     row = re.search(r"^\| Audio \| (.+) \|$", _text("docs/USAGE_de.md"), re.M).group(1)
-    for word in ("Gerät", "Lautstärke", "Hintergrundprogramm"):
+    for word in ("Backend", "Ausgabegerät", "Eingabegerät", "Lautstärke"):
+        assert word in row, word
+    for word in ("Device", "Volume", "Hintergrundprogramm"):
         assert word not in row, word

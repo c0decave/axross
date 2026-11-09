@@ -57,7 +57,9 @@ def _path(name: str, *labels: str) -> str:
             return label.replace(bare, german.get(bare, bare)).replace("&", "")
 
         return " → ".join(de(label) for label in labels)
-    return " > ".join(label.replace("&", "") for label in labels)
+    # The English guide joins menu paths with "→" too (UX review round 7).
+    sep = " → " if name == "USAGE.md" else " > "
+    return sep.join(label.replace("&", "") for label in labels)
 
 
 @pytest.mark.parametrize("name", HEADINGS)

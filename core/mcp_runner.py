@@ -962,6 +962,74 @@ def _direct(program: str, argv: list[str], depth: int) -> RunnerPlan | None:
     return _command_option(program, rest)
 
 
+# -- contained by default -----------------------------------------------------------------
+
+#: Interpreters that only run a script (or a module) already on disk. A
+#: server line that is one of them with its file runs on this machine as it
+#: is; any other program - a build tool, a package manager, a binary nobody
+#: can read - is contained by default: it starts only in a sandbox profile
+#: or a container, or when the user marked the server trusted
+#: (core.mcp_client.McpServerConfig.host_run_problem). A deny-list of
+#: downloading tools is never complete (bazel, mix, swift, conan …); this
+#: short allow-list is.
+_SCRIPT_LAUNCHERS = frozenset({"node", "nodejs", "ruby", "perl", "php", "lua", "luajit",
+                               "rscript", "sh", "bash", "dash", "zsh"})
+#: python options without a value that change nothing about what runs.
+_PYTHON_PLAIN = frozenset("uIEsSBOPqR")
+#: node options (``--name`` / ``--name=value``) that load nothing.
+_NODE_PLAIN = re.compile(r"--(?:enable-source-maps|no-warnings|no-deprecation|trace-warnings"
+                         r"|max-old-space-size=\d+|stack-size=\d+|unhandled-rejections=\w+"
+                         r"|experimental-[a-z-]+|no-experimental-[a-z-]+)")
+_JAVA_PLAIN = re.compile(r"-(?:D[\w.-]+=\S*|Xm[sx]\d+[kmgKMG]?|Xss\d+[kmgKMG]?)")
+
+
+def _script_word(word: str) -> bool:
+    """A word that names a script or module on disk (not an option, a URL
+    or a line of its own)."""
+    return bool(word) and not word.startswith("-") and "://" not in word \
+        and not _LINE_MARKS.search(word)
+
+
+def host_launcher(argv) -> bool:
+    """True when *argv* is a known pure launcher: an interpreter that runs a
+    script or a module already on disk (``node server.js``, ``python3 -u
+    server.py``, ``python -m mcp_server_git``, ``java -jar srv.jar``,
+    ``dotnet srv.dll``, ``bash srv.sh``) and nothing in its line is a runner.
+    Such a server runs on this machine as it is; anything else is contained
+    by default (see :data:`_SCRIPT_LAUNCHERS`)."""
+    words = [str(a) for a in (argv or ())]
+    if len(words) < 2 or downloading_runner(words) is not None:
+        return False
+    program, rest = _program(words), words[1:]
+    if _PYTHONS.fullmatch(program):
+        i = 0
+        while i < len(rest) and rest[i].startswith("-") and rest[i] != "-":
+            letters = rest[i][1:]
+            if letters == "m":
+                return i + 1 < len(rest) and \
+                    re.fullmatch(r"[A-Za-z_][\w.]*", rest[i + 1]) is not None
+            if not letters or not set(letters) <= _PYTHON_PLAIN:
+                return False
+            i += 1
+        return i < len(rest) and _script_word(rest[i])
+    if program in _NODES:
+        i = 0
+        while i < len(rest) and _NODE_PLAIN.fullmatch(rest[i]):
+            i += 1
+        return i < len(rest) and _script_word(rest[i])
+    if program == "java":
+        i = 0
+        while i < len(rest) and _JAVA_PLAIN.fullmatch(rest[i]):
+            i += 1
+        return rest[i:i + 1] == ["-jar"] and i + 1 < len(rest) \
+            and _script_word(rest[i + 1]) and rest[i + 1].lower().endswith(".jar")
+    if program == "dotnet":
+        return _script_word(rest[0]) and rest[0].lower().endswith(".dll")
+    if program in _SCRIPT_LAUNCHERS:
+        return _script_word(rest[0])
+    return False
+
+
 #: The server name in a container's --name / --label (core.mcp_client's names).
 _CONTAINER_SERVER = r"[A-Za-z0-9_-]{1,32}"
 

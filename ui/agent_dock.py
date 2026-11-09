@@ -80,7 +80,9 @@ from core.thread_relay import GuiCall
 from ui.agent_panels import AGENT_DOCK_EXT_ID, AgentPanel, DetachTabBar, alive, weak_call
 from ui.dock_frame import framed
 from ui.extension_panels import ExtensionDock
+from ui.format_utils import sandbox_label
 from ui.icon_provider import set_window_icon
+from ui.plain_text import show_full_text, shown_length
 
 log = logging.getLogger(__name__)
 
@@ -135,6 +137,15 @@ HISTORY_LIMIT = 50
 THINKING_SCHEME = "axross-thinking"
 #: Longest first line a closed Thinking block shows.
 SUMMARY_CHARS = 100
+#: The links that show a line's whole text in a window: "axross-full:<line>".
+FULL_SCHEME = "axross-full"
+#: The most characters the transcript lays out, all lines together: past
+#: it the oldest lines show only their start (COLLAPSED_CHARS) and a link
+#: to the rest. Each line shows at most ui.plain_text.shown_length() of
+#: its text - one answer of 200,000 mixed-direction characters kept the
+#: GUI thread more than 90 s.
+MAX_TRANSCRIPT_SHOWN = 512 * 1024
+COLLAPSED_CHARS = 200
 
 
 def reasoning_summary(text: str, limit: int = SUMMARY_CHARS) -> str:
@@ -197,7 +208,7 @@ def call_box(parent, name: str, args: dict) -> QMessageBox:
     preview = _visible(json.dumps(args, ensure_ascii=False))
     if len(preview) > CALL_PREVIEW_CHARS:
         preview = preview[:CALL_PREVIEW_CHARS] + "\n" + tr(
-            "… cut at {shown} of {total} characters - Show Details… shows all of it."
+            "… cut at {shown} of {total} characters – Show Details… shows all of it."
         ).format(shown=CALL_PREVIEW_CHARS, total=len(preview))
     box.setInformativeText(preview)
     box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
@@ -373,6 +384,10 @@ class AgentTab(QWidget):
         self._entries: list[dict] = []
         #: The Thinking blocks that are open (indexes into _entries).
         self._open: set[int] = set()
+        #: The lines that show only their start (the transcript's oldest,
+        #: past MAX_TRANSCRIPT_SHOWN), and the characters the others lay out.
+        self._collapsed: set[int] = set()
+        self._shown_chars = 0
         #: Whether this tab's LLM is reachable: the dock's lamp.
         self.link = AL.LinkTracker()
         # The agent's thread reaches the GUI thread through these, not
@@ -537,7 +552,7 @@ class AgentTab(QWidget):
         self.topics_button = QToolButton()
         self.topics_button.setText(tr("Topics ▸"))
         self.topics_button.setToolTip(
-            tr("Prepared tasks: inventory, installs, logs, disk usage, … - and your own "
+            tr("Prepared tasks: inventory, installs, logs, disk usage, … – and your own "
                "(+ New Topic…)")
         )
         self.topics_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -743,6 +758,7 @@ class AgentTab(QWidget):
             self._load_settings()
             self._entries = [{"who": e["who"], "text": e["text"], "muted": e.get("muted", False),
                               "kind": e.get("kind", "")} for e in s.transcript]
+            self._collapsed = set()
             self._render_all()
             # The latest lines in view, as appending them showed them.
             self.transcript.moveCursor(QTextCursor.MoveOperation.End)
@@ -807,7 +823,7 @@ class AgentTab(QWidget):
                 # A fresh install has the axross functions off: every preset
                 # said so, without the way to the switch.
                 links.append('<a href="settings:access">'
-                             + html.escape(tr("Open Agent Settings > Access…")) + "</a>")
+                             + html.escape(tr("Open Agent Settings → Access…")) + "</a>")
             links.append('<a href="apply:again">' + html.escape(tr("Apply Profile again"))
                          + "</a>")
             lines.append(" · ".join(links))
@@ -869,7 +885,7 @@ class AgentTab(QWidget):
             return text.format(tool=name, owner=owner, line=line, tools=tools), "tools:show"
         if kind == "access":
             text = tr('The agent asked for "{tool}", which needs "{function}": switch it on in '
-                      'Agent Settings > Access.')
+                      'Agent Settings → Access.')
             return text.format(tool=name, function=tr(AP.FUNCTION_NAMES.get(value, value))), \
                 "settings:access"
         if kind == "offered":
@@ -891,7 +907,7 @@ class AgentTab(QWidget):
         if target == "tools:show":
             link = tr("Show the Tools")
         elif target == "settings:access":
-            link = tr("Open Agent Settings > Access…")
+            link = tr("Open Agent Settings → Access…")
         self.setup_hint.setText(html.escape(text) + (
             f' <a href="{html.escape(target, quote=True)}">{html.escape(link)}</a>' if link else ""))
         self.setup_hint.show()
@@ -946,7 +962,9 @@ class AgentTab(QWidget):
             self.sandbox_combo.clear()
             self.sandbox_combo.addItem(tr("No sandbox"), "")
             for profile in settings.sandboxes:
-                self.sandbox_combo.addItem(f"{profile.name} ({profile.level})", profile.name)
+                self.sandbox_combo.addItem(
+                    f"{sandbox_label(profile.name)} ({sandbox_label(profile.level)})",
+                    profile.name)
             if s.sandbox and settings.sandbox_profile(s.sandbox) is None:
                 # Renamed or deleted: kept and refused, never quietly "no sandbox".
                 self.sandbox_combo.addItem(tr("{name} (missing)").format(name=s.sandbox), s.sandbox)
@@ -1091,11 +1109,11 @@ class AgentTab(QWidget):
         self.read_only_check.blockSignals(False)
         self.read_only_check.setEnabled(not forced)
         self.read_only_check.setToolTip(
-            tr("Agent Settings > Access makes files read-only in every tab")
+            tr("Agent Settings → Access makes files read-only in every tab")
             if forced
             else tr(
                 "The agent reads files but changes none: no writing, deleting or moving, "
-                "no remote commands, no writing tools of MCP servers or extensions - except "
+                "no remote commands, no writing tools of MCP servers or extensions – except "
                 "a container server axross installed with no network and only read-only "
                 "folders (its calls still ask as its Asks says)"
             )
@@ -1388,7 +1406,52 @@ class AgentTab(QWidget):
 
     def _show(self, who: str, text: str, muted: bool = False, *, kind: str = "") -> None:
         self._entries.append({"who": who, "text": text, "muted": muted, "kind": kind})
-        self.transcript.append(self._entry_html(len(self._entries) - 1))
+        index = len(self._entries) - 1
+        self.transcript.append(self._entry_html(index))
+        self._shown_chars += self._entry_cost(index)
+        self._collapse_oldest()
+
+    def _entry_cost(self, index: int) -> int:
+        """The characters line *index* lays out."""
+        text = self._entries[index]["text"]
+        if index in self._collapsed:
+            return min(len(text), COLLAPSED_CHARS)
+        if self._entries[index]["kind"] == "reasoning" and index not in self._open:
+            return SUMMARY_CHARS
+        return shown_length(text)
+
+    def _collapse_oldest(self) -> None:
+        """Past MAX_TRANSCRIPT_SHOWN, the oldest lines show only their start
+        (drawn again one block each, the way toggle_reasoning does)."""
+        if self._shown_chars <= MAX_TRANSCRIPT_SHOWN:
+            return
+        document = self.transcript.document()
+        in_step = document.blockCount() == len(self._entries)
+        for index in range(len(self._entries) - 1):
+            if self._shown_chars <= MAX_TRANSCRIPT_SHOWN:
+                break
+            if index in self._collapsed:
+                continue
+            before = self._entry_cost(index)
+            self._collapsed.add(index)
+            self._shown_chars -= before - self._entry_cost(index)
+            if in_step:
+                cursor = QTextCursor(document.findBlockByNumber(index))
+                cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock,
+                                    QTextCursor.MoveMode.KeepAnchor)
+                cursor.insertHtml(self._entry_html(index))
+        if not in_step or document.blockCount() != len(self._entries):
+            self._render_all()
+
+    def _shown_text(self, index: int, text: str) -> str:
+        """The part of line *index*'s *text* the transcript lays out, escaped,
+        with a link to the whole text when that is not all of it."""
+        end = min(len(text), COLLAPSED_CHARS) if index in self._collapsed else shown_length(text)
+        body = html.escape(text[:end]).replace(chr(10), "<br>")
+        if end < len(text):
+            more = html.escape(tr("Show all ({count} characters)").format(count=len(text)))
+            body += f' … <a href="{FULL_SCHEME}:{index}">{more}</a>'
+        return body
 
     def _entry_html(self, index: int) -> str:
         entry = self._entries[index]
@@ -1403,14 +1466,14 @@ class AgentTab(QWidget):
             label = (f'<a href="{THINKING_SCHEME}:{index}" style="color:#888; '
                      f'text-decoration:none"><b>{"▾" if opened else "▸"} '
                      f'{html.escape(tr("Thinking"))}</b></a>')
-            body = (html.escape(text).replace(chr(10), "<br>") if opened
+            body = (self._shown_text(index, text) if opened
                     else html.escape(reasoning_summary(text)))
             return f'<p style="color:#888"><i>{label}{"<br>" if opened else " "}{body}</i></p>'
         # No colour on normal lines: the theme's text colour applies. Qt's
         # rich text has no "inherit" - it paints that as black.
         style = ' style="color:#888"' if entry["muted"] else ""
         return (f"<p{style}><b>{html.escape(entry['who'])}</b> "
-                f"{html.escape(text).replace(chr(10), '<br>')}</p>")
+                f"{self._shown_text(index, text)}</p>")
 
     def _append(self, who: str, text: str, *, muted: bool = False, kind: str = "") -> None:
         self._show(who, text, muted, kind=kind)
@@ -1427,13 +1490,24 @@ class AgentTab(QWidget):
             self.transcript.verticalScrollBar().setValue(maximum)
 
     def _on_anchor(self, url: QUrl) -> None:
-        if url.scheme() != THINKING_SCHEME:
+        if url.scheme() not in (THINKING_SCHEME, FULL_SCHEME):
             return  # the transcript has no other links; nothing is opened
         try:
             index = int(url.path())
         except ValueError:
             return
-        self.toggle_reasoning(index)
+        if url.scheme() == FULL_SCHEME:
+            self.show_full_entry(index)
+        else:
+            self.toggle_reasoning(index)
+
+    def show_full_entry(self, index: int):
+        """Line *index*'s whole text in a window of its own, as plain text."""
+        if not 0 <= index < len(self._entries):
+            return None
+        entry = self._entries[index]
+        title = entry["who"].rstrip(":") or tr("Agent")
+        return show_full_text(self, title, entry["text"])
 
     def toggle_reasoning(self, index: int) -> None:
         """Open a closed Thinking block, close an open one. The transcript
@@ -1441,7 +1515,9 @@ class AgentTab(QWidget):
         there)."""
         if not 0 <= index < len(self._entries) or self._entries[index]["kind"] != "reasoning":
             return
+        before = self._entry_cost(index)
         self._open ^= {index}
+        self._shown_chars += self._entry_cost(index) - before
         bar = self.transcript.verticalScrollBar()
         at_end, value = bar.value() >= bar.maximum(), bar.value()
         document = self.transcript.document()
@@ -1459,7 +1535,16 @@ class AgentTab(QWidget):
     def _render_all(self) -> None:
         """Draw the whole transcript at once: one setHtml gives the same
         document as appending line by line, which took twice as long in a
-        hidden tab and almost five times as long in a shown one."""
+        hidden tab and almost five times as long in a shown one. The newest
+        lines up to MAX_TRANSCRIPT_SHOWN characters are shown, the older
+        ones only their start."""
+        self._collapsed = {i for i in self._collapsed if i < len(self._entries)}
+        self._shown_chars = 0
+        for index in range(len(self._entries) - 1, -1, -1):
+            if index not in self._collapsed and self._shown_chars + self._entry_cost(index) \
+                    > MAX_TRANSCRIPT_SHOWN and index != len(self._entries) - 1:
+                self._collapsed.add(index)
+            self._shown_chars += self._entry_cost(index)
         self.transcript.setHtml("".join(self._entry_html(i) for i in range(len(self._entries))))
 
     # -- attachments ------------------------------------------------------------------------
@@ -1599,10 +1684,10 @@ class AgentTab(QWidget):
             self.allow_exec.isEnabled() and self.allow_exec.isChecked()
         ):
             missing.append(
-                tr("remote commands (Tools ▸ Allow remote commands; Agent Settings > Access)")
+                tr("remote commands (Tools ▸ Allow remote commands; Agent Settings → Access)")
             )
         if "remote" in topic.needs and "remote_files" not in self.functions():
-            missing.append(tr("remote files (Access…; Agent Settings > Access)"))
+            missing.append(tr("remote files (Access…; Agent Settings → Access)"))
         if "write" in topic.needs and not (
             self.allow_write.isEnabled() and self.allow_write.isChecked()
         ):
@@ -1669,7 +1754,7 @@ class AgentTab(QWidget):
             self._show(
                 tr("axross:"),
                 tr(
-                    "Remote files are off in this tab's Access or Agent Settings > Access: "
+                    "Remote files are off in this tab's Access or Agent Settings → Access: "
                     "the agent cannot open files of a connection."
                 ),
                 muted=True,
@@ -1751,6 +1836,8 @@ class AgentTab(QWidget):
         self.transcript.clear()
         self._entries.clear()
         self._open.clear()
+        self._collapsed.clear()
+        self._shown_chars = 0
         self.session.transcript.clear()
         self.session.messages.clear()
         self._plan_ready = False
@@ -3080,7 +3167,7 @@ class AgentDock(ExtensionDock):
                 MC.set_token(config.name, token)
         except Exception as exc:  # noqa: BLE001 - no keyring: say so, add nothing
             QMessageBox.warning(parent, heading, tr(
-                "The secrets of {name} could not be stored in the keyring - it is not "
+                "The secrets of {name} could not be stored in the keyring – it is not "
                 "added:").format(name=config.name) + f"\n{type(exc).__name__}")
             return None
         settings.mcp_servers.append(config)

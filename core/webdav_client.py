@@ -22,7 +22,6 @@ from __future__ import annotations
 import errno
 import logging
 import posixpath
-import tempfile
 import threading
 import weakref
 from datetime import datetime, timezone
@@ -34,6 +33,7 @@ from core import transfer_hooks
 from core.append_helpers import read_existing_for_append
 from core.backend import SessionLifecycle
 from core.path_policy import refuse_folder_path
+from core.read_spool import new_spool
 from core.redaction import redact_url
 from models.file_item import FileItem
 
@@ -592,8 +592,12 @@ class _WebDavClient:
                 return False
             raise
 
-    def download_to(self, fileobj: IO[bytes], path: str) -> None:
-        with self._request("GET", path, stream=True) as resp:
+    def download_stream(self, path: str) -> "requests.Response":
+        """The GET response of *path*, its body not read yet (the caller
+        closes it): a folder is IsADirectoryError, a missing file
+        FileNotFoundError."""
+        resp = self._request("GET", path, stream=True)
+        try:
             self._check_status(resp, allowed=(200,))
             if resp.headers.get("Content-Type", "").lower().startswith("text/html"):
                 # GET on a collection answers its HTML index (Apache, nginx,
@@ -605,6 +609,13 @@ class _WebDavClient:
                     is_collection = False
                 if is_collection:
                     raise IsADirectoryError(errno.EISDIR, f"{path} is a folder", path)
+        except BaseException:
+            resp.close()
+            raise
+        return resp
+
+    def download_to(self, fileobj: IO[bytes], path: str) -> None:
+        with self.download_stream(path) as resp:
             for chunk in resp.iter_content(chunk_size=64 * 1024):
                 if chunk:
                     fileobj.write(chunk)
@@ -757,7 +768,7 @@ class _SpooledWriter:
     def __init__(self, client: _WebDavClient, remote_path: str, on_put=None):
         self._client = client
         self._remote_path = remote_path
-        self._buf = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
+        self._buf = new_spool(max_size=8 * 1024 * 1024)
         self._closed = False
         #: Called with the remote path once the PUT went through.
         self._on_put = on_put
@@ -990,8 +1001,31 @@ class WebDavSession(SessionLifecycle):
         return self._client.check(self._norm(path))
 
     def open_read(self, path: str) -> IO[bytes]:
-        from core.read_spool import new_read_spool
+        from core.read_spool import (
+            StreamedBody,
+            ensure_stream_room,
+            new_read_spool,
+            streaming_wanted,
+        )
 
+        if streaming_wanted() and isinstance(self._client, _WebDavClient):
+            # The transfer engine reads front to back: the body as it
+            # arrives, no spool beside the local copy (twice the room).
+            try:
+                resp = self._client.download_stream(self._norm(path))
+            except FileNotFoundError as e:
+                raise FileNotFoundError(errno.ENOENT, f"Cannot read {path}: {e}", path) from e
+            except WebDavRequestError as e:
+                raise OSError(f"Cannot read {path}: {e}") from e
+            try:
+                ensure_stream_room(int(resp.headers.get("Content-Length")))
+            except (AttributeError, TypeError, ValueError):
+                pass
+            except BaseException:
+                resp.close()
+                raise
+            return StreamedBody(resp.iter_content(chunk_size=64 * 1024),
+                                what=f"Cannot read {path}", close=resp.close)
         # Spooled, not a BytesIO: the whole file used to sit in RAM.
         buf = new_read_spool()
         # In a running transfer every block checks Cancel and counts as

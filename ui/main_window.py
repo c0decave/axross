@@ -127,6 +127,11 @@ def _is_ssh_session(backend) -> bool:
     return mod is not None and isinstance(backend, mod.SSHSession)
 
 
+def _shift_held() -> bool:
+    """Whether Shift is held right now (connect: open in a new pane)."""
+    return bool(QApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier)
+
+
 def _terminal_name(session, profile) -> str:
     """The terminal dock's name for an SSH *session* opened through *profile*.
 
@@ -445,6 +450,13 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         self._setup_analysis_dock()
         self._setup_agent_dock()
         self._setup_mail_docks()
+        # Every menu entry gets an underlined letter, in any language and in
+        # the menus built at run time (ui.mnemonics; UX review round 7).
+        from ui import mnemonics as _mnemonics
+
+        for _top in self.menuBar().actions():
+            if _top.menu() is not None:
+                _mnemonics.install(_top.menu())
         # A sign-in that shows a code in the browser asks for it here (Dropbox).
         from ui import auth_prompt as _auth_prompt
 
@@ -859,7 +871,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         tools_menu.setObjectName("axToolsMenu")
         self._network_search_action = tools_menu.addAction(tr("&Find on Network Hosts (SMB)…"))
         self._network_search_action.setToolTip(
-            tr("Your files on many SMB hosts at once - host list, addresses or CIDR, one login, read only")
+            tr("Your files on many SMB hosts at once – host list, addresses or CIDR, one login, read only")
         )
         self._network_search_action.triggered.connect(self._show_network_search)
         self._menu_icon(self._network_search_action, "globe")
@@ -1349,7 +1361,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             self,
             tr("Switch on {title}?").format(title=tr(title)),
             tr("{title} is an extension and switched off. Switch it on now? "
-               "(Extensions > Manage Extensions… switches it off again.)").format(
+               "(Extensions → Manage Extensions… switches it off again.)").format(
                    title=tr(title)),
         )
         if answer != QMessageBox.StandardButton.Yes:
@@ -1517,7 +1529,11 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
     def _toggle_bookmark_sidebar(self, checked: bool) -> None:
         sidebar = getattr(self, "_bookmark_sidebar", None)
         if sidebar is not None:
+            self._sidebar_chosen()
             sidebar.setVisible(checked)
+
+    def _sidebar_chosen(self, *_args) -> None:
+        self._sidebar_auto_hidden = False
 
     def _install_dock_titlebar(self, dock, title: str, icon_name: str) -> None:
         """Swap out Qt's default QDockWidget title bar for our custom
@@ -1573,6 +1589,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         # Keep the toolbar button's checked state in step with the dock,
         # however it was toggled (F12, menu, the dock's own X).
         self._bookmark_sidebar.visibilityChanged.connect(self._bookmarks_btn.setChecked)
+        # Shown or hidden by the user: no longer "hidden because empty".
+        self._bookmark_sidebar.toggleViewAction().triggered.connect(self._sidebar_chosen)
         self.addDockWidget(
             Qt.DockWidgetArea.LeftDockWidgetArea,
             self._bookmark_sidebar,
@@ -2005,7 +2023,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         take.setObjectName("axTourOfferTake")
         close = QPushButton(tr("No Thanks"))
         close.setObjectName("axTourOfferDismiss")
-        close.setToolTip(tr("Help > Tours… has every tour; Settings > General offers this "
+        close.setToolTip(tr("Help → Tours… has every tour; Settings → General offers this "
                             "one again at the next start"))
         row.addWidget(label)
         row.addWidget(take)
@@ -2618,7 +2636,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             QMessageBox.information(
                 self,
                 tr("Open Archive"),
-                tr("Opening an archive inside a 7z or RAR archive is not supported — "
+                tr("Opening an archive inside a 7z or RAR archive is not supported – "
                    "extract it first."),
             )
             return
@@ -2836,7 +2854,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             QMessageBox.information(
                 self,
                 title,
-                tr("Partial extraction is not supported for this format (7z/RAR) — "
+                tr("Partial extraction is not supported for this format (7z/RAR) – "
                    "please use 'Extract All'."),
             )
             return
@@ -2887,7 +2905,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             QMessageBox.information(
                 self,
                 tr("Extract Selection"),
-                tr("Nothing selected — please select files or folders in the tree."),
+                tr("Nothing selected – please select files or folders in the tree."),
             )
             return
         parent = parent or os.path.dirname(archive_path)
@@ -2982,7 +3000,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             QMessageBox.information(
                 self,
                 tr("Open Member"),
-                tr("Single-file preview is not supported for this format (7z/RAR) — "
+                tr("Single-file preview is not supported for this format (7z/RAR) – "
                    "please use 'Extract All'."),
             )
             return None
@@ -3369,6 +3387,68 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             self._target_pane = pane
             self._refresh_pane_styles()
 
+        return pane
+
+    def _untouched_target_pane(self) -> FilePaneWidget | None:
+        """The pane a new connection opens in instead of a new pane: the
+        target pane when nobody has used it yet - a local pane in the
+        workspace on screen, not the active one, still at the home folder
+        it opened with (never navigated), nothing selected, no filter typed,
+        nothing running in it. None otherwise; the connection then gets a
+        new pane as before.
+
+        The first connection at the first start gave three panes, and the
+        server landed in the narrowest (UX review round 7)."""
+        pane = self._target_pane
+        if pane is None or pane is self._active_pane or pane not in self._panes:
+            return None
+        if not isinstance(pane.backend, LocalFS) or pane in self._pane_profiles:
+            return None
+        if self.workspace_of(pane) is not self._current_ws or not pane.isVisible():
+            return None
+        try:
+            home = pane.backend.normalize(pane.backend.home())
+        except OSError:
+            return None
+        if pane.current_path != home or len(getattr(pane, "_history", ())) > 1:
+            return None
+        if pane.selected_items() or pane._filter_edit.text():
+            return None
+        jobs = ("_size_job", "_checksum_job", "_probe_job", "_op_job", "_removal_job")
+        if any(getattr(getattr(pane, job, None), "running", False) for job in jobs):
+            return None
+        return pane
+
+    def _add_connected_pane(
+        self, session, profile, password: str, key_passphrase: str, *, new_pane: bool = False
+    ) -> FilePaneWidget:
+        """The pane for a fresh connection: in place of the untouched target
+        pane (_untouched_target_pane) unless *new_pane* - Shift held, or
+        "Open in a new pane" ticked in the Connection Manager - else a new
+        pane at the right as before."""
+        spare = None if new_pane else self._untouched_target_pane()
+        splitter = spare.parent() if spare is not None else None
+        if not isinstance(splitter, QSplitter):
+            return self._add_pane_to_splitter(
+                self._root_splitter, session, profile=profile, password=password,
+                key_passphrase=key_passphrase,
+            )
+        index = splitter.indexOf(spare)
+        sizes = splitter.sizes()
+        pane = self._add_pane_to_splitter(
+            splitter, session, profile=profile, password=password, key_passphrase=key_passphrase
+        )
+        splitter.insertWidget(index, pane)
+        self._close_pane(spare)
+        if len(sizes) == splitter.count():
+            splitter.setSizes(sizes)
+        self._target_pane = pane
+        self._refresh_pane_styles()
+        self.statusBar().showMessage(
+            tr("{name} opened in the unused pane – hold Shift while connecting "
+               "to open a new pane instead").format(name=profile.name),
+            8000,
+        )
         return pane
 
     def _set_active_pane(self, pane: FilePaneWidget) -> None:
@@ -3828,6 +3908,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         self._quick_connect_profile(
             profile,
             post_connect=lambda pane, ph=placeholder: self._land_reconnected_pane(ph, pane),
+            new_pane=True,  # it lands in the placeholder's place
         )
 
     def _land_reconnected_pane(
@@ -5941,6 +6022,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             self,
             on_connect=lambda p: self._quick_connect_profile(p),
             on_background=lambda p: self._quick_connect_profile(p, activate=False),
+            on_new_pane=lambda p: self._quick_connect_profile(p, new_pane=True),
             on_edit=lambda p: self._on_connect(profile=p),
             on_delete=self._delete_connection_config,
         )
@@ -5965,7 +6047,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                 menu.add_profile(self._profile_label(profile), profile)
 
         if menu.isEmpty():
-            action = menu.addAction(tr("No profiles — open Connection Manager"))
+            action = menu.addAction(tr("No profiles – open Connection Manager"))
             action.triggered.connect(self._on_connect)
 
         menu.addSeparator()
@@ -6114,11 +6196,16 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         *,
         post_connect=None,
         activate: bool = True,
+        new_pane: bool = False,
     ) -> None:
         """Connect to a profile, prompting for password if needed.
 
         ``activate=False`` (Quick Connect's "Connect in Background") adds
         the new pane without making it the active one.
+
+        The connection opens in the untouched target pane when there is one
+        (_add_connected_pane); ``new_pane=True`` - or Shift held - always
+        adds a new pane.
 
         ``post_connect`` is an optional callable ``(pane) -> None``
         run after the new pane lands. Used by ``_navigate_bookmark``
@@ -6131,6 +6218,9 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         password = ""
         key_passphrase = ""
         stored: str | None = None
+        # Shift held on the click: a new pane (read now - the connection
+        # ends long after the key is let go).
+        new_pane = new_pane or _shift_held()
 
         proto = getattr(profile, "protocol", "sftp")
         needs_password = False
@@ -6173,12 +6263,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                 password = pw
 
         def _on_success(session):
-            pane = self._add_pane_to_splitter(
-                self._root_splitter,
-                session,
-                profile=profile,
-                password=password,
-                key_passphrase=key_passphrase,
+            pane = self._add_connected_pane(
+                session, profile, password, key_passphrase, new_pane=new_pane
             )
             if activate:
                 self._set_active_pane(pane)
@@ -6706,6 +6792,16 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         self._first_start_docks_pending = False
         horizontal, vertical = Qt.Orientation.Horizontal, Qt.Orientation.Vertical
         sidebar = getattr(self, "_bookmark_sidebar", None)
+        if (sidebar is not None and sidebar.isVisible() and not sidebar.isFloating()
+                and not self._bookmark_manager.tree() and self._small_screen()):
+            # Empty, on a small screen it only took the panes' room (UX
+            # review round 7). F12 / View → Panels brings it back, and the
+            # session keeps that choice; the first bookmark shows it too.
+            sidebar.hide()
+            self._sidebar_auto_hidden = True
+            self.statusBar().showMessage(
+                tr("The empty Bookmarks sidebar is hidden to give the panes room – F12 "
+                   "shows it."), 10000)
         if sidebar is not None and sidebar.isVisible() and not sidebar.isFloating():
             bar = sidebar.titleBarWidget()
             title = bar.sizeHint().width() if bar is not None else 0
@@ -6719,6 +6815,15 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         # Idle: the one-row Transfers dock; the height above comes back
         # with the first job.
         QTimer.singleShot(0, self._fit_transfer_area)
+
+    #: A window narrower than this (or a screen with less room) counts as a
+    #: small screen: 1024x600 netbooks and tiled halves of a 1920 screen.
+    SMALL_SCREEN_WIDTH = 1200
+
+    def _small_screen(self) -> bool:
+        screen = self.screen()
+        room = screen.availableGeometry().width() if screen is not None else self.width()
+        return min(room, self.width()) < self.SMALL_SCREEN_WIDTH
 
     def _reset_to_default_layout(self) -> None:
         """One local pane in one fresh workspace, whatever was there."""
@@ -7050,7 +7155,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                     name=f"'{profile.name}'", what=what)
                 password, ok = QInputDialog.getText(
                     self,
-                    tr("Session Restore — Password Required"),
+                    tr("Session Restore – Password Required"),
                     label,
                     QLineEdit.EchoMode.Password,
                 )
@@ -7085,7 +7190,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                         prompt = tr("Wrong passphrase. {prompt}").format(prompt=prompt)
                     key_passphrase, ok = QInputDialog.getText(
                         self,
-                        tr("Session Restore — Key Passphrase"),
+                        tr("Session Restore – Key Passphrase"),
                         prompt,
                         QLineEdit.EchoMode.Password,
                     )
@@ -7177,16 +7282,13 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             profile = dialog.result_profile
             password = dialog.result_password
             key_passphrase = dialog.result_key_passphrase
+            new_pane = getattr(dialog, "result_new_pane", False)
         finally:
             dialog.deleteLater()  # a child of the window: gone once closed
 
         def _on_success(session):
-            pane = self._add_pane_to_splitter(
-                self._root_splitter,
-                session,
-                profile=profile,
-                password=password,
-                key_passphrase=key_passphrase,
+            pane = self._add_connected_pane(
+                session, profile, password, key_passphrase, new_pane=new_pane
             )
             self._set_active_pane(pane)
 
@@ -7562,7 +7664,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                 QMessageBox.question(
                     self,
                     tr("Diagnostics"),
-                    tr("Run a write/rename/delete probe in the active pane's current directory?"),
+                    tr("Run a write/rename/delete probe in the active pane's current folder?"),
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                     QMessageBox.StandardButton.No,
                 )
@@ -8021,7 +8123,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
         box.setWindowTitle(tr("Move"))
-        box.setText(tr("{count} source(s) cannot be removed after the copy - "
+        box.setText(tr("{count} source(s) cannot be removed after the copy – "
                        "you lack the permission:").format(count=len(undeletable)))
         box.setInformativeText(shown + "\n\n" + tr(
             "As administrator, the move runs as root (one password prompt); names "
@@ -8079,7 +8181,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                 return
             if value:
                 QMessageBox.information(self, tr("Move"), tr(
-                    "{count} item(s) were not moved - a name already in the destination "
+                    "{count} item(s) were not moved – a name already in the destination "
                     "is not replaced:\n{names}").format(
                         count=len(value), names="\n".join(value[:10])))
 
@@ -8632,11 +8734,17 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         sidebar = getattr(self, "_bookmark_sidebar", None)
         if sidebar is not None:
             sidebar.rebuild()
+            # Hidden only because it was empty (_size_first_start_docks):
+            # the first bookmark brings it back.
+            if getattr(self, "_sidebar_auto_hidden", False) and self._bookmark_manager.tree():
+                self._sidebar_auto_hidden = False
+                sidebar.show()
 
     def _populate_bookmarks_menu(self) -> None:
         self._bookmarks_menu.clear()
 
-        add_action = self._bookmarks_menu.addAction(tr("Add Current Directory"))
+        # One name with the pane's right-click entry (UX review round 7).
+        add_action = self._bookmarks_menu.addAction(tr("&Bookmark This Folder"))
         # F8 / Ctrl+Shift+B = add bookmark, window-wide. F2 rename, F3 view,
         # F4 edit, F5 copy, F6 move, F7 mkdir, F9 rename-alias, F10 context
         # menu, F12 bookmark-sidebar toggle; Del deletes.
@@ -8710,7 +8818,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         """Folders dragged from a pane onto the bookmark sidebar: bookmark
         each at the drop position, without a dialog (Edit… changes name,
         icon and group later). A remote folder keeps the pane's backend and
-        connection profile, like "Add Current Directory" does."""
+        connection profile, like "Bookmark This Folder" does."""
         source = self._pane_by_id(source_pane_id)
         if source is None:
             self._drop_status(tr("The dragged items come from a pane that is no longer open."))
@@ -9133,7 +9241,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
 
             # profile_name missing — typically an older bookmark
             # saved before we tracked profiles, OR one created via
-            # "Add Current Directory" on a pane whose connection
+            # "Bookmark This Folder" on a pane whose connection
             # wasn't profile-backed. Tell the user instead of
             # silently no-oping.
             if not bookmark.profile_name:
@@ -9141,7 +9249,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                     self,
                     tr("Bookmark"),
                     tr("Bookmark '{name}' has no associated connection profile. The profile "
-                       "reference was lost or never set — re-bookmark this location from the "
+                       "reference was lost or never set – re-bookmark this location from the "
                        "matching remote pane after connecting.").format(name=bookmark.name),
                 )
                 return
@@ -9197,7 +9305,10 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             # Enter must not trust a key nobody compared: No is the default.
             QMessageBox.StandardButton.No,
         )
-        return reply == QMessageBox.StandardButton.Yes
+        trusted = reply == QMessageBox.StandardButton.Yes
+        # The error is raised next: core.user_errors words a No apart.
+        error.declined = not trusted
+        return trusted
 
     # --- Keyring tools ---
 
@@ -9267,7 +9378,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         button.setProperty("role", "" if notice else "muted")
         if notice:
             button.setText(f"{shown} · {notice}".replace("&", "&&"))
-            button.setToolTip(tr("{notice} - click for the update window").format(notice=notice))
+            button.setToolTip(tr("{notice} – click for the update window").format(notice=notice))
             button.setCursor(Qt.CursorShape.PointingHandCursor)
         else:
             button.setText(shown)
@@ -9350,7 +9461,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         ("Log", "a live log of all operations"),
         ("Console / Scripts", "a Python REPL and saved scripts"),
         ("Analysis (sift)", "what the selected file is"),
-        ("Agent", "tasks for the LLM agent, with voice; Tools > MCP Servers… for its tools"),
+        ("Agent", "tasks for the LLM agent, with voice; Tools → MCP Servers… for its tools"),
         ("Bookmarks", "the bookmark sidebar (F12)"),
     )
     #: Help > About: (tool, what it does) - extensions, switched on when first opened.
@@ -9390,15 +9501,15 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             f"<h2>axross {__version__}</h2>"
             f"<p>{summary}</p>"
             f"<h3>{e('Protocols')}</h3><table>{rows(self._ABOUT_PROTOCOLS)}</table>"
-            f"<p>{e('…and more: see File > Connection Manager… for the full list.')}</p>"
+            f"<p>{e('…and more: see File → Connection Manager… for the full list.')}</p>"
             f"<h3>{e('Features')}</h3><ul>{features}</ul>"
             f"<h3>{e('Panels')}</h3><ul>{items(self._ABOUT_PANELS)}</ul>"
             f"<h3>{e('Tools')}</h3><ul>{items(self._ABOUT_TOOLS)}</ul>"
-            f"<p><small>{e('axross {version} - Python + PyQt6').format(version=__version__)}"
+            f"<p><small>{e('axross {version} – Python + PyQt6').format(version=__version__)}"
             " | github.com/c0decave/axross</small></p>"
-            f"<p><small>{e('F1: handbook · Help > Tours… · Ctrl+F1: keyboard shortcuts')}"
+            f"<p><small>{e('F1: handbook · Help → Tours… · Ctrl+F1: keyboard shortcuts')}"
             "</small></p>"
-            f"<p><small>{e('Thanks to the projects behind axross: Help > Third-Party Software…')}"
+            f"<p><small>{e('Thanks to the projects behind axross: Help → Third-Party Software…')}"
             "</small></p>"
         )
 
@@ -9486,7 +9597,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         # styles (Breeze, Windows11, ...) draw some controls themselves and
         # ignore parts of both.
         style = "Fusion" if tokens is not None else self._base_style_name
-        palette = themes.qpalette_for(tokens) if tokens is not None else self._base_palette
+        palette = (themes.qpalette_for(tokens) if tokens is not None
+                   else themes.readable_palette(self._base_palette))
         # The same sheet, style and palette again (the theme picked once
         # more, the system scheme reported unchanged): nothing to repolish -
         # a pass over every widget costs about 0.3 s. (app.style() is the

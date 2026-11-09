@@ -88,7 +88,9 @@ def test_happy_grep_resolves_the_root_once_per_call(tree):
     with patch:
         matches = grep(root)
     assert len(matched_files(matches)) == N
-    assert counter.of_watched == 2  # the root once, the start path (= the root) once
+    # the root once, the start path (= the root) once, and once per call as the
+    # read side's grant (round 7: default-deny for reads, core.protected_places)
+    assert counter.of_watched == 3
     # Per file read: one for the root confinement and one for the secret-file
     # check (core.protected_places resolves what the path points to); the
     # secret places once per call. The root is not resolved per file.
@@ -126,7 +128,9 @@ def test_happy_recursive_checksum_resolves_the_root_once_per_call(tree):
     hashed = {os.path.basename(e["path"]): e["checksum"] for e in entries if "checksum" in e}
     assert len(hashed) == N and "secret.txt" not in hashed
     assert hashed["f000.txt"] == hashlib.sha256(b"needle 0\n").hexdigest()
-    assert counter.of_watched == 2  # the root once, the start path (= the root) once
+    # the root once, the start path (= the root) once, and once per call as the
+    # read side's grant (round 7: default-deny for reads, core.protected_places)
+    assert counter.of_watched == 3
 
 
 # --- the root is re-resolved by every call ----------------------------------------------
@@ -216,7 +220,8 @@ def test_edge_extra_roots_are_each_resolved_once(tree, tmp_path):
     with patch:
         files = matched_files(grep(root, extra, extra_roots=((str(extra), False),)))
     assert files == {f"e{i}.txt" for i in range(5)}
-    assert counter.of_watched == 2  # the extra root once, the start path once
+    # the extra root once, the start path once, once as a read grant (round 7)
+    assert counter.of_watched == 3
 
 
 def test_sad_a_start_path_outside_every_root_is_refused(tree, tmp_path):

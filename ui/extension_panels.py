@@ -216,7 +216,7 @@ class ExtensionPanelTitleBar(DockTitleBar):
         self.move_menu.aboutToShow.connect(self._fill_move_menu)
         self.move_button = QToolButton(self)
         self.move_button.setText("⇄")  # ⇄, as a terminal pane's button
-        self.move_button.setToolTip(tr("Send to Workspace - lay the panel out inside a "
+        self.move_button.setToolTip(tr("Send to Workspace – lay the panel out inside a "
                                        "workspace like a pane"))
         self.move_button.setAccessibleName(tr("Send to Workspace"))
         self.move_button.setAutoRaise(True)

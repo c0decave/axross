@@ -223,19 +223,19 @@ def error_text(name: str, message: str) -> str:
                   "headphones the sound server needs its Bluetooth support (PipeWire's or "
                   "PulseAudio's Bluetooth module).")
     if "page-timeout" in low or "page timeout" in low:
-        return tr("The device did not answer - is it switched on and in range?")
+        return tr("The device did not answer – is it switched on and in range?")
     texts = {
-        "org.bluez.Error.NotReady": tr("The Bluetooth adapter is not ready - switch the adapter "
+        "org.bluez.Error.NotReady": tr("The Bluetooth adapter is not ready – switch the adapter "
                                        "on first."),
         "org.bluez.Error.AuthenticationFailed": tr("Pairing failed: the PIN or passkey did not "
                                                    "match, or the device refused."),
         "org.bluez.Error.AuthenticationRejected": tr("Pairing was rejected."),
         "org.bluez.Error.AuthenticationCanceled": tr("Pairing was canceled."),
-        "org.bluez.Error.AuthenticationTimeout": tr("Pairing timed out - the device or the "
+        "org.bluez.Error.AuthenticationTimeout": tr("Pairing timed out – the device or the "
                                                     "answer did not come in time."),
-        "org.bluez.Error.ConnectionAttemptFailed": tr("The connection attempt failed - is the "
+        "org.bluez.Error.ConnectionAttemptFailed": tr("The connection attempt failed – is the "
                                                       "device switched on and in range?"),
-        "org.bluez.Error.InProgress": tr("Another operation on this device is still running - "
+        "org.bluez.Error.InProgress": tr("Another operation on this device is still running – "
                                          "wait for it to finish."),
         "org.bluez.Error.AlreadyExists": tr("The device is already paired."),
         "org.bluez.Error.AlreadyConnected": tr("The device is already connected."),
@@ -257,7 +257,7 @@ def error_text(name: str, message: str) -> str:
         "org.freedesktop.DBus.Error.Disconnected": tr("The connection to the system D-Bus was "
                                                       "lost."),
         "org.freedesktop.DBus.Error.UnknownObject": tr("The device or adapter is gone."),
-        "org.freedesktop.DBus.Error.AccessDenied": tr("D-Bus denied the request - is your user "
+        "org.freedesktop.DBus.Error.AccessDenied": tr("D-Bus denied the request – is your user "
                                                       "allowed to use Bluetooth?"),
     }
     text = texts.get(name)

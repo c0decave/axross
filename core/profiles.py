@@ -171,6 +171,10 @@ SENSITIVE_PROFILE_FIELDS = (
 )
 
 
+#: The largest SFTP time-out a profile may set (seconds).
+SFTP_TIMEOUT_MAX = 3600
+
+
 @dataclass
 class ConnectionProfile:
     """A saved connection profile (multi-protocol)."""
@@ -312,6 +316,14 @@ class ConnectionProfile:
     # 30-s cadence, so this is off unless the user opts in for a
     # specific NAT-bound profile.
     ssh_keepalive_interval: int = 0
+
+    # SFTP / SSH: seconds of silence after which a waiting request (or a
+    # server-side command such as the checksum after an upload) asks the
+    # connection whether it is alive; it fails only when the connection
+    # does not answer. 0 = the default (core.ssh_client.SFTP_IO_TIMEOUT,
+    # 60 s). Larger for a server that is slow to start answering (tape,
+    # HSM), smaller to notice a lost network sooner.
+    sftp_timeout: int = 0
 
     # SMB NTLM WorkstationName override. Empty string → fall back to
     # the module-level default (``core.client_identity.SMB_CLIENT_NAME``,
@@ -530,6 +542,8 @@ class ConnectionProfile:
         # away from the safe default so the JSON stays readable.
         if self.ssh_keepalive_interval > 0:
             d["ssh_keepalive_interval"] = self.ssh_keepalive_interval
+        if self.sftp_timeout > 0:
+            d["sftp_timeout"] = self.sftp_timeout
         if self.smb_client_name:
             d["smb_client_name"] = self.smb_client_name
         if self.telnet_naws_width > 0:
@@ -703,6 +717,7 @@ class ConnectionProfile:
                 0,
                 3600,
             ),
+            sftp_timeout=_int_in_range("sftp_timeout", 0, 0, SFTP_TIMEOUT_MAX),
             smb_client_name=_string("smb_client_name"),
             telnet_naws_width=_int_in_range(
                 "telnet_naws_width",

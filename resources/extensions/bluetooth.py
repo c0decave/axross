@@ -210,7 +210,7 @@ class AgentDialog(QDialog):
         texts = {
             "confirm": tr("Does {device} show the passkey {passkey}? Confirm only if it does.")
             .format(device=name, passkey=passkey),
-            "pin": tr("Enter the PIN for {device} - the one it shows, or the one in its manual "
+            "pin": tr("Enter the PIN for {device} – the one it shows, or the one in its manual "
                       "(often 0000 or 1234):").format(device=name),
             "passkey": tr("Enter the 6-digit passkey {device} shows:").format(device=name),
             "display-passkey": tr("Type {passkey} on {device} and press Enter there.")
@@ -346,8 +346,8 @@ class BluetoothPanel(QWidget):
         self.scan_button.clicked.connect(self._scan_clicked)
         top.addWidget(self.scan_button)
         self.add_button = QPushButton(tr("Add Device…"))
-        self.add_button.setToolTip(tr("Find a new device nearby and pair, trust, connect it - "
-                                      "and make a speaker or headset the audio output - in "
+        self.add_button.setToolTip(tr("Find a new device nearby and pair, trust, connect it – "
+                                      "and make a speaker or headset the audio output – in "
                                       "one go."))
         self.add_button.clicked.connect(self.open_add_device)
         top.addWidget(self.add_button)
@@ -422,7 +422,7 @@ class BluetoothPanel(QWidget):
         self.remove_button.clicked.connect(self._remove_clicked)
         self.output_button = QPushButton(tr("Use as Audio Output"))
         self.output_button.setToolTip(tr("Connect the speaker or headset and make it axross's "
-                                         "audio output (Edit > Settings > Audio)."))
+                                         "audio output (Edit → Settings → Audio)."))
         self.output_button.clicked.connect(self._output_clicked)
         self.details_button = QPushButton(tr("Details…"))
         self.details_button.setToolTip(tr("Everything BlueZ knows of the device, and the map "
@@ -803,7 +803,7 @@ class BluetoothPanel(QWidget):
         self._show(box)
 
     def _reconnecting(self, path: str, attempt: int) -> None:
-        self.message.setText(tr("The connection to {device} dropped - reconnecting "
+        self.message.setText(tr("The connection to {device} dropped – reconnecting "
                                 "(attempt {n} of {total})…").format(
             device=self._names.get(path, path.rsplit("/", 1)[-1]), n=attempt,
             total=self.reconnector.max_attempts))
@@ -1030,8 +1030,8 @@ class BluetoothPanel(QWidget):
             self.output_result.emit(device.path, False, str(exc))
         else:
             self.output_result.emit(device.path, True, description)
-            self.message.setText(tr("{device} is now axross's audio output ({output}) - see "
-                                    "Edit > Settings > Audio.")
+            self.message.setText(tr("{device} is now axross's audio output ({output}) – see "
+                                    "Edit → Settings → Audio.")
                                  .format(device=device.display_name, output=description))
         self._update_buttons()
 
@@ -1144,7 +1144,7 @@ class BluetoothHost(QWidget):
         self.source_combo = QComboBox()
         self.source_combo.setToolTip(tr(
             "BlueZ: the system's Bluetooth service (Linux). A USB stick used directly: "
-            "axross drives it itself (Bumble), without BlueZ - also on Windows and macOS; "
+            "axross drives it itself (Bumble), without BlueZ – also on Windows and macOS; "
             "the system cannot use the stick meanwhile, and audio output needs BlueZ."))
         row.addWidget(self.source_combo, 1)
         self.refresh_button = QPushButton(tr("Look Again"))
@@ -1190,7 +1190,7 @@ class BluetoothHost(QWidget):
         else:
             # Help > Features… installs it, as every other extra (before:
             # a pip command to type).
-            combo.addItem(tr("USB stick directly - needs Bumble: install it in Help > Features… "
+            combo.addItem(tr("USB stick directly – needs Bumble: install it in Help → Features… "
                              "(Bluetooth USB stick without BlueZ)"), None)
             item = combo.model().item(combo.count() - 1)
             item.setEnabled(False)

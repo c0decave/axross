@@ -88,7 +88,7 @@ COL_NAME, COL_FOLDER, COL_SIZE, COL_MODIFIED, COL_BACKEND, COL_HASH = range(6)
 MARK_ALL_TEXT = "Mark All Duplicates (keep first)"
 SURVIVOR_TIP = (
     "First in its group: kept by “Mark All Duplicates (keep first)” and when "
-    "every copy is selected — the oldest copy; ties go to the shorter, then "
+    "every copy is selected – the oldest copy; ties go to the shorter, then "
     "the alphabetically first path."
 )
 HARD_LINK_TIP = (
@@ -175,7 +175,7 @@ def scan_label(scan) -> str:
     if scan.scan_id == CAS.EARLIER_SCANS:
         return tr("Earlier scans (before scan history)")
     when = scan.started_at.strftime("%Y-%m-%d %H:%M") if scan.started_at else "?"
-    return tr("Scan #{id}: {root} [{backend}] — {when} ({status})").format(
+    return tr("Scan #{id}: {root} [{backend}] – {when} ({status})").format(
         id=scan.scan_id, root=scan.root, backend=scan.backend_id, when=when, status=tr(scan.status))
 
 
@@ -323,9 +323,9 @@ class CasDuplicatesDialog(QDialog):
         add_close_corner(self)
 
         intro = QLabel(
-            tr("Indexed files grouped by content hash — every row in a group "
+            tr("Indexed files grouped by content hash – every row in a group "
             "holds identical content, wherever it lives. Use “Rebuild from "
-            "Active Pane” to index a directory first.")
+            "Active Pane” to index a folder first.")
         )
         intro.setProperty("role", "muted")
         intro.setWordWrap(True)
@@ -421,7 +421,7 @@ class CasDuplicatesDialog(QDialog):
 
         self._mark_all_btn = QPushButton(tr(MARK_ALL_TEXT), self)
         self._mark_all_btn.setToolTip(
-            tr("Select every copy except the first of each group — the oldest by "
+            tr("Select every copy except the first of each group – the oldest by "
             "modification time. Review, then Move Selected to Trash.")
         )
         self._mark_all_btn.clicked.connect(self._mark_all_duplicates)
@@ -430,7 +430,7 @@ class CasDuplicatesDialog(QDialog):
         self._keep_btn = QPushButton(tr("Mark, Keeping…"), self)
         self._keep_btn.setToolTip(
             tr("Select every copy except the one a rule keeps: the newest, the "
-            "shortest path, the one inside a folder — or select the copies "
+            "shortest path, the one inside a folder – or select the copies "
             "inside a folder. One copy of every group always stays.")
         )
         self._keep_menu = self._build_keep_menu(self._keep_btn)
@@ -958,8 +958,8 @@ class CasDuplicatesDialog(QDialog):
                 self._update_status()
             return
         total = sum(int(e.size or 0) for e in entries)
-        self._status.setText(tr_n(len(entries), "{n} file selected — {size}",
-                                  "{n} files selected — {size}", size=_format_size(total)))
+        self._status.setText(tr_n(len(entries), "{n} file selected – {size}",
+                                  "{n} files selected – {size}", size=_format_size(total)))
 
     # ------------------------------------------------------------------
     # Rebuild
@@ -978,7 +978,7 @@ class CasDuplicatesDialog(QDialog):
             tr("Rebuild CAS"),
             tr("Walk and (re)hash every file under\n{path}\non backend [{bid}]?\n\nNative "
                 "checksum is used where available. Where the backend has none, files "
-                "are read and hashed here — only those that share their size with "
+                "are read and hashed here – only those that share their size with "
                 "another file, and only as far as their first bytes match.").format(path=path, bid=bid),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
@@ -1006,7 +1006,7 @@ class CasDuplicatesDialog(QDialog):
                 self._busy_bar.setRange(0, total)
                 self._busy_bar.setValue(min(total, int(state["scanned"])))
                 return (tr("Checking and moving to trash… {scanned} of {total} checked, {indexed} "
-                    "moved — {where}").format(scanned=state['scanned'], total=total, indexed=state['indexed'], where=where))
+                    "moved – {where}").format(scanned=state['scanned'], total=total, indexed=state['indexed'], where=where))
             return tr("Checking and moving to trash… {indexed} moved — ").format(indexed=state['indexed']) + where
         stats = self._rebuild_stats
         if stats is not None and stats.phase == "read" and stats.read_total:
@@ -1014,7 +1014,7 @@ class CasDuplicatesDialog(QDialog):
             self._busy_bar.setValue(min(stats.read_total, stats.read_done))
             return (
                 tr("Reading files without a checksum… {read_done} of {read_total}, "
-                    "{indexed} indexed, {bytes_hashed} hashed — {where}").format(read_done=stats.read_done, read_total=stats.read_total, indexed=state['indexed'], bytes_hashed=_format_size(stats.bytes_hashed), where=where)
+                    "{indexed} indexed, {bytes_hashed} hashed – {where}").format(read_done=stats.read_done, read_total=stats.read_total, indexed=state['indexed'], bytes_hashed=_format_size(stats.bytes_hashed), where=where)
             )
         text = tr("Working… {indexed} indexed, {scanned} scanned").format(indexed=state['indexed'], scanned=state['scanned'])
         if stats is not None:
@@ -1412,8 +1412,8 @@ class CasDuplicatesDialog(QDialog):
         self._select_items(rows)
         size = sum(int(e.size or 0) for e in result.marked)
         if rows:
-            text = tr_n(len(rows), "{n} duplicate marked — {size}",
-                        "{n} duplicates marked — {size}", size=_format_size(size))
+            text = tr_n(len(rows), "{n} duplicate marked – {size}",
+                        "{n} duplicates marked – {size}", size=_format_size(size))
         else:
             text = tr("No duplicates to mark")
         if result.untouched:
@@ -1542,7 +1542,7 @@ def rebuild_report(count, root: str, stats, cancelled: bool, backend_id: str = "
     every file or folder left out and why. *trouble* is true when something
     could not be read or listed."""
     if cancelled:
-        lines = [tr("Cancelled — {count} file(s) indexed so far under {root}.").format(count=count, root=root)]
+        lines = [tr("Cancelled – {count} file(s) indexed so far under {root}.").format(count=count, root=root)]
     else:
         lines = [tr("Indexed {count} file(s) under {root}.").format(count=count, root=root)]
     if stats is None:

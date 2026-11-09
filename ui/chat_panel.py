@@ -58,6 +58,7 @@ from core.thread_relay import GuiCall
 from ui.chat_rooms import RoomListPanel
 from ui.close_corner import add_close_corner
 from ui.icon_provider import has_icon, icon, set_window_icon
+from ui.plain_text import show_full_text, shown_length
 
 log = logging.getLogger(__name__)
 
@@ -154,10 +155,42 @@ def link_question(url: QUrl) -> str:
     return "\n".join(lines)
 
 
-def message_html(message: C.ChatMessage, conversation_encryption: str = "") -> str:
-    """One message as a line of HTML; everything from the network escaped."""
+#: The most characters of one message the conversation lays out; the rest
+#: is a click away ("Show all", a plain view). A 16,000-character message
+#: of alternating Hebrew and Latin letters kept the GUI thread 0.6-0.9 s.
+MAX_MESSAGE_SHOWN = 2000
+#: The link of a message's "Show all": "axross-more:<number>".
+MORE_SCHEME = "axross-more"
+
+
+def _shown_html(text: str, more_href: str = "") -> str:
+    """*text* escaped with its web addresses as links - at most what
+    ui.plain_text.shown_length() lets a view lay out (MAX_MESSAGE_SHOWN),
+    then a link to the rest when *more_href* is given. A web address the
+    cut runs through is shown as text: a link to half of it would go
+    elsewhere."""
+    end = shown_length(text, MAX_MESSAGE_SHOWN)
+    if end >= len(text):
+        return linkify(text).replace("\n", "<br>")
+    head = text[:end]
+    tail = ""
+    if not text[end].isspace():
+        space = max(head.rfind(" "), head.rfind("\n"), head.rfind("\t"))
+        head, tail = head[:space + 1], head[space + 1:]
+    shown = (linkify(head) + html.escape(tail)).replace("\n", "<br>")
+    more = ""
+    if more_href:
+        label = tr("Show all ({count} characters)").format(count=len(text))
+        more = f' <a href="{html.escape(more_href, quote=True)}">{html.escape(label)}</a>'
+    return f"{shown} …{more}"
+
+
+def message_html(message: C.ChatMessage, conversation_encryption: str = "",
+                 more_href: str = "") -> str:
+    """One message as a line of HTML; everything from the network escaped.
+    A long text shows its start (*more_href*: the link to the rest)."""
     stamp = time.strftime("%H:%M", time.localtime(message.timestamp))
-    text = linkify(message.text).replace("\n", "<br>")
+    text = _shown_html(message.text, more_href)
     sender = html.escape(message.sender)
     colour = nick_colour(message.sender)
     mark = ""
@@ -319,6 +352,9 @@ class ConversationView(QWidget):
         self.input.submitted.connect(lambda text: self.client.send(self.key, text))
         layout.addWidget(self.input)
         self._rendered = 0
+        #: The whole text of the long messages shown in part, by link number.
+        self._long_texts: dict[int, str] = {}
+        self._long_count = 0
         self.refresh()
         for message in client.history(key):
             self.add_message(message)
@@ -378,12 +414,32 @@ class ConversationView(QWidget):
         cursor.movePosition(QTextCursor.MoveOperation.End)
         if self._rendered:
             cursor.insertBlock()
-        cursor.insertHtml(message_html(message, enc))
+        more = ""
+        if shown_length(message.text, MAX_MESSAGE_SHOWN) < len(message.text):
+            self._long_count += 1
+            more = f"{MORE_SCHEME}:{self._long_count}"
+            self._long_texts[self._long_count] = message.text
+            while len(self._long_texts) > C.HISTORY_LIMIT:   # the view keeps no more lines
+                self._long_texts.pop(next(iter(self._long_texts)))
+        cursor.insertHtml(message_html(message, enc, more))
         self._rendered += 1
         if at_end:
             bar.setValue(bar.maximum())
 
+    def show_whole_message(self, number: str):
+        """The whole text of the long message *number* in a window of its own."""
+        try:
+            text = self._long_texts.get(int(number))
+        except ValueError:
+            text = None
+        if text is None:
+            return None
+        return show_full_text(self, tr("Message"), text)
+
     def _link(self, url: QUrl) -> None:
+        if url.scheme().lower() == MORE_SCHEME:
+            self.show_whole_message(url.path())
+            return
         if url.scheme().lower() not in ("http", "https"):
             return
         answer = QMessageBox.question(

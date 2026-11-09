@@ -301,8 +301,8 @@ def test_sad_off_in_agent_settings_points_there_not_to_the_tab():
 
     editor = _editor(S.Access(axross_functions=False), master=True)
     assert not editor.axross_check.isEnabled()
-    assert "Agent Settings > Access" in editor.functions_note.text()
-    assert all("Agent Settings > Access" in c.toolTip() for c in editor.function_checks.values())
+    assert "Agent Settings → Access" in editor.functions_note.text()
+    assert all("Agent Settings → Access" in c.toolTip() for c in editor.function_checks.values())
     editor.deleteLater()
     APP.processEvents()
 
@@ -311,7 +311,7 @@ def test_edge_one_function_off_in_the_settings_keeps_its_own_reason():
     editor = _editor(_open_ceiling(remote_commands=True), master=True)
     assert editor.functions_note.isHidden()
     assert not editor.function_checks["remote_commands"].isEnabled()
-    assert "Agent Settings > Access" in editor.function_checks["remote_commands"].toolTip()
+    assert "Agent Settings → Access" in editor.function_checks["remote_commands"].toolTip()
     assert editor.function_checks["mcp_servers"].isEnabled()
     editor.deleteLater()
     APP.processEvents()

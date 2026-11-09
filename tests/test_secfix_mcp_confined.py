@@ -303,8 +303,11 @@ def test_happy_write_file_keeps_the_mode_and_hard_links_of_the_file(home, resolv
     tools = _tools(root)
     T.call(tools, "write_file", {"path": "run.sh", "content": "#!/bin/sh\necho\n"})
     assert stat.S_IMODE(script.stat().st_mode) == 0o750
-    T.call(tools, "write_file", {"path": "a", "content": "B"})
-    assert (root / "b").read_text() == "B" and os.path.samefile(root / "a", root / "b")
+    # Round 7: a file with other hard links is refused (written in place the
+    # other name - maybe ~/.bashrc - would change too); the link stays intact.
+    with pytest.raises(T.RpcError, match="hard links"):
+        T.call(tools, "write_file", {"path": "a", "content": "B"})
+    assert (root / "b").read_text() == "A" and os.path.samefile(root / "a", root / "b")
     assert not [n for n in os.listdir(root) if n.endswith(".tmp")]
 
 

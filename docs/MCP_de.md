@@ -503,6 +503,7 @@ Red-Team-Szenario. Die MCP-Tests liegen in `tests/test_mcp_*.py`:
 | `tests/test_mcp_error_redaction.py` | Secrets in Backend-Fehlertexten werden redigiert (tools/call, Tasks, recursive_checksum). |
 | `tests/test_mcp_http_bearer_token.py` | Reines HTTP lehnt Requests ohne Bearer-Token ab (401, `/health` ausgenommen), die Token-Datei ist 0600 und wird nie durch einen Symlink geschrieben, `--mcp-http` serviert immer mit Token. |
 | `tests/test_mcp_http_hardening.py` | DNS-Rebinding (Host/Origin), Session-Cap und Idle-Eviction, kaputte Params/IDs, unvollständige TLS-Flags, idle TCP-Client vs. accept. |
+| `tests/test_secfix_r7_host_header.py` | `Host` streng als `host[:port]` gelesen (`localhost:1@evil`, Pfade, Leerzeichen, nacktes IPv6 abgelehnt); zwei `Host`-/`Origin`-Header abgelehnt (MCP-HTTP und Reverse-Serve). |
 | `tests/test_mcp_http_sse_lifecycle.py` | Ein SSE-Stream pro Session, DELETE/Idle-Eviction beenden ihn, Replay beim Reconnect. |
 | `tests/test_mcp_search_root.py` | `search` liefert nie indizierte Pfade außerhalb der Root. |
 | `tests/test_mcp_tasks_limits.py` | `tasks/start`-Rate-Limit, Cap laufender Tasks, Tool-Timeout. |
@@ -682,6 +683,24 @@ zählt das Home des Hosts mit. `--mcp-allow-secret-reads` (nur stdio)
 schaltet die Prüfung ab; die eigenen Tools des Agenten behalten sie
 immer. Die Schreibseite (§2, die geschützten Orte von
 `core.protected_places`) ist eine eigene Liste und unverändert.
+
+Jeder Name eines Pfads wird geprüft - wie getippt, nach jedem Symlink auf
+dem Weg und aufgelöst -, auf beiden Seiten: ein Schlüssel hinter
+`~/.ssh/id_ed25519 -> ~/keys/id_ed25519` wird unter beiden Namen
+verweigert, und `~/dotfiles/kitty/kitty.conf` wird nicht geschrieben, wenn
+`~/.config/kitty` dorthin zeigt (gib das Ziel frei, um es zu erlauben). Ein
+Hardlink auf eine geheime Datei wird nicht gelesen; eine Datei mit weiteren
+Hardlinks wird gar nicht geschrieben (an Ort und Stelle würden sich die
+anderen Namen - vielleicht `~/.bashrc` oder eine `.git/config` - mit ändern).
+
+**Default-deny beim Lesen.** Neben den Geheimnissen wird der Inhalt eines
+versteckten Eintrags des Home (`~/.config/<App>`, `~/.mozilla`, ...) und von
+`~/snap` (auch `~/Library`, `%APPDATA%`) nicht herausgegeben, außer der
+Betreiber hat diesen Ordner freigegeben: ein `--mcp-root` an so einem Ort
+(beim Agenten: sein Ordner oder ein zusätzlicher Ordner dort; nur lesend
+genügt; die Geheimnisse darin bleiben ungelesen). Ein Root für das ganze Home hebt nichts auf.
+Namen bleiben auflistbar; andere Dateien werden gelesen wie bisher.
+`--mcp-allow-secret-reads` hebt auch das auf.
 
 ---
 

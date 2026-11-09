@@ -12,6 +12,7 @@ from __future__ import annotations
 import html
 import re
 import unicodedata
+from dataclasses import dataclass
 from html.parser import HTMLParser
 from urllib.parse import SplitResult, urlsplit
 
@@ -29,6 +30,20 @@ VOID = {"area", "base", "basefont", "bgsound", "br", "col", "command", "embed", 
 #: (``&#`` repeated grew four-fold on escaping: a 4 MB mail made 12.6 MB of
 #: HTML, and the viewer's setHtml never came back).
 MAX_OUTPUT = 2 * 1024 * 1024
+#: What the formatted view (a QTextBrowser, which lays out the whole
+#: document at once) is given of a message: its sanitised HTML up to this
+#: many characters. A 4 MB plain-text mail of newlines kept the GUI thread
+#: 24.6 s (509 MB), 6 MB of alternating Hebrew and Latin 20.7 s; the rest
+#: is a click away in the plain view (:func:`message_view`).
+MAX_SHOWN = 128 * 1024
+#: The plain view (a QPlainTextEdit: it lays out only the lines on screen)
+#: shows up to this many characters and lines of a message, every line
+#: broken after :data:`PLAIN_LINE` characters - one long line is laid out
+#: in quadratic time even there (40,000 mixed-direction characters: 3.7 s),
+#: and each line costs memory and time to set (500,000 lines: 2.5 s).
+MAX_PLAIN = 2 * 1024 * 1024
+MAX_PLAIN_LINES = 100_000
+PLAIN_LINE = 1000
 #: Elements open at once; deeper ones are left out (keeps every end tag
 #: cheap, and the viewer's layout shallow).
 MAX_NESTING = 64
@@ -163,10 +178,12 @@ def strip_hidden(text: str) -> str:
 
 
 class _Sanitiser(HTMLParser):
-    def __init__(self) -> None:
+    def __init__(self, limit: int = MAX_OUTPUT) -> None:
         super().__init__(convert_charrefs=True)
         self.out: list[str] = []
         self.size = 0
+        self.limit = limit
+        self.cut = False                    # text was left out at the limit
         self.skip = 0                       # inside a dropped element
         self.stack: list[str] = []
         self.link_target: list[str] = []
@@ -184,12 +201,14 @@ class _Sanitiser(HTMLParser):
             self.out.append(text)
             self.size += len(text)
             return
-        room = MAX_OUTPUT - self.size
+        room = self.limit - self.size
         if room <= 0:
+            self.cut = True
             return
         if self.open["table"]:
             self._table_work(len(text))
         if len(text) > room:
+            self.cut = True
             # Cut to what is left - the escaped text counts - and never in
             # the middle of a character reference or a tag.
             text = text[:room]
@@ -395,23 +414,131 @@ def links(text: str, *, limit: int = 100_000, text_limit: int = 4096) -> list[tu
 _CHUNK = 64 * 1024
 
 
-def _feed(parser: HTMLParser, text: str, done) -> None:
-    """*text* in pieces, until *done()* says the rest is not needed."""
+def _feed(parser: HTMLParser, text: str, done) -> bool:
+    """*text* in pieces, until *done()* says the rest is not needed; True
+    when some was left out so."""
+    stopped = False
     for start in range(0, len(text), _CHUNK):
         if done():
+            stopped = True
             break
         parser.feed(text[start:start + _CHUNK])
     parser.close()
+    return stopped
 
 
-def sanitise(text: str) -> str:
-    p = _Sanitiser()
-    _feed(p, text or "", lambda: p.size >= MAX_OUTPUT)
-    return "".join(p.out)
+def _sanitised(text: str, limit: int) -> tuple[str, bool]:
+    """(*text* sanitised up to *limit* characters, whether some was left out)."""
+    p = _Sanitiser(limit)
+    text = text or ""
+    if _feed(p, text, lambda: p.size >= limit):
+        p.cut = True
+    return "".join(p.out), p.cut
+
+
+def sanitise(text: str, limit: int = MAX_OUTPUT) -> str:
+    return _sanitised(text, limit)[0]
 
 
 def message_html(msg) -> str:
-    """The message as safe HTML: its HTML part sanitised, else its text."""
+    """The message as safe HTML for the formatted view: its HTML part
+    sanitised, else its text - either up to :data:`MAX_SHOWN` characters."""
+    return message_view(msg).html or _pre(msg.text or "")[0]
+
+
+def _pre(text: str) -> tuple[str, bool]:
+    shown = text[:MAX_SHOWN]
+    return "<pre>" + html.escape(shown) + "</pre>", len(shown) < len(text)
+
+
+class _Text(HTMLParser):
+    """The text of an HTML part, a line per paragraph, cell or line break."""
+
+    BLOCK = {"p", "br", "div", "tr", "li", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "table",
+             "blockquote", "pre", "dt", "dd"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.out: list[str] = []
+        self.size = 0
+        self.skip = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in DROP_WITH_CONTENT and tag not in VOID:
+            self.skip += 1
+        elif tag in self.BLOCK:
+            self._add("\n")
+        elif tag in ("td", "th"):
+            self._add("\t")
+
+    def handle_startendtag(self, tag, attrs):
+        if tag in self.BLOCK:
+            self._add("\n")
+
+    def handle_endtag(self, tag):
+        if tag in DROP_WITH_CONTENT and tag not in VOID:
+            self.skip = max(0, self.skip - 1)
+        elif tag in self.BLOCK:
+            self._add("\n")
+
+    def handle_data(self, data):
+        if not self.skip:
+            self._add(data)
+
+    def _add(self, text: str) -> None:
+        self.out.append(text)
+        self.size += len(text)
+
+
+def html_text(text: str, limit: int = MAX_PLAIN) -> str:
+    """The text of an HTML part (no tag, nothing dropped by the sanitiser),
+    about *limit* characters of it at most."""
+    p = _Text()
+    _feed(p, text or "", lambda: p.size >= limit)
+    return re.sub(r"\n{3,}", "\n\n", "".join(p.out)).strip("\n")
+
+
+def plain_lines(text: str) -> tuple[str, bool]:
+    """*text* for the plain view: every line broken after
+    :data:`PLAIN_LINE` characters, at most :data:`MAX_PLAIN` characters
+    and :data:`MAX_PLAIN_LINES` lines; and whether some was left out."""
+    out: list[str] = []
+    cut = False
+    for line in text[:MAX_PLAIN].split("\n"):
+        pieces = [line[i:i + PLAIN_LINE] for i in range(0, len(line), PLAIN_LINE)] or [""]
+        if len(out) + len(pieces) > MAX_PLAIN_LINES:
+            out.extend(pieces[:MAX_PLAIN_LINES - len(out)])
+            cut = True
+            break
+        out.extend(pieces)
+    cut = cut or len(text) > MAX_PLAIN
+    return "\n".join(out), cut
+
+
+@dataclass(frozen=True)
+class MessageView:
+    """A message as the viewer shows it.
+
+    *html* - sanitised HTML for the formatted view (None for a plain-text
+    mail: it goes to the plain view, which lays out only what is on
+    screen); *cut* - the formatted view holds only the start of the
+    message; *plain* - the plain view's text (the text part, else the HTML
+    part's text); *plain_cut* - even that holds only the start."""
+
+    html: str | None
+    cut: bool
+    plain: str
+    plain_cut: bool
+
+
+def message_view(msg) -> MessageView:
+    """The message for the viewer: an HTML part sanitised for the
+    formatted view up to :data:`MAX_SHOWN` characters, and its text for
+    the plain view (:func:`plain_lines`)."""
+    text = msg.text or ""
     if msg.html:
-        return sanitise(msg.html)
-    return "<pre>" + html.escape(msg.text or "") + "</pre>"
+        shown, cut = _sanitised(msg.html, MAX_SHOWN)
+        plain, plain_cut = plain_lines(text if text.strip() else html_text(msg.html))
+        return MessageView(shown, cut, plain, plain_cut)
+    plain, plain_cut = plain_lines(text)
+    return MessageView(None, False, plain, plain_cut)

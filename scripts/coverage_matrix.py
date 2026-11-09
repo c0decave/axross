@@ -114,6 +114,7 @@ FEATURES: tuple[Feature, ...] = (
             "core/version_stubs.py",
             "core/remote_name.py",
             "core/path_policy.py",
+            "core/backend_guard.py",
         ],
         [
             (
@@ -1401,6 +1402,8 @@ INFRASTRUCTURE: dict[str, str] = {
     "ui/thread_lifetime.py": "lets a worker QThread outlive its starter",
     "core/thread_relay.py": "worker-thread calls into the GUI thread, safe from a deleted receiver",
     "ui/close_corner.py": "the close corner every dialog gets",
+    "ui/elided_label.py": "one-line labels cut with an ellipsis (the pane footer, its free space)",
+    "ui/mnemonics.py": "an underlined letter for every menu entry that has none",
     "ui/title_bar.py": "axross's own title bar of every window (frameless), or the window manager's",
     "ui/state_files.py": "the window's state files, read bounded and written privately",
     "core/json_store.py": "a JSON store read before it is written back: broken files set aside",

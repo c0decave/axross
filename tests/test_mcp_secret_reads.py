@@ -73,7 +73,11 @@ def test_sad_read_file_refuses_a_secret_under_the_default_root(home, rel):
 
 @pytest.mark.parametrize("rel", sorted(PUBLIC))
 def test_happy_other_files_are_read_as_before(home, rel):
-    out = T.call(_tools(home), "read_file", {"path": str(home / rel), "encoding": "text"})
+    # A hidden folder of the home is read only when granted (round 7,
+    # default-deny for reads): here as an extra read-only folder.
+    granted = ((str((home / rel).parent), False),)
+    out = T.call(_tools(home, extra_roots=granted), "read_file",
+                 {"path": str(home / rel), "encoding": "text"})
     assert out["text"] == PUBLIC[rel]
 
 
@@ -95,7 +99,8 @@ def test_sad_grep_and_checksums_do_not_read_secrets(home):
     assert str(home / ".ssh/id_ed25519") in refused
     with pytest.raises(T.RpcError):
         T.call(tools, "checksum", {"path": str(home / ".ssh/id_ed25519")})
-    tree = T.call(tools, "recursive_checksum", {"path": str(home / ".ssh")})
+    tree = T.call(_tools(home, extra_roots=((str(home / ".ssh"), False),)),
+                  "recursive_checksum", {"path": str(home / ".ssh")})
     by_path = {e["path"]: e for e in tree["entries"]}
     assert "checksum" not in by_path[str(home / ".ssh/id_ed25519")]
     assert "checksum" in by_path[str(home / ".ssh/id_ed25519.pub")]
@@ -168,7 +173,8 @@ def test_edge_in_the_sandbox_the_host_homes_secrets_stay_refused(home, tmp_path,
 def test_edge_case_insensitive_systems_and_xdg_places(home, tmp_path, monkeypatch):
     monkeypatch.setattr(P, "_case_insensitive", lambda: True)
     assert P.read_refusal(str(home / ".SSH" / "ID_ED25519"))
-    assert P.read_refusal(str(home / ".SSH" / "id_ed25519.PUB")) is None
+    assert P.read_refusal(str(home / ".SSH" / "id_ed25519.PUB"),
+                          granted=[str(home / ".SSH")]) is None
     monkeypatch.setattr(P, "_case_insensitive", lambda: False)
     runtime = tmp_path / "run"
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
@@ -179,7 +185,8 @@ def test_edge_case_insensitive_systems_and_xdg_places(home, tmp_path, monkeypatc
 
 
 def test_edge_a_folder_holding_secrets_is_refused_only_as_a_whole(home):
-    assert P.read_refusal(str(home / ".ssh")) is None  # listed, not read
+    # listed, not read (a hidden folder: when granted - round 7)
+    assert P.read_refusal(str(home / ".ssh"), granted=[str(home / ".ssh")]) is None
     assert P.read_refusal(str(home / ".ssh"), entry=True)  # copied or moved whole
     assert P.read_refusal(str(home), entry=True)
     assert P.read_refusal(str(home / "Documents"), entry=True) is None

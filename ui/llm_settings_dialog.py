@@ -325,7 +325,7 @@ class _LLMProfilesForm:
             self.key_edit.setText(self._new_keys.get(id(p), ""))
             stored = id(p) in self._origin and bool(LP.get_api_key(self._origin[id(p)]))
             self.key_edit.setPlaceholderText(
-                tr("stored in the keyring - type to replace")
+                tr("stored in the keyring – type to replace")
                 if stored
                 else tr("none (most local servers need none)")
             )

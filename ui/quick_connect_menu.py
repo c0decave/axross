@@ -8,6 +8,9 @@ a small menu instead of connecting:
 * **Connect in Background** - the connection opens in a new pane, but the
   list stays open and the active pane stays where it is, so several
   profiles can be opened one after the other.
+* **Connect in New Pane** - like Connect, but always in a new pane: Connect
+  opens the connection in the target pane while nobody has used it (a
+  local pane still at the home folder). Shift on a left click does the same.
 * **Edit Config…** - the list closes and the connection dialog opens with
   that profile loaded.
 * **Delete Connection Config…** - the list closes; after a confirmation
@@ -28,7 +31,7 @@ from PyQt6.QtWidgets import QMenu
 
 log = logging.getLogger(__name__)
 
-PROFILE_MENU_LABELS = ("Connect", "Connect in Background", "Edit Config…")
+PROFILE_MENU_LABELS = ("Connect", "Connect in Background", "Connect in New Pane", "Edit Config…")
 DELETE_LABEL = "Delete Connection Config…"
 
 
@@ -44,9 +47,11 @@ class QuickConnectMenu(QMenu):
         on_background: Callable,
         on_edit: Callable,
         on_delete: Callable | None = None,
+        on_new_pane: Callable | None = None,
     ) -> None:
         super().__init__(title, parent)
         self._on_connect = on_connect
+        self._on_new_pane = on_new_pane
         self._on_background = on_background
         self._on_edit = on_edit
         self._on_delete = on_delete
@@ -75,21 +80,33 @@ class QuickConnectMenu(QMenu):
 
     def build_profile_menu(self, profile) -> QMenu:
         """The right-click menu for *profile*, in the operator's order."""
+        from core.i18n import tr
+
         menu = QMenu(self)
-        connect, background, edit = (menu.addAction(text) for text in PROFILE_MENU_LABELS)
+        # Translated: the German menu showed these in English.
+        connect, background, new_pane, edit = (
+            menu.addAction(tr(text)) for text in PROFILE_MENU_LABELS)
         connect.triggered.connect(lambda _checked=False: self._connect_now(profile))
         background.triggered.connect(lambda _checked=False: self._on_background(profile))
+        if self._on_new_pane is not None:
+            new_pane.triggered.connect(lambda _checked=False: self._connect_new_pane(profile))
+        else:
+            menu.removeAction(new_pane)
         edit.triggered.connect(lambda _checked=False: self._edit(profile))
         if self._on_delete is not None:
             # Apart from the harmless entries: this one destroys something.
             menu.addSeparator()
-            delete = menu.addAction(DELETE_LABEL)
+            delete = menu.addAction(tr(DELETE_LABEL))
             delete.triggered.connect(lambda _checked=False: self._delete(profile))
         return menu
 
     def _connect_now(self, profile) -> None:
         self.close()
         self._on_connect(profile)
+
+    def _connect_new_pane(self, profile) -> None:
+        self.close()
+        self._on_new_pane(profile)
 
     def _edit(self, profile) -> None:
         self.close()

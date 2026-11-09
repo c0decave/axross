@@ -41,7 +41,8 @@ class VideoError(Exception):
     ``str()`` is the technical text (for the log); :meth:`user_text` is the
     translated sentence for the message box. *kind* is ``"unpublished"``
     (the release or the file answers 404), ``"network"`` (no connection,
-    no name resolution, no answer in time), ``"checksum"``, ``"disk"`` or
+    no name resolution, no answer in time), ``"checksum"``, ``"disk"``,
+    ``"unsafe"`` (the cache folder is not private to this user) or
     ``"other"``; *cause* is the network error behind a ``"network"`` one."""
 
     def __init__(self, message: str, *, kind: str = "other", name: str = "",
@@ -65,6 +66,10 @@ class VideoError(Exception):
         if self.kind == "checksum":
             return tr("The downloaded video does not match the checksum axross expects, so "
                       "it was not kept. Try again later.")
+        if self.kind == "unsafe":
+            return tr("The video folder {folder} is not private to you (another user owns it, "
+                      "others may write to it, or it is a link), so no video is kept there.").format(
+                folder=self.name)
         if self.kind == "disk":
             from core.user_errors import describe
 
@@ -164,7 +169,14 @@ def _sha256_of(path: Path) -> str:
 
 
 def cached(video: Video) -> Path | None:
-    """The cached file of *video* when it is there and matches its pin."""
+    """The cached file of *video* when it is there and matches its pin -
+    and its folder is private to this user (self_update.private_dir_problem):
+    in a folder others may change, the checked file could be swapped
+    before the player reads it."""
+    from core import self_update
+
+    if self_update.private_dir_problem(cache_dir(), create=False):
+        return None
     path = cache_dir() / video.name
     try:
         if not path.is_file() or path.is_symlink() or path.stat().st_size != video.size:
@@ -190,10 +202,13 @@ def fetch(video: Video, *, opener=None, progress: Callable[[int, int], None] | N
         return found
     folder = cache_dir()
     try:
-        folder.mkdir(parents=True, exist_ok=True)
+        folder.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         raise VideoError(f"Cannot create {folder}: {exc.strerror or exc}", kind="disk",
                          name=str(folder), cause=exc) from exc
+    problem = self_update.private_dir_problem(folder)
+    if problem:
+        raise VideoError(problem, kind="unsafe", name=str(folder))
     digest = hashlib.sha256()
     fd, tmp_name = tempfile.mkstemp(prefix=".part-", suffix=".mp4", dir=folder)
     tmp = Path(tmp_name)

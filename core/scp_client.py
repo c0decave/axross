@@ -22,7 +22,6 @@ import os
 import posixpath
 import re
 import socket
-import tempfile
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -42,6 +41,7 @@ from core.proxy import (
     create_proxy_socket,
     enable_tcp_nodelay,
 )
+from core.read_spool import new_spool
 from core.redaction import redact_text
 from core.ssh_client import (
     CleanEnvProxyCommand,
@@ -287,7 +287,7 @@ class _SpooledWriter:
         self._remote_path = remote_path
         self._caps = caps
         self._append = append
-        self._buf = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
+        self._buf = new_spool(max_size=8 * 1024 * 1024)
         self._closed = False
         # The running transfer's Cancel and progress (core.transfer_hooks):
         # the upload happens in close(), after the copy loop.
@@ -1022,7 +1022,7 @@ class SCPSession(SessionLifecycle):
         if not self._client:
             raise ConnectionError("Not connected")
 
-        spool = tempfile.SpooledTemporaryFile(max_size=_READ_SPOOL_MAX)
+        spool = new_spool(max_size=_READ_SPOOL_MAX)
         # In a running transfer each piece checks Cancel and counts as
         # received: the whole download happens here, before the copy loop.
         hooks = transfer_hooks.current()
@@ -1092,7 +1092,7 @@ class SCPSession(SessionLifecycle):
         """Read *path* with ``scp -f`` (source mode) into a spooled file."""
         if not self._client:
             raise ConnectionError("Not connected")
-        spool = tempfile.SpooledTemporaryFile(max_size=_READ_SPOOL_MAX)
+        spool = new_spool(max_size=_READ_SPOOL_MAX)
         try:
             with self._lock:
                 chan = self._scp_channel(f"scp -f {shell_path(path)}")

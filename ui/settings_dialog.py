@@ -273,7 +273,7 @@ class GeneralPage(_FormPage):
 
         self.tour_offer_check = QCheckBox(tr("Offer the Getting Started tour at the next start"))
         self.tour_offer_check.setToolTip(
-            tr("A notice in the status bar, shown once; Help > Tours… has every tour at any "
+            tr("A notice in the status bar, shown once; Help → Tours… has every tour at any "
                "time.")
         )
         self.tour_offer_check.setChecked(tour_offer.offer_at_start())
@@ -334,7 +334,7 @@ class AppearancePage(_FormPage):
         form.addRow("", self.monochrome_check)
         self.title_bars_check = QCheckBox(tr("axross's own title bars (off: the window manager's)"))
         self.title_bars_check.setToolTip(tr(
-            "On: each window's top row - its icon, name and _ [] x - is its title bar; the window "
+            "On: each window's top row – its icon, name and _ [] x – is its title bar; the window "
             "manager draws none. Off: the window manager's title bar and buttons."))
         self.title_bars_check.setChecked(prefs.own_title_bars)
         form.addRow("", self.title_bars_check)
@@ -365,14 +365,15 @@ class AppearancePage(_FormPage):
         self.font_spin.setSuffix(tr(" pt"))
         self.font_spin.setValue(prefs.font_size or self.font_spin.minimum())
         form.addRow(tr("Font size (zoom)"), self.font_spin)
-        form.addRow("", _note(tr("View > Zoom In / Out / Reset (Ctrl+= / Ctrl+- / Ctrl+0) "
+        form.addRow("", _note(tr("View → Zoom In / Out / Reset (Ctrl+= / Ctrl+- / Ctrl+0) "
                                  "change it too.")))
 
-        hidden = QGroupBox(tr("Hidden files"))
-        hidden_form = QFormLayout(hidden)
+        # In the page's own form, not a box with a form of its own: the
+        # check box stood right of the column every other field starts in
+        # (UX review round 7).
         self.highlight_check = QCheckBox(tr("Highlight hidden files (italics, muted colour)"))
         self.highlight_check.setChecked(prefs.highlight_hidden)
-        hidden_form.addRow("", self.highlight_check)
+        form.addRow(tr("Hidden files"), self.highlight_check)
         self.theme_colour_radio = QRadioButton(tr("Theme colour"))
         self.own_colour_radio = QRadioButton(tr("Own colour"))
         self.colour_button = QPushButton(tr("Choose Colour…"))
@@ -384,7 +385,7 @@ class AppearancePage(_FormPage):
         row.addWidget(self.colour_label)
         row.addWidget(self.colour_button)
         row.addStretch(1)
-        hidden_form.addRow(tr("Hidden files colour"), row)
+        form.addRow(tr("Hidden files colour"), row)
         self._colour: str | None = prefs.hidden_color
         self.theme_colour_radio.setChecked(self._colour is None)
         self.own_colour_radio.setChecked(self._colour is not None)
@@ -392,7 +393,6 @@ class AppearancePage(_FormPage):
         self.theme_colour_radio.toggled.connect(self._show_colour)
         self._show_colour()
         self.layout_.addLayout(form)
-        self.layout_.addWidget(hidden)
         self._finish()
 
     def _sync_icon_colours(self, *_args) -> None:
@@ -552,7 +552,7 @@ class ToolbarPage(_FormPage):
         row.addStretch(1)
         self.layout_.addLayout(row)
         self.layout_.addWidget(_note(tr(
-            "Drag a button along its bar to move it. Right-click the toolbar > "
+            "Drag a button along its bar to move it. Right-click the toolbar → "
             "Reset Toolbar Order puts the buttons back in their default order.")))
         self._show_colours()
         self._sync_enabled()
@@ -745,7 +745,7 @@ class SearchPage(_FormPage):
         where_form.addRow("", _note(tr(
             "Set by AXROSS_METADATA_DB and AXROSS_CAS_DB in the environment, else "
             "$XDG_DATA_HOME/axross (default ~/.local/share/axross; an index already "
-            "there stays in use). Edit > Index Active Folder… fills the offline index.")))
+            "there stays in use). Edit → Index Active Folder… fills the offline index.")))
         self.layout_.addWidget(where)
         self._finish()
 
@@ -983,6 +983,29 @@ def _searchable_texts(widget: QWidget) -> list[str]:
     return [t.replace("&", "").lower() for t in texts if t]
 
 
+#: At most this many settings of a page are marked for one search.
+_MAX_MARKS = 12
+
+
+def _widget_text(widget: QWidget) -> str:
+    if isinstance(widget, QGroupBox):
+        return widget.title()
+    if isinstance(widget, (QLabel, QAbstractButton)):
+        return widget.text()
+    return ""
+
+
+def _matching_widgets(page: QWidget, needle: str) -> list[QWidget]:
+    """The labels, buttons and group boxes of *page* whose text holds
+    *needle* (case-insensitive, mnemonics ignored), in the page's order."""
+    found = []
+    for widget in page.findChildren(QWidget):
+        text = _widget_text(widget)
+        if text and needle in text.replace("&", "").lower():
+            found.append(widget)
+    return found
+
+
 class SettingsDialog(QDialog):
     """Edit > Settings…: the categories, their pages, OK / Apply / Cancel."""
 
@@ -1030,9 +1053,20 @@ class SettingsDialog(QDialog):
         self.error_label.setTextFormat(Qt.TextFormat.PlainText)
         self.error_label.hide()
         self.stack = QStackedWidget()
+        # A search without a hit shows this, not the page shown before.
+        self.empty_page = QLabel()
+        self.empty_page.setObjectName("axSettingsNoMatch")
+        self.empty_page.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_page.setWordWrap(True)
+        self.empty_page.setProperty("role", "muted")
+        self.stack.addWidget(self.empty_page)
+        #: The widgets a search marked (_mark_matches), to unmark.
+        self._marked: list[QWidget] = []
         right = QWidget()
         right_layout = QVBoxLayout(right)
-        right_layout.setContentsMargins(0, 0, 0, 0)
+        # Room between the list and the page: the heading stood flush
+        # against the list (UX review round 7).
+        right_layout.setContentsMargins(12, 0, 0, 0)
         right_layout.addWidget(self.title_label)
         right_layout.addWidget(self.error_label)
         right_layout.addWidget(self.stack, 1)
@@ -1206,6 +1240,39 @@ class SettingsDialog(QDialog):
             page.show_tab(sub)
         if page_id in ("agent", "analysis"):
             self._offer_llm_profiles()
+        self._mark_matches(page_id, self.filter_edit.text().strip().lower())
+
+    # -- search marks ----------------------------------------------------------
+    MATCH_STYLE = ("background-color: palette(highlight); color: palette(highlighted-text);"
+                   " border-radius: 3px;")
+
+    def _mark_matches(self, page_id: str, needle: str) -> None:
+        """Mark the settings of *page_id* whose name holds *needle* and
+        scroll the first into view: the page opened, but which of its
+        twenty fields had matched was left to the eye (UX review round 7)."""
+        for widget in self._marked:
+            try:
+                widget.setStyleSheet(widget.property("axSearchStyle") or "")
+                widget.setProperty("axSearchHit", False)
+            except RuntimeError:  # deleted with its page
+                pass
+        self._marked = []
+        page = self._pages.get(page_id)
+        if not needle or page is None:
+            return
+        hits = [w for w in _matching_widgets(page, needle) if not w.property("axSearchHit")]
+        for widget in hits[:_MAX_MARKS]:
+            widget.setProperty("axSearchStyle", widget.styleSheet())
+            widget.setProperty("axSearchHit", True)
+            widget.setStyleSheet(widget.styleSheet() + self.MATCH_STYLE)
+            self._marked.append(widget)
+        shown = next((w for w in self._marked if w.isVisibleTo(page)), None)
+        if shown is not None:
+            self._scrolls[page_id].ensureWidgetVisible(shown)
+
+    def marked_texts(self) -> list[str]:
+        """The texts of the settings the search marked (for tests)."""
+        return [_widget_text(w) for w in self._marked]
 
     def _follow_tab(self, page_id: str, index: int) -> None:
         """The agent page's own tabs keep the list's selection in step."""
@@ -1250,10 +1317,22 @@ class SettingsDialog(QDialog):
             if match and first is None:
                 first = item
         self.no_match_label.setVisible(first is None)
+        if first is None:
+            # Nothing matches: say so where the page was, not the old page.
+            self.empty_page.setText(
+                tr("No setting matches “{text}”.").format(text=text.strip())
+                + "\n\n" + tr("Try another word, or clear the search to see every page."))
+            self.stack.setCurrentWidget(self.empty_page)
+            self.title_label.setText(tr("No Matches"))
+            self._mark_matches("", "")
+            return
         current = self.tree.currentItem()
         top = (current.parent() or current) if current is not None else None
-        if first is not None and (top is None or top.isHidden()):
+        if top is None or top.isHidden():
             self.tree.setCurrentItem(first)
+        else:
+            # The page shown before the search went empty, and its marks.
+            self._on_item_changed(current)
 
     def visible_page_ids(self) -> list[str]:
         return [pid for pid, item in self._items.items() if not item.isHidden()]
@@ -1293,7 +1372,7 @@ class SettingsDialog(QDialog):
     def _show_error(self, page_id: str, problems: list[str]) -> None:
         self.show_page(page_id)
         self.error_label.setText(
-            tr("Not saved - {page}:").format(page=self._titles[page_id]) + "\n"
+            tr("Not saved – {page}:").format(page=self._titles[page_id]) + "\n"
             + "\n".join(problems)
         )
         self.error_label.show()

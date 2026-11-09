@@ -35,7 +35,8 @@ def _path(name: str, *labels: str) -> str:
     if name == "USAGE_de.md":
         german = json.loads((ROOT / "resources/i18n/de.json").read_text(encoding="utf-8"))
         return " → ".join(german.get(label, label) for label in labels)
-    return " > ".join(labels)
+    # The English guide joins menu paths with "→" too (UX review round 7).
+    return (" → " if name == "USAGE.md" else " > ").join(labels)
 
 
 @pytest.mark.parametrize("name", HEADINGS)

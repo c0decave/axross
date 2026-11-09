@@ -94,7 +94,8 @@ def test_happy_the_right_click_menu_lists_the_entries_in_order(window) -> None:
     labels = [a.text() for a in menu.build_profile_menu(profile).actions()]
     # Delete Connection Config… (punch list item 27) sits apart, after a separator.
     assert labels == [
-        "Connect", "Connect in Background", "Edit Config…", "", "Delete Connection Config…"
+        "Connect", "Connect in Background", "Connect in New Pane", "Edit Config…", "",
+        "Delete Connection Config…",
     ]
     menu.close()
 

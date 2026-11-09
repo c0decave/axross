@@ -13,7 +13,6 @@ import json
 import logging
 import os
 import posixpath
-import tempfile
 import time
 from datetime import datetime
 from typing import IO
@@ -25,7 +24,7 @@ from core import cloud_http, transfer_hooks
 from core.backend import SessionLifecycle
 from core.desktop_open import install_clean_webbrowser
 from core.path_policy import refuse_folder_path
-from core.read_spool import spool_response
+from core.read_spool import new_spool, spool_response
 from core.secure_storage import adopt_legacy_secret_file, write_secret_file
 from models.file_item import FileItem
 
@@ -87,7 +86,7 @@ class _SpooledWriter:
     def __init__(self, session: OneDriveSession, remote_path: str):
         self._session = session
         self._remote_path = remote_path
-        self._buf = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
+        self._buf = new_spool(max_size=8 * 1024 * 1024)
         self._closed = False
         # The running transfer's Cancel and progress (core.transfer_hooks):
         # the upload happens in close(), after the copy loop.

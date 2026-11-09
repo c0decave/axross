@@ -64,6 +64,16 @@ perfil selecciona un protocolo y guarda host / usuario / autenticación
 secretos OAuth, cadenas de conexión Azure) van al keyring del SO; el
 JSON de perfil mismo nunca lleva credenciales en plano.
 
+- **Dónde se abre una conexión.** Mientras el panel de destino no se ha
+  usado - un panel local todavía en tu carpeta personal, sin navegar, sin
+  selección ni filtro -, una conexión nueva se abre en su lugar; en el
+  primer arranque el servidor ocupa así la mitad derecha de la ventana en
+  vez de un tercer panel estrecho. Si no, se abre en un panel nuevo a la
+  derecha. Para tener siempre un panel nuevo, mantén **Shift** al hacer
+  clic en la conexión (o en OK), marca *Open in a new pane* en el
+  Connection Manager o, con clic derecho sobre un perfil en Quick Connect,
+  elige *Connect in New Pane*.
+
 - **Cómo está protegida una conexión.** Un icono junto a cada conexión -
   la cabecera del panel, la pestaña del workspace (su conexión más débil),
   los marcadores, Quick Connect - muestra texto claro, solo firmado, TLS
@@ -120,13 +130,24 @@ JSON de perfil mismo nunca lleva credenciales en plano.
   SSH, nombre de workstation SMB, NAWS de Telnet, stripping de
   metadata rsync. Ver [OPSEC.md](OPSEC.md) para el modelo de
   amenazas.
-- **SFTP con la red caída.** Una petición que el servidor no responde en
-  60 s falla con "no respondió a tiempo" en lugar de esperar para
-  siempre (Wi-Fi caída, VPN desconectada); la siguiente acción abre un
-  canal nuevo. Cancelar detiene una transferencia SFTP o SCP al
-  instante, también mientras espera a la red; una transferencia atascada
-  tras un enlace muerto cierra la conexión 10 s después (reconecta
-  entonces).
+- **SFTP con la red caída y servidores lentos.** Cuando el servidor no
+  envía nada durante 60 s, axross pregunta a la conexión SSH si sigue
+  viva (una petición keepalive, solo entonces - sin cadencia fija, ver
+  [OPSEC.md](OPSEC.md)). Sin respuesta: la petición falla con "no
+  respondió a tiempo" en lugar de esperar para siempre (Wi-Fi caída, VPN
+  desconectada); la siguiente acción abre un canal nuevo. Con respuesta:
+  el servidor vive pero es lento (una recuperación de cinta o HSM, un
+  archivo en la nube por niveles) y axross sigue esperando, hasta 30
+  minutos por petición. Lo mismo vale para los comandos que axross
+  ejecuta en el servidor - la suma de comprobación tras cada subida, una
+  copia en el servidor: uno largo se espera, una red muerta lo termina.
+  Los 60 s son por perfil: **Conectar → SFTP time-out** (*Default (60 s)*,
+  hasta 3600 s). Cancelar detiene una transferencia SFTP o SCP al
+  instante, también mientras espera a la red o a la suma; una
+  transferencia atascada tras un enlace muerto cierra la conexión 10 s
+  después (reconecta entonces) - salvo que terminales u otros paneles
+  usen la conexión y esta aún responda: entonces solo se cierra el canal
+  de la transferencia.
 - **Google Drive: Docs, Sheets, Slides y unidades compartidas.** Un
   Google Doc aparece como `<nombre>.docx`, una hoja como `.xlsx`, unas
   Slides como `.pptx`, un dibujo como `.pdf` - sin tamaño - y se lee
@@ -173,7 +194,14 @@ JSON de perfil mismo nunca lleva credenciales en plano.
   nueva punta de origin cuando tocan otros archivos; si no, quedan en una
   rama nueva `axross/unpushed-<fecha>-<hora>` - el mensaje la nombra - y
   la rama muestra la versión de origin: abre esa rama para copiar tus
-  archivos de vuelta. No se pierde nada. Si el remoto no es accesible, la copia en caché se abre en solo
+  archivos de vuelta. Esa rama se sube a origin con el mismo nombre, así
+  sobrevive a una caché borrada; si origin la rechaza, el mensaje dice que
+  solo está en la caché local (`~/.cache/axross/git/...`) - copia los
+  archivos pronto. No se pierde nada. Renombrar (un archivo o una carpeta
+  entera) es un commit y un push: llega completo o nada. Guardados muy
+  seguidos (a menos de 2 s del último fetch o push) no preguntan antes a
+  origin; su push sigue sin sobrescribir trabajo ajeno y se pone al día
+  como arriba. Si el remoto no es accesible, la copia en caché se abre en solo
   lectura y la línea de estado dice "offline". Los scripts pueden pasar
   `auto_push=False` y hacer push con `axross.git_push()`.
 
@@ -1519,10 +1547,23 @@ MCP) o como carpeta adicional (`~/.config/myapp`); los sitios de la lista
 siguen protegidos dentro, y conceder toda la carpeta personal no levanta
 nada. Los ficheros de zsh en `$ZDOTDIR` (leído de `~/.zshenv`) cuentan como
 ficheros de inicio, y los ficheros de Git que ejecutan código (`.git/config`,
-`.git/hooks`, `.git/info`, `.gitmodules`, una entrada `.git`) se rechazan en
-cualquier sitio. En el sandbox las entradas ocultas de una carpeta personal
-con escritura se montan de solo lectura y no se puede crear ninguna nueva;
-la configuración y los hooks de Git de la carpeta del agente también. El
+`.git/hooks`, `.git/info`, `.git/commondir` - dirige Git a la configuración y
+los hooks de otra carpeta -, `gitdir`, `.gitmodules`, una entrada `.git`) se
+rechazan en cualquier sitio, también en un repositorio bare (`x.git/hooks`) y
+en cualquier carpeta que Git tome por un repositorio (`HEAD`, `objects/` y
+`refs/`; el último de los tres no se crea en una carpeta que aún no lo es);
+igual `.hg/hgrc` de Mercurial y `.jj/repo` de Jujutsu. Cuenta cada nombre de
+una ruta: tal como se escribe, tras cada symlink del camino y resuelto - y el
+destino de un symlink en esos sitios (GNU stow: `~/.config/kitty ->
+~/dotfiles/kitty`) se protege como el sitio mismo, salvo que concedas ese
+destino. Un archivo con otros hard links no se escribe (los otros nombres
+cambiarían también; escribe una copia con otro nombre). En el sandbox las
+entradas ocultas de una carpeta personal con escritura se montan de solo
+lectura y no se puede crear ninguna nueva, los destinos de esos symlinks son
+de solo lectura; la configuración, los hooks, `info` y `commondir` de Git de
+la carpeta del agente y de los repositorios una carpeta más abajo también, y
+un `.git/commondir` que el agente cree ahí se aparta al terminar su tarea
+(renombrado a `commondir.set-aside-by-axross-<hora>`). El
 `chmod` de MCP no pone los bits setuid, setgid ni sticky ni da escritura al
 grupo o a todos.
 
@@ -1537,10 +1578,26 @@ credential, token, secret, key (`*.pem`, `*.key`, `id_*`, `*key*.json`), una
 base de contraseñas (`*.kdbx`), cookies o history. Sus nombres se pueden
 listar; el sandbox los muestra vacíos. La papelera de axross
 (`~/.axross-trash`) también es secreta y de solo lectura para toda
-herramienta. La papelera firma cada entrada: una entrada cuyos datos o
+herramienta. Un symlink a un secreto (`~/.ssh/id_ed25519 ->
+~/keys/id_ed25519`) hace secreto su destino, y un hard link a un archivo
+secreto tampoco se lee. La papelera firma cada entrada: una entrada cuyos datos o
 registro han cambiado no se restaura, y una que vuelve a un sitio protegido
 (un fichero de inicio, una entrada de autostart) solo desde la ventana de
 la papelera y tras tu confirmación.
+
+**Las carpetas ocultas no se leen sin concederlas.** Las herramientas del
+agente y del servidor MCP no entregan el contenido de una entrada oculta de
+tu carpeta personal (`~/.config/<app>`, `~/.mozilla`,
+`~/.local/share/TelegramDesktop`, …) ni de `~/snap` (ahí guardan los
+paquetes snap sus perfiles de Firefox y Chromium; también `~/Library` y
+`%APPDATA%`): demasiados programas guardan ahí sesiones, tokens y claves
+para listarlos todos. Los nombres se pueden listar y tus demás archivos se
+leen como antes. Si una tarea necesita uno de esos archivos, concede esa
+carpeta - como raíz del agente o del servidor MCP o como carpeta adicional
+(basta de solo lectura), p. ej. `~/.config/myapp`; los secretos dentro
+siguen sin leerse. Conceder toda la carpeta personal no levanta nada;
+`--mcp-allow-secret-reads` lo levanta para el servidor MCP junto con los
+secretos.
 
 **Files read-only** (en la fila superior de la pestaña, y para todas las
 pestañas en Agent Settings > Access): el agente lee archivos pero no
@@ -1710,7 +1767,18 @@ puede ofrecer como `<servidor>__<herramienta>`. *Test* lista sus
 herramientas. Un servidor en "always" pregunta en cada llamada;
 "writes" deja ejecutar sin preguntar las herramientas que el servidor
 marca como read-only. Un programa puede ejecutarse en un perfil de
-sandbox; uno sin él dice *runs on this machine, not in a container*. El
+sandbox; uno sin él dice *runs on this machine, not in a container*.
+**Contenido por defecto:** sin perfil de sandbox solo arranca un
+lanzador puro: un intérprete que ejecuta un script o un módulo que ya
+está en disco (`node server.js`, `python3 -u server.py`, `python -m
+módulo`, `java -jar x.jar`, `dotnet x.dll`, `bash x.sh`,
+`ruby`/`perl`/`php` con un script). Cualquier otro programa (un binario,
+una herramienta de build como `bazel run`, `make`, `mix run`, `swift run`
+…, un gestor de paquetes) dice *not started: needs a sandbox profile or
+Trusted* y se rechaza al arrancar hasta que se ejecute en un perfil de
+sandbox o marques *Trusted: runs on this machine as it is* (entonces se
+ejecuta con tus derechos; se guarda como `"trusted": true`). Trusted
+nunca deja entrar en esta máquina un comando que descarga código. El
 token de un servidor http se guarda en el keyring. Un comando escrito
 que descarga código (`npx …`, `uvx …`, `docker run …`) nunca se guarda
 como programa de esta máquina: *Install in a Container* lo construye en

@@ -141,13 +141,14 @@ def test_happy_the_view_menu_and_the_context_menu_switch_the_active_pane(folder)
         assert action.shortcut().toString() == "Ctrl+Shift+G"
         action.trigger()
         assert pane.view_mode == "thumbnails"
-        labels = [a.text().replace("&", "") for a in all_actions(pane._build_context_menu())]
-        assert "View as Details" in labels
+        # One name and check with View → Thumbnail View (UX review round 7).
+        def entry():
+            return next(a for a in all_actions(pane._build_context_menu())
+                        if a.text().replace("&", "") == "Thumbnail View")
+        assert entry().isCheckable() and entry().isChecked()
         action.trigger()
         assert pane.view_mode == "details"
-        assert "View as Thumbnails" in [
-            a.text().replace("&", "") for a in all_actions(pane._build_context_menu())
-        ]
+        assert not entry().isChecked()
     finally:
         win.close()
         win.deleteLater()

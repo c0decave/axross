@@ -159,5 +159,5 @@ class LinkTracker:
         if self.state == TRYING:
             return tr("Connecting to the LLM ({detail}): {where}").format(
                 detail=self.detail, where=where)
-        return tr("Not connected to the LLM: {where} - {detail}. Click to check again.").format(
+        return tr("Not connected to the LLM: {where} – {detail}. Click to check again.").format(
             where=where, detail=self.detail)

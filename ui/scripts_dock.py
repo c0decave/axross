@@ -560,7 +560,7 @@ class ScriptsDock(QDockWidget):
             self.header.setText(tr("No script open"))
         elif self._current[0] == "example":
             self.header.setText(
-                tr("{name} — bundled example, read-only").format(name=self._current[1])
+                tr("{name} – bundled example, read-only").format(name=self._current[1])
             )
         else:
             self.header.setText(self._current[1] + (" *" if self._dirty else ""))
@@ -578,7 +578,7 @@ class ScriptsDock(QDockWidget):
         self.stop_action.setEnabled(running)
         if not policy.allow_scripts:
             blocked = tr(
-                "Scripts are blocked in {mode} security mode (Edit > Settings > Security)."
+                "Scripts are blocked in {mode} security mode (Edit → Settings → Security)."
             ).format(mode=policy.name)
             self.run_action.setEnabled(False)
             self.console_action.setEnabled(False)
@@ -642,7 +642,7 @@ class ScriptsDock(QDockWidget):
                     )
                 self.list.addItem(item)
             if not saved:
-                hint = QListWidgetItem(tr("(none yet — press New)"))
+                hint = QListWidgetItem(tr("(none yet – press New)"))
                 hint.setFlags(Qt.ItemFlag.NoItemFlags)
                 self.list.addItem(hint)
             self._add_header(tr("Examples (read-only)"))

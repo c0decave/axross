@@ -177,7 +177,7 @@ class MailDockPanel(QWidget):
                   "allowed": tr("answers the sender without asking")}[d.send_policy]
         when = tr("paused") if self.paused else (tr("running…") if self._running else
                                                 tr("next run {t}").format(t=time.strftime("%H:%M", time.localtime(self._next))))
-        self.status.setText(tr("{box} / {folder} - every {n} min - {policy} - {when}").format(
+        self.status.setText(tr("{box} / {folder} – every {n} min – {policy} – {when}").format(
             box=d.mailbox_profile or tr("(no mailbox)"), folder=d.folder, n=d.interval_minutes,
             policy=policy, when=when))
 
@@ -372,11 +372,13 @@ class MailDockDialog(QDialog):
         _select_saved(self.llm, dock.llm_profile)
         self.sandbox = QComboBox()
         self.sandbox.addItem(tr("(no sandbox)"), "")
+        from ui.format_utils import sandbox_label
+
         for name in sandboxes:
-            self.sandbox.addItem(name, name)
+            self.sandbox.addItem(sandbox_label(name), name)
         _select_saved(self.sandbox, dock.sandbox)
         self.policy = QComboBox()
-        for key, label in (("never", tr("Never send - drafts only")),
+        for key, label in (("never", tr("Never send – drafts only")),
                            ("ask", tr("Ask me before each mail")),
                            ("allowed", tr("Answer the sender without asking (others: ask)"))):
             self.policy.addItem(label, key)

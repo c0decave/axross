@@ -2031,7 +2031,7 @@ class SystemInfoWindow(QDialog):
         bar.addWidget(self.search, 1)
         self.show_ids = QCheckBox(tr("Show identifiers"))
         self.show_ids.setToolTip(tr("Serial numbers, MAC and IP addresses and UUIDs. Hidden by "
-                                    "default - also in copies and saved reports - because such "
+                                    "default – also in copies and saved reports – because such "
                                     "reports get pasted in public."))
         self.show_ids.toggled.connect(lambda _on: self.render())
         bar.addWidget(self.show_ids)
@@ -2052,7 +2052,7 @@ class SystemInfoWindow(QDialog):
         bar.addWidget(self.save_button)
         # Feedback: JSON was only a file type in the save dialog - not found.
         self.json_button = QPushButton(tr("JSON Export"))
-        self.json_button.setToolTip(tr("Everything as JSON - every value, table and raw reading - "
+        self.json_button.setToolTip(tr("Everything as JSON – every value, table and raw reading – "
                                        "to a file or the clipboard"))
         json_menu = QMenu(self.json_button)
         json_menu.addAction(tr("Save as JSON File…"), lambda: self.save_report(as_json=True))
@@ -2208,7 +2208,7 @@ class SystemInfoWindow(QDialog):
             dim = key != "overview" and available and not any(available)
             item.setForeground(muted(self) if dim else self.palette().color(
                 QPalette.ColorRole.Text))
-            item.setToolTip(plain_tooltip(tr("Not available - {reasons}").format(
+            item.setToolTip(plain_tooltip(tr("Not available – {reasons}").format(
                 reasons="; ".join(reasons))) if reasons else tr(title))
         self.show_page(current or "overview")
         if self.last_sample is not None:

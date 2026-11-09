@@ -81,7 +81,7 @@ def capacity_cells(row: HostRow) -> dict[str, str]:
         "Total": human_bytes(row.capacity_total) if measured else DASH,
         "Used": human_bytes(row.capacity_used) if measured else DASH,
         "Free": human_bytes(row.capacity_free) if measured else DASH,
-        "Usage": f"{percent}%" if measured else _UNSUPPORTED,
+        "Usage": f"{percent}%" if measured else tr(_UNSUPPORTED),
     }
 
 
@@ -233,7 +233,7 @@ class DiskUsageDialog(QDialog):
         if percent is None:
             # No bar at all: a 0 %-filled bar reads as "empty disk",
             # which is precisely the claim we cannot make.
-            label = QLabel(_UNSUPPORTED)
+            label = QLabel(tr(_UNSUPPORTED))
             label.setProperty("role", "muted")
             return label
         bar = QProgressBar()

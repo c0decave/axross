@@ -16,12 +16,6 @@ from dataclasses import dataclass
 log = logging.getLogger(__name__)
 MAX_HTTP_CONNECT_HEADER = 8192
 
-# Serialises the ``socket.create_connection`` patch used by
-# :func:`patched_create_connection` so two threads patching for
-# different profiles can't see each other's replacement function.
-_CREATE_CONNECTION_LOCK = threading.Lock()
-
-
 # ---------------------------------------------------------------------------
 # SSRF guard
 # ---------------------------------------------------------------------------
@@ -1250,8 +1244,8 @@ _UDP_PATCH_LOCK = threading.Lock()
 def patched_module_udp_socket(module, proxy: "ProxyConfig | None"):
     """Temporarily make ``module.socket.socket(AF_INET, SOCK_DGRAM)`` a
     SOCKS5 UDP relay (for libraries such as tftpy that create their UDP
-    socket internally). Scoped and serialised like
-    :func:`patched_create_connection`. Yields untouched without a proxy.
+    socket internally). Scoped to the ``with`` body and serialised by a
+    lock. Yields untouched without a proxy.
     """
     if proxy is None:
         yield
@@ -1295,50 +1289,6 @@ def warn_unsupported_proxy(
         proxy_host,
         detail,
     )
-
-
-@contextlib.contextmanager
-def patched_create_connection(profile_or_config):
-    """Temporarily override ``socket.create_connection`` so it routes
-    through the proxy.
-
-    Use as a context manager around a third-party library call that
-    internally uses :func:`socket.create_connection` and exposes no
-    other proxy hook (smbprotocol, adb-shell, …). Same scoping
-    discipline as :func:`core.smb_client._patched_gethostname`: a
-    process-global lock serialises the patch across threads.
-
-    Yields without patching when no proxy is configured.
-
-    Process-wide: while it is active, EVERY thread's create_connection
-    goes through the proxy, and other users wait for the lock across the
-    whole connect. A library whose own module calls
-    ``socket.create_connection`` is better served by
-    :func:`routed_create_connection` (that module, this thread only).
-    """
-    proxy_cfg = _enabled_proxy_config(profile_or_config)
-    if proxy_cfg is None:
-        yield
-        return
-
-    with _CREATE_CONNECTION_LOCK:
-        original = socket.create_connection
-
-        def proxied(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, **kwargs):
-            host, port = address
-            t = timeout if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT else 10.0
-            return create_proxy_socket(
-                proxy_cfg,
-                host,
-                int(port),
-                timeout=float(t),
-            )
-
-        socket.create_connection = proxied  # type: ignore[assignment]
-        try:
-            yield
-        finally:
-            socket.create_connection = original  # type: ignore[assignment]
 
 
 def _enabled_proxy_config(profile_or_config) -> "ProxyConfig | None":
@@ -1415,8 +1365,9 @@ def routed_create_connection(module, profile_or_config):
     """Route *module*'s ``socket.create_connection`` through the proxy of
     *profile_or_config* - in this thread, for the ``with`` body.
 
-    Unlike :func:`patched_create_connection` nothing process-wide changes
-    and no lock is held across the connect: a connection another thread
+    Nothing process-wide changes (the retired ``patched_create_connection``
+    swapped ``socket.create_connection`` for every thread) and no lock is
+    held across the connect: a connection another thread
     (or library) opens meanwhile goes where it was meant to - an SMB
     dial through a SOCKS proxy took every ftplib / imaplib connect of
     the process with it, and held a second SMB dial to another host for

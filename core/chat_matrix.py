@@ -76,7 +76,7 @@ def nio_missing(*, load: bool = True) -> str | None:
 
 # Help > Features… installs it (or names the axross-full build), as for
 # every other extra - not a pip command to type.
-_NIO_MISSING = "Matrix needs matrix-nio with encryption: install it in Help > Features… (Matrix and XMPP chat)"
+_NIO_MISSING = "Matrix needs matrix-nio with encryption: install it in Help → Features… (Matrix and XMPP chat)"
 
 
 def full_user_id(user: str, homeserver: str) -> str:

@@ -77,7 +77,7 @@ def _root_ok(win) -> None:
     assert win._workspace_tabs.currentWidget() is root
 
 
-def _connect_like_quick_connect(win, monkeypatch) -> None:
+def _connect_like_quick_connect(win, monkeypatch, **kw) -> None:
     """The success path of _quick_connect_profile with a fake connect."""
     from core.profiles import ConnectionProfile
 
@@ -88,7 +88,7 @@ def _connect_like_quick_connect(win, monkeypatch) -> None:
 
     monkeypatch.setattr(credentials, "get_password", lambda name: "pw")
     win._quick_connect_profile(
-        ConnectionProfile(name="p", protocol="sftp", host="h", username="u")
+        ConnectionProfile(name="p", protocol="sftp", host="h", username="u"), **kw
     )
 
 
@@ -101,7 +101,9 @@ def test_happy_a_connect_after_a_preset_adds_its_pane(window, monkeypatch, prese
     pump()
     _root_ok(window)
     before = len(window._panes)
-    _connect_like_quick_connect(window, monkeypatch)
+    # A new pane on purpose: by default a connection takes the place of an
+    # untouched target pane (tests/test_connect_reuses_untouched_pane.py).
+    _connect_like_quick_connect(window, monkeypatch, new_pane=True)
     assert len(window._panes) == before + 1
     assert window._panes[-1].parent() is not None
 

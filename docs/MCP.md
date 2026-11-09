@@ -487,6 +487,7 @@ we've thought about. The MCP tests live in `tests/test_mcp_*.py`:
 |------|--------|
 | `tests/test_mcp_error_redaction.py` | Secrets in backend error text are redacted (tools/call, tasks, recursive_checksum). |
 | `tests/test_mcp_http_hardening.py` | DNS rebinding (Host/Origin), session cap and idle eviction, malformed params/ids, partial TLS flags, idle TCP client vs. accept. |
+| `tests/test_secfix_r7_host_header.py` | `Host` parsed strictly as `host[:port]` (`localhost:1@evil`, paths, spaces, bare IPv6 refused); two `Host`/`Origin` headers refused (MCP HTTP and reverse-serve). |
 | `tests/test_mcp_http_bearer_token.py` | Plain HTTP refuses requests without the bearer token (401, `/health` exempt), the token file is 0600 and never written through a symlink, `--mcp-http` always serves with one. |
 | `tests/test_mcp_http_sse_lifecycle.py` | One SSE stream per session, DELETE/idle eviction end it, replay on reconnect. |
 | `tests/test_mcp_search_root.py` | `search` never returns indexed paths outside the root. |
@@ -664,6 +665,23 @@ resolved and refused. Names stay listable (`list_dir`, `walk`, `stat`,
 `--mcp-allow-secret-reads` (stdio only) switches the check off; the
 agent's own tools always keep it. The write side (§2, the protected
 places of `core.protected_places`) is a list of its own and unchanged.
+
+Every name a path goes by is checked - as typed, after each symlink on
+the way, and resolved - on both sides: a key behind
+`~/.ssh/id_ed25519 -> ~/keys/id_ed25519` is refused under either name, and
+`~/dotfiles/kitty/kitty.conf` is not written when `~/.config/kitty` links
+there (grant the target to allow it). A hard link to a secret file is not
+read; a file with other hard links is not written at all (in place, the
+other names - maybe `~/.bashrc` or a `.git/config` - would change too).
+
+**Default-deny for reads.** Besides the secrets, the contents of a hidden
+entry of the home (`~/.config/<app>`, `~/.mozilla`, ...) and of `~/snap`
+(also `~/Library`, `%APPDATA%`) are not handed out unless the operator
+granted that folder: an `--mcp-root` inside such a place (for the agent:
+its folder or an extra folder there; read-only is enough; the secrets in
+it stay unread). A root of the
+whole home lifts nothing. Names stay listable; other files read as before.
+`--mcp-allow-secret-reads` lifts this too.
 
 ---
 

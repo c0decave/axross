@@ -253,7 +253,7 @@ class DeviceDialog(QDialog):
         group = QGroupBox(tr("Profiles"))
         row = QHBoxLayout(group)
         self.profile_combo = QComboBox()
-        self.profile_combo.setToolTip(tr("Connect or disconnect one profile - e.g. the headset "
+        self.profile_combo.setToolTip(tr("Connect or disconnect one profile – e.g. the headset "
                                          "profile for the microphone next to A2DP for music."))
         row.addWidget(self.profile_combo, 1)
         self.profile_connect_button = QPushButton(tr("Connect Profile"))
@@ -369,7 +369,7 @@ class DeviceDialog(QDialog):
         device = self.device()
         if device is None:
             return
-        self.setWindowTitle(tr("Bluetooth Device - {name}").format(name=device.display_name))
+        self.setWindowTitle(tr("Bluetooth Device – {name}").format(name=device.display_name))
         for key, text in overview(device).items():
             label = self.fields[key]
             shown = text or NOT_REPORTED
@@ -626,7 +626,7 @@ class DeviceDialog(QDialog):
             return
         if sink is None:
             self.test_label.setText(tr(
-                "{device} has no audio output in the sound server - its A2DP profile may not "
+                "{device} has no audio output in the sound server – its A2DP profile may not "
                 "be connected (Connect Profile: Audio playback).").format(
                 device=device.display_name))
             return

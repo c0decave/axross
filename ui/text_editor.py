@@ -159,7 +159,7 @@ class TextEditorDialog(QDialog):
                 QMessageBox.warning(
                     self,
                     tr("File Too Large"),
-                    tr("File is {size_human} — only files up to {describe_limit} are opened "
+                    tr("File is {size_human} – only files up to {describe_limit} are opened "
                         "(change it under Edit → Settings… → Files & Panes → Open Size Limit).").format(size_human=stat.size_human, describe_limit=describe_limit()),
                 )
                 self.reject()

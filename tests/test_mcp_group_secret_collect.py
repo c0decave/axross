@@ -55,8 +55,14 @@ def _zip_members(tools, path: str) -> dict[str, bytes]:
         return {n: z.read(n) for n in z.namelist()}
 
 
+def _granted(home, *rels):
+    """Extra read-only folders: a hidden folder of the home is read only
+    when granted (round 7, default-deny for reads); its secrets stay unread."""
+    return tuple((str(home / rel), False) for rel in rels)
+
+
 def test_sad_pack_leaves_the_ssh_keys_in_a_named_folder_out(home):
-    tools = T.build(home, {"packer"}, allow_write=True)
+    tools = T.build(home, {"packer"}, allow_write=True, extra_roots=_granted(home, ".ssh"))
     out = T.call(tools, "pack", {"folder": str(home), "names": [".ssh", "notes.txt"],
                                  "archive_name": "x"})
     members = _zip_members(tools, out["path"])
@@ -79,7 +85,8 @@ def test_sad_pack_refuses_a_secret_named_directly(home):
 
 
 def test_edge_pack_leaves_a_wholly_secret_folder_out_recursively(home):
-    tools = T.build(home, {"packer"}, allow_write=True)
+    tools = T.build(home, {"packer"}, allow_write=True,
+                    extra_roots=_granted(home, ".gnupg", ".config"))
     out = T.call(tools, "pack", {"folder": str(home), "names": [".gnupg", ".config"],
                                  "archive_name": "z"})
     members = _zip_members(tools, out["path"])
@@ -98,7 +105,7 @@ def test_sad_duplicates_scan_does_not_read_secrets(home, monkeypatch):
 
     monkeypatch.setattr(cas, "_index_one", spy)
     (home / "copy.pub").write_text("ssh-ed25519 AAAA public", encoding="utf-8")
-    tools = T.build(home, {"duplicates"})
+    tools = T.build(home, {"duplicates"}, extra_roots=_granted(home, ".ssh"))
     scan = T.call(tools, "duplicates_scan", {"path": str(home)})
     assert scan["status"] == "complete"
     hashed = {Path(p).relative_to(home).as_posix() for p in read}

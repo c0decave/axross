@@ -94,7 +94,7 @@ def activate(api):
             from ui.icon_provider import set_window_icon
 
             set_window_icon(dialog, "heatmap")
-            dialog.setWindowTitle(tr("Entropy — {name}").format(name=item.name))
+            dialog.setWindowTitle(tr("Entropy – {name}").format(name=item.name))
             layout = QVBoxLayout(dialog)
             strip = QLabel()
             strip.setPixmap(QPixmap.fromImage(heat_image(values)))

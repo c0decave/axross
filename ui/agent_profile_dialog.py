@@ -72,7 +72,7 @@ class ProfilePickerDialog(QDialog):
         self.buttons.rejected.connect(self.reject)
         right = QVBoxLayout()
         right.addWidget(self.description)
-        right.addWidget(QLabel(tr("The tab gets (within Agent Settings > Access):")))
+        right.addWidget(QLabel(tr("The tab gets (within Agent Settings → Access):")))
         right.addWidget(self.preview, 1)
         top = QHBoxLayout()
         top.addWidget(self.list, 1)

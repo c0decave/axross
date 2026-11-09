@@ -76,6 +76,7 @@ import re
 import shlex
 import stat as st_mod
 import threading
+import time
 import zlib
 from datetime import datetime
 from pathlib import Path
@@ -384,6 +385,18 @@ class GitFsSession(SessionLifecycle):
         # origin could not be read to bring them up to date: no further
         # commit lands on them until it can ({branch: the error}).
         self._push_blocked: dict[str, str] = {}
+        # When origin last told this session where its branches are: a
+        # fetch (every branch) or a push (that branch), monotonic seconds.
+        # A write right after one needs no ls-remote of its own (see
+        # _sync_before_commit, :attr:`_FRESH_SECONDS`).
+        self._fetched_at: float | None = None
+        self._pushed_at: dict[str, float] = {}
+        # Set by any fetch, ls-remote or push that failed in this session:
+        # from then on every write asks origin again first.
+        self._remote_trouble = False
+        # Side branches (axross/unpushed-*) and what pushing them to
+        # origin said: None = it is on origin too, else the error.
+        self._side_published: dict[str, str | None] = {}
         # Why origin could not be reached when the session opened ("" =
         # it could): the cache is shown read-only then.
         self.offline = ""
@@ -426,6 +439,11 @@ class GitFsSession(SessionLifecycle):
                     try:
                         self._fetch_origin()
                         log.debug("Git-FS fetched from %s", self._display_origin_url)
+                        # Unpushed work the fetch had to move aside goes to
+                        # origin too: in the cache alone it is easily lost.
+                        for outcome in list(self._reconciled.values()):
+                            if outcome[0] == "side":
+                                self._publish_side_branch(outcome[1])
                     except Exception as exc:  # noqa: BLE001
                         # The cache is all there is: shown, but read-only -
                         # a commit here could neither be pushed nor checked
@@ -515,12 +533,17 @@ class GitFsSession(SessionLifecycle):
             config=self._repo.get_config_stack(),
             **self._transport_kwargs,
         )
-        result = client.fetch(
-            path.encode() if isinstance(path, str) else path,
-            self._repo,
-            progress=lambda _data: None,  # not to the terminal
-        )
+        try:
+            result = client.fetch(
+                path.encode() if isinstance(path, str) else path,
+                self._repo,
+                progress=lambda _data: None,  # not to the terminal
+            )
+        except BaseException:
+            self._remote_trouble = True
+            raise
         self._update_from_remote_refs(getattr(result, "refs", None) or {})
+        self._fetched_at = time.monotonic()
 
     def _remote_branch_tip(self, branch: str) -> bytes | None:
         """The sha origin's ``refs/heads/<branch>`` points at now (an
@@ -785,16 +808,70 @@ class GitFsSession(SessionLifecycle):
             side, _short_sha(local), shown, _short_sha(remote),
         )
 
+    def _publish_side_branch(self, side: str) -> str | None:
+        """Push the side branch *side* (``axross/unpushed-<time>``) to
+        origin under the same name, once: in the cache alone it is lost
+        with ``~/.cache`` (cleaners, a new computer). None when origin
+        has it now, else why not."""
+        if side in self._side_published:
+            return self._side_published[side]
+        error: str | None = None
+        if not self._pushes():
+            error = "no push to origin in this session"
+        else:
+            ref = f"refs/heads/{side}".encode()
+            out = io.BytesIO()
+            try:
+                result = porcelain.push(
+                    self._repo,
+                    remote_location=self._connect_url,
+                    refspecs=[ref + b":" + ref],
+                    force=False,
+                    outstream=out,
+                    errstream=out,
+                    **self._transport_kwargs,
+                )
+                status = getattr(result, "ref_status", None)
+                refused = status.get(ref) if isinstance(status, dict) else None
+                if refused:
+                    error = (refused.decode("utf-8", "replace")
+                             if isinstance(refused, bytes) else str(refused))
+            except Exception as exc:  # noqa: BLE001 - network, auth, a refusing hook
+                error = str(exc) or type(exc).__name__
+        if error is None:
+            sha = _ref_or_none(self._repo.refs, f"refs/heads/{side}".encode())
+            if sha is not None:
+                self._repo.refs[self._REMOTE_PREFIX + side.encode()] = sha
+            log.info("Git-FS: side branch %s pushed to origin", side)
+        else:
+            self._remote_trouble = True
+            log.warning(
+                "Git-FS: side branch %s could not be pushed to origin (%s); it is only "
+                "in the cache %s", side, error, self._workdir,
+            )
+        self._side_published[side] = error
+        return error
+
     def _side_branch_message(self, branch: str, outcome: tuple) -> str:
         """The sentence for a branch whose unpushed commits went to a side
-        branch (see :meth:`_reconcile_diverged`)."""
+        branch (see :meth:`_reconcile_diverged`); the side branch is
+        pushed to origin first (:meth:`_publish_side_branch`), and the
+        sentence says where it is."""
         from core.i18n import tr
 
         _kind, side, commit, overlap = outcome
+        error = self._publish_side_branch(side)
+        if error is None:
+            where = tr("on origin and in the cache {cache}").format(cache=self._workdir)
+        else:
+            where = tr(
+                "only in the local cache {cache} - pushing it to origin failed "
+                "({error}), and the cache can be deleted: copy your files out soon"
+            ).format(cache=self._workdir, error=error)
         return tr(
             "Git: someone else pushed to {branch}, and your change could not be "
             "added on top of theirs{paths}. Nothing is lost: your change is kept "
-            "on the branch {side} (commit {sha}, in the cache {cache}), and "
+            "on the branch {side} (commit {sha}, {where}), and "
             "{branch} now shows what origin has. Open {side} to copy your files "
             "back, or merge it in a git client."
         ).format(
@@ -806,22 +883,46 @@ class GitFsSession(SessionLifecycle):
             ),
             side=side,
             sha=_short_sha(commit),
-            cache=self._workdir,
+            where=where,
         )
 
-    def _sync_before_commit(self, branch: str, sub: str) -> None:
+    #: Seconds after a fetch or push in which a write trusts what origin
+    #: said then and asks it nothing more before committing (a batch of
+    #: saves: one push each instead of an ls-remote plus a push). The
+    #: push still refuses a non-fast-forward, and a refused push is
+    #: caught up (:meth:`_catch_up_after_rejected_push`).
+    _FRESH_SECONDS = 2.0
+
+    def _origin_seen_lately(self, branch: str) -> bool:
+        """Whether origin's view of *branch* is fresh enough to commit on
+        without asking again: a fetch or a push of it within
+        :attr:`_FRESH_SECONDS`, and no failed fetch, ls-remote or push in
+        this session (someone else at work: always ask)."""
+        if self._remote_trouble or branch in self._push_blocked:
+            return False
+        stamps = [t for t in (self._fetched_at, self._pushed_at.get(branch)) if t is not None]
+        return bool(stamps) and time.monotonic() - max(stamps) < self._FRESH_SECONDS
+
+    def _sync_before_commit(self, branch: str, subs) -> None:
         """Before a commit that is pushed straight away: ask origin where
         *branch* is now and, when someone else pushed, fetch - a commit on
         the stale tip would be refused by the push. When the fetch moved
-        the branch only by files other than *sub*, the commit is built on
-        the new tip; when it touched *sub*, the commit is refused
+        the branch only by files other than *subs* (one path or several:
+        every path the commit changes), the commit is built on the new
+        tip; when it touched one of them, the commit is refused
         (:class:`GitBranchMoved`: their change of the file is not
         overwritten). Origin unreachable: the commit goes ahead and its
         push reports it - unless a refused push of the branch is still
-        unresolved."""
+        unresolved. Origin asked moments ago (:meth:`_origin_seen_lately`):
+        not asked again."""
         from core.i18n import tr
 
         if not self._pushes():
+            return
+        if isinstance(subs, str):
+            subs = [subs]
+        if self._origin_seen_lately(branch):
+            log.debug("Git-FS: origin's %s was seen moments ago; not asked again", branch)
             return
         refs = self._repo.refs
         ref_name = f"refs/heads/{branch}".encode()
@@ -829,7 +930,12 @@ class GitFsSession(SessionLifecycle):
         before = _ref_or_none(refs, ref_name) or _ref_or_none(refs, tracking)
         self._reconciled.clear()
         try:
-            if self._remote_branch_tip(branch) != _ref_or_none(refs, tracking):
+            try:
+                remote_tip = self._remote_branch_tip(branch)
+            except Exception:
+                self._remote_trouble = True
+                raise
+            if remote_tip != _ref_or_none(refs, tracking):
                 self._fetch_origin()
         except Exception as exc:  # noqa: BLE001 - network, auth, a server error
             error = self._push_blocked.get(branch)
@@ -863,7 +969,7 @@ class GitFsSession(SessionLifecycle):
         if self._branch_tips.get(branch) != before:
             return  # the session's view was stale already: GitBranchMoved
         changed = self._changed_paths(self._repo[before].tree, self._repo[after].tree)
-        if not self._overlapping(set(changed), {sub.encode("utf-8")}):
+        if not self._overlapping(set(changed), {sub.encode("utf-8") for sub in subs}):
             self._branch_tips[branch] = after
             log.info(
                 "Git-FS: %s moved on origin (%s -> %s) by other files; committing on it",
@@ -1279,27 +1385,47 @@ class GitFsSession(SessionLifecycle):
         dst_branch, dst_sub = self._split_branch(dst)
         if src_branch != dst_branch:
             raise OSError("Git: cross-branch rename is not supported (use copy)")
-        # The rename is two commits, "write dst" then "remove src": onto
-        # itself the second removed the file, and onto an existing file
-        # the first replaced it without a word (DbFsBackend refuses both).
+        if not src_sub or not dst_sub:
+            raise OSError("Git rename: a branch is renamed with git, not here")
+        # One commit that adds the new name and drops the old one - a file
+        # or a whole folder (its tree entry moves) - with one sync and one
+        # push: all of it lands or nothing does. Two commits ("write dst",
+        # then "rm src", each with its own sync) left the rename half done
+        # when someone pushed between them: the copy committed and not
+        # pushed, the original still there, a repeat refused with EEXIST.
         if dst == src:
             raise OSError(errno.EINVAL, f"Git rename: source and destination are the same: {src}")
+        if dst_sub.startswith(src_sub + "/"):
+            raise OSError(errno.EINVAL, f"Git rename: cannot move {src} into itself: {dst}")
         if self.exists(dst):
             raise FileExistsError(errno.EEXIST, f"Git rename: destination already exists: {dst}")
-        with self.open_read(src) as fh:
-            data = fh.read()
-        mode = self._file_mode(src_branch, src_sub)
-        # Two commits to keep the diff readable: write to dst, then rm src.
-        self._commit_modification(
-            dst_branch,
-            dst_sub,
-            blob_data=data,
-            message=f"axross: mv {src_sub} → {dst_sub} (a)",
-            blob_mode=mode,
-            push=False,
-        )
-        self._commit_modification(
-            src_branch, src_sub, blob_data=None, message=f"axross: mv {src_sub} → {dst_sub} (b)"
+        self.stat(src)  # FileNotFoundError when it is not there
+
+        def build(root):
+            # Read from the tip the commit is built on (after the sync),
+            # not from what the pane showed.
+            tree_sha = root.id if len(root) else None
+            entry = self._entry_at(tree_sha, src_sub) if tree_sha else None
+            if entry is None:
+                raise FileNotFoundError(errno.ENOENT, f"Git rename: no such file: {src}", src)
+            if self._entry_at(tree_sha, dst_sub) is not None:
+                raise FileExistsError(
+                    errno.EEXIST, f"Git rename: destination already exists: {dst}", dst
+                )
+            parts = dst_sub.split("/")
+            for i in range(1, len(parts)):
+                above = self._entry_at(tree_sha, "/".join(parts[:i]))
+                if above is not None and not st_mod.S_ISDIR(above[0]):
+                    raise NotADirectoryError(
+                        errno.ENOTDIR, f"Git rename: not a directory: {'/'.join(parts[:i])}"
+                    )
+            return self._apply_changes(
+                tree_sha,
+                {dst_sub.encode("utf-8"): (entry[0], entry[1]), src_sub.encode("utf-8"): None},
+            )
+
+        self._commit_changes(
+            src_branch, [src_sub, dst_sub], build, f"axross: mv {src_sub} → {dst_sub}"
         )
 
     @_object_errors_as_oserror
@@ -1701,6 +1827,23 @@ class GitFsSession(SessionLifecycle):
         (100644 for a new file). In a URL session with ``auto_push``
         the commit is pushed to origin unless *push* is False (the
         first half of a two-commit change)."""
+        self._commit_changes(
+            branch,
+            [sub],
+            lambda root: self._build_modified_tree(root, sub, blob_data, blob_mode),
+            message,
+            push=push,
+        )
+
+    def _commit_changes(self, branch: str, subs: list[str], build, message: str,
+                        push: bool = True) -> None:
+        """One commit on ``branch``: the tree ``build(root)`` makes of the
+        tip's root tree (an empty Tree on a new branch), *subs* the paths
+        it changes (the sync with origin refuses when someone else changed
+        one of them). A change of several paths (a rename: the new name
+        and the old) is one commit and one push - all of it lands or none
+        of it. Guards as :meth:`_commit_modification`."""
+        sub = subs[0]
         if not self._author_name or not self._author_email:
             raise OSError(
                 "Git commit refused: no author identity. Set "
@@ -1735,7 +1878,7 @@ class GitFsSession(SessionLifecycle):
                 )
             # Someone else may have pushed: catch up first, so the commit
             # is built on origin's tip and its push is not refused.
-            self._sync_before_commit(branch, sub)
+            self._sync_before_commit(branch, subs)
             # The tip the session read (and the caller decided on) may
             # be stale: someone may have committed or pushed to the
             # branch since. Building on it would drop that work from
@@ -1785,7 +1928,7 @@ class GitFsSession(SessionLifecycle):
                 root_tree = self._repo[parent_commit.tree]
                 parent_sha = tip_sha
 
-            new_root = self._build_modified_tree(root_tree, sub, blob_data, blob_mode)
+            new_root = build(root_tree)
             self._repo.object_store.add_object(new_root)
 
             commit = Commit()
@@ -2087,6 +2230,7 @@ class GitFsSession(SessionLifecycle):
                 **self._transport_kwargs,
             )
         except Exception as exc:
+            self._remote_trouble = True
             text = f"{exc} {out.getvalue().decode('utf-8', 'replace')}".lower()
             if type(exc).__name__ == "DivergedBranches" or any(
                 word in text for word in self._REJECTED_PUSH_WORDS
@@ -2099,6 +2243,7 @@ class GitFsSession(SessionLifecycle):
         status = getattr(result, "ref_status", None)
         refused = status.get(ref) if isinstance(status, dict) else None
         if isinstance(refused, (bytes, str)) and refused:
+            self._remote_trouble = True
             text = refused.decode("utf-8", "replace") if isinstance(refused, bytes) else refused
             if any(word in text.lower() for word in self._REJECTED_PUSH_WORDS):
                 self._catch_up_after_rejected_push(b, pushed, OSError(text), catch_up)
@@ -2106,6 +2251,7 @@ class GitFsSession(SessionLifecycle):
             raise OSError(errno.EACCES, f"Git push {b}: origin refused it: {text}")
         if isinstance(pushed, bytes):
             self._repo.refs[self._REMOTE_PREFIX + b.encode()] = pushed
+        self._pushed_at[b] = time.monotonic()
         display_origin = getattr(self, "_display_origin_url", "") or redact_url(
             self._origin_url
         )

@@ -257,7 +257,7 @@ def test_sad_a_folder_on_one_side_and_a_file_on_the_other_is_never_synced(policy
     file = FileItem(name="a", size=4, modified=BASE)
     entries = [
         _entry("a", Status.DIFFERS, left=folder, right=file,
-               reason="type differs (directory vs file)"),
+               reason="type differs (folder vs file)"),
         _entry("a/x.txt", Status.LEFT_ONLY, left=_item()),
         _entry("a/sub", Status.LEFT_ONLY, left=FileItem(name="sub", is_dir=True)),
         _entry("ab.txt", Status.LEFT_ONLY, left=_item()),

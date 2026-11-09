@@ -610,9 +610,9 @@ class TourRunner(QObject):
             text = tr("The tour has nothing to show in this window: its parts are switched "
                       "off or closed.")
         elif reason == "done":
-            text = tr("Tour finished - Help > Tours… has the others, F1 the handbook.")
+            text = tr("Tour finished – Help → Tours… has the others, F1 the handbook.")
         else:
-            text = tr("Tour ended - Help > Tours… starts it again.")
+            text = tr("Tour ended – Help → Tours… starts it again.")
         bar.showMessage(text, 8000)
 
     # -- events ----------------------------------------------------------------------------

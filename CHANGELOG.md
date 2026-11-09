@@ -33,6 +33,90 @@ the old code.
 
 ### Fixed
 
+- **A connection opens where there is room.** The first connection at the
+  first start made a third, narrow pane; now a connection takes the place
+  of the target pane while that is unused (a local pane still at the home
+  folder, not navigated, nothing selected). Shift on the click, *Open in a
+  new pane* in the Connection Manager or Quick Connect's *Connect in New
+  Pane* still add a pane.
+- **The pane footer cuts with "…" and keeps the message first.** A long
+  message (after Ctrl+C at 1024x600: "2 Pfade in die Zwische") is cut with
+  an ellipsis, whole in its tooltip and in the window's status bar; the
+  free space shrinks to "Free: 249.0 MB", then away, before the message is
+  cut. The item count counts the entries shown: "7 items (3 hidden)",
+  "3 of 7 items" with a filter.
+- **Column headers stay whole.** A column that had stepped aside for a long
+  name came back below its label (the German "Eigentümer" drawn as
+  "igentüme") and the columns jumped on a refresh; the label is now
+  measured in the header's real font.
+- **Smaller UX fixes.** A declined host key says so; "Host-Key" in German
+  throughout. German for "not supported", "timed out", the sandbox names
+  (Locker, Normal, Hoch, Paranoid) and Quick Connect's right-click menu.
+  One name for bookmarking a folder (*Bookmark This Folder*, F8; Ctrl+D in
+  the list), "folder" for "directory", menu paths written with "→" and
+  dashes as "–" in English as in German. Settings: room beside the list,
+  the matching setting is marked, a search without a hit says so, the
+  hidden-files check box sits in the form's column. Light Mode: a readable
+  selection and secondary text; disabled buttons in the dark themes look
+  disabled. On a small screen the empty Bookmarks sidebar folds away (F12
+  shows it). Every entry of the menu bar's submenus has an underlined
+  letter, in English and German; Thumbnail View is one action with one
+  name.
+- **SFTP: the checksum after an upload no longer hangs, and Cancel stops
+  it.** The integrity check runs `sha256sum` on the server over an SSH
+  exec channel that had no time-out and no Cancel watch: a slow hash
+  ignored Cancel, a network gone silent kept the job (and its temp file)
+  for ever. Exec channels (checksum, server-side copy, df, hard links,
+  `exec()`) now close on Cancel, and when they hear nothing for the SFTP
+  time-out axross asks the connection whether it is alive
+  (keepalive@openssh.com): no answer fails the command, an answer waits
+  on - a long hash or copy is not cut off.
+- **SFTP: a slow server that is alive is waited for.** A tape/HSM recall
+  or a cloud-tiered file no longer fails after 60 s with "check the
+  network": the request asks the connection first and waits on while it
+  answers (up to 30 minutes). The time-out is per profile
+  (**Connect → SFTP time-out**, default 60 s).
+- **Cancel no longer closes terminals on the same SSH connection.** A
+  transfer stuck after Cancel closed the whole shared connection after
+  10 s; now that happens only when nothing else uses it, or when it no
+  longer answers.
+- **ADB over a proxy no longer routes other connections through it.**
+  The ADB connect swapped `socket.create_connection` for the whole
+  process while it waited for the phone's "Allow USB debugging?" tap;
+  every other thread's FTP/IMAP/SMTP connection went to the ADB proxy.
+  It is routed for its own thread only now, like SMB; the process-wide
+  patch is gone.
+- **A Git rename is one commit.** It was two ("write the new name", "remove
+  the old one"), each synced with origin on its own; a push in between
+  left the copy committed and unpushed and the original still there, and
+  a repeat failed with "already exists". Now a file or folder rename is
+  one commit and one push, all or nothing. The side branch
+  `axross/unpushed-<time>` that keeps a change origin refused is pushed
+  to origin (the message says where it is; only in the local cache when
+  origin refuses it). Saves within 2 s of the last fetch or push skip
+  the ls-remote before their push.
+- **Deleting the root and "file/" are refused on every backend.** Removing
+  "/" (the whole share, server, bucket or drive) is refused everywhere -
+  on SMB, FTP, SFTP, OneDrive and Azure Files it emptied it, and SCP and
+  Telnet sent `rm -rf -- /`. A path ending in "/" names a folder: delete,
+  rename, open and stat of `file/` no longer act on the file `file` (FTP,
+  SMB, WebDAV, the cloud drives, the shells).
+- **Downloads into a local folder need the room once, not twice.** FTP,
+  S3, Azure, WebDAV, Dropbox and OneDrive downloads stream straight into
+  the destination instead of being stored beside it first: 20 MiB with
+  90 MiB free is no longer refused. Upload buffers and ADB, TFTP and
+  rsync files go to the spool folder (not a small /tmp) and are removed
+  on every path.
+- **Growing files, mail sizes, /sys files.** An FTP download of a file
+  that grew meanwhile (a log being written) no longer fails ("ended after
+  1500 of 1000 bytes"); POP3 messages from Exchange / Microsoft 365 (whose
+  sizes are estimates) and NNTP articles copy instead of failing as
+  "only 5078 of 5215 bytes"; /sys, /proc and /dev files over SFTP or SCP
+  (listed 4096 bytes, a few read) are no longer refused as short.
+- **No hidden leftovers after a failed copy.** A refused short read or a
+  Cancel of a source that cannot continue where it stopped (POP3, a
+  streamed download) removes its hidden `.part` file, and a safety copy
+  that failed half-way (disk full) its partial `.previous-*` file.
 - **Someone else pushed to your Git branch: your save still lands.** A
   save to a Git URL session asks origin first and builds on its new tip
   when only other files changed (the same file: refused, refresh and
@@ -554,6 +638,97 @@ the old code.
 
 ### Security
 
+- **Rich text that only looked harmless is shown as written.** The markup
+  guard of labels, tooltips and message boxes counted `</table>` with a
+  regular expression, so one inside an attribute value or a comment closed
+  a table Qt still laid out (a 476-byte remote name froze "Delete
+  {name}?" for 33.5 s); a CSS comment before the colon
+  (`font-size/**/:4000px`) passed every size check, and sizes under the
+  caps added up (letter-spacing x 200 letters: 402,172 px wide). End tags
+  now count where an HTML parser reads them, CSS comments and escapes are
+  read as Qt reads them, and rich text the checks let through is measured
+  off screen once: wider than 4000 px or taller than 5000 px (beyond what
+  its words take) and it is shown as plain text.
+- **Long mails open at once.** A plain-text mail went whole into the
+  message view as `<pre>` (4 MB of newlines: 24.6 s, 509 MB; 6 MB of mixed
+  Hebrew and Latin: 20.7 s). Plain-text mails now show in a plain view
+  that lays out only the lines on screen (lines broken after 1000
+  characters, at most 2 MB / 100,000 lines); an HTML mail's formatted view
+  gets at most 128 KB of sanitised HTML, with "Show All as Plain Text" for
+  the rest.
+- **SVG with duplicate ids refused.** The `<use>` cap counted the first
+  element an id names, QtSvg draws the last one: duplicated ids drew a
+  million elements from a 1.8 KB file. Such a file gets no preview now.
+- **Long agent answers and chat messages no longer freeze the window.**
+  An agent transcript line of 200,000 mixed-direction characters took more
+  than 90 s to lay out, a 16,000-character chat message 0.6-0.9 s. Each
+  now lays out its start (mixed-direction text and very long words are cut
+  earlier), with "Show all (N characters)" opening the whole text as plain
+  text; past 512 K characters the transcript's oldest lines show only
+  their start.
+- **Protected places checked under every name a path goes by.** The MCP
+  server and the agent checked protected places, default-deny and secrets
+  on the resolved path only: through a GNU stow link (`~/.config/kitty ->
+  ~/dotfiles/kitty`, `~/.wezterm.lua -> dotfiles/...`) the target was
+  written, and a key behind `~/.ssh/id_ed25519 -> ~/keys/id_ed25519` was
+  handed out. Now the path as typed, each symlink on the way and the
+  resolved path count, the target of a symlink in those places is
+  protected like the place (read-only in the sandbox; a link in `~/.ssh` and
+  the other secret places makes its target secret, hidden in the sandbox).
+- **Git folders recognised by what they are.** `.git/commondir` and
+  `gitdir` (they point Git at another folder's config, whose
+  `core.fsmonitor` runs at the next `git status`), the config and hooks of
+  a bare `x.git` and of any folder shaped like a repository (`HEAD`,
+  `objects/`, `refs/` - the last of them is not made in a folder that is
+  not one yet), Mercurial's `.hg/hgrc` and Jujutsu's `.jj/repo` are refused
+  like `.git/config`. The sandbox also keeps `commondir`, `gitdir`,
+  alternates, the submodules' and worktrees' configs and the repositories
+  one folder below the agent's read-only, and sets aside a new
+  `.git/commondir` when the agent's task ends.
+- **No write through a hard link.** A file with other hard links was
+  written in place, so a hard link in the MCP root changed `~/.bashrc` or a
+  `.git/config`; such a file is now refused (write a copy under a new
+  name). A hard link to a secret file is not read.
+- **Hidden folders are default-deny for reads.** The agent's and the MCP
+  server's tools no longer hand out the contents of a hidden entry of the
+  home or of `~/snap` unless that folder is granted (the root or an extra
+  folder there); names stay listable, other files read as before. More
+  credential stores are secret everywhere: snap Firefox and Chromium,
+  Telegram Desktop, Discord, Element, Slack, Pidgin, glab, doctl, hcloud,
+  fly, ngrok, FileZilla, Remmina, WireGuard, `~/.terraformrc`, Maven and
+  Gradle settings. A grant of `~/.local` no longer opens `~/.local/share`.
+- **The sandbox no longer runs out of looking for secrets.** The walk for
+  secret-named files (histories, tokens, keys) stopped after 50,000
+  entries, so a big `~/.cache` left `~/.config` uncovered. Package stores
+  are skipped, caches come last, each hidden folder (and each folder of
+  `~/.config`, `~/.local/share`, ...) has a budget of its own, and one that
+  runs out is hidden whole.
+- **More places where `XDG_CONFIG_HOME` is set are read:** `~/.xprofile`,
+  `~/.xsessionrc`, `~/.bash_login`, Plasma's `env/*.sh`, fish
+  (`set -gx`), `${XDG_CONFIG_HOME:-...}`, `export A=1 XDG_...=`,
+  `X=...; export X`, trailing comments and `/home/$USER/...`.
+- **Agent MCP servers are contained by default.** A server program ran on
+  this machine with your rights unless it was on a list of downloading
+  tools, and that list was never complete (`bazel run`, `mix run`, `swift
+  run`, `conan install`, `make`, `brew` …). Now only a pure launcher - an
+  interpreter running a script or module on disk (`node x.js`, `python -m
+  mod`, `java -jar x.jar` …) - starts without a sandbox profile; any other
+  program starts in its sandbox profile or when you tick *Trusted* for it
+  (Agent Settings > MCP Servers). Commands that download code still never
+  run on this machine, trusted or not.
+- **Loopback `Host` check parsed strictly.** `Host: localhost:1@evil.example`
+  passed the DNS-rebinding check of the MCP HTTP server and of reverse-serve
+  (cut at its colon to `localhost`). `Host` is now `host[:port]` with a
+  numeric port only, and two `Host` or `Origin` headers are refused.
+- **Release notes: the Open Link question shows the real address.** An IDN
+  host is shown as punycode (`xn--…`), bidi controls of the path stay
+  percent-encoded, the host has a line of its own, control characters of the
+  link text are made visible, and a link with a user name
+  (`https://github.com@evil.example/`) is not opened.
+- **Update and tour-video caches must be private.** They are made 0700 and
+  refused (nothing downloaded into or played from them) when they are a
+  symbolic link, belong to another user, are writable by group or others,
+  or sit in a folder others may change - as the extension code cache.
 - **TFTP takes data only from the transfer's peer.** A packet from another
   port or host (a spoofed DATA block) was logged as "discarding" by tftpy
   and then written into the download - into a firmware image, for example.

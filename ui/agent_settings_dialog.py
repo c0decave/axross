@@ -90,6 +90,7 @@ from core import mcp_catalog as M
 from core import mcp_client as MC
 from core.agent_net import parse_host
 from core.agent_sandbox import ENGINES, LEVELS, RULES, SandboxProfile, available
+from ui.format_utils import sandbox_label
 from core.i18n import tr
 from core.thread_relay import GuiCall
 from ui.close_corner import add_close_corner
@@ -99,16 +100,16 @@ from ui.icon_provider import set_window_icon
 SWITCH_ON_FIRST = 'Switch on "Let agents use axross functions" first to choose these.'
 
 MODE_LABELS = {
-    "ask": "Ask - every change asks first",
-    "plan": "Plan - read and plan only, run the plan after your OK",
-    "auto": "Auto - changes in the folder run, remote commands ask",
-    "bypass": "Bypass - nothing asks (dangerous)",
+    "ask": "Ask – every change asks first",
+    "plan": "Plan – read and plan only, run the plan after your OK",
+    "auto": "Auto – changes in the folder run, remote commands ask",
+    "bypass": "Bypass – nothing asks (dangerous)",
 }
 LEVEL_LABELS = {
-    "lax": "Lax - the host's network, folders as configured",
-    "normal": "Normal - allowed hosts only, folders as configured",
-    "high": "High - allowed hosts only, extra folders read-only, tighter limits",
-    "paranoid": "Paranoid - only the LLM, nothing writable, tightest limits",
+    "lax": "Lax – the host's network, folders as configured",
+    "normal": "Normal – allowed hosts only, folders as configured",
+    "high": "High – allowed hosts only, extra folders read-only, tighter limits",
+    "paranoid": "Paranoid – only the LLM, nothing writable, tightest limits",
 }
 ENGINE_LABELS = {
     "auto": "Automatic",
@@ -543,7 +544,7 @@ class _AgentSettingsForm:
         try:
             self.agent_profile_list.clear()
             self.agent_profile_default_combo.clear()
-            self.agent_profile_default_combo.addItem(tr("None - as the General page says"), "")
+            self.agent_profile_default_combo.addItem(tr("None – as the General page says"), "")
             for profile in rows:
                 item = QListWidgetItem(profile_label(profile))
                 item.setData(Qt.ItemDataRole.UserRole, profile.name)
@@ -615,7 +616,7 @@ class _AgentSettingsForm:
                              + [(p.name, p.name) for p in self._llm.profiles],
                              profile.llm_profile)
             self._fill_combo(self.agent_profile_prompt_combo,
-                             [(tr("As Agent Settings > Prompts"), ""),
+                             [(tr("As Agent Settings → Prompts"), ""),
                               (tr("{name} (built-in)").format(name=AP.DEFAULT_NAME),
                                AP.DEFAULT_NAME)]
                              + [(p.name, p.name) for p in self.settings.prompt_profiles],
@@ -626,7 +627,7 @@ class _AgentSettingsForm:
                              [(tr(MODE_LABELS[m]), m) for m in modes], profile.mode)
             self._fill_combo(self.agent_profile_sandbox_combo,
                              [(tr("No sandbox"), "")]
-                             + [(p.name, p.name) for p in self.settings.sandboxes],
+                             + [(sandbox_label(p.name), p.name) for p in self.settings.sandboxes],
                              profile.sandbox)
             for i in range(self.agent_profile_groups.count()):
                 item = self.agent_profile_groups.item(i)
@@ -1229,7 +1230,8 @@ class _AgentSettingsForm:
         self.sandbox_list.blockSignals(True)
         self.sandbox_list.clear()
         for profile in self.settings.sandboxes:
-            self.sandbox_list.addItem(f"{profile.name}  ({profile.level})")
+            self.sandbox_list.addItem(
+                f"{sandbox_label(profile.name)}  ({sandbox_label(profile.level)})")
         self.sandbox_list.blockSignals(False)
         if 0 <= row < self.sandbox_list.count():
             self.sandbox_list.setCurrentRow(row)
@@ -1241,7 +1243,7 @@ class _AgentSettingsForm:
         self.default_sandbox_combo.clear()
         self.default_sandbox_combo.addItem(tr("No sandbox"), "")
         for profile in self.settings.sandboxes:
-            self.default_sandbox_combo.addItem(profile.name, profile.name)
+            self.default_sandbox_combo.addItem(sandbox_label(profile.name), profile.name)
         self.default_sandbox_combo.setCurrentIndex(
             max(0, self.default_sandbox_combo.findData(chosen))
         )
@@ -1482,6 +1484,12 @@ class _AgentSettingsForm:
         form.addRow(tr("Environment"), self.server_env_edit)
         self.server_sandbox_combo = QComboBox()
         form.addRow(tr("Runs in sandbox"), self.server_sandbox_combo)
+        self.server_trusted_check = QCheckBox(tr("Trusted: runs on this machine as it is"))
+        self.server_trusted_check.setToolTip(tr(
+            "Contained by default: only an interpreter running a script on disk (node, python, "
+            "java -jar …) starts without a sandbox profile. Any other program starts in its "
+            "sandbox profile, or when you mark it trusted here – then it runs with your rights."))
+        form.addRow("", self.server_trusted_check)
         self.server_url_edit = QLineEdit()
         self.server_url_edit.setPlaceholderText("http://127.0.0.1:7331/messages")
         form.addRow(tr("URL"), self.server_url_edit)
@@ -1489,7 +1497,7 @@ class _AgentSettingsForm:
         form.addRow("", self.server_bearer_check)
         self.server_token_edit = QLineEdit()
         self.server_token_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self.server_token_edit.setPlaceholderText(tr("unchanged - stored in the keyring"))
+        self.server_token_edit.setPlaceholderText(tr("unchanged – stored in the keyring"))
         form.addRow(tr("Token"), self.server_token_edit)
         self.server_confirm_combo = shrinkable(QComboBox())
         for key, label in CONFIRM_LABELS.items():
@@ -1547,6 +1555,7 @@ class _AgentSettingsForm:
         self.server_enabled_check.toggled.connect(self._store_server)
         self.server_category_combo.editTextChanged.connect(self._store_server)
         self.server_bearer_check.toggled.connect(self._store_server)
+        self.server_trusted_check.toggled.connect(self._store_server)
         self.server_timeout_spin.valueChanged.connect(self._store_server)
         self.server_token_edit.textChanged.connect(self._store_token)
         self._rebuild_server_list()
@@ -1597,7 +1606,7 @@ class _AgentSettingsForm:
         self._rebuild_server_list()
         self.server_list.setCurrentRow(len(self.settings.mcp_servers) - 1)
         self.server_test_label.setText(tr(
-            "Installed in a container and switched on - Save keeps it"))
+            "Installed in a container and switched on – Save keeps it"))
         self._fill_detected()
 
     def detect_servers(self) -> None:
@@ -1681,7 +1690,7 @@ class _AgentSettingsForm:
             item.setCheckState(Qt.CheckState.Checked)
             self.detected_list.blockSignals(False)
             self.server_test_label.setText(tr(
-                "{name} was not added from this list - delete it in the list above").format(
+                "{name} was not added from this list – delete it in the list above").format(
                 name=server.name))
             return
         self._store_server()
@@ -1711,7 +1720,7 @@ class _AgentSettingsForm:
             self._tokens[config.name] = detected.token
         self._rebuild_server_list()
         self.server_list.setCurrentRow(len(self.settings.mcp_servers) - 1)
-        self.server_test_label.setText(tr("Detected server added and switched on - Save keeps it"))
+        self.server_test_label.setText(tr("Detected server added and switched on – Save keeps it"))
         return True
 
     def _rebuild_server_list(self) -> None:
@@ -1733,6 +1742,10 @@ class _AgentSettingsForm:
 
             if downloading_runner(server.command) is not None:
                 label += tr(" - downloads code: install it in a container")
+            elif server.host_run_problem():
+                label += tr(" - not started: needs a sandbox profile or Trusted")
+            elif server.trusted and not server.sandbox:
+                label += tr(" - trusted: runs on this machine, not in a container")
             elif not server.sandbox:
                 label += tr(" - runs on this machine, not in a container")
         return label
@@ -1774,6 +1787,7 @@ class _AgentSettingsForm:
             )
             self.server_url_edit.setText(server.url)
             self.server_bearer_check.setChecked(server.bearer)
+            self.server_trusted_check.setChecked(server.trusted)
             self.server_token_edit.setText(self._tokens.get(server.name, ""))
             self.server_confirm_combo.setCurrentIndex(
                 max(0, self.server_confirm_combo.findData(server.confirm))
@@ -1796,11 +1810,12 @@ class _AgentSettingsForm:
         # (core.mcp_runner.container_flag_problems accepts no other).
         self.server_command_edit.setReadOnly(container)
         self.server_command_edit.setToolTip(
-            tr("Written by Install in a Container - not edited here") if container else "")
+            tr("Written by Install in a Container – not edited here") if container else "")
         # A container is its own sandbox; its network is set at install.
         self.server_sandbox_combo.setEnabled(stdio and not container)
         self.server_sandbox_combo.setToolTip(
-            tr("A container server runs in podman - it is its own sandbox") if container else "")
+            tr("A container server runs in podman – it is its own sandbox") if container else "")
+        self.server_trusted_check.setEnabled(stdio and not container)
         allowlist = container and any(MC.TOKEN_EGRESS in a for a in self._server.command)
         self.server_egress_edit.setEnabled(bool(allowlist))
         self.uninstall_button.setEnabled(container)
@@ -1821,11 +1836,18 @@ class _AgentSettingsForm:
 
     def _update_runner(self) -> None:
         plan = self._runner_plan()
-        self.server_runner_label.setVisible(plan is not None)
+        host = "" if plan is not None or self._server is None else self._server.host_run_problem()
+        self.server_runner_label.setVisible(plan is not None or bool(host))
         self.server_contain_button.setVisible(plan is not None)
         self.server_contain_button.setEnabled(bool(plan and plan.convertible)
                                               and not getattr(self, "_containing", False))
-        if plan is None:
+        if plan is None and host:
+            self.server_runner_label.setText(tr(
+                "{program} is not an interpreter running a script on disk, so it is contained "
+                "by default: it starts only in a sandbox profile (Runs in sandbox), or when you "
+                "mark it Trusted – then it runs on this machine with your rights.").format(
+                program=M.clean_text(str(self._server.command[0]), 60)))
+        elif plan is None:
             self.server_runner_label.clear()
         elif plan.convertible:
             text = tr("{runner} downloads {spec} when it starts: such a command is never run on "
@@ -1896,7 +1918,7 @@ class _AgentSettingsForm:
         row = next((i for i, s in enumerate(self.settings.mcp_servers) if s is server), -1)
         if row < 0:
             self.server_test_label.setText(tr(
-                "Installed, but its server was deleted meanwhile - not added"))
+                "Installed, but its server was deleted meanwhile – not added"))
             return
         self.settings.mcp_servers[row] = config
         self._server = None
@@ -1904,7 +1926,7 @@ class _AgentSettingsForm:
         self.server_list.setCurrentRow(row)
         self._show_server(row)
         self.server_test_label.setText(tr(
-            "Installed in a container and switched on - Save keeps it"))
+            "Installed in a container and switched on – Save keeps it"))
 
     @staticmethod
     def _split(text: str) -> list[str]:
@@ -1951,6 +1973,7 @@ class _AgentSettingsForm:
         server.sandbox = self.server_sandbox_combo.currentData() or ""
         server.url = self.server_url_edit.text().strip()
         server.bearer = self.server_bearer_check.isChecked()
+        server.trusted = self.server_trusted_check.isChecked() and not server.container
         server.confirm = self.server_confirm_combo.currentData() or "always"
         server.timeout = float(self.server_timeout_spin.value())
         server.secret_env = tuple(dict.fromkeys(self.server_secret_env_edit.text().split()))
@@ -2105,7 +2128,7 @@ class _AgentSettingsForm:
         self._rebuild_server_list()
         self.server_list.setCurrentRow(len(self.settings.mcp_servers) - 1)
         self.server_test_label.setText(
-            tr("Installed and switched on - Save keeps it") if config.enabled
+            tr("Installed and switched on – Save keeps it") if config.enabled
             else tr("Installed, switched off: its test failed"))
 
     def uninstall_server(self, *, confirm: bool = True) -> bool:
@@ -2173,16 +2196,16 @@ class _AgentSettingsForm:
         layout = QVBoxLayout(page)
         note = QLabel(tr(
             "Where Add from Catalog searches. What a source says is checked and shown as text; "
-            "nothing from it runs on this machine - servers run in rootless podman."))
+            "nothing from it runs on this machine – servers run in rootless podman."))
         note.setWordWrap(True)
         layout.addWidget(note)
         self.source_builtin_check = QCheckBox(tr("Built-in catalog (official images, pinned)"))
         self.source_hub_check = QCheckBox(
             tr("c0decave MCP Hub (ghcr.io/c0decave images, pinned by digest)"))
-        self.source_dockerhub_check = QCheckBox(tr("Docker Hub - Docker's mcp namespace"))
+        self.source_dockerhub_check = QCheckBox(tr("Docker Hub – Docker's mcp namespace"))
         self.source_registry_check = QCheckBox(
             tr("MCP Registry (registry.modelcontextprotocol.io)"))
-        self.source_discover_check = QCheckBox(tr("Discover - curated awesome-lists to browse"))
+        self.source_discover_check = QCheckBox(tr("Discover – curated awesome-lists to browse"))
         for box in (self.source_builtin_check, self.source_hub_check,
                     self.source_dockerhub_check, self.source_registry_check,
                     self.source_discover_check):
@@ -2217,7 +2240,7 @@ class _AgentSettingsForm:
         self.source_check_label.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(self.source_check_label)
         schema = QLabel(tr(
-            "A catalog has the schema \"axross-mcp-catalog\", version 1 - see docs/USAGE.md. "
+            "A catalog has the schema \"axross-mcp-catalog\", version 1 – see docs/USAGE.md. "
             "Its images must be pinned by digest."))
         schema.setWordWrap(True)
         schema.setProperty("role", "muted")
@@ -2270,7 +2293,7 @@ class _AgentSettingsForm:
         self.source_list.addItem(location)
         self.source_list.setCurrentRow(self.source_list.count() - 1)
         self._store_sources()
-        self.source_check_label.setText(tr("Added - Check reads it now."))
+        self.source_check_label.setText(tr("Added – Check reads it now."))
         return True
 
     def add_source_file(self, path: str | None = None) -> bool:
@@ -2568,6 +2591,6 @@ def _package_text(server: MC.McpServerConfig) -> str:
         what = f"{pkg.get('kind')} {what} {pkg.get('version', '')}"
     elif pkg.get("digest"):
         what = f"{what}@{pkg['digest'][:19]}…"
-    return tr("{what} - from {source}, image {image}, network {network}, {when}").format(
+    return tr("{what} – from {source}, image {image}, network {network}, {when}").format(
         what=what, source=pkg.get("source", "?"), image=pkg.get("image", "?")[:12],
         network=pkg.get("network", "?"), when=pkg.get("installed", ""))

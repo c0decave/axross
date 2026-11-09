@@ -120,7 +120,7 @@ def test_happy_the_preview_shows_what_a_tab_gets_and_follows_the_access_page(tmp
     dlg.agent_profile_list.setCurrentRow(_row(dlg, "Reverse Engineering"))
     text = dlg.agent_profile_preview.toPlainText()
     assert "MCP servers: r2" in text
-    assert "axross functions are off in Agent Settings > Access" in text
+    assert "axross functions are off in Agent Settings → Access" in text
     assert "Security: Firmware & Forensics" in text  # missing
     dlg.axross_check.setChecked(True)
     dlg.mcp_servers_check.setChecked(True)

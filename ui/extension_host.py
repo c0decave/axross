@@ -672,8 +672,8 @@ class ExtensionHost(QObject):
                        name=info.name)
             )
             box.setInformativeText(
-                tr("Try Again loads it now - if it hangs again, the next start skips it again. "
-                   "Keep Off switches it off; Extensions > Manage Extensions… switches it on "
+                tr("Try Again loads it now – if it hangs again, the next start skips it again. "
+                   "Keep Off switches it off; Extensions → Manage Extensions… switches it on "
                    "again. Details are in the log.")
             )
             retry = box.addButton(tr("Try Again"), QMessageBox.ButtonRole.AcceptRole)

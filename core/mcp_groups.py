@@ -188,6 +188,9 @@ class GroupEnv:
     #: the many new entries of ONE call (an archive's members), with the
     #: protected places resolved once. None: entry_path per path.
     entry_checker: Callable[[Any], Callable[[str], str]] | None = None
+    #: The folders the tools read (the root and the extra ones): granted for
+    #: the read side's default-deny (core.protected_places.secret_checker).
+    read_roots: tuple = ()
 
 
 def _entry_checker(env: GroupEnv, backend) -> Callable[[str], str]:
@@ -315,7 +318,7 @@ def _secret_refuser(env: GroupEnv, backend) -> Callable[[str], bool]:
         return lambda path: False  # no secret places on a remote backend
     from core import protected_places
 
-    check = protected_places.secret_checker()
+    check = protected_places.secret_checker(granted=env.read_roots)
     return lambda path: check(path) is not None and _confined(env, backend, path) is None
 
 

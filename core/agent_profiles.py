@@ -224,7 +224,7 @@ def presets() -> list[AgentProfile]:
         _preset("Research",
                 "The fetch, memory and sequentialthinking MCP servers. Not Files read-only: "
                 "fetch needs network, and under read-only only a container server without "
-                "network keeps its tools - so axross changes no file here because Allow "
+                "network keeps its tools – so axross changes no file here because Allow "
                 "changes to files is off, and every MCP call asks as its server says.",
                 groups=("metadata", "filetype"), axross=True, functions=("mcp_servers",),
                 mcp_servers=("fetch", "memory", "sequentialthinking")),
@@ -426,17 +426,17 @@ def resolve(profile: AgentProfile, settings, *, llm_names=None, modes=None) -> R
     master = profile.axross and bool(getattr(ceiling, "axross_functions", False))
     if profile.axross and not master:
         out.access_cut = True
-        notes.append(tr("axross functions are off in Agent Settings > Access: the tab gets none "
+        notes.append(tr("axross functions are off in Agent Settings → Access: the tab gets none "
                         "({names}). Switch them on there to use them.").format(
                             names=", ".join(tr(FUNCTION_NAMES[f]) for f in profile.functions))
                      if profile.functions else
-                     tr("axross functions are off in Agent Settings > Access: the tab gets none. "
+                     tr("axross functions are off in Agent Settings → Access: the tab gets none. "
                         "Switch them on there to use them."))
     functions = tuple(f for f in profile.functions if getattr(ceiling, f, False))
     cut = [f for f in profile.functions if f not in functions]
     if master and cut:
         out.access_cut = True
-        notes.append(tr("Off in Agent Settings > Access: {names}.").format(
+        notes.append(tr("Off in Agent Settings → Access: {names}.").format(
             names=", ".join(tr(FUNCTION_NAMES[f]) for f in cut)))
     network = profile.network
     choices = network_choices(sandbox) if profile.sandbox else network_choices(None)

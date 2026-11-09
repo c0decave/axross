@@ -49,7 +49,7 @@ SCORES = Path.home() / ".config" / "axross" / "arcade.json"
 
 GAMES = {
     "chase": ("Byte Chase", "Collect every bit of the maze; four daemons hunt you. A root key turns them "
-              "for a while - catch them then. Arrows or WASD."),
+              "for a while – catch them then. Arrows or WASD."),
     "tilt": ("Tilt Maze", "100 levels in 10 worlds on an isometric board: collect every bit, a root key "
              "turns the daemons, Space jumps over them and over pits; teleporters, the Hopper, boards "
              "that scroll. A world code opens a world you reached."),

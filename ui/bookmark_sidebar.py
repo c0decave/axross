@@ -883,8 +883,9 @@ class BookmarkSidebar(BookmarkTreeEditing, QDockWidget):
         # fresh install doesn't look broken.
         self._hint = _DropHint(
             tr("No bookmarks yet.\n\n"
-               "Drag folders here from a pane, or right-click\n"
-               'a folder and choose "Bookmark This Directory".'),
+               "Drag folders here from a pane, or press F8\n"
+               "(View → Bookmarks → Bookmark This Folder)\n"
+               "to bookmark the folder the active pane shows."),
             container,
         )
         self._hint.external_drop_requested.connect(self._apply_external_drop)

@@ -265,7 +265,7 @@ class DiskImageDialog(QDialog):
             reply = QMessageBox.warning(
                 self, tr("Mount Read-Write"),
                 tr("Mount partition {n} with WRITE access? Changes go straight into the image "
-                   "file and cannot be undone - for evidence, keep read-only.").format(
+                   "file and cannot be undone – for evidence, keep read-only.").format(
                     n=part.number or tr("whole")),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
@@ -357,7 +357,7 @@ class DiskImageDialog(QDialog):
     def _password_dialog(self, title: str, retry: bool = False) -> str | None:
         label = tr("Password for sudo:")
         if retry:
-            label = tr("Wrong password - try again.") + "\n" + label
+            label = tr("Wrong password – try again.") + "\n" + label
         text, ok = QInputDialog.getText(self, title, label, QLineEdit.EchoMode.Password)
         return text if ok and text else None
 

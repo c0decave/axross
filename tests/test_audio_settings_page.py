@@ -1,4 +1,4 @@
-"""Edit > Settings… > Audio (ui.audio_settings_page).
+"""Edit → Settings… → Audio (ui.audio_settings_page).
 
 Operator: *„insbesondere brauchen wir natürlich einen bereich in dem wir auch
 input und output devices configen koennen und testen."* / *„ein interface in
@@ -454,7 +454,7 @@ def test_sad_a_disk_error_keeps_the_dialog_open_and_names_it(stores, audio, monk
     monkeypatch.setattr(AS.AudioSettings, "save", broken)
     page.output_slider.setValue(10)
     assert not dialog.apply()
-    assert "Not saved - Audio" in dialog.error_text() and "No space left" in dialog.error_text()
+    assert "Not saved – Audio" in dialog.error_text() and "No space left" in dialog.error_text()
     assert page.is_dirty()
 
 

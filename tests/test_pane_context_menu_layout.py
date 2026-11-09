@@ -65,7 +65,7 @@ EXPECTED_KEYS = {
     "refresh": "Ctrl+R",
     "duplicates": "Ctrl+Shift+D",
     "view-mode": "Ctrl+Shift+G",
-    "bookmark": "Ctrl+D",
+    "bookmark": "F8",  # as View → Bookmarks; Ctrl+D in the list does the same
 }
 
 STATES = [None, "notes.txt", "sub", "pack.zip", ("notes.txt", "sub")]

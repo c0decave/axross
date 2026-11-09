@@ -55,7 +55,7 @@ def show_security(panel, client: M.MatrixClient, key: str) -> None:
         if path and passphrase:
             client.import_keys(path, passphrase)
 
-    title = tr("Encryption - {title}").format(title=conv.title if conv else client.user_id)
+    title = tr("Encryption – {title}").format(title=conv.title if conv else client.user_id)
     head = tr(C.ENC_TEXT.get(conv.encryption, "")) if in_room else tr("Your other devices")
     dialog = DevicesDialog(panel, f"{title} ({head})", client.own_device(), devices,
                            lambda d, trust: client.set_trust(d.user_id, d.device_id, trust),

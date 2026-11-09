@@ -125,7 +125,7 @@ SHORTCUTS: list[tuple[str, tuple[str, ...], str]] = [
     ("Scripting", (".save <name>",), "Console: save this session's input as a script"),
     ("Scripting", (".load <name>",), "Console: print a saved script"),
     ("Scripting", (".delete <name>",), "Console: delete a saved script"),
-    ("Scripting", (".open",), "Console: show the script directory"),
+    ("Scripting", (".open",), "Console: show the script folder"),
     ("Terminal pane", ("Ctrl+Shift+P",), "Pin: capture all keyboard input"),
     ("Terminal pane", ("Ctrl+A..Z",), "Terminal control characters (while pinned)"),
     # Matches file_pane._drop_action (tests/test_shortcuts_drag_matches_drop.py).

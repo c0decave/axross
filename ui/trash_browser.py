@@ -56,7 +56,7 @@ class TrashBrowserDialog(QDialog):
         super().__init__(parent)
         set_window_icon(self, "trash")
         self._backend = backend
-        self.setWindowTitle(tr("Trash — {name}").format(
+        self.setWindowTitle(tr("Trash – {name}").format(
             name=getattr(backend, "name", type(backend).__name__)))
         self.resize(720, 420)
         self._build_ui()
@@ -204,7 +204,7 @@ class TrashBrowserDialog(QDialog):
 
     def _progress_text(self, state: dict) -> str:
         return (
-            tr("Working… {scanned} of {indexed} — {path}").format(
+            tr("Working… {scanned} of {indexed} – {path}").format(
                 scanned=state['scanned'], indexed=state['indexed'], path=shorten(state['path']))
         )
 

@@ -429,6 +429,7 @@ class ConnectionManager:
             profile.mtp_device_id,
             profile.mtp_mounter,
             str(profile.ssh_keepalive_interval),
+            str(profile.sftp_timeout),
             str(profile.telnet_naws_width),
             str(profile.telnet_naws_height),
             str(hash(profile.gdrive_client_secret)),

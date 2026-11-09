@@ -105,8 +105,9 @@ def test_sad_list_dir_of_a_file_is_not_a_directory(remote):
         s.list_dir("/g")
     with pytest.raises(FileNotFoundError):
         s.list_dir("/nope")
-    # "g/" names a folder: OpenSSH answers ENOTDIR as "no such file".
-    with pytest.raises(FileNotFoundError):
+    # "g/" names a folder: OpenSSH answers ENOTDIR as "no such file";
+    # the backend guard (core.backend_guard) finds the file g and says so.
+    with pytest.raises(NotADirectoryError):
         s.stat("/g/")
     with pytest.raises(OSError):
         s.rename("/g", "/x/")

@@ -75,11 +75,24 @@ def _claim_text(info: FT.FileTypeInfo) -> str:
     return f"{info.extension_mime} ({info.extension})"
 
 
+#: Row kinds whose description is a fixed English word of core.file_type
+#: ("timed out", "cannot read", "Folder"), translated when shown; a file's
+#: description is the signature table's and stays as written.
+_FIXED_WORDS = frozenset({FT.KIND_TIMEOUT, FT.KIND_ERROR, FT.KIND_DIRECTORY})
+
+
+def _described(info: FT.FileTypeInfo) -> str:
+    """The Detected type cell: "timed out" was English in German (UX
+    review round 7)."""
+    text = info.description or info.kind
+    return tr(text) if info.kind in _FIXED_WORDS and text else text
+
+
 def _cells(info: FT.FileTypeInfo) -> list[str]:
     is_file = info.kind == FT.KIND_FILE
     return [
         info.name,
-        info.description or info.kind,
+        _described(info),
         info.mime,
         _claim_text(info),
         info.verdict if is_file else "",
@@ -577,7 +590,7 @@ class FolderFileTypeDialog(QDialog):
         is_file = info.kind == FT.KIND_FILE
         verdict = tr("mismatch") if info.mismatch else (info.verdict if is_file else "")
         values = {
-            "Detected type": info.description or info.kind,
+            "Detected type": _described(info),
             "MIME type": info.mime,
             "Verdict": verdict,
             "Note": note or (info.error if not is_file else ""),

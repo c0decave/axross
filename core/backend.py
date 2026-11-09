@@ -201,7 +201,17 @@ class SessionLifecycle:
     "not supported" for a class that lacks them, so no caller meets an
     AttributeError. ``copy``, ``symlink`` and ``hardlink`` are left out:
     callers test those with hasattr or the capability flags.
+
+    Every subclass gets the root and "file/" guard of
+    core.backend_guard on its remove, rename, open_read, stat and
+    list_dir.
     """
+
+    def __init_subclass__(cls, **kwargs) -> None:
+        super().__init_subclass__(**kwargs)
+        from core.backend_guard import guard_class
+
+        guard_class(cls)
 
     def checksum(self, path: str, algorithm: str = "sha256") -> str:
         """No cheap checksum: callers hash a full read themselves."""

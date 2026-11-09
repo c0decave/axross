@@ -409,7 +409,7 @@ class SignalGraph(QWidget):
 
     def one_reading_text(self) -> str:
         """What the graph says while it has a single reading."""
-        return tr("{dbm} dBm - one reading so far; more come while it is heard").format(
+        return tr("{dbm} dBm – one reading so far; more come while it is heard").format(
             dbm=self.readings[-1][1])
 
     def set_readings(self, readings) -> None:
@@ -440,7 +440,7 @@ class SignalGraph(QWidget):
         if not points:
             p.setPen(self.palette().placeholderText().color())
             p.drawText(self.rect(), int(Qt.AlignmentFlag.AlignCenter),
-                       tr("No signal readings - scan to see them."))
+                       tr("No signal readings – scan to see them."))
             p.end()
             return
         if len(points) == 1:

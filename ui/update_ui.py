@@ -392,16 +392,43 @@ def _unmark(document: QTextDocument) -> None:
 WEB_SCHEMES = ("http", "https")
 
 
+def _visible_controls(text: str) -> str:
+    """*text* with every control and format character (bidi overrides and
+    isolates, zero-width characters, line breaks …) written as ``\\uXXXX``:
+    what the question shows is what the address is, in reading order."""
+    import unicodedata
+
+    return "".join(f"\\u{ord(c):04x}" if unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp")
+                   else c for c in text)
+
+
+def open_link_question(href: str, text: str) -> str:
+    """The body of the Open Link question: the address fully encoded (an
+    IDN host as punycode, ``xn--…``, never its look-alike letters; bidi
+    controls of the path percent-encoded), its host on a line of its own,
+    and the link's text - with controls made visible - when it differs."""
+    url = QUrl(href)
+    shown = bytes(url.toEncoded()).decode("ascii", "replace") if url.isValid() else href
+    shown = _visible_controls(shown)
+    body = tr("Open this address in your web browser?") + "\n\n" + shown
+    host = url.host(QUrl.ComponentFormattingOption.FullyEncoded)
+    if host:
+        body += "\n\n" + tr("Host: {host}").format(host=_visible_controls(host))
+    text = (text or "").strip()
+    if text and text != href and text != shown:
+        body += "\n\n" + tr("The link in the notes reads: {text}").format(
+            text=_visible_controls(text[:300]))
+    return body
+
+
 def ask_open_link(parent, href: str, text: str) -> bool:
     """Ask before a link of the release notes opens in the browser: the
     notes come from the release page, and a link's text can name another
-    address than it opens - the real one is shown, and the text too when
-    it differs."""
+    address than it opens - the real one is shown (:func:`open_link_question`),
+    and the text too when it differs."""
     from PyQt6.QtWidgets import QMessageBox
 
-    body = tr("Open this address in your web browser?") + "\n\n" + href
-    if text and text.strip() and text.strip() != href:
-        body += "\n\n" + tr("The link in the notes reads: {text}").format(text=text.strip()[:300])
+    body = open_link_question(href, text)
     box = QMessageBox(QMessageBox.Icon.Question, tr("Open Link"), body,
                       QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Cancel, parent)
     box.setTextFormat(Qt.TextFormat.PlainText)
@@ -463,7 +490,12 @@ class ReleaseNotesView(QTextBrowser):
     def _open_link(self, url: QUrl) -> None:
         if url.scheme().lower() not in WEB_SCHEMES or not url.host():
             log.info("release notes: link not opened (only http and https): %s",
-                     url.toString()[:200])
+                     bytes(url.toEncoded()).decode("ascii", "replace")[:200])
+            return
+        if url.userInfo():
+            # https://github.com@evil.example/: a name before "@" only misleads.
+            log.info("release notes: link not opened (a user name in the address): %s",
+                     bytes(url.toEncoded()).decode("ascii", "replace")[:200])
             return
         href = url.toString()
         if not ask_open_link(self, href, self._link_text(href)):

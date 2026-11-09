@@ -14,6 +14,7 @@ import stat as stat_module
 import subprocess
 import threading
 import time
+import weakref
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -81,6 +82,18 @@ _SFTP_CONNECTION_ERRORS = (paramiko.SSHException, EOFError)
 #: gets its bytes long before this. Also the longest wait for the server
 #: to open a channel.
 SFTP_IO_TIMEOUT = 60.0
+
+#: The longest an SFTP request waits for its answer while the SSH
+#: connection itself still answers (see :func:`transport_answers`): a
+#: server that is alive but slow - a tape or HSM recall, a cloud-tiered
+#: file brought back on open, the unlink of a huge file - is waited for,
+#: up to this many seconds of silence on the one request.
+SFTP_SLOW_SERVER_CAP = 30 * 60.0
+
+#: The keepalive request :func:`transport_answers` sends: OpenSSH's own
+#: (ServerAliveInterval). Only after :data:`SFTP_IO_TIMEOUT` of silence
+#: on a waiting request - no fixed cadence (docs/OPSEC.md #2).
+_KEEPALIVE_REQUEST = "keepalive@openssh.com"
 
 
 def _sftp_errors_as_oserror(fn):
@@ -156,12 +169,83 @@ class _SurrogateSftpClient(paramiko.SFTPClient):
     def _adjust_cwd(self, path):
         return super()._adjust_cwd(wire_path(path))
 
+    def _read_all(self, n):
+        """paramiko's, but a request whose answer is late is not failed
+        while the SSH connection still answers (:meth:`_still_waiting`)."""
+        out = b""
+        silent_since = None
+        while n > 0:
+            try:
+                x = self.sock.recv(n)
+            except TimeoutError:
+                silent_since = self._still_waiting(silent_since)
+                continue
+            if len(x) == 0:
+                raise EOFError()
+            silent_since = None
+            out += x
+            n -= len(x)
+        return out
+
+    def _write_all(self, out):
+        """paramiko's, with the same patience as :meth:`_read_all` for a
+        server that is slow to take more (a full channel window)."""
+        silent_since = None
+        while len(out) > 0:
+            try:
+                n = self.sock.send(out)
+            except TimeoutError:
+                silent_since = self._still_waiting(silent_since)
+                continue
+            if n <= 0:
+                raise EOFError()
+            silent_since = None
+            if n == len(out):
+                return
+            out = out[n:]
+
+    def _still_waiting(self, silent_since: float | None) -> float:
+        """The channel's time-out (:data:`SFTP_IO_TIMEOUT` or the
+        profile's) passed without a byte. A server that is alive but
+        slow (a tape or HSM recall, a cloud-tiered file, the unlink of a
+        huge file) is not a lost network: the SSH connection is asked
+        (:func:`transport_answers`); it answers - wait on, up to
+        :data:`SFTP_SLOW_SERVER_CAP` of silence; it does not - re-raise
+        the time-out (ETIMEDOUT for the caller, see
+        core.sftp_io.timeout_error). Cancel closes the channel, which
+        ends the wait."""
+        chan = self.sock
+        now = time.monotonic()
+        if silent_since is None:
+            silent_since = now - (chan.gettimeout() or 0.0)
+        if chan.closed:
+            raise EOFError()
+        if now - silent_since >= SFTP_SLOW_SERVER_CAP:
+            minutes = SFTP_SLOW_SERVER_CAP / 60
+            chan.close()
+            raise SlowServerTimeout(
+                errno.ETIMEDOUT,
+                f"SFTP: the server is connected but did not answer a request for "
+                f"{minutes:g} minutes; it may be stuck. Try again later.",
+            )
+        limit = chan.gettimeout() or SFTP_IO_TIMEOUT
+        if not transport_answers(chan.get_transport(), limit, lambda: chan.closed):
+            if chan.closed:
+                raise EOFError()
+            raise TimeoutError()  # silent and no answer to a keepalive
+        log.info(
+            "SFTP: no answer for %.0f s, but the SSH connection answers; waiting on "
+            "(a slow server)", time.monotonic() - silent_since,
+        )
+        return silent_since
+
     @classmethod
-    def from_transport(cls, t, window_size=None, max_packet_size=None):
-        """paramiko's, with the channel time-out (:data:`SFTP_IO_TIMEOUT`)
-        set before the SFTP version exchange - a server gone silent then
-        fails the open too, instead of hanging it."""
-        limit = SFTP_IO_TIMEOUT
+    def from_transport(cls, t, window_size=None, max_packet_size=None, timeout=None):
+        """paramiko's, with the channel time-out (*timeout*, default
+        :data:`SFTP_IO_TIMEOUT`) set before the SFTP version exchange - a
+        server gone silent then fails the open too, instead of hanging
+        it."""
+        limit = timeout if timeout else SFTP_IO_TIMEOUT
 
         def silent() -> TimeoutError:
             return TimeoutError(
@@ -304,6 +388,154 @@ def _wait_readable(chan, timeout: float) -> bool:
     return chan in rlist
 
 
+class _Probe:
+    """One keepalive request on a transport and whether it was answered."""
+
+    def __init__(self) -> None:
+        self.answered = threading.Event()
+
+    def start(self, transport) -> None:
+        # Any answer counts - OpenSSH and paramiko servers refuse an unknown
+        # global request (REQUEST_FAILURE), which proves the connection
+        # carries traffic both ways just as well. paramiko sets
+        # ``completion_event`` on either answer.
+        transport.completion_event = self.answered
+        # Sent from a thread of its own: a send waits behind a write stuck
+        # in the socket buffer of a dead link (paramiko retries for ever).
+        threading.Thread(
+            target=self._send, args=(transport,), name="axross-ssh-probe", daemon=True
+        ).start()
+
+    @staticmethod
+    def _send(transport) -> None:
+        try:
+            m = paramiko.Message()
+            m.add_byte(paramiko.common.cMSG_GLOBAL_REQUEST)
+            m.add_string(_KEEPALIVE_REQUEST)
+            m.add_boolean(True)
+            transport._send_user_message(m)
+        except Exception as exc:  # noqa: BLE001 - a dead transport does not answer
+            log.debug("SSH keepalive probe not sent: %s", exc)
+
+
+#: The probe in flight per transport (weak: a closed transport goes).
+_PROBES: "weakref.WeakKeyDictionary[object, _Probe]" = weakref.WeakKeyDictionary()
+_PROBES_LOCK = threading.Lock()
+
+
+def transport_answers(transport, timeout: float, stop: Callable[[], bool] | None = None) -> bool:
+    """Whether the SSH connection *transport* still carries traffic both
+    ways: a keepalive request (``keepalive@openssh.com``, want-reply) is
+    answered within *timeout* seconds. A request whose answer is slow
+    then waits on (the server is alive, only busy) instead of failing as
+    a lost network. Probes of one transport share the request in
+    flight. *stop* (polled) ends the wait early - Cancel - with False."""
+    if transport is None or not transport.is_active():
+        return False
+    with _PROBES_LOCK:
+        try:
+            probe = _PROBES.get(transport)
+        except TypeError:  # not weakly referenceable (a stand-in)
+            probe = None
+        if probe is None or probe.answered.is_set():
+            probe = _Probe()
+            try:
+                _PROBES[transport] = probe
+            except TypeError:
+                pass
+            probe.start(transport)
+    deadline = time.monotonic() + max(timeout, 0.0)
+    while True:
+        left = deadline - time.monotonic()
+        if probe.answered.wait(min(0.1, max(left, 0.0))):
+            return transport.is_active()
+        if left <= 0 or not transport.is_active() or (stop is not None and stop()):
+            return False
+
+
+class _ExecWatch:
+    """Watches one exec channel (a checksum, a server-side copy, df, ln)
+    from a thread of its own while the command runs:
+
+    * Cancel of the running transfer (core.transfer_hooks) closes the
+      channel at once - a read blocked on it wakes - and :attr:`cancelled`
+      tells the caller to raise InterruptedError;
+    * no output for *idle* seconds: the SSH connection is asked whether
+      it is alive (:func:`transport_answers`). Alive, the command just
+      takes long (a big file hashed, copied on the server) and is waited
+      for; dead, the channel is closed and :attr:`timed_out` set. A
+      fixed read time-out would fail a long legitimate command; none at
+      all hung for ever on a network gone silent (keepalive is off by
+      default, docs/OPSEC.md #2).
+    """
+
+    POLL = 0.2
+
+    def __init__(self, chan, transport, idle: float, hooks=None) -> None:
+        from core import transfer_hooks
+
+        self.cancelled = False
+        self.timed_out = False
+        self._chan = chan
+        self._transport = transport
+        self._idle = max(float(idle), 0.5)
+        hooks = hooks if hooks is not None else transfer_hooks.current()
+        self._cancel = getattr(hooks, "cancel_event", None)
+        if self._cancel is not None and self._cancel.is_set():
+            raise InterruptedError(transfer_hooks.CANCELLED)
+        self._last = time.monotonic()
+        self._stopped = threading.Event()
+        threading.Thread(target=self._run, name="axross-exec-watch", daemon=True).start()
+
+    def touch(self) -> None:
+        """Output arrived: the command is alive."""
+        self._last = time.monotonic()
+
+    def _should_stop(self) -> bool:
+        return self._stopped.is_set() or (self._cancel is not None and self._cancel.is_set())
+
+    def _run(self) -> None:
+        while not self._stopped.is_set():
+            if self._cancel is not None:
+                fired = self._cancel.wait(self.POLL)
+            else:
+                fired = False
+                self._stopped.wait(self.POLL)
+            if self._stopped.is_set():
+                return
+            if fired:
+                self.cancelled = True
+                self._close()
+                return
+            if time.monotonic() - self._last < self._idle:
+                continue
+            if transport_answers(self._transport, self._idle, self._should_stop):
+                self.touch()  # alive: the command takes its time
+                continue
+            if self._stopped.is_set():
+                return
+            if self._cancel is not None and self._cancel.is_set():
+                self.cancelled = True
+            else:
+                self.timed_out = True
+            self._close()
+            return
+
+    def _close(self) -> None:
+        # In a thread of its own: closing sends a message, which can wait
+        # behind a write stuck on a dead link.
+        threading.Thread(target=self._close_now, daemon=True).start()
+
+    def _close_now(self) -> None:
+        try:
+            self._chan.close()
+        except Exception:  # noqa: BLE001 - closing a dead channel may fail
+            pass
+
+    def stop(self) -> None:
+        self._stopped.set()
+
+
 def drain_exec_channel(
     chan,
     *,
@@ -311,6 +543,7 @@ def drain_exec_channel(
     stdout_cap: int,
     stderr_cap: int,
     label: str,
+    on_output: Callable[[], object] | None = None,
 ) -> "ExecResult":
     """Read an exec channel's stdout and stderr to the end, each clipped
     at its cap, and return the :class:`~models.exec_result.ExecResult`.
@@ -320,7 +553,9 @@ def drain_exec_channel(
     Bytes above a cap are read and discarded so the remote can finish.
     Raises ``TimeoutError`` (an OSError) when the command has not exited
     after *timeout* seconds - the channel timeout only bounds a blocking
-    recv, which this loop never makes.
+    recv, which this loop never makes. *on_output* is called whenever
+    bytes arrived (an :class:`_ExecWatch` learns the command is alive).
+    A channel closed under the loop (Cancel, a dead connection) ends it.
     """
     from models.exec_result import ExecResult
 
@@ -339,7 +574,11 @@ def drain_exec_channel(
         # under load: not readable 97 times in a row with data pending), and
         # a loop that read only after a wake-up never read again.
         if not (chan.recv_ready() or chan.recv_stderr_ready()):
+            if chan.closed:
+                break
             _wait_readable(chan, 0.1)
+        if on_output is not None and (chan.recv_ready() or chan.recv_stderr_ready()):
+            on_output()
         if chan.recv_ready():
             room = stdout_cap - len(stdout_buf)
             if room > 0:
@@ -409,6 +648,17 @@ class CleanEnvProxyCommand(paramiko.ProxyCommand):
             env=clean_child_env(),
         )
         self.timeout = None
+
+
+class SlowServerTimeout(TimeoutError):
+    """An SFTP request the server left unanswered for
+    :data:`SFTP_SLOW_SERVER_CAP` while the SSH connection kept answering:
+    the server is there, but busy or stuck - not a lost network."""
+
+
+class _ExecRefused(OSError):
+    """The server turned an exec request down while the connection stands
+    (it runs no commands, or not this one)."""
 
 
 class HostKeyVerificationError(paramiko.SSHException):
@@ -701,7 +951,7 @@ class SSHSession(SessionLifecycle):
             self._prefer_known_host_key_types()
             self._transport.start_client(timeout=10.0)
             # paramiko waits an hour for the server to open a channel.
-            self._transport.channel_timeout = SFTP_IO_TIMEOUT
+            self._transport.channel_timeout = self._io_timeout()
             self._verify_host_key(on_unknown_host=on_unknown_host)
             # Keepalive off by default — a fixed 30-s cadence is a
             # cross-session fingerprint. Opt-in per profile. See
@@ -953,7 +1203,8 @@ class SSHSession(SessionLifecycle):
             # the server could send only 2 MiB of the 8 MiB a window asks
             # for per round trip (a download at 20 ms: ~52 MB/s, not ~90).
             client = _SurrogateSftpClient.from_transport(
-                self._transport, window_size=2 * ReadAheadRaw.MAX_WINDOW
+                self._transport, window_size=2 * ReadAheadRaw.MAX_WINDOW,
+                timeout=self._io_timeout(),
             )
             return client
         except paramiko.ChannelException as exc:
@@ -1454,6 +1705,102 @@ class SSHSession(SessionLifecycle):
                 f"SFTP symlink({target!r} → {link_path!r}): {exc}",
             ) from exc
 
+    def _io_timeout(self) -> float:
+        """Seconds of silence after which a waiting SFTP request or exec
+        command asks the SSH connection whether it is alive: the
+        profile's SFTP time-out, else :data:`SFTP_IO_TIMEOUT`."""
+        value = getattr(getattr(self, "_profile", None), "sftp_timeout", 0) or 0
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            value = 0.0
+        return value if value > 0 else SFTP_IO_TIMEOUT
+
+    def _run_on_channel(
+        self,
+        label: str,
+        start: Callable[[paramiko.Channel], object],
+        *,
+        timeout: float | None = None,
+        stdout_cap: int = HELPER_STDOUT_CAP,
+        stderr_cap: int = HELPER_STDERR_CAP,
+    ) -> "ExecResult":
+        """Open an exec channel, ``start(chan)`` (sends the exec request),
+        read the command's output to its end and return the
+        :class:`~models.exec_result.ExecResult`.
+
+        Watched by an :class:`_ExecWatch`: Cancel of the running transfer
+        closes the channel (InterruptedError), and a connection that goes
+        silent and does not answer a keepalive fails it (TimeoutError,
+        ETIMEDOUT) - a command that only takes long (a hash of a big file)
+        is waited for. *timeout*: a hard limit on top (exec()). An exec
+        request the server turns down while the connection stands raises
+        :class:`_ExecRefused`."""
+        transport = self._transport
+        if not transport or not transport.is_active():
+            raise ConnectionError(errno.ENOTCONN, f"{label}: SSH transport not active")
+        idle = self._io_timeout()
+        try:
+            chan = transport.open_session(timeout=idle)
+        except paramiko.SSHException as exc:
+            if str(exc).startswith("Timeout opening channel"):
+                raise TimeoutError(
+                    errno.ETIMEDOUT,
+                    f"{label}: the server did not open a channel within {idle:g} s; the "
+                    f"network connection is probably lost. Reconnect and try again.",
+                ) from exc
+            raise
+        watch: _ExecWatch | None = None
+        try:
+            watch = _ExecWatch(chan, transport, idle)
+            try:
+                start(chan)
+            except paramiko.SSHException as exc:
+                if not (watch.cancelled or watch.timed_out) and transport.is_active():
+                    raise _ExecRefused(f"{label}: the server refused the command ({exc})") from exc
+                raise
+            result = drain_exec_channel(
+                chan,
+                timeout=timeout,
+                stdout_cap=stdout_cap,
+                stderr_cap=stderr_cap,
+                label=label,
+                on_output=watch.touch,
+            )
+        except BaseException as exc:
+            if isinstance(exc, InterruptedError) and watch is None:
+                raise  # Cancel was pressed before the command was sent
+            if watch is not None and watch.cancelled:
+                from core import transfer_hooks
+
+                raise InterruptedError(transfer_hooks.CANCELLED) from exc
+            if watch is not None and watch.timed_out:
+                raise self._silent_exec(label, idle) from exc
+            raise
+        finally:
+            if watch is not None:
+                watch.stop()
+            try:
+                chan.close()
+            except Exception:  # noqa: BLE001 - closing a dead channel may fail
+                pass
+        if watch.cancelled:
+            from core import transfer_hooks
+
+            raise InterruptedError(transfer_hooks.CANCELLED)
+        if watch.timed_out:
+            raise self._silent_exec(label, idle)
+        return result
+
+    @staticmethod
+    def _silent_exec(label: str, idle: float) -> TimeoutError:
+        return TimeoutError(
+            errno.ETIMEDOUT,
+            f"{label}: the server sent nothing for {idle:g} s and the SSH connection "
+            f"did not answer a keepalive either; the network connection is probably "
+            f"lost. Reconnect and try again.",
+        )
+
     def hardlink(self, target: str, link_path: str) -> None:
         """Hardlink via a remote ``ln`` shell call — SFTP v3 has no
         native hardlink operation. Fails cleanly when the remote
@@ -1472,17 +1819,11 @@ class SSHSession(SessionLifecycle):
             f"echo {_HARDLINK_TAKEN} >&2; exit 1; fi; "
             f"ln -- {shlex.quote(target)} {qlink}",
         )
-        chan = self._transport.open_session()
         try:
-            chan.exec_command(command)
-            err = _read_limited_stream(
-                chan.makefile_stderr("rb"),
-                HELPER_STDERR_CAP,
-                "SSH hardlink stderr",
-            )
-            rc = chan.recv_exit_status()
-        finally:
-            chan.close()
+            result = self._run_on_channel("SSH hardlink", lambda chan: chan.exec_command(command))
+        except paramiko.SSHException as exc:
+            raise OSError(f"SSH hardlink: {exc}") from exc
+        rc, err = result.returncode, result.stderr
         if rc != 0 and _HARDLINK_TAKEN.encode() in err:
             raise FileExistsError(
                 errno.EEXIST, f"SSH hardlink: {link_path} already exists", link_path
@@ -1513,30 +1854,17 @@ class SSHSession(SessionLifecycle):
             raise ConnectionError(errno.ENOTCONN, "SSH transport not active")
         command = command_bytes(f"df -Pk -- {shlex.quote(path)}")
         try:
-            chan = self._transport.open_session()
+            result = self._run_on_channel("SSH df", lambda chan: chan.exec_command(command))
+        except _ExecRefused as exc:
+            log.debug("df fallback unavailable for %s: %s", path, exc)
+            return (0, 0, 0)
         except paramiko.SSHException as exc:
             raise OSError(f"SSH disk usage of {path}: {exc}") from exc
-        try:
-            try:
-                chan.exec_command(command)
-            except paramiko.SSHException as exc:
-                if self._transport.is_active():
-                    log.debug("df fallback unavailable for %s: %s", path, exc)
-                    return (0, 0, 0)
-                raise OSError(f"SSH disk usage of {path}: {exc}") from exc
-            output = _read_limited_stream(
-                chan.makefile("rb"),
-                HELPER_STDOUT_CAP,
-                "SSH df stdout",
-            ).decode("utf-8", errors="replace")
-            stderr = _read_limited_stream(
-                chan.makefile_stderr("rb"),
-                HELPER_STDERR_CAP,
-                "SSH df stderr",
-            ).decode("utf-8", errors="replace")
-            rc = chan.recv_exit_status()
-        finally:
-            chan.close()
+        if result.truncated_stdout:
+            raise OSError(f"SSH df stdout exceeds {HELPER_STDOUT_CAP} byte cap")
+        output = result.stdout.decode("utf-8", errors="replace")
+        stderr = result.stderr.decode("utf-8", errors="replace")
+        rc = result.returncode
         if rc in COMMAND_NOT_FOUND:
             log.debug("df unavailable on %s: %s", self._profile.host, stderr.strip())
             return (0, 0, 0)
@@ -1620,8 +1948,7 @@ class SSHSession(SessionLifecycle):
                         f"SSH exec: env value for {k!r} must not contain "
                         "NUL/CR/LF (refusing to send). F39."
                     )
-        chan = self._transport.open_session()
-        try:
+        def start(chan) -> None:
             if timeout is not None:
                 chan.settimeout(timeout)
             if env:
@@ -1642,18 +1969,15 @@ class SSHSession(SessionLifecycle):
                     chan.shutdown_write()
                 except OSError:
                     pass
-            return drain_exec_channel(
-                chan,
-                timeout=timeout,
-                stdout_cap=stdout_cap,
-                stderr_cap=stderr_cap,
-                label="SSH exec",
-            )
-        finally:
-            try:
-                chan.close()
-            except Exception:  # noqa: BLE001
-                pass
+
+        # Cancel (in a transfer) and a connection gone silent end it too.
+        return self._run_on_channel(
+            "SSH exec",
+            start,
+            timeout=timeout,
+            stdout_cap=stdout_cap,
+            stderr_cap=stderr_cap,
+        )
 
     def interactive_shell(
         self,
@@ -1751,22 +2075,17 @@ class SSHSession(SessionLifecycle):
         from core.telnet_client import copy_command
 
         command = command_bytes(copy_command(src, dst, preserve=True))
+        # A copy of a big file on the server takes as long as it takes: no
+        # fixed time-out, but a silent connection that does not answer a
+        # keepalive fails it, and Cancel closes it (_run_on_channel).
         try:
-            chan = self._transport.open_session()
-            try:
-                chan.exec_command(command)
-                stderr = _read_limited_stream(
-                    chan.makefile_stderr("rb"),
-                    HELPER_STDERR_CAP,
-                    "SSH copy stderr",
-                ).decode("utf-8", errors="replace")
-                rc = chan.recv_exit_status()
-            finally:
-                chan.close()
-            if rc != 0:
-                raise OSError(f"cp {src} -> {dst} failed: rc={rc} stderr={stderr!r}")
+            result = self._run_on_channel("SSH copy", lambda chan: chan.exec_command(command))
         except paramiko.SSHException as exc:
             raise OSError(f"copy failed: {exc}") from exc
+        rc = result.returncode
+        if rc != 0:
+            stderr = result.stderr.decode("utf-8", errors="replace")
+            raise OSError(f"cp {src} -> {dst} failed: rc={rc} stderr={stderr!r}")
 
     def checksum_kinds(self, path: str = "", *, written: bool = False) -> frozenset[str] | None:
         """The algorithms :meth:`checksum` can answer with here: none once
@@ -1804,48 +2123,38 @@ class SSHSession(SessionLifecycle):
         if not self._transport or not self._transport.is_active():
             raise ConnectionError("SSH transport not active")
         command = command_bytes(f"{tool} -- {shlex.quote(path)}")
+        # After every upload the transfer engine asks for this: Cancel
+        # closes the channel, and a connection gone silent fails it - a
+        # big file hashed slowly is waited for (_run_on_channel).
         try:
-            chan = self._transport.open_session()
-            try:
-                chan.exec_command(command)
-            except paramiko.SSHException as exc:
-                if self._transport.is_active():
-                    # The channel opened, the command was turned down (the
-                    # connection still stands): this server runs no commands.
-                    for name in ("sha256", "sha1", "md5"):
-                        self._checksum_unavailable[name] = (
-                            f"the server refuses to run commands ({exc})")
-                chan.close()
-                raise
-            # paramiko's makefile("r") still yields bytes on some
-            # builds; decode explicitly so the f-string below doesn't
-            # embed a ``b'...'`` repr.
-            output = _read_limited_stream(
-                chan.makefile("rb"),
-                HELPER_STDOUT_CAP,
-                "SSH checksum stdout",
-            ).decode("utf-8", errors="replace")
-            stderr = _read_limited_stream(
-                chan.makefile_stderr("rb"),
-                HELPER_STDERR_CAP,
-                "SSH checksum stderr",
-            ).decode("utf-8", errors="replace")
-            rc = chan.recv_exit_status()
-            chan.close()
-            if rc in COMMAND_NOT_FOUND:
-                # No such tool on this host: "" lets the caller hash the
-                # stream, as documented above.
-                log.debug("%s unavailable on %s: %s", tool, self._profile.host, stderr.strip())
-                self._checksum_unavailable[algorithm] = "missing"
-                return ""
-            if rc != 0:
-                raise OSError(f"{tool} failed on {path}: rc={rc} stderr={stderr!r}")
-            hex_digest = digest_from_sum_output(output, algorithm)
-            if not hex_digest:
-                return ""
-            return f"{algorithm}:{hex_digest}"
+            result = self._run_on_channel(f"SSH {tool}", lambda chan: chan.exec_command(command))
+        except _ExecRefused as exc:
+            # The channel opened, the command was turned down (the
+            # connection still stands): this server runs no commands.
+            reason = exc.__cause__ or exc
+            for name in ("sha256", "sha1", "md5"):
+                self._checksum_unavailable[name] = (
+                    f"the server refuses to run commands ({reason})")
+            raise OSError(f"checksum failed: {reason}") from exc
         except paramiko.SSHException as exc:
             raise OSError(f"checksum failed: {exc}") from exc
+        if result.truncated_stdout:
+            raise OSError(f"SSH checksum stdout exceeds {HELPER_STDOUT_CAP} byte cap")
+        output = result.stdout.decode("utf-8", errors="replace")
+        stderr = result.stderr.decode("utf-8", errors="replace")
+        rc = result.returncode
+        if rc in COMMAND_NOT_FOUND:
+            # No such tool on this host: "" lets the caller hash the
+            # stream, as documented above.
+            log.debug("%s unavailable on %s: %s", tool, self._profile.host, stderr.strip())
+            self._checksum_unavailable[algorithm] = "missing"
+            return ""
+        if rc != 0:
+            raise OSError(f"{tool} failed on {path}: rc={rc} stderr={stderr!r}")
+        hex_digest = digest_from_sum_output(output, algorithm)
+        if not hex_digest:
+            return ""
+        return f"{algorithm}:{hex_digest}"
 
     def _attr_to_item(self, attr: paramiko.SFTPAttributes, name_override: str = "") -> FileItem:
         mode = attr.st_mode or 0

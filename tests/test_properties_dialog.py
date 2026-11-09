@@ -130,7 +130,7 @@ def test_happy_path_and_backend_are_shown(opened):
 def test_happy_type_reflects_file_dir_and_symlink(opened):
     b = _FakeBackend()
     assert opened(b, "/a", _f("a")).general_fields()["Type"] == "File"
-    assert opened(b, "/d", _f("d", is_dir=True)).general_fields()["Type"] == "Directory"
+    assert opened(b, "/d", _f("d", is_dir=True)).general_fields()["Type"] == "Folder"
     link = _f("l", is_link=True, link_target="/elsewhere")
     fields = opened(b, "/l", link).general_fields()
     assert fields["Type"] == "Symlink"

@@ -66,9 +66,9 @@ from ui.icon_provider import set_window_icon
 log = logging.getLogger(__name__)
 _ENTRY_ROLE = Qt.ItemDataRole.UserRole
 NETWORK_LABELS = {
-    "none": "None - no network (safest)",
-    "allowlist": "Allowlist - only the hosts below (programs that use HTTPS_PROXY)",
-    "full": "Full - any host",
+    "none": "None – no network (safest)",
+    "allowlist": "Allowlist – only the hosts below (programs that use HTTPS_PROXY)",
+    "full": "Full – any host",
 }
 
 
@@ -582,7 +582,7 @@ class McpCatalogDialog(QDialog):
         edit = QLineEdit(spec.default)
         if spec.secret:
             edit.setEchoMode(QLineEdit.EchoMode.Password)
-            edit.setPlaceholderText(tr("secret - stored in the keyring"))
+            edit.setPlaceholderText(tr("secret – stored in the keyring"))
         self.env_table.setCellWidget(row, 1, edit)
 
     def env_edit(self, name: str) -> QLineEdit | None:
@@ -739,10 +739,10 @@ class McpCatalogDialog(QDialog):
         self._busy = False
         if ok:
             config.enabled = True
-            self._append_log(tr("Test passed - {name} is switched on. Tools: {tools}").format(
+            self._append_log(tr("Test passed – {name} is switched on. Tools: {tools}").format(
                 name=config.name, tools=text or tr("none")))
         else:
-            self._append_log(tr("Test failed: {why} - {name} is added switched off.").format(
+            self._append_log(tr("Test failed: {why} – {name} is added switched off.").format(
                 why=text, name=config.name))
         self._taken.add(config.name)
         self.installs.append(payload)

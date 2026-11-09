@@ -234,7 +234,7 @@ class FindFilesDialog(QDialog):
         self.contains_edit = QLineEdit(self)
         self.contains_edit.setPlaceholderText(tr("text inside the file (optional)"))
         self.contains_edit.setToolTip(
-            tr("Searched line by line in the first 32 MiB of each file - with ripgrep (rg) "
+            tr("Searched line by line in the first 32 MiB of each file – with ripgrep (rg) "
                "when it is installed")
         )
         self.contains_regex_box = QCheckBox(tr("Regex"), self)
@@ -321,7 +321,7 @@ class FindFilesDialog(QDialog):
 
         db = self._index_db or MX.default_db_path()
         self.index_box.setToolTip(
-            tr("Names, sizes and dates recorded by Edit > Index Active Folder… (no file "
+            tr("Names, sizes and dates recorded by Edit → Index Active Folder… (no file "
                "content); works for connections that are closed now. Stored in {path}").format(
                 path=db)
         )
@@ -587,7 +587,7 @@ class FindFilesDialog(QDialog):
         self._drain_timer.start()
 
     def _progress_text(self, state: dict) -> str:
-        return tr("Searching… {found} found, {scanned} scanned — {path}").format(
+        return tr("Searching… {found} found, {scanned} scanned – {path}").format(
             found=state["indexed"], scanned=state["scanned"], path=shorten(state["path"]))
 
     def _drain(self, everything: bool = False) -> None:

@@ -173,7 +173,7 @@ def test_edge_the_reason_is_translated():
 
     catalogue = json.loads((Path(i18n.__file__).resolve().parent.parent
                             / "resources" / "i18n" / "de.json").read_text("utf-8"))
-    key = ("{name} is not the file the move put there - it was changed or "
+    key = ("{name} is not the file the move put there – it was changed or "
            "replaced since")
     assert key in catalogue and "{name}" in catalogue[key]
 

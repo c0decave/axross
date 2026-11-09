@@ -193,9 +193,9 @@ class DockTitleBar(QWidget):
         self._pin_btn.setIcon(icon("pin", 16) if ws is not None else
                               icon("pin", 16, "#8a8a8a"))
         self._pin_btn.setToolTip(
-            tr("Shown only on {workspace} - click to change").format(workspace=ws.name)
+            tr("Shown only on {workspace} – click to change").format(workspace=ws.name)
             if ws is not None else
-            tr("Show Only on Workspace - keep this panel to one workspace"))
+            tr("Show Only on Workspace – keep this panel to one workspace"))
         self._pin_btn.setVisible(owner is not None)
 
     def add_binding_menu(self, menu: QMenu) -> QMenu | None:

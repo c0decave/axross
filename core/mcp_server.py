@@ -1234,7 +1234,7 @@ def _confine_local(backend, backends: dict | None, roots: tuple, *,
             return
         from core import protected_places
 
-        reason = protected_places.read_refusal(path)
+        reason = protected_places.read_refusal(path, granted=roots)
         if reason is not None:
             raise PermissionError(reason)
 
@@ -1506,6 +1506,14 @@ def _build_tools(
                     raise PermissionError(f"{path} holds a read-only folder")
         return path
 
+    def _typed(path: str) -> str:
+        """*path* as the client typed it, made absolute (a relative path is
+        the main root's): the protected places and secrets are checked on
+        this name too, not only on where its symlinks lead."""
+        import os.path as op
+
+        return op.abspath(path if op.isabs(path) else op.join(root or "/", path))
+
     def _write_path(path: str, active_backend) -> str:
         """Confine a path a mutating tool writes, moves or deletes. On a
         remote backend of a production-flagged profile every mutation
@@ -1513,8 +1521,10 @@ def _build_tools(
         if _is_remote(active_backend):
             remote_registry.refuse_production(active_backend)
             return _groups.check_remote_path(path)
-        return _refuse_protected(_refuse_read_only(_confined(path, write_roots)),
-                                 granted=write_roots)
+        confined = _refuse_read_only(_confined(path, write_roots))
+        if _typed(path) != confined:
+            _refuse_protected(_typed(path), granted=write_roots)
+        return _refuse_protected(confined, granted=write_roots)
 
     def _entry_path(path: str, active_backend) -> str:
         """Confine a path whose directory entry itself is removed or
@@ -1522,9 +1532,11 @@ def _build_tools(
         if _is_remote(active_backend):
             remote_registry.refuse_production(active_backend)
             return _groups.check_remote_path(path)
-        return _refuse_protected(_refuse_read_only_below(
-            _refuse_read_only(_confined(path, write_roots, _enforce_root_entry))), entry=True,
-            granted=write_roots)
+        confined = _refuse_read_only_below(
+            _refuse_read_only(_confined(path, write_roots, _enforce_root_entry)))
+        if _typed(path) != confined:
+            _refuse_protected(_typed(path), entry=True, granted=write_roots)
+        return _refuse_protected(confined, entry=True, granted=write_roots)
 
     def _entry_checker(active_backend):
         """``check(path) -> path``: :func:`_entry_path` (and the secret
@@ -1540,9 +1552,12 @@ def _build_tools(
         def check(path: str) -> str:
             confined = _refuse_read_only_below(
                 _refuse_read_only(_confined(path, write_roots, _enforce_root_entry)))
-            reason = places(confined, entry=True)
-            if reason is not None:
-                raise PermissionError(reason)
+            for name in dict.fromkeys((_typed(path), confined)):
+                reason = places(name, entry=True)
+                if reason is not None:
+                    raise PermissionError(reason)
+            if _typed(path) != confined:
+                secret(_typed(path), entry=True)
             return secret(confined, entry=True)
 
         return check
@@ -1558,7 +1573,7 @@ def _build_tools(
             return lambda path, *, entry=False: path
         from core import protected_places
 
-        check = protected_places.secret_checker()
+        check = protected_places.secret_checker(granted=read_roots)
 
         def refuse(path: str, *, entry: bool = False) -> str:
             reason = check(path, entry=entry)
@@ -1573,8 +1588,14 @@ def _build_tools(
         return _secret_check(active_backend)(path, entry=entry)
 
     def _read_path(path: str, active_backend=None) -> str:
-        """:func:`_scope_path` for a path whose contents a tool hands out."""
-        return _refuse_secret(_scope_path(path, active_backend), active_backend)
+        """:func:`_scope_path` for a path whose contents a tool hands out:
+        refused when the name typed, a symlink on the way or where it leads
+        is a secret (or in a default-deny place of the read side)."""
+        scoped = _scope_path(path, active_backend)
+        if (not _is_remote(active_backend) and isinstance(path, str)
+                and _typed(path) != scoped):
+            _refuse_secret(_typed(path), active_backend)
+        return _refuse_secret(scoped, active_backend)
 
     def _refuse_root(path: str, active_backend, operation: str) -> None:
         """Refuse a mutation of the configured root object itself."""
@@ -3554,6 +3575,7 @@ def _build_tools(
                     ),
                     audit=_audit,
                     root=root,
+                    read_roots=tuple(read_roots),
                     allow_write=allow_write,
                     backend_by_id=_backend_by_id,
                     remote=remote_registry,
@@ -3862,11 +3884,16 @@ class _ResourceCatalog:
         clean = raw_path.rstrip("/") or "/"
         resolved = _enforce_root(clean, self.root)
         if not self.allow_secret_reads:
+            import os.path as op
+
             from core import protected_places
 
-            reason = protected_places.read_refusal(resolved)
-            if reason is not None:
-                raise PermissionError(reason)
+            check = protected_places.secret_checker(granted=(self.root,))
+            typed = op.abspath(clean if op.isabs(clean) else op.join(self.root, clean))
+            for name in dict.fromkeys((typed, resolved)):
+                reason = check(name)
+                if reason is not None:
+                    raise PermissionError(reason)
         with self.backend.open_read(resolved) as fh:
             data, _ = _read_capped_stream(fh, MAX_READ_BYTES)
         # Silently truncate at cap — the MCP spec has no partial-read

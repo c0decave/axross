@@ -206,6 +206,12 @@ class DetectedServer:
             elif self.local:
                 lines.append("Runs on this machine, not in a container (in the sandbox profile "
                              "of the place where it is ticked, if that has one).")
+                from core.mcp_runner import host_launcher
+
+                if not host_launcher(self.command):
+                    lines.append("It is no interpreter running a script on disk, so it is "
+                                 "contained by default: it starts only in a sandbox profile, or "
+                                 "when it is marked Trusted in Agent Settings.")
         else:
             lines.append(f"URL: {self.url}" + (" (with a token)" if self.token else ""))
         if self.env:

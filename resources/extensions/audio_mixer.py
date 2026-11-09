@@ -177,7 +177,7 @@ class MixerPanel(QWidget):
         grid.setColumnStretch(0, 1)
         self.master = _Channel(grid, 0, tr("Master"), same_text=tr("System default"))
         self.master.label.setStyleSheet("font-weight: bold")
-        self.master.output.setToolTip(tr("axross's output device (Edit > Settings > Audio)"))
+        self.master.output.setToolTip(tr("axross's output device (Edit → Settings → Audio)"))
         self.channels: dict[str, _Channel] = {}
         for row, source in enumerate(SOURCES, start=1):
             self.channels[source] = _Channel(grid, row, tr(AR.SOURCE_LABELS[source]),
@@ -206,8 +206,8 @@ class MixerPanel(QWidget):
         row.addWidget(self.devices_button)
         row.addStretch(1)
         self.settings_button = QPushButton(tr("Audio Settings…"))
-        self.settings_button.setToolTip(tr("Backend, input device and the tests: Edit > "
-                                           "Settings > Audio."))
+        self.settings_button.setToolTip(tr("Backend, input device and the tests: Edit → "
+                                           "Settings → Audio."))
         self.settings_button.clicked.connect(self._settings_clicked)
         self.settings_button.setVisible(callable(self._open_audio_settings))
         row.addWidget(self.settings_button)

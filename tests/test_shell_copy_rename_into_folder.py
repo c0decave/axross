@@ -133,6 +133,17 @@ def test_edge_every_shell_backend_sends_the_guarded_copy(monkeypatch):
     ) in sent
 
     class _Chan:
+        closed = False
+
+        def exit_status_ready(self):
+            return True
+
+        def recv_ready(self):
+            return False
+
+        def recv_stderr_ready(self):
+            return False
+
         def exec_command(self, cmd):
             # Sent as bytes (surrogateescape keeps non-UTF-8 names whole).
             sent.append(("ssh", cmd.decode("utf-8", "surrogateescape") if isinstance(cmd, bytes) else cmd))
@@ -152,7 +163,7 @@ def test_edge_every_shell_backend_sends_the_guarded_copy(monkeypatch):
         def is_active(self):
             return True
 
-        def open_session(self):
+        def open_session(self, **_kw):
             return _Chan()
 
     ssh = ssh_client.SSHSession.__new__(ssh_client.SSHSession)

@@ -214,12 +214,12 @@ def _classify(
 
     if left.is_dir != right.is_dir:
         return ComparedEntry(
-            rel, Status.DIFFERS, "type differs (directory vs file)", left, right
+            rel, Status.DIFFERS, "type differs (folder vs file)", left, right
         )
     if left.is_dir:
         # Directories are compared for existence only; their contents
         # show up as their own entries.
-        return ComparedEntry(rel, Status.SAME, "directory on both sides", left, right)
+        return ComparedEntry(rel, Status.SAME, "folder on both sides", left, right)
 
     if left.size != right.size:
         # Decisive on its own — never read content to confirm.

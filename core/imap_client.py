@@ -26,12 +26,12 @@ import io
 import logging
 import posixpath
 import re
-import tempfile
 from datetime import datetime, timedelta, timezone
 from typing import IO
 
 from core.backend import SessionLifecycle
 from core.mail_names import cap_component, message_file_name
+from core.read_spool import new_spool
 from core.session_lock import io_lock, liveness_check, serialized
 from models.file_item import FileItem
 
@@ -643,7 +643,7 @@ class _SpooledWriter:
         self._filename = filename
         # The session's I/O lock: APPEND runs on the shared handle.
         self._lock = lock if lock is not None else contextlib.nullcontext()
-        self._buf = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
+        self._buf = new_spool(max_size=8 * 1024 * 1024)
         self._closed = False
         # The running transfer's Cancel and progress (core.transfer_hooks):
         # the APPEND happens in close(), after the copy loop.

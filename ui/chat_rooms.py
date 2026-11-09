@@ -241,7 +241,7 @@ class RoomListPanel(QWidget):
         if client is None:
             return
         if client.state != C.STATE_ONLINE:
-            self.status.setText(tr("Connect first - the list comes from the server."))
+            self.status.setText(tr("Connect first – the list comes from the server."))
             return
         model = self.model_for(client.account.account_id)
         # the id is the client's next one: batches of an older request are dropped

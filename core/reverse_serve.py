@@ -236,13 +236,22 @@ def _is_local_bind(bind: str) -> bool:
 
 def _loopback_authority(value: str) -> bool:
     """True when a ``Host`` / ``Origin`` authority is a literal loopback
-    name (``127.0.0.1``, ``[::1]``, ``localhost``, with or without port)."""
-    host = (value or "").strip()
-    if host.startswith("["):
-        host = host[1:].split("]", 1)[0]
-    elif host.count(":") == 1:
-        host = host.split(":", 1)[0]
-    return bool(host) and _is_local_bind(host)
+    name (``127.0.0.1``, ``[::1]``, ``localhost``, with or without port).
+    Parsed strictly as ``host[:port]`` with a port of digits only:
+    ``localhost:1@evil``, a path, a space or a bare IPv6 address is refused,
+    never cut down to a loopback name (as core.mcp_http)."""
+    match = _HOST_AUTHORITY.fullmatch((value or "").strip(" \t"))
+    if match is None:
+        return False
+    port = match.group(3)
+    if port is not None and not 0 < int(port) <= 65535:
+        return False
+    return _is_local_bind(match.group(1) or match.group(2))
+
+
+#: ``host[:port]``: ``[v6]`` or a DNS name / IPv4 address, then digits only.
+_HOST_AUTHORITY = re.compile(r"(?:\[([0-9A-Fa-f:.]{2,45})\]|([A-Za-z0-9](?:[A-Za-z0-9.-]{0,252}))"
+                             r")(?::([0-9]{1,5}))?")
 
 
 def _backend_join(backend, *parts: str) -> str:
@@ -788,7 +797,10 @@ class _BaseHandler(BaseHTTPRequestHandler):
         host = self.headers.get("Host")
         origin = self.headers.get("Origin")
         refused = ""
-        if host is not None and not _loopback_authority(host):
+        if len(self.headers.get_all("Host") or ()) > 1 or len(
+                self.headers.get_all("Origin") or ()) > 1:
+            refused = "more than one Host or Origin header"
+        elif host is not None and not _loopback_authority(host):
             refused = "Host header is not a loopback name"
         elif origin is not None and not _loopback_authority(urlparse(origin).netloc):
             refused = "cross-origin request refused"

@@ -185,7 +185,7 @@ class DirSizeDialog(QDialog):
     def __init__(self, rows: list[SizeRow], folder: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         set_window_icon(self, "disk-usage")
-        self.setWindowTitle(tr("Directory Size") + f" — {folder}")
+        self.setWindowTitle(tr("Folder Size") + f" — {folder}")
         self.resize(640, 360)
         layout = QVBoxLayout(self)
         add_close_corner(self)

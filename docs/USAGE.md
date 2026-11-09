@@ -8,19 +8,23 @@ Languages: **English** · [Deutsch](USAGE_de.md) · [Español](USAGE_es.md)
 
 ## At a glance
 
-axross is a Total-Commander-style file manager for 30+ protocols,
-built around three ideas:
+axross is a file manager for more than 30 protocols, in the style of Total
+Commander: you work with servers, cloud storage and mailboxes (SFTP, SMB,
+WebDAV, S3, IMAP, …) just as with the files on your computer - in the same
+window, with the same keys.
 
-- **Multi-pane layout.** Split horizontally / vertically into as many
-  panes as you like; each pane connects to its own backend (local,
-  SFTP, S3, IMAP, anything).
-- **Backend-agnostic primitives.** Trash, atomic writes, encrypted
-  overlays, version timeline, content-addressable storage — all of
-  these work on every protocol, even the ones whose native API
-  doesn't support them.
-- **MCP server mode.** axross can run headless and expose any
-  configured backend as MCP tools, so an LLM client can drive it.
-  Read-only by default; opt-in `--mcp-write` for mutations.
+- **As many panes as you like.** Split the window side by side or one
+  above the other; every pane has its own connection - your computer on
+  the left, a server on the right, a cloud bucket below. F5 copies from
+  one pane to the other, F6 moves.
+- **The same features on every connection.** The trash, safe saving (a
+  file is never left half written), encrypted files, earlier versions of
+  a file and the search for duplicate files work everywhere - also on
+  servers that cannot do this themselves.
+- **An AI program can help.** axross can run without a window as an MCP
+  server; an LLM program such as Claude Desktop then reaches your
+  connections through axross. At first it may only read - you allow
+  writing explicitly with `--mcp-write` (see [MCP server](#mcp-server)).
 
 ## Handbook and tours
 
@@ -32,8 +36,8 @@ built around three ideas:
   the other documents open them on GitHub in the browser.
 - **F1 opens the section of the area you are in**: a file pane opens
   *Multi-pane layout*, its address or filter field *Path bar*, the
-  Transfers dock *Transfers*, the Agent dock *Agent dock*, *Connect to
-  Server* opens *Connections*, and in *Edit → Settings…* F1 opens the part
+  Transfers dock *Transfers*, the Agent dock *Agent dock*, the
+  *Connection Manager* opens *Connections*, and in *Edit → Settings…* F1 opens the part
   about the page shown (*Logging*, *Updates*, the Agent's pages …; the
   rest *Settings*). Anywhere else F1 opens the contents. The keyboard
   shortcut list is **Ctrl+F1** (*Help → Keyboard Shortcuts*).
@@ -64,6 +68,15 @@ profile in Quick Connect (or on the profile list of the Connection
 Manager) offers *Delete Connection Config…*: after a question the
 profile goes, with its stored password.
 
+- **Where a connection opens.** While the target pane is unused - a local
+  pane still at your home folder, not navigated, nothing selected, no
+  filter typed - a new connection opens in its place; at the first start
+  the server so gets the right half of the window instead of a third,
+  narrow pane. Otherwise it opens in a new pane at the right. To always
+  get a new pane, hold **Shift** when you click the connection (or OK),
+  tick *Open in a new pane* in the Connection Manager, or right-click a
+  profile in Quick Connect and choose *Connect in New Pane*.
+
 - **How a connection is protected.** An icon next to every connection -
   the pane's header, the workspace tab (its weakest connection), bookmarks,
   Quick Connect - shows cleartext, signed only, TLS (with a weakness), SSH
@@ -72,7 +85,7 @@ profile goes, with its stored password.
   FTPS TLS 1.3 with a verified certificate, SMB 3.1.1 encrypted or signing
   only, WebDAV http vs https, NFS AUTH_SYS cleartext ...).
 
-- **Missing features.** *Help > Features…* lists every optional
+- **Missing features.** *Help → Features…* lists every optional
   feature - connections, file analysis and archives, external tools
   such as ripgrep, rsync or the forensic and VirtualBox extensions'
   qemu-img, Sleuth Kit, TestDisk / PhotoRec and VBoxManage - as
@@ -113,12 +126,22 @@ profile goes, with its stored password.
 - **OpSec overrides.** Profile fields control SSH keepalive, SMB
   workstation name, Telnet NAWS, rsync metadata stripping. See
   [OPSEC.md](OPSEC.md) for the threat model.
-- **SFTP on a lost network.** A request the server leaves unanswered
-  for 60 s fails with "did not answer in time" instead of waiting for
-  ever (Wi-Fi gone, a VPN down); the next action opens a new channel.
-  Cancel stops an SFTP or SCP transfer at once, also while it waits on
-  the network; a transfer stuck behind a dead link closes the
-  connection after 10 s more (reconnect then).
+- **SFTP on a lost network, and slow servers.** When the server sends
+  nothing for 60 s, axross asks the SSH connection whether it is still
+  alive (one keepalive request, only then - no fixed cadence, see
+  [OPSEC.md](OPSEC.md)). No answer: the request fails with "did not
+  answer in time" instead of waiting for ever (Wi-Fi gone, a VPN down);
+  the next action opens a new channel. An answer: the server is alive but
+  slow (a tape or HSM recall, a cloud-tiered file) and axross waits on,
+  up to 30 minutes for one request. The same holds for the commands axross
+  runs on the server - the checksum after every upload, a server-side
+  copy: a long one is waited for, a dead network ends it. The 60 s are
+  per profile: **Connect → SFTP time-out** (*Default (60 s)*, up to
+  3600 s). Cancel stops an SFTP or SCP transfer at once, also while it
+  waits on the network or on the checksum; a transfer stuck behind a dead
+  link closes the connection after 10 s more (reconnect then) - unless
+  terminals or other panes use the connection and it still answers: then
+  only the transfer's channel is closed.
 - **Google Drive: Docs, Sheets, Slides and shared drives.** A Google
   Doc is listed as `<name>.docx`, a Sheet as `.xlsx`, a Slides deck as
   `.pptx`, a drawing as `.pdf` - without a size - and read (opened,
@@ -160,7 +183,14 @@ profile goes, with its stored password.
   onto origin's new tip when they touch other files; otherwise they are
   kept on a new branch `axross/unpushed-<date>-<time>` - the message names
   it - and the branch shows origin's version: open that branch to copy
-  your files back. Nothing is lost either way. When the remote cannot be reached
+  your files back. That branch is pushed to origin under the same name,
+  so it survives a deleted cache; when origin refuses it the message says
+  it lives only in the local cache (`~/.cache/axross/git/...`) - copy the
+  files out soon. Nothing is lost either way. A rename (a file or a
+  whole folder) is one commit and one push: it lands completely or not at
+  all. Saves in quick succession (within 2 s of the last fetch or push)
+  skip asking origin first; their push still refuses to overwrite
+  someone else's work and catches up as above. When the remote cannot be reached
   the cached copy opens read-only and the status line says "offline".
   Scripts can pass `auto_push=False` and push with `axross.git_push()`.
 
@@ -282,7 +312,7 @@ General**, on by default) switches this off; the choice is stored in
 `session.json` at once and a start then shows
 the default single pane. A missing, unreadable or invalid
 `session.json` also starts with the default layout; the reason is in
-the log. **File > Restore Last Session** (**Ctrl+Shift+R**) still
+the log. **File → Restore Last Session** (**Ctrl+Shift+R**) still
 rebuilds the saved layout on demand, and there remote file panes do
 connect.
 
@@ -324,9 +354,9 @@ overwritten. A move removes its source only when the source still has
 the size it had before it was copied; one that changed meanwhile (a log
 still being written) fails its job and is kept.
 
-**Cut and Paste.** *Cut* (Ctrl+X, or right-click > Cut) only remembers
+**Cut and Paste.** *Cut* (Ctrl+X, or right-click → Cut) only remembers
 the selected entries - nothing is removed, they are drawn dimmed while
-the cut waits. *Paste* (Ctrl+V, or right-click > Paste, also on empty
+the cut waits. *Paste* (Ctrl+V, or right-click → Paste, also on empty
 space) in any pane - another folder, another connection - moves them
 into that pane's folder as a move through the transfer queue: the same
 name check as above, and each source is removed only after its own copy
@@ -436,7 +466,7 @@ The right-click menu is one column. **Open** comes first (a folder opens in the 
 |---|---|---|
 | Disk Image… | Right-click (one `.img .raw .dd .iso .qcow2 .vdi .vmdk .vhd(x) .e01 …` file) | The container (qcow2, VDI, VMDK, VHD/VHDX, E01), the partition table (MBR with logical partitions, GPT) and each volume's file system and label, read in plain Python through any backend. A local image mounts one volume through a loop device over exactly its bytes: `udisksctl` without a prompt first (where polkit allows it), then `sudo`, then `pkexec`, then `udisksctl` letting polkit ask. The sudo password is asked once and kept in memory while axross runs (never on disk, never on a command line); *Remember the sudo password* (*Edit → Settings… → Security*) switches that off, which restores the order `udisksctl` (polkit asks), `pkexec`, `sudo` asked every time. Paranoid Security Mode never remembers it. sudo, pkexec and udisksctl are run only from root-owned system folders, never from `$PATH`. **Read-only** unless *Allow writing* is ticked and confirmed. The mounted folder opens in a new pane; *Unmount* gives the loop device back. Mounts made by axross are remembered across restarts (`~/.config/axross/mounts.json`, only those still mounted come back). *Identify File Type…* recognises disk images by content too (GPT, MBR, virtual disks) and offers *Disk Image…* for such a row, whatever its name. qcow2 / dynamic VDI / VMDK need converting (`qemu-img convert -O raw`) first; a fixed VDI mounts directly. |
 | New Folder | Right-click | `backend.mkdir(path)` on every writeable backend. |
-| Tags ▸ | Right-click a selection | Tick a coloured tag (Important and Review later exist; New Tag… adds one) for every selected file on any backend; dots in the Name column, the tags in its tooltip; `tag:<name>` in the filter field shows only those files; *View > Tagged Files…* lists every tag's files and goes there. Stored in `~/.config/axross/tags.json`. |
+| Tags ▸ | Right-click a selection | Tick a coloured tag (Important and Review later exist; New Tag… adds one) for every selected file on any backend; dots in the Name column, the tags in its tooltip; `tag:<name>` in the filter field shows only those files; *View → Tagged Files…* lists every tag's files and goes there. Stored in `~/.config/axross/tags.json`. |
 | New File… | Right-click | Zero-byte file via `backend.open_write(path).write(b"")`. |
 | New Symlink… | Right-click | Two prompts. Visible only on `supports_symlinks=True` backends. |
 | New Hardlink… | Right-click | Same shape; cross-device hardlinks surface as `OSError(EXDEV)`. |
@@ -609,7 +639,7 @@ archives, is axross' own Find Files (`core.file_search`,
   right-click menu sorts it (*Sort* by name, path, name + path or age,
   each also reversed; groups stay first, the order is saved; bookmarks
   from before the creation time was recorded sort last).
-  **Bookmarks > Manage Bookmarks…** shows the same tree with each
+  **View → Bookmarks → Manage Bookmarks…** shows the same tree with each
   entry's location and connection and does the same with buttons:
   Edit…, Rename… (F2), New Group…, New Terminal Bookmark…, Move Up /
   Down / to Top, Move to Group, Sort, Delete… (Del, for a selection).
@@ -648,8 +678,8 @@ Every viewer, editor, dialog and extra window has its own title bar: its
 icon and name, then `_` (put it into the dock bar), the maximize button
 and [x]. The window manager draws none of its own (the window is
 frameless): a drag on the title bar moves the window, a double-click
-maximizes or restores it, and the thin edges resize it. *Settings >
-Appearance > axross's own title bars* switches back to the window
+maximizes or restores it, and the thin edges resize it. *Settings →
+Appearance → axross's own title bars* switches back to the window
 manager's title bar and buttons, for open windows at once.
 [x] closes the window, the button left of it maximizes it over the whole
 screen and restores the size it had before. `Ctrl+M` does the same, and so does
@@ -1397,8 +1427,8 @@ For LLM clients: [LLM_GUIDE.md](LLM_GUIDE.md).
 
 ## Agent dock — a local LLM works with axross
 
-Tools > Start Agent, *New Agent Tab Here* in a pane's right-click menu
-(a new tab for that folder) or View > Panels > Agent (Ask the Agent:
+Tools → Start Agent, *New Agent Tab Here* in a pane's right-click menu
+(a new tab for that folder) or View → Panels → Agent (Ask the Agent:
 Ctrl+Shift+K; Ctrl+Shift+A in a file list inverts the selection)
 open a chat with an LLM profile
 (the profiles of the Analysis dock: LM Studio, Ollama, vLLM, llama.cpp
@@ -1416,7 +1446,7 @@ filled the context, the tab says so.
 
 **Tabs.** Every tab is a conversation of its own with its own model,
 protection mode, sandbox, folder and tools: "+" or Ctrl+T opens one,
-a double-click renames it. With *Keep tabs* on (Tools > Agent
+a double-click renames it. With *Keep tabs* on (Tools → Agent
 Settings…) each tab is one JSON file in `~/.config/axross/agent/sessions/`
 (`0o600`) and comes back at the next start. Ctrl+Enter sends, Esc
 or Stop ends the task at once - also while the model is still writing
@@ -1517,7 +1547,8 @@ others (chmod); a symlink does not lead around them, and a relative
 symlink moved elsewhere is checked again. In the sandbox the existing
 ones, and the missing folders among them, are mounted read-only - a
 symlinked one (GNU stow, chezmoi) at its real path too; a protected file
-with hard links stays writable through its other names (a known limit).
+with hard links stays writable in the sandbox through its other names (a
+known limit; the tools themselves write no file with more names).
 The agent also does not read axross's own tokens or private SSH and
 GnuPG keys (`--mcp-allow-secret-reads` lifts that for the MCP server); in
 the sandbox they, `~/.ssh` as a whole, the ADB key, the desktop keyrings,
@@ -1535,10 +1566,22 @@ server's) root or an extra folder (`~/.config/myapp`); the places listed
 above stay protected inside it, and granting the whole home lifts nothing.
 zsh files in `$ZDOTDIR` (read from `~/.zshenv`) count as start files, and
 Git's files that run code - a repository's `.git/config`, `.git/hooks`,
-`.git/info`, `.gitmodules`, a `.git` entry itself - are refused anywhere.
-In the sandbox the hidden entries of a writable home are mounted read-only
-and no new one can be made; the Git config and hooks of the agent's folder
-are read-only too. MCP `chmod` sets no setuid, setgid or sticky bit and
+`.git/info`, `.git/commondir` (it points Git at another folder's config and
+hooks), `gitdir`, `.gitmodules`, a `.git` entry itself - are refused anywhere,
+also in a bare repository (`x.git/hooks`) and in any folder Git would take
+for a repository (`HEAD`, `objects/` and `refs/`; the last of the three is
+not made in a folder that is not one yet); likewise Mercurial's
+`.hg/hgrc` and Jujutsu's `.jj/repo`. Every name a path goes by counts: as
+typed, after each symlink on the way, and resolved - and the target of a
+symlink in those places (GNU stow: `~/.config/kitty -> ~/dotfiles/kitty`)
+is protected like the place itself, unless you grant that target. A file
+with other hard links is not written (the other names would change too;
+write a copy under a new name). In the sandbox the hidden entries of a
+writable home are mounted read-only and no new one can be made, the
+targets of such symlinks are read-only; the Git config, hooks, info and
+`commondir` of the agent's folder and of the repositories one folder below
+it are read-only too, and a `.git/commondir` the agent makes there is set
+aside (renamed `commondir.set-aside-by-axross-<time>`) when its task ends. MCP `chmod` sets no setuid, setgid or sticky bit and
 makes nothing group- or world-writable.
 
 **Secrets the agent does not read**, besides axross's own: the credential
@@ -1553,13 +1596,28 @@ history (shell and REPL histories hold typed tokens). Their names stay
 listable; the sandbox shows them empty. axross's trash (`~/.axross-trash`)
 is secret and read-only for every tool as well: a trashed key is still a
 key, and what is restored from the trash is put back with axross's rights.
+A link to a secret (`~/.ssh/id_ed25519 -> ~/keys/id_ed25519`) makes its
+target secret, and a hard link to a secret file is not read either.
 The trash records each entry with a signature: an entry whose record or
 data was changed is not restored, and one that goes back into a protected
 place (a start file, an autostart entry) is restored from the Trash window
 only after you confirm it.
 
+**Hidden folders are not read without a grant.** The agent's and the MCP
+server's tools do not hand out the contents of a hidden entry of your home
+(`~/.config/<app>`, `~/.mozilla`, `~/.local/share/TelegramDesktop`, …) or
+of `~/snap` (snap packages keep their Firefox and Chromium profiles
+there; also `~/Library` and `%APPDATA%`): too many programs keep sessions,
+tokens and keys there to list them all. Names stay listable, and your
+other files are read as before. For a task that needs such a file
+(*Review a config folder*), grant that folder - the agent's or the MCP
+server's root or an extra folder (read-only is enough), e.g.
+`~/.config/myapp`; the secrets in it stay unread. Granting the whole home
+lifts nothing; `--mcp-allow-secret-reads` lifts this for the MCP server
+along with the secrets.
+
 **Files read-only** (in the tab's top row, and for every tab in Agent
-Settings > Access): the agent reads files but changes none - no
+Settings → Access): the agent reads files but changes none - no
 writing, deleting or moving, no remote commands (a command can change
 files), extra folders read-only, no writing tools of MCP servers or
 extensions, and a sandbox mounts nothing writable. It is enforced where
@@ -1610,10 +1668,10 @@ They are a way out of a sandbox, so a master switch guards them and is
 
 **What a tab may reach** — two layers, both must allow it:
 
-- *Agent Settings > Access* is the ceiling of every tab: the master
+- *Agent Settings → Access* is the ceiling of every tab: the master
   switch *Let agents use axross functions* and each function. Off there
   means off in every tab.
-- *Access…* in the tab (or *Agent Settings > Sessions* for all tabs at
+- *Access…* in the tab (or *Agent Settings → Sessions* for all tabs at
   once) is the tab's own choice within it: its master switch and
   functions, its **network** and its **folders**. A new tab starts with
   the master switch as Agent Settings has it.
@@ -1639,11 +1697,11 @@ functions (master switch, functions, network), *Files read-only*,
 *Allow changes to files* / *Allow remote commands* and the MCP servers
 it offers — chosen **by category** (the catalog category a server was
 installed from, e.g. *Security: Reverse Engineering*; *Category* in
-Agent Settings > MCP Servers sets one by hand) and/or **by name** (or by
+Agent Settings → MCP Servers sets one by hand) and/or **by name** (or by
 the catalog entry it came from, so a renamed server still matches).
 The arrow beside "+" in the Agent dock offers **New Tab from Profile**,
 **Apply Profile…** (also in a tab's right-click menu) and **Edit Agent
-Profiles…**; Tools > New Agent Tab from Profile opens one for the active
+Profiles…**; Tools → New Agent Tab from Profile opens one for the active
 pane's folder. *Apply Profile…* shows first what the tab would get; it
 changes the tab's settings, the folder and the conversation stay, and a
 tab with a running task refuses it (stop the task first — the running
@@ -1652,7 +1710,7 @@ task keeps the settings it started with). The tab names its profile
 **Install from Catalog…** (the catalog opens on that category, or
 searches the server's name).
 
-A profile **never widens Agent Settings > Access**: with axross
+A profile **never widens Agent Settings → Access**: with axross
 functions off there, a profile's MCP servers are not offered and the tab
 says so; Bypass only where it may be chosen; a sandbox profile that does
 not exist is kept and refused, never quietly "no sandbox". Under *Files
@@ -1674,14 +1732,14 @@ editable profile of one):
 | Research | servers *fetch*, *memory*, *sequentialthinking*; not files read-only (fetch needs network), *Allow changes to files* off |
 
 A preset whose servers are not installed still sets up the rest of the
-tab. Agent Settings > **Profiles** edits your own profiles (New, Copy,
+tab. Agent Settings → **Profiles** edits your own profiles (New, Copy,
 Delete), previews what a tab gets within the Access page and picks the
 **profile of new tabs**. Stored in `~/.config/axross/agent/settings.json`
 (`agent_profiles`, `agent_profile`); a hand-edited entry is checked like
 the rest of the file (unknown keys dropped, wrong types take their
 default, a taken name — also a preset's — drops the entry).
 
-**Sandboxes** (Agent Settings > Sandboxes): a tab can run its agent in
+**Sandboxes** (Agent Settings → Sandboxes): a tab can run its agent in
 bubblewrap, podman or docker. A sandbox profile has a level:
 
 | Level | Network | Folder | Extra folders |
@@ -1711,12 +1769,23 @@ docker; bubblewrap gets them from a systemd user scope (without one only
 the memory, through `prlimit`). podman and docker need the image:
 `scripts/axross-podman.sh agent-image` ([PACKAGING.md](PACKAGING.md)).
 
-**MCP servers** (Agent Settings > MCP Servers): further MCP servers —
+**MCP servers** (Agent Settings → MCP Servers): further MCP servers —
 a program (stdio) or an http endpoint — whose tools a tab may offer as
 `<server>__<tool>`. *Test* lists their tools. A server set to "always"
 asks for every call; "writes" lets tools the server marks read-only run
 without asking. A program can run in a sandbox profile; one without
-says *runs on this machine, not in a container*. An http server's token
+says *runs on this machine, not in a container*. **Contained by
+default:** without a sandbox profile only a pure launcher starts - an
+interpreter running a script or a module already on disk (`node
+server.js`, `python3 -u server.py`, `python -m module`, `java -jar
+x.jar`, `dotnet x.dll`, `bash x.sh`, `ruby`/`perl`/`php` with a script).
+Any other program - a binary, a build tool (`bazel run`, `make`, `mix
+run`, `swift run` …), a package manager - says *not started: needs a
+sandbox profile or Trusted* and is refused at its start until it runs in
+a sandbox profile or you tick *Trusted: runs on this machine as it is*
+(then it runs with your rights; the mark is saved as `"trusted": true`).
+Trusted never lets a command that downloads code onto this machine
+(below). An http server's token
 is kept in the keyring. A typed command that downloads code (`npx …`,
 `uvx …`, `docker run …`) is never saved as a program on this machine:
 *Install in a Container* builds it in rootless podman (no network), or
@@ -1814,7 +1883,9 @@ converted (a git URL, `--package`, `uv run`, an unknown option …) is
 shown but cannot be ticked, with the reason. A program already on disk
 runs as it is, in the sandbox profile of new tabs (Agent Settings) or of
 the tab where it was ticked, and says so: *runs on this machine, not in
-a container*; one that is not on this machine cannot be ticked. The
+a container*; one that is not on this machine cannot be ticked. Without
+a sandbox profile only a pure launcher starts (contained by default,
+above): a detected binary needs a sandbox profile or *Trusted*. The
 files are read only, as untrusted data (regular files up to 8 MiB, JSON
 or TOML, nothing run). Environment values that look like secrets (by
 name - TOKEN, PASSWORD, API_KEY … - or shape) and Bearer tokens are
@@ -1871,7 +1942,7 @@ aloud. Speech is recognised by the tab's LLM profile (LLM Profiles,
 OpenAI-compatible server (`/audio/transcriptions`; a remote one asks
 before it hears a recording). Answers are spoken by a local Piper voice.
 
-- **Microphone modes** (Settings > Voice): *push-to-talk* (hold the button,
+- **Microphone modes** (Settings → Voice): *push-to-talk* (hold the button,
   or the hold key, default **F9**, while the Agent dock has the focus),
   *toggle* (click to start, click again or pause to end) and
   *conversation* (after each spoken answer it listens again; click the
@@ -1891,7 +1962,7 @@ before it hears a recording). Answers are spoken by a local Piper voice.
   (German: Thorsten or Kerstin, English: Ryan or Lessac), whether it is
   downloaded, **Download** (a second click cancels) and **Listen** - it
   speaks two sample sentences with the values of the tab, saved or not,
-  through the output of *Settings > Audio*; a second click stops. Every
+  through the output of *Settings → Audio*; a second click stops. Every
   voice keeps its own values of how it speaks: *Speed* (0.5-2×), *Pitch*
   (±6 semitones; Piper has no pitch of its own, so the speech is made that
   much slower and then resampled that much higher - its length stays),
@@ -1902,7 +1973,7 @@ before it hears a recording). Answers are spoken by a local Piper voice.
   uses them.
 - **Setup:** `pip install axross[voice]` (piper-tts, faster-whisper; part
   of axross-full), then **Download** beside a voice on the Voice page, or
-  *Help > Features…*, group **Voice**, for the voices and a Whisper model
+  *Help → Features…*, group **Voice**, for the voices and a Whisper model
   (pinned checksums, into `~/.local/share/axross/voice/`).
 - **Safety:** confirmations are always clicked, never spoken; the
   microphone is off in the paranoid security mode; audio and transcripts
@@ -2132,7 +2203,7 @@ environment or in the paranoid security mode; *Check Now* still works.
 - `~/.config/axross/bookmarks.json` — bookmark bar contents.
 - `~/.config/axross/session.json` — pane layout, window geometry and
   dock layout at last close; restored on start unless *Restore the layout
-  of the last session on start* (Settings > General) is off. Its `window`
+  of the last session on start* (Settings → General) is off. Its `window`
   object also holds the look (theme, compact, monochrome icons, font size,
   hidden files) and the language.
 - `~/.config/axross/column_prefs.json` — column widths and hidden

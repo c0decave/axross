@@ -22,9 +22,12 @@ from __future__ import annotations
 import contextlib
 import errno
 import io
+import logging
 import os
 
 from core import transfer_hooks
+
+log = logging.getLogger(__name__)
 
 
 def timeout_error(what: str, sftp) -> TimeoutError:
@@ -42,8 +45,9 @@ def timeout_error(what: str, sftp) -> TimeoutError:
     waited = f"{seconds:g} s" if seconds else "the time-out"
     return TimeoutError(
         errno.ETIMEDOUT,
-        f"SFTP {what}: the server sent nothing for {waited}; the network connection "
-        f"is probably lost. Reconnect and try again.",
+        f"SFTP {what}: the server sent nothing for {waited} and the SSH connection did "
+        f"not answer a keepalive either; the network connection is probably lost. "
+        f"Reconnect and try again.",
     )
 
 
@@ -79,11 +83,43 @@ def _connection_errors_as_oserror(what: str, sftp=None, watch=None):
 def _close_transport(sftp) -> None:
     """Close the SSH connection under *sftp*: a write blocked in the
     kernel's send buffer of a dead link wakes only then (paramiko retries
-    a full socket for ever)."""
+    a full socket for ever).
+
+    The connection is shared: terminals and other panes on the host have
+    channels on it. With any of them open it is closed only when it does
+    not answer a keepalive (core.ssh_client.transport_answers) - dead,
+    they are lost anyway; alive, the transfer's own channel is closed
+    already and the rest of the connection is left alone (logged)."""
     channel = sftp.get_channel()
     transport = channel.get_transport() if channel is not None else None
-    if transport is not None:
-        transport.close()
+    if transport is None:
+        return
+    channels = getattr(transport, "_channels", None)
+    try:
+        others = [
+            c for c in list(channels.values())
+            if c is not channel and not getattr(c, "closed", True)
+        ] if channels is not None else []
+    except Exception:  # noqa: BLE001 - paramiko internals: assume none
+        others = []
+    if others:
+        from core.ssh_client import transport_answers
+
+        # A probe as long as the grace Cancel already gave the I/O: a write
+        # stuck on a dead link holds the connection's send lock, so the
+        # probe cannot even go out then.
+        limit = transfer_hooks.CancelWatch.GRACE
+        if channel is not None and channel.gettimeout():
+            limit = min(limit, channel.gettimeout())
+        if transport_answers(transport, limit):
+            log.warning(
+                "Cancel: the transfer's SFTP channel is closed but its I/O has not "
+                "returned; the SSH connection still answers and carries %d other "
+                "channel(s) (terminals, panes), so it is left open",
+                len(others),
+            )
+            return
+    transport.close()
 
 
 def _watch_cancel(sftp_file):

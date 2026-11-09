@@ -31,7 +31,7 @@ from ui.icon_provider import set_window_icon
 _COLUMNS = ("On", "Name", "Version", "Source", "Description", "Status")
 
 WARNING = (
-    "An extension is Python code that runs inside axross with your rights - "
+    "An extension is Python code that runs inside axross with your rights – "
     "it can read, change and send anything you can. Switch on only extensions "
     "you trust. Nothing of an extension runs while it is off."
 )

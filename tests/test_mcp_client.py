@@ -264,7 +264,9 @@ def test_happy_the_server_may_ping_during_a_call(fake_server):
 
 def test_sad_a_missing_program_is_a_clear_error():
     with pytest.raises(C.McpClientError, match="cannot start"):
-        C.McpClient(C.McpServerConfig(name="x", command=("/nonexistent/mcp-server",)))
+        # trusted: a binary is contained by default (round 7), this one may start as it is
+        C.McpClient(C.McpServerConfig(name="x", command=("/nonexistent/mcp-server",),
+                                      trusted=True))
 
 
 def test_sad_a_dying_server_reports_its_last_words(fake_server):

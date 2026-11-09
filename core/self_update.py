@@ -725,6 +725,52 @@ def cache_dir() -> Path:
     return base_dir("XDG_CACHE_HOME") / "axross" / "update"  # a relative one is ignored
 
 
+def private_dir_problem(folder: Path, *, create: bool = True) -> str:
+    """Why *folder* may not hold a download ("" = it may): it must be a real
+    directory (no symlink) of this user that no one else may write to, like
+    the extension code cache. It is made with 0o700 when *create* and
+    missing; a folder another user owns, a group- or world-writable one or a
+    symlink is refused - not used, not "repaired" (someone else may have put
+    files in it). Its parents must not be writable by others either (unless
+    sticky, as /tmp), or the folder could be renamed away and replaced."""
+    folder = Path(folder)
+    try:
+        if create and not os.path.lexists(folder):
+            folder.parent.mkdir(parents=True, exist_ok=True)
+            os.mkdir(folder, 0o700)
+        st = os.lstat(folder)
+    except FileExistsError:
+        return private_dir_problem(folder, create=False)
+    except OSError as exc:
+        return f"{folder} cannot be used: {exc.strerror or exc}"
+    if stat.S_ISLNK(st.st_mode):
+        return f"{folder} is a symbolic link: not used"
+    if not stat.S_ISDIR(st.st_mode):
+        return f"{folder} is not a folder: not used"
+    from core.posix_compat import effective_uid
+
+    uid = effective_uid()
+    if uid is None:
+        return ""  # no owners and modes to check here (Windows)
+    if st.st_uid != uid:
+        return f"{folder} belongs to another user: not used"
+    if st.st_mode & 0o022:
+        return (f"{folder} is writable by other users: not used "
+                f"(make it private: chmod 700 '{folder}')")
+    parent = folder.parent
+    for _ in range(64):
+        try:
+            pst = os.stat(parent)
+        except OSError:
+            break
+        if pst.st_uid not in (uid, 0) or (pst.st_mode & 0o002 and not pst.st_mode & 0o1000):
+            return f"{parent} can be changed by other users: {folder} is not used"
+        if parent.parent == parent:
+            break
+        parent = parent.parent
+    return ""
+
+
 def _plain_mode(path: Path) -> int:
     """The read/write/execute bits of *path* - never setuid, setgid or
     sticky onto a downloaded file."""
@@ -1022,11 +1068,9 @@ def _update_binary(release: Release, inst: Install, *, opener, progress, cancel,
                               cancel=cancel, current=current, **issue)
         return install(downloaded, inst)
     cache = cache_dir()
-    cache.mkdir(parents=True, exist_ok=True)
-    try:
-        os.chmod(cache, 0o700)
-    except OSError:
-        pass
+    problem = private_dir_problem(cache)
+    if problem:
+        raise UpdateError(problem)
     downloaded = download(release, inst, dest_dir=cache, opener=opener, progress=progress,
                           cancel=cancel, current=current, **issue)
     final = cache / versioned_name(inst.asset, release.version)

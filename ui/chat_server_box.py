@@ -66,7 +66,7 @@ class ServerBox(QWidget):
         self.refresh_button.setText(tr("Refresh list"))
         self.refresh_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.refresh_button.setToolTip(tr("Fetch the list of public servers from the public directory "
-                                          "(through the proxy of Settings > Network & Proxy)"))
+                                          "(through the proxy of Settings → Network & Proxy)"))
         self.refresh_button.clicked.connect(self.refresh)
         row.addWidget(self.refresh_button)
         outer.addLayout(row)
@@ -124,7 +124,7 @@ class ServerBox(QWidget):
             self.info.setText(tr(template).format(date=server_list.date or "?") + " - "
                               + tr("{n} servers; or type your own.").format(n=len(self.entries)))
         else:
-            self.info.setText(tr("No list of public servers - type the server."))
+            self.info.setText(tr("No list of public servers – type the server."))
 
     def refresh(self) -> None:
         """Fetch the directories on a worker thread; the answer (or the

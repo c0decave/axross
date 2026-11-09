@@ -353,7 +353,9 @@ def test_edge_a_typed_docker_line_goes_hardened_and_a_local_program_says_where_i
     fake_podman(tmp_path, monkeypatch)
     path = tmp_path / "agent.json"
     s = S.AgentSettings()
-    s.mcp_servers.append(C.McpServerConfig(name="local", command=(sys.executable, "-V")))
+    script = tmp_path / "server.py"
+    script.write_text("", encoding="utf-8")
+    s.mcp_servers.append(C.McpServerConfig(name="local", command=(sys.executable, str(script))))
     s.save(path)
     dlg = _dialog(path)
     dlg.show()

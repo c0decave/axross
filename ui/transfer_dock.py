@@ -186,7 +186,10 @@ class TransferDock(QDockWidget):
         self._idle_label = QLabel(tr("No transfers yet. F5 copies the selection to the "
                                      "target pane, F6 moves it."))
         self._idle_label.setObjectName("axTransferIdle")
-        self._idle_label.setEnabled(False)  # the muted colour of the theme
+        # The theme's secondary text colour (QLabel[role="muted"]), not the
+        # disabled one: that was 1.9:1 on white in Light Mode (UX review
+        # round 7); every theme's muted colour reaches 4.5:1.
+        self._idle_label.setProperty("role", "muted")
         bottom.addWidget(self._idle_label, stretch=1)
 
         self._btn_retry = QPushButton(tr("Retry Failed"))

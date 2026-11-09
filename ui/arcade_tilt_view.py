@@ -559,7 +559,7 @@ class TiltView(AC.ArcadeView):
         sub = QColor("#c7d2fe")
         sub.setAlphaF(max(0.0, min(1.0, (t - 0.45) * 3)))
         AC.glow_text(p, QRectF(rect.left(), base_y + depth + 18, rect.width(), 26),
-                     tr("100 levels on a tilted board - Space jumps"), AC.font(10.5), sub)
+                     tr("100 levels on a tilted board – Space jumps"), AC.font(10.5), sub)
         AC.intro_hint(p, rect, t, QColor("#a5d8ff"))
 
     def _title_letters(self, rect: QRectF):

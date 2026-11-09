@@ -25,7 +25,7 @@ from core import third_party as T  # noqa: E402
 PROJECTS = {"README.md": r"lists the (\d+) projects axross uses or ships",
             "README_de.md": r"listet die (\d+) Projekte, die axross nutzt",
             "README_es.md": r"lista los (\d+) proyectos que axross usa"}
-GLANCE = {"USAGE.md": r"file manager for (\d+)\+ protocols",
+GLANCE = {"USAGE.md": r"file manager for more than (\d+)\s+protocols",
           "USAGE_de.md": r"Dateimanager für mehr als (\d+)\s+Protokolle",
           "USAGE_es.md": r"Total Commander para más de (\d+)\s+protocolos"}
 

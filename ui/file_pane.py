@@ -143,7 +143,8 @@ CONTEXT_COMMANDS: dict[str, tuple[str | None, str | None]] = {
     "refresh": ("refresh", "Ctrl+R"),
     "view-mode": ("thumbnails", "Ctrl+Shift+G"),
     "media-view": ("media-view", None),
-    "bookmark": ("bookmark", "Ctrl+D"),
+    # F8 as in View → Bookmarks; Ctrl+D in the file list does the same.
+    "bookmark": ("bookmark", "F8"),
     "trash-browser": ("trash", None),
     "terminal": ("terminal", None),
     "external-terminal": ("terminal", None),
@@ -546,8 +547,8 @@ def _select_in_modal_line_edit(text: str, length: int) -> None:
 
 def _removal_cancelled_text(trash: bool) -> str:
     """The status line of a Delete / Move to Trash stopped before anything went."""
-    return (tr("Move to Trash cancelled - nothing was touched.") if trash
-            else tr("Delete cancelled - nothing was deleted."))
+    return (tr("Move to Trash cancelled – nothing was touched.") if trash
+            else tr("Delete cancelled – nothing was deleted."))
 
 
 def removal_preview_text(preview) -> str:
@@ -1270,19 +1271,19 @@ class FilePaneWidget(QWidget):
 
         self._btn_up = QPushButton("\u2191")
         self._btn_up.setFixedWidth(30)
-        self._btn_up.setToolTip(tr("Parent directory"))
+        self._btn_up.setToolTip(tr("Parent folder"))
         self._btn_up.clicked.connect(self._go_up)
         path_bar.addWidget(self._btn_up)
 
         self._btn_home = QPushButton("\u2302")
         self._btn_home.setFixedWidth(30)
-        self._btn_home.setToolTip(tr("Home directory"))
+        self._btn_home.setToolTip(tr("Home folder"))
         self._btn_home.clicked.connect(self._go_home)
         path_bar.addWidget(self._btn_home)
 
         self._btn_bookmark = QPushButton("\u2606")
         self._btn_bookmark.setFixedWidth(30)
-        self._btn_bookmark.setToolTip(tr("Bookmark current directory"))
+        self._btn_bookmark.setToolTip(tr("Bookmark the current folder"))
         self._btn_bookmark.clicked.connect(self._add_bookmark)
         path_bar.addWidget(self._btn_bookmark)
 
@@ -1307,7 +1308,7 @@ class FilePaneWidget(QWidget):
         self._btn_watch.setToolTip(
             tr("Auto-refresh when the folder changes. On by default for local "
             "folders; off for remote ones, where it lists the folder again "
-            "every 2 seconds - click to turn it on for this pane.")
+            "every 2 seconds – click to turn it on for this pane.")
         )
         self._btn_watch.toggled.connect(self._on_watch_toggled)
         path_bar.addWidget(self._btn_watch)
@@ -1317,9 +1318,9 @@ class FilePaneWidget(QWidget):
         for btn, name in (
             (self._btn_target, tr("Set as transfer target")),
             (self._btn_close, tr("Close pane")),
-            (self._btn_up, tr("Parent directory")),
-            (self._btn_home, tr("Home directory")),
-            (self._btn_bookmark, tr("Bookmark current directory")),
+            (self._btn_up, tr("Parent folder")),
+            (self._btn_home, tr("Home folder")),
+            (self._btn_bookmark, tr("Bookmark the current folder")),
             (self._btn_refresh, tr("Refresh")),
             (self._btn_watch, tr("Auto-refresh")),
         ):
@@ -1366,6 +1367,12 @@ class FilePaneWidget(QWidget):
         self._model = FileTableModel(self)
         self._proxy = FileSortProxyModel(self)
         self._proxy.setSourceModel(self._model)
+        # The count in the status line follows the rows shown.
+        self._count_text = ""
+        self._count_pending = False
+        for signal in (self._proxy.rowsInserted, self._proxy.rowsRemoved,
+                       self._proxy.modelReset, self._proxy.layoutChanged):
+            signal.connect(self._count_changed)
         #: The window's "Show Hidden Files" for this pane, and the folder a
         #: Reveal showed hidden entries in for its entry (None: none).
         self._hidden_pref = False
@@ -1463,10 +1470,18 @@ class FilePaneWidget(QWidget):
         layout.addWidget(self._table, stretch=1)
 
         # Status bar with disk usage
-        status_layout = QHBoxLayout()
+        # The message is cut with "…" (whole in its tooltip) and keeps its
+        # room before the free space does (ui.elided_label; UX review
+        # round 7: "2 Pfade in die Zwische" at 1024x600).
+        from ui.elided_label import ElidedLabel, MessageFirstRow
+
+        self._status = ElidedLabel()
+        self._disk_label = ElidedLabel()
+        self._disk_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        status_layout = MessageFirstRow(self._status, self._disk_label)
+        self._status_row = status_layout
         status_layout.setSpacing(8)
 
-        self._status = QLabel()
         status_layout.addWidget(self._status)
 
         # Shown only while a folder loads in the background.
@@ -1522,7 +1537,6 @@ class FilePaneWidget(QWidget):
         self._proxy_label.hide()
         status_layout.addWidget(self._proxy_label)
 
-        self._disk_label = QLabel()
         self._disk_label.setProperty("role", "muted")
         status_layout.addWidget(self._disk_label)
 
@@ -1663,7 +1677,7 @@ class FilePaneWidget(QWidget):
                                 listed_after=listed_after)
         except OSError as e:
             log.error("Navigation failed: %s", e)
-            self._status.setText(tr("Error: {error}").format(error=describe(e, path)))
+            self._feedback(tr("Error: {error}").format(error=describe(e, path)))
         finally:
             self._progress_bar.hide()
 
@@ -1732,7 +1746,7 @@ class FilePaneWidget(QWidget):
         self._nav_job.abandon()
         self._end_loading()
         if not ctx["quiet"]:
-            self._status.setText(tr("Cancelled — still in {path}").format(
+            self._status.setText(tr("Cancelled – still in {path}").format(
                 path=_shorten_path(self._current_path)))
         self.navigation_finished.emit(ctx["path"], False)
 
@@ -1755,7 +1769,7 @@ class FilePaneWidget(QWidget):
                 return
             log.error("Navigation failed: %s", value)
             if not ctx["quiet"]:
-                self._status.setText(tr("Error: {error}").format(
+                self._feedback(tr("Error: {error}").format(
                     error=describe(value, ctx["path"])))
             self.navigation_finished.emit(ctx["path"], False)
             return
@@ -2305,7 +2319,7 @@ class FilePaneWidget(QWidget):
         if not paths:
             return False
         cut_clipboard().cut(self, self._backend, self._current_path, paths)
-        self._status.setText(
+        self._feedback(
             tr("Cut {count} item(s): Paste (Ctrl+V) in a folder moves them there").format(
                 count=len(paths))
         )
@@ -2450,7 +2464,7 @@ class FilePaneWidget(QWidget):
                       "Copied {n} paths to the clipboard")
         if any(had for _text, had in lines):
             status += " " + tr("(control characters escaped)")
-        self._status.setText(status)
+        self._feedback(status)
 
     def _copy_paths_to_clipboard(self) -> None:
         """Copy selected file paths to clipboard (Ctrl+C).
@@ -2490,7 +2504,7 @@ class FilePaneWidget(QWidget):
                 "Clipboard copy: %d path(s) contained control characters — escaped before copy",
                 sum(1 for p in paths if _sanitize_clipboard_text(p)[1]),
             )
-        self._status.setText(status)
+        self._feedback(status)
 
     def _safe_item_path(self, item: FileItem, *, warn: bool = True) -> str | None:
         """Return the selected item's child path, rejecting hostile names."""
@@ -2554,7 +2568,7 @@ class FilePaneWidget(QWidget):
                 else:
                     left_out.append(item.name)
         if left_out:
-            self._status.setText(
+            self._feedback(
                 tr("{count} selected item(s) left out: name not usable here ({names})").format(
                     count=len(left_out),
                     names=", ".join(repr(n) for n in left_out[:3]),
@@ -2663,7 +2677,16 @@ class FilePaneWidget(QWidget):
         """The status line's count: the entries, not the "." and ".." rows -
         and what the backend has to say about its state, if anything (a
         Git URL session: offline, or commits not pushed to origin)."""
-        text = tr_n(self._model.entry_count(), "{n} item", "{n} items")
+        # The entries shown, not all listed: hidden ones (and those the
+        # filter leaves out) are counted apart (UX review round 7).
+        shown, hidden, filtered = self._proxy.entry_counts()
+        if filtered:
+            text = tr_n(shown + filtered, "{shown} of {n} item", "{shown} of {n} items",
+                        shown=shown)
+        else:
+            text = tr_n(shown, "{n} item", "{n} items")
+        if hidden:
+            text += " " + tr_n(hidden, "({n} hidden)", "({n} hidden)")
         note_of = getattr(self._backend, "status_note", None)
         if callable(note_of):
             try:
@@ -2672,7 +2695,22 @@ class FilePaneWidget(QWidget):
                 note = ""
             if isinstance(note, str) and note:
                 text = f"{text} \u00b7 {note}"
+        self._count_text = text
         return text
+
+    def _count_changed(self, *_args) -> None:
+        """The rows shown changed (filter, Show Hidden Files): the count
+        in the status line follows - unless a message stands there."""
+        if not self._count_pending:
+            self._count_pending = True
+            QTimer.singleShot(0, self._refresh_count)
+
+    def _refresh_count(self) -> None:
+        self._count_pending = False
+        if getattr(self, "_status", None) is None:
+            return
+        if self._status.text() == self._count_text:
+            self._status.setText(self._items_text())
 
     def _list_views(self) -> list:
         """The table and, once made, the thumbnail view: both show the model."""
@@ -2955,8 +2993,12 @@ class FilePaneWidget(QWidget):
             return f"{format_decimal(b)} PB"
 
         pct = int((used / total) * 100) if total else 0
-        self._disk_label.setText(tr("Free: {free} / {total} ({pct}% used)").format(
-            free=_fmt(free), total=_fmt(total), pct=pct))
+        # The short form when the footer is narrow (ui.elided_label).
+        self._disk_label.set_texts(
+            tr("Free: {free} / {total} ({pct}% used)").format(
+                free=_fmt(free), total=_fmt(total), pct=pct),
+            tr("Free: {free}").format(free=_fmt(free)),
+        )
 
     # --- Filter ---
 
@@ -3914,10 +3956,15 @@ class FilePaneWidget(QWidget):
         # In the background, as Ctrl+R and the toolbar: refresh() lists the
         # folder on the GUI thread (scripts and tests want it that way).
         more_entry("refresh", tr("R&efresh"), lambda _checked=False: self.refresh_async())
-        view_as = "Vie&w as Details" if self.view_mode == "thumbnails" else "Vie&w as Thumbnails"
-        more_entry("view-mode", tr(view_as), lambda _checked=False: self.toggle_view_mode())
+        # One name, check and key with View → Thumbnail View (the menus
+        # named it "View as Thumbnails" / "Thumbnail View"; UX review round 7).
+        view_mode = more_entry("view-mode", tr("Thumb&nail View"),
+                               lambda _checked=False: self.toggle_view_mode())
+        view_mode.setCheckable(True)
+        view_mode.setChecked(self.view_mode == "thumbnails")
         more_entry("media-view", tr("View Media…"), lambda _checked=False: self.view_media())
-        more_entry("bookmark", tr("&Bookmark This Directory"), self._add_bookmark)
+        # The name of View → Bookmarks → Bookmark This Folder (F8).
+        more_entry("bookmark", tr("&Bookmark This Folder"), self._add_bookmark)
         more_entry("trash-browser", tr("Show Trash…"), self._show_trash_browser)
         group(more)
         # The paths alone, as text (Copy - Ctrl+C - marks the entries for
@@ -3966,7 +4013,7 @@ class FilePaneWidget(QWidget):
                 more_entry("decrypt", tr("Decrypt with passphrase…"),
                            lambda: self._decrypt_selected_file(single))
             else:
-                more_entry("encrypt", tr("Encrypt with passphrase…"),
+                more_entry("encrypt", tr("Encrypt with Passphrase…"),
                            lambda: self._encrypt_selected_file(single))
         # -- the agent
         group(more)
@@ -4025,7 +4072,7 @@ class FilePaneWidget(QWidget):
         if dirs and not hostile:
             entry(
                 "calculate-size",
-                tr("Calculate Si&ze ({count} dirs)").format(count=len(dirs)),
+                tr_n(len(dirs), "Calculate Si&ze ({n} folder)", "Calculate Si&ze ({n} folders)"),
                 self._calculate_dir_size,
             )
         sub.addSeparator()
@@ -4289,6 +4336,17 @@ class FilePaneWidget(QWidget):
         options.triggered.connect(lambda _checked=False: self.pack_selection(None))
         return menu
 
+    def _feedback(self, text: str) -> None:
+        """Show *text* in the pane's status line; when the line is too
+        narrow for all of it, in the window's status bar as well (the
+        pane line then shows it cut with "…", whole in its tooltip)."""
+        self._status.setText(text)
+        room = self._status_row.message_room()
+        if self.isVisible() and self._status.fontMetrics().horizontalAdvance(text) > room:
+            window = self.window()
+            if window is not self and hasattr(window, "statusBar"):
+                window.statusBar().showMessage(text, 8000)
+
     def status_message(self, text: str) -> None:
         """Show *text* in the pane's status line and the window's."""
         self._status.setText(text)
@@ -4346,7 +4404,7 @@ class FilePaneWidget(QWidget):
         if job is None:
             job = ScanJob(
                 self,
-                formatter=lambda st: tr("Packing… {scanned} of {total} — {path}").format(
+                formatter=lambda st: tr("Packing… {scanned} of {total} – {path}").format(
                     scanned=st["scanned"], total=st["indexed"], path=st["path"]),
             )
             job.progress.connect(self.status_message)
@@ -4369,7 +4427,7 @@ class FilePaneWidget(QWidget):
             self.refresh_after_change(quiet=True)
             return
         if cancelled or isinstance(value, PK.PackCancelled):
-            self.status_message(tr("Packing cancelled - nothing was written."))
+            self.status_message(tr("Packing cancelled – nothing was written."))
             return
         QMessageBox.warning(self, tr("Pack"), f"{tr('The archive was not made:')}\n{value}")
 
@@ -4386,7 +4444,7 @@ class FilePaneWidget(QWidget):
             QMessageBox.warning(
                 self,
                 tr("New Folder"),
-                tr("Folder name must be a plain filename — no path "
+                tr("Folder name must be a plain filename – no path "
                 "separators, no '..', no NUL bytes."),
             )
             return
@@ -4426,7 +4484,7 @@ class FilePaneWidget(QWidget):
             QMessageBox.warning(
                 self,
                 tr("New File"),
-                tr("File name must be a plain filename — no path separators, no '..', no NUL bytes."),
+                tr("File name must be a plain filename – no path separators, no '..', no NUL bytes."),
             )
             return
         backend = self._backend
@@ -4470,7 +4528,7 @@ class FilePaneWidget(QWidget):
         link_name, ok = QInputDialog.getText(
             self,
             tr("New Symlink"),
-            tr("Link name (created in this directory):"),
+            tr("Link name (created in this folder):"),
         )
         if not ok or not link_name:
             return
@@ -4478,7 +4536,7 @@ class FilePaneWidget(QWidget):
             QMessageBox.warning(
                 self,
                 tr("New Symlink"),
-                tr("Link name must be a plain filename — no path separators, no '..', no NUL bytes."),
+                tr("Link name must be a plain filename – no path separators, no '..', no NUL bytes."),
             )
             return
         link_path = self._backend.join(folder, link_name)
@@ -4518,7 +4576,7 @@ class FilePaneWidget(QWidget):
         link_name, ok = QInputDialog.getText(
             self,
             tr("New Hardlink"),
-            tr("Link name (created in this directory):"),
+            tr("Link name (created in this folder):"),
         )
         if not ok or not link_name:
             return
@@ -4526,7 +4584,7 @@ class FilePaneWidget(QWidget):
             QMessageBox.warning(
                 self,
                 tr("New Hardlink"),
-                tr("Link name must be a plain filename — no path separators, no '..', no NUL bytes."),
+                tr("Link name must be a plain filename – no path separators, no '..', no NUL bytes."),
             )
             return
         link_path = self._backend.join(folder, link_name)
@@ -4568,7 +4626,7 @@ class FilePaneWidget(QWidget):
             QMessageBox.warning(
                 self,
                 tr("Rename"),
-                tr("New name must be a plain filename — no path "
+                tr("New name must be a plain filename – no path "
                 "separators, no '..', no NUL bytes."),
             )
             return
@@ -4824,7 +4882,7 @@ class FilePaneWidget(QWidget):
             return
         self._removal_job.cancel()
         self._cancel_delete_btn.setEnabled(False)
-        self._status.setText(tr("Cancelling - stopping at the next entry…"))
+        self._status.setText(tr("Cancelling – stopping at the next entry…"))
 
     def _end_removal(self, ctx: dict) -> None:
         _release_removal(ctx["token"])
@@ -5201,7 +5259,7 @@ class FilePaneWidget(QWidget):
             return
         self._status.setText(self._items_text())
         if kind == "error":
-            QMessageBox.warning(self, tr("Directory Size"), tr("Could not calculate the size:\n{error}").format(error=value))
+            QMessageBox.warning(self, tr("Folder Size"), tr("Could not calculate the size:\n{error}").format(error=value))
             return
         from ui.dir_size_dialog import DirSizeDialog, rows_from_results
 
@@ -5506,15 +5564,42 @@ class FilePaneWidget(QWidget):
         table = getattr(self, "_table", None)
         if table is None:
             return default
-        return max(default, table.horizontalHeader().sectionSizeHint(col))
+        return max(default, self._label_width(col))
+
+    def _label_width(self, col: int) -> int:
+        """Width the header label of *col* needs as drawn: the header's
+        real (style sheet) font, its padding and room for a sort arrow.
+
+        Not header.sectionSizeHint(): that is 0 for a hidden column,
+        so a column that had stepped aside came back below its label - the
+        German "Eigentümer" at 75 px drawn as "igentüme" (UX review
+        round 7)."""
+        from PyQt6.QtCore import QSize
+        from PyQt6.QtWidgets import QStyle, QStyleOptionHeader
+
+        header = self._table.horizontalHeader()
+        opt = QStyleOptionHeader()
+        opt.initFrom(header)
+        opt.orientation = Qt.Orientation.Horizontal
+        opt.section = col
+        opt.text = str(self._model.headerData(col, Qt.Orientation.Horizontal) or "")
+        opt.textAlignment = header.defaultAlignment()
+        # Room for the arrow whichever column is sorted: sorting by a
+        # column must not clip its label either. The same measure for a
+        # shown and a hidden column, so a refresh does not make columns
+        # jump.
+        if header.isSortIndicatorShown():
+            opt.sortIndicator = QStyleOptionHeader.SortIndicator.SortDown
+        size = header.style().sizeFromContents(
+            QStyle.ContentsType.CT_HeaderSection, opt, QSize(), header
+        )
+        return size.width()
 
     def _column_floor(self, col: int) -> int:
         """Narrowest *col* may get to make room for a name: its own content
         and its header label stay whole."""
         header = self._table.horizontalHeader()
-        return max(
-            header.minimumSectionSize(), self._content_width(col), header.sectionSizeHint(col)
-        )
+        return max(header.minimumSectionSize(), self._content_width(col), self._label_width(col))
 
     def _user_visible_columns(self) -> list[int]:
         """The columns the user wants shown (the fitting may hide some)."""
@@ -5531,7 +5616,7 @@ class FilePaneWidget(QWidget):
         # Never less than its header label: an empty folder (only "." and
         # "..") left Name a few pixels wide beside full-width columns
         # (UX review round 6).
-        label = self._table.horizontalHeader().sectionSizeHint(0)
+        label = self._label_width(0)
         return max(label, min(self._content_width(0), max(viewport * 2 // 5, chars + icon + 24)))
 
     def _fit_widths(self, others: list[int], viewport: int, chosen: set[int]) -> dict[int, int]:
@@ -5833,7 +5918,7 @@ class FilePaneWidget(QWidget):
             QMessageBox.warning(
                 self,
                 tr("Create XLink"),
-                tr("Link name must be a plain filename — no path separators, no '..', no NUL bytes."),
+                tr("Link name must be a plain filename – no path separators, no '..', no NUL bytes."),
             )
             return
         target_path = self._backend.join(folder, name)
@@ -6194,7 +6279,7 @@ class FilePaneWidget(QWidget):
             self,
             tr("Encrypted"),
             as_written(f"{item.name} → {dst_path.rsplit('/', 1)[-1]}\n\n"
-                       + tr("Original plaintext is still in place — delete it manually "
+                       + tr("Original plaintext is still in place – delete it manually "
                             "when you've verified the encrypted copy decrypts cleanly.")),
         )
         self.refresh_after_change()
@@ -6443,7 +6528,7 @@ class FilePaneWidget(QWidget):
                 return True
 
             # --- File operations ---
-            # F8 is the window's "Add Current Directory" shortcut, not delete.
+            # F8 is the window's "Bookmark This Folder" shortcut, not delete.
             # Del moves to the trash (a permanent delete where the connection
             # has none); Shift+Del deletes permanently, after a question
             # whose default is No.

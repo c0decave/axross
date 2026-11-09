@@ -289,7 +289,7 @@ def replaced_reason(plan: UndoPlan, backend) -> str:
     from core.i18n import tr
 
     name = plan.dest.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1] or plan.dest
-    return tr("{name} is not the file the move put there - it was changed or "
+    return tr("{name} is not the file the move put there – it was changed or "
               "replaced since").format(name=name)
 
 
@@ -330,7 +330,7 @@ def plan_undo(event: dict) -> UndoPlan:
     if status not in _SUCCESS:
         return _refuse(
             event,
-            _tr("the operation did not complete (status {status}) — "
+            _tr("the operation did not complete (status {status}) – "
                 "reversing it against unknown state could lose data").format(
                     status=status or _tr("unknown")),
         )

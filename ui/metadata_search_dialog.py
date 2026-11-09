@@ -295,8 +295,8 @@ class MetadataSearchDialog(QDialog):
             return
         indexed, removed = value if isinstance(value, tuple) else (value, 0)
         if cancelled:
-            text = tr_n(indexed, "Cancelled — {n} entry indexed so far under {path}.",
-                        "Cancelled — {n} entries indexed so far under {path}.", path=path)
+            text = tr_n(indexed, "Cancelled – {n} entry indexed so far under {path}.",
+                        "Cancelled – {n} entries indexed so far under {path}.", path=path)
         else:
             text = tr_n(indexed, "Indexed {n} entry under {path}.",
                         "Indexed {n} entries under {path}.", path=path)
@@ -327,7 +327,7 @@ class MetadataSearchDialog(QDialog):
             self._status.setText(in_index)
         elif more:
             self._status.setText(
-                tr("Showing the first {n} matches - there are more; narrow the search.").format(
+                tr("Showing the first {n} matches – there are more; narrow the search.").format(
                     n=format_count(found)) + "  ·  " + in_index)
         else:
             self._status.setText(

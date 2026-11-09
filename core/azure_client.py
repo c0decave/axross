@@ -11,7 +11,6 @@ import errno
 import logging
 import posixpath
 import re
-import tempfile
 import time
 from datetime import datetime
 from typing import IO
@@ -21,7 +20,7 @@ from core.append_helpers import read_existing_for_append
 from core import cloud_http, transfer_hooks
 from core.backend import SessionLifecycle
 from core.path_policy import refuse_folder_path, safe_leaf
-from core.read_spool import spool_chunks
+from core.read_spool import new_spool, spool_chunks
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
@@ -319,7 +318,7 @@ class _BlobSpooledWriter:
     def __init__(self, blob_client, path: str = ""):
         self._blob_client = blob_client
         self._path = path or _client_name(blob_client, "blob_name")
-        self._buf = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
+        self._buf = new_spool(max_size=8 * 1024 * 1024)
         self._closed = False
         self._hooks = transfer_hooks.current()
         if self._hooks is not None:
@@ -390,7 +389,7 @@ class _ShareSpooledWriter:
     def __init__(self, file_client, path: str = ""):
         self._file_client = file_client
         self._path = path or _client_name(file_client, "file_name")
-        self._buf = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
+        self._buf = new_spool(max_size=8 * 1024 * 1024)
         self._closed = False
         self._hooks = transfer_hooks.current()
         if self._hooks is not None:

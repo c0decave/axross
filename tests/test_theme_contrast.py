@@ -9,6 +9,7 @@ background (WCAG contrast ratio).
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -160,6 +161,71 @@ class EveryThemeIsReadableTest(_QtCase):
         tokens = themes.palette_tokens_for("hacker")
         self.assertEqual(tokens["surface_alt"], "#0d0d0d")
         self.assertEqual(tokens["text"], "#00ff41")
+
+
+class SecondaryTextSelectionAndDisabledTest(_QtCase):
+    """UX review round 7: the Light Mode hint "No transfers yet…" was the
+    palette's disabled grey (1.9:1), Fusion's selection 3.7:1, and a
+    disabled button in a dark theme looked like an enabled one."""
+
+    def test_happy_the_idle_hint_uses_the_muted_role_readable_in_every_theme(self) -> None:
+        from ui import themes
+
+        source = (Path(__file__).resolve().parent.parent / "ui/transfer_dock.py").read_text()
+        self.assertIn('self._idle_label.setProperty("role", "muted")', source)
+        self.assertNotIn("self._idle_label.setEnabled(False)", source)
+        backgrounds = {"default": "#efefef", "classic": "#1e1e2e", "hacker": "#0a0a0a",
+                       "amber": "#0a0a0a"}
+        for theme, background in backgrounds.items():
+            css = themes.stylesheet_for(theme, None)
+            colours = re.findall(r'QLabel\[role="muted"\] \{\s*color: (#[0-9a-fA-F]{6})', css)
+            self.assertTrue(colours, theme)
+            self.assertGreaterEqual(themes.contrast_ratio(colours[-1], background), 4.5, theme)
+
+    def test_happy_a_weak_desktop_selection_is_darkened_to_readable(self) -> None:
+        from PyQt6.QtGui import QColor, QPalette
+
+        from ui import themes
+
+        pal = QPalette()
+        role = QPalette.ColorRole
+        pal.setColor(role.Highlight, QColor("#308cc6"))  # Fusion's own
+        pal.setColor(role.HighlightedText, QColor("#ffffff"))
+        self.assertLess(themes.contrast_ratio("#ffffff", "#308cc6"), 4.5)
+        fixed = themes.readable_palette(pal)
+        for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
+            ratio = themes.contrast_ratio(fixed.color(group, role.HighlightedText).name(),
+                                          fixed.color(group, role.Highlight).name())
+            self.assertGreaterEqual(ratio, 4.5)
+
+    def test_sad_a_disabled_button_differs_from_an_enabled_one_in_dark_themes(self) -> None:
+        from ui import themes
+
+        for theme in ("classic", "hacker", "amber", "modern-dark", "modern-light"):
+            css = themes.stylesheet_for(theme, None)
+            rule = re.search(r"QPushButton:disabled[^{]*\{([^}]*)\}", css)
+            self.assertIsNotNone(rule, theme)
+            body = rule.group(1)
+            self.assertIn("background-color: transparent", body, theme)
+            self.assertIn("dashed", body, theme)
+            self.assertIn("color:", body, theme)
+
+    def test_edge_a_readable_selection_is_left_alone(self) -> None:
+        from PyQt6.QtGui import QColor, QPalette
+
+        from ui import themes
+
+        pal = QPalette()
+        role = QPalette.ColorRole
+        pal.setColor(role.Highlight, QColor("#1d4f91"))
+        pal.setColor(role.HighlightedText, QColor("#ffffff"))
+        self.assertEqual(themes.readable_palette(pal).color(role.Highlight).name(), "#1d4f91")
+        # a light selection under dark text gets lighter, not darker
+        pal.setColor(role.Highlight, QColor("#6f6f6f"))
+        pal.setColor(role.HighlightedText, QColor("#000000"))
+        fixed = themes.readable_palette(pal)
+        self.assertGreaterEqual(
+            themes.contrast_ratio("#000000", fixed.color(role.Highlight).name()), 4.5)
 
 
 if __name__ == "__main__":

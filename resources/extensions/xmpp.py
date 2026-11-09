@@ -114,7 +114,7 @@ def show_security(panel, client: X.XmppClient, key: str) -> None:
         own, found = result
         shown = list(found)  # the dialog's refresh after a trust change shows these again
         head = tr(C.ENC_TEXT.get(conv.encryption, "")) if conv is not None else ""
-        dialog = DevicesDialog(panel, tr("OMEMO - {jid}").format(jid=jid) + (f" ({head})" if head else ""),
+        dialog = DevicesDialog(panel, tr("OMEMO – {jid}").format(jid=jid) + (f" ({head})" if head else ""),
                                own, lambda: shown, set_trust, None, fingerprint_text=lambda f: f,
                                trust_choices=("verified", "trusted", "distrusted", "undecided"))
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
@@ -135,7 +135,7 @@ def handle_request(panel, client: X.XmppClient, request) -> bool:
         box.setText(tr("{jid} has devices nobody decided on. Messages are encrypted for them only when "
                        "you trust them.").format(jid=request.jid))
         box.setInformativeText(lines)
-        verified = box.addButton(tr("I Compared Them - Verified"), QMessageBox.ButtonRole.AcceptRole)
+        verified = box.addButton(tr("I Compared Them – Verified"), QMessageBox.ButtonRole.AcceptRole)
         trust = box.addButton(tr("Trust Without Comparing"), QMessageBox.ButtonRole.YesRole)
         box.addButton(tr("Distrust"), QMessageBox.ButtonRole.RejectRole)
         box.exec()

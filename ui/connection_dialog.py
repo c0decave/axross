@@ -176,6 +176,12 @@ class ConnectionDialog(QDialog):
     def result_key_passphrase(self) -> str:
         return self._result_key_passphrase
 
+    @property
+    def result_new_pane(self) -> bool:
+        """Open the connection in a new pane, not in the unused target
+        pane: "Open in a new pane" ticked, or Shift held on OK."""
+        return getattr(self, "_result_new_pane", False)
+
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
 
@@ -258,6 +264,22 @@ class ConnectionDialog(QDialog):
         self._addr_family.addItems([tr("Auto"), tr("IPv4 only"), tr("IPv6 only")])
         conn_form.addRow(tr("IP Version:"), self._addr_family)
 
+        # SFTP: seconds of silence before a waiting request asks the
+        # connection whether it is alive (core.ssh_client.SFTP_IO_TIMEOUT).
+        from core.profiles import SFTP_TIMEOUT_MAX
+
+        self._sftp_timeout = QSpinBox()
+        self._sftp_timeout.setRange(0, SFTP_TIMEOUT_MAX)
+        self._sftp_timeout.setSuffix(tr(" s"))
+        self._sftp_timeout.setSpecialValueText(tr("Default (60 s)"))
+        self._sftp_timeout.setToolTip(tr(
+            "How long a request may wait for the server's answer before axross asks the "
+            "SSH connection whether it is still alive. It fails only when the connection "
+            "does not answer; a slow server that is alive (tape or HSM storage) is waited "
+            "for. Larger for such servers, smaller to notice a lost network sooner."
+        ))
+        conn_form.addRow(tr("SFTP time-out:"), self._sftp_timeout)
+
         # --- Protocol-specific fields ---
 
         # FTP: passive mode
@@ -312,9 +334,9 @@ class ConnectionDialog(QDialog):
         # What the client sends about itself (AUTH_SYS). Any of them set:
         # axross speaks NFSv3 itself instead of mounting through the kernel.
         sender_tip = tr(
-            "What axross sends the NFS server about itself (AUTH_SYS) - the server "
+            "What axross sends the NFS server about itself (AUTH_SYS) – the server "
             "believes it and decides access by it. Fill in any of these and axross "
-            "speaks NFS itself - v3 or v4, as chosen above (no mount, no root); the fields left empty are this "
+            "speaks NFS itself – v3 or v4, as chosen above (no mount, no root); the fields left empty are this "
             "computer's name, your UID and GID and no extra groups. Empty: the system's "
             "NFS mount, which always sends this computer's name and your IDs."
         )
@@ -340,7 +362,7 @@ class ConnectionDialog(QDialog):
         self._nfs_client_id = QLineEdit()
         self._nfs_client_id.setPlaceholderText(tr("NFSv4: axross:<machine name>"))
         self._nfs_client_id.setToolTip(
-            tr("NFSv4 only: the client id string axross registers with the server (SETCLIENTID) - "
+            tr("NFSv4 only: the client id string axross registers with the server (SETCLIENTID) – "
                "what the server knows this client as.") + " " + sender_tip
         )
         conn_form.addRow(tr("NFSv4 Client ID:"), self._nfs_client_id)
@@ -438,7 +460,7 @@ class ConnectionDialog(QDialog):
         self._iscsi_initiator_name = QLineEdit()
         self._iscsi_initiator_name.setPlaceholderText(tr("system default (/etc/iscsi/initiatorname.iscsi)"))
         self._iscsi_initiator_name.setToolTip(
-            tr("The initiator name (IQN) this connection sends to the target - in the "
+            tr("The initiator name (IQN) this connection sends to the target – in the "
             "login and the discovery. Any name the target accepts, e.g. "
             "iqn.2026-11.org.example:client1. Empty: the system's.")
         )
@@ -476,7 +498,7 @@ class ConnectionDialog(QDialog):
                                         "countdown)"))
         self._production.setToolTip(tr(
             "The first delete, move or overwrite on this connection in a pane waits a few "
-            "seconds with a countdown that Cancel or Esc stops - for servers where a slip "
+            "seconds with a countdown that Cancel or Esc stops – for servers where a slip "
             "costs something."))
         conn_form.addRow("", self._production)
 
@@ -543,7 +565,7 @@ class ConnectionDialog(QDialog):
 
         self._proxy_mode = QComboBox()
         # A combo box shows "&" as it is: "&&" showed up doubled.
-        self._proxy_mode.addItem(tr("Default proxy (Tools > Network & Proxy)"), "default")
+        self._proxy_mode.addItem(tr("Default proxy (Tools → Network & Proxy)"), "default")
         self._proxy_mode.addItem(tr("Custom proxy for this profile"), "custom")
         proxy_form.addRow(tr("Use:"), self._proxy_mode)
 
@@ -623,6 +645,15 @@ class ConnectionDialog(QDialog):
         self._btn_deploy_key.clicked.connect(self._deploy_ssh_key)
         buttons.addButton(self._btn_deploy_key, QDialogButtonBox.ButtonRole.ActionRole)
 
+        # Where the connection opens: by default in the target pane while
+        # nobody has used it yet (ui.main_window._untouched_target_pane).
+        self._new_pane_box = QCheckBox(tr("Open in a new pane"))
+        self._new_pane_box.setToolTip(
+            tr("Without this, the connection opens in the target pane while that is "
+               "unused (a local pane still at your home folder). Holding Shift while "
+               "you click OK also opens a new pane.")
+        )
+        layout.addWidget(self._new_pane_box)
         layout.addWidget(buttons)
 
         self._update_auth_fields()
@@ -792,6 +823,7 @@ class ConnectionDialog(QDialog):
 
         # IP version — only relevant for host-based protocols
         self._set_form_row_visible(self._addr_family, needs_host)
+        self._set_form_row_visible(self._sftp_timeout, proto == "sftp")
 
         # Update default port
         from core.backend_registry import get as get_backend
@@ -923,6 +955,7 @@ class ConnectionDialog(QDialog):
 
         addr_map = {"auto": 0, "ipv4": 1, "ipv6": 2}
         self._addr_family.setCurrentIndex(addr_map.get(p.address_family, 0))
+        self._sftp_timeout.setValue(p.sftp_timeout)
 
         if p.auth_type == "key":
             self._auth_key.setChecked(True)
@@ -1020,7 +1053,7 @@ class ConnectionDialog(QDialog):
         elif defaults.proxy_type != "none":
             hint = f"{defaults.proxy_type.upper()} {defaults.host}:{defaults.port}"
         else:
-            hint = tr("No default proxy is configured yet (Tools > Network & Proxy).")
+            hint = tr("No default proxy is configured yet (Tools → Network & Proxy).")
         self._proxy_default_hint.setText(hint)
         self._update_proxy_fields()
 
@@ -1078,6 +1111,7 @@ class ConnectionDialog(QDialog):
         self._port.setValue(22)
         self._username.clear()
         self._addr_family.setCurrentIndex(0)  # "auto": not the last profile's
+        self._sftp_timeout.setValue(0)  # the default
         self._clear_typed_secrets()
         self._key_file.clear()
         self._store_password.setChecked(False)
@@ -1213,6 +1247,7 @@ class ConnectionDialog(QDialog):
             store_proxy_password=self._store_proxy_pw.isChecked() and custom_proxy,
             proxy_command=proxy_command,
             address_family=address_family,
+            sftp_timeout=self._sftp_timeout.value() if proto == "sftp" else 0,
             # Protocol-specific
             ftp_passive=self._ftp_passive.isChecked(),
             smb_share=self._smb_share.text().strip(),
@@ -1695,6 +1730,10 @@ class ConnectionDialog(QDialog):
         self._result_profile = self._build_profile()
         self._result_password = self._effective_password()
         self._result_key_passphrase = self._key_passphrase.text()
+        from PyQt6.QtWidgets import QApplication
+
+        shift = QApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier
+        self._result_new_pane = self._new_pane_box.isChecked() or bool(shift)
 
         # Save password if requested
         try:
@@ -1730,7 +1769,7 @@ class ConnectionDialog(QDialog):
         super().done(result)
 
     def _on_test_success(self, home: str) -> None:
-        QMessageBox.information(self, tr("Success"), tr("Connection successful!\nHome directory: {home}").format(home=home))
+        QMessageBox.information(self, tr("Success"), tr("Connection successful!\nHome folder: {home}").format(home=home))
 
     def _on_test_error(self, error: str) -> None:
         QMessageBox.critical(self, tr("Connection Failed"), error)
@@ -1993,4 +2032,7 @@ class ConnectionDialog(QDialog):
             # Enter must not trust a key nobody compared: No is the default.
             QMessageBox.StandardButton.No,
         )
-        return reply == QMessageBox.StandardButton.Yes
+        trusted = reply == QMessageBox.StandardButton.Yes
+        # The error is raised next: core.user_errors words a No apart.
+        error.declined = not trusted
+        return trusted

@@ -347,7 +347,7 @@ class NameFitsBeforeOtherColumnsTest(_PaneTestBase):
         return max(
             h.minimumSectionSize(),
             pane._table.sizeHintForColumn(col),
-            h.sectionSizeHint(col),
+            pane._label_width(col),
         )
 
     def _least(self, pane, col: int) -> int:

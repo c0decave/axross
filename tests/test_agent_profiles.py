@@ -224,7 +224,7 @@ def test_sad_the_ceiling_cuts_and_says_so():
     s = _settings(_server("r2", RE), axross=False)
     res = AP.resolve(AP.preset("Reverse Engineering"), s)
     assert not res.access.axross and res.servers == ["r2"]
-    assert any("Agent Settings > Access" in n and "axross functions" in n for n in res.notes)
+    assert any("Agent Settings → Access" in n and "axross functions" in n for n in res.notes)
     s = _settings(_server("r2", RE), functions=("remote_files",))
     res = AP.resolve(AP.preset("Reverse Engineering"), s)
     assert "mcp_servers" not in res.access.functions

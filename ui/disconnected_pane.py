@@ -60,7 +60,7 @@ class DisconnectedPanePlaceholder(QWidget):
         header = QHBoxLayout()
         # Plain text: the profile name and the path come from session.json
         # and must never be read as rich text.
-        self._title = QLabel(tr("Not connected — {name}").format(name=profile_name))
+        self._title = QLabel(tr("Not connected – {name}").format(name=profile_name))
         self._title.setTextFormat(Qt.TextFormat.PlainText)
         font = self._title.font()
         font.setBold(True)

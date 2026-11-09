@@ -86,7 +86,7 @@ class SnapshotBrowserDialog(QDialog):
         self._backend = backend
         self._path = path
         backend_name = getattr(backend, "name", type(backend).__name__)
-        self.setWindowTitle(tr("Versions — {path} [{backend_name}]").format(path=path, backend_name=backend_name))
+        self.setWindowTitle(tr("Versions – {path} [{backend_name}]").format(path=path, backend_name=backend_name))
         self.resize(820, 460)
         self._entries: list = []
         # Saving / restoring a version streams the whole file: it runs in a
@@ -291,7 +291,7 @@ class SnapshotBrowserDialog(QDialog):
             QMessageBox.warning(self, title, f"{failed}:\n{value}")
             return
         if cancelled:
-            QMessageBox.information(self, title, tr("Cancelled — nothing was changed."))
+            QMessageBox.information(self, title, tr("Cancelled – nothing was changed."))
             return
         QMessageBox.information(self, title, done_text)
         if ctx.get("op") == "restore":

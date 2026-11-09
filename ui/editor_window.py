@@ -603,7 +603,7 @@ class EditorWindow(QMainWindow):
         except UnicodeEncodeError as exc:
             QMessageBox.critical(self, tr("Save"), tr(
                 "The text holds characters {encoding} cannot store; nothing was written. Choose "
-                "another encoding (Format > Encoding).\n{error}").format(
+                "another encoding (Format → Encoding).\n{error}").format(
                 encoding=tab.document.encoding_name, error=exc))
             return False
         except Exception as exc:  # noqa: BLE001 - any failure is "not saved", never "saved"
@@ -677,7 +677,7 @@ class EditorWindow(QMainWindow):
         except UnicodeEncodeError as exc:
             QMessageBox.critical(self, tr("Save"), tr(
                 "The text holds characters {encoding} cannot store; nothing was written. Choose "
-                "another encoding (Format > Encoding).\n{error}").format(
+                "another encoding (Format → Encoding).\n{error}").format(
                 encoding=tab.document.encoding_name, error=exc))
             return False
         except OSError as exc:

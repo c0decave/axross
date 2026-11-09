@@ -109,7 +109,7 @@ def pump(seconds: float = 0.05) -> None:
 
 #: Submenus whose entries are the user's data (profile names), not labels.
 _DATA_MENUS = {"New Agent Tab from &Profile"}
-_DATA_TEXT = re.compile(r"^Workspace \d+$")
+_DATA_TEXT = re.compile(r"^&?Workspace \d+$")
 
 
 def _menu_texts(window) -> list[tuple[str, str]]:
@@ -166,7 +166,10 @@ def test_happy_every_menu_bar_entry_has_a_german_entry(menus):
             continue
         # A text the same in both languages must be a deliberate entry
         # ("Shell" stays "Shell"), not one the catalogue lacks.
-        if en_text == de_text and en_text not in catalogue:
+        # ui/mnemonics.py adds a free "&" letter to entries without one, so
+        # the shown text can carry an "&" its catalogue key has not.
+        bare = en_text.replace("&", "")
+        if en_text == de_text and en_text not in catalogue and bare not in catalogue:
             untranslated.append(f"{en_path} > {en_text}")
     assert untranslated == [], "\n".join(untranslated)
 

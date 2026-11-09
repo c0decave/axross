@@ -228,8 +228,8 @@ class AccessEditor(QWidget):
         ceiling = self._ceiling
         if ceiling is not None and not getattr(ceiling, "axross_functions", False):
             self.axross_check.setEnabled(False)
-            self.axross_check.setToolTip(tr("axross functions are off in Agent Settings > Access"))
-            locked = tr("axross functions are off in Agent Settings > Access: switch them on there first.")
+            self.axross_check.setToolTip(tr("axross functions are off in Agent Settings → Access"))
+            locked = tr("axross functions are off in Agent Settings → Access: switch them on there first.")
         else:
             self.axross_check.setEnabled(True)
             locked = "" if master else tr(
@@ -239,7 +239,7 @@ class AccessEditor(QWidget):
         for name, check in self.function_checks.items():
             allowed = ceiling is None or bool(getattr(ceiling, name, False))
             check.setEnabled(not locked and allowed)
-            check.setToolTip(locked or ("" if allowed else tr("Off in Agent Settings > Access")))
+            check.setToolTip(locked or ("" if allowed else tr("Off in Agent Settings → Access")))
         hosts = self.network_combo.currentData() == "hosts"
         for widget in (self.hosts_list, self.host_edit, self.host_add, self.host_remove):
             widget.setEnabled(hosts)

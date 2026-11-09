@@ -88,6 +88,7 @@ import json
 import logging
 import os
 import queue
+import re
 import secrets
 import socket
 import socketserver
@@ -234,13 +235,26 @@ def _loopback_host_header(value: str) -> bool:
 
     A DNS-rebinding page reaches the loopback listener with its own
     hostname in ``Host``; only literal loopback names pass.
+    Parsed strictly as ``host[:port]`` (RFC 9110 authority without
+    userinfo): a name of letters, digits, dots and dashes or a bracketed
+    IPv6 address, and a port of digits only - ``localhost:1@evil``,
+    ``localhost/x``, a space, a bare IPv6 address or an empty port are
+    refused, never cut down to a loopback name.
     """
-    host = (value or "").strip()
-    if host.startswith("["):
-        host = host[1:].split("]", 1)[0]
-    elif host.count(":") == 1:
-        host = host.split(":", 1)[0]
-    return bool(host) and _is_loopback(host)
+    # Only the optional whitespace HTTP allows around a field value.
+    match = _HOST_AUTHORITY.fullmatch((value or "").strip(" \t"))
+    if match is None:
+        return False
+    host = match.group(1) or match.group(2)
+    port = match.group(3)
+    if port is not None and not 0 < int(port) <= 65535:
+        return False
+    return _is_loopback(host)
+
+
+#: ``host[:port]``: ``[v6]`` or a DNS name / IPv4 address, then digits only.
+_HOST_AUTHORITY = re.compile(r"(?:\[([0-9A-Fa-f:.]{2,45})\]|([A-Za-z0-9](?:[A-Za-z0-9.-]{0,252}))"
+                             r")(?::([0-9]{1,5}))?")
 
 
 class SessionLimitError(RuntimeError):
@@ -703,6 +717,10 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
             return True
         host = self.headers.get("Host")
         origin = self.headers.get("Origin")
+        if len(self.headers.get_all("Host") or ()) > 1 or len(
+                self.headers.get_all("Origin") or ()) > 1:
+            self._send_error(400, "more than one Host or Origin header")
+            return False
         if host is not None and not _loopback_host_header(host):
             self._send_error(403, "Host header is not a loopback name")
             return False

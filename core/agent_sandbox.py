@@ -450,6 +450,118 @@ def _inside(path: str, folder: str) -> bool:
 #: Most entries of one frame folder mounted (a home folder with more is
 #: shown with the first ones only, in name order).
 MAX_FRAME_ENTRIES = 4096
+#: Entries of a repository's ``.git`` folder that run code or point Git at
+#: another folder whose config and hooks it uses: read-only in the sandbox.
+#: The rest (objects, refs, logs, index, HEAD, the lock files) stays
+#: writable - Git makes its lock files next to them, so the folder cannot be.
+GIT_GUARD_NAMES = ("config", "config.worktree", "hooks", "info", "commondir", "gitdir",
+                   os.path.join("objects", "info", "alternates"))
+#: Of those, the folders made as empty read-only ones when missing.
+GIT_GUARD_MISSING_DIRS = ("hooks", "info")
+#: The same names in the Git folders of submodules and worktrees
+#: (``.git/modules/<name>``, ``.git/worktrees/<name>``), this many at most.
+MAX_GIT_SUBDIRS = 256
+#: Files that, made in a repository's ``.git`` folder while the sandbox
+#: runs, point Git elsewhere; no mount can keep them from being made (Git
+#: could not make its lock files either): set aside when the worker ends
+#: (:func:`_set_aside_git_pointers`).
+GIT_POINTER_NAMES = ("commondir",)
+
+
+def _writable_repos(writable_roots) -> list[str]:
+    """Each writable folder and its folders one level down that hold a
+    ``.git`` entry."""
+    out: list[str] = []
+    for root in writable_roots:
+        candidates = [root]
+        try:
+            with os.scandir(root) as it:
+                names = sorted(e.name for e in it if e.is_dir(follow_symlinks=False))
+        except OSError:
+            names = []
+        candidates += [os.path.join(root, n) for n in names[:MAX_FRAME_ENTRIES]]
+        for folder in candidates:
+            if folder not in out and os.path.lexists(os.path.join(folder, ".git")):
+                out.append(folder)
+    return out
+
+
+def _git_guard(repo: str) -> tuple[list[str], list[str]]:
+    """``(entries to mount read-only, missing folders to make read-only)``
+    of the repository *repo* (:data:`GIT_GUARD_NAMES`, also in its
+    submodules' and worktrees' Git folders, and ``.gitmodules``)."""
+    git_dir = os.path.join(repo, ".git")
+    candidates = [os.path.join(repo, ".gitmodules")]
+    missing: list[str] = []
+    if os.path.isdir(git_dir) and not os.path.islink(git_dir):
+        for name in GIT_GUARD_NAMES:
+            path = os.path.join(git_dir, name)
+            if os.path.lexists(path):
+                candidates.append(path)
+            elif name in GIT_GUARD_MISSING_DIRS:
+                missing.append(path)
+        budget = MAX_GIT_SUBDIRS
+        stack = [os.path.join(git_dir, sub) for sub in ("modules", "worktrees")]
+        while stack and budget > 0:
+            folder = stack.pop()
+            try:
+                with os.scandir(folder) as it:
+                    subs = sorted(e.path for e in it if e.is_dir(follow_symlinks=False))
+            except OSError:
+                continue
+            for sub in subs:
+                budget -= 1
+                if budget < 0:
+                    break
+                candidates += [os.path.join(sub, n) for n in GIT_GUARD_NAMES
+                               if os.path.lexists(os.path.join(sub, n))]
+                nested = os.path.join(sub, "modules")  # a submodule's submodules
+                if os.path.isdir(nested):
+                    stack.append(nested)
+    elif os.path.lexists(git_dir):
+        candidates.append(git_dir)  # a "gitdir:" file
+    return candidates, missing
+
+
+def _git_pointer_watch(plan) -> list[str]:
+    """The :data:`GIT_POINTER_NAMES` missing now in the ``.git`` folders of
+    the repositories of *plan*'s (:func:`_mount_plan`) writable mounts
+    (:func:`_writable_repos`)."""
+    roots = [path for path, rw, kind in plan if rw and kind == "bind"]
+    out = []
+    for repo in _writable_repos(roots):
+        git_dir = os.path.join(repo, ".git")
+        if not os.path.isdir(git_dir) or os.path.islink(git_dir):
+            continue
+        for name in GIT_POINTER_NAMES:
+            path = os.path.join(git_dir, name)
+            if not os.path.lexists(path) and path not in out:
+                out.append(path)
+    return out
+
+
+def _set_aside_git_pointers(paths) -> list[str]:
+    """Rename each of *paths* (:func:`_git_pointer_watch`) that exists now to
+    ``<name>.set-aside-by-axross-<time>``: made by the sandboxed agent, it
+    would point Git at a folder whose config and hooks run at the user's
+    next ``git status``. Returns the new names (logged)."""
+    import time
+
+    moved = []
+    for path in paths:
+        if not os.path.lexists(path):
+            continue
+        new = f"{path}.set-aside-by-axross-{int(time.time())}"
+        try:
+            os.rename(path, new)
+        except OSError as exc:
+            log.error("agent sandbox: %s was made by the agent and could not be set aside: %s",
+                      path, exc)
+            continue
+        log.warning("agent sandbox: the agent made %s (it points Git at another folder's "
+                    "config and hooks); set aside as %s", path, new)
+        moved.append(new)
+    return moved
 
 
 def _mount_plan(
@@ -516,22 +628,21 @@ def _mount_plan(
                 seen[real], kinds[real] = False, "bind"
         elif folder:
             missing.append((place, True))
+    # A symlink in those places (GNU stow: ~/.config/kitty -> ~/dotfiles/kitty)
+    # makes its target the place: read-only too where it lies in a writable
+    # folder (a writable folder of the user's at or below it stays writable).
+    for target in protected_places.deny_link_targets(granted=writable_roots):
+        if target in seen or not os.path.lexists(target):
+            continue
+        if any(_inside(target, r) for r in writable_roots):
+            seen[target], kinds[target] = False, "bind"
     # Git runs code from a repository's config and hooks (a shell prompt's
-    # ``git status`` is enough): those of a writable mount's own repository
-    # are read-only (a repository deeper inside is not looked for).
-    for root_path in writable_roots:
-        git_dir = os.path.join(root_path, ".git")
-        candidates = [os.path.join(root_path, ".gitmodules")]
-        if os.path.isdir(git_dir) and not os.path.islink(git_dir):
-            candidates += [os.path.join(git_dir, n) for n in ("config", "config.worktree")]
-            for name in ("hooks", "info"):
-                path = os.path.join(git_dir, name)
-                if os.path.lexists(path):
-                    candidates.append(path)
-                else:
-                    missing.append((path, True))
-        elif os.path.lexists(git_dir):
-            candidates.append(git_dir)  # a "gitdir:" file
+    # ``git status`` is enough), and from the folder ``commondir`` names:
+    # those of a writable mount's own repository and of the repositories one
+    # folder below it are read-only (deeper ones are not looked for).
+    for repo in _writable_repos(writable_roots):
+        candidates, missing_dirs = _git_guard(repo)
+        missing += [(path, True) for path in missing_dirs]
         for path in candidates:
             if os.path.lexists(path) and path not in seen:
                 seen[path], kinds[path] = False, "bind"
@@ -1013,6 +1124,8 @@ class SandboxedAgent:
         #: Mount points the engine makes for missing protected places
         #: (removed when the worker has ended, see _release_mount_points).
         self._points: list[str] = []
+        # .git/commondir files missing at the start (_git_pointer_watch)
+        self._git_watch: list[str] = []
         #: A container that "rm -f" could not remove still has them mounted.
         self._container_left = False
         self._relay = HostRelay(self._send, self._host_allowed)
@@ -1150,10 +1263,12 @@ class SandboxedAgent:
         )
         self._release_points()
         writable = bool(self.config.allow_write) and profile.rules.folder_writable
-        points = _mount_points(_mount_plan(profile, os.path.abspath(self.config.root), writable,
-                                           tuple(self.config.extra_roots)))
+        plan = _mount_plan(profile, os.path.abspath(self.config.root), writable,
+                           tuple(self.config.extra_roots))
+        points = _mount_points(plan)
         _hold_mount_points(points)
         self._points, self._container_left = points, False
+        self._git_watch = _git_pointer_watch(plan) if writable else []
         return sandbox_command(profile, self.config.root, writable=self.config.allow_write,
                                name=self._container[1] if self._container else None,
                                extra=tuple(self.config.extra_roots))
@@ -1305,6 +1420,8 @@ class SandboxedAgent:
         points, self._points = self._points, []
         if points and not self._container_left:
             _release_mount_points(points)
+        watch, self._git_watch = getattr(self, "_git_watch", []), []
+        _set_aside_git_pointers(watch)
 
     def close(self) -> None:
         self._stop()
@@ -1386,6 +1503,7 @@ class SandboxedAgent:
             return self._serve()
         finally:
             done.set()
+            _set_aside_git_pointers(getattr(self, "_git_watch", ()))
 
     def _serve(self) -> A.AgentResult:
         proc = self._proc

@@ -90,7 +90,7 @@ class PackDialog(QDialog):
         for row, fmt in enumerate(PK.FORMATS.values()):
             ok, reason = fmt.available()
             if fmt.single and not self._single_file:
-                ok, reason = False, tr("compresses exactly one file - select a single file")
+                ok, reason = False, tr("compresses exactly one file – select a single file")
             item = model.item(row)
             if not ok:
                 item.setEnabled(False)

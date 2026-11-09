@@ -141,7 +141,7 @@ def test_sad_cancel_at_the_password_leaves_a_placeholder_not_a_local_pane(win, m
     result = win._restore_pane(win._root_splitter,
                                {"type": "pane", "profile": profile.name, "path": "/srv/x"})
     assert result is None
-    assert events == ["ask Session Restore — Password Required"]  # no connect after Cancel
+    assert events == ["ask Session Restore – Password Required"]  # no connect after Cancel
     assert win._panes == panes  # no local pane at the remote path
     placeholder = win._pane_placeholders[-1]
     assert placeholder.profile_name == "p-ftp" and placeholder.path == "/srv/x"
@@ -172,7 +172,7 @@ def test_edge_an_encrypted_key_is_asked_for_after_the_first_try(win, tmp_path, m
                              {"type": "pane", "profile": profile.name, "path": str(tmp_path)})
     assert events == [
         "connect pw='' kp=''",
-        "ask Session Restore — Key Passphrase",
+        "ask Session Restore – Key Passphrase",
         "connect pw='' kp='secret'",
     ]
     assert pane is not None and win._pane_key_passphrases.get(pane) == "secret"

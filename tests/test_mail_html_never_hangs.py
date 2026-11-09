@@ -131,13 +131,13 @@ def _dialog(tmp_path):
 def test_happy_the_message_is_rendered_off_the_gui_thread(tmp_path, monkeypatch):
     app, dlg = _dialog(tmp_path)
     release, threads = threading.Event(), []
-    real = mail_html.message_html
+    real = mail_html.message_view
 
     def slow(msg):
         threads.append(threading.current_thread() is threading.main_thread())
         release.wait(5)
         return real(msg)
-    monkeypatch.setattr(mail_html, "message_html", slow)
+    monkeypatch.setattr(mail_html, "message_view", slow)
     started = time.monotonic()
     dlg.table.selectRow(0)
     assert time.monotonic() - started < 3, "the selection waited for the message to be rendered"

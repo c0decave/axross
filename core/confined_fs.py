@@ -458,9 +458,15 @@ class ConfinedLocalFS(LocalFS):
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
         if not FD_CONFINED:
             return self._verified(path, super().open_write(path, append))
-        flags = os.O_WRONLY | os.O_CREAT | (os.O_APPEND if append else os.O_TRUNC)
+        # Not truncated before the file is known to have one name only.
+        flags = os.O_WRONLY | os.O_CREAT | (os.O_APPEND if append else 0)
         fd = self._open(path, flags, 0o666)
         try:
+            st = os.fstat(fd)
+            if stat_module.S_ISREG(st.st_mode) and st.st_nlink > 1:
+                raise _hard_linked(path, st.st_nlink)
+            if not append and stat_module.S_ISREG(st.st_mode):
+                os.ftruncate(fd, 0)
             return os.fdopen(fd, "ab" if append else "wb")
         except BaseException:
             os.close(fd)
@@ -655,9 +661,11 @@ class ConfinedLocalFS(LocalFS):
         goes to a temp file in the target's folder and is renamed over it,
         both relative to that folder's descriptor; the old file's mode,
         group and extended attributes are carried. A file whose identity a
-        rename would lose (other hard links, another owner, a folder this
-        user cannot create in, an attribute that cannot be copied) is
-        written in place, with its old bytes put back on failure."""
+        rename would lose (another owner, a folder this user cannot create
+        in, an attribute that cannot be copied) is written in place, with
+        its old bytes put back on failure. A file with other hard links is
+        refused (PermissionError): in place the other names would change
+        too, renamed over it would no longer be them."""
         if not FD_CONFINED:
             from core.atomic_io import atomic_write
 
@@ -833,7 +841,7 @@ def _write_beneath(dfd: int, name: str, path: str, data: bytes) -> None:
             raise OSError(errno.EINVAL, "not a regular file; not written", path)
         euid = effective_uid()
         if st.st_nlink > 1:
-            return _write_in_place(dfd, name, path, data, "the file has other hard links")
+            raise _hard_linked(path, st.st_nlink)
         if euid is not None and st.st_uid != euid:
             return _write_in_place(dfd, name, path, data, "it belongs to another user")
     mode = stat_module.S_IMODE(st.st_mode) if st is not None else None
@@ -876,6 +884,20 @@ def _write_beneath(dfd: int, name: str, path: str, data: bytes) -> None:
 
 class _KeepIdentity(Exception):
     pass
+
+
+def _hard_linked(path: str, links: int) -> PermissionError:
+    """The refusal of a write to a file with more names: written in place
+    it would change every other name too (one may be ~/.bashrc or a
+    repository's .git/config, which the server never writes); replaced by
+    a new file it would quietly stop being the same file as the others."""
+    return PermissionError(
+        errno.EPERM,
+        f"the file has {links} hard links; the tools do not write a file with more names "
+        "(the other names would change too - one may be a protected file). Write a copy "
+        "under a new name instead",
+        path,
+    )
 
 
 def _remove_tree(parent_fd: int, name: str, path: str) -> None:

@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from core import transfer_hooks
+from core import read_spool, transfer_hooks
 from core.path_policy import hidden_sibling_name, safe_join
 
 if TYPE_CHECKING:
@@ -327,6 +327,9 @@ def _native_checksum(backend, path: str, side: str):
     try:
         return backend.checksum(path)
     except Exception as exc:
+        hooks = transfer_hooks.current()
+        if isinstance(exc, InterruptedError) and hooks is not None and hooks.cancelled():
+            raise  # Cancel during the checksum (an SSH exec): the job is cancelled
         log.debug("%s checksum unavailable: %s", side, exc)
         return None
 
@@ -344,6 +347,38 @@ class _SameEntry(OSError):
 
     Raised before the temp file replaces the destination; a move would
     otherwise delete "the source", which is the only copy."""
+
+
+#: Kernel file systems whose files list a size (4096, 0) that a read does
+#: not yield: sysfs attributes, procfs, device nodes.
+_PSEUDO_ROOTS = ("/sys", "/proc", "/dev")
+
+
+def _is_pseudo_file(path: str) -> bool:
+    """*path* lies under /sys, /proc or /dev (a POSIX path)."""
+    if not isinstance(path, str) or not path.startswith("/"):
+        return False
+    import posixpath
+
+    clean = posixpath.normpath(path)
+    if clean.startswith("//"):
+        clean = "/" + clean.lstrip("/")
+    return any(clean == root or clean.startswith(root + "/") for root in _PSEUDO_ROOTS)
+
+
+class _ShortRead(OSError):
+    """The source's read ended (without an error) before its size: the
+    copy is refused, the destination left as it was."""
+
+
+def _source_reads_at_offset(backend) -> bool:
+    """Whether a resume could read *backend*'s file from where a partial
+    ends (its caps' seekable_reads): a source read whole (POP3, a mail
+    store, a spooled download) yields the same short bytes again."""
+    from core.server_ops import _known_backend_capabilities
+
+    caps = _known_backend_capabilities(backend)
+    return caps is None or bool(getattr(caps, "seekable_reads", True))
 
 
 class _DestinationKept(Exception):
@@ -543,6 +578,14 @@ def _hooks_of(job: "TransferJob", progress_callback) -> transfer_hooks.TransferH
     if isinstance(hooks, transfer_hooks.TransferHooks):
         return hooks
     return transfer_hooks.TransferHooks(job.cancel_event)
+
+
+def _open_sequential(backend, path: str):
+    """``backend.open_read(path)`` for the copy loop, which reads front to
+    back once: a download may stream instead of spooling
+    (core.read_spool.sequential_reads)."""
+    with read_spool.sequential_reads():
+        return backend.open_read(path)
 
 
 def _copy_starts(progress_callback) -> None:
@@ -1060,6 +1103,17 @@ class TransferWorker(QObject):
         return source_size(job.source_backend, job.source_path)
 
     def _verify_integrity(self, job: TransferJob, dest_path: str | None = None) -> None:
+        """:meth:`_verify_integrity_now` under the job's Cancel: a backend
+        that hashes on the server (SFTP runs ``sha256sum`` over an SSH
+        exec channel) watches it, so Cancel ends a slow hash at once."""
+        hooks = transfer_hooks.current()
+        if hooks is None:
+            hooks = transfer_hooks.TransferHooks(getattr(job, "cancel_event", None))
+        with transfer_hooks.active(hooks):
+            # By the class: tests call it with a stand-in for self.
+            TransferWorker._verify_integrity_now(self, job, dest_path)
+
+    def _verify_integrity_now(self, job: TransferJob, dest_path: str | None = None) -> None:
         """Compare source + dest checksum after a successful transfer.
 
         *dest_path*: the file to check on the destination backend, by
@@ -1204,7 +1258,8 @@ class TransferWorker(QObject):
         chunk_size = 1 << 20  # 1 MiB
         hasher = hashlib.sha256()
         # A reader that downloads in open_read checks Cancel meanwhile.
-        with transfer_hooks.active(transfer_hooks.TransferHooks(cancel_event)):
+        with transfer_hooks.active(transfer_hooks.TransferHooks(cancel_event)), \
+                read_spool.sequential_reads():
             handle = backend.open_read(path)
         with handle as fh:
             while True:
@@ -1418,7 +1473,7 @@ class TransferWorker(QObject):
                 # Cancel and report their network bytes. Not around the
                 # rollback below: that must not be cancelled itself.
                 with transfer_hooks.active(_hooks_of(job, progress_callback)), \
-                        source_backend.open_read(job.source_path) as src:
+                        _open_sequential(source_backend, job.source_path) as src:
                     dst = dest_backend.open_write(job.dest_path, append=False)
                     opened = True
                     _copy_starts(progress_callback)
@@ -1576,16 +1631,20 @@ class TransferWorker(QObject):
         was copied as it is now. A source whose size cannot be read (a
         symlink, a mail store's estimate, a failed stat) is not refused,
         nor a local one: its reads fail rather than end early, and sysfs
-        lists 4096 bytes for attributes that read a few. Called before the
-        copy replaces the destination, so the destination stays as it was."""
+        lists 4096 bytes for attributes that read a few - on a remote
+        machine too (SFTP, SCP, a shell): /sys, /proc and /dev are not
+        refused anywhere. Called before the copy replaces the destination,
+        so the destination stays as it was."""
         if expected <= 0 or transferred >= expected or _is_local(job.source_backend):
+            return
+        if _is_pseudo_file(job.source_path):
             return
         from core.server_ops import source_size
 
         live = source_size(job.source_backend, job.source_path)
         if live is None or transferred >= live:
             return
-        raise OSError(
+        raise _ShortRead(
             errno.EIO,
             f"only {transferred} of {live} bytes of {job.source_path} were read; "
             f"the copy is incomplete and {job.dest_path} was left as it was",
@@ -1611,6 +1670,7 @@ class TransferWorker(QObject):
         written: the check was asked for, and without the copy its
         failure would leave the corrupt upload in place of the original."""
         dest_backend = job.dest_backend
+        backup = None
         try:
             backup = TransferWorker._destination_backup_path(job)
             copy = getattr(dest_backend, "copy", None)
@@ -1618,12 +1678,24 @@ class TransferWorker(QObject):
                 raise OSError("the backend has no server-side copy")
             copy(job.dest_path, backup)
         except Exception as exc:  # noqa: BLE001 - nothing was written yet
+            if backup is not None:
+                # A copy that failed half-way (the disk full) left its
+                # partial under our own name: it would stay hidden.
+                TransferWorker._remove_failed_backup(dest_backend, backup)
             raise OSError(
                 f"cannot keep a copy of {job.dest_path} before it is replaced and checked "
                 f"({exc}); nothing was replaced"
             ) from exc
         log.debug("Kept %s as %s until the integrity check passes", job.dest_path, backup)
         return backup
+
+    @staticmethod
+    def _remove_failed_backup(dest_backend, backup: str) -> None:
+        try:
+            if dest_backend.exists(backup):
+                dest_backend.remove(backup)
+        except Exception as exc:  # noqa: BLE001 - a leftover copy loses nothing
+            log.warning("Could not remove the partial copy %s: %s", backup, exc)
 
     @staticmethod
     def _put_back_committed_destination(job: TransferJob, backup: str, *, written: bool) -> bool:
@@ -1737,7 +1809,10 @@ class TransferWorker(QObject):
                 resume_offset = 0
 
             hooks = _hooks_of(job, progress_callback)
-            with transfer_hooks.active(hooks):
+            # From the start the copy reads front to back once: a download
+            # streams instead of spooling beside its local copy. A resume
+            # seeks (and compares the partial), so it keeps the spool.
+            with transfer_hooks.active(hooks), read_spool.sequential_reads(resume_offset == 0):
                 source_handle = source_backend.open_read(job.source_path)
             with source_handle as src:
                 if resume_offset > 0 and not self._partial_matches_source(
@@ -1858,15 +1933,24 @@ class TransferWorker(QObject):
             # after a failed integrity check, holds the wrong bytes.
             raise
         except InterruptedError:
+            # Not for a source a resume cannot read from an offset (a
+            # download streamed from S3, OneDrive, FTP ...): the resume
+            # fetches it whole again, the partial would only stay hidden.
             keep_partial = (real_append and (transferred > 0 or resume_offset > 0)
+                            and _source_reads_at_offset(job.source_backend)
                             and self._partial_resumable(job, temp_path))
             raise
         except Exception as exc:
             # Kept for a resume - unless the destination is full: the
             # hidden partial is what fills it, and a resume needs the
             # room as well.
+            # Nor for a source a resume cannot read from an offset (POP3,
+            # a streamed download): it reads the whole file again - after
+            # a refused short read just as short - and the partial would
+            # only stay behind, hidden.
             keep_partial = (real_append and (transferred > 0 or resume_offset > 0)
                             and not is_out_of_space(exc)
+                            and _source_reads_at_offset(job.source_backend)
                             and self._partial_resumable(job, temp_path))
             raise
         finally:

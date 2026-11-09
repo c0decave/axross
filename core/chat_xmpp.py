@@ -102,7 +102,7 @@ def libraries_missing(*, load: bool = True) -> str | None:
 
 
 # Help > Features… installs it, as for every other extra.
-_LIBRARIES_MISSING = "XMPP needs slixmpp and OMEMO: install them in Help > Features… (Matrix and XMPP chat)"
+_LIBRARIES_MISSING = "XMPP needs slixmpp and OMEMO: install them in Help → Features… (Matrix and XMPP chat)"
 
 
 def oldmemo_available() -> bool:

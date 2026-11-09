@@ -129,7 +129,7 @@ class ScanJob(QObject):
                 self.progress.emit(
                     self._formatter(state)
                     if self._formatter is not None
-                    else tr("Working… {indexed} indexed, {scanned} scanned — {path}").format(
+                    else tr("Working… {indexed} indexed, {scanned} scanned – {path}").format(
                         indexed=state["indexed"], scanned=state["scanned"],
                         path=shorten(state["path"]))
                 )

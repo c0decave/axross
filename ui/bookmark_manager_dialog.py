@@ -83,8 +83,8 @@ class BookmarkManagerDialog(BookmarkTreeEditing, QDialog):
 
         self._hint = QLabel(
             tr(
-                "No bookmarks yet. Bookmark a folder with Bookmarks > Add Current "
-                "Directory (F8), or drag it onto the Bookmarks sidebar; create a "
+                "No bookmarks yet. Bookmark a folder with View → Bookmarks → Bookmark "
+                "This Folder (F8), or drag it onto the Bookmarks sidebar; create a "
                 "group here."
             )
         )

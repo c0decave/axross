@@ -261,7 +261,7 @@ def activate(api):
             if kind == "exists":
                 mode = ask_existing(api.window, folder, count)
                 if mode is None:
-                    api.notify(tr("{name} already exists here - not overwritten").format(
+                    api.notify(tr("{name} already exists here – not overwritten").format(
                         name=MANIFEST_NAME))
                     return
                 api.run_in_background(lambda: work(mode), on_done=done)

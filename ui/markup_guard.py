@@ -61,6 +61,7 @@ import logging
 import os
 import re
 import stat
+from html.parser import HTMLParser
 
 log = logging.getLogger(__name__)
 
@@ -188,7 +189,32 @@ def _too_large_attribute(tag: str) -> bool:
     return False
 
 
+#: a CSS comment (an unclosed one runs to the end, as in Qt's CSS scanner)
+_CSS_COMMENT = re.compile(r"/\*.*?(?:\*/|\Z)", re.DOTALL)
+#: a CSS escape: ``\66`` (hex, one optional white space after it) or ``\-``
+_CSS_ESCAPE = re.compile(r"\\(?:([0-9a-f]{1,6})[ \t\r\n\f]?|(.))", re.IGNORECASE | re.DOTALL)
+
+
+def _css_char(match) -> str:
+    if match.group(1):
+        code = int(match.group(1), 16)
+        return chr(code) if 0 < code <= 0x10FFFF else "\ufffd"
+    return match.group(2)
+
+
+def _plain_css(css: str) -> str:
+    """*css* as Qt's CSS scanner reads it: comments are white space
+    (``font-size/**/:4000px`` is ``font-size :4000px`` - the property
+    before the colon still counts) and escapes stand for their character."""
+    if "/*" in css:
+        css = _CSS_COMMENT.sub(" ", css)
+    if "\\" in css:
+        css = _CSS_ESCAPE.sub(_css_char, css)
+    return css
+
+
 def _too_large_style(css: str) -> bool:
+    css = _plain_css(css)
     for match in _DECLARATION.finditer(css):
         prop = match.group(1).lower()
         font = prop in ("font", "font-size")
@@ -210,6 +236,41 @@ def _too_large_style(css: str) -> bool:
             if value > limit:
                 return True
     return False
+
+
+class _EndTagOffsets(HTMLParser):
+    """Where an HTML parser reads an end tag in a text: a ``</table>``
+    inside an attribute value (``<i title='</table>'>``) or an HTML comment
+    is no tag - Qt lays the table around it out all the same. A
+    ``</table>`` the parser reads as a tag closes one; any other one
+    closes nothing (counted as open: stricter, never looser)."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__(convert_charrefs=False)
+        self.offsets: set[int] = set()
+        self._line_starts = [0]
+        self._line_starts.extend(m.end() for m in re.finditer("\n", text))
+        try:
+            self.feed(text)
+            self.close()
+        except Exception:  # noqa: BLE001 - a text it cannot read closes nothing more
+            log.debug("markup guard: HTML parser gave up", exc_info=True)
+
+    def handle_endtag(self, tag) -> None:
+        line, column = self.getpos()
+        self.offsets.add(self._line_starts[line - 1] + column)
+
+
+@functools.lru_cache(maxsize=32)
+def _end_tag_offsets(text: str) -> frozenset[int]:
+    return frozenset(_EndTagOffsets(text).offsets)
+
+
+def _closes(match, text: str) -> bool:
+    """The end tag *match* found (``</table``, ``</ul``) is one an HTML
+    parser reads as a tag too - not text in an attribute value or a
+    comment."""
+    return match.start() in _end_tag_offsets(text)
 
 
 def _too_many_cells(text: str) -> bool:
@@ -234,7 +295,7 @@ def _too_many_cells(text: str) -> bool:
         closing, tag = match.group(1), match.group(2).lower()
         if tag == "table":
             if closing:
-                if grids:
+                if grids and _closes(match, text):
                     grids.pop()
             else:
                 grids.append(TableGrid())
@@ -265,7 +326,11 @@ def _too_deep(text: str) -> bool:
     depth = {"table": 0, "indent": 0}
     for match in _NESTING.finditer(text):
         kind = "table" if match.group(2).lower() == "table" else "indent"
-        depth[kind] = max(0, depth[kind] + (-1 if match.group(1) else 1))
+        if match.group(1):
+            if _closes(match, text):
+                depth[kind] = max(0, depth[kind] - 1)
+            continue
+        depth[kind] += 1
         if depth["table"] > MAX_TABLE_DEPTH or depth["indent"] > MAX_INDENT_DEPTH:
             return True
     return False
@@ -288,15 +353,104 @@ def _asks_too_much(markup: str) -> bool:
     return _too_deep(markup)
 
 
+#: The largest size (px) rich text may lay out to: a few sizes under the
+#: limits above still add up (200 letters at letter-spacing 1999px: 402172
+#: px; six nested tables with cellpadding, cellspacing and border 1999:
+#: 95960 px square, 636 MB once painted), so what passes the checks is
+#: laid out once more off screen and measured (:func:`_renders_too_large`).
+#: Only what the markup adds counts: a long text is as large as plain text.
+MAX_RENDER_WIDTH_PX = 4000
+MAX_RENDER_HEIGHT_PX = 5000
+
+
+def _measure_document():
+    """A QTextDocument that loads no resource (the text was checked for
+    them before; this one reads nothing all the same)."""
+    from PyQt6.QtGui import QImage, QTextDocument
+
+    class _Measure(QTextDocument):
+        def loadResource(self, kind, url):  # noqa: N802 - Qt's name
+            empty = QImage(1, 1, QImage.Format.Format_ARGB32)
+            empty.fill(0)
+            return empty
+
+    return _Measure()
+
+
+def _sizes(document) -> tuple[float, float, float]:
+    """(width on one line, width and height wrapped at MAX_RENDER_WIDTH_PX)."""
+    document.setTextWidth(-1)
+    natural = document.size().width()
+    document.setTextWidth(MAX_RENDER_WIDTH_PX)
+    wrapped = document.size()
+    return natural, wrapped.width(), wrapped.height()
+
+
+@functools.lru_cache(maxsize=256)
+def _rendered_too_large(text: str) -> bool:
+    rich = _measure_document()
+    rich.setHtml(text)
+    plain = _measure_document()
+    plain.setPlainText(rich.toPlainText())
+    limits = (MAX_RENDER_WIDTH_PX, MAX_RENDER_WIDTH_PX, MAX_RENDER_HEIGHT_PX)
+    for got, as_text, limit in zip(_sizes(rich), _sizes(plain), limits):
+        # larger than the limit and than the words take as plain text
+        if got > max(limit, 2 * as_text + 1000):
+            return True
+    return False
+
+
+def _renders_too_large(text: str) -> bool:
+    """*text*, laid out as rich text, is wider than
+    :data:`MAX_RENDER_WIDTH_PX` (on one line, as a label shows it, or
+    wrapped at that width) or taller than :data:`MAX_RENDER_HEIGHT_PX` -
+    and than its words take as plain text. Measured on the GUI thread
+    only, where labels live (a QTextDocument needs the application's
+    fonts); the checks before keep what is measured cheap to lay out
+    (tables at most :data:`MAX_TABLE_DEPTH` deep, :data:`MAX_CELLS`
+    cells) - and a widget showing it would lay it out anyway - and the
+    answer is kept per text."""
+    from PyQt6.QtCore import QThread
+    from PyQt6.QtGui import QGuiApplication
+
+    if not _MAY_ADD_SIZE.search(text) or _escaped_only(text):
+        return False
+    app = QGuiApplication.instance()
+    if app is None or app.thread() is not QThread.currentThread():
+        return False
+    return _rendered_too_large(text)
+
+
+#: Markup that can make text take more room than its words: a tag with an
+#: attribute (a style, a size, a padding), a table, preformatted text.
+#: ``<b>``, ``<i>``, ``<br>``, a list or a heading take about what the
+#: words take; texts with only those are not measured.
+_MAY_ADD_SIZE = re.compile(r"<\s*[a-z][^<>]*=|<\s*(?:table|pre)\b", re.IGNORECASE)
+
+
+def _escaped_only(text: str) -> bool:
+    """*text* is a text escaped to show as written (:func:`defuse`,
+    :func:`ui.plain_text.as_written`): no markup but its head."""
+    for head in (_DEFUSED_HEAD, _AS_WRITTEN_HEAD):
+        if text.startswith(head) and text.endswith(_DEFUSED_TAIL) \
+                and "<" not in text[len(head):-len(_DEFUSED_TAIL)]:
+            return True
+    return False
+
+
 def bombs_layout(text) -> bool:
     """True when *text* would be rendered as rich text whose markup asks
     for an absurd size: a huge width, height, border, font or indent, or
-    tables or lists nested too deep."""
-    if not isinstance(text, str) or "<" not in text or not _asks_too_much(text):
+    tables or lists nested too deep - or whose sizes, each small enough,
+    add up to a layout wider or taller than :data:`MAX_RENDER_WIDTH_PX` /
+    :data:`MAX_RENDER_HEIGHT_PX`."""
+    if not isinstance(text, str) or "<" not in text:
         return False
     from PyQt6.QtCore import Qt
 
-    return bool(Qt.mightBeRichText(text))
+    if not Qt.mightBeRichText(text):
+        return False
+    return _asks_too_much(text) or _renders_too_large(text)
 
 
 #: What a defused text starts and ends with (the class marks it as ours, so
@@ -363,10 +517,8 @@ def show_as_written(text):
     it is."""
     if not isinstance(text, str) or "<" not in text:
         return text
-    for head in (_DEFUSED_HEAD, _AS_WRITTEN_HEAD):
-        if text.startswith(head) and text.endswith(_DEFUSED_TAIL) \
-                and "<" not in text[len(head):-len(_DEFUSED_TAIL)]:
-            return text
+    if _escaped_only(text):
+        return text
     from PyQt6.QtCore import Qt
 
     if not Qt.mightBeRichText(text):
@@ -674,6 +826,7 @@ def install() -> None:
         cls.loadResource = _safe_load_resource(cls.loadResource)
 
 
-__all__ = ["MAX_CELLS", "MAX_FONT_PX","MAX_IMAGE_BYTES", "MAX_INDENT_DEPTH", "MAX_LENGTH_PX", "MAX_SIZE", "MAX_SPAN",
+__all__ = ["MAX_CELLS", "MAX_FONT_PX", "MAX_IMAGE_BYTES", "MAX_INDENT_DEPTH", "MAX_LENGTH_PX",
+           "MAX_RENDER_HEIGHT_PX", "MAX_RENDER_WIDTH_PX", "MAX_SIZE", "MAX_SPAN",
            "MAX_TABLE_DEPTH", "asks_for_resource", "bombs_layout", "defuse", "defuse_message",
            "holds_link", "install", "original_of", "show_as_written"]

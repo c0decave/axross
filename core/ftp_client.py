@@ -30,7 +30,7 @@ from core.path_policy import (
     refuse_folder_path,
     safe_join,
 )
-from core.read_spool import READ_CHUNK, new_read_spool, new_spool
+from core.read_spool import READ_CHUNK, new_read_spool, new_spool, streaming_wanted
 from core.session_lock import io_lock, liveness_check, serialized
 from core.transfer_pool import MAX_PARALLEL
 from models.file_item import FileItem
@@ -683,7 +683,7 @@ class _StreamedDownload(io.RawIOBase):
     _BLOCK = 64 * 1024
 
     def __init__(self, ftp: FTP, conn, path: str, done, expected: int | None = None,
-                 spool=None) -> None:
+                 spool=None, *, streamed: bool = False) -> None:
         super().__init__()
         self._ftp = ftp
         self._conn = conn
@@ -693,7 +693,12 @@ class _StreamedDownload(io.RawIOBase):
         self._expected = expected
         # Called with the control connection after a complete transfer.
         self._done = done
-        self._spool = spool if spool is not None else new_read_spool(expected)
+        # Streamed (the transfer engine reads front to back once): no
+        # spool - a download into a local folder needed the room twice,
+        # the spool beside the copy - and no seek back.
+        self._streamed = streamed
+        self._spool = None if streamed else (
+            spool if spool is not None else new_read_spool(expected))
         self._received = 0
         self._pos = 0
         self._failed: OSError | None = None
@@ -703,12 +708,16 @@ class _StreamedDownload(io.RawIOBase):
         return True
 
     def seekable(self) -> bool:
-        return True
+        return not self._streamed
 
     def tell(self) -> int:
         return self._pos
 
     def seek(self, pos: int, whence: int = 0) -> int:
+        if self._streamed:
+            if (whence, pos) in ((io.SEEK_SET, self._pos), (io.SEEK_CUR, 0)):
+                return self._pos
+            raise io.UnsupportedOperation("a streamed FTP download cannot seek")
         with self._lock:
             self._checked()
             if whence == io.SEEK_SET:
@@ -729,6 +738,8 @@ class _StreamedDownload(io.RawIOBase):
         with self._lock:
             self._checked()
             view = memoryview(buffer).cast("B")
+            if self._streamed:
+                return self._receive_into(view)
             self._receive(self._pos + len(view))
             if self._pos >= self._received:
                 return 0
@@ -767,6 +778,26 @@ class _StreamedDownload(io.RawIOBase):
             self._spool.write(data)
             self._received += len(data)
 
+    def _receive_into(self, view) -> int:
+        """Streamed: the next bytes of the data connection into *view*."""
+        if self._conn is None or not len(view):
+            return 0
+        try:
+            data = self._conn.recv(min(len(view), self._BLOCK))
+        except _FTP_PROTOCOL_ERRORS as exc:
+            detail = str(exc) or "connection closed by server"
+            self._fail(OSError(f"FTP read {self._path}: {detail}"))
+        except OSError as exc:
+            self._fail(exc)
+        if not data:
+            self._finish()
+            return 0
+        n = len(data)
+        view[:n] = data
+        self._received += n
+        self._pos += n
+        return n
+
     def _finish(self) -> None:
         """The data connection ended: the server's reply says whether the
         file did. A 4xx/5xx there is a failed download, not a short file."""
@@ -780,7 +811,10 @@ class _StreamedDownload(io.RawIOBase):
         self._ftp.voidresp()
         ftp, self._ftp = self._ftp, None
         self._done(ftp)
-        if self._expected is not None and self._received != self._expected:
+        # Fewer bytes than announced is a cut connection; more is a file
+        # that grew since SIZE (a log being written) - the transfer
+        # engine's own check against the live size decides about that.
+        if self._expected is not None and self._received < self._expected:
             self._failed = _short_download(self._path, self._received, self._expected)
             raise self._failed
 
@@ -809,7 +843,8 @@ class _StreamedDownload(io.RawIOBase):
             try:
                 self._drop()
             finally:
-                self._spool.close()
+                if self._spool is not None:
+                    self._spool.close()
                 super().close()
 
 
@@ -1874,9 +1909,12 @@ class FtpSession(SessionLifecycle):
         try:
             ftp.voidcmd("TYPE I")
             expected = _announced_size(ftp, path)
-            # Before RETR: a file that cannot fit in the spool folder fails
-            # now, not when the disk is full half-way.
-            spool = new_read_spool(expected)
+            # Before RETR: a file that cannot fit in the spool folder (or,
+            # streamed, the destination folder) fails now, not when the
+            # disk is full half-way.
+            streamed = streaming_wanted(expected)
+            if not streamed:
+                spool = new_read_spool(expected)
             conn, announced = ftp.ntransfercmd(f"RETR {path}")
         except error_perm as e:
             # "550 No such file": answered, the connection is fine.
@@ -1898,7 +1936,8 @@ class FtpSession(SessionLifecycle):
             _close_quietly(ftp)
             raise
         return _StreamedDownload(ftp, conn, path, done,
-                                 expected if expected is not None else announced, spool)
+                                 expected if expected is not None else announced, spool,
+                                 streamed=streamed)
 
     def _store(self, command: str, fileobj) -> None:
         """Upload *fileobj* with *command* (STOR / APPE): on a control
@@ -2099,7 +2138,7 @@ class FtpSession(SessionLifecycle):
         try:
             ftp.retrbinary(f"RETR {path}", sink.write)
             received = buf.tell()
-            if expected is not None and received != expected:
+            if expected is not None and received < expected:  # more: it grew
                 raise _short_download(path, received, expected)
         except error_perm as e:
             buf.close()

@@ -170,7 +170,7 @@ def test_happy_symbol_buttons_have_an_accessible_name(win):
             unnamed.append((text, button.toolTip()[:40], button.objectName()))
     assert unnamed == []
     pane = win._active_pane
-    assert pane._btn_up.accessibleName() == "Parent directory"
+    assert pane._btn_up.accessibleName() == "Parent folder"
     assert pane._btn_target.accessibleName() == "Set as transfer target"
     bar = win._transfer_dock.titleBarWidget()
     assert "Transfers" in bar._close_btn.accessibleName()

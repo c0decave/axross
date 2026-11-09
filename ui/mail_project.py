@@ -179,7 +179,7 @@ class MailProjectDialog(QDialog):
         self.message_view = _safe_browser_class()()
         self.detail_tabs = QTabWidget()
         self.detail_tabs.addTab(self.detail, tr("Report"))
-        self.detail_tabs.addTab(self.message_view, tr("Message"))
+        self.detail_tabs.addTab(self._message_pages(), tr("Message"))
         split.addWidget(self.detail_tabs)
         split.setSizes([620, 480])
         layout.addWidget(split, 1)
@@ -189,6 +189,43 @@ class MailProjectDialog(QDialog):
         add_close_corner(self)
         if folder:
             self.open_project(folder)
+
+    def _message_pages(self):
+        """The Message tab: the formatted view (sanitised HTML, at most
+        core.mail_html.MAX_SHOWN characters of it - a QTextBrowser lays
+        out all it holds at once) and the plain view (a QPlainTextEdit: it
+        lays out only the lines on screen), for a plain-text mail and for
+        "Show All" of a long one."""
+        from PyQt6.QtWidgets import QStackedWidget, QWidget
+
+        self.message_pages = QStackedWidget()
+        formatted = QWidget()
+        column = QVBoxLayout(formatted)
+        column.setContentsMargins(0, 0, 0, 0)
+        self.cut_bar = QWidget()
+        bar = QHBoxLayout(self.cut_bar)
+        bar.setContentsMargins(4, 2, 4, 2)
+        self.cut_note = QLabel(tr("Only the start of this message is shown here."))
+        self.cut_note.setTextFormat(Qt.TextFormat.PlainText)
+        self.cut_note.setWordWrap(True)
+        self.show_all_button = QPushButton(tr("Show All as Plain Text"))
+        self.show_all_button.clicked.connect(self.show_all)
+        bar.addWidget(self.cut_note, 1)
+        bar.addWidget(self.show_all_button)
+        self.cut_bar.hide()
+        column.addWidget(self.cut_bar)
+        column.addWidget(self.message_view, 1)
+        self.message_plain = QPlainTextEdit()
+        self.message_plain.setReadOnly(True)
+        self.message_pages.addWidget(formatted)
+        self.message_pages.addWidget(self.message_plain)
+        self._plain_text = ""
+        return self.message_pages
+
+    def show_all(self) -> None:
+        """The whole message as plain text, in the plain view."""
+        self.message_plain.setPlainText(self._plain_text)
+        self.message_pages.setCurrentIndex(1)
 
     def _dns_toggled(self, on: bool) -> None:
         if self.project is not None:
@@ -383,6 +420,8 @@ class MailProjectDialog(QDialog):
             self.detail.setPlainText(str(exc))
         self._showing += 1
         ticket, project = self._showing, self.project
+        self.cut_bar.hide()
+        self.message_pages.setCurrentIndex(0)
         self.message_view.setPlainText(tr("Loading…"))
         try:
             self._viewer.submit(self._load, ticket, project, sha)
@@ -393,21 +432,37 @@ class MailProjectDialog(QDialog):
         """On the viewer thread: the message parsed and made safe HTML."""
         if ticket != self._showing:         # another message was selected meanwhile
             return
-        from core.mail_html import message_html
+        from core import mail_html
 
         try:
-            html_text, error = message_html(project.message(sha)), ""
+            shown, error = mail_html.message_view(project.message(sha)), ""
         except Exception as exc:  # noqa: BLE001 - an unreadable message shows why
-            html_text, error = None, str(exc)
-        self._post_shown(ticket, html_text, error)
+            shown, error = None, str(exc)
+        self._post_shown(ticket, shown, error)
 
-    def _shown(self, ticket: int, html_text: str | None, error: str) -> None:
+    def _shown(self, ticket: int, shown, error: str) -> None:
+        """Show *shown* (a core.mail_html.MessageView, or HTML as a str),
+        else *error*, when *ticket* is still the newest selection."""
         if ticket != self._showing:
             return
-        if html_text is None:
+        self.cut_bar.hide()
+        self.message_pages.setCurrentIndex(0)
+        if shown is None:
             self.message_view.setPlainText(error)
-        else:
-            self.message_view.setHtml(html_text)
+            return
+        if isinstance(shown, str):
+            self.message_view.setHtml(shown)
+            return
+        self._plain_text = shown.plain
+        if shown.plain_cut:
+            self._plain_text += "\n\n" + tr("[The rest of this message is not shown here.]")
+        if shown.html is None:              # a plain-text mail: the plain view
+            self.message_view.clear()
+            self.show_all()
+            return
+        self.message_view.setHtml(shown.html)
+        if shown.cut:
+            self.cut_bar.show()
 
     def ask_agent(self) -> None:
         if not self._need_project():

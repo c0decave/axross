@@ -300,7 +300,7 @@ class ImageViewerDialog(QDialog):
         self._label.setText(f"{title}\n\n{text}")
         self._label.adjustSize()
         name = self._siblings[self._idx].rsplit("/", 1)[-1]
-        self._info.setText(tr("{name} — cannot be shown [{n}/{count}]").format(
+        self._info.setText(tr("{name} – cannot be shown [{n}/{count}]").format(
             name=name, n=self._idx + 1, count=len(self._siblings)))
 
     def _render(self) -> None:

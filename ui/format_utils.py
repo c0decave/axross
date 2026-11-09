@@ -66,4 +66,20 @@ def backend_label(name: str) -> str:
     return tr("Local") if name == "Local" else name
 
 
-__all__ = ["backend_label", "format_size", "human_bytes", "measured_bytes"]
+#: The sandbox profiles axross ships (core.agent_sandbox.default_profiles)
+#: and its levels: stored under these English names, shown translated.
+SANDBOX_WORDS = {"lax": "Lax", "normal": "Normal", "high": "High", "paranoid": "Paranoid"}
+
+
+def sandbox_label(name: str) -> str:
+    """A sandbox profile's (or level's) name for display: the shipped
+    "Lax", "Normal", "High" and "Paranoid" in the interface language (they
+    were English in German - UX review round 7); a name the user gave
+    stays as written. The stored name - the profile's id - is unchanged."""
+    from core.i18n import tr
+
+    word = SANDBOX_WORDS.get(str(name).casefold())
+    return tr(word) if word is not None and str(name) in (word, word.lower()) else name
+
+
+__all__ = ["backend_label", "format_size", "human_bytes", "measured_bytes", "sandbox_label"]

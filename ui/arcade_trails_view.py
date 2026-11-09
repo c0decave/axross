@@ -483,7 +483,7 @@ class TrailsView(AC.ArcadeView):
         p.setFont(AC.font(9.5))
         p.setPen(QColor("#cbd5e1"))
         p.drawText(QRectF(0, 0, self.width() - 12, HUD_H), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight,
-                   tr("{arena} - round {n}").format(arena=tr(g.arena), n=g.round_no))
+                   tr("{arena} – round {n}").format(arena=tr(g.arena), n=g.round_no))
 
     def _paint_message(self, p) -> None:
         g = self.game
@@ -513,7 +513,7 @@ class TrailsView(AC.ArcadeView):
         g = self.game
         if g.over and not self.paused:
             best = max(g.riders, key=lambda rr: rr.points)
-            return tr("{who} takes the match").format(who=tr(best.name)), tr("R plays again - Esc goes back")
+            return tr("{who} takes the match").format(who=tr(best.name)), tr("R plays again – Esc goes back")
         title, hint = self.end_message()
         if not title and g.humans_out():
             title = tr("You are out") if not self.settings.two_players else tr("Both of you are out")
@@ -571,7 +571,7 @@ class TrailsView(AC.ArcadeView):
         sub = QColor("#a7f3d0")
         sub.setAlphaF(max(0.0, min(1.0, (t - 0.6) * 4)))
         AC.glow_text(p, QRectF(rect.left(), frame.bottom() + 14, rect.width(), 26),
-                     tr("leave a wall - make the others hit it first"), AC.font(10.5), sub)
+                     tr("leave a wall – make the others hit it first"), AC.font(10.5), sub)
         AC.intro_hint(p, rect, t, QColor(T.COLOURS[0]))
 
     def _title_path(self, rect: QRectF) -> QPainterPath:

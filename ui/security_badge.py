@@ -58,7 +58,7 @@ def tooltip_lines(info: CS.SecurityInfo) -> list[str]:
     lines += [tr(d) for d in info.details]
     if info.level != CS.LEVEL_LOCAL:
         lines.append(tr("(negotiated on the live connection)") if info.negotiated
-                     else tr("(configured - not read from a live connection)"))
+                     else tr("(configured – not read from a live connection)"))
     return lines
 
 

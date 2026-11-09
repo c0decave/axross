@@ -51,12 +51,12 @@ import os
 import posixpath
 import re
 import socket
-import tempfile
 import time
 from datetime import datetime
 from typing import IO
 
 from core.backend import SessionLifecycle
+from core.read_spool import new_named_spool
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
@@ -415,7 +415,7 @@ class TftpSession(SessionLifecycle):
                 self._port,
                 options={"tsize": "0"},
             )
-            with tempfile.NamedTemporaryFile(delete=True) as tmp, self._udp_scope():
+            with new_named_spool(prefix="axross-tftp-") as tmp, self._udp_scope():
                 client.download(
                     name,
                     tmp.name,
@@ -510,7 +510,7 @@ class TftpSession(SessionLifecycle):
                 raise _Present
 
         client = tftpy.TftpClient(self._host, self._port)  # type: ignore[union-attr]
-        with tempfile.NamedTemporaryFile(delete=True) as tmp:
+        with new_named_spool(prefix="axross-tftp-") as tmp:
             try:
                 with self._udp_scope():
                     client.download(
@@ -549,7 +549,7 @@ class TftpSession(SessionLifecycle):
                     f"TFTP read of {name!r} exceeded {cap} byte cap (at {bytes_so_far[0]} bytes)",
                 )
 
-        with tempfile.NamedTemporaryFile(delete=True) as tmp:
+        with new_named_spool(prefix="axross-tftp-") as tmp:
             try:
                 with self._udp_scope():
                     client.download(
@@ -758,7 +758,7 @@ class TftpSession(SessionLifecycle):
                 f"TFTP upload of {name!r} ({len(data)} bytes) exceeds "
                 f"{self._max_size_bytes} byte cap.",
             )
-        with tempfile.NamedTemporaryFile(delete=True) as tmp:
+        with new_named_spool(prefix="axross-tftp-") as tmp:
             tmp.write(data)
             tmp.flush()
             tmp.seek(0)

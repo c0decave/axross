@@ -149,15 +149,16 @@ Every backend now reaches the proxy via one of three primitives:
    `HTTPS_PROXY` from the process environment cannot silently override a
    profile route. Used by WebDAV, OneDrive, Dropbox, Exchange, WinRM,
    Azure and HTTP-CONNECT S3.
-3. **`patched_create_connection(profile)`** — context manager that
-   swaps `socket.create_connection` for a proxied wrapper for the
-   duration of the call, with a process-global lock so concurrent
-   patches across threads can't strand each other's replacement.
-   A configured proxy port is validated before the monkey-patch is
-   installed, so malformed settings fail before any direct connect can
-   happen.
+3. **`routed_create_connection(module, profile)`** — context manager
+   that routes ONE library module's `socket.create_connection` through
+   the proxy, in the calling thread only, for the duration of the call.
+   Nothing process-wide changes: a connection another thread opens
+   meanwhile goes where it was meant to. A configured proxy port is
+   validated first, so malformed settings fail before any direct
+   connect can happen.
    Used by SMB, DFS-N and ADB, which use libraries that have no
-   better hook.
+   better hook. (The older `patched_create_connection`, which swapped
+   `socket.create_connection` for the whole process, is gone.)
 4. **`LocalTunnel` / `open_tunnel(kwargs, host, port)`** — a loopback
    listener (127.0.0.1, ephemeral port, **same-uid peers only**, see
    *Who may connect* below, 64-connection cap) that relays every accepted

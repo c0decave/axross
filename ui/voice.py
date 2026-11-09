@@ -64,7 +64,7 @@ def _audio_ready() -> None:
     result = MPROBE.cached()
     if result is None:
         MPROBE.start()
-        raise AudioPending(tr("Audio is still starting - try again in a moment."))
+        raise AudioPending(tr("Audio is still starting – try again in a moment."))
     if not result.ok:
         raise AudioUnavailable(MPROBE.unavailable_text(result))
 
@@ -469,11 +469,11 @@ class VoiceController(QObject):
         if not piper:
             if not quiet:
                 self._once("piper", tr("Voice output needs the voice packages: pip install "
-                                       "axross[voice] (Help > Features…)."))
+                                       "axross[voice] (Help → Features…)."))
             return False
         if not self._model_ready(model):
             if not quiet:
-                self._once(model.id, tr("The voice {name} is not downloaded yet: Help > "
+                self._once(model.id, tr("The voice {name} is not downloaded yet: Help → "
                                         "Features…, group Voice.").format(name=model.title))
             return False
         return True
@@ -702,12 +702,12 @@ class VoiceController(QObject):
             if not whisper:
                 self._set_state("idle")
                 self.notice.emit(tr("Speech recognition needs the voice packages: pip install "
-                                    "axross[voice] (Help > Features…)."))
+                                    "axross[voice] (Help → Features…)."))
                 return
             if model is None or not self._model_ready(model):
                 self._set_state("idle")
                 self.notice.emit(tr("The speech recognition model {name} is not downloaded yet: "
-                                    "Help > Features…, group Voice.").format(
+                                    "Help → Features…, group Voice.").format(
                                         name=model.title if model else profile.stt_model))
                 return
             request = {"op": "transcribe", "model": str(VM.model_dir(model)),
@@ -818,10 +818,10 @@ class VoicePreview(QObject):
             return False
         if not self._packages()[0]:
             self.message.emit(tr("Voice output needs the voice packages: pip install "
-                                 "axross[voice] (Help > Features…)."))
+                                 "axross[voice] (Help → Features…)."))
             return False
         if not self._model_ready(model):
-            self.message.emit(tr("The voice {name} is not downloaded yet - click "
+            self.message.emit(tr("The voice {name} is not downloaded yet – click "
                                  "Download.").format(name=model.title))
             return False
         if self._lexicon is None:

@@ -110,6 +110,7 @@ def test_sad_a_failing_test_says_why(tmp_path):
     dlg.add_server()
     dlg.server_name_edit.setText("gone")
     dlg.server_command_edit.setText("/nonexistent/mcp-server")
+    dlg.server_trusted_check.setChecked(True)  # a binary is contained by default (round 7)
     dlg.test_server()
     _wait(lambda: "failed" in dlg.server_test_label.text())
     assert "cannot start" in dlg.server_test_label.text()

@@ -233,7 +233,8 @@ class WriteTraits:
     real_append: bool = True
     #: stat().size is the number of bytes a read yields. False for the mail
     #: stores: Exchange reports the EWS store size and the copy is the MIME
-    #: text; IMAP servers (Exchange's among them) estimate RFC822.SIZE.
+    #: text; IMAP servers (Exchange's among them) estimate RFC822.SIZE, and
+    #: POP3 LIST sizes (Exchange, Microsoft 365) and NNTP byte counts too.
     exact_size: bool = True
     #: open_write() touches nothing on the server: the writer spools and
     #: sends the whole file in close() (FTP STOR, a WebDAV PUT, an SCP /
@@ -273,6 +274,11 @@ _WRITE_TRAITS = {
     "git": _RMW_APPEND,
     "imap": WriteTraits(append_only=True, real_append=False, exact_size=False),
     "exchange": WriteTraits(append_only=True, real_append=False, exact_size=False),
+    # Exchange / Microsoft 365 report POP3 LIST sizes as estimates
+    # (EnableExactRFC822Size off by default), an NNTP overview's bytes
+    # count is the server's own: a read is not that long.
+    "pop3": WriteTraits(exact_size=False),
+    "nntp": WriteTraits(exact_size=False),
     "ftp": _SPOOLED,
     "ftps": _SPOOLED,
     "telnet": _SPOOLED_COPIES,
@@ -422,6 +428,7 @@ def _keep_snapshot_locally(dst: str, snapshot) -> str | None:
     not dropped with the snapshot. Its path, or None."""
     import tempfile
 
+    path = None
     try:
         base = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local",
                                                                 "state")
@@ -436,6 +443,11 @@ def _keep_snapshot_locally(dst: str, snapshot) -> str | None:
         return path
     except Exception:  # noqa: BLE001 - logged by the caller's message
         log.debug("could not keep the snapshot of %s", dst, exc_info=True)
+        if path is not None:  # a half-written copy (the disk full) is none
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
         return None
 
 

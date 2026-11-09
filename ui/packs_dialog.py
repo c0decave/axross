@@ -145,7 +145,7 @@ class PacksDialog(QDialog):
             return
         _refresh_features()
         self._retry_extensions()
-        self._done(tr("Added: {n} files checked and unpacked - ready to use.").format(n=files))
+        self._done(tr("Added: {n} files checked and unpacked – ready to use.").format(n=files))
         self.activated.emit(list(units))
 
     def _retry_extensions(self) -> None:

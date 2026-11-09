@@ -37,11 +37,11 @@ GUIDES: dict[str, Guide] = {
             "Create a project and enable the Google Drive API.",
             "Create an OAuth client ID of type Desktop app.",
             "OAuth consent screen: add the scope …/auth/drive and yourself as a test user.",
-            "Enter Client ID and Client Secret - or download the client's JSON file and "
+            "Enter Client ID and Client Secret – or download the client's JSON file and "
             "use Import Client JSON…",
         ),
         _BROWSER + " Google Docs, Sheets and Slides open as .docx / .xlsx / .pptx exports "
-        "(read-only); shared drives are not listed - only what is reachable from My Drive.",
+        "(read-only); shared drives are not listed – only what is reachable from My Drive.",
     ),
     "onedrive": Guide(
         "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",
@@ -72,7 +72,7 @@ GUIDES: dict[str, Guide] = {
         (
             "Create app: Scoped access, Full Dropbox.",
             "Permissions: files.metadata.read/write, files.content.read/write, "
-            "account_info.read - then Submit.",
+            "account_info.read – then Submit.",
             "Enter the App key (the secret is optional: axross signs in with PKCE).",
         ),
         "Connecting opens the browser for the sign-in; Dropbox then shows a code, "

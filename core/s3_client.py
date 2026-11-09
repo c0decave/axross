@@ -10,31 +10,30 @@ from __future__ import annotations
 import errno
 import logging
 import posixpath
-import tempfile
 from datetime import datetime
 from typing import IO
 
 from core import cloud_http, transfer_hooks
 from core.append_helpers import read_existing_for_append
 from core.backend import SessionLifecycle
-from core.read_spool import read_chunks, spool_chunks
+from core.read_spool import new_spool, read_chunks, spool_chunks
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
 
 
-def _spool_body(body, what: str) -> IO[bytes]:
-    """A GetObject body as a spool, not one bytes object in RAM.
+def _spool_body(body, what: str, size: int | None = None) -> IO[bytes]:
+    """A GetObject body as a spool, not one bytes object in RAM - or, for
+    the transfer engine's front-to-back read, as it arrives (no spool:
+    a download into a local folder needs the room once, not twice).
 
     Read in sized chunks to the end, so botocore still checks the bytes
     against the Content-Length; the body is closed either way.
     """
-    try:
-        return spool_chunks(read_chunks(body), what=what)
-    finally:
-        close = getattr(body, "close", None)
-        if close is not None:
-            close()
+    close = getattr(body, "close", None)
+    return spool_chunks(read_chunks(body), what=what,
+                        progress_total=size if isinstance(size, int) else None,
+                        close=close)
 
 from core.client_identity import HTTP_USER_AGENT  # noqa: E402 — after log= for clean attribution
 
@@ -253,7 +252,7 @@ class _SpooledWriter:
         self._s3 = s3_client
         self._bucket = bucket
         self._key = key
-        self._buf = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
+        self._buf = new_spool(max_size=8 * 1024 * 1024)
         self._closed = False
         # The running transfer's Cancel and progress: the upload happens in
         # close(), after the copy loop.
@@ -963,7 +962,7 @@ class S3Session(SessionLifecycle):
         key = self._to_key(path)
         try:
             resp = self._s3.get_object(Bucket=self._bucket, Key=key)
-            return _spool_body(resp["Body"], f"Cannot read {path}")
+            return _spool_body(resp["Body"], f"Cannot read {path}", resp.get("ContentLength"))
         except Exception as e:
             if isinstance(e, ClientError) and _is_not_found(e):
                 # NoSuchKey: no object - maybe a folder (a prefix).

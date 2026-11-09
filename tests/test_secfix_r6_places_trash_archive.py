@@ -291,7 +291,10 @@ def test_sad_credential_stores_are_secret(home, rel):
     ".local/lib/python3.11/site-packages/google/auth/credentials.py",
 ])
 def test_edge_ordinary_files_stay_readable(home, rel):
-    assert P.read_refusal(str(home / rel)) is None
+    # Round 7: a hidden folder of the home is default-deny for reads unless
+    # granted; granted, its files are not taken for secrets by their names.
+    path = home / rel
+    assert P.read_refusal(str(path), granted=[str(path.parent)]) is None
 
 
 def test_edge_the_sandbox_leaves_code_named_like_secrets_alone(home):
