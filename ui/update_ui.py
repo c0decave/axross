@@ -335,10 +335,21 @@ def _markdown_features(*features: QTextDocument.MarkdownFeature) -> QTextDocumen
     return _markdown_feature(value)
 
 
+def _feature_member(value: int) -> QTextDocument.MarkdownFeature:
+    """``MarkdownFeature(value)`` (its own function so a test can make it
+    behave like Python 3.12)."""
+    return QTextDocument.MarkdownFeature(value)
+
+
 def _markdown_feature(value: int) -> QTextDocument.MarkdownFeature:
     """The Qt Markdown feature set of the bits *value* (see above)."""
-    union = QTextDocument.MarkdownFeature(value)
-    if union.value != value:
+    try:
+        union = _feature_member(value)
+    except ValueError:
+        # Python 3.12's enum refuses a value that is no member (3.11 gave a
+        # member with fewer bits): the main window did not start at all.
+        union = None
+    if union is None or union.value != value:
         union = object.__new__(QTextDocument.MarkdownFeature)
         union._value_ = value
         union._name_ = None
