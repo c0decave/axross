@@ -68,9 +68,10 @@ JSON de perfil mismo nunca lleva credenciales en plano.
   usado - un panel local todavía en tu carpeta personal, sin navegar, sin
   selección ni filtro -, una conexión nueva se abre en su lugar; en el
   primer arranque el servidor ocupa así la mitad derecha de la ventana en
-  vez de un tercer panel estrecho. Si no, se abre en un panel nuevo a la
-  derecha. Para tener siempre un panel nuevo, mantén **Shift** al hacer
-  clic en la conexión (o en OK), marca *Open in a new pane* en el
+  vez de un tercer panel estrecho. El último panel local nunca se
+  reemplaza: una segunda conexión se abre junto a la primera. Si no, se
+  abre en un panel nuevo a la derecha. Para tener siempre un panel nuevo,
+  mantén **Shift** al hacer clic en la conexión (o en *Connect*), marca *Open in a new pane* en el
   Connection Manager o, con clic derecho sobre un perfil en Quick Connect,
   elige *Connect in New Pane*.
 
@@ -734,7 +735,8 @@ vuelve a acoplar.
   privado hasta el *Open Size Limit* y se borran después; un
   elemento demasiado grande, cifrado o roto muestra el motivo. El SVG
   solo se renderiza sin DOCTYPE/entidades, scripts ni referencias
-  fuera del fichero. El modo `paranoid` bloquea el visor.
+  fuera del fichero, en un proceso aparte que se detiene a los 10
+  segundos. El modo `paranoid` bloquea el visor.
   `I` (o el botón *Info*) muestra la metadata del elemento actual en
   un panel lateral, con *Remove metadata* — también en el visor de
   imágenes.
@@ -1551,8 +1553,12 @@ ficheros de inicio, y los ficheros de Git que ejecutan código (`.git/config`,
 los hooks de otra carpeta -, `gitdir`, `.gitmodules`, una entrada `.git`) se
 rechazan en cualquier sitio, también en un repositorio bare (`x.git/hooks`) y
 en cualquier carpeta que Git tome por un repositorio (`HEAD`, `objects/` y
-`refs/`; el último de los tres no se crea en una carpeta que aún no lo es);
-igual `.hg/hgrc` de Mercurial y `.jj/repo` de Jujutsu. Cuenta cada nombre de
+`refs/`; el último de los tres no se crea en una carpeta que aún no lo es -
+un fichero `objects` o `refs` cuenta tanto como una carpeta, y una entrada de
+archivo llamada `HEAD` no se extrae); igual `.hg/hgrc` y
+`.hg/hgrc-not-shared` de Mercurial, `.sl/config` de Sapling, `.jj/repo` de
+Jujutsu, `_darcs/prefs/defaults` de darcs y `.bzr/branch/branch.conf` de
+Breezy (y las carpetas `.hg`, `.sl`, `_darcs`, `.bzr` mismas). Cuenta cada nombre de
 una ruta: tal como se escribe, tras cada symlink del camino y resuelto - y el
 destino de un symlink en esos sitios (GNU stow: `~/.config/kitty ->
 ~/dotfiles/kitty`) se protege como el sitio mismo, salvo que concedas ese
@@ -1563,9 +1569,14 @@ lectura y no se puede crear ninguna nueva, los destinos de esos symlinks son
 de solo lectura; la configuración, los hooks, `info` y `commondir` de Git de
 la carpeta del agente y de los repositorios una carpeta más abajo también, y
 un `.git/commondir` que el agente cree ahí se aparta al terminar su tarea
-(renombrado a `commondir.set-aside-by-axross-<hora>`). El
-`chmod` de MCP no pone los bits setuid, setgid ni sticky ni da escritura al
-grupo o a todos.
+(renombrado a `commondir.set-aside-by-axross-<hora>`), igual que un
+`.git/config.worktree` y el `commondir` y `config.worktree` de las carpetas
+Git de submódulos y worktrees (`.git/modules/<nombre>`,
+`.git/worktrees/<nombre>`) creados durante la tarea. Un repositorio nuevo que
+el agente cree en su carpeta no está cubierto (el límite documentado de un
+worker comprometido). El `chmod` de MCP no pone los bits setuid, setgid ni
+sticky, no da escritura al grupo o a todos y no cambia un archivo con otros
+hard links (su modo vale para todos sus nombres).
 
 **Secretos que el agente no lee**, además de los de axross: las
 credenciales de herramientas comunes (`~/.aws`, `~/.kube`,
@@ -1580,7 +1591,18 @@ listar; el sandbox los muestra vacíos. La papelera de axross
 (`~/.axross-trash`) también es secreta y de solo lectura para toda
 herramienta. Un symlink a un secreto (`~/.ssh/id_ed25519 ->
 ~/keys/id_ed25519`) hace secreto su destino, y un hard link a un archivo
-secreto tampoco se lee. La papelera firma cada entrada: una entrada cuyos datos o
+secreto tampoco se lee. En cualquier sitio - también en una carpeta de
+proyecto - el agente no lee una clave privada ni una base de contraseñas
+reconocida por su contenido (`-----BEGIN … PRIVATE KEY-----`, una clave
+OpenSSH o PuTTY, una base de KeePass) ni archivos que por su nombre guardan
+credenciales (`.env`, `.env.*` salvo `.env.example`/`.sample`/`.template`,
+`.netrc`, `.git-credentials`, `.pgpass`, `*.tfstate`, `*.kdbx`,
+`id_rsa`/`id_ed25519`/`id_ecdsa`, `*.ppk`, `*.p12`, `*.pfx`). Con una raíz
+que contiene `/proc` (`--mcp-root /`) tampoco se leen el entorno, la línea
+de órdenes, la memoria, los maps y los ficheros abiertos de un proceso
+(`/proc/<pid>/environ`, …, `/proc/self`) ni `/run/secrets`. El sandbox solo
+oculta los secretos de la carpeta personal; los archivos del proyecto
+siguen visibles para las órdenes. La papelera firma cada entrada: una entrada cuyos datos o
 registro han cambiado no se restaura, y una que vuelve a un sitio protegido
 (un fichero de inicio, una entrada de autostart) solo desde la ventana de
 la papelera y tras tu confirmación.

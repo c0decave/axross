@@ -36,7 +36,10 @@ import errno
 import io
 import logging
 import os
+import stat
 import tempfile
+import threading
+import time
 from collections.abc import Callable, Iterable, Iterator
 from typing import IO
 
@@ -142,15 +145,107 @@ def new_spool(size: int | None = None, *, max_size: int = READ_SPOOL_MAX) -> IO[
     return tempfile.SpooledTemporaryFile(max_size=max_size, dir=directory)
 
 
-def new_named_spool(size: int | None = None, *, prefix: str = "axross-",
+#: Every named spool file (and folder) starts with this: hidden in a
+#: file manager (a spool goes next to the user's download while it
+#: runs), and the name :func:`sweep_stale_spools` knows as ours.
+SPOOL_PREFIX = ".axross-spool-"
+#: A named spool this old (by its mtime) is one a crashed run left.
+STALE_SPOOL_AGE = 24 * 3600
+
+_swept: set[str] = set()
+_swept_lock = threading.Lock()
+
+
+def spool_name_prefix(tag: str = "") -> str:
+    """The name prefix of a named spool of *tag* (``adb``, ``tftp``):
+    ``.axross-spool-adb-``."""
+    return f"{SPOOL_PREFIX}{tag}-" if tag else SPOOL_PREFIX
+
+
+def _ours(st, now: float, age: float) -> bool:
+    """Owned by this user and untouched for *age* seconds."""
+    from core.posix_compat import effective_uid
+
+    uid = effective_uid()
+    return (uid is None or st.st_uid == uid) and now - st.st_mtime > age
+
+
+def _remove_stale_folder(path: str, now: float, age: float) -> bool:
+    """A spool folder (rsync's download folder) holding only regular
+    files of ours: those and the folder go. Anything else stays."""
+    try:
+        names = os.listdir(path)
+        for name in names:
+            st = os.lstat(os.path.join(path, name))
+            if not stat.S_ISREG(st.st_mode) or not _ours(st, now, -1):
+                return False
+        for name in names:
+            os.unlink(os.path.join(path, name))
+        os.rmdir(path)
+    except OSError:
+        return False
+    return True
+
+
+def sweep_stale_spools(directory: str | None, *, age: float = STALE_SPOOL_AGE,
+                       now: float | None = None) -> int:
+    """Remove the named spools a crashed run left in *directory* (None:
+    the temp folder): only names with :data:`SPOOL_PREFIX`, only regular
+    files (or a folder of such files) owned by this user, only those not
+    touched for *age* seconds - a spool in use is written to or was made
+    now. Never follows a link. Returns how many went."""
+    folder = directory or tempfile.gettempdir()
+    now = time.time() if now is None else now
+    removed = 0
+    try:
+        names = [n for n in os.listdir(folder) if n.startswith(SPOOL_PREFIX)]
+    except OSError:
+        return 0
+    for name in names:
+        path = os.path.join(folder, name)
+        try:
+            st = os.lstat(path)
+        except OSError:
+            continue
+        if not _ours(st, now, age):
+            continue
+        if stat.S_ISREG(st.st_mode):
+            try:
+                os.unlink(path)
+            except OSError:
+                continue
+        elif not (stat.S_ISDIR(st.st_mode) and _remove_stale_folder(path, now, age)):
+            continue
+        removed += 1
+    if removed:
+        log.info("Removed %d stale spool file(s) from %s", removed, folder)
+    return removed
+
+
+def named_spool_dir() -> str | None:
+    """:func:`spool_dir` for a named spool; the first time in this run a
+    folder is used for one, the stale spools there go
+    (:func:`sweep_stale_spools`)."""
+    directory = spool_dir()
+    key = directory or tempfile.gettempdir()
+    with _swept_lock:
+        first = key not in _swept
+        _swept.add(key)
+    if first:
+        sweep_stale_spools(directory)
+    return directory
+
+
+def new_named_spool(size: int | None = None, *, tag: str = "",
                     suffix: str = "", delete: bool = True, mode: str = "w+b"):
     """A NamedTemporaryFile in :func:`spool_dir` (for a tool that wants a
-    file path: adb pull / push, tftpy); with *size* the free space is
-    checked first. With ``delete=False`` the caller removes it
-    (:func:`remove_quietly`) on every path."""
-    directory = spool_dir()
+    file path: adb pull / push, tftpy), named ``.axross-spool-<tag>-...``
+    (hidden; a crash's leftovers are swept the next run); with *size* the
+    free space is checked first. With ``delete=False`` the caller removes
+    it (:func:`remove_quietly`) on every path."""
+    directory = named_spool_dir()
     ensure_spool_room(directory, size)
-    return tempfile.NamedTemporaryFile(mode=mode, prefix=prefix, suffix=suffix,
+    return tempfile.NamedTemporaryFile(mode=mode, prefix=spool_name_prefix(tag), suffix=suffix,
                                        dir=directory, delete=delete)
 
 
@@ -200,6 +295,39 @@ def ensure_stream_room(size: int | None) -> None:
         ensure_spool_room(near, size)
 
 
+def _error_text(exc: BaseException) -> str:
+    """What *exc* says, without the tuple requests and urllib3 wrap it
+    in (``('Connection broken: IncompleteRead(...)', IncompleteRead(...))``)."""
+    if isinstance(exc, OSError) and exc.strerror:
+        return exc.strerror
+    args = getattr(exc, "args", ())
+    if args and isinstance(args[0], str) and args[0]:
+        return args[0]
+    if args and isinstance(args[0], BaseException) and args[0] is not exc:
+        return _error_text(args[0])
+    return str(exc) or type(exc).__name__
+
+
+def _named_error(exc: BaseException, what: str) -> OSError:
+    """*exc*, raised while a download was read, as an OSError whose
+    message names the download (*what*: "Cannot read /big.bin"). An
+    OSError keeps its errno and its built-in type (TimeoutError,
+    ConnectionResetError ...; a library's subclass - requests'
+    ChunkedEncodingError - becomes the built-in one it derives from);
+    anything else is EIO. Cancel (InterruptedError) and axross's own
+    error types stay as they are."""
+    text = _error_text(exc)
+    if not isinstance(exc, OSError):
+        return OSError(errno.EIO, f"{what}: {text}")
+    if isinstance(exc, InterruptedError) or type(exc).__module__.startswith("core."):
+        return exc
+    if text.startswith(what):
+        return exc  # named already
+    cls = next(c for c in type(exc).__mro__
+               if c.__module__ == "builtins" and issubclass(c, OSError))
+    return cls(exc.errno if exc.errno is not None else errno.EIO, f"{what}: {text}")
+
+
 class StreamedBody(io.RawIOBase):
     """A download read from the wire as the caller reads, front to back.
 
@@ -244,10 +372,11 @@ class StreamedBody(io.RawIOBase):
                         f"the server announced {self._expected}",
                     ) from None
                 return b""
-            except OSError:
-                raise
             except Exception as exc:  # noqa: BLE001 - the library's own error types
-                raise OSError(errno.EIO, f"{self._what}: {exc}") from exc
+                named = _named_error(exc, self._what)
+                if named is exc:
+                    raise
+                raise named from exc
             if chunk:
                 self._received += len(chunk)
                 return bytes(chunk)

@@ -145,9 +145,9 @@ def test_happy_e2e_the_result_is_a_table_with_totals(pane, tree):
     assert dialog is not None and dialog.isVisible()
     rows = {r[0]: r for r in dialog.displayed_rows()}
     assert set(rows) == {"big", "small", "mid"}
-    assert rows["big"][1:5] == ("300 B", "3", "2", "85.7 %")
-    assert rows["small"][1:5] == ("10 B", "1", "0", "2.9 %")
-    assert rows["mid"][1:5] == ("40 B", "1", "0", "11.4 %")
+    assert rows["big"][1:5] == ("300 B", "3", "2", "85.7%")
+    assert rows["small"][1:5] == ("10 B", "1", "0", "2.9%")
+    assert rows["mid"][1:5] == ("40 B", "1", "0", "11.4%")
     assert dialog.total_text() == "Total: 350 B, 5 files, 2 folders"
 
 

@@ -134,12 +134,25 @@ class SameJobsTest(_Base):
     def test_sad_partial_leftovers_are_still_resumed(self) -> None:
         target = self.dst / "src"
         target.mkdir()
-        (target / ".f9.bin.part-abc123").write_bytes(b"x" * 4)  # partial of a 10-byte file
-        (target / ".f3.bin.part-zzz").write_bytes(b"x" * 9)  # bigger than the 4-byte source
-        self._same()
-        jobs = {j.source_path.rsplit("/", 1)[-1]: j for j in self.enqueue()}
+        from core.transfer_worker import partial_name
+
+        # Partials in axross's own shape, not written to for an hour.
+        f9 = target / partial_name("f9.bin", "0123abcd", "deadbeef")
+        f9.write_bytes(b"x" * 4)  # partial of a 10-byte file
+        f3 = target / partial_name("f3.bin", "0123abcd", "deadbeef")
+        f3.write_bytes(b"x" * 9)  # bigger than the 4-byte source
+        for partial in (f9, f3):
+            os.utime(partial, (time.time() - 3600,) * 2)
+        ref = [_fields(j) for j in self.reference()]
+        # The queued jobs of the first walk hold f9's partial: a second
+        # walk must not adopt it as well.
+        self.assertFalse([j for j in self.enqueue() if j.resume])
+        self.mgr._jobs.clear()
+        new = self.enqueue()
+        self.assertEqual([_fields(j) for j in new], ref)
+        jobs = {j.source_path.rsplit("/", 1)[-1]: j for j in new}
         self.assertTrue(jobs["f9.bin"].resume)
-        self.assertTrue(jobs["f9.bin"].temp_path.endswith(".f9.bin.part-abc123"))
+        self.assertEqual(jobs["f9.bin"].temp_path, str(f9))
         self.assertFalse(jobs["f3.bin"].resume)
 
     def test_edge_single_files_at_the_top_level(self) -> None:

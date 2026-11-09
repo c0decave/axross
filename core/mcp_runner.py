@@ -241,6 +241,8 @@ _SCRIPT_PROGRAMS = {
     "npx-cli.js": "npx", "npm-cli.js": "npm", "npx-cli": "npx", "npm-cli": "npm",
     "npx.js": "npx", "npm.js": "npm", "pnpm.cjs": "pnpm", "pnpm.js": "pnpm",
     "pnpx.cjs": "pnpx", "yarn.js": "yarn", "yarn.cjs": "yarn", "bunx.js": "bunx",
+    "corepack.js": "corepack", "corepack.cjs": "corepack", "pnpx.js": "pnpx",
+    "yarnpkg.js": "yarn", "yarnpkg.cjs": "yarn", "yarnpkg": "yarn", "composer.phar": "composer",
 }
 _SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "mksh", "ash", "yash", "fish", "csh",
                      "tcsh", "busybox"})
@@ -278,7 +280,7 @@ _PACKAGE_TOOLS = frozenset({
 #: their build scripts and plugins are downloaded code as well.
 _BUILD_TOOLS = frozenset({
     "cargo", "cargo-binstall", "rustup", "mvn", "mvnw", "gradle", "gradlew", "sbt", "lein",
-    "cabal", "composer", "cpanm", "luarocks",
+    "cabal", "composer", "cpanm", "cpan", "cpanp", "luarocks", "bazelisk",
 })
 #: Programs that download (or install) what they run, wherever they stand
 #: in a command line: a word naming one makes the command a runner.
@@ -294,7 +296,14 @@ _NODE_MODULE_OPTIONS = frozenset({"--import", "--loader", "--experimental-loader
 _CODE_URL = re.compile(r"^\s*(?:data|https?):", re.IGNORECASE)
 #: Python modules that are package tools (``python -m pdm run …``).
 _PYTHON_TOOL_MODULES = frozenset({"pdm", "poetry", "hatch", "conda", "mamba", "ensurepip",
-                                   "pixi", "virtualenv", "venv"})
+                                   "pixi", "virtualenv", "venv", "pip_run", "pip-run", "tox",
+                                   "nox", "piptools", "build", "pipenv", "rye", "easy_install",
+                                   "setuptools"})
+#: Node packages whose scripts are package managers (``node
+#: …/node_modules/yarn/lib/cli.js dlx x``, ``…/corepack/dist/pnpx.js``).
+_NODE_RUNNER_PACKAGE = re.compile(
+    r"(?:^|[\\/])(?:node_modules[\\/](?:@yarnpkg[\\/][^\\/]+|yarn|corepack|pnpm|npm|bun)"
+    r"|share[\\/]yarn)[\\/]", re.IGNORECASE)
 #: What makes a word of a command line a line of its own (``script -qc "npx x"``).
 _LINE_MARKS = re.compile(r"[\s;&|()<>$`'\"\\]")
 #: Programs that start the rest of their line.
@@ -716,6 +725,9 @@ def _node(rest: list[str], depth: int):
     script = _program(rest[i:])
     if script in ("npx", "npm", "pnpm", "pnpx", "yarn", "bunx", "corepack"):
         return _with_env(_runner([script, *rest[i + 1:]], depth + 1), {}, "node")
+    if _NODE_RUNNER_PACKAGE.search(rest[i]):
+        return _unreadable("node", "node runs a script of a package manager (npm, yarn, pnpm, "
+                                   "corepack, bun): it may download code")
     return None
 
 
@@ -979,15 +991,42 @@ _PYTHON_PLAIN = frozenset("uIEsSBOPqR")
 #: node options (``--name`` / ``--name=value``) that load nothing.
 _NODE_PLAIN = re.compile(r"--(?:enable-source-maps|no-warnings|no-deprecation|trace-warnings"
                          r"|max-old-space-size=\d+|stack-size=\d+|unhandled-rejections=\w+"
-                         r"|experimental-[a-z-]+|no-experimental-[a-z-]+)")
-_JAVA_PLAIN = re.compile(r"-(?:D[\w.-]+=\S*|Xm[sx]\d+[kmgKMG]?|Xss\d+[kmgKMG]?)")
+                         r"|experimental-(?!loader|network-imports|policy|import)[a-z-]+"
+                         r"|no-experimental-[a-z-]+)")
+#: java options that load nothing: a system property (none that names a
+#: class loader, a code base or a configuration to load, no URL) or a size.
+_JAVA_PLAIN = re.compile(r"-(?:D(?![\w.-]*(?:class\.loader|codebase|[cC]onfigurationFile|"
+                         r"config\.file|agent)=)[\w.-]+=(?!\S*://)\S*"
+                         r"|Xm[sx]\d+[kmgKMG]?|Xss\d+[kmgKMG]?)")
+
+
+#: Scripts that are package or tool managers when an allowed interpreter
+#: runs them (``ruby /usr/bin/bundle exec x``, ``bash ~/.sdkman/bin/sdk``):
+#: never a pure launcher - such a line is contained (bare ``bundle exec x``
+#: is too: it is no interpreter).
+_TOOL_SCRIPTS = frozenset({"bundle", "bundler", "rake", "gem", "sdk", "bazel", "bazelisk",
+                           "cpan", "cpanm", "cpanp", "composer", "jupyter", "pip-run",
+                           "pipenv", "poetry", "pdm", "hatch", "tox", "nox", "corepack",
+                           "yarnpkg", "gradlew", "mvnw"})
+#: Python modules that are such tools (``python -m jupyter lab``).
+_TOOL_MODULES = frozenset({"jupyter", "notebook", "ipykernel", "IPython", "pip_run", "tox",
+                           "nox", "piptools", "build", "pipenv", "rye", "pdm", "poetry",
+                           "hatch", "conda", "mamba", "pixi", "virtualenv", "venv",
+                           "ensurepip", "setuptools", "easy_install", "pip", "pipx", "uv"})
+_WINDOWS_ABSOLUTE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
+
+
+def _absolute(word: str) -> bool:
+    return word.startswith("/") or bool(_WINDOWS_ABSOLUTE.match(word))
 
 
 def _script_word(word: str) -> bool:
-    """A word that names a script or module on disk (not an option, a URL
-    or a line of its own)."""
+    """A word that names a script on disk by its absolute path (not an
+    option, a URL, a line of its own, a path relative to wherever axross
+    was started, or a package or tool manager)."""
     return bool(word) and not word.startswith("-") and "://" not in word \
-        and not _LINE_MARKS.search(word)
+        and not _LINE_MARKS.search(word) and _absolute(word) \
+        and _program([word]) not in _TOOL_SCRIPTS and _program([word]) not in _RUNNER_NAMES
 
 
 def host_launcher(argv) -> bool:
@@ -1007,7 +1046,8 @@ def host_launcher(argv) -> bool:
             letters = rest[i][1:]
             if letters == "m":
                 return i + 1 < len(rest) and \
-                    re.fullmatch(r"[A-Za-z_][\w.]*", rest[i + 1]) is not None
+                    re.fullmatch(r"[A-Za-z_][\w.]*", rest[i + 1]) is not None and \
+                    rest[i + 1].split(".", 1)[0] not in _TOOL_MODULES
             if not letters or not set(letters) <= _PYTHON_PLAIN:
                 return False
             i += 1
@@ -1028,6 +1068,102 @@ def host_launcher(argv) -> bool:
     if program in _SCRIPT_LAUNCHERS:
         return _script_word(rest[0])
     return False
+
+
+#: Environment variables that make an interpreter (or the loader) run code
+#: of their own before the server's script: a server line with one of them
+#: is no pure launcher, whatever it starts.
+_CODE_ENV = frozenset({
+    "BASH_ENV", "ENV", "ZDOTDIR", "SHELLOPTS", "BASHOPTS", "PS4", "PROMPT_COMMAND",
+    "NODE_OPTIONS", "NODE_PATH", "NODE_REPL_EXTERNAL_MODULE",
+    "PERL5OPT", "PERL5LIB", "PERLLIB", "PERL5DB",
+    "PYTHONSTARTUP", "PYTHONPATH", "PYTHONHOME", "PYTHONUSERBASE", "PYTHONWARNINGS",
+    "PYTHONBREAKPOINT", "PYTHONINSPECT", "PYTHONEXECUTABLE",
+    "RUBYOPT", "RUBYLIB", "GEM_HOME", "GEM_PATH", "BUNDLE_GEMFILE",
+    "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS", "CLASSPATH",
+    "PHPRC", "PHP_INI_SCAN_DIR", "DOTNET_STARTUP_HOOKS", "DOTNET_ADDITIONAL_DEPS",
+    "GCONV_PATH", "R_PROFILE", "R_PROFILE_USER", "R_ENVIRON", "R_ENVIRON_USER", "R_LIBS",
+    "R_LIBS_USER",
+})
+_CODE_ENV_PREFIX = re.compile(r"(?:LD_|DYLD_|LUA_INIT|LUA_PATH|LUA_CPATH|CORECLR_|COR_PROFILER)",
+                              re.IGNORECASE)
+
+
+def code_env(env) -> list[str]:
+    """The names in *env* (a server's own environment) that load code into
+    the program it starts (``BASH_ENV``, ``NODE_OPTIONS``, ``PERL5OPT``,
+    ``LD_PRELOAD``, ``PYTHONPATH`` …), sorted."""
+    return sorted(str(k) for k in (env or {})
+                  if str(k).upper() in _CODE_ENV or _CODE_ENV_PREFIX.match(str(k)))
+
+
+#: Where version managers keep interpreters under the home (``~/.nvm``,
+#: ``~/.pyenv`` …), and package managers outside it (Homebrew, whose
+#: folders belong to the user): a launcher there counts as installed.
+_MANAGED_HOME = (".nvm", ".volta", ".fnm", ".local/share/fnm", ".pyenv", ".rbenv", ".asdf",
+                 ".local/share/mise", ".local/share/rtx", ".local/share/uv/python", ".sdkman",
+                 ".rye/py", ".jenv", ".plenv", ".nodenv", ".goenv", ".dotnet")
+_MANAGED_SYSTEM = ("/opt/homebrew/", "/usr/local/Cellar/", "/usr/local/opt/",
+                   "/home/linuxbrew/.linuxbrew/", "/nix/store/", "/snap/")
+
+
+def _system_owned(path: str) -> bool:
+    """*path* and every folder above it belong to root and no one else may
+    write them (a file the package manager installed)."""
+    import os
+
+    current = path
+    for _ in range(64):
+        try:
+            st = os.stat(current)
+        except OSError:
+            return False
+        if st.st_uid != 0 or st.st_mode & 0o022:
+            return False
+        parent = os.path.dirname(current)
+        if parent == current:
+            return True
+        current = parent
+    return False
+
+
+def launcher_place_problem(program: str, path: str | None = None) -> str:
+    """Why the launcher *program* (a server line's first word) may not run
+    a server on this machine as it is ("" = it may): it must be found -
+    as an absolute path, or by name on the server's *path* (its PATH) - in
+    a place the system's or a version manager's installation put it: owned
+    by root and writable by no one else (``/usr/bin/python3``), or under a
+    version manager's folder (``~/.nvm``, ``~/.pyenv``, Homebrew …). A
+    relative path (``./python3``), a batch file or a program the user
+    downloaded (``~/Downloads/node``) only runs in a sandbox profile, a
+    container or when the server is marked trusted."""
+    import os
+    import shutil
+
+    from core.posix_compat import effective_uid
+
+    word = str(program)
+    shown = M.clean_text(word, 60)
+    if re.search(r"\.(?:bat|cmd|ps1)\Z", word, re.IGNORECASE):
+        return f"{shown} is a batch file, not an interpreter"
+    if ("/" in word or "\\" in word) and not _absolute(word):
+        return f"{shown} is a relative path (it depends on where axross was started)"
+    found = word if _absolute(word) else shutil.which(word, path=path)
+    if not found or not os.path.isfile(found):
+        return f"{shown} is not found on the server's PATH"
+    if effective_uid() is None:
+        return ""  # no owners to read here (Windows)
+    real = os.path.realpath(found)
+    if _system_owned(real):
+        return ""
+    if real.startswith(_MANAGED_SYSTEM):
+        return ""
+    home = os.path.realpath(os.path.expanduser("~"))
+    for place in _MANAGED_HOME:
+        if real.startswith(os.path.join(home, place) + os.sep):
+            return ""
+    return (f"{shown} ({M.clean_text(real, 120)}) is not installed by the system or a version "
+            "manager")
 
 
 #: The server name in a container's --name / --label (core.mcp_client's names).

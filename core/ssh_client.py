@@ -92,7 +92,8 @@ SFTP_SLOW_SERVER_CAP = 30 * 60.0
 
 #: The keepalive request :func:`transport_answers` sends: OpenSSH's own
 #: (ServerAliveInterval). Only after :data:`SFTP_IO_TIMEOUT` of silence
-#: on a waiting request - no fixed cadence (docs/OPSEC.md #2).
+#: on a waiting request - no fixed cadence (docs/OPSEC.md #2). A server
+#: that drops it unanswered gets a channel open of this type half-way.
 _KEEPALIVE_REQUEST = "keepalive@openssh.com"
 
 
@@ -388,50 +389,214 @@ def _wait_readable(chan, timeout: float) -> bool:
     return chan in rlist
 
 
+#: Channel ids of the probe's channel opens: above paramiko's own (24
+#: bits), so an answer to one is never taken for a channel of paramiko's.
+_PROBE_CHANNEL_BASE = 0x7F000000
+_PROBE_CHANNEL_SPAN = 0x00FFFFFF
+
+
+class _TransportWatch:
+    """The receive side of one transport, as the probes need it - hooked
+    per instance (paramiko keeps its handler table per transport for
+    this); paramiko's own events and fields are never replaced:
+
+    * every packet the transport reads wakes the probes waiting: ANY
+      packet - output of another channel, a window adjust, an answer -
+      proves the connection carries traffic both ways;
+    * the answers to the probes' own keepalive requests and channel
+      opens are taken here, before paramiko's handlers: its
+      ``completion_event``, ``global_response`` and ``saved_exception``
+      belong to whoever else waits on them.
+    """
+
+    def __init__(self, transport) -> None:
+        self.lock = threading.Lock()
+        self.waiters: set[threading.Event] = set()
+        #: Keepalive requests (want-reply) sent and not answered yet:
+        #: answers come in order (RFC 4254 4), so that many are ours.
+        #: axross itself sends no other global request that wants one.
+        self.pending_requests = 0
+        self._next_channel = 0
+        ref = weakref.ref(transport)
+        packetizer = transport.packetizer
+        read = packetizer.read_message
+
+        def read_message():
+            result = read()
+            if self.waiters:
+                self._wake()
+            return result
+
+        common = paramiko.common
+        table = transport._handler_table
+        hooks = {
+            common.MSG_REQUEST_SUCCESS: self._global_answer,
+            common.MSG_REQUEST_FAILURE: self._global_answer,
+            common.MSG_CHANNEL_OPEN_SUCCESS: lambda orig: self._open_answer(orig, ref, True),
+            common.MSG_CHANNEL_OPEN_FAILURE: lambda orig: self._open_answer(orig, ref, False),
+        }
+        wrapped = {ptype: hook(table[ptype]) for ptype, hook in hooks.items()}
+        table.update(wrapped)
+        packetizer.read_message = read_message
+
+    def _wake(self) -> None:
+        with self.lock:
+            waiters, self.waiters = self.waiters, set()
+        for event in waiters:
+            event.set()
+
+    def wait_for_traffic(self, event: threading.Event) -> None:
+        with self.lock:
+            self.waiters.add(event)
+
+    def _global_answer(self, original):
+        # The handlers wake the probes too: the table is looked up per
+        # packet, while a read_message already running when the watch
+        # was installed still returns its packet past the hook.
+        def handler(m):
+            if self.waiters:
+                self._wake()
+            with self.lock:
+                ours = self.pending_requests > 0
+                if ours:
+                    self.pending_requests -= 1
+            if not ours:
+                return original(m)
+            return None
+
+        return handler
+
+    def _open_answer(self, original, ref, success: bool):
+        def handler(m):
+            if self.waiters:
+                self._wake()
+            pos = m.packet.tell()
+            chanid = m.get_int()
+            if not _PROBE_CHANNEL_BASE <= chanid <= _PROBE_CHANNEL_BASE + _PROBE_CHANNEL_SPAN:
+                m.packet.seek(pos)
+                return original(m)
+            if success:
+                # A server that opened the unknown channel all the same:
+                # closed again (its later messages for it are ignored,
+                # the id is in channels_seen).
+                remote = m.get_int()
+                transport = ref()
+                if transport is not None:
+                    close = paramiko.Message()
+                    close.add_byte(paramiko.common.cMSG_CHANNEL_CLOSE)
+                    close.add_int(remote)
+                    try:
+                        transport._send_message(close)
+                    except Exception as exc:  # noqa: BLE001 - the transport decides
+                        log.debug("SSH probe channel not closed: %s", exc)
+            return None
+
+        return handler
+
+    def send_request(self, transport) -> None:
+        m = paramiko.Message()
+        m.add_byte(paramiko.common.cMSG_GLOBAL_REQUEST)
+        m.add_string(_KEEPALIVE_REQUEST)
+        m.add_boolean(True)
+        with self.lock:
+            self.pending_requests += 1
+        transport._send_user_message(m)
+
+    def send_channel_open(self, transport) -> None:
+        """A channel open of a type no server offers: RFC 4254 5.1 says
+        every server answers it (OPEN_FAILURE) - also one that drops
+        global requests without the answer RFC 4254 4 asks for."""
+        with transport.lock:
+            chanid = _PROBE_CHANNEL_BASE + self._next_channel
+            self._next_channel = (self._next_channel + 1) % _PROBE_CHANNEL_SPAN
+            # Whatever comes later for it is "a dead channel" to paramiko
+            # (ignored), never "an unknown channel" (which ends the transport).
+            transport.channels_seen[chanid] = True
+        m = paramiko.Message()
+        m.add_byte(paramiko.common.cMSG_CHANNEL_OPEN)
+        m.add_string(_KEEPALIVE_REQUEST)
+        m.add_int(chanid)
+        m.add_int(0)
+        m.add_int(32768)
+        transport._send_user_message(m)
+
+
+#: The receive hooks per transport (weak: a closed transport goes).
+_WATCHES: "weakref.WeakKeyDictionary[object, _TransportWatch]" = weakref.WeakKeyDictionary()
+
+
+def _transport_watch(transport) -> _TransportWatch | None:
+    """The :class:`_TransportWatch` of *transport*, installed on first
+    use; None for something that is no paramiko transport (a stand-in)."""
+    with _PROBES_LOCK:
+        try:
+            watch = _WATCHES.get(transport)
+        except TypeError:
+            return None
+        if watch is not None:
+            return watch
+        if not isinstance(getattr(transport, "_handler_table", None), dict) or \
+                getattr(transport, "packetizer", None) is None:
+            return None
+        try:
+            watch = _TransportWatch(transport)
+        except Exception as exc:  # noqa: BLE001 - another paramiko: no probe
+            log.debug("SSH keepalive probe not available: %s", exc)
+            return None
+        _WATCHES[transport] = watch
+        return watch
+
+
 class _Probe:
-    """One keepalive request on a transport and whether it was answered."""
+    """One keepalive probe on a transport and whether anything came back."""
 
     def __init__(self) -> None:
         self.answered = threading.Event()
 
-    def start(self, transport) -> None:
-        # Any answer counts - OpenSSH and paramiko servers refuse an unknown
-        # global request (REQUEST_FAILURE), which proves the connection
-        # carries traffic both ways just as well. paramiko sets
-        # ``completion_event`` on either answer.
-        transport.completion_event = self.answered
+    def start(self, transport, watch: _TransportWatch | None, timeout: float) -> None:
+        if watch is not None:
+            watch.wait_for_traffic(self.answered)
         # Sent from a thread of its own: a send waits behind a write stuck
         # in the socket buffer of a dead link (paramiko retries for ever).
         threading.Thread(
-            target=self._send, args=(transport,), name="axross-ssh-probe", daemon=True
+            target=self._send, args=(transport, watch, timeout),
+            name="axross-ssh-probe", daemon=True,
         ).start()
 
-    @staticmethod
-    def _send(transport) -> None:
+    def _send(self, transport, watch: _TransportWatch | None, timeout: float) -> None:
+        if watch is None:
+            return
         try:
-            m = paramiko.Message()
-            m.add_byte(paramiko.common.cMSG_GLOBAL_REQUEST)
-            m.add_string(_KEEPALIVE_REQUEST)
-            m.add_boolean(True)
-            transport._send_user_message(m)
+            # OpenSSH's own keepalive (ServerAliveInterval) first. Any
+            # answer counts - OpenSSH and paramiko servers refuse it
+            # (REQUEST_FAILURE), which proves traffic both ways as well.
+            watch.send_request(transport)
+            # A server that drops global requests unanswered (some
+            # appliances) gets a channel open half-way through the wait.
+            if self.answered.wait(max(timeout, 0.0) / 2) or not transport.is_active():
+                return
+            watch.send_channel_open(transport)
         except Exception as exc:  # noqa: BLE001 - a dead transport does not answer
             log.debug("SSH keepalive probe not sent: %s", exc)
 
 
 #: The probe in flight per transport (weak: a closed transport goes).
 _PROBES: "weakref.WeakKeyDictionary[object, _Probe]" = weakref.WeakKeyDictionary()
-_PROBES_LOCK = threading.Lock()
+_PROBES_LOCK = threading.RLock()
 
 
 def transport_answers(transport, timeout: float, stop: Callable[[], bool] | None = None) -> bool:
     """Whether the SSH connection *transport* still carries traffic both
-    ways: a keepalive request (``keepalive@openssh.com``, want-reply) is
-    answered within *timeout* seconds. A request whose answer is slow
-    then waits on (the server is alive, only busy) instead of failing as
-    a lost network. Probes of one transport share the request in
-    flight. *stop* (polled) ends the wait early - Cancel - with False."""
+    ways: anything arrives within *timeout* seconds of a keepalive
+    request (``keepalive@openssh.com``, want-reply) - its answer, or any
+    other packet; for a server that drops the request unanswered, the
+    answer to a channel open sent half-way. A request whose answer is
+    slow then waits on (the server is alive, only busy) instead of
+    failing as a lost network. Probes of one transport share the probe
+    in flight. *stop* (polled) ends the wait early - Cancel - with False."""
     if transport is None or not transport.is_active():
         return False
+    watch = _transport_watch(transport)
     with _PROBES_LOCK:
         try:
             probe = _PROBES.get(transport)
@@ -443,7 +608,7 @@ def transport_answers(transport, timeout: float, stop: Callable[[], bool] | None
                 _PROBES[transport] = probe
             except TypeError:
                 pass
-            probe.start(transport)
+            probe.start(transport, watch, timeout)
     deadline = time.monotonic() + max(timeout, 0.0)
     while True:
         left = deadline - time.monotonic()
@@ -948,6 +1113,8 @@ class SSHSession(SessionLifecycle):
             log.info("Creating SSH transport to %s:%d", profile.host, profile.port)
             self._transport = paramiko.Transport(sock)
             self._transport.local_version = SSH_LOCAL_VERSION
+            # Before the transport reads: every packet counts for a probe.
+            _transport_watch(self._transport)
             self._prefer_known_host_key_types()
             self._transport.start_client(timeout=10.0)
             # paramiko waits an hour for the server to open a channel.

@@ -291,7 +291,7 @@ def test_happy_e2e_choose_devices_and_volumes_then_ok_writes_audio_json(
         QTest.keyClick(page.output_slider, Qt.Key.Key_PageUp)  # 10 a page
     page.input_slider.setFocus()
     QTest.keyClick(page.input_slider, Qt.Key.Key_PageDown)
-    assert page.output_value.text() == "40 %"
+    assert page.output_value.text() == "40%"
     assert dialog.dirty_page_ids() == ["audio"]
     QTest.mouseClick(dialog.buttons.button(QDialogButtonBox.StandardButton.Ok),
                      Qt.MouseButton.LeftButton)

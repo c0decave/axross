@@ -48,7 +48,7 @@ from core import bluetooth as BT
 from core import bluetooth_link as BTL
 from core import bluetooth_presence as BP
 from core import bluetooth_vendor as BV
-from core.i18n import tr
+from core.i18n import format_percent, tr
 
 EXTENSION = {
     "name": "Bluetooth",
@@ -645,7 +645,7 @@ class BluetoothPanel(QWidget):
                  tr(RADIO_TEXT.get(device.bearer, "")) if device.bearer else "",
                  f"{device.rssi} dBm" if device.rssi is not None else "",
                  device.vendor,
-                 f"{device.battery} %" if device.battery is not None else "",
+                 format_percent(device.battery) if device.battery is not None else "",
                  seen_text(device.last_seen),
                  self._state_text(device))
         for col, text in enumerate(cells):

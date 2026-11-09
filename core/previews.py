@@ -731,9 +731,8 @@ def _svg_options(qtsvg):
 def _render_svg(abs_path: str, edge: int):
     """Render the SVG at *abs_path* to a QImage whose longer side is *edge*."""
     try:
-        from PyQt6.QtCore import QByteArray, QRectF, Qt
-        from PyQt6.QtGui import QImage, QPainter
-        from PyQt6.QtSvg import QSvgRenderer
+        from PyQt6.QtGui import QImage
+        from PyQt6.QtSvg import QSvgRenderer  # noqa: F401 - the child draws with it
     except ImportError as exc:  # pragma: no cover - QtSvg is part of the wheel
         raise PreviewNotAvailable(f"PyQt6.QtSvg unavailable: {exc}") from exc
 
@@ -748,31 +747,31 @@ def _render_svg(abs_path: str, edge: int):
     if reason is not None:
         raise PreviewNotAvailable(f"{abs_path}: {reason}")
 
-    renderer = QSvgRenderer()
+    # Drawn in a child process that is killed past its time: the gate
+    # counts elements, not what each costs (one path of 10,000 segments
+    # drawn 1000 times: 61 KB, 13 s; filled, 23 KB past two minutes), and
+    # QSvgRenderer.render() cannot be interrupted (core.svg_worker).
+    options = -1
     try:
         from PyQt6.QtSvg import QtSvg
 
-        options = _svg_options(QtSvg)
-        if options is not None:
-            renderer.setOptions(options)
+        found = _svg_options(QtSvg)
+        if found is not None:
+            options = found.value
     except (ImportError, AttributeError, TypeError, ValueError) as exc:
         # Qt < 6.7 has no options; the gate above still applies.
-        log.debug("QSvgRenderer.setOptions unavailable: %s", exc)
-    if not renderer.load(QByteArray(data)) or not renderer.isValid():
-        raise PreviewDecodeFailed(f"{abs_path}: not a valid SVG")
-    size = renderer.defaultSize()
-    w, h = (size.width(), size.height()) if not size.isEmpty() else (edge, edge)
-    scale = edge / max(w, h)
-    out_w, out_h = max(1, round(w * scale)), max(1, round(h * scale))
-    image = QImage(out_w, out_h, QImage.Format.Format_ARGB32_Premultiplied)
-    if image.isNull():
-        raise PreviewTooLarge(f"{abs_path}: cannot allocate {out_w}x{out_h}")
-    image.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(image)
+        log.debug("QSvgRenderer options unavailable: %s", exc)
+    from core import svg_worker
+
     try:
-        renderer.render(painter, QRectF(0, 0, out_w, out_h))
-    finally:
-        painter.end()
+        png = svg_worker.render_png(data, edge, options)
+    except svg_worker.SvgTooSlow as exc:
+        raise PreviewTooLarge(f"{abs_path}: {exc}") from exc
+    except svg_worker.SvgFailed as exc:
+        raise PreviewDecodeFailed(f"{abs_path}: {exc}") from exc
+    image = QImage.fromData(png, "PNG")
+    if image.isNull():
+        raise PreviewDecodeFailed(f"{abs_path}: not a valid SVG")
     return image
 
 

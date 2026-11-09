@@ -757,14 +757,53 @@ def private_dir_problem(folder: Path, *, create: bool = True) -> str:
     if st.st_mode & 0o022:
         return (f"{folder} is writable by other users: not used "
                 f"(make it private: chmod 700 '{folder}')")
-    parent = folder.parent
+    # Both the parents as written and those of the real path (a symlinked
+    # ~/.cache leads elsewhere): whoever may write any of them could rename
+    # the folder away and put another in its place.
+    chains = [folder.parent]
+    try:
+        real = Path(os.path.realpath(folder)).parent
+    except (OSError, ValueError):
+        real = None
+    if real is not None and real != folder.parent:
+        chains.append(real)
+    for parent in chains:
+        problem = _parents_problem(parent, folder, uid)
+        if problem:
+            return problem
+    return ""
+
+
+def _private_group(gid: int, uid: int) -> bool:
+    """*gid* is this user's own group (a user private group: the user's
+    name, no other members) - its write bit lets no one else in."""
+    try:
+        import grp
+        import pwd
+
+        name = pwd.getpwuid(uid).pw_name
+        group = grp.getgrgid(gid)
+    except (ImportError, KeyError, OSError):
+        return False
+    return group.gr_name == name and set(group.gr_mem) <= {name}
+
+
+def _parents_problem(parent: Path, folder: Path, uid: int) -> str:
+    """Why a parent of *folder* (from *parent* up to /) lets someone else
+    replace it ("" = none does): another owner than this user or root, a
+    world-writable folder without the sticky bit, or one of this user's
+    folders that its group may write (unless the group is the user's own)."""
     for _ in range(64):
         try:
             pst = os.stat(parent)
         except OSError:
             break
-        if pst.st_uid not in (uid, 0) or (pst.st_mode & 0o002 and not pst.st_mode & 0o1000):
-            return f"{parent} can be changed by other users: {folder} is not used"
+        sticky = pst.st_mode & 0o1000
+        if pst.st_uid not in (uid, 0) or (pst.st_mode & 0o002 and not sticky) or \
+                (pst.st_uid == uid and pst.st_mode & 0o020 and not sticky
+                 and not _private_group(pst.st_gid, uid)):
+            return (f"{parent} can be changed by other users: {folder} is not used "
+                    f"(make it private: chmod go-w '{parent}')")
         if parent.parent == parent:
             break
         parent = parent.parent

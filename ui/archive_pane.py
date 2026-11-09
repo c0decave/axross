@@ -66,7 +66,7 @@ from core.archive import (
     list_archive,
     strip_archive_extension,
 )
-from core.i18n import format_decimal, tr, tr_n
+from core.i18n import format_decimal, format_percent, tr, tr_n
 from core.remote_name import sanitize_for_display
 from ui.icon_provider import set_window_icon
 
@@ -105,7 +105,7 @@ def _fmt_ratio(entry: ArchiveEntry) -> str:
     misleading noise in the tree."""
     if entry.is_dir or entry.size <= 0:
         return ""
-    return f"{round(entry.ratio * 100)}%"
+    return format_percent(round(entry.ratio * 100))
 
 
 def _fmt_mtime(mtime: float | None) -> str:

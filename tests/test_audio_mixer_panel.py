@@ -138,7 +138,7 @@ def test_happy_changes_made_elsewhere_show_here(panel, path):
     p = panel()
     AR.update(path, media_volume=30, eq_preset="Vocal", eq_gains=AEQ.PRESETS["Vocal"])
     assert p.channels["media"].slider.value() == 30
-    assert p.channels["media"].value.text() == "30 %"
+    assert p.channels["media"].value.text() == "30%"
     assert p.preset_combo.currentText() == "Vocal"
 
 

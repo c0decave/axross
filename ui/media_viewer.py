@@ -91,7 +91,7 @@ from core import audio_route as AR
 from core import media_collect as MC
 from core import media_load as ML
 from core import multimedia_probe as MPROBE
-from core.i18n import format_count, tr
+from core.i18n import format_count, format_percent, tr
 from core.multimedia_env import prime_notify_lookups
 from core.thread_relay import GuiCall
 from ui import viewer_file_actions as VFA
@@ -1475,7 +1475,7 @@ class MediaViewer(QWidget):
                 tr("page {n} of {total}").format(n=self.current_page + 1, total=self.page_count)
             )
         if self.mode in ("image", "pdf"):
-            parts.append(tr("fit") if self.fit_mode else f"{self.zoom_factor * 100:.0f} %")
+            parts.append(tr("fit") if self.fit_mode else format_percent(self.zoom_factor * 100))
         if self._slideshow:
             parts.append(tr("slideshow"))
         if self._status:

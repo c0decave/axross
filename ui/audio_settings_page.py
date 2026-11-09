@@ -55,7 +55,7 @@ from core import audio_route as AR
 from core import multimedia_probe as MPROBE
 from core import voice_audio as VA
 from core.audio_settings import FIELDS, VOLUME_RANGE, AudioSettings
-from core.i18n import tr
+from core.i18n import format_percent, tr
 from core.multimedia_env import users_audio_backend
 from core.multimedia_probe import AudioDeviceInfo
 
@@ -261,7 +261,7 @@ class AudioPage(QWidget):
         slider.setPageStep(10)
         value = QLabel()
         value.setMinimumWidth(48)
-        slider.valueChanged.connect(lambda v: value.setText(f"{v} %"))
+        slider.valueChanged.connect(lambda v: value.setText(format_percent(v)))
         row = QHBoxLayout()
         row.addWidget(slider, 1)
         row.addWidget(value)
@@ -275,8 +275,8 @@ class AudioPage(QWidget):
         self._refill(output=settings.output_device, input_=settings.input_device)
         self.output_slider.setValue(settings.output_volume)
         self.input_slider.setValue(settings.input_volume)
-        self.output_value.setText(f"{settings.output_volume} %")
-        self.input_value.setText(f"{settings.input_volume} %")
+        self.output_value.setText(format_percent(settings.output_volume))
+        self.input_value.setText(format_percent(settings.input_volume))
         self._baseline = self.values()
 
     def values(self) -> dict:

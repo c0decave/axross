@@ -468,7 +468,7 @@ FEATURES: tuple[Feature, ...] = (
         "Panes & layout",
         "thumbnails",
         "Thumbnail view and previews",
-        ["ui/thumbnail_view.py", "core/previews.py"],
+        ["ui/thumbnail_view.py", "core/previews.py", "core/svg_worker.py"],
         [("tests/test_thumbnail_view.py::test_happy_double_click_on_a_folder_tile_opens_it", "ui")],
     ),
     # ------------------------------------------------- transfers, file ops

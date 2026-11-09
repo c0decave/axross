@@ -679,7 +679,17 @@ als unlesbar; `copy`, `bulk_copy`, `rename` und `hardlink` nehmen sie
 Capability-Gruppen (§9) sehen sie als außerhalb des Roots. Ein Symlink
 auf ein Geheimnis wird aufgelöst und verweigert. Namen bleiben
 auflistbar (`list_dir`, `walk`, `stat`, `search`). In der Agent-Sandbox
-zählt das Home des Hosts mit. `--mcp-allow-secret-reads` (nur stdio)
+zählt das Home des Hosts mit. Überall (auch in einem Projektordner): eine
+Datei, deren erste 4 KiB einen privaten Schlüssel oder eine
+Passwort-Datenbank zeigen (`-----BEGIN … PRIVATE KEY-----`, OpenSSH,
+PuTTY, KeePass), und Dateien, die ihr Name als geheim ausweist (`.env`,
+`.env.*` außer `.example`/`.sample`/`.template`/`.dist`, `.netrc`,
+`.git-credentials`, `.pgpass`, `*.tfstate`, `*.kdbx`, `id_rsa`,
+`id_ed25519`, `id_ecdsa`, `*.ppk`, `*.p12`, `*.pfx`); unter `/proc`
+`environ`, `cmdline`, `mem`, `maps`, `fd` und Ähnliches eines Prozesses und
+ganz `/proc/self` (eine Wurzel `/` gäbe sonst die API-Schlüssel von axross
+heraus) sowie `/run/secrets`. `chmod` verweigert eine Datei mit weiteren
+Hardlinks. `--mcp-allow-secret-reads` (nur stdio)
 schaltet die Prüfung ab; die eigenen Tools des Agenten behalten sie
 immer. Die Schreibseite (§2, die geschützten Orte von
 `core.protected_places`) ist eine eigene Liste und unverändert.

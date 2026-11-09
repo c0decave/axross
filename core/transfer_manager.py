@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import errno
 import logging
+import os
+import stat as stat_module
 import threading
 import time
 from collections import OrderedDict
@@ -23,7 +26,9 @@ from core.transfer_worker import (
     TransferStatus,
     TransferWorker,
     _backend_label,
+    is_partial_name,
     partial_fingerprint,
+    partial_in_use,
     partial_prefix,
     source_fingerprint,
 )
@@ -100,17 +105,43 @@ class _DestListings:
         return self._listings[folder]
 
 
+#: A partial written to within this many seconds may belong to a transfer
+#: still running (another axross, a job of this one): it is not resumed.
+RESUME_IDLE_SECONDS = 30.0
+
+
+def _idle_long_enough(item, now: float) -> bool:
+    """The listing says *item* was last written RESUME_IDLE_SECONDS ago or
+    more; an unknown or future time counts as recent."""
+    modified = getattr(item, "modified", None)
+    try:
+        stamp = float(modified.timestamp()) if modified is not None else 0.0
+    except (AttributeError, OSError, OverflowError, ValueError):
+        stamp = 0.0
+    return stamp > 0 and now - stamp >= RESUME_IDLE_SECONDS
+
+
 def _probe_resumable_temp(
     backend: FileBackend,
     dest_path: str,
     listings: _DestListings | None = None,
     fingerprint: str = "",
+    busy: Callable[[], set[str]] | frozenset[str] | set[str] = frozenset(),
 ) -> tuple[str, int] | None:
-    """Look for an existing partial ``.<name>.part-*`` sibling of
-    *dest_path* on the backend. Returns ``(temp_path, size)`` if a
-    non-empty partial exists, else ``None``. A partial whose name records
+    """Look for a partial ``.<name>.part-<job id>-<fingerprint>`` sibling
+    of *dest_path* on the backend. Returns ``(temp_path, size)`` for a
+    non-empty one, else ``None``. A partial whose name records
     *fingerprint* (the source as it is now) is preferred; the worker
-    discards any other before it writes.
+    discards any other (an older version's) before it writes.
+
+    Only a name of exactly that shape counts (a user's
+    ``.video.mp4.part-1-notes`` was adopted, then removed), and only a
+    partial nobody may still be writing: not one in *busy* (or what it
+    returns, asked only when there is a candidate) or written by
+    a job of this process now, and not one written to within the last
+    RESUME_IDLE_SECONDS - a second copy of a file adopted the first one's
+    live partial and both appended to it (review round 8). The worker then
+    claims it by a rename before it appends.
 
     This is best-effort: any backend error while probing disables
     auto-resume (we restart from scratch) rather than surfacing the
@@ -123,13 +154,14 @@ def _probe_resumable_temp(
         filename = dest_path.rsplit(sep, 1)[-1] if sep in dest_path else dest_path
         # Match ``_temp_destination_path`` in transfer_worker.py:
         # ``.{filename}.part-{job_id}-{fingerprint}``. The job_id differs on
-        # each run; we match by prefix so any prior partial counts.
+        # each run.
         temp_prefix = partial_prefix(filename)
         entries = listings.entries(parent) if listings is not None else backend.list_dir(parent)
+        now = time.time()
         fallback: tuple[str, int] | None = None
         for item in entries:
             name = getattr(item, "name", "") or ""
-            if not name.startswith(temp_prefix):
+            if not name.startswith(temp_prefix) or not is_partial_name(name, filename):
                 continue
             try:
                 tmp_path = safe_join(backend, parent, name)
@@ -149,6 +181,15 @@ def _probe_resumable_temp(
             size = int(getattr(item, "size", 0) or 0)
             if size <= 0:
                 continue
+            if callable(busy):
+                busy = busy()
+            if tmp_path in busy or partial_in_use(tmp_path):
+                log.info("Not resuming %s: another transfer is writing it", tmp_path)
+                continue
+            if not _idle_long_enough(item, now):
+                log.info("Not resuming %s: it was written to in the last %d s",
+                         tmp_path, int(RESUME_IDLE_SECONDS))
+                continue
             if fingerprint and partial_fingerprint(name, filename) == fingerprint:
                 return tmp_path, size
             if fallback is None:
@@ -161,6 +202,43 @@ def _probe_resumable_temp(
             exc,
         )
     return None
+
+
+#: Why a symbolic link to a folder is not copied (a row in the transfer list).
+FOLDER_LINK_REFUSAL = ("symbolic link to a folder: not followed "
+                       "(copy the folder it points to on its own)")
+
+
+def _local_link_refusal(backend: FileBackend, path: str) -> str:
+    """Why the symbolic link *path* on this machine's disk is not copied,
+    or "" (not a link, a link to a file - copied as that file - or not a
+    local path). LocalFS lists a link with ``is_dir=False`` whatever it
+    points to: a link to a folder then failed as "[Errno 21] Is a
+    directory", a dangling one as "No such file or directory" (review
+    round 8)."""
+    from core.local_fs import LocalFS
+
+    if not isinstance(backend, LocalFS) or type(backend).stat is not LocalFS.stat:
+        return ""  # a subclass may map its paths (confined roots, MTP)
+    try:
+        if not stat_module.S_ISLNK(os.lstat(path).st_mode):
+            return ""
+    except (OSError, ValueError):
+        return ""
+    try:
+        target = os.stat(path)
+    except OSError as exc:
+        if exc.errno in (errno.ENOENT, errno.ENOTDIR, errno.ELOOP):
+            try:
+                points_to = os.readlink(path)
+            except OSError:
+                points_to = "?"
+            return (f"dangling symbolic link (it points to {points_to}, which is not "
+                    "there): skipped")
+        return ""  # the copy reports it
+    if stat_module.S_ISDIR(target.st_mode):
+        return FOLDER_LINK_REFUSAL
+    return ""
 
 
 def _source_metadata(item) -> tuple[int | None, float | None]:
@@ -431,7 +509,8 @@ class TransferManager(QObject):
         auto_resume = False
         resume_temp_path = ""
         if use_temp:
-            probe = _probe_resumable_temp(dest_backend, dest_path, dest_listing, fingerprint)
+            probe = _probe_resumable_temp(dest_backend, dest_path, dest_listing, fingerprint,
+                                          self._partials_in_use)
             if probe is not None:
                 tmp_path, tmp_size = probe
                 # Only treat as resumable if the partial is non-empty
@@ -596,6 +675,8 @@ class TransferManager(QObject):
                 refusal = _self_target_refusal(
                     source_backend, src_path, dest_backend, dest_path, is_dir=src_is_dir
                 )
+                if not refusal and not src_is_dir:
+                    refusal = _local_link_refusal(source_backend, src_path)
                 if refusal:
                     jobs.append(
                         self._refused_job(
@@ -1087,25 +1168,29 @@ class TransferManager(QObject):
                     continue
                 dst_path, if_exists = resolved
 
-            if item.is_dir and getattr(item, "is_link", False):
+            if getattr(item, "is_link", False):
                 # A symlinked folder (SMB lists it with its target's
-                # is_dir): descending copies a folder outside the
-                # selection -- a move empties it -- and a link to an
-                # ancestor never ends. Shown in the transfer list; the
-                # link stays, so a moved folder holding it is kept.
-                jobs.append(
-                    self._refused_job(
-                        source_backend,
-                        dest_backend,
-                        src_path,
-                        dst_path,
-                        direction,
-                        move,
-                        "symbolic link to a folder: not followed "
-                        "(copy the folder it points to on its own)",
+                # is_dir, LocalFS with its own): descending copies a folder
+                # outside the selection -- a move empties it -- and a link
+                # to an ancestor never ends. Shown in the transfer list;
+                # the link stays, so a moved folder holding it is kept. A
+                # dangling one has nothing to copy.
+                refusal = (FOLDER_LINK_REFUSAL if item.is_dir
+                           else _local_link_refusal(source_backend, src_path))
+                if refusal:
+                    jobs.append(
+                        self._refused_job(
+                            source_backend,
+                            dest_backend,
+                            src_path,
+                            dst_path,
+                            direction,
+                            move,
+                            refusal,
+                            retryable=False,
+                        )
                     )
-                )
-                continue
+                    continue
             if item.is_dir:
                 sub_jobs = self._transfer_directory(
                     source_backend,
@@ -1337,6 +1422,11 @@ class TransferManager(QObject):
         log.info("Retrying transfer (resume): %s -> %s", old_job.source_path, old_job.dest_path)
         return new_job
 
+    def _partials_in_use(self) -> set[str]:
+        """Temp paths of this manager's jobs that are queued or running."""
+        return {j.temp_path for j in list(self._jobs.values())
+                if j.temp_path and j.status in (TransferStatus.PENDING, TransferStatus.ACTIVE)}
+
     @staticmethod
     def partial_kept(job: TransferJob) -> str:
         """The hidden partial file (``.<name>.part-…``) a failed or
@@ -1387,13 +1477,13 @@ class TransferManager(QObject):
     def _remove_partials(partials: list) -> threading.Thread | None:
         """Remove each kept partial ``(backend, path)`` off the GUI thread
         (a remote one is a round trip each). Only names the worker gives a
-        partial (core.transfer_worker.PARTIAL_MARK) are touched."""
-        from core.transfer_worker import PARTIAL_MARK
-
+        partial (``.<name>.part-<job id>-<fingerprint>``, see
+        core.transfer_worker.is_partial_name) are touched, none another job
+        of this process is writing."""
         chosen = []
         for backend, path in partials:
             name = path.replace("\\", "/").rsplit("/", 1)[-1]
-            if backend is not None and name.startswith(".") and PARTIAL_MARK in name:
+            if backend is not None and is_partial_name(name) and not partial_in_use(path):
                 chosen.append((backend, path))
         if not chosen:
             return None

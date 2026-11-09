@@ -91,6 +91,10 @@ def fake_server(tmp_path):
 def _own_stdio(root, **kw):
     env = {k: os.environ[k] for k in ("PYTHONUSERBASE",) if k in os.environ}
     env.update(PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring", QT_QPA_PLATFORM="offscreen")
+    if "PYTHONUSERBASE" in env:
+        # The test venv's user site: a variable that loads code, so the
+        # server runs on the host only when it is marked trusted (round 8).
+        kw.setdefault("trusted", True)
     return C.McpServerConfig(
         name="own",
         command=(sys.executable, str(ROOT / "main.py"), "--mcp-server", "--mcp-root", str(root)),

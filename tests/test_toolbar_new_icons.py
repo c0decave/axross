@@ -61,7 +61,7 @@ def window(tmp_path):
 
 
 def _toolbar(win) -> QToolBar:
-    return next(tb for tb in win.findChildren(QToolBar) if tb.windowTitle() == "Main")
+    return next(tb for tb in win.findChildren(QToolBar) if tb.objectName() == "axMainToolbar")
 
 
 def _by_icon(win) -> dict:

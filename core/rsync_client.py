@@ -411,7 +411,7 @@ class _RsyncWriter:
 
         # In the spool folder (not /tmp, a tmpfs), and removed even when
         # the writer is dropped without close() or discard().
-        self._tmp = new_named_spool(prefix="axross-rsync-", delete=False)
+        self._tmp = new_named_spool(tag="rsync", delete=False)
         self._cleanup = weakref.finalize(self, remove_quietly, self._tmp.name)
         self._closed = False
 
@@ -1059,12 +1059,13 @@ class RsyncSession(SessionLifecycle):
         "skipping non-regular file" or "skipping directory", so the
         download goes into an empty temp directory and only a regular
         file that actually arrived there counts as read."""
-        from core.read_spool import remove_quietly, spool_dir
+        from core.read_spool import named_spool_dir, remove_quietly, spool_name_prefix
 
         url = self._build_url(_literal_source(path))
-        # In the spool folder (not /tmp, a tmpfs); removed on every path.
-        folder = spool_dir()
-        tmpdir = tempfile.mkdtemp(prefix="axross-rsync-", dir=folder)
+        # In the spool folder (not /tmp, a tmpfs), hidden; removed on
+        # every path, and swept the next run after a crash.
+        folder = named_spool_dir()
+        tmpdir = tempfile.mkdtemp(prefix=spool_name_prefix("rsync"), dir=folder)
         try:
             # A stall limit, not a wall clock: rsync's own --timeout ends a
             # transfer that moved nothing for that long; a cap on the whole
@@ -1073,7 +1074,7 @@ class RsyncSession(SessionLifecycle):
             arrived = [os.path.join(tmpdir, n) for n in os.listdir(tmpdir)]
             if len(arrived) != 1 or not os.path.isfile(arrived[0]):
                 raise OSError(f"rsync read {path}: not a regular file")
-            fd, tmp_name = tempfile.mkstemp(prefix="axross-rsync-", dir=folder)
+            fd, tmp_name = tempfile.mkstemp(prefix=spool_name_prefix("rsync"), dir=folder)
             os.close(fd)
             try:
                 os.replace(arrived[0], tmp_name)

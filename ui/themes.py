@@ -642,6 +642,10 @@ QGroupBox::title {{
     padding: 0 4px;
     color: {text_muted};
 }}
+QGroupBox:flat {{
+    border: none;
+    padding-top: 0;
+}}
 QTabWidget::pane {{
     border: 1px solid {border};
     border-radius: {radius};
@@ -897,6 +901,21 @@ def _indicator_css(key: str) -> str:
     )
 
 
+def _menu_check_css(key: str) -> str:
+    """A checkable menu entry with an icon showed no on/off state: Qt draws
+    the icon where the check mark goes (View > Panels: Transfers on and
+    Agent off looked the same; UX review round 8). A checked one gets a
+    frame in the theme's check colour around its icon - 3:1 or more
+    against the menu in every theme."""
+    _edge, _base, fill, _mark = _INDICATOR_COLOURS[key]
+    return (
+        "\nQMenu::icon:checked {\n"
+        f"    border: 2px solid {fill};\n"
+        "    border-radius: 3px;\n"
+        "}\n"
+    )
+
+
 def _version_css(key: str) -> str:
     """The version bottom right (ui.main_window): secondary text without a
     button frame; with an update notice in the theme's accent, so it is
@@ -956,8 +975,9 @@ def stylesheet_for(theme: object, system_scheme: str | None, compact: bool = Fal
         css += _indicator_css("amber")
     else:
         css = _CLASSIC_MUTED_LIGHT + _NATIVE_HEADER_CSS + _indicator_css("native")
-    css += _version_css("classic" if resolved == "dark" else
-                        resolved if resolved in _INDICATOR_COLOURS else "native")
+    key = ("classic" if resolved == "dark" else
+           resolved if resolved in _INDICATOR_COLOURS else "native")
+    css += _version_css(key) + _menu_check_css(key)
     if compact:
         css += COMPACT_CSS
     return css

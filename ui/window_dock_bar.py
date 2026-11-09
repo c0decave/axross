@@ -29,7 +29,9 @@ class WindowDockBar(QToolBar):
     (Qt puts that area above the status bar)."""
 
     def __init__(self, main_window: QMainWindow) -> None:
-        super().__init__("Docked Windows", main_window)
+        from core.i18n import tr
+
+        super().__init__(tr("Docked Windows"), main_window)
         self.setObjectName("axWindowDockBar")
         self.setMovable(False)
         self.setFloatable(False)

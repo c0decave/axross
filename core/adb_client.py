@@ -372,7 +372,7 @@ class _AdbPushOnClose:
 
         # In the spool folder (not /tmp, a tmpfs), and removed even when
         # the writer is dropped without close() or discard().
-        self._tmp = new_named_spool(prefix="axross-adb-", delete=False)
+        self._tmp = new_named_spool(tag="adb", delete=False)
         self._tmp_path = self._tmp.name
         self._cleanup = weakref.finalize(self, remove_quietly, self._tmp_path)
         self._closed = False
@@ -749,7 +749,7 @@ class AdbSession(SessionLifecycle):
                 path,
             )
         # In the spool folder (not /tmp, a tmpfs), removed on every path.
-        local = new_named_spool(prefix="axross-adb-", delete=False)
+        local = new_named_spool(tag="adb", delete=False)
         local_path = local.name
         local.close()
         try:

@@ -176,9 +176,9 @@ def _classify(exc: BaseException, subject: str) -> str | None:
         # The user said No to "Trust Host Key?" a moment ago: "Use Connect
         # to review its fingerprint" read as if nothing had been asked
         # (UX review round 7).
-        return tr("You did not trust the host key of {host}, so axross did not connect. "
-                  "To connect, try again and compare the fingerprint with the server's "
-                  "administrator before you trust it.").format(host=getattr(exc, "host", host))
+        return tr("Not connected: you did not trust the host key of {host}. To connect, "
+                  "try again and check the fingerprint with the server's administrator "
+                  "before you trust it.").format(host=getattr(exc, "host", host))
     if "UnknownHostKeyError" in names:
         return tr("{host} has a new host key that axross has not seen yet. Use Connect to "
                   "review its fingerprint and trust it.").format(host=getattr(exc, "host", host))

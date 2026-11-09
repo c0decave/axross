@@ -31,7 +31,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import previews as P
-from core.i18n import tr
+from core.i18n import format_percent, tr
 from ui import viewer_file_actions as VFA
 from ui import viewer_window as VW
 from ui.close_corner import add_close_corner
@@ -325,7 +325,7 @@ class ImageViewerDialog(QDialog):
             )
         self._label.setPixmap(QPixmap.fromImage(img))
         self._label.resize(img.width(), img.height())
-        self._zoom_label.setText(f"{int(self._zoom * 100)}%")
+        self._zoom_label.setText(format_percent(int(self._zoom * 100)))
         path = self._siblings[self._idx]
         name = path.rsplit("/", 1)[-1]
         self._info.setText(

@@ -82,4 +82,18 @@ def sandbox_label(name: str) -> str:
     return tr(word) if word is not None and str(name) in (word, word.lower()) else name
 
 
-__all__ = ["backend_label", "format_size", "human_bytes", "measured_bytes", "sandbox_label"]
+def ui_locale():
+    """The QLocale of the interface language, for a widget that formats
+    numbers itself (a QDoubleSpinBox showed "1.00 s" in German; UX review
+    round 8). Set per widget: a default QLocale would outlive a switch."""
+    from PyQt6.QtCore import QLocale
+
+    from core import i18n
+
+    locale = QLocale(i18n.active().language)
+    locale.setNumberOptions(QLocale.NumberOption.OmitGroupSeparator)
+    return locale
+
+
+__all__ = ["backend_label", "format_size", "human_bytes", "measured_bytes", "sandbox_label",
+           "ui_locale"]

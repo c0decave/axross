@@ -43,6 +43,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -51,6 +52,8 @@ import tempfile
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+
+_log = logging.getLogger(__name__)
 
 MANIFEST_FORMAT = 1
 #: The line of SHA256SUMS that numbers a release's pack manifest: written
@@ -532,10 +535,28 @@ def _blob_ok(folder: Path, manifest: dict, name: str, directory: str | None = No
         return False
 
 
+def _folder_problem(folder: Path) -> str:
+    """Why *folder* may not go on sys.path ("" = it may): like the update
+    cache (core.self_update.private_dir_problem) it is a real folder of
+    this user that no one else may write to, and so are its parents - the
+    real path's as well; whoever may write it would put code on the path."""
+    from core.self_update import private_dir_problem
+
+    return private_dir_problem(folder, create=False)
+
+
 def activate(version: str, root: Path | None = None, path: list | None = None) -> list[str]:
     """Put the installed blobs of *version* on sys.path (at start); the
-    folders added. A blob whose marker does not match the manifest is left out."""
+    folders added. A blob whose marker does not match the manifest is left
+    out, and so is every blob when the version folder (or a parent) may be
+    written by someone else (:func:`_folder_problem`)."""
     folder = (root or packs_root()) / version
+    if not folder.is_dir():
+        return []
+    problem = _folder_problem(folder)
+    if problem:
+        _log.warning("packs: not used: %s", problem)
+        return []
     state = _state(folder)
     manifest = state.get("manifest") or {}
     path = sys.path if path is None else path
@@ -549,6 +570,10 @@ def activate(version: str, root: Path | None = None, path: list | None = None) -
             directory = _dir_of(state, name)
             dest = folder / directory
             if _blob_ok(folder, manifest, name, directory) and str(dest) not in path:
+                problem = _folder_problem(dest)
+                if problem:
+                    _log.warning("packs: blob not used: %s", problem)
+                    continue
                 path.append(str(dest))
                 added.append(str(dest))
     return added
@@ -585,6 +610,10 @@ def activate_now(version: str, units: list[str], root: Path | None = None,
         return [], waiting
     if not all(_blob_ok(folder, manifest, n, _dir_of(state, n)) for n in names):
         raise PackError("an installed blob does not match the manifest - refused")
+    for problem in [_folder_problem(folder)] + [_folder_problem(folder / _dir_of(state, n))
+                                                for n in sorted(names)]:
+        if problem:
+            raise PackError(f"not used: {problem}")
     added = []
     for name in sorted(names):
         dest = str(folder / _dir_of(state, name))

@@ -83,7 +83,7 @@ def test_happy_a_declined_host_key_says_so():
     error = _unknown_host_error()
     error.declined = True
     text = describe(error)
-    assert "You did not trust the host key" in text
+    assert "you did not trust the host key" in text
     assert "Use Connect" not in text
 
 

@@ -327,6 +327,10 @@ def plan_undo(event: dict) -> UndoPlan:
     dest = str(event.get("dest", ""))
     details = event.get("details") or {}
 
+    if operation == "undo":
+        # Also one journaled as skipped (record_skipped): no "did not complete".
+        return _refuse(event, _tr("an undo is not itself undoable"))
+
     if status not in _SUCCESS:
         return _refuse(
             event,
@@ -429,9 +433,6 @@ def plan_undo(event: dict) -> UndoPlan:
             direction=str(details.get("direction", "")),
             source_backend=str(details.get("source_backend", "")),
         )
-
-    if operation == "undo":
-        return _refuse(event, _tr("an undo is not itself undoable"))
 
     if operation == "transfer":
         return _refuse(
@@ -929,7 +930,7 @@ def _roots(parts) -> list[UndoPlan]:
     return roots or list(reversed(parts))
 
 
-def gone_reason(plan: UndoPlan, backend) -> str:
+def gone_reason(plan: UndoPlan, backend, refused: list | None = None) -> str:
     """Why *plan* can no longer be carried out on *backend* because what
     it would put back is gone, or "" (also when the backend cannot tell:
     then apply_undo reports the real error).
@@ -937,24 +938,105 @@ def gone_reason(plan: UndoPlan, backend) -> str:
     A trash entry disappears without a journal entry - restored or
     deleted in the Trash window, the trash emptied, another tool - and an
     undo that keeps offering it would hide every older operation.
+
+    So does an undo that is refused every time: a moved entry no longer
+    at its destination, or no longer the one the move put there
+    (:func:`replaced_reason`), a trashed entry whose place another one
+    took. Ctrl+Z offered it again and again, and the operation before it
+    could never be undone (review round 8). Such a reason is also added
+    to *refused*: the caller journals the plan as skipped
+    (:func:`record_skipped`) and says so.
     """
+    def refuse(reason: str) -> str:
+        if reason and refused is not None:
+            refused.append(reason)
+        return reason
+
     if plan.action == "batch":
         trashed = [p for p in plan.parts if p.action == "restore_from_trash"]
-        if trashed and len(trashed) == len(plan.parts) and all(
-                gone_reason(p, backend) for p in trashed):
-            return "their trash entries are gone (restored or deleted from the trash since)"
+        if trashed and len(trashed) == len(plan.parts):
+            taken: list = []
+            if not all([gone_reason(p, backend, taken) for p in trashed]):
+                return ""
+            if not taken:
+                return "their trash entries are gone (restored or deleted from the trash since)"
+            return refuse(taken[0] if len(trashed) == 1 else _tr(
+                "none of the entries can go back to its place: other entries took their "
+                "names; they stay in the trash"))
+        moved = [p for p in plan.parts if p.action in _MOVED_ACTIONS]
+        rest = [p for p in plan.parts if p.action not in _MOVED_ACTIONS]
+        if moved and all(p.action == "folder_back" for p in rest):
+            reasons = [_moved_gone_reason(p, backend) for p in moved]
+            if all(reasons):
+                return refuse(reasons[0] if len(reasons) == 1 else _tr(
+                    "none of the moved entries is still where the move put it"))
         return ""
+    if plan.action in _MOVED_ACTIONS:
+        return refuse(_moved_gone_reason(plan, backend))
     if plan.action != "restore_from_trash" or not plan.trash_id:
         return ""
     from core import trash as trash_module
 
     try:
-        if trash_module.entry_exists(backend, plan.trash_id, root=plan.trash_root or None):
-            return ""
-    except OSError as exc:
+        if not trash_module.entry_exists(backend, plan.trash_id, root=plan.trash_root or None):
+            return "its trash entry is gone (restored or deleted from the trash since)"
+        taken = bool(plan.source) and backend.exists(plan.source) is True
+    except Exception as exc:  # noqa: BLE001 - cannot tell: the undo reports the real error
         log.debug("undo: cannot check trash entry %s: %s", plan.trash_id, exc)
         return ""
-    return "its trash entry is gone (restored or deleted from the trash since)"
+    if not taken:
+        return ""
+    name = plan.source.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1] or plan.source
+    return refuse(_tr("another {name} took its place; the deleted one stays in the "
+                      "trash").format(name=name))
+
+
+_MOVED_ACTIONS = ("move_back", "transfer_back")
+
+
+def _moved_gone_reason(plan: UndoPlan, backend) -> str:
+    """Why the entry a move put at *plan.dest* cannot be moved back: it
+    is no longer there, or another entry is (:func:`replaced_reason`).
+    "" when it is, or when the backend cannot tell."""
+    if not plan.dest:
+        return ""
+    try:
+        present = backend.exists(plan.dest)
+    except Exception as exc:  # noqa: BLE001 - cannot tell: the undo reports the real error
+        log.debug("undo: cannot check %s: %s", plan.dest, exc)
+        return ""
+    if present is False:
+        name = plan.dest.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1] or plan.dest
+        return _tr("{name} is no longer where the move put it").format(name=name)
+    if present is not True:
+        return ""
+    try:
+        return replaced_reason(plan, backend)
+    except Exception as exc:  # noqa: BLE001 - as above
+        log.debug("undo: cannot compare %s: %s", plan.dest, exc)
+        return ""
+
+
+def record_skipped(plan: UndoPlan, reason: str) -> None:
+    """Journal that *plan* could not be undone and was skipped (its moved
+    entry is gone or was replaced, see :func:`gone_reason`): like
+    :func:`record_undone` it is not offered again, so the next Ctrl+Z
+    reaches the operation before it. Its status says it was skipped."""
+    from core.operation_journal import finish_operation, new_operation_id
+
+    details: dict = {"undone": plan.operation_id, "reversed": plan.operation,
+                     "skipped": reason}
+    if plan.parts:
+        details["parts"] = [p.operation_id for p in plan.parts]
+    finish_operation(
+        new_operation_id(),
+        "undo",
+        status="skipped",
+        source=plan.source,
+        dest=plan.dest,
+        backend=plan.backend,
+        details=details,
+    )
 
 
 def pick_undoable(
@@ -1005,6 +1087,7 @@ __all__ = [
     "operation_name",
     "pick_undoable",
     "plan_undo",
+    "record_skipped",
     "record_undone",
     "replaced_reason",
     "unchanged_parts",

@@ -118,7 +118,7 @@ def test_happy_the_actions_menu_mirrors_the_right_click_menu(window, name) -> No
 
 def test_happy_toolbar_buttons_are_in_the_menus_as_the_same_action(window) -> None:
     in_menus = _all_menu_actions(window)
-    bars = [tb for tb in window.findChildren(QToolBar) if tb.windowTitle() in ("Main", "Tools")]
+    bars = [tb for tb in window.findChildren(QToolBar) if tb.objectName() in ("axMainToolbar", "axToolsToolbar")]
     missing = [
         a.text()
         for toolbar in bars

@@ -6,8 +6,10 @@ import errno
 import hashlib
 import logging
 import os
+import re
 import stat as stat_module
 import string
+import threading
 import time
 import uuid
 from collections import deque
@@ -96,6 +98,52 @@ def partial_fingerprint(name: str, filename: str) -> str:
     ):
         return fingerprint.lower()
     return ""
+
+
+_PARTIAL_TAIL_RE = re.compile(r"[0-9a-f]{%d}-[0-9a-f]{%d}" % (JOB_ID_LEN, FINGERPRINT_LEN))
+
+
+def is_partial_name(name: str, filename: str | None = None) -> bool:
+    """True when *name* has exactly the shape of a partial axross writes
+    and may resume or remove: ``.<filename>.part-<job id>-<fingerprint>``
+    (eight hex digits each). A user's ``.video.mp4.part-1-notes`` is not
+    one: it was adopted as a partial, then removed (review round 8).
+    Without *filename*, any ``.<something>.part-<hex8>-<hex8>``."""
+    if filename is not None:
+        prefix = partial_prefix(filename)
+        return name.startswith(prefix) and bool(_PARTIAL_TAIL_RE.fullmatch(name[len(prefix):]))
+    head, mark, tail = name.rpartition(PARTIAL_MARK)
+    return bool(mark and head.startswith(".") and len(head) > 1
+                and _PARTIAL_TAIL_RE.fullmatch(tail))
+
+
+#: Partial files a worker of this process is writing now: no other job may
+#: adopt one (two copies of one file appended into one partial, and both
+#: committed it - review round 8).
+_LIVE_PARTIALS: set[str] = set()
+_LIVE_PARTIALS_LOCK = threading.Lock()
+
+
+def partial_in_use(path: str) -> bool:
+    """A job of this process is writing the partial *path* now."""
+    with _LIVE_PARTIALS_LOCK:
+        return path in _LIVE_PARTIALS
+
+
+def _claim_live_partial(path: str) -> bool:
+    """Mark *path* as written by the calling job; False when another job
+    of this process has it."""
+    with _LIVE_PARTIALS_LOCK:
+        if path in _LIVE_PARTIALS:
+            return False
+        _LIVE_PARTIALS.add(path)
+        return True
+
+
+def _release_live_partials(paths) -> None:
+    with _LIVE_PARTIALS_LOCK:
+        for path in paths:
+            _LIVE_PARTIALS.discard(path)
 
 
 _FALLBACK_UMASK: int | None = None
@@ -352,6 +400,9 @@ class _SameEntry(OSError):
 #: Kernel file systems whose files list a size (4096, 0) that a read does
 #: not yield: sysfs attributes, procfs, device nodes.
 _PSEUDO_ROOTS = ("/sys", "/proc", "/dev")
+#: The sizes such a file lists: a page (sysfs) or nothing (procfs, a
+#: device node). Any other size under those folders is a real one.
+_PSEUDO_SIZES = (0, 4096)
 
 
 def _is_pseudo_file(path: str) -> bool:
@@ -364,6 +415,28 @@ def _is_pseudo_file(path: str) -> bool:
     if clean.startswith("//"):
         clean = "/" + clean.lstrip("/")
     return any(clean == root or clean.startswith(root + "/") for root in _PSEUDO_ROOTS)
+
+
+def _is_pseudo_source(backend, path: str, listed: int) -> bool:
+    """A kernel pseudo file, whose short read is no lost data: under
+    /sys, /proc or /dev on a backend whose "/" is a whole machine's root
+    (``machine_root``: local, SFTP, SCP, the shells, ADB) AND listed with
+    such a file's size (:data:`_PSEUDO_SIZES`). On an FTP, WebDAV or any
+    other server "/dev" is an ordinary folder, and a 3 MB file under it
+    that delivered half was saved as the copy."""
+    if listed not in _PSEUDO_SIZES or not _is_pseudo_file(path):
+        return False
+    from core.capability_contracts import caps_for_backend
+
+    try:
+        return bool(getattr(caps_for_backend(backend), "machine_root", False))
+    except Exception:  # noqa: BLE001 - unknown: no exemption
+        return False
+
+
+class _PartialChanged(OSError):
+    """The temp file holds other bytes than the job wrote into it (another
+    transfer wrote to it too): it is not committed, nor kept."""
 
 
 class _ShortRead(OSError):
@@ -458,6 +531,13 @@ class TransferJob:
     # for "fail" / "newer": a file that appeared since must still be
     # found, and those modes look right before writing as before.
     dest_folder_new: bool = False
+    # Set by the worker while it runs: the source's size before a move
+    # copied it (None for a copy or when unknown) - a copy that comes out
+    # shorter is not committed (see _refuse_short_move) - and whether the
+    # integrity check compared the bytes (then the temp file's size needs
+    # no second look before the rename).
+    move_source_size: int | None = field(default=None, repr=False, compare=False)
+    integrity_compared: bool = field(default=False, repr=False, compare=False)
 
     @property
     def eta_seconds(self) -> float:
@@ -861,6 +941,7 @@ class TransferWorker(QObject):
             # A move compares the source's size after the copy with this, so
             # it never deletes data written to the source meanwhile.
             size_before = self._move_source_size(job)
+            job.move_source_size, job.integrity_compared = size_before, False
             written = self._do_transfer(job, progress_callback)
             if written is not None:
                 # What was written, not what the listing said when the job
@@ -886,6 +967,7 @@ class TransferWorker(QObject):
                 refuse_changed_source(
                     job.source_backend, job.source_path, size_before, job.dest_path
                 )
+                self._refuse_wrong_destination_size(job, size_before, written)
                 try:
                     job.source_backend.remove(job.source_path)
                     log.info("Move: deleted source %s", job.source_path)
@@ -1094,6 +1176,28 @@ class TransferWorker(QObject):
             return None
 
     @staticmethod
+    def _refuse_wrong_destination_size(job: TransferJob, size_before: int | None,
+                                       written: int | None) -> None:
+        """Raise :class:`OSError` when the committed destination of a move
+        is not as long as the source (*size_before*; what the copy
+        *written* where the source's backend lists 0): the source is then
+        kept. Another job appending to the same partial gave a 4.9 MB
+        "copy" of a 4 MB file, and the move deleted the source (review
+        round 8). Not checked when a size is unknown."""
+        if size_before is None or job.dest_backend is None:
+            return
+        expected = written if not size_before and written else size_before
+        from core.server_ops import source_size
+
+        size_now = source_size(job.dest_backend, job.dest_path)
+        if size_now is None or size_now == expected:
+            return
+        raise OSError(
+            f"{job.dest_path} holds {size_now} bytes after the copy, {job.source_path} "
+            f"{expected}; the source was kept"
+        )
+
+    @staticmethod
     def _move_source_size(job: TransferJob) -> int | None:
         """The source's size before a move copies it (None for a copy)."""
         if not job.move or job.source_backend is None:
@@ -1183,6 +1287,7 @@ class TransferWorker(QObject):
                     raise _ChecksumMismatch(
                         f"Integrity FAIL for {job.filename}: source {src_cs} != dest {dst_cs}"
                     )
+                job.integrity_compared = True
                 log.info(
                     "Integrity OK for %s (%s, native)",
                     job.filename,
@@ -1237,6 +1342,7 @@ class TransferWorker(QObject):
                 f"Integrity FAIL for {job.filename}: "
                 f"source sha256:{src_sha} != dest sha256:{dst_sha}"
             )
+        job.integrity_compared = True
         log.info(
             "Integrity OK for %s (sha256, stream)",
             job.filename,
@@ -1492,6 +1598,7 @@ class TransferWorker(QObject):
                         # Before a spooling writer sends anything: a short
                         # read then costs no upload and no rollback.
                         self._refuse_short_read(job, transferred, expected)
+                        self._refuse_short_move(job, transferred)
                         if needs_copy and spools:
                             # Not under the hooks: the read-back is no part
                             # of the job's progress (Cancel still stops it).
@@ -1620,6 +1727,24 @@ class TransferWorker(QObject):
         return True
 
     @staticmethod
+    def _refuse_short_move(job: TransferJob, transferred: int) -> None:
+        """A move whose copy came out shorter than the source was before it
+        is not committed - a local source too (_refuse_short_read leaves
+        those to the size check after the copy): a local file truncated
+        while it was moved left the short copy under the destination's
+        name, the move failed and kept the source (review round 8)."""
+        size_before = job.move_source_size
+        if not job.move or size_before is None or transferred >= size_before:
+            return
+        if _is_pseudo_source(job.source_backend, job.source_path, size_before):
+            return
+        raise _ShortRead(
+            errno.EIO,
+            f"only {transferred} of {size_before} bytes of {job.source_path} were copied; "
+            f"the source was kept and {job.dest_path} was left as it was",
+        )
+
+    @staticmethod
     def _refuse_short_read(job: TransferJob, transferred: int, expected: int) -> None:
         """Raise :class:`OSError` when the copy read fewer bytes than the
         source holds: a stream that ended early without an error (an FTP
@@ -1633,11 +1758,13 @@ class TransferWorker(QObject):
         nor a local one: its reads fail rather than end early, and sysfs
         lists 4096 bytes for attributes that read a few - on a remote
         machine too (SFTP, SCP, a shell): /sys, /proc and /dev are not
-        refused anywhere. Called before the copy replaces the destination,
-        so the destination stays as it was."""
+        refused there - only under those folders, only on a backend whose
+        "/" is a machine's root and only for a file listed with such a
+        file's size (:func:`_is_pseudo_source`). Called before the copy
+        replaces the destination, so the destination stays as it was."""
         if expected <= 0 or transferred >= expected or _is_local(job.source_backend):
             return
-        if _is_pseudo_file(job.source_path):
+        if _is_pseudo_source(job.source_backend, job.source_path, expected):
             return
         from core.server_ops import source_size
 
@@ -1753,8 +1880,17 @@ class TransferWorker(QObject):
         # again, and refuses one over 256 MiB - kept "for a resume", such a
         # partial failed every later copy of the file.
         real_append = write_traits(dest_backend).real_append
+        #: Partials this job writes: no other job of this process adopts them.
+        live: list[str] = []
 
         try:
+            if not fresh_temp:
+                brought = temp_path
+                temp_path = self._claim_brought_partial(job, temp_path, real_append)
+                # A fresh name of this job's own: nothing to look for there.
+                fresh_temp = temp_path != brought and not job.resume
+            if _claim_live_partial(temp_path):
+                live.append(temp_path)
             resume_offset = 0
             live_size = 0
             if job.resume and real_append and dest_backend.exists(temp_path):
@@ -1778,6 +1914,8 @@ class TransferWorker(QObject):
                     job.temp_path = ""
                     job.source_fingerprint = source_fingerprint(live_source)
                     temp_path = self._temp_destination_path(job)
+                    if _claim_live_partial(temp_path):
+                        live.append(temp_path)
                     if dest_backend.exists(temp_path):
                         dest_backend.remove(temp_path)
                 else:
@@ -1839,6 +1977,7 @@ class TransferWorker(QObject):
                     )
                     self._refuse_aliased_source(job, temp_path)
                     self._verify_integrity(job, temp_path)
+                    self._refuse_changed_partial(job, temp_path, transferred)
                     free = self._check_existing_destination(job) is False
                     self._apply_source_mode(job, temp_path)
                     self._finalize_temp_destination(dest_backend, temp_path, job.dest_path,
@@ -1901,11 +2040,14 @@ class TransferWorker(QObject):
             # A short read is not committed: the temp file never replaces
             # the destination (a resume can continue it where it is real).
             self._refuse_short_read(job, transferred, expected)
+            self._refuse_short_move(job, transferred)
             self._refuse_aliased_source(job, temp_path)
             # The temp file, before it replaces the destination: checked
             # after the rename, a mismatch left the corrupt copy where the
             # original had been.
             self._verify_integrity(job, temp_path)
+            # Another job appending to the same partial is found here.
+            self._refuse_changed_partial(job, temp_path, transferred)
             # "fail" / "newer" onto a free name: the rename must not replace
             # a file that appears after this look (a check and then rename()
             # replaced it on LocalFS and SFTP).
@@ -1927,7 +2069,8 @@ class TransferWorker(QObject):
 
             cleanup_temp = False
             return transferred
-        except (_DestinationKept, FileExistsError, _SameEntry, _ChecksumMismatch):
+        except (_DestinationKept, FileExistsError, _SameEntry, _ChecksumMismatch,
+                _PartialChanged):
             # Refused to replace the destination: the partial is of no
             # use to a retry, which would be refused the same way - or,
             # after a failed integrity check, holds the wrong bytes.
@@ -1960,6 +2103,76 @@ class TransferWorker(QObject):
                         dest_backend.remove(temp_path)
                 except OSError:
                     log.warning("Could not remove partial transfer %s", temp_path)
+            _release_live_partials(live)
+
+    @staticmethod
+    def _claim_brought_partial(job: TransferJob, temp_path: str, real_append: bool) -> str:
+        """The temp path a job brought along (a retry, an auto-resume):
+        made its own before anything is written to it, or a fresh one.
+
+        A partial another job may still be writing is never resumed: one
+        this process writes is left alone, and one a resume would append
+        to is first renamed to this job's own name without replacing
+        anything - a job of another process (a second axross) that still
+        writes it then fails at its rename instead of committing both
+        jobs' bytes (review round 8). When the rename fails the copy starts
+        afresh under this job's own name and the partial stays as it was."""
+        dest_backend = job.dest_backend
+
+        def fresh(reason: str) -> str:
+            log.info("Not resuming %s (%s); starting afresh", temp_path, reason)
+            job.temp_path = ""
+            job.resume = False
+            return TransferWorker._temp_destination_path(job)
+
+        if partial_in_use(temp_path):
+            return fresh("another transfer is writing it")
+        if not (job.resume and real_append):
+            return temp_path
+        sep = dest_backend.separator() or "/"
+        dest_name = job.dest_path.rsplit(sep, 1)[-1]
+        temp_name = temp_path.rsplit(sep, 1)[-1]
+        own_name = partial_name(dest_name, job.job_id, partial_fingerprint(temp_name, dest_name))
+        if temp_name == own_name:
+            return temp_path
+        try:
+            own_path = safe_join(dest_backend, dest_backend.parent(job.dest_path), own_name)
+        except ValueError as exc:
+            return fresh(str(exc))
+        if partial_in_use(own_path):
+            return fresh("another transfer is writing it")
+        from core.server_ops import rename_no_replace
+
+        try:
+            rename_no_replace(dest_backend, temp_path, own_path)
+        except Exception as exc:  # noqa: BLE001 - gone, taken or refused: start afresh
+            return fresh(f"it could not be claimed: {exc}")
+        log.debug("Claimed partial %s as %s", temp_path, own_path)
+        job.temp_path = own_path
+        return own_path
+
+    @staticmethod
+    def _refuse_changed_partial(job: TransferJob, temp_path: str, transferred: int) -> None:
+        """Raise :class:`_PartialChanged` when the temp file is not as long
+        as what this job put into it (the resumed part and the bytes it
+        wrote): another transfer wrote to it as well. Two copies of one
+        file appending into one partial committed a 4.9 MB "copy" of a
+        4 MB file (review round 8). Not asked when the integrity check
+        already compared the temp file's bytes, nor when its size is
+        unknown."""
+        if job.integrity_compared or job.dest_backend is None:
+            return
+        from core.server_ops import source_size
+
+        size = source_size(job.dest_backend, temp_path)
+        if size is None or size == transferred:
+            return
+        raise _PartialChanged(
+            errno.EIO,
+            f"the partial file {temp_path} holds {size} bytes, this copy wrote "
+            f"{transferred}: another transfer wrote to it as well; {job.dest_path} "
+            "was left as it was",
+        )
 
     @staticmethod
     def _precreate_private_temp(job: TransferJob, temp_path: str, mode=-1) -> bool:

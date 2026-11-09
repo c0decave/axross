@@ -155,13 +155,16 @@ def keyring_status_message() -> str:
     _ensure_non_interactive_keyring()
     if _keyring_usable:
         return ""
-    return (
-        f"No usable system keyring (active backend: {_keyring_backend_id}). "
+    # Shown in dialogs: in the interface language (it was English only).
+    from core.i18n import tr
+
+    return tr(
+        "No usable system keyring (active backend: {backend}). "
         "Passwords will not be persisted until a Secret-Service or KWallet "
         "provider, or another keyring backend that needs no terminal input, "
         "is reachable. Install or unlock gnome-keyring, KWallet, "
         "or KeePassXC Secret Service integration, then re-check the keyring."
-    )
+    ).format(backend=_keyring_backend_id)
 
 
 def _entry_name(profile_name: str, suffix: str = "") -> str:

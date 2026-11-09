@@ -90,7 +90,7 @@ from core import mcp_catalog as M
 from core import mcp_client as MC
 from core.agent_net import parse_host
 from core.agent_sandbox import ENGINES, LEVELS, RULES, SandboxProfile, available
-from ui.format_utils import sandbox_label
+from ui.format_utils import sandbox_label, ui_locale
 from core.i18n import tr
 from core.thread_relay import GuiCall
 from ui.close_corner import add_close_corner
@@ -229,6 +229,17 @@ def confirm_detected_secrets(parent, detected) -> bool:
             name=detected.name, names=", ".join(names)))
     return answer == QMessageBox.StandardButton.Yes
 
+
+
+def _sandbox_entry(name: str, level: str) -> str:
+    """A sandbox in the list: its name, then its level when that says
+    something more - "Locker", not "Lax (Lax)", and translated after an edit
+    too (it went back to English; UX review round 8). The ids are kept."""
+    shown = sandbox_label(name) if name else tr("(unnamed)")
+    level_shown = sandbox_label(level)
+    if shown.casefold() == level_shown.casefold() or name.casefold() == level.casefold():
+        return shown
+    return f"{shown}  ({level_shown})"
 
 class _AgentSettingsForm:
     """The tabs of the agent's settings (AGENT_TABS); :class:`AgentSettingsPage`
@@ -1230,8 +1241,7 @@ class _AgentSettingsForm:
         self.sandbox_list.blockSignals(True)
         self.sandbox_list.clear()
         for profile in self.settings.sandboxes:
-            self.sandbox_list.addItem(
-                f"{sandbox_label(profile.name)}  ({sandbox_label(profile.level)})")
+            self.sandbox_list.addItem(_sandbox_entry(profile.name, profile.level))
         self.sandbox_list.blockSignals(False)
         if 0 <= row < self.sandbox_list.count():
             self.sandbox_list.setCurrentRow(row)
@@ -1257,7 +1267,7 @@ class _AgentSettingsForm:
                 return
             profile = self._current = self.settings.sandboxes[row]
             self.sandbox_form.setEnabled(True)
-            self.name_edit.setText(profile.name)
+            self.name_edit.setText(sandbox_label(profile.name))  # "Locker" for Lax
             self.engine_combo.setCurrentIndex(max(0, self.engine_combo.findData(profile.engine)))
             self.level_combo.setCurrentIndex(max(0, self.level_combo.findData(profile.level)))
             self.image_edit.setText(profile.image)
@@ -1301,7 +1311,9 @@ class _AgentSettingsForm:
         if self._loading or self._current is None:
             return
         p = self._current
-        p.name = self.name_edit.text().strip()
+        typed = self.name_edit.text().strip()
+        # The shown name of a shipped sandbox ("Locker") keeps its id ("Lax").
+        p.name = p.name if typed and typed == sandbox_label(p.name) else typed
         p.engine = self.engine_combo.currentData() or "auto"
         p.level = self.level_combo.currentData() or "normal"
         p.image = self.image_edit.text().strip()
@@ -1313,7 +1325,7 @@ class _AgentSettingsForm:
         p.mounts = tuple(mounts)
         item = self.sandbox_list.item(self.sandbox_list.currentRow())
         if item is not None:
-            item.setText(f"{p.name or tr('(unnamed)')}  ({p.level})")
+            item.setText(_sandbox_entry(p.name, p.level))
         self._update_level_notes()
 
     def add_sandbox(self) -> None:
@@ -1393,6 +1405,14 @@ class _AgentSettingsForm:
         left = QVBoxLayout()
         self.server_list = QListWidget()
         self.server_list.currentRowChanged.connect(self._show_server)
+        # Without a server the page was a blank list beside a greyed form
+        # (UX review round 8): what to do instead.
+        self.server_empty_label = QLabel(tr(
+            "No MCP server yet. Add one, pick one with Add from Catalog… or tick one "
+            "detected on this machine."))
+        self.server_empty_label.setWordWrap(True)
+        self.server_empty_label.setProperty("role", "muted")
+        left.addWidget(self.server_empty_label)
         left.addWidget(self.server_list, 1)
         row = QHBoxLayout()
         for label, slot, attr in ((tr("Add"), self.add_server, "server_add_button"),
@@ -1504,6 +1524,7 @@ class _AgentSettingsForm:
             self.server_confirm_combo.addItem(tr(label), key)
         form.addRow(tr("Asks"), self.server_confirm_combo)
         self.server_timeout_spin = QDoubleSpinBox()
+        self.server_timeout_spin.setLocale(ui_locale())  # "1,00 s" in German
         self.server_timeout_spin.setRange(1, 3600)
         self.server_timeout_spin.setSuffix(" s")
         form.addRow(tr("Timeout"), self.server_timeout_spin)
@@ -1730,12 +1751,13 @@ class _AgentSettingsForm:
         for server in self.settings.mcp_servers:
             self.server_list.addItem(self._server_label(server))
         self.server_list.blockSignals(False)
+        self.server_empty_label.setVisible(not self.settings.mcp_servers)
         if 0 <= row < self.server_list.count():
             self.server_list.setCurrentRow(row)
 
     @staticmethod
     def _server_label(server: MC.McpServerConfig) -> str:
-        state = "" if server.enabled else ", off"
+        state = "" if server.enabled else ", " + tr("off")
         label = f"{server.name or tr('(unnamed)')}  ({server.transport}{state})"
         if server.transport == "stdio" and server.command and not server.container:
             from core.mcp_runner import downloading_runner
@@ -1842,11 +1864,30 @@ class _AgentSettingsForm:
         self.server_contain_button.setEnabled(bool(plan and plan.convertible)
                                               and not getattr(self, "_containing", False))
         if plan is None and host:
-            self.server_runner_label.setText(tr(
-                "{program} is not an interpreter running a script on disk, so it is contained "
-                "by default: it starts only in a sandbox profile (Runs in sandbox), or when you "
-                "mark it Trusted – then it runs on this machine with your rights.").format(
-                program=M.clean_text(str(self._server.command[0]), 60)))
+            from core.mcp_detect import masked
+            from core.mcp_runner import code_env, host_launcher
+
+            program = M.clean_text(str(self._server.command[0]), 60)
+            loading = code_env(self._server.env) if host_launcher(self._server.command) else []
+            if not host_launcher(self._server.command):
+                text = tr("{program} is not an interpreter running a script on disk (named by "
+                          "its absolute path), so it is contained by default: it starts only in "
+                          "a sandbox profile (Runs in sandbox), or when you mark it Trusted – "
+                          "then it runs on this machine with your rights.")
+            elif loading:
+                text = tr("Its environment loads code before the server ({values}), so it is "
+                          "contained by default: it starts only in a sandbox profile (Runs in "
+                          "sandbox), or when you mark it Trusted – then it runs on this machine "
+                          "with your rights.")
+            else:
+                text = tr("{program} is not installed by the system or a version manager (or "
+                          "is named by a relative path), so it is contained by default: it "
+                          "starts only in a sandbox profile (Runs in sandbox), or when you mark "
+                          "it Trusted – then it runs on this machine with your rights.")
+            values = ", ".join(
+                f"{name}={M.clean_text(masked([str(self._server.env[name])])[0], 80)}"
+                for name in loading[:4])
+            self.server_runner_label.setText(text.format(program=program, values=values))
         elif plan is None:
             self.server_runner_label.clear()
         elif plan.convertible:

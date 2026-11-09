@@ -258,7 +258,7 @@ def test_happy_the_sliders_show_the_saved_tuning_and_their_ranges():
     labels = page.slider_labels["de"]
     assert labels["speed"].text() == "1.50×"
     assert labels["pitch"].text() == "-2.0 semitones"
-    assert labels["volume"].text() == "60 %"
+    assert labels["volume"].text() == "60%"
     assert labels["pause"].text() == "0.80 s"
     assert page.sliders["en"]["speed"].value() == _steps("speed", 1.0)  # ryan: defaults
 

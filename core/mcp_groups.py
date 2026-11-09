@@ -33,6 +33,7 @@ from __future__ import annotations
 import logging
 import os
 import posixpath
+import re
 import threading
 import weakref
 from collections.abc import Callable, Iterable
@@ -1636,13 +1637,23 @@ def openable(profile) -> tuple[bool, str]:
     return True, ""
 
 
-def check_remote_path(path) -> str:
+#: A ``..`` component, with either separator, or after a drive (``C:..``).
+_PARENT_COMPONENT = re.compile(r"(?:^|[/\\:])\.\.(?:[/\\]|$)")
+
+
+def check_remote_path(path, *, mutating: bool = False) -> str:
     """Shape check for a path on a remote backend: --mcp-root does not apply
-    there (the profile defines what is reachable)."""
+    there (the profile defines what is reachable). A path a tool writes,
+    moves or deletes (*mutating*) may hold no ``..`` component, split on
+    ``/`` or ``\\``: where it lands depends on who resolves it (smbclient
+    and Remove-Item apply Windows rules, ``/x\\..`` is the share root
+    there). The backends refuse it too; this is the second line."""
     if not isinstance(path, str) or not path:
         raise ValueError("path must be a non-empty string")
     if "\x00" in path:
         raise ValueError("path contains NUL byte")
+    if mutating and _PARENT_COMPONENT.search(path):
+        raise ValueError(f"refusing a remote path with '..' in it: {path!r}")
     return path
 
 

@@ -168,7 +168,7 @@ def test_happy_scan_pair_connect_and_use_as_output_e2e(env, fake):
     assert e.cell(dev_path(SPEAKER), BTX.COL_ADDRESS) == SPEAKER
     assert e.cell(dev_path(SPEAKER), BTX.COL_TYPE) == "Speaker"
     assert e.cell(dev_path(SPEAKER), BTX.COL_SIGNAL) == "-41 dBm"
-    assert e.cell(dev_path(SPEAKER), BTX.COL_BATTERY) == "73 %"
+    assert e.cell(dev_path(SPEAKER), BTX.COL_BATTERY) == "73%"
     # pair (Just Works: no dialog)
     e.select(dev_path(SPEAKER))
     e.click(panel.pair_button)
@@ -376,7 +376,7 @@ def test_edge_a_device_disappearing_keeps_the_rest(env, fake):
 def test_edge_battery_and_rssi_update_in_place(env, fake):
     e = env(devices=[speaker(battery=90)])
     fake.command("battery", path=dev_path(SPEAKER), percentage=12)
-    assert wait_until(lambda: e.cell(dev_path(SPEAKER), BTX.COL_BATTERY) == "12 %")
+    assert wait_until(lambda: e.cell(dev_path(SPEAKER), BTX.COL_BATTERY) == "12%")
 
 
 def test_edge_the_scan_stops_by_itself(env, fake, monkeypatch):

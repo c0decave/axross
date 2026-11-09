@@ -39,7 +39,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import system_mixer as SM
-from core.i18n import tr
+from core.i18n import format_percent, tr
 from ui.plain_text import plain_tooltip
 
 #: The volume sliders' top: the sound server allows amplification.
@@ -99,7 +99,7 @@ class _Row:
         grid.addWidget(self.head, head_row, 0, 1, 3)
         for col, widget in enumerate((self.slider, self.value, self.mute)):
             grid.addWidget(widget, slider_row, col)
-        self.slider.valueChanged.connect(lambda v: self.value.setText(f"{v} %"))
+        self.slider.valueChanged.connect(lambda v: self.value.setText(format_percent(v)))
         self.slider.sliderReleased.connect(page._slider_released)
         self.widgets = [self.label, self.slider, self.value, self.mute, self.head]
 
@@ -122,7 +122,7 @@ class _Row:
             self.slider.blockSignals(True)
             self.slider.setValue(min(MAX_PERCENT, max(0, int(round(percent)))))
             self.slider.blockSignals(False)
-            self.value.setText(f"{int(round(percent))} %")
+            self.value.setText(format_percent(int(round(percent))))
         self.slider.setEnabled(has_volume and not muted)
         self.mute.blockSignals(True)
         self.mute.setChecked(muted)

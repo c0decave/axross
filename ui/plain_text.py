@@ -97,27 +97,97 @@ MAX_SHOWN_WORD = 16_000
 MIN_SHOWN_CHARS = 4000
 
 #: a run of right-to-left letters (Hebrew, Arabic, Syriac, Thaana, NKo, ...)
+#: or of direction marks, embeddings, overrides and isolates (LRM, RLM,
+#: LRE/RLE/PDF/LRO/RLO, LRI/RLI/FSI/PDI; ALM is in the Arabic block): each
+#: is a change of direction for Qt - "a" RLM NBSP repeated, 63,000
+#: characters, kept the GUI thread 4.65 s.
 _RTL_RUN = re.compile("[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufefc"
-                      "\U00010800-\U00010fff\U0001e800-\U0001efff]+")
-_WORD = re.compile(r"\S+")
+                      "\U00010800-\U00010fff\U0001e800-\U0001efff"
+                      "\u200e\u200f\u202a-\u202e\u2066-\u2069]+")
+#: a word as Qt breaks lines: the no-break spaces (U+00A0, U+2007,
+#: U+202F; Python's \s) join words - the word joiner U+2060 is no \s.
+_WORD = re.compile("[\\S\u00a0\u2007\u202f]+")
+
+
+#: a run of letters outside Latin (Greek, Cyrillic, CJK, ...): inside one
+#: long word each is an item of its own for Qt - "a" NBSP alpha NBSP
+#: repeated, 64,000 characters, kept the GUI thread 7.2 s.
+#: (General punctuation - the no-break spaces among it - and variation
+#: selectors belong to no script: they do not end a run; right-to-left
+#: letters are counted as :data:`_RTL_RUN`.)
+_SCRIPT_RUN = re.compile("[^\x00-\u036f\u0590-\u08ff\u2000-\u206f\ufb1d-\ufdff\ufe00-\ufe0f"
+                         "\ufe70-\ufefc\U00010800-\U00010fff\U0001e800-\U0001efff]+")
+#: Words longer than this have their changes of script counted.
+LONG_WORD = 200
+#: (a word only from its start: trying every place inside a long word
+#: again would take quadratic time)
+_LONG_WORD = re.compile("(?<![\\S\u00a0\u2007\u202f])[\\S\u00a0\u2007\u202f]{%d,}" % (LONG_WORD + 1))
+_TOO_LONG_WORD = re.compile("(?<![\\S\u00a0\u2007\u202f])[\\S\u00a0\u2007\u202f]{%d,}"
+                            % (MAX_SHOWN_WORD + 1))
+#: The most changes of script inside long words laid out (as with
+#: right-to-left runs: 16,000 such changes in one word took 1.15 s).
+MAX_SHOWN_SCRIPT_RUNS = 1000
+#: What one right-to-left run or change of script costs the layout, in
+#: characters of plain words (:func:`layout_cost`): 128 lines of 1000
+#: runs each took 4.5 s, 512,000 characters of plain words 0.2 s.
+RUN_COST = 64
+
+
+def _script_runs(text: str, end: int, stop_at: int = 0) -> tuple[int, int]:
+    """The changes of script inside the long words of ``text[:end]``, and
+    where the *stop_at*-th of them starts (*end* when there are fewer)."""
+    count = 0
+    for word in _LONG_WORD.finditer(text, 0, end):
+        for match in _SCRIPT_RUN.finditer(text, *word.span()):
+            count += 1
+            if count == stop_at:
+                return count, match.start()
+    return count, end
 
 
 def shown_length(text: str, limit: int = MAX_SHOWN_CHARS) -> int:
     """How much of *text* a rich-text view lays out: at most *limit*
     characters, cut before the :data:`MAX_SHOWN_RTL_RUNS`-th right-to-left
-    run and inside a word longer than :data:`MAX_SHOWN_WORD` (never below
-    :data:`MIN_SHOWN_CHARS`, or *limit* when that is less)."""
+    run (or direction mark), before the :data:`MAX_SHOWN_SCRIPT_RUNS`-th
+    change of script inside long words and inside a word longer than
+    :data:`MAX_SHOWN_WORD` (never below :data:`MIN_SHOWN_CHARS`, or *limit*
+    when that is less). Words end only where Qt breaks a line: a no-break
+    space joins two."""
     end = min(len(text), limit)
     head = text[:end]
     for count, match in enumerate(_RTL_RUN.finditer(head), 1):
         if count >= MAX_SHOWN_RTL_RUNS:
             end = min(end, max(match.start(), MIN_SHOWN_CHARS))
             break
-    for word in _WORD.finditer(text, 0, end):
-        if word.end() - word.start() > MAX_SHOWN_WORD:
-            end = min(end, max(word.start() + MAX_SHOWN_WORD, MIN_SHOWN_CHARS))
-            break
+    word = _TOO_LONG_WORD.search(text, 0, end)
+    if word:
+        end = min(end, max(word.start() + MAX_SHOWN_WORD, MIN_SHOWN_CHARS))
+    count, at = _script_runs(text, end, MAX_SHOWN_SCRIPT_RUNS)
+    if count >= MAX_SHOWN_SCRIPT_RUNS:
+        end = min(end, max(at, MIN_SHOWN_CHARS))
     return min(end, len(text))
+
+
+def short_length(text: str, limit: int, max_runs: int = 16) -> int:
+    """How much of *text* a line shown only by its start lays out: at most
+    *limit* characters, cut before its *max_runs*-th right-to-left run or
+    run of letters outside Latin (a transcript keeps thousands of such
+    lines: 2000 of 200 mixed-direction characters took 3.3 s)."""
+    end = min(len(text), limit)
+    starts = sorted(m.start() for pattern in (_RTL_RUN, _SCRIPT_RUN) for m in pattern.finditer(text, 0, end))
+    if len(starts) >= max_runs:
+        end = min(end, max(starts[max_runs - 1], 1))
+    return end
+
+
+def layout_cost(text: str, end: int | None = None) -> int:
+    """What laying out ``text[:end]`` costs, in characters of plain words:
+    its length, and :data:`RUN_COST` for each right-to-left run and each
+    change of script inside a long word (a transcript drawn again whole
+    adds these up: eight answers of script changes took 21 s)."""
+    end = len(text) if end is None else min(end, len(text))
+    runs = sum(1 for _ in _RTL_RUN.finditer(text, 0, end))
+    return end + RUN_COST * (runs + _script_runs(text, end)[0])
 
 
 def _plain_lines(text: str, limit: int = 2 * 1024 * 1024, width: int = 1000,
@@ -126,7 +196,7 @@ def _plain_lines(text: str, limit: int = 2 * 1024 * 1024, width: int = 1000,
     line broken after *width* characters, at most *limit* characters and
     *max_lines* lines; and whether some was left out."""
     out: list[str] = []
-    for line in text[:limit].split("\n"):
+    for line in re.split(r"\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]", text[:limit]):
         pieces = [line[i:i + width] for i in range(0, len(line), width)] or [""]
         if len(out) + len(pieces) > max_lines:
             out.extend(pieces[:max_lines - len(out)])

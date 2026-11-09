@@ -2524,7 +2524,8 @@ class FilePaneWidget(QWidget):
                 QMessageBox.warning(
                     self,
                     tr("Unsafe Item Name"),
-                    tr("Skipping unsafe item name:\n{name}\n\n{error}").format(name=item.name, error=exc),
+                    as_written(tr("Skipping unsafe item name:\n{name}\n\n{error}").format(
+                        name=item.name, error=exc)),
                 )
             return None
 
@@ -3414,9 +3415,9 @@ class FilePaneWidget(QWidget):
             QMessageBox.information(
                 self,
                 tr("File Too Large"),
-                tr("{name} is {size}; files up to {limit} are opened. Raise the limit "
-                   "under Edit → Settings… → Files & Panes → Open Size Limit.").format(
-                    name=item.name, size=item.size_human, limit=describe_limit()),
+                as_written(tr("{name} is {size}; files up to {limit} are opened. Raise the limit "
+                              "under Edit → Settings… → Files & Panes → Open Size Limit.").format(
+                    name=item.name, size=item.size_human, limit=describe_limit())),
             )
         else:
             self.file_activated.emit(full_path)
@@ -3747,6 +3748,12 @@ class FilePaneWidget(QWidget):
         from ui import extension_host
 
         extension_host.add_context_actions(self, menu)
+        # The entries without a letter of their own (Paste, Pack, Analyse,
+        # More's and the submenus' entries, extensions') get a free one when
+        # the menu opens, in either language (UX review round 8).
+        from ui import mnemonics
+
+        mnemonics.install(menu, now=False)
         self._track_menu(menu)
         return menu
 
@@ -5937,7 +5944,8 @@ class FilePaneWidget(QWidget):
 
             final = self._wait(create, tr("Creating {name}…").format(name=leaf))
             if final is None:
-                QMessageBox.warning(self, tr("Create XLink"), tr("Path already exists:\n{name}").format(name=leaf))
+                QMessageBox.warning(self, tr("Create XLink"),
+                                    as_written(tr("Path already exists:\n{name}").format(name=leaf)))
                 return
             log.info("Created xlink %s → %s", final, redact_url(url))
         except (OSError, ValueError) as exc:
@@ -6186,7 +6194,7 @@ class FilePaneWidget(QWidget):
             if note:
                 self.status_message(note)
                 text += "\n\n" + note
-            QMessageBox.information(self, tr("Extract Archive"), text)
+            QMessageBox.information(self, tr("Extract Archive"), as_written(text))
             return
         if state["error"] == "cancelled":
             log.info("Extraction cancelled: %s", src_path)
@@ -6194,7 +6202,9 @@ class FilePaneWidget(QWidget):
         QMessageBox.warning(
             self,
             tr("Extract Archive"),
-            tr("Could not extract {name}:\n{error}").format(name=item.name, error=state["error"]),
+            # the archive's name and the error come from outside: as written
+            as_written(tr("Could not extract {name}:\n{error}").format(
+                name=item.name, error=state["error"])),
         )
 
     def _encrypt_selected_file(self, item) -> None:

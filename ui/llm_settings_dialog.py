@@ -46,6 +46,7 @@ from PyQt6.QtWidgets import (
 
 from core import llm_profiles as LP
 from core.i18n import tr
+from ui.format_utils import ui_locale
 from core.thread_relay import GuiCall
 from ui.close_corner import add_close_corner
 from ui.icon_provider import set_window_icon
@@ -168,6 +169,7 @@ class _LLMProfilesForm:
         self.key_edit = QLineEdit()
         self.key_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.temperature_spin = QDoubleSpinBox()
+        self.temperature_spin.setLocale(ui_locale())  # the decimal mark of the interface language
         self.temperature_spin.setRange(0.0, 2.0)
         self.temperature_spin.setSingleStep(0.1)
         self.timeout_spin = QSpinBox()

@@ -683,7 +683,16 @@ como ilegible; `copy`, `bulk_copy`, `rename` y `hardlink` no lo aceptan
 (ni una carpeta que lo contenga) como origen; los grupos (§9) lo ven
 fuera del root. Un symlink a un secreto se resuelve y se rechaza. Los
 nombres se siguen listando (`list_dir`, `walk`, `stat`, `search`). En el
-sandbox del agente cuenta también el home del host.
+sandbox del agente cuenta también el home del host. En cualquier sitio
+(también en una carpeta de proyecto): un fichero cuyos primeros 4 KiB
+muestran una clave privada o una base de contraseñas (`-----BEGIN …
+PRIVATE KEY-----`, OpenSSH, PuTTY, KeePass), y los ficheros secretos por su
+nombre (`.env`, `.env.*` salvo `.example`/`.sample`/`.template`/`.dist`,
+`.netrc`, `.git-credentials`, `.pgpass`, `*.tfstate`, `*.kdbx`, `id_rsa`,
+`id_ed25519`, `id_ecdsa`, `*.ppk`, `*.p12`, `*.pfx`); bajo `/proc` el
+`environ`, `cmdline`, `mem`, `maps`, `fd` y similares de un proceso y todo
+`/proc/self` (una raíz `/` entregaría las claves de API de axross), y
+`/run/secrets`. `chmod` rechaza un fichero con otros hard links.
 `--mcp-allow-secret-reads` (solo stdio) desactiva la comprobación; las
 herramientas propias del agente la mantienen siempre. El lado de
 escritura (§2, los lugares protegidos de `core.protected_places`) es

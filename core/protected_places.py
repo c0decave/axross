@@ -163,12 +163,18 @@ GIT_TREE_NAMES = (".gitmodules",)
 #: that is not one yet (a folder of the project made into a repository Git
 #: finds before the real one).
 GIT_SHAPE = ("HEAD", "objects", "refs")
-#: Mercurial and Jujutsu: ``(folder, paths directly below it)`` that run code
-#: or point at a folder whose settings do (``.hg/hgrc`` hooks,
-#: ``.hg/sharedpath``, ``.jj/repo`` - a file in a workspace -, and
-#: ``.jj/repo/config.toml``).
-VCS_CODE = ((".hg", (("hgrc",), ("sharedpath",))),
-            (".jj", (("repo",), ("repo", "config.toml"))))
+#: Mercurial, Sapling, Jujutsu, darcs and Breezy: ``(folder, paths below
+#: it)`` that run code or point at a folder whose settings do (``.hg/hgrc``
+#: hooks, ``.hg/hgrc-not-shared`` - read for every repository too -,
+#: ``.hg/sharedpath``, Sapling's ``.sl/config``, ``.jj/repo`` - a file in a
+#: workspace -, ``.jj/repo/config.toml``, darcs's ``_darcs/prefs/defaults``
+#: (``--posthook``), Breezy's ``.bzr/branch/branch.conf`` and the
+#: ``.bzr/branch/location`` of a lightweight checkout).
+VCS_CODE = ((".hg", (("hgrc",), ("hgrc-not-shared",), ("sharedpath",))),
+            (".sl", (("config",), ("hgrc",), ("hgrc-not-shared",), ("sharedpath",))),
+            (".jj", (("repo",), ("repo", "config.toml"))),
+            ("_darcs", (("prefs", "defaults"),)),
+            (".bzr", (("branch", "branch.conf"), ("branch", "location"))))
 #: axross's trash folder (core.trash): no tool writes there wherever it is
 #: (a planted entry is restored by the user with axross's rights), and its
 #: contents are secret (a trashed key is still a key).
@@ -995,11 +1001,15 @@ def _git_shaped(path: str, memo: dict) -> bool:
     """Whether Git takes the folder *path* for a repository (:data:`GIT_SHAPE`)."""
     done = memo.get(path)
     if done is None:
-        done = (os.path.lexists(os.path.join(path, "HEAD"))
-                and os.path.isdir(os.path.join(path, "objects"))
-                and os.path.isdir(os.path.join(path, "refs")))
+        # Any entry will do: Git only asks access(X_OK) of objects and
+        # refs, so an executable FILE named objects passes too.
+        done = all(os.path.lexists(os.path.join(path, n)) for n in GIT_SHAPE)
         memo[path] = done
     return done
+
+
+def _fold_name(name: str) -> str:
+    return name.casefold() if _case_insensitive() else name
 
 
 def _path_parts(path: str) -> list[str]:
@@ -1022,7 +1032,10 @@ def _git_code(ck: tuple[str, ...], path: str | None = None, memo: dict | None = 
         return True
     for i, part in enumerate(ck):
         for folder, rels in VCS_CODE:
-            if part == folder and any(ck[i + 1:] == rel for rel in rels):
+            # The file itself, or a folder on its way (the .hg folder, as
+            # with .git: a folder renamed to .hg brings its hgrc along).
+            tail = ck[i + 1:]
+            if part == folder and any(rel[:len(tail)] == tail for rel in rels):
                 return True
     parts = _path_parts(path) if path is not None else None
     if parts is not None and len(parts) != len(ck):
@@ -1074,9 +1087,7 @@ def _git_code(ck: tuple[str, ...], path: str | None = None, memo: dict | None = 
             if last == fold("HEAD") and holds_code(folder):
                 return True
             others = [n for n in GIT_SHAPE if fold(n) != last]
-            checks = {"HEAD": os.path.lexists, "objects": os.path.isdir,
-                      "refs": os.path.isdir}
-            if all(checks[n](os.path.join(folder, n)) for n in others):
+            if all(lexists(folder, n) for n in others):
                 return True
     return False
 
@@ -1086,8 +1097,9 @@ def _git_message(path: str) -> str:
             "(config, hooks, info, commondir, gitdir of a .git or *.git folder or of a "
             "folder shaped like a repository or holding a HEAD, .gitmodules, a .git "
             "entry, a HEAD beside a config or hooks, the last of HEAD/objects/refs that "
-            "would make a folder a repository; .hg/hgrc, .jj/repo): Git, Mercurial and "
-            "Jujutsu run code from them")
+            "would make a folder a repository; .hg/hgrc, .hg/hgrc-not-shared, .sl/config, "
+            ".jj/repo, _darcs/prefs/defaults, .bzr/branch/branch.conf): Git, Mercurial, "
+            "Sapling, Jujutsu, darcs and Breezy run code from them")
 
 
 def _link_target_denials(environ, areas, home_keys) -> list[tuple[tuple[str, ...], tuple[str, ...]]]:
@@ -1123,19 +1135,29 @@ def deny_link_targets(environ=os.environ, *, granted=()) -> list[str]:
     return out
 
 
-def write_checker(environ=os.environ, *, granted=()):
+def write_checker(environ=os.environ, *, granted=(), members: bool = False):
     """:func:`refusal` with the places resolved once - for the many paths of
-    one tool call (an archive's members); a new one per call."""
+    one tool call (an archive's members); a new one per call. *members*:
+    the paths are an archive's members, and one named ``HEAD`` (at any
+    depth) is refused as well - with a config, hooks, objects and refs from
+    the same archive it makes a folder Git runs code from."""
     places = [(_key(place), place) for place in _all_places(environ)]
     areas = _deny_areas(environ)
     grants = _granted_keys(granted)
     home_keys = [_key(h) for h in homes(environ)]
     targets = _link_target_denials(environ, areas, home_keys)
     readlink = _memo_readlink()
-    shape_memo: dict[str, bool] = {}
 
     def check(path: str, *, entry: bool = False) -> str | None:
+        # Looked up afresh for every path: an archive's members are made
+        # one after the other, and what the last one made (a HEAD, an
+        # objects entry) decides whether the next one is Git's code.
+        shape_memo: dict = {}
         absolute = os.path.abspath(path)
+        if members and _fold_name(os.path.basename(absolute)) == _fold_name("HEAD"):
+            return (f"{path}: the agent does not extract a file named HEAD: with a config "
+                    "or hooks beside it Git takes the folder for a repository and runs "
+                    "code from it")
         candidates = list(_link_chain(absolute, readlink))
         parent_real = os.path.join(os.path.realpath(os.path.dirname(absolute)),
                                    os.path.basename(absolute))
@@ -1156,6 +1178,9 @@ def write_checker(environ=os.environ, *, granted=()):
         for ck, candidate in keyed:
             if _git_code(ck, candidate, shape_memo):
                 return _git_message(path)
+            if _system_secret(ck):
+                return (f"{path}: the agent does not change a process's memory, environment "
+                        "or open files below /proc, nor /run/secrets")
             if TRASH_NAME in ck:
                 return (f"{path}: the agent does not change axross's trash ({TRASH_NAME}): "
                         "what is restored from it is put back with axross's rights")
@@ -1306,6 +1331,85 @@ SECRET_NAMES = ((".config/axross", ("*token*",)),)
 #: matches - a private key in ~/.ssh may have any name.
 SECRET_UNLESS = ((".ssh", ("*.pub", "known_hosts", "known_hosts.old", "authorized_keys",
                            "authorized_keys2", "config")),)
+
+
+#: Names (case-folded) of files that are secret wherever they are - in a
+#: project folder too: credential stores, private keys, Terraform state
+#: (it holds every resource's secrets), password databases, dotenv files
+#: (``.env``, ``.env.production``; not their ``.example`` and the like).
+SECRET_NAMES_ANYWHERE = (".git-credentials", ".netrc", "_netrc", ".pgpass", ".env", ".env.*",
+                         "*.tfstate", "*.tfstate.backup", "*.kdbx", "*.kdb", "id_rsa",
+                         "id_dsa", "id_ecdsa", "id_ed25519", "id_ecdsa_sk", "id_ed25519_sk",
+                         "*.ppk", "*.p12", "*.pfx")
+SECRET_NAMES_ANYWHERE_UNLESS = ("*.example", "*.sample", "*.template", "*.dist", "*.defaults",
+                                "*.tpl", "*.pub")
+#: How much of a file :func:`_secret_content` looks at, and what makes it a
+#: secret there wherever it is: a PEM or OpenSSH private key (also inside a
+#: bundle or after OpenSSL's "Bag Attributes"), a PuTTY key, a KeePass
+#: database (KeePass 1 and KDBX signatures).
+SECRET_CONTENT_HEAD = 4096
+_SECRET_CONTENT = None
+_KEEPASS_MAGIC = (b"\x03\xd9\xa2\x9a\x67\xfb\x4b\xb5", b"\x03\xd9\xa2\x9a\x65\xfb\x4b\xb5",
+                  b"\x03\xd9\xa2\x9a\x66\xfb\x4b\xb5")
+
+
+def _secret_anywhere(name: str) -> bool:
+    """Whether a file is secret by its name wherever it is
+    (:data:`SECRET_NAMES_ANYWHERE`)."""
+    return (_secret_name(name, SECRET_NAMES_ANYWHERE)
+            and not _secret_name(name, SECRET_NAMES_ANYWHERE_UNLESS))
+
+
+def _secret_content(path: str) -> bool:
+    """Whether the regular file *path* holds a private key or a password
+    database by its first bytes (:data:`SECRET_CONTENT_HEAD`)."""
+    global _SECRET_CONTENT
+    import re
+
+    if _SECRET_CONTENT is None:
+        _SECRET_CONTENT = re.compile(
+            rb"-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY[A-Z ]{0,10}-----|^PuTTY-User-Key-File-",
+            re.MULTILINE)
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+                     | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+    except OSError:
+        return False
+    try:
+        import stat as stat_module
+
+        if not stat_module.S_ISREG(os.fstat(fd).st_mode):
+            return False
+        head = os.read(fd, SECRET_CONTENT_HEAD)
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+    return head[:8] in _KEEPASS_MAGIC or _SECRET_CONTENT.search(head) is not None
+
+
+#: ``/proc/<pid>/...`` entries that hand out a process's secrets: its
+#: environment (API keys, tokens), command line, memory and what it has
+#: open; ``/proc/self`` and ``/proc/thread-self`` whole.
+PROC_SECRET_NAMES = ("environ", "cmdline", "mem", "maps", "smaps", "smaps_rollup", "numa_maps",
+                     "pagemap", "auxv", "fd", "fdinfo", "map_files", "root", "cwd", "exe",
+                     "stack", "syscall", "io", "mountinfo", "mounts", "attr")
+#: Folders of the system whose every file is secret (container and
+#: orchestrator secrets).
+SYSTEM_SECRET_DIRS = ("/run/secrets", "/var/run/secrets")
+
+
+def _system_secret(ck: tuple[str, ...]) -> bool:
+    """Whether *ck* is a process's secrets below /proc or a system secrets
+    folder (:data:`PROC_SECRET_NAMES`, :data:`SYSTEM_SECRET_DIRS`)."""
+    if os.name != "posix":
+        return False
+    if len(ck) >= 2 and ck[0] == "proc":
+        if ck[1] in ("self", "thread-self"):
+            return True
+        if ck[1].isdigit() and any(part in PROC_SECRET_NAMES for part in ck[2:]):
+            return True
+    return any(ck[:len(k)] == k for k in (_key(d) for d in SYSTEM_SECRET_DIRS))
 
 
 def _secret_rules(environ) -> list[tuple[tuple[str, ...], str, tuple[str, ...]]]:
@@ -1489,11 +1593,25 @@ def secret_checker(environ=os.environ, *, granted=()):
                         "or the settings, data and snap folders (~/.config, ~/.local, ~/snap, "
                         "~/Library, %APPDATA%) unless that folder is granted to it (the MCP "
                         "root or an extra folder there): many hold sessions, tokens and keys")
-        # A hard link shares a secret file's contents under another name.
+            if _system_secret(ck):
+                return (f"{path}: the agent does not read a process's environment, command "
+                        "line, memory or open files below /proc, nor /run/secrets: they "
+                        "hold API keys and tokens")
+            if ck and _secret_anywhere(ck[-1]):
+                return (f"{path}: the agent does not read this file: by its name it holds "
+                        "credentials, keys or secrets wherever it is (.env, .netrc, "
+                        ".git-credentials, .pgpass, *.tfstate, *.kdbx, id_rsa, *.ppk, "
+                        "*.p12)")
         try:
             st = os.stat(chain[-1])
         except OSError:
             st = None
+        # A private key or password database by its contents, whatever
+        # its name (a project's deploy/id_rsa, a renamed key).
+        if st is not None and stat_module.S_ISREG(st.st_mode) and _secret_content(chain[-1]):
+            return (f"{path}: the agent does not read this file: it holds a private key or "
+                    "a password database (found by its contents)")
+        # A hard link shares a secret file's contents under another name.
         if st is not None and stat_module.S_ISREG(st.st_mode) and st.st_nlink > 1:
             if not inodes:
                 inodes.append(_secret_inodes(environ, rules))

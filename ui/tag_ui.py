@@ -74,7 +74,7 @@ def add_tags_menu(pane, menu: QMenu) -> None:
     store = T.store()
     sub = menu.addMenu(tr("T&ags"))
     for tag in store.tags():
-        action = sub.addAction(tag.name)
+        action = sub.addAction(tag.name.replace("&", "&&"))  # a name's "&" is shown
         action.setCheckable(True)
         action.setChecked(all(tag.name in store.tags_of(pane.backend.name, p) for p in paths))
         action.setIcon(_dot_icon(tag.colour))

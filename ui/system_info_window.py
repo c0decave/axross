@@ -76,7 +76,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import system_info as SI
-from core.i18n import tr
+from core.i18n import format_percent, tr
 from core.thread_relay import GuiCall
 from ui.plain_text import plain_tooltip, set_plain
 from ui.icon_provider import set_window_icon
@@ -1402,7 +1402,7 @@ class Overview(Page):
         if b.get("health") is not None:
             bar = UsageBar(label_width=60)
             h = b["health"]
-            bar.set_value(min(1.0, h / 100), "Health", f"{h:.0f} %",
+            bar.set_value(min(1.0, h / 100), "Health", format_percent(h),
                           QColor(GOOD) if h >= 80 else QColor(WARNING) if h >= 60
                           else QColor(CRITICAL))
             tile.body.addWidget(bar)
@@ -1758,7 +1758,7 @@ def battery_extra(section: dict) -> QWidget | None:
         if b.get("health") is not None:
             bar = UsageBar(label_width=60)
             h = b["health"]
-            bar.set_value(min(1.0, h / 100), "Health", f"{h:.0f} %",
+            bar.set_value(min(1.0, h / 100), "Health", format_percent(h),
                           QColor(GOOD) if h >= 80 else QColor(WARNING) if h >= 60
                           else QColor(CRITICAL))
             col.addWidget(bar)

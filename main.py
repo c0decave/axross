@@ -513,6 +513,12 @@ def main() -> int:
         from core.regex_worker import _child_main as regex_worker_main
 
         return regex_worker_main()
+    if sys.argv[1:2] == ["--svg-worker"]:
+        # An SVG drawn for the media viewer (core.svg_worker starts it):
+        # stdin/stdout are its channel. The frozen build's "python -c".
+        from core.svg_worker import _child_main as svg_worker_main
+
+        return svg_worker_main()
     if sys.argv[1:] == ["--voice-worker"]:
         # Speech synthesis and recognition for the Agent dock
         # (core.voice_worker starts it): no GUI, stdin/stdout are its channel.

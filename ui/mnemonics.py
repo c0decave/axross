@@ -58,9 +58,12 @@ def assign(menu: QMenu) -> None:
             action.setText(new)
 
 
-def install(menu: QMenu) -> None:
+def install(menu: QMenu, *, now: bool = True) -> None:
     """Assign mnemonics in *menu* and its submenus each time it opens -
-    after the menu's own aboutToShow, which may rebuild its entries."""
+    after the menu's own aboutToShow, which may rebuild its entries. With
+    *now* false only then: a popup menu built for one exec() (the pane's
+    right-click menu, Quick Connect) keeps its labels as built until it
+    is shown."""
     if menu.property(_HOOKED):
         return
     menu.setProperty(_HOOKED, True)
@@ -73,7 +76,8 @@ def install(menu: QMenu) -> None:
                 install(sub)
 
     menu.aboutToShow.connect(on_show)
-    on_show()
+    if now:
+        on_show()
 
 
 __all__ = ["assign", "install", "mnemonic_of", "with_mnemonic"]

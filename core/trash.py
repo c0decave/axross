@@ -145,12 +145,45 @@ def _resolve_root(backend, root: str | None) -> str:
     return safe_join(backend, base, TRASH_DIRNAME)
 
 
+class TrashFolderRefused(OSError):
+    """The trash folder's name is taken by something that is no folder.
+    Its text is written for the user (core.user_errors keeps it)."""
+
+
 def _ensure_trash_dir(backend, trash_root: str) -> None:
     try:
         if not backend.exists(trash_root):
             backend.mkdir(trash_root)
+            return
+        is_folder = backend.is_dir(trash_root) or _links_to_a_folder(backend, trash_root)
     except OSError as exc:
         raise OSError(f"Cannot create trash directory {trash_root}: {exc}") from exc
+    if not is_folder:
+        # Not "x.txt is not a folder" for the file being trashed (review
+        # round 8): the trash folder is what is wrong.
+        from core.i18n import tr
+
+        # No errno: core.user_errors would say "<path> is not a folder".
+        raise TrashFolderRefused(
+            tr("The trash folder {path} is not a folder: a file has its name. Rename or "
+               "move that file, then try again.").format(path=trash_root))
+
+
+def _links_to_a_folder(backend, path: str) -> bool:
+    """*path* is a symbolic link that may lead to a folder (a trash folder
+    on another disk): on this machine's disk where it points is looked
+    at, elsewhere it is taken as one (the move into it reports)."""
+    try:
+        item = backend.stat(path)
+    except Exception:  # noqa: BLE001 - no answer: not known to be a link
+        return False
+    if not getattr(item, "is_link", False):
+        return False
+    from core.local_fs import LocalFS
+
+    if isinstance(backend, LocalFS) and type(backend).stat is LocalFS.stat:
+        return os.path.isdir(path)
+    return True
 
 
 def _meta_path(backend, trash_root: str, trash_id: str) -> str:

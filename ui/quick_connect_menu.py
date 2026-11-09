@@ -98,6 +98,9 @@ class QuickConnectMenu(QMenu):
             menu.addSeparator()
             delete = menu.addAction(tr(DELETE_LABEL))
             delete.triggered.connect(lambda _checked=False: self._delete(profile))
+        from ui import mnemonics
+
+        mnemonics.install(menu, now=False)
         return menu
 
     def _connect_now(self, profile) -> None:

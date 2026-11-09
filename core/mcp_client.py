@@ -57,6 +57,11 @@ MAX_TOOLS = 128
 MAX_DESCRIPTION = 2000
 MAX_SCHEMA_BYTES = 64 * 1024
 MAX_MESSAGE_BYTES = 16 * 1024 * 1024
+#: What is kept of a server's stderr (for the reason it ended): the last
+#: lines, each cut at a length, read in chunks of this size.
+STDERR_LINES = 20
+STDERR_LINE_BYTES = 4096
+STDERR_CHUNK = 64 * 1024
 MAX_NAME = 64
 TRANSPORTS = ("stdio", "http")
 CONFIRMS = ("always", "writes")
@@ -192,14 +197,23 @@ class McpServerConfig:
         if self.sandbox if sandboxed is None else sandboxed:
             return ""
         from core.mcp_catalog import clean_text
-        from core.mcp_runner import host_launcher
+        from core.mcp_runner import code_env, host_launcher, launcher_place_problem
 
-        if host_launcher(self.command):
-            return ""
-        program = clean_text(str(self.command[0]), 60)
-        return (f"{program} is no known launcher (an interpreter running a script on disk): "
-                "it starts only in a sandbox profile or a container, or when the server is "
+        tail = ("it starts only in a sandbox profile or a container, or when the server is "
                 "marked trusted")
+        if not host_launcher(self.command):
+            program = clean_text(str(self.command[0]), 60)
+            return (f"{program} is no known launcher (an interpreter running a script on disk "
+                    f"by its absolute path): {tail}")
+        loading = code_env(self.env)
+        if loading:
+            return (f"its environment loads code ({clean_text(', '.join(loading), 120)}): "
+                    f"{tail}")
+        place = launcher_place_problem(str(self.command[0]),
+                                       self.env.get("PATH", os.environ.get("PATH")))
+        if place:
+            return f"{place}: {tail}"
+        return ""
 
     def files_risk(self) -> str:
         """Why the server may change the user's files ("" = it cannot): only
@@ -402,9 +416,45 @@ def _named_env(names) -> dict:
     return {k: v for k, v in os.environ.items() if k in names}
 
 
+def run_dir(name: str) -> str:
+    """The private, empty working folder of the program server *name* run
+    on this machine: ``$XDG_STATE_HOME/axross/mcp-run/<name>`` (0700, of
+    this user, parents no one else may change - core.self_update's
+    private_dir_problem). A folder that is not private stops the start."""
+    from core.self_update import private_dir_problem
+    from core.xdg_dirs import base_dir
+
+    folder = base_dir("XDG_STATE_HOME") / "axross" / "mcp-run" / (
+        name if _NAME.fullmatch(name or "") else "server")
+    try:
+        folder.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    except OSError as exc:
+        raise McpClientError(f"no working folder for the server: {exc}") from None
+    problem = private_dir_problem(folder)
+    if problem:
+        raise McpClientError(f"no working folder for the server: {problem}")
+    return str(folder)
+
+
+def _python_module(argv) -> bool:
+    """*argv* is ``python … -m module``: python puts its working folder
+    first on its import path, unless PYTHONSAFEPATH is set (3.11+)."""
+    from core.mcp_runner import _PYTHONS, _program
+
+    if not argv or not _PYTHONS.fullmatch(_program(argv)):
+        return False
+    for word in argv[1:]:
+        if not word.startswith("-") or word == "--":
+            return False
+        if "m" in word[1:] and not word.startswith("--"):
+            return True
+    return False
+
+
 class _Stdio:
     def __init__(self, argv: list[str], env: dict, timeout: float, *, pass_fds=(),
-                 cleanup: Callable[[], None] | None = None, base=_BASE_ENV) -> None:
+                 cleanup: Callable[[], None] | None = None, base=_BASE_ENV,
+                 cwd: str | None = None) -> None:
         self._timeout = timeout
         self._cleanup = cleanup
         try:
@@ -413,6 +463,7 @@ class _Stdio:
             self._proc = process_launcher.popen(
                 argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 env={**_named_env(base), **env}, start_new_session=True, pass_fds=tuple(pass_fds),
+                cwd=cwd,
             )
         except OSError as exc:
             raise McpClientError(f"cannot start {argv[0]}: {exc}") from None
@@ -425,8 +476,34 @@ class _Stdio:
         threading.Thread(target=self._drain, daemon=True, name="mcp-client-stderr").start()
 
     def _drain(self) -> None:
-        for raw in iter(self._proc.stderr.readline, b""):
-            self.stderr = (self.stderr + [raw.decode("utf-8", "replace").rstrip()])[-20:]
+        """Keep the last :data:`STDERR_LINES` lines of the server's stderr,
+        each cut at :data:`STDERR_LINE_BYTES`: read in chunks, never a whole
+        line at once - an endless line without a newline costs nothing."""
+        read = getattr(self._proc.stderr, "read1", None) or self._proc.stderr.read
+        part = bytearray()
+        cut = False
+        while True:
+            try:
+                chunk = read(STDERR_CHUNK)
+            except (OSError, ValueError):
+                break
+            if not chunk:
+                break
+            while chunk:
+                line, newline, chunk = chunk.partition(b"\n")
+                if not cut:
+                    room = STDERR_LINE_BYTES - len(part)
+                    part += line[:room]
+                    cut = len(line) > room
+                if newline:
+                    self._keep(bytes(part))
+                    part.clear()
+                    cut = False
+        if part:
+            self._keep(bytes(part))
+
+    def _keep(self, raw: bytes) -> None:
+        self.stderr = (self.stderr + [raw.decode("utf-8", "replace").rstrip()])[-STDERR_LINES:]
 
     def _write(self, message: dict) -> None:
         data = (json.dumps(message, ensure_ascii=False) + "\n").encode("utf-8")
@@ -862,8 +939,16 @@ class McpClient:
                 self._transport = _start_container(config, values)
             else:
                 argv = list(config.command)
-                self._transport = _Stdio(wrap(argv) if wrap else argv,
-                                         {**config.env, **values}, config.timeout)
+                env = {**config.env, **values}
+                cwd = None
+                if wrap is None:
+                    # Never in the folder axross was started from (a cloned
+                    # repository's module would shadow the server's own).
+                    cwd = run_dir(config.name)
+                    if _python_module(argv):
+                        env["PYTHONSAFEPATH"] = "1"
+                self._transport = _Stdio(wrap(argv) if wrap else argv, env, config.timeout,
+                                         cwd=cwd)
         else:
             self._transport = _Http(config.url, token, config.timeout)
             if cancel is not None:

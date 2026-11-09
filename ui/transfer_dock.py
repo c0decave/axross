@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.i18n import tr, tr_n
+from core.i18n import percent_sign, tr, tr_n
 from core.transfer_manager import TransferManager
 from core.transfer_worker import TransferJob, TransferStatus
 from models.transfer_model import COL_PROGRESS, ProgressBarDelegate, TransferModel
@@ -308,7 +308,7 @@ class TransferDock(QDockWidget):
             self._ended_badly = (0, 0)
             self._show_ended_badly(False)
             self._overall_progress.setValue(0)
-            self._overall_progress.setFormat("%p%")
+            self._overall_progress.setFormat("%p" + percent_sign())
             self._overall_progress.setToolTip("")
             return
         running = (TransferStatus.ACTIVE, TransferStatus.PENDING)
@@ -372,7 +372,7 @@ class TransferDock(QDockWidget):
                     done=TransferModel._format_size(done),
                     total=TransferModel._format_size(total), left=left))
         else:
-            self._overall_progress.setFormat("%p%")
+            self._overall_progress.setFormat("%p" + percent_sign())
             self._overall_progress.setToolTip("")
 
     def _show_ended_badly(self, bad: bool) -> None:

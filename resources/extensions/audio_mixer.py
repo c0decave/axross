@@ -43,7 +43,7 @@ from PyQt6.QtWidgets import (
 
 from core import audio_eq as AEQ
 from core import audio_route as AR
-from core.i18n import tr
+from core.i18n import format_percent, tr
 from ui.plain_text import set_plain
 
 log = logging.getLogger(__name__)
@@ -107,7 +107,7 @@ class _Channel:
         grid.addLayout(head, top, 0, 1, 3)
         for col, widget in enumerate((self.slider, self.value, self.mute)):
             grid.addWidget(widget, top + 1, col)
-        self.slider.valueChanged.connect(lambda v: self.value.setText(f"{v} %"))
+        self.slider.valueChanged.connect(lambda v: self.value.setText(format_percent(v)))
 
     def set_values(self, volume: int, muted: bool) -> None:
         for widget, setter, value in ((self.slider, "setValue", volume),
@@ -115,7 +115,7 @@ class _Channel:
             widget.blockSignals(True)
             getattr(widget, setter)(value)
             widget.blockSignals(False)
-        self.value.setText(f"{volume} %")
+        self.value.setText(format_percent(volume))
         self.slider.setEnabled(not muted)
 
     def fill_outputs(self, devices: list[tuple[str, str]], chosen: str) -> None:

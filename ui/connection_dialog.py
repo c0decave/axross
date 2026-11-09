@@ -621,6 +621,8 @@ class ConnectionDialog(QDialog):
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
+        # The main button says what it does (it said "OK"; UX review round 8).
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(tr("Connect"))
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
 
@@ -651,7 +653,7 @@ class ConnectionDialog(QDialog):
         self._new_pane_box.setToolTip(
             tr("Without this, the connection opens in the target pane while that is "
                "unused (a local pane still at your home folder). Holding Shift while "
-               "you click OK also opens a new pane.")
+               "you click Connect also opens a new pane.")
         )
         layout.addWidget(self._new_pane_box)
         layout.addWidget(buttons)
@@ -692,6 +694,8 @@ class ConnectionDialog(QDialog):
 
         proxy_reason = proxy_unavailable_reason(proto)
         self._proxy_group.setEnabled(proxy_reason is None)
+        # No proxy for this protocol: no box for one (UX review round 8).
+        self._proxy_group.setVisible(proxy_reason is None)
         self._proxy_group.setToolTip(
             ""
             if proxy_reason is None
@@ -1064,6 +1068,9 @@ class ConnectionDialog(QDialog):
         custom = self._proxy_mode.currentIndex() == 1
         transport = TRANSPORT_CHOICES[self._proxy_type.currentIndex()][1]
         used = self._proxy_group.isChecked()
+        # Unticked, the group is its title alone, not an empty frame under
+        # it (UX review round 8).
+        self._proxy_group.setFlat(not used)
         self._set_form_row_visible(self._proxy_mode, used)
         self._set_form_row_visible(self._proxy_default_hint, used and not custom)
         for widget in (

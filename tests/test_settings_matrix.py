@@ -309,7 +309,7 @@ def _toolbar_style(ctx):
 def _tools_bar(win):
     from PyQt6.QtWidgets import QToolBar
 
-    return next(tb for tb in win.findChildren(QToolBar) if tb.windowTitle() == "Tools")
+    return next(tb for tb in win.findChildren(QToolBar) if tb.objectName() == "axToolsToolbar")
 
 
 def effect_toolbar_grouping(ctx, win, value) -> None:

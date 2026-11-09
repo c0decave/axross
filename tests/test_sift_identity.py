@@ -166,7 +166,7 @@ def _commands(pane) -> dict[str, QAction]:
 
 
 def _tool_button(win, icon_name: str) -> QAction:
-    return next(a for bar in win.findChildren(QToolBar) if bar.windowTitle() in ("Main", "Tools")
+    return next(a for bar in win.findChildren(QToolBar) if bar.objectName() in ("axMainToolbar", "axToolsToolbar")
                 for a in bar.actions() if a.property("axIcon") == icon_name)
 
 

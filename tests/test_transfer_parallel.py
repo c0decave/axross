@@ -749,8 +749,10 @@ def test_happy_leftover_partials_resume_with_jobs_side_by_side(tmp_path) -> None
     for i, p in enumerate(paths):
         data = Path(p).read_bytes()
         fp = source_fingerprint(LocalFS().stat(p))
-        name = partial_name(Path(p).name, f"old{i:05d}", fp)
+        name = partial_name(Path(p).name, f"{0xa0 + i:08x}", fp)
         (dst / name).write_bytes(data[: len(data) // 2])
+        # Not written to lately: a partial in use is not resumed.
+        os.utime(dst / name, (time.time() - 3600,) * 2)
     mgr = manager(3)
     try:
         jobs = mgr.transfer_files(src, LocalFS(), paths, str(dst), TransferDirection.DOWNLOAD)

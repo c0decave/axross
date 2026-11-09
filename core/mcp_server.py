@@ -1520,7 +1520,7 @@ def _build_tools(
         is refused (the GUI's countdown cannot be shown over MCP)."""
         if _is_remote(active_backend):
             remote_registry.refuse_production(active_backend)
-            return _groups.check_remote_path(path)
+            return _groups.check_remote_path(path, mutating=True)
         confined = _refuse_read_only(_confined(path, write_roots))
         if _typed(path) != confined:
             _refuse_protected(_typed(path), granted=write_roots)
@@ -1531,7 +1531,7 @@ def _build_tools(
         moved: a symlink there is acted on, never its target."""
         if _is_remote(active_backend):
             remote_registry.refuse_production(active_backend)
-            return _groups.check_remote_path(path)
+            return _groups.check_remote_path(path, mutating=True)
         confined = _refuse_read_only_below(
             _refuse_read_only(_confined(path, write_roots, _enforce_root_entry)))
         if _typed(path) != confined:
@@ -1546,7 +1546,7 @@ def _build_tools(
             return lambda path: _entry_path(path, active_backend)
         from core import protected_places
 
-        places = protected_places.write_checker(granted=write_roots)
+        places = protected_places.write_checker(granted=write_roots, members=True)
         secret = _secret_check(active_backend)
 
         def check(path: str) -> str:
@@ -3088,6 +3088,23 @@ def _build_tools(
             try:
                 safe = _write_path(path, backend)
                 _refuse_root(safe, backend, "chmod")
+                if not _is_remote(backend):
+                    import os
+                    import stat
+
+                    # A mode belongs to the inode: through a second name
+                    # (a hard link to ~/.bashrc in the root) chmod would
+                    # change the protected file's mode, not a copy's.
+                    try:
+                        st = os.stat(safe, follow_symlinks=False)
+                    except OSError:
+                        st = None
+                    if st is not None and stat.S_ISREG(st.st_mode) and st.st_nlink > 1:
+                        raise PermissionError(
+                            f"chmod: {safe} has {st.st_nlink} names (hard links): the agent "
+                            "does not change the mode of a file that has other names - one of "
+                            "them may be a protected file"
+                        )
                 if mode_int & 0o022 and not _is_remote(backend):
                     # Writable by others, a folder that holds protected places
                     # (~, ~/.config, ~/.local) lets another local user swap

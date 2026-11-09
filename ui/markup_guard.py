@@ -55,6 +55,7 @@ does).
 
 from __future__ import annotations
 
+import contextvars
 import functools
 import html
 import logging
@@ -105,9 +106,7 @@ def asks_for_resource(text) -> bool:
         return False
     if not _RESOURCE_TAG.search(text) and not _tag_asks_for_resource(text):
         return False
-    from PyQt6.QtCore import Qt
-
-    return bool(Qt.mightBeRichText(text))
+    return _rich(text)
 
 
 # -- layout bombs ---------------------------------------------------------------------------
@@ -446,9 +445,7 @@ def bombs_layout(text) -> bool:
     :data:`MAX_RENDER_HEIGHT_PX`."""
     if not isinstance(text, str) or "<" not in text:
         return False
-    from PyQt6.QtCore import Qt
-
-    if not Qt.mightBeRichText(text):
+    if not _rich(text):
         return False
     return _asks_too_much(text) or _renders_too_large(text)
 
@@ -459,13 +456,80 @@ _DEFUSED_HEAD = "<qt class='axross-defused' style='white-space:pre-wrap'>"
 _DEFUSED_TAIL = "</qt>"
 
 
+# -- markup the guard cannot vouch for ------------------------------------------------------
+#
+# The checks above read tags the way an HTML parser does; Qt's own parser
+# reads more as a tag: a quoted name (``<"img">``, ``<'table'>``), a name
+# with character references (``<&#105;mg>``, ``<t&#97;ble>``), a quoted
+# attribute name (``<span "<"=1 style=…>``), a comment ended only by
+# ``-->`` (html.parser ends one at ``-- >``). Each such difference let a
+# 40-byte file name make Qt read /dev/zero until the process died, or lay
+# out a 3.2 GB message box. Rather than chase Qt's parser, rich text is
+# rendered only when every tag in it is written in one plain, unambiguous
+# form both read alike: ``<name attr=value …>`` / ``</name>`` with an
+# ASCII tag name Qt knows, ASCII attribute names, values quoted or plain,
+# no ``<`` that starts anything else (no comment, no ``<!``/``<?``, no
+# stray ``<``). Anything else is shown as written - axross' own rich
+# texts are all of that form.
+
+#: Tags axross' own labels, tooltips and message boxes may use. Not here:
+#: ``title``, ``head``, ``script``, ``meta`` (they hide the text after
+#: them) - and any tag Qt does not know.
+_VOUCHED_TAGS = frozenset("""
+    a address b big blockquote body br caption center cite code dd del dfn div dl dt em font
+    h1 h2 h3 h4 h5 h6 hr html i img ins kbd li link nobr ol p pre qt s samp small span strike
+    strong style sub sup table tbody td tfoot th thead tr tt u ul var
+""".split())
+_WS = "[ \t\n\r\f]"
+_OPEN_NAME = re.compile(rf"<{_WS}*(/?){_WS}*([A-Za-z][A-Za-z0-9]*)")
+_ATTRIBUTE = re.compile(
+    rf"{_WS}+([A-Za-z][A-Za-z0-9_:.-]*)"
+    rf"(?:{_WS}*={_WS}*(?:\"[^\"<>]*\"|'[^'<>]*'|[^ \t\n\r\f\"'<>]+))?")
+_TAG_END = re.compile(rf"{_WS}*/?{_WS}*>")
+_END_TAG_END = re.compile(rf"{_WS}*>")
+
+
+def _vouched(text: str) -> bool:
+    """Every ``<`` of *text* starts a tag written in the one plain form
+    Qt and these checks read alike (see above)."""
+    pos = text.find("<")
+    while pos != -1:
+        match = _OPEN_NAME.match(text, pos)
+        if match is None or match.group(2).lower() not in _VOUCHED_TAGS:
+            return False
+        end = match.end()
+        if match.group(1):              # an end tag: no attributes
+            close = _END_TAG_END.match(text, end)
+        else:
+            while (attribute := _ATTRIBUTE.match(text, end)) is not None:
+                end = attribute.end()
+            close = _TAG_END.match(text, end)
+        if close is None:               # a name or value runs on, or no ">"
+            return False
+        pos = text.find("<", close.end())
+    return True
+
+
+def unvouched(text) -> bool:
+    """True when *text* would be rendered as rich text holding markup not
+    written in the one plain form (:func:`_vouched`)."""
+    if not isinstance(text, str) or "<" not in text:
+        return False
+    return _rich(text) and not _vouched(text)
+
+
+def _as_written(text: str) -> str:
+    return f"{_DEFUSED_HEAD}{html.escape(text)}{_DEFUSED_TAIL}"
+
+
 def defuse(text):
     """*text*, or - when Qt would render it as rich text that loads a
-    resource or asks for an absurd size - the same text escaped, so it
-    shows exactly as written."""
-    if not (asks_for_resource(text) or bombs_layout(text)):
-        return text
-    return f"{_DEFUSED_HEAD}{html.escape(text)}{_DEFUSED_TAIL}"
+    resource, asks for an absurd size or holds markup the guard cannot
+    vouch for (:func:`unvouched`) - the same text escaped, so it shows
+    exactly as written."""
+    if unvouched(text) or asks_for_resource(text) or bombs_layout(text):
+        return _as_written(text)
+    return text
 
 
 #: A start tag of a link (``<a href=…>``, ``<A\nhref=…>``).
@@ -476,9 +540,7 @@ def holds_link(text) -> bool:
     """True when *text* would be rendered as rich text with a link in it."""
     if not isinstance(text, str) or "<" not in text or not _LINK_TAG.search(text):
         return False
-    from PyQt6.QtCore import Qt
-
-    return bool(Qt.mightBeRichText(text))
+    return _rich(text)
 
 
 #: An HTML comment: as rich text it hides the rest of the text.
@@ -493,14 +555,40 @@ def defuse_message(text):
     {error}") and put a verdict of its own there. axross' own message
     texts hold neither."""
     if holds_link(text) or (isinstance(text, str) and _COMMENT in text and _rich(text)):
-        return f"{_DEFUSED_HEAD}{html.escape(text)}{_DEFUSED_TAIL}"
+        return _as_written(text)
     return defuse(text)
 
 
+#: Set while a text goes to a widget whose format is RichText: Qt renders
+#: it as rich text whatever Qt.mightBeRichText says of it.
+_FORCED_RICH = contextvars.ContextVar("axross_forced_rich", default=False)
+
+
 def _rich(text: str) -> bool:
+    if _FORCED_RICH.get():
+        return True
     from PyQt6.QtCore import Qt
 
     return bool(Qt.mightBeRichText(text))
+
+
+def _rich_format(widget) -> bool:
+    """*widget* (a QLabel, a QMessageBox) renders every text as rich text."""
+    from PyQt6.QtCore import Qt
+
+    try:
+        return widget.textFormat() == Qt.TextFormat.RichText
+    except (AttributeError, RuntimeError, TypeError):
+        return False
+
+
+def _as_rich(fn, text):
+    """*fn(text)* with every text counted as rich (:data:`_FORCED_RICH`)."""
+    token = _FORCED_RICH.set(True)
+    try:
+        return fn(text)
+    finally:
+        _FORCED_RICH.reset(token)
 
 
 #: The head of a text :func:`ui.plain_text.as_written` escaped.
@@ -519,11 +607,9 @@ def show_as_written(text):
         return text
     if _escaped_only(text):
         return text
-    from PyQt6.QtCore import Qt
-
-    if not Qt.mightBeRichText(text):
+    if not _rich(text):
         return text
-    return f"{_DEFUSED_HEAD}{html.escape(text)}{_DEFUSED_TAIL}"
+    return _as_written(text)
 
 
 def original_of(text):
@@ -536,13 +622,25 @@ def original_of(text):
 def _wrap_set_text_format(cls, getters_setters) -> None:
     """``QLabel(text)`` then ``setTextFormat(PlainText)`` - a common order:
     the text was defused while the format was AutoText; switched to plain
-    text it is shown as written again (plain text loads nothing)."""
+    text it is shown as written again (plain text loads nothing). Switched
+    to RichText, it is looked at once more as the rich text Qt now reads."""
     from PyQt6.QtCore import Qt
 
     original = cls.setTextFormat
 
     @functools.wraps(original)
     def wrapper(self, fmt):
+        if fmt == Qt.TextFormat.RichText:
+            # ``QLabel(text)`` then ``setTextFormat(RichText)``: the text
+            # was looked at as AutoText; Qt renders it rich from now on
+            # (at once: the text is defused before the switch).
+            for get, put in getters_setters:
+                current = getattr(self, get)()
+                if isinstance(current, str) and "<" in current:
+                    defused = _as_rich(defuse_message if hasattr(self, "informativeText")
+                                       else defuse, current)
+                    if defused != current:
+                        getattr(self, put)(defused)
         original(self, fmt)
         if fmt == Qt.TextFormat.PlainText:
             for get, put in getters_setters:
@@ -572,7 +670,10 @@ def _wrap_text_at(cls, name: str, index: int, *, unless_plain: bool = False,
             if isinstance(value, str) and "<" in value \
                     and not (unless_plain and _is_plain(self)):
                 args = list(args)
-                args[index] = fn(value)
+                # a RichText widget renders the text rich whatever
+                # Qt.mightBeRichText says of it
+                args[index] = _as_rich(fn, value) if unless_plain and _rich_format(self) \
+                    else fn(value)
         result = original(self, *args, **kwargs)
         if after is not None:
             after(self)

@@ -63,7 +63,7 @@ from PyQt6.QtDBus import (
     QDBusVariant,
 )
 
-from core.i18n import tr
+from core.i18n import format_percent, tr
 
 log = logging.getLogger(__name__)
 
@@ -681,7 +681,7 @@ def decode_value(uuid, data: bytes) -> str:
         if number in (0x2A00, 0x2A24, 0x2A25, 0x2A26, 0x2A27, 0x2A28, 0x2A29):
             return data.decode("utf-8", errors="replace").rstrip("\x00")
         if number == 0x2A19:
-            return f"{data[0]} %"
+            return format_percent(data[0])
         if number == 0x2A01 and len(data) >= 2:
             value = int.from_bytes(data[:2], "little")
             return f"{tr(device_kind('', 0, value))} (0x{value:04X})"
@@ -696,7 +696,7 @@ def decode_value(uuid, data: bytes) -> str:
         if number == 0x2A6E and len(data) >= 2:
             return f"{_sint(data, 0, 2) / 100:.2f} °C"
         if number == 0x2A6F and len(data) >= 2:
-            return f"{int.from_bytes(data[:2], 'little') / 100:.2f} %"
+            return format_percent(int.from_bytes(data[:2], 'little') / 100, 2)
         if number == 0x2A6D and len(data) >= 4:
             return f"{int.from_bytes(data[:4], 'little') / 10 / 100:.1f} hPa"
     except (IndexError, ValueError):

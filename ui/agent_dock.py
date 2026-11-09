@@ -82,7 +82,7 @@ from ui.dock_frame import framed
 from ui.extension_panels import ExtensionDock
 from ui.format_utils import sandbox_label
 from ui.icon_provider import set_window_icon
-from ui.plain_text import show_full_text, shown_length
+from ui.plain_text import layout_cost, short_length, show_full_text, shown_length
 
 log = logging.getLogger(__name__)
 
@@ -143,7 +143,9 @@ FULL_SCHEME = "axross-full"
 #: it the oldest lines show only their start (COLLAPSED_CHARS) and a link
 #: to the rest. Each line shows at most ui.plain_text.shown_length() of
 #: its text - one answer of 200,000 mixed-direction characters kept the
-#: GUI thread more than 90 s.
+#: GUI thread more than 90 s - and counts what it costs to lay out
+#: (ui.plain_text.layout_cost: a change of direction or script counts as
+#: many characters).
 MAX_TRANSCRIPT_SHOWN = 512 * 1024
 COLLAPSED_CHARS = 200
 
@@ -1412,13 +1414,15 @@ class AgentTab(QWidget):
         self._collapse_oldest()
 
     def _entry_cost(self, index: int) -> int:
-        """The characters line *index* lays out."""
+        """What laying out line *index* costs, in characters of plain words
+        (ui.plain_text.layout_cost: right-to-left runs and changes of
+        script count more - eight answers of them took 21 s to draw again)."""
         text = self._entries[index]["text"]
         if index in self._collapsed:
-            return min(len(text), COLLAPSED_CHARS)
+            return layout_cost(text, short_length(text, COLLAPSED_CHARS))
         if self._entries[index]["kind"] == "reasoning" and index not in self._open:
             return SUMMARY_CHARS
-        return shown_length(text)
+        return layout_cost(text, shown_length(text))
 
     def _collapse_oldest(self) -> None:
         """Past MAX_TRANSCRIPT_SHOWN, the oldest lines show only their start
@@ -1446,7 +1450,7 @@ class AgentTab(QWidget):
     def _shown_text(self, index: int, text: str) -> str:
         """The part of line *index*'s *text* the transcript lays out, escaped,
         with a link to the whole text when that is not all of it."""
-        end = min(len(text), COLLAPSED_CHARS) if index in self._collapsed else shown_length(text)
+        end = short_length(text, COLLAPSED_CHARS) if index in self._collapsed else shown_length(text)
         body = html.escape(text[:end]).replace(chr(10), "<br>")
         if end < len(text):
             more = html.escape(tr("Show all ({count} characters)").format(count=len(text)))
@@ -1537,12 +1541,16 @@ class AgentTab(QWidget):
         document as appending line by line, which took twice as long in a
         hidden tab and almost five times as long in a shown one. The newest
         lines up to MAX_TRANSCRIPT_SHOWN characters are shown, the older
-        ones only their start."""
+        ones - from the first that does not fit on, without measuring them
+        whole - only their start."""
         self._collapsed = {i for i in self._collapsed if i < len(self._entries)}
         self._shown_chars = 0
+        full = False
         for index in range(len(self._entries) - 1, -1, -1):
-            if index not in self._collapsed and self._shown_chars + self._entry_cost(index) \
+            if not full and index not in self._collapsed and self._shown_chars + self._entry_cost(index) \
                     > MAX_TRANSCRIPT_SHOWN and index != len(self._entries) - 1:
+                full = True
+            if full:
                 self._collapsed.add(index)
             self._shown_chars += self._entry_cost(index)
         self.transcript.setHtml("".join(self._entry_html(i) for i in range(len(self._entries))))

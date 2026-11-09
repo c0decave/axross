@@ -461,11 +461,14 @@ GIT_GUARD_MISSING_DIRS = ("hooks", "info")
 #: The same names in the Git folders of submodules and worktrees
 #: (``.git/modules/<name>``, ``.git/worktrees/<name>``), this many at most.
 MAX_GIT_SUBDIRS = 256
-#: Files that, made in a repository's ``.git`` folder while the sandbox
-#: runs, point Git elsewhere; no mount can keep them from being made (Git
-#: could not make its lock files either): set aside when the worker ends
-#: (:func:`_set_aside_git_pointers`).
-GIT_POINTER_NAMES = ("commondir",)
+#: Files that, made in a repository's ``.git`` folder (or the Git folder
+#: of a submodule or worktree, ``.git/modules/<name>``,
+#: ``.git/worktrees/<name>``) while the sandbox runs, point Git elsewhere
+#: (``commondir``) or are read as its settings (``config.worktree``, with
+#: ``extensions.worktreeConfig`` - set by ``git sparse-checkout init``); no
+#: mount can keep them from being made (Git could not make its lock files
+#: either): set aside when the worker ends (:func:`_set_aside_git_pointers`).
+GIT_POINTER_NAMES = ("commondir", "config.worktree")
 
 
 def _writable_repos(writable_roots) -> list[str]:
@@ -500,43 +503,55 @@ def _git_guard(repo: str) -> tuple[list[str], list[str]]:
                 candidates.append(path)
             elif name in GIT_GUARD_MISSING_DIRS:
                 missing.append(path)
-        budget = MAX_GIT_SUBDIRS
-        stack = [os.path.join(git_dir, sub) for sub in ("modules", "worktrees")]
-        while stack and budget > 0:
-            folder = stack.pop()
-            try:
-                with os.scandir(folder) as it:
-                    subs = sorted(e.path for e in it if e.is_dir(follow_symlinks=False))
-            except OSError:
-                continue
-            for sub in subs:
-                budget -= 1
-                if budget < 0:
-                    break
-                candidates += [os.path.join(sub, n) for n in GIT_GUARD_NAMES
-                               if os.path.lexists(os.path.join(sub, n))]
-                nested = os.path.join(sub, "modules")  # a submodule's submodules
-                if os.path.isdir(nested):
-                    stack.append(nested)
+        for sub in _git_subdirs(git_dir):
+            candidates += [os.path.join(sub, n) for n in GIT_GUARD_NAMES
+                           if os.path.lexists(os.path.join(sub, n))]
     elif os.path.lexists(git_dir):
         candidates.append(git_dir)  # a "gitdir:" file
     return candidates, missing
 
 
+def _git_subdirs(git_dir: str) -> list[str]:
+    """The Git folders of the submodules and worktrees of the ``.git``
+    folder *git_dir* (``modules/<name>``, nested, and ``worktrees/<name>``;
+    :data:`MAX_GIT_SUBDIRS` at most)."""
+    out: list[str] = []
+    budget = MAX_GIT_SUBDIRS
+    stack = [os.path.join(git_dir, sub) for sub in ("modules", "worktrees")]
+    while stack and budget > 0:
+        folder = stack.pop()
+        try:
+            with os.scandir(folder) as it:
+                subs = sorted(e.path for e in it if e.is_dir(follow_symlinks=False))
+        except OSError:
+            continue
+        for sub in subs:
+            budget -= 1
+            if budget < 0:
+                break
+            out.append(sub)
+            nested = os.path.join(sub, "modules")  # a submodule's submodules
+            if os.path.isdir(nested):
+                stack.append(nested)
+    return out
+
+
 def _git_pointer_watch(plan) -> list[str]:
     """The :data:`GIT_POINTER_NAMES` missing now in the ``.git`` folders of
     the repositories of *plan*'s (:func:`_mount_plan`) writable mounts
-    (:func:`_writable_repos`)."""
+    (:func:`_writable_repos`) and in their submodules' and worktrees' Git
+    folders (:func:`_git_subdirs`)."""
     roots = [path for path, rw, kind in plan if rw and kind == "bind"]
     out = []
     for repo in _writable_repos(roots):
         git_dir = os.path.join(repo, ".git")
         if not os.path.isdir(git_dir) or os.path.islink(git_dir):
             continue
-        for name in GIT_POINTER_NAMES:
-            path = os.path.join(git_dir, name)
-            if not os.path.lexists(path) and path not in out:
-                out.append(path)
+        for folder in [git_dir, *_git_subdirs(git_dir)]:
+            for name in GIT_POINTER_NAMES:
+                path = os.path.join(folder, name)
+                if not os.path.lexists(path) and path not in out:
+                    out.append(path)
     return out
 
 
@@ -559,7 +574,8 @@ def _set_aside_git_pointers(paths) -> list[str]:
                       path, exc)
             continue
         log.warning("agent sandbox: the agent made %s (it points Git at another folder's "
-                    "config and hooks); set aside as %s", path, new)
+                    "config and hooks, or Git reads it as settings); set aside as %s",
+                    path, new)
         moved.append(new)
     return moved
 

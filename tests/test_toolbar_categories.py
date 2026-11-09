@@ -336,7 +336,7 @@ def _open(stores, width: int = 2600):
 
 
 def _bar(win, title: str) -> QToolBar:
-    return next(tb for tb in win.findChildren(QToolBar) if tb.windowTitle() == title)
+    return next(tb for tb in win.findChildren(QToolBar) if tb.objectName() == f"ax{title}Toolbar")
 
 
 def _raw(bar) -> list[str]:

@@ -133,14 +133,14 @@ def result(c, path, op, timeout=8.0):
 class TestDecode:
     def test_happy_known_formats(self):
         assert BT.decode_value(u16(0x2A00), b"Band 7\x00") == "Band 7"
-        assert BT.decode_value(u16(0x2A19), b"\x40") == "64 %"
+        assert BT.decode_value(u16(0x2A19), b"\x40") == "64%"
         assert BT.decode_value(u16(0x2A01), b"\xc1\x00") == "Watch (0x00C1)"
         assert BT.decode_value(u16(0x2A07), b"\xfc") == "-4 dBm"
         assert BT.decode_value(u16(0x2A37), b"\x00\x48") == "72 bpm"
         assert BT.decode_value(u16(0x2A37), b"\x01\x2c\x01") == "300 bpm"
         assert BT.decode_value(u16(0x2A6E), b"\x2a\x09") == "23.46 °C"
         assert BT.decode_value(u16(0x2A6E), b"\x00\xff") == "-2.56 °C"
-        assert BT.decode_value(u16(0x2A6F), b"\x88\x13") == "50.00 %"
+        assert BT.decode_value(u16(0x2A6F), b"\x88\x13") == "50.00%"
         assert BT.decode_value(u16(0x2A6D), (101325 * 10).to_bytes(4, "little")) \
             == "1013.2 hPa"
 
@@ -189,7 +189,7 @@ class TestGatt:
         c.read_characteristic(battery.path)
         assert result(c, battery.path, "read") == ""
         assert chars(c)[u16(0x2A19)].value == b"\x40"
-        assert chars(c)[u16(0x2A19)].value_text == "64 %"
+        assert chars(c)[u16(0x2A19)].value_text == "64%"
 
     def test_happy_notifications_deliver_values(self, client, fake):
         c = client(band(connected=True))
@@ -234,7 +234,7 @@ class TestGatt:
         gatt = [{"uuid": u16(0x180F), "chars": [
             {"uuid": u16(0x2A19), "flags": ["read"], "value": [10], "cached": [55]}]}]
         c = client(band(connected=True, gatt=gatt))
-        assert chars(c)[u16(0x2A19)].value_text == "55 %"
+        assert chars(c)[u16(0x2A19)].value_text == "55%"
 
     def test_edge_device_of_a_stranger(self, client):
         c = client()
@@ -259,7 +259,7 @@ def test_happy_overview_texts():
     assert texts["class"] == ("0x5A020C (Phone; services: Networking, Capturing, "
                               "Object transfer, Telephony)")
     assert texts["signal"] == "-61 dBm, about ~8 m" and texts["tx_power"] == "0 dBm"
-    assert texts["battery"] == "80 %" and texts["seen"] == "12 s ago"
+    assert texts["battery"] == "80%" and texts["seen"] == "12 s ago"
     assert texts["state"] == "Paired, Bonded"
     assert texts["manufacturer"] == "Garmin: 01 02"
     assert texts["service_data"] == "Xiaomi: 30"
@@ -339,7 +339,7 @@ def test_happy_details_map_and_read_the_gatt_services_e2e(panel, fake):
     assert not dialog.connect_button.isVisible()
     # read all: what is readable gets its value, the refusal is said
     QTest.mouseClick(dialog.read_all_button, Qt.MouseButton.LeftButton)
-    assert wait_until(lambda: select_char(dialog, "Battery Level").text(BD.COL_VALUE) == "64 %")
+    assert wait_until(lambda: select_char(dialog, "Battery Level").text(BD.COL_VALUE) == "64%")
     assert select_char(dialog, "Device Name").text(BD.COL_VALUE) == "Band 7"
     assert select_char(dialog, "Appearance").text(BD.COL_VALUE) == "Watch (0x00C1)"
     assert wait_until(lambda: "not authorized" in dialog.message.text())
@@ -403,7 +403,7 @@ def test_edge_values_update_without_rebuilding_the_tree(panel):
     assert wait_until(lambda: dialog.tree.topLevelItemCount() == 4)
     item = select_char(dialog, "Battery Level")
     QTest.mouseClick(dialog.read_button, Qt.MouseButton.LeftButton)
-    assert wait_until(lambda: item.text(BD.COL_VALUE) == "64 %")
+    assert wait_until(lambda: item.text(BD.COL_VALUE) == "64%")
     assert dialog.tree.currentItem() is item  # the same item: no rebuild
 
 

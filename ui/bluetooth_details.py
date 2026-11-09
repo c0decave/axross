@@ -50,7 +50,7 @@ from PyQt6.QtWidgets import (
 from core import bluetooth as BT
 from core import bluetooth_adv as BA
 from core import bluetooth_link as BTL
-from core.i18n import tr
+from core.i18n import format_percent, tr
 from ui.icon_provider import set_window_icon
 
 #: The test sound: two rising tones (Hz, seconds) - easy to tell from noise.
@@ -106,7 +106,7 @@ def overview(device: BT.Device, now: float | None = None) -> dict[str, str]:
         "signal": (f"{device.rssi} dBm, " + tr("about {distance}").format(
             distance=BT.distance_text(device.distance))) if device.rssi is not None else "",
         "tx_power": f"{device.tx_power} dBm" if device.tx_power is not None else "",
-        "battery": f"{device.battery} %" if device.battery is not None else "",
+        "battery": format_percent(device.battery) if device.battery is not None else "",
         "seen": seen,
         "state": ", ".join(tr(w) for w in state),
         "advertises": "\n".join(ident.text() for ident in device.idents),

@@ -1246,6 +1246,20 @@ class SettingsDialog(QDialog):
     MATCH_STYLE = ("background-color: palette(highlight); color: palette(highlighted-text);"
                    " border-radius: 3px;")
 
+    @classmethod
+    def _match_sheet(cls, widget: QWidget, own: str) -> str:
+        """*widget*'s style sheet *own* plus the search mark, for *widget*
+        alone: a rule without a selector reached every child too - "proxy"
+        turned whole group boxes blue (UX review round 8). A group box gets
+        its title marked, nothing else."""
+        if own.strip() and "{" not in own:
+            own = "* { " + own + " }"  # the same widget and children as before
+        if isinstance(widget, QGroupBox):
+            rule = f'QGroupBox[axSearchHit="true"]::title {{ {cls.MATCH_STYLE} }}'
+        else:
+            rule = f'[axSearchHit="true"] {{ {cls.MATCH_STYLE} }}'
+        return own + "\n" + rule
+
     def _mark_matches(self, page_id: str, needle: str) -> None:
         """Mark the settings of *page_id* whose name holds *needle* and
         scroll the first into view: the page opened, but which of its
@@ -1264,7 +1278,7 @@ class SettingsDialog(QDialog):
         for widget in hits[:_MAX_MARKS]:
             widget.setProperty("axSearchStyle", widget.styleSheet())
             widget.setProperty("axSearchHit", True)
-            widget.setStyleSheet(widget.styleSheet() + self.MATCH_STYLE)
+            widget.setStyleSheet(self._match_sheet(widget, widget.styleSheet()))
             self._marked.append(widget)
         shown = next((w for w in self._marked if w.isVisibleTo(page)), None)
         if shown is not None:

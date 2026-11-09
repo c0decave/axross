@@ -77,9 +77,13 @@ class RenamedMoveUndoTest(_WindowBase):
     def test_edge_a_renamed_file_that_is_gone_fails_without_a_trace(self) -> None:
         self.move_with_rename()
         os.remove(self.y / "a (1).txt")
-        _info, warn = self.undo()
-        self.assertTrue(warn.called)
+        info, warn = self.undo()
+        # Passed over with a note, journaled as skipped (review round 8):
+        # refused on every Ctrl+Z, it hid every older operation.
+        self.assertFalse(warn.called, warn.call_args)
+        self.assertIn("could not be undone and was skipped", str(info.call_args))
+        self.assertIn("is no longer where the move put it", str(info.call_args))
         self.assertFalse((self.x / "a.txt").exists())
         self.assertEqual(sorted(os.listdir(self.x)), [])
         self.assertEqual((self.y / "a.txt").read_bytes(), b"ALREADY THERE")
-        self.assertEqual(self.undo_rows(), [])
+        self.assertEqual([r["status"] for r in self.undo_rows()], ["skipped"])

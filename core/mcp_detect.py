@@ -216,6 +216,15 @@ class DetectedServer:
             lines.append(f"URL: {self.url}" + (" (with a token)" if self.token else ""))
         if self.env:
             lines.append("Environment: " + ", ".join(sorted(self.env)))
+            from core.mcp_runner import code_env
+
+            loading = code_env(self.env)
+            if loading:
+                # What they load is what to judge: shown (a token in it hidden).
+                lines.append("It loads code before the server, so it is contained by default "
+                             "(a sandbox profile, or Trusted in Agent Settings):")
+                lines += [f"  {name}={M.clean_text(masked([str(self.env[name])])[0], 120)}"
+                          for name in loading[:8]]
         if self.secrets:
             lines.append("Secrets (to the keyring when it is switched on): "
                          + ", ".join(sorted(self.secrets)))

@@ -41,7 +41,8 @@ from PyQt6.QtWidgets import (
 
 from core import voice_models as VM
 from core import voice_settings as VS
-from core.i18n import tr
+from core.i18n import format_decimal, format_percent, tr
+from ui.format_utils import ui_locale
 from core.thread_relay import GuiCall
 
 LANGUAGE_LABELS = {"auto": "Follow the answer", "de": "German", "en": "English"}
@@ -75,8 +76,8 @@ def tuning_text(name: str, value: float) -> str:
     if name == "pitch":
         return tr("{value} semitones").format(value=f"{value:+.1f}" if value else "0.0")
     if name == "pause":
-        return f"{value:.2f} s"
-    return f"{round(value * 100)} %"
+        return f"{format_decimal(value, 2)} s"
+    return format_percent(round(value * 100))
 
 
 def _steps(name: str, value: float) -> int:
@@ -154,6 +155,7 @@ class VoicePage(QWidget):
         self.after_combo = self._combo(VS.AFTER_RECOGNITION, AFTER_LABELS)
         form.addRow(tr("Recognised text"), self.after_combo)
         self.silence_spin = QDoubleSpinBox()
+        self.silence_spin.setLocale(ui_locale())  # the decimal mark of the interface language
         self.silence_spin.setRange(*VS.SILENCE_RANGE)
         self.silence_spin.setSingleStep(0.1)
         self.silence_spin.setDecimals(1)

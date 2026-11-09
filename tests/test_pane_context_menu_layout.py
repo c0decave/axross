@@ -186,7 +186,7 @@ def test_happy_every_toolbar_icon_is_on_its_right_click_entry_too(window) -> Non
     context: dict[str, QAction] = {}
     for state in STATES:
         context.update(_by_command(_menu(pane, state)))
-    bars = [tb for tb in window.findChildren(QToolBar) if tb.windowTitle() in ("Main", "Tools")]
+    bars = [tb for tb in window.findChildren(QToolBar) if tb.objectName() in ("axMainToolbar", "axToolsToolbar")]
     checked = 0
     for action in [a for toolbar in bars for a in toolbar.actions()]:
         icon_name = action.property("axIcon")

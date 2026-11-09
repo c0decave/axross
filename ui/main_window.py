@@ -671,7 +671,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         self._hidden_action.triggered.connect(self._store_show_hidden)
 
         # Per pane: the active pane switches, the check mark follows it.
-        self.thumbnail_view_action = view_menu.addAction(tr("&Thumbnail View"))
+        self.thumbnail_view_action = view_menu.addAction(tr("Thu&mbnail View"))
         self.thumbnail_view_action.setCheckable(True)
         self.thumbnail_view_action.setShortcut(QKeySequence("Ctrl+Shift+G"))
         self.thumbnail_view_action.setToolTip(
@@ -1097,7 +1097,10 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                 walk(action.menu())
 
     def _setup_toolbar(self) -> None:
-        toolbar = self.addToolBar("Main")
+        # The title names the bar in the toolbar's right-click menu: in the
+        # interface language (it said "Main" in German too; UX review
+        # round 8). The object name is what saveState keys on.
+        toolbar = self.addToolBar(tr("Main Toolbar"))
         toolbar.setObjectName("axMainToolbar")  # saveState / restoreState key
         toolbar.setMovable(False)
 
@@ -1217,7 +1220,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         # The tools (Agent ... Features) are a bar of their own: it moves to
         # a second row when both do not fit side by side (_fit_toolbars) -
         # in one row the tools fell off the edge of a narrow window.
-        tools = self.addToolBar("Tools")
+        tools = self.addToolBar(tr("Tools Toolbar"))
         tools.setObjectName("axToolsToolbar")  # saveState / restoreState key
         tools.setMovable(False)
         self._tools_toolbar = tools
@@ -1283,7 +1286,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
 
         from ui.icon_provider import icon as _ico
 
-        self._trash_action = QAction(tr("Show Trash…"), self)
+        # Its own letter: the View menu had none left for it (round 8).
+        self._trash_action = QAction(tr("Show &Trash…"), self)
         self._trash_action.setObjectName("axTrashAction")
         self._trash_action.triggered.connect(self._trash_from_toolbar)
         buttons = [
@@ -2028,6 +2032,9 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         row.addWidget(label)
         row.addWidget(take)
         row.addWidget(close)
+        # The buttons at their own width, the room left over after them:
+        # they stretched to ~320 px each (UX review round 8).
+        row.addStretch(1)
 
         def take_tour() -> None:
             from ui.tours import FIRST_TOUR
@@ -3398,13 +3405,22 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         new pane as before.
 
         The first connection at the first start gave three panes, and the
-        server landed in the narrowest (UX review round 7)."""
+        server landed in the narrowest (UX review round 7). The last local
+        pane of the workspace is never taken (round 8)."""
         pane = self._target_pane
         if pane is None or pane is self._active_pane or pane not in self._panes:
             return None
         if not isinstance(pane.backend, LocalFS) or pane in self._pane_profiles:
             return None
         if self.workspace_of(pane) is not self._current_ws or not pane.isVisible():
+            return None
+        # Never the last local pane: the second connection took the one left
+        # beside the first server and no local folder was on screen (UX
+        # review round 8). After the first connection the local pane stays.
+        if not any(other is not pane and isinstance(other.backend, LocalFS)
+                   and other not in self._pane_profiles
+                   and self.workspace_of(other) is self._current_ws
+                   for other in self._panes):
             return None
         try:
             home = pane.backend.normalize(pane.backend.home())
@@ -4807,19 +4823,53 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         plans = undoable(events)
         by_label = self._backends_by_label()
 
+        #: Moves passed over because what they moved is gone or was
+        #: replaced: journaled as skipped once the search is over.
+        skipped: list = []
+
         def _gone(candidate) -> bool:
             # An entry restored or deleted in the Trash window is not in
             # the journal; offering it again would block every older one.
+            # So would a move whose destination was deleted or replaced.
             entry = by_label.get(candidate.backend) if candidate.backend else None
             if entry is None and not candidate.backend and len(by_label) == 1:
                 entry = next(iter(by_label.values()))
-            return entry is not None and bool(gone_reason(candidate, entry[0]))
+            if entry is None:
+                return False
+            refused: list = []
+            reason = gone_reason(candidate, entry[0], refused)
+            if refused:
+                skipped.append((candidate, refused[0]))
+            return bool(reason)
+
+        def _picked(kind, value) -> None:
+            MainWindow._undo_note_skipped(self, skipped)
+            self._undo_picked(plans, kind, value)
 
         self._undo_status(tr("Looking for the operation to undo…"))
         # A batch is read whole (or refused) on the worker: the newest
         # events may hold only the last part of a big move.
         self._undo_step(lambda: complete_batch(pick_undoable(plans, set(by_label), gone=_gone)),
-                        lambda kind, value: self._undo_picked(plans, kind, value))
+                        _picked)
+
+    def _undo_note_skipped(self, skipped: list) -> None:
+        """Journal each move Ctrl+Z passed over (core.undo.record_skipped):
+        not offered again, the next Ctrl+Z reaches the operation before it.
+        The newest is named in the status bar."""
+        if not skipped:
+            return
+        from core.undo import operation_name, record_skipped
+
+        for plan, reason in skipped:
+            try:
+                record_skipped(plan, reason)
+            except Exception as exc:  # noqa: BLE001 - offered again next time, no harm
+                log.warning("undo: could not journal the skipped %s: %s", plan.operation_id, exc)
+        plan, reason = skipped[0]
+        self._undo_skipped_note = tr(
+            "The last {operation} could not be undone and was skipped: {reason}").format(
+                operation=operation_name(plan.operation), reason=reason)
+        log.info("undo: skipped %d operation(s): %s", len(skipped), self._undo_skipped_note)
 
     def _undo_status(self, text: str) -> None:
         status_bar = getattr(self, "statusBar", None)
@@ -4858,12 +4908,23 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         # The search is over: "Looking for the operation to undo…" must not
         # stay in the status bar after a box, a No or a refusal.
         MainWindow._undo_clear_status(self)
+        # A move passed over on the way (its entry gone or replaced): said
+        # in the status bar and with whatever box comes next.
+        note = getattr(self, "_undo_skipped_note", "")
+        self._undo_skipped_note = ""
+        if note:
+            self._undo_status(note)
+        noted = (lambda text: f"{note}\n\n{text}") if note else (lambda text: text)
         if kind == "error":
             QMessageBox.warning(self, tr("Undo failed"), str(plan))
             return
         if plan is None:
             newest = plans[0] if plans else None
-            if newest is not None and not newest.reversible:
+            if note:
+                QMessageBox.information(self, tr("Nothing to undo"), noted(
+                    tr("No other recent operation on a currently open connection can be "
+                       "reversed.")))
+            elif newest is not None and not newest.reversible:
                 QMessageBox.information(
                     self,
                     tr("Nothing to undo"),
@@ -4895,8 +4956,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         if QMessageBox.question(
             self,
             tr("Undo"),
-            tr("Undo the last {operation}?\n\n{reason}").format(
-                operation=operation_name(plan.operation), reason=plan.reason),
+            noted(tr("Undo the last {operation}?\n\n{reason}").format(
+                operation=operation_name(plan.operation), reason=plan.reason)),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.Yes,
         ) != QMessageBox.StandardButton.Yes:
@@ -5233,6 +5294,13 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                 continue
             self._undo_waits.remove(wait)
             plan = wait["plan"]
+            # The sentence for the job's error, not "[Errno 2] No such file
+            # or d…" (review round 8).
+            job = self._transfer_manager.get_job(job_id)
+            if getattr(job, "error", None) is not None:
+                from core.user_errors import describe
+
+                error = describe(job.error)
             QMessageBox.warning(
                 self,
                 tr("Undo failed"),
@@ -6034,7 +6102,10 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                 profile = self._profile_manager.get(name)
                 if not profile:
                     continue
-                menu.add_profile(f"&{i + 1}  {self._profile_label(profile)}", profile)
+                # A name's own "&" is shown, not taken for a mnemonic ("Web
+                # & Mail" showed as "Web _Mail"; UX review round 8).
+                label = self._profile_label(profile).replace("&", "&&")
+                menu.add_profile(f"&{i + 1}  {label}", profile)
 
         # All saved profiles
         all_names = self._profile_manager.list_names()
@@ -6044,7 +6115,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                 profile = self._profile_manager.get(name)
                 if not profile:
                     continue
-                menu.add_profile(self._profile_label(profile), profile)
+                menu.add_profile(self._profile_label(profile).replace("&", "&&"), profile)
 
         if menu.isEmpty():
             action = menu.addAction(tr("No profiles – open Connection Manager"))
@@ -6058,6 +6129,10 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         manager_action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
         manager_action.setShortcutVisibleInContextMenu(True)
         manager_action.triggered.connect(lambda _checked=False: self._on_connect())
+        # Every entry gets an underlined letter (UX review round 8).
+        from ui import mnemonics
+
+        mnemonics.install(menu, now=False)
         return menu
 
     def _delete_connection_config(self, profile) -> None:
@@ -6351,7 +6426,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                 key_passphrase = entered
                 self._run_connect_async(profile, password, key_passphrase, _on_success, _on_failure)
                 return
-            QMessageBox.critical(self, tr("Connection Failed"), describe(exc))
+            self._report_connect_failure(exc)
             log.error("Quick connect failed: %s", exc)
 
         self._run_connect_async(
@@ -7301,27 +7376,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                     _terminal_name(session, profile), session.transport
                 )
 
-            if password and not profile.store_password:
-                reply = QMessageBox.question(
-                    self,
-                    tr("Save Password"),
-                    tr("Save password for '{name}' in the system keyring?\n"
-                       "This allows automatic reconnection.").format(name=profile.name),
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                )
-                if reply == QMessageBox.StandardButton.Yes:
-                    from core.credentials import store_password as _store_pw
-
-                    if _store_pw(profile.name, password):
-                        profile.store_password = True
-                        self._profile_manager.add(profile)
-                        log.info("Password saved to keyring for %s", profile.name)
-                    else:
-                        QMessageBox.warning(
-                            self,
-                            tr("Keyring Error"),
-                            tr("Could not save password to system keyring."),
-                        )
+            if password and profile.store_password:
+                self._confirm_password_saved(profile, password)
 
             if not self._profile_manager.get(profile.name):
                 self._profile_manager.add(profile)
@@ -7329,7 +7385,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             log.info("Connected to %s", session.name)
 
         def _on_failure(exc):
-            QMessageBox.critical(self, tr("Connection Failed"), describe(exc))
+            self._report_connect_failure(exc)
             log.error("Connection failed: %s", exc)
 
         self._run_connect_async(
@@ -7338,6 +7394,41 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             key_passphrase,
             _on_success,
             _on_failure,
+        )
+
+    def _report_connect_failure(self, exc: BaseException) -> None:
+        """Say why a connection did not come about. A host key the user
+        declined is no failure: a neutral note, not a red "Connection
+        Failed" (UX review round 8)."""
+        if getattr(exc, "declined", False):
+            QMessageBox.information(self, tr("Not Connected"), describe(exc))
+        else:
+            QMessageBox.critical(self, tr("Connection Failed"), describe(exc))
+
+    def _confirm_password_saved(self, profile, password: str) -> None:
+        """"Save in keyring" was ticked in the Connection Manager, which
+        stored the password on OK: no second question. Only when it is not
+        in the keyring - none usable, or the store refused it - the user is
+        told why. Unticked, nothing is asked: the box was the answer (it
+        was asked after every connection; UX review round 8)."""
+        from core.credentials import get_password, is_keyring_available, keyring_status_message
+        from core.credentials import store_password as _store_pw
+
+        if not is_keyring_available():
+            QMessageBox.warning(self, tr("Password not saved"), keyring_status_message())
+            return
+        try:
+            stored = get_password(profile.name) == password
+        except Exception:  # noqa: BLE001 - a keyring that fails to read is retried
+            stored = False
+        if stored or _store_pw(profile.name, password):
+            log.info("Password saved to keyring for %s", profile.name)
+            return
+        QMessageBox.warning(
+            self,
+            tr("Password not saved"),
+            keyring_status_message()
+            or tr("The password could not be saved; the Log panel says why."),
         )
 
     def _import_ssh_hosts(self, hosts: list, source: str) -> None:
@@ -9156,7 +9247,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                 if ask_password():
                     self._run_connect_async(retry, state["password"], "", on_success, on_failure)
                 return
-            QMessageBox.critical(self, tr("Connection Failed"), describe(exc))
+            self._report_connect_failure(exc)
             log.error("Host terminal connect to %s failed: %s", p.name, exc)
 
         if profile.auth_type == "password" and not ask_password():
@@ -10119,6 +10210,10 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             reset = menu.addAction(tr("Reset Toolbar Order"))
             reset.setToolTip(tr("Put the toolbar buttons back in their default order"))
             reset.triggered.connect(lambda _checked=False: self.reset_toolbar_order())
+        # Underlined letters here too (UX review round 8).
+        from ui import mnemonics
+
+        mnemonics.install(menu, now=False)
         return menu
 
     def _rebuild_dock_titlebars(self) -> None:

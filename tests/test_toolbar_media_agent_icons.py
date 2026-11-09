@@ -76,7 +76,7 @@ def win(stores):
 
 def _bars(win) -> list[QToolBar]:
     return [tb for title in ("Main", "Tools") for tb in win.findChildren(QToolBar)
-            if tb.windowTitle() == title]
+            if tb.objectName() == f"ax{title}Toolbar"]
 
 
 def _by_icon(win) -> dict:
@@ -168,7 +168,7 @@ def test_happy_the_equalizer_is_the_audio_and_video_settings_icon() -> None:
 
 
 def test_happy_the_audio_and_video_button_sits_beside_the_media_player(win) -> None:
-    tools = next(b for b in _bars(win) if b.windowTitle() == "Tools")
+    tools = next(b for b in _bars(win) if b.objectName() == "axToolsToolbar")
     names = [a.property("axIcon") for a in tools.actions() if not a.isSeparator()]
     assert names.index("audio-settings") == names.index("media-player") + 1
     action = _by_icon(win)["audio-settings"]
@@ -312,7 +312,7 @@ def painted(icon, size=22):
 out = {"frozen": bool(getattr(sys, "frozen", False)), "buttons": [],
        "agent_is_robot": IP.ICONS.get("agent") == IP.ICONS.get("bot")}
 for bar in win.findChildren(QToolBar):
-    if bar.windowTitle() not in ("Main", "Tools"):
+    if bar.objectName() not in ("axMainToolbar", "axToolsToolbar"):
         continue
     for a in bar.actions():
         if a.isSeparator():

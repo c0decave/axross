@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import html
 import logging
+import re
 import time
 import types
 from pathlib import Path
@@ -331,6 +332,11 @@ def _markdown_features(*features: QTextDocument.MarkdownFeature) -> QTextDocumen
     value = 0
     for feature in features:
         value |= feature.value
+    return _markdown_feature(value)
+
+
+def _markdown_feature(value: int) -> QTextDocument.MarkdownFeature:
+    """The Qt Markdown feature set of the bits *value* (see above)."""
     union = QTextDocument.MarkdownFeature(value)
     if union.value != value:
         union = object.__new__(QTextDocument.MarkdownFeature)
@@ -347,6 +353,34 @@ def _markdown_features(*features: QTextDocument.MarkdownFeature) -> QTextDocumen
 #: Python (see above) costs tables and strike-through, never raw HTML.
 NOTES_MARKDOWN = _markdown_features(QTextDocument.MarkdownFeature.MarkdownDialectGitHub,
                                     QTextDocument.MarkdownFeature.MarkdownNoHTML)
+#: The same without tables (md4c's MD_FLAG_TABLES, 0x100, is part of the
+#: GitHub dialect): for notes whose tables would have more than
+#: :data:`MAX_NOTES_TABLE_CELLS` cells - Qt lays out every cell, and a
+#: 20,000-character table of 19,000 cells kept the GUI thread 4 s. Such
+#: a table is shown as the lines of text it is written as.
+NOTES_MARKDOWN_NO_TABLES = _markdown_feature(NOTES_MARKDOWN.value & ~0x100)
+MAX_NOTES_TABLE_CELLS = 2000
+#: A Markdown table's delimiter row ("| --- | :-: |"), after any quote or
+#: list marker: its dashes give the table's columns.
+_TABLE_DELIMITER = re.compile(r"^[\s>*+\d.)-]*?\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*\Z")
+
+
+def table_cells(text: str) -> int:
+    """An upper bound of the cells the Markdown tables of *text* make: for
+    each delimiter row with a "|", its columns times the lines up to the
+    next empty one (each a row, a short one filled up with empty cells)."""
+    lines = text.splitlines()
+    cells = 0
+    for number, line in enumerate(lines):
+        if "|" not in line or "-" not in line or not _TABLE_DELIMITER.match(line):
+            continue
+        rows = 1
+        for after in lines[number + 1:]:
+            if not after.strip():
+                break
+            rows += 1
+        cells += len(re.findall(r"-+", line)) * rows
+    return cells
 
 #: Marks each backslash :func:`_escape_html` adds (WORD JOINER: invisible,
 #: no Markdown syntax), so :func:`_unmark` finds exactly those again.
@@ -376,17 +410,20 @@ def _unmark(document: QTextDocument) -> None:
     """Remove what :func:`_escape_html` added from the rendered document:
     the mark, and the backslash after it where it stayed (code). Only
     characters go; the HTML question was settled by the parser."""
+    # The marks are found in the document's raw text (a position there is
+    # a position in the document) and taken out from the last one back, so
+    # the places before stay where they are: QTextDocument.find() from
+    # each mark again took 2.4 s for 20,000 "<" (quadratic).
+    raw = document.toRawText()
     cursor = QTextCursor(document)
     cursor.beginEditBlock()
-    found = document.find(_MARK)
-    while not found.isNull():
-        start = found.selectionStart()
-        added = (document.characterAt(start + 1) == "\\"
-                 and document.characterAt(start + 2) == "<")
+    start = raw.rfind(_MARK)
+    while start >= 0:
+        added = raw[start + 1:start + 3] == "\\<"
         cursor.setPosition(start)
         cursor.setPosition(start + (2 if added else 1), QTextCursor.MoveMode.KeepAnchor)
         cursor.removeSelectedText()
-        found = document.find(_MARK, start)
+        start = raw.rfind(_MARK, 0, start)
     cursor.endEditBlock()
 #: The only link schemes the notes open.
 WEB_SCHEMES = ("http", "https")
@@ -456,7 +493,8 @@ class ReleaseNotesView(QTextBrowser):
         if text == self._source:
             return
         self._source = text
-        self.document().setMarkdown(_escape_html(text), NOTES_MARKDOWN)
+        features = NOTES_MARKDOWN if table_cells(text) <= MAX_NOTES_TABLE_CELLS else NOTES_MARKDOWN_NO_TABLES
+        self.document().setMarkdown(_escape_html(text), features)
         _unmark(self.document())
         # setMarkdown leaves the cursor at the end, and showing the view
         # scrolls to it: the notes opened at their last line.

@@ -71,7 +71,14 @@ INDENT = {"ul", "ol", "dl", "blockquote"}
 #: a 400,000-character word kept the GUI thread 10 s, 2 MB of "&#" (one
 #: word once escaped) close to a minute.
 MAX_WORD = 200
-_SPACE = re.compile(r"(\s+)")
+#: The white space Qt breaks a line at: Python's ``\s`` without the
+#: no-break spaces (U+00A0, U+2007 figure space, U+202F narrow no-break
+#: space), which join two words into one for Qt - "x&nbsp;" repeated was
+#: one 128,000-character line (Hebrew and Latin between them: 44 s).
+_SPACE = re.compile(r"([^\S\u00a0\u2007\u202f]+)")
+#: What the plain view (Qt) starts a new line or block at - not only
+#: "\n": 2 MB of "\r" were 2,000,001 blocks (6.35 s, 954 MB).
+_LINE_END = re.compile(r"\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]")
 #: The parts of a table: without their table they are left out too.
 TABLE_PARTS = {"thead", "tbody", "tfoot", "tr", "td", "th", "caption"}
 
@@ -147,10 +154,10 @@ def breakable(text: str, run: int = 0) -> tuple[str, int]:
     if run + len(text) <= MAX_WORD and not _SPACE.search(text):
         return text, run + len(text)
     out = []
-    for token in _SPACE.split(text):
+    for number, token in enumerate(_SPACE.split(text)):
         if not token:
             continue
-        if token[0].isspace():
+        if number % 2:  # a separator (the split keeps them at the odd places)
             out.append(token)
             run = 0
             continue
@@ -504,7 +511,7 @@ def plain_lines(text: str) -> tuple[str, bool]:
     and :data:`MAX_PLAIN_LINES` lines; and whether some was left out."""
     out: list[str] = []
     cut = False
-    for line in text[:MAX_PLAIN].split("\n"):
+    for line in _LINE_END.split(text[:MAX_PLAIN]):
         pieces = [line[i:i + PLAIN_LINE] for i in range(0, len(line), PLAIN_LINE)] or [""]
         if len(out) + len(pieces) > MAX_PLAIN_LINES:
             out.extend(pieces[:MAX_PLAIN_LINES - len(out)])

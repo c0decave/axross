@@ -35,7 +35,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.dashboard import DashboardSnapshot, HostRow
-from core.i18n import tr, tr_n
+from core.i18n import format_percent, tr, tr_n
 from ui.close_corner import add_close_corner
 from ui.format_utils import human_bytes
 from ui.thread_lifetime import detach_running_thread
@@ -81,7 +81,7 @@ def capacity_cells(row: HostRow) -> dict[str, str]:
         "Total": human_bytes(row.capacity_total) if measured else DASH,
         "Used": human_bytes(row.capacity_used) if measured else DASH,
         "Free": human_bytes(row.capacity_free) if measured else DASH,
-        "Usage": f"{percent}%" if measured else tr(_UNSUPPORTED),
+        "Usage": format_percent(percent) if measured else tr(_UNSUPPORTED),
     }
 
 
@@ -239,7 +239,7 @@ class DiskUsageDialog(QDialog):
         bar = QProgressBar()
         bar.setRange(0, 100)
         bar.setValue(percent)
-        bar.setFormat(f"{percent}%")
+        bar.setFormat(format_percent(percent))
         bar.setTextVisible(True)
         return bar
 

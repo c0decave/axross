@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.i18n import tr, tr_n
+from core.i18n import format_percent, tr, tr_n
 from core.subprocess_env import clean_child_env
 from ui.plain_text import plain_tooltip, set_plain
 
@@ -433,7 +433,7 @@ class BarChart(QWidget):
             if bar:
                 painter.fillRect(QRectF(label, y + 3, used, self.ROW - 8), QColor(USED_COLOUR))
                 painter.fillRect(QRectF(label + used, y + 3, bar - used, self.ROW - 8), QColor(FREE_COLOUR))
-            note = f"{drive.percent:.0f} %" if drive.percent is not None else tr("unknown")
+            note = format_percent(drive.percent) if drive.percent is not None else tr("unknown")
             painter.drawText(QRectF(label + bar + 6, y, 80, self.ROW - 4),
                              Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, note)
 
@@ -496,7 +496,7 @@ class DrivesPanel(QWidget):
         table.setSortingEnabled(False)
         table.setRowCount(len(drives))
         for row, drive in enumerate(drives):
-            use = (f"{drive.percent:.0f} %" if drive.percent is not None
+            use = (format_percent(drive.percent) if drive.percent is not None
                    else (drive.error or tr("unknown")))
             cells = (
                 QTableWidgetItem(drive.mount), QTableWidgetItem(drive.label),

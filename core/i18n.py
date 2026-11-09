@@ -397,6 +397,20 @@ def format_decimal(value: float, digits: int = 1) -> str:
     return text if active().language == DEFAULT_LANGUAGE else text.replace(".", ",")
 
 
+def percent_sign() -> str:
+    """What follows a number as a percentage: "%" in English, a narrow
+    no-break space and "%" in German and the other shipped catalogues
+    ("87 %"; German showed "87%", "87 %" and "87 %" side by side - UX
+    review round 8)."""
+    return "%" if active().language == DEFAULT_LANGUAGE else "\u202f%"
+
+
+def format_percent(value: float, digits: int = 0) -> str:
+    """*value* (87.5 for 87.5 %) as a percentage in the active language:
+    "87%" / "87 %", "2.9%" / "2,9 %"."""
+    return format_decimal(value, digits) + percent_sign()
+
+
 #: Key names as the keyboard of each language prints them ("Strg+Umschalt+A").
 #: Qt's own .qm catalogues, which would do this, are not shipped.
 _KEY_NAMES = {

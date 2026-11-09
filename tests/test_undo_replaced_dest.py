@@ -209,9 +209,12 @@ class ReplacedDestinationWindowTest(_WindowBase):
         (self.a / "report.pdf").write_text("the report the user moved")
         self.move(self.local, self.other, self.a / "report.pdf")
         _replace(self.b / "report.pdf", "the colleague's new report")
-        _info, warn = self.undo()
-        self.assertTrue(warn.called)
-        self.assertIn(_REASON, str(warn.call_args))
+        info, warn = self.undo()
+        # Not offered (and refused) again on every Ctrl+Z: skipped with
+        # the reason (review round 8).
+        self.assertFalse(warn.called, warn.call_args)
+        self.assertIn(_REASON, str(info.call_args))
+        self.assertIn("could not be undone and was skipped", str(info.call_args))
         self.assertEqual(os.listdir(self.a), [])
         self.assertEqual((self.b / "report.pdf").read_text(), "the colleague's new report")
         self.assertEqual((self.b / "renamed-report.pdf").read_text(),

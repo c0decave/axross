@@ -37,12 +37,19 @@ def _config(line: str, **kw) -> C.McpServerConfig:
     return C.McpServerConfig(name="srv", command=tuple(line.split()), **kw)
 
 
-@pytest.mark.parametrize("line", ["node srv.js", "nodejs --enable-source-maps dist/srv.js",
-                                  "python3 -u srv.py", "python -m mcp_server_git",
-                                  "/usr/bin/python3.12 -I srv.py --repo /srv/x",
-                                  "java -Dx=1 -jar srv.jar", "dotnet srv.dll", "bash srv.sh",
-                                  "ruby srv.rb", "perl srv.pl", "php srv.php"])
-def test_happy_a_pure_launcher_still_runs_as_it_is(line):
+@pytest.mark.parametrize("line", ["node /srv/srv.js",
+                                  "nodejs --enable-source-maps /srv/dist/srv.js",
+                                  "python3 -u /srv/srv.py", "python -m mcp_server_git",
+                                  "/usr/bin/python3.12 -I /srv/srv.py --repo /srv/x",
+                                  "java -Dx=1 -jar /srv/srv.jar", "dotnet /srv/srv.dll",
+                                  "bash /srv/srv.sh", "ruby /srv/srv.rb", "perl /srv/srv.pl",
+                                  "php /srv/srv.php"])
+def test_happy_a_pure_launcher_still_runs_as_it_is(line, monkeypatch):
+    # Round 8: scripts by their absolute path; where the launcher itself is
+    # installed is checked apart (tests/test_r8_mcp_host_run.py).
+    from core import mcp_runner
+
+    monkeypatch.setattr(mcp_runner, "launcher_place_problem", lambda *a, **k: "")
     assert host_launcher(line.split())
     assert _config(line).host_run_problem() == ""
 

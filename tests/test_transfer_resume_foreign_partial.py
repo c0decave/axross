@@ -163,10 +163,11 @@ class AutoResumeEndToEndTest(unittest.TestCase):
         (tmp / "downloads").mkdir()
         new = random.Random(6).randbytes(700 * KIB)
         (tmp / "host_b" / "backup.tar").write_bytes(new)
-        # Left behind by a cancelled download of host A's backup.tar.
-        (tmp / "downloads" / ".backup.tar.part-1a2b3c4d").write_bytes(
-            random.Random(7).randbytes(300 * KIB)
-        )
+        # Left behind by a cancelled download of host A's backup.tar (an
+        # hour ago: a partial written to just now may still be in use).
+        left = tmp / "downloads" / TW.partial_name("backup.tar", "1a2b3c4d", "0badf00d")
+        left.write_bytes(random.Random(7).randbytes(300 * KIB))
+        _age(left)
 
         mgr = TransferManager()
         self.addCleanup(mgr.shutdown)
@@ -279,6 +280,12 @@ class SourceVersionTest(unittest.TestCase):
         self.assertEqual(TW.partial_fingerprint(".other.part-0-deadbeef", "a-b.txt"), "")
 
 
+def _age(path) -> None:
+    """An hour old: only a partial nobody wrote to lately is resumed."""
+    stamp = time.time() - 3600
+    os.utime(path, (stamp, stamp))
+
+
 class AutoResumeVersionEndToEndTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -312,6 +319,7 @@ class AutoResumeVersionEndToEndTest(unittest.TestCase):
         (tmp / "share" / TW.partial_name("disk.img", "1a2b3c4d", fp)).write_bytes(
             old[: 2 * 1024 * KIB]
         )
+        _age(tmp / "share" / TW.partial_name("disk.img", "1a2b3c4d", fp))
         new = bytearray(old)
         new[1024 * KIB: 1024 * KIB + 4096] = b"\xaa" * 4096
         src.write_bytes(bytes(new))
@@ -338,6 +346,8 @@ class AutoResumeVersionEndToEndTest(unittest.TestCase):
         (tmp / "out" / TW.partial_name("f.bin", "00000000", "0badf00d")).write_bytes(b"s" * 9)
         good = tmp / "out" / TW.partial_name("f.bin", "11111111", fp)
         good.write_bytes(data[:300 * KIB])
+        for partial in (tmp / "out").iterdir():
+            _age(partial)
         mgr = TransferManager()
         self.addCleanup(mgr.shutdown)
         jobs = mgr.transfer_files(_NoChecksumFS(), _NoChecksumFS(), [str(src)], str(tmp / "out"))

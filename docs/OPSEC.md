@@ -77,7 +77,11 @@ demand - when an SFTP request or a command it runs on the server (the
 checksum after an upload, a server-side copy) has heard nothing for the
 profile's SFTP time-out (60 s by default). It is the request OpenSSH's
 `ServerAliveInterval` sends (`keepalive@openssh.com`, want-reply), once
-per silence, to tell a slow server from a dead network.
+per silence, to tell a slow server from a dead network. Any packet from
+the server counts as the answer. A server that drops the request
+unanswered (some appliances) gets, half-way through the wait, a channel
+open of the type `keepalive@openssh.com`, which no server offers and every
+server must refuse - a message OpenSSH's own client does not send.
 
 ## The update check at start
 

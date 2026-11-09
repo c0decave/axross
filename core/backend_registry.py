@@ -94,6 +94,11 @@ class BackendCapabilities:
     # file and a folder can carry the same name side by side (a write to
     # "x" next to the folder "x" adds the file, it does not fail).
     name_holds_file_and_folder: bool = False
+    # True when the backend's "/" is a whole machine's root (this one,
+    # an SSH / shell login, an Android device): /sys, /proc and /dev hold
+    # kernel files there that list a size (4096, 0) a read does not
+    # yield. Anywhere else such a folder is an ordinary one.
+    machine_root: bool = False
 
 
 # Pre-built capability sets for common backend types
@@ -109,6 +114,7 @@ POSIX_CAPS = BackendCapabilities(
     rename_atomic=True,
     append_native=True,
     symlink_follows=True,
+    machine_root=True,
 )
 FTP_CAPS = BackendCapabilities(
     can_chmod=True,
@@ -203,6 +209,10 @@ AZURE_FILES_CAPS = BackendCapabilities(
     # No real append: the client downloads the whole file (capped at 256 MiB)
     # and uploads it again (core.server_ops.WriteTraits.real_append).
     append_native=False,
+    # open_read downloads the whole file into a spool: a resume read it
+    # all again from byte 0 (and needed the room twice) - like Blob, a
+    # resume starts over instead.
+    seekable_reads=False,
 )
 CLOUD_CAPS = BackendCapabilities(
     can_chmod=False,
@@ -346,6 +356,7 @@ TELNET_CAPS = BackendCapabilities(
     can_checksum_without_read=True,  # sha256sum on remote shell
     seekable_reads=False,
     symlink_follows=True,
+    machine_root=True,
 )
 SCP_CAPS = BackendCapabilities(
     can_chmod=True,
@@ -364,6 +375,7 @@ SCP_CAPS = BackendCapabilities(
     can_checksum_without_read=True,  # remote sha256sum
     seekable_reads=False,
     symlink_follows=True,
+    machine_root=True,
 )
 WINRM_CAPS = BackendCapabilities(
     can_chmod=False,  # NTFS ACLs don't map to POSIX bits
@@ -431,6 +443,7 @@ ADB_CAPS = BackendCapabilities(
     can_server_side_copy=True,  # cp on the shell
     can_checksum_without_read=True,
     seekable_reads=False,
+    machine_root=True,
 )
 MTP_CAPS = BackendCapabilities(
     # MTP-over-FUSE looks like a POSIX filesystem through the kernel,

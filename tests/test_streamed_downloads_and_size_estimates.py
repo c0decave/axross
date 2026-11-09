@@ -18,7 +18,9 @@ Measured before (review round 7, repros ftp/, mail/ and the spool sites):
 * N5 - writer and pull spools went to the temp folder (a tmpfs), ADB's
   delete=False files stayed when a writer was dropped or open() failed;
 * L3 - a sysfs file on a remote machine (listed 4096, read 5 bytes) was
-  refused as a short read; /sys, /proc and /dev are exempt everywhere;
+  refused as a short read; /sys, /proc and /dev are exempt on a backend
+  whose "/" is a machine's root, for a file listed 4096 (round 8 M1:
+  tests/test_r8_protocol_fixes.py);
 * L4 - a refused short read (or Cancel) of a source a resume cannot read
   from an offset kept its hidden .part for a resume that saves nothing;
 * L6 - a failed server-side safety copy (disk full) left its partial
@@ -348,8 +350,25 @@ class _SysfsHost(RamFsSession):
         return dataclasses.replace(item, size=4096) if not item.is_dir else item
 
 
+@pytest.fixture
+def machine_root(monkeypatch):
+    """_SysfsHost stands for an SFTP / shell login: its "/" is a machine's
+    root (caps machine_root, round 8 M1)."""
+    from core import capability_contracts
+    from core.backend_registry import RAMFS_CAPS
+
+    original = capability_contracts.caps_for_backend
+
+    def caps(backend):
+        if isinstance(backend, _SysfsHost):
+            return dataclasses.replace(RAMFS_CAPS, machine_root=True)
+        return original(backend)
+
+    monkeypatch.setattr(capability_contracts, "caps_for_backend", caps)
+
+
 @pytest.mark.parametrize("folder", ["/sys/class/net/eth0", "/proc/1", "/dev/x"])
-def test_happy_a_remote_pseudo_file_is_not_refused_as_short(tmp_path, folder):
+def test_happy_a_remote_pseudo_file_is_not_refused_as_short(tmp_path, folder, machine_root):
     src = _SysfsHost(f"sysfs-{os.getpid()}-{id(tmp_path)}")
     try:
         parts = folder.strip("/").split("/")
@@ -368,7 +387,7 @@ def test_happy_a_remote_pseudo_file_is_not_refused_as_short(tmp_path, folder):
         src.disconnect()
 
 
-def test_sad_an_ordinary_remote_file_read_short_is_still_refused(tmp_path):
+def test_sad_an_ordinary_remote_file_read_short_is_still_refused(tmp_path, machine_root):
     src = _SysfsHost(f"sysfs-plain-{os.getpid()}-{id(tmp_path)}")
     try:
         src.mkdir("/data")

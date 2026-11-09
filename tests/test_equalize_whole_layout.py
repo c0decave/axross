@@ -145,5 +145,5 @@ def test_edge_a_terminal_pane_counts_as_a_pane(window) -> None:
 def test_edge_the_toolbar_button_is_the_same_action(window) -> None:
     from PyQt6.QtWidgets import QToolBar
 
-    bar = next(tb for tb in window.findChildren(QToolBar) if tb.windowTitle() == "Main")
+    bar = next(tb for tb in window.findChildren(QToolBar) if tb.objectName() == "axMainToolbar")
     assert window._equalize_action in bar.actions()

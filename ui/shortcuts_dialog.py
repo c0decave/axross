@@ -12,13 +12,14 @@ Pane keys are handled in ``FilePaneWidget.eventFilter``.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QEvent, Qt
+from PyQt6.QtCore import QEvent, QRect, Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QDialog,
     QDialogButtonBox,
     QLabel,
     QLineEdit,
+    QStyledItemDelegate,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -135,6 +136,27 @@ SHORTCUTS: list[tuple[str, tuple[str, ...], str]] = [
 ]
 
 
+class _WrapDelegate(QStyledItemDelegate):
+    """Rows as high as their Action text needs at the column's width: a
+    tree view asks its delegate for a row height without the column width,
+    so a long description stayed one line and ended in "…"."""
+
+    def __init__(self, tree: QTreeWidget) -> None:
+        super().__init__(tree)
+        self._tree = tree
+
+    def sizeHint(self, option, index):  # noqa: N802 - Qt
+        size = super().sizeHint(option, index)
+        text = index.data()
+        if index.column() == 1 and text:
+            # Less the item padding of the theme and the text margins.
+            width = max(self._tree.columnWidth(1) - 32, 60)
+            bounds = option.fontMetrics.boundingRect(
+                QRect(0, 0, width, 100000), int(Qt.TextFlag.TextWordWrap), str(text))
+            size.setHeight(max(size.height(), bounds.height() + 6))
+        return size
+
+
 class ShortcutsDialog(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -166,6 +188,14 @@ class ShortcutsDialog(QDialog):
 
         # Keys as wide as they are, Action the rest; both dividers draggable.
         self._columns = ColumnFitter(self.tree, fill=1)
+        # A long description wraps instead of ending in "…": three German
+        # ones were cut at the default size, with no way to read them (UX
+        # review round 8). The tooltip has the whole text too.
+        self.tree.setWordWrap(True)
+        self.tree.setUniformRowHeights(False)
+        self.tree.setItemDelegate(_WrapDelegate(self.tree))
+        self.tree.header().sectionResized.connect(
+            lambda *_args: self.tree.scheduleDelayedItemsLayout())
         self.tree.installEventFilter(self)
 
         sections: dict[str, QTreeWidgetItem] = {}
@@ -182,6 +212,8 @@ class ShortcutsDialog(QDialog):
             # The keys as the keyboard prints them ("Strg+Umschalt+A" in German).
             shown_keys = tuple(tr_keys(key) for key in keys)
             item = QTreeWidgetItem(parent, [" / ".join(shown_keys), tr(description)])
+            item.setToolTip(0, item.text(0))
+            item.setToolTip(1, item.text(1))
             # English and translated text: what is shown must be findable.
             haystack = " ".join((*keys, *shown_keys, description, tr(description), section,
                                  tr(section)))

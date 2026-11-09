@@ -5,7 +5,7 @@ from __future__ import annotations
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PyQt6.QtWidgets import QApplication, QStyle, QStyledItemDelegate, QStyleOptionProgressBar
 
-from core.i18n import tr
+from core.i18n import format_percent, tr
 from core.transfer_worker import TransferDirection, TransferJob, TransferStatus
 
 COLUMNS = ("File", "Direction", "Size", "Progress", "Speed", "ETA", "Status")
@@ -198,7 +198,7 @@ class TransferModel(QAbstractTableModel):
                     return tr("Skipped")
                 if job.status == TransferStatus.DONE:
                     return tr("Done")
-                return f"{job.progress_percent:.0f}%"
+                return format_percent(job.progress_percent)
             if col == COL_SPEED:
                 if job.status == TransferStatus.ACTIVE and job.speed > 0:
                     return f"{self._format_size(job.speed)}/s"
@@ -277,7 +277,7 @@ class ProgressBarDelegate(QStyledItemDelegate):
                 opt.minimum = 0
                 opt.maximum = 100
                 opt.progress = int(progress)
-                opt.text = f"{int(progress)}%"
+                opt.text = format_percent(int(progress))
                 opt.textVisible = True
                 QApplication.style().drawControl(QStyle.ControlElement.CE_ProgressBar, opt, painter)
                 return

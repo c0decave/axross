@@ -145,6 +145,14 @@ class _RowAdapter:
 # ---------------------------------------------------------------------------
 
 
+def _canonical(rooted: str) -> str:
+    """posixpath.normpath of a rooted path with its leading slashes
+    collapsed too: normpath keeps two (``//`` is "implementation
+    defined" in POSIX), and ``rename(x, "//")`` stored a row under
+    ``//`` that no listing of ``/`` shows - the data was hidden."""
+    return "/" + (posixpath.normpath(rooted) or "/").lstrip("/")
+
+
 class DbFsBackend(_RowAdapter, SessionLifecycle):
     """FileBackend implementation backed by ``_RowAdapter`` ops.
 
@@ -202,7 +210,7 @@ class DbFsBackend(_RowAdapter, SessionLifecycle):
         if not path.startswith("/"):
             path = "/" + path
         # Collapse any '..' / '//' to keep DB lookups deterministic.
-        return posixpath.normpath(path) or "/"
+        return _canonical(path)
 
     @staticmethod
     def _strict_normalize_or_reject(path: str) -> str:
@@ -215,7 +223,7 @@ class DbFsBackend(_RowAdapter, SessionLifecycle):
         if not path:
             raise OSError("empty path")
         rooted = path if path.startswith("/") else "/" + path
-        canonical = posixpath.normpath(rooted) or "/"
+        canonical = _canonical(rooted)
         # The only legal difference between input and canonical is the
         # implicit leading slash and the root case.
         if rooted not in (canonical, canonical + "/"):

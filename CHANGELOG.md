@@ -33,6 +33,74 @@ the old code.
 
 ### Fixed
 
+- **Every entry of the right-click menus has an underlined letter.** The
+  pane's right-click menu (Paste, Pack, Analyse, More and its Links,
+  Metadata and Tags submenus), Quick Connect and the toolbar's right-click
+  menu had about thirty entries the keyboard could not pick; a free letter
+  is now given to each when the menu opens, in English and German. View >
+  Show Trash… got one too.
+- **A second connection keeps your local pane.** It replaced the last local
+  pane, leaving two servers and no local folder on screen; the last local
+  pane is never taken now, and the second server opens beside the first.
+- **"Save in keyring" is the answer.** After every connection from the
+  Connection Manager axross asked "Save password in the system keyring?",
+  ticked or not; unticked it now asks nothing, ticked it saves without a
+  second question, and a missing or refusing keyring is explained (in
+  German too) instead of "Could not save password to system keyring.".
+- **Checked menu entries with an icon look checked.** View > Panels
+  (Transfers on, Agent off), Thumbnail View and the toolbar's right-click
+  list showed no on/off state; a checked one now has a frame in the
+  theme's check colour around its icon, in every theme.
+- **The settings search marks the setting, not the whole box.** "proxy"
+  turned the Default Proxy and No Proxy For boxes blue with every field
+  in them; a group box now gets its title marked, other matches only
+  themselves.
+- **Smaller fixes to the windows.** A profile or tag named "Web & Mail"
+  showed as "Web _Mail" in Quick Connect and the Tags menu; the toolbars
+  are called Main Toolbar and Tools Toolbar (Hauptleiste, Tools-Leiste in
+  German) in their right-click menu; German shortcut descriptions wrap
+  instead of ending in "…"; a sandbox shows as "Locker", not "Lax (Lax)",
+  and stays translated after an edit; a declined host key is a neutral
+  "Not Connected" note ("check the fingerprint with the administrator"),
+  not a red "Connection Failed"; German says "Eingabe" for the Enter key
+  everywhere and writes percentages as "87 %" with a narrow space; the MCP
+  Servers page shows "1,00 s" in German and says what to do while it has
+  no server; the tour offer's buttons keep their own width; the
+  Connection Manager's main button says Connect; an unticked Proxy box is
+  its title alone and hidden where no proxy applies; the German handbook
+  uses one dash.
+- **Two copies of one file no longer write into one partial file.** A
+  second copy of a file queued while the first ran (a second F5, a second
+  axross) took over the first one's unfinished hidden partial and appended
+  to it: the first copy reported done with a 4.9 MB file for a 4 MB
+  source, and a move then deleted the source. A partial is now resumed
+  only when no transfer of this axross writes it and nothing wrote to it
+  for 30 seconds, it is first renamed to the new job's own name, a copy is
+  committed only when the partial holds exactly what the job wrote, and a
+  move deletes its source only when the destination is as long as the
+  source.
+- **Your file named like a partial is left alone.** A file such as
+  `.video.mp4.part-1-notes` next to `video.mp4` was taken for an
+  unfinished copy and removed by the copy or by Clear Finished; only names
+  of the exact shape axross gives its partials count now.
+- **Ctrl+Z no longer gets stuck on a move it cannot undo.** When the moved
+  file was edited, replaced or deleted since (or the places of trashed
+  entries were taken by new files), every Ctrl+Z offered it again and
+  refused it, and older operations could never be undone; a deleted file
+  showed "[Errno 2] No such file or d…". Such an operation is now skipped
+  once with a note ("… could not be undone and was skipped: …") and Ctrl+Z
+  goes on to the one before it.
+- **A trash folder that is a file is named as the problem.** With a file
+  called `.axross-trash` in the home folder, Del said "x.txt is not a
+  folder"; it now says the trash folder is not a folder.
+- **Symbolic links in a copied local folder get a clear reason.** A link
+  to a folder ended with "[Errno 21] Is a directory" and a dangling link
+  with "No such file or directory"; they are skipped now as "symbolic link
+  to a folder: not followed" and "dangling symbolic link … skipped", as on
+  SMB.
+- **A move whose local source came out short keeps the destination
+  clean.** The move failed and kept the source, but left the short copy
+  under the destination's name; the copy is no longer committed.
 - **A connection opens where there is room.** The first connection at the
   first start made a third, narrow pane; now a connection takes the place
   of the target pane while that is unused (a local pane still at the home
@@ -636,7 +704,137 @@ the old code.
   the first clone; they showed the files as they were then, and a change
   was committed on top of that old state.
 
+- **A download cut half-way under /dev, /proc or /sys is no longer saved
+  as complete.** The exemption for kernel files (listed 4096 bytes, a few
+  read) applied to every backend: an FTP server whose folder is called
+  /dev delivered half of a 3 MB file and the transfer said done. It now
+  holds only where "/" is a whole machine's root (local, SFTP, SCP, the
+  shells, ADB) and only for a file listed with a kernel file's size.
+- **ADB, TFTP and rsync no longer leave visible spool files in your
+  download folder.** Their temporary files (`axross-adb-…`) showed up next
+  to the download while it ran and stayed after a crash; they are hidden
+  now (`.axross-spool-…`), and leftovers older than a day are removed the
+  next time axross spools there.
+- **SSH: a server that does not answer keepalive requests no longer looks
+  dead.** A silent command (a long checksum) failed with "the network
+  connection is probably lost" on such a server; now any packet from the
+  server counts as an answer, and a server that drops the request is asked
+  with a channel open it must answer. The probe no longer takes over
+  paramiko's own completion event.
+- **Database backends: renaming onto `//` no longer hides the data.** The
+  path kept its two leading slashes, so the entry vanished from every
+  listing; `//` is the root now, and the root is refused as a rename
+  destination on every backend.
+- **Azure Files: a resumed download starts over cleanly.** It claimed
+  reads from an offset but downloads whole files, so a resume fetched
+  everything again and needed twice the space.
+- **A streamed download that breaks names the file.** The error read
+  "('Connection broken: IncompleteRead(…)', …)"; it now says "Cannot read
+  /path: Connection broken: …" and keeps its type and error number.
+
 ### Security
+
+- **Text from outside that froze the window again.** A mail whose words
+  were joined by no-break spaces (U+00A0, U+202F, U+2007) was one line of
+  128,000 characters for Qt (Hebrew and Latin: 44 s); an agent answer of
+  script changes or direction marks (RLM, LRE … PDF, RLI … PDI) between
+  no-break spaces 7.2 s, and restoring eight of them 21 s. Words now end
+  only where Qt breaks a line, direction marks count as changes of
+  direction, changes of script inside a long word are capped, and the
+  transcript counts what a line costs to lay out, not its characters
+  (older lines then show only their start). A plain mail of carriage
+  returns or U+2029 separators (2,000,001 blocks, 954 MB) now counts every
+  line end Qt knows for its line cap.
+- **Release notes:** 20,000 `<` took 2.4 s to clean up and a Markdown
+  table of 19,000 cells 4 s; the clean-up is now linear and a table of more
+  than 2000 cells is shown as its lines of text.
+- **An SVG that costs more than it counts** (an 8.8 KB filled path drawn
+  100 times: 23 s; others minutes) is now drawn in a child process that is
+  killed after 10 s (the media viewer shows why).
+
+- **A host-run MCP server imported code from the folder axross was started
+  in.** A pure launcher (`python3 -m mcp_server_time`) inherited axross's
+  working folder, so a cloned repository's `mcp_server_time/` ran on this
+  machine. A program server now starts in its own empty folder
+  (`$XDG_STATE_HOME/axross/mcp-run/<server>`, 0700, checked like the update
+  cache), `python -m` with `PYTHONSAFEPATH=1`, and a script counts as pure
+  only by its absolute path.
+- **Pure launchers that were not.** Downloading tools started through an
+  allowed interpreter (corepack / pnpx / yarn scripts, `python -m
+  pip_run|tox|nox|piptools|build|pipenv`, `perl …/cpan`, `php
+  composer.phar`, bazelisk) are refused like `npx`; tool scripts (`ruby
+  …/bundle`, `bash …/sdk`, `python -m jupyter`) and node / java options
+  that load code (`--experimental-loader`, `--experimental-network-imports`,
+  `-Djava.system.class.loader`, a `-D…=` URL) are contained. The launcher
+  itself is found on the server's PATH and must be installed by the system
+  (root-owned, writable by no one else) or a version manager: `./python3`,
+  a `node` in `~/Downloads` or a `.bat` need a sandbox profile or Trusted.
+- **A server environment that loads code** (`BASH_ENV`, `ENV`,
+  `NODE_OPTIONS`, `PERL5OPT`, `PERL5LIB`, `PYTHONPATH`, `PYTHONSTARTUP`,
+  `RUBYOPT`, `LD_*`, `DYLD_*`, `JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS` …) no
+  longer passes as a pure launcher; the details of a detected server and
+  Agent Settings show those variables with their values (tokens hidden).
+- **A server's stderr could fill axross's memory** (512 MiB without a
+  newline: 555 MB). It is read in 64 KiB chunks; the last 20 lines are
+  kept, each cut at 4 KiB.
+- **Private folders: real path and group.** The update / tour-video cache
+  check walked only the parents as written (`~/.cache` a symlink into a
+  world-writable folder passed) and accepted a parent its group may write;
+  both the written and the real parents are checked now, a group-writable
+  parent of yours only passes for your own private group. The packs
+  folders (`$XDG_DATA_HOME/axross/packs/<version>` and each wheel folder)
+  go on the import path only after the same check.
+- **A 40-byte file name could crash axross through a message box.** The
+  markup guard read tags the way an HTML parser does; Qt also reads a
+  quoted tag name (`<"img">`, `<'table'>`), one with character references
+  (`<&#105;mg>`) and a quoted attribute name as markup. The archive name
+  `<b></b><'img' src=&#47;dev&#47;zero>.zip` made "Could not extract …"
+  read /dev/zero until the process died; nested quoted tables froze the
+  window 33-37 s, a 56-byte name laid out a 3.2 GB message box, and
+  `<"style">`/`<"title">` or a comment ended by `-- >` hid the rest of a
+  message. Labels, tooltips and message boxes now render rich text only
+  when every tag in it is written in one plain form both read alike (a
+  known tag name, plain attribute names, no comment); anything else is
+  shown as written. Labels set to rich text are checked as such, and the
+  file pane's messages show archive and file names as written.
+- **One archive could build a Git folder that ran code.** archive_extract
+  checked every member with one checker that remembered "no HEAD here"
+  from before the member HEAD was made, and the repository shape needed
+  `objects` and `refs` to be folders while Git only asks that they can be
+  entered: members `objects` (an executable file), `HEAD`, `config` (with
+  `core.fsmonitor`) and `refs/` made a folder whose `git status` ran the
+  config's command. Each member is now looked up afresh, any entry named
+  `objects`/`refs` counts, and an archive member named `HEAD` is not
+  extracted.
+- **More version-control settings that run code are protected:**
+  Mercurial's `.hg/hgrc-not-shared` (read for every repository), Sapling's
+  `.sl/config`, darcs's `_darcs/prefs/defaults` (`--posthook`) and Breezy's
+  `.bzr/branch/branch.conf`, and the `.hg`/`.sl`/`_darcs`/`.bzr` folders
+  themselves (a folder renamed to `.hg` brought its `hgrc` along).
+- **A root holding /proc handed out axross's environment.** With
+  `--mcp-root /` the tools read `/proc/<pid>/environ` (API keys) and the
+  command line, memory maps and open files of processes. `/proc/self`,
+  those entries of `/proc/<pid>` and `/run/secrets` are now refused for
+  reading and writing.
+- **Secrets in project folders are not handed out to the agent**: private
+  keys and password databases found by their first bytes (PEM, OpenSSH,
+  PuTTY, KeePass) and files secret by their name anywhere (`.env`,
+  `.git-credentials`, `.netrc`, `.pgpass`, `*.tfstate`, `*.kdbx`, `id_rsa`
+  and friends, `*.ppk`, `*.p12`).
+- MCP `chmod` refuses a file with other hard links: through a second name
+  in the root it changed the mode of `~/.bashrc`.
+- The agent sandbox now also sets aside a `.git/config.worktree` and the
+  `commondir`/`config.worktree` of submodules' and worktrees' Git folders
+  that the task made (only `.git/commondir` was).
+- **The whole SMB share could be deleted through a backslash spelling of
+  its root.** The root guard normalised paths the POSIX way only, while
+  smbclient applies Windows rules: deleting `/x\..` or `\` with
+  everything in it emptied the share; on WinRM `C:\Users\..` and `c:\.`
+  were no drive root to the guard. The guard now splits on backslashes on
+  every backend that does not treat them as a name character, counts drive
+  roots, and refuses any `..` in the paths of a delete or a rename (and as
+  their destination); the MCP server refuses `..` in remote paths it
+  writes, moves or deletes.
 
 - **Rich text that only looked harmless is shown as written.** The markup
   guard of labels, tooltips and message boxes counted `</table>` with a

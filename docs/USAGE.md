@@ -72,8 +72,10 @@ profile goes, with its stored password.
   pane still at your home folder, not navigated, nothing selected, no
   filter typed - a new connection opens in its place; at the first start
   the server so gets the right half of the window instead of a third,
-  narrow pane. Otherwise it opens in a new pane at the right. To always
-  get a new pane, hold **Shift** when you click the connection (or OK),
+  narrow pane. The last local pane is never replaced: a second connection
+  opens beside the first. Otherwise it opens in a new pane at the right.
+  To always get a new pane, hold **Shift** when you click the connection
+  (or *Connect*),
   tick *Open in a new pane* in the Connection Manager, or right-click a
   profile in Quick Connect and choose *Connect in New Pane*.
 
@@ -747,7 +749,8 @@ bar docks it again.
   to the *Open Size Limit* and removed afterwards; an item that is
   too large, encrypted or broken shows the reason instead. SVG is
   rendered only when it has no DOCTYPE/entities, scripts or
-  references outside the file. `paranoid` mode blocks the viewer.
+  references outside the file, and in a separate process that is
+  stopped after 10 seconds. `paranoid` mode blocks the viewer.
   `I` (or the *Info* button) shows the current item's metadata in a
   side panel, with *Remove metadata* — in the image viewer too.
 - **Media Player** (bundled extension; its toolbar button or
@@ -1570,8 +1573,12 @@ Git's files that run code - a repository's `.git/config`, `.git/hooks`,
 hooks), `gitdir`, `.gitmodules`, a `.git` entry itself - are refused anywhere,
 also in a bare repository (`x.git/hooks`) and in any folder Git would take
 for a repository (`HEAD`, `objects/` and `refs/`; the last of the three is
-not made in a folder that is not one yet); likewise Mercurial's
-`.hg/hgrc` and Jujutsu's `.jj/repo`. Every name a path goes by counts: as
+not made in a folder that is not one yet - an `objects` or `refs` file
+counts as much as a folder, and an archive member named `HEAD` is not
+extracted); likewise Mercurial's `.hg/hgrc` and `.hg/hgrc-not-shared`,
+Sapling's `.sl/config`, Jujutsu's `.jj/repo`, darcs's
+`_darcs/prefs/defaults` and Breezy's `.bzr/branch/branch.conf` (and the
+`.hg`, `.sl`, `_darcs`, `.bzr` folders themselves). Every name a path goes by counts: as
 typed, after each symlink on the way, and resolved - and the target of a
 symlink in those places (GNU stow: `~/.config/kitty -> ~/dotfiles/kitty`)
 is protected like the place itself, unless you grant that target. A file
@@ -1581,8 +1588,14 @@ writable home are mounted read-only and no new one can be made, the
 targets of such symlinks are read-only; the Git config, hooks, info and
 `commondir` of the agent's folder and of the repositories one folder below
 it are read-only too, and a `.git/commondir` the agent makes there is set
-aside (renamed `commondir.set-aside-by-axross-<time>`) when its task ends. MCP `chmod` sets no setuid, setgid or sticky bit and
-makes nothing group- or world-writable.
+aside (renamed `commondir.set-aside-by-axross-<time>`) when its task ends,
+like a `.git/config.worktree` and the `commondir` and `config.worktree` of
+the submodules' and worktrees' Git folders (`.git/modules/<name>`,
+`.git/worktrees/<name>`) made during the task. A new repository the agent
+makes in its folder is not covered (the documented limit of a compromised
+worker). MCP `chmod` sets no setuid, setgid or sticky bit,
+makes nothing group- or world-writable and does not change a file that has
+other hard links (its mode belongs to every name).
 
 **Secrets the agent does not read**, besides axross's own: the credential
 stores of common tools (`~/.aws`, `~/.kube`, `~/.docker/config.json`,
@@ -1598,6 +1611,16 @@ is secret and read-only for every tool as well: a trashed key is still a
 key, and what is restored from the trash is put back with axross's rights.
 A link to a secret (`~/.ssh/id_ed25519 -> ~/keys/id_ed25519`) makes its
 target secret, and a hard link to a secret file is not read either.
+Anywhere - also in a project folder - the agent does not read a private key
+or password database found by its contents (`-----BEGIN … PRIVATE KEY-----`,
+an OpenSSH or PuTTY key, a KeePass database) or files that by their name
+hold credentials (`.env`, `.env.*` but not `.env.example`/`.sample`/
+`.template`, `.netrc`, `.git-credentials`, `.pgpass`, `*.tfstate`,
+`*.kdbx`, `id_rsa`/`id_ed25519`/`id_ecdsa`, `*.ppk`, `*.p12`, `*.pfx`).
+With a root that holds `/proc` (`--mcp-root /`) a process's environment,
+command line, memory, maps and open files (`/proc/<pid>/environ`, …,
+`/proc/self`) and `/run/secrets` are not read either. The sandbox hides
+only the home's secrets; project files stay visible to commands there.
 The trash records each entry with a signature: an entry whose record or
 data was changed is not restored, and one that goes back into a protected
 place (a start file, an autostart entry) is restored from the Trash window
@@ -1777,8 +1800,23 @@ without asking. A program can run in a sandbox profile; one without
 says *runs on this machine, not in a container*. **Contained by
 default:** without a sandbox profile only a pure launcher starts - an
 interpreter running a script or a module already on disk (`node
-server.js`, `python3 -u server.py`, `python -m module`, `java -jar
-x.jar`, `dotnet x.dll`, `bash x.sh`, `ruby`/`perl`/`php` with a script).
+/srv/server.js`, `python3 -u /srv/server.py`, `python -m module`, `java
+-jar /srv/x.jar`, `dotnet /srv/x.dll`, `bash /srv/x.sh`,
+`ruby`/`perl`/`php` with a script). The script is named by its absolute
+path; the interpreter is found on the server's PATH and must be installed
+by the system (owned by root, writable by no one else) or a version
+manager (`~/.nvm`, `~/.pyenv`, `~/.asdf`, mise, Homebrew …) - not
+`./python3` or a `node` in `~/Downloads`. A server whose environment loads
+code (`BASH_ENV`, `NODE_OPTIONS`, `PERL5OPT`, `PYTHONPATH`, `RUBYOPT`,
+`LD_PRELOAD`, `JAVA_TOOL_OPTIONS` …; the details show their values, tokens
+hidden) is no pure launcher, and neither is a package or build tool run
+by an interpreter (`ruby …/bundle`, `python -m jupyter`; the downloading
+ones - `python -m tox`, `node …/yarn/lib/cli.js`, `perl …/cpan`,
+`php composer.phar` - are refused like `npx`). A program server run on
+this machine starts in its own empty folder
+(`$XDG_STATE_HOME/axross/mcp-run/<server>`, 0700), never in the folder
+axross was started from, and `python -m` with `PYTHONSAFEPATH=1`; of its
+stderr the last 20 lines, each cut at 4 KiB, are kept.
 Any other program - a binary, a build tool (`bazel run`, `make`, `mix
 run`, `swift run` …), a package manager - says *not started: needs a
 sandbox profile or Trusted* and is refused at its start until it runs in
@@ -2143,7 +2181,11 @@ next start. An update of the binary brings the installed units along - the
 new release's, checked the same way - before the new binary is fetched; when
 the release's pack manifest was re-issued (same version, a pack fixed),
 *Help → Features…* offers *Update packs*, checked the same way
-(docs/PACKS.md).
+(docs/PACKS.md). At start, a pack folder that someone else may write (its
+version folder, a wheel folder or a parent - also of the real path, when
+a parent is a symlink) is not put on the import path; the update and the
+tour-video caches are checked the same way, and a parent folder its group
+may write is refused too (unless the group is your own private group).
 
 
 - **Check at start.** Once per start, about two seconds after the window

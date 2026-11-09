@@ -158,7 +158,7 @@ AREAS: tuple[Area, ...] = (
     )),
     Area("media", "Media / Audio / Voice", (
         *_core("audio_eq", "audio_route", "audio_settings", "multimedia_env", "multimedia_probe",
-               "media_collect", "media_load", "previews", "voice_audio", "voice_models",
+               "media_collect", "media_load", "previews", "svg_worker", "voice_audio", "voice_models",
                "voice_settings", "voice_stt", "voice_text", "voice_worker", "system_mixer"),
         *_ui("audio_settings_page", "system_mixer_page", "voice", "voice_lens",
              "voice_settings_page",

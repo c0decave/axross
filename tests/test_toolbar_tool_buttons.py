@@ -88,7 +88,7 @@ def _by_icon(win) -> dict:
     # Main, then Tools (the tools moved to a bar of their own that wraps
     # to a second row on a narrow window): toolbar order.
     bars = [tb for title in ("Main", "Tools") for tb in win.findChildren(QToolBar)
-            if tb.windowTitle() == title]
+            if tb.objectName() == f"ax{title}Toolbar"]
     return {a.property("axIcon"): a for bar in bars for a in bar.actions() if a.property("axIcon")}
 
 

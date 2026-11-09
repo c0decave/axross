@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.i18n import tr
+from core.i18n import format_percent, tr
 from ui.close_corner import add_close_corner
 from ui.format_utils import measured_bytes as size_text
 from ui.icon_provider import set_window_icon
@@ -112,7 +112,7 @@ class DirSizeModel(QAbstractTableModel):
             return str(row.folders)
         if column == COL_SHARE:
             share = self.share(row)
-            return DASH if share is None else f"{share:.1f} %"
+            return DASH if share is None else format_percent(share, 1)
         return row.notes
 
     def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
