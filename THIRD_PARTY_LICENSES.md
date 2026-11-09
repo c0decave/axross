@@ -429,26 +429,23 @@ The release notes name the components and their versions.
 <!-- third-party:native-files -->
 <!-- Generated from the built binaries by `python scripts/native_inventory.py --write dist/axross-full dist/axross-slim`; tests/test_native_inventory.py fails at release time when it drifts. -->
 
-`axross-full` 433 ELF files (222 of them Python extension modules); `axross-slim` 315 ELF files (145 of them Python extension modules). *Read from*: `rpm` the builder image's package, `wheel` the library is the wheel's own, `sbom` the wheel's SBOM, `file` a version string in the file, `sibling` that string in the library of the same build next to it, `soname` only the ABI number of the file name, `credits` not in the binary: the version resources/credits/third_party.json names.
+`axross-full` 436 ELF files (233 of them Python extension modules); `axross-slim` 306 ELF files (143 of them Python extension modules). *Read from*: `rpm` the builder image's package, `cpython` the libpython of the Python the build ran with, `wheel` the library is the wheel's own, `sbom` the wheel's SBOM, `file` a version string in the file, `sibling` that string in the library of the same build next to it, `soname` only the ABI number of the file name, `credits` not in the binary: the version resources/credits/third_party.json names.
 
 | File | Component | Version | Read from | Shipped by | In |
 |---|---|---|---|---|---|
 | `libbz2.so.1` | [bzip2](https://sourceware.org/bzip2/) | 1.0.8-11.el9 | rpm | rpm bzip2-libs | full, slim |
 | `libdbus-1.so.3` | [D-Bus](https://www.freedesktop.org/wiki/Software/dbus/) | 1.12.20-8.el9 | rpm | rpm dbus-libs | full, slim |
-| `libexpat.so.1` | [Expat](https://libexpat.github.io) | 2.5.0-6.el9_8.7 | rpm | rpm expat | full, slim |
-| `libfuse.so.2` | [libfuse 2](https://github.com/libfuse/libfuse) | 2.9.9-17.el9 | rpm | rpm fuse-libs | full, slim |
-| `libgdbm.so.6` | [GNU dbm](https://www.gnu.org.ua/software/gdbm/) | 1.23-1.el9 | rpm | rpm gdbm-libs | full |
-| `libgdbm_compat.so.4` | [GNU dbm](https://www.gnu.org.ua/software/gdbm/) | 1.23-1.el9 | rpm | rpm gdbm-libs | full |
 | `libglib-2.0.so.0` | [GLib](https://gitlab.gnome.org/GNOME/glib) | 2.68.4-19.el9_8.10 | rpm | rpm glib2 | full, slim |
 | `libgobject-2.0.so.0` | [GLib](https://gitlab.gnome.org/GNOME/glib) | 2.68.4-19.el9_8.10 | rpm | rpm glib2 | full, slim |
 | `libgthread-2.0.so.0` | [GLib](https://gitlab.gnome.org/GNOME/glib) | 2.68.4-19.el9_8.10 | rpm | rpm glib2 | full, slim |
 | `libgraphite2.so.3` | [Graphite](https://github.com/silnrsi/graphite) | 1.3.14-9.el9 | rpm | rpm graphite2 | full, slim |
 | `libharfbuzz.so.0` | [HarfBuzz](https://github.com/harfbuzz/harfbuzz) | 2.7.4-10.el9 | rpm | rpm harfbuzz | full, slim |
 | `libkeyutils.so.1` | [keyutils](https://git.kernel.org/pub/scm/linux/kernel/git/dhowells/keyutils.git) | 1.6.3-1.el9 | rpm | rpm keyutils-libs | full, slim |
-| `libgssapi_krb5.so.2` | [MIT Kerberos](https://web.mit.edu/kerberos/) | 1.21.1-10.el9_8 | rpm | rpm krb5-libs | full, slim |
-| `libk5crypto.so.3` | [MIT Kerberos](https://web.mit.edu/kerberos/) | 1.21.1-10.el9_8 | rpm | rpm krb5-libs | full, slim |
-| `libkrb5.so.3` | [MIT Kerberos](https://web.mit.edu/kerberos/) | 1.21.1-10.el9_8 | rpm | rpm krb5-libs | full, slim |
-| `libkrb5support.so.0` | [MIT Kerberos](https://web.mit.edu/kerberos/) | 1.21.1-10.el9_8 | rpm | rpm krb5-libs | full, slim |
+| `libgssapi_krb5.so.2` | [MIT Kerberos](https://web.mit.edu/kerberos/) | 1.21.1-10.el9_8.1 | rpm | rpm krb5-libs | full, slim |
+| `libk5crypto.so.3` | [MIT Kerberos](https://web.mit.edu/kerberos/) | 1.21.1-10.el9_8.1 | rpm | rpm krb5-libs | full, slim |
+| `libkrb5.so.3` | [MIT Kerberos](https://web.mit.edu/kerberos/) | 1.21.1-10.el9_8.1 | rpm | rpm krb5-libs | full, slim |
+| `libkrb5support.so.0` | [MIT Kerberos](https://web.mit.edu/kerberos/) | 1.21.1-10.el9_8.1 | rpm | rpm krb5-libs | full, slim |
+| `libatomic.so.1` | [GCC runtime libraries](https://gcc.gnu.org) | 11.5.0-14.el9.alma.1 | rpm | rpm libatomic | full |
 | `libblkid.so.1` | [util-linux libraries](https://github.com/util-linux/util-linux) | 2.37.4-25.el9 | rpm | rpm libblkid | full, slim |
 | `libbrotlicommon.so.1` | [Brotli (C library)](https://github.com/google/brotli) | 1.0.9-10.el9_8.1 | rpm | rpm libbrotli | full, slim |
 | `libbrotlidec.so.1` | [Brotli (C library)](https://github.com/google/brotli) | 1.0.9-10.el9_8.1 | rpm | rpm libbrotli | full, slim |
@@ -460,9 +457,8 @@ The release notes name the components and their versions.
 | `libmount.so.1` | [util-linux libraries](https://github.com/util-linux/util-linux) | 2.37.4-25.el9 | rpm | rpm libmount | full, slim |
 | `libpng16.so.16` | [libpng](https://www.libpng.org) | 1.6.37-15.el9_8.2 | rpm | rpm libpng | full, slim |
 | `libselinux.so.1` | [libselinux](https://github.com/SELinuxProject/selinux) | 3.6-3.el9 | rpm | rpm libselinux | full, slim |
-| `libuuid.so.1` | [util-linux libraries](https://github.com/util-linux/util-linux) | 2.37.4-25.el9 | rpm | rpm libuuid | full, slim |
-| `libX11.so.6` | [X.Org client libraries](https://www.x.org) | 1.8.12-1.el9 | rpm | rpm libX11 | full, slim |
-| `libX11-xcb.so.1` | [X.Org client libraries](https://www.x.org) | 1.8.12-1.el9 | rpm | rpm libX11-xcb | full, slim |
+| `libX11.so.6` | [X.Org client libraries](https://www.x.org) | 1.8.12-1.el9_8.1 | rpm | rpm libX11 | full, slim |
+| `libX11-xcb.so.1` | [X.Org client libraries](https://www.x.org) | 1.8.12-1.el9_8.1 | rpm | rpm libX11-xcb | full, slim |
 | `libXau.so.6` | [X.Org client libraries](https://www.x.org) | 1.0.9-8.el9 | rpm | rpm libXau | full, slim |
 | `libxcb-glx.so.0` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 1.13.1-9.el9 | rpm | rpm libxcb | full, slim |
 | `libxcb-randr.so.0` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 1.13.1-9.el9 | rpm | rpm libxcb | full, slim |
@@ -477,18 +473,13 @@ The release notes name the components and their versions.
 | `libxkbcommon-x11.so.0` | [libxkbcommon](https://xkbcommon.org) | 1.0.3-4.el9 | rpm | rpm libxkbcommon-x11 | full, slim |
 | `libxml2.so.2` | [libxml2](https://gitlab.gnome.org/GNOME/libxml2) | 2.9.13-14.el9_8.5 | rpm | rpm libxml2 | full, slim |
 | `libXrandr.so.2` | [X.Org client libraries](https://www.x.org) | 1.5.2-8.el9 | rpm | rpm libXrandr | full, slim |
-| `libXrender.so.1` | [X.Org client libraries](https://www.x.org) | 0.9.10-16.el9_8.1 | rpm | rpm libXrender | full, slim |
+| `libXrender.so.1` | [X.Org client libraries](https://www.x.org) | 0.9.10-16.el9_8.2 | rpm | rpm libXrender | full, slim |
 | `libzstd.so.1` | [Zstandard](https://github.com/facebook/zstd) | 1.5.5-1.el9 | rpm | rpm libzstd | full, slim |
 | `liblz4.so.1` | [LZ4](https://github.com/lz4/lz4) | 1.9.3-5.el9 | rpm | rpm lz4-libs | full, slim |
-| `libmpdec.so.3` | [mpdecimal](https://www.bytereef.org/mpdecimal/) | 2.5.1-3.el9 | rpm | rpm mpdecimal | full, slim |
-| `libtinfo.so.6` | [ncurses (libtinfo)](https://invisible-island.net/ncurses/) | 6.2-12.20210508.el9 | rpm | rpm ncurses-libs | full, slim |
 | `libcrypto.so.3` | [OpenSSL](https://www.openssl.org) | 3.5.8-2.el9_8 | rpm | rpm openssl-libs | full, slim |
 | `libssl.so.3` | [OpenSSL](https://www.openssl.org) | 3.5.8-2.el9_8 | rpm | rpm openssl-libs | full, slim |
 | `libpcre.so.1` | [PCRE and PCRE2](https://www.pcre.org) | 8.44-4.el9 | rpm | rpm pcre | full, slim |
 | `libpcre2-8.so.0` | [PCRE and PCRE2](https://www.pcre.org) | 10.40-7.el9_8 | rpm | rpm pcre2 | full, slim |
-| `libpython3.12.so.1.0` | [Python](https://www.python.org) | 3.12.15-1.el9_8 | rpm | rpm python3.12-libs | full, slim |
-| `libreadline.so.8` | [GNU Readline](https://tiswww.case.edu/php/chet/readline/rltop.html) | 8.1-4.el9 | rpm | rpm readline | full, slim |
-| `libsqlite3.so.0` | [SQLite](https://www.sqlite.org) | 3.34.1-11.el9_8 | rpm | rpm sqlite-libs | full, slim |
 | `libsystemd.so.0` | [libsystemd](https://systemd.io) | 252-67.el9_8.6.alma.1 | rpm | rpm systemd-libs | full, slim |
 | `libxcb-util.so.1` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 0.4.0-19.el9 | rpm | rpm xcb-util | full, slim |
 | `libxcb-cursor.so.0` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 0.1.4-3.el9 | rpm | rpm xcb-util-cursor | full, slim |
@@ -498,6 +489,7 @@ The release notes name the components and their versions.
 | `libxcb-icccm.so.4` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 0.4.1-22.el9 | rpm | rpm xcb-util-wm | full, slim |
 | `liblzma.so.5` | [XZ Utils (liblzma)](https://tukaani.org/xz/) | 5.2.5-8.el9_8.1 | rpm | rpm xz-libs | full, slim |
 | `libz.so.1` | [zlib](https://zlib.net) | 1.2.11-40.el9 | rpm | rpm zlib | full, slim |
+| `libpython3.12.so.1.0` | [Python](https://www.python.org) | 3.12.8 | cpython | python-build-standalone 3.12.8 | full, slim |
 | `av.libs/libasound-c7818c60.so.2.0.0` | [alsa-lib](https://github.com/alsa-project/alsa-lib) | 2.0.0 | soname | wheel av 19.0.2 | full |
 | `av.libs/libavcodec-d61378e8.so.63.1.102` | [FFmpeg (PyAV build)](https://ffmpeg.org) | 9.0.2 | file | wheel av 19.0.2 | full |
 | `av.libs/libavdevice-c9c4901c.so.63.1.102` | [FFmpeg (PyAV build)](https://ffmpeg.org) | 9.0.2 | file | wheel av 19.0.2 | full |
@@ -528,8 +520,9 @@ The release notes name the components and their versions.
 | `av.libs/libxcb-shape-7716c890.so.0.0.0` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 1.13.1-1.el8 | sbom | wheel av 19.0.2 | full |
 | `av.libs/libxcb-shm-0be6dfbf.so.0.0.0` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 1.13.1-1.el8 | sbom | wheel av 19.0.2 | full |
 | `av.libs/libxcb-xfixes-6de855b8.so.0.0.0` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 1.13.1-1.el8 | sbom | wheel av 19.0.2 | full |
-| `ctranslate2.libs/libctranslate2-42c542ff.so.4.8.4` | [ctranslate2](https://github.com/OpenNMT/CTranslate2) | 4.8.4 | wheel | wheel ctranslate2 4.8.4 | full |
-| `ctranslate2.libs/libgomp-e985bcbb.so.1.0.0` | [GCC runtime libraries](https://gcc.gnu.org) | 8.5.0-28.el8_10.alma.1 | sbom | wheel ctranslate2 4.8.4 | full |
+| `ctranslate2.libs/libctranslate2-bdb19cbc.so.4.8.3` | [ctranslate2](https://github.com/OpenNMT/CTranslate2) | 4.8.3 | wheel | wheel ctranslate2 4.8.3 | full |
+| `ctranslate2.libs/libgomp-e985bcbb.so.1.0.0` | [GCC runtime libraries](https://gcc.gnu.org) | 1.0.0 | soname | wheel ctranslate2 4.8.3 | full |
+| `libusb-1.0.so` | [libusb](https://github.com/libusb/libusb) | 1.0.26.4 | wheel | wheel libusb-package 1.0.26.4 | full |
 | `numpy.libs/libgfortran-83c28eba-468e71e5.so.5.0.0` | [GCC runtime libraries](https://gcc.gnu.org) | 5.0.0 | soname | wheel numpy 2.5.4 | full |
 | `numpy.libs/libquadmath-2284e583-a9307bba.so.0.0.0` | [GCC runtime libraries](https://gcc.gnu.org) | 0.0.0 | soname | wheel numpy 2.5.4 | full |
 | `numpy.libs/libscipy_openblas64_-f48b354e.so` | [OpenBLAS](https://github.com/OpenMathLib/OpenBLAS) | 0.3.34 | file | wheel numpy 2.5.4 | full |
@@ -642,31 +635,38 @@ The release notes name the components and their versions.
 | `PyQt6/Qt6/plugins/wayland-shell-integration/libxdg-shell.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
 | `PyQt6/Qt6/plugins/xcbglintegrations/libqxcb-egl-integration.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
 | `PyQt6/Qt6/plugins/xcbglintegrations/libqxcb-glx-integration.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
-| `bin/fd` | [fd](https://github.com/sharkdp/fd) | 10.5.0 | file | build | full |
-| `bin/rg` | [ripgrep](https://github.com/BurntSushi/ripgrep) | 15.2.0 | file | build | full |
+| `xeddsa.libs/libsodium-f5304dcb.so.23.3.0` | [libsodium](https://github.com/jedisct1/libsodium) | 23.3.0 | soname | wheel xeddsa 1.2.0 | full |
 | `650fdafa2468af73c11f__mypyc.cpython-312-x86_64-linux-gnu.so` (1 extension modules) | [chardet](https://github.com/chardet/chardet) | - | - | bundle | full, slim |
 | `_brotli.cpython-312-x86_64-linux-gnu.so` (1 extension modules) | [brotli](https://github.com/google/brotli) | - | - | bundle | full, slim |
 | `_cffi_backend.cpython-312-x86_64-linux-gnu.so` (1 extension modules) | [cffi](https://github.com/python-cffi/cffi) | - | - | bundle | full, slim |
-| `python3.12/lib-dynload/` (50 (full), 48 (slim) extension modules) | [Python](https://www.python.org) | 3.12.15-1.el9_8 | rpm | rpm python3.12-libs | full, slim |
+| `_libxeddsa.abi3.so` (1 extension modules) | [python-xeddsa](https://github.com/Syndace/python-xeddsa) | - | - | bundle | full |
+| `aiohttp/` (4 extension modules) | [aiohttp](https://github.com/aio-libs/aiohttp) | 3.14.5 | wheel | wheel aiohttp 3.14.5 | full |
 | `av/` (50 extension modules) | [PyAV](https://github.com/PyAV-Org/PyAV) | 19.0.2 | wheel | wheel av 19.0.2 | full |
 | `backports/` (1 extension modules) | [backports.zstd](https://github.com/rogdham/backports.zstd) | 1.8.0 | wheel | wheel backports-zstd 1.8.0 | full, slim |
 | `bcrypt/` (1 extension modules) | [bcrypt](https://github.com/pyca/bcrypt) | 5.0.0 | wheel | wheel bcrypt 5.0.0 | full, slim |
 | `chardet/` (16 extension modules) | [chardet](https://github.com/chardet/chardet) | 7.7.0 | wheel | wheel chardet 7.7.0 | full, slim |
 | `charset_normalizer/` (2 extension modules) | [charset-normalizer](https://github.com/jawah/charset_normalizer) | 3.5.2 | wheel | wheel charset-normalizer 3.5.2 | full, slim |
 | `cryptography/` (1 extension modules) | [cryptography](https://github.com/pyca/cryptography) | 50.0.2 | wheel | wheel cryptography 50.0.2 | full, slim |
-| `ctranslate2/` (1 extension modules) | [ctranslate2](https://github.com/OpenNMT/CTranslate2) | 4.8.4 | wheel | wheel ctranslate2 4.8.4 | full |
-| `dulwich/` (3 extension modules) | [dulwich](https://github.com/dulwich/dulwich) | 1.2.19 | wheel | wheel dulwich 1.2.19 | full, slim |
+| `ctranslate2/` (1 extension modules) | [ctranslate2](https://github.com/OpenNMT/CTranslate2) | 4.8.3 | wheel | wheel ctranslate2 4.8.3 | full |
+| `dulwich/` (3 extension modules) | [dulwich](https://github.com/dulwich/dulwich) | 1.2.17 | wheel | wheel dulwich 1.2.17 | full, slim |
+| `frozenlist/` (1 extension modules) | [frozenlist](https://github.com/aio-libs/frozenlist) | 1.8.0 | wheel | wheel frozenlist 1.8.0 | full |
+| `google/` (1 extension modules) | [google-api-core](https://github.com/googleapis/google-cloud-python) | 2.42.0 | wheel | wheel google-api-core 2.42.0 | full |
 | `hf_xet/` (1 extension modules) | [hf-xet](https://github.com/huggingface/xet-core) | 1.7.0 | wheel | wheel hf-xet 1.7.0 | full |
 | `inflate64/` (1 extension modules) | [inflate64](https://github.com/miurahr/inflate64) | 1.0.4 | wheel | wheel inflate64 1.0.4 | full, slim |
 | `lxml/` (7 extension modules) | [lxml](https://github.com/lxml/lxml) | 6.1.3 | wheel | wheel lxml 6.1.3 | full |
 | `markupsafe/` (1 extension modules) | [MarkupSafe](https://github.com/pallets/markupsafe) | 3.0.4 | wheel | wheel markupsafe 3.0.4 | full |
+| `multidict/` (1 extension modules) | [multidict](https://github.com/aio-libs/multidict) | 7.1.0 | wheel | wheel multidict 7.1.0 | full |
 | `numpy/` (13 extension modules) | [numpy](https://github.com/numpy/numpy) | 2.5.4 | wheel | wheel numpy 2.5.4 | full |
 | `onnxruntime/` (1 extension modules) | [onnxruntime](https://github.com/microsoft/onnxruntime) | 1.31.0 | wheel | wheel onnxruntime 1.31.0 | full |
 | `PIL/` (6 extension modules) | [Pillow](https://github.com/python-pillow/Pillow) | 13.0.0 | wheel | wheel pillow 13.0.0 | full, slim |
+| `propcache/` (1 extension modules) | [propcache](https://github.com/aio-libs/propcache) | 0.5.4 | wheel | wheel propcache 0.5.4 | full |
 | `psutil/` (1 extension modules) | [psutil](https://github.com/giampaolo/psutil) | 7.2.2 | wheel | wheel psutil 7.2.2 | full, slim |
 | `psycopg_binary/` (2 extension modules) | [psycopg-binary](https://github.com/psycopg/psycopg) | 3.3.6 | wheel | wheel psycopg-binary 3.3.6 | full, slim |
 | `bcj/` (1 extension modules) | [pybcj](https://github.com/miurahr/pybcj) | 1.0.8 | wheel | wheel pybcj 1.0.8 | full, slim |
+| `pycares/` (1 extension modules) | [pycares](https://github.com/saghul/pycares) | 5.2.1 | wheel | wheel pycares 5.2.1 | full |
+| `Crypto/` (46 extension modules) | [pycryptodome](https://github.com/Legrandin/pycryptodome) | 4.1.0 | wheel | wheel pycryptodome 4.1.0 | full, slim |
 | `Cryptodome/` (42 extension modules) | [pycryptodomex](https://github.com/Legrandin/pycryptodome) | 3.24.1 | wheel | wheel pycryptodomex 3.24.1 | full, slim |
+| `pydantic_core/` (1 extension modules) | [pydantic_core](https://github.com/pydantic/pydantic/tree/main/pydantic-core) | 2.50.1 | wheel | wheel pydantic-core 2.50.1 | full |
 | `bson/` (1 extension modules) | [pymongo](https://github.com/mongodb/mongo-python-driver) | 4.19.0 | wheel | wheel pymongo 4.19.0 | full, slim |
 | `pymongo/` (1 extension modules) | [pymongo](https://github.com/mongodb/mongo-python-driver) | 4.19.0 | wheel | wheel pymongo 4.19.0 | full, slim |
 | `nacl/` (1 extension modules) | [PyNaCl](https://github.com/pyca/pynacl) | 1.6.2 | wheel | wheel pynacl 1.6.2 | full, slim |
@@ -674,7 +674,11 @@ The release notes name the components and their versions.
 | `PyQt6/` (11 extension modules) | [PyQt6](https://www.riverbankcomputing.com/software/pyqt/) | 6.11.0 | wheel | wheel pyqt6 6.11.0 | full, slim |
 | `yaml/` (1 extension modules) | [PyYAML](https://github.com/yaml/pyyaml) | 6.0.3 | wheel | wheel pyyaml 6.0.3 | full, slim |
 | `rpds/` (1 extension modules) | [rpds-py](https://github.com/crate-py/rpds) | 2026.9.1 | wheel | wheel rpds-py 2026.9.1 | full, slim |
+| `slixmpp/` (1 extension modules) | [Slixmpp](https://codeberg.org/poezio/slixmpp) | 1.17.0 | wheel | wheel slixmpp 1.17.0 | full |
 | `tokenizers/` (1 extension modules) | [tokenizers](https://github.com/huggingface/tokenizers) | 0.23.3 | wheel | wheel tokenizers 0.23.3 | full |
+| `vodozemac/` (1 extension modules) | [vodozemac](https://github.com/matrix-nio/vodozemac-python) | 0.10.0 | wheel | wheel vodozemac 0.10.0 | full |
+| `websockets/` (1 extension modules) | [websockets](https://github.com/python-websockets/websockets) | 17.3 | wheel | wheel websockets 17.3 | full |
+| `yarl/` (1 extension modules) | [yarl](https://github.com/aio-libs/yarl) | 1.25.1 | wheel | wheel yarl 1.25.1 | full |
 | linked into the wheel's modules | [OpenSSL](https://www.openssl.org) | 4.0.3 | sbom | wheel cryptography 50.0.2 | full, slim |
 | linked into the wheel's modules | FriBiDi | 1.0.17 | sbom | wheel pillow 13.0.0 | full, slim |
 | linked into the wheel's modules | fribidi-shim | 1.x | sbom | wheel pillow 13.0.0 | full, slim |
