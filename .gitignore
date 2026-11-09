@@ -19,6 +19,19 @@ build/*
 !build/requirements-bundle.in
 !build/requirements-bundle.txt
 !build/requirements-bootstrap.txt
+# The rest of what scripts/build_dist.sh reads from a clean `git archive`
+# (the CI builder has nothing else): the build's and the scanners' locks,
+# the target systems' package lists, the reviewed young-release exceptions,
+# capa's pinned rules, the standalone tools' spec.
+!build/requirements-dist-tools.in
+!build/requirements-dist-tools.txt
+!build/requirements-scan-tools.in
+!build/requirements-scan-tools.txt
+!build/sysroot/
+!build/young-release-exceptions.txt
+!build/capa-rules.txt
+!build/capa-sigs.txt
+!build/standalone.spec
 build-tmp/
 *.whl
 

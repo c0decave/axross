@@ -1,0 +1,6 @@
+# capa's FLIRT signatures (library functions recognised in PE files): the
+# capa source release matching flare-capa in build/requirements-scan-tools.txt,
+# "url sha256". The flare-capa wheel carries no signatures, and capa refuses
+# every PE file without them. Checked by security/supply_chain_gate.py before
+# it is unpacked (only .sig files).
+https://github.com/mandiant/capa/archive/refs/tags/v10.0.0.tar.gz d3f6006ad61e6591896f524566c191eca89c6220611969e1bd485bd9a1098180

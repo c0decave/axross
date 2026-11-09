@@ -1,0 +1,18 @@
+# The scanners of the supply-chain gate (security/supply_chain_scan.py), in a
+# venv of their own at build time - never part of a bundle. Locked with
+# hashes in build/requirements-scan-tools.txt and vetted by the gate's
+# standard-library stage before they are installed:
+#   scripts/lock_scan_tools.sh
+#
+# GuardDog (Datadog): its YARA rules for malicious packages (the gate reads
+# the rule files; GuardDog itself is never imported or run - it fetches lists
+# from the network). No Semgrep: none of the rules used needs it.
+guarddog>=3.2.0
+# GHSA-2qm8-x737-gmw5 and three more, fixed in 0.6.5 (a reviewed young release)
+pyasn1>=0.6.5
+# YARA over every member of every archive (security/yara_rules).
+yara-python>=4.5.4
+# capa (Mandiant): what a native binary can do (network, processes, crypto ...).
+flare-capa>=10.0.0
+# Verifies PyPI's PEP 740 attestations (Sigstore) of every file used.
+pypi-attestations>=0.0.27

@@ -1,0 +1,9 @@
+# Releases younger than the supply-chain gate's minimum age (14 days) that the
+# lock scripts may still take: "package upload-cutoff reason". Each one also
+# needs a reviewed baseline with "young_release" (security/supply_chain_gate.py
+# accept --young REASON). Only for security fixes; remove the line once the
+# release is old enough.
+pyasn1 2026-10-28T00:00:00Z 0.6.5 fixes GHSA-2qm8-x737-gmw5 GHSA-9m75-vc3g-4x39 GHSA-fm9c-5rcf-2q5p GHSA-mm57-4v3p-rchx (quadratic CPU decoding crafted ASN.1)
+pypdf 2026-10-29T00:00:00Z 6.21.4 fixes GHSA-5849-834g-hvw5 GHSA-mfr5-77xh-9j7h GHSA-cggf-277g-3q54 (parser advisories; axross opens untrusted PDFs with it)
+brotli 2026-10-23T00:00:00Z 1.2.1 fixes GHSA-9v8h-qqgm-4m35 / PYSEC-2026-4322 (1.2.0 has it)
+brotlicffi 2026-10-23T00:00:00Z 1.2.1.0 fixes GHSA-9v8h-qqgm-4m35 / PYSEC-2026-4323

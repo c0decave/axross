@@ -1,0 +1,15 @@
+# The tools of scripts/build_dist.sh itself: PyPA build (the sdist and wheel,
+# built without isolation against the pinned setuptools/wheel below, so no
+# unhashed build backend is fetched) and zstandard (AlmaLinux's zstd RPMs).
+# Locked with hashes into requirements-dist-tools.txt by scripts/build_dist.sh --lock-tools.
+build==1.2.2
+zstandard==0.23.0
+setuptools>=84.1.0
+wheel>=0.46.2
+# PyInstaller's bootloader is built from its hash-pinned sdist (no prebuilt
+# native starter from PyPI goes into a bundle): its build backend, and zig as
+# the C compiler (clang-compatible, a glibc floor per target).
+hatchling>=1.27
+# 0.17.0 was yanked on PyPI ("partial upload due to hitting a PyPI limit");
+# its replacements are younger than the gate's 14 days.
+ziglang>=0.15.1,!=0.17.0

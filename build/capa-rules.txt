@@ -1,0 +1,4 @@
+# The rules of capa (security/supply_chain_scan.py), the release matching
+# flare-capa in build/requirements-scan-tools.txt: "url sha256". Checked by
+# security/supply_chain_gate.py before it is unpacked (only .yml files).
+https://github.com/mandiant/capa-rules/archive/refs/tags/v10.0.0.tar.gz 3d14dbdaf5b71731e42395ed5fa4d287418e6a2e5d6b0a348c7fd9fbe1699611
