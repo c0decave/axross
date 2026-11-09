@@ -25,7 +25,7 @@ source tree:
 | Output | How to build | Where |
 |---|---|---|
 | `axross-<version>.tar.gz`, `axross-<version>-py3-none-any.whl` | `python -m build` | anywhere |
-| Linux `axross-base`, `axross-slim`, `axross-full` (+ `axross-media-player`, `axross-system-info`) for glibc 2.34 and 2.36, the packs, wheel and sdist - everything a release carries for Linux | `scripts/build_dist.sh` -> `dist/<version>/` | builder (see [Release flow](#release-flow)) |
+| Linux `axross-base`, `axross-slim`, `axross-full` (+ `axross-media-player`, `axross-system-info`) for glibc 2.34 and 2.36, the packs, wheel and sdist - everything a release carries for Linux | `scripts/build_dist.sh` -> `dist/<version>/`; in CI the `linux` job of `cross-platform.yml` runs it (artifact `axross-linux-dist`) | CI, or a builder (see [Release flow](#release-flow)) |
 | One Linux binary on this machine | `scripts/build_bundle.sh slim\|full\|base [--appimage]` | any Linux |
 | One portable Linux binary (glibc 2.34) | `scripts/build_bundle_docker.sh slim\|full` | Linux with Docker or podman |
 | macOS and Windows `axross-slim`, `axross-full` | the `bundle` job of `cross-platform.yml`, started by a tag push | CI |
@@ -550,6 +550,19 @@ Docker, no root); **maintainer** is the machine that holds the release key
 and the PyPI tokens, and never builds. Nothing on the builder or in CI
 ever sees the key.
 
+CI is the builder: the `linux` job of `cross-platform.yml`
+runs `scripts/build_dist.sh` unchanged on a GitHub runner (Ubuntu 24.04,
+the supply-chain gate first, both glibc variants against their own
+packages - no container), so a release needs no builder machine, only the
+maintainer's key. A builder machine stays the alternative (step 5). What
+CI cannot do, and stays with the maintainer: signing `SHA256SUMS` (the key
+never leaves the maintainer's machine; the workflow references no secret),
+the uploads to GitHub and PyPI, the update check of an installed 0.14.136
+binary, the tour videos, and the optional source tarball of
+`scripts/build_release.sh --tarball` (it needs the maintainer's private
+`~/.config/axross/release-identity-terms`; `build_dist.sh` never reads
+it).
+
 ```bash
 export GH_HOST=github.com   # gh must talk to github.com, whatever its default host is
 VERSION=0.15.177
@@ -603,9 +616,10 @@ VERSION=0.15.177
    gh run view "$RUN" --json jobs --jq '.jobs[] | "\(.name) \(.conclusion)"'
    ```
 
-   Every `smoke` and every `bundle` job must say `success` (four bundle
-   jobs: slim and full on macOS and Windows). Fix and push again until it
-   is; tag only a commit with a green run.
+   Every job must say `success`: `smoke` (three), `bundle` (four: slim
+   and full on macOS and Windows), `linux` (the whole Linux dist, a few
+   hours) and `linux-host-check` (three: full, slim, base). Fix and push
+   again until it is; tag only a commit with a green run.
 
 3. **maintainer** - tag that commit and push the tag:
 
@@ -615,11 +629,13 @@ VERSION=0.15.177
 
 4. **CI** - the tag starts `cross-platform.yml` again: the smoke tests on
    Linux, macOS and Windows, then the `bundle` job builds the macOS and
-   Windows one-file binaries, slim and full. Its artifacts are
+   Windows one-file binaries, slim and full, and the `linux` job the Linux
+   dist (step 5). The `bundle` artifacts are
    `axross-<flavor>-<runner.os>-<runner.arch>` - `axross-slim-macOS-ARM64`,
    `axross-full-macOS-ARM64`, `axross-slim-Windows-X64`,
    `axross-full-Windows-X64` - each with `axross-<flavor>[.exe]` and its
-   `.sha256`. Fetch them once the run is green:
+   `.sha256`; the `linux` artifact is `axross-linux-dist`. Fetch them all
+   once the run is green:
 
    ```bash
    RUN=$(gh run list --workflow cross-platform.yml --branch "v$VERSION" --limit 1 \
@@ -628,26 +644,47 @@ VERSION=0.15.177
    gh run download "$RUN" -D "dist/$VERSION-ci"
    ```
 
-5. **builder** - build the Linux binaries, the packs, wheel and sdist from
-   the tag (`build_dist.sh` builds `HEAD`, a clean `git archive`, after the
-   supply-chain gate passed):
+5. **CI** - the `linux` job builds the Linux binaries, the packs, wheel
+   and sdist from the tag with `scripts/build_dist.sh` (`HEAD`, a clean
+   `git archive`, after the supply-chain gate passed; `BUILD-INFO.md` names
+   the run), writes `NATIVE-COMPONENTS.md` (`scripts/native_inventory.py
+   --notes`), checks THIRD_PARTY_LICENSES.md against the binaries
+   (`--check`) and that `assemble_release.py` takes the folder, then
+   uploads it as `axross-linux-dist`; `linux-host-check` runs step 6's host
+   test on the downloaded artifact. Step 4's download put it at
+   `dist/$VERSION-ci/axross-linux-dist/`, which `assemble_release.py --ci`
+   takes in place of `--dist` (step 8). To have it where a builder writes
+   it (an artifact keeps no file mode):
+
+   ```bash
+   gh run download "$RUN" -n axross-linux-dist -D "dist/$VERSION"
+   chmod +x dist/$VERSION/glibc-2.3*/axross-*
+   ```
+
+   The folder holds `glibc-2.34/` and `glibc-2.36/` (each with
+   `axross-base`, `axross-slim`, `axross-full` and the tools
+   `axross-media-player`, `axross-system-info`), `packs/` (the wheels and
+   `packs-$VERSION.json`), `standalone/`, the wheel
+   `axross-$VERSION-py3-none-any.whl`, the sdist `axross-$VERSION.tar.gz`,
+   `SUPPLY-CHAIN.md`, `BUILD-INFO.md` and `NATIVE-COMPONENTS.md`. When
+   `--check` fails (a newer system package changed a native file), the run
+   uploads `axross-linux-third-party-licenses`, the THIRD_PARTY_LICENSES.md
+   these binaries want: review it, commit it, and run again.
+
+   **Alternative: a builder machine** (no CI run, or to rebuild one
+   locally) - the same script from the tag:
 
    ```bash
    git checkout "v$VERSION"
    scripts/build_dist.sh            # -> dist/$VERSION/
    ```
 
-   `dist/$VERSION/` then holds `glibc-2.34/` and `glibc-2.36/` (each with
-   `axross-base`, `axross-slim`, `axross-full` and the tools
-   `axross-media-player`, `axross-system-info`), `packs/` (the wheels and
-   `packs-$VERSION.json`), `standalone/`, the wheel
-   `axross-$VERSION-py3-none-any.whl`, the sdist `axross-$VERSION.tar.gz`,
-   `SUPPLY-CHAIN.md` and `BUILD-INFO.md`.
-
-6. **builder, or any current distribution** - the Linux binaries against
-   a current host (see "What comes from the host"), and the native
-   components for THIRD_PARTY_LICENSES.md and the release notes (fails when
-   a typed credits version disagrees):
+6. **builder, or any current distribution** - only when the Linux dist
+   comes from a builder (in CI the `linux` and `linux-host-check`
+   jobs run both, step 5): the Linux binaries against a current host (see
+   "What comes from the host"), and the native components for
+   THIRD_PARTY_LICENSES.md and the release notes (fails when a typed
+   credits version disagrees):
 
    ```bash
    for f in full slim base; do
@@ -692,9 +729,14 @@ VERSION=0.15.177
 
    ```bash
    .venv/bin/python scripts/assemble_release.py --version "$VERSION" \
-       --dist "dist/$VERSION" --ci "dist/$VERSION-ci" --out "dist/release-$VERSION" \
+       --ci "dist/$VERSION-ci" --out "dist/release-$VERSION" \
        --key /path/to/release-key.pem --require-all
    ```
+
+   `--ci` alone takes the Linux dist from its `axross-linux-dist` (a
+   folder, or the `.zip` the web page hands out); with a builder's
+   folder add `--dist "dist/$VERSION"` - it is used instead, and the
+   summary says so.
 
    `scripts/assemble_release.py` renames everything to the asset names of
    the contract below, checks every input against the checksum its build

@@ -771,3 +771,100 @@ def test_edge_changelog_section_stops_at_the_next_version():
     text = "# C\n\n## 1.2.30 - x\n\n- no\n\n## 1.2.3 - y\n\nyes\n\n## 1.2.2\n\nno\n"
     assert AR.changelog_section(text, "1.2.3") == ("## 1.2.3 - y", "yes")
     assert AR.changelog_section(text, "1.2.4") is None
+
+
+# -- the Linux dist from CI (cross-platform.yml, job linux) ----------------------------
+
+
+def make_ci_with_linux(root: Path, *, zipped=False, with_bundles=True) -> Path:
+    """Every artifact of a cross-platform run as gh run download (a folder
+    each) or the web page (a .zip each) hands them out: the bundle job's and
+    the linux job's axross-linux-dist - build_dist.sh's dist/<version>/,
+    without file modes (an artifact keeps none)."""
+    import shutil
+
+    ci = make_ci(root, zipped=zipped) if with_bundles else root / "ci"
+    ci.mkdir(exist_ok=True)
+    built = make_dist(root / "linux-runner")
+    for path in built.rglob("*"):
+        if path.is_file():
+            path.chmod(0o644)
+    if zipped:
+        with zipfile.ZipFile(ci / f"{AR.CI_LINUX}.zip", "w", zipfile.ZIP_DEFLATED) as zf:
+            for path in sorted(built.rglob("*")):
+                if path.is_file():
+                    zf.write(path, path.relative_to(built).as_posix())
+    else:
+        shutil.copytree(built, ci / AR.CI_LINUX)
+    return ci
+
+
+@pytest.mark.parametrize("zipped", [False, True], ids=["gh-run-download", "web-zip"])
+def test_happy_the_ci_artifacts_alone_make_the_whole_release(tmp_path, field_key, zipped):
+    """No builder: --ci with the linux job's artifact takes --dist's place,
+    every Linux asset, the packs, wheel, sdist and NATIVE-COMPONENTS.md
+    included (--require-all)."""
+    _key, key_file = field_key
+    ci, out = make_ci_with_linux(tmp_path, zipped=zipped), tmp_path / "rel"
+    assert run("--version", VERSION, "--ci", ci, "--out", out, "--key", key_file,
+               "--require-all") == 0
+    names = assets_of(out)
+    assert CONTRACT <= names
+    assert {"axross-media-player-glibc2.36", f"axross-{VERSION}.tar.gz",
+            f"axross_media_player-{VERSION}-py3-none-any.whl", f"packs-{VERSION}.json",
+            "SHA256SUMS.sig"} <= names
+    for name in ("axross-full", "axross-base-glibc2.36", "axross-system-info"):
+        assert (out / "assets" / name).stat().st_mode & 0o777 == 0o755
+    assert "libfake 1.0" in (out / "notes.md").read_text()
+    # the .zip was unpacked next to the downloads for the run only
+    assert sorted(p.name for p in tmp_path.iterdir() if p.name.startswith(".")) == []
+    assert run("--version", VERSION, "--check", out / "assets", "--require-all") == 0
+
+
+def test_edge_dist_wins_over_the_ci_linux_artifact(tmp_path, field_key, capsys):
+    _key, key_file = field_key
+    ci, out = make_ci_with_linux(tmp_path), tmp_path / "rel"
+    local = make_dist(tmp_path / "builder")
+    (local / "glibc-2.34" / "axross-full").write_bytes(elf("from the builder"))
+    sums_of(local / "glibc-2.34", [f"axross-{n}" for n in (*SU.FLAVORS, *AR.TOOLS)])
+    assert run("--version", VERSION, "--dist", local, "--ci", ci, "--out", out, "--key", key_file,
+               "--require-all") == 0
+    assert (out / "assets" / "axross-full").read_bytes() == elf("from the builder")
+    assert f"ci/{AR.CI_LINUX}: not used, --dist names the Linux dist" in capsys.readouterr().out
+
+
+def test_edge_without_the_linux_artifact_the_missing_dist_names_both_ways(tmp_path, capsys):
+    out = tmp_path / "rel"
+    assert run("--version", VERSION, "--ci", make_ci(tmp_path), "--out", out) == 0
+    assert f"or the linux job's {AR.CI_LINUX} in --ci" in capsys.readouterr().out
+
+
+def _evil_zip(ci: Path, member: str, *, link=False) -> None:
+    with zipfile.ZipFile(ci / f"{AR.CI_LINUX}.zip", "w") as zf:
+        zf.writestr("glibc-2.34/axross-full", elf("ok"))
+        info = zipfile.ZipInfo(member)
+        if link:
+            info.external_attr = (0o120777 << 16)
+        zf.writestr(info, "/etc/passwd" if link else "x")
+
+
+@pytest.mark.parametrize("member, link", [
+    ("../escaped", False), ("/abs/escaped", False), ("glibc-2.34/../../escaped", False),
+    ("glibc-2.34\\..\\escaped", False), ("glibc-2.36/axross-full", True)],
+    ids=["dotdot", "absolute", "nested-dotdot", "backslash", "symlink"])
+def test_sad_an_unsafe_linux_zip_is_refused_and_nothing_left(tmp_path, capsys, member, link):
+    ci = make_ci(tmp_path)
+    _evil_zip(ci, member, link=link)
+    out = tmp_path / "rel"
+    assert run("--version", VERSION, "--ci", ci, "--out", out) == 1
+    assert f"{AR.CI_LINUX}.zip" in capsys.readouterr().err
+    assert not (tmp_path / "escaped").exists() and not (tmp_path.parent / "escaped").exists()
+    assert sorted(p.name for p in tmp_path.iterdir() if p.name.startswith(".")) == []
+    assert not (out / "assets").exists()
+
+
+def test_sad_the_linux_artifact_both_unpacked_and_zipped_is_refused(tmp_path, capsys):
+    ci = make_ci_with_linux(tmp_path)
+    (ci / f"{AR.CI_LINUX}.zip").write_bytes(b"PK\x05\x06" + b"\0" * 18)
+    assert run("--version", VERSION, "--ci", ci, "--out", tmp_path / "rel") == 1
+    assert "keep one" in capsys.readouterr().err

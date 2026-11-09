@@ -15,12 +15,19 @@ refuses then):
   tools ``axross-{media-player,system-info}``, the wheel
   ``axross-<version>-py3-none-any.whl`` and the sdist ``axross-<version>.tar.gz``,
   ``standalone/`` (the tools' sdists and wheels) and ``packs/``.
-* ``CI`` - the macOS and Windows binaries of the tag's "Cross-platform"
-  workflow (.github/workflows/cross-platform.yml, job ``bundle``): one
-  artifact ``axross-<flavor>-<runner.os>-<runner.arch>`` per flavour and
-  system, each with ``axross-<flavor>[.exe]`` and its ``.sha256``. As
-  ``gh run download <run> -D CI`` writes them (a folder per artifact) or as
-  the web page hands them out (``<artifact>.zip``).
+* ``CI`` - the artifacts of the tag's "Cross-platform" workflow
+  (.github/workflows/cross-platform.yml), as ``gh run download <run> -D CI``
+  writes them (a folder per artifact) or as the web page hands them out
+  (``<artifact>.zip``):
+
+  - job ``bundle``, the macOS and Windows binaries: one artifact
+    ``axross-<flavor>-<runner.os>-<runner.arch>`` per flavour and system,
+    each with ``axross-<flavor>[.exe]`` and its ``.sha256``;
+  - job ``linux``, the artifact ``axross-linux-dist``: build_dist.sh's
+    ``dist/<version>/`` as built there (with ``NATIVE-COMPONENTS.md``). It
+    takes the place of ``--dist`` when that is not given (with ``--dist``
+    it is left alone); a ``.zip`` of it is unpacked next to ``CI`` for the
+    run (no absolute path, ``..`` or symbolic link inside) and removed.
 * ``PACKS`` - ``packs-<version>.json`` and the wheels it lists
   (default ``DIST/packs``).
 * ``DIST/NATIVE-COMPONENTS.md`` (scripts/native_inventory.py --notes) and
@@ -85,19 +92,21 @@ Nothing is uploaded. Exit status: 0 done, 1 refused, 2 usage.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import hashlib
 import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 import urllib.parse
 import zipfile
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -114,6 +123,11 @@ CI_SYSTEMS = {
     ("Windows", "X64"): ("win32", "amd64", "windows-x64"),
 }
 _CI_ARTIFACT = re.compile(r"axross-(base|slim|full)-([A-Za-z]+)-([A-Za-z0-9]+)")
+#: The linux job's artifact (cross-platform.yml): build_dist.sh's dist/<version>/.
+CI_LINUX = "axross-linux-dist"
+#: What an unpacked axross-linux-dist.zip may hold at most (two variants of
+#: five binaries, the packs: about 1.5 GB).
+MAX_CI_LINUX_BYTES = 16 << 30
 #: The upload lists and the notes (never assets; a downloaded draft may hold them).
 UPLOAD_LISTS = ("upload-1.txt", "upload-2.txt")
 NOTES = "notes.md"
@@ -357,9 +371,60 @@ def _read_member(path: Path, member: str, limit: int = 4096) -> bytes:
         return fh.read(limit)
 
 
+def _unpack_linux(archive: Path, dest: Path) -> None:
+    """*archive* (the web page's axross-linux-dist.zip) into *dest*: plain
+    files and folders inside it only."""
+    try:
+        with zipfile.ZipFile(archive) as zf:
+            members, total = zf.infolist(), 0
+            for info in members:
+                parts = PurePosixPath(info.filename).parts
+                if not parts or info.filename.startswith("/") or "\\" in info.filename \
+                        or any(part in ("..", "") or ":" in part for part in parts):
+                    raise Refused(f"{archive.name}: {info.filename!r} is not a path inside it")
+                if stat.S_ISLNK(info.external_attr >> 16):
+                    raise Refused(f"{archive.name}: {info.filename} is a symbolic link")
+                total += info.file_size
+                if total > MAX_CI_LINUX_BYTES:
+                    raise Refused(f"{archive.name} unpacks to more than {MAX_CI_LINUX_BYTES} bytes")
+            for info in members:
+                target = dest.joinpath(*PurePosixPath(info.filename).parts)
+                if info.is_dir():
+                    target.mkdir(parents=True, exist_ok=True)
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with zf.open(info) as src, open(target, "xb") as out:
+                    shutil.copyfileobj(src, out, _CHUNK)
+    except zipfile.BadZipFile:
+        raise Refused(f"{archive.name} is not a zip file") from None
+    except FileExistsError as exc:
+        raise Refused(f"{archive.name} holds {Path(exc.filename).name} twice") from None
+    except OSError as exc:
+        raise Refused(f"{archive.name} cannot be unpacked: {exc}") from None
+
+
+def ci_linux_dist(ci: Path, stack: contextlib.ExitStack) -> Path | None:
+    """The linux job's artifact in *ci* - build_dist.sh's dist/<version>/ -
+    or None. A .zip is unpacked next to *ci* until *stack* closes."""
+    folder, archive = ci / CI_LINUX, ci / (CI_LINUX + ".zip")
+    if folder.is_dir():
+        if archive.exists():
+            raise Refused(f"{ci} holds {CI_LINUX}/ and {CI_LINUX}.zip: keep one")
+        return folder
+    if not archive.is_file():
+        return None
+    # on the disk of the download (a tmpfs /tmp is memory), never inside *ci*
+    unpacked = Path(stack.enter_context(tempfile.TemporaryDirectory(
+        prefix=f".{CI_LINUX}-", dir=ci.resolve().parent, ignore_cleanup_errors=True)))
+    _unpack_linux(archive, unpacked)
+    return unpacked
+
+
 def collect_ci(ci: Path, plan: Plan) -> None:
     found: set[tuple[str, str]] = set()
     for artifact, files in _ci_entries(ci):
+        if artifact == CI_LINUX:
+            continue  # the Linux dist: ci_linux_dist
         match = _CI_ARTIFACT.fullmatch(artifact)
         if match is None or files is None:
             plan.skipped.append(f"ci/{artifact}: not an artifact of the bundle job")
@@ -919,7 +984,7 @@ def _verify_keys(args, signer: str | None) -> tuple[str, ...] | None:
     return field_keys() if args.key else None
 
 
-def _notes_inputs(args, plan: Plan) -> tuple[str, str]:
+def _notes_inputs(args, plan: Plan, dist: Path | None) -> tuple[str, str]:
     """(the CHANGELOG section, the native components) for notes.md; what is
     missing goes into plan.missing (--require-all refuses then)."""
     path = args.changelog or CHANGELOG
@@ -939,9 +1004,9 @@ def _notes_inputs(args, plan: Plan) -> tuple[str, str]:
             plan.missing.append(f"{path}: '{heading}' - turn it into '## {plan.version} - "
                                 "<date>' first (step 1 of the release flow)")
     native = ""
-    if args.dist is not None and any(i.kind == "binary" and i.system == "linux"
-                                     for i in plan.items):
-        native_path = args.dist / "NATIVE-COMPONENTS.md"
+    if dist is not None and any(i.kind == "binary" and i.system == "linux"
+                                for i in plan.items):
+        native_path = dist / "NATIVE-COMPONENTS.md"
         if native_path.is_file():
             native = native_path.read_text(encoding="utf-8")
         else:
@@ -951,30 +1016,41 @@ def _notes_inputs(args, plan: Plan) -> tuple[str, str]:
 
 
 def assemble(args) -> int:
+    with contextlib.ExitStack() as stack:  # an unpacked axross-linux-dist.zip lives as long
+        return _assemble(args, stack)
+
+
+def _assemble(args, stack: contextlib.ExitStack) -> int:
     version = args.version
     plan = Plan(version)
     dist = args.dist
+    if args.ci is not None and not args.ci.is_dir():
+        raise Refused(f"{args.ci} is not a folder")
+    ci_dist = ci_linux_dist(args.ci, stack) if args.ci is not None else None
+    if dist is None:
+        dist = ci_dist
+    elif ci_dist is not None:
+        plan.skipped.append(f"ci/{CI_LINUX}: not used, --dist names the Linux dist")
     if dist is not None:
         if not dist.is_dir():
             raise Refused(f"{dist} is not a folder")
         collect_linux(dist, plan)
         collect_python(dist, plan)
     else:
-        plan.missing.append("the Linux binaries, wheel and sdist (--dist: build_dist.sh's folder)")
+        plan.missing.append("the Linux binaries, wheel and sdist (--dist: build_dist.sh's folder, "
+                            f"or the linux job's {CI_LINUX} in --ci)")
     packs = args.packs or (dist / "packs" if dist is not None else None)
     if packs is not None:
         collect_packs(packs, plan, args.pack_wheels)
     else:
         plan.missing.append(f"packs/{P.manifest_name(version)} (--packs)")
     if args.ci is not None:
-        if not args.ci.is_dir():
-            raise Refused(f"{args.ci} is not a folder")
         collect_ci(args.ci, plan)
     else:
         plan.missing.append("the macOS and Windows binaries (--ci: the bundle job's artifacts)")
     if not plan.items:
         raise Refused("nothing to assemble")
-    notes_inputs = _notes_inputs(args, plan)
+    notes_inputs = _notes_inputs(args, plan, dist)
     if plan.missing and args.require_all:
         raise Refused("--require-all: missing " + "; ".join(plan.missing))
     out = args.out
@@ -1161,8 +1237,10 @@ def main(argv=None) -> int:
                            "draft")
     parser.add_argument("--version", default=None,
                         help="the release's version (default: axross/_version.py)")
-    parser.add_argument("--dist", type=Path, help="scripts/build_dist.sh's folder, dist/<version>")
-    parser.add_argument("--ci", type=Path, help="the bundle job's artifacts (folders or .zip)")
+    parser.add_argument("--dist", type=Path, help="scripts/build_dist.sh's folder, dist/<version> "
+                        f"(default: the linux job's {CI_LINUX} in --ci)")
+    parser.add_argument("--ci", type=Path, help="the cross-platform workflow's artifacts (folders "
+                        f"or .zip): the bundle job's, the linux job's {CI_LINUX}")
     parser.add_argument("--packs", type=Path, help="the packs folder (default: DIST/packs)")
     parser.add_argument("--pack-wheels", choices=PACK_WHEELS, default="unhosted",
                         help="unhosted (default): attach only the pack wheels without a PyPI "

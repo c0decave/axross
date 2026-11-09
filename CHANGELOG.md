@@ -1140,6 +1140,7 @@ the old code.
 
 ### Changed
 
+- **Linux binaries built in CI.** The `linux` job of `cross-platform.yml` runs `scripts/build_dist.sh` (supply-chain gate, glibc 2.34 and 2.36) and uploads `axross-linux-dist`; `assemble_release.py --ci` takes it, so a release needs no builder machine, only the maintainer's key.
 - **Del moves to the trash, Shift+Del deletes permanently.** Del used to
   delete for good. Now it moves the selection to the trash wherever the
   connection has one; read-only protocols and those without rename (Gopher,

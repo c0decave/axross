@@ -342,6 +342,11 @@ fi
     echo
     echo "From commit $COMMIT, a clean \`git archive\` of HEAD, by scripts/build_dist.sh."
     echo
+    if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+        # the linux job of .github/workflows/cross-platform.yml: which run built it
+        echo "Built by GitHub Actions: ${GITHUB_SERVER_URL:-}/${GITHUB_REPOSITORY:-}/actions/runs/${GITHUB_RUN_ID:-} (attempt ${GITHUB_RUN_ATTEMPT:-1}, ${GITHUB_REF:-}, runner image ${ImageOS:-?} ${ImageVersion:-?})."
+        echo
+    fi
     echo "| Path | What |"
     echo "|---|---|"
     [[ -f "$OUT/axross-$VERSION.tar.gz" ]] && echo "| axross-$VERSION.tar.gz, axross-$VERSION-py3-none-any.whl | PyPA build $BUILD_VERSION, isolated; platform-independent (PyPI) |"
