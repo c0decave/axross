@@ -288,6 +288,25 @@ def test_edge_a_closed_dock_is_opened_for_its_step_and_closed_again(window):
     assert not dock.isVisible()
 
 
+
+def test_edge_the_auto_hidden_bookmarks_sidebar_is_opened_for_its_step(window):
+    # a first start on a small screen hides the empty sidebar (UX round 7);
+    # the tour and the 0.15.177 tour video skipped "Bookmarks" because of it
+    sidebar = window._bookmark_sidebar
+    sidebar.hide()
+    pump()
+    runner = window.start_tour("find-organize")
+    pump()
+    while runner.running and runner.step.title != "Bookmarks":
+        runner.next()
+        pump()
+    assert runner.running and runner.step.title == "Bookmarks"
+    assert "Bookmarks" not in runner.skipped and sidebar.isVisible()
+    runner.end()
+    pump()
+    assert not sidebar.isVisible()
+
+
 # ---------------------------------------------------------------------------
 # Missing widgets are skipped, never a crash
 # ---------------------------------------------------------------------------

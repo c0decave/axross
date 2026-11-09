@@ -4,10 +4,10 @@ What changed in each axross release, for the people who use it. The full
 notes of a release, with every fix, are on its
 [GitHub release page](https://github.com/c0decave/axross/releases).
 
-## Unreleased (0.15.177)
+## 0.15.177 - 2026-11-09
 
 0.15.177 is the first release since 0.14.136 with one-file binaries for
-Linux, macOS and Windows: installed binaries update to it. Six rounds of
+Linux, macOS and Windows: installed binaries update to it. Nine rounds of
 reviews of the whole code (backends and transfers, security, the windows,
 the extensions, the entry points, concurrency, the docs against the code)
 found and fixed several hundred bugs; every fix comes with tests that fail on

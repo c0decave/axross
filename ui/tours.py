@@ -285,6 +285,9 @@ FIND_ORGANIZE = Tour(
             "bookmark to move them there (Ctrl copies). A remote bookmark keeps its "
             "connection profile.",
             "BookmarkSidebar",
+            # a first start on a small screen hides the empty sidebar (UX
+            # round 7): the step opens it instead of being skipped
+            reveal=True,
         ),
         TourStep(
             "Workspaces",

@@ -4,63 +4,63 @@
  "videos": {
   "de/automate": {
    "file": "axross-tour-de-automate.mp4",
-   "size": 2291053,
-   "sha256": "786894f7486ed46289509694c9638ca9083ccf83e41026f88c9f05fcbe008cd0"
+   "size": 2263751,
+   "sha256": "c1a777a43b99814687e6fbda10d62e1db0b4c13b182e8d378f8ebbd6e289026e"
   },
   "de/connect": {
    "file": "axross-tour-de-connect.mp4",
-   "size": 2504630,
-   "sha256": "0e018f84db1c7f3e325bc50ed3a474ee55fe9d7dd18fd27a7557b3cf8e3d30fb"
+   "size": 2461225,
+   "sha256": "b8b9d13745ac79836797013c251300cb5c3298fa45f61138a0f8ddd01ed73e95"
   },
   "de/copy-safely": {
    "file": "axross-tour-de-copy-safely.mp4",
-   "size": 2458121,
-   "sha256": "9be5822fc1d6dc3c0569ff79e262a4b58d7706ac6d9bd96250415f7dc9a39cfa"
+   "size": 2532612,
+   "sha256": "82018b254c979ac4207db5134498607cc45be56b03e72e96dad243297bdc8cdf"
   },
   "de/extensions": {
    "file": "axross-tour-de-extensions.mp4",
-   "size": 2211084,
-   "sha256": "dc1f0ad841bfbce3cca9f2dbb43e1020271db0a0b5794148f1fb856e269c2536"
+   "size": 2080212,
+   "sha256": "b5ce7b75c3401f89a4167686eedc7af66a3b7c6a8e0fb028ffc70e05879cca35"
   },
   "de/find-organize": {
    "file": "axross-tour-de-find-organize.mp4",
-   "size": 2257005,
-   "sha256": "7c203cda64ec4c7b6cf113e84c3ebca9fd5ce0148975d684478f7560d5c969f8"
+   "size": 2188510,
+   "sha256": "43fb944a7eaaa002ff79ede2d96d7052ecebe4413cc4a0525d5b8a704f6e01c5"
   },
   "de/getting-started": {
    "file": "axross-tour-de-getting-started.mp4",
-   "size": 3349107,
-   "sha256": "f54b802e74a104adac3af3629371604600278903cfe1beabcd25a5c9f9386d9f"
+   "size": 3288216,
+   "sha256": "b866231abe5a15910812953eb90f58eea5f7fed4d5284bd9e6fd0f321612bf21"
   },
   "en/automate": {
    "file": "axross-tour-en-automate.mp4",
-   "size": 1864883,
-   "sha256": "8ce35f028b30351247c06c24b01a233e39a73c18168e36120d24b28012081b8a"
+   "size": 1792417,
+   "sha256": "c6f5be56ecc6837864a6c23ec73f2a5525e07f772e0fa93b2a1fa914a41aa5e0"
   },
   "en/connect": {
    "file": "axross-tour-en-connect.mp4",
-   "size": 2138520,
-   "sha256": "2dfdaee628f2faabc25287393f08177f560a3c04f2f0666e3fd6d8b5cf76145b"
+   "size": 2102198,
+   "sha256": "debde8c14403e92aa1904141e7f2be54501b552c0ea8692575639ab954fd66a3"
   },
   "en/copy-safely": {
    "file": "axross-tour-en-copy-safely.mp4",
-   "size": 2072789,
-   "sha256": "606bf7ce82b3ca2712c5989bbba2c9949b819f14ad0c4262943c2f1bc6ad8056"
+   "size": 2017327,
+   "sha256": "044f6bf05ff5458043ffac7209fa323a32ffcd7cf6b76025badc2b78268c97fd"
   },
   "en/extensions": {
    "file": "axross-tour-en-extensions.mp4",
-   "size": 1920570,
-   "sha256": "15cf2acb59ee8cc383de16595b7c54c9f57284caabaea7b71910b96117178e36"
+   "size": 1793399,
+   "sha256": "ae02056e447b712968ac77b1df002bf5882064618bf56506f0075f21d61b5943"
   },
   "en/find-organize": {
    "file": "axross-tour-en-find-organize.mp4",
-   "size": 1825655,
-   "sha256": "3adb6e274dc68f0bae4ef0846a47ce0442109a8f01b171417ddae4efb5e2c936"
+   "size": 1767471,
+   "sha256": "23fc268c35761fbf6c0d69f8f13808eec2e1dba1142236de7653227e7af20e10"
   },
   "en/getting-started": {
    "file": "axross-tour-en-getting-started.mp4",
-   "size": 2799889,
-   "sha256": "4632602fb5e10de21c8c50ae9f87fd8332a850ec1f644c4c13989c06f8430814"
+   "size": 2748755,
+   "sha256": "fa4c5932e6917cbd02f4969900ec87a27a207a385c4d0a920f81c26527a687f1"
   }
  }
 }
