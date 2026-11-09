@@ -238,3 +238,14 @@ def test_happy_a_failed_build_leaves_its_last_lines_as_an_annotation() -> None:
     after = job["steps"][build + 1]
     assert after.get("if") == "failure()"
     assert "::error" in after["run"] and "%0A" in after["run"]
+
+
+def test_happy_the_builder_has_debian_s_archive_keys() -> None:
+    # sysroot_fetch.py verifies debian12's Release file with gpgv against
+    # /usr/share/keyrings; an Ubuntu runner has none (the second CI build
+    # stopped there: "no Debian archive keyring")
+    runs = "\n".join(_runs(_job()))
+    assert "debian-archive-keyring" in runs
+    tools = _index(_job(), lambda s: "debian-archive-keyring" in s.get("run", ""))
+    build = _index(_job(), lambda s: "build_dist.sh --out" in s.get("run", ""))
+    assert tools < build

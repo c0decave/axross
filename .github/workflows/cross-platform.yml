@@ -130,6 +130,10 @@ jobs:
         for tool in git curl gpgv dpkg-deb python3 sha256sum; do
             command -v "$tool" >/dev/null || { echo "::error::$tool is missing"; exit 1; }
         done
+        # sysroot_fetch.py checks Debian's Release files against Debian's keys
+        # (/usr/share/keyrings): Ubuntu's signed package of them, not on the runner
+        sudo apt-get install -y -q --no-install-recommends debian-archive-keyring
+        ls /usr/share/keyrings/debian-archive-keyring.gpg
         curl -fsSL --proto '=https' --tlsv1.2 -o "$RUNNER_TEMP/uv.tar.gz" \
             "https://github.com/astral-sh/uv/releases/download/$UV_VERSION/uv-x86_64-unknown-linux-gnu.tar.gz"
         echo "$UV_SHA256  $RUNNER_TEMP/uv.tar.gz" | sha256sum --check --strict
