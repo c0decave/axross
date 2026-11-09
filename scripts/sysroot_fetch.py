@@ -93,7 +93,7 @@ def gpgv(signed: Path, keyrings, *, detached_data: Path | None = None,
          output: Path | None = None) -> None:
     """Check a signature; with *output*, gpgv writes the signed text there
     (of a clearsigned file: only what the signature covers)."""
-    args = ["gpgv"]
+    args = ["gpgv", "--status-fd", "1"]
     for keyring in keyrings:
         args += ["--keyring", str(keyring)]
     if output is not None:
@@ -104,8 +104,29 @@ def gpgv(signed: Path, keyrings, *, detached_data: Path | None = None,
     if detached_data is not None:
         args.append(str(detached_data))
     result = subprocess.run(args, capture_output=True, text=True)
-    if result.returncode != 0:
+    if result.returncode != 0 and not signature_accepted(result.stdout):
         raise SystemExit(f"bad signature on {signed.name}:\n{result.stderr}")
+    if output is not None and not output.exists():
+        raise SystemExit(f"bad signature on {signed.name}: gpgv wrote no signed text")
+
+
+#: gpgv's status words of a signature that must never pass, whatever else
+#: signed the file
+_REFUSED_STATUS = ("BADSIG", "EXPKEYSIG", "REVKEYSIG", "EXPSIG")
+
+
+def signature_accepted(status: str) -> bool:
+    """What apt accepts: at least one good signature by a key of the given
+    keyrings and no bad one. A Release file is signed by several keys at
+    once (Debian's bookworm InRelease: the 12 and 13 archive keys and the
+    12 release key); a builder whose keyring package predates one of them
+    sees "No public key" for it (gpgv exits 2), which is no reason to
+    refuse the signatures it can check."""
+    words = [line.split()[1] for line in status.splitlines()
+             if line.startswith("[GNUPG:] ") and len(line.split()) > 1]
+    if any(word in _REFUSED_STATUS for word in words):
+        return False
+    return "VALIDSIG" in words and "GOODSIG" in words
 
 
 # -- Debian ---------------------------------------------------------------------------------

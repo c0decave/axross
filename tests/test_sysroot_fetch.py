@@ -266,3 +266,80 @@ def test_sad_a_symlink_climbing_out_of_the_root_is_refused(tmp_path):
     assert SF.safe_target(root, "./up/escape") is None
     os.symlink("loop", root / "loop")
     assert SF.safe_target(root, "./loop/x") is None
+
+
+# -- gpgv: several signatures, a keyring that lacks one of the keys --------------------------
+# gpgv's status lines for Debian's bookworm InRelease (signed by the 12 and
+# 13 archive keys and the 12 release key) checked against a keyring package
+# that predates the 13 key - an Ubuntu 24.04 CI runner; gpgv exits 2 there.
+_BOOKWORM_STATUS = """\
+[GNUPG:] PLAINTEXT 74 0
+[GNUPG:] NEWSIG
+[GNUPG:] KEY_CONSIDERED B8B80B5B623EAB6AD8775C45B7C5D7D6350947F8 0
+[GNUPG:] GOODSIG 6ED0E7B82643E131 Debian Archive Automatic Signing Key (12/bookworm)
+[GNUPG:] VALIDSIG 4CB50190207B4758A3F73A796ED0E7B82643E131 2026-07-11 1783765031 0 4 0 1 8 01 B8B8
+[GNUPG:] NEWSIG
+[GNUPG:] ERRSIG 78DBA3BC47EF2265 1 8 01 1783765032 9 B8E5F13176D2A7A75220028078DBA3BC47EF2265
+[GNUPG:] NO_PUBKEY 78DBA3BC47EF2265
+[GNUPG:] NEWSIG
+[GNUPG:] GOODSIG F8D2585B8783D481 Debian Stable Release Key (12/bookworm)
+[GNUPG:] VALIDSIG 4D64FEC119C2029067D6E791F8D2585B8783D481 2026-07-11 1783765141 0 4 0 22 8 01 4D64
+"""
+
+
+class _Ran:
+    def __init__(self, returncode, stdout, stderr="gpgv: Can't check signature: No public key"):
+        self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+
+def _fake_gpgv(monkeypatch, returncode, status, *, writes=True):
+    def run(args, **_kw):
+        if writes and "--output" in args:
+            Path(args[args.index("--output") + 1]).write_text("Suite: bookworm\n")
+        return _Ran(returncode, status)
+    monkeypatch.setattr(SF.subprocess, "run", run)
+
+
+def test_happy_a_release_signed_also_by_an_unknown_key_passes(monkeypatch, tmp_path):
+    # the third CI Linux build stopped here: "bad signature on bookworm.InRelease"
+    _fake_gpgv(monkeypatch, 2, _BOOKWORM_STATUS)
+    out = tmp_path / "bookworm.Release"
+    SF.gpgv(tmp_path / "bookworm.InRelease", [tmp_path / "k.gpg"], output=out)
+    assert out.read_text() == "Suite: bookworm\n"
+
+
+def test_sad_one_bad_signature_refuses_whatever_else_is_good(monkeypatch, tmp_path):
+    status = _BOOKWORM_STATUS + "[GNUPG:] NEWSIG\n[GNUPG:] BADSIG 6ED0E7B82643E131 Debian\n"
+    _fake_gpgv(monkeypatch, 1, status)
+    with pytest.raises(SystemExit, match="bad signature"):
+        SF.gpgv(tmp_path / "x.InRelease", [], output=tmp_path / "x.Release")
+
+
+@pytest.mark.parametrize("word", ["EXPKEYSIG", "REVKEYSIG", "EXPSIG"])
+def test_sad_an_expired_or_revoked_key_refuses(word):
+    assert not SF.signature_accepted(_BOOKWORM_STATUS + f"[GNUPG:] {word} 6ED0E7B82643E131 x\n")
+
+
+def test_sad_only_unknown_keys_is_refused(monkeypatch, tmp_path):
+    status = ("[GNUPG:] NEWSIG\n[GNUPG:] ERRSIG 78DBA3BC47EF2265 1 8 01 1 9 B8E5\n"
+              "[GNUPG:] NO_PUBKEY 78DBA3BC47EF2265\n")
+    _fake_gpgv(monkeypatch, 2, status)
+    with pytest.raises(SystemExit, match="bad signature"):
+        SF.gpgv(tmp_path / "x.InRelease", [], output=tmp_path / "x.Release")
+
+
+def test_edge_no_signed_text_written_is_refused(monkeypatch, tmp_path):
+    _fake_gpgv(monkeypatch, 0, _BOOKWORM_STATUS, writes=False)
+    with pytest.raises(SystemExit, match="no signed text"):
+        SF.gpgv(tmp_path / "x.InRelease", [], output=tmp_path / "x.Release")
+
+
+def test_edge_gpgv_reports_its_status_on_stdout(monkeypatch, tmp_path):
+    seen = {}
+
+    def run(args, **_kw):
+        seen["args"] = args
+        return _Ran(0, _BOOKWORM_STATUS)
+    monkeypatch.setattr(SF.subprocess, "run", run)
+    SF.gpgv(tmp_path / "x.sig", [], detached_data=tmp_path / "x")
+    assert seen["args"][1:3] == ["--status-fd", "1"]
