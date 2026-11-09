@@ -148,7 +148,20 @@ jobs:
         echo "AXROSS_DIST_WORK=$work" >> "$GITHUB_ENV"
         df -h "$RUNNER_TEMP" /mnt || true
     - name: Build the Linux dist (scripts/build_dist.sh, the supply-chain gate first)
-      run: scripts/build_dist.sh --out dist/linux --work "$AXROSS_DIST_WORK"
+      run: |
+        set -o pipefail
+        scripts/build_dist.sh --out dist/linux --work "$AXROSS_DIST_WORK" 2>&1 | tee "$RUNNER_TEMP/build_dist.log"
+    - name: The end of the build log as an annotation
+      # the API serves annotations where the log storage is out of reach
+      # (a sandboxed maintainer's machine): gh api .../check-runs/JOB/annotations
+      if: failure()
+      run: |
+        [ -f "$RUNNER_TEMP/build_dist.log" ] || exit 0
+        tail -n 80 "$RUNNER_TEMP/build_dist.log" | python3 -I -c '
+        import re, sys
+        text = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", sys.stdin.read())[-3800:]
+        text = text.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+        print("::error title=build_dist.sh (last lines)::" + text)'
     - name: The native components of the release notes
       run: |
         python3 -I scripts/native_inventory.py dist/linux/glibc-2.34/axross-full \

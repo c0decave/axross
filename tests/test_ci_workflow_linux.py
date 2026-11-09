@@ -226,3 +226,15 @@ def test_edge_the_release_flow_documents_both_ways() -> None:
     assert AR.CI_LINUX in flow
     assert f'gh run download "$RUN" -n {AR.CI_LINUX} -D "dist/$VERSION"' in flow
     assert "scripts/build_dist.sh" in flow  # the builder machine stays an alternative
+
+
+def test_happy_a_failed_build_leaves_its_last_lines_as_an_annotation() -> None:
+    # the logs live where a sandboxed maintainer cannot reach them; the API's
+    # annotations are what is left to see why build_dist.sh stopped
+    job = _job()
+    build = _index(job, lambda s: "build_dist.sh" in s.get("run", "") and "--out" in s.get("run", ""))
+    step = job["steps"][build]
+    assert "pipefail" in step["run"] and "tee" in step["run"]
+    after = job["steps"][build + 1]
+    assert after.get("if") == "failure()"
+    assert "::error" in after["run"] and "%0A" in after["run"]
