@@ -562,7 +562,8 @@ class _FtpServer:
     7.1). ``mlsd=False`` leaves MLST / MLSD out, as vsftpd does.
 
     ``dash_a``: "ls" takes ``-a`` as ls does; "refuse" answers 501 to an
-    argument that starts with "-"; "literal" takes "-a x" for a path.
+    argument that starts with "-" ("450" with "450 No files found");
+    "literal" takes "-a x" for a path.
     ``pasv_host``: the address the 227 reply names. ``commands`` keeps
     every command line received."""
 
@@ -705,8 +706,11 @@ class _FtpServer:
                     c.close()
                     send("226 done")
                 elif verb in ("LIST", "NLST"):
-                    if self.dash_a == "refuse" and arg.startswith("-"):
-                        send("501 options not supported")
+                    if self.dash_a in ("refuse", "450") and arg.startswith("-"):
+                        # "450": wu-ftpd / ProFTPD wording for a path
+                        # "-a ..." that matches nothing.
+                        send("450 No files found" if self.dash_a == "450"
+                             else "501 options not supported")
                         no_data()
                         continue
                     show_all = self.dash_a == "ls" and (arg == "-a" or arg.startswith("-a "))

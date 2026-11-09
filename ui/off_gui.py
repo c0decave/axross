@@ -231,7 +231,9 @@ def connect_off_gui(manager, profile, *, password: str = "", key_passphrase: str
         return manager.connect(profile, **kwargs)
 
     name = getattr(profile, "name", "") or getattr(profile, "host", "")
-    return run_off_gui(connect, status=status, text=f"Connecting to {name}…")
+    from core.i18n import tr
+
+    return run_off_gui(connect, status=status, text=tr("Connecting to {name}…").format(name=name))
 
 
 __all__ = ["BUSY_CURSOR_AFTER_MS", "connect_off_gui", "run_off_gui"]

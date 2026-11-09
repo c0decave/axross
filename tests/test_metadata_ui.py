@@ -30,6 +30,7 @@ from core.local_fs import LocalFS  # noqa: E402
 from core.ram_fs import RamFsSession  # noqa: E402
 from tests import metadata_testkit as K  # noqa: E402
 from ui import metadata_dialog as MD  # noqa: E402
+from tests.menu_walk import all_actions  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -425,7 +426,7 @@ def _pane_at(window, path: Path):
 
 
 def _menu_texts(pane) -> list[str]:
-    return [a.text() for a in pane._build_context_menu().actions()]
+    return [a.text() for a in all_actions(pane._build_context_menu())]
 
 
 def test_happy_context_menu_entries(window, tree):
@@ -443,7 +444,7 @@ def test_happy_tools_menu_has_metadata_settings(window):
 def test_e2e_folder_show_recursive_export_remove_undo(window, tree, tmp_path, monkeypatch):
     originals = {p: p.read_bytes() for p in tree.rglob("*") if p.is_file()}
     pane = _pane_at(window, tree)
-    action = next(a for a in pane._build_context_menu().actions() if a.text() == "Show Metadata…")
+    action = next(a for a in all_actions(pane._build_context_menu()) if a.text() == "Show Metadata…")
     action.trigger()
     assert wait_until(lambda: pane.metadata_dialogs and pane.metadata_dialogs[-1].idle)
     dlg = pane.metadata_dialogs[-1]

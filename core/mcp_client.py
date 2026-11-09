@@ -36,6 +36,7 @@ import json
 import logging
 import os
 import re
+import signal
 import subprocess
 import threading
 import time
@@ -90,6 +91,16 @@ def clean_category(value) -> str:
 
 class McpClientError(RuntimeError):
     """The server could not be started, reached or understood."""
+
+
+class McpCancelled(McpClientError):
+    """Stop came while the server was starting: it was ended."""
+
+
+#: Seconds a server may take to start - to answer ``initialize`` and list
+#: its tools - at most, whatever its per-call timeout allows: a server that
+#: never answers held the Agent tab for the whole call timeout (120 s).
+CONNECT_TIMEOUT = 30.0
 
 
 @dataclass
@@ -442,7 +453,8 @@ class _Stdio:
         except McpClientError:
             pass
 
-    def request(self, ident: int, message: dict) -> dict:
+    def request(self, ident: int, message: dict, *, timeout: float | None = None) -> dict:
+        limit = self._timeout if timeout is None else timeout
         slot = {"event": threading.Event(), "reply": None}
         with self._lock:
             if self._closed:
@@ -450,8 +462,8 @@ class _Stdio:
             self._waiting[ident] = slot
         try:
             self._write(message)
-            if not slot["event"].wait(self._timeout):
-                raise McpClientError(f"no answer within {self._timeout:g} s")
+            if not slot["event"].wait(limit):
+                raise McpClientError(f"no answer within {limit:g} s")
         finally:
             with self._lock:
                 self._waiting.pop(ident, None)
@@ -465,6 +477,32 @@ class _Stdio:
     def _ended(self) -> str:
         tail = " | ".join(line for line in self.stderr if line)[-400:]
         return "the server ended" + (f": {tail}" if tail else "")
+
+    def abort(self) -> None:
+        """Stop while the server starts: SIGTERM to its process group at
+        once (a waiting request sees the end of its output), SIGKILL and the
+        cleanup after 3 s - in the background, Stop does not wait."""
+        proc = self._proc
+
+        def end() -> None:
+            _signal_group(proc, signal.SIGTERM)
+            try:
+                proc.wait(timeout=3)
+                return
+            except subprocess.TimeoutExpired:
+                pass
+            _signal_group(proc, signal.SIGKILL)
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                log.warning("mcp client: a stopped server did not end")
+            if self._cleanup is not None:
+                try:
+                    self._cleanup()
+                except Exception:  # noqa: BLE001 - cleanup is best effort
+                    log.warning("mcp client: cleanup after a killed server failed", exc_info=True)
+
+        threading.Thread(target=end, daemon=True, name="mcp-client-abort").start()
 
     def close(self) -> None:
         """End of input first; then SIGTERM (podman passes it on to the
@@ -495,6 +533,20 @@ class _Stdio:
                 log.warning("mcp client: cleanup after a killed server failed", exc_info=True)
 
 
+def _signal_group(proc, sig) -> None:
+    """*sig* to the process group of *proc* (started in a session of its
+    own: a launcher's children end with it), else to *proc* alone."""
+    if proc.poll() is not None:
+        return
+    try:
+        os.killpg(proc.pid, sig)
+    except (OSError, AttributeError):
+        try:
+            proc.send_signal(sig)
+        except OSError:
+            pass
+
+
 class _Http:
     def __init__(self, url: str, token: str, timeout: float) -> None:
         self._url = url
@@ -502,8 +554,14 @@ class _Http:
         self._timeout = timeout
         self._session: str | None = None
         self._version: str | None = None
+        #: While the server starts: its connections, so Stop can cut them.
+        self.starting = None
 
-    def _post(self, message: dict) -> tuple[dict | None, dict]:
+    def abort(self) -> None:
+        if self.starting is not None:
+            self.starting.abort()
+
+    def _post(self, message: dict, *, timeout: float | None = None) -> tuple[dict | None, dict]:
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
@@ -519,9 +577,12 @@ class _Http:
         from core.agent_net import opener_without_redirects
 
         host = urlsplit(self._url).hostname
-        deadline = time.monotonic() + self._timeout
+        limit = self._timeout if timeout is None else timeout
+        deadline = time.monotonic() + limit
+        starting = self.starting
+        opener = opener_without_redirects(*(starting.handlers() if starting is not None else ()))
         try:
-            with opener_without_redirects().open(request, timeout=self._timeout) as response:
+            with opener.open(request, timeout=limit) as response:
                 session = response.headers.get("Mcp-Session-Id")
                 if session:
                     self._session = session
@@ -533,7 +594,7 @@ class _Http:
                     # The whole answer within the timeout, not each read: a
                     # server that drips would hold the agent forever.
                     if time.monotonic() > deadline:
-                        raise McpClientError(f"no answer within {self._timeout:g} s")
+                        raise McpClientError(f"no answer within {limit:g} s")
                     chunk = response.read1(65536)
                     if not chunk:
                         break
@@ -546,7 +607,12 @@ class _Http:
                 raise McpClientError(
                     f"{host} answered a redirect (HTTP {exc.code}), which is not followed"
                 ) from None
-            raise McpClientError(f"{host} answered HTTP {exc.code}") from None
+            from core.agent_net import server_error_text
+
+            raise McpClientError(
+                f"{host} answered HTTP {exc.code}"
+                + server_error_text(exc, redact=(self._token or "",))
+            ) from None
         except (urllib.error.URLError, OSError) as exc:
             raise McpClientError(f"cannot reach {host}: {getattr(exc, 'reason', exc)}") from None
         if len(body) > MAX_MESSAGE_BYTES:
@@ -559,8 +625,8 @@ class _Http:
             raise McpClientError(f"{host} did not answer JSON") from None
         return (reply if isinstance(reply, dict) else None), {}
 
-    def request(self, ident: int, message: dict) -> dict:
-        reply, _ = self._post(message)
+    def request(self, ident: int, message: dict, *, timeout: float | None = None) -> dict:
+        reply, _ = self._post(message, timeout=timeout)
         if reply is None:
             raise McpClientError("the server sent no answer")
         return reply
@@ -746,9 +812,12 @@ class McpClient:
 
     def __init__(self, config: McpServerConfig, *, token: str = "",
                  wrap: Callable[[list[str]], list[str]] | None = None,
-                 secrets: dict | None = None) -> None:
+                 secrets: dict | None = None,
+                 cancel: threading.Event | None = None) -> None:
         """*wrap* turns a stdio argv into the sandboxed one; *secrets* are the
-        values of ``secret_env`` (default: the keyring's)."""
+        values of ``secret_env`` (default: the keyring's). Setting *cancel*
+        while the server starts ends it and raises :class:`McpCancelled`;
+        ``initialize`` may take :meth:`start_timeout` at most."""
         self.config = config
         self._lock = threading.Lock()
         self._next = 0
@@ -766,8 +835,16 @@ class McpClient:
                                          {**config.env, **values}, config.timeout)
         else:
             self._transport = _Http(config.url, token, config.timeout)
+            if cancel is not None:
+                from core.agent_net import AbortableConnections
+
+                self._transport.starting = AbortableConnections()
         try:
-            self.server_info = self._initialize()
+            self.server_info = self._initialize(cancel)
+        except McpCancelled:
+            log.info("mcp client: the start of %r was stopped", config.name)
+            self.abort()
+            raise
         except Exception as exc:
             log.warning("mcp client: the server %r did not start: %s", config.name, exc)
             self.close()
@@ -777,12 +854,21 @@ class McpClient:
                   server_name=str(self.server_info.get("name", ""))[:80],
                   server_version=str(self.server_info.get("version", ""))[:40])
 
-    def _call(self, method: str, params: dict) -> dict:
+    def start_timeout(self) -> float:
+        """Seconds ``initialize`` and the tool list may take."""
+        return min(float(self.config.timeout), CONNECT_TIMEOUT)
+
+    def _call(self, method: str, params: dict, *, timeout: float | None = None,
+              cancel: threading.Event | None = None) -> dict:
         with self._lock:
             self._next += 1
             ident = self._next
-        reply = self._transport.request(ident, {"jsonrpc": "2.0", "id": ident, "method": method,
-                                                "params": params})
+        message = {"jsonrpc": "2.0", "id": ident, "method": method, "params": params}
+        if cancel is None:
+            reply = self._transport.request(ident, message, timeout=timeout)
+        else:
+            reply = self._stoppable(
+                lambda: self._transport.request(ident, message, timeout=timeout), cancel)
         if "error" in reply:
             error = reply["error"] if isinstance(reply["error"], dict) else {}
             raise McpClientError(str(error.get("message") or "the server refused")[:500])
@@ -791,7 +877,31 @@ class McpClient:
             raise McpClientError("the server's answer has no result")
         return result
 
-    def _initialize(self) -> dict:
+    def _stoppable(self, work: Callable[[], dict], cancel: threading.Event) -> dict:
+        """*work*'s answer, waited for in a helper thread so that *cancel*
+        ends the wait at once (:meth:`abort` then ends the server)."""
+        if cancel.is_set():
+            raise McpCancelled(f"stopped while {self.config.name} was starting")
+        box: dict = {}
+        done = threading.Event()
+
+        def run() -> None:
+            try:
+                box["value"] = work()
+            except BaseException as exc:  # noqa: BLE001 - handed to the waiting thread
+                box["error"] = exc
+            finally:
+                done.set()
+
+        threading.Thread(target=run, daemon=True, name="mcp-client-start").start()
+        while not done.wait(0.05):
+            if cancel.is_set():
+                raise McpCancelled(f"stopped while {self.config.name} was starting")
+        if "error" in box:
+            raise box["error"]
+        return box["value"]
+
+    def _initialize(self, cancel: threading.Event | None = None) -> dict:
         from axross._version import __version__
 
         result = self._call(
@@ -801,6 +911,7 @@ class McpClient:
                 "capabilities": {},
                 "clientInfo": {"name": "axross", "version": __version__},
             },
+            timeout=self.start_timeout(), cancel=cancel,
         )
         version = result.get("protocolVersion")
         if isinstance(version, str) and isinstance(self._transport, _Http):
@@ -809,13 +920,17 @@ class McpClient:
         info = result.get("serverInfo")
         return info if isinstance(info, dict) else {}
 
-    def tools(self) -> list[ExternalTool]:
+    def tools(self, *, cancel: threading.Event | None = None) -> list[ExternalTool]:
+        """The server's tools. With *cancel* (while it starts) each page may
+        take :meth:`start_timeout`, and setting it raises :class:`McpCancelled`."""
+        timeout = self.start_timeout() if cancel is not None else None
         out: list[ExternalTool] = []
         safe = self.config.files_safe()
         cursor = None
         seen: set = set()
         for _page in range(20):
-            result = self._call("tools/list", {"cursor": cursor} if cursor else {})
+            result = self._call("tools/list", {"cursor": cursor} if cursor else {},
+                                timeout=timeout, cancel=cancel)
             for raw in result.get("tools") or []:
                 if len(out) >= MAX_TOOLS:
                     break
@@ -853,6 +968,23 @@ class McpClient:
     def call_tool(self, name: str, args: dict) -> dict:
         return self._call("tools/call", {"name": name, "arguments": args})
 
+    def started(self) -> None:
+        """The start is over: its connections are no longer tracked."""
+        if isinstance(self._transport, _Http):
+            self._transport.starting = None
+
+    def abort(self) -> None:
+        """Stop while starting: end the server now, without waiting."""
+        try:
+            abort = getattr(self._transport, "abort", None)
+            if abort is not None:
+                abort()
+            else:
+                self._transport.close()
+        except Exception:  # noqa: BLE001 - ending is best effort
+            log.debug("mcp client: ending %s failed", self.config.name, exc_info=True)
+        log_event(log, logging.INFO, "mcp.client.closed", server=self.config.name)
+
     def close(self) -> None:
         try:
             self._transport.close()
@@ -881,20 +1013,30 @@ class McpClientPool:
         self._clients: dict[str, tuple[tuple, McpClient, list]] = {}
         self._always: set = set()
 
-    def tools(self, configs, *, wrap_for=None) -> tuple[list[ExternalTool], list[str]]:
+    def tools(self, configs, *, wrap_for=None, cancel: threading.Event | None = None,
+              on_start: Callable[[str], None] | None = None,
+              ) -> tuple[list[ExternalTool], list[str]]:
         """The tools of *configs* (connecting what is not yet) and one
         error line per server that failed. *wrap_for* replaces the pool's
-        own for this call."""
+        own for this call. *on_start* is told the name of each server about
+        to be started; setting *cancel* ends a starting server at once and
+        returns what was there before (no error line for the stopped one)."""
         tools: list[ExternalTool] = []
         errors: list[str] = []
         for config in configs:
+            if cancel is not None and cancel.is_set():
+                break
             try:
-                tools.extend(self._tools_of(config, wrap_for or self._wrap_for))
+                tools.extend(self._tools_of(config, wrap_for or self._wrap_for,
+                                            cancel=cancel, on_start=on_start))
+            except McpCancelled:
+                break
             except McpClientError as exc:
                 errors.append(f"{config.name}: {exc}")
         return tools, errors
 
-    def _tools_of(self, config: McpServerConfig, wrap_for) -> list[ExternalTool]:
+    def _tools_of(self, config: McpServerConfig, wrap_for, *, cancel=None,
+                  on_start=None) -> list[ExternalTool]:
         # The token and the secret values live in the keyring, not in the
         # signature: a client connected with other ones is connected again.
         token = self._token_lookup(config.name) if config.bearer else ""
@@ -906,12 +1048,19 @@ class McpClientPool:
                 return list(held[2])
         if held is not None:
             self.drop(config.name)
-        client = McpClient(config, token=token, wrap=wrap_for(config), secrets=secrets)
+        if on_start is not None:
+            on_start(config.name)
+        client = McpClient(config, token=token, wrap=wrap_for(config), secrets=secrets,
+                           cancel=cancel)
         try:
-            found = client.tools()
+            found = client.tools(cancel=cancel)
+        except McpCancelled:
+            client.abort()
+            raise
         except Exception:
             client.close()
             raise
+        client.started()
         with self._lock:
             old = self._clients.get(config.name)
             self._clients[config.name] = (config.signature(), client, found, digest)

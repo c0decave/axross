@@ -108,6 +108,7 @@ pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 not installed")
 
 from PyQt6.QtCore import QItemSelectionModel  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
+from tests.menu_walk import all_actions  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -136,7 +137,7 @@ def _select(pane, name):
 
 
 def _labels(pane):
-    return [a.text().replace("&", "") for a in pane._build_context_menu().actions()]
+    return [a.text().replace("&", "") for a in all_actions(pane._build_context_menu())]
 
 
 @pytest.fixture
@@ -186,7 +187,7 @@ def _disk_image_dialogs() -> list:
 def test_e2e_a_local_image_without_a_telling_name_gets_disk_image(local_pane):
     _select(local_pane, "blob")
     menu = local_pane._build_context_menu()
-    action = next(a for a in menu.actions() if a.text().replace("&", "") == "Disk Image…")
+    action = next(a for a in all_actions(menu) if a.text().replace("&", "") == "Disk Image…")
     assert action.property("axCommand") == "disk-image"
     before = set(_disk_image_dialogs())
     action.trigger()

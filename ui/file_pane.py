@@ -21,7 +21,7 @@ from PyQt6.QtCore import (
     QUrl,
     pyqtSignal,
 )
-from PyQt6.QtGui import QDrag, QPainter, QPixmap
+from PyQt6.QtGui import QDrag, QKeySequence, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -55,6 +55,7 @@ from models.file_table_model import (
 )
 from ui.column_fit import detach_header_selection
 from ui.format_utils import backend_label
+from ui.plain_text import as_written
 from ui.pane_drag import PANE_MIME_TYPE, DraggableHeader, PaneDropZones
 from ui.scan_job import ScanJob
 
@@ -90,6 +91,8 @@ def _is_safe_leaf_name(name: str) -> bool:
 #: neither ("Ambiguous shortcut overload").
 CONTEXT_COMMANDS: dict[str, tuple[str | None, str | None]] = {
     # open / view the selection
+    "open": (None, "Return"),
+    "open-with": ("file", None),
     "open-text": ("file", None),
     "open-hex": ("code", None),
     "open-root": ("shield", None),
@@ -110,8 +113,8 @@ CONTEXT_COMMANDS: dict[str, tuple[str | None, str | None]] = {
     "encrypt": ("key", None),
     "decrypt": ("key", None),
     # remove
-    "trash": ("trash", None),
-    "delete": ("x", "Del"),
+    "trash": ("trash", "Del"),
+    "delete": ("x", "Shift+Del"),
     # create in this folder
     "new-folder": ("folder", "F7"),
     "new-file": ("plus", None),
@@ -150,6 +153,11 @@ CONTEXT_COMMANDS: dict[str, tuple[str | None, str | None]] = {
     "send-to-agent": ("bot", None),
     # the pane itself
     "send-to-workspace": (None, None),
+    # submenus of the right-click menu
+    "metadata-menu": ("metadata", None),
+    "analyse-menu": ("analysis", None),
+    "links-menu": (None, None),
+    "more-menu": (None, None),
 }
 
 
@@ -202,9 +210,25 @@ def _sanitize_clipboard_text(text: str) -> tuple[str, bool]:
     return out, True
 
 
+def _shown_name(name: str, limit: int = 200) -> str:
+    """*name* as a question shows it: a control, line-break, bidi or other
+    format character as its code (``\\u202e``) - "invoice\\u202efdp.exe"
+    read as "invoiceexe.pdf", and a name with 40 line breaks pushed the
+    names after it out of the Delete question - and a very long one cut in
+    the middle (its end, the extension, stays)."""
+    shown = "".join(c if c.isprintable() else f"\\u{ord(c):04x}" for c in str(name))
+    if len(shown) <= limit:
+        return shown
+    head = (limit - 1) // 2
+    return shown[:head] + "…" + shown[-(limit - 1 - head):]
+
+
 def _dialog_item_names(items, limit: int = 5) -> str:
-    """Return a QMessageBox-safe, short list of selected item names."""
-    shown = ", ".join(escape(str(i.name)) for i in items[:limit])
+    """A short list of the selected items' names (:func:`_shown_name`), not
+    escaped: the question shows its whole text as written
+    (:func:`ui.plain_text.as_written`) - escaped here too, "Tom & Jerry"
+    read "Tom &amp; Jerry"."""
+    shown = ", ".join(_shown_name(i.name) for i in items[:limit])
     if len(items) > limit:
         shown += f" ... (+{len(items) - limit} more)"
     return shown
@@ -408,8 +432,12 @@ def _classify_local_file_is_binary(backend, path: str, name: str) -> bool:
     return b"\x00" in header
 
 
-def _escape_dialog_lines(lines) -> str:
-    return "\n".join(escape(str(line)) for line in lines)
+def _dialog_lines(lines) -> str:
+    """Lines for a message box whose whole text goes through
+    :func:`ui.plain_text.as_written`: each shown as :func:`_shown_name` does
+    (no control or bidi character acts), not escaped - escaped here too,
+    "Tom & Jerry" read "Tom &amp; Jerry"."""
+    return "\n".join(_shown_name(str(line), 400) for line in lines)
 
 
 _UNSET = object()  # "no precomputed value" marker
@@ -485,6 +513,69 @@ def _paths_in_removal() -> list[str]:
         return sorted(p for _k, held in _REMOVAL_CLAIMS.values() for p in held)
 
 
+#: Double extensions kept whole when F2 selects a name without its extension.
+_DOUBLE_EXTENSIONS = (".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst", ".tar.lz", ".tar.lzma")
+
+
+def rename_stem_length(name: str) -> int:
+    """How much of *name* Rename selects: the part before the extension
+    ("report" of "report.pdf", "backup" of "backup.tar.gz"); all of a name
+    without one or a dot file (".bashrc")."""
+    lower = name.lower()
+    for ext in _DOUBLE_EXTENSIONS:
+        if lower.endswith(ext) and len(name) > len(ext):
+            return len(name) - len(ext)
+    dot = name.rfind(".")
+    return dot if dot > 0 else len(name)
+
+
+def _select_in_modal_line_edit(text: str, length: int) -> None:
+    """Select the first *length* characters in the open input dialog's line
+    edit, when it shows *text* (QInputDialog.getText offers no selection)."""
+    from PyQt6.QtWidgets import QApplication, QLineEdit
+
+    dialog = QApplication.activeModalWidget()
+    if dialog is None:
+        return
+    for edit in dialog.findChildren(QLineEdit):
+        if edit.text() == text:
+            edit.setSelection(0, length)
+            return
+
+
+def _removal_cancelled_text(trash: bool) -> str:
+    """The status line of a Delete / Move to Trash stopped before anything went."""
+    return (tr("Move to Trash cancelled - nothing was touched.") if trash
+            else tr("Delete cancelled - nothing was deleted."))
+
+
+def removal_preview_text(preview) -> str:
+    """What a Delete / Move to Trash takes with it, for its question:
+    "In total: 3 files, 1 folder, 180.1 KB; 1 of them hidden" - in the
+    interface language, the size human-readable. (``OperationPreview.summary``
+    stays the terse English line scripts print.)"""
+    from ui.format_utils import human_bytes
+
+    parts = []
+    if preview.files or not preview.dirs:
+        parts.append(tr_n(preview.files, "{n} file", "{n} files"))
+    if preview.dirs:
+        parts.append(tr_n(preview.dirs, "{n} folder", "{n} folders"))
+    parts.append(human_bytes(preview.bytes_total))
+    text = tr("In total: {what}").format(what=", ".join(parts))
+    extra = []
+    if preview.hidden_count:
+        extra.append(tr_n(preview.hidden_count, "{n} of them hidden", "{n} of them hidden"))
+    if preview.conflicts:
+        extra.append(tr_n(len(preview.conflicts), "{n} conflict", "{n} conflicts"))
+    if preview.warnings:
+        extra.append(tr_n(len(preview.warnings), "{n} entry could not be read",
+                          "{n} entries could not be read"))
+    if preview.truncated:
+        extra.append(tr("the count stopped early, there may be more"))
+    return "; ".join([text, *extra])
+
+
 class _RemovalResult:
     """What the removal phase did: ``done`` entries removed, ``errors`` one
     line per failed entry, ``not_attempted`` entries a cancel (or a stop)
@@ -524,13 +615,14 @@ def _run_removal(backend, entries, trash: bool, cancelled, report) -> _RemovalRe
     """
     from core.operation_journal import journal_batch, new_batch_id
 
-    with journal_batch(new_batch_id() if trash else ""):
+    with journal_batch(new_batch_id() if trash else "", begin="trash", entries=len(entries)):
         return _run_removal_entries(backend, entries, trash, cancelled, report)
 
 
 def _run_removal_entries(backend, entries, trash: bool, cancelled, report) -> _RemovalResult:
     from core import removal_cancel as RC
     from core import trash as T
+    from core.user_errors import describe
 
     done, errors, attempted, aborted = 0, [], 0, False
     partial: tuple[str, int] | None = None
@@ -542,7 +634,8 @@ def _run_removal_entries(backend, entries, trash: bool, cancelled, report) -> _R
         attempted += 1
 
         def inside(count: int, _path: str, index=index, name=name) -> None:
-            report(index, len(entries), f"{name}: {count} removed inside")
+            report(index, len(entries),
+                   tr("{name}: {count} removed inside").format(name=name, count=count))
 
         try:
             if trash:
@@ -559,11 +652,11 @@ def _run_removal_entries(backend, entries, trash: bool, cancelled, report) -> _R
             break
         except OSError as exc:
             log.error("%s failed for %s: %s", what, name, exc)
-            errors.append(f"{name}: {exc}")
+            errors.append(f"{name}: {describe(exc)}")
             continue
         except Exception as exc:  # noqa: BLE001 — reported to the user, run stopped
             log.exception("%s stopped at %s: unexpected error", what, name)
-            errors.append(f"{name}: {exc}")
+            errors.append(f"{name}: {describe(exc)}")
             aborted = True
             break
         done += 1
@@ -1231,7 +1324,7 @@ class FilePaneWidget(QWidget):
         self._filter_edit = QLineEdit()
         self._filter_edit.setObjectName("axPaneFilter")
         self._filter_edit.setProperty("axHelpTopic", "path-bar")
-        self._filter_edit.setPlaceholderText(tr("Type to filter files..."))
+        self._filter_edit.setPlaceholderText(tr("Type to filter files…"))
         self._filter_edit.setClearButtonEnabled(True)
         self._filter_edit.textChanged.connect(self._on_filter_changed)
         filter_bar.addWidget(self._filter_edit)
@@ -1545,7 +1638,7 @@ class FilePaneWidget(QWidget):
             self._nav_job.abandon()
             self._end_loading()
         self._progress_bar.show()
-        self._status.setText(tr("Loading..."))
+        self._status.setText(tr("Loading…"))
         QApplication.processEvents()
 
         try:
@@ -2273,11 +2366,17 @@ class FilePaneWidget(QWidget):
                 sel.select(row_idx, sel.SelectionFlag.Deselect | sel.SelectionFlag.Rows)
             else:
                 sel.select(row_idx, sel.SelectionFlag.Select | sel.SelectionFlag.Rows)
-        # Move cursor down
+        # Move cursor down - without touching the marks: the view's
+        # setCurrentIndex applies the ExtendedSelection command
+        # (ClearAndSelect), which wiped every mark but the new row.
         next_row = current.row() + 1
         if next_row < self._proxy.rowCount():
             next_idx = self._proxy.index(next_row, current.column())
-            self._table.setCurrentIndex(next_idx)
+            self._table.selectionModel().setCurrentIndex(
+                next_idx, QItemSelectionModel.SelectionFlag.NoUpdate
+            )
+            view = self._thumbs if self.view_mode == "thumbnails" else self._table
+            view.scrollTo(next_idx)
 
     def _invert_selection(self) -> None:
         """Invert selection on all items except '..' (Ctrl+Shift+A).
@@ -2436,13 +2535,20 @@ class FilePaneWidget(QWidget):
         return entries
 
     def _selection_by_name(self) -> tuple[set[str], str | None] | None:
-        """The selected rows' names and the current row's name, or None."""
+        """The selected rows' names and the current row's name, or None
+        when there is neither. The current row counts on its own: after
+        Space (mark and move down) it is the next, unmarked row - a
+        refresh dropped it and the next arrow key started at the top."""
         sel = self._table.selectionModel()
         names = {item.name for item in self._selected_source_items()}
-        if not names:
+        current = None
+        index = sel.currentIndex()
+        if index.isValid():
+            current = self._model.get_item(self._proxy.mapToSource(index).row())
+        current_name = current.name if current is not None else None
+        if not names and current_name is None:
             return None
-        current = self._model.get_item(self._proxy.mapToSource(sel.currentIndex()).row())
-        return names, current.name if current is not None else None
+        return names, current_name
 
     def reveal_path(self, path: str) -> None:
         """Show the folder holding *path* with that entry selected and
@@ -2526,8 +2632,19 @@ class FilePaneWidget(QWidget):
             shown or self._items_text()))
 
     def _items_text(self) -> str:
-        """The status line's count: the entries, not the "." and ".." rows."""
-        return tr_n(self._model.entry_count(), "{n} item", "{n} items")
+        """The status line's count: the entries, not the "." and ".." rows -
+        and what the backend has to say about its state, if anything (a
+        Git URL session: offline, or commits not pushed to origin)."""
+        text = tr_n(self._model.entry_count(), "{n} item", "{n} items")
+        note_of = getattr(self._backend, "status_note", None)
+        if callable(note_of):
+            try:
+                note = note_of()
+            except Exception:  # noqa: BLE001 - a status line never breaks a listing
+                note = ""
+            if isinstance(note, str) and note:
+                text = f"{text} \u00b7 {note}"
+        return text
 
     def _list_views(self) -> list:
         """The table and, once made, the thumbnail view: both show the model."""
@@ -2578,17 +2695,25 @@ class FilePaneWidget(QWidget):
         # The listing's names as one list (the model keeps it for the
         # filter): no get_item call per row (100 ms per 100,000 entries).
         listed = self._model.row_cache().names
-        for row in [r for r, name in enumerate(listed) if name in names]:
+        wanted = names | {current} if current is not None else names
+        for row in [r for r, name in enumerate(listed) if name in wanted]:
             item = self._model.get_item(row)
-            if item is None or item.name not in names:
+            if item is None or item.name not in wanted:
                 continue
             index = proxy.mapFromSource(self._model.index(row, COL_NAME))
             if not index.isValid():  # filtered out (hidden files)
                 continue
-            rows.append(index.row())
             if item.name == current:
                 current_index = index
+            if item.name in names:
+                rows.append(index.row())
+        sel = self._table.selectionModel()
+        flags = QItemSelectionModel.SelectionFlag
         if not rows:
+            # Nothing marked: the current row alone comes back - NoUpdate,
+            # so it stays unmarked.
+            if current_index is not None:
+                sel.setCurrentIndex(current_index, flags.NoUpdate)
             return
         rows.sort()
         last = proxy.columnCount() - 1
@@ -2601,8 +2726,6 @@ class FilePaneWidget(QWidget):
             selection.select(proxy.index(top, 0), proxy.index(previous, last))
             if row is not None:
                 top = previous = row
-        sel = self._table.selectionModel()
-        flags = QItemSelectionModel.SelectionFlag
         sel.select(selection, flags.ClearAndSelect | flags.Rows)
         if current_index is not None:
             sel.setCurrentIndex(current_index, flags.NoUpdate)
@@ -2733,9 +2856,12 @@ class FilePaneWidget(QWidget):
 
         type_label = tr({"local": "LOCAL", "remote": "REMOTE", "root": "ROOT"}[session_type])
         self.refresh_security()
-        self._header_label.setText(
-            f"<b>{escape(backend_label(self._backend.name))}</b> <small>[{type_label}]</small>"
-        )
+        name = backend_label(self._backend.name)
+        # "Local [LOCAL]" said one thing twice: the badge only where it adds
+        # something (a remote or root connection, or a renamed local one).
+        badge = (f" <small>[{type_label}]</small>"
+                 if type_label.casefold() != name.casefold() else "")
+        self._header_label.setText(f"<b>{escape(name)}</b>{badge}")
         _set_style(
             self._header_label,
             f"QLabel {{ background-color: {bg}; color: {fg}; "
@@ -3158,6 +3284,11 @@ class FilePaneWidget(QWidget):
         item = self._model.get_item(source_idx.row())
         if not item:
             return
+        self._open_item(item)
+
+    def _open_item(self, item) -> None:
+        """Open *item* as a double-click or Enter does: a folder in this
+        pane, a file in the viewer or editor it calls for."""
         if item.name == "..":
             self.navigate_async(self._backend.parent(self._current_path))
             return
@@ -3586,50 +3717,94 @@ class FilePaneWidget(QWidget):
         self._menus = keep
 
     def _build_base_context_menu(self) -> QMenu:
-        """The pane's own right-click entries, in groups split by separators:
-        open/view the selection, clipboard/edit, transfer, protect, remove,
-        create here, info/analysis, this folder, tags, agent, the pane
-        (Send to Workspace - on an item and on the empty area alike, one
-        submenu at the end). Each entry shows the
-        icon its command has in the toolbar or a dock and the key the pane or
-        the window reacts to (:data:`CONTEXT_COMMANDS`); the underlined
-        letter (``&``) picks it while the menu is open."""
+        """The pane's own right-click entries: one column of about twenty,
+        the rarer ones in submenus. Open first (a folder opens in this
+        pane, a file in its viewer, as Enter does), then the core file
+        operations - clipboard and rename, copy / move to the target pane,
+        trash and delete, new - then Properties and the submenus
+        (Metadata, Analyse, Links, Tags), Refresh and More (this folder,
+        terminals, mounts, the agent, Send to Workspace). Each entry shows
+        the icon its command has in the toolbar or a dock and the key the
+        pane or the window reacts to (:data:`CONTEXT_COMMANDS`); the
+        underlined letter (``&``) picks it while the menu is open, unique
+        within each menu in English and German."""
         menu = QMenu(self)
         menu.setToolTipsVisible(True)
         selected = self.selected_file_items()
         files = [i for i in selected if not i.is_dir]
+        dirs = [i for i in selected if i.is_dir]
         single = files[0] if len(files) == 1 else None
         single_path = self._safe_item_path(single, warn=False) if single is not None else None
         # A single file whose name cannot be joined safely gets none of the
         # entries that act on that name (open, rename, remove, checksum ...).
         hostile = single is not None and single_path is None
 
-        def entry(command: str, label: str, slot=None):
-            action = decorate_command(menu.addAction(label), command)
-            if slot is not None:
-                action.triggered.connect(slot)
-            return action
+        def entry_in(target: QMenu):
+            def entry(command: str, label: str, slot=None):
+                action = decorate_command(target.addAction(label), command)
+                if slot is not None:
+                    action.triggered.connect(slot)
+                return action
+            return entry
 
-        def group() -> None:
-            actions = menu.actions()
+        entry = entry_in(menu)
+
+        def group(target: QMenu = menu) -> None:
+            actions = target.actions()
             if actions and not actions[-1].isSeparator():
-                menu.addSeparator()
+                target.addSeparator()
 
-        # -- open / view the selection
+        def submenu(label: str) -> QMenu:
+            sub = QMenu(label, menu)
+            sub.setToolTipsVisible(True)
+            return sub
+
+        def attach(sub: QMenu, command: str | None = None) -> QMenu | None:
+            """Add *sub* to the menu when it has an entry; drop it otherwise."""
+            while sub.actions() and sub.actions()[-1].isSeparator():
+                sub.removeAction(sub.actions()[-1])
+            if not sub.actions():
+                sub.deleteLater()
+                return None
+            action = menu.addMenu(sub)
+            if command is not None:
+                decorate_command(action, command)
+            return sub
+
+        # -- open: what Enter / a double-click does, then Open With ▸
+        if len(selected) == 1 and not hostile and not selected[0].is_nav:
+            item = selected[0]
+            opener = entry("open", tr("&Open"), lambda _checked=False, i=item: self._open_item(i))
+            bold = opener.font()
+            bold.setBold(True)
+            opener.setFont(bold)
+        open_with = submenu(tr("Open &With"))
+        with_entry = entry_in(open_with)
+        archive = None
         if single_path is not None:
-            entry("open-text", tr("Open as &Text"), lambda: self._open_editor(single_path))
-            entry("open-hex", tr("Open as &Hex"), lambda: self._open_hex_editor(single_path))
+            with_entry("open-text", tr("Open as &Text"), lambda: self._open_editor(single_path))
+            with_entry("open-hex", tr("Open as &Hex"), lambda: self._open_hex_editor(single_path))
             # "Open as root…" only for local backends with pkexec + the
             # helper binaries (cat/tee/stat/ls): no click into an error dialog.
             if self._elevated_io_available():
-                entry("open-root", tr("Open as root…"), lambda: self._open_as_root(single_path))
-            self._add_archive_actions(menu, entry, single, single_path)
+                with_entry("open-root", tr("Open as root…"),
+                           lambda: self._open_as_root(single_path))
+            archive = self._add_archive_actions(with_entry, single, single_path)
         if selected:
-            entry(
+            with_entry(
                 "view-selected-media",
                 tr("View Selected Media…"),
                 lambda _checked=False: self.view_media(selected_only=True),
             )
+        attach(open_with, "open-with")
+        if archive is not None:
+            extract = entry("extract", tr("E&xtract…"), lambda: self._extract_archive(archive))
+            # Bold sets the one entry that writes to disk apart from the
+            # read-only preview; its icon comes from the provider like every
+            # other entry, so monochrome mode and the theme tint apply to it.
+            bold = extract.font()
+            bold.setBold(True)
+            extract.setFont(bold)
 
         # -- clipboard / edit. Paste is offered on empty space too.
         if selected or self.can_paste():
@@ -3653,7 +3828,7 @@ class FilePaneWidget(QWidget):
         if selected and not hostile:
             entry("rename", tr("&Rename"), self._rename_selected)
             if len(selected) > 1:
-                entry("batch-rename", tr("Batch Rename..."), self._batch_rename)
+                entry("batch-rename", tr("Batch Rename…"), self._batch_rename)
 
         # -- transfer
         if selected:
@@ -3670,41 +3845,104 @@ class FilePaneWidget(QWidget):
             )
             decorate_command(menu.addMenu(self._build_pack_menu(selected, menu)), "pack")
 
-        # -- protect (single file: passphrase prompt flow)
-        if single_path is not None:
-            group()
-            if single.name.endswith(".axenc"):
-                entry(
-                    "decrypt",
-                    tr("Decrypt with passphrase…"),
-                    lambda: self._decrypt_selected_file(single),
-                )
-            else:
-                entry(
-                    "encrypt",
-                    tr("Encrypt with passphrase…"),
-                    lambda: self._encrypt_selected_file(single),
-                )
-
-        # -- remove
+        # -- remove: Del moves to the trash where the connection has one,
+        # Shift+Del deletes permanently (Del too where there is no trash).
         if selected and not hostile:
             group()
-            entry("trash", tr("Move to Tr&ash"), self._trash_selected)
-            entry("delete", tr("&Delete Permanently"), self._delete_selected)
+            if self.can_trash():
+                entry("trash", tr("Move to Tr&ash"), self._trash_selected)
+                entry("delete", tr("&Delete Permanently"), self._delete_selected)
+            else:
+                delete = entry("delete", tr("&Delete Permanently"), self._delete_selected)
+                delete.setShortcuts([QKeySequence("Del"), QKeySequence("Shift+Del")])
+                delete.setToolTip(tr("This connection has no trash: Del deletes permanently, "
+                                     "after a question"))
 
-        # -- create in this folder. Symlink / Hardlink only where the backend
-        # flags support: no entry that fails the moment it is clicked.
+        # -- create in this folder
         group()
         entry("new-folder", tr("&New Folder"), self._create_folder)
         entry("new-file", tr("New &File…"), self._create_empty_file)
-        if getattr(self._backend, "supports_symlinks", False):
-            entry("new-symlink", tr("New Symlink…"), self._create_symlink)
-        if getattr(self._backend, "supports_hardlinks", False):
-            entry("new-hardlink", tr("New Hardlink…"), self._create_hardlink)
-        entry("xlink", tr("Create XLink…"), self._create_xlink)
 
-        # -- info / analysis
+        # -- about the selection: Properties, then the submenus
         group()
+        if selected:
+            entry("properties", tr("Propert&ies…"), self._show_properties)
+        # Metadata acts on the selection, or on this folder when nothing is
+        # selected - "remove all metadata" for a directory is one click.
+        metadata = submenu(tr("Me&tadata"))
+        meta_entry = entry_in(metadata)
+        for command, label, meta_action in (
+            ("metadata", "Show Metadata…", "show"),
+            ("metadata-remove", "Remove Metadata…", "remove"),
+            ("metadata-export", "Export Metadata…", "export"),
+        ):
+            meta_entry(command, tr(label),
+                       lambda _checked=False, a=meta_action: self.open_metadata(a))
+        attach(metadata, "metadata-menu")
+        attach(self._build_analyse_menu(submenu(tr("Anal&yse")), entry_in, selected, files,
+                                        dirs, single, single_path, hostile), "analyse-menu")
+        links = submenu(tr("&Links"))
+        link_entry = entry_in(links)
+        if any(i.is_link for i in selected) and not hostile:
+            link_entry("link-target", tr("Show Link Target"), self._show_link_target)
+        if getattr(self._backend, "supports_symlinks", False):
+            link_entry("new-symlink", tr("New Symlink…"), self._create_symlink)
+        if getattr(self._backend, "supports_hardlinks", False):
+            link_entry("new-hardlink", tr("New Hardlink…"), self._create_hardlink)
+        link_entry("xlink", tr("Create XLink…"), self._create_xlink)
+        attach(links, "links-menu")
+        # -- tags of the selection (nothing without one)
+        from ui.tag_ui import add_tags_menu
+
+        add_tags_menu(self, menu)
+
+        # -- this folder: Refresh, and More ▸ for the rest
+        group()
+        # In the background, as Ctrl+R and the toolbar: refresh() lists the
+        # folder on the GUI thread (scripts and tests want it that way).
+        entry("refresh", tr("R&efresh"), lambda _checked=False: self.refresh_async())
+        more = submenu(tr("&More"))
+        more_entry = entry_in(more)
+        view_as = "Vie&w as Details" if self.view_mode == "thumbnails" else "Vie&w as Thumbnails"
+        more_entry("view-mode", tr(view_as), lambda _checked=False: self.toggle_view_mode())
+        more_entry("media-view", tr("View Media…"), lambda _checked=False: self.view_media())
+        more_entry("bookmark", tr("&Bookmark This Directory"), self._add_bookmark)
+        more_entry("trash-browser", tr("Show Trash…"), self._show_trash_browser)
+        group(more)
+        self._add_terminal_actions(more)
+        self._add_fuse_actions(more, more_entry)
+        if selected and not hostile:
+            group(more)
+            more_entry("permissions", tr("Per&missions…"), self._show_permissions)
+        # -- protect (single file: passphrase prompt flow)
+        if single_path is not None:
+            if single.name.endswith(".axenc"):
+                more_entry("decrypt", tr("Decrypt with passphrase…"),
+                           lambda: self._decrypt_selected_file(single))
+            else:
+                more_entry("encrypt", tr("Encrypt with passphrase…"),
+                           lambda: self._encrypt_selected_file(single))
+        # -- the agent
+        group(more)
+        self._add_agent_action(more)
+        attach(more, "more-menu")
+        # -- the pane itself: Send to Workspace ▸, in a group of its own at
+        # the end (none off a workspace) - as in the pane header's menu.
+        from ui.workspaces import add_send_to_workspace_menu
+
+        group()
+        send = add_send_to_workspace_menu(self, menu)
+        if send is not None:
+            decorate_command(send.menuAction(), "send-to-workspace")
+        while menu.actions() and menu.actions()[-1].isSeparator():
+            menu.removeAction(menu.actions()[-1])
+        return menu
+
+    def _build_analyse_menu(self, sub: QMenu, entry_in, selected, files, dirs, single,
+                            single_path, hostile: bool) -> QMenu:
+        """Analyse ▸: file type, disk image, checksum, versions, size, sift,
+        duplicates and Find in This Folder."""
+        entry = entry_in(sub)
         if selected:
             identify = entry(
                 "identify",
@@ -3714,33 +3952,6 @@ class FilePaneWidget(QWidget):
             identify.setToolTip(
                 tr("Detect the real type from the content and compare it with the extension")
             )
-            if single_path is not None:
-                from core.disk_image import looks_like_image
-
-                if looks_like_image(single.name) or self._content_says_disk_image(
-                        single, single_path):
-                    image = entry("disk-image", tr("Disk Image…"),
-                                  lambda _checked=False: self.show_disk_image())
-                    image.setToolTip(
-                        tr("Partitions and file systems of the image; mount one read-only")
-                    )
-            if single_path is not None:
-                # Most backends return a native fingerprint cheaply (S3 ETag,
-                # Drive md5Checksum, ssh sha256sum); the rest stream after a prompt.
-                entry("checksum", tr("Show Checks&um…"), lambda: self._show_checksum(single))
-                entry("versions", tr("Show Versions…"), lambda: self._show_versions(single))
-            dirs = [i for i in selected if i.is_dir]
-            if dirs and not hostile:
-                entry(
-                    "calculate-size",
-                    tr("Calculate Si&ze ({count} dirs)").format(count=len(dirs)),
-                    self._calculate_dir_size,
-                )
-            if any(i.is_link for i in selected) and not hostile:
-                entry("link-target", tr("Show Link Target"), self._show_link_target)
-            if not hostile:
-                entry("permissions", tr("Per&missions..."), self._show_permissions)
-            entry("properties", tr("Propert&ies…"), self._show_properties)
         # The folder you stand in (or the selected one): offered on empty space too.
         folder_scan = entry(
             "identify-folder",
@@ -3751,15 +3962,29 @@ class FilePaneWidget(QWidget):
             tr("Detect the real type of every file in this folder (or the selected one) "
                "from its content; disk images show their partitions")
         )
+        if single_path is not None:
+            from core.disk_image import looks_like_image
+
+            if looks_like_image(single.name) or self._content_says_disk_image(
+                    single, single_path):
+                image = entry("disk-image", tr("Disk Image…"),
+                              lambda _checked=False: self.show_disk_image())
+                image.setToolTip(
+                    tr("Partitions and file systems of the image; mount one read-only")
+                )
+            # Most backends return a native fingerprint cheaply (S3 ETag,
+            # Drive md5Checksum, ssh sha256sum); the rest stream after a prompt.
+            entry("checksum", tr("Show Checks&um…"), lambda: self._show_checksum(single))
+            entry("versions", tr("Show Versions…"), lambda: self._show_versions(single))
+        if dirs and not hostile:
+            entry(
+                "calculate-size",
+                tr("Calculate Si&ze ({count} dirs)").format(count=len(dirs)),
+                self._calculate_dir_size,
+            )
+        sub.addSeparator()
         self._add_sift_actions(entry, files, hostile)
-        # Metadata acts on the selection, or on this folder when nothing is
-        # selected - "remove all metadata" for a directory is one click.
-        for command, label, meta_action in (
-            ("metadata", "Show Metadata…", "show"),
-            ("metadata-remove", "Remove Metadata…", "remove"),
-            ("metadata-export", "Export Metadata…", "export"),
-        ):
-            entry(command, tr(label), lambda _checked=False, a=meta_action: self.open_metadata(a))
+        sub.addSeparator()
         # Acts on the folder you are standing in: offered with nothing selected.
         entry(
             # One name with View > Duplicate Finder… (the same window).
@@ -3775,40 +4000,16 @@ class FilePaneWidget(QWidget):
                 tr("Search this folder (or the selected one) by name, type, content and "
                    "inside archives")
             )
-
-        # -- this folder
-        group()
-        # In the background, as Ctrl+R and the toolbar: refresh() lists the
-        # folder on the GUI thread (scripts and tests want it that way).
-        entry("refresh", tr("R&efresh"), lambda _checked=False: self.refresh_async())
-        view_as = "Vie&w as Details" if self.view_mode == "thumbnails" else "Vie&w as Thumbnails"
-        entry("view-mode", tr(view_as), lambda _checked=False: self.toggle_view_mode())
-        entry("media-view", tr("View Media…"), lambda _checked=False: self.view_media())
-        entry("bookmark", tr("&Bookmark This Directory"), self._add_bookmark)
-        entry("trash-browser", tr("Show Trash…"), self._show_trash_browser)
-        self._add_terminal_actions(menu)
-        self._add_fuse_actions(menu, entry)
-
-        # -- tags of the selection (nothing without one)
-        from ui.tag_ui import add_tags_menu
-
-        group()
-        add_tags_menu(self, menu)
-
-        # -- agent
-        group()
-        self._add_agent_action(menu)
-
-        # -- the pane itself: Send to Workspace ▸ (none off a workspace)
-        from ui.workspaces import add_send_to_workspace_menu
-
-        group()
-        send = add_send_to_workspace_menu(self, menu)
-        if send is not None:
-            decorate_command(send.menuAction(), "send-to-workspace")
-        if menu.actions() and menu.actions()[-1].isSeparator():
-            menu.removeAction(menu.actions()[-1])
-        return menu
+        # No doubled separators where a group stayed empty.
+        previous_separator = True
+        for action in list(sub.actions()):
+            if action.isSeparator():
+                if previous_separator:
+                    sub.removeAction(action)
+                previous_separator = True
+            else:
+                previous_separator = False
+        return sub
 
     def _add_sift_actions(self, entry, files, hostile: bool) -> None:
         """Analyse with sift (the selected files) and Analyse Folder with sift
@@ -3836,29 +4037,24 @@ class FilePaneWidget(QWidget):
                    "(sift), as one batch for the LLM")
             )
 
-    def _add_archive_actions(self, menu: QMenu, entry, item, path: str) -> None:
-        """Preview Archive / Extract… for one local file whose name is a
-        format :mod:`core.archive` extracts. The safety caps and the
-        zip-slip guard live there; the UI picks a unique target dir and
-        drives a progress dialog."""
+    def _add_archive_actions(self, entry, item, path: str):
+        """Preview Archive (in Open With ▸) for one local file whose name is
+        a format :mod:`core.archive` extracts; returns *item* when it is
+        one, so the caller offers Extract… at the top level. The safety
+        caps and the zip-slip guard live there; the UI picks a unique
+        target dir and drives a progress dialog."""
         from core import archive as _ARCH
         from core import previews as _PV
 
         if not (_PV._is_local_backend(self._backend) and _ARCH.is_supported_archive(item.name)):
-            return
+            return None
         # The non-modal archive dock, nothing extracted to disk.
         entry(
             "preview-archive",
             tr("&Preview Archive"),
             lambda _checked=False, p=path: self._open_archive_preview(p),
         )
-        extract = entry("extract", tr("E&xtract…"), lambda: self._extract_archive(item))
-        # Bold sets the one entry that writes to disk apart from the
-        # read-only preview; its icon comes from the provider like every
-        # other entry, so monochrome mode and the theme tint apply to it.
-        bold = extract.font()
-        bold.setBold(True)
-        extract.setFont(bold)
+        return item
 
     def _add_fuse_actions(self, menu: QMenu, entry) -> None:
         """Mount as FUSE read-only / read-write, or Unmount - only when
@@ -4104,7 +4300,8 @@ class FilePaneWidget(QWidget):
         if job is None:
             job = ScanJob(
                 self,
-                formatter=lambda st: f"Packing… {st['scanned']} of {st['indexed']} — {st['path']}",
+                formatter=lambda st: tr("Packing… {scanned} of {total} — {path}").format(
+                    scanned=st["scanned"], total=st["indexed"], path=st["path"]),
             )
             job.progress.connect(self.status_message)
             job.finished.connect(self._on_pack_finished)
@@ -4116,9 +4313,13 @@ class FilePaneWidget(QWidget):
         from core import packer as PK
 
         if kind == "done":
-            note = f" ({len(value.skipped)} link(s) skipped)" if value.skipped else ""
             name = value.path.replace("\\", "/").rsplit("/", 1)[-1]
-            self.status_message(f"Packed {value.files} file(s) into {name}{note}")
+            text = tr_n(value.files, "Packed {n} file into {name}",
+                        "Packed {n} files into {name}", name=name)
+            if value.skipped:
+                text += " " + tr_n(len(value.skipped), "({n} link skipped)",
+                                   "({n} links skipped)")
+            self.status_message(text)
             self.refresh_after_change(quiet=True)
             return
         if cancelled or isinstance(value, PK.PackCancelled):
@@ -4310,6 +4511,10 @@ class FilePaneWidget(QWidget):
         if old_path is None:
             return
         folder = self._current_path
+        # The name without its extension is selected, as in other file
+        # managers: typing replaces "report", ".pdf" stays.
+        stem = len(item.name) if item.is_dir else rename_stem_length(item.name)
+        QTimer.singleShot(0, lambda: _select_in_modal_line_edit(item.name, stem))
         new_name, ok = QInputDialog.getText(self, tr("Rename"), tr("New name:"), text=item.name)
         if not ok or not new_name or new_name == item.name:
             return
@@ -4345,7 +4550,8 @@ class FilePaneWidget(QWidget):
         def checked(_value):
             # The production question between the check and the move: on
             # the GUI thread, as every dialog.
-            if not self._production_ok(f"rename {old_path} to {new_name}"):
+            if not self._production_ok(tr("rename {path} to {name}").format(
+                    path=old_path, name=new_name)):
                 return
             self._run_op(busy, move, moved, tr("Rename"), failed=failed)
 
@@ -4357,11 +4563,26 @@ class FilePaneWidget(QWidget):
         from ui.batch_rename_dialog import BatchRenameDialog
 
         items = self.selected_file_items()
-        if not items or not self._production_ok(f"rename {len(items)} item(s)"):
+        if not items or not self._production_ok(
+                tr_n(len(items), "rename {n} item", "rename {n} items")):
             return
         dialog = BatchRenameDialog(self._backend, self._current_path, items, parent=self)
         if dialog.exec():
             self.refresh_after_change()
+
+    def can_trash(self) -> bool:
+        """Whether Move to Trash works on this pane's connection."""
+        from core.trash import supports_trash
+
+        return supports_trash(self._backend)
+
+    def _delete_key(self) -> None:
+        """Del: Move to Trash where the connection has a trash, otherwise
+        Delete Permanently (which asks, default No)."""
+        if self.can_trash():
+            self._trash_selected()
+        else:
+            self._delete_selected()
 
     def _delete_selected(self) -> None:
         """Delete the selection permanently, in the background.
@@ -4410,14 +4631,14 @@ class FilePaneWidget(QWidget):
             QMessageBox.warning(
                 self,
                 tr("Delete"),
-                "Not started: these paths are already being deleted or moved to the trash:\n"
-                + _escape_dialog_lines(busy[:10]),
+                as_written(tr("Not started: these paths are already being deleted or moved "
+                              "to the trash:\n{paths}").format(paths=_dialog_lines(busy[:10]))),
             )
             return False
         ctx = {
             "phase": "remove",
             "trash": False,
-            "title": "Delete",
+            "title": tr("Delete"),
             "backend": backend,
             "entries": [(path, path, False) for path in ordered],
             "unsafe": [],
@@ -4425,7 +4646,8 @@ class FilePaneWidget(QWidget):
             "token": token,
         }
         self._removal_ctx = ctx
-        if not self._production_ok(f"delete {len(ordered)} item(s)"):
+        if not self._production_ok(
+                tr_n(len(ordered), "delete {n} item", "delete {n} items")):
             if not self._removal_dropped(ctx):
                 self._end_removal(ctx)
             return False
@@ -4449,7 +4671,7 @@ class FilePaneWidget(QWidget):
            stops between entries. Errors are reported per entry, and the
            listing is reloaded at the end.
         """
-        title = "Move to Trash" if trash else "Delete"
+        title = tr("Move to Trash") if trash else tr("Delete Permanently")
         if self._removal_ctx:
             self.status_message(tr("A delete is still running in this pane."))
             return
@@ -4470,12 +4692,13 @@ class FilePaneWidget(QWidget):
                     )
                 )
             except ValueError as exc:
-                unsafe.append(f"{item.name}: {exc}")
+                unsafe.append(f"{_shown_name(item.name)}: {exc}")
         if not entries:
             QMessageBox.warning(
                 self,
                 title,
-                "No selected item has a safe backend path.\n" + _escape_dialog_lines(unsafe[:10]),
+                as_written(tr("No selected item has a name that can be used safely here:"
+                              "\n{names}").format(names=_dialog_lines(unsafe[:10]))),
             )
             return
         backend = self._backend
@@ -4485,8 +4708,8 @@ class FilePaneWidget(QWidget):
             QMessageBox.warning(
                 self,
                 title,
-                "Not started: these paths are already being deleted or moved to the trash:\n"
-                + _escape_dialog_lines(busy[:10]),
+                as_written(tr("Not started: these paths are already being deleted or moved "
+                              "to the trash:\n{paths}").format(paths=_dialog_lines(busy[:10]))),
             )
             return
         self._removal_ctx = {
@@ -4506,9 +4729,12 @@ class FilePaneWidget(QWidget):
             return preview_delete(backend, paths, cancel=cancelled, progress=report,
                                   verb=tr("move to trash") if trash else tr("delete"))
 
+        n = len(entries)
         self._show_removal_busy(
-            (tr("Checking {n} item(s) before moving them to the trash…") if trash
-             else tr("Checking {n} item(s) before the delete…")).format(n=len(entries))
+            tr_n(n, "Checking {n} item before moving it to the trash…",
+                 "Checking {n} items before moving them to the trash…") if trash
+            else tr_n(n, "Checking {n} item before the delete…",
+                      "Checking {n} items before the delete…")
         )
         self._ensure_removal_job().start(work, replace=True)
 
@@ -4523,8 +4749,9 @@ class FilePaneWidget(QWidget):
         ctx = self._removal_ctx
         where = _shorten_path(str(state.get("path", "")))
         if ctx.get("phase") == "remove":
-            verb = tr("Moving to the trash…") if ctx.get("trash") else tr("Deleting…")
-            return f"{verb} {state['scanned']} of {state['indexed']} — {where}"
+            text = (tr("Moving to the trash… {done} of {total}") if ctx.get("trash")
+                    else tr("Deleting… {done} of {total}"))
+            return text.format(done=state["scanned"], total=state["indexed"]) + f" — {where}"
         return (
             tr("Checking before the delete… {folders} folders, {files} files").format(
                 folders=state["scanned"], files=state["indexed"]
@@ -4577,9 +4804,9 @@ class FilePaneWidget(QWidget):
         if self._backend is not ctx["backend"]:
             self._end_removal(ctx)
             self.status_message(
-                tr("{what} not started: the connection changed - nothing was touched.").format(
-                    what=ctx["title"]
-                )
+                tr("Nothing was moved to the trash: the connection changed meanwhile.")
+                if ctx["trash"]
+                else tr("Nothing was deleted: the connection changed meanwhile.")
             )
             return True
         return False
@@ -4591,28 +4818,32 @@ class FilePaneWidget(QWidget):
             log.debug("%s preview failed: %s", title, value)
         if cancelled or (preview is not None and preview.cancelled):
             self._end_removal(ctx)
-            self.status_message(
-                tr("{what} cancelled - nothing was touched.").format(what=title)
-                if trash
-                else tr("Delete cancelled - nothing was deleted.")
-            )
+            self.status_message(_removal_cancelled_text(trash))
             return
         if self._removal_dropped(ctx):
             return
         entries, unsafe = ctx["entries"], ctx["unsafe"]
-        preview_text = "\n\n" + preview.summary() if preview is not None else ""
+        n = len(entries)
+        preview_text = "\n\n" + removal_preview_text(preview) if preview is not None else ""
         if unsafe:
-            preview_text += f"\n\nSkipped {len(unsafe)} unsafe item(s):\n" + "\n".join(unsafe[:5])
-        question = (
-            f"Move {len(entries)} item(s) to trash?"
-            if trash
-            else f"Delete {len(entries)} item(s)?"
-        )
+            preview_text += "\n\n" + tr_n(
+                len(unsafe), "Skipped {n} item whose name cannot be used safely:",
+                "Skipped {n} items whose names cannot be used safely:",
+            ) + "\n" + "\n".join(unsafe[:5])
+        if trash:
+            question = tr_n(n, "Move {n} item to the trash?", "Move {n} items to the trash?")
+        else:
+            question = tr_n(n, "Delete {n} item permanently?", "Delete {n} items permanently?")
+            question += " " + tr("This cannot be undone.")
+        from ui.plain_text import as_written
+
+        # A permanent delete defaults to No: Enter on a reflex keeps the files.
         reply = QMessageBox.question(
             self,
             title,
-            f"{question}\n{ctx['names']}{escape(preview_text)}",
+            as_written(f"{question}\n{ctx['names']}{preview_text}"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes if trash else QMessageBox.StandardButton.No,
         )
         if self._removal_dropped(ctx):
             return
@@ -4622,16 +4853,15 @@ class FilePaneWidget(QWidget):
         if not self._hidden_entries_ok(ctx, preview):
             if not self._removal_dropped(ctx):
                 self._end_removal(ctx)
-                self.status_message(
-                    tr("{what} cancelled - nothing was touched.").format(what=title)
-                )
+                self.status_message(_removal_cancelled_text(trash))
             return
         if self._removal_dropped(ctx):
             return
         op = (
-            f"move {len(entries)} item(s) to the trash"
+            tr_n(n, "move {n} item to the trash", "move {n} items to the trash")
             if trash
-            else f"delete {len(entries)} item(s) in {self._current_path}"
+            else tr_n(n, "delete {n} item in {folder}", "delete {n} items in {folder}",
+                      folder=self._current_path)
         )
         if not self._production_ok(op):
             if not self._removal_dropped(ctx):
@@ -4684,7 +4914,7 @@ class FilePaneWidget(QWidget):
         reply = QMessageBox.warning(
             self,
             tr("{title}: hidden entries").format(title=ctx["title"]),
-            _escape_dialog_lines(lines),
+            as_written(_dialog_lines(lines)),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -4700,10 +4930,11 @@ class FilePaneWidget(QWidget):
             finally:
                 _release_removal(token)
 
+        n = len(entries)
         self._show_removal_busy(
-            tr("Moving {n} item(s) to the trash…").format(n=len(entries))
+            tr_n(n, "Moving {n} item to the trash…", "Moving {n} items to the trash…")
             if trash
-            else tr("Deleting {n} item(s)…").format(n=len(entries))
+            else tr_n(n, "Deleting {n} item…", "Deleting {n} items…")
         )
         self._ensure_removal_job().start(work, replace=True)
 
@@ -4714,36 +4945,57 @@ class FilePaneWidget(QWidget):
         if kind == "error":  # _run_removal catches per entry; this is a defect
             log.error("%s failed: %s", ctx["title"], value)
             errors.append(str(value))
-            note = f"{ctx['title']} failed: {value}"
+            note = tr("{what} failed: {error}").format(what=ctx["title"], error=value)
         else:
             errors.extend(value.errors)
-            moved = "Moved" if trash else "Deleted"
-            where = " to the trash" if trash else ""
+            done, kept = value.done, value.not_attempted
             if value.aborted:
                 note = (
-                    f"{ctx['title']} stopped after an unexpected error: {moved.lower()} "
-                    f"{value.done} of {total} item(s){where}; {value.not_attempted} kept."
+                    tr_n(total, "Move to Trash stopped after an unexpected error: "
+                         "{done} of {n} item moved to the trash; {kept} kept.",
+                         "Move to Trash stopped after an unexpected error: "
+                         "{done} of {n} items moved to the trash; {kept} kept.",
+                         done=done, kept=kept)
+                    if trash else
+                    tr_n(total, "Delete stopped after an unexpected error: "
+                         "{done} of {n} item deleted; {kept} kept.",
+                         "Delete stopped after an unexpected error: "
+                         "{done} of {n} items deleted; {kept} kept.",
+                         done=done, kept=kept)
                 )
             elif value.partial is not None:
                 part_name, part_count = value.partial
-                note = (
-                    f"{ctx['title']} cancelled after {value.done} of {total} item(s); "
-                    f"{part_name} was partly deleted ({part_count} entries inside it "
-                    f"removed, the rest is still there); {value.not_attempted} kept."
+                note = tr_n(
+                    total,
+                    "Delete cancelled after {done} of {n} item; {name} was partly deleted "
+                    "({inside} entries inside it removed, the rest is still there); {kept} kept.",
+                    "Delete cancelled after {done} of {n} items; {name} was partly deleted "
+                    "({inside} entries inside it removed, the rest is still there); {kept} kept.",
+                    done=done, name=part_name, inside=part_count, kept=kept,
                 )
-            elif value.not_attempted:
+            elif kept:
                 note = (
-                    f"{ctx['title']} cancelled after {value.done} of {total} item(s); "
-                    f"{value.not_attempted} kept."
+                    tr_n(total, "Move to Trash cancelled after {done} of {n} item; {kept} kept.",
+                         "Move to Trash cancelled after {done} of {n} items; {kept} kept.",
+                         done=done, kept=kept)
+                    if trash else
+                    tr_n(total, "Delete cancelled after {done} of {n} item; {kept} kept.",
+                         "Delete cancelled after {done} of {n} items; {kept} kept.",
+                         done=done, kept=kept)
                 )
+            elif trash:
+                note = tr_n(total, "Moved {done} of {n} item to the trash.",
+                            "Moved {done} of {n} items to the trash.", done=done)
             else:
-                note = f"{moved} {value.done} of {total} item(s){where}."
+                note = tr_n(total, "Deleted {done} of {n} item.", "Deleted {done} of {n} items.",
+                            done=done)
         self._note_after_refresh(note)
         if errors:
             QMessageBox.warning(
                 self,
-                "Trash Errors" if trash else "Delete Errors",
-                f"{len(errors)} item(s) failed:\n" + _escape_dialog_lines(errors[:10]),
+                tr("Trash Errors") if trash else tr("Delete Errors"),
+                as_written(tr_n(len(errors), "{n} item failed:", "{n} items failed:") + "\n"
+                           + _dialog_lines(errors[:10])),
             )
 
     def _note_after_refresh(self, text: str) -> None:
@@ -4777,7 +5029,8 @@ class FilePaneWidget(QWidget):
             return
         item = items[0]
         path = self._safe_item_path(item)
-        if path is None or not self._production_ok(f"change permissions of {path}"):
+        if path is None or not self._production_ok(
+                tr("change permissions of {path}").format(path=path)):
             return
         dialog = PermissionsDialog(self._backend, path, item, parent=self)
         if dialog.exec():
@@ -5011,8 +5264,8 @@ class FilePaneWidget(QWidget):
         item, full_path = self._checksum_target
         stream = self._checksum_phase == "stream"
         if kind == "error":
-            text = ("Failed to read file for hashing:\n{error}" if stream
-                    else "Failed to compute checksum:\n{error}")
+            text = (tr("Failed to read file for hashing:\n{error}") if stream
+                    else tr("Failed to compute checksum:\n{error}"))
             QMessageBox.warning(self, tr("Checksum"), text.format(error=value))
             return
         if stream:
@@ -5341,7 +5594,7 @@ class FilePaneWidget(QWidget):
                     Qt.Orientation.Horizontal,
                     Qt.ItemDataRole.DisplayRole,
                 )
-                or f"Column {col}"
+                or tr("Column {n}").format(n=col)
             )
             action = menu.addAction(str(label))
             action.setCheckable(True)
@@ -5678,19 +5931,22 @@ class FilePaneWidget(QWidget):
         except OSError as exc:
             QMessageBox.warning(
                 self,
-                "Extract Archive",
-                f"Cannot pick a unique target folder:\n{exc}",
+                tr("Extract Archive"),
+                tr("Cannot pick a target folder:\n{error}").format(error=exc),
             )
             return
 
+        from ui.plain_text import as_written
+
         progress = QProgressDialog(
-            f"Extracting {item.name} → {Path(target_dir).name}…",
-            "Cancel",
+            as_written(tr("Extracting {name} → {target}…").format(
+                name=item.name, target=Path(target_dir).name)),
+            tr("Cancel"),
             0,
             0,
             self,
         )
-        progress.setWindowTitle("Extract Archive")
+        progress.setWindowTitle(tr("Extract Archive"))
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(250)
         progress.setValue(0)
@@ -5770,15 +6026,15 @@ class FilePaneWidget(QWidget):
             if note:
                 self.status_message(note)
                 text += "\n\n" + note
-            QMessageBox.information(self, "Extract Archive", text)
+            QMessageBox.information(self, tr("Extract Archive"), text)
             return
         if state["error"] == "cancelled":
             log.info("Extraction cancelled: %s", src_path)
             return
         QMessageBox.warning(
             self,
-            "Extract Archive",
-            f"Could not extract {item.name}:\n{state['error']}",
+            tr("Extract Archive"),
+            tr("Could not extract {name}:\n{error}").format(name=item.name, error=state["error"]),
         )
 
     def _encrypt_selected_file(self, item) -> None:
@@ -5797,10 +6053,12 @@ class FilePaneWidget(QWidget):
         src_path = self._safe_item_path(item)
         if src_path is None:
             return
+        from ui.plain_text import as_written
+
         pw, ok = QInputDialog.getText(
             self,
             tr("Encrypt File"),
-            tr("Passphrase for '{name}':").format(name=item.name),
+            as_written(tr("Passphrase for '{name}':").format(name=item.name)),
             QLineEdit.EchoMode.Password,
         )
         if not ok or not pw:
@@ -5836,6 +6094,7 @@ class FilePaneWidget(QWidget):
                     as_written(tr("'{name}' already exists. Overwrite?").format(
                         name=existing.rsplit('/', 1)[-1])),
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
                 )
                 if reply != QMessageBox.StandardButton.Yes:
                     return
@@ -5878,10 +6137,12 @@ class FilePaneWidget(QWidget):
             return
         dst_name = item.name[: -len(E.ENC_SUFFIX)] or item.name + ".decrypted"
         dst_path = self._backend.join(self._current_path, dst_name)
+        from ui.plain_text import as_written
+
         pw, ok = QInputDialog.getText(
             self,
             tr("Decrypt File"),
-            tr("Passphrase for '{name}':").format(name=item.name),
+            as_written(tr("Passphrase for '{name}':").format(name=item.name)),
             QLineEdit.EchoMode.Password,
         )
         if not ok or not pw:
@@ -5915,6 +6176,7 @@ class FilePaneWidget(QWidget):
                     tr("Overwrite?"),
                     as_written(tr("'{name}' already exists. Overwrite?").format(name=dst_name)),
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
                 )
                 if reply != QMessageBox.StandardButton.Yes:
                     return
@@ -6107,7 +6369,13 @@ class FilePaneWidget(QWidget):
 
             # --- File operations ---
             # F8 is the window's "Add Current Directory" shortcut, not delete.
+            # Del moves to the trash (a permanent delete where the connection
+            # has none); Shift+Del deletes permanently, after a question
+            # whose default is No.
             if key == Qt.Key.Key_Delete and no_mods:
+                self._delete_key()
+                return True
+            if key == Qt.Key.Key_Delete and mods == Qt.KeyboardModifier.ShiftModifier:
                 self._delete_selected()
                 return True
             if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and no_mods:

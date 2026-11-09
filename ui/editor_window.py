@@ -532,7 +532,8 @@ class EditorWindow(QMainWindow):
         index = self.tabs.indexOf(tab)
         if index < 0:
             return
-        title = tab.name + (" [read-only]" if tab.read_only else "") + (" *" if tab.is_modified() else "")
+        title = (tr("{name} [read-only]").format(name=tab.name) if tab.read_only else tab.name) \
+            + (" *" if tab.is_modified() else "")
         self.tabs.setTabText(index, title)
         if tab.untitled:
             tip = tr("{name} (not saved yet)").format(name=tab.name)
@@ -746,7 +747,9 @@ class EditorWindow(QMainWindow):
             else:
                 self.statusBar().clearMessage()
 
-        return run_off_gui(fn, text=tr(verb + " {name}…").format(name=tab.name), status=status)
+        texts = {"Reading": tr("Reading {name}…"), "Checking": tr("Checking {name}…")}
+        text = texts.get(verb, tr("Writing {name}…")).format(name=tab.name)
+        return run_off_gui(fn, text=text, status=status)
 
     def _gone(self, tab: EditorTab) -> bool:
         """After a wait (_io): the window or *tab* was deleted meanwhile.

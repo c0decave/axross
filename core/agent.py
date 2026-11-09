@@ -244,11 +244,24 @@ def _send_chat(opener, request, profile: LLMProfile) -> dict:
                 f"the LLM server at {profile.host()} answered a redirect (HTTP {exc.code}), "
                 "which is not followed"
             ) from None
-        raise AgentError(f"the LLM server at {profile.host()} answered HTTP {exc.code}") from None
+        raise AgentError(
+            f"the LLM server at {profile.host()} answered HTTP {exc.code}"
+            + _error_detail(exc, request)
+        ) from None
     except (urllib.error.URLError, OSError) as exc:
         raise AgentError(unreachable_text(profile, exc)) from None
     except (ValueError, RecursionError):
         raise AgentError(f"the LLM server at {profile.host()} did not answer JSON") from None
+
+
+def _error_detail(exc: urllib.error.HTTPError, request: urllib.request.Request) -> str:
+    """The server's own words of an error answer (": model not found, try
+    pulling it first"), the request's API key masked should it echo it."""
+    from core.agent_net import server_error_text
+
+    auth = request.get_header("Authorization") or ""
+    key = auth[len("Bearer "):] if auth.startswith("Bearer ") else auth
+    return server_error_text(exc, redact=(key,))
 
 
 def unreachable_text(profile: LLMProfile, exc: BaseException) -> str:
@@ -345,7 +358,10 @@ def _model_listing(profile: LLMProfile, api_key: str) -> list[dict]:
                 f"the LLM server at {profile.host()} answered a redirect (HTTP {exc.code}), "
                 "which is not followed"
             ) from None
-        raise AgentError(f"the LLM server at {profile.host()} answered HTTP {exc.code}") from None
+        raise AgentError(
+            f"the LLM server at {profile.host()} answered HTTP {exc.code}"
+            + _error_detail(exc, request)
+        ) from None
     except (urllib.error.URLError, OSError) as exc:
         raise AgentError(unreachable_text(profile, exc)) from None
     except (ValueError, RecursionError):
@@ -1146,6 +1162,10 @@ class Agent:
         except Exception as exc:  # noqa: BLE001 - a broken server must not stop the agent
             log.warning("agent: the MCP servers could not be read: %s", exc)
             tools, errors = [], [str(exc)]
+        if self.cancel.is_set():
+            # Stopped while a server started: the next task starts it again.
+            self._external = None
+            return
         for error in errors:
             self._on_event({"type": "notice", "text": f"MCP server not available: {error}"})
         self._external = {t.name: t for t in tools
@@ -1413,6 +1433,8 @@ class Agent:
             if refusal:
                 raise AgentError(refusal)
         self._load_external()
+        if self.cancel.is_set():
+            return AgentResult("", "cancelled", [])
         self.messages.append({"role": "user", "content": task})
         calls: list[dict] = []
         for _step in range(max(1, int(self.config.max_steps))):

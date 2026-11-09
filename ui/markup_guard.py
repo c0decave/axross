@@ -24,6 +24,13 @@ Two parts, installed once when the ``ui`` package is imported
   instead. axross' own rich texts do neither, so they render as before; a
   hostile one reads as what it is. A label set to ``PlainText`` is left
   alone.
+* **Progress and input dialogs.** Their label is a QLabel Qt makes in
+  C++, so the QLabel wrappers never see its text: ``QProgressDialog(text,
+  ...)``, ``setLabelText`` of QProgressDialog and QInputDialog and the
+  static ``QInputDialog.getText()`` / ``getItem()`` / ``getInt()`` /
+  ``getDouble()`` / ``getMultiLineText()`` show a label that reads as rich
+  text as written (:func:`show_as_written`): axross' own labels there are
+  plain text, so markup in one came from a name.
 * **Links in message boxes.** A QMessageBox label opens links in the web
   browser on a click (``openExternalLinks``), and its texts carry names
   from outside: a remote file named ``x<br><b>verified</b> <a
@@ -268,6 +275,31 @@ def defuse_message(text):
     return defuse(text)
 
 
+#: The head of a text :func:`ui.plain_text.as_written` escaped.
+_AS_WRITTEN_HEAD = "<qt style='white-space:pre-wrap'>"
+
+
+def show_as_written(text):
+    """*text* for the label of a progress or input dialog: shown exactly as
+    written when Qt would render it as rich text. axross' own labels of
+    these dialogs are plain text, so markup in one came from a name (an
+    archive member, a remote file) - rendered, ``<img src=/dev/zero>``
+    made Qt read the device until the process died. A text already
+    escaped (:func:`defuse`, :func:`ui.plain_text.as_written`) is left as
+    it is."""
+    if not isinstance(text, str) or "<" not in text:
+        return text
+    for head in (_DEFUSED_HEAD, _AS_WRITTEN_HEAD):
+        if text.startswith(head) and text.endswith(_DEFUSED_TAIL) \
+                and "<" not in text[len(head):-len(_DEFUSED_TAIL)]:
+            return text
+    from PyQt6.QtCore import Qt
+
+    if not Qt.mightBeRichText(text):
+        return text
+    return f"{_DEFUSED_HEAD}{html.escape(text)}{_DEFUSED_TAIL}"
+
+
 def original_of(text):
     """The text :func:`defuse` was given for *text*, or *text* itself."""
     if isinstance(text, str) and text.startswith(_DEFUSED_HEAD) and text.endswith(_DEFUSED_TAIL):
@@ -323,7 +355,9 @@ def _wrap_text_at(cls, name: str, index: int, *, unless_plain: bool = False,
     setattr(cls, name, wrapper)
 
 
-def _wrap_static_text_at(cls, name: str, index: int, fn=None) -> None:
+def _wrap_static_text_at(cls, name: str, index: int, fn=None, keyword: str = "text") -> None:
+    """Wrap the static ``cls.name`` so its positional argument *index* (or
+    the one given as *keyword*) is defused by *fn*."""
     original = getattr(cls, name)
     fn = fn or defuse
 
@@ -332,8 +366,8 @@ def _wrap_static_text_at(cls, name: str, index: int, fn=None) -> None:
         if len(args) > index:
             args = list(args)
             args[index] = fn(args[index])
-        if "text" in kwargs:
-            kwargs["text"] = fn(kwargs["text"])
+        if keyword in kwargs:
+            kwargs[keyword] = fn(kwargs[keyword])
         return original(*args, **kwargs)
 
     setattr(cls, name, staticmethod(wrapper))
@@ -344,8 +378,35 @@ def _is_plain(widget) -> bool:
 
     try:
         return widget.textFormat() == Qt.TextFormat.PlainText
+    except AttributeError:
+        pass
+    except RuntimeError:
+        return False
+    # A dialog whose labels Qt made (QProgressDialog, QInputDialog): plain
+    # once every one of them was switched to PlainText.
+    from PyQt6.QtWidgets import QLabel
+
+    try:
+        labels = widget.findChildren(QLabel)
+        return bool(labels) and all(label.textFormat() == Qt.TextFormat.PlainText
+                                    for label in labels)
     except (AttributeError, RuntimeError):
         return False
+
+
+def _wrap_label_init(cls) -> None:
+    """``QProgressDialog(labelText, ...)``: the first argument, a str, is
+    the label Qt makes in C++ (AutoText) - shown as written when it reads
+    as rich text (:func:`show_as_written`)."""
+    original = cls.__init__
+
+    @functools.wraps(original)
+    def wrapper(self, *args, **kwargs):
+        if args and isinstance(args[0], str):
+            args = (show_as_written(args[0]), *args[1:])
+        original(self, *args, **kwargs)
+
+    cls.__init__ = wrapper
 
 
 def _wrap_role_data(cls, name: str, role_index: int, value_index: int) -> None:
@@ -486,9 +547,11 @@ def install() -> None:
     from PyQt6.QtGui import QAction, QStandardItem
     from PyQt6.QtWidgets import (
         QComboBox,
+        QInputDialog,
         QLabel,
         QListWidgetItem,
         QMessageBox,
+        QProgressDialog,
         QTabBar,
         QTableWidgetItem,
         QTabWidget,
@@ -511,6 +574,15 @@ def install() -> None:
     for name in ("warning", "critical", "information", "question", "about"):
         _wrap_static_text_at(QMessageBox, name, 2, defuse_message)
     _wrap_static_text_at(QToolTip, "showText", 1)
+    # Progress and input dialogs: their label is a QLabel Qt makes in C++
+    # (AutoText), past the QLabel wrappers above - also the one of the
+    # static QInputDialog.getText() and friends.
+    _wrap_label_init(QProgressDialog)
+    for cls in (QProgressDialog, QInputDialog):
+        _wrap_text_at(cls, "setLabelText", 0, unless_plain=True, fn=show_as_written)
+    for name in ("getText", "getMultiLineText", "getItem", "getInt", "getDouble"):
+        # (PyQt takes the label positionally only; "text" is the answer.)
+        _wrap_static_text_at(QInputDialog, name, 2, show_as_written, keyword="label")
     for cls in (QWidget, QAction, QListWidgetItem, QStandardItem):
         _wrap_text_at(cls, "setToolTip", 0)
     for cls in (QTreeWidgetItem,):
@@ -530,4 +602,4 @@ def install() -> None:
 
 __all__ = ["MAX_CELLS", "MAX_FONT_PX","MAX_IMAGE_BYTES", "MAX_INDENT_DEPTH", "MAX_LENGTH_PX", "MAX_SPAN",
            "MAX_TABLE_DEPTH", "asks_for_resource", "bombs_layout", "defuse", "defuse_message",
-           "holds_link", "install", "original_of"]
+           "holds_link", "install", "original_of", "show_as_written"]

@@ -91,7 +91,7 @@ from core import audio_route as AR
 from core import media_collect as MC
 from core import media_load as ML
 from core import multimedia_probe as MPROBE
-from core.i18n import tr
+from core.i18n import format_count, tr
 from core.multimedia_env import prime_notify_lookups
 from core.thread_relay import GuiCall
 from ui import viewer_file_actions as VFA
@@ -589,7 +589,7 @@ class MediaListModel(QAbstractListModel):
                 self.thumbnail_needed.emit(item)
             return self._kind_icon(item.kind)
         if role == Qt.ItemDataRole.ToolTipRole:
-            text = f"{item.path}\n{item.size:,} bytes"
+            text = tr("{path}\n{size} bytes").format(path=item.path, size=format_count(item.size))
             reason = self._failed.get(item.path)
             from ui.plain_text import plain_tooltip
 

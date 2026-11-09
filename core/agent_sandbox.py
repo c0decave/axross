@@ -63,6 +63,19 @@ login:
   without capabilities) cannot write to. A container engine cannot make
   a symlink, so a symlink entry is left out there, as is an entry with a
   colon in its name (``-v`` cannot carry one).
+* A protected place that is a **symlink** (GNU stow, chezmoi:
+  ``~/.bashrc -> dotfiles/bash/.bashrc``) is also mounted read-only at its
+  real path when that lies in a writable folder. A protected file with
+  **hard links** is read-only at its protected name only: its other names
+  cannot be found without walking the file system (logged; a known limit).
+
+Secret files (core.protected_places.secret_hides: SSH and GnuPG private
+keys, the ADB key, axross's tokens and keys, the desktop's keyrings,
+``~/.netrc``, ``~/.git-credentials``) inside any mount - the home folder as
+the agent's folder - are covered in the sandbox: a folder by an empty
+read-only tmpfs (all of ``~/.ssh``), a file by an empty one (``/dev/null``).
+A mount that names the secret itself (or a folder in it) gives it to the
+agent on purpose and is left as it is.
 """
 
 from __future__ import annotations
@@ -402,6 +415,21 @@ def _agent_mounts(
     return [(path, rw) for path, rw, _kind in _mount_plan(profile, root, writable, extra)]
 
 
+def _warn_hard_links(place: str) -> None:
+    """A protected file with more names (hard links) can be changed through
+    another name in a writable folder: those names cannot be found without
+    walking the file system, so it is only logged (a known limit)."""
+    try:
+        st = os.lstat(place)
+    except OSError:
+        return
+    import stat as stat_module
+
+    if stat_module.S_ISREG(st.st_mode) and st.st_nlink > 1:
+        log.warning("agent sandbox: %s has %d hard links; it is read-only at this name only",
+                    place, st.st_nlink)
+
+
 def _inside(path: str, folder: str) -> bool:
     return path == folder or path.startswith(folder.rstrip(os.sep) + os.sep)
 
@@ -441,11 +469,19 @@ def _mount_plan(
 
     writable_roots = [p for p, rw in seen.items() if rw]
     missing: list[tuple[str, bool]] = []
-    for place, folder in protected_places.protected_paths():
+    for place, folder in protected_places.protected_paths(foreign_missing=False):
         if not any(_inside(place, r) for r in writable_roots):
             continue
         if os.path.lexists(place):
             seen[place], kinds[place] = False, "bind"
+            # Through a symlink (GNU stow, chezmoi: ~/.bashrc ->
+            # dotfiles/bash/.bashrc) the place's real file or folder lies in
+            # an ordinary writable folder: mounted read-only there as well.
+            real = os.path.realpath(place)
+            if real != place and os.path.lexists(real) and any(
+                    _inside(real, r) for r in writable_roots):
+                seen[real], kinds[real] = False, "bind"
+            _warn_hard_links(place)
         else:
             missing.append((place, folder))
     frames: dict[str, bool] = {}  # frame -> whether its entries are writable
@@ -493,6 +529,19 @@ def _mount_plan(
                 continue  # mounted on its own (a protected place, a folder of the profile)
             seen[path] = rw
             kinds[path] = "link" if os.path.islink(path) else "entry"
+    # Secrets (SSH and GnuPG keys, the ADB key, axross's tokens, keyrings)
+    # in any mount, writable or not, are covered: an empty read-only folder,
+    # an empty file. The worker's own read refusal is no guard once it is
+    # compromised. Unless a mount names the secret itself (or a folder in
+    # it): the user gave it to the agent on purpose.
+    explicit = [p for path, _rw in mounts for p in (os.path.abspath(path), os.path.realpath(path))]
+    for secret, is_dir in protected_places.secret_hides():
+        holders = [p for p in seen if _inside(secret, p)]
+        if not holders or kinds[max(holders, key=len)] not in ("bind", "entry"):
+            continue  # not in the sandbox, or under a mount of its own already
+        if any(_inside(m, secret) for m in explicit):
+            continue
+        seen[secret], kinds[secret] = False, "dir" if is_dir else "hide"
     ordered = sorted(seen.items(), key=lambda item: (item[0].rstrip(os.sep).count(os.sep), item[0]))
     return [(path, rw, kinds[path]) for path, rw in ordered]
 
@@ -563,6 +612,12 @@ def _host_xdg_env() -> list[tuple[str, str]]:
         value = os.environ.get(var, "")
         if value and os.path.isabs(value):
             out.append((host_var, value))
+    # The host's PATH folders in the home: a new file there is a command.
+    from core.protected_places import HOST_PATH_ENV, home_path_dirs
+
+    path_dirs = home_path_dirs()
+    if path_dirs:
+        out.append((HOST_PATH_ENV, os.pathsep.join(path_dirs)))
     return out
 
 
@@ -644,6 +699,8 @@ def _bwrap_command(profile: SandboxProfile, root: str, writable: bool, inner: li
             argv += ["--bind-try" if rw else "--ro-bind-try", path, path]
         elif kind == "absent":
             continue  # kept from being made by its read-only frame
+        elif kind == "hide":
+            argv += ["--ro-bind", os.devnull, path]  # a secret file: empty here
         elif kind == "link":
             try:
                 argv += ["--symlink", os.readlink(path), path]
@@ -651,7 +708,7 @@ def _bwrap_command(profile: SandboxProfile, root: str, writable: bool, inner: li
                 pass  # gone since the plan
         else:
             argv += ["--bind" if rw else "--ro-bind", path, path]
-    for path in frames:
+    for path in reversed(frames):  # a frame in a frame first, the outer one last
         argv += ["--remount-ro", path]
     argv += ["--chdir", root, "--", *inner]
     if profile.network == "full":
@@ -701,6 +758,12 @@ def _container_command(profile: SandboxProfile, engine: str, root: str, writable
             argv.append(f"--tmpfs={path}:rw,nosuid,nodev,noexec,mode=0555")
         elif kind == "absent":
             continue  # kept from being made by its frame
+        elif kind == "hide":
+            if ":" in path:
+                log.warning("agent sandbox: %s cannot be named to %s (a colon): the folder "
+                            "holding it stays readable", path, engine)
+                continue
+            argv += ["-v", f"{os.devnull}:{path}:ro"]  # a secret file: empty here
         elif kind == "link":
             continue  # a container engine cannot make a symlink: left out
         elif kind == "entry" and ":" in path:
@@ -949,6 +1012,10 @@ class SandboxedAgent:
         except Exception as exc:  # noqa: BLE001 - a broken server must not stop the agent
             log.warning("agent sandbox: the MCP servers could not be read: %s", exc)
             tools, errors = [], [str(exc)]
+        if self.cancel.is_set():
+            # Stopped while a server started: the next task starts it again.
+            self._external = None
+            return
         for error in errors:
             self._on_event({"type": "notice", "text": f"MCP server not available: {error}"})
         self._external = [t for t in tools if A.tool_allowed(t, self.config.functions)
@@ -1229,6 +1296,8 @@ class SandboxedAgent:
             )
             self._stop()
         self._load_external()
+        if self.cancel.is_set():
+            return A.AgentResult("", "cancelled", [])
         if self._proc is None or self._proc.poll() is not None:
             self._start(sandbox)
         # The worker sends through axross: axross asks what is loaded - after

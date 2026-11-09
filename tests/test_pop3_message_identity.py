@@ -97,14 +97,28 @@ def test_sad_after_a_reconnect_the_listed_message_is_found_by_its_uid(server, mo
         s.remove("/1_hello.eml")  # deleted meanwhile
 
 
-def test_sad_without_uidl_a_renumbered_message_is_refused(server):
+def test_sad_without_uidl_a_renumbered_message_is_found_by_its_fingerprint(server):
+    """Without UIDL the listing's fingerprint (TOP n 0 headers + size)
+    finds "world" again (round 5: it was refused - and with two messages
+    of one subject the wrong one was deleted, see
+    tests/test_pop3_reconnect_and_lost_deletes.py)."""
+    server.state["uidl"] = False
+    s = _session(server)
+    s.list_dir("/")
+    s._pop.close()
+    s._pop = None
+    s.remove("/2_world.eml")  # number 2 is "salary-letter" now
+    assert _commands(server, "DELE") == ["DELE 1"]
+
+
+def test_sad_without_uidl_a_path_not_in_the_listing_is_refused(server):
     server.state["uidl"] = False
     s = _session(server)
     s.list_dir("/")
     s._pop.close()
     s._pop = None
     with pytest.raises(OSError, match="list the mailbox again"):
-        s.remove("/2_world.eml")  # number 2 is "salary-letter" now
+        s.remove("/2_hello.eml")  # never listed as 2; number 2 is "salary-letter" now
     assert _commands(server, "DELE") == []
 
 

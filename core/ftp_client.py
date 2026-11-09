@@ -22,7 +22,7 @@ from ftplib import FTP, FTP_TLS, error_perm, error_temp  # nosec B402
 from ftplib import Error as _FtpLibError  # nosec B402
 from typing import IO, NoReturn
 
-from core import removal_cancel
+from core import removal_cancel, transfer_hooks
 from core.backend import SessionLifecycle
 from core.path_policy import (
     MAX_RECURSIVE_DELETE_DEPTH,
@@ -231,6 +231,17 @@ def _unix_entry(
     return found.pop() if len(found) == 1 else None
 
 
+def _option_refused(exc: BaseException) -> bool:
+    """Whether the refusal of a ``LIST -a`` / ``NLST -a`` means "try it
+    without the option": any 5xx, and a 4xx other than 421 - wu-ftpd and
+    ProFTPD answer an option they do not take (a path "-a ..." that
+    matches nothing) with "450 No files found". 421 closes the
+    connection; asking again on it is pointless and hides why."""
+    if isinstance(exc, error_perm):
+        return True
+    return isinstance(exc, error_temp) and str(exc)[:3] != "421"
+
+
 def _nlst_all(ftp, path: str) -> list[str]:
     """``NLST`` of *path* including its dot entries.
 
@@ -238,17 +249,28 @@ def _nlst_all(ftp, path: str) -> list[str]:
     that start with a dot out of a plain NLST / LIST unless the client
     passes ``-a``: a folder copy left .htaccess / .env / .git behind and a
     recursive delete failed on RMD with them still there. ``NLST -a``
-    first; a server that refuses the option, answers with nothing (it may
-    have looked for a path "-a ..."), or names entries that begin with
-    "-a" (it took the option for part of the path) gets the plain NLST,
-    whose answer - or refusal - stands."""
+    first; a server that refuses the option (see :func:`_option_refused`)
+    or answers with nothing (it may have looked for a path "-a ...") gets
+    the plain NLST, whose answer - or refusal - stands. Names that begin
+    with "-a" may be the option taken for part of the path - or real
+    entries ("-archive.tar"): the plain NLST decides. When it names them
+    too they are entries and the ``-a`` answer (with the dot entries)
+    stands; otherwise the server misread the option."""
     try:
         names = ftp.nlst(f"-a {path}")
-    except error_perm:
+    except (error_perm, error_temp) as exc:
+        if not _option_refused(exc):
+            raise
         names = []
-    if names and not any(n.startswith("-a") for n in names):
+    if not names:
+        return ftp.nlst(path)
+    suspect = [n for n in names if n.startswith("-a")]
+    if not suspect:
         return names
-    return ftp.nlst(path)
+    plain = ftp.nlst(path)
+    if set(suspect) <= set(plain):
+        return names
+    return plain
 
 
 def _list_lines_all(ftp, path: str) -> tuple[str | None, list[str]]:
@@ -259,7 +281,9 @@ def _list_lines_all(ftp, path: str) -> tuple[str | None, list[str]]:
     lines: list[str] = []
     try:
         reply = ftp.retrlines(f"LIST -a {path}", lines.append)
-    except error_perm:
+    except (error_perm, error_temp) as exc:
+        if not _option_refused(exc):
+            raise
         lines = []
     else:
         if any(line.strip() and not line.startswith("total ") for line in lines):
@@ -474,6 +498,19 @@ def _close_quietly(ftp) -> None:
         pass
 
 
+def _settle_after_abandon(ftp) -> None:
+    """After a transfer given up mid-way (Cancel), its data connection is
+    closed but the server's reply (226 / 426) is still waiting on the
+    control connection: read it, so the next command does not read it as
+    its own answer. A connection that cannot be brought back is closed."""
+    try:
+        ftp.voidresp()
+    except (error_temp, error_perm):
+        pass  # 426 "transfer aborted" and the like: the answer is read
+    except Exception:  # noqa: BLE001 - not in a usable state any more
+        _close_quietly(ftp)
+
+
 class _SpooledWriter:
     """Write to a temp file, then upload on close.
 
@@ -490,6 +527,11 @@ class _SpooledWriter:
         self._store = store
         self._buf = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
         self._closed = False
+        # The running transfer's Cancel and progress (core.transfer_hooks):
+        # the STOR happens in close(), after the copy loop.
+        self._hooks = transfer_hooks.current()
+        if self._hooks is not None:
+            self._hooks.expect_upload()
 
     def write(self, data: bytes) -> int:
         return self._buf.write(data)
@@ -508,14 +550,30 @@ class _SpooledWriter:
         if self._closed:
             return
         self._closed = True
+        hooks = self._hooks
         try:
+            size = self._buf.seek(0, io.SEEK_END)
             self._buf.seek(0)
             cmd = "APPE" if self._append else "STOR"
+            # In a running transfer storbinary reads the spool through
+            # ReadProgress: each block checks Cancel and counts as sent. A
+            # cancelled STOR leaves a partial file (a plain InterruptedError:
+            # the engine rolls the destination back).
+            body = self._buf
+            if hooks is not None:
+                hooks.check()
+                body = transfer_hooks.ReadProgress(self._buf, hooks, size)
             if self._store is not None:
-                self._store(f"{cmd} {self._remote_path}", self._buf)
+                self._store(f"{cmd} {self._remote_path}", body)
             else:
                 with self._lock:
-                    self._ftp.storbinary(f"{cmd} {self._remote_path}", self._buf)
+                    try:
+                        self._ftp.storbinary(f"{cmd} {self._remote_path}", body)
+                    except InterruptedError:
+                        _settle_after_abandon(self._ftp)
+                        raise
+            if hooks is not None:
+                hooks.sent(size, size, check=False)
         finally:
             self._buf.close()
 
@@ -1384,6 +1442,13 @@ class FtpSession(SessionLifecycle):
                 ftp.retrlines(command, lines.append)
             except error_perm:
                 continue
+            except error_temp as exc:
+                # "450 No files found" for an option it does not take
+                # (_option_refused); on the plain LIST a 4xx is no
+                # "refused" - it is raised as before.
+                if command.startswith("LIST -a ") and _option_refused(exc):
+                    continue
+                raise
             details = _parse_unix_list_details(lines)
             if details:
                 return details
@@ -1720,7 +1785,14 @@ class FtpSession(SessionLifecycle):
         got = self._transfer_connection()
         if got is None:
             with io_lock(self):
-                self._ensure_connected().storbinary(command, fileobj)
+                shared = self._ensure_connected()
+                try:
+                    shared.storbinary(command, fileobj)
+                except InterruptedError:
+                    # Cancelled mid-STOR: the session's own connection
+                    # still holds the server's reply to it.
+                    _settle_after_abandon(shared)
+                    raise
             return
         ftp, generation = got
         try:
@@ -1728,6 +1800,13 @@ class FtpSession(SessionLifecycle):
         except error_perm:
             # "553 Could not create file": answered, the connection is fine.
             self._release_connection(ftp, generation=generation)
+            raise
+        except InterruptedError:
+            # Cancelled mid-STOR: wait for the server's reply, so that it
+            # is done with the partial file before the transfer engine
+            # rolls the destination back; then the connection goes.
+            _settle_after_abandon(ftp)
+            _close_quietly(ftp)
             raise
         except BaseException:
             _close_quietly(ftp)
@@ -1887,11 +1966,19 @@ class FtpSession(SessionLifecycle):
         ftp = self._ensure_connected()
         # Spooled, not a BytesIO: the whole file used to sit in RAM.
         buf = new_read_spool()
+        # In a running transfer every block checks Cancel and counts as
+        # received: the whole RETR happens here, before the copy loop.
+        hooks = transfer_hooks.current()
+        sink = buf if hooks is None else transfer_hooks.WriteProgress(buf, hooks)
         try:
-            ftp.retrbinary(f"RETR {path}", buf.write)
+            ftp.retrbinary(f"RETR {path}", sink.write)
         except error_perm as e:
             buf.close()
             raise self._read_refused(path, e) from e
+        except InterruptedError:
+            buf.close()
+            _settle_after_abandon(ftp)
+            raise
         except BaseException:
             buf.close()
             raise

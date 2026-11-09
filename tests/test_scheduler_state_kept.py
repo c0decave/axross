@@ -87,8 +87,8 @@ def _dialog_doing(monkeypatch, action) -> None:
     real_dialog = SD.SchedulerDialog
 
     class _Dialog:
-        def __init__(self, store, parent=None, *, run_now=None):
-            self.real = real_dialog(store, run_now=run_now)
+        def __init__(self, store, parent=None, *, run_now=None, running=()):
+            self.real = real_dialog(store, run_now=run_now, running=running)
 
         def exec(self):
             action(self.real)
@@ -195,3 +195,27 @@ def test_sad_the_job_store_is_private(tmp_path):
     assert [p.name for p in path.parent.iterdir() if p.name != "jobs.json.lock"] == [
         "jobs.json"
     ]
+
+
+def test_happy_an_open_scheduler_window_shows_the_result_of_run_now(window, monkeypatch):
+    """Run Now said "its result shows here when it ends", and the open
+    window kept "Last run: never" until it was reopened: the window is told
+    of each start and end now."""
+    seen: dict = {}
+
+    def while_open(dlg):
+        window._scheduler_dialog = dlg  # what _open_scheduler holds while exec runs
+        window._run_job_now(next(j for j in dlg._jobs if j.job_id == "j1"))
+        seen["during"] = dlg.displayed_rows()[0]
+        record = getattr(scheduler, "record_run", None)
+        if record is not None:
+            record(window._job_store(), "j1", True, "ran mirror")
+        window._on_scheduled_job_finished("j1", True, "ran mirror")
+        seen["after"] = dlg.displayed_rows()[0]
+        seen["status"] = dlg._status.text()
+
+    window._scheduler_jobs = window._job_store().load()
+    _dialog_doing(monkeypatch, while_open)
+    window._open_scheduler()
+    assert seen["during"] != seen["after"]
+    assert "finished" in seen["status"] and "ran mirror" in seen["status"]

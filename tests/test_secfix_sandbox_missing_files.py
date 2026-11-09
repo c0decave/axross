@@ -80,7 +80,8 @@ def test_sad_bwrap_makes_the_home_a_read_only_frame(home):
     assert ["--bind", h, h] not in triples  # the host's home is not mounted itself
     tmpfs = [i for i, a in enumerate(argv[:-1]) if a == "--tmpfs" and argv[i + 1] == h][0] + 1
     # The host's entries, as writable as the home was; protected ones read-only.
-    for name in ("proj", "notes.txt", ".config", ".profile"):
+    # (~/.config is a frame of its own: a missing ~/.config/mimeapps.list.)
+    for name in ("proj", "notes.txt", ".profile"):
         path = str(home / name)
         i = argv.index(path)
         rw = name != ".profile"

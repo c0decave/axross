@@ -108,7 +108,7 @@ def _toolbar_move(window):
 
     for bar in window.findChildren(QToolBar):
         for action in bar.actions():
-            if action.text().replace("&", "") == "Move to Target":
+            if action.text().replace("&", "") == "Move to Target Pane":
                 return action
     raise AssertionError("no Move to Target on the toolbar")
 

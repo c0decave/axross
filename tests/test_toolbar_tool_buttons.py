@@ -257,8 +257,14 @@ def test_edge_an_extension_switched_off_again_asks_again(window, monkeypatch) ->
 def test_edge_no_shortcut_is_bound_twice(window) -> None:
     from PyQt6.QtGui import QAction
 
+    from PyQt6.QtCore import Qt
+
     owners: dict[str, set[int]] = {}
     for action in window.findChildren(QAction):
+        # A menu's stand-in that only shows the key (WidgetShortcut: active
+        # only while that menu has focus) is no second owner of it.
+        if action.shortcutContext() == Qt.ShortcutContext.WidgetShortcut:
+            continue
         for seq in action.shortcuts():
             if seq.toString():
                 owners.setdefault(seq.toString(), set()).add(id(action))

@@ -63,7 +63,7 @@ AREAS: tuple[Area, ...] = (
         *_core("features", "startup_guard", "qt_exit", "thread_lifetime", "thread_relay", "i18n",
                "posix_compat", "frozen_archive", "process_launcher", "subprocess_env",
                "desktop_open", "pane_activation", "open_limits", "json_store", "third_party",
-               "structured_log", "log_areas", "log_config", "user_errors"),
+               "structured_log", "log_areas", "log_config", "user_errors", "xdg_dirs"),
     )),
     Area("protocols", "Protocols"),
     Area("protocols.connections", "Connections & Proxy", (
@@ -115,7 +115,8 @@ AREAS: tuple[Area, ...] = (
         *_models("trash_entry", "watch_tick_state", "xlink"),
     )),
     Area("transfers", "Transfers", (
-        *_core("transfer_manager", "transfer_pool", "transfer_worker", "transfer_conflicts",
+        *_core("transfer_manager", "transfer_pool", "transfer_worker", "transfer_hooks",
+               "transfer_conflicts",
                "copy_resume", "sync", "scheduler", "operation_journal", "move_permissions"),
         *_ui("transfer_dock", "transfer_conflict_dialog", "scheduler_dialog"),
         *_models("transfer_model"),

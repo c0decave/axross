@@ -976,7 +976,8 @@ class WorkspaceMixin:
                 action.setChecked(ws is here)
             action.triggered.connect(
                 lambda _c=False, w=ws: pick(w) if w in self._workspaces else None)
-        menu.addSeparator()
+        if menu.actions():  # no separator above a lone New Workspace
+            menu.addSeparator()
         new = menu.addAction(tr("New Workspace"))
         if not self.can_add_workspace():
             new.setEnabled(False)

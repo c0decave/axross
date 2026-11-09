@@ -1687,7 +1687,8 @@ def storage_extra(section: dict) -> QWidget | None:
         head = QLabel(f"<b>{_esc(title)}</b>  <span style='color:{muted(card).name()}'>"
                       f"{_esc(disk['name'])} · {_esc(disk['kind'])} · "
                       f"{SI.human_bytes(disk['size'])}"
-                      + (" · removable" if disk.get("removable") else "") + "</span>")
+                      + (" · " + _esc(tr("removable")) if disk.get("removable") else "")
+                      + "</span>")
         inner.addWidget(head)
         inner.addWidget(PartitionBar(disk))
         col.addWidget(card)

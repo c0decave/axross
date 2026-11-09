@@ -13,6 +13,14 @@ Modelled on Drive:
   may hold fewer than pageSize items, even none, while more exist)
 * ``name_ci``: name = '...' matches case-insensitively
 * errors are googleapiclient HttpError with resp.status
+* a Google-native file (``application/vnd.google-apps.*`` but a folder)
+  has no size and no media: files.get_media answers 403
+  fileNotDownloadable, files.export_media the export (``exports``:
+  {mimeType: bytes}, else a stand-in naming the type); an export over
+  ``export_limit`` bytes is 403 exportSizeLimitExceeded; ``export_calls``
+  records (fileId, mimeType)
+* ``kwargs`` records the keyword arguments of every request
+  (supportsAllDrives ...)
 """
 
 from __future__ import annotations
@@ -25,6 +33,11 @@ import httplib2
 from googleapiclient.errors import HttpError
 
 FOLDER = "application/vnd.google-apps.folder"
+NATIVE = "application/vnd.google-apps."
+
+
+def _is_native(mime):
+    return mime.startswith(NATIVE) and mime != FOLDER
 _ids = itertools.count(1)
 
 
@@ -48,12 +61,15 @@ class _Req:
 class _MediaHttp:
     """What MediaIoBaseDownload asks for the bytes (``http.request``)."""
 
-    def __init__(self, drive, file_id):
-        self.drive, self.file_id = drive, file_id
+    def __init__(self, drive, file_id, export=None):
+        self.drive, self.file_id, self.export = drive, file_id, export
 
     def request(self, uri, method="GET", headers=None, **kw):
         try:
-            data = self.drive.data_of(self.file_id)
+            if self.export is not None:
+                data = self.drive.export_of(self.file_id, self.export)
+            else:
+                data = self.drive.data_of(self.file_id)
         except HttpError as exc:
             return exc.resp, exc.content
         resp = httplib2.Response({"status": "200", "content-length": str(len(data))})
@@ -64,8 +80,8 @@ class _MediaRequest:
     """files.get_media: downloaded by core.gdrive_client._download_spooled
     through googleapiclient's real MediaIoBaseDownload."""
 
-    def __init__(self, drive, file_id):
-        self.http = _MediaHttp(drive, file_id)
+    def __init__(self, drive, file_id, export=None):
+        self.http = _MediaHttp(drive, file_id, export)
         self.uri = f"https://fake.drive/{file_id}?alt=media"
         self.headers = {}
 
@@ -75,13 +91,20 @@ class _Files:
         self.d = d
 
     def list(self, q="", fields="", pageSize=100, pageToken=None, **kw):
+        self.d.kwargs.append(("list", kw))
         return _Req(lambda: self.d._list(q, pageSize, pageToken))
 
     def get(self, fileId, fields="", **kw):
+        self.d.kwargs.append(("get", kw))
         return _Req(lambda: self.d._get(fileId))
 
     def get_media(self, fileId, **kw):
+        self.d.kwargs.append(("get_media", kw))
         return _MediaRequest(self.d, fileId)
+
+    def export_media(self, fileId, mimeType):
+        self.d.export_calls.append((fileId, mimeType))
+        return _MediaRequest(self.d, fileId, export=mimeType)
 
     def create(self, body, media_body=None, fields="", **kw):
         return _Req(lambda: self.d._create(body, media_body))
@@ -102,6 +125,9 @@ class FakeDrive:
         self.name_ci = False
         self.empty_first_page = 0
         self.calls = []
+        self.kwargs = []
+        self.export_calls = []
+        self.export_limit = 10 * 1024 * 1024
         self._tokens = {}
 
     def files(self):
@@ -117,7 +143,7 @@ class FakeDrive:
     def _meta(self, it):
         out = {k: it[k] for k in ("id", "name", "mimeType") if k in it}
         out["modifiedTime"] = it["modifiedTime"] if "modifiedTime" in it else _now()
-        if it["mimeType"] != FOLDER:
+        if it["mimeType"] != FOLDER and not _is_native(it["mimeType"]):
             out["size"] = str(len(it.get("data", b"")))
         return out
 
@@ -219,9 +245,23 @@ class FakeDrive:
         it = self.items.get(fid)
         if it is None:
             raise _http_error(404, "File not found")
-        if it["mimeType"] == FOLDER:
-            raise _http_error(403, "fileNotDownloadable")
+        if it["mimeType"] == FOLDER or _is_native(it["mimeType"]):
+            raise _http_error(403, '{"error": {"errors": [{"reason": "fileNotDownloadable", '
+                              '"message": "Only files with binary content can be downloaded. '
+                              'Use Export with Docs Editors files."}], "code": 403}}')
         return it.get("data", b"")
+
+    def export_of(self, fid, mime):
+        it = self.items.get(fid)
+        if it is None:
+            raise _http_error(404, "File not found")
+        if not _is_native(it["mimeType"]):
+            raise _http_error(403, '{"error": {"errors": [{"reason": "fileNotExportable"}]}}')
+        data = it.get("exports", {}).get(mime, f"export of {it['name']} as {mime}".encode())
+        if len(data) > self.export_limit:
+            raise _http_error(403, '{"error": {"errors": [{"reason": '
+                              '"exportSizeLimitExceeded"}], "code": 403}}')
+        return data
 
 
 def make_session(drive=None):

@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from core import agent_settings as AGS  # noqa: E402
 from core import bookmarks as BM  # noqa: E402
+from tests.menu_walk import all_actions  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -82,7 +83,7 @@ def test_happy_send_to_agent_attaches_the_pane_selection(win, tmp_path):
 
 def test_happy_the_context_menu_offers_send_to_agent(win):
     menu = win._active_pane._build_context_menu()
-    assert "Send to Agent" in [a.text() for a in menu.actions()]
+    assert "Send to Agent" in [a.text() for a in all_actions(menu)]
 
 
 # -- sad -----------------------------------------------------------------------

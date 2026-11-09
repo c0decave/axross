@@ -53,6 +53,28 @@ META_SUFFIX = ".meta.json"
 MAX_META_SIZE = 64 * 1024
 
 
+#: Backends that cannot move an entry into a trash folder: read-only ones
+#: and ones without a rename (their ``rename`` always raises). A backend
+#: can also say so itself with a ``supports_trash`` attribute.
+_NO_TRASH_BACKENDS = frozenset({
+    "GopherSession", "LdapFsSession", "NntpSession", "PjlSession", "Pop3Session",
+    "SlpSession", "SvnFsSession", "TftpSession", "WMISession",
+})
+
+
+def supports_trash(backend) -> bool:
+    """Whether Move to Trash can work on *backend*: the trash is a rename
+    into ``<home>/.axross-trash``, so a backend without a rename has none.
+    The Del key moves to the trash where there is one and asks for a
+    permanent delete elsewhere."""
+    if backend is None:
+        return False
+    flag = getattr(backend, "supports_trash", None)
+    if isinstance(flag, bool):
+        return flag
+    return type(backend).__name__ not in _NO_TRASH_BACKENDS
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------

@@ -31,6 +31,7 @@ from datetime import datetime, timedelta, timezone
 from typing import IO
 
 from core.backend import SessionLifecycle
+from core.mail_names import cap_component, message_file_name
 from core.session_lock import io_lock, liveness_check, serialized
 from models.file_item import FileItem
 
@@ -57,6 +58,13 @@ def _sanitize_filename(name: str, max_len: int = 120) -> str:
     if len(name) > max_len:
         name = name[:max_len]
     return name
+
+
+def _message_name(uid: str, subject: str) -> str:
+    """The file name of message *uid*: ``<uid>_<subject>.eml``, the subject
+    cut at 80 characters and the whole name at MAX_NAME_BYTES UTF-8 bytes
+    (core.mail_names)."""
+    return message_file_name(uid, _sanitize_filename(subject, max_len=80))
 
 
 def _internaldate(text: str) -> datetime:
@@ -295,6 +303,14 @@ def _search_uids(raw: bytes | str) -> list[bytes]:
     if isinstance(raw, str):
         raw = raw.encode("utf-8", "replace")
     return [tok for tok in raw.split() if tok.isdigit()]  # bytes.isdigit(): ASCII only
+
+
+def _response_code(data) -> bytes:
+    """The response code (RFC 3501 7.1, RFC 5530) of a tagged NO/BAD,
+    upper-cased without its brackets - ``b"ALREADYEXISTS"`` - or b""."""
+    text = b" ".join(_as_bytes(d) for d in data or () if d).lstrip()
+    match = re.match(rb"\[([A-Za-z-]+)", text)
+    return match.group(1).upper() if match else b""
 
 
 def _as_bytes(value) -> bytes:
@@ -624,6 +640,13 @@ class _SpooledWriter:
         self._lock = lock if lock is not None else contextlib.nullcontext()
         self._buf = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
         self._closed = False
+        # The running transfer's Cancel and progress (core.transfer_hooks):
+        # the APPEND happens in close(), after the copy loop.
+        from core import transfer_hooks
+
+        self._hooks = transfer_hooks.current()
+        if self._hooks is not None:
+            self._hooks.expect_upload()
 
     def write(self, data: bytes) -> int:
         return self._buf.write(data)
@@ -655,10 +678,22 @@ class _SpooledWriter:
             message_bytes = raw_bytes
 
         mailbox_encoded = _mailbox_arg(self._mailbox)
+        hooks = self._hooks
+        if hooks is not None:
+            # APPEND sends the message as one literal: Cancel can stop it
+            # before, not in the middle (a half-sent literal would leave
+            # the shared connection waiting for the rest). Nothing was
+            # added to the mailbox.
+            from core import transfer_hooks
+
+            if hooks.cancelled():
+                raise transfer_hooks.UploadCancelled(transfer_hooks.CANCELLED)
         with self._lock:
             typ, data = self._imap.append(mailbox_encoded, None, None, message_bytes)
         if typ != "OK":
             raise OSError(f"IMAP APPEND to {self._mailbox} failed: {data}")
+        if hooks is not None:
+            hooks.sent(len(raw_bytes), len(raw_bytes), check=False)
         log.info("Appended %d bytes to mailbox %s", len(message_bytes), self._mailbox)
 
     def discard(self) -> None:
@@ -1019,7 +1054,9 @@ class ImapSession(SessionLifecycle):
     def _attachment_name(part) -> str | None:
         filename = part.get_filename()
         if filename:
-            return _sanitize_filename(filename)
+            # 120 characters as before; over MAX_NAME_BYTES bytes (CJK) cut
+            # in bytes with the extension kept (core.mail_names).
+            return cap_component(_sanitize_filename(filename, max_len=len(filename) + 1), 120)
 
         content_disp = part.get("Content-Disposition", "")
         if "attachment" not in content_disp.lower():
@@ -1226,8 +1263,9 @@ class ImapSession(SessionLifecycle):
         return [FileItem(name=name, is_dir=True) for name, selectable in entries if selectable]
 
     def _list_messages(self, mailbox: str) -> list[FileItem]:
-        """List messages in a mailbox as file entries."""
-        self._select_mailbox(mailbox, readonly=True)
+        """List messages in a mailbox as file entries; FileNotFoundError
+        for a mailbox that is not there."""
+        self._select_existing(mailbox, f"/{mailbox}")
         imap = self._ensure_connected()
 
         # The answer is one line of all UIDs: over imaplib's line limit
@@ -1264,10 +1302,9 @@ class ImapSession(SessionLifecycle):
                     continue
                 uid = uid.decode("ascii")
                 subject = _envelope_subject(attrs.get(b"ENVELOPE"))
-                sanitized_subject = _sanitize_filename(subject, max_len=80)
                 items.append(
                     FileItem(
-                        name=f"{uid}_{sanitized_subject}.eml",
+                        name=_message_name(uid, subject),
                         size=_fetch_number(attrs, b"RFC822.SIZE") or 0,
                         modified=_fetch_date(attrs),
                     )
@@ -1451,8 +1488,11 @@ class ImapSession(SessionLifecycle):
         without the envelope cannot tell another message apart: it passes."""
         if leaf.lower() == f"{uid}.eml" or envelope is None:
             return True
-        listed = f"{uid}_{_sanitize_filename(_envelope_subject(envelope), max_len=80)}.eml"
-        return leaf.casefold() == listed.casefold()
+        subject = _envelope_subject(envelope)
+        # The name the listing gives it, or the one it gave before names
+        # were capped in bytes (a bookmark, a mail dock's seen-state).
+        legacy = f"{uid}_{_sanitize_filename(subject, max_len=80)}.eml"
+        return leaf.casefold() in (_message_name(uid, subject).casefold(), legacy.casefold())
 
     @_imap_errors_as_oserror
     def is_dir(self, path: str) -> bool:
@@ -1490,9 +1530,14 @@ class ImapSession(SessionLifecycle):
         """Create a new mailbox."""
         mailbox = self._virtual_path_to_mailbox(path)
         imap = self._ensure_connected()
+        self._mailbox_cache = None  # one made since the last LIST counts
+        if mailbox in self._mailbox_nodes():
+            raise FileExistsError(errno.EEXIST, f"Mailbox {mailbox!r} exists", path)
         encoded = _mailbox_arg(mailbox)
         typ, data = imap.create(encoded)
         if typ != "OK":
+            if _response_code(data) == b"ALREADYEXISTS":
+                raise FileExistsError(errno.EEXIST, f"Mailbox {mailbox!r} exists", path)
             raise OSError(f"Cannot create mailbox {mailbox!r}: {data}")
         self._mailbox_cache = None
         log.info("Created mailbox: %s", mailbox)
@@ -1527,13 +1572,24 @@ class ImapSession(SessionLifecycle):
                 # is there, and "removed" it was not. (A failed APPEND is
                 # never rolled back by name: the store only adds.)
                 raise FileNotFoundError(errno.ENOENT, "No such message", path)
+            leaf_name = [p for p in self.normalize(path).split("/") if p][-1]
+            if not leaf_name.lower().endswith(".eml"):
+                # "<uid>" is the folder of the message's attachments, a view
+                # of the message: removing it - recursive or not - deleted
+                # the whole message. Only its file deletes the message.
+                raise PermissionError(
+                    errno.EPERM,
+                    f"The folder {leaf_name!r} shows the attachments of message UID {uid}; "
+                    "it cannot be removed on its own - delete the message's .eml file "
+                    "to delete the message",
+                    path,
+                )
             self._select_mailbox(mailbox, readonly=False)
             # stat()'s identity check, in this selection: "5_invoice.eml"
             # from a stale listing (or another mailbox) is not this
             # mailbox's UID 5 when its subject differs - deleting by the
             # number alone removed another message. FileNotFoundError then,
             # nothing deleted.
-            leaf_name = [p for p in self.normalize(path).split("/") if p][-1]
             self._selected_message_item(uid, leaf_name, path)
             imap = self._ensure_connected()
             typ, data = imap.uid("STORE", uid, "+FLAGS", "(\\Deleted)")
@@ -1659,10 +1715,15 @@ class ImapSession(SessionLifecycle):
             imap = self._ensure_connected()
             if self._selected_mailbox == old_name:
                 self._leave_selected(imap)
+            self._mailbox_cache = None
+            if new_name in self._mailbox_nodes():
+                raise FileExistsError(errno.EEXIST, f"Mailbox {new_name!r} exists", dst)
             old_enc = _mailbox_arg(old_name)
             new_enc = _mailbox_arg(new_name)
             typ, data = imap.rename(old_enc, new_enc)
             if typ != "OK":
+                if _response_code(data) == b"ALREADYEXISTS":
+                    raise FileExistsError(errno.EEXIST, f"Mailbox {new_name!r} exists", dst)
                 raise OSError(f"Cannot rename mailbox {old_name!r} to {new_name!r}: {data}")
             self._mailbox_cache = None
             log.info("Renamed mailbox %s -> %s", old_name, new_name)
@@ -2023,6 +2084,8 @@ class ImapSession(SessionLifecycle):
         if _has_capability(imap, "MOVE"):
             typ, data = imap.uid("MOVE", uid, dst_enc)
             if typ != "OK":
+                if _response_code(data) in (b"TRYCREATE", b"NONEXISTENT"):
+                    raise FileNotFoundError(errno.ENOENT, f"No such mailbox: {dst_mailbox}")
                 raise OSError(f"Cannot move message UID {uid} to {dst_mailbox!r}: {data}")
             log.info("Moved message UID %s from %s to %s", uid, src_mailbox, dst_mailbox)
             return
@@ -2038,6 +2101,8 @@ class ImapSession(SessionLifecycle):
                 )
         typ, data = imap.uid("COPY", uid, dst_enc)
         if typ != "OK":
+            if _response_code(data) in (b"TRYCREATE", b"NONEXISTENT"):
+                raise FileNotFoundError(errno.ENOENT, f"No such mailbox: {dst_mailbox}")
             raise OSError(f"Cannot copy message UID {uid} to {dst_mailbox!r}: {data}")
         kept = f"message UID {uid} was copied to {dst_mailbox!r} but stays in {src_mailbox!r}"
         typ, data = imap.uid("STORE", uid, "+FLAGS", "(\\Deleted)")

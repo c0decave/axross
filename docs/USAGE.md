@@ -113,6 +113,41 @@ profile goes, with its stored password.
 - **OpSec overrides.** Profile fields control SSH keepalive, SMB
   workstation name, Telnet NAWS, rsync metadata stripping. See
   [OPSEC.md](OPSEC.md) for the threat model.
+- **Google Drive: Docs, Sheets, Slides and shared drives.** A Google
+  Doc is listed as `<name>.docx`, a Sheet as `.xlsx`, a Slides deck as
+  `.pptx`, a drawing as `.pdf` - without a size - and read (opened,
+  copied) as that export; Google exports at most 10 MB of a document.
+  They are read-only here: writing over one is refused, save under
+  another name. A Form or a Site has no file form and says so on
+  reading. Items of a shared drive that are reachable from My Drive
+  (shared with you, a shortcut's folder) work as any other; the shared
+  drives themselves are not listed (there is no `/Shared drives/<name>`
+  folder yet) - open them in the browser or add a shortcut to My Drive.
+- **Mail as files (IMAP, POP3, Exchange).** A message is
+  `<id>_<subject>.eml`, the whole name at most 200 UTF-8 bytes (the id
+  and `.eml` whole, a long subject cut at a character), so it can be
+  copied to any local folder; an attachment name keeps its extension.
+  Names that were longer before (CJK or emoji subjects, Exchange's long
+  ItemIds) are shorter now; IMAP and POP3 still accept the old name, and
+  a mail dock does not take the renamed message for new. The folder
+  `<uid>` beside an IMAP message lists its attachments; it cannot be
+  removed by itself - delete the `.eml` to delete the message. POP3
+  reconnects after a dropped connection; deletions it had sent on that
+  connection are not committed (POP3 commits on QUIT only) and an error
+  says so, as it does when the QUIT on disconnect fails. On a POP3
+  server without UIDL a message is found again by its headers and size
+  after a reconnect; when two are identical a delete is refused.
+- **Git repositories by URL.** A `git+https://` (ssh, git, file) session
+  is a cached clone that follows the remote: opening fetches, a branch
+  with nothing unpushed follows origin (also after a force-push or a
+  deletion), and every save is committed and pushed at once (fast-forward
+  only). A push that fails keeps the commit in the cache and the save
+  reports it; the pane's status line shows "not pushed to origin:
+  main (1)" until the next save pushes it. Commits that never reached a
+  branch origin has rewritten are kept, and the branch is read-only
+  until it is merged in a git client. When the remote cannot be reached
+  the cached copy opens read-only and the status line says "offline".
+  Scripts can pass `auto_push=False` and push with `axross.git_push()`.
 
 ## Multi-pane layout
 
@@ -380,6 +415,8 @@ native protocol doesn't support them.
 
 ## Right-click actions
 
+The right-click menu is one column. **Open** comes first (a folder opens in the pane, a file in its viewer, as `Enter` does), then *Open With ▸* (as text, as hex, as root, View Selected Media…, Preview Archive) and, for an archive, *Extract…*; then *Copy Path*, *Cut*, *Paste*, *Rename*; *Copy to Target Pane*, *Move to Target Pane*, *Pack ▸*; *Move to Trash* (`Del`) and *Delete Permanently* (`Shift+Del`); *New Folder*, *New File…*; *Properties…* and the submenus *Metadata ▸*, *Analyse ▸* (file type, disk image, checksum, versions, size, sift, Duplicate Finder, Find in This Folder), *Links ▸* (link target, new symlink / hardlink / XLink) and *Tags ▸*; *Refresh* and *More ▸* (view mode, View Media…, bookmark, Show Trash…, terminals, FUSE, Permissions…, encrypt / decrypt, the agent), and at the end *Send to Workspace ▸* for the pane itself. More than three extension entries go into *Extensions ▸*. The table names each entry by its label.
+
 | Action | Trigger | What it does |
 |---|---|---|
 | Disk Image… | Right-click (one `.img .raw .dd .iso .qcow2 .vdi .vmdk .vhd(x) .e01 …` file) | The container (qcow2, VDI, VMDK, VHD/VHDX, E01), the partition table (MBR with logical partitions, GPT) and each volume's file system and label, read in plain Python through any backend. A local image mounts one volume through a loop device over exactly its bytes: `udisksctl` without a prompt first (where polkit allows it), then `sudo`, then `pkexec`, then `udisksctl` letting polkit ask. The sudo password is asked once and kept in memory while axross runs (never on disk, never on a command line); *Remember the sudo password* (*Edit → Settings… → Security*) switches that off, which restores the order `udisksctl` (polkit asks), `pkexec`, `sudo` asked every time. Paranoid Security Mode never remembers it. sudo, pkexec and udisksctl are run only from root-owned system folders, never from `$PATH`. **Read-only** unless *Allow writing* is ticked and confirmed. The mounted folder opens in a new pane; *Unmount* gives the loop device back. Mounts made by axross are remembered across restarts (`~/.config/axross/mounts.json`, only those still mounted come back). *Identify File Type…* recognises disk images by content too (GPT, MBR, virtual disks) and offers *Disk Image…* for such a row, whatever its name. qcow2 / dynamic VDI / VMDK need converting (`qemu-img convert -O raw`) first; a fixed VDI mounts directly. |
@@ -400,8 +437,8 @@ native protocol doesn't support them.
 | Open Terminal Here | Right-click (also on empty space) | Opens a shell in the terminal dock in the folder: a selected folder, otherwise the folder shown. Local panes get a local shell started in that folder; SFTP / SCP panes get a shell on the same SSH connection followed by `cd -- '<folder>'` (quoted with `shlex.quote`). Disabled, with the reason as tooltip, on protocols without a shell. |
 | Open External Terminal Here | Right-click (local panes) | Starts `$TERMINAL`, else the first installed of x-terminal-emulator, gnome-terminal, konsole, xfce4-terminal, alacritty, kitty, foot, wezterm, xterm — with the folder as working directory, detached, no shell involved. |
 | Cut / Paste | Right-click (Paste also on empty space), `Ctrl+X` / `Ctrl+V` | Cut remembers the selection and removes nothing (the entries are dimmed); Paste in any pane moves them into its folder through the transfer queue - see *Transfers*. A cut never pasted leaves everything in place. |
-| Move to Trash | Right-click | Universal recycle bin. Runs like Delete Permanently: in the background, with the same second question for hidden entries. |
-| Delete Permanently | Right-click, `Del` | First counts what will go (folders, files, bytes, hidden entries) off the GUI thread, then asks. A selected folder that holds hidden entries (dotfiles, or a backend's hidden flag) - or one the check could not fully read - needs a second OK whose default is No. The removal runs in the background: the status line shows the progress, Cancel stops at the next entry - also inside a folder being deleted on a local path, SMB, SFTP or FTP (SFTP removes a folder's files in batches of 16 requests at once and stops after the running batch), and the status line then says how much of that folder went (removed entries stay removed; a server that deletes a whole folder in one request, such as WebDAV or S3, finishes that folder first) - failures are listed per entry, and the folder is reloaded at the end. A path that is already being deleted is refused, also from the other pane. |
+| Move to Trash | Right-click, `Del` | Universal recycle bin (a folder `.axross-trash` in the connection's home, so it works wherever the connection can rename; read-only protocols and ones without rename - Gopher, LDAP, NNTP, PJL, POP3, SLP, SVN, TFTP, WMI - have none, and there `Del` asks for a permanent delete instead). Runs like Delete Permanently: in the background, with the same second question for hidden entries. |
+| Delete Permanently | Right-click, `Shift+Del` | First counts what will go (folders, files, size, hidden entries) off the GUI thread, then asks - with **No** as the default button, so `Enter` keeps the files. A selected folder that holds hidden entries (dotfiles, or a backend's hidden flag) - or one the check could not fully read - needs a second OK whose default is No. The removal runs in the background: the status line shows the progress, Cancel stops at the next entry - also inside a folder being deleted on a local path, SMB, SFTP or FTP (SFTP removes a folder's files in batches of 16 requests at once and stops after the running batch), and the status line then says how much of that folder went (removed entries stay removed; a server that deletes a whole folder in one request, such as WebDAV or S3, finishes that folder first) - failures are listed per entry, and the folder is reloaded at the end. A path that is already being deleted is refused, also from the other pane. |
 | Show Trash… | Right-click | Restore / permanently-delete dialog. |
 | Show Versions… | Right-click | Snapshot browser — Save Version As, Restore as Current. |
 | Show Checksum… | Right-click | Native checksum (S3 ETag, Drive md5, ssh sha256sum…) with stream-hash fallback. |
@@ -1450,12 +1487,27 @@ own settings and data (`~/.config/axross`, `~/.local/share/axross`,
 settings, editor and window-manager start files, and other LLM clients'
 settings and MCP servers (`~/.claude`, Claude Desktop, Cursor, VS Code),
 in their default and their XDG locations: changed, each would run code
-or widen the agent's rights without a question. A folder holding one of
-them is not deleted or moved either, and a symlink does not lead around
-them. In the sandbox the existing ones, and the missing folders among
-them, are mounted read-only. The agent also does not read axross's own
-tokens or private SSH and GnuPG keys (`--mcp-allow-secret-reads` lifts
-that for the MCP server).
+or widen the agent's rights without a question. Also the folders on your
+PATH inside the home (`~/bin`, `~/.cargo/bin`, the pipx and uv tool
+venvs), site-packages in the home and any `.pth` / `sitecustomize.py`
+file, `~/.tmux.conf`, `~/.config/mimeapps.list`, Emacs and other window
+managers' start files; on macOS `~/Library/LaunchAgents`, login items and
+`~/Library/Application Support/axross`; on Windows the Startup folder,
+the PowerShell profiles and `%APPDATA%\axross` / `%LOCALAPPDATA%\axross`.
+XDG folders count where your session sets them even when an MCP server is
+started without the variables (axross remembers the ones it ran with, and
+reads them from `~/.profile`, `~/.pam_environment`, `environment.d`). A
+folder holding one of them is not deleted or moved, nor made writable for
+others (chmod); a symlink does not lead around them, and a relative
+symlink moved elsewhere is checked again. In the sandbox the existing
+ones, and the missing folders among them, are mounted read-only - a
+symlinked one (GNU stow, chezmoi) at its real path too; a protected file
+with hard links stays writable through its other names (a known limit).
+The agent also does not read axross's own tokens or private SSH and
+GnuPG keys (`--mcp-allow-secret-reads` lifts that for the MCP server); in
+the sandbox they, `~/.ssh` as a whole, the ADB key, the desktop keyrings,
+`~/.netrc` and `~/.git-credentials` are empty unless you mount the folder
+itself for the agent.
 
 **Files read-only** (in the tab's top row, and for every tab in Agent
 Settings > Access): the agent reads files but changes none - no

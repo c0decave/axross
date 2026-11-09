@@ -48,8 +48,18 @@ def pane(tmp_path):
         APP.processEvents()
 
 
+def _all_actions(menu) -> list:
+    """The entries of *menu* and of its submenus (Analyse ▸, More ▸ …)."""
+    found = []
+    for action in menu.actions():
+        found.append(action)
+        if action.menu() is not None:
+            found += _all_actions(action.menu())
+    return found
+
+
 def _menu_texts(widget) -> list[str]:
-    return [a.text().replace("&", "") for a in widget._build_context_menu().actions()]
+    return [a.text().replace("&", "") for a in _all_actions(widget._build_context_menu())]
 
 
 def test_happy_duplicate_finder_is_offered_without_a_selection(pane):
@@ -71,7 +81,8 @@ def test_happy_triggering_the_entry_emits_the_request(pane):
     pane.open_duplicates_requested.connect(lambda: seen.append(True))
 
     action = next(
-        a for a in pane._build_context_menu().actions() if "Duplicate" in a.text().replace("&", "")
+        a for a in _all_actions(pane._build_context_menu())
+        if "Duplicate" in a.text().replace("&", "")
     )
     action.trigger()
     APP.processEvents()

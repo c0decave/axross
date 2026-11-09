@@ -316,6 +316,10 @@ class TransferManager(QObject):
         # id(walk) -> its jobs registered so far, queued at its end.
         self._held: dict[int, list] = {}
         self._directory_error = GuiCall(self._emit_directory_error)
+        # backend -> the backend now used for the same connection, or None
+        # (set_backend_resolver): a retry of a job whose session was
+        # closed and replaced runs on the replacement.
+        self._backend_resolver = None
 
         # Worker threads. They share one queue (core.transfer_pool); with
         # max_parallel 1 the first worker is the only one and runs the jobs
@@ -528,10 +532,15 @@ class TransferManager(QObject):
         creates there: undo reverses the call as one operation, folders
         included (core.undo).
         """
-        from core.operation_journal import new_batch_id
+        from core.operation_journal import begin_batch, new_batch_id
 
         outer_batch = getattr(self._local, "batch_id", "")
         self._local.batch_id = batch_id or outer_batch or new_batch_id()
+        if self._local.batch_id != outer_batch:
+            # A batch of its own begins (not a folder inside the walk):
+            # its marker goes first, so undo knows it holds all of it.
+            begin_batch(self._local.batch_id, "move" if move else "transfer",
+                        entries=len(source_paths))
         try:
             return self._transfer_files(source_backend, dest_backend, source_paths, dest_dir,
                                         direction, move, conflict_plan=conflict_plan)
@@ -700,7 +709,7 @@ class TransferManager(QObject):
         another). The folder each destination belongs in is made first,
         with any missing above it: the move removed the folders it emptied.
         """
-        from core.operation_journal import new_batch_id
+        from core.operation_journal import begin_batch, new_batch_id
         from core.trash import recreate_parent_folders
 
         def build() -> list[TransferJob]:
@@ -713,6 +722,8 @@ class TransferManager(QObject):
                 )
             outer_batch = getattr(self._local, "batch_id", "")
             self._local.batch_id = batch_id or new_batch_id()
+            begin_batch(self._local.batch_id, "move" if move else "transfer",
+                        entries=len(pairs))
             jobs: list[TransferJob] = []
             try:
                 for src, dest in pairs:
@@ -938,8 +949,16 @@ class TransferManager(QObject):
         reason: str,
         *,
         retryable: bool = True,
+        error: BaseException | None = None,
+        context: str = "",
     ) -> TransferJob:
-        """A job that never runs, so the refusal shows in the transfer list."""
+        """A job that never runs, so the refusal shows in the transfer list.
+
+        *error* is the exception behind *reason*: the Transfers panel then
+        says it as ``core.user_errors.describe()`` does, in the interface
+        language, with *context* ("mkdir" / "list", see
+        ``models.transfer_model.REFUSAL_CONTEXTS``) in front; *reason*
+        stays the raw text for the tooltip and the log."""
         sep = source_backend.separator()
         if not isinstance(sep, str) or not sep:
             sep = "/"
@@ -953,6 +972,10 @@ class TransferManager(QObject):
             error_message=reason,
             retryable=retryable,
         )
+        if error is not None:
+            job.error = error.with_traceback(None)
+        # Not a field of TransferJob: only refused folder rows carry it.
+        job.error_context = context
         job.source_backend = source_backend
         job.dest_backend = dest_backend
         log.warning("Transfer refused: %s -> %s: %s", source_path, dest_path, reason)
@@ -1015,6 +1038,8 @@ class TransferManager(QObject):
                     source_backend, dest_backend, source_dir, dest_dir, direction, move,
                     f"cannot create the folder, its contents were not copied: {e}",
                     retryable=False,
+                    error=e,
+                    context="mkdir",
                 )
             )
             return jobs
@@ -1030,6 +1055,8 @@ class TransferManager(QObject):
                     source_backend, dest_backend, source_dir, dest_dir, direction, move,
                     f"cannot read the folder, its contents were not copied: {e}",
                     retryable=False,
+                    error=e,
+                    context="list",
                 )
             )
             return jobs
@@ -1182,6 +1209,61 @@ class TransferManager(QObject):
             and (job.source_backend is backend or job.dest_backend is backend)
         ]
 
+    def set_backend_resolver(self, resolver) -> None:
+        """*resolver(backend)* names the backend now used for the same
+        connection as *backend* (the pane's after a reconnect), or None.
+        retry_job asks it for a backend that is no longer connected."""
+        self._backend_resolver = resolver
+
+    def rebind_backend(self, old: object, new: object) -> int:
+        """Jobs that still wait for *old* - queued and not started, or
+        failed / cancelled and not retried yet - use *new* instead: *old*
+        was a session that dropped and *new* the one that replaced it.
+        The jobs held the dead session, so they failed again, and so did
+        Retry, which copies a job's backends. Returns how many jobs moved."""
+        if old is None or new is None or old is new:
+            return 0
+        moved = 0
+        for job in list(self._jobs.values()):
+            if job.status == TransferStatus.PENDING:
+                pass
+            elif job.status in (TransferStatus.ERROR, TransferStatus.CANCELLED):
+                if job.retried:
+                    continue
+            else:
+                continue  # running or done: nothing to move
+            changed = False
+            if job.source_backend is old:
+                job.source_backend = new
+                changed = True
+            if job.dest_backend is old:
+                job.dest_backend = new
+                changed = True
+            moved += changed
+        if moved:
+            log.info("%d transfer(s) now use the reconnected %s", moved,
+                     getattr(new, "name", type(new).__name__))
+        return moved
+
+    def _current_backend(self, backend: object) -> object:
+        """*backend*, or - when it is no longer connected and the resolver
+        names another one for the same connection - that one."""
+        resolver = self._backend_resolver
+        if backend is None or resolver is None:
+            return backend
+        try:
+            replacement = resolver(backend)
+        except Exception as exc:  # noqa: BLE001 - keep the job's own backend
+            log.debug("Transfer retry: backend lookup failed: %s", exc)
+            return backend
+        if replacement is None or replacement is backend:
+            return backend
+        try:
+            still_up = bool(getattr(backend, "connected", True))
+        except Exception:  # noqa: BLE001 - asking failed: it is not up
+            still_up = False
+        return backend if still_up else replacement
+
     def retry_job(self, job_id: str) -> TransferJob | None:
         """Retry a failed or cancelled job, resuming from partial data if possible.
 
@@ -1215,8 +1297,10 @@ class TransferManager(QObject):
             source_mtime=old_job.source_mtime,
             batch_id=old_job.batch_id,
         )
-        new_job.source_backend = old_job.source_backend
-        new_job.dest_backend = old_job.dest_backend
+        # The session the job ran on may have dropped and been replaced
+        # (a reconnect): the retry runs on the one in use now.
+        new_job.source_backend = self._current_backend(old_job.source_backend)
+        new_job.dest_backend = self._current_backend(old_job.dest_backend)
         try:
             from core.operation_journal import start_operation
 

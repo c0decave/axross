@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from tests.test_pane_stale_targets import _Base  # noqa: E402
+from tests.menu_walk import all_actions  # noqa: E402
 
 
 class DirSizeInBackgroundTest(_Base):
@@ -94,7 +95,7 @@ class DirSizeInBackgroundTest(_Base):
         self.assertTrue(self.settle())
         self.select("b")
         menu = self.pane._build_context_menu()
-        entry = next(a for a in menu.actions() if a.property("axCommand") == "calculate-size")
+        entry = next(a for a in all_actions(menu) if a.property("axCommand") == "calculate-size")
         entry.trigger()
         self.assertTrue(self.wait(lambda: self.dialog() is not None))
         name, size, files, folders = self.dialog().displayed_rows()[0][:4]

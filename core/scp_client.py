@@ -30,6 +30,7 @@ from typing import IO, TYPE_CHECKING
 
 import paramiko
 
+from core import transfer_hooks
 from core.append_helpers import read_existing_for_append
 from core.backend import SessionLifecycle
 from core.exec_util import shell_path
@@ -261,6 +262,11 @@ class _SpooledWriter:
         self._append = append
         self._buf = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
         self._closed = False
+        # The running transfer's Cancel and progress (core.transfer_hooks):
+        # the upload happens in close(), after the copy loop.
+        self._hooks = transfer_hooks.current()
+        if self._hooks is not None:
+            self._hooks.expect_upload()
 
     def write(self, data: bytes) -> int:
         return self._buf.write(data)
@@ -278,14 +284,25 @@ class _SpooledWriter:
         if self._closed:
             return
         self._closed = True
+        hooks = self._hooks
         try:
             size = self._buf.seek(0, os.SEEK_END)
             self._buf.seek(0)
-            # Up to the spool's memory size as bytes; a larger file streams
-            # from its spool file: read whole (and base64-encoded on top) a
-            # 4 GiB upload needed some 9 GiB of RAM.
-            data = self._buf.read() if size <= STREAM_ABOVE else self._buf
+            if hooks is None:
+                # Up to the spool's memory size as bytes; a larger file
+                # streams from its spool file: read whole (and base64-encoded
+                # on top) a 4 GiB upload needed some 9 GiB of RAM.
+                data = self._buf.read() if size <= STREAM_ABOVE else self._buf
+            else:
+                # In a running transfer always streamed, through
+                # ReadProgress: each piece checks Cancel and counts as sent.
+                # A cancelled upload leaves a partial remote file (a plain
+                # InterruptedError: the engine rolls the destination back).
+                hooks.check()
+                data = transfer_hooks.ReadProgress(self._buf, hooks, size)
             self._upload(data, shell_path(self._remote_path))
+            if hooks is not None:
+                hooks.sent(size, size, check=False)
         finally:
             self._buf.close()
 
@@ -588,11 +605,13 @@ class SCPSession(SessionLifecycle):
             raise ConnectionError("Not connected")
 
         with self._lock:
+            channel = None
             try:
                 stdin, stdout, stderr = self._client.exec_command(
                     cmd,
                     timeout=timeout,
                 )
+                channel = stdin.channel
                 if stdin_data is not None:
                     for chunk in _chunks(stdin_data):
                         stdin.channel.sendall(chunk)
@@ -612,6 +631,12 @@ class SCPSession(SessionLifecycle):
                     out_bytes += b"\n" + err_bytes
                 out = out_bytes.decode("utf-8", errors="replace")
                 return out, exit_code
+            except InterruptedError:
+                # A cancelled upload (core.transfer_hooks) while its stdin
+                # was sent: the command must not wait for the rest.
+                if channel is not None:
+                    channel.close()
+                raise
             except (paramiko.SSHException, socket.error) as exc:
                 raise OSError(f"Command execution failed: {exc}") from exc
 
@@ -965,15 +990,22 @@ class SCPSession(SessionLifecycle):
             raise ConnectionError("Not connected")
 
         spool = tempfile.SpooledTemporaryFile(max_size=_READ_SPOOL_MAX)
+        # In a running transfer each piece checks Cancel and counts as
+        # received: the whole download happens here, before the copy loop.
+        hooks = transfer_hooks.current()
         try:
             with self._lock:
+                channel = None
                 try:
                     stdin, stdout, stderr = self._client.exec_command(
                         cmd, timeout=TRANSFER_TIMEOUT
                     )
+                    channel = stdout.channel
                     stdin.channel.shutdown_write()
                     carry = b""
                     while True:
+                        if hooks is not None:
+                            hooks.received(spool.tell())
                         chunk = stdout.read(_READ_CHUNK)
                         if not chunk:
                             break
@@ -988,6 +1020,10 @@ class SCPSession(SessionLifecycle):
                     # -1: the channel closed without an exit status, i.e.
                     # the stream was cut - never a complete file.
                     code = stdout.channel.recv_exit_status()
+                except InterruptedError:
+                    if channel is not None:
+                        channel.close()  # the remote cat stops on the closed channel
+                    raise
                 except (paramiko.SSHException, socket.error) as exc:
                     raise OSError(f"Cannot read {path}: {exc}") from exc
                 except binascii.Error as exc:
@@ -1037,7 +1073,10 @@ class SCPSession(SessionLifecycle):
                         raise OSError(f"Cannot read {path}: bad SCP header {header[:80]!r}")
                     chan.sendall(b"\0")
                     left = size
+                    hooks = transfer_hooks.current()
                     while left:
+                        if hooks is not None:
+                            hooks.received(size - left, size)
                         chunk = chan.recv(min(_READ_CHUNK, left))
                         if not chunk:
                             raise OSError(
@@ -1049,7 +1088,7 @@ class SCPSession(SessionLifecycle):
                     _scp_status(chan, path)
                     chan.sendall(b"\0")
                 except (paramiko.SSHException, socket.error) as exc:
-                    if isinstance(exc, FileNotFoundError | PermissionError):
+                    if isinstance(exc, FileNotFoundError | PermissionError | InterruptedError):
                         raise
                     raise OSError(f"Cannot read {path}: {exc}") from exc
                 finally:
@@ -1085,7 +1124,7 @@ class SCPSession(SessionLifecycle):
                 _scp_status(chan, path)
                 chan.shutdown_write()
             except (paramiko.SSHException, socket.error) as exc:
-                if isinstance(exc, FileNotFoundError | PermissionError):
+                if isinstance(exc, FileNotFoundError | PermissionError | InterruptedError):
                     raise
                 raise OSError(f"Cannot write {path}: {exc}") from exc
             finally:

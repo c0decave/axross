@@ -141,3 +141,36 @@ def test_edge_verify_of_an_empty_manifest_warns_that_nothing_was_checked(tmp_pat
     icon, text = seen[0]
     assert icon == QMessageBox.Icon.Warning
     assert "OK: 0" not in text and "nothing was verified" in text
+
+
+def test_sad_a_manifest_made_from_every_selected_file_does_not_list_itself(tmp_path, monkeypatch):
+    """Ctrl+A selected the old SHA256SUMS too; the new one listed it, and
+    Verify then reported "FAILED: 1 - SHA256SUMS"."""
+    pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 not installed")
+    from PyQt6.QtWidgets import QApplication, QMainWindow
+
+    app = QApplication.instance() or QApplication([])  # noqa: F841 - kept alive
+    (tmp_path / "a.txt").write_bytes(b"a")
+    (tmp_path / CM.MANIFEST_NAME).write_text("0" * 64 + "  a.txt\n", encoding="utf-8")
+    monkeypatch.setattr(CM, "ask_existing", lambda *a, **k: "replace")
+
+    class Api:
+        window = QMainWindow()
+        actions: dict = {}
+
+        def add_context_action(self, label, cb, applies_to="any", extensions=(), icon=None):
+            self.actions[label] = cb
+
+        def notify(self, text):
+            pass
+
+        def run_in_background(self, work, on_done=None, on_error=None):
+            on_done(work())
+
+    api = Api()
+    CM.activate(api)
+    items = [SimpleNamespace(name=n, is_dir=False) for n in ("a.txt", CM.MANIFEST_NAME)]
+    api.actions["Create SHA256SUMS"](SimpleNamespace(backend=FS, folder=str(tmp_path), items=items,
+                                                     pane=None))
+    lines = (tmp_path / CM.MANIFEST_NAME).read_text(encoding="utf-8").splitlines()
+    assert [line.split("  ", 1)[1] for line in lines] == ["a.txt"]

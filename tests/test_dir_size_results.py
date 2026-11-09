@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import QApplication  # noqa: E402
 from core.local_fs import LocalFS  # noqa: E402
 from core.tree_size import TreeSize  # noqa: E402
 from models.file_table_model import COL_NAME, COL_SIZE  # noqa: E402
+from tests.menu_walk import all_actions  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 GiB = 1024**3
@@ -109,7 +110,7 @@ def _calculate(pane, *names) -> None:
     """Through the right-click entry, as a user does."""
     _select(pane, *names)
     menu = pane._build_context_menu()
-    action = next(a for a in menu.actions() if a.property("axCommand") == "calculate-size")
+    action = next(a for a in all_actions(menu) if a.property("axCommand") == "calculate-size")
     action.trigger()
     assert wait_until(lambda: pane._size_job is not None and not pane._size_job.running)
     pump()

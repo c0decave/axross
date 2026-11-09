@@ -371,6 +371,8 @@ class ConfinedLocalFS(LocalFS):
                         try:
                             st = entry.stat(follow_symlinks=False)
                             items.append(self._item(entry.name, st, fd, entry.name))
+                        except FileNotFoundError:
+                            pass  # gone while listed: no ghost row (as LocalFS)
                         except OSError as e:
                             log.warning("Cannot stat %s: %s", entry.name, e)
                             items.append(unstattable_item(entry, e))
@@ -552,6 +554,31 @@ class ConfinedLocalFS(LocalFS):
                     ) from exc
                 _move_entry_across(sfd, sname, dfd, dname, st, exc)
 
+    def rename_no_replace(self, src: str, dst: str) -> None:
+        """:meth:`rename` refusing an existing *dst* (FileExistsError),
+        within the confinement (core.local_fs.rename_no_replace at the
+        parents' descriptors). Across file systems: checked, then
+        :meth:`rename`, as before."""
+        if not FD_CONFINED or getattr(self.rename, "__func__", None) is not \
+                ConfinedLocalFS.rename:
+            # Not confined by descriptors, or rename replaced (a subclass,
+            # a stand-in): checked, then that rename (see LocalFS).
+            if self.exists(dst):
+                raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), dst)
+            return self.rename(src, dst)
+        from core.local_fs import rename_no_replace
+
+        with self._parent(src) as (sfd, sname), self._parent(dst) as (dfd, dname):
+            try:
+                rename_no_replace(sname, dname, src_dir_fd=sfd, dst_dir_fd=dfd)
+                return
+            except OSError as exc:
+                if exc.errno != errno.EXDEV:
+                    raise
+        if self.exists(dst):
+            raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), dst)
+        self.rename(src, dst)
+
     def symlink(self, target: str, link_path: str) -> None:
         if not FD_CONFINED:
             return super().symlink(target, link_path)
@@ -643,6 +670,77 @@ class ConfinedLocalFS(LocalFS):
             _journal_finish(op_id, "error", path, len(data), error=str(exc))
             raise
         _journal_finish(op_id, "done", path, len(data))
+
+    # -- a streamed upload (core.reverse_serve PUT) ------------------------
+    def confined_atomic_write_stream(self, path: str, reader, *,
+                                     chunk_size: int = 1024 * 1024) -> int:
+        """Store what ``reader.read(n)`` delivers at *path*: written to a
+        temp file in the target's folder and renamed over it, both relative
+        to that folder's descriptor; the old file's mode is kept. The old
+        file stays as it was when the reader fails. A symlink at the target
+        (one appeared since the caller resolved the path) is refused. The
+        bytes written are returned."""
+        if not FD_CONFINED:
+            from core.atomic_io import atomic_write_stream
+
+            self._locate(os.path.realpath(path))
+            return atomic_write_stream(LocalFS(), path, reader, chunk_size=chunk_size)
+        with self._parent(path) as (dfd, name):
+            try:
+                st = os.stat(name, dir_fd=dfd, follow_symlinks=False)
+            except FileNotFoundError:
+                st = None
+            if st is not None:
+                if stat_module.S_ISLNK(st.st_mode):
+                    raise _refused(path)
+                if stat_module.S_ISDIR(st.st_mode):
+                    raise IsADirectoryError(errno.EISDIR, os.strerror(errno.EISDIR), path)
+                if not stat_module.S_ISREG(st.st_mode):
+                    raise OSError(errno.EINVAL, "not a regular file; not written", path)
+            mode = stat_module.S_IMODE(st.st_mode) if st is not None else None
+            tmp, fd = _create_temp(dfd, name, 0o600 if mode is not None else 0o666)
+            done = 0
+            try:
+                with os.fdopen(fd, "wb") as fh:
+                    while True:
+                        chunk = reader.read(chunk_size)
+                        if not chunk:
+                            break
+                        fh.write(chunk)
+                        done += len(chunk)
+                    fh.flush()
+                    if mode is not None:
+                        fchmod_private(fh.fileno(), mode)
+                os.rename(tmp, name, src_dir_fd=dfd, dst_dir_fd=dfd)
+            except BaseException:
+                _unlink_quietly(dfd, tmp)
+                raise
+            return done
+
+    # -- new entries (MCP _place_new, core.packer, core.archive) -----------
+    def create_new(self, path: str, mode: int = 0o600) -> IO[bytes]:
+        """A new file at *path*, open for writing: FileExistsError when
+        anything (a symlink too) is there already; nothing on the way is
+        followed."""
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+        if not FD_CONFINED:
+            self._locate(os.path.realpath(os.path.dirname(path) or "."))
+            fd = os.open(path, flags | _O_NOFOLLOW, mode)
+            return self._verified(path, os.fdopen(fd, "wb"))
+        fd = self._open(path, flags, mode)
+        try:
+            return os.fdopen(fd, "wb")
+        except BaseException:
+            os.close(fd)
+            raise
+
+    @contextlib.contextmanager
+    def parent_dir(self, path: str) -> Iterator[tuple[int, str]]:
+        """``(descriptor of *path*'s folder, the final name)``: the folder
+        opened beneath a root without following a symlink (core.archive
+        creates its target folder in it and extracts beneath that)."""
+        with self._parent(path) as pair:
+            yield pair
 
 
 # --------------------------------------------------------------- the workers
@@ -899,5 +997,40 @@ def confinable(backend) -> bool:
     return type(backend) is LocalFS
 
 
-__all__ = ["FD_CONFINED", "ConfinedLocalFS", "SymlinkRefused", "confinable", "open_beneath",
-           "uses_openat2"]
+def makedirs_beneath(root_fd: int, parts: list[str], *, path: str = "") -> int:
+    """``os.makedirs(root/parts..., exist_ok=True)`` relative to *root_fd*,
+    each folder created and entered without following a symlink
+    (SymlinkRefused when one stands in the way). A descriptor of the last
+    folder (a dup of *root_fd* for no *parts*); the caller closes it."""
+    fd = os.dup(root_fd)
+    try:
+        for name in parts:
+            if name in ("", ".", "..") or "/" in name:
+                raise ValueError(f"not a folder name: {name!r}")
+            try:
+                next_fd = os.open(name, _DIR_FLAGS, dir_fd=fd)
+            except FileNotFoundError:
+                try:
+                    os.mkdir(name, 0o777, dir_fd=fd)
+                except FileExistsError:
+                    pass  # a concurrent creator
+                try:
+                    next_fd = os.open(name, _DIR_FLAGS, dir_fd=fd)
+                except OSError as exc:
+                    if exc.errno in _LINK_ERRNOS or _is_link_at(fd, name):
+                        raise _refused(path, exc) from exc
+                    raise
+            except OSError as exc:
+                if exc.errno in _LINK_ERRNOS or _is_link_at(fd, name):
+                    raise _refused(path, exc) from exc
+                raise
+            os.close(fd)
+            fd = next_fd
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+__all__ = ["FD_CONFINED", "ConfinedLocalFS", "SymlinkRefused", "confinable", "makedirs_beneath",
+           "open_beneath", "uses_openat2"]

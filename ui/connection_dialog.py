@@ -513,7 +513,7 @@ class ConnectionDialog(QDialog):
         self._key_file = QLineEdit()
         self._key_file.setPlaceholderText(tr("Path to private key"))
         key_layout.addWidget(self._key_file)
-        self._btn_browse_key = QPushButton(tr("Browse..."))
+        self._btn_browse_key = QPushButton(tr("Browse…"))
         self._btn_browse_key.clicked.connect(self._browse_key)
         key_layout.addWidget(self._btn_browse_key)
         auth_layout.addLayout(key_layout)
@@ -609,7 +609,7 @@ class ConnectionDialog(QDialog):
         self._btn_import_ssh.clicked.connect(self._import_from_ssh_config)
         buttons.addButton(self._btn_import_ssh, QDialogButtonBox.ButtonRole.ActionRole)
 
-        self._btn_import_file = QPushButton(tr("Import Config File..."))
+        self._btn_import_file = QPushButton(tr("Import Config File…"))
         self._btn_import_file.setToolTip(tr("Import host from a custom SSH config file"))
         self._btn_import_file.clicked.connect(self._import_from_ssh_config_file)
         buttons.addButton(self._btn_import_file, QDialogButtonBox.ButtonRole.ActionRole)
@@ -662,7 +662,7 @@ class ConnectionDialog(QDialog):
         self._proxy_group.setToolTip(
             ""
             if proxy_reason is None
-            else f"A proxy cannot be used with this protocol. {proxy_reason}"
+            else tr("A proxy cannot be used with this protocol. {reason}").format(reason=proxy_reason)
         )
         if proxy_reason is not None:
             self._proxy_group.setChecked(False)
@@ -1458,8 +1458,8 @@ class ConnectionDialog(QDialog):
                 QMessageBox.warning(self, tr("Validation"), tr("Host is required."))
                 return False
             if not self._smb_share.text().strip():
-                label = "DFS namespace" if proto == "dfsn" else "SMB share name"
-                QMessageBox.warning(self, tr("Validation"), tr("{label} is required.").format(label=tr(label)))
+                label = tr("DFS namespace") if proto == "dfsn" else tr("SMB share name")
+                QMessageBox.warning(self, tr("Validation"), tr("{label} is required.").format(label=label))
                 return False
         elif proto in ("gopher", "pjl", "nntp", "tftp"):
             # No username (TFTP has no login at all; its row is hidden).
@@ -1641,6 +1641,7 @@ class ConnectionDialog(QDialog):
             tr("Delete Profile"),
             tr("Delete this profile?\n\n{name}").format(name=name),  # never markup in line 1
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
             try:
@@ -1669,7 +1670,7 @@ class ConnectionDialog(QDialog):
             return
         profile = self._build_profile()
         self._btn_test.setEnabled(False)
-        self._btn_test.setText(tr("Connecting..."))
+        self._btn_test.setText(tr("Connecting…"))
 
         self._connect_thread = _ConnectThread(
             profile, self._effective_password(), self._key_passphrase.text(), parent=self
@@ -1893,7 +1894,7 @@ class ConnectionDialog(QDialog):
         password = self._password.text()
         key_passphrase = self._key_passphrase.text()
         self._btn_deploy_key.setEnabled(False)
-        self._btn_deploy_key.setText(tr("Deploying..."))
+        self._btn_deploy_key.setText(tr("Deploying…"))
         bridge = HostKeyPrompt()
         bridge.set_prompt(self._confirm_unknown_host)
         bridge.request.connect(bridge.handle_request, _Qt.ConnectionType.QueuedConnection)
@@ -1987,5 +1988,7 @@ class ConnectionDialog(QDialog):
                 host=error.host, key_type=error.key_type,
                 fingerprint=error.fingerprint_sha256),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            # Enter must not trust a key nobody compared: No is the default.
+            QMessageBox.StandardButton.No,
         )
         return reply == QMessageBox.StandardButton.Yes

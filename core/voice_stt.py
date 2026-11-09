@@ -67,7 +67,12 @@ def transcribe_server(
         with opener(request, timeout=profile.timeout) as response:
             raw = response.read(MAX_ANSWER_BYTES + 1)
     except urllib.error.HTTPError as exc:
-        raise TranscriptionError(f"the transcription server answered HTTP {exc.code}") from exc
+        from core.agent_net import server_error_text
+
+        raise TranscriptionError(
+            f"the transcription server answered HTTP {exc.code}"
+            + server_error_text(exc, redact=(api_key,))
+        ) from exc
     except (OSError, ValueError) as exc:
         raise TranscriptionError(f"the transcription server is not reachable: {exc}") from exc
     if len(raw) > MAX_ANSWER_BYTES:

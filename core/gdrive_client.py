@@ -5,6 +5,20 @@ Requires: pip install axross[gdrive]
 
 Uses OAuth2 browser redirect flow for authentication. Tokens are cached
 locally so the user only needs to authorise once.
+
+Google Docs, Sheets and Slides (Google-native files, no binary content)
+are listed with the extension of their export - ``Thesis`` as
+``Thesis.docx``, ``Budget`` as ``Budget.xlsx``, ``Deck`` as
+``Deck.pptx``, a drawing as ``.pdf`` - without a size, and read through
+``files.export_media`` (Google caps an export at 10 MB). They are
+read-only here: a write to one is refused. A Google-native item without
+an export (a Form, a Site) is listed and refused on reading with that
+reason - not "permission denied".
+
+Shared drives: items of a shared drive that are reachable from My Drive
+(shared into it, a shortcut's folder) are listed, read and written
+(``supportsAllDrives``). The shared drives themselves are not listed:
+there is no "/Shared drives/<name>" root (docs/USAGE.md).
 """
 
 from __future__ import annotations
@@ -23,7 +37,7 @@ from core.answer_fields import as_dict, as_list, as_size, as_str, as_utc_datetim
 from core.append_helpers import read_existing_for_append
 from core.backend import SessionLifecycle
 from core.desktop_open import install_clean_webbrowser
-from core import cloud_http
+from core import cloud_http, transfer_hooks
 from core.path_policy import refuse_folder_path, safe_leaf
 from core.read_spool import new_read_spool
 from core.secure_storage import adopt_legacy_secret_file, write_secret_file
@@ -82,25 +96,40 @@ def _is_retryable(exc: BaseException, idempotent: bool) -> bool:
     return idempotent and status in cloud_http.RETRYABLE_STATUSES
 
 
-def _run(request, *, idempotent: bool = True):
+def _run(request, *, idempotent: bool = True, gone_ok: bool = False, step=None):
     """``request.execute()`` with bounded retries (cloud_http) on what
     Drive documents as "try again": 429, the 403 rate limits, 5xx.
     googleapiclient's own retry (``num_retries``) defaults to none, and
     it ignores Retry-After. A resumable upload request resumes where its
     session stands when it is executed again. The last failure is raised
-    as it came; :func:`_drive_error` types it."""
+    as it came; :func:`_drive_error` types it.
+
+    *gone_ok* (a delete): a 404 on a retry after a 5xx or a lost answer
+    is that first try's work - the file is gone, as asked - and returns
+    None. *step*: called instead of ``request.execute`` (one chunk of a
+    resumable upload); the retries are the same.
+    """
     attempt = 0
+    uncertain = False
+    call = step if step is not None else request.execute
     while True:
         attempt += 1
         try:
-            return request.execute()
+            return call()
         except Exception as exc:
+            if gone_ok and uncertain and _http_status(exc) in (404, 410):
+                log.info("Google Drive: gone on the retry (the first try did it)")
+                return None
             if attempt >= cloud_http.ATTEMPTS or not _is_retryable(exc, idempotent):
                 raise
             resp = getattr(exc, "resp", None)
             retry_after = None
             if resp is not None and hasattr(resp, "get"):
                 retry_after = cloud_http.retry_after_seconds(resp.get("retry-after"))
+            status = _http_status(exc)
+            # Not a 429 / rate limit (those were not carried out): whether
+            # the first try did its work is unknown.
+            uncertain = uncertain or (status is not None and status >= 500) or status is None
             log.debug("Google Drive request failed (%s); retry %d", exc, attempt)
             cloud_http.pause(attempt, retry_after)
 
@@ -108,12 +137,28 @@ def _run(request, *, idempotent: bool = True):
 def _drive_error(exc: BaseException, message: str, filename: str | None = None) -> OSError:
     """*message* as the typed OSError of a failed Drive request: 404
     FileNotFoundError, 403 PermissionError (ENOSPC for a full storage,
-    EAGAIN for a rate limit), 429 / 5xx EAGAIN / EIO ... (cloud_http)."""
+    EAGAIN for a rate limit), 429 / 5xx EAGAIN / EIO ... (cloud_http).
+    A cancelled transfer (InterruptedError, core.transfer_hooks) stays
+    one: the transfer engine reports it as cancelled, not failed."""
+    if isinstance(exc, InterruptedError):
+        return transfer_hooks.UploadCancelled(*exc.args) if isinstance(
+            exc, transfer_hooks.UploadCancelled) else InterruptedError(*exc.args)
     status = _http_status(exc)
     if status is None:
         return cloud_http.rewrap(exc, message, filename)
     if status == 403:
         text = _error_text(exc)
+        if "exportSizeLimitExceeded" in text:
+            return cloud_http.oserror(
+                errno.EFBIG, f"{message} (Google exports a document of at most 10 MB)", filename)
+        if "fileNotDownloadable" in text or "cannotExportFile" in text:
+            # Not a permission: the item has no file form to download.
+            return cloud_http.oserror(
+                errno.EOPNOTSUPP,
+                f"{message} (a Google-native item without binary content that Google "
+                f"Drive can download or export, such as a Form or a Site)",
+                filename,
+            )
         if any(r in text for r in _QUOTA_REASONS):
             return cloud_http.oserror(errno.ENOSPC, message, filename)
         if any(r in text for r in _RATE_LIMIT_REASONS):
@@ -122,10 +167,46 @@ def _drive_error(exc: BaseException, message: str, filename: str | None = None) 
 
 
 _FOLDER_MIME = "application/vnd.google-apps.folder"
+_NATIVE_PREFIX = "application/vnd.google-apps."
+#: Google-native (Docs editors) files as axross reads them: the MIME type
+#: files.export_media is asked for, and the extension the name gets.
+_EXPORTS = {
+    "application/vnd.google-apps.document": (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx"),
+    "application/vnd.google-apps.spreadsheet": (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx"),
+    "application/vnd.google-apps.presentation": (
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation", ".pptx"),
+    "application/vnd.google-apps.drawing": ("application/pdf", ".pdf"),
+    "application/vnd.google-apps.jam": ("application/pdf", ".pdf"),
+    "application/vnd.google-apps.script": ("application/vnd.google-apps.script+json", ".json"),
+}
+_EXPORT_EXTENSIONS = tuple(sorted({ext for _mime, ext in _EXPORTS.values()}))
+#: Items of a shared drive answer only requests that say they know of them.
+_ALL_DRIVES = {"supportsAllDrives": True}
+_ALL_DRIVES_LIST = {"supportsAllDrives": True, "includeItemsFromAllDrives": True}
+
+
+def _is_native(mime) -> bool:
+    """A Google-native item (a Doc, a Form ...) - no binary content."""
+    return isinstance(mime, str) and mime.startswith(_NATIVE_PREFIX) and mime != _FOLDER_MIME
+
+
+def _listed_name(name: str, mime) -> str:
+    """*name* as the listing shows an item of *mime*: a Google Doc, Sheet
+    or Slides deck with the extension of its export (unless it has it)."""
+    export = _EXPORTS.get(mime) if isinstance(mime, str) else None
+    if export is None or name.lower().endswith(export[1]):
+        return name
+    return name + export[1]
 _FILE_FIELDS = "files(id,name,mimeType,size,modifiedTime)"
 #: Bytes per download request. googleapiclient's default is 100 MiB, each
 #: chunk one bytes object in RAM.
 _DOWNLOAD_CHUNK = 4 * 1024 * 1024
+#: Bytes per resumable-upload request (a multiple of 256 KiB, as Drive
+#: asks): Cancel and the progress bar act between two of them. The
+#: library's default, 100 MiB, made both wait for 100 MiB at a time.
+_UPLOAD_CHUNK = 8 * 1024 * 1024
 
 
 def _download_spooled(request) -> IO[bytes]:
@@ -133,17 +214,47 @@ def _download_spooled(request) -> IO[bytes]:
     stay in memory, larger ones go to a temp file) instead of a BytesIO
     holding the whole file."""
     spool = new_read_spool()
+    # In a running transfer: Cancel between chunks, the bytes reported.
+    hooks = transfer_hooks.current()
     try:
         downloader = MediaIoBaseDownload(spool, request, chunksize=_DOWNLOAD_CHUNK)
         done = False
         while not done:
+            if hooks is not None:
+                hooks.check()
             # The library's own retry of a 429 / 5xx chunk (backoff).
-            _, done = downloader.next_chunk(num_retries=cloud_http.ATTEMPTS - 1)
+            status, done = downloader.next_chunk(num_retries=cloud_http.ATTEMPTS - 1)
+            if hooks is not None:
+                total = getattr(status, "total_size", None)
+                hooks.received(spool.tell(), total if isinstance(total, int) else None)
         spool.seek(0)
     except BaseException:
         spool.close()
         raise
     return spool
+
+
+def _upload(request, hooks, size: int) -> None:
+    """Run a resumable upload *request*: chunk by chunk (``next_chunk``)
+    in a running transfer - Cancel checked and the bytes reported between
+    two chunks - else in one ``execute``. Retries as :func:`_run`."""
+    if hooks is None or not callable(getattr(request, "next_chunk", None)):
+        if hooks is not None:
+            hooks.check()
+        _run(request)
+        if hooks is not None:
+            hooks.sent(size, size, check=False)
+        return
+    while True:
+        hooks.check()
+        status, response = _run(request, step=request.next_chunk)
+        if response is not None:
+            # The last chunk made the file: too late for a Cancel.
+            hooks.sent(size, size, check=False)
+            return
+        done = getattr(status, "resumable_progress", None)
+        if isinstance(done, int):
+            hooks.sent(done, size)
 
 
 class _SpooledWriter:
@@ -156,6 +267,11 @@ class _SpooledWriter:
         self._existing_id = existing_id
         self._buf = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
         self._closed = False
+        # The running transfer's Cancel and progress (core.transfer_hooks):
+        # the upload happens in close(), after the copy loop.
+        self._hooks = transfer_hooks.current()
+        if self._hooks is not None:
+            self._hooks.expect_upload()
 
     def write(self, data: bytes) -> int:
         return self._buf.write(data)
@@ -173,29 +289,39 @@ class _SpooledWriter:
         if self._closed:
             return
         self._closed = True
+        hooks = self._hooks
         try:
+            size = self._buf.seek(0, os.SEEK_END)
             self._buf.seek(0)
             media = MediaIoBaseUpload(
                 self._buf,
                 mimetype="application/octet-stream",
+                chunksize=_UPLOAD_CHUNK,
                 resumable=True,
             )
             # A resumable upload: executed again after a 429 / 5xx, the
             # request resumes its session - the file is made once.
             if self._existing_id:
-                _run(self._service.files().update(
+                request = self._service.files().update(
                     fileId=self._existing_id,
                     media_body=media,
-                ))
+                )
             else:
                 body = {
                     "name": self._file_name,
                     "parents": [self._parent_id],
                 }
-                _run(self._service.files().create(
+                request = self._service.files().create(
                     body=body,
                     media_body=media,
-                ))
+                )
+            with transfer_hooks.bound(hooks):
+                _upload(request, hooks, size)
+        except InterruptedError:
+            # Cancelled between two chunks: a resumable session commits
+            # the file only with its last chunk, so nothing was made or
+            # replaced (Drive drops the unfinished session).
+            raise transfer_hooks.UploadCancelled(transfer_hooks.CANCELLED) from None
         except Exception as exc:
             # The SDK's HttpError is no OSError: the editor's "Cannot save"
             # and atomic_write's caller catch OSError.
@@ -558,16 +684,40 @@ class GDriveSession(SessionLifecycle):
         says more follow. The first page alone read as "not found", and
         open_write / mkdir then made a second item of the name.
         """
+        ids = self._ids_named(parent_id, name, name, path)
+        stem = name[: -len(name.rsplit(".", 1)[-1]) - 1] if "." in name else ""
+        if stem and name.lower().endswith(_EXPORT_EXTENSIONS):
+            # "Thesis.docx" may be the Google Doc "Thesis" (_listed_name).
+            ids += [i for i in self._ids_named(parent_id, stem, name, path) if i not in ids]
+        if len(ids) > 1:
+            raise OSError(
+                _ENOTUNIQ,
+                f"Cannot resolve path '{path}': at least 2 files named {name!r} "
+                f"in one folder",
+                path,
+            )
+        if not ids:
+            raise FileNotFoundError(errno.ENOENT, "Not found", path)
+        if not ids[0]:
+            raise OSError(errno.EPROTO,
+                          f"Cannot resolve path '{path}': the answer carries no file id")
+        return ids[0]
+
+    def _ids_named(self, parent_id: str, query_name: str, name: str, path: str) -> list[str]:
+        """The ids of the items of folder *parent_id* called *query_name*
+        whose listed name (_listed_name) is *name*; OSError ENOTUNIQ as
+        soon as there are two."""
         query = (
             f"'{parent_id}' in parents "
-            f"and name = '{self._escape_query(name)}' "
+            f"and name = '{self._escape_query(query_name)}' "
             f"and trashed = false"
         )
         ids: list[str] = []
         page_token = ""
         seen_tokens: set[str] = set()
         for _page in range(_LOOKUP_MAX_PAGES):
-            kwargs = dict(q=query, fields="nextPageToken,files(id,name,mimeType)", pageSize=2)
+            kwargs = dict(q=query, fields="nextPageToken,files(id,name,mimeType)", pageSize=2,
+                          **_ALL_DRIVES_LIST)
             if page_token:
                 kwargs["pageToken"] = page_token
             try:
@@ -578,7 +728,8 @@ class GDriveSession(SessionLifecycle):
                 entry = as_dict(entry)
                 # A name query may match regardless of case; the folder
                 # can hold "Report.txt" beside "report.txt".
-                if "name" in entry and entry.get("name") != name:
+                if "name" in entry and _listed_name(as_str(entry.get("name")),
+                                                    entry.get("mimeType")) != name:
                     continue
                 ids.append(as_str(entry.get("id")))
             if len(ids) > 1:
@@ -600,12 +751,7 @@ class GDriveSession(SessionLifecycle):
         else:
             raise OSError(errno.EPROTO, f"Cannot resolve path '{path}': the name query does "
                           f"not end after {_LOOKUP_MAX_PAGES} pages")
-        if not ids:
-            raise FileNotFoundError(errno.ENOENT, "Not found", path)
-        if not ids[0]:
-            raise OSError(errno.EPROTO,
-                          f"Cannot resolve path '{path}': the answer carries no file id")
-        return ids[0]
+        return ids
 
     def _existing_child(self, parent_id: str, name: str, path: str) -> str | None:
         """The id *name* already has in folder *parent_id*, None when it is
@@ -648,6 +794,7 @@ class GDriveSession(SessionLifecycle):
                     q=f"'{folder_id}' in parents and trashed = false",
                     fields="files(id)",
                     pageSize=1,
+                    **_ALL_DRIVES_LIST,
                 ))
             )
         except Exception as e:
@@ -664,6 +811,7 @@ class GDriveSession(SessionLifecycle):
                 .get(
                     fileId=file_id,
                     fields="id,name,mimeType,size,modifiedTime",
+                    **_ALL_DRIVES,
                 ))
             )
         except Exception as e:
@@ -723,6 +871,7 @@ class GDriveSession(SessionLifecycle):
                         fields=f"nextPageToken,{_FILE_FIELDS}",
                         pageSize=1000,
                         pageToken=page_token,
+                        **_ALL_DRIVES_LIST,
                     ))
                 )
             except Exception as e:
@@ -748,17 +897,14 @@ class GDriveSession(SessionLifecycle):
                 if not file_id:
                     log.warning("Google Drive list_dir(%s): skipping %r without an id", path, name)
                     continue
-                is_dir = f.get("mimeType") == _FOLDER_MIME
+                mime = f.get("mimeType")
+                name = _listed_name(name, mime)
+                is_dir = mime == _FOLDER_MIME
                 size = as_size(f.get("size"), digit_strings=True) if not is_dir else 0
                 modified = self._parse_time(f.get("modifiedTime", ""))
-                items.append(
-                    FileItem(
-                        name=name,
-                        size=size,
-                        modified=modified,
-                        is_dir=is_dir,
-                    )
-                )
+                # A Google Doc is read here as an export: read-only.
+                items.append(FileItem(name=name, size=size, modified=modified, is_dir=is_dir,
+                                      permissions=0o444 if _is_native(mime) else 0))
                 ids.setdefault(name, []).append(file_id)
 
             page_token = as_str(resp.get("nextPageToken"))
@@ -798,11 +944,14 @@ class GDriveSession(SessionLifecycle):
     def _stat(self, path: str) -> FileItem:
         file_id = self._resolve_path(path)
         meta = self._get_metadata(file_id)
-        is_dir = meta.get("mimeType") == _FOLDER_MIME
+        mime = meta.get("mimeType")
+        is_dir = mime == _FOLDER_MIME
         size = as_size(meta.get("size"), digit_strings=True) if not is_dir else 0
         modified = self._parse_time(meta.get("modifiedTime", ""))
-        name = as_str(meta.get("name")) or posixpath.basename(path.rstrip("/")) or "/"
-        return FileItem(name=name, size=size, modified=modified, is_dir=is_dir)
+        name = as_str(meta.get("name"))
+        name = _listed_name(name, mime) if name else posixpath.basename(path.rstrip("/")) or "/"
+        return FileItem(name=name, size=size, modified=modified, is_dir=is_dir,
+                        permissions=0o444 if _is_native(mime) else 0)
 
     def is_dir(self, path: str) -> bool:
         """False only for "not found"; a failed lookup (timeout, 5xx, rate
@@ -872,7 +1021,7 @@ class GDriveSession(SessionLifecycle):
             if self._has_children(file_id, path):
                 raise OSError(errno.ENOTEMPTY, f"Directory not empty: {path}", path)
         try:
-            _run(self._service.files().delete(fileId=file_id))
+            _run(self._service.files().delete(fileId=file_id, **_ALL_DRIVES), gone_ok=True)
         except Exception as e:
             raise _drive_error(e, f"Cannot remove {path}: {e}") from e
         self._invalidate_cache(path)
@@ -908,6 +1057,7 @@ class GDriveSession(SessionLifecycle):
                 _run(self._service.files().update(
                     fileId=file_id,
                     body={"name": new_name},
+                    **_ALL_DRIVES,
                 ))
             else:
                 # Move to a different folder and optionally rename
@@ -918,6 +1068,7 @@ class GDriveSession(SessionLifecycle):
                     body={"name": new_name},
                     addParents=new_parent_id,
                     removeParents=old_parent_id,
+                    **_ALL_DRIVES,
                 ))
         except Exception as e:
             raise _drive_error(e, f"Cannot rename {src} -> {dst}: {e}") from e
@@ -929,9 +1080,30 @@ class GDriveSession(SessionLifecycle):
     def open_read(self, path: str) -> IO[bytes]:
         file_id = self._resolve_path(path)
         try:
-            return _download_spooled(self._service.files().get_media(fileId=file_id))
+            return _download_spooled(
+                self._service.files().get_media(fileId=file_id, **_ALL_DRIVES))
         except Exception as e:
+            if _http_status(e) == 403 and "fileNotDownloadable" in _error_text(e):
+                # A Google Doc / Sheet / Slides deck: read as its export.
+                return self._export(file_id, path, e)
             raise _drive_error(e, f"Cannot read {path}: {e}") from e
+
+    def _export(self, file_id: str, path: str, refused: BaseException) -> IO[bytes]:
+        """The Google-native file *file_id* as the file its listed name
+        promises (_EXPORTS); one without an export is refused with the
+        reason of get_media's 403 *refused*."""
+        mime = self._get_metadata(file_id).get("mimeType")
+        if mime == _FOLDER_MIME:
+            raise IsADirectoryError(errno.EISDIR, f"Cannot read {path}: a folder", path)
+        export = _EXPORTS.get(mime) if isinstance(mime, str) else None
+        if export is None:
+            raise _drive_error(refused, f"Cannot read {path}: {mime or 'this item'} cannot be "
+                               f"downloaded") from refused
+        try:
+            return _download_spooled(
+                self._service.files().export_media(fileId=file_id, mimeType=export[0]))
+        except Exception as e:
+            raise _drive_error(e, f"Cannot export {path} as {export[1]}: {e}") from e
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
         # normalize() drops the slash: "x/" was written as the FILE x.
@@ -951,9 +1123,19 @@ class GDriveSession(SessionLifecycle):
             existing_id = self._resolve_for_change(path, "overwrite")
         except FileNotFoundError:
             pass
-        if existing_id and self._get_metadata(existing_id).get("mimeType") == _FOLDER_MIME:
+        existing_mime = self._get_metadata(existing_id).get("mimeType") if existing_id else None
+        if existing_mime == _FOLDER_MIME:
             # files.update with media on a folder fails only at close().
             raise IsADirectoryError(errno.EISDIR, f"Cannot write {path}: a folder", path)
+        if _is_native(existing_mime):
+            # Its content is Google's own format: the upload would replace
+            # the document by a binary file (or fail at close()).
+            raise PermissionError(
+                errno.EPERM,
+                f"Cannot write {path}: it is a Google Docs editors file ({existing_mime}), "
+                f"read here as an export; save under another name",
+                path,
+            )
 
         writer = _SpooledWriter(self._service, file_name, parent_id, existing_id=existing_id)
 
@@ -1106,6 +1288,7 @@ class GDriveSession(SessionLifecycle):
             _run(self._service.files().copy(
                 fileId=src_id,
                 body={"name": dst_name, "parents": [dst_parent]},
+                **_ALL_DRIVES,
             ), idempotent=False)
         except Exception as exc:
             raise _drive_error(exc, f"Drive copy {src} -> {dst} failed: {exc}") from exc

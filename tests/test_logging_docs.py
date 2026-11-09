@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests.doc_labels import on_screen  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -30,7 +31,7 @@ def test_happy_each_guide_has_the_logging_row_last_in_the_settings_table(name):
     assert rows.index("Updates") + 1 == rows.index("Logging")
     assert CATEGORY_ORDER[-1] == "logging" and _BUILTIN["logging"][0] == "Logging"
     row = re.search(r"^\| Logging \| (.+) \|$", text, re.M).group(1)
-    for needle in ("DEBUG", "WARNING", "*Reset to Defaults*"):
+    for needle in ("DEBUG", "WARNING", on_screen(name, "*Reset to Defaults*")):
         assert needle in row, needle
 
 
@@ -42,7 +43,7 @@ def test_happy_each_guide_names_the_store_the_flags_and_the_collapse(name):
     assert "~/.config/axross/" + LC.settings_file().name in text
     assert "--debug" in text and "--verbose" in text
     assert "Last message repeated" in text  # the line the log shows, verbatim
-    assert "*Areas*" in text  # the Log dock's filter button
+    assert on_screen(name, "*Areas*") in text  # the Log dock's filter button
 
 
 def test_sad_the_labels_the_docs_name_exist():

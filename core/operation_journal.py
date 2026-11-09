@@ -17,11 +17,12 @@ from typing import Any
 from core.posix_compat import fchmod_private
 from core.redaction import _is_sensitive_key, redact, redact_path, redact_text
 from core.structured_log import log_event
+from core.xdg_dirs import base_dir
 
 log = logging.getLogger(__name__)
 
 _LOCK = threading.Lock()
-_DEFAULT_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state")) / "axross"
+_DEFAULT_DIR = base_dir("XDG_STATE_HOME") / "axross"  # a relative XDG_STATE_HOME is ignored
 JOURNAL_PATH = Path(os.environ.get("AXROSS_OPERATION_JOURNAL", _DEFAULT_DIR / "operations.jsonl"))
 MAX_READ_RECENT_BYTES = 4 * 1024 * 1024
 #: Above this size the journal becomes ``<name>.1`` (replacing the older
@@ -167,22 +168,50 @@ def new_batch_id() -> str:
     return "b" + uuid.uuid4().hex[:11]
 
 
+#: The phase of the event that opens a batch (:func:`begin_batch`).
+BATCH_BEGIN = "batch_begin"
+
+
+def begin_batch(batch_id: str, operation: str, *, entries: int | None = None) -> None:
+    """Journal that the batch *batch_id* begins: written before any of
+    its entries, so a batch whose surviving events start with this marker
+    is known to be whole (:func:`read_batch`). *entries* is the number of
+    entries the user picked, when known. Never raises: the journal must
+    not stop the operation."""
+    if not batch_id:
+        return
+    details: dict[str, Any] = {"batch": batch_id}
+    if entries is not None:
+        details["entries"] = int(entries)
+    try:
+        append_event(JournalEvent(operation_id=batch_id, phase=BATCH_BEGIN,
+                                  operation=operation, status="active", details=details))
+    except Exception as exc:  # noqa: BLE001
+        log.debug("operation journal: batch begin of %s failed: %s", batch_id, exc)
+
+
 class journal_batch:  # noqa: N801 - used like a function: ``with journal_batch(id):``
     """Every event this thread writes inside the block carries
     ``details["batch"] = batch_id`` (unless it names a batch itself).
 
     For callers that journal through code of their own (core.trash.trash
     per selected entry); the transfer engine names the batch on each job,
-    whose events are written on worker threads.
+    whose events are written on worker threads. With *begin* (the
+    operation's name) the block opens with the batch's begin marker
+    (:func:`begin_batch`, *entries* as there).
     """
 
-    def __init__(self, batch_id: str) -> None:
+    def __init__(self, batch_id: str, *, begin: str = "", entries: int | None = None) -> None:
         self.batch_id = batch_id
         self._outer = ""
+        self._begin = begin
+        self._entries = entries
 
     def __enter__(self) -> str:
         self._outer = getattr(_BATCH, "id", "")
         _BATCH.id = self.batch_id
+        if self._begin and self.batch_id:
+            begin_batch(self.batch_id, self._begin, entries=self._entries)
         return self.batch_id
 
     def __exit__(self, *_exc) -> None:
@@ -542,11 +571,16 @@ MAX_READ_BATCH_BYTES = 4 * MAX_JOURNAL_BYTES
 _BATCH_EDGE_LINES = 64
 
 
+#: Operations journaled with a finish event only (no start).
+_FINISH_ONLY = frozenset({"move_folder", "undo"})
+
+
 def _scan_batch(path: Path, needle: bytes, events: list[dict],
-                lines_before: int) -> tuple[int, int | None, bool]:
+                lines_before: int, firsts: list[dict]) -> tuple[int, int | None, bool]:
     """Append the events of *path* that hold *needle* or are an undo to
     *events*; return (lines read, index of the first line holding
-    *needle* counted from *lines_before*, whether read from its start)."""
+    *needle* counted from *lines_before*, whether read from its start).
+    The first event holding *needle* is appended to *firsts*."""
     undo = b'"operation":"undo"'
     first: int | None = None
     count = 0
@@ -568,6 +602,7 @@ def _scan_batch(path: Path, needle: bytes, events: list[dict],
                         events.append(item)
                         if has and first is None:
                             first = lines_before + count
+                            firsts.append(item)
                 count += 1
     except OSError:
         return count, first, False
@@ -581,9 +616,16 @@ def read_batch(batch_id: str, *, journal_path: Path | None = None) -> tuple[list
 
     For an undo of a batch larger than what read_recent reads: built from
     its newest entries only, it put back part of a move and recorded the
-    whole batch as undone - the rest could never be undone. Not whole: the
-    batch's first event is at the start of what is left of the journal (or
-    not found), so its oldest entries may be gone."""
+    whole batch as undone - the rest could never be undone.
+
+    Whole: the batch's first surviving event is its begin marker
+    (:func:`begin_batch`, written before any entry). A batch journaled
+    before the marker existed is whole when the journal was never rotated,
+    or when its first event is well into what is left of the journal and
+    no entry's finish has lost its start; otherwise its oldest entries may
+    be gone (a batch whose start was rotated away while another
+    operation's events opened the rotated file was called whole and
+    undone in part)."""
     if not batch_id or not _journal_enabled(journal_path):
         return [], False
     path = _target_path(journal_path)
@@ -598,9 +640,10 @@ def read_batch(batch_id: str, *, journal_path: Path | None = None) -> tuple[list
         except OSError:
             before = None
         events, first, lines, from_start = [], None, 0, False
+        firsts: list[dict] = []
         files = [p for p in (older, path) if p.exists()]
         for index, each in enumerate(files):
-            read, found, whole = _scan_batch(each, needle, events, lines)
+            read, found, whole = _scan_batch(each, needle, events, lines, firsts)
             if index == 0:
                 # The start of the history only for a journal never rotated.
                 from_start = whole and each == path
@@ -615,13 +658,40 @@ def read_batch(batch_id: str, *, journal_path: Path | None = None) -> tuple[list
             break  # not rotated while it was read
     if first is None:
         return events, False
-    return events, from_start or first >= _BATCH_EDGE_LINES
+    head = firsts[0]
+    if head.get("phase") == BATCH_BEGIN and head.get("operation_id") == batch_id:
+        return events, True
+    if any(e.get("phase") == BATCH_BEGIN and e.get("operation_id") == batch_id
+           for e in events):
+        return events, False  # entries of it before its marker: not this batch's start
+    return events, from_start or (first >= _BATCH_EDGE_LINES
+                                  and _starts_kept(events, batch_id))
+
+
+def _starts_kept(events: list[dict], batch_id: str) -> bool:
+    """Whether every entry of *batch_id* in *events* still has its start
+    event (those journaled with a finish only aside)."""
+    started: set = set()
+    for event in events:
+        details = event.get("details")
+        if not isinstance(details, dict) or details.get("batch") != batch_id:
+            continue
+        if event.get("operation") in _FINISH_ONLY:
+            continue
+        op = event.get("operation_id")
+        if event.get("phase") == "start":
+            started.add(op)
+        elif op not in started:
+            return False
+    return True
 
 
 __all__ = [
+    "BATCH_BEGIN",
     "JOURNAL_PATH",
     "JournalEvent",
     "append_event",
+    "begin_batch",
     "current_batch",
     "finish_operation",
     "journal_batch",

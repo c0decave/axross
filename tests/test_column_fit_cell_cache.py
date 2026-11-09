@@ -210,6 +210,9 @@ def _dock(jobs: int):
     signals = _Signals()
     signals.all_jobs = lambda: list(dock._model._jobs)
     dock = TransferDock(signals)
+    # The jobs go into the model directly (no job_added): show the table as
+    # a queued job does - an idle dock hides it.
+    dock._set_idle(False)
     dock.resize(1000, 300)
     dock.show()
     for i in range(jobs):

@@ -244,9 +244,15 @@ def _mode(backend, item, path: str, is_dir: bool) -> int:
 
 
 def _is_local(backend) -> bool:
+    """A local backend whose paths are used as they are: the archive is
+    written in the folder and the sources read by name. A confined one
+    (core.confined_fs, the MCP server's) is not: there a folder of the path
+    swapped for a symlink must not be followed, so the archive is built in
+    the private staging folder and created beneath the root's descriptor
+    (:func:`_place_confined`), the sources read through the backend."""
     from core.local_fs import LocalFS
 
-    return isinstance(backend, LocalFS)
+    return isinstance(backend, LocalFS) and not hasattr(backend, "create_new")
 
 
 def _mtime(item) -> float:
@@ -530,6 +536,35 @@ def _place_local(tmp: str, backend, folder: str, stem: str, suffix: str) -> str:
     raise PackError("no free archive name")
 
 
+def _place_confined(tmp: str, backend, folder: str, stem: str, suffix: str, cancel) -> str:
+    """Copy the archive to the first free name, created with O_EXCL beneath
+    the confined backend's root (``create_new``): never over a file, never
+    through a symlink. A failed copy removes what it wrote."""
+    for _attempt in range(100):
+        target = _unique(backend, folder, stem, suffix)
+        try:
+            dst = backend.create_new(target, 0o600)
+        except FileExistsError:
+            continue  # taken meanwhile: next name
+        try:
+            with dst, open(tmp, "rb") as src:
+                while True:
+                    if cancel is not None and cancel.is_set():
+                        raise PackCancelled("cancelled")
+                    chunk = src.read(CHUNK)
+                    if not chunk:
+                        break
+                    dst.write(chunk)
+        except BaseException:
+            try:
+                backend.remove(target)
+            except OSError:
+                pass
+            raise
+        return target
+    raise PackError("no free archive name")
+
+
 def _place_remote(tmp: str, backend, folder: str, stem: str, suffix: str, cancel) -> str:
     """Upload the archive under a hidden temporary name next to its place,
     then rename it there: a dropped connection leaves no truncated
@@ -634,6 +669,8 @@ def pack(
         result.bytes_out = os.path.getsize(tmp)
         if local:
             result.path = _place_local(tmp, backend, folder, stem, fmt.suffix)
+        elif hasattr(backend, "create_new"):
+            result.path = _place_confined(tmp, backend, folder, stem, fmt.suffix, cancel)
         else:
             result.path = _place_remote(tmp, backend, folder, stem, fmt.suffix, cancel)
         return result

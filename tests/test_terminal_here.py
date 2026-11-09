@@ -172,8 +172,19 @@ def _close(widget) -> None:
     APP.processEvents()
 
 
+def _entries(menu) -> list:
+    """The entries of *menu* and of its submenus (More ▸, Open With ▸ …)."""
+    found = []
+    for action in menu.actions():
+        found.append(action)
+        if action.menu() is not None:
+            found += _entries(action.menu())
+    return found
+
+
 def _action(widget, text):
-    return next((a for a in widget._build_context_menu().actions() if a.text().replace("&", "") == text), None)
+    return next((a for a in _entries(widget._build_context_menu())
+                 if a.text().replace("&", "") == text), None)
 
 
 # --------------------------------------------------------------------------
@@ -429,7 +440,7 @@ def local_pane(tmp_path):
 
 
 def test_happy_local_pane_offers_both_entries_on_empty_space(local_pane):
-    texts = [a.text().replace("&", "") for a in local_pane._build_context_menu().actions()]
+    texts = [a.text().replace("&", "") for a in _entries(local_pane._build_context_menu())]
     assert EMBEDDED in texts and EXTERNAL in texts
     assert _action(local_pane, EMBEDDED).isEnabled()
 

@@ -956,6 +956,12 @@ def _run(args) -> int:
         EX.set_safe_mode(True)
         log.info("Safe mode: no extension is loaded at the start")
 
+    # The XDG folders of the user's session, for an MCP server started
+    # without them (core.protected_places).
+    from core import protected_places
+
+    protected_places.remember_xdg()
+
     from core.backend_registry import init_registry
 
     init_registry()

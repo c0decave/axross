@@ -537,7 +537,7 @@ class AgentTab(QWidget):
         self.topics_button = QToolButton()
         self.topics_button.setText(tr("Topics ▸"))
         self.topics_button.setToolTip(
-            tr("Prepared tasks: inventory, installs, logs, disk usage, ... - and your own "
+            tr("Prepared tasks: inventory, installs, logs, disk usage, … - and your own "
                "(+ New Topic…)")
         )
         self.topics_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -1285,8 +1285,18 @@ class AgentTab(QWidget):
         )
 
     def _external_tools(self, servers, extensions, *, plan: bool = False) -> tuple:
+        # Stop ends an MCP server that is starting (one that never answers
+        # held the tab for its whole timeout), and the transcript says which
+        # server it waits for.
+        cancel = self._cancel
+        notice = self._event_call
+
+        def starting(name: str) -> None:
+            notice({"type": "notice", "text": tr("Starting MCP server {name}…").format(name=name)})
+
         tools, errors = (
-            self.dock.external_tools(servers, extensions) if servers or extensions else ([], [])
+            self.dock.external_tools(servers, extensions, cancel=cancel, on_start=starting)
+            if servers or extensions else ([], [])
         )
         if plan:  # Plan only reads: nothing that may change something is offered
             tools = [t for t in tools if not t.write]
@@ -2504,6 +2514,8 @@ class AgentDock(ExtensionDock):
         answer = QMessageBox.question(
             self, heading,
             tr("Close {title}? Its conversation is deleted.").format(title=tab.session.title),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         return answer == QMessageBox.StandardButton.Yes
 
@@ -2863,10 +2875,12 @@ class AgentDock(ExtensionDock):
     def _servers(self, names) -> list:
         return [s for s in self.agent_settings.mcp_servers if s.enabled and s.name in names]
 
-    def mcp_tools(self, names) -> tuple:
+    def mcp_tools(self, names, *, cancel=None, on_start=None) -> tuple:
         """The tools of the enabled servers *names*, and one error line per
-        server that failed (core.mcp_client.McpClientPool.tools)."""
-        return self.mcp_pool.tools(self._servers(names), wrap_for=self._mcp_wrap)
+        server that failed (core.mcp_client.McpClientPool.tools: *cancel*
+        ends a starting server, *on_start* is told its name)."""
+        return self.mcp_pool.tools(self._servers(names), wrap_for=self._mcp_wrap,
+                                   cancel=cancel, on_start=on_start)
 
     def external_signature(self, groups) -> tuple:
         """What the chosen servers and extensions are now: a change starts
@@ -2876,10 +2890,11 @@ class AgentDock(ExtensionDock):
         return (tuple((s.name, s.signature()) for s in self._servers(names)),
                 tuple((t.name, id(t)) for t in self.extension_tools(ext_ids)))
 
-    def external_tools(self, servers, extensions) -> tuple:
+    def external_tools(self, servers, extensions, *, cancel=None, on_start=None) -> tuple:
         """The tools of the MCP servers and extensions a tab chose, and the
         servers that failed."""
-        tools, errors = self.mcp_tools(servers) if servers else ([], [])
+        tools, errors = (self.mcp_tools(servers, cancel=cancel, on_start=on_start)
+                         if servers else ([], []))
         return [*tools, *self.extension_tools(extensions)], errors
 
     def extension_tools(self, ext_ids) -> list:

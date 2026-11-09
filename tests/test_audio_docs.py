@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests.doc_labels import on_screen  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -37,7 +38,7 @@ def test_happy_each_guide_lists_the_audio_page_in_the_settings_table(name):
     assert _BUILTIN["audio"][0] == "Audio"
     # The table's order is the dialog's: Agent, Voice (its slot), Audio.
     rows = _settings_table(text)
-    assert rows.index("Agent") < rows.index("Voice") < rows.index("Audio")
+    assert rows.index("Agent") < rows.index(on_screen(name, "Voice")) < rows.index("Audio")
     assert CATEGORY_ORDER.index("agent") < CATEGORY_ORDER.index("voice") \
         < CATEGORY_ORDER.index("audio")
 
@@ -48,7 +49,8 @@ def test_happy_each_guide_names_the_store_and_the_media_players_way_out(name):
 
     text = _text(name)
     assert "~/.config/axross/" + AS.settings_file().name in text
-    assert "*Try Again*" in text and "*Audio Settings…*" in text
+    assert on_screen(name, "*Try Again*") in text
+    assert on_screen(name, "*Audio Settings…*") in text
 
 
 @pytest.mark.parametrize("name", READMES)

@@ -1150,7 +1150,9 @@ class TerminalDock(QDockWidget):
         toolbar = QHBoxLayout()
 
         self._session_combo = QComboBox()
-        self._session_combo.addItem("Local Shell")  # the session key, not only a label
+        # The shown text is also the session key (_current_key): one
+        # language per run, so the translated text is a stable key.
+        self._session_combo.addItem(tr("Local Shell"))
         self._session_combo.setMinimumWidth(200)
         self._session_combo.currentIndexChanged.connect(self._on_session_switched)
         toolbar.addWidget(QLabel(tr("Session:")))
@@ -1280,7 +1282,9 @@ class TerminalDock(QDockWidget):
                                 self._btn_start.setEnabled(True)
                                 self._btn_stop.setEnabled(False)
                                 self._status_label.setText(tr("Disconnected"))
-                                self._terminal.message(f"\n--- Reconnect failed: {e} ---\n")
+                                self._terminal.message(
+                                    "\n--- " + tr("Reconnect failed: {error}").format(error=e)
+                                    + " ---\n")
                 for j in range(self._session_combo.count()):
                     if self._ssh_extra.get(
                         self._session_combo.itemText(j)
@@ -1353,7 +1357,7 @@ class TerminalDock(QDockWidget):
                 self._status_label.setText(tr("Connected: {name}").format(name=key))
             except Exception as e:
                 log.error("Failed to start SSH terminal: %s", e)
-                self._terminal.message(f"\n--- Error: {e} ---\n")
+                self._terminal.message("\n--- " + tr("Error: {error}").format(error=e) + " ---\n")
                 return
         else:
             # Local shell
@@ -1377,7 +1381,7 @@ class TerminalDock(QDockWidget):
         self._btn_start.setEnabled(True)
         self._btn_stop.setEnabled(False)
         self._status_label.setText(tr("Disconnected"))
-        self._terminal.message("\n--- Session ended ---\n")
+        self._terminal.message("\n--- " + tr("Session ended") + " ---\n")
 
     def _on_input(self, data: bytes) -> None:
         key = self._current_key()
@@ -1399,7 +1403,7 @@ class TerminalDock(QDockWidget):
                     self._btn_start.setEnabled(True)
                     self._btn_stop.setEnabled(False)
                     self._status_label.setText(tr("Disconnected"))
-                    self._terminal.message("\n--- Session ended ---\n")
+                    self._terminal.message("\n--- " + tr("Session ended") + " ---\n")
                 else:
                     tab.screen.feed("\r\n--- Session ended ---\r\n")
                 log.info("Terminal session ended: %s", key)
@@ -1475,7 +1479,7 @@ class TerminalDock(QDockWidget):
         # extra subshell reads naturally as "Local Shell 1".
         idx = 1
         while True:
-            label = f"Local Shell {idx}"
+            label = tr("Local Shell {n}").format(n=idx)
             existing = [self._session_combo.itemText(i) for i in range(self._session_combo.count())]
             if label not in existing:
                 break
@@ -1530,7 +1534,7 @@ class TerminalDock(QDockWidget):
             log.warning("Terminal dock: %s is no longer a folder", folder)
             return None
         name = os.path.basename(folder.rstrip(os.sep)) or folder
-        label = self._unique_label(f"Local Shell: {name}")
+        label = self._unique_label(tr("Local Shell: {name}").format(name=name))
         log.info("Terminal dock: local shell in %s", folder)
         return self._open_tab(label, _TerminalTab(cwd=folder))
 

@@ -53,6 +53,7 @@ import importlib.util
 import io
 import logging
 import os
+import posixpath
 import shutil
 import stat
 import tarfile
@@ -435,6 +436,245 @@ def _write_member_file(dest: str, src, mode: int | None, mtime: float | None) ->
             log.debug("archive: cannot set the time of %s: %s", dest, exc)
 
 
+def _member_parts(member_name: str) -> list[str]:
+    """The folders and name of a member below the target, as written there
+    (``a/./b/../c`` -> ``["a", "c"]``); UnsafeArchive for one that leaves it."""
+    norm = posixpath.normpath(member_name.replace("\\", "/"))
+    if norm in ("", "."):
+        return []
+    if norm == ".." or norm.startswith(("../", "/")):
+        raise UnsafeArchive(f"archive entry escapes target directory: {member_name!r}")
+    return norm.split("/")
+
+
+class _Sink:
+    """Where one extraction writes: the target folder it created.
+
+    POSIX: a descriptor of the target folder, opened right after it was
+    created (``O_NOFOLLOW``, relative to its parent's descriptor). Every
+    folder and file of a member is created relative to it, component by
+    component, without following a symlink (core.confined_fs), and a file
+    is created with ``O_EXCL`` - another process that writes in the same
+    tree (it swaps a folder just created for a symlink to
+    ``~/.config/autostart``, or plants a hard link) makes the extraction
+    fail instead of writing outside. 7z and RAR, whose libraries write by
+    path, extract into a private temporary folder first and are copied in.
+    Without ``dir_fd`` (Windows) the paths are used, as before.
+    """
+
+    def __init__(self, target: str, parent_fd: int | None = None, name: str = "",
+                 fd: int | None = None) -> None:
+        self.target = target
+        self.parent_fd = parent_fd
+        self.name = name
+        self.fd = fd
+
+    @classmethod
+    def create(cls, target: str, parent_dir=None) -> "_Sink":
+        """Create the folder *target* (0o755; FileExistsError when it is
+        there) and the sink writing into it. *parent_dir(target)*: a context
+        manager giving ``(descriptor of the parent folder, name)`` - the MCP
+        server's confined backend (core.confined_fs.ConfinedLocalFS.parent_dir);
+        else the parent folder is opened by its path (made when missing)."""
+        from core import confined_fs as CF
+
+        if not CF.FD_CONFINED:
+            os.makedirs(target, mode=0o755, exist_ok=False)
+            if os.path.islink(target):
+                try:
+                    os.unlink(target)
+                except OSError:
+                    pass
+                raise UnsafeArchive(
+                    f"target directory {target!r} is a symlink — refusing "
+                    "to extract into an indirection (likely symlink-swap "
+                    "race from another local process)",
+                )
+            return cls(target)
+        if parent_dir is not None:
+            with parent_dir(target) as (pfd, name):
+                return cls._made_in(target, pfd, name)
+        folder, name = os.path.split(os.path.abspath(target))
+        os.makedirs(folder, exist_ok=True)
+        pfd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0))
+        try:
+            return cls._made_in(target, pfd, name)
+        finally:
+            os.close(pfd)
+
+    @classmethod
+    def _made_in(cls, target: str, pfd: int, name: str) -> "_Sink":
+        os.mkdir(name, 0o755, dir_fd=pfd)
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+        try:
+            fd = os.open(name, flags, dir_fd=pfd)
+        except OSError as exc:
+            # The folder just made was swapped for a symlink (ELOOP, or
+            # ENOTDIR for one to a file) by another local process.
+            raise UnsafeArchive(
+                f"target directory {target!r} is a symlink — refusing "
+                "to extract into an indirection (likely symlink-swap "
+                "race from another local process)",
+            ) from exc
+        return cls(target, os.dup(pfd), name, fd)
+
+    def _confined(self, what):
+        """Run *what()*; a symlink or a file that appeared in the way is
+        UnsafeArchive (the extraction is refused and removed)."""
+        from core import confined_fs as CF
+
+        try:
+            return what()
+        except CF.SymlinkRefused as exc:
+            raise UnsafeArchive(
+                f"a symbolic link appeared in the extraction folder {self.target!r} - "
+                "refused (another process changes it while it is extracted)"
+            ) from exc
+        except FileExistsError as exc:
+            raise UnsafeArchive(
+                f"a file appeared in the extraction folder {self.target!r} while it was "
+                "extracted - refused"
+            ) from exc
+
+    def makedirs(self, member_name: str, dest: str) -> None:
+        if self.fd is None:
+            os.makedirs(dest, exist_ok=True)
+            return
+        from core import confined_fs as CF
+
+        parts = _member_parts(member_name)
+        os.close(self._confined(lambda: CF.makedirs_beneath(self.fd, parts, path=dest)))
+
+    def open_new(self, member_name: str, dest: str, perm: int = 0o666):
+        """A new file for the member, open for writing (``O_EXCL``)."""
+        if self.fd is None:
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            return open(dest, "xb")
+        from core import confined_fs as CF
+
+        parts = _member_parts(member_name)
+        if not parts:
+            raise UnsafeArchive(f"archive entry has empty/root path: {member_name!r}")
+
+        def make():
+            dfd = CF.makedirs_beneath(self.fd, parts[:-1], path=dest)
+            try:
+                flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+                return CF.open_beneath(dfd, parts[-1:], flags, perm, path=dest)
+            finally:
+                os.close(dfd)
+
+        return os.fdopen(self._confined(make), "wb")
+
+    def write(self, member_name: str, dest: str | None, src, mode: int | None,
+              mtime: float | None) -> None:
+        """A member's bytes, with its stored mode and time (see
+        :func:`_write_member_file`)."""
+        if self.fd is None:
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            _write_member_file(dest, src, mode, mtime)
+            return
+        perm = (mode & 0o777) if mode else 0o666
+        with self.open_new(member_name, dest or member_name, perm) as dst:
+            shutil.copyfileobj(src, dst, length=64 * 1024)
+            dst.flush()
+            if mtime is not None and mtime > 0:
+                try:
+                    os.utime(dst.fileno(), (mtime, mtime))
+                except (OSError, OverflowError, ValueError) as exc:
+                    log.debug("archive: cannot set the time of %s: %s", member_name, exc)
+
+    def staged(self, extract_into: Callable[[str], None]) -> None:
+        """Run *extract_into(folder)* of a library that writes by path
+        (py7zr, rarfile): without a descriptor into the target itself, else
+        into a private temporary folder whose files are then copied in."""
+        if self.fd is None:
+            extract_into(self.target)
+            return
+        staging = tempfile.mkdtemp(prefix="axross-extract-")
+        try:
+            extract_into(staging)
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+        self._adopt(staging)
+
+    def _adopt(self, staging: str) -> None:
+        """Copy what a library extracted into *staging* into the target
+        (regular files and folders only), then remove *staging*."""
+        try:
+            for dirpath, dirnames, filenames in os.walk(staging, followlinks=False):
+                rel = os.path.relpath(dirpath, staging)
+                base = "" if rel == "." else rel.replace(os.sep, "/") + "/"
+                for d in dirnames:
+                    if not os.path.islink(os.path.join(dirpath, d)):
+                        self.makedirs(base + d, "")
+                for f in filenames:
+                    path = os.path.join(dirpath, f)
+                    st = os.lstat(path)
+                    if not stat.S_ISREG(st.st_mode):
+                        continue
+                    with open(path, "rb") as src:
+                        self.write(base + f, None, src, stat.S_IMODE(st.st_mode), st.st_mtime)
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+
+    def measure(self) -> int:
+        """The bytes of the regular files in the target (see
+        :func:`_measure_tree_bytes`)."""
+        if self.fd is None:
+            return _measure_tree_bytes(self.target)
+        total = 0
+        for _dirpath, _dirs, filenames, dfd in os.fwalk(".", dir_fd=self.fd,
+                                                         follow_symlinks=False):
+            for name in filenames:
+                try:
+                    st = os.stat(name, dir_fd=dfd, follow_symlinks=False)
+                except OSError:
+                    continue
+                if stat.S_ISREG(st.st_mode):
+                    total += st.st_size
+        return total
+
+    def discard(self) -> None:
+        """Remove the target and everything in it (a refused or failed
+        extraction) - by descriptor: the folder this extraction made, even
+        when another process renamed it or put a symlink in its place."""
+        if self.fd is None:
+            shutil.rmtree(self.target, ignore_errors=True)
+            return
+        try:
+            there = os.stat(self.name, dir_fd=self.parent_fd, follow_symlinks=False)
+            same = os.path.samestat(there, os.fstat(self.fd))
+        except OSError:
+            same = False
+        if same:
+            shutil.rmtree(self.name, dir_fd=self.parent_fd, ignore_errors=True)
+            return
+        try:
+            names = os.listdir(self.fd)
+        except OSError:
+            return
+        for entry in names:
+            try:
+                st = os.stat(entry, dir_fd=self.fd, follow_symlinks=False)
+                if stat.S_ISDIR(st.st_mode):
+                    shutil.rmtree(entry, dir_fd=self.fd, ignore_errors=True)
+                else:
+                    os.unlink(entry, dir_fd=self.fd)
+            except OSError:
+                pass
+
+    def close(self) -> None:
+        for fd in (self.fd, self.parent_fd):
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+        self.fd = self.parent_fd = None
+
+
 def _zip_mode(info: zipfile.ZipInfo) -> int | None:
     """The Unix mode a ZIP made on Unix stores, None for any other maker."""
     if info.create_system != 3:
@@ -692,10 +932,12 @@ def _extract_zip(
     archive_path: str,
     target: str,
     progress: Callable[[int, int, str], None] | None,
+    sink: _Sink | None = None,
 ) -> int:
     """Extract a ZIP-family archive. Returns the count of files
     actually written (directories don't count; they're created as
     a side effect of ensuring parents for file entries)."""
+    sink = sink or _Sink(target)
     _check_zip_entry_count(archive_path, MAX_EXTRACT_FILES)
     with zipfile.ZipFile(archive_path) as zf:
         infos = zf.infolist()
@@ -725,7 +967,7 @@ def _extract_zip(
             if info.is_dir():
                 dest = _safe_member_path(target, name)
                 _check_duplicate_member(seen_paths, dest, name)
-                os.makedirs(dest, exist_ok=True)
+                sink.makedirs(name, dest)
                 continue
             _check_bomb_ratio(
                 info.file_size,
@@ -734,10 +976,9 @@ def _extract_zip(
             )
             dest = _safe_member_path(target, name)
             _check_duplicate_member(seen_paths, dest, name)
-            os.makedirs(os.path.dirname(dest), exist_ok=True)
             # Stream decompressed bytes — no whole-file buffer.
             with zf.open(info) as src:
-                _write_member_file(dest, src, _zip_mode(info), _zip_mtime(info))
+                sink.write(name, dest, src, _zip_mode(info), _zip_mtime(info))
             files_done += 1
             if progress is not None:
                 progress(files_done, files_total, name)
@@ -860,18 +1101,20 @@ def _extract_single(
     archive_path: str,
     target: str,
     progress: Callable[[int, int, str], None] | None,
+    sink: _Sink | None = None,
 ) -> int:
     """One compressed file: decompressed into *target*/<name without the
     extension>, never more than MAX_EXTRACT_TOTAL_BYTES."""
     ext = _single_ext(archive_path.lower())
     if ext is None:
         raise UnsafeArchive(f"not a single compressed file: {archive_path!r}")
+    sink = sink or _Sink(target)
     name = _single_member_name(archive_path)
     out_path = _safe_member_path(target, name)
     if progress is not None:
         progress(0, 1, name)
     try:
-        with _single_reader(archive_path, ext) as src, open(out_path, "xb") as dst:
+        with _single_reader(archive_path, ext) as src, sink.open_new(name, out_path) as dst:
             _copy_capped(src, dst, MAX_EXTRACT_TOTAL_BYTES, archive_path)
     except (UnsafeArchive, ExtractCancelled):
         raise
@@ -886,10 +1129,12 @@ def _extract_tar(
     archive_path: str,
     target: str,
     progress: Callable[[int, int, str], None] | None,
+    sink: _Sink | None = None,
 ) -> int:
     """Extract a TAR-family archive. Tarfile sniffs gz/bz2/xz from
     the magic bytes so a single ``mode='r:*'`` open handles all
     four compressed variants."""
+    sink = sink or _Sink(target)
     with _open_tar(archive_path, _stream_budget(MAX_EXTRACT_TOTAL_BYTES, MAX_EXTRACT_FILES)) as tf:
         members = _tar_members_capped(
             tf,
@@ -926,7 +1171,7 @@ def _extract_tar(
                     continue
                 dest = _safe_member_path(target, m.name)
                 _check_duplicate_member(seen_paths, dest, m.name)
-                os.makedirs(dest, exist_ok=True)
+                sink.makedirs(m.name, dest)
                 continue
             # Tarfile doesn't expose per-entry compressed size the
             # same way zipfile does — the whole archive is a single
@@ -934,14 +1179,13 @@ def _extract_tar(
             # declared bloat; skip per-entry ratio checks.
             dest = _safe_member_path(target, m.name)
             _check_duplicate_member(seen_paths, dest, m.name)
-            os.makedirs(os.path.dirname(dest), exist_ok=True)
             src = tf.extractfile(m)
             if src is None:
                 # Some non-regular types leak through isfile() on
                 # older Python versions — defensive skip.
                 continue
             try:
-                _write_member_file(dest, src, m.mode, m.mtime)
+                sink.write(m.name, dest, src, m.mode, m.mtime)
             finally:
                 src.close()
             files_done += 1
@@ -954,10 +1198,12 @@ def _extract_7z(
     archive_path: str,
     target: str,
     progress: Callable[[int, int, str], None] | None,
+    sink: _Sink | None = None,
 ) -> int:
     """Extract a 7z archive via py7zr. Safety caps are applied
     before extraction starts; py7zr's own ``extractall`` is called
     only after every path has passed the zip-slip check."""
+    sink = sink or _Sink(target)
     if not SEVEN_Z_AVAILABLE:
         raise UnsafeArchive(
             "7z extraction requires py7zr — install with: pip install py7zr",
@@ -1006,8 +1252,12 @@ def _extract_7z(
             progress(0, len(entries), "")
     # py7zr needs its own fresh open for extraction — the sz.list()
     # above advanced internal state.
-    with seven_zip.SevenZipFile(archive_path, mode="r") as sz:
-        sz.extract(path=target, targets=safe_targets)
+    # py7zr writes by path: into a private folder, then copied in by the sink.
+    def into(out: str) -> None:
+        with seven_zip.SevenZipFile(archive_path, mode="r") as sz:
+            sz.extract(path=out, targets=safe_targets)
+
+    sink.staged(into)
     files_written = sum(1 for e in entries if not getattr(e, "is_directory", False))
     if progress is not None:
         progress(files_written, files_written, "")
@@ -1018,6 +1268,7 @@ def _extract_rar(
     archive_path: str,
     target: str,
     progress: Callable[[int, int, str], None] | None,
+    sink: _Sink | None = None,
 ) -> int:
     """Extract a RAR archive via ``rarfile`` (which shells out to an
     ``unrar``/``unar`` backend). Mirrors :func:`_extract_7z`: every
@@ -1030,6 +1281,7 @@ def _extract_rar(
     """
     if not RAR_AVAILABLE:
         raise RarUnavailable(_RAR_UNAVAILABLE_MSG)
+    sink = sink or _Sink(target)
     try:
         with rarfile.RarFile(archive_path) as rf:  # type: ignore[union-attr]
             infos = rf.infolist()
@@ -1075,7 +1327,7 @@ def _extract_rar(
                 dest = _safe_member_path(target, name)
                 _check_duplicate_member(seen_paths, dest, name)
                 if ri.is_dir():
-                    os.makedirs(dest, exist_ok=True)
+                    sink.makedirs(name, dest)
                     continue
                 _check_bomb_ratio(
                     int(getattr(ri, "file_size", 0) or 0),
@@ -1085,7 +1337,8 @@ def _extract_rar(
                 safe_targets.append(name)
             if progress is not None:
                 progress(0, files_total, "")
-            rf.extractall(path=target, members=safe_targets)
+            # rarfile writes by path: into a private folder, then copied in.
+            sink.staged(lambda out: rf.extractall(path=out, members=safe_targets))
     except (rarfile.RarCannotExec, rarfile.RarExecError) as exc:  # type: ignore[union-attr]
         # Backend tool (unrar/unar) missing or unrunnable. Surface the
         # same remediation hint as the import-failure path.
@@ -1166,11 +1419,13 @@ def _extract_members_zip(
     target: str,
     members: list[str],
     progress: Callable[[int, int, str], None] | None,
+    sink: _Sink | None = None,
 ) -> int:
     """Partial ZIP extraction. Mirrors :func:`_extract_zip`'s guards
     (zip-slip, duplicate, bomb-ratio, count + total-byte caps) but
     applies them ONLY to the SELECTED subset. Caps are enforced across
     the selection, not the whole archive."""
+    sink = sink or _Sink(target)
     _check_zip_entry_count(archive_path, MAX_LIST_ENTRIES)
     with zipfile.ZipFile(archive_path) as zf:
         infos = zf.infolist()
@@ -1201,14 +1456,13 @@ def _extract_members_zip(
             if info.is_dir():
                 dest = _safe_member_path(target, name)
                 _check_duplicate_member(seen_paths, dest, name)
-                os.makedirs(dest, exist_ok=True)
+                sink.makedirs(name, dest)
                 continue
             _check_bomb_ratio(info.file_size, info.compress_size, name)
             dest = _safe_member_path(target, name)
             _check_duplicate_member(seen_paths, dest, name)
-            os.makedirs(os.path.dirname(dest), exist_ok=True)
             with zf.open(info) as src:
-                _write_member_file(dest, src, _zip_mode(info), _zip_mtime(info))
+                sink.write(name, dest, src, _zip_mode(info), _zip_mtime(info))
             files_done += 1
             if progress is not None:
                 progress(files_done, files_total, name)
@@ -1220,10 +1474,12 @@ def _extract_members_tar(
     target: str,
     members: list[str],
     progress: Callable[[int, int, str], None] | None,
+    sink: _Sink | None = None,
 ) -> int:
     """Partial TAR extraction. Mirrors :func:`_extract_tar`'s guards
     (symlink/hardlink + non-file/dir refusal, zip-slip, duplicate, count
     + total-byte caps) applied ONLY to the SELECTED subset."""
+    sink = sink or _Sink(target)
     with _open_tar(archive_path, _stream_budget(MAX_LIST_TAR_BYTES, MAX_LIST_ENTRIES)) as tf:
         members_all = _tar_members_capped(
             tf,
@@ -1263,16 +1519,15 @@ def _extract_members_tar(
                     continue
                 dest = _safe_member_path(target, m.name)
                 _check_duplicate_member(seen_paths, dest, m.name)
-                os.makedirs(dest, exist_ok=True)
+                sink.makedirs(m.name, dest)
                 continue
             dest = _safe_member_path(target, m.name)
             _check_duplicate_member(seen_paths, dest, m.name)
-            os.makedirs(os.path.dirname(dest), exist_ok=True)
             src = tf.extractfile(m)
             if src is None:
                 continue
             try:
-                _write_member_file(dest, src, m.mode, m.mtime)
+                sink.write(m.name, dest, src, m.mode, m.mtime)
             finally:
                 src.close()
             files_done += 1
@@ -1286,6 +1541,8 @@ def extract_members(
     target: str,
     members: list[str],
     progress: Callable[[int, int, str], None] | None = None,
+    *,
+    parent_dir=None,
 ) -> ExtractResult:
     """Extract ONLY the named *members* from *archive_path* into *target*.
 
@@ -1350,8 +1607,8 @@ def extract_members(
         if missing:
             raise KeyError(f"not in the archive: {', '.join(missing)}")
 
-        def runner(path, tgt, _members, prog):
-            return _extract_single(path, tgt, prog)
+        def runner(path, tgt, _members, prog, sink=None):
+            return _extract_single(path, tgt, prog, sink)
 
     if runner is None:
         for ext in _SEVEN_Z_EXTENSIONS + _RAR_EXTENSIONS:
@@ -1365,27 +1622,15 @@ def extract_members(
         raise UnsafeArchive(
             f"unsupported archive extension: {archive_path!r}",
         )
-    os.makedirs(target, mode=0o755, exist_ok=False)
-    # Same symlink-swap-race guard as extract(): the dir we just created
-    # could be rm'd + replaced with a symlink by a parallel process
-    # before we start writing.
-    if os.path.islink(target):
-        try:
-            os.unlink(target)
-        except OSError:
-            pass
-        raise UnsafeArchive(
-            f"target directory {target!r} is a symlink — refusing "
-            "to extract into an indirection (likely symlink-swap "
-            "race from another local process)",
-        )
+    # Same symlink-swap-race guard as extract(): written beneath a
+    # descriptor of the folder made here, nothing followed (_Sink).
+    sink = _Sink.create(target, parent_dir)
     try:
-        written = runner(archive_path, target, members, progress)
+        written = runner(archive_path, target, members, progress, sink)
         # Post-extraction size re-verification, same as extract(): the
         # selected members' declared sizes can lie.
-        actual_bytes = _measure_tree_bytes(target)
+        actual_bytes = sink.measure()
         if actual_bytes > MAX_EXTRACT_TOTAL_BYTES:
-            shutil.rmtree(target, ignore_errors=True)
             raise UnsafeArchive(
                 f"selection extracted {actual_bytes} bytes; cap is "
                 f"{MAX_EXTRACT_TOTAL_BYTES} — likely bomb with "
@@ -1395,8 +1640,10 @@ def extract_members(
     except BaseException:
         # Clean on ANY failure (UnsafeArchive, KeyError, ExtractCancelled,
         # OSError, KeyboardInterrupt) — never leave partial content.
-        shutil.rmtree(target, ignore_errors=True)
+        sink.discard()
         raise
+    finally:
+        sink.close()
 
 
 # --------------------------------------------------------------------------
@@ -1660,6 +1907,7 @@ def extract(
     target: str,
     *,
     progress: Callable[[int, int, str], None] | None = None,
+    parent_dir=None,
 ) -> ExtractResult:
     """Extract *archive_path* into *target*.
 
@@ -1674,6 +1922,13 @@ def extract(
     Returns the number of regular files written, as an
     :class:`ExtractResult` whose ``skipped_links`` names the symlink and
     hardlink members left out (tar, and ZIP symlinks).
+
+    Every folder and file is created beneath a descriptor of the new
+    *target*, never through a symlink and never over a file that appeared
+    meanwhile (:class:`_Sink`). *parent_dir(target)*: a context manager
+    giving ``(descriptor of target's folder, name)`` - the MCP server's
+    confined backend passes its ``parent_dir``, so even the folder the
+    target is made in is reached without following a symlink.
     """
     if not os.path.isfile(archive_path):
         raise FileNotFoundError(
@@ -1717,41 +1972,27 @@ def extract(
         raise UnsafeArchive(
             f"unsupported archive extension: {archive_path!r}",
         )
-    os.makedirs(target, mode=0o755, exist_ok=False)
-    # Defence against a symlink-swap race: right after makedirs we
-    # created a real directory at *target*. A parallel process with
-    # write access to the parent dir could, in principle, rm -rf the
-    # new dir and replace it with a symlink (e.g. to /etc) before we
-    # start writing entries. ``exist_ok=False`` blocks pre-planted
-    # symlinks; this check closes the post-makedirs window.
-    #
-    # We only test whether ``target`` itself is a symlink — NOT
-    # whether its realpath equals abspath. A realpath-vs-abspath
-    # comparison would reject legitimate cases where an ANCESTOR of
-    # target is a symlink (macOS ``/tmp`` → ``/private/tmp``, distro
-    # ``/var/run`` → ``/run``), which isn't the attack we care
-    # about.
-    if os.path.islink(target):
-        try:
-            os.unlink(target)
-        except OSError:
-            pass
-        raise UnsafeArchive(
-            f"target directory {target!r} is a symlink — refusing "
-            "to extract into an indirection (likely symlink-swap "
-            "race from another local process)",
-        )
+    # Defence against a symlink-swap race: a parallel process with write
+    # access to the parent dir could replace the new folder - or a folder
+    # an entry creates in it - with a symlink (e.g. to
+    # ~/.config/autostart) while entries are written. The sink creates
+    # the target relative to its parent's descriptor, holds a descriptor
+    # of it and writes every entry beneath that without following a
+    # symlink (_Sink). A symlink in an ANCESTOR of the target (macOS
+    # ``/tmp`` → ``/private/tmp``) is the caller's and stays usable;
+    # *parent_dir* (the MCP server's confined backend) opens the parent
+    # beneath its root instead.
+    sink = _Sink.create(target, parent_dir)
     try:
-        written = runner(archive_path, target, progress)
+        written = runner(archive_path, target, progress, sink)
         # Post-extraction sanity: some archive formats (notably 7z via
         # py7zr) let per-entry metadata claim smaller than the actual
         # decompressed size. We track the declared total during
         # pre-flight (MAX_EXTRACT_TOTAL_BYTES) but the declared total
         # can lie. Walk target once and re-verify against the cap,
         # then roll back if we over-shot.
-        actual_bytes = _measure_tree_bytes(target)
+        actual_bytes = sink.measure()
         if actual_bytes > MAX_EXTRACT_TOTAL_BYTES:
-            shutil.rmtree(target, ignore_errors=True)
             raise UnsafeArchive(
                 f"archive extracted {actual_bytes} bytes; cap is "
                 f"{MAX_EXTRACT_TOTAL_BYTES} — likely bomb with "
@@ -1764,8 +2005,10 @@ def extract(
         # would let a malformed archive plant a handful of attacker-
         # controlled files before the escape check fires on a later
         # entry.
-        shutil.rmtree(target, ignore_errors=True)
+        sink.discard()
         raise
+    finally:
+        sink.close()
 
 
 #: Public name of :func:`_open_tar` for readers outside this module.

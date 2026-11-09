@@ -717,8 +717,9 @@ def parse_sums(text: str) -> dict[str, str]:
 
 
 def cache_dir() -> Path:
-    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
-    return Path(base) / "axross" / "update"
+    from core.xdg_dirs import base_dir
+
+    return base_dir("XDG_CACHE_HOME") / "axross" / "update"  # a relative one is ignored
 
 
 def _plain_mode(path: Path) -> int:

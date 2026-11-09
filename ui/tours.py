@@ -237,9 +237,10 @@ COPY_SAFELY = Tour(
         ),
         TourStep(
             "The trash first",
-            "Move to Trash (right click) works on every connection, and Show Trash… restores "
-            "from it. Delete Permanently (Del) counts first and asks again when hidden files "
-            "are inside. Use the trash for anything you might want back.",
+            "Del moves the selection to the trash, and Show Trash… restores from it. Delete "
+            "Permanently (Shift+Del) counts first, asks with No as the default, and asks "
+            "again when hidden files are inside. Use the trash for anything you might want "
+            "back.",
             "axTrashAction",
         ),
         TourStep(

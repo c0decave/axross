@@ -14,6 +14,14 @@ Places under ``~/.config``, ``~/.local/share``, ``~/.local/state`` and
 ``$XDG_DATA_HOME``, ``$XDG_STATE_HOME`` and ``$XDG_CACHE_HOME`` move them
 (both locations count).
 
+Every platform's places count on every platform (:data:`MACOS_DIRS`,
+:data:`WINDOWS_DIRS`, ...; inert where they mean nothing). Computed at
+check time: the home's folders on PATH and its site-packages on sys.path
+(:func:`_dynamic_dirs`), and the XDG folders the user's session sets even
+when this process lacks the variables (:func:`remember_xdg`, the shell and
+session files). A Python start file (``*.pth``, ``sitecustomize.py``) is
+refused wherever it is.
+
 A path names a place when it is the place or lies inside it, compared
 component by component (Windows separators included), case-insensitively
 where the file system usually is (Windows, macOS), and also through each
@@ -55,6 +63,19 @@ HOME_DIRS = (
     ".claude", ".config/Claude", ".cursor", ".config/Code/User", ".vscode/extensions",
     # container CLI plugins and credential helpers
     ".docker",
+    # more commands on PATH: ~/bin (Debian's ~/.profile adds it once it
+    # exists), language tool chains, and the pipx / uv tool venvs (axross
+    # itself, installed with pipx; their site-packages run .pth files)
+    "bin", ".cargo/bin", "go/bin", ".deno/bin", ".bun/bin", ".npm-global/bin", ".pyenv/shims",
+    ".local/share/pipx", ".local/pipx", ".local/share/uv/tools",
+    # more editors, terminal multiplexers and window managers that run code at start
+    ".config/tmux", ".emacs.d", ".config/emacs", ".config/openbox", ".config/lxsession",
+    ".config/awesome", ".config/bspwm", ".config/sxhkd", ".config/qtile",
+    ".config/herbstluftwm", ".xmonad", ".config/xmonad", ".config/labwc", ".config/river",
+    ".config/niri", ".kde/Autostart", ".kde4/Autostart", ".config/upstart",
+    # file-manager actions (a menu entry runs the command it names)
+    ".local/share/kio/servicemenus", ".local/share/kservices5/ServiceMenus",
+    ".local/share/nautilus/scripts",
 )
 #: Files (relative to the home folder).
 HOME_FILES = (
@@ -62,7 +83,57 @@ HOME_FILES = (
     ".zshrc", ".zprofile", ".zshenv", ".zlogin", ".zlogout", ".xprofile", ".xsession",
     ".xsessionrc", ".xinitrc", ".pam_environment", ".inputrc", ".gitconfig", ".pip/pip.conf",
     ".vimrc", ".npmrc", ".claude.json",
+    ".tmux.conf", ".emacs", ".emacs.el", ".gvimrc", ".exrc", ".screenrc", ".gdbinit",
+    ".xbindkeysrc", ".mailcap", ".config/mimeapps.list", ".config/wayfire.ini",
 )
+#: macOS (relative to the home folder): launchd agents, login items, axross's
+#: own folders and preferences, the user site-packages, other agents' settings.
+MACOS_DIRS = (
+    "Library/LaunchAgents", "Library/LaunchDaemons", "Library/Application Support/axross",
+    "Library/Application Support/com.apple.backgroundtaskmanagementagent",
+    "Library/Application Support/Claude", "Library/Application Support/Code/User",
+    "Library/Python", "Library/Services",
+)
+MACOS_FILES = (
+    "Library/Preferences/com.axross.Axross.plist",
+    "Library/Preferences/com.apple.loginitems.plist",
+)
+#: Windows (relative to the home folder): the Startup folder, PowerShell
+#: profiles (Documents may be moved into OneDrive), axross's own folders,
+#: the user site-packages, commands on PATH, other agents' settings.
+WINDOWS_DIRS = (
+    "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup",
+    "AppData/Roaming/axross", "AppData/Local/axross",
+    "Documents/PowerShell", "Documents/WindowsPowerShell",
+    "OneDrive/Documents/PowerShell", "OneDrive/Documents/WindowsPowerShell",
+    "AppData/Roaming/Python", "AppData/Local/Microsoft/WindowsApps",
+    "AppData/Roaming/Claude", "AppData/Roaming/Code/User",
+)
+WINDOWS_FILES: tuple[str, ...] = ()
+#: ``(variable, folders below it)``: where Windows' own variables move them.
+WINDOWS_ENV_DIRS = (
+    ("APPDATA", ("Microsoft/Windows/Start Menu/Programs/Startup", "axross", "Python",
+                 "Claude", "Code/User")),
+    ("LOCALAPPDATA", ("axross", "Microsoft/WindowsApps")),
+)
+#: File names Python runs at start wherever they lie in a site folder: no
+#: tool writes them anywhere (a site folder outside the lists - a venv -
+#: is not known here).
+START_NAMES = ("*.pth", "sitecustomize.py", "usercustomize.py")
+#: Names of the folders whose .pth files Python runs (found on sys.path).
+SITE_DIR_NAMES = ("site-packages", "dist-packages")
+#: Where axross remembers the XDG folders it ran with (below the default
+#: ``~/.config/axross``, a protected place wherever XDG points): an MCP
+#: server started without the user's XDG variables (by a desktop client)
+#: still protects them (:func:`remember_xdg`).
+XDG_RECORD = ".config/axross/xdg-locations.json"
+#: Shell and session files the XDG variables are commonly set in: read
+#: (line by line, ``XDG_..._HOME=value``) for the same reason.
+XDG_PROFILE_FILES = (".profile", ".bash_profile", ".bashrc", ".zshenv", ".zprofile", ".zshrc",
+                     ".pam_environment", ".config/environment.d")
+#: The PATH of the host (its entries in the home folder), for the worker
+#: in the agent sandbox, whose PATH is the sandbox's.
+HOST_PATH_ENV = "AXROSS_AGENT_HOST_PATH"
 #: The host's home folder, set by core.agent_sandbox for the worker.
 HOST_HOME_ENV = "AXROSS_AGENT_HOST_HOME"
 #: ``(home-relative prefix, XDG variable, variable naming the host's value
@@ -128,12 +199,160 @@ def places(home: str) -> list[str]:
     return out
 
 
+def _home_rel(home: str, rel: str) -> str:
+    return os.path.join(home, *rel.split("/"))
+
+
+def _inside_key(inner: tuple[str, ...], outer: tuple[str, ...]) -> bool:
+    """Whether the key *inner* lies strictly below *outer*."""
+    return len(inner) > len(outer) and inner[:len(outer)] == outer
+
+
+#: The XDG variables a profile line may set (``XDG_CONFIG_HOME=...``,
+#: ``export XDG_DATA_HOME="$HOME/x"``, ``XDG_CONFIG_HOME DEFAULT=@{HOME}/x``).
+_XDG_LINE = None
+#: ``path -> ((mtime_ns, size), {variable: [values]})``: profile files read.
+_PROFILE_CACHE: dict[str, tuple[tuple[int, int], dict[str, list[str]]]] = {}
+_XDG_VARS = tuple(var for _prefix, var, _host in XDG_PLACES)
+
+
+def _profile_values(path: str, home: str) -> dict[str, list[str]]:
+    """The absolute XDG folders *path* (a shell or session file) sets."""
+    global _XDG_LINE
+    import re
+
+    try:
+        st = os.stat(path)
+    except OSError:
+        return {}
+    stamp = (st.st_mtime_ns, st.st_size)
+    cached = _PROFILE_CACHE.get(path)
+    if cached is not None and cached[0] == stamp:
+        return cached[1]
+    if _XDG_LINE is None:
+        _XDG_LINE = re.compile(r"^\s*(?:export\s+)?(XDG_(?:CONFIG|DATA|STATE|CACHE)_HOME)"
+                               r"(?:\s+DEFAULT)?\s*=\s*(\S+?)\s*;?\s*$")
+    found: dict[str, list[str]] = {}
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            text = fh.read(256 * 1024)
+    except OSError:
+        text = ""
+    for line in text.splitlines():
+        match = _XDG_LINE.match(line)
+        if not match:
+            continue
+        value = match.group(2).strip("'\"")
+        for token in ("${HOME}", "$HOME", "@{HOME}"):
+            value = value.replace(token, home)
+        if value.startswith("~/"):
+            value = home + value[1:]
+        if "$" in value or not os.path.isabs(value):
+            continue  # another variable or a relative path (the XDG spec ignores those)
+        found.setdefault(match.group(1), []).append(os.path.normpath(value))
+    _PROFILE_CACHE[path] = (stamp, found)
+    return found
+
+
+def _recorded_xdg(home: str) -> dict[str, list[str]]:
+    """The XDG folders axross ran with (:func:`remember_xdg`) and the ones
+    *home*'s shell and session files set."""
+    import json
+
+    out: dict[str, list[str]] = {}
+
+    def add(var: str, values) -> None:
+        if var not in _XDG_VARS or not isinstance(values, list):
+            return
+        for value in values[:16]:
+            if isinstance(value, str) and os.path.isabs(value):
+                out.setdefault(var, []).append(value)
+
+    try:
+        with open(_home_rel(home, XDG_RECORD), encoding="utf-8") as fh:
+            data = json.loads(fh.read(64 * 1024))
+    except (OSError, ValueError, RecursionError):
+        data = None
+    if isinstance(data, dict):
+        for var, values in data.items():
+            add(var, values)
+    files = []
+    for rel in XDG_PROFILE_FILES:
+        path = _home_rel(home, rel)
+        if os.path.isdir(path):
+            try:
+                files += sorted(os.path.join(path, n) for n in os.listdir(path)
+                                if n.endswith(".conf"))[:64]
+            except OSError:
+                pass
+        else:
+            files.append(path)
+    for path in files:
+        for var, values in _profile_values(path, home).items():
+            add(var, values)
+    return out
+
+
+def remember_xdg(environ=os.environ) -> None:
+    """Record this process's XDG folders below the home folder
+    (:data:`XDG_RECORD`), so that an MCP server started without them still
+    protects the places they move. Called by the GUI at start; never raises."""
+    import json
+    import tempfile
+
+    try:
+        home = os.path.expanduser("~")
+        if not os.path.isabs(home):
+            return
+        path = _home_rel(home, XDG_RECORD)
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.loads(fh.read(64 * 1024))
+        except (OSError, ValueError, RecursionError):
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        before = json.dumps(data, sort_keys=True)
+        for var in _XDG_VARS:
+            value = environ.get(var, "")
+            if not value or not os.path.isabs(value):
+                continue
+            value = os.path.abspath(value)
+            known = [v for v in data.get(var, []) if isinstance(v, str) and v != value]
+            data[var] = [value, *known][:4]
+        if json.dumps(data, sort_keys=True) == before:
+            return
+        folder = os.path.dirname(path)
+        os.makedirs(folder, mode=0o700, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=".xdg-locations-", dir=folder)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, indent=1, sort_keys=True)
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+    except Exception:  # noqa: BLE001 - a missing record only loses the extra protection
+        import logging
+
+        logging.getLogger(__name__).debug("remember_xdg failed", exc_info=True)
+
+
 def _xdg_bases(environ) -> list[tuple[str, str]]:
     """``(home-relative prefix, folder)`` of every XDG location set to an
-    absolute path - this process's and, in the agent sandbox, the host's."""
+    absolute path - this process's and, in the agent sandbox, the host's;
+    also the ones axross ran with and the user's shell and session files set
+    (an MCP server started by a desktop client may lack the variables)."""
     out: list[tuple[str, str]] = []
+    recorded = [_recorded_xdg(home) for home in homes(environ)]
     for prefix, var, host_var in XDG_PLACES:
-        for value in (environ.get(var, ""), environ.get(host_var, "")):
+        values = [environ.get(var, ""), environ.get(host_var, "")]
+        for found in recorded:
+            values += found.get(var, [])
+        for value in values:
             if value and os.path.isabs(value):
                 base = (prefix, os.path.abspath(value))
                 if base not in out:
@@ -141,9 +360,56 @@ def _xdg_bases(environ) -> list[tuple[str, str]]:
     return out
 
 
-def protected_paths(environ=os.environ) -> list[tuple[str, bool]]:
+def _platform_lists() -> tuple[list[tuple[str, bool]], list[tuple[str, bool]]]:
+    """``(this platform's entries, the other platforms' entries)`` beyond
+    :data:`HOME_DIRS` / :data:`HOME_FILES` (``(home-relative, is_folder)``)."""
+    own: list[tuple[str, bool]] = []
+    foreign: list[tuple[str, bool]] = []
+    for platform, dirs, files in (("darwin", MACOS_DIRS, MACOS_FILES),
+                                  ("win32", WINDOWS_DIRS, WINDOWS_FILES)):
+        entries = [(rel, True) for rel in dirs] + [(rel, False) for rel in files]
+        (own if sys.platform == platform else foreign).extend(entries)
+    return own, foreign
+
+
+def _dynamic_dirs(environ, home_list: list[str]) -> list[str]:
+    """Folders of a home that are protected because of where they are
+    used: the PATH's (a new file there is a command) and the site-packages
+    on sys.path (their .pth files run at every Python start). A PATH entry
+    that is a home folder itself is left out (it would protect all of it)."""
+    candidates: list[str] = []
+    for value in (environ.get("PATH", ""), environ.get(HOST_PATH_ENV, "")):
+        candidates += [e for e in value.split(os.pathsep) if e and os.path.isabs(e)]
+    candidates += [e for e in sys.path if isinstance(e, str) and os.path.isabs(e)
+                   and os.path.basename(os.path.normpath(e)) in SITE_DIR_NAMES]
+    home_keys = [_key(h) for h in home_list]
+    out: list[str] = []
+    for entry in candidates:
+        entry = os.path.normpath(entry)
+        ek = _key(entry)
+        if any(_inside_key(ek, hk) for hk in home_keys) and entry not in out:
+            out.append(entry)
+    return out
+
+
+def home_path_dirs(environ=os.environ) -> list[str]:
+    """The PATH entries inside a home folder (for :data:`HOST_PATH_ENV`)."""
+    home_keys = [_key(h) for h in homes(environ)]
+    out = []
+    for e in environ.get("PATH", "").split(os.pathsep):
+        if e and os.path.isabs(e) and any(_inside_key(_key(e), hk) for hk in home_keys):
+            out.append(os.path.normpath(e))
+    return out
+
+
+def protected_paths(environ=os.environ, *, foreign_missing: bool = True
+                    ) -> list[tuple[str, bool]]:
     """``(path, is_folder)`` of every protected place as typed: below each
-    home and where the XDG variables move them."""
+    home, where the XDG (and on Windows APPDATA / LOCALAPPDATA) variables
+    move them, the home's folders on PATH and its site-packages on sys.path.
+    Every platform's places count (inert elsewhere, cheap to refuse);
+    *foreign_missing* False lists another platform's places only where they
+    exist (core.agent_sandbox makes no mount points for them)."""
     out: list[tuple[str, bool]] = []
     seen: set[str] = set()
 
@@ -153,13 +419,29 @@ def protected_paths(environ=os.environ) -> list[tuple[str, bool]]:
             out.append((path, folder))
 
     entries = [(rel, True) for rel in HOME_DIRS] + [(rel, False) for rel in HOME_FILES]
-    for home in homes(environ):
-        for rel, folder in entries:
-            add(os.path.join(home, *rel.split("/")), folder)
+    own, foreign = _platform_lists()
+    home_list = homes(environ)
+    for home in home_list:
+        for rel, folder in entries + own:
+            add(_home_rel(home, rel), folder)
+        for rel, folder in foreign:
+            path = _home_rel(home, rel)
+            if foreign_missing or os.path.lexists(path):
+                add(path, folder)
     for prefix, base in _xdg_bases(environ):
         for rel, folder in entries:
             if rel.startswith(prefix + "/"):
                 add(os.path.join(base, *rel[len(prefix) + 1:].split("/")), folder)
+    for var, rels in WINDOWS_ENV_DIRS:
+        value = environ.get(var, "")
+        if not value or not os.path.isabs(value):
+            continue
+        for rel in rels:
+            path = _home_rel(value, rel)
+            if foreign_missing or sys.platform == "win32" or os.path.lexists(path):
+                add(path, True)
+    for path in _dynamic_dirs(environ, home_list):
+        add(path, True)
     return out
 
 
@@ -178,14 +460,29 @@ def existing_places(environ=os.environ) -> list[str]:
     return [place for place, _folder in protected_paths(environ) if os.path.lexists(place)]
 
 
+def _start_name(name: str) -> bool:
+    import fnmatch
+
+    if _windows_names():
+        name = name.split(":", 1)[0].rstrip(". ") or name
+    if _case_insensitive():
+        name = name.casefold()
+    return any(fnmatch.fnmatchcase(name, pattern) for pattern in START_NAMES)
+
+
 def refusal(path: str, *, entry: bool = False, environ=os.environ) -> str | None:
     """Why *path* must not be changed, or None. *entry*: the path's entry
     is created, removed or moved, so a folder that holds a protected place
-    is refused too (deleting or replacing ~/.config takes ~/.config/autostart)."""
+    is refused too (deleting or replacing ~/.config takes ~/.config/autostart).
+    A Python start file (:data:`START_NAMES`) is refused wherever it is."""
     absolute = os.path.abspath(path)
     candidates = {absolute, os.path.realpath(absolute),
                   os.path.join(os.path.realpath(os.path.dirname(absolute)),
                                os.path.basename(absolute))}
+    for candidate in candidates:
+        if _start_name(os.path.basename(candidate)):
+            return (f"{path}: the agent does not write Python start files "
+                    f"({', '.join(START_NAMES)}): Python runs them at every start")
     keys = {_key(c) for c in candidates}
     for place in _all_places(environ):
         pk = _key(place)
@@ -210,12 +507,16 @@ def refusal(path: str, *, entry: bool = False, environ=os.environ) -> str | None
 
 #: Folders whose every file is secret (relative to the home folder).
 SECRET_DIRS = (".local/state/axross/chat", ".gnupg/private-keys-v1.d",
-               ".gnupg/openpgp-revocs.d")
+               ".gnupg/openpgp-revocs.d",
+               # the desktop's keyrings (GNOME Keyring, KWallet)
+               ".local/share/keyrings", ".local/share/kwalletd")
 #: Secret files (relative to the home folder).
 SECRET_FILES = (".gnupg/secring.gpg", ".android/adbkey",
                 # the key that authenticates the extension code cache
                 ".config/axross/extension-code.key",
-                ".local/share/axross/bluetooth-direct-keys.json")
+                ".local/share/axross/bluetooth-direct-keys.json",
+                # passwords and tokens other programs keep in plain text
+                ".netrc", ".git-credentials")
 #: ``(folder, patterns)``: the entries of *folder* whose name matches
 #: (core.connection_manager names a token file ``gdrive_token.<profile>-<hash>.json``,
 #: core.mcp_http's is ``mcp-http-<port>.token``; their temporary siblings too).
@@ -300,3 +601,56 @@ def read_refusal(path: str, *, entry: bool = False, environ=os.environ) -> str |
     a secret is refused too (copying ~/.ssh takes its keys along). Compared
     like :func:`refusal` (components, case, resolved paths)."""
     return secret_checker(environ)(path, entry=entry)
+
+
+def secret_hides(environ=os.environ) -> list[tuple[str, bool]]:
+    """``(path, is_folder)`` of the existing secret places core.agent_sandbox
+    covers in the sandbox (an empty read-only folder, an empty file): every
+    secret folder and file, all of a folder whose private keys may have
+    any name (``~/.ssh``), and each matching entry of a folder with secret
+    names (axross's token files). Resolved, and never a symlink: a link
+    leads to its target, which is listed instead."""
+    import fnmatch
+
+    out: list[tuple[str, bool]] = []
+
+    def add(path: str) -> None:
+        real = os.path.realpath(path)
+        if not os.path.lexists(real) or os.path.islink(real):
+            return
+        item = (real, os.path.isdir(real))
+        if item not in out:
+            out.append(item)
+
+    def add_names(folder: str, patterns: tuple[str, ...]) -> None:
+        real = os.path.realpath(folder)
+        try:
+            names = sorted(os.listdir(real))[:4096]
+        except OSError:
+            return
+        for name in names:
+            key = name.casefold() if _case_insensitive() else name
+            if any(fnmatch.fnmatchcase(key, p) for p in patterns):
+                add(os.path.join(real, name))
+
+    for home in homes(environ):
+        for rel in SECRET_DIRS + SECRET_FILES:
+            add(_home_rel(home, rel))
+        for rel, patterns in SECRET_NAMES:
+            add_names(_home_rel(home, rel), patterns)
+        for rel, _patterns in SECRET_UNLESS:
+            add(_home_rel(home, rel))
+    for prefix, base in _xdg_bases(environ):
+        if prefix == ".local/share":
+            add(os.path.join(base, "axross", "bluetooth-direct-keys.json"))
+            add(os.path.join(base, "keyrings"))
+            add(os.path.join(base, "kwalletd"))
+        elif prefix == ".config":
+            add_names(os.path.join(base, "axross"), ("*token*",))
+            add(os.path.join(base, "axross", "extension-code.key"))
+        elif prefix == ".local/state":
+            add(os.path.join(base, "axross", "chat"))
+    runtime = environ.get("XDG_RUNTIME_DIR", "")
+    if runtime and os.path.isabs(runtime):
+        add_names(os.path.join(runtime, "axross"), ("*token*",))
+    return out

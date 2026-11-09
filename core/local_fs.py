@@ -5,6 +5,7 @@ import logging
 import os
 import shutil
 import stat as stat_module
+import sys
 import threading
 import time
 from datetime import datetime
@@ -159,6 +160,76 @@ def entry_stat(path: str, *, follow: bool = False) -> os.stat_result | None:
         raise
 
 
+#: renameat2(2)'s flag: fail with EEXIST instead of replacing the target.
+_RENAME_NOREPLACE = 1
+_AT_FDCWD = -100
+_renameat2_fn: list = []
+
+
+def _renameat2():
+    """libc's renameat2, or None (not Linux, an old libc)."""
+    if not _renameat2_fn:
+        fn = None
+        if sys.platform.startswith("linux"):
+            try:
+                import ctypes
+
+                fn = ctypes.CDLL(None, use_errno=True).renameat2
+                fn.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p,
+                               ctypes.c_uint]
+                fn.restype = ctypes.c_int
+            except (AttributeError, OSError):
+                fn = None
+        _renameat2_fn.append(fn)
+    return _renameat2_fn[0]
+
+
+def rename_no_replace(src: str, dst: str, *, src_dir_fd: int | None = None,
+                      dst_dir_fd: int | None = None) -> None:
+    """Rename *src* to *dst* unless *dst* exists - FileExistsError then,
+    also for a *dst* that appears while this runs, where the system can
+    tell: renameat2(RENAME_NOREPLACE) on Linux; a hard link and an unlink
+    for a file elsewhere (or on a file system without renameat2's flag);
+    Windows' rename never replaces. Only where neither works (a folder
+    off Linux, a file system without hard links) the target is checked
+    and then renamed onto, as before. A plain ``os.rename`` replaces a
+    file that appeared after the caller's check."""
+    if os.name == "nt":
+        os.rename(src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+        return
+    fn = _renameat2()
+    if fn is not None:
+        import ctypes
+
+        result = fn(_AT_FDCWD if src_dir_fd is None else src_dir_fd, os.fsencode(src),
+                    _AT_FDCWD if dst_dir_fd is None else dst_dir_fd, os.fsencode(dst),
+                    _RENAME_NOREPLACE)
+        if result == 0:
+            return
+        err = ctypes.get_errno()
+        if err not in (errno.ENOSYS, errno.EINVAL, errno.EOPNOTSUPP, errno.ENOTSUP):
+            raise OSError(err, os.strerror(err), src, None, dst)
+    st = os.stat(src, dir_fd=src_dir_fd, follow_symlinks=False)
+    if not stat_module.S_ISDIR(st.st_mode):
+        try:
+            os.link(src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd,
+                    follow_symlinks=False)
+        except FileExistsError:
+            raise
+        except (OSError, NotImplementedError) as exc:
+            log.debug("no-replace rename %s -> %s by a hard link failed: %s", src, dst, exc)
+        else:
+            os.unlink(src, dir_fd=src_dir_fd)
+            return
+    try:
+        os.stat(dst, dir_fd=dst_dir_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        pass
+    else:
+        raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), dst)
+    os.rename(src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+
+
 class LocalFS(SessionLifecycle):
     """Local filesystem backend implementing the FileBackend protocol."""
 
@@ -192,6 +263,11 @@ class LocalFS(SessionLifecycle):
                 for entry in it:
                     try:
                         append(to_item(entry))
+                    except FileNotFoundError:
+                        # Removed between readdir and lstat (a cache, a
+                        # build): gone, not a "?" row - a folder copy failed
+                        # a job for it and the pane showed a ghost.
+                        log.debug("Gone while listed: %s", entry.path)
                     except OSError as e:
                         log.warning("Cannot stat %s: %s", entry.path, e)
                         append(unstattable_item(entry, e))
@@ -239,6 +315,18 @@ class LocalFS(SessionLifecycle):
 
     def rename(self, src: str, dst: str) -> None:
         os.rename(src, dst)
+
+    def rename_no_replace(self, src: str, dst: str) -> None:
+        """:meth:`rename` that refuses an existing *dst* (FileExistsError),
+        also one that appears meanwhile (see :func:`rename_no_replace`).
+        Where :meth:`rename` is replaced (a subclass, a stand-in) the
+        system call would go around it: then checked, then that rename."""
+        if getattr(self.rename, "__func__", None) is not LocalFS.rename:
+            if entry_stat(dst) is not None:
+                raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), dst)
+            self.rename(src, dst)
+            return
+        rename_no_replace(src, dst)
 
     def open_read(self, path: str) -> IO[bytes]:
         """Open a regular file (through symlinks) for reading.

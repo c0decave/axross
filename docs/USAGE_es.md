@@ -120,6 +120,45 @@ JSON de perfil mismo nunca lleva credenciales en plano.
   SSH, nombre de workstation SMB, NAWS de Telnet, stripping de
   metadata rsync. Ver [OPSEC.md](OPSEC.md) para el modelo de
   amenazas.
+- **Google Drive: Docs, Sheets, Slides y unidades compartidas.** Un
+  Google Doc aparece como `<nombre>.docx`, una hoja como `.xlsx`, unas
+  Slides como `.pptx`, un dibujo como `.pdf` - sin tamaño - y se lee
+  (abre, copia) como esa exportación; Google exporta como máximo 10 MB
+  de un documento. Aquí son de solo lectura: sobrescribir uno se
+  rechaza, guarda con otro nombre. Un formulario o un sitio no tiene
+  forma de archivo y lo dice al leerlo. Los elementos de una unidad
+  compartida accesibles desde My Drive (compartidos contigo, la carpeta
+  de un acceso directo) funcionan como cualquier otro; las unidades
+  compartidas en sí no se listan (aún no hay carpeta
+  `/Shared drives/<nombre>`) - ábrelas en el navegador o añade un acceso
+  directo en My Drive.
+- **Correo como archivos (IMAP, POP3, Exchange).** Un mensaje es
+  `<id>_<asunto>.eml`, el nombre entero como máximo 200 bytes UTF-8 (el
+  id y `.eml` enteros, un asunto largo cortado en un carácter), para
+  poder copiarlo a cualquier carpeta local; un adjunto conserva su
+  extensión. Los nombres que antes eran más largos (asuntos CJK o con
+  emoji, los ItemId largos de Exchange) ahora son más cortos; IMAP y POP3
+  siguen aceptando el nombre antiguo, y un dock de correo no toma el
+  mensaje renombrado por nuevo. La carpeta `<uid>` junto a un mensaje
+  IMAP lista sus adjuntos; no se puede borrar por sí sola - borra el
+  `.eml` para borrar el mensaje. POP3 se reconecta tras perder la
+  conexión; los borrados enviados por esa conexión no se confirmaron
+  (POP3 confirma solo con QUIT) y un error lo dice, igual que cuando
+  falla el QUIT al desconectar. En un servidor POP3 sin UIDL, tras
+  reconectar, un mensaje se vuelve a encontrar por sus cabeceras y su
+  tamaño; si dos son idénticos, se rechaza el borrado.
+- **Repositorios Git por URL.** Una sesión `git+https://` (ssh, git,
+  file) es un clon en caché que sigue al remoto: al abrir se hace fetch,
+  una rama sin nada pendiente de push sigue a origin (también tras un
+  force-push o un borrado), y cada guardado se confirma y se hace push
+  al momento (solo fast-forward). Si el push falla, el commit queda en
+  la caché y el guardado lo informa; la línea de estado del panel
+  muestra "not pushed to origin: main (1)" hasta que el siguiente
+  guardado lo envía. Los commits en una rama que origin reescribió se
+  conservan, y la rama es de solo lectura hasta fusionarla en un cliente
+  git. Si el remoto no es accesible, la copia en caché se abre en solo
+  lectura y la línea de estado dice "offline". Los scripts pueden pasar
+  `auto_push=False` y hacer push con `axross.git_push()`.
 
 ## Layout multi-panel
 
@@ -387,6 +426,8 @@ cuyo protocolo nativo no las soporta.
 
 ## Acciones del menú contextual
 
+El menú contextual es una sola columna. **Open** va primero (una carpeta se abre en el pane, un archivo en su visor, como con `Enter`), luego *Open With ▸* (como texto, hex, root, View Selected Media…, Preview Archive) y, para un archivo comprimido, *Extract…*; luego *Copy Path*, *Cut*, *Paste*, *Rename*; *Copy to Target Pane*, *Move to Target Pane*, *Pack ▸*; *Move to Trash* (`Del`) y *Delete Permanently* (`Shift+Del`); *New Folder*, *New File…*; *Properties…* y los submenús *Metadata ▸*, *Analyse ▸*, *Links ▸* y *Tags ▸*; *Refresh* y *More ▸* (modo de vista, View Media…, bookmark, Show Trash…, terminales, FUSE, Permissions…, cifrar, el agente) y al final *Send to Workspace ▸* para el propio pane. Más de tres entradas de extensiones van a *Extensions ▸*.
+
 | Acción | Trigger | Qué hace |
 |---|---|---|
 | Disk Image… | Clic derecho (un fichero `.img .raw .dd .iso .qcow2 .vdi .vmdk .vhd(x) .e01 …`) | El contenedor (qcow2, VDI, VMDK, VHD/VHDX, E01), la tabla de particiones (MBR con particiones lógicas, GPT) y el filesystem y la etiqueta de cada volumen, leídos en Python puro a través de cualquier backend. Una imagen local monta un volumen mediante un loop device sobre exactamente sus bytes: primero `udisksctl` sin preguntar (donde polkit lo permite), luego `sudo`, luego `pkexec` y por último `udisksctl` dejando preguntar a polkit. La contraseña de sudo se pide una vez y se guarda en memoria mientras axross está abierto (nunca en disco, nunca en una línea de comandos); *Remember the sudo password* (*Edit → Settings… → Security*) lo desactiva y vuelve al orden `udisksctl` (polkit pregunta), `pkexec`, `sudo` preguntando cada vez. El Paranoid Security Mode nunca la recuerda. sudo, pkexec y udisksctl se ejecutan solo desde carpetas del sistema propiedad de root, nunca desde `$PATH`. **Read-only** salvo que *Allow writing* esté marcado y confirmado. La carpeta montada se abre en un panel nuevo; *Unmount* libera el loop device. Los montajes hechos por axross se recuerdan entre reinicios (`~/.config/axross/mounts.json`; solo vuelven los que siguen montados). *Identify File Type…* reconoce imágenes de disco también por su contenido (GPT, MBR, discos virtuales) y ofrece *Disk Image…* para esa fila, se llame como se llame. qcow2 / VDI dinámico / VMDK hay que convertirlos antes (`qemu-img convert -O raw`); un VDI fijo se monta directamente. |
@@ -407,8 +448,8 @@ cuyo protocolo nativo no las soporta.
 | View Media… / View Selected Media… | Click derecho, menú View | Imágenes, PDFs y vídeos de la carpeta (opcionalmente recursivo) o de la selección como grid overview, visor para ir pasando o slideshow — ver *Editores y visores*. |
 | Show / Remove / Export Metadata… | Click derecho | EXIF / GPS / XMP / IPTC, propiedades de Office, info de PDF, tags de audio / vídeo de la selección — o de toda la carpeta si no hay nada seleccionado (subcarpetas opcionales) — ver *Metadata de ficheros*. |
 | Cut / Paste | Click derecho (Paste también en el espacio vacío), `Ctrl+X` / `Ctrl+V` | Cut recuerda la selección y no elimina nada (las entradas se atenúan); Paste en cualquier panel las mueve a su carpeta por la cola de transferencias - ver *Transferencias*. Un cut que nunca se pega lo deja todo en su sitio. |
-| Move to Trash | Click derecho | Papelera universal. Funciona como Delete Permanently: en segundo plano, con la misma segunda pregunta para las entradas ocultas. |
-| Delete Permanently | Click derecho, `Del` | Primero cuenta fuera del hilo de la GUI lo que se borrará (carpetas, archivos, bytes, entradas ocultas) y luego pregunta. Una carpeta seleccionada con entradas ocultas (dotfiles o el flag hidden del backend) - o una que la comprobación no pudo leer entera - necesita un segundo OK cuyo default es No. El borrado corre en segundo plano: la línea de estado muestra el progreso, Cancel para en la entrada siguiente - también dentro de una carpeta que se borra en local, por SMB, SFTP o FTP, y la línea de estado dice cuánto de esa carpeta ya se borró (lo borrado queda borrado; un servidor que borra una carpeta entera con un request, como WebDAV o S3, termina esa carpeta) - los fallos se listan por entrada y la carpeta se recarga al final. Una ruta que ya se está borrando se rechaza, también desde el otro pane. |
+| Move to Trash | Click derecho, `Del` | Papelera universal (una carpeta `.axross-trash` en el home de la conexión: funciona donde la conexión puede renombrar; los protocolos de solo lectura y los que no renombran - Gopher, LDAP, NNTP, PJL, POP3, SLP, SVN, TFTP, WMI - no tienen, y ahí `Del` pregunta por un borrado definitivo). Funciona como Delete Permanently: en segundo plano, con la misma segunda pregunta para las entradas ocultas. |
+| Delete Permanently | Click derecho, `Shift+Del` | Primero cuenta fuera del hilo de la GUI lo que se borrará (carpetas, archivos, tamaño, entradas ocultas) y luego pregunta - con **No** como botón por defecto, así que `Enter` conserva los archivos. Una carpeta seleccionada con entradas ocultas (dotfiles o el flag hidden del backend) - o una que la comprobación no pudo leer entera - necesita un segundo OK cuyo default es No. El borrado corre en segundo plano: la línea de estado muestra el progreso, Cancel para en la entrada siguiente - también dentro de una carpeta que se borra en local, por SMB, SFTP o FTP, y la línea de estado dice cuánto de esa carpeta ya se borró (lo borrado queda borrado; un servidor que borra una carpeta entera con un request, como WebDAV o S3, termina esa carpeta) - los fallos se listan por entrada y la carpeta se recarga al final. Una ruta que ya se está borrando se rechaza, también desde el otro pane. |
 | Show Trash… | Click derecho | Diálogo restaurar / borrar permanentemente. |
 | Show Versions… | Click derecho | Snapshot browser — Save Version As, Restore as Current. |
 | Show Checksum… | Click derecho | Checksum nativo (S3 ETag, Drive md5, ssh sha256sum…) con fallback a stream-hash. |

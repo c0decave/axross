@@ -6923,6 +6923,12 @@
           "summary": "The path on this machine's filesystem (see core.storage_identity)."
         },
         {
+          "name": "rename_no_replace",
+          "signature": "rename_no_replace(src: str, dst: str) -> None",
+          "returns": "None",
+          "summary": ":meth:`rename` that refuses an existing *dst* (FileExistsError), also one that appears meanwhile (see :func:`rename_no_replace`). Where :meth:`rename` is replaced (a subclass, a stand-in) the system call would go around it: then checked, then that rename."
+        },
+        {
           "name": "same_file",
           "signature": "same_file(a: str, b: str) -> bool",
           "returns": "bool",

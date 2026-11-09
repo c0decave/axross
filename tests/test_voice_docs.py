@@ -51,7 +51,7 @@ def test_happy_each_handbook_explains_talking_to_the_agent(name):
 @pytest.mark.parametrize("name", HEADINGS)
 def test_happy_the_settings_table_and_the_store_are_listed(name):
     text = (ROOT / "docs" / name).read_text(encoding="utf-8")
-    assert re.search(r"^\| Voice \| ", text, re.M)
+    assert re.search(rf"^\| {re.escape(_path(name, 'Voice'))} \| ", text, re.M)
     assert "~/.config/axross/agent/voice.json" in text
 
 
@@ -64,14 +64,16 @@ def test_sad_nothing_about_a_hidden_reply(name):
 
 @pytest.mark.parametrize("name", HEADINGS)
 def test_happy_each_handbook_explains_the_voices_and_how_they_speak(name):
-    """The labels of the Voice page's voice tabs (English in every handbook,
-    as on screen) and what Listen and Download do."""
+    """The labels of the Voice page's voice tabs (as on screen: German in
+    the German handbook, English in the others) and what Listen and
+    Download do."""
     from ui.voice_settings_page import TUNING_LABELS
 
     section = _section(name)
     for label, _tip in TUNING_LABELS.values():
-        assert f"*{label}*" in section, label
-    for needle in ("**Listen**", "**Download**", "*Reset*", "*Reset All*",
+        assert f"*{_path(name, label)}*" in section, label
+    for needle in (f"**{_path(name, 'Listen')}**", f"**{_path(name, 'Download')}**",
+                   f"*{_path(name, 'Reset')}*", f"*{_path(name, 'Reset All')}*",
                    _path(name, "Settings", "Audio")):
         assert needle in section, needle
 
@@ -79,5 +81,6 @@ def test_happy_each_handbook_explains_the_voices_and_how_they_speak(name):
 @pytest.mark.parametrize("name", HEADINGS)
 def test_happy_the_settings_table_names_listen_and_the_tuning(name):
     text = (ROOT / "docs" / name).read_text(encoding="utf-8")
-    row = re.search(r"^\| Voice \| (.*)$", text, re.M).group(1)
-    assert "Listen" in row and "Download" in row
+    row = re.search(rf"^\| {re.escape(_path(name, 'Voice'))} \| (.*)$", text, re.M).group(1)
+    # The buttons as the window names them ("Anhören" in German).
+    assert _path(name, "Listen") in row and _path(name, "Download") in row

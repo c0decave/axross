@@ -73,6 +73,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import errno
 import hashlib
 import hmac
 import io
@@ -99,6 +100,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import quote, unquote, urlparse
 
+from core.confined_fs import FD_CONFINED, ConfinedLocalFS, confinable
+from core.confined_fs import _relative as _confined_relative
 from security.reverse_s3_limits import enforce_listing_caps, validate_truncation_flag
 
 log = logging.getLogger(__name__)
@@ -113,10 +116,22 @@ HEAD_BANNER = "axross-reverse/1"
 REQUEST_TIMEOUT_S = 30.0
 #: Seconds the request line and every header together may take (a client
 #: sending a byte now and then never trips the per-read timeout above).
-HEADER_DEADLINE_S = 30.0
+HEADER_DEADLINE_S = 10.0
+#: Bytes the request line and the headers of one request may take
+#: together (http.server alone allowed 100 lines of 64 KiB each: 64 idle
+#: connections held 410 MB before sending a token). More: 431, closed.
+MAX_HEADER_BYTES = 64 * 1024
 #: Connections served at once; one more is answered 503 and closed (each
-#: holds a thread, also before it sent its token).
+#: holds a thread, also before it sent its token). A connection that has
+#: not shown the token yet gives its slot up to a new connection when all
+#: are taken (the oldest such one is closed), so clients without the
+#: token cannot lock a token holder out.
 MAX_CONNECTIONS = 64
+#: Connections from one address that have not shown the token yet; one
+#: more closes the oldest of them.
+MAX_PENDING_PER_ADDRESS = 8
+#: Seconds a new connection waits for the slot of a closed one.
+EVICT_WAIT_S = 2.0
 #: Seconds a kept-alive connection may wait for its next request before
 #: it is closed (and its MAX_CONNECTIONS slot freed); the first request
 #: of a connection has HEADER_DEADLINE_S.
@@ -286,8 +301,91 @@ def _rooted_join(backend, root: str, *parts: str, follow: bool = True) -> str:
         from core.path_policy import confined_path
 
         rel = "/".join(p.strip("/") for p in parts if p and p.strip("/"))
-        confined_path(root or flavour.sep, rel, follow=follow)
+        try:
+            confined_path(root or flavour.sep, rel, follow=follow)
+        except PermissionError:
+            raise
+        except OSError as exc:
+            # realpath raced a rename (a link read between its lstat and
+            # its readlink): no answer at all before, a traceback.
+            raise PermissionError(f"the path changed while it was checked: {rel}") from exc
     return full
+
+
+class _ServedTreeFS(ConfinedLocalFS):
+    """The plain local file system as the handlers of one server use it:
+    every operation opens its path beneath the served folder, relative to
+    a descriptor, without following a symlink (core.confined_fs).
+
+    :func:`_rooted_join` checks a path as a string; the handler then used
+    it by name. Between the two, a token holder could MOVE a folder of the
+    path away and a symlink to a folder outside the root (one already in
+    the tree - MOVE renames links) into its place: GET read, COPY and PUT
+    wrote and DELETE removed files outside the root. Here the folders of a
+    path are resolved below the root (a link that stays inside still
+    works) and the resolved path is opened with no link followed, so a
+    link swapped in after the resolution is refused, never followed.
+    *follow* methods (read, write, list, create) also resolve the last
+    component, as LocalFS follows it; the others (stat, remove, rename)
+    act on the entry itself."""
+
+    def __init__(self, root: str) -> None:
+        super().__init__([root])
+        self._served = os.path.abspath(root)
+
+    def _resolved(self, path: str, *, follow: bool) -> str:
+        rel = _confined_relative(os.path.abspath(path), self._served)
+        if rel is None:
+            return path  # a resolved form (a root under a link); _locate decides
+        from core.path_policy import confined_path
+
+        try:
+            resolved = confined_path(self._served, rel.replace(os.sep, "/"), follow=follow)
+            return os.path.realpath(resolved) if follow else resolved
+        except PermissionError:
+            raise
+        except OSError as exc:  # realpath raced a rename: refused, never "not there"
+            raise PermissionError(errno.EACCES, "the path changed while it was checked",
+                                  rel) from exc
+
+    def _locate(self, path: str) -> tuple[str, list[str]]:
+        return super()._locate(self._resolved(path, follow=False))
+
+    def list_dir(self, path: str):
+        return super().list_dir(self._resolved(path, follow=True))
+
+    def open_read(self, path: str):
+        return super().open_read(self._resolved(path, follow=True))
+
+    def open_write(self, path: str, append: bool = False):
+        return super().open_write(self._resolved(path, follow=True), append)
+
+    def mkdir(self, path: str) -> None:
+        super().mkdir(self._resolved(path, follow=True))
+
+    def chmod(self, path: str, mode: int) -> None:
+        super().chmod(self._resolved(path, follow=True), mode)
+
+    def copy(self, src: str, dst: str) -> None:
+        # COPY writes through a link at the destination (LocalFS did).
+        super().copy(src, self._resolved(dst, follow=True))
+
+    def confined_atomic_write_stream(self, path: str, reader, *,
+                                     chunk_size: int = 1024 * 1024) -> int:
+        return super().confined_atomic_write_stream(
+            self._resolved(path, follow=True), reader, chunk_size=chunk_size)
+
+
+def _served_backend(backend, root: str):
+    """*backend* as the handlers use it: the plain local file system
+    becomes a :class:`_ServedTreeFS` rooted at *root*; other backends (and
+    a LocalFS on a system without descriptor-relative calls) keep the
+    string checks of :func:`_rooted_join`."""
+    if not (FD_CONFINED and confinable(backend)) or vars(backend):
+        # vars(): an instance with its own attributes (a patched method)
+        # is not the plain local file system.
+        return backend
+    return _ServedTreeFS(root)
 
 
 def _mkdir_best_effort(backend, path: str) -> None:
@@ -370,7 +468,19 @@ def _http_date(epoch: float) -> str:
     return formatdate(epoch, usegmt=True)
 
 
-_BYTE_RANGE = re.compile(r"bytes[ \t]*=[ \t]*(\d*)[ \t]*-[ \t]*(\d*)[ \t]*", re.IGNORECASE)
+_BYTE_RANGE = re.compile(r"bytes[ \t]*=[ \t]*([0-9]*)[ \t]*-[ \t]*([0-9]*)[ \t]*",
+                         re.IGNORECASE)
+#: Digits of a number the server converts (Python refuses int() of more
+#: than 4300 digits: a traceback and a dropped connection, not an answer).
+_MAX_NUMBER_DIGITS = 19
+#: What a longer number counts as: more than any size.
+_HUGE = 1 << 64
+
+
+def _bounded_int(digits: str) -> int:
+    """``int(digits)`` (ASCII digits) or _HUGE for a longer number."""
+    significant = digits.lstrip("0") or "0"
+    return int(significant) if len(significant) <= _MAX_NUMBER_DIGITS else _HUGE
 
 
 def _single_range(header: str | None, size: int):
@@ -382,20 +492,20 @@ def _single_range(header: str | None, size: int):
     WebDAV tools asks several), or a header that is no byte range."""
     if not header:
         return None
-    match = _BYTE_RANGE.fullmatch(header.strip())
+    match = _BYTE_RANGE.fullmatch(header.strip(" \t"))
     if match is None:
         return None
     first, last = match.group(1), match.group(2)
     if first == "" and last == "":
         return None
     if first == "":
-        suffix = int(last)
+        suffix = _bounded_int(last)
         if suffix == 0 or size == 0:
             return "unsatisfiable"
         return max(0, size - suffix), size - 1
-    start = int(first)
-    end = size - 1 if last == "" else min(int(last), size - 1)
-    if last != "" and int(last) < start:
+    start = _bounded_int(first)
+    end = size - 1 if last == "" else min(_bounded_int(last), size - 1)
+    if last != "" and _bounded_int(last) < start:
         return None  # syntactically invalid: ignored (RFC 9110 14.1.1)
     if start >= size:
         return "unsatisfiable"
@@ -475,22 +585,32 @@ class _BodyError(ValueError):
         self.status = status
 
 
+class _HeadersTooLarge(ConnectionError):
+    """The request line and headers passed MAX_HEADER_BYTES."""
+
+
 class _DeadlineIO(socket.SocketIO):
     """The connection's input with an overall deadline while ``deadline``
     is set (the request line and headers): each read waits at most what is
     left of it, then TimeoutError (which BaseHTTPRequestHandler answers by
-    closing the connection)."""
+    closing the connection). In that phase at most MAX_HEADER_BYTES are
+    read (``header_bytes`` counts them; one buffer more may be read ahead)."""
 
     deadline: float | None = None
+    header_bytes = 0
 
     def readinto(self, b):
         if self.deadline is not None:
+            if self.header_bytes > MAX_HEADER_BYTES:
+                raise _HeadersTooLarge("the request headers are too large")
             left = self.deadline - time.monotonic()
             if left <= 0:
                 raise TimeoutError("the request headers took too long")
             self._sock.settimeout(min(REQUEST_TIMEOUT_S, left))
-        else:
-            self._sock.settimeout(REQUEST_TIMEOUT_S)
+            n = super().readinto(b)
+            self.header_bytes += n or 0
+            return n
+        self._sock.settimeout(REQUEST_TIMEOUT_S)
         return super().readinto(b)
 
 
@@ -547,6 +667,7 @@ class _BaseHandler(BaseHTTPRequestHandler):
         self._requests_served += 1
         self.headers = None  # not the last request's (until parse_request)
         self._body = None
+        self._checked_path = None  # S3: the path _parse_path checked
         self._expect_continue = False
         self._continue_sent = False
         self._connection_header_sent = False
@@ -555,6 +676,7 @@ class _BaseHandler(BaseHTTPRequestHandler):
         # start; a kept-alive connection waits KEEPALIVE_IDLE_S for the
         # first byte of the next one, then the headers get their deadline.
         self._input.deadline = now + (HEADER_DEADLINE_S if first else KEEPALIVE_IDLE_S)
+        self._input.header_bytes = 0
         try:
             if not self._wait_for_request():
                 self.close_connection = True
@@ -562,6 +684,17 @@ class _BaseHandler(BaseHTTPRequestHandler):
             if not first:
                 self._input.deadline = time.monotonic() + HEADER_DEADLINE_S
             super().handle_one_request()
+        except _HeadersTooLarge:
+            log.warning("reverse-server: request headers over %d bytes from %s; closed",
+                        MAX_HEADER_BYTES,
+                        self.client_address[0] if self.client_address else "?")
+            self.close_connection = True
+            try:
+                self.wfile.write(b"HTTP/1.1 431 Request Header Fields Too Large\r\n"
+                                 b"Content-Length: 0\r\nConnection: close\r\n\r\n")
+            except OSError:
+                pass
+            return
         finally:
             self._input.deadline = None
         if not self._body_consumed():
@@ -693,6 +826,14 @@ class _BaseHandler(BaseHTTPRequestHandler):
         ``AWS <token>:...``): S3 SDKs (aws-cli, restic) sign every request
         and own the header. The signature itself is not checked; the key
         id travels in clear like a Bearer token."""
+        if self._token_matches():
+            authenticated = getattr(self.server, "_authenticated", None)
+            if authenticated is not None:
+                authenticated(self.connection)
+            return True
+        return False
+
+    def _token_matches(self) -> bool:
         token = self.config.auth_token
         if not token:
             return True
@@ -720,9 +861,42 @@ class _BaseHandler(BaseHTTPRequestHandler):
             presented.encode("utf-8"), token.encode("utf-8")
         )
 
+    def _public(self, text: str) -> str:
+        """*text* (an error for the client) without this machine's paths:
+        the served folder's local path is left out (what remains is the
+        path as the client named it), the home folder is ``~`` and the
+        multipart cache ``<cache>`` - an error reply named
+        ``/home/<user>/...`` before."""
+        names: list[tuple[str, str]] = []
+        root = self.config.root_path or ""
+        forms = {root.rstrip("/\\")}
+        local = _confine_locally(self.config.backend)
+        if local:
+            forms.add(os.path.realpath(root).rstrip(os.sep))
+        names += [(form, "") for form in forms if len(form) > 1]
+        if local:
+            uploads = getattr(self.server, "multipart", None)
+            cache = getattr(uploads, "_root", None)
+            if cache:
+                names.append((os.path.dirname(cache), "<cache>"))
+            home = os.path.expanduser("~").rstrip(os.sep)
+            if len(home) > 1:
+                names.append((home, "~"))
+        for name, shown in sorted(names, key=lambda pair: len(pair[0]), reverse=True):
+            text = re.sub(re.escape(name) + r"(?=[/\\'\"\s:;,)&<]|$)",
+                          lambda _m, shown=shown: shown, text)
+        return text
+
     def _send_simple(
         self, code: int, body: bytes = b"", *, content_type: str = "text/plain"
     ) -> None:
+        if code >= 400 and body:
+            body = self._public(body.decode("utf-8", "replace")).encode("utf-8")
+        if code == 401:
+            # A connection without the token carries no further request:
+            # kept alive, it held a connection slot as long as its client
+            # liked (64 of them locked every token holder out).
+            self.close_connection = True
         self.send_response(code)
         if code == 401:
             # WebDAV clients ask for credentials only when told the scheme.
@@ -894,7 +1068,7 @@ class _BaseHandler(BaseHTTPRequestHandler):
             raise ValueError("Content-Length headers that differ")
         if not _DIGITS.fullmatch(raw):
             raise ValueError(f"invalid Content-Length {raw[:40]!r}")
-        length = int(raw)
+        length = _bounded_int(raw)
         if length < 0:
             raise ValueError("negative Content-Length")
         if length > MAX_BODY_BYTES:
@@ -927,6 +1101,12 @@ class _BaseHandler(BaseHTTPRequestHandler):
         from core.server_ops import _discard_or_close_writer, _supports_temp_destination
 
         backend = self.config.backend
+        confined_store = getattr(backend, "confined_atomic_write_stream", None)
+        if confined_store is not None:
+            # The local served tree: temp file and rename beneath the
+            # target's folder, no symlink followed (_ServedTreeFS).
+            confined_store(path, body, chunk_size=PUT_CHUNK)
+            return
         if _supports_temp_destination(backend):
             # The body lands in a sibling temp file and replaces the old
             # object (keeping its mode) only once every byte arrived. A
@@ -1789,14 +1969,20 @@ class _S3Handler(_BaseHandler):
             bucket, _, key = path.partition("/")
         # Second layer: the joined path must stay below the root (on a
         # local backend also through symlinks; DELETE means a link itself).
-        _rooted_join(self.config.backend, self.config.root_path, bucket, key,
-                     follow=self.command != "DELETE")
+        full = _rooted_join(self.config.backend, self.config.root_path, bucket, key,
+                            follow=self.command != "DELETE")
+        self._checked_path = (bucket, key, full)
         return (bucket, key)
 
     def _backend_path_for(self, bucket: str, key: str) -> str:
         """Rooted backend path. The reverse-server treats the *first
         URL segment* as the bucket name; we map it to a top-level
-        directory under ``config.root_path``."""
+        directory under ``config.root_path``. The path _parse_path checked
+        is reused: checked again (a rename in between), a refusal here was
+        no answer at all - nothing catches it."""
+        checked = getattr(self, "_checked_path", None)
+        if checked is not None and checked[:2] == (bucket, key):
+            return checked[2]
         return _rooted_join(self.config.backend, self.config.root_path, bucket, key,
                             follow=self.command != "DELETE")
 
@@ -1814,7 +2000,7 @@ class _S3Handler(_BaseHandler):
             "<?xml version='1.0' encoding='UTF-8'?>"
             "<Error>"
             f"<Code>{s3_code}</Code>"
-            f"<Message>{_xml_escape(message)}</Message>"
+            f"<Message>{_xml_escape(self._public(message))}</Message>"
             "</Error>"
         ).encode("utf-8")
         self._send_simple(code, body_xml, content_type="application/xml")
@@ -1852,7 +2038,10 @@ class _S3Handler(_BaseHandler):
         prefix = self._query_param("prefix") or ""
         delimiter = self._query_param("delimiter") or ""
         try:
-            max_keys = int(self._query_param("max-keys") or "1000")
+            max_keys_text = self._query_param("max-keys") or "1000"
+            if len(max_keys_text) > _MAX_NUMBER_DIGITS:
+                raise ValueError(max_keys_text[:40])
+            max_keys = int(max_keys_text)
         except ValueError:
             self._s3_error(400, "InvalidArgument", "max-keys must be an integer")
             return
@@ -2051,7 +2240,7 @@ class _S3Handler(_BaseHandler):
             raise _BodyError(411, "aws-chunked without x-amz-decoded-content-length")
         if not _DIGITS.fullmatch(raw):
             raise _BodyError(400, f"invalid x-amz-decoded-content-length {raw[:40]!r}")
-        length = int(raw)
+        length = _bounded_int(raw)
         if length > MAX_BODY_BYTES:
             raise _BodyError(400, f"x-amz-decoded-content-length {length} exceeds cap {MAX_BODY_BYTES}")
         return length
@@ -2753,7 +2942,14 @@ class _DAVHandler(_BaseHandler):
         if not dst_url:
             self._send_simple(400, b"missing Destination header")
             return
-        dst_path = urlparse(dst_url).path or ""
+        dst_parts = urlparse(dst_url)
+        if dst_parts.netloc and not self._same_authority(dst_parts.netloc):
+            # RFC 4918 9.8.4 / 9.9.4: a Destination on another server is
+            # 502; taken as a path of this one, a client meaning "copy to
+            # that host" overwrote a file here.
+            self._send_simple(502, b"the Destination names another server")
+            return
+        dst_path = dst_parts.path or ""
         try:
             dst_norm = _normalize_key(dst_path)
             # MOVE renames (a link at the destination is replaced, not
@@ -2869,6 +3065,21 @@ class _DAVHandler(_BaseHandler):
 
     # ------- helpers ---------------------------------------------------
 
+    def _same_authority(self, netloc: str) -> bool:
+        """Whether a Destination's ``host[:port]`` is this server as the
+        request's ``Host`` names it (or its bind address and port)."""
+        default = ":443" if self.config.tls_enabled() else ":80"
+
+        def norm(authority: str) -> str:
+            authority = authority.rpartition("@")[2].strip().lower()
+            return authority[: -len(default)] if authority.endswith(default) else authority
+
+        bind = self.config.bind.lower()
+        if ":" in bind and not bind.startswith("["):
+            bind = f"[{bind}]"
+        names = {norm(self.headers.get("Host") or ""), norm(f"{bind}:{self.config.port}")}
+        return norm(netloc) in names
+
     def _is_served_root(self, full: str) -> bool:
         flavour = _path_flavour(self.config.backend)
         root = self.config.root_path or flavour.sep
@@ -2915,6 +3126,8 @@ class _DAVHandler(_BaseHandler):
         return body
 
     def _send_html_index(self, path: str, entries: list) -> None:
+        # The title is the path as the client asked for it, never the local one.
+        shown = unquote(self._url_for(path))
         rows = "".join(
             f"<li><a href='{quote(item.name)}{'/' if getattr(item, 'is_dir', False) else ''}'>"
             f"{_xml_escape(item.name)}</a> "
@@ -2922,8 +3135,8 @@ class _DAVHandler(_BaseHandler):
             for item in entries
         )
         body = (
-            f"<!doctype html><html><head><title>{_xml_escape(path)}</title></head>"
-            f"<body><h1>{_xml_escape(path)}</h1><ul>{rows}</ul></body></html>"
+            f"<!doctype html><html><head><title>{_xml_escape(shown)}</title></head>"
+            f"<body><h1>{_xml_escape(shown)}</h1><ul>{rows}</ul></body></html>"
         ).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -2985,6 +3198,9 @@ class _ReverseHTTPServer(ThreadingHTTPServer):
         #: connection any further.
         self._idle_lock = threading.Lock()
         self._idle: set = set()
+        #: Connections that have not shown the token yet: (address,
+        #: accepted at) by connection, in the order they were accepted.
+        self._pending: dict = {}
         self._stopping = False
         #: S3 multipart uploads in progress (None: not used yet).
         self.multipart: _MultipartUploads | None = None
@@ -3023,15 +3239,48 @@ class _ReverseHTTPServer(ThreadingHTTPServer):
         if uploads is not None:
             uploads.close()
 
+    def _authenticated(self, connection) -> None:
+        """*connection* showed the token: its slot is no longer given up."""
+        with self._idle_lock:
+            self._pending.pop(connection, None)
+
+    def _evict_pending(self, address: str | None) -> bool:
+        """Close the oldest connection that has not shown the token (of
+        *address*, or of any address for None); False when there is none."""
+        with self._idle_lock:
+            victim = next((c for c, (addr, _t) in self._pending.items()
+                           if address is None or addr == address), None)
+            if victim is None:
+                return False
+            self._pending.pop(victim, None)
+        log.info("reverse-server: closing a connection without a token from %s for a new one",
+                 address or "another address")
+        try:
+            socket.socket.shutdown(victim, socket.SHUT_RDWR)
+        except OSError:
+            pass
+        return True
+
     def process_request(self, request, client_address) -> None:
+        address = client_address[0] if client_address else ""
+        with self._idle_lock:
+            same = sum(1 for addr, _t in self._pending.values() if addr == address)
+        if same >= MAX_PENDING_PER_ADDRESS:
+            self._evict_pending(address)
         if not self._slots.acquire(blocking=False):
-            log.warning("reverse-server: %d connections already, refusing %s",
-                        MAX_CONNECTIONS, client_address[0] if client_address else "?")
-            self._refuse_busy(request)
-            return
+            if not (self._evict_pending(None)
+                    and self._slots.acquire(timeout=EVICT_WAIT_S)):
+                log.warning("reverse-server: %d connections already, refusing %s",
+                            MAX_CONNECTIONS, address or "?")
+                self._refuse_busy(request)
+                return
+        with self._idle_lock:
+            self._pending[request] = (address, time.monotonic())
         try:
             super().process_request(request, client_address)
         except BaseException:
+            with self._idle_lock:
+                self._pending.pop(request, None)
             self._slots.release()
             raise
 
@@ -3039,6 +3288,8 @@ class _ReverseHTTPServer(ThreadingHTTPServer):
         try:
             super().process_request_thread(request, client_address)
         finally:
+            with self._idle_lock:
+                self._pending.pop(request, None)
             self._slots.release()
 
     def _refuse_busy(self, request) -> None:
@@ -3145,6 +3396,8 @@ def _serve(config: ServerConfig, handler_cls: type, flavour: str) -> ReverseServ
     # Before the socket exists: a bad certificate or key leaks nothing.
     ssl_ctx = _make_ssl_context(config) if config.tls_enabled() else None
     config.root_path = _normalize_root_path(config.root_path)
+    label = getattr(config.backend, "name", type(config.backend).__name__)
+    config.backend = _served_backend(config.backend, config.root_path)
     if config.auth_token and len(config.auth_token) < 16:
         log.warning(
             "reverse-%s auth_token is short (%d chars); use a long random "
@@ -3170,7 +3423,6 @@ def _serve(config: ServerConfig, handler_cls: type, flavour: str) -> ReverseServ
             httpd.socket, server_side=True, do_handshake_on_connect=False
         )
     config.port = int(httpd.server_address[1])
-    label = getattr(config.backend, "name", type(config.backend).__name__)
     server = ReverseServer(
         flavour=flavour,
         bind=config.bind,

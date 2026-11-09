@@ -366,6 +366,11 @@ def _addresses(name: str) -> frozenset[str]:
         return frozenset()
 
 
+def _alive(connection) -> bool:
+    transport = getattr(connection, "transport", None)
+    return bool(getattr(transport, "connected", False))
+
+
 class _ReferralPortCache(dict):
     """A session's smbclient connection pool (``connection_cache``) that
     keeps a non-default port to the server the user named.
@@ -387,13 +392,23 @@ class _ReferralPortCache(dict):
     the first label of a full one.
     """
 
-    def __init__(self, host: str, port: int, *, resolve: bool = True) -> None:
+    def __init__(self, host: str, port: int, *, resolve: bool = True, dial=None) -> None:
         super().__init__()
         self._origin = host.lower()
         self._origin_key = _host_key(host)
         self._port = int(port)
         self._resolve = resolve
         self._same: dict[str, bool] = {}
+        # dial(server, port, connection) -> a connected Connection with
+        # this session's authenticated Session in its session_table.
+        # With one, every connection this pool hands smbclient is alive
+        # and logged in, so smbclient's register_session never dials or
+        # authenticates by itself - it would do that with username=None
+        # (implicit Kerberos as whoever holds the local ticket), straight
+        # past the proxy and with the real hostname in NTLM.
+        self._dial = dial
+        self._dial_lock = threading.Lock()
+        self._closed = False
 
     def _is_origin(self, server: str) -> bool:
         key = _host_key(server)
@@ -414,32 +429,64 @@ class _ReferralPortCache(dict):
         return full.split(".", 1)[0] == short
 
     def get(self, key, default=None):
-        hit = super().get(key, default)
         server, _, port = str(key).rpartition(":")
-        if self._port == _SMB_PORT or port != str(self._port) or self._is_origin(server):
-            return hit
-        if hit is not None and getattr(hit.transport, "connected", False):
-            return hit
-        target_key = f"{server}:{_SMB_PORT}"
-        connection = super().get(target_key)
-        if connection is None or not connection.transport.connected:
+        remapped = False
+        if self._port != _SMB_PORT and port == str(self._port) and not self._is_origin(server):
+            hit = super().get(key)
+            if hit is not None and _alive(hit):
+                return hit
+            key, port, remapped = f"{server}:{_SMB_PORT}", str(_SMB_PORT), True
+        hit = super().get(key, default)
+        if self._closed:
+            # After close() nothing dials again; a dead connection left
+            # here would make smbclient dial a fresh one by itself.
+            if hit is not None and _alive(hit):
+                return hit
+            self._drop(key)
+            raise ConnectionError(errno.ENOTCONN, "SMB session closed")
+        if self._dial is None:
+            if not remapped or (hit is not None and _alive(hit)):
+                return hit
             from smbclient._pool import ClientConfig
             from smbprotocol.connection import Connection
 
             connection = Connection(ClientConfig().client_guid, server, _SMB_PORT)
             connection.connect(timeout=60)
-            self[target_key] = connection
-        return connection
+            self[key] = connection
+            return connection
+        if hit is not None and _alive(hit) and hit.session_table:
+            return hit
+        with self._dial_lock:
+            hit = super().get(key)
+            if hit is not None and _alive(hit) and hit.session_table:
+                return hit
+            if hit is not None and not _alive(hit):
+                self._drop(key)
+                hit = None
+            log.info("SMB: (re)connecting to %s:%s", server, port)
+            connection = self._dial(server, int(port), hit)
+            self[key] = connection
+            return connection
 
-    def close_referral_targets(self) -> None:
-        """Disconnect the connections to servers other than the original
-        one (smbclient's delete_session only knows the original)."""
-        for key in [k for k in self if k.rpartition(":")[0] != self._origin]:
-            connection = self.pop(key)
-            try:
-                connection.disconnect()
-            except Exception as exc:  # noqa: BLE001 - closing anyway
-                log.debug("SMB: closing the referral connection %s failed: %s", key, exc)
+    def _drop(self, key: str) -> None:
+        connection = self.pop(key, None)
+        if connection is None:
+            return
+        try:
+            connection.disconnect()
+        except Exception as exc:  # noqa: BLE001 - it is gone either way
+            log.debug("SMB: closing the dead connection %s failed: %s", key, exc)
+
+    def shut(self) -> None:
+        """No more dials: from now on a lookup of a dead or missing
+        connection raises ConnectionError."""
+        self._closed = True
+
+    def close_all(self) -> None:
+        """shut() and disconnect every connection of this pool."""
+        self._closed = True
+        for key in list(self):
+            self._drop(key)
 
 
 class SmbSession(SessionLifecycle):
@@ -466,7 +513,55 @@ class SmbSession(SessionLifecycle):
             # or close tore down - this pane's connection, and a call
             # without credentials ran as whoever logged in last.
             kw["connection_cache"] = connections
+        username = getattr(self, "_username", "")
+        if username:
+            # Should smbclient ever create a session itself, it uses
+            # these credentials - not username=None (implicit Kerberos
+            # as the local ticket holder) - and its lookup only matches
+            # a session of this user.
+            kw["username"] = username
+            kw["password"] = getattr(self, "_password", "")
         return kw
+
+    def _dial(self, server: str, port: int, connection=None):
+        """Connect (unless *connection* is still up) and log in to
+        *server*:*port* the way __init__ did: through the profile's
+        proxy, with the masked workstation name in NTLM and with this
+        session's credentials. The pool (_ReferralPortCache) calls it for
+        the first connection, after a connection dropped and for the
+        server a DFS referral names."""
+        import smbclient._pool as pool
+        from core.proxy import patched_create_connection
+
+        with (
+            _patched_gethostname(self._client_name),
+            patched_create_connection(self._proxy),
+        ):
+            fresh = connection is None
+            if fresh:
+                connection = pool.Connection(
+                    pool.ClientConfig().client_guid, server, port, require_signing=True
+                )
+                connection.connect(timeout=60)
+            try:
+                session = pool.Session(
+                    connection,
+                    username=self._username,
+                    password=self._password,
+                    require_encryption=False,
+                    auth_protocol="negotiate",
+                )
+                session.connect()
+            except BaseException:
+                if fresh:
+                    try:
+                        connection.disconnect()
+                    except Exception as exc:  # noqa: BLE001 - failing anyway
+                        log.debug("SMB: closing after a failed login: %s", exc)
+                raise
+        if _host_key(server) == _host_key(self._host) and int(port) == int(self._port):
+            self._smb_session = session
+        return connection
 
     def __init__(
         self,
@@ -511,30 +606,23 @@ class SmbSession(SessionLifecycle):
         # session that A registered is the one B's listdir sees. The
         # per-host lock below makes init atomic per-host: each thread
         # owns the registry entry for host during delete→register→probe.
-        effective_client_name = client_name or SMB_CLIENT_NAME
-        from core.proxy import patched_create_connection
+        self._client_name = client_name or SMB_CLIENT_NAME
 
+        # Every connection of this session is dialled by self._dial (the
+        # pool calls it): inside two scoped patches that nest cleanly -
+        # 1) socket.gethostname returns our chosen WORKSTATION name
+        #    (OpSec finding #3 - keeps the real hostname out of NTLM)
+        # 2) socket.create_connection routes through the SOCKS / HTTP
+        #    proxy when the profile has one set, otherwise no-op -
+        # and logged in with this session's credentials. That covers the
+        # first connection, every redial after the connection dropped and
+        # the server a DFS referral names; smbclient never dials alone.
         self._connections: dict = _ReferralPortCache(
-            host, port, resolve=self._proxy.proxy_type == "none"
+            host, port, resolve=self._proxy.proxy_type == "none", dial=self._dial
         )
         with _session_lock(host):
-
-            # Two scoped patches that nest cleanly:
-            # 1) socket.gethostname returns our chosen WORKSTATION name
-            #    (OpSec finding #3 — keeps the real hostname out of NTLM)
-            # 2) socket.create_connection routes through the SOCKS / HTTP
-            #    proxy when the profile has one set, otherwise no-op.
-            #
-            # Both patches MUST cover the eager probe listdir below as
-            # well — register_session is lazy, the actual TCP socket
-            # opens on first IO. Once it's open, the smbclient pool
-            # reuses the same socket for every subsequent op so the
-            # proxy stays in effect without re-patching.
-            with (
-                _patched_gethostname(effective_client_name),
-                patched_create_connection(self._proxy),
-            ):
-                # kept for security_info(): dialect, signing, encryption
+            # kept for security_info(): dialect, signing, encryption
+            try:
                 self._smb_session = smbclient.register_session(
                     host,
                     username=username,
@@ -542,18 +630,18 @@ class SmbSession(SessionLifecycle):
                     port=port,
                     connection_cache=self._connections,
                 )
-                # Verify credentials eagerly by doing a cheap listdir
-                # on the share root so a wrong-password / wrong-share
-                # misconfiguration surfaces at connection time instead
-                # of halfway into a transfer.
-                try:
-                    smbclient.listdir(self._prefix, **self._kw)
-                except Exception as exc:
-                    try:
-                        smbclient.delete_session(host, port=port, connection_cache=self._connections)
-                    except Exception:
-                        pass
-                    raise OSError(f"SMB connect failed for {self._prefix}: {exc}") from exc
+            except BaseException:
+                self._close_connections()
+                raise
+            # Verify credentials eagerly by doing a cheap listdir
+            # on the share root so a wrong-password / wrong-share
+            # misconfiguration surfaces at connection time instead
+            # of halfway into a transfer.
+            try:
+                smbclient.listdir(self._prefix, **self._kw)
+            except Exception as exc:
+                self._close_connections()
+                raise OSError(f"SMB connect failed for {self._prefix}: {exc}") from exc
 
         log.info("SMB connected: %s@%s\\%s:%d", username, host, share, port)
 
@@ -584,13 +672,22 @@ class SmbSession(SessionLifecycle):
         reuse our credentials (or vice versa), which causes test-order
         bugs and means disconnected UI sessions leak kernel resources.
         """
-        try:
-            smbclient.delete_session(self._host, **self._kw)
-        except Exception as exc:
-            log.debug("smbclient.delete_session(%s) raised: %s", self._host, exc)
+        self._close_connections()
+
+    def _close_connections(self) -> None:
         connections = getattr(self, "_connections", None)
         if isinstance(connections, _ReferralPortCache):
-            connections.close_referral_targets()
+            # First: no redial while (or after) closing.
+            connections.shut()
+        kw = {"port": self._port}
+        if connections is not None:
+            kw["connection_cache"] = connections
+        try:
+            smbclient.delete_session(self._host, **kw)
+        except Exception as exc:
+            log.debug("smbclient.delete_session(%s) raised: %s", self._host, exc)
+        if isinstance(connections, _ReferralPortCache):
+            connections.close_all()
 
     def disconnect(self) -> None:
         self.close()

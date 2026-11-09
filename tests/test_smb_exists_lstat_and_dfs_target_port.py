@@ -101,7 +101,7 @@ def test_happy_a_regular_file_and_a_missing_name(smb):
 
 def test_happy_the_namespace_server_keeps_its_own_port(dialled):
     session, ports = dialled
-    pool.register_session("ns", username="u", password="p", **session._kw)
+    pool.register_session("ns", **{"username": "u", "password": "p", **session._kw})
     assert ports == [("ns", 4445)]
 
 
@@ -116,7 +116,7 @@ def test_sad_a_link_whose_target_cannot_be_reached_still_exists(smb, name):
 def test_sad_a_referral_target_is_dialled_on_445(dialled):
     session, ports = dialled
     # What get_smb_tree does for the server a referral names.
-    pool.register_session("fs2", username="u", password="p", **session._kw)
+    pool.register_session("fs2", **{"username": "u", "password": "p", **session._kw})
     assert ports[-1] == ("fs2", 445)
 
 
@@ -125,7 +125,7 @@ def test_sad_a_referral_target_is_dialled_on_445(dialled):
 
 def test_edge_close_also_closes_the_referral_connections(dialled, monkeypatch):
     session, _ = dialled
-    pool.register_session("fs2", username="u", password="p", **session._kw)
+    pool.register_session("fs2", **{"username": "u", "password": "p", **session._kw})
     monkeypatch.setattr(SC.smbclient, "delete_session", lambda *a, **k: None)
     session.close()
     assert all(k.startswith("ns:") for k in session._connections)
@@ -162,9 +162,9 @@ def test_sad_the_namespace_server_by_another_name_keeps_its_port(resolver, diall
     listen. A server whose first label matches but that resolves
     elsewhere is another one: 445."""
     session, ports = dialled
-    pool.register_session(name, username="u", password="p", **session._kw)
-    assert ports[-1] == (name, 4445)
-    pool.register_session("ns.other.example", username="u", password="p", **session._kw)
+    pool.register_session(name, **{"username": "u", "password": "p", **session._kw})
+    assert ports[-1] == (name.lower(), 4445)  # smbclient keys the pool in lower case
+    pool.register_session("ns.other.example", **{"username": "u", "password": "p", **session._kw})
     assert ports[-1] == ("ns.other.example", 445)
 
 

@@ -259,6 +259,8 @@ class IscsiSession(SessionLifecycle):
                 for entry in it:
                     try:
                         items.append(self._entry_to_item(entry))
+                    except FileNotFoundError:
+                        pass  # gone while listed: no ghost row (as LocalFS)
                     except OSError as exc:
                         log.warning("Cannot stat %s: %s", entry.path, exc)
                         items.append(unstattable_item(entry, exc))  # as LocalFS

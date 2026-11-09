@@ -149,7 +149,11 @@ def test_happy_onedrive_large_file_goes_through_an_upload_session(od):
     s, calls, upload_url = od
     with s.open_write("/dir/big.bin") as fh:
         fh.write(_DATA)
-    assert calls[0][0] == "POST" and calls[0][1].endswith("/root:/dir/big.bin:/createUploadSession")
+    # (a GET of the item may go first: its version tag tells a lost answer
+    # to the last fragment from a failed upload)
+    posts = [c for c in calls if c[0] == "POST"]
+    assert posts[0][1].endswith("/root:/dir/big.bin:/createUploadSession")
+    assert all(c[0] == "GET" for c in calls[: calls.index(posts[0])])
     chunks = [c for c in calls if c[1] == upload_url]
     assert b"".join(c[3] for c in chunks) == _DATA
     start = 0

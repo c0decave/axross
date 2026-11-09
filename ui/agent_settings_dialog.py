@@ -997,7 +997,7 @@ class _AgentSettingsForm:
         layout.addWidget(self.axross_off_hint)
         self.remote_files_check = QCheckBox(tr("Files of the remote connections open in the panes"))
         self.saved_profiles_check = QCheckBox(tr("Saved connections the agent opens itself"))
-        self.remote_commands_check = QCheckBox(tr("Commands on remote hosts (SSH, WinRM, ...)"))
+        self.remote_commands_check = QCheckBox(tr("Commands on remote hosts (SSH, WinRM, …)"))
         self.mcp_servers_check = QCheckBox(tr("Tools of further MCP servers"))
         self.extensions_check = QCheckBox(tr("Tools of axross extensions"))
         for box in self._function_checks().values():
@@ -2119,7 +2119,9 @@ class _AgentSettingsForm:
                 self, tr("Uninstall"),
                 tr("Remove {name}? On Save its image ({image}) is removed from podman as well, "
                    "unless another server uses it.").format(
-                    name=server.name, image=server.package.get("image", "?")[:12]))
+                    name=server.name, image=server.package.get("image", "?")[:12]),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
             if answer != QMessageBox.StandardButton.Yes:
                 return False
         self._uninstalls.append(server)

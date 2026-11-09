@@ -92,6 +92,7 @@ def delete_file(parent: QWidget, backend, path: str, pane) -> bool:
         tr("Delete"),
         tr("Delete {name}?\n{path}").format(name=escape(name), path=escape(path)),
         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        QMessageBox.StandardButton.No,
     )
     if reply != QMessageBox.StandardButton.Yes:
         return False

@@ -23,7 +23,7 @@ from typing import IO
 
 from core import auth_prompt
 from core.append_helpers import read_existing_for_append
-from core import cloud_http
+from core import cloud_http, transfer_hooks
 from core.backend import SessionLifecycle
 from core.desktop_open import open_in_browser
 from core.path_policy import refuse_folder_path
@@ -60,10 +60,14 @@ _DEFAULT_TOKEN_PATH = os.path.expanduser("~/.config/axross/dropbox_token.json")
 #: files/upload takes at most 150 MiB per request; a larger file goes
 #: through an upload session.
 _SINGLE_UPLOAD_MAX = 150 * 1024 * 1024
-#: The SDK retries a 429 (RateLimitError, honouring its backoff) without
-#: end by default - a throttled account parked a transfer and its Cancel
-#: for good. 5xx it retries max_retries_on_error (4) times itself.
-_RATE_LIMIT_RETRIES = cloud_http.ATTEMPTS - 1
+#: The SDK retries a 429 (RateLimitError) without end by default and sleeps
+#: the server's Retry-After whole (int(Retry-After): an hour, four times,
+#: was four hours of a transfer nobody could cancel); a 5xx it retries
+#: max_retries_on_error times with sleeps of its own. Both are off
+#: (0): _GuardedDropbox retries them through cloud_http - bounded tries,
+#: Retry-After capped at RETRY_AFTER_CAP, a pause Cancel wakes.
+_RATE_LIMIT_RETRIES = 0
+_SERVER_ERROR_RETRIES = 0
 #: Bytes per upload-session request (a multiple of 4 MiB, as Dropbox asks).
 _UPLOAD_CHUNK = 8 * 1024 * 1024
 
@@ -207,6 +211,28 @@ def _is_not_found(exc: BaseException) -> bool:
     return isinstance(exc, (FileNotFoundError, NotADirectoryError))
 
 
+#: _retry_after of an error that is not retried.
+_NO_RETRY = object()
+
+
+def _retry_after(exc: BaseException):
+    """Whether the SDK error *exc* is worth another try, and after how
+    long: a 429 (RateLimitError: not processed) with the server's backoff
+    in seconds (None: the default backoff), a 5xx (InternalServerError,
+    as the SDK retried it itself before) with None; _NO_RETRY for any
+    other answer. cloud_http.pause caps the server's value."""
+    kind = type(exc).__name__
+    if kind == "RateLimitError":
+        backoff = getattr(exc, "backoff", None)
+        try:
+            return None if backoff is None else float(backoff)
+        except (TypeError, ValueError):
+            return None
+    if kind == "InternalServerError":
+        return None
+    return _NO_RETRY
+
+
 class _GuardedDropbox:
     """The SDK client, with every call failing as a typed OSError.
 
@@ -228,19 +254,50 @@ class _GuardedDropbox:
             return attr
 
         def call(*args, **kwargs):
-            try:
-                return attr(*args, **kwargs)
-            except OSError as exc:
-                if isinstance(exc.errno, int) and exc.errno:
-                    raise
-                # requests' own errors are OSErrors without an errno.
-                raise _sdk_error(exc, f"Dropbox {name} failed: {exc}") from exc
-            except (ApiError,) + _SDK_ANSWER_ERRORS as exc:
-                raise _sdk_error(
-                    exc, f"Dropbox {name} failed: {type(exc).__name__}: {exc}"
-                ) from exc
+            attempt = 0
+            while True:
+                attempt += 1
+                try:
+                    return attr(*args, **kwargs)
+                except InterruptedError:
+                    raise  # a cancelled transfer (core.transfer_hooks)
+                except OSError as exc:
+                    if isinstance(exc.errno, int) and exc.errno:
+                        raise
+                    # requests' own errors are OSErrors without an errno.
+                    raise _sdk_error(exc, f"Dropbox {name} failed: {exc}") from exc
+                except (ApiError,) + _SDK_ANSWER_ERRORS as exc:
+                    retry_after = _retry_after(exc)
+                    if retry_after is _NO_RETRY or attempt >= cloud_http.ATTEMPTS:
+                        raise _sdk_error(
+                            exc, f"Dropbox {name} failed: {type(exc).__name__}: {exc}"
+                        ) from exc
+                    log.debug("Dropbox %s: %s; retry %d", name, type(exc).__name__, attempt)
+                # Outside the except: a Cancel during the pause is no
+                # error "during handling of" the SDK's.
+                cloud_http.pause(attempt, retry_after)
 
         return call
+
+
+def _correct_offset(exc: BaseException) -> int | None:
+    """The ``correct_offset`` of an upload-session ``incorrect_offset``
+    answer (append_v2 directly, finish under lookup_failed) found in the
+    cause chain of *exc*; None for any other error."""
+    seen = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        node = getattr(cur, "error", None)
+        for _depth in range(6):
+            if node is None:
+                break
+            correct = getattr(node, "correct_offset", None)
+            if isinstance(correct, int) and not isinstance(correct, bool):
+                return correct
+            node = getattr(node, "_value", None)
+        cur = cur.__cause__ or cur.__context__
+    return None
 
 
 class _SpooledWriter:
@@ -251,6 +308,11 @@ class _SpooledWriter:
         self._remote_path = remote_path
         self._buf = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
         self._closed = False
+        # The running transfer's Cancel and progress (core.transfer_hooks):
+        # the upload happens in close(), after the copy loop.
+        self._hooks = transfer_hooks.current()
+        if self._hooks is not None:
+            self._hooks.expect_upload()
 
     def write(self, data: bytes) -> int:
         return self._buf.write(data)
@@ -268,17 +330,33 @@ class _SpooledWriter:
         if self._closed:
             return
         self._closed = True
+        hooks = self._hooks
         try:
             size = self._buf.seek(0, io.SEEK_END)
             self._buf.seek(0)
-            if size <= _SINGLE_UPLOAD_MAX:
-                self._dbx.files_upload(
-                    self._buf.read(),
-                    self._remote_path,
-                    mode=WriteMode("overwrite"),
-                )
-            else:
-                self._upload_in_session(size)
+            # In a running transfer a file of more than two chunks goes up
+            # in a session too: one files/upload request of up to 150 MiB
+            # left Cancel and the bar waiting for all of it.
+            single_max = _SINGLE_UPLOAD_MAX if hooks is None else min(
+                _SINGLE_UPLOAD_MAX, 2 * _UPLOAD_CHUNK)
+            with transfer_hooks.bound(hooks):
+                if size <= single_max:
+                    if hooks is not None:
+                        hooks.check()
+                    self._dbx.files_upload(
+                        self._buf.read(),
+                        self._remote_path,
+                        mode=WriteMode("overwrite"),
+                    )
+                    if hooks is not None:
+                        hooks.sent(size, size, check=False)
+                else:
+                    self._upload_in_session(size, hooks)
+        except InterruptedError:
+            # Cancelled before files/upload or upload_session/finish: an
+            # unfinished session commits nothing (Dropbox drops it), the
+            # file stays as it was.
+            raise transfer_hooks.UploadCancelled(transfer_hooks.CANCELLED) from None
         except Exception as exc:
             # The editor's "Cannot save" and atomic_write's callers catch
             # OSError: no SDK exception leaves close().
@@ -289,19 +367,52 @@ class _SpooledWriter:
         finally:
             self._buf.close()
 
-    def _upload_in_session(self, size: int) -> None:
-        """start, append_v2 ..., finish: one chunk per request."""
+    def _upload_in_session(self, size: int, hooks=None) -> None:
+        """start, append_v2 ..., finish: one chunk per request.
+
+        A chunk the server appended although its answer was lost (a
+        gateway 503, a dropped connection) is sent again by the retry and
+        answered ``incorrect_offset`` with the ``correct_offset``: the
+        upload goes on from there instead of failing after hundreds of
+        MiB. *hooks*: Cancel checked and the bytes reported between two
+        chunks."""
+        self._buf.seek(0)
         chunk = self._buf.read(_UPLOAD_CHUNK)
         started = self._dbx.files_upload_session_start(chunk)
-        cursor = UploadSessionCursor(session_id=started.session_id, offset=len(chunk))
+        session_id = started.session_id
+        offset = len(chunk)
         commit = CommitInfo(path=self._remote_path, mode=WriteMode("overwrite"))
+        resumes = 0
         while True:
+            if hooks is not None:
+                hooks.sent(offset, size)
+            self._buf.seek(offset)
             chunk = self._buf.read(_UPLOAD_CHUNK)
-            if cursor.offset + len(chunk) >= size:
-                self._dbx.files_upload_session_finish(chunk, cursor, commit)
+            cursor = UploadSessionCursor(session_id=session_id, offset=offset)
+            last = offset + len(chunk) >= size
+            try:
+                if last:
+                    self._dbx.files_upload_session_finish(chunk, cursor, commit)
+                else:
+                    self._dbx.files_upload_session_append_v2(chunk, cursor)
+            except InterruptedError:
+                raise
+            except (OSError, ApiError) as exc:  # typed by _GuardedDropbox, or the SDK's own
+                correct = _correct_offset(exc)
+                resumes += 1
+                if correct is None or not 0 <= correct <= size or correct == offset \
+                        or resumes >= cloud_http.ATTEMPTS:
+                    raise
+                log.info("Dropbox upload of %s: the session holds %d bytes, not %d; "
+                         "going on from there", self._remote_path, correct, offset)
+                offset = correct
+                continue
+            if last:
+                if hooks is not None:
+                    # The finish made the file: too late for a Cancel.
+                    hooks.sent(size, size, check=False)
                 return
-            self._dbx.files_upload_session_append_v2(chunk, cursor)
-            cursor.offset += len(chunk)
+            offset += len(chunk)
 
     def discard(self) -> None:
         """Drop the buffered bytes without uploading. Called by
@@ -392,6 +503,7 @@ class DropboxSession(SessionLifecycle):
                     app_key=self._app_key,
                     app_secret=self._app_secret or None,
                     max_retries_on_rate_limit=_RATE_LIMIT_RETRIES,
+            max_retries_on_error=_SERVER_ERROR_RETRIES,
                 )
                 self._apply_session_overrides(self._dbx)
                 # Validate / refresh
@@ -408,6 +520,7 @@ class DropboxSession(SessionLifecycle):
                 self._dbx = dropbox.Dropbox(
                     oauth2_access_token=access_token,
                     max_retries_on_rate_limit=_RATE_LIMIT_RETRIES,
+            max_retries_on_error=_SERVER_ERROR_RETRIES,
                 )
                 self._apply_session_overrides(self._dbx)
                 try:
@@ -473,6 +586,7 @@ class DropboxSession(SessionLifecycle):
             app_key=self._app_key,
             app_secret=self._app_secret or None,
             max_retries_on_rate_limit=_RATE_LIMIT_RETRIES,
+            max_retries_on_error=_SERVER_ERROR_RETRIES,
         )
         self._apply_session_overrides(self._dbx)
 

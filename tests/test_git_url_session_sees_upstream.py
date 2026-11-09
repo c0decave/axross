@@ -46,7 +46,13 @@ def upstream(tmp_path, monkeypatch):
 
 
 def _session(up: Path) -> G.GitFsSession:
-    return G.GitFsSession(url="file://" + str(up), author_name="T", author_email="t@example.org")
+    # The upstream is a non-bare repository with its branch checked out:
+    # a push to it is refused (tests/test_git_url_session_follows_origin.py
+    # covers pushing). These tests are about what a fetch does, so the
+    # session commits into its cache only.
+    return G.GitFsSession(
+        url="file://" + str(up), author_name="T", author_email="t@example.org", auto_push=False
+    )
 
 
 def _branch(up: Path) -> str:

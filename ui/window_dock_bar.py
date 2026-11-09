@@ -51,7 +51,9 @@ class WindowDockBar(QToolBar):
             return self._entries[key][1]
         button = QToolButton(self)
         button.setAutoRaise(True)
-        title = window.windowTitle() or window.objectName() or "Window"
+        from core.i18n import tr
+
+        title = window.windowTitle() or window.objectName() or tr("Window")
         button.setText(_short(title))
         button.setToolTip(title)
         if not window.windowIcon().isNull():

@@ -153,12 +153,22 @@ def test_happy_slideshow_start_mode_from_the_view_menu(window, tree):
     assert [i.name for i in dlg.viewer.items()] == ["a.png", "itinerary.pdf"]
 
 
+def _entries(menu) -> list:
+    """The entries of *menu* and of its submenus (More ▸, Open With ▸ …)."""
+    found = []
+    for action in menu.actions():
+        found.append(action)
+        if action.menu() is not None:
+            found += _entries(action.menu())
+    return found
+
+
 def test_happy_view_selected_media_from_the_context_menu(window, tree):
     pane = _pane_at(window, tree)
     pane._restore_selection({"a.png", "trip"}, "a.png")
     assert {i.name for i in pane.selected_file_items()} == {"a.png", "trip"}
     action = next(
-        a for a in pane._build_context_menu().actions() if a.text() == "View Selected Media…"
+        a for a in _entries(pane._build_context_menu()) if a.text() == "View Selected Media…"
     )
     _answer_options(recursive=False, mode="browse")
     action.trigger()
@@ -170,7 +180,7 @@ def test_happy_view_selected_media_from_the_context_menu(window, tree):
 
 def test_edge_context_menu_offers_view_media_without_a_selection(window, tree):
     pane = _pane_at(window, tree)
-    texts = [a.text() for a in pane._build_context_menu().actions()]
+    texts = [a.text() for a in _entries(pane._build_context_menu())]
     assert "View Media…" in texts
     assert "View Selected Media…" not in texts
 

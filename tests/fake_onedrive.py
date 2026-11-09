@@ -11,6 +11,8 @@ Modelled on Graph:
   (``patch_conflict`` = "fail"; set "replace" to model the other reading
   of the docs)
 * 429 injection: ``throttle`` = number of next requests answered 429
+* files carry an eTag and a cTag that change with every upload; DELETE on
+  an upload session URL cancels it
 """
 
 from __future__ import annotations
@@ -81,6 +83,9 @@ class FakeGraph:
         else:
             d["file"] = {"hashes": {}}
             d["size"] = len(n["data"])
+            # Graph: eTag changes with the item, cTag with its content.
+            d["eTag"] = f'"{{{n["id"]}}},{n.get("version", 1)}"'
+            d["cTag"] = f'"c:{{{n["id"]}}},{n.get("version", 1)}"'
         return d
 
     @staticmethod
@@ -249,6 +254,10 @@ class FakeGraph:
         self.calls.append(("DELETE", url))
         if t := self._throttled():
             return t
+        if url.startswith("https://upload.fake/S"):
+            # cancelling an upload session: its fragments are dropped
+            self.sessions.pop(url.rsplit("/", 1)[1], None)
+            return Resp(204)
         kind, low, tail, q = self._parse(url)
         if low is None or low not in self.nodes:
             return self._err(404, "itemNotFound", "missing")
@@ -283,7 +292,8 @@ class FakeGraph:
         old = self.nodes.get(low)
         self.nodes[low] = {"id": old["id"] if old else f"I{next(_ids)}",
                            "name": old["name"] if old else posixpath.basename(rel),
-                           "is_dir": False, "data": bytes(data), "mtime": _now()}
+                           "is_dir": False, "data": bytes(data), "mtime": _now(),
+                           "version": (old.get("version", 1) + 1) if old else 1}
         return Resp(201, self._item(low))
 
     def close(self):

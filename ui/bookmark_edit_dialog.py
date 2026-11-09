@@ -267,7 +267,7 @@ class BookmarkEditDialog(QDialog):
             form.addRow(tr("Group:"), self._group_combo)
         root.addLayout(form)
 
-        root.addWidget(QLabel(tr("Color:"), self))
+        root.addWidget(QLabel(tr("Colour:"), self))
         self._colors = _ColorRow(self._bookmark.color, self)
         root.addWidget(self._colors)
 
@@ -434,7 +434,7 @@ class GroupEditDialog(QDialog):
         self._name_edit = QLineEdit(self._group.name, self)
         form.addRow(tr("Name:"), self._name_edit)
         root.addLayout(form)
-        root.addWidget(QLabel(tr("Color:"), self))
+        root.addWidget(QLabel(tr("Colour:"), self))
         self._colors = _ColorRow(self._group.color, self)
         root.addWidget(self._colors)
         root.addWidget(QLabel(tr("Icon:"), self))

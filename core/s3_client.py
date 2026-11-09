@@ -14,6 +14,7 @@ import tempfile
 from datetime import datetime
 from typing import IO
 
+from core import cloud_http, transfer_hooks
 from core.append_helpers import read_existing_for_append
 from core.backend import SessionLifecycle
 from core.read_spool import read_chunks, spool_chunks
@@ -50,6 +51,89 @@ except ImportError:
     BotoCoreError = Exception  # type: ignore[assignment,misc]
 
 
+#: S3 error codes and the errno each stands for; a code not listed here is
+#: read by its HTTP status (cloud_http.errno_for_status).
+_CODE_ERRNO = {
+    "NoSuchKey": errno.ENOENT,
+    "NotFound": errno.ENOENT,
+    "NoSuchBucket": errno.ENOENT,
+    "NoSuchUpload": errno.ENOENT,
+    "NoSuchVersion": errno.ENOENT,
+    "AccessDenied": errno.EACCES,
+    "AllAccessDisabled": errno.EACCES,
+    "AccountProblem": errno.EACCES,
+    "InvalidAccessKeyId": errno.EACCES,
+    "SignatureDoesNotMatch": errno.EACCES,
+    "ExpiredToken": errno.EACCES,
+    "InvalidToken": errno.EACCES,
+    "RequestTimeTooSkewed": errno.EACCES,
+    "SlowDown": errno.EAGAIN,
+    "Throttling": errno.EAGAIN,
+    "ThrottlingException": errno.EAGAIN,
+    "RequestLimitExceeded": errno.EAGAIN,
+    "TooManyRequests": errno.EAGAIN,
+    "ServiceUnavailable": errno.EAGAIN,
+    "QuotaExceeded": errno.ENOSPC,
+    "XMinioStorageFull": errno.ENOSPC,
+    "XMinioAdminBucketQuotaExceeded": errno.ENOSPC,
+    "EntityTooLarge": errno.EFBIG,
+    "PreconditionFailed": errno.ESTALE,
+    "BucketNotEmpty": errno.ENOTEMPTY,
+    "RequestTimeout": errno.ETIMEDOUT,
+    "KeyTooLongError": errno.ENAMETOOLONG,
+    "InvalidArgument": errno.EINVAL,
+    "InvalidRequest": errno.EINVAL,
+    "InvalidObjectName": errno.EINVAL,
+    "NotImplemented": errno.ENOTSUP,
+    "InternalError": errno.EIO,
+}
+
+
+def _s3_errno(exc: BaseException) -> int:
+    """The errno of a boto3 / botocore failure: the S3 error code, else
+    the HTTP status (both through core.cloud_http), else the kind of
+    transport failure."""
+    if isinstance(exc, OSError) and isinstance(exc.errno, int) and exc.errno:
+        return exc.errno
+    response = getattr(exc, "response", None)
+    if isinstance(response, dict):
+        error = response.get("Error") or {}
+        code = str(error.get("Code", "")) if isinstance(error, dict) else ""
+        if code in _CODE_ERRNO:
+            return _CODE_ERRNO[code]
+        status = (response.get("ResponseMetadata") or {}).get("HTTPStatusCode")
+        if not isinstance(status, int) and code.isdigit():
+            status = int(code)  # a HEAD answer carries no body: Code is the status
+        if isinstance(status, int):
+            return cloud_http.errno_for_status(status)
+        return errno.EIO
+    name = type(exc).__name__
+    if "Timeout" in name:
+        return errno.ETIMEDOUT
+    if "Connection" in name or "Endpoint" in name:
+        return errno.ECONNRESET
+    if "Credentials" in name or "NoAuth" in name:
+        return errno.EACCES
+    if isinstance(exc, ValueError):
+        return errno.EPROTO  # an answer botocore cannot parse
+    return errno.EIO
+
+
+def _s3_error(exc: BaseException, message: str, filename: str | None = None) -> OSError:
+    """*message* as the typed OSError of a failed S3 call (cloud_http):
+    FileNotFoundError for NoSuchKey / 404, PermissionError for
+    AccessDenied / 403, EAGAIN for SlowDown / 503, ENOSPC for a quota ...
+    botocore's ClientError is no OSError at all - an editor's Save ended
+    in the global exception hook - and the errno-less OSError of old was
+    read by a FUSE mount as ENOENT. A cancelled transfer stays an
+    InterruptedError."""
+    if isinstance(exc, InterruptedError):
+        if isinstance(exc, transfer_hooks.UploadCancelled):
+            return transfer_hooks.UploadCancelled(*exc.args)
+        return InterruptedError(*exc.args)
+    return cloud_http.oserror(_s3_errno(exc), message, filename)
+
+
 def _is_not_found(exc: Exception) -> bool:
     """True for the ClientError S3 answers for a missing key (HEAD carries
     no body, so botocore names it by the status: "404")."""
@@ -78,8 +162,86 @@ _COPY_PART_SIZE = 512 * 1024**2
 _MAX_PARTS = 10_000
 
 
+#: Above this a transfer's upload is a multipart upload (s3transfer's
+#: default threshold), which a Cancel aborts; below it one PutObject that
+#: runs to its end.
+_MULTIPART_THRESHOLD = 8 * 1024 * 1024
+#: Seconds between two looks at Cancel and progress while s3transfer's
+#: threads upload (the end of the upload wakes the wait at once).
+_POLL = 0.05
+
+
+def _is_boto_client(client) -> bool:
+    try:
+        from botocore.client import BaseClient
+    except ImportError:  # pragma: no cover - the S3 backend needs botocore
+        return False
+    return isinstance(client, BaseClient)
+
+
+class _UploadProgress:
+    """An s3transfer subscriber: the bytes its threads have sent."""
+
+    def __init__(self) -> None:
+        import threading
+
+        self._lock = threading.Lock()
+        self.done = 0
+        #: Set when the transfer has ended (s3transfer runs on_done after
+        #: its result is set): the watching loop needs no further pause.
+        self.finished = threading.Event()
+
+    # s3transfer calls on_queued / on_progress / on_done on its subscribers
+    def on_queued(self, future, **kwargs) -> None:
+        pass
+
+    def on_progress(self, future, bytes_transferred, **kwargs) -> None:
+        with self._lock:
+            self.done += bytes_transferred  # negative when a part is retried
+
+    def on_done(self, future, **kwargs) -> None:
+        self.finished.set()
+
+
+def _upload_cancellable(client, fileobj, bucket: str, key: str, size: int, hooks) -> None:
+    """``upload_fileobj`` as s3transfer runs it (multipart above 8 MiB, ten
+    parts at a time), watched from this thread: the bytes sent go to
+    *hooks* and a Cancel cancels the transfer - s3transfer then aborts the
+    multipart upload (AbortMultipartUpload, its failure cleanup), so no
+    part of it is ever committed and the old object stays. A single
+    PutObject (up to 8 MiB) is not cut off - once sent it may already have
+    replaced the object: the caller sends those without this."""
+    from s3transfer.manager import TransferManager
+
+    progress = _UploadProgress()
+    hooks.check()
+    with TransferManager(client) as manager:
+        future = manager.upload(fileobj, bucket, key, subscribers=[progress])
+        cancelled = False
+        while not future.done():
+            if hooks.cancelled():
+                future.cancel()
+                cancelled = True
+                break
+            hooks.sent(max(progress.done, 0), size, check=False)
+            progress.finished.wait(_POLL)
+        try:
+            future.result()
+        except Exception as exc:
+            if cancelled:
+                # Raised once every part in flight is back and the
+                # multipart upload was aborted.
+                raise transfer_hooks.UploadCancelled(transfer_hooks.CANCELLED) from exc
+            raise
+    hooks.sent(size, size, check=False)
+
+
 class _SpooledWriter:
-    """Write to a temp file, then upload on close."""
+    """Write to a temp file, then upload on close.
+
+    In a running transfer (core.transfer_hooks) the upload reports its
+    bytes and a Cancel aborts it (see _upload_cancellable); every failure
+    of close() is a typed OSError (_s3_error)."""
 
     def __init__(self, s3_client, bucket: str, key: str):
         self._s3 = s3_client
@@ -87,6 +249,11 @@ class _SpooledWriter:
         self._key = key
         self._buf = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
         self._closed = False
+        # The running transfer's Cancel and progress: the upload happens in
+        # close(), after the copy loop.
+        self._hooks = transfer_hooks.current()
+        if self._hooks is not None:
+            self._hooks.expect_upload()
 
     def write(self, data: bytes) -> int:
         return self._buf.write(data)
@@ -104,9 +271,27 @@ class _SpooledWriter:
         if self._closed:
             return
         self._closed = True
+        hooks = self._hooks
+        path = "/" + self._key
         try:
+            size = self._buf.seek(0, 2)
             self._buf.seek(0)
-            self._s3.upload_fileobj(self._buf, self._bucket, self._key)
+            if hooks is not None and size > _MULTIPART_THRESHOLD and _is_boto_client(self._s3):
+                _upload_cancellable(self._s3, self._buf, self._bucket, self._key, size, hooks)
+            else:
+                if hooks is not None:
+                    hooks.check()
+                self._s3.upload_fileobj(self._buf, self._bucket, self._key)
+                if hooks is not None:
+                    hooks.sent(size, size, check=False)
+        except InterruptedError:
+            # Cancelled before the upload began, or a multipart upload
+            # aborted: nothing was committed, the old object stays.
+            raise transfer_hooks.UploadCancelled(transfer_hooks.CANCELLED) from None
+        except Exception as exc:
+            # botocore's ClientError is no OSError: the editor's "Cannot
+            # save" and atomic_write's callers catch OSError.
+            raise _s3_error(exc, f"Cannot upload {path}: {exc}", path) from exc
         finally:
             self._buf.close()
 
@@ -243,12 +428,27 @@ class S3Session(SessionLifecycle):
             kwargs["config"] = base_config
         if endpoint:
             kwargs["endpoint_url"] = endpoint
+            # botocore 1.36+ adds a CRC checksum to every upload (an
+            # aws-chunked body with a trailer) and asks for one on every
+            # download. Many S3-compatible stores (older MinIO and Ceph
+            # RGW, Wasabi, R2 at first, Backblaze B2) refuse such uploads
+            # or answer without the checksum: "when_required" sends and
+            # checks one only where the operation demands it - as every
+            # botocore before 1.36 did. AWS itself keeps the default.
+            try:
+                kwargs["config"] = kwargs["config"].merge(BotoConfig(
+                    request_checksum_calculation="when_required",
+                    response_checksum_validation="when_required",
+                ))
+            except TypeError:  # botocore < 1.36: no such options, nothing to turn off
+                pass
 
         # Validate bucket name before connecting
         import re
 
         if not re.fullmatch(r"^[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9]$", bucket):
             raise OSError(
+                errno.EINVAL,
                 f"Invalid S3 bucket name '{bucket}'. "
                 "Bucket names must be 3-63 characters, lowercase letters, digits, "
                 "hyphens, and dots only. If you have a full URL, just paste it — "
@@ -311,15 +511,16 @@ class S3Session(SessionLifecycle):
                         code = e.response.get("Error", {}).get("Code", "")
 
             if code in ("NoSuchBucket", "404"):
-                raise OSError(f"S3 bucket '{bucket}' does not exist") from e
+                raise _s3_error(e, f"S3 bucket '{bucket}' does not exist") from e
             if code in ("AccessDenied", "403", "AllAccessDisabled"):
                 raise OSError(
+                    errno.EACCES,
                     f"Access denied to S3 bucket '{bucket}'. "
                     "Check credentials or try anonymous access."
                 ) from e
-            raise OSError(f"Cannot access S3 bucket '{bucket}': {e}") from e
+            raise _s3_error(e, f"Cannot access S3 bucket '{bucket}': {e}") from e
         except Exception as e:
-            raise OSError(f"Cannot access S3 bucket '{bucket}': {e}") from e
+            raise _s3_error(e, f"Cannot access S3 bucket '{bucket}': {e}") from e
 
     def _test_bucket(self, bucket: str) -> None:
         """Try to access the bucket, preferring list then head."""
@@ -403,7 +604,7 @@ class S3Session(SessionLifecycle):
                     )
 
         except (ClientError, Exception) as e:
-            raise OSError(f"Cannot list {path}: {e}") from e
+            raise _s3_error(e, f"Cannot list {path}: {e}") from e
 
         if not seen_any:
             # Nothing under the prefix - not even a folder marker: no folder
@@ -437,11 +638,11 @@ class S3Session(SessionLifecycle):
         except ClientError as e:
             error_code = e.response.get("Error", {}).get("Code", "")
             if error_code != "404":
-                raise OSError(f"Cannot stat {path}: {e}") from e
+                raise _s3_error(e, f"Cannot stat {path}: {e}") from e
         except Exception as e:
             # botocore raises ValueError for a HEAD answer it cannot parse
             # and BotoCoreError (not an OSError) when the endpoint hangs up.
-            raise OSError(f"Cannot stat {path}: {e}") from e
+            raise _s3_error(e, f"Cannot stat {path}: {e}") from e
 
         # Check if it's a directory prefix
         try:
@@ -453,7 +654,7 @@ class S3Session(SessionLifecycle):
             if _lists_anything(resp):
                 return FileItem(name=name, is_dir=True)
         except (ClientError, Exception) as e:
-            raise OSError(f"Cannot stat {path}: {e}") from e
+            raise _s3_error(e, f"Cannot stat {path}: {e}") from e
 
         raise FileNotFoundError(errno.ENOENT, "Not found", path)
 
@@ -473,7 +674,7 @@ class S3Session(SessionLifecycle):
                 MaxKeys=1,
             )
         except Exception as e:
-            raise OSError(f"Cannot check {path}: {e}") from e
+            raise _s3_error(e, f"Cannot check {path}: {e}") from e
         return _lists_anything(resp)
 
     def exists(self, path: str) -> bool:
@@ -491,11 +692,11 @@ class S3Session(SessionLifecycle):
             return True
         except ClientError as e:
             if not _is_not_found(e):
-                raise OSError(f"Cannot check {path}: {e}") from e
+                raise _s3_error(e, f"Cannot check {path}: {e}") from e
         except Exception as e:
             # An answer botocore cannot parse, or a dropped connection, says
             # nothing about existence (see stat()).
-            raise OSError(f"Cannot check {path}: {e}") from e
+            raise _s3_error(e, f"Cannot check {path}: {e}") from e
 
         # Check as directory prefix
         return self.is_dir(path)
@@ -503,16 +704,16 @@ class S3Session(SessionLifecycle):
     def mkdir(self, path: str) -> None:
         """Create a directory marker (zero-byte object ending with /)."""
         if self._anonymous:
-            raise OSError("Cannot write to anonymous/public S3 bucket (read-only)")
+            raise OSError(errno.EROFS, "Cannot write to anonymous/public S3 bucket (read-only)")
         key = self._to_key(path).rstrip("/") + "/"
         try:
             self._s3.put_object(Bucket=self._bucket, Key=key, Body=b"")
         except (ClientError, Exception) as e:
-            raise OSError(f"Cannot create directory {path}: {e}") from e
+            raise _s3_error(e, f"Cannot create directory {path}: {e}") from e
 
     def remove(self, path: str, recursive: bool = False) -> None:
         if self._anonymous:
-            raise OSError("Cannot write to anonymous/public S3 bucket (read-only)")
+            raise OSError(errno.EROFS, "Cannot write to anonymous/public S3 bucket (read-only)")
         key = self._to_key(path)
 
         if self.is_dir(path):
@@ -529,7 +730,7 @@ class S3Session(SessionLifecycle):
                 try:
                     self._s3.delete_object(Bucket=self._bucket, Key=target)
                 except (ClientError, Exception) as e:
-                    raise OSError(f"Cannot remove {path}: {e}") from e
+                    raise _s3_error(e, f"Cannot remove {path}: {e}") from e
             else:
                 self._remove_prefix(key.rstrip("/") + "/")
         else:
@@ -540,7 +741,7 @@ class S3Session(SessionLifecycle):
             try:
                 self._s3.delete_object(Bucket=self._bucket, Key=key)
             except (ClientError, Exception) as e:
-                raise OSError(f"Cannot remove {path}: {e}") from e
+                raise _s3_error(e, f"Cannot remove {path}: {e}") from e
 
     def _refuse_non_empty(self, prefix: str, path: str) -> None:
         """ENOTEMPTY when any key besides the folder marker *prefix* lies
@@ -549,7 +750,7 @@ class S3Session(SessionLifecycle):
         try:
             resp = self._s3.list_objects_v2(Bucket=self._bucket, Prefix=prefix, MaxKeys=2)
         except Exception as e:
-            raise OSError(f"Cannot remove {path}: {e}") from e
+            raise _s3_error(e, f"Cannot remove {path}: {e}") from e
         if any(obj.get("Key") != prefix for obj in resp.get("Contents") or []):
             raise OSError(errno.ENOTEMPTY, f"Directory not empty: {path}", path)
 
@@ -565,9 +766,9 @@ class S3Session(SessionLifecycle):
         except ClientError as e:
             if _is_not_found(e):
                 return False
-            raise OSError(f"Cannot check {path}: {e}") from e
+            raise _s3_error(e, f"Cannot check {path}: {e}") from e
         except Exception as e:
-            raise OSError(f"Cannot check {path}: {e}") from e
+            raise _s3_error(e, f"Cannot check {path}: {e}") from e
 
     def _remove_prefix(self, prefix: str) -> None:
         """Delete all objects under a prefix.
@@ -591,17 +792,18 @@ class S3Session(SessionLifecycle):
                     for err in (resp or {}).get("Errors") or []:
                         code, message = err.get("Code"), err.get("Message")
                         refused.append(f"{err.get('Key')} ({code}: {message})")
-        except (ClientError, BotoCoreError) as e:
-            raise OSError(f"Cannot delete under {prefix}: {e}") from e
+        except Exception as e:  # noqa: BLE001 - every SDK failure, typed
+            raise _s3_error(e, f"Cannot delete under {prefix}: {e}") from e
         if refused:
             shown = "; ".join(refused[:5])
             more = f" and {len(refused) - 5} more" if len(refused) > 5 else ""
-            raise OSError(f"Cannot delete {len(refused)} object(s) under {prefix}: {shown}{more}")
+            raise OSError(errno.EACCES,
+                          f"Cannot delete {len(refused)} object(s) under {prefix}: {shown}{more}")
 
     def rename(self, src: str, dst: str) -> None:
         """S3 doesn't support rename — copy + delete."""
         if self._anonymous:
-            raise OSError("Cannot write to anonymous/public S3 bucket (read-only)")
+            raise OSError(errno.EROFS, "Cannot write to anonymous/public S3 bucket (read-only)")
         src_key = self._to_key(src)
         dst_key = self._to_key(dst)
 
@@ -634,32 +836,44 @@ class S3Session(SessionLifecycle):
                 # Moving the folder tree would leave the file behind and
                 # moving the file would not be what a folder rename means.
                 raise OSError(
+                    errno.EINVAL,
                     f"Cannot rename {src}: both a file and a folder are named "
                     f"{posixpath.basename(src_key)!r} here; the name does not say which one"
                 )
             # Rename all objects under the prefix
             old_prefix = src_key.rstrip("/") + "/"
             new_prefix = dst_key.rstrip("/") + "/"
-            paginator = self._s3.get_paginator("list_objects_v2")
-            pages = paginator.paginate(Bucket=self._bucket, Prefix=old_prefix)
+            what = f"Cannot rename {src} -> {dst}"
+            try:
+                paginator = self._s3.get_paginator("list_objects_v2")
+                pages = iter(paginator.paginate(Bucket=self._bucket, Prefix=old_prefix))
+            except Exception as e:  # noqa: BLE001 - every SDK failure, typed
+                raise _s3_error(e, f"{what}: {e}", src) from e
 
-            for page in pages:
+            while True:
+                # Each page is a request: a refused or throttled listing
+                # mid-way is a typed OSError, not botocore's ClientError.
+                try:
+                    page = next(pages)
+                except StopIteration:
+                    break
+                except Exception as e:  # noqa: BLE001 - every SDK failure, typed
+                    raise _s3_error(e, f"{what}: {e}", src) from e
                 for obj in page.get("Contents", []):
                     old_key = obj["Key"]
                     new_key = new_prefix + old_key[len(old_prefix) :]
-                    what = f"Cannot rename {src} -> {dst}"
                     self._copy_key(old_key, new_key, what, size=obj.get("Size"))
                     try:
                         self._s3.delete_object(Bucket=self._bucket, Key=old_key)
                     except (ClientError, Exception) as e:
-                        raise OSError(f"{what}: {e}") from e
+                        raise _s3_error(e, f"{what}: {e}") from e
         else:
             what = f"Cannot rename {src} -> {dst}"
             self._copy_key(src_key, dst_key, what, path=src)
             try:
                 self._s3.delete_object(Bucket=self._bucket, Key=src_key)
             except (ClientError, Exception) as e:
-                raise OSError(f"{what}: {e}") from e
+                raise _s3_error(e, f"{what}: {e}") from e
 
     def _copy_key(
         self, src_key: str, dst_key: str, what: str, *, size: int | None = None, path: str = ""
@@ -678,7 +892,7 @@ class S3Session(SessionLifecycle):
             try:
                 self._s3.copy_object(Bucket=self._bucket, CopySource=source, Key=dst_key)
             except (ClientError, Exception) as e:
-                raise OSError(f"{what}: {e}") from e
+                raise _s3_error(e, f"{what}: {e}") from e
             return
         if not head:
             head = self._head_for_copy(src_key, what, path)
@@ -690,11 +904,15 @@ class S3Session(SessionLifecycle):
                 create[field] = head[field]
         if head.get("Metadata"):
             create["Metadata"] = head["Metadata"]
+        # Every part is copied from the version the HEAD saw: a source
+        # replaced mid-copy fails the next part (412 PreconditionFailed)
+        # instead of mixing the parts of two versions in one object.
+        condition = {"CopySourceIfMatch": head["ETag"]} if head.get("ETag") else {}
         part_size = max(_COPY_PART_SIZE, -(-size // _MAX_PARTS))
         try:
             upload_id = self._s3.create_multipart_upload(**create)["UploadId"]
         except (ClientError, Exception) as e:
-            raise OSError(f"{what}: {e}") from e
+            raise _s3_error(e, f"{what}: {e}") from e
         parts = []
         try:
             for number, start in enumerate(range(0, size, part_size), start=1):
@@ -706,6 +924,7 @@ class S3Session(SessionLifecycle):
                     PartNumber=number,
                     CopySource=source,
                     CopySourceRange=f"bytes={start}-{end}",
+                    **condition,
                 )
                 parts.append({"PartNumber": number, "ETag": resp["CopyPartResult"]["ETag"]})
             self._s3.complete_multipart_upload(
@@ -721,7 +940,7 @@ class S3Session(SessionLifecycle):
                 )
             except Exception:  # noqa: BLE001 - the copy error is the one to report
                 log.warning("S3: could not abort the multipart copy to %s", dst_key)
-            raise OSError(f"{what}: {e}") from e
+            raise _s3_error(e, f"{what}: {e}") from e
 
     def _head_for_copy(self, src_key: str, what: str, path: str) -> dict:
         try:
@@ -730,9 +949,9 @@ class S3Session(SessionLifecycle):
             if _is_not_found(e):
                 where = path or "/" + src_key
                 raise FileNotFoundError(errno.ENOENT, f"{what}: not found", where) from e
-            raise OSError(f"{what}: {e}") from e
+            raise _s3_error(e, f"{what}: {e}") from e
         except Exception as e:
-            raise OSError(f"{what}: {e}") from e
+            raise _s3_error(e, f"{what}: {e}") from e
 
     def open_read(self, path: str) -> IO[bytes]:
         key = self._to_key(path)
@@ -751,7 +970,7 @@ class S3Session(SessionLifecycle):
                         errno.EISDIR, f"Cannot read {path}: it is a folder", path
                     ) from e
                 raise FileNotFoundError(errno.ENOENT, f"Cannot read {path}: {e}", path) from e
-            raise OSError(f"Cannot read {path}: {e}") from e
+            raise _s3_error(e, f"Cannot read {path}: {e}") from e
 
     # Hard cap on "download existing then re-upload" append semantics.
     # Above this the operation is almost certainly not what the user
@@ -761,7 +980,7 @@ class S3Session(SessionLifecycle):
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
         if self._anonymous:
-            raise OSError("Cannot write to anonymous/public S3 bucket (read-only)")
+            raise OSError(errno.EROFS, "Cannot write to anonymous/public S3 bucket (read-only)")
         key = self._file_key(path, "write")
         if append:
             # S3 doesn't support append — download, concatenate, re-upload.
@@ -777,6 +996,7 @@ class S3Session(SessionLifecycle):
             )
             if len(existing) > cap:
                 raise OSError(
+                    errno.EFBIG,
                     f"S3 append: existing object exceeds "
                     f"{cap // (1024 * 1024)} MiB cap "
                     f"(read-modify-write not safe at this size)"
@@ -802,10 +1022,10 @@ class S3Session(SessionLifecycle):
         return "/"
 
     def chmod(self, path: str, mode: int) -> None:
-        raise OSError("S3 does not support Unix permissions")
+        raise OSError(errno.ENOTSUP, "S3 does not support Unix permissions", path)
 
     def readlink(self, path: str) -> str:
-        raise OSError("S3 does not support symlinks")
+        raise OSError(errno.EINVAL, "S3 does not support symlinks", path)
 
     def disk_usage(self, path: str) -> tuple[int, int, int]:
         return (0, 0, 0)
@@ -822,7 +1042,7 @@ class S3Session(SessionLifecycle):
             try:
                 resp = self._s3.list_object_versions(**request)
             except Exception as exc:
-                raise OSError(f"S3 list_versions {path}: {exc}") from exc
+                raise _s3_error(exc, f"S3 list_versions {path}: {exc}") from exc
             past_target = False
             for v in resp.get("Versions", []):
                 key = v.get("Key")
@@ -850,6 +1070,7 @@ class S3Session(SessionLifecycle):
                 request.get("VersionIdMarker"),
             ):
                 raise OSError(
+                    errno.EPROTO,
                     f"S3 list_versions {path}: truncated listing without a new continuation marker"
                 )
             request["KeyMarker"] = key_marker
@@ -869,7 +1090,7 @@ class S3Session(SessionLifecycle):
             )
             return _spool_body(resp["Body"], f"Cannot read {path}@{version_id}")
         except Exception as exc:
-            raise OSError(f"S3 get_object {path}@{version_id}: {exc}") from exc
+            raise _s3_error(exc, f"S3 get_object {path}@{version_id}: {exc}") from exc
 
     def copy(self, src: str, dst: str) -> None:
         """S3 CopyObject (UploadPartCopy above 5 GiB) — no client bytes."""
@@ -922,7 +1143,7 @@ class S3Session(SessionLifecycle):
         try:
             resp = self._s3.get_bucket_versioning(Bucket=self._bucket)
         except Exception as exc:
-            raise OSError(f"S3 get_bucket_versioning: {exc}") from exc
+            raise _s3_error(exc, f"S3 get_bucket_versioning: {exc}") from exc
         return resp.get("Status") or "Disabled"
 
     def lifecycle_get(self) -> list[dict]:
@@ -942,7 +1163,7 @@ class S3Session(SessionLifecycle):
             code = err.get("Error", {}).get("Code") if isinstance(err, dict) else ""
             if code == "NoSuchLifecycleConfiguration":
                 return []
-            raise OSError(f"S3 get_bucket_lifecycle: {exc}") from exc
+            raise _s3_error(exc, f"S3 get_bucket_lifecycle: {exc}") from exc
 
     def checksum_kinds(self, path: str = "", *, written: bool = False) -> frozenset[str]:
         """What :meth:`checksum` can answer: an ETag, as ``md5:`` or as the
@@ -964,7 +1185,7 @@ class S3Session(SessionLifecycle):
         try:
             resp = self._s3.head_object(Bucket=self._bucket, Key=self._to_key(path))
         except Exception as exc:
-            raise OSError(f"Cannot stat {path}: {exc}") from exc
+            raise _s3_error(exc, f"Cannot stat {path}: {exc}") from exc
         etag = (resp.get("ETag") or "").strip('"')
         if not etag:
             return ""

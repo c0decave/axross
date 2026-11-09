@@ -36,6 +36,7 @@ from PyQt6.QtWidgets import QLabel, QToolBar  # noqa: E402
 from core.file_analysis import AnalysisResult  # noqa: E402
 from tests.settings_testkit import app, isolate  # noqa: E402
 from ui import icon_provider as IP  # noqa: E402
+from tests.menu_walk import all_actions  # noqa: E402
 
 APP = app()
 #: Fewer painted pixels than this at 22 px is no icon a user can see.
@@ -160,7 +161,8 @@ def _select(pane, names) -> None:
 def _commands(pane) -> dict[str, QAction]:
     menu = pane._build_context_menu()
     pane._kept_menu = menu  # the actions live as long as their menu
-    return {str(a.property("axCommand")): a for a in menu.actions() if a.property("axCommand")}
+    return {str(a.property("axCommand")): a for a in all_actions(menu)
+            if a.property("axCommand")}
 
 
 def _tool_button(win, icon_name: str) -> QAction:
@@ -320,7 +322,7 @@ def test_happy_e2e_the_actions_menu_offers_it_too(win) -> None:
     pane = win._active_pane
     _select(pane, ["notes.txt"])
     win.actions_menu.aboutToShow.emit()
-    commands = [a.property("axCommand") for a in win.actions_menu.actions()]
+    commands = [a.property("axCommand") for a in all_actions(win.actions_menu)]
     assert "analyse-sift" in commands and "analyse-folder-sift" in commands
 
 

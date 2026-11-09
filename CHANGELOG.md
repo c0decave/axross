@@ -15,6 +15,124 @@ old code.
 
 ### Fixed
 
+- Create SHA256SUMS with every file selected no longer lists the manifest itself (Verify then failed on it); an open Scheduled Jobs window shows the result of Run Now.
+- **Space marks files again instead of moving one mark down.** "Mark the
+  file and move down" moved the cursor with a call that cleared every
+  other mark, so three presses left one wrong file marked; the marks now
+  stay (details and thumbnail view). A refresh (the folder watcher, a
+  transfer writing into the folder) also keeps the cursor row when it is
+  not marked itself, so the next arrow key no longer starts at the top.
+- **Undo of a large move is no longer done in part after the journal
+  rotated.** Every move, copy and Move to Trash now opens its entries in
+  the operation journal with a begin marker; Ctrl+Z undoes a batch whole
+  only when that marker is still there. A move whose first files had been
+  rotated out of the journal was undone in part and recorded as undone,
+  and a move that began at the top of the rotated journal was refused.
+- **"Overwrite?" and "Delete?" questions default to No.** Encrypt and
+  Decrypt onto an existing name, Delete Permanently and Empty Trash in the
+  trash window, discarding unsaved changes in the text and hex editors,
+  deleting bookmarks, profiles or a chat account and other destructive
+  questions answered Enter with Yes.
+- **A file removed while a local folder is listed no longer shows as a "?"
+  row.** It is left out (a folder copy no longer fails a job for it); an
+  entry that cannot be read for another reason is still listed.
+- **A move, an undo or a "skip existing" copy does not replace a file that
+  appears at the last moment.** Local folders and SFTP now refuse the
+  rename when the target appeared after the check, instead of overwriting
+  it.
+
+- **A folder that cannot be created or read is reported in the interface
+  language.** When a copy into a read-only place failed, the Transfers
+  panel showed raw English, "cannot create the folder, its contents were
+  not copied: [Errno 30] Read-only file system: …", while the file next to
+  it got a German sentence. The refused folder row now keeps its exception
+  and shows the same kind of sentence; the raw text stays in the tooltip
+  and the log.
+
+- **Cancel works during the real upload and download of spooling
+  backends, and the bar shows the network bytes.** The OneDrive, Google
+  Drive, Dropbox, S3, Azure, WebDAV, FTP, SCP, Telnet and IMAP writers
+  upload in close() and several readers download the whole file inside
+  open_read(): the bar reached 100 % at disk speed, then the real transfer
+  ran to its end whatever Cancel said (OneDrive: three chunks sent and the
+  file committed after Cancel). The transfer engine now hands the backends
+  its Cancel and progress for the job (core/transfer_hooks.py): uploads and
+  downloads check Cancel between chunks and report what is on the server,
+  retry pauses wake on Cancel, and a cancelled upload commits nothing (the
+  OneDrive session is deleted, the S3 multipart upload aborted, the
+  Dropbox session never finished, the Azure blocks never committed, the
+  Drive resumable session left unfinished). A job with two network legs
+  (cloud to cloud, SFTP to cloud) shows each as half of the bar.
+- **Dropbox no longer sleeps a server's Retry-After whole.** The SDK slept
+  int(Retry-After) itself (an hour, four times); its own retries are off
+  and 429 / 5xx are retried with the capped, cancellable pause.
+- **A Dropbox upload over 150 MiB resumes after a lost answer** from the
+  session's correct_offset instead of failing.
+- **S3 errors are typed.** The writer's close() let botocore's ClientError
+  out (an editor Save of a write-protected key ended in the error hook),
+  other verbs raised errno-less errors and the folder-rename listing was
+  not wrapped; every S3 failure is now an OSError of its errno (403
+  PermissionError, SlowDown EAGAIN, quota ENOSPC ...). A multipart copy
+  over 5 GiB pins the source version (CopySourceIfMatch), and a custom
+  endpoint gets checksums only where S3 requires them (S3-compatible
+  stores refuse botocore's new default trailers).
+- **OneDrive: an upload whose last answer was lost is no failure** when
+  the item is there with the new content; **a DELETE retried after a lost
+  answer** (OneDrive, Google Drive) is no "not found" any more.
+- **Git URL sessions follow the remote and push what is saved.** After an
+  upstream force-push a session kept the old content and refused every
+  write; saves were committed into the local cache only and never pushed;
+  an unreachable remote opened the stale cache as if all was well. Now a
+  branch with nothing unpushed follows origin (force-push, deleted branch),
+  every save is pushed at once (fast-forward only; a failed push keeps the
+  commit and the save says so), commits origin does not have are kept and
+  counted in the pane's status line ("not pushed to origin: main (1)"), and
+  an unreachable remote opens the cache read-only, marked "offline".
+- **Removing an IMAP message's attachments folder no longer deletes the
+  message.** `remove("/INBOX/1")` - the folder that lists message 1's
+  attachments - deleted the whole message, with or without recursive. It
+  is refused now; deleting the `.eml` deletes the message.
+- **Mail file names fit a local file system.** IMAP, POP3 and Exchange
+  capped a message's name in characters: a CJK or emoji subject, or any
+  long subject behind an Exchange ItemId, gave names over 255 bytes, and
+  copying the message to a local folder failed with "File name too long".
+  Names are at most 200 UTF-8 bytes now (the id and extension whole); the
+  old names still resolve and a mail dock does not see renamed mail as new.
+- **POP3 reconnects, and says when deletions were lost.** After a dropped
+  connection every call failed until the profile was reopened; a failed
+  QUIT after deletions was swallowed, so the messages stayed on the server
+  while the user saw them deleted. POP3 now reconnects, and the deletions a
+  lost connection or a failed QUIT did not commit are reported. On a server
+  without UIDL, two messages with the same subject could swap after a
+  reconnect and the wrong one was deleted; messages are found by their
+  headers and size now, and identical ones are not deleted.
+- **Google Docs, Sheets and Slides can be read.** They were refused with
+  "Permission denied" (Drive has no binary content for them). They are
+  listed as `.docx` / `.xlsx` / `.pptx` (a drawing `.pdf`) and read as that
+  export, read-only; a Form says it has no file form. Requests now support
+  items of shared drives; the shared drives themselves are not listed yet.
+- **Typed errors:** IMAP mkdir or rename onto an existing mailbox is
+  FileExistsError, a missing mailbox in a listing or as a move target
+  FileNotFoundError; Git open_read / list_dir of a missing path is
+  FileNotFoundError, list_dir of a file NotADirectoryError, mkdir over a
+  file FileExistsError, and a file path ending in "/" is refused.
+
+- **Retry after a reconnect uses the new connection.** When an SFTP pane
+  reconnected by itself, its failed and queued transfers kept the dropped
+  session, so Retry failed again with "Not connected". They now move to the
+  new session, and Retry takes the pane's current connection when the job's
+  own one is closed.
+- **SFTP copy, hard link, checksum, commands and disk usage work on names
+  that are not UTF-8.** They failed with an encoding error (and left an SSH
+  channel open), and disk usage showed an empty disk; a failing disk usage
+  query is now an error, not 0 bytes.
+- **FTP listings on servers that answer "-a" with "450 No files found"**
+  work again, and a file whose name starts with "-a" no longer hides the
+  dot files of its folder.
+- **WebDAV and Exchange retry when the server is busy.** WebDAV sends a
+  request again after 429 or 503 (bounded, honouring Retry-After; MOVE and
+  COPY only after 429); Exchange retries throttled requests
+  (ErrorServerBusy) for up to 60 seconds.
 - **Right-click menus are freed once they close.** Each right click in a
   file pane left its menu (four menus, ~70 actions) on the pane - 500 right
   clicks grew the process by ~130 MB - and kept switched-off extensions'
@@ -263,6 +381,14 @@ old code.
 
 ### Security
 
+- Trust Host Key? defaults to No: Enter no longer trusts an SSH host key nobody compared.
+- **SMB reconnects with the same identity, proxy and workstation name.**
+  After the connection dropped, the next operation dialled again without
+  credentials (or as the local Kerberos ticket holder), past the
+  SOCKS/HTTP proxy and with the real host name in NTLM; servers a DFS
+  referral named were dialled the same way. Every SMB connection of a
+  session is now made through the profile's proxy, with the masked name and
+  the session's credentials; a closed session never dials again.
 - The agent's protected home places hold inside the sandbox, through
   symlinks and in Windows and macOS spellings, and are mounted read-only;
   more places are protected.
@@ -307,6 +433,74 @@ old code.
   server no longer lose each other's history. `ssh -o ProxyCommand`,
   `git ext::`, `gdb -ex` and `php -d` count as running code for the MCP
   runner check.
+- **Reverse-serve stays in its folder when paths change under it.** The
+  served path was checked as a string and then opened by name: a token
+  holder who swapped a folder of the path for a symlink to a folder
+  outside (MOVE renames links) between the two read, overwrote or deleted
+  files outside the served folder. Every request on the local file system
+  now opens its path beneath the served folder without following any
+  symlink (links that stay inside still work).
+- **Reverse-serve: clients without the token cannot lock token holders
+  out.** 64 idle or keep-alive connections without the token made every
+  token holder wait for a 503, and stalled header lines grew the server to
+  over 400 MB. A 401 now ends its connection, a connection that has not
+  shown the token gives its slot up to a new one (at most 8 per address),
+  the request headers are capped at 64 KiB (431) and must arrive within
+  10 s.
+- **Reverse-serve answers name no local paths and no other host.** Error
+  answers and the folder index no longer show the served folder's local
+  path; a Range number of thousands of digits is answered (416) instead of
+  dropping the connection; a COPY/MOVE Destination on another host is
+  refused with 502 instead of being taken as a path of this server.
+- **A file name can no longer crash or freeze axross through a progress or
+  input dialog.** Their label is made by Qt itself, past the markup guard:
+  an archive member or remote file named `<img src="&#47;dev&#47;zero">x`
+  in "Opening …", "Extracting …" or the Encrypt/Decrypt passphrase prompt
+  made Qt read /dev/zero until the process aborted (a FIFO froze it). The
+  guard now covers QProgressDialog and QInputDialog labels, including
+  `QInputDialog.getText()` and friends, and these dialogs show names as
+  written.
+- **A mail can no longer freeze the window.** Tables nested 21 deep (a
+  467-byte mail) kept the window busy for 25 s, a long word or 4 MB of
+  `&#` for minutes. The safe view keeps at most 6 nested tables and 16
+  nested lists or quotes, ends the tables of a mail whose tables would
+  take too long to lay out (the rest shows as text), gives long words a
+  break opportunity, and caps the HTML after escaping.
+- The Delete question shows names once and as they are: "Tom & Jerry" no
+  longer reads "Tom &amp; Jerry", and bidi overrides and line breaks in a
+  name show as their codes (`\u202e`) instead of hiding the names after it.
+- Protected places cover macOS (LaunchAgents/LaunchDaemons, login items,
+  Application Support/axross, Library/Python) and Windows (Startup folder,
+  PowerShell profiles, %APPDATA%/%LOCALAPPDATA%\axross), the home's
+  folders on PATH (~/bin, ~/.cargo/bin, pipx/uv tool venvs) and its
+  site-packages, `*.pth`/sitecustomize files anywhere, ~/.tmux.conf,
+  ~/.config/mimeapps.list, Emacs and more window-manager start files; XDG
+  folders count even for an MCP server started without the variables
+  (recorded by the GUI, read from the shell/session files).
+- Agent sandbox: a protected place reached through a symlink (GNU stow,
+  chezmoi) is read-only at its real path too; SSH/GnuPG private keys, the
+  ADB key, axross's tokens and keys, keyrings, ~/.netrc and
+  ~/.git-credentials are empty in the sandbox unless their folder is
+  mounted on purpose.
+- MCP: chmod no longer makes a folder holding protected places
+  (~/.config, ~/.local) writable for group or others; a rename or
+  transfer_move that re-points a relative symlink out of the root or at a
+  protected place is refused.
+- Archive extraction (MCP archive_extract, the GUI) creates every folder
+  and file beneath a descriptor of the new target folder, never through a
+  symlink and never over a file that appeared meanwhile; MCP's new-file
+  writers and the packer create their files the same way, beneath the MCP
+  root.
+- The MCP grep tool's regex child has a CPU limit per text and ends with
+  the server (PR_SET_PDEATHSIG on Linux, a kill-on-close job object on
+  Windows); a killed server no longer leaves it backtracking.
+- Packs: the signed SHA256SUMS must name the release and match GitHub's
+  digests; a pack-manifest issue older than the one shipped or ever seen
+  is refused, also on a fresh install and when a self-update brings the
+  packs along; a wheel member with a drive or stream colon is refused.
+- A relative XDG_DATA_HOME / XDG_CACHE_HOME / XDG_STATE_HOME /
+  XDG_RUNTIME_DIR is ignored (XDG spec); packs, the update cache and
+  tokens no longer land under the current directory.
 
 ### New
 
@@ -324,6 +518,51 @@ old code.
   the server.
 
 ### Changed
+
+- **Del moves to the trash, Shift+Del deletes permanently.** Del used to
+  delete for good. Now it moves the selection to the trash wherever the
+  connection has one; read-only protocols and those without rename (Gopher,
+  LDAP, NNTP, PJL, POP3, SLP, SVN, TFTP, WMI) have none, and there Del asks
+  for a permanent delete instead. The permanent-delete question now
+  defaults to **No**, so a reflexive Enter keeps the files. Its text is in
+  the interface language, with plural forms and readable sizes ("Delete 2
+  items permanently? … In total: 2 files, 1.1 MB"), and so are the
+  progress, result and error lines.
+- **The right-click menu is one short column with Open first.** It had about
+  47 entries in two columns, and on a folder the first was "View Selected
+  Media…". Now it has about 20: Open (a folder in the pane, a file in its
+  viewer) and Open With ▸; Copy Path, Cut, Paste, Rename; Copy / Move to
+  Target Pane and Pack ▸; Move to Trash and Delete Permanently; New Folder
+  and New File…; Properties… with Metadata ▸, Analyse ▸, Links ▸ and Tags ▸;
+  Refresh and More ▸; Send to Workspace ▸ at the end. More than three
+  extension entries go into Extensions ▸. Every former entry is still there.
+- **Small screens: the file list gets the room.** A window shorter than
+  700 px keeps the toolbars in one row. An empty Transfers panel is a
+  single line, without an empty table or an idle "0%" bar; it grows back
+  when a transfer starts. On 1024x600 the panes show seven rows instead of
+  four.
+- **German handbook (docs/USAGE_de.md, F1): every UI label it names is the
+  one the German window shows.** Some 280 English labels were replaced, and
+  tests/test_german_handbook_labels.py checks them. The opening section is
+  now written for users, without developer jargon.
+- **German: no English left behind tr().** Now translated: the password and
+  passphrase prompts of Quick Connect, session restore and host terminals;
+  the archive messages; Quick Connect ("Zuletzt verwendet", "Alle Profile",
+  "Connection Manager…" with its shortcut shown the normal way); the local
+  shell entries; the Pack and Extract status lines; the production-countdown
+  texts; and the "Stimme" settings page. A new AST check,
+  tests/test_german_no_untranslated_literals.py, reads ui/ and the
+  user-facing core/ modules. It fails on any text given to a dialog, menu or
+  status line without tr(), including tr(f"…"). The catalogue now uses
+  informal "du" throughout and "…" instead of "...".
+- One action, one name: Copy / Move to Target Pane is "Ins Ziel-Pane
+  kopieren / verschieben" in the Actions menu, the right-click menu, the
+  toolbar and the shortcut list. The Actions menu and Help > Features… have
+  underlined letters. The View menu no longer lists a second "Bookmarks"
+  entry; the sidebar toggle is under Panels. The pane header says "Local",
+  not "Local [LOCAL]". The shortcut list is wider so that the descriptions
+  fit. F2 selects the name without its extension. A tour video that is not
+  available is reported with an information icon, not a warning.
 
 - **German: "Profil", not "Profile".** The English word kept in about 120
   German texts broke the grammar ("ein Profile", "das aktive LLM-Profile");

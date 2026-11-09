@@ -114,7 +114,7 @@ def detect_tmpfs_paths() -> list[TmpfsPath]:
     out: list[TmpfsPath] = []
 
     runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "")
-    if not runtime_dir:
+    if not os.path.isabs(runtime_dir):  # unset, empty or relative: ignored
         try:
             runtime_dir = f"/run/user/{os.getuid()}"
         except AttributeError:  # Windows

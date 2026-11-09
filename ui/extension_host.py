@@ -864,8 +864,15 @@ class ExtensionHost(QObject):
         from ui.icon_provider import icon as _icon
 
         menu.addSeparator()
+        # A few entries stay at the end of the menu; more go into
+        # Extensions ▸, so the right-click menu stays one short column.
+        target = menu
+        if len(entries) > EXTENSION_ENTRIES_INLINE:
+            target = menu.addMenu(_tr("Exten&sions"))
+            target.setToolTipsVisible(True)
+            target.menuAction().setProperty("axCommand", "extensions-menu")
         for api, label, callback, icon_name in entries:
-            action = menu.addAction(_tr(label))
+            action = target.addAction(_tr(label))
             if icon_name:
                 action.setIcon(_icon(icon_name))
                 action.setProperty("axIcon", icon_name)
@@ -874,6 +881,11 @@ class ExtensionHost(QObject):
                 lambda _checked=False, a=api, cb=callback, c=context:
                     self.call(a, cb, c) if self.is_live(a) else None
             )
+
+
+#: Extension entries shown directly in the right-click menu; more than
+#: this go into an Extensions submenu.
+EXTENSION_ENTRIES_INLINE = 3
 
 
 def _tr(text: str) -> str:

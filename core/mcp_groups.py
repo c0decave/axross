@@ -181,6 +181,9 @@ class GroupEnv:
     all_backends: Callable[[], dict] | None = None
     #: The groups this server offers (``--mcp-tools``).
     groups: frozenset = frozenset()
+    #: ``refuse_moved_links(src, dst, backend)`` - a move that re-points a
+    #: relative symlink out of the root or at a protected place is refused.
+    refuse_moved_links: Callable[[str, str, Any], None] | None = None
 
 
 def _tool(
@@ -364,6 +367,16 @@ def _place_new(env: GroupEnv, backend, path: str, data: bytes, *, ext: str | Non
         stem, ext = _split_name(name)
     for n in range(1, 10_000):
         candidate = env.write_path(backend.join(folder, _free_name(stem, ext, n)), backend)
+        if hasattr(backend, "create_new"):
+            # core.confined_fs: created beneath the root's descriptor - a
+            # folder of the path swapped for a symlink meanwhile is refused.
+            try:
+                fh = backend.create_new(candidate, 0o600)
+            except FileExistsError:
+                continue
+            with fh:
+                fh.write(data)
+            return candidate
         if _is_local(backend):
             flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
             try:
@@ -1378,7 +1391,10 @@ def _build_archive(env: GroupEnv) -> list:
                     ctx.progress(float(done), float(total), f"extracted {name}")
 
             try:
-                files = A.extract(path, target, progress=progress)
+                # Beneath the confined backend's descriptors (core.archive._Sink):
+                # a folder swapped for a symlink while it extracts is refused.
+                files = A.extract(path, target, progress=progress,
+                                  parent_dir=getattr(backend, "parent_dir", None))
             except A.ExtractCancelled as exc:
                 raise CancelledError("request cancelled by client") from exc
             out = {"path": target, "files": int(files)}
@@ -2136,6 +2152,8 @@ def _build_transfer(env: GroupEnv) -> list:
                 raise ValueError("transfer_move moves one file; copy a folder with transfer_copy")
             if db.exists(dst):
                 raise FileExistsError(f"destination exists: {dst}")
+            if sb is db and env.refuse_moved_links is not None:
+                env.refuse_moved_links(src, dst, sb)  # a link is moved as the link
             ctx.check_cancel()
             _ensure_dir(db, db.parent(dst))
             moved = S.move(sb, src, db, dst, overwrite=False)

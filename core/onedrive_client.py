@@ -21,7 +21,7 @@ from urllib.parse import quote
 
 from core.answer_fields import as_dict, as_list, as_size, as_str, as_utc_datetime
 from core.append_helpers import read_existing_for_append
-from core import cloud_http
+from core import cloud_http, transfer_hooks
 from core.backend import SessionLifecycle
 from core.desktop_open import install_clean_webbrowser
 from core.path_policy import refuse_folder_path
@@ -89,6 +89,11 @@ class _SpooledWriter:
         self._remote_path = remote_path
         self._buf = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
         self._closed = False
+        # The running transfer's Cancel and progress (core.transfer_hooks):
+        # the upload happens in close(), after the copy loop.
+        self._hooks = transfer_hooks.current()
+        if self._hooks is not None:
+            self._hooks.expect_upload()
 
     def write(self, data: bytes) -> int:
         return self._buf.write(data)
@@ -106,13 +111,20 @@ class _SpooledWriter:
         if self._closed:
             return
         self._closed = True
+        hooks = self._hooks
         try:
             size = self._buf.seek(0, io.SEEK_END)
             self._buf.seek(0)
-            if size <= _SIMPLE_UPLOAD_MAX:
-                self._session._upload_content(self._remote_path, self._buf.read())
-            else:
-                self._session._upload_in_session(self._remote_path, self._buf, size)
+            with transfer_hooks.bound(hooks):
+                if size <= _SIMPLE_UPLOAD_MAX:
+                    if hooks is not None and hooks.cancelled():
+                        raise transfer_hooks.UploadCancelled(transfer_hooks.CANCELLED)
+                    self._session._upload_content(self._remote_path, self._buf.read())
+                    if hooks is not None:
+                        hooks.sent(size, size, check=False)
+                else:
+                    self._session._upload_in_session(self._remote_path, self._buf, size,
+                                                     hooks=hooks)
         finally:
             self._buf.close()
 
@@ -411,6 +423,9 @@ class OneDriveSession(SessionLifecycle):
         send = getattr(self._http, method.lower())
         refreshed = False
         attempt = 0
+        #: A try whose fate is unknown went before: a 5xx (a gateway may
+        #: answer one after the backend did the work) or a lost answer.
+        uncertain = False
         if auth:
             self._ensure_token()
         while True:
@@ -423,6 +438,7 @@ class OneDriveSession(SessionLifecycle):
             except (requests.ConnectionError, requests.Timeout) as exc:
                 if idempotent and attempt < cloud_http.ATTEMPTS:
                     log.debug("Graph %s %s: %s; retrying", method, url, exc)
+                    uncertain = True
                     cloud_http.pause(attempt)
                     continue
                 err = errno.ETIMEDOUT if isinstance(exc, requests.Timeout) else errno.ECONNRESET
@@ -440,8 +456,15 @@ class OneDriveSession(SessionLifecycle):
                 retry_after = cloud_http.retry_after_seconds(_header(resp, "Retry-After"))
                 resp.close()
                 log.debug("Graph %s %s answered %s; retry %d", method, url, status, attempt)
+                uncertain = uncertain or status != 429  # 429: not processed
                 cloud_http.pause(attempt, retry_after)
                 continue
+            if status in (404, 410) and method == "DELETE" and uncertain:
+                # The DELETE was resent after a try whose answer was lost or
+                # a 5xx: "not found" now is that first try's work - the
+                # item is gone, as asked.
+                log.info("Graph DELETE %s: gone on the retry (the first try did it)", url)
+                return resp
             if status >= 400:
                 try:
                     detail = resp.text[:500]
@@ -560,7 +583,8 @@ class OneDriveSession(SessionLifecycle):
         url = f"{GRAPH_BASE}{prefix}/root:{self._escape_path(path)}:/content"
         self._graph_put_bytes(url, data)
 
-    def _upload_in_session(self, path: str, fh: IO[bytes], size: int) -> None:
+    def _upload_in_session(self, path: str, fh: IO[bytes], size: int, *,
+                           hooks: transfer_hooks.TransferHooks | None = None) -> None:
         """createUploadSession, then PUT the bytes in Content-Range chunks.
 
         The upload URL is pre-authenticated: it gets no bearer token, and
@@ -569,8 +593,19 @@ class OneDriveSession(SessionLifecycle):
         the pause the session is asked where it stands
         (``nextExpectedRanges``) and the upload resumes there - one hiccup
         no longer threw away what went up before it.
+
+        Graph completes the item with the last fragment and the upload URL
+        is gone after it (404). When the answer to the last fragment was
+        lost, the resend meets that 404: the item then decides - the size
+        of the upload under a new version tag is the upload, done.
+
+        *hooks* (core.transfer_hooks): Cancel is checked between chunks
+        and the bytes on the server are reported. A cancelled upload
+        deletes its session - nothing of it is committed, the item stays
+        as it was - and raises UploadCancelled.
         """
         prefix = self._drive_prefix()
+        before = self._content_tag(path)
         url = f"{GRAPH_BASE}{prefix}/root:{self._escape_path(path)}:/createUploadSession"
         answer = self._graph_post(
             url, {"item": {"@microsoft.graph.conflictBehavior": "replace"}}
@@ -578,9 +613,20 @@ class OneDriveSession(SessionLifecycle):
         upload_url = as_str(answer.get("uploadUrl"))
         if not upload_url.lower().startswith("https://"):
             raise OSError(errno.EPROTO, f"OneDrive upload of {path}: the upload URL is not https")
+        try:
+            self._send_session_chunks(path, fh, size, upload_url, before, hooks)
+        except InterruptedError:
+            self._cancel_upload_session(upload_url, path)
+            raise transfer_hooks.UploadCancelled(transfer_hooks.CANCELLED) from None
+
+    def _send_session_chunks(self, path: str, fh: IO[bytes], size: int, upload_url: str,
+                             before: str | None, hooks) -> None:
         offset = 0
         failures = 0
+        final_sent = False
         while offset < size:
+            if hooks is not None:
+                hooks.check()
             fh.seek(offset)
             chunk = fh.read(_UPLOAD_CHUNK)
             if not chunk:
@@ -590,6 +636,7 @@ class OneDriveSession(SessionLifecycle):
                 "Content-Length": str(len(chunk)),
                 "Content-Range": f"bytes {offset}-{offset + len(chunk) - 1}/{size}",
             }
+            final_sent = final_sent or offset + len(chunk) >= size
             retry_after = None
             try:
                 resp = self._http.put(upload_url, headers=headers, data=chunk,
@@ -601,9 +648,19 @@ class OneDriveSession(SessionLifecycle):
                 if status < 400:
                     offset += len(chunk)
                     failures = 0
+                    if hooks is not None:
+                        # The last fragment committed the item: too late
+                        # for a Cancel to change anything.
+                        hooks.sent(offset, size, check=offset < size)
                     continue
                 detail = resp.text[:500]
                 retry_after = cloud_http.retry_after_seconds(_header(resp, "Retry-After"))
+            if status in (404, 410) and final_sent and self._upload_landed(path, size, before):
+                log.info("OneDrive upload of %s: the answer to the last fragment was lost; "
+                         "the item is complete", path)
+                if hooks is not None:
+                    hooks.sent(size, size, check=False)
+                return
             failures += 1
             if (status is not None and status not in cloud_http.RETRYABLE_STATUSES) or \
                     failures >= cloud_http.ATTEMPTS:
@@ -615,6 +672,49 @@ class OneDriveSession(SessionLifecycle):
                       offset, status)
             cloud_http.pause(failures, retry_after)
             offset = self._session_offset(upload_url, offset)
+
+    #: _content_tag of a path with no item.
+    _NO_ITEM = ""
+
+    def _content_tag(self, path: str) -> str | None:
+        """The version tag (cTag, else eTag) of the item at *path* before
+        an upload: _NO_ITEM when there is no item, None when that is not
+        known (the lookup failed, the item carries no tag)."""
+        try:
+            data = self._graph_get(self._item_path_url(path))
+        except FileNotFoundError:
+            return self._NO_ITEM
+        except OSError:
+            return None
+        return as_str(data.get("cTag")) or as_str(data.get("eTag")) or None
+
+    def _upload_landed(self, path: str, size: int, before: str | None) -> bool:
+        """True when the item at *path* is this upload: a file of *size*
+        bytes where there was none, or under a version tag the item did
+        not have before the upload began. Unknown before: never."""
+        if before is None:
+            return False
+        try:
+            data = self._graph_get(self._item_path_url(path))
+        except OSError:
+            return False
+        if "file" not in data or as_size(data.get("size")) != size:
+            return False
+        if before == self._NO_ITEM:
+            return True
+        tag = as_str(data.get("cTag")) or as_str(data.get("eTag"))
+        return bool(tag) and tag != before
+
+    def _cancel_upload_session(self, upload_url: str, path: str) -> None:
+        """DELETE the upload session of a cancelled upload: Graph drops
+        the fragments it holds and commits nothing. Best effort - an
+        abandoned session expires on its own."""
+        try:
+            self._http.delete(upload_url, timeout=GRAPH_TIMEOUT).close()
+        except Exception as exc:  # noqa: BLE001 - expires on its own
+            log.debug("OneDrive upload of %s: could not delete the cancelled session: %s",
+                      path, exc)
+        log.info("OneDrive upload of %s cancelled; its upload session was deleted", path)
 
     def _session_offset(self, upload_url: str, fallback: int) -> int:
         """Where an upload session wants the next byte: the start of its

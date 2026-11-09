@@ -50,7 +50,8 @@ def release(tmp_path):
     manifest = json.dumps(P.build_manifest("9.9.9", "linux-x86_64", wheels, units)).encode()
     files = dict(blobs)
     files[P.manifest_name("9.9.9")] = manifest
-    sums = "".join(f"{hashlib.sha256(d).hexdigest()}  {n}\n" for n, d in sorted(files.items())).encode()
+    sums = ("# axross-release 9.9.9\n"  # the signed release line (core.packs checks it)
+            + "".join(f"{hashlib.sha256(d).hexdigest()}  {n}\n" for n, d in sorted(files.items()))).encode()
     files["SHA256SUMS"] = sums
     files["SHA256SUMS.sig"] = key.sign(sums)
     state = {"files": files, "pub": pub, "fetched": []}

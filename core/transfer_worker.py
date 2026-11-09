@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from core import transfer_hooks
 from core.path_policy import hidden_sibling_name, safe_join
 
 if TYPE_CHECKING:
@@ -437,6 +438,138 @@ class TransferJob:
         return min(100.0, (self.transferred_bytes / self.total_bytes) * 100.0)
 
 
+def _is_local(backend) -> bool:
+    """A backend on this machine's disk: copying from or to it runs at
+    disk speed, it is no network leg of a job."""
+    from core.local_fs import LocalFS
+
+    return isinstance(backend, LocalFS)
+
+
+class _JobProgress:
+    """The progress callback of one job, counting the network phases.
+
+    A job may move its bytes over the network more than once: a reader
+    that downloads in ``open_read`` (Drive, S3 ...), the copy loop, a
+    writer that uploads in ``close()`` (OneDrive, FTP ...). Each phase
+    reports 0..total bytes of its own (core.transfer_hooks); the bar
+    shows their sum over the number of network phases, so it reaches 100 %
+    when the last byte is on the destination - not when a spooling writer
+    has buffered everything at disk speed. A copy loop between a local or
+    already downloaded source and a local or spooling destination is no
+    network leg and moves the bar not at all (it still checks Cancel).
+    Speed and ETA follow the bar, i.e. the job's own throughput.
+
+    Called as ``progress(transferred, total)`` by the copy loop; ``hooks``
+    is what the backends see.
+    """
+
+    def __init__(self, job: "TransferJob", report) -> None:
+        self._job = job
+        self._report = report  # report(done, total): the bar, the speed
+        self.hooks = transfer_hooks.TransferHooks(job.cancel_event, self._network)
+        self._finished = 0  # network phases done
+        self._phases = 1  # network phases in all (known once both ends are open)
+        self._copy_weight = 1
+        self._copy_started = False
+        self._shown = 0
+        self._shown_total = -1
+
+    def _show(self, current: int, total: int) -> None:
+        total = max(int(total or 0), 0)
+        phases = max(self._phases, 1)
+        done = (self._finished * total + min(max(current, 0), total)) // phases \
+            if total else 0
+        # Never backwards inside a job: a phase that starts over (an
+        # upload resumed where the server says it stands) shows no dip.
+        if total == self._shown_total:
+            done = max(done, self._shown)
+        self._shown, self._shown_total = done, total
+        self._report(done, total)
+
+    def _network(self, kind: str, done: int, total: int | None) -> None:
+        job_total = self._job.total_bytes
+        if kind == "download" and not self._copy_started:
+            # open_read downloads before the copy loop: one leg, and one
+            # more after it unless the destination is this machine.
+            self._phases = 1 + (0 if _is_local(self._job.dest_backend) else 1)
+        if total and job_total <= 0:
+            job_total = total
+        if total and total != job_total and job_total > 0:
+            done = done * job_total // total
+        try:
+            self._show(done, job_total)
+        except InterruptedError:
+            # The bar only: whether a Cancel stops the backend is decided by
+            # the hooks (TransferHooks.sent checks it unless the upload is
+            # already committed).
+            pass
+
+    def copy_starts(self) -> None:
+        """Both ends are open: how many network legs the job has is known."""
+        if self._copy_started:
+            return
+        self._copy_started = True
+        job, hooks = self._job, self.hooks
+        if hooks.downloaded:
+            self._finished = 1
+        source_done = hooks.downloaded or _is_local(job.source_backend)
+        dest_done = hooks.upload_expected or _is_local(job.dest_backend)
+        upload = 1 if hooks.upload_expected else 0
+        self._copy_weight = 0 if source_done and dest_done and (self._finished or upload) else 1
+        self._phases = max(self._finished + self._copy_weight + upload, 1)
+
+    def copy_ends(self) -> None:
+        """The copy loop is through; what follows is the writer's upload."""
+        if self._copy_started:
+            self._finished += self._copy_weight
+            self._copy_weight = 0
+
+    def __call__(self, transferred: int, total: int) -> None:
+        if self._copy_weight or not self._copy_started:
+            self._show(transferred, total)
+        else:
+            self.hooks.check()
+            self._show(0, total)
+
+
+def _hooks_of(job: "TransferJob", progress_callback) -> transfer_hooks.TransferHooks:
+    """The hooks the backends get for *job*: those of its _JobProgress, or
+    Cancel alone for a caller that passed a plain callback."""
+    hooks = getattr(progress_callback, "hooks", None)
+    if isinstance(hooks, transfer_hooks.TransferHooks):
+        return hooks
+    return transfer_hooks.TransferHooks(job.cancel_event)
+
+
+def _copy_starts(progress_callback) -> None:
+    starts = getattr(progress_callback, "copy_starts", None)
+    if starts is not None:
+        starts()
+
+
+def _copy_ends(progress_callback) -> None:
+    ends = getattr(progress_callback, "copy_ends", None)
+    if ends is not None:
+        ends()
+
+
+def _was_cancelled(job: "TransferJob", exc: BaseException) -> bool:
+    """*exc* is the Cancel of *job*, re-raised under another type by a
+    library on the way out (requests wraps an InterruptedError raised in
+    the middle of a request body as ConnectionError)."""
+    if not job.cancel_event.is_set():
+        return False
+    seen = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        if isinstance(cur, InterruptedError):
+            return True
+        seen.add(id(cur))
+        cur = cur.__cause__ or cur.__context__
+    return False
+
+
 def _without_traceback(exc: BaseException) -> BaseException:
     """*exc* (and the exceptions it was raised from) without their
     tracebacks: a failed job keeps its exception for the Transfers panel,
@@ -616,7 +749,7 @@ class TransferWorker(QObject):
                 last_sent[0] = (done, total)
                 self.progress.emit(job.job_id, done, total)
 
-        def progress_callback(transferred: int, total: int) -> None:
+        def report_progress(transferred: int, total: int) -> None:
             nonlocal last_progress_time
 
             if job.cancel_event.is_set():
@@ -646,6 +779,10 @@ class TransferWorker(QObject):
                 if job.speed != last_sent[1]:
                     last_sent[1] = job.speed
                     self.speed_update.emit(job.job_id, job.speed)
+
+        # The copy loop calls it; the backends see its hooks (network
+        # phases of spooling readers and writers, Cancel during them).
+        progress_callback = _JobProgress(job, report_progress)
 
         try:
             renamed = self._move_by_rename(job)
@@ -724,19 +861,25 @@ class TransferWorker(QObject):
             return
 
         except InterruptedError:
-            job.error_message = "Cancelled"
-            self._finish_journal(job, status="cancelled", error="Cancelled")
-            job.status = TransferStatus.CANCELLED
-            self.job_error.emit(job.job_id, "Cancelled")
-            log.info("Transfer cancelled: %s", job.filename)
+            self._report_job_cancelled(job)
 
         except Exception as e:
+            if _was_cancelled(job, e):
+                self._report_job_cancelled(job)
+                return
             job.error_message = str(e)
             job.error = _without_traceback(e)
             self._finish_journal(job, status="error", error=str(e))
             job.status = TransferStatus.ERROR
             self.job_error.emit(job.job_id, str(e))
             log.error("Transfer error for %s: %s", job.filename, e)
+
+    def _report_job_cancelled(self, job: TransferJob) -> None:
+        job.error_message = "Cancelled"
+        self._finish_journal(job, status="cancelled", error="Cancelled")
+        job.status = TransferStatus.CANCELLED
+        self.job_error.emit(job.job_id, "Cancelled")
+        log.info("Transfer cancelled: %s", job.filename)
 
     @staticmethod
     def _move_by_rename(job: TransferJob) -> int | None:
@@ -1043,7 +1186,10 @@ class TransferWorker(QObject):
 
         chunk_size = 1 << 20  # 1 MiB
         hasher = hashlib.sha256()
-        with backend.open_read(path) as fh:
+        # A reader that downloads in open_read checks Cancel meanwhile.
+        with transfer_hooks.active(transfer_hooks.TransferHooks(cancel_event)):
+            handle = backend.open_read(path)
+        with handle as fh:
             while True:
                 if cancel_event.is_set():
                     raise InterruptedError("transfer cancelled")
@@ -1227,9 +1373,15 @@ class TransferWorker(QObject):
                     # holds the bytes; a short copy restores them.
                     size_before = source_size(source_backend, job.source_path)
             try:
-                with source_backend.open_read(job.source_path) as src:
+                # The hooks for the backends: a reader that downloads in
+                # open_read and a writer that uploads in close() check
+                # Cancel and report their network bytes. Not around the
+                # rollback below: that must not be cancelled itself.
+                with transfer_hooks.active(_hooks_of(job, progress_callback)), \
+                        source_backend.open_read(job.source_path) as src:
                     dst = dest_backend.open_write(job.dest_path, append=False)
                     opened = True
+                    _copy_starts(progress_callback)
                     streamed = _StreamedHash(job, 0)
                     try:
                         while True:
@@ -1244,8 +1396,17 @@ class TransferWorker(QObject):
                             progress_callback(transferred, job.total_bytes)
                         completed = True
                         streamed.finish()
+                        _copy_ends(progress_callback)
                     finally:
-                        _discard_or_close_writer(dst, completed=completed)
+                        try:
+                            _discard_or_close_writer(dst, completed=completed)
+                        except transfer_hooks.UploadCancelled:
+                            # Cancelled before the writer committed a byte:
+                            # the destination is as it was, nothing to roll
+                            # back (a snapshot restore would upload the old
+                            # file again).
+                            completed, opened = False, False
+                            raise
                 if size_before is not None and transferred < size_before:
                     raise OSError(
                         f"only {transferred} of {size_before} bytes of {job.source_path} "
@@ -1430,7 +1591,10 @@ class TransferWorker(QObject):
                 dest_backend.remove(temp_path)
                 resume_offset = 0
 
-            with source_backend.open_read(job.source_path) as src:
+            hooks = _hooks_of(job, progress_callback)
+            with transfer_hooks.active(hooks):
+                source_handle = source_backend.open_read(job.source_path)
+            with source_handle as src:
                 if resume_offset > 0 and not self._partial_matches_source(
                     src, dest_backend, temp_path, resume_offset
                 ):
@@ -1455,9 +1619,10 @@ class TransferWorker(QObject):
                     )
                     self._refuse_aliased_source(job, temp_path)
                     self._verify_integrity(job, temp_path)
-                    self._check_existing_destination(job)
+                    free = self._check_existing_destination(job) is False
                     self._apply_source_mode(job, temp_path)
-                    self._finalize_temp_destination(dest_backend, temp_path, job.dest_path)
+                    self._finalize_temp_destination(dest_backend, temp_path, job.dest_path,
+                                                    no_replace=free)
                     self._apply_source_mtime(job)
                     cleanup_temp = False
                     return transferred
@@ -1477,7 +1642,9 @@ class TransferWorker(QObject):
                 mode_set = False
                 if resume_offset == 0:
                     mode_set = self._precreate_private_temp(job, temp_path, mode)
-                dst = dest_backend.open_write(temp_path, append=resume_offset > 0)
+                with transfer_hooks.active(hooks):
+                    dst = dest_backend.open_write(temp_path, append=resume_offset > 0)
+                _copy_starts(progress_callback)
 
                 streamed = _StreamedHash(job, resume_offset)
                 completed = False
@@ -1497,9 +1664,13 @@ class TransferWorker(QObject):
                         progress_callback(transferred, job.total_bytes)
                     streamed.finish()
                     completed = True
+                    _copy_ends(progress_callback)
                 finally:
                     if completed or real_append:
-                        dst.close()  # an unfinished partial stays for a resume
+                        # An unfinished partial stays for a resume. A
+                        # spooling writer uploads now, under the hooks.
+                        with transfer_hooks.active(hooks):
+                            dst.close()
                     else:
                         # A spooling writer (Azure Files) uploads at close:
                         # a cancelled transfer uploaded its partial, for
@@ -1511,18 +1682,22 @@ class TransferWorker(QObject):
             # after the rename, a mismatch left the corrupt copy where the
             # original had been.
             self._verify_integrity(job, temp_path)
-            self._check_existing_destination(job)
+            # "fail" / "newer" onto a free name: the rename must not replace
+            # a file that appears after this look (a check and then rename()
+            # replaced it on LocalFS and SFTP).
+            free = self._check_existing_destination(job) is False
             # Mode and time in one request where the backend can (SFTP: one
             # SETSTAT on the temp file, whose time the rename keeps) - sent
             # together with the rename where it can do that too.
             timed, renamed = self._rename_with_attributes(
-                job, temp_path, None if mode_set else mode)
+                job, temp_path, None if mode_set else mode, no_replace=free)
             if not timed and not renamed:
                 timed = self._apply_source_attributes(job, temp_path, None if mode_set else mode)
             if not timed and not mode_set:
                 self._apply_source_mode(job, temp_path if not renamed else job.dest_path, mode)
             if not renamed:
-                self._finalize_temp_destination(dest_backend, temp_path, job.dest_path)
+                self._finalize_temp_destination(dest_backend, temp_path, job.dest_path,
+                                                no_replace=free)
             if not timed:
                 self._apply_source_mtime(job)
 
@@ -1585,7 +1760,8 @@ class TransferWorker(QObject):
 
     @staticmethod
     def _rename_with_attributes(job: TransferJob, temp_path: str,
-                                mode: int | None) -> tuple[bool, bool]:
+                                mode: int | None, *,
+                                no_replace: bool = False) -> tuple[bool, bool]:
         """Mode, time and the rename onto the destination in one round trip
         where the backend offers ``rename_with_attributes`` (SFTP); called
         after the integrity check and the last look at the destination,
@@ -1597,8 +1773,13 @@ class TransferWorker(QObject):
         if not job.source_mtime or not callable(combined):
             return False, False
         try:
-            timed = bool(combined(temp_path, job.dest_path, mode=mode, mtime=job.source_mtime))
-        except (OSError, NotImplementedError, ValueError) as exc:
+            if no_replace:
+                timed = bool(combined(temp_path, job.dest_path, mode=mode,
+                                      mtime=job.source_mtime, no_replace=True))
+            else:
+                timed = bool(combined(temp_path, job.dest_path, mode=mode,
+                                      mtime=job.source_mtime))
+        except (OSError, NotImplementedError, ValueError, TypeError) as exc:
             log.debug("rename of %s with its attributes failed: %s", temp_path, exc)
             return False, False
         return timed, True
@@ -1805,7 +1986,8 @@ class TransferWorker(QObject):
         return job.temp_path
 
     @staticmethod
-    def _finalize_temp_destination(dest_backend, temp_path: str, dest_path: str) -> None:
+    def _finalize_temp_destination(dest_backend, temp_path: str, dest_path: str, *,
+                                   no_replace: bool = False) -> None:
         from core.server_ops import _finalize_temp_destination
 
-        _finalize_temp_destination(dest_backend, temp_path, dest_path)
+        _finalize_temp_destination(dest_backend, temp_path, dest_path, no_replace=no_replace)

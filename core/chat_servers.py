@@ -310,8 +310,9 @@ def bundled_path(protocol: str) -> Path:
 
 
 def cache_dir() -> Path:
-    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
-    return Path(base) / "axross" / "chat-servers"
+    from core.xdg_dirs import base_dir
+
+    return base_dir("XDG_CACHE_HOME") / "axross" / "chat-servers"  # a relative one is ignored
 
 
 def _read_file(path: Path, protocol: str, origin: str) -> ServerList:

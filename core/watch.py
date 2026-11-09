@@ -287,6 +287,8 @@ def _local_snapshot(path: str, *, log_errors: bool = True) -> _Snapshot | None:
             for entry in it:
                 try:
                     st = entry.stat(follow_symlinks=False)
+                except FileNotFoundError:
+                    continue  # gone while listed: as list_dir, left out
                 except OSError as exc:
                     _local_log.warning("Cannot stat %s: %s", entry.path, exc)  # as list_dir
                     # As list_dir: kept, with the placeholder's attributes.

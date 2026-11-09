@@ -23,7 +23,12 @@ brings them to it - through :func:`signed_manifest` and the same blob
 checks as :func:`install`, there is no other path. Each issue is numbered
 in the signed ``SHA256SUMS`` (:data:`PACKS_ISSUE_PREFIX`); an issue older
 than the one installed is refused, so an earlier signed issue uploaded
-again cannot roll a fixed pack back.
+again cannot roll a fixed pack back - and, where nothing is installed yet
+(a fresh install, a self-update bringing the packs to a new version), one
+older than :data:`SHIPPED_ISSUES` names or than the highest issue ever
+seen signed here (:data:`ISSUES_SEEN`). The signed ``SHA256SUMS`` must name
+the release (its ``# axross-release`` line) and match GitHub's digests, as
+for the binary (core.self_update).
 
 The running session has its blob folders on sys.path: nothing it may
 import from is deleted or replaced while it runs. A blob re-issued under
@@ -73,8 +78,62 @@ def manifest_name(version: str) -> str:
 
 
 def packs_root() -> Path:
-    base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    # A relative XDG_DATA_HOME is invalid (XDG Base Directory spec: ignore
+    # it) - else the packs root, and with it sys.path, would follow the
+    # current directory.
+    base = os.environ.get("XDG_DATA_HOME") or ""
+    if not os.path.isabs(base):
+        base = str(Path.home() / ".local" / "share")
     return Path(base) / "axross" / "packs"
+
+
+#: The pack-manifest issue a release had reached when this build was made
+#: (version -> issue): the floor for a fresh install, where no
+#: ``installed.json`` remembers an issue. A re-issue that fixes a pack adds
+#: its number here for the next build.
+SHIPPED_ISSUES: dict[str, int] = {}
+#: Beside the version folders: version -> the highest issue of its manifest
+#: ever seen signed here. Survives removing the units and :func:`prune`.
+ISSUES_SEEN = "issues-seen.json"
+
+
+def _issues_seen(root: Path) -> dict:
+    try:
+        data = json.loads((root / ISSUES_SEEN).read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def issue_floor(version: str, root: Path | None = None) -> int:
+    """The lowest pack-manifest issue of *version* still accepted: the one
+    this build shipped with or the highest one seen signed here."""
+    seen = _issues_seen(root or packs_root()).get(version)
+    seen = seen if isinstance(seen, int) and not isinstance(seen, bool) and seen >= 0 else 0
+    return max(int(SHIPPED_ISSUES.get(version, 0)), seen)
+
+
+def _refuse_below_floor(version: str, issue: int, root: Path) -> None:
+    floor = issue_floor(version, root)
+    if issue < floor:
+        raise PackError(f"the pack manifest of {version} is issue {issue}, older than issue "
+                        f"{floor} already published - refused (an earlier signed issue, "
+                        "re-uploaded)")
+
+
+def _record_issue(version: str, issue: int, root: Path) -> None:
+    """Remember that issue *issue* of *version* was seen signed."""
+    seen = _issues_seen(root)
+    if seen.get(version) == issue or issue_floor(version, root) > issue:
+        return
+    seen[version] = issue
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        tmp = root / f".{ISSUES_SEEN}.tmp"
+        tmp.write_text(json.dumps(seen, indent=1, sort_keys=True), encoding="utf-8")
+        os.replace(tmp, root / ISSUES_SEEN)
+    except OSError:
+        pass
 
 
 # --- the build side -----------------------------------------------------------------------
@@ -155,7 +214,10 @@ def _unpack(blob: Path, dest: Path) -> None:
             for info in z.infolist():
                 name = info.filename
                 parts = [p for p in name.replace("\\", "/").split("/") if p not in ("", ".")]
-                if not parts or ".." in parts or name.startswith("/") or ":" in parts[0]:
+                # A colon anywhere: "pkg/C:evil.py" joins to a drive path on
+                # Windows (and "name:stream" names an NTFS stream).
+                if not parts or ".." in parts or name.startswith("/") \
+                        or any(":" in p for p in parts):
                     raise PackError(f"{blob.name}: member {name!r} leaves its folder")
                 if (info.external_attr >> 16) & 0o170000 == 0o120000:
                     raise PackError(f"{blob.name}: member {name!r} is a link")
@@ -245,9 +307,18 @@ def _signed(release, fetch: Fetcher, *, verify=None) -> tuple[dict, dict, int]:
     if sums_asset is None or sig_asset is None:
         raise PackError(f"release {release.version} has no signed {SU.SUMS_NAME}")
     sums = fetch(sums_asset.url, SU.MAX_SUMS_BYTES)
+    _same_as_api_digest(sums_asset, sums)
     signature = fetch(sig_asset.url, SU.SIG_BYTES)
+    _same_as_api_digest(sig_asset, signature)
     (verify or SU.verify_signature)(sums, signature)
     text = sums.decode("utf-8", "replace")
+    # The signature covers the release line: without it, or naming another
+    # version, the signed SHA256SUMS of another release (its manifest
+    # issue included) is served under this tag - as core.self_update refuses.
+    signed_for = SU.release_of_sums(text)
+    if signed_for != release.version:
+        raise PackError(f"the signed {SU.SUMS_NAME} is for axross {signed_for or '(no version)'}, "
+                        f"the release says {release.version} - refused")
     issue = packs_issue_of_sums(text)
     entries = SU.parse_sums(text)
     name = manifest_name(release.version)
@@ -255,12 +326,21 @@ def _signed(release, fetch: Fetcher, *, verify=None) -> tuple[dict, dict, int]:
     if asset is None or name not in entries:
         raise PackError(f"release {release.version} has no pack manifest in its {SU.SUMS_NAME}")
     data = fetch(asset.url, MAX_MANIFEST)
+    _same_as_api_digest(asset, data)
     if hashlib.sha256(data).hexdigest() != entries[name]:
         raise PackError(f"{name} differs from the signed {SU.SUMS_NAME} - refused")
     manifest = parse_manifest(data)
     if manifest.get("version") != release.version:
         raise PackError(f"{name} is for version {manifest.get('version')}, not {release.version}")
     return manifest, entries, issue
+
+
+def _same_as_api_digest(asset, data: bytes) -> None:
+    """PackError when GitHub's API names another SHA-256 for *asset* than
+    the bytes fetched (as core.self_update checks it)."""
+    digest = getattr(asset, "digest", "") or ""
+    if digest and hashlib.sha256(data).hexdigest() != digest:
+        raise PackError(f"{asset.name} differs from GitHub's digest of it - refused")
 
 
 def install(release, units: list[str], *, fetch: Fetcher | None = None, root: Path | None = None,
@@ -329,6 +409,8 @@ def _install_checked(release, manifest: dict, entries: dict, units: list[str], f
     manifest of an *issue* older than the one installed is refused."""
     folder = root / release.version
     _refuse_rollback(_state(folder), issue, release.version, manifest)
+    _refuse_below_floor(release.version, issue, root)
+    _record_issue(release.version, issue, root)
     folder.mkdir(parents=True, exist_ok=True)
     os.chmod(folder, 0o700)
     wanted = set()
@@ -539,6 +621,8 @@ def check_reissued(version: str, *, fetch: Fetcher | None = None, root: Path | N
     release = release_for(version, fetch=fetch)
     manifest, _, issue = _signed(release, fetch, verify=verify)
     _refuse_rollback(_state((root or packs_root()) / version), issue, version, manifest)
+    _refuse_below_floor(version, issue, root or packs_root())
+    _record_issue(version, issue, root or packs_root())
     return release, stale_units(version, manifest, root)
 
 

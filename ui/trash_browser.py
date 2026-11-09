@@ -56,7 +56,8 @@ class TrashBrowserDialog(QDialog):
         super().__init__(parent)
         set_window_icon(self, "trash")
         self._backend = backend
-        self.setWindowTitle(f"Trash — {getattr(backend, 'name', type(backend).__name__)}")
+        self.setWindowTitle(tr("Trash — {name}").format(
+            name=getattr(backend, "name", type(backend).__name__)))
         self.resize(720, 420)
         self._build_ui()
         self._reload()
@@ -301,6 +302,7 @@ class TrashBrowserDialog(QDialog):
             tr_n(len(entries), "Delete {n} entry from trash permanently? This cannot be undone.",
                  "Delete {n} entries from trash permanently? This cannot be undone."),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
@@ -334,6 +336,7 @@ class TrashBrowserDialog(QDialog):
             tr("Empty Trash"),
             tr("Permanently delete ALL entries from trash?\nThis cannot be undone."),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
             return

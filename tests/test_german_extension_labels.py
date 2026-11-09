@@ -106,7 +106,15 @@ class _Pane:
 
 
 def _menu_texts(menu: QMenu) -> list[str]:
-    return [a.text() for a in menu.actions() if not a.isSeparator()]
+    """The entries of *menu* and of its submenus (more than three extension
+    entries sit in Extensions ▸)."""
+    texts = []
+    for action in menu.actions():
+        if not action.isSeparator():
+            texts.append(action.text())
+        if action.menu() is not None:
+            texts += _menu_texts(action.menu())
+    return texts
 
 
 def test_happy_menu_context_and_panel_labels_show_in_german(german_host, tmp_path):

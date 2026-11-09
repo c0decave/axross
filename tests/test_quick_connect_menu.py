@@ -201,7 +201,7 @@ def test_sad_a_right_click_on_connection_manager_opens_no_profile_menu(
     menu = _menu(window)
     opened = []
     monkeypatch.setattr(menu, "exec_profile_menu", lambda sub, _pos: opened.append(sub))
-    manager = next(a for a in menu.actions() if a.text().startswith("Connection Manager"))
+    manager = next(a for a in menu.actions() if a.text().replace("&", "").startswith("Connection Manager"))
     _right_click(menu, manager)
     pump()
     assert opened == [] and calls == []
@@ -252,6 +252,6 @@ def test_edge_the_keyboard_menu_key_opens_the_profile_menu(window, calls, monkey
 
 def test_edge_connection_manager_entry_still_works(window, calls) -> None:
     menu = _menu(window)
-    manager = next(a for a in menu.actions() if a.text().startswith("Connection Manager"))
+    manager = next(a for a in menu.actions() if a.text().replace("&", "").startswith("Connection Manager"))
     manager.trigger()
     assert calls and calls[0][0] == "edit"

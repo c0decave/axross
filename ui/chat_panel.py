@@ -1170,7 +1170,9 @@ class AccountsDialog(QDialog):
         client = self.panel.clients.get(account_id)
         answer = QMessageBox.question(self, tr("Remove Account"), tr(
             "Remove the account {name}? Its stored password and keys are deleted.").format(
-                name=client.account.name if client else ""))
+                name=client.account.name if client else ""),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
         if answer == QMessageBox.StandardButton.Yes:
             self.panel.remove_account(account_id)
             self._fill()

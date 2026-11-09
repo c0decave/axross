@@ -346,7 +346,7 @@ class TerminalPaneWidget(QWidget):
             log.info("Terminal pane started: %s", self._label_text)
         except Exception as e:
             log.error("Failed to start terminal pane: %s", e)
-            self._terminal.message(f"\n--- Error: {e} ---\n")
+            self._terminal.message("\n--- " + tr("Error: {error}").format(error=e) + " ---\n")
 
     def _restart_session(self) -> None:
         if self._session:

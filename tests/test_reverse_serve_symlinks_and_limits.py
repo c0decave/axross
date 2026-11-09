@@ -173,13 +173,20 @@ def test_sad_a_nul_in_the_path_is_a_400(root, kind):
 
 
 def test_sad_connections_beyond_the_limit_are_answered_503(root, monkeypatch):
+    # The slots are held by token holders (kept-alive connections): a
+    # connection without the token gives its slot up instead (round 5,
+    # test_secfix_r5_reverse_serve_dos.py).
     monkeypatch.setattr(RS, "MAX_CONNECTIONS", 4)
+    monkeypatch.setattr(RS, "KEEPALIVE_IDLE_S", 30.0)
+    monkeypatch.setattr(RS, "EVICT_WAIT_S", 0.2)
     server = _serve("webdav", root)
     held = []
     try:
         for _ in range(4):
             c = socket.create_connection(("127.0.0.1", server.port), timeout=5)
-            c.sendall(b"GET / HTTP/1.1\r\n")  # never finishes its headers
+            c.sendall(f"GET /b/a.txt HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                      f"Authorization: Bearer {TOKEN}\r\n\r\n".encode())
+            assert c.recv(65536).startswith(b"HTTP/1.1 200")
             held.append(c)
         time.sleep(0.3)
         out = _raw(server.port, b"GET /b/a.txt HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")

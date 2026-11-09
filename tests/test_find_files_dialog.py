@@ -30,6 +30,7 @@ import core.bookmarks as BM  # noqa: E402
 from core.local_fs import LocalFS  # noqa: E402
 from core.ram_fs import RamFsSession  # noqa: E402
 from ui import find_files_dialog as FD  # noqa: E402
+from tests.menu_walk import all_actions  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -403,7 +404,7 @@ def test_e2e_find_double_click_navigates_the_pane_and_selects_the_file(window, f
 def test_e2e_find_in_this_folder_from_the_pane_menu(window, folder) -> None:
     pane = window._active_pane
     menu = pane._build_context_menu()
-    action = next(a for a in menu.actions() if a.text() == "Find in This Folder…")
+    action = next(a for a in all_actions(menu) if a.text() == "Find in This Folder…")
     action.trigger()
     pump()
     dlg = window._find_dialogs[-1]

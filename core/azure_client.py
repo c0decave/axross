@@ -18,7 +18,7 @@ from typing import IO
 
 from core.answer_fields import as_size
 from core.append_helpers import read_existing_for_append
-from core import cloud_http
+from core import cloud_http, transfer_hooks
 from core.backend import SessionLifecycle
 from core.path_policy import refuse_folder_path, safe_leaf
 from core.read_spool import spool_chunks
@@ -109,7 +109,12 @@ def _azure_error(exc: BaseException, message: str, filename: str | None = None, 
     HttpResponseError is no OSError - it left the writers' close() and the
     editor's "Cannot save" never saw it. *type_mismatch*: what
     ResourceTypeMismatch (a file where a folder is, or the other way
-    round) means for the call."""
+    round) means for the call. A cancelled transfer stays an
+    InterruptedError (core.transfer_hooks)."""
+    if isinstance(exc, InterruptedError):
+        if isinstance(exc, transfer_hooks.UploadCancelled):
+            return transfer_hooks.UploadCancelled(*exc.args)
+        return InterruptedError(*exc.args)
     if isinstance(exc, OSError) and isinstance(exc.errno, int) and exc.errno:
         return cloud_http.rewrap(exc, message, filename)
     code = _error_code(exc)
@@ -252,14 +257,73 @@ def _axross_azure_transport_kwargs(
 # ---------------------------------------------------------------------------
 
 
+#: Bytes per staged block of a transfer's blob upload: Cancel and the
+#: progress bar act between two blocks.
+_BLOCK = 8 * 1024 * 1024
+#: Blocks a block blob may have.
+_MAX_BLOCKS = 50_000
+
+
+def _upload_blocks(blob_client, buf, size: int, hooks) -> None:
+    """A block blob uploaded block by block (Put Block), then committed in
+    one Put Block List - which replaces the blob, as upload_blob(overwrite)
+    does. Cancel is checked before every block and before the commit: a
+    cancelled upload commits nothing, the blob stays as it was, and the
+    blocks it staged are dropped by the service (uncommitted blocks expire;
+    the next commit of the blob discards them). The block ids carry a
+    random prefix of this upload, so two uploads of one name never commit
+    each other's blocks."""
+    import base64
+    import uuid
+
+    from azure.storage.blob import BlobBlock
+
+    block_size = max(_BLOCK, -(-size // _MAX_BLOCKS))
+    upload = uuid.uuid4().hex
+    blocks = []
+    offset = 0
+    buf.seek(0)
+    while offset < size:
+        hooks.check()
+        chunk = buf.read(block_size)
+        if not chunk:
+            raise OSError(errno.EIO, f"the spool ended at {offset} of {size} bytes")
+        block_id = base64.b64encode(f"{upload}-{len(blocks):06d}".encode("ascii")).decode("ascii")
+        blob_client.stage_block(block_id, chunk)
+        blocks.append(BlobBlock(block_id=block_id))
+        offset += len(chunk)
+        hooks.sent(offset, size)
+    hooks.check()
+    blob_client.commit_block_list(blocks)
+    hooks.sent(size, size, check=False)
+
+
+def _takes_keyword(fn, name: str) -> bool:
+    """Whether *fn* accepts the keyword argument *name* (by name or **kw)."""
+    import inspect
+
+    try:
+        params = inspect.signature(fn).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(p.name == name or p.kind is p.VAR_KEYWORD for p in params)
+
+
 class _BlobSpooledWriter:
-    """Write to a temp file, then upload to Azure Blob on close."""
+    """Write to a temp file, then upload to Azure Blob on close.
+
+    In a running transfer (core.transfer_hooks) a blob of more than one
+    block goes up block by block (_upload_blocks): its bytes are reported,
+    and a Cancel commits nothing (UploadCancelled)."""
 
     def __init__(self, blob_client, path: str = ""):
         self._blob_client = blob_client
         self._path = path or _client_name(blob_client, "blob_name")
         self._buf = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
         self._closed = False
+        self._hooks = transfer_hooks.current()
+        if self._hooks is not None:
+            self._hooks.expect_upload()
 
     def write(self, data: bytes) -> int:
         return self._buf.write(data)
@@ -277,9 +341,23 @@ class _BlobSpooledWriter:
         if self._closed:
             return
         self._closed = True
+        hooks = self._hooks
         try:
+            size = self._buf.seek(0, 2)
             self._buf.seek(0)
-            self._blob_client.upload_blob(self._buf, overwrite=True)
+            with transfer_hooks.bound(hooks):
+                if hooks is not None and size > _BLOCK and callable(
+                        getattr(self._blob_client, "stage_block", None)):
+                    _upload_blocks(self._blob_client, self._buf, size, hooks)
+                else:
+                    if hooks is not None:
+                        hooks.check()
+                    self._blob_client.upload_blob(self._buf, overwrite=True)
+                    if hooks is not None:
+                        hooks.sent(size, size, check=False)
+        except InterruptedError:
+            # Before upload_blob, or between blocks: nothing committed.
+            raise transfer_hooks.UploadCancelled(transfer_hooks.CANCELLED) from None
         except Exception as exc:
             raise _azure_error(exc, f"Cannot upload {self._path}: {cloud_http.reason(exc)}",
                                self._path or None) from exc
@@ -314,6 +392,9 @@ class _ShareSpooledWriter:
         self._path = path or _client_name(file_client, "file_name")
         self._buf = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
         self._closed = False
+        self._hooks = transfer_hooks.current()
+        if self._hooks is not None:
+            self._hooks.expect_upload()
 
     def write(self, data: bytes) -> int:
         return self._buf.write(data)
@@ -336,7 +417,24 @@ class _ShareSpooledWriter:
             # object held the whole file in RAM.
             size = self._buf.seek(0, 2)
             self._buf.seek(0)
-            self._file_client.upload_file(self._buf, length=size)
+            hooks = self._hooks
+            if hooks is None:
+                self._file_client.upload_file(self._buf, length=size)
+            else:
+                # The file is created at its full size and its ranges are
+                # written one by one: a Cancel between two leaves a partial
+                # file (a plain InterruptedError - the transfer engine
+                # rolls the destination back).
+                hooks.check()
+
+                def progress(done, _total=None):
+                    hooks.sent(done, size, check=done < size)
+
+                extra = {"progress_hook": progress} if _takes_keyword(
+                    self._file_client.upload_file, "progress_hook") else {}
+                with transfer_hooks.bound(hooks):
+                    self._file_client.upload_file(self._buf, length=size, **extra)
+                hooks.sent(size, size, check=False)
         except Exception as exc:
             raise _azure_error(exc, f"Cannot upload {self._path}: {cloud_http.reason(exc)}",
                                self._path or None) from exc

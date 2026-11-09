@@ -51,6 +51,7 @@ WINDOW_ONLY = {
 #: The key each entry shows, as the pane's eventFilter or a window QAction
 #: binds it (file_pane.eventFilter, main_window._setup_toolbar/_setup_menubar).
 EXPECTED_KEYS = {
+    "open": "Return",
     "rename": "F2",
     "copy-path": "Ctrl+C",
     "cut": "Ctrl+X",
@@ -58,7 +59,8 @@ EXPECTED_KEYS = {
     "copy-to-target": "F5",
     "move-to-target": "F6",
     "new-folder": "F7",
-    "delete": "Del",
+    "trash": "Del",
+    "delete": "Shift+Del",
     "properties": "Alt+Return",
     "refresh": "Ctrl+R",
     "duplicates": "Ctrl+Shift+D",
@@ -143,12 +145,27 @@ def _menu(pane, state) -> QMenu:
     return pane._build_context_menu()
 
 
+def _menus(menu: QMenu) -> list[QMenu]:
+    """*menu* and every submenu in it, depth first."""
+    found = [menu]
+    for action in menu.actions():
+        if action.menu() is not None:
+            found += _menus(action.menu())
+    return found
+
+
 def _by_command(menu: QMenu) -> dict[str, QAction]:
+    """Every entry with a command, in the menu or one of its submenus."""
     return {
         str(a.property("axCommand")): a
-        for a in menu.actions()
+        for m in _menus(menu)
+        for a in m.actions()
         if a.property("axCommand")
     }
+
+
+def _top(menu: QMenu) -> dict[str, QAction]:
+    return {str(a.property("axCommand")): a for a in menu.actions() if a.property("axCommand")}
 
 
 def _groups(menu: QMenu) -> list[list[str]]:
@@ -213,14 +230,16 @@ def test_happy_entries_are_grouped_in_a_fixed_order(window) -> None:
         return next(i for i, g in enumerate(groups) if command in g)
 
     order = [
-        "open-text", "rename", "copy-to-target", "trash", "new-folder",
-        "properties", "refresh", "send-to-agent",
+        "open", "rename", "copy-to-target", "trash", "new-folder",
+        "properties", "refresh",
     ]
     positions = [group_of(c) for c in order]
     assert positions == sorted(positions) and len(set(positions)) == len(positions), groups
     assert group_of("copy-path") == group_of("rename") == group_of("cut")
     assert group_of("move-to-target") == group_of("copy-to-target") == group_of("pack")
     assert group_of("delete") == group_of("trash")
+    assert group_of("properties") == group_of("metadata-menu") == group_of("analyse-menu")
+    assert group_of("refresh") == group_of("more-menu")
 
 
 @pytest.mark.parametrize("cut", [False, True])
@@ -229,11 +248,10 @@ def test_happy_mnemonics_are_unique_within_each_menu(window, cut) -> None:
     if cut:
         _cut_pending(pane)
     for state in STATES:
-        letters = [
-            _mnemonic(a.text()) for a in _menu(pane, state).actions() if not a.isSeparator()
-        ]
-        used = [m for m in letters if m]
-        assert len(used) == len(set(used)), (state, sorted(used))
+        for each in _menus(_menu(pane, state)):
+            letters = [_mnemonic(a.text()) for a in each.actions() if not a.isSeparator()]
+            used = [m for m in letters if m]
+            assert len(used) == len(set(used)), (state, each.title(), sorted(used))
     commands = _by_command(_menu(pane, "notes.txt"))
     for command in ("rename", "copy-to-target", "new-folder", "properties", "refresh", "delete"):
         assert _mnemonic(commands[command].text()), command
@@ -278,7 +296,8 @@ def _all_with_key(window, key: str) -> list[QAction]:
         ("Ctrl+X", "cut_selected"),
         ("Ctrl+V", "paste_cut"),
         ("F7", "_create_folder"),
-        ("Del", "_delete_selected"),
+        ("Del", "_trash_selected"),
+        ("Shift+Del", "_delete_selected"),
         ("Ctrl+D", "_add_bookmark"),
         ("Alt+Return", "_show_properties"),
         ("F5", "_copy_to_target"),
@@ -327,9 +346,10 @@ def test_happy_e2e_each_key_still_fires_exactly_once(window, key, pane_method) -
 def test_sad_right_click_entries_never_own_a_key(window) -> None:
     pane = window._active_pane
     for state in STATES:
-        for action in _menu(pane, state).actions():
-            if not action.shortcut().isEmpty():
-                assert action.shortcutContext() == Qt.ShortcutContext.WidgetShortcut
+        for each in _menus(_menu(pane, state)):
+            for action in each.actions():
+                if not action.shortcut().isEmpty():
+                    assert action.shortcutContext() == Qt.ShortcutContext.WidgetShortcut
 
 
 def test_sad_no_entry_shows_the_unknown_placeholder(window) -> None:
@@ -348,7 +368,8 @@ def test_sad_a_hostile_single_name_offers_no_file_actions(window) -> None:
     _select(pane, "notes.txt")
     pane._safe_item_path = lambda item, warn=True: None
     commands = _by_command(pane._build_context_menu())
-    for command in ("open-text", "open-hex", "rename", "cut", "trash", "delete", "checksum"):
+    for command in ("open", "open-text", "open-hex", "rename", "cut", "trash", "delete",
+                    "checksum"):
         assert command not in commands, command
     assert "refresh" in commands and "new-folder" in commands  # the folder entries stay
 
@@ -359,8 +380,9 @@ def test_sad_a_hostile_single_name_offers_no_file_actions(window) -> None:
 def test_edge_no_leading_trailing_or_double_separators(window) -> None:
     pane = window._active_pane
     for state in STATES:
-        groups = _groups(_menu(pane, state))
-        assert all(groups), (state, groups)
+        for each in _menus(_menu(pane, state)):
+            groups = _groups(each)
+            assert all(groups), (state, each.title(), groups)
 
 
 def test_edge_icons_follow_the_theme_tint(window) -> None:
@@ -385,7 +407,8 @@ def test_edge_the_actions_menu_still_lists_refresh_once(window) -> None:
     )
     actions_menu.aboutToShow.emit()
     commands = [a.property("axCommand") for a in actions_menu.actions()]
-    assert commands.count("refresh") == 1 and commands.count("metadata") == 1
+    assert commands.count("refresh") == 1 and commands.count("metadata-menu") == 1
+    assert commands.count("copy-to-target") == 1 and commands.count("move-to-target") == 1
     assert "rename" in commands
 
 
@@ -423,25 +446,29 @@ def test_happy_the_integrated_entries_sit_in_the_grouped_menu(window) -> None:
     the selection and is not part of the agent's group."""
     _with_disk_image(window)
     pane = window._active_pane
-    groups = _groups(_menu(pane, "disk.img"))
+    menu = _menu(pane, "disk.img")
+    groups = _groups(menu)
+    analyse = _top(menu)["analyse-menu"].menu()
+    inside = _groups(analyse)
 
-    def group_of(name: str) -> int:
-        return next(i for i, g in enumerate(groups) if name in g)
+    def group_of(name: str, where=groups) -> int:
+        return next(i for i, g in enumerate(where) if name in g)
 
-    assert group_of("disk-image") == group_of("properties"), groups
-    assert group_of("find-files") == group_of("duplicates"), groups
-    assert group_of("Tags") != group_of("send-to-agent"), groups
-    assert group_of("Tags") < group_of("send-to-agent"), groups
+    assert "disk-image" in _top(analyse), inside
+    assert group_of("find-files", inside) == group_of("duplicates", inside), inside
+    assert group_of("Tags") == group_of("properties"), groups
+    assert group_of("Tags") < group_of("more-menu"), groups
+    assert "send-to-agent" in _top(_top(menu)["more-menu"].menu())
 
 
 def test_edge_mnemonics_stay_unique_with_a_disk_image_selected(window) -> None:
     _with_disk_image(window)
     pane = window._active_pane
     for state in (*STATES, "disk.img"):
-        letters = [_mnemonic(a.text()) for a in _menu(pane, state).actions()
-                   if not a.isSeparator()]
-        used = [m for m in letters if m]
-        assert len(used) == len(set(used)), (state, sorted(used))
+        for each in _menus(_menu(pane, state)):
+            letters = [_mnemonic(a.text()) for a in each.actions() if not a.isSeparator()]
+            used = [m for m in letters if m]
+            assert len(used) == len(set(used)), (state, each.title(), sorted(used))
 
 
 def test_edge_german_mnemonics_are_unique_within_each_menu(window, monkeypatch) -> None:
@@ -456,7 +483,8 @@ def test_edge_german_mnemonics_are_unique_within_each_menu(window, monkeypatch) 
     monkeypatch.setattr(i18n, "_ACTIVE", german)  # the previous one comes back after
     _cut_pending(pane)  # Cut and Paste are in the menu too
     for state in (*STATES, "disk.img"):
-        texts = [a.text() for a in _menu(pane, state).actions() if not a.isSeparator()]
-        used = [m for m in map(_mnemonic, texts) if m]
-        dupes = sorted({m for m in used if used.count(m) > 1})
-        assert not dupes, (state, dupes, [t for t in texts if _mnemonic(t) in dupes])
+        for each in _menus(_menu(pane, state)):
+            texts = [a.text() for a in each.actions() if not a.isSeparator()]
+            used = [m for m in map(_mnemonic, texts) if m]
+            dupes = sorted({m for m in used if used.count(m) > 1})
+            assert not dupes, (state, dupes, [t for t in texts if _mnemonic(t) in dupes])

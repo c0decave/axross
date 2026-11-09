@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QDockWidget,
     QHBoxLayout,
+    QLabel,
     QMenu,
     QProgressBar,
     QPushButton,
@@ -63,6 +64,9 @@ class TransferDock(QDockWidget):
     # it's not the currently-raised tab, so background transfers
     # don't stay invisible to the user.
     activity = pyqtSignal()
+    #: True when the queue became empty (the dock shows one short row: the
+    #: window shrinks its area then), False when a job arrived.
+    idle_changed = pyqtSignal(bool)
 
     def __init__(self, transfer_manager: TransferManager, parent: QWidget | None = None):
         super().__init__(tr("Transfers"), parent)
@@ -85,7 +89,9 @@ class TransferDock(QDockWidget):
         #: (failed, cancelled) of the last batch once it ended: the bar
         #: keeps saying so until the next batch or Clear Finished.
         self._ended_badly = (0, 0)
+        self._idle = False
         self._setup_ui()
+        self._set_idle(True)
 
         # Connect manager signals
         # The overall bar walks every job; recompute it once per burst of
@@ -164,6 +170,13 @@ class TransferDock(QDockWidget):
         self._overall_progress.setValue(0)
         self._overall_progress.setTextVisible(True)
         bottom.addWidget(self._overall_progress, stretch=1)
+        # With nothing queued the table and the bar ("0%") are hidden and
+        # this line stands in their place: the file list gets the room.
+        self._idle_label = QLabel(tr("No transfers yet. F5 copies the selection to the "
+                                     "target pane, F6 moves it."))
+        self._idle_label.setObjectName("axTransferIdle")
+        self._idle_label.setEnabled(False)  # the muted colour of the theme
+        bottom.addWidget(self._idle_label, stretch=1)
 
         self._btn_retry = QPushButton(tr("Retry Failed"))
         self._btn_retry.setObjectName("axTransferRetry")  # the tours point at it
@@ -186,7 +199,22 @@ class TransferDock(QDockWidget):
         # dock column, and Qt laid the bottom area under that column.
         self.setWidget(framed(container, self))
 
+    @property
+    def idle(self) -> bool:
+        """True while the queue holds no job (the dock is one short row)."""
+        return self._idle
+
+    def _set_idle(self, idle: bool) -> None:
+        if idle == self._idle:
+            return
+        self._idle = idle
+        self._table.setVisible(not idle)
+        self._overall_progress.setVisible(not idle)
+        self._idle_label.setVisible(idle)
+        self.idle_changed.emit(idle)
+
     def _on_job_added(self, job: TransferJob) -> None:
+        self._set_idle(False)
         self._batch.add(job.job_id)
         self._model.add_job(job)
         self._schedule_overall()
@@ -226,6 +254,7 @@ class TransferDock(QDockWidget):
 
     def _update_overall(self) -> None:
         jobs = self._manager.all_jobs()
+        self._set_idle(not jobs)
         if not jobs:
             self._batch.clear()
             self._batch_dropped = 0

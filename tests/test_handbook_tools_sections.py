@@ -12,6 +12,7 @@ place for F1 to open, so each one gets a section, in every language.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -86,7 +87,12 @@ def test_happy_each_section_says_where_the_tool_is(name):
         "### Backup Repositories": "Backup Repository Info…",
         "### Image Batch": "Resize / Convert Images…",
     }
+    # The German handbook names each tool by its German label (de.json).
+    german = json.loads((Path(__file__).resolve().parents[1] / "resources/i18n/de.json")
+                        .read_text(encoding="utf-8"))
     for heading, needle in where.items():
+        if name == "USAGE_de.md":
+            needle = german.get(needle, needle).replace("&", "")
         body = " ".join(_section(text, own[english.index(heading)]).split())
         assert needle in body, (name, heading, needle)
     assert "Scheduled Jobs…" in text or "Geplante Jobs…" in text, name

@@ -192,8 +192,9 @@ def _private_manifest_dir() -> Path:
     after creation and refused unless it is a real directory owned by
     the current user that nobody else can enter.
     """
-    base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
-    local_dir = Path(base) / "axross" / "resume"
+    from core.xdg_dirs import base_dir
+
+    local_dir = base_dir("XDG_STATE_HOME") / "axross" / "resume"  # a relative one is ignored
     local_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     st = os.lstat(local_dir)
     if stat.S_ISLNK(st.st_mode):

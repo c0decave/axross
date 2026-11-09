@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests.doc_labels import on_screen  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -57,7 +58,7 @@ def test_happy_each_guide_names_the_store_the_cache_and_the_button(name):
 
     text = _text(name)
     row = _row(text, name)
-    assert "*Clear Cache*" in row
+    assert on_screen(name, "*Clear Cache*") in row
     assert "~/.config/axross/" + AS.settings_file().name in text
     assert "~/.cache/axross/sift" in text
 

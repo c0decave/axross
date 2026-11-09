@@ -522,7 +522,30 @@ def _local_tree_sizes(path: str) -> dict[str, tuple[bool, int]]:
     return entries
 
 
-def _finalize_temp_destination(backend, temp_path: str, dst: str) -> None:
+def rename_no_replace(backend, src: str, dst: str) -> None:
+    """Rename *src* to *dst* on *backend* unless *dst* exists:
+    FileExistsError then. Through the backend's ``rename_no_replace``
+    where it has one (LocalFS: renameat2 / a hard link; SFTP: the plain
+    RENAME; SMB), which also refuses a *dst* that appeared after the
+    caller looked - a check followed by ``rename`` replaced it on LocalFS
+    and SFTP. Elsewhere: checked, then renamed."""
+    native = getattr(backend, "rename_no_replace", None)
+    if callable(native):
+        native(src, dst)
+        return
+    if _exists_true(backend, dst):
+        raise FileExistsError(errno.EEXIST, f"{dst} already exists; not replaced", dst)
+    backend.rename(src, dst)
+
+
+def _finalize_temp_destination(backend, temp_path: str, dst: str, *,
+                               no_replace: bool = False) -> None:
+    """The temp file becomes *dst*: replacing a file there (through a
+    backup), or - *no_replace*, for a job that must not replace one -
+    refusing one that appeared since the last check (FileExistsError)."""
+    if no_replace:
+        rename_no_replace(backend, temp_path, dst)
+        return
     try:
         backend.rename(temp_path, dst)
     except OSError as first_rename_exc:
@@ -879,8 +902,15 @@ def server_side_move(
         _rename_via_temp_name(backend, src, dst)
         return
     try:
-        backend.rename(src, dst)
+        if overwrite:
+            backend.rename(src, dst)
+        else:
+            # The target was free at the check above; one that appeared
+            # since is refused, not replaced, where the backend can tell.
+            rename_no_replace(backend, src, dst)
         return
+    except FileExistsError:
+        raise
     except (OSError, NotImplementedError) as exc:
         if _is_cross_device(backend, exc):
             # Two local file systems (a USB stick and the home with the

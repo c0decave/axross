@@ -40,7 +40,7 @@ from ui.icon_provider import set_window_icon
 FUNCTION_LABELS = {
     "remote_files": "Files of the remote connections open in the panes",
     "saved_profiles": "Saved connections the agent opens itself",
-    "remote_commands": "Commands on remote hosts (SSH, WinRM, ...)",
+    "remote_commands": "Commands on remote hosts (SSH, WinRM, …)",
     "mcp_servers": "Tools of further MCP servers",
     "extensions": "Tools of axross extensions",
 }

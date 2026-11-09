@@ -106,13 +106,14 @@ def _ask(pane, trash: bool) -> tuple[str, list[str]]:
 
 def test_sad_the_trash_question_does_not_say_delete(pane):
     text, _busy = _ask(pane, trash=True)
-    assert "move to trash: 2 item(s)" in text
-    assert "delete:" not in text
+    assert "Move 2 items to the trash?" in text
+    assert "In total: 2 files" in text
+    assert "delete" not in text.lower()
 
 
 def test_edge_delete_permanently_keeps_delete_and_the_busy_text_follows(pane):
     _text, busy = _ask(pane, trash=True)
     assert busy and "trash" in busy[0] and "delete" not in busy[0]
     text, busy = _ask(pane, trash=False)
-    assert "delete: 2 item(s)" in text
+    assert "Delete 2 items permanently?" in text
     assert "before the delete" in busy[0]

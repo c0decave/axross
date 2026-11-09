@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import IO, TYPE_CHECKING
 
+from core import transfer_hooks
 from core.backend import SessionLifecycle
 from core.exec_util import shell_path
 from core.path_policy import refuse_control_chars
@@ -1244,6 +1245,11 @@ class _SpooledWriter:
         self._append = append
         self._buf = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
         self._closed = False
+        # The running transfer's Cancel and progress (core.transfer_hooks):
+        # the upload happens in close(), after the copy loop.
+        self._hooks = transfer_hooks.current()
+        if self._hooks is not None:
+            self._hooks.expect_upload()
 
     def write(self, data: bytes) -> int:
         return self._buf.write(data)
@@ -1268,6 +1274,8 @@ class _SpooledWriter:
             self._buf.close()
         qpath = shell_path(self._remote_path)
 
+        if self._hooks is not None:
+            self._hooks.check()
         if self._caps.transfer_method == "base64":
             self._upload_base64(data, qpath)
         elif self._caps.transfer_method == "uuencode":
@@ -1276,6 +1284,8 @@ class _SpooledWriter:
             self._upload_xxd(data, qpath)
         else:
             self._upload_raw(data, qpath)
+        if self._hooks is not None:
+            self._hooks.sent(len(data), len(data), check=False)
 
     @staticmethod
     def _safe_eof(payload: str) -> str:
@@ -1291,7 +1301,13 @@ class _SpooledWriter:
         the rest append. One multi-megabyte line through the interactive
         shell lost input now and then (see _upload_base64)."""
         starts = range(0, len(data), raw_per_heredoc) if data else [0]
+        hooks = self._hooks
         for index, start in enumerate(starts):
+            if hooks is not None and index:
+                # Between two heredocs: Cancel stops the upload here (the
+                # remote file holds the part sent - a plain InterruptedError,
+                # the engine rolls the destination back).
+                hooks.sent(start, len(data))
             text = encode(data[start : start + raw_per_heredoc])
             redirect = ">>" if (self._append or index) else ">"
             eof = self._safe_eof(text)

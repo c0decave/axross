@@ -422,6 +422,78 @@ def opener_without_redirects(*handlers) -> urllib.request.OpenerDirector:
     return urllib.request.build_opener(_RefuseRedirects, *handlers)
 
 
+#: Bytes of an HTTP error answer read for its message, and characters of
+#: the message shown.
+ERROR_BODY_BYTES = 4096
+ERROR_TEXT_CHARS = 300
+
+
+def server_error_text(exc: urllib.error.HTTPError, *, redact=()) -> str:
+    """What the server said in its error answer, ready to append to "answered
+    HTTP 404" - ``": model 'x' not found, try pulling it first"`` - or "".
+
+    Reads at most :data:`ERROR_BODY_BYTES` of the body and takes the message
+    of the usual shapes (``{"error": {"message": …}}`` of OpenAI-compatible
+    servers, ``{"error": "…"}`` of Ollama, ``{"message": …}``, FastAPI's
+    ``{"detail": …}``) or a plain-text body; an HTML page says nothing. Control
+    and bidi characters go, the text is cut to :data:`ERROR_TEXT_CHARS`, and
+    each string in *redact* (the API key) is masked should the server echo it.
+    Never raises."""
+    import json
+    import unicodedata
+
+    try:
+        raw = exc.read(ERROR_BODY_BYTES)
+    except Exception:  # noqa: BLE001 - a broken body only loses the detail
+        return ""
+    if not isinstance(raw, (bytes, bytearray)) or not raw:
+        return ""
+    text = bytes(raw).decode("utf-8", "replace")
+    message = None
+    try:
+        data = json.loads(text)
+    except (ValueError, RecursionError):
+        data = None
+        stripped = text.strip()
+        if stripped and not stripped.startswith(("<", "{", "[")):
+            message = stripped
+    if data is not None:
+        message = _error_message(data)
+    if not isinstance(message, str):
+        return ""
+    for secret in redact:
+        if secret and len(secret) >= 4:
+            message = message.replace(secret, "***")
+    clean = "".join(
+        " " if unicodedata.category(ch) in ("Cc", "Cf", "Cs", "Co", "Zl", "Zp") else ch
+        for ch in message
+    )
+    clean = " ".join(clean.split())
+    if not clean:
+        return ""
+    if len(clean) > ERROR_TEXT_CHARS:
+        clean = clean[: ERROR_TEXT_CHARS - 1].rstrip() + "…"
+    return ": " + clean
+
+
+def _error_message(data, depth: int = 0):
+    """The human message in a parsed error body, or None."""
+    if depth > 3:
+        return None
+    if isinstance(data, str):
+        return data
+    if isinstance(data, list):
+        return _error_message(data[0], depth + 1) if data else None
+    if not isinstance(data, dict):
+        return None
+    for key in ("error", "message", "detail", "msg", "error_description"):
+        if key in data:
+            found = _error_message(data[key], depth + 1)
+            if found:
+                return found
+    return None
+
+
 class AbortableConnections:
     """The connections of one opener, so another thread can cut them: Stop
     during a model request. Shutting the socket down wakes the request's

@@ -193,7 +193,7 @@ class DeleteInBackgroundTest(_Base):
             gate.set()
             self.assertTrue(self.idle())
         question.assert_called_once()
-        self.assertIn("1 file(s), 1 dir(s)", question.call_args[0][2])
+        self.assertIn("1 file, 1 folder", question.call_args[0][2])
         self.assertFalse((self.root / "plain").exists())
 
     def test_sad_cancel_stops_between_entries_and_keeps_the_rest(self) -> None:

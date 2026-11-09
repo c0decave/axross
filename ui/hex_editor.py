@@ -742,6 +742,7 @@ class HexEditorDialog(QDialog):
                 tr("Unsaved Changes"),
                 tr("Reload and discard changes?"),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
@@ -778,6 +779,7 @@ class HexEditorDialog(QDialog):
                         tr("File Changed"),
                         tr("File was modified on server. Overwrite?"),
                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.No,
                     )
                     if reply != QMessageBox.StandardButton.Yes:
                         return
@@ -866,6 +868,7 @@ class HexEditorDialog(QDialog):
                 tr("Unsaved Changes"),
                 tr("Discard changes?"),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
@@ -885,6 +888,7 @@ class HexEditorDialog(QDialog):
                 tr("Unsaved Changes"),
                 tr("Discard changes?"),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
@@ -897,6 +901,7 @@ class HexEditorDialog(QDialog):
                 tr("Unsaved Changes"),
                 tr("Discard changes?"),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
             )
             if reply != QMessageBox.StandardButton.Yes:
                 event.ignore()

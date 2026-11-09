@@ -40,6 +40,7 @@ from core import file_type as FT  # noqa: E402
 from core.local_fs import LocalFS  # noqa: E402
 from models.file_item import FileItem  # noqa: E402
 from tests.test_disk_image import MiB, mbr_entry, put_ext4, with_mbr  # noqa: E402
+from tests.menu_walk import all_actions  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -218,7 +219,7 @@ def pane(folder):
 
 
 def _entry(menu, command):
-    return next((a for a in menu.actions() if a.property("axCommand") == command), None)
+    return next((a for a in all_actions(menu) if a.property("axCommand") == command), None)
 
 
 def _row_of(dialog, name: str) -> int:

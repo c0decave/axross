@@ -755,7 +755,8 @@ class ToursDialog(QDialog):
 
         self._video_done()
         sentence = error.user_text() if hasattr(error, "user_text") else str(error)
-        box = QMessageBox(QMessageBox.Icon.Warning, tr("Tour video"), sentence,
+        # Information, not a warning: nothing is broken, the tour itself works.
+        box = QMessageBox(QMessageBox.Icon.Information, tr("Tour video"), sentence,
                           QMessageBox.StandardButton.NoButton, self)
         box.setInformativeText(tr("Start Tour shows the same steps in axross itself."))
         start = box.addButton(tr("Start Tour"), QMessageBox.ButtonRole.AcceptRole)

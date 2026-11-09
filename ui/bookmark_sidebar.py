@@ -45,7 +45,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.bookmarks import KIND_TERMINAL, LOCAL_SHELL, Bookmark, BookmarkGroup, BookmarkManager
-from core.i18n import tr
+from core.i18n import tr, tr_n
 from ui.bookmark_edit_dialog import BookmarkEditDialog, GroupEditDialog
 from ui.file_pane import TRANSFER_MIME_TYPE, _drop_action, decode_transfer_payload
 from ui.icon_provider import icon, set_window_icon
@@ -363,9 +363,9 @@ class BookmarkTreeEditing:
                 item.setIcon(0, icon(node.icon_name or "find-index", 32, node.color))
                 item.setToolTip(
                     0,
-                    f"{_html_escape(node.name)}<br>Smart Folder: "
-                    f"{_html_escape(describe_saved_search(node.search))}"
-                    "<br>Click to run the search again.",
+                    tr("{name}<br>Smart Folder: {search}<br>Click to run the search again.").format(
+                        name=_html_escape(node.name),
+                        search=_html_escape(describe_saved_search(node.search))),
                 )
             elif node.is_terminal:
                 item.setIcon(0, icon(node.icon_name or "terminal", 32, node.color))
@@ -788,6 +788,7 @@ class BookmarkTreeEditing:
             tr("Delete Bookmarks"),
             text,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
@@ -804,21 +805,24 @@ class BookmarkTreeEditing:
         # (Escaped instead, "Bob's & Co" was shown as "Bob&#x27;s &amp; Co".)
         if isinstance(node, BookmarkGroup):
             kept = _count_bookmarks(node)
-            text = (
-                f"Delete this group?\n\n{node.name}\n\n"
-                f"Its {kept} bookmark(s) are kept and move up one level."
+            text = tr_n(
+                kept,
+                "Delete this group?\n\n{name}\n\nIts {n} bookmark is kept and moves up one level.",
+                "Delete this group?\n\n{name}\n\nIts {n} bookmarks are kept and move up one level.",
+                name=node.name,
             )
-            title = "Delete Group"
+            title = tr("Delete Group")
         else:
             # A Smart Folder's path is its key in the store, not a place.
             where = "" if node.is_smart_folder or not node.path else f"\n{node.path}"
-            text = f"Delete this bookmark?\n\n{node.name}{where}"
-            title = "Delete Bookmark"
+            text = tr("Delete this bookmark?\n\n{name}").format(name=node.name) + where
+            title = tr("Delete Bookmark")
         reply = QMessageBox.question(
             self,
             title,
             text,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
             return

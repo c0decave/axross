@@ -63,8 +63,11 @@ def test_sad_bwrap_mounts_a_missing_protected_folder_as_an_empty_read_only_one(h
     assert place in [argv[j + 1] for j, a in enumerate(argv) if a == "--tmpfs"]
     k = argv.index(place)
     assert argv[k - 1] == "--tmpfs" and argv[k + 1:k + 3] == ["--remount-ro", place]
-    assert argv.index("--bind-try") < k  # after the ~/.config it lies in
-    assert argv[argv.index("--bind-try") + 1] == str(home / ".config")
+    # After the ~/.config it lies in: a frame of its own since a missing
+    # ~/.config/mimeapps.list is protected too (review 5), an empty folder
+    # of the sandbox's holding the host's entries.
+    config = str(home / ".config")
+    assert argv.index(config) < k and argv[argv.index(config) - 1] == "--tmpfs"
     assert not os.path.exists(place)  # nothing is made by building the command
 
 
@@ -89,7 +92,7 @@ def test_sad_containers_mount_missing_places_read_only_too(home, engine):
     argv = _argv(engine, home)
     # The home holds missing protected files: a frame (core.agent_sandbox).
     assert f"--tmpfs={home}:rw,nosuid,nodev,noexec,mode=0555" in argv
-    assert f"{home / '.config'}:{home / '.config'}:rw" in argv
+    assert f"--tmpfs={home / '.config'}:rw,nosuid,nodev,noexec,mode=0555" in argv
     assert any(a.startswith(f"--tmpfs={home / '.config' / 'autostart'}:ro") for a in argv)
     assert any(a.startswith(f"--tmpfs={home / '.local' / 'bin'}:ro") for a in argv)
     assert not [v for v in argv if v.endswith(f":{home / '.bash_profile'}:ro")]

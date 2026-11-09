@@ -1203,7 +1203,7 @@ def _token_directory() -> Path:
     """Where publish_token puts the token: the per-user runtime dir
     (``$XDG_RUNTIME_DIR``, private by spec), else ~/.config/axross."""
     runtime = os.environ.get("XDG_RUNTIME_DIR", "")
-    if runtime and os.path.isdir(runtime):
+    if runtime and os.path.isabs(runtime) and os.path.isdir(runtime):  # relative: ignored
         return Path(runtime) / "axross"
     return Path.home() / ".config" / "axross"
 

@@ -242,6 +242,10 @@ ERR_INVALID_PARAMS = -32602
 ERR_INTERNAL = -32603
 
 MAX_READ_BYTES = 4 * 1024 * 1024  # 4 MiB cap on a single read_file
+#: Most entries of a folder moved to another folder whose symlinks are
+#: checked (rename, transfer_move): a relative link points elsewhere from
+#: its new place. A bigger folder is refused.
+MOVED_LINK_CHECK_LIMIT = 100_000
 _READ_CHUNK_BYTES = 1024 * 1024
 # Default wall-clock ceilings per tool category. Values are generous
 # enough for real backend latency (an SFTP list_dir on a spinning
@@ -1548,6 +1552,58 @@ def _build_tools(
         for configured in (write_root, *(p for p, _ in extras)):
             _refuse_configured_root(path, configured, operation)
 
+    def _refuse_moved_links(src: str, dst: str, active_backend) -> None:
+        """PermissionError when moving *src* to *dst* re-points a relative
+        symlink - the entry itself or one in a moved folder - outside a
+        writable root or at a protected place: a link refused when made at
+        ``a/l`` (``../../.ssh``) was made at ``a/b/l`` and renamed up. Each
+        link whose target changes is checked as if made at its new place;
+        absolute links (and moves within one folder) point where they did."""
+        import os
+        import os.path as op
+
+        if _is_remote(active_backend):
+            return
+
+        def check(link: str, new_link: str, real_src: str | None) -> None:
+            target = os.readlink(link)
+            if op.isabs(target):
+                return
+            before = op.realpath(op.join(op.dirname(link), target))
+            if real_src is not None and (before == real_src
+                                         or before.startswith(real_src.rstrip(os.sep) + os.sep)):
+                after = op.join(dst, op.relpath(before, real_src))  # inside the moved folder
+            else:
+                after = op.realpath(op.join(op.dirname(new_link), target))
+            if after == before:
+                return
+            try:
+                _refuse_protected(_write_path(after, active_backend), entry=True)
+            except PermissionError as exc:
+                raise PermissionError(
+                    f"{link}: moved to {new_link}, the symlink would point to {after}: {exc}"
+                ) from exc
+
+        if op.islink(src):
+            check(src, dst, None)
+            return
+        if not op.isdir(src):
+            return
+        if op.realpath(op.dirname(src)) == op.realpath(op.dirname(dst)):
+            return  # renamed in its folder: every ".." leads where it did
+        real_src = op.realpath(src)
+        count = 0
+        for folder, dirs, files in os.walk(src):
+            for name in dirs + files:
+                count += 1
+                if count > MOVED_LINK_CHECK_LIMIT:
+                    raise PermissionError(
+                        f"{src} holds more than {MOVED_LINK_CHECK_LIMIT} entries: their links "
+                        "cannot all be checked - move it in smaller parts")
+                path = op.join(folder, name)
+                if op.islink(path):
+                    check(path, op.join(dst, op.relpath(path, src)), real_src)
+
     def _safe_child_path(active_backend, parent: str, name: str) -> str | None:
         from core.path_policy import safe_join
 
@@ -2525,6 +2581,7 @@ def _build_tools(
                 _refuse_root(safe_dst, backend, "rename destination")
                 if backend.exists(safe_dst):
                     raise OSError(f"rename target already exists: {safe_dst}")
+                _refuse_moved_links(safe_src, safe_dst, backend)
                 from core.server_ops import server_side_move
 
                 server_side_move(backend, safe_src, safe_dst)
@@ -2968,6 +3025,17 @@ def _build_tools(
             try:
                 safe = _write_path(path, backend)
                 _refuse_root(safe, backend, "chmod")
+                if mode_int & 0o022 and not _is_remote(backend):
+                    # Writable by others, a folder that holds protected places
+                    # (~, ~/.config, ~/.local) lets another local user swap
+                    # ~/.config/autostart for their own: an operation on the
+                    # entry, not on its contents.
+                    try:
+                        _refuse_protected(safe, entry=True)
+                    except PermissionError as exc:
+                        raise PermissionError(
+                            f"chmod {mode_int:o}: group or others could write {safe}: {exc}"
+                        ) from exc
                 backend.chmod(safe, mode_int)
             except BaseException as exc:
                 _audit("chmod", "refused", path=path, mode=oct(mode_int), error=type(exc).__name__)
@@ -3437,6 +3505,7 @@ def _build_tools(
                     write_path=_write_path,
                     entry_path=lambda p, b: _refuse_secret(_entry_path(p, b), b, entry=True),
                     refuse_root=_refuse_root,
+                    refuse_moved_links=_refuse_moved_links,
                     index_backend_id=lambda b: (
                         server_backend_id if b is _default_backend else _backend_id_for(b)
                     ),

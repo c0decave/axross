@@ -125,9 +125,9 @@ def whisper_model(name: str) -> VoiceModel | None:
 
 
 def data_dir() -> Path:
-    base = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local",
-                                                           "share")
-    return Path(base) / "axross" / "voice"
+    from core.xdg_dirs import base_dir
+
+    return base_dir("XDG_DATA_HOME") / "axross" / "voice"  # a relative one is ignored
 
 
 def model_dir(m: VoiceModel) -> Path:

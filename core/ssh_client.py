@@ -110,6 +110,22 @@ def wire_path(path: str | bytes) -> bytes:
     return path.encode("utf-8", errors="surrogateescape")
 
 
+def command_bytes(cmd: str | bytes) -> bytes:
+    """*cmd* as the bytes of an SSH exec request: UTF-8, with the lone
+    surrogates of a name that is not UTF-8 (see :func:`wire_path`) back
+    as the raw bytes - paramiko encodes a str command strictly as UTF-8,
+    so a command naming such a file raised UnicodeEncodeError (not an
+    OSError). ``shlex.quote`` quotes such a str like any other, so the
+    quoting survives the encoding. A surrogate that stands for no byte
+    is an OSError (EILSEQ)."""
+    if isinstance(cmd, bytes):
+        return cmd
+    try:
+        return cmd.encode("utf-8", errors="surrogateescape")
+    except UnicodeEncodeError as exc:
+        raise OSError(errno.EILSEQ, f"SSH command cannot be sent: {exc}") from exc
+
+
 class _SurrogateSftpClient(paramiko.SFTPClient):
     """paramiko's SFTP client with paths encoded by :func:`wire_path`.
 
@@ -1210,13 +1226,15 @@ class SSHSession(SessionLifecycle):
         sftp._request(CMD_SETSTAT, sftp._adjust_cwd(path), attr)
 
     def rename_with_attributes(self, src: str, dst: str, *, mode: int | None = None,
-                               mtime: float | None = None) -> bool:
+                               mtime: float | None = None, no_replace: bool = False) -> bool:
         """:meth:`set_attributes` of *src*, then :meth:`rename` of *src* to
         *dst*, in ONE round trip: both requests go out together and the
         server handles them in order (a transfer's temp file gets the
         source's mode and time, then its name). Returns whether the
         attributes were set; raises what :meth:`rename` raises - a refused
-        posix-rename is tried again as a plain RENAME, as there."""
+        posix-rename is tried again as a plain RENAME, as there.
+        *no_replace*: the plain RENAME only, as :meth:`rename_no_replace` -
+        FileExistsError for a *dst* that is there."""
         sftp = self.sftp
         if not isinstance(sftp, paramiko.SFTPClient):  # a stand-in client (tests)
             try:
@@ -1224,13 +1242,16 @@ class SSHSession(SessionLifecycle):
                 attributes_set = True
             except OSError:
                 attributes_set = False
-            self.rename(src, dst)
+            if no_replace:
+                self.rename_no_replace(src, dst)
+            else:
+                self.rename(src, dst)
             return attributes_set
-        return self._rename_with_attributes(sftp, src, dst, mode, mtime)
+        return self._rename_with_attributes(sftp, src, dst, mode, mtime, no_replace)
 
     @_sftp_errors_as_oserror
-    def _rename_with_attributes(self, sftp, src, dst, mode, mtime) -> bool:
-        from paramiko.sftp import CMD_EXTENDED, CMD_SETSTAT
+    def _rename_with_attributes(self, sftp, src, dst, mode, mtime, no_replace=False) -> bool:
+        from paramiko.sftp import CMD_EXTENDED, CMD_RENAME, CMD_SETSTAT
 
         attr = paramiko.SFTPAttributes()
         if mode is not None:
@@ -1241,8 +1262,11 @@ class SSHSession(SessionLifecycle):
         old, new = sftp._adjust_cwd(src), sftp._adjust_cwd(dst)
         try:
             setstat = sftp._async_request(receiver, CMD_SETSTAT, old, attr)
-            rename = sftp._async_request(receiver, CMD_EXTENDED, "posix-rename@openssh.com",
-                                         old, new)
+            if no_replace:
+                rename = sftp._async_request(receiver, CMD_RENAME, old, new)
+            else:
+                rename = sftp._async_request(receiver, CMD_EXTENDED,
+                                             "posix-rename@openssh.com", old, new)
             while setstat not in receiver.answers or rename not in receiver.answers:
                 sftp._read_response()
         finally:
@@ -1263,7 +1287,10 @@ class SSHSession(SessionLifecycle):
 
         attributes_set = ok(setstat)
         if not ok(rename):
-            log.debug("posix-rename %s -> %s refused, falling back", src, dst)
+            # posix-rename refused: the plain RENAME. A refused plain RENAME
+            # (no_replace) is sent again on its own, which names a target
+            # that is there (FileExistsError) or raises the server's error.
+            log.debug("rename %s -> %s refused, falling back", src, dst)
             self._plain_rename(src, dst)
         return attributes_set
 
@@ -1372,13 +1399,14 @@ class SSHSession(SessionLifecycle):
         if not self._transport or not self._transport.is_active():
             raise OSError("SSH hardlink: transport not active")
         qlink = shlex.quote(link_path)
+        command = command_bytes(
+            f"if test -e {qlink} || test -L {qlink}; then "
+            f"echo {_HARDLINK_TAKEN} >&2; exit 1; fi; "
+            f"ln -- {shlex.quote(target)} {qlink}",
+        )
         chan = self._transport.open_session()
         try:
-            chan.exec_command(
-                f"if test -e {qlink} || test -L {qlink}; then "
-                f"echo {_HARDLINK_TAKEN} >&2; exit 1; fi; "
-                f"ln -- {shlex.quote(target)} {qlink}",
-            )
+            chan.exec_command(command)
             err = _read_limited_stream(
                 chan.makefile_stderr("rb"),
                 HELPER_STDERR_CAP,
@@ -1409,33 +1437,51 @@ class SSHSession(SessionLifecycle):
         except Exception as e:
             log.debug("statvfs unavailable for %s: %s", path, e)
 
+        # df: "not supported" - (0, 0, 0) - only when the server has no
+        # df or runs no commands. A failure (no such path, a dropped
+        # connection, a name that cannot be sent) is an OSError, not an
+        # empty disk.
+        if not self._transport or not self._transport.is_active():
+            raise ConnectionError(errno.ENOTCONN, "SSH transport not active")
+        command = command_bytes(f"df -Pk -- {shlex.quote(path)}")
         try:
-            if not self._transport or not self._transport.is_active():
-                return (0, 0, 0)
             chan = self._transport.open_session()
-            chan.exec_command(f"df -Pk -- {shlex.quote(path)}")
+        except paramiko.SSHException as exc:
+            raise OSError(f"SSH disk usage of {path}: {exc}") from exc
+        try:
+            try:
+                chan.exec_command(command)
+            except paramiko.SSHException as exc:
+                if self._transport.is_active():
+                    log.debug("df fallback unavailable for %s: %s", path, exc)
+                    return (0, 0, 0)
+                raise OSError(f"SSH disk usage of {path}: {exc}") from exc
             output = _read_limited_stream(
                 chan.makefile("rb"),
                 HELPER_STDOUT_CAP,
                 "SSH df stdout",
             ).decode("utf-8", errors="replace")
-            _read_limited_stream(
+            stderr = _read_limited_stream(
                 chan.makefile_stderr("rb"),
                 HELPER_STDERR_CAP,
                 "SSH df stderr",
-            )
+            ).decode("utf-8", errors="replace")
+            rc = chan.recv_exit_status()
+        finally:
             chan.close()
-            lines = [line.strip() for line in split_lf_only_stream(output) if line.strip()]
-            if len(lines) < 2:
-                return (0, 0, 0)
-            parts = lines[-1].split()
+        if rc in COMMAND_NOT_FOUND:
+            log.debug("df unavailable on %s: %s", self._profile.host, stderr.strip())
+            return (0, 0, 0)
+        if rc != 0:
+            raise OSError(f"SSH disk usage of {path}: df rc={rc}: {stderr.strip()}")
+        lines = [line.strip() for line in split_lf_only_stream(output) if line.strip()]
+        parts = lines[-1].split() if len(lines) >= 2 else []
+        try:
             if len(parts) >= 4:
-                total = int(parts[1]) * 1024
-                used = int(parts[2]) * 1024
-                free = int(parts[3]) * 1024
-                return (total, used, free)
-        except Exception as e:
-            log.debug("df fallback unavailable for %s: %s", path, e)
+                return (int(parts[1]) * 1024, int(parts[2]) * 1024, int(parts[3]) * 1024)
+        except ValueError:
+            pass
+        log.debug("df output for %s not understood: %r", path, output[:200])
         return (0, 0, 0)
 
     def exec(
@@ -1481,7 +1527,10 @@ class SSHSession(SessionLifecycle):
             "SSH exec on %s@%s: %s%s",
             self._profile.username,
             self._profile.host,
-            cmd[:120],
+            # A name that is not UTF-8 (surrogates) as \udcXX: the log
+            # file is UTF-8 and would drop the line.
+            (cmd[:120].encode("utf-8", "backslashreplace").decode("utf-8")
+             if isinstance(cmd, str) else repr(cmd[:120])),
             "..." if len(cmd) > 120 else "",
         )
         if env:
@@ -1515,7 +1564,7 @@ class SSHSession(SessionLifecycle):
                         chan.update_environment({k: v})
                     except paramiko.SSHException:
                         pass
-            chan.exec_command(cmd)
+            chan.exec_command(command_bytes(cmd))
             if stdin:
                 try:
                     chan.sendall(stdin)
@@ -1630,19 +1679,22 @@ class SSHSession(SessionLifecycle):
         """Server-side copy via ``cp -p``. O(0) client bytes."""
         if not self._transport or not self._transport.is_active():
             raise ConnectionError("SSH transport not active")
+        # Plain cp copies INTO an existing folder dst (review B6 twin).
+        from core.telnet_client import copy_command
+
+        command = command_bytes(copy_command(src, dst, preserve=True))
         try:
             chan = self._transport.open_session()
-            # Plain cp copies INTO an existing folder dst (review B6 twin).
-            from core.telnet_client import copy_command
-
-            chan.exec_command(copy_command(src, dst, preserve=True))
-            stderr = _read_limited_stream(
-                chan.makefile_stderr("rb"),
-                HELPER_STDERR_CAP,
-                "SSH copy stderr",
-            ).decode("utf-8", errors="replace")
-            rc = chan.recv_exit_status()
-            chan.close()
+            try:
+                chan.exec_command(command)
+                stderr = _read_limited_stream(
+                    chan.makefile_stderr("rb"),
+                    HELPER_STDERR_CAP,
+                    "SSH copy stderr",
+                ).decode("utf-8", errors="replace")
+                rc = chan.recv_exit_status()
+            finally:
+                chan.close()
             if rc != 0:
                 raise OSError(f"cp {src} -> {dst} failed: rc={rc} stderr={stderr!r}")
         except paramiko.SSHException as exc:
@@ -1683,10 +1735,11 @@ class SSHSession(SessionLifecycle):
             raise OSError(f"checksum failed: {known}")
         if not self._transport or not self._transport.is_active():
             raise ConnectionError("SSH transport not active")
+        command = command_bytes(f"{tool} -- {shlex.quote(path)}")
         try:
             chan = self._transport.open_session()
             try:
-                chan.exec_command(f"{tool} -- {shlex.quote(path)}")
+                chan.exec_command(command)
             except paramiko.SSHException as exc:
                 if self._transport.is_active():
                     # The channel opened, the command was turned down (the

@@ -17,7 +17,8 @@ Retries. A 429 or 5xx answer is what the services document as "try again
 later", often with a ``Retry-After`` header. :func:`pause` waits before
 the next attempt: exponential backoff with jitter, or the server's
 Retry-After, capped so that a hostile or broken header cannot park a
-transfer (and its Cancel) for minutes. :data:`ATTEMPTS` bounds the tries.
+transfer for minutes; the pause of a running transfer ends at once when it
+is cancelled (core.transfer_hooks). :data:`ATTEMPTS` bounds the tries.
 """
 
 from __future__ import annotations
@@ -25,8 +26,9 @@ from __future__ import annotations
 import errno
 import email.utils
 import random
-import time
 from datetime import datetime, timezone
+
+from core import transfer_hooks
 
 #: Tries of one request, the first included.
 ATTEMPTS = 5
@@ -40,8 +42,14 @@ RETRY_AFTER_CAP = 30.0
 #: answer). 501 / 505 are final.
 RETRYABLE_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
 
+def _wait(seconds: float) -> None:
+    """Sleep *seconds*; in a running transfer, wake on its Cancel
+    (InterruptedError) instead of sleeping the pause out."""
+    transfer_hooks.wait(seconds)
+
+
 #: Replaced by the tests: the pause between two attempts.
-_sleep = time.sleep
+_sleep = _wait
 
 
 def errno_for_status(status: int | None) -> int:
@@ -121,8 +129,12 @@ def delay(attempt: int, retry_after: float | None = None) -> float:
 
 
 def pause(attempt: int, retry_after: float | None = None) -> None:
-    """Wait before retry number *attempt* (see :func:`delay`)."""
+    """Wait before retry number *attempt* (see :func:`delay`). In a
+    running transfer a Cancel - before, during or after the pause - is an
+    InterruptedError: no retry is sent for a cancelled job."""
+    transfer_hooks.check()
     _sleep(delay(attempt, retry_after))
+    transfer_hooks.check()
 
 
 def rewrap(exc: BaseException, message: str, filename: str | None = None) -> OSError:

@@ -246,7 +246,8 @@ FEATURES: tuple[Feature, ...] = (
         "Connections & backends",
         "backend-mail",
         "IMAP / POP3 / Exchange (EWS)",
-        ["core/imap_client.py", "core/pop3_client.py", "core/exchange_client.py"],
+        ["core/imap_client.py", "core/pop3_client.py", "core/exchange_client.py",
+         "core/mail_names.py"],
         [
             (
                 "tests/test_pop3_stat.py::Pop3StatTest::test_happy_stat_reports_the_message_size",
@@ -477,6 +478,7 @@ FEATURES: tuple[Feature, ...] = (
         [
             "core/transfer_manager.py",
             "core/transfer_worker.py",
+            "core/transfer_hooks.py",
             "core/transfer_pool.py",
             "core/transfer_conflicts.py",
             "core/move_permissions.py",
@@ -1389,6 +1391,7 @@ INFRASTRUCTURE: dict[str, str] = {
     "ui/about_dialog.py": "Help > About, a dialog that fits the screen",
     "ui/screen_fit.py": "fits windows and dialogs to the screen they open on",
     "core/posix_compat.py": "POSIX-only os calls made safe on other platforms",
+    "core/xdg_dirs.py": "the XDG base folders, a relative variable ignored",
     "core/process_launcher.py": "starts long-lived children from a long-lived thread",
     "core/qt_exit.py": "deletes Python-owned Qt objects before PyQt's exit clean-up",
     "core/session_lock.py": "one lock per protocol handle",

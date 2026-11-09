@@ -114,10 +114,14 @@ def job_row(job: Job, *, now: datetime | None = None) -> dict[str, str]:
 class SchedulerDialog(QDialog):
     """List, add and remove recurring jobs."""
 
-    def __init__(self, store: JobStore, parent: QWidget | None = None, *, run_now=None):
+    def __init__(self, store: JobStore, parent: QWidget | None = None, *, run_now=None,
+                 running=()):
         super().__init__(parent)
         #: run_now(job) -> bool starts *job* at once (False: it is running).
         self._run_now = run_now
+        #: The ids of the jobs running now (the store never holds that):
+        #: the owner reports starts and ends (job_started, job_finished).
+        self._running: set[str] = set(running)
         set_window_icon(self, "clock")
         install_help_key(self, "scheduler")  # F1: its handbook section (a window of its own)
         self.store = store
@@ -213,8 +217,33 @@ class SchedulerDialog(QDialog):
     # -- data ------------------------------------------------------------
 
     def reload(self) -> None:
-        self._jobs = self.store.load()
+        self._jobs = self._flagged(self.store.load())
         self._populate()
+
+    def _flagged(self, jobs: list[Job]) -> list[Job]:
+        from dataclasses import replace
+
+        return [replace(j, running=True) if j.job_id in self._running else j for j in jobs]
+
+    def job_started(self, job_id: str) -> None:
+        """A run of *job_id* began (Run Now or its time): its row says so."""
+        self._running.add(job_id)
+        self.reload()
+
+    def job_finished(self, job_id: str, ok: bool, detail: str) -> None:
+        """A run of *job_id* ended and its result is in the store: the
+        table shows it, and the status line says how it went."""
+        self._running.discard(job_id)
+        self.reload()
+        job = next((j for j in self._jobs if j.job_id == job_id), None)
+        if job is None:
+            return
+        if ok:
+            self._status.setText(tr("{name} finished: {detail}").format(
+                name=job.name, detail=detail or tr("ok")))
+        else:
+            self._status.setText(tr("{name} failed: {detail}").format(
+                name=job.name, detail=detail or tr("failed")))
 
     def _populate(self) -> None:
         rows = self.displayed_rows()
@@ -288,7 +317,7 @@ class SchedulerDialog(QDialog):
         """Apply *change* to the jobs as the store holds them now, not to
         this dialog's copy: a run that finished while the dialog was open
         recorded its result in the store, and saving the copy would erase it."""
-        self._jobs = self.store.update(change)
+        self._jobs = self._flagged(self.store.update(change))
         self._populate()
 
     # -- handlers --------------------------------------------------------
@@ -323,7 +352,7 @@ class SchedulerDialog(QDialog):
         scripts = self._saved_scripts()
         if script not in scripts:
             QMessageBox.warning(self, tr("Add job"), tr(
-                "There is no saved script {name!r}. Save it in the Script Editor first, or "
+                "There is no saved script {name!r}. Save it in the Scripts dock first, or "
                 "choose one of: {scripts}").format(
                     name=script, scripts=", ".join(scripts) or tr("(no saved scripts)")))
             return
@@ -354,6 +383,8 @@ class SchedulerDialog(QDialog):
         if job is None or self._run_now is None:
             return
         if self._run_now(job):
+            self._running.add(job.job_id)
+            self.reload()
             self._status.setText(tr("{name} started; its result shows here when it ends.").format(
                 name=job.name))
         else:

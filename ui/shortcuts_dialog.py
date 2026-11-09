@@ -38,7 +38,8 @@ SHORTCUTS: list[tuple[str, tuple[str, ...], str]] = [
     ("File operations", ("Ctrl+X",), "Cut: remember the selection for Paste (nothing is removed)"),
     ("File operations", ("Ctrl+V",), "Paste: move the cut entries into this folder"),
     ("File operations", ("F7",), "New folder"),
-    ("File operations", ("Del",), "Delete"),
+    ("File operations", ("Del",), "Move to the trash, or delete permanently where there is none"),
+    ("File operations", ("Shift+Del",), "Delete permanently (asks first; No is the default)"),
     ("File operations", ("Return",), "Open file / enter folder"),
     ("File operations", ("Alt+Return",), "Properties (size, owner, permissions)"),
     ("File operations", ("F10",), "Context menu"),
@@ -139,7 +140,11 @@ class ShortcutsDialog(QDialog):
         from axross._version import __version__
 
         self.setWindowTitle(tr("Keyboard Shortcuts") + f" — axross {__version__}")
-        self.resize(560, 640)
+        from ui.screen_fit import fit_size
+
+        # Wide enough that the Action column shows its sentences whole; the
+        # Keys column is only as wide as its longest key list.
+        self.resize(fit_size((820, 640), parent))
         self.entries = SHORTCUTS
 
         self.search = QLineEdit()

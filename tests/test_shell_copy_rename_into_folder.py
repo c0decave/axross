@@ -134,7 +134,8 @@ def test_edge_every_shell_backend_sends_the_guarded_copy(monkeypatch):
 
     class _Chan:
         def exec_command(self, cmd):
-            sent.append(("ssh", cmd))
+            # Sent as bytes (surrogateescape keeps non-UTF-8 names whole).
+            sent.append(("ssh", cmd.decode("utf-8", "surrogateescape") if isinstance(cmd, bytes) else cmd))
 
         def makefile_stderr(self, mode):
             import io

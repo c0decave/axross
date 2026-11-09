@@ -41,6 +41,14 @@ def _reason(job: TransferJob) -> str:
     return "" if reason.casefold() == "cancelled" else reason
 
 
+#: What a refused folder row was about (``job.error_context``, set by
+#: core.transfer_manager): said in front of the error's own sentence.
+REFUSAL_CONTEXTS = {
+    "mkdir": "The folder could not be created, so its contents were not copied: {error}",
+    "list": "The folder could not be read, so its contents were not copied: {error}",
+}
+
+
 def _sentence(job: TransferJob) -> str:
     """:func:`_reason` as core.user_errors.describe() says it, in the
     interface language, when the job kept its exception ("[Errno 13]
@@ -51,7 +59,9 @@ def _sentence(job: TransferJob) -> str:
         return reason
     from core.user_errors import describe
 
-    return describe(error) or reason
+    sentence = describe(error) or reason
+    context = REFUSAL_CONTEXTS.get(getattr(job, "error_context", ""))
+    return tr(context).format(error=sentence) if context else sentence
 
 
 class TransferModel(QAbstractTableModel):

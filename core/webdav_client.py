@@ -30,6 +30,7 @@ from email.utils import parsedate_to_datetime
 from typing import IO, Any
 from urllib.parse import quote, unquote, urlsplit
 
+from core import transfer_hooks
 from core.append_helpers import read_existing_for_append
 from core.backend import SessionLifecycle
 from core.path_policy import refuse_folder_path
@@ -80,6 +81,43 @@ def _refuse_unlistable_name(path: str) -> None:
             errno.EINVAL,
             f"WebDAV cannot list a name with control characters ({points}): {path!r}",
         )
+
+
+#: "Not processed, try again later" (RFC 6585 4, RFC 9110 15.6.4).
+_RETRY_STATUSES = frozenset({429, 503})
+#: Requests that may be sent twice: nothing changes, or the second one
+#: leaves what the first left (PUT of the same body, DELETE, MKCOL).
+_RETRY_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "PROPFIND", "PUT", "DELETE", "MKCOL"})
+#: MOVE / COPY run a second time after an unseen success answer
+#: differently (412 under "Overwrite: F", 404 for the moved source): only
+#: 429 - a rate limit, which turns the request away before it runs - is
+#: taken as "nothing happened". A 503 may come from a gateway that gave
+#: up on a server still working on it.
+_RETRY_ON_429_ONLY = frozenset({"MOVE", "COPY"})
+
+
+def _may_retry(method: str, status) -> bool:
+    method = method.upper()
+    if method in _RETRY_ON_429_ONLY:
+        return status == 429
+    return method in _RETRY_METHODS and status in _RETRY_STATUSES
+
+
+def _body_rewinder(data):
+    """A function that puts *data* back to where the first send started,
+    or None when it cannot be sent again (a stream without seek / tell)."""
+    if data is None or isinstance(data, (bytes, bytearray, memoryview, str, dict)):
+        return lambda: None
+    seek, tell = getattr(data, "seek", None), getattr(data, "tell", None)
+    if seek is None or tell is None:
+        return None
+    try:
+        if hasattr(data, "seekable") and not data.seekable():
+            return None
+        start = tell()
+    except (OSError, ValueError):
+        return None
+    return lambda: seek(start)
 
 
 class WebDavRequestError(OSError):
@@ -337,10 +375,40 @@ class _WebDavClient:
     # ------------------------------------------------------------------
 
     def _request(self, method: str, path: str, **kwargs: Any) -> "requests.Response":
+        """One request, sent again (at most cloud_http.ATTEMPTS times in
+        all, after cloud_http's pause / the server's Retry-After) while the
+        server answers 429 or 503 - "not processed, try later": Nextcloud's
+        brute-force and rate limits, a server in maintenance mode, a busy
+        proxy. Only requests that may be sent twice (_may_retry), and only
+        with a body that can be sent again from its start."""
+        from core import cloud_http
+
         url = self._full_url(path)
         kwargs.setdefault("timeout", self._timeout)
         kwargs.setdefault("auth", self._auth)
-        return self.session.request(method, url, **kwargs)
+        rewind = _body_rewinder(kwargs.get("data"))
+        attempt = 1
+        while True:
+            resp = self.session.request(method, url, **kwargs)
+            status = getattr(resp, "status_code", None)
+            if (
+                attempt >= cloud_http.ATTEMPTS
+                or rewind is None
+                or not _may_retry(method, status)
+            ):
+                return resp
+            headers = getattr(resp, "headers", None) or {}
+            retry_after = cloud_http.retry_after_seconds(headers.get("Retry-After"))
+            close = getattr(resp, "close", None)
+            if close is not None:
+                close()
+            log.info(
+                "WebDAV %s %s: HTTP %s, trying again (%d of %d)",
+                method, redact_url(url), status, attempt + 1, cloud_http.ATTEMPTS,
+            )
+            cloud_http.pause(attempt, retry_after)
+            rewind()
+            attempt += 1
 
     @staticmethod
     def _check_status(resp: "requests.Response", *, allowed: tuple[int, ...]) -> None:
@@ -693,6 +761,11 @@ class _SpooledWriter:
         self._closed = False
         #: Called with the remote path once the PUT went through.
         self._on_put = on_put
+        # The running transfer's Cancel and progress (core.transfer_hooks):
+        # the PUT happens in close(), after the copy loop.
+        self._hooks = transfer_hooks.current()
+        if self._hooks is not None:
+            self._hooks.expect_upload()
 
     def write(self, data: bytes) -> int:
         return self._buf.write(data)
@@ -710,9 +783,29 @@ class _SpooledWriter:
         if self._closed:
             return
         self._closed = True
+        hooks = self._hooks
         try:
+            size = self._buf.seek(0, 2)
             self._buf.seek(0)
-            self._client.upload_from(self._buf, self._remote_path)
+            if hooks is None:
+                self._client.upload_from(self._buf, self._remote_path)
+            else:
+                # The body is read through ReadProgress: every block the
+                # PUT sends checks Cancel and counts as sent. A cancelled
+                # PUT may leave a partial file on servers that write in
+                # place: a plain InterruptedError, the engine rolls back.
+                hooks.check()
+                body = transfer_hooks.ReadProgress(self._buf, hooks, size)
+                try:
+                    with transfer_hooks.bound(hooks):
+                        self._client.upload_from(body, self._remote_path)
+                except Exception as exc:
+                    if hooks.cancelled():
+                        # requests wraps the InterruptedError a body read
+                        # raised into a ConnectionError.
+                        raise InterruptedError(transfer_hooks.CANCELLED) from exc
+                    raise
+                hooks.sent(size, size, check=False)
         finally:
             self._buf.close()
         if self._on_put is not None:
@@ -901,8 +994,12 @@ class WebDavSession(SessionLifecycle):
 
         # Spooled, not a BytesIO: the whole file used to sit in RAM.
         buf = new_read_spool()
+        # In a running transfer every block checks Cancel and counts as
+        # received (the whole download happens here, before the copy loop).
+        hooks = transfer_hooks.current()
+        sink = buf if hooks is None else transfer_hooks.WriteProgress(buf, hooks)
         try:
-            self._client.download_to(buf, self._norm(path))
+            self._client.download_to(sink, self._norm(path))
         except FileNotFoundError as e:
             buf.close()
             raise FileNotFoundError(errno.ENOENT, f"Cannot read {path}: {e}", path) from e

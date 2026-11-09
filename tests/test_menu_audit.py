@@ -124,7 +124,9 @@ def test_happy_toolbar_buttons_are_in_the_menus_as_the_same_action(window) -> No
         for toolbar in bars
         for a in toolbar.actions()
         if a.text() and not a.isSeparator() and id(a) not in in_menus
-        and a.text() not in _menu_texts(window)
+        # A stand-in with the same label counts (the Actions menu's entries
+        # carry an underlined letter); compared as _menu_texts normalises.
+        and a.text().replace("&", "").rstrip(".…") not in _menu_texts(window)
     ]
     assert missing == [], missing
 
@@ -169,7 +171,9 @@ def test_sad_no_shortcut_is_bound_twice(window) -> None:
 def test_sad_no_german_label_in_the_english_right_click_menu(window) -> None:
     pane = window._active_pane
     _select(pane, "pack.zip")
-    labels = _labels(pane._build_context_menu())
+    menu = pane._build_context_menu()
+    labels = _labels(menu) + [label for action in menu.actions() if action.menu() is not None
+                              for label in _labels(action.menu())]
     assert "Preview Archive" in labels and "Extract…" in labels
     assert not {"Vorschau", "Entpacken…"} & set(labels)
 

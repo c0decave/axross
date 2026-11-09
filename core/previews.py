@@ -265,8 +265,9 @@ class ThumbnailResult:
 
 
 def _cache_root() -> Path:
-    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
-    root = Path(base) / "axross" / "thumbnails"
+    from core.xdg_dirs import base_dir
+
+    root = base_dir("XDG_CACHE_HOME") / "axross" / "thumbnails"  # a relative one is ignored
     root.mkdir(parents=True, exist_ok=True)
     return root
 

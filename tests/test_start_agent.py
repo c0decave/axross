@@ -26,6 +26,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 not installed")
 
 from PyQt6.QtWidgets import QApplication, QMenu  # noqa: E402
+from tests.menu_walk import all_actions  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -74,7 +75,7 @@ def _tools_menu(win) -> QMenu:
 
 
 def _find(menu: QMenu, text: str):
-    return next((a for a in menu.actions() if a.text().replace("&", "") == text), None)
+    return next((a for a in all_actions(menu) if a.text().replace("&", "") == text), None)
 
 
 # --- happy -----------------------------------------------------------------
@@ -99,7 +100,7 @@ def test_happy_tools_start_agent_opens_a_new_tab_for_the_active_folder(win, fold
 def test_happy_e2e_new_agent_tab_here_sits_next_to_send_to_agent(win, folder) -> None:
     pane = win._active_pane
     menu = pane._build_context_menu()
-    texts = [a.text() for a in menu.actions()]
+    texts = [a.text() for a in all_actions(menu)]
     assert "New Agent Tab Here" in texts
     assert texts.index("New Agent Tab Here") == texts.index("Send to Agent") + 1
     dock = win._agent_dock

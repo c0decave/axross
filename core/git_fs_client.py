@@ -3,7 +3,7 @@
 Treats a git repository as a filesystem: branches are directories
 under ``/``, the tree at each branch's HEAD is its child filesystem.
 Writes commit a new tree onto the branch (one commit per file
-write); ``flush_push()`` syncs to the remote.
+write).
 
 Layout::
 
@@ -15,14 +15,41 @@ Capabilities & guard rails:
 
 * **Author / email** come from the profile (``author_name`` /
   ``author_email``); ``~/.gitconfig`` is used as a fallback.
-* **Fast-forward only.** Any operation that would rewrite history
-  (force-push, branch reset, amend) is refused. The session refuses
-  to commit if the local branch tip has diverged from the remote.
+* **Fast-forward only.** axross never rewrites history on a remote
+  (no force-push, branch reset of a pushed branch, amend). The
+  session refuses to commit if the local branch tip has diverged from
+  the remote.
 * **No working tree assumption.** We talk to the object store
   directly via dulwich; there is no ``.git/index`` checkout. Bare
   repos work the same as non-bare.
-* **Remote URLs auto-clone** into a per-session cache dir under
-  ``~/.cache/axross/git/<sha1>/``. ``flush_push()`` pushes back.
+* **Remote URLs auto-clone** into a per-URL cache dir under
+  ``~/.cache/axross/git/<sha256[:16]>/``.
+
+URL sessions and the remote (the cache is a mirror, not a fork):
+
+* **Opening fetches.** Each local branch then follows ``origin``:
+  behind → fast-forwarded; rewritten upstream (a force-push) while
+  every local commit of it was already on origin → reset to origin's
+  new tip (logged); deleted upstream with nothing unpushed → deleted
+  here too. A branch with commits that never reached origin keeps
+  them (nothing is thrown away): ahead of origin they are pushed with
+  the next write; diverged from origin (upstream force-pushed over
+  them) the branch is read-only here until it is merged in a real git
+  client (:class:`GitForceRefused`).
+* **Every write is pushed** (``auto_push=True``, the default): the
+  commit goes to origin straight away, fast-forward only. When the
+  push fails (network, rejected) the commit stays in the cache, the
+  write raises :class:`GitPushFailed` naming the commit, and the next
+  write - or ``flush_push()`` / ``axross.git_push`` - pushes it along.
+  A script that wants one push for many writes passes
+  ``auto_push=False`` and calls ``flush_push()`` itself. A branch that
+  is checked out in a local non-bare origin is not written (git
+  refuses such a push; dulwich would move the ref under the work tree).
+* **Offline:** when origin cannot be reached at open, the session
+  opens the cached copy *read-only* (``offline`` is the reason; every
+  write raises ``EROFS``) and says so - a WARNING in the log and
+  :meth:`GitFsSession.status_note` in the pane's status line, as is
+  a count of commits not pushed yet.
 
 Requires: ``pip install axross[git]`` — dulwich>=0.21.
 """
@@ -197,10 +224,24 @@ class GitForceRefused(OSError):
     edits silently."""
 
 
+class GitPushFailed(OSError):
+    """A write was committed into the session's cache but could not be
+    pushed to origin (unreachable, rejected). The commit is kept and is
+    pushed with the next write or ``flush_push()``."""
+
+
 class GitBranchMoved(OSError):
     """Raised when a write finds the branch moved since the session read
     it (or while it committed): committing on the old tip would drop the
     commits made in between, so axross refuses instead."""
+
+
+def _ref_or_none(refs, name: bytes):
+    """The sha *name* points at in *refs*, None when there is no such ref."""
+    try:
+        return refs[name]
+    except KeyError:
+        return None
 
 
 def _short_sha(sha: bytes | None) -> str:
@@ -208,6 +249,26 @@ def _short_sha(sha: bytes | None) -> str:
     if not sha:
         return "none"
     return (sha.decode("ascii", "replace") if isinstance(sha, bytes) else str(sha))[:8]
+
+
+def _checked_out_in(repo) -> set[str]:
+    """Branches a work tree of *repo* has checked out: the HEAD of a
+    non-bare repo and the HEAD of every linked worktree."""
+    control = repo.controldir()
+    heads = [] if repo.bare else [os.path.join(control, "HEAD")]
+    linked = os.path.join(control, "worktrees")
+    if os.path.isdir(linked):
+        heads += [os.path.join(linked, name, "HEAD") for name in sorted(os.listdir(linked))]
+    branches: set[str] = set()
+    for head in heads:
+        try:
+            with open(head, "rb") as fh:
+                text = fh.read(4096).strip()
+        except OSError:
+            continue
+        if text.startswith(b"ref: refs/heads/"):
+            branches.add(text[len(b"ref: refs/heads/") :].decode("utf-8", "replace"))
+    return branches
 
 
 # ---------------------------------------------------------------------------
@@ -300,9 +361,15 @@ class GitFsSession(SessionLifecycle):
         author_name: str = "",
         author_email: str = "",
         default_branch: str = "",
+        auto_push: bool = True,
         **_ignored,
     ):
         self._tunnels: list = []
+        # Why origin could not be reached when the session opened ("" =
+        # it could): the cache is shown read-only then.
+        self.offline = ""
+        self._auto_push = bool(auto_push)
+        self._status_note = ""
         self._transport_kwargs: dict = {}
         url = _dulwich_url(url) if url else url
         self._connect_url = url or ""
@@ -341,10 +408,15 @@ class GitFsSession(SessionLifecycle):
                         self._fetch_origin()
                         log.debug("Git-FS fetched from %s", self._display_origin_url)
                     except Exception as exc:  # noqa: BLE001
+                        # The cache is all there is: shown, but read-only -
+                        # a commit here could neither be pushed nor checked
+                        # against what origin has now.
+                        self.offline = str(exc) or type(exc).__name__
                         log.warning(
-                            "Git-FS fetch from %s failed: %s",
+                            "Git-FS: origin %s is unreachable (%s); showing the cached "
+                            "copy from the last fetch, read-only",
                             self._display_origin_url,
-                            exc,
+                            self.offline,
                         )
                 else:
                     log.info("Git-FS cloning %s -> %s", self._display_origin_url, cache_dir)
@@ -371,6 +443,7 @@ class GitFsSession(SessionLifecycle):
         # after every commit so list_dir reflects new state.
         self._branch_tips: dict[str, bytes] = {}
         self._refresh_branch_tips()
+        self._refresh_status_note()
 
     # ------------------------------------------------------------------
     # Identity / lifecycle
@@ -429,13 +502,20 @@ class GitFsSession(SessionLifecycle):
         """File a fetch's answer under ``refs/remotes/origin/*``, and move
         each local branch that has nothing of its own along with it.
 
-        * ``refs/remotes/origin/<b>`` = the remote's ``refs/heads/<b>``;
-          a remote-tracking ref of a branch the remote no longer has goes.
+        * ``refs/remotes/origin/<b>`` = the remote's ``refs/heads/<b>``.
         * ``refs/heads/<b>`` is fast-forwarded when it is an ancestor of
-          the remote's tip: no commit made here is lost. A branch with
-          commits of its own (not pushed yet) keeps them; a diverged one
-          is left as it is and _commit_modification refuses to build on
-          it until it is merged.
+          the remote's tip: no commit made here is lost.
+        * origin rewrote the branch (a force-push) and every commit of
+          the local branch was on origin before (the local tip is the
+          remote-tracking tip of the last fetch or push, or behind it):
+          the local branch follows origin's new tip - nothing of ours is
+          dropped, and the session no longer shows (and refuses writes
+          to) content upstream has replaced.
+        * a branch with commits of its own (not pushed yet) keeps them:
+          ahead of origin they are pushed with the next write; diverged,
+          _commit_modification refuses to build on it until it is merged.
+        * a branch origin deleted goes here too when nothing of it is
+          unpushed; its remote-tracking ref goes in every case.
         * a tag the cache does not have yet is added; one it has stays.
         Refs whose objects the fetch did not bring are skipped."""
         refs = self._repo.refs
@@ -454,28 +534,50 @@ class GitFsSession(SessionLifecycle):
             elif ref.startswith(b"refs/tags/") and ref not in refs:
                 refs[ref] = sha
         for name, sha in upstream.items():
+            shown = name.decode("utf-8", "replace")
+            previous = _ref_or_none(refs, self._REMOTE_PREFIX + name)
             refs[self._REMOTE_PREFIX + name] = sha
             local_ref = b"refs/heads/" + name
-            try:
-                local = refs[local_ref]
-            except KeyError:
-                local = None
+            local = _ref_or_none(refs, local_ref)
             if local is None or local == sha:
                 continue
             if self._is_ancestor(local, sha):
                 refs.set_if_equals(local_ref, local, sha)
-                log.debug("Git-FS: %s fast-forwarded to %s", name.decode("utf-8", "replace"),
-                          _short_sha(sha))
-            elif not self._is_ancestor(sha, local):
+                log.debug("Git-FS: %s fast-forwarded to %s", shown, _short_sha(sha))
+            elif self._is_ancestor(sha, local):
+                log.info("Git-FS: %s has commits not pushed to origin yet", shown)
+            elif previous is not None and (local == previous or self._is_ancestor(local, previous)):
+                refs.set_if_equals(local_ref, local, sha)
                 log.warning(
-                    "Git-FS: local branch %s has diverged from origin (%s vs %s); "
-                    "it is shown as it is here",
-                    name.decode("utf-8", "replace"), _short_sha(local), _short_sha(sha),
+                    "Git-FS: origin rewrote branch %s (a force-push: %s -> %s); nothing of "
+                    "it was unpushed here, so it follows origin",
+                    shown, _short_sha(previous), _short_sha(sha),
+                )
+            else:
+                log.warning(
+                    "Git-FS: local branch %s has commits origin does not have and origin "
+                    "has diverged from it (%s vs %s); it is kept as it is here and is "
+                    "read-only until it is merged in a git client",
+                    shown, _short_sha(local), _short_sha(sha),
                 )
         if remote_branches:
             for ref in list(refs.keys(base=self._REMOTE_PREFIX)):
-                if ref != b"HEAD" and ref not in remote_branches:
-                    del refs[self._REMOTE_PREFIX + ref]
+                if ref == b"HEAD" or ref in remote_branches:
+                    continue
+                previous = _ref_or_none(refs, self._REMOTE_PREFIX + ref)
+                del refs[self._REMOTE_PREFIX + ref]
+                local = _ref_or_none(refs, b"refs/heads/" + ref)
+                if local is None or previous is None:
+                    continue
+                shown = ref.decode("utf-8", "replace")
+                if local == previous or self._is_ancestor(local, previous):
+                    refs.remove_if_equals(b"refs/heads/" + ref, local)
+                    log.warning("Git-FS: origin deleted branch %s; it goes here too", shown)
+                else:
+                    log.warning(
+                        "Git-FS: origin deleted branch %s, which has commits not pushed; "
+                        "it is kept here", shown,
+                    )
 
     def _git_config_value(self, section: str, key: str) -> str:
         try:
@@ -645,16 +747,16 @@ class GitFsSession(SessionLifecycle):
             if not sub:
                 tip = self._branch_tips.get(branch)
                 if tip is None:
-                    raise OSError(f"No such branch: {branch}")
+                    raise FileNotFoundError(errno.ENOENT, f"No such branch: {branch}", path)
                 tree = self._repo[self._repo[tip].tree]
             else:
                 parent_tree, leaf = self._walk_tree_to(branch, sub)
                 entry = self._tree_entry(parent_tree, leaf)
                 if entry is None:
-                    raise OSError(f"No such path: {path}")
+                    raise FileNotFoundError(errno.ENOENT, "No such path", path)
                 mode, sha = entry
                 if not st_mod.S_ISDIR(mode):
-                    raise OSError(f"Not a directory: {path}")
+                    raise NotADirectoryError(errno.ENOTDIR, "Not a directory", path)
                 tree = self._repo[sha]
         except KeyError as exc:
             raise OSError(f"Git list({path}): {exc}") from exc
@@ -687,7 +789,13 @@ class GitFsSession(SessionLifecycle):
 
     @_object_errors_as_oserror
     def stat(self, path: str) -> FileItem:
-        path = self.normalize(path)
+        item = self._stat(self.normalize(path))
+        if path.endswith("/") and path.strip("/") and not item.is_dir:
+            # stat(2) of "file/": not the file.
+            raise NotADirectoryError(errno.ENOTDIR, "Not a directory", path)
+        return item
+
+    def _stat(self, path: str) -> FileItem:
         if path == "/":
             return FileItem(
                 name="/",
@@ -779,17 +887,19 @@ class GitFsSession(SessionLifecycle):
         path = self.normalize(path)
         branch, sub = self._split_branch(path)
         if not branch or not sub:
-            raise OSError("Git read: path must be /<branch>/<file>")
+            if self.exists(path):
+                raise IsADirectoryError(errno.EISDIR, "Is a directory", path)
+            raise FileNotFoundError(errno.ENOENT, "No such branch", path)
         try:
             parent_tree, leaf = self._walk_tree_to(branch, sub)
             entry = self._tree_entry(parent_tree, leaf)
         except KeyError as exc:
             raise OSError(f"Git read({path}): {exc}") from exc
         if entry is None:
-            raise OSError(f"No such path: {path}")
+            raise FileNotFoundError(errno.ENOENT, "No such path", path)
         mode, sha = entry
         if st_mod.S_ISDIR(mode):
-            raise OSError(f"Is a directory: {path}")
+            raise IsADirectoryError(errno.EISDIR, "Is a directory", path)
         if _is_gitlink(mode):
             raise OSError(f"Git read: {path} is a submodule, not a file")
         blob = self._repo[sha]
@@ -809,6 +919,9 @@ class GitFsSession(SessionLifecycle):
 
     @_object_errors_as_oserror
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
+        if path.endswith("/"):
+            # normalize() drops the slash: "t/" would become a FILE t.
+            raise IsADirectoryError(errno.EISDIR, "A file name cannot end in '/'", path)
         path = self.normalize(path)
         branch, sub = self._split_branch(path)
         if not branch or not sub:
@@ -833,12 +946,22 @@ class GitFsSession(SessionLifecycle):
         # Git tracks files, not empty directories. mkdir is a no-op
         # except when the user is trying to create a top-level branch
         # — for that, they should use the bookmark / branch UI.
-        if path.count("/") <= 1:
+        if self.normalize(path).count("/") <= 1:
+            if self.exists(path):
+                raise FileExistsError(errno.EEXIST, "The branch exists", path)
             raise OSError(
+                errno.EPERM,
                 "Git: branches must be created via git, not mkdir. "
                 "Existing branches appear at the root automatically.",
             )
-        # Deeper paths: no-op (git has no empty trees).
+        # Deeper paths: no-op (git has no empty trees) - unless a file
+        # already has the name.
+        try:
+            item = self.stat(path)
+        except FileNotFoundError:
+            return
+        if not item.is_dir:
+            raise FileExistsError(errno.EEXIST, "A file has this name", path)
 
     @_object_errors_as_oserror
     def remove(self, path: str, recursive: bool = False) -> None:
@@ -855,6 +978,10 @@ class GitFsSession(SessionLifecycle):
 
     @_object_errors_as_oserror
     def rename(self, src: str, dst: str) -> None:
+        if dst.endswith("/") and not self.is_dir(src):
+            # rename(2) of a file to "x/" is ENOTDIR; normalize() would
+            # drop the slash and make a FILE x.
+            raise NotADirectoryError(errno.ENOTDIR, "Not a directory", dst)
         src = self.normalize(src)
         dst = self.normalize(dst)
         src_branch, src_sub = self._split_branch(src)
@@ -878,6 +1005,7 @@ class GitFsSession(SessionLifecycle):
             blob_data=data,
             message=f"axross: mv {src_sub} → {dst_sub} (a)",
             blob_mode=mode,
+            push=False,
         )
         self._commit_modification(
             src_branch, src_sub, blob_data=None, message=f"axross: mv {src_sub} → {dst_sub} (b)"
@@ -936,7 +1064,7 @@ class GitFsSession(SessionLifecycle):
             with self._lock:
                 tip = self._branch_tips.get(branch)
         if tip is None:
-            raise OSError(f"No such branch: {branch or path}")
+            raise FileNotFoundError(errno.ENOENT, f"No such branch: {branch or path}")
         return sub, tip
 
     @_object_errors_as_oserror
@@ -1272,18 +1400,36 @@ class GitFsSession(SessionLifecycle):
         blob_data: bytes | None,
         message: str,
         blob_mode: int | None = None,
+        push: bool = True,
     ) -> None:
         """Build a new tree on ``branch`` with ``sub`` set to
         ``blob_data`` (or removed if None) and commit it. Refuses if
         the local branch ref is behind a known remote tip
         (fast-forward only), or if a work tree has the branch checked
         out. ``blob_mode`` None keeps the mode of the file it replaces
-        (100644 for a new file)."""
+        (100644 for a new file). In a URL session with ``auto_push``
+        the commit is pushed to origin unless *push* is False (the
+        first half of a two-commit change)."""
         if not self._author_name or not self._author_email:
             raise OSError(
                 "Git commit refused: no author identity. Set "
                 "author_name / author_email on the profile or in "
                 "~/.gitconfig.",
+            )
+        if self.offline:
+            raise OSError(
+                errno.EROFS,
+                f"Git: origin {self._display_origin_url} could not be reached when the "
+                f"session opened ({self.offline}); the cached copy is shown read-only. "
+                f"Reconnect when the remote is reachable.",
+            )
+        if self._pushes() and branch in self._origin_checked_out_branches():
+            raise OSError(
+                errno.EBUSY,
+                f"Git: branch {branch} is checked out in the origin repository "
+                f"{self._display_origin_url}; a push to it would leave that work tree "
+                f"behind (git refuses such a push), so axross does not commit to it. "
+                f"Write to another branch or use a bare origin.",
             )
         with self._lock, _as_oserror("write", f"/{branch}/{sub}"):
             if branch in self._checked_out_branches():
@@ -1376,25 +1522,102 @@ class GitFsSession(SessionLifecycle):
                 )
             self._branch_tips[branch] = commit.id
             log.info("Git-FS commit %s on %s: %s", commit.id.decode()[:8], branch, message)
+        if push and self._pushes():
+            try:
+                self._push_branch(branch)
+            except OSError as exc:
+                self._refresh_status_note()
+                raise GitPushFailed(
+                    errno.EIO,
+                    f"Git: the change was committed ({_short_sha(commit.id)} on {branch}) "
+                    f"in the local cache but not pushed to {self._display_origin_url}: "
+                    f"{exc}. It is pushed with the next write to the branch.",
+                ) from exc
+        self._refresh_status_note()
 
     def _checked_out_branches(self) -> set[str]:
         """Branches a work tree of this repo has checked out: the HEAD of
         a non-bare repo and the HEAD of every linked worktree."""
-        control = self._repo.controldir()
-        heads = [] if self._repo.bare else [os.path.join(control, "HEAD")]
-        linked = os.path.join(control, "worktrees")
-        if os.path.isdir(linked):
-            heads += [os.path.join(linked, name, "HEAD") for name in sorted(os.listdir(linked))]
-        branches: set[str] = set()
-        for head in heads:
-            try:
-                with open(head, "rb") as fh:
-                    text = fh.read(4096).strip()
-            except OSError:
-                continue
-            if text.startswith(b"ref: refs/heads/"):
-                branches.add(text[len(b"ref: refs/heads/") :].decode("utf-8", "replace"))
-        return branches
+        return _checked_out_in(self._repo)
+
+    def _pushes(self) -> bool:
+        """Whether a commit is pushed to origin straight away."""
+        return bool(self._origin_url) and self._auto_push
+
+    def _origin_checked_out_branches(self) -> set[str]:
+        """Branches checked out in origin when origin is a local non-bare
+        repository (``file://`` or a path); empty for any other remote."""
+        url = self._origin_url
+        if url.startswith("file://"):
+            local = urlsplit(url).path
+        elif "://" not in url and url.startswith(("/", ".")):
+            local = url
+        else:
+            return set()
+        try:
+            origin = Repo(local)
+        except Exception:  # noqa: BLE001 - not a repository (yet): the push says why
+            return set()
+        try:
+            return _checked_out_in(origin)
+        finally:
+            origin.close()
+
+    # ------------------------------------------------------------------
+    # Sync state with origin
+    # ------------------------------------------------------------------
+
+    #: The most commits counted per branch for "not pushed".
+    _UNPUSHED_COUNT_CAP = 1000
+
+    def unpushed_commits(self) -> dict[str, int]:
+        """``{branch: n}`` of local branches with *n* commits origin does
+        not have (as of the last fetch or push); empty for a session
+        without a remote."""
+        if not self._origin_url:
+            return {}
+        out: dict[str, int] = {}
+        with self._lock:
+            refs = self._repo.get_refs()
+            for ref, sha in refs.items():
+                if not ref.startswith(b"refs/heads/"):
+                    continue
+                name = ref[len(b"refs/heads/") :]
+                origin = refs.get(self._REMOTE_PREFIX + name)
+                if origin == sha:
+                    continue
+                walker = self._repo.get_walker(
+                    include=[sha],
+                    exclude=[origin] if origin else None,
+                    max_entries=self._UNPUSHED_COUNT_CAP,
+                )
+                count = sum(1 for _entry in walker)
+                if count:
+                    out[name.decode("utf-8", "replace")] = count
+        return out
+
+    def _refresh_status_note(self) -> None:
+        from core.i18n import tr
+
+        note = ""
+        try:
+            if self.offline:
+                note = tr("offline: cached copy, read-only")
+            else:
+                pending = self.unpushed_commits()
+                if pending:
+                    note = tr("not pushed to origin: {branches}").format(
+                        branches=", ".join(f"{b} ({n})" for b, n in sorted(pending.items()))
+                    )
+        except Exception as exc:  # noqa: BLE001 - a status line never breaks a write
+            log.debug("Git-FS status note: %s", exc)
+        self._status_note = note
+
+    def status_note(self) -> str:
+        """One line for the pane's status bar: offline (the cached copy,
+        read-only) or the branches with commits not pushed yet; "" when
+        the session is in step with origin."""
+        return self._status_note
 
     def _file_mode(self, branch: str, sub: str) -> int:
         """The commit mode of the file ``sub`` on ``branch``: 100755 for
@@ -1508,28 +1731,56 @@ class GitFsSession(SessionLifecycle):
     # ------------------------------------------------------------------
 
     def flush_push(self, branch: str | None = None) -> None:
-        """Push local commits to origin. Branch defaults to every
-        branch the session has touched. Refuses non-fast-forward
+        """Push local commits to origin. Branch defaults to every local
+        branch of the session. Refuses non-fast-forward
         unconditionally (no force-push surface)."""
         if not self._origin_url:
             raise OSError("Git-FS: no remote URL — nothing to push to")
-        branches = [branch] if branch else list(self._branch_tips)
-        for b in branches:
-            try:
-                porcelain.push(
-                    self._repo,
-                    remote_location=self._connect_url,
-                    refspecs=[f"refs/heads/{b}:refs/heads/{b}".encode()],
-                    force=False,
-                    **self._transport_kwargs,
-                )
-            except Exception as exc:
-                if "non-fast-forward" in str(exc).lower():
-                    raise GitForceRefused(
-                        f"push refused: branch {b} would require force-push"
-                    ) from exc
-                raise OSError(f"Git push {b}: {exc}") from exc
-            display_origin = getattr(self, "_display_origin_url", "") or redact_url(
-                self._origin_url
+        if branch:
+            branches = [branch]
+        else:
+            branches = [
+                b for b in list(self._branch_tips)
+                if _ref_or_none(self._repo.refs, f"refs/heads/{b}".encode()) is not None
+            ]
+        try:
+            for b in branches:
+                self._push_branch(b)
+        finally:
+            self._refresh_status_note()
+
+    def _push_branch(self, b: str) -> None:
+        """Push local branch *b* to origin (fast-forward only) and move
+        ``refs/remotes/origin/<b>`` to what was pushed."""
+        if b in self._origin_checked_out_branches():
+            raise OSError(
+                errno.EBUSY,
+                f"Git push {b}: the branch is checked out in the origin repository; "
+                f"git refuses such a push",
             )
-            log.info("Git-FS pushed %s → %s", b, display_origin)
+        ref = f"refs/heads/{b}".encode()
+        pushed = _ref_or_none(self._repo.refs, ref)
+        out = io.BytesIO()
+        try:
+            porcelain.push(
+                self._repo,
+                remote_location=self._connect_url,
+                refspecs=[ref + b":" + ref],
+                force=False,
+                outstream=out,
+                errstream=out,
+                **self._transport_kwargs,
+            )
+        except Exception as exc:
+            text = f"{exc} {out.getvalue().decode('utf-8', 'replace')}".lower()
+            if "non-fast-forward" in text or "diverged" in text:
+                raise GitForceRefused(
+                    f"push refused: branch {b} would require force-push"
+                ) from exc
+            raise OSError(f"Git push {b}: {exc}") from exc
+        if isinstance(pushed, bytes):
+            self._repo.refs[self._REMOTE_PREFIX + b.encode()] = pushed
+        display_origin = getattr(self, "_display_origin_url", "") or redact_url(
+            self._origin_url
+        )
+        log.info("Git-FS pushed %s → %s", b, display_origin)

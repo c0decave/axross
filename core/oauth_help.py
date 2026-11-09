@@ -40,7 +40,8 @@ GUIDES: dict[str, Guide] = {
             "Enter Client ID and Client Secret - or download the client's JSON file and "
             "use Import Client JSON…",
         ),
-        _BROWSER,
+        _BROWSER + " Google Docs, Sheets and Slides open as .docx / .xlsx / .pptx exports "
+        "(read-only); shared drives are not listed - only what is reachable from My Drive.",
     ),
     "onedrive": Guide(
         "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",

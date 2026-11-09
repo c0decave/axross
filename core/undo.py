@@ -304,12 +304,18 @@ def apply_undo(
         # Refuse if something new occupies the original path. Renaming
         # over it would trade one lost file for another, which is not
         # what undo means.
+        again = (f"{plan.source} exists again — undo would overwrite it. "
+                 "Move or rename it first.")
         if getattr(backend, "exists", None) and backend.exists(plan.source):
-            raise OSError(
-                f"{plan.source} exists again — undo would overwrite it. "
-                "Move or rename it first."
-            )
-        backend.rename(plan.dest, plan.source)
+            raise OSError(again)
+        # No-replace where the backend can: a file that appears there after
+        # the check is refused too (a plain rename replaced it - LocalFS, SFTP).
+        from core.server_ops import rename_no_replace
+
+        try:
+            rename_no_replace(backend, plan.dest, plan.source)
+        except FileExistsError as exc:
+            raise FileExistsError(again) from exc
         log.info("undo: moved %s back to %s", plan.dest, plan.source)
         return plan.source
 
@@ -692,7 +698,10 @@ def complete_batch(plan: UndoPlan | None, *, journal_path=None) -> UndoPlan | No
     undone - the other 5,000 were never offered again. So the batch is
     read whole (core.operation_journal.read_batch); a batch that reaches
     past the start of what is left of the journal is refused, with nothing
-    changed, rather than undone in part."""
+    changed, rather than undone in part. Whole means: its begin marker
+    (core.operation_journal.begin_batch) is its first surviving event - or,
+    for a batch journaled before the marker existed, that nothing of it
+    looks cut off (see read_batch)."""
     if plan is None or plan.action != "batch" or not plan.batch:
         return plan
     from core.i18n import tr_n

@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from core import agent_profiles as AP  # noqa: E402
+from tests.doc_labels import on_screen  # noqa: E402
 
 HEADINGS = {"USAGE.md": "**Agent profiles**", "USAGE_de.md": "**Agent-Profile**",
             "USAGE_es.md": "**perfiles de agente**"}
@@ -57,11 +58,16 @@ def _path(name: str, *labels: str) -> str:
 @pytest.mark.parametrize("name", HEADINGS)
 def test_happy_the_menu_entries_and_the_store_are_named_as_on_screen(name):
     section = " ".join(_section(name).split())  # a phrase may wrap
-    for needle in ("New Tab from Profile", "Apply Profile…", "Edit Agent Profiles…",
-                   "Install from Catalog…", _path(name, "Tools", "New Agent Tab from &Profile"),
-                   _path(name, "Agent Settings", "**Profiles**"), "*(preset)*", "*Copy*",
+    for needle in (on_screen(name, "New Tab from Profile"), on_screen(name, "Apply Profile…"),
+                   on_screen(name, "Edit Agent Profiles…"),
+                   on_screen(name, "Install from Catalog…"),
+                   _path(name, "Tools", "New Agent Tab from &Profile"),
+                   _path(name, "Agent Settings", "**Profiles**"),
+                   "(Preset)" if name.endswith("_de.md") else "(preset)",
+                   on_screen(name, "*Copy*"),
                    "~/.config/axross/agent/settings.json", "`agent_profiles`",
-                   "`agent_profile`", _path(name, "Agent Settings", "Access"), "*Category*"):
+                   "`agent_profile`", _path(name, "Agent Settings", "Access"),
+                   on_screen(name, "*Category*")):
         assert needle in section, needle
 
 
@@ -79,7 +85,9 @@ def test_sad_no_preset_or_category_is_named_that_the_code_does_not_have(name):
 
 def test_edge_the_german_handbook_keeps_the_it_terms():
     section = _section("USAGE_de.md")
-    for term in ("Preset", "Settings", "Catalog", "Sandbox", "Tool-Gruppen", "Mode"):
+    # "Katalog" is what the German window says (Aus dem Katalog
+    # installieren…): the handbook names the labels as shown.
+    for term in ("Preset", "Settings", "Sandbox", "Tool-Gruppen", "Mode"):
         assert term in section, term
-    for german in ("Voreinstellung", "Vorlage", "Katalog", "Werkzeug"):
+    for german in ("Voreinstellung", "Vorlage", "Werkzeug"):
         assert german not in section, german

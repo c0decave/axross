@@ -44,6 +44,7 @@ from typing import Callable
 from core import mail_send as MS
 from core.mail_analyse import analyse
 from core.mail_message import MAX_MESSAGE, MailMessage, parse_any
+from core.mail_names import MAX_NAME_BYTES
 
 log = logging.getLogger(__name__)
 
@@ -232,7 +233,7 @@ class Mailbox:
     def new(self, *, mark: bool = True) -> list[dict]:
         out = []
         for item in self._items():
-            if item.name in self._seen:
+            if self._was_seen(item.name):
                 continue
             out.append({"id": self._short(item.name), "name": item.name, "size": item.size,
                         "date": item.modified.isoformat()})
@@ -243,6 +244,21 @@ class Mailbox:
         if mark and out:
             self._save()
         return out
+
+    def _was_seen(self, name: str) -> bool:
+        """Whether the message *name* was seen - also under the longer name
+        a backend gave it before mail names were capped at
+        core.mail_names.MAX_NAME_BYTES bytes (the same id and the start of
+        the subject): taken over, so the mail is not handled twice."""
+        if name in self._seen:
+            return True
+        if not name.endswith(".eml") or len(name.encode("utf-8")) < MAX_NAME_BYTES - 4:
+            return False
+        stem = name[: -len(".eml")]
+        if any(old.endswith(".eml") and old.startswith(stem) for old in self._seen):
+            self._seen.add(name)
+            return True
+        return False
 
     def mark_seen(self, msg_id: str) -> None:
         """Remember the message *msg_id* (an id :meth:`new` or

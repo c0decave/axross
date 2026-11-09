@@ -25,6 +25,7 @@ from PyQt6.QtGui import QColor, QImage  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from core.local_fs import LocalFS  # noqa: E402
+from tests.menu_walk import all_actions  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -140,12 +141,12 @@ def test_happy_the_view_menu_and_the_context_menu_switch_the_active_pane(folder)
         assert action.shortcut().toString() == "Ctrl+Shift+G"
         action.trigger()
         assert pane.view_mode == "thumbnails"
-        labels = [a.text().replace("&", "") for a in pane._build_context_menu().actions()]
+        labels = [a.text().replace("&", "") for a in all_actions(pane._build_context_menu())]
         assert "View as Details" in labels
         action.trigger()
         assert pane.view_mode == "details"
         assert "View as Thumbnails" in [
-            a.text().replace("&", "") for a in pane._build_context_menu().actions()
+            a.text().replace("&", "") for a in all_actions(pane._build_context_menu())
         ]
     finally:
         win.close()

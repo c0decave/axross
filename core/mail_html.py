@@ -10,6 +10,7 @@ a viewer that loads no resource at all (ui/mail_project.py SafeBrowser).
 from __future__ import annotations
 
 import html
+import re
 import unicodedata
 from html.parser import HTMLParser
 from urllib.parse import SplitResult, urlsplit
@@ -24,9 +25,35 @@ DROP_WITH_CONTENT = {"script", "style", "head", "title", "iframe", "frame", "fra
 #: start a dropped region that only an end tag could close.
 VOID = {"area", "base", "basefont", "bgsound", "br", "col", "command", "embed", "frame", "hr", "img", "input",
         "keygen", "link", "meta", "param", "source", "track", "wbr"}
+#: The sanitised HTML is cut here - the escaped text counts, not the mail's
+#: (``&#`` repeated grew four-fold on escaping: a 4 MB mail made 12.6 MB of
+#: HTML, and the viewer's setHtml never came back).
 MAX_OUTPUT = 2 * 1024 * 1024
-#: Elements open at once; deeper ones are left out (keeps every end tag cheap).
-MAX_NESTING = 256
+#: Elements open at once; deeper ones are left out (keeps every end tag
+#: cheap, and the viewer's layout shallow).
+MAX_NESTING = 64
+#: Tables open at once, and lists / quotes: Qt's layout of nested tables
+#: grows exponentially with the depth - 21 nested tables in a 467-byte
+#: mail kept the GUI thread busy for 25 s, 24 for minutes. A deeper one is
+#: left out (its text stays, in the cell around it).
+MAX_TABLE_DEPTH = 6
+MAX_INDENT_DEPTH = 16
+#: What the tables of one mail may cost the viewer's layout: each
+#: character inside a table, and each cell (:data:`CELL_WORK`), counts
+#: double for every table around it (Qt lays a nested table out again for
+#: each one around it: 1 MB of text took 1 s in one table, 31 s in six).
+#: Past it the tables end there and the rest is shown as text.
+TABLE_WORK = 1_000_000
+CELL_WORK = 64
+INDENT = {"ul", "ol", "dl", "blockquote"}
+#: A word longer than this gets a break opportunity (a zero-width space)
+#: every so many characters: Qt lays out one long word in quadratic time -
+#: a 400,000-character word kept the GUI thread 10 s, 2 MB of "&#" (one
+#: word once escaped) close to a minute.
+MAX_WORD = 200
+_SPACE = re.compile(r"(\s+)")
+#: The parts of a table: without their table they are left out too.
+TABLE_PARTS = {"thead", "tbody", "tfoot", "tr", "td", "th", "caption"}
 
 
 def split_url(url: str) -> SplitResult | None:
@@ -39,6 +66,32 @@ def split_url(url: str) -> SplitResult | None:
     except ValueError:
         return None
     return parts
+
+
+def breakable(text: str, run: int = 0) -> tuple[str, int]:
+    """*text* with a zero-width space after every :data:`MAX_WORD`
+    characters of a longer word (see there), and the length of the word it
+    ends with; *run* is the length of the word before it (a word goes on
+    across the pieces of text between tags: ``x<b>x</b>x``)."""
+    if run + len(text) <= MAX_WORD and not _SPACE.search(text):
+        return text, run + len(text)
+    out = []
+    for token in _SPACE.split(text):
+        if not token:
+            continue
+        if token[0].isspace():
+            out.append(token)
+            run = 0
+            continue
+        if run + len(token) > MAX_WORD:
+            cut = MAX_WORD - run
+            pieces = [token[:cut]] + [token[i:i + MAX_WORD] for i in range(cut, len(token), MAX_WORD)]
+            token = "\u200b".join(pieces)
+            run = len(pieces[-1])
+        else:
+            run += len(token)
+        out.append(token)
+    return "".join(out), run
 
 
 def hidden_chars(text: str) -> bool:
@@ -61,12 +114,62 @@ class _Sanitiser(HTMLParser):
         self.skip = 0                       # inside a dropped element
         self.stack: list[str] = []
         self.link_target: list[str] = []
+        self.open = {"table": 0, "indent": 0}     # open tables, open lists and quotes
+        self.table_work = 0
+        self.flat = False                          # the tables ended: text only
+        self.refused: dict[str, int] = {}          # elements left out, still open
+        self.run = 0                               # length of the word shown last
 
     def _emit(self, text: str, *, closing: bool = False) -> None:
         # end tags of open elements always go out: the output stays balanced
-        if self.size < MAX_OUTPUT or closing:
+        if closing:
             self.out.append(text)
             self.size += len(text)
+            return
+        room = MAX_OUTPUT - self.size
+        if room <= 0:
+            return
+        if self.open["table"]:
+            self._table_work(len(text))
+        if len(text) > room:
+            # Cut to what is left - the escaped text counts - and never in
+            # the middle of a character reference or a tag.
+            text = text[:room]
+            for start, end in (("&", ";"), ("<", ">")):
+                cut = text.rfind(start)
+                if cut != -1 and end not in text[cut:]:
+                    text = text[:cut]
+        self.out.append(text)
+        self.size += len(text)
+
+    def _table_work(self, units: int) -> None:
+        """Count *units* of work inside the open tables; past
+        :data:`TABLE_WORK` every open table ends here."""
+        self.table_work += units << (self.open["table"] - 1)
+        if self.table_work > TABLE_WORK:
+            self.flat = True
+            while self.open["table"]:
+                self._pop()
+
+    def _refuse(self, tag: str) -> None:
+        """Leave out the element *tag* (its text stays) - and its end tag."""
+        self.refused[tag] = self.refused.get(tag, 0) + 1
+
+    def _too_deep(self, tag: str) -> bool:
+        if len(self.stack) >= MAX_NESTING:
+            return True
+        if tag == "table":
+            return self.flat or self.open["table"] >= MAX_TABLE_DEPTH
+        if tag in INDENT:
+            return self.open["indent"] >= MAX_INDENT_DEPTH
+        if tag in TABLE_PARTS:
+            # the parts of a table left out, or of none at all
+            if self.refused.get("table") or not self.open["table"]:
+                return True
+            if tag in ("td", "th", "tr"):
+                self._table_work(CELL_WORK)
+                return not self.open["table"]
+        return False
 
     def handle_starttag(self, tag, attrs):
         tag = tag.lower()
@@ -82,7 +185,8 @@ class _Sanitiser(HTMLParser):
             return
         if tag not in ALLOWED:
             return
-        if tag not in VOID and len(self.stack) >= MAX_NESTING:
+        if tag not in VOID and self._too_deep(tag):
+            self._refuse(tag)
             return
         kept = ""
         if tag == "a":
@@ -107,19 +211,29 @@ class _Sanitiser(HTMLParser):
         self._emit(f"<{tag}{kept}>")
         if tag not in VOID:
             self.stack.append(tag)
+            self._count(tag, 1)
+
+    def _count(self, tag: str, step: int) -> None:
+        if tag == "table":
+            self.open["table"] += step
+        elif tag in INDENT:
+            self.open["indent"] += step
 
     def handle_startendtag(self, tag, attrs):
         tag = tag.lower()
         if tag in DROP_WITH_CONTENT or self.skip:
             return                   # <svg/> is empty: it starts no dropped region
-        depth = len(self.stack)
+        depth, refused = len(self.stack), self.refused.get(tag, 0)
         self.handle_starttag(tag, attrs)
         if tag not in VOID and len(self.stack) > depth:
             self._pop()
+        elif self.refused.get(tag, 0) > refused:
+            self.refused[tag] -= 1       # <table/> left out: no end tag follows
 
     def _pop(self) -> str:
         """Close the innermost open element."""
         open_tag = self.stack.pop()
+        self._count(open_tag, -1)
         if open_tag == "a":
             _target, label = self.link_target.pop() if self.link_target else ("", "not a web address")
             self._emit(f"</a> <small>[&#8594; {html.escape(strip_hidden(label))}]</small>", closing=True)
@@ -133,6 +247,13 @@ class _Sanitiser(HTMLParser):
             if tag in DROP_WITH_CONTENT and tag not in VOID:   # </embed> closes nothing
                 self.skip -= 1
             return
+        if self.refused.get(tag):
+            # the end of an element left out (the innermost one of the name
+            # is the one it closes): an element kept stays open
+            self.refused[tag] -= 1
+            return
+        if tag in TABLE_PARTS and self.refused.get("table"):
+            return                   # inside a table left out: its parts were too
         if tag not in self.stack:
             return
         while self.stack and self._pop() != tag:
@@ -140,6 +261,7 @@ class _Sanitiser(HTMLParser):
 
     def handle_data(self, data):
         if not self.skip:
+            data, self.run = breakable(data, self.run)
             self._emit(html.escape(data))
 
     def close(self):

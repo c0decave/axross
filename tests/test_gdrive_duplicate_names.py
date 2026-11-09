@@ -57,7 +57,7 @@ class _Drive:
     def files(self):
         return self
 
-    def list(self, q=None, fields=None, pageSize=None, pageToken=None):
+    def list(self, q=None, fields=None, pageSize=None, pageToken=None, **_kw):
         parent = q.split("'")[1]
 
         def run():
@@ -72,7 +72,7 @@ class _Drive:
 
         return _Exec(run)
 
-    def get(self, fileId=None, fields=None):
+    def get(self, fileId=None, fields=None, **_kw):
         def run():
             for f in self.store:
                 if f["id"] == fileId:
@@ -81,7 +81,7 @@ class _Drive:
 
         return _Exec(run)
 
-    def delete(self, fileId=None):
+    def delete(self, fileId=None, **_kw):
         def run():
             self.deleted.append(fileId)
             self.store[:] = [f for f in self.store if f["id"] != fileId]
@@ -90,7 +90,7 @@ class _Drive:
         return _Exec(run)
 
     def update(self, fileId=None, media_body=None, body=None, addParents=None,
-               removeParents=None, fields=None):
+               removeParents=None, fields=None, **_kw):
         def run():
             self.updated.append(fileId)
             for f in self.store:
@@ -103,7 +103,7 @@ class _Drive:
 
         return _Exec(run)
 
-    def copy(self, fileId=None, body=None):
+    def copy(self, fileId=None, body=None, **_kw):
         def run():
             fid = f"C{next(self._ids)}"
             self.created.append(fid)
@@ -115,7 +115,7 @@ class _Drive:
 
         return _Exec(run)
 
-    def create(self, body=None, media_body=None, fields=None):
+    def create(self, body=None, media_body=None, fields=None, **_kw):
         def run():
             fid = f"N{next(self._ids)}"
             self.created.append(fid)

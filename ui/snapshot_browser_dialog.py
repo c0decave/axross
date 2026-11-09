@@ -332,6 +332,7 @@ class SnapshotBrowserDialog(QDialog):
                     path=self._path, version_id=entry.version_id,
                     when=_format_when(entry.modified))),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
             return

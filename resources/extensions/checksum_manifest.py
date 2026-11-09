@@ -221,7 +221,10 @@ def activate(api):
         # and the write (on a remote folder each was a round trip that
         # held the window), and the pane is shown again without blocking.
         backend, folder = ctx.backend, ctx.folder
-        chosen = [i.name for i in ctx.items if not i.is_dir and i.name not in ("..", ".")]
+        # The manifest never lists itself: with every file selected (Ctrl+A)
+        # it did, and Verify then reported "FAILED: SHA256SUMS".
+        chosen = [i.name for i in ctx.items
+                  if not i.is_dir and i.name not in ("..", ".", MANIFEST_NAME)]
         folders = [i.name for i in ctx.items if i.is_dir and i.name not in ("..", ".")]
         whole_folder = not ctx.items  # nothing selected: every file of the folder
         if not chosen and len(folders) == 1:

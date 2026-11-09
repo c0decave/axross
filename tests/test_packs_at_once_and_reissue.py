@@ -78,7 +78,8 @@ def publish(state: dict, blobs: dict, *, key=None, sums_from: dict | None = None
     if sums_from is not None:
         files[SU.SUMS_NAME], files[SU.SIG_NAME] = sums_from[SU.SUMS_NAME], sums_from[SU.SIG_NAME]
     else:
-        sums = ((f"{P.PACKS_ISSUE_PREFIX}{issue}\n" if issue else "")
+        sums = (f"{SU.RELEASE_LINE_PREFIX}{VERSION}\n"
+                + (f"{P.PACKS_ISSUE_PREFIX}{issue}\n" if issue else "")
                 + "".join(f"{hashlib.sha256(d).hexdigest()}  {n}\n" for n, d in sorted(files.items()))).encode()
         files[SU.SUMS_NAME] = sums
         files[SU.SIG_NAME] = (key or state["key"]).sign(sums)

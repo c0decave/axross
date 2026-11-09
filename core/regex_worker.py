@@ -13,7 +13,9 @@ the parent kills the child when one file takes longer than its bound (or
 the call is cancelled). The child is started with ``-I -S`` and runs only
 the stdlib code in :data:`_CHILD_SOURCE` (a frozen build answers
 ``--regex-worker``, main.py); it reads nothing but its stdin, and its
-address space and CPU time are capped.
+address space and CPU time are capped (RLIMIT_AS; RLIMIT_CPU per text,
+so the bound holds when the parent is gone), and it ends with its parent
+(PR_SET_PDEATHSIG on Linux, a kill-on-close job object on Windows).
 
 Protocol over the pipes (all integers big-endian):
 
@@ -28,6 +30,7 @@ Protocol over the pipes (all integers big-endian):
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import struct
 import subprocess
@@ -50,13 +53,38 @@ ADDRESS_SPACE_LIMIT = 1024**3
 MAX_LIMIT = 1 << 20
 
 _CHILD_SOURCE = r'''
-import re, struct, sys
+import os, re, struct, sys
+_parent, _cpu = int(sys.argv[-3]), int(sys.argv[-2])
+if sys.platform.startswith("linux"):
+    # End with the parent: a server killed while this child backtracks
+    # must not leave it spinning (PR_SET_PDEATHSIG = 1).
+    try:
+        import ctypes, signal
+        ctypes.CDLL(None, use_errno=True).prctl(1, int(signal.SIGKILL), 0, 0, 0)
+    except Exception:
+        pass
+if _parent and os.getppid() != _parent:
+    raise SystemExit(0)
 try:
     import resource
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     resource.setrlimit(resource.RLIMIT_AS, (int(sys.argv[-1]), int(sys.argv[-1])))
 except Exception:
     pass
+def cpu_budget(seconds):
+    # The CPU time this child may still use: what it used so far plus
+    # *seconds* (SIGXCPU ends it) - the bound holds without the parent.
+    try:
+        import resource
+        used = resource.getrusage(resource.RUSAGE_SELF)
+        soft = int(used.ru_utime + used.ru_stime) + seconds
+        hard = resource.getrlimit(resource.RLIMIT_CPU)[1]
+        if hard != resource.RLIM_INFINITY:
+            soft = min(soft, hard)
+        resource.setrlimit(resource.RLIMIT_CPU, (soft, hard))
+    except Exception:
+        pass
+cpu_budget(_cpu)
 inp, out = sys.stdin.buffer, sys.stdout.buffer
 def read(n):
     data = inp.read(n)
@@ -76,6 +104,7 @@ out.write(struct.pack(">I", 0)); out.flush()
 while True:
     limit = u32()
     text = read(u32()).decode("utf-8", "replace")
+    cpu_budget(_cpu)
     hits = []
     for n, line in enumerate(text.splitlines(), 1):
         if search(line):
@@ -95,12 +124,76 @@ class RegexCancelled(Exception):
     """The caller cancelled while the child was matching (the child was killed)."""
 
 
-def worker_argv() -> list[str]:
+def cpu_seconds_for(seconds_per_text: float) -> int:
+    """The CPU seconds the child may spend on one text (or on compiling the
+    pattern): the wall-clock bound with room to spare - the parent's timer
+    normally ends the child first, this limit ends it when the parent is
+    gone (RLIMIT_CPU, POSIX)."""
+    return int(max(seconds_per_text, STARTUP_SECONDS)) * 2 + 5
+
+
+def worker_argv(seconds_per_text: float = DEFAULT_SECONDS_PER_FILE) -> list[str]:
     """The command that starts the matcher child. A frozen build has no
-    ``python -c``: the binary itself answers ``--regex-worker`` (main.py)."""
+    ``python -c``: the binary itself answers ``--regex-worker`` (main.py).
+    The last three arguments: this process's pid (the child ends when its
+    parent is gone), the CPU seconds per text, the address-space limit."""
+    tail = [str(os.getpid()), str(cpu_seconds_for(seconds_per_text)), str(ADDRESS_SPACE_LIMIT)]
     if getattr(sys, "frozen", False):
-        return [sys.executable, "--regex-worker", str(ADDRESS_SPACE_LIMIT)]
-    return [sys.executable, "-I", "-S", "-c", _CHILD_SOURCE, str(ADDRESS_SPACE_LIMIT)]
+        return [sys.executable, "--regex-worker", *tail]
+    return [sys.executable, "-I", "-S", "-c", _CHILD_SOURCE, *tail]
+
+
+def _kill_with_parent_windows(proc: subprocess.Popen) -> None:
+    """Windows has neither PR_SET_PDEATHSIG nor RLIMIT_CPU: put the child in
+    a job object that kills it when the last handle to the job - this
+    process's - closes, i.e. when this process ends however it ends. A
+    watchdog thread in the child cannot do it: ``re`` holds the GIL for the
+    whole backtracking search."""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _BasicLimits(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64),
+                        ("PerJobUserTimeLimit", ctypes.c_int64),
+                        ("LimitFlags", wintypes.DWORD),
+                        ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t),
+                        ("ActiveProcessLimit", wintypes.DWORD),
+                        ("Affinity", ctypes.c_size_t),
+                        ("PriorityClass", wintypes.DWORD),
+                        ("SchedulingClass", wintypes.DWORD)]
+
+        class _IoCounters(ctypes.Structure):
+            _fields_ = [(name, ctypes.c_uint64) for name in (
+                "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+                "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
+
+        class _ExtendedLimits(ctypes.Structure):
+            _fields_ = [("BasicLimitInformation", _BasicLimits),
+                        ("IoInfo", _IoCounters),
+                        ("ProcessMemoryLimit", ctypes.c_size_t),
+                        ("JobMemoryLimit", ctypes.c_size_t),
+                        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                        ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            raise OSError(ctypes.get_last_error(), "CreateJobObjectW")
+        info = _ExtendedLimits()
+        info.BasicLimitInformation.LimitFlags = 0x2000  # KILL_ON_JOB_CLOSE
+        if not kernel32.SetInformationJobObject(job, 9, ctypes.byref(info),
+                                                ctypes.sizeof(info)):
+            raise OSError(ctypes.get_last_error(), "SetInformationJobObject")
+        if not kernel32.AssignProcessToJobObject(job, wintypes.HANDLE(int(proc._handle))):
+            raise OSError(ctypes.get_last_error(), "AssignProcessToJobObject")
+        proc._axross_job = job  # the handle stays open as long as this process
+    except Exception as exc:  # noqa: BLE001 - best effort; the parent's timer still applies
+        log.warning("regex worker %s: no kill-on-exit job object: %s", proc.pid, exc)
 
 
 def _child_main() -> int:
@@ -129,13 +222,14 @@ class RegexMatcher:
         self._is_cancelled = is_cancelled or (lambda: False)
         self._replies: queue.Queue = queue.Queue()
         self._proc = subprocess.Popen(
-            worker_argv(),
+            worker_argv(self._seconds),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             env=worker_env(),
             close_fds=True,
         )
+        _kill_with_parent_windows(self._proc)
         self._reader = threading.Thread(target=self._read_loop, name="regex-worker-reader",
                                         daemon=True)
         self._reader.start()

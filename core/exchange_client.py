@@ -51,6 +51,7 @@ from datetime import datetime
 from typing import IO
 
 from core.backend import SessionLifecycle
+from core.mail_names import cap_component, message_file_name
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
@@ -168,11 +169,14 @@ def _is_not_found(exc: BaseException) -> bool:
 
 
 def _sanitize(name: str, max_len: int = 120) -> str:
+    """*name* as one path component: at most *max_len* characters, as
+    before - unless that is over MAX_NAME_BYTES UTF-8 bytes (CJK): then
+    cut in bytes, an extension kept (core.mail_names)."""
     cleaned = _FILENAME_BAD_CHARS.sub("_", name or "")
     cleaned = cleaned.strip(". ")
     if not cleaned:
         cleaned = "untitled"
-    return cleaned[:max_len]
+    return cap_component(cleaned, max_len)
 
 
 def _split_path(path: str) -> list[str]:
@@ -340,6 +344,26 @@ class _ExchangeMessageWriter:
 # --------------------------------------------------------------------------
 
 
+#: Seconds exchangelib may spend waiting and retrying one request that the
+#: server turned away as busy (ErrorServerBusy, HTTP 503 / 429 - EWS
+#: throttling) or that lost its connection. exchangelib's default policy
+#: (FailFast) retries nothing, so one throttled request failed a whole
+#: folder copy; its FaultTolerance default (3600 s) would leave a pane
+#: waiting for an hour. A server that asks for a longer back-off than
+#: this fails at once.
+EXCHANGE_RETRY_MAX_WAIT = 60
+
+
+def _retry_policy():
+    """exchangelib's FaultTolerance bounded by EXCHANGE_RETRY_MAX_WAIT,
+    or None when this exchangelib has none (its default then applies)."""
+    try:
+        from exchangelib import FaultTolerance  # type: ignore[import-not-found]
+    except ImportError:
+        return None
+    return FaultTolerance(max_wait=EXCHANGE_RETRY_MAX_WAIT)
+
+
 class ExchangeSession(SessionLifecycle):
     """EWS-backed FileBackend.
 
@@ -398,12 +422,21 @@ class ExchangeSession(SessionLifecycle):
 
         try:
             creds = Credentials(self._username, password)  # type: ignore[misc]
+            policy = _retry_policy()
+            retry = {"retry_policy": policy} if policy is not None else {}
             if autodiscover:
+                # The retry policy reaches an autodiscovered Account only
+                # through a Configuration (exchangelib takes it from there).
                 self._account = Account(  # type: ignore[misc]
                     primary_smtp_address=smtp_address,
                     credentials=creds,
                     autodiscover=True,
                     access_type=DELEGATE,
+                    **(
+                        {"config": Configuration(credentials=creds, **retry)}  # type: ignore[misc]
+                        if retry
+                        else {}
+                    ),
                 )
             else:
                 if not server:
@@ -411,6 +444,7 @@ class ExchangeSession(SessionLifecycle):
                 config = Configuration(  # type: ignore[misc]
                     server=server,
                     credentials=creds,
+                    **retry,
                 )
                 self._account = Account(  # type: ignore[misc]
                     primary_smtp_address=smtp_address,
@@ -1107,7 +1141,9 @@ class ExchangeSession(SessionLifecycle):
         for msg in messages:
             mid = _id_segment(self._msg_id(msg))
             subj = _sanitize(getattr(msg, "subject", "") or "no_subject")
-            file_name = f"{mid}_{subj}.eml"
+            # The ItemId (~150 characters) whole, the subject cut so the
+            # name stays a valid local file name; found by the id alone.
+            file_name = message_file_name(mid, subj)
             out.append(
                 FileItem(
                     name=file_name,

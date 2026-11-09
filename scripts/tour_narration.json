@@ -96,8 +96,8 @@
           "de": "{Panes} vergleichen im Menü Ansicht vergleicht den Ordner des aktiven {Panes} mit dem des Ziel-{Panes}. Gleiche Dateien werden ausgeblendet, und eine Datei, die es nur auf einer Seite gibt, lässt sich hinüberkopieren. Abgleich zeigt genau, was es tun würde, bevor es irgendetwas tut, und Bei Konflikt steht anfangs auf Mich fragen, so wird nichts überschrieben."
         },
         "The trash first": {
-          "en": "Move to Trash in the right click menu works on every connection, and Show Trash restores from it. Delete Permanently, on the Delete key, counts first and asks again when hidden files are inside. Use the trash for anything you might want back.",
-          "de": "In den {Trash} verschieben im Rechtsklick-Menü funktioniert auf jeder Verbindung, und {Trash} anzeigen stellt daraus wieder her. Endgültig löschen, auf der Taste Entfernen, zählt erst und fragt noch einmal, wenn versteckte Dateien darin sind. Nimm den {Trash} für alles, was du vielleicht zurückhaben willst."
+          "en": "The Delete key moves the selection to the trash, and Show Trash restores from it. Delete Permanently, on Shift and Delete, counts first, asks with No as the default, and asks again when hidden files are inside. Use the trash for anything you might want back.",
+          "de": "Die Taste Entfernen verschiebt die Auswahl in den {Trash}, und {Trash} anzeigen stellt daraus wieder her. Endgültig löschen, auf Umschalt und Entfernen, zählt erst, fragt mit Nein als Vorauswahl und fragt noch einmal, wenn versteckte Dateien darin sind. Nimm den {Trash} für alles, was du vielleicht zurückhaben willst."
         },
         "Undo": {
           "en": "Control Z reverses the newest move or Move to Trash whose connection is open. A copy is reported as not reversible, instead of being guessed at.",

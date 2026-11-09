@@ -245,6 +245,7 @@ class TextEditorDialog(QDialog):
                         tr("The file has been modified on the server since you opened it.\n"
                         "Overwrite with your changes?"),
                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.No,
                     )
                     if reply != QMessageBox.StandardButton.Yes:
                         return
@@ -322,6 +323,7 @@ class TextEditorDialog(QDialog):
             tr("Unsaved Changes"),
             prompt,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         return reply == QMessageBox.StandardButton.Yes
 

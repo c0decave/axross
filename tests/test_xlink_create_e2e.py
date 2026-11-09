@@ -40,6 +40,7 @@ from PyQt6.QtWidgets import (  # noqa: E402
 
 from core import xlink as XL  # noqa: E402
 from core.local_fs import LocalFS  # noqa: E402
+from tests.menu_walk import all_actions  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -106,7 +107,7 @@ def run_dialog(pane, steps) -> list[str]:
             return
         steps(dlg, seen)
 
-    action = next(a for a in pane._build_context_menu().actions() if a.text() == "Create XLink…")
+    action = next(a for a in all_actions(pane._build_context_menu()) if a.text() == "Create XLink…")
     QTimer.singleShot(0, drive)
     action.trigger()
     return seen

@@ -84,7 +84,7 @@ class _Drive:
     def files(self):
         return self
 
-    def list(self, q=None, fields=None, pageSize=None, pageToken=None):
+    def list(self, q=None, fields=None, pageSize=None, pageToken=None, **_kw):
         parent = q.split("'")[1]
 
         def run():
@@ -96,10 +96,10 @@ class _Drive:
 
         return _Exec(run)
 
-    def get(self, fileId=None, fields=None):
+    def get(self, fileId=None, fields=None, **_kw):
         return _Exec(lambda: dict(self.meta[fileId], size=str(len(self.content[fileId]))))
 
-    def get_media(self, fileId=None):
+    def get_media(self, fileId=None, **_kw):
         return fileId
 
     def update(self, fileId=None, media_body=None, body=None, **kw):

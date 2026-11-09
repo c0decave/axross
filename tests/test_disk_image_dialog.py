@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 from core import loop_mount as LM  # noqa: E402
 from core.local_fs import LocalFS  # noqa: E402
 from tests.test_disk_image import LINUX, SECTOR, gpt_image, put_ext4  # noqa: E402
+from tests.menu_walk import all_actions  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -158,10 +159,10 @@ def test_happy_context_menu_offers_disk_image_for_an_image(image, monkeypatch):
         pane = win._active_pane
         pane.navigate(str(image.parent))
         _select(pane, "disk.img")
-        labels = [a.text() for a in pane._build_context_menu().actions()]
+        labels = [a.text() for a in all_actions(pane._build_context_menu())]
         assert "Disk Image…" in labels
         _select(pane, "notes.txt")
-        assert "Disk Image…" not in [a.text() for a in pane._build_context_menu().actions()]
+        assert "Disk Image…" not in [a.text() for a in all_actions(pane._build_context_menu())]
         _select(pane, "disk.img")
         dlg = pane.show_disk_image()
         assert wait(lambda: dlg.info is not None)
