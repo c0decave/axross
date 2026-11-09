@@ -87,10 +87,13 @@ def packs_root() -> Path:
     return Path(base) / "axross" / "packs"
 
 
-#: The pack-manifest issue a release had reached when this build was made
-#: (version -> issue): the floor for a fresh install, where no
-#: ``installed.json`` remembers an issue. A re-issue that fixes a pack adds
-#: its number here for the next build.
+#: A floor for a fresh install, where no ``installed.json`` remembers an
+#: issue (version -> issue). A build is always made before any re-issue of
+#: its own version's manifest, so for its own version the floor is issue 0:
+#: leave this empty. An entry only helps a LATER build that knows an older
+#: version's manifest was re-issued (e.g. a fixed pack) and must not accept
+#: the earlier issue when it carries those packs along in an update. The
+#: rollback floor of an installed axross is ``issues-seen.json``.
 SHIPPED_ISSUES: dict[str, int] = {}
 #: Beside the version folders: version -> the highest issue of its manifest
 #: ever seen signed here. Survives removing the units and :func:`prune`.

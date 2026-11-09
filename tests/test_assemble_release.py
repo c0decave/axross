@@ -478,7 +478,7 @@ def test_happy_the_release_flow_has_the_final_reviews_steps():
                    "--pack-wheels unhosted", "sorted by name, ignoring case"):
         assert needle in flow, needle
     assert "upload-1.txt first keeps" not in flow and "the test suite) must be green" not in flow
-    assert flow.index("refs/heads/ci/") < flow.index('git tag -s "v$VERSION"')
+    assert flow.index("refs/heads/ci/") < flow.index('git tag -a "v$VERSION"')
     assert flow.index("--prerelease --latest=false") < flow.index("--draft --verify-tag") \
         < flow.index("--api-json")
     doc = (ROOT / "scripts" / "tour_videos.py").read_text(encoding="utf-8")

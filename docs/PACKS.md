@@ -47,9 +47,10 @@ The release key (Ed25519, public half pinned in `core/self_update.TRUSTED_KEYS`)
 signs `SHA256SUMS` (`scripts/sign_release.py`, raw 64-byte signature in
 `SHA256SUMS.sig`). Everything else hangs from that one signature:
 
-- `SHA256SUMS` lists every binary (base / slim / full, every variant), every blob and
-  `packs-<version>.json` - so the manifest is signed through it, and every blob through
-  the manifest's and the sums' SHA-256.
+- `SHA256SUMS` lists every binary (base / slim / full, every variant), every blob
+  attached to the release and `packs-<version>.json` - so the manifest is signed through
+  it, and every blob through the manifest's SHA-256 (a blob fetched from PyPI is listed
+  only in the signed manifest; the ones attached to the release are in both).
 - The installer checks in this order and stops at the first failure: the signature of
   `SHA256SUMS` against the pinned key; the manifest's SHA-256 against `SHA256SUMS`; each
   blob's size and SHA-256 against the manifest (and against `SHA256SUMS`); only then is

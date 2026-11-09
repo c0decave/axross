@@ -64,7 +64,7 @@ source .venv/bin/activate
 pip install -r dev-requirements.txt
 rm -rf dist
 python -m build
-python -m twine check dist/*
+python -m twine check --strict dist/*
 ```
 
 The source checkout should stay out of the smoke test so import-path
@@ -95,7 +95,7 @@ git status --short
 git tag -s v0.4.1 -m "axross 0.4.1"
 rm -rf dist
 python -m build
-python -m twine check dist/*
+python -m twine check --strict dist/*
 python -m twine upload --repository testpypi dist/*
 python -m twine upload dist/*
 ```
@@ -122,7 +122,7 @@ Then rebuild from scratch:
 ```bash
 rm -rf dist
 python -m build
-python -m twine check dist/*
+python -m twine check --strict dist/*
 ```
 
 Use PEP 440-compliant versions (`0.4.1`, `0.5.0`, `1.0.0`,
@@ -551,6 +551,7 @@ and the PyPI tokens, and never builds. Nothing on the builder or in CI
 ever sees the key.
 
 ```bash
+export GH_HOST=github.com   # gh must talk to github.com, whatever its default host is
 VERSION=0.15.177
 ```
 
@@ -568,6 +569,25 @@ VERSION=0.15.177
 
    (`-n auto` needs pytest-xdist; single-process the run takes about half an
    hour.) Merge to `main`; `python-app.yml` must be green on that commit.
+
+   **Tour videos, in the same commit.** The app pins each video's SHA-256
+   in `resources/tours/tour_videos.json` and plays only those files, so the
+   videos are rendered from this commit (its tour texts, its window, its
+   version in the status bar) and their pins committed *before* the tag -
+   rendered after it, every video would be refused; published from an older
+   render, they would narrate old texts. A new set of videos takes a new
+   tag (`tour-videos-2`, ...): an axross that pinned the old files keeps
+   fetching them from the old release.
+
+   ```bash
+   TOURS=tour-videos-1          # a new tag when the videos change
+   python scripts/tour_videos.py frames --out F --lang en de          # PyQt6
+   python scripts/tour_videos.py render --frames F --out V --voices VOICES   # piper, ffmpeg
+   python scripts/tour_videos.py manifest --videos V --tag "$TOURS"   # -> V/release/*.mp4
+   git add resources/tours/tour_videos.json && git commit -m "Tour videos for $VERSION"
+   ```
+
+   Step 7 publishes `V/release/*.mp4` as that tag.
 
 2. **maintainer** - before the tag, a green **cross-platform build** of that
    commit: the macOS and Windows binaries have not been built since
@@ -590,7 +610,7 @@ VERSION=0.15.177
 3. **maintainer** - tag that commit and push the tag:
 
    ```bash
-   git tag -s "v$VERSION" -m "axross $VERSION" && git push origin "v$VERSION"
+   git tag -a "v$VERSION" -m "axross $VERSION" && git push origin "v$VERSION"
    ```
 
 4. **CI** - the tag starts `cross-platform.yml` again: the smoke tests on
@@ -656,7 +676,7 @@ VERSION=0.15.177
    gh release create "$TOURS" --prerelease --latest=false \
        --title "axross tour videos ($TOURS)" \
        --notes "The narrated videos of Help > Tours; axross downloads them on demand." \
-       VIDEOS/release/*.mp4
+       V/release/*.mp4
    gh api repos/c0decave/axross/releases/latest --jq .tag_name   # still a vX.Y.Z tag
    ```
 
@@ -738,7 +758,7 @@ VERSION=0.15.177
 
    ```bash
    A="dist/release-$VERSION/assets"
-   .venv/bin/twine check "$A/axross-$VERSION.tar.gz" "$A/axross-$VERSION-py3-none-any.whl"
+   .venv/bin/twine check --strict "$A/axross-$VERSION.tar.gz" "$A/axross-$VERSION-py3-none-any.whl"
    .venv/bin/twine upload --repository testpypi \
        "$A/axross-$VERSION.tar.gz" "$A/axross-$VERSION-py3-none-any.whl"
    python3 -m venv /tmp/axross-testpypi

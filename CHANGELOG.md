@@ -7,11 +7,29 @@ notes of a release, with every fix, are on its
 ## Unreleased (0.15.177)
 
 0.15.177 is the first release since 0.14.136 with one-file binaries for
-Linux, macOS and Windows: installed binaries update to it. Three rounds of
+Linux, macOS and Windows: installed binaries update to it. Six rounds of
 reviews of the whole code (backends and transfers, security, the windows,
 the extensions, the entry points, concurrency, the docs against the code)
-found and fixed more than 140 bugs; every fix comes with tests that fail on the
-old code.
+found and fixed several hundred bugs; every fix comes with tests that fail on
+the old code.
+
+**In short** (the update dialog shows the start of these notes):
+
+- **New since 0.14.136:** Help > Handbook (F1 everywhere) and guided
+  Tours with narrated videos in English and German; packs (optional
+  features added to a small binary), an axross-base binary and a glibc 2.36
+  build; mail projects and mail docks, chat, Bluetooth; a German interface.
+- **Safer:** the agent's sandbox and the MCP server keep to their folders
+  even against racing symlinks; protected places on Linux, macOS and
+  Windows; reverse-serve confined to its folder; hostile file names are
+  shown as text everywhere; updates are signed and never roll back.
+- **Faster:** small files transfer in about a third of the time, big
+  folders filter in milliseconds, the start with all extensions takes half
+  as long.
+- **More careful with your data:** Cancel works during uploads and
+  downloads and leaves nothing half-written; undo checks it moves the file
+  it moved; Del moves to the trash (Shift+Del deletes); questions that
+  destroy default to No.
 
 ### Fixed
 

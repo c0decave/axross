@@ -853,7 +853,7 @@ def release_notes(version: str, plan: Plan, section: str, native: str, signer: s
     for kind, what in (("binary", "One-file binaries (they update themselves)"),
                        ("download", "One-file binaries to download (no self-update)"),
                        ("tool", "The tools as programs of their own"),
-                       ("python", "Python packages (the same as on PyPI)")):
+                       ("python", "Python packages (wheels; those on PyPI are the same files)")):
         if names(kind):
             assets.append(f"- {what}: {names(kind)}")
     if plan.manifest is not None:
@@ -1128,8 +1128,14 @@ def check_only(args) -> int:
             notes = (place / NOTES).read_text(encoding="utf-8")
             break
     keys = SU.TRUSTED_KEYS if args.allow_new_key else field_keys()
-    report = check_release(assets, args.version, keys=keys if (assets / SU.SIG_NAME).exists()
-                           or args.require_all else None, order=order, api=api, notes=notes)
+    check_signature = (assets / SU.SIG_NAME).exists() or args.require_all
+    if args.allow_unpinned:
+        # A rehearsal signed with a throwaway key: everything but the
+        # signature is checked (the real run must not pass this flag).
+        print("assemble_release: --allow-unpinned: the signature is NOT checked", file=sys.stderr)
+        check_signature = False
+    report = check_release(assets, args.version, keys=keys if check_signature else None,
+                           order=order, api=api, notes=notes)
     print(f"axross {args.version}: {assets}")
     _print_report(report)
     if report.problems or (args.require_all and report.missing):
