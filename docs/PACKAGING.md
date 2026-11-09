@@ -222,7 +222,15 @@ One spec file handles both flavours via the
   the library it carries, a tracked text is added: libusb-package has only
   its own Apache-2.0 text, so libusb's LGPL-2.1 `COPYING` and `AUTHORS`
   (v1.0.26) come from `build/licenses/libusb/`
-  (`WHEEL_LIBRARY_NOTICES` in `scripts/bundle_licenses.py`).
+  (`WHEEL_LIBRARY_NOTICES` in `scripts/bundle_licenses.py`). The same goes
+  for libraries inside a wheel: xeddsa's `xeddsa.libs/libsodium` (1.0.18,
+  ISC, `build/licenses/libsodium/LICENSE`) and the c-ares that pycares
+  links in (1.34.9, MIT, `build/licenses/c-ares/LICENSE.md`); both texts
+  are upstream's at the matching tag. A new pin of xeddsa or pycares
+  needs that version checked again (tests/test_bundle_licenses_sysroot.py
+  holds the pins). ctranslate2's wheel has neither a licence file nor an
+  SBOM, so the full build copies its dist-info (`copy_metadata`) for the
+  inventory to tie `ctranslate2.libs/` to the wheel.
 
 ### Dynamic backend imports
 

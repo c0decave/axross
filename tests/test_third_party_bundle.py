@@ -43,7 +43,21 @@ WHEEL_PREFIX = "wheel:"
 #: Wheels that ship another project's library without its licence: the
 #: file the build adds below the wheel's licence folder
 #: (scripts/bundle_licenses.WHEEL_LIBRARY_NOTICES).
-WHEEL_LIBRARY_NOTICE = {"libusb-package": "libusb/COPYING"}
+WHEEL_LIBRARY_NOTICE = {"libusb-package": "libusb/COPYING", "xeddsa": "libsodium/LICENSE",
+                        "pycares": "c-ares/LICENSE.md"}
+
+
+def wheel_notice_problems(names, dists) -> list[str]:
+    """The bundled wheels of *dists* (normalised names) whose licence folder
+    lacks the notice of the library they ship without its licence
+    (:data:`WHEEL_LIBRARY_NOTICE`: xeddsa's libsodium, pycares' c-ares)."""
+    missing = []
+    for dist in sorted(set(dists) & set(WHEEL_LIBRARY_NOTICE)):
+        folder = re.compile(rf"^licenses/python/{re.escape(dist)}-[^-/]+/")
+        notice = WHEEL_LIBRARY_NOTICE[dist]
+        if not any(folder.match(n) and n.endswith("/" + notice) for n in names):
+            missing.append(f"python {dist}: no licenses/python/{dist}-*/{notice}")
+    return missing
 
 
 def system_licence_problems(toc, listed: dict[str, str]) -> list[str]:
@@ -125,6 +139,33 @@ def test_happy_library_names_lose_version_and_wheel_hash():
     assert T.normalise_library("libscipy_openblas64_-f48b354e.so") == "libscipy_openblas64_"
 
 
+def test_happy_the_data_claims_what_the_ci_inventory_found_without_an_entry():
+    # 0.15.177's CI inventory: native parts of the Matrix / XMPP stack and
+    # libusb's libatomic that resources/credits/third_party.json did not name.
+    toc = [("b", "Crypto/Cipher/_raw_aes.abi3.so"), ("b", "_libxeddsa.abi3.so"),
+           ("b", "xeddsa.libs/libsodium-f5304dcb.so.23.3.0"), ("b", "libatomic.so.1"),
+           ("b", "aiohttp/_http_parser.cpython-312-x86_64-linux-gnu.so"),
+           ("b", "yarl/_quoting_c.cpython-312-x86_64-linux-gnu.so"),
+           ("b", "multidict/_multidict.cpython-312-x86_64-linux-gnu.so"),
+           ("b", "frozenlist/_frozenlist.cpython-312-x86_64-linux-gnu.so"),
+           ("b", "propcache/_helpers_c.cpython-312-x86_64-linux-gnu.so"),
+           ("b", "pycares/_cares.abi3.so"),
+           ("b", "pydantic_core/_pydantic_core.cpython-312-x86_64-linux-gnu.so")]
+    modules = ["Crypto.Cipher.AES", "xeddsa.bindings", "h2.connection", "peewee", "pydantic",
+               "aiohttp_socks", "python_socks", "elementpath", "xmlschema", "x3dh",
+               "doubleratchet", "unpaddedbase64", "atomicwrites", "cachetools", "aiofiles",
+               "aiodns", "aiosignal", "aiohappyeyeballs", "annotated_types",
+               "typing_inspection", "hpack", "hyperframe"]
+    report = T.classify_bundle(T.load(), "axross-full", toc, modules, STDLIB)
+    assert report.unclaimed == []
+    assert report.unlisted == []
+    owners = {what: owner for owner, parts in report.claimed.items() for what in parts}
+    assert owners["xeddsa.libs/libsodium-f5304dcb.so.23.3.0"] == "libsodium"
+    assert owners["_libxeddsa.abi3.so"] == "xeddsa"
+    assert owners["libatomic.so.1"] == "gcc-runtime"
+    assert owners["Crypto/Cipher/_raw_aes.abi3.so"] == "pycryptodome"
+
+
 # --- classifier: sad -------------------------------------------------------
 
 
@@ -193,6 +234,25 @@ def test_sad_a_wheel_library_without_its_licences_is_reported():
         "system libthing.so.2: no licence files of the wheel some-wheel"]
 
 
+def test_happy_a_bundled_wheel_s_inner_library_notice_passes():
+    names = ["licenses/python/xeddsa-1.2.0/LICENSE",
+             "licenses/python/xeddsa-1.2.0/libsodium/LICENSE",
+             "licenses/python/pycares-5.2.1/c-ares/LICENSE.md",
+             "licenses/python/numpy-2.5.4/LICENSE.txt"]
+    assert wheel_notice_problems(names, {"xeddsa", "pycares", "numpy"}) == []
+    # a flavour without the wheels (slim) needs none of them
+    assert wheel_notice_problems([], {"numpy"}) == []
+
+
+def test_sad_a_bundled_wheel_without_its_inner_library_notice_is_reported():
+    names = ["licenses/python/xeddsa-1.2.0/LICENSE",
+             "licenses/python/pycares-5.2.1/LICENSE",
+             "licenses/python/pycares-old-1.0/c-ares/LICENSE.md"]
+    assert wheel_notice_problems(names, {"xeddsa", "pycares"}) == [
+        "python pycares: no licenses/python/pycares-*/c-ares/LICENSE.md",
+        "python xeddsa: no licenses/python/xeddsa-*/libsodium/LICENSE"]
+
+
 def test_edge_bootstrap_and_symlink_entries_are_ignored():
     toc = [("m", "pyimod01_archive"), ("s", "pyiboot01_bootstrap"), ("z", "PYZ.pyz"),
            ("n", "libwhatever.so.1"), ("x", "base_library.zip")]
@@ -255,15 +315,18 @@ def test_release_the_binary_carries_the_licence_texts(flavor, path):
     names = [name for _, name in toc]
     report = T.classify_bundle(T.load(), flavor, toc, modules, STDLIB)
     missing = []
+    bundled = set()
     for entry in T.load():
         if entry.id not in report.claimed:
             continue
         for pypi in entry.pypi:
             key = T.normalise_name(pypi)
+            bundled.add(key)
             if key in NO_LICENCE_FILE_IN_WHEEL:
                 continue
             if not any(n.startswith(f"licenses/python/{key}-") for n in names):
                 missing.append(f"python {pypi}")
+    missing += wheel_notice_problems(names, bundled)
     if "licenses/system/LIBRARIES.txt" in names:
         manifest = archive.extract("licenses/system/LIBRARIES.txt").decode("utf-8")
         listed = {line.split("\t")[0]: line.split("\t")[1]

@@ -262,6 +262,47 @@ def test_happy_the_licences_document_has_one_native_files_block():
     assert text.count(T.block_end(N.BLOCK)) == 1
 
 
+def test_happy_a_wheel_without_licence_or_sbom_is_known_by_its_dist_info():
+    # ctranslate2 4.8.3: no licence file, no SBOM; build/axross.spec copies
+    # its dist-info so the libraries of ctranslate2.libs/ name the wheel
+    entries = _entries(
+        {"id": "ctranslate2", "name": "ctranslate2", "kind": "python", "pypi": ["ctranslate2"],
+         "match": {"modules": ["ctranslate2"], "libraries": ["libctranslate2"]}},
+        {"id": "gcc-runtime", "name": "GCC runtime libraries",
+         "match": {"libraries": ["libgomp"]}})
+    files = {"ctranslate2.libs/libctranslate2-bdb19cbc.so.4.8.3": ELF,
+             "ctranslate2.libs/libgomp-e985bcbb.so.1.0.0": ELF,
+             "ctranslate2/_ext.cpython-312-x86_64-linux-gnu.so": ELF}
+    with_metadata = dict(files, **{"ctranslate2-4.8.3.dist-info/METADATA": b"Name: ctranslate2"})
+    rows = _by_path(N.inventory(FakeArchive(with_metadata), entries))
+    lib = rows["ctranslate2.libs/libctranslate2-bdb19cbc.so.4.8.3"]
+    assert (lib.component, lib.version, lib.evidence, lib.shipped_by) == \
+        ("ctranslate2", "4.8.3", "wheel", "wheel ctranslate2 4.8.3")
+    assert rows["ctranslate2.libs/libgomp-e985bcbb.so.1.0.0"].shipped_by == \
+        "wheel ctranslate2 4.8.3"
+    ext = rows["ctranslate2/"]
+    assert (ext.version, ext.evidence, ext.shipped_by) == \
+        ("4.8.3", "wheel", "wheel ctranslate2 4.8.3")
+    # without it (the 0.15.177 CI binary) nothing ties them to the wheel
+    rows = _by_path(N.inventory(FakeArchive(files), entries))
+    assert rows["ctranslate2.libs/libctranslate2-bdb19cbc.so.4.8.3"].shipped_by == "bundle"
+
+
+def test_happy_the_full_build_copies_ctranslate2_s_metadata():
+    from tests.bundle_sources import have_bundle_sources, read
+
+    if not have_bundle_sources():
+        pytest.skip("build/ is not in an sdist")
+    spec = read("axross.spec")
+    voice = spec[spec.index('_piper = _metadata.distribution("piper-tts")'):]
+    voice = voice[:voice.index("# Build graph")]
+    # only in the full flavour's voice block: slim has no ctranslate2
+    assert 'datas += copy_metadata("ctranslate2")' in voice
+    assert spec.count('copy_metadata("ctranslate2")') == 1
+    before = spec[:spec.index('_piper = _metadata.distribution("piper-tts")')]
+    assert before[before.rindex("\nif "):].startswith('\nif FLAVOR == "full":')
+
+
 # --- sad -------------------------------------------------------------------
 
 

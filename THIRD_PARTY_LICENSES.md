@@ -153,7 +153,15 @@ them) into the bundle under `licenses/python/<name>-<version>/`
 | Package | SPDX license | Used for | In |
 |---|---|---|---|
 | [adb_shell](https://github.com/JeffLIrion/adb_shell) | Apache-2.0 | Android devices over ADB | full, slim |
+| [aiodns](https://github.com/aio-libs/aiodns) | MIT | Used by Slixmpp: Simple DNS resolver for asyncio | full |
+| [aiofiles](https://github.com/Tinche/aiofiles) | Apache-2.0 | Used by matrix-nio: File support for asyncio | full |
+| [aiohappyeyeballs](https://github.com/aio-libs/aiohappyeyeballs) | PSF-2.0 | Used by aiohttp: Happy Eyeballs for asyncio | full |
+| [aiohttp](https://github.com/aio-libs/aiohttp) | Apache-2.0 AND MIT | Used by matrix-nio: Async http client/server framework (asyncio) | full |
+| [aiohttp_socks](https://github.com/romis2012/aiohttp-socks) | Apache-2.0 | Used by matrix-nio: Proxy connector for aiohttp | full |
+| [aiosignal](https://github.com/aio-libs/aiosignal) | Apache-2.0 | Used by aiohttp: A list of registered asynchronous callbacks | full |
+| [annotated-types](https://github.com/annotated-types/annotated-types) | MIT | Used by pydantic: Reusable constraint types to use with typing.Annotated | full |
 | [anyio](https://github.com/agronholm/anyio) | MIT | Used by httpx2: High-level concurrency and networking framework on top of asyncio or Trio | full, slim |
+| [atomicwrites](https://github.com/untitaker/python-atomicwrites) | MIT | Used by matrix-nio: Atomic file writes | full |
 | [attrs](https://github.com/python-attrs/attrs) | MIT | Used by jsonschema: Classes Without Boilerplate | full, slim |
 | [azure-core](https://github.com/Azure/azure-sdk-for-python) | MIT | Used by azure-storage-blob: Microsoft Azure Core Library for Python | full |
 | [azure-storage-blob](https://github.com/Azure/azure-sdk-for-python) | MIT | Azure Blob Storage backend | full |
@@ -166,6 +174,7 @@ them) into the bundle under `licenses/python/<name>-<version>/`
 | [brotli](https://github.com/google/brotli) | MIT | Used by py7zr: Python bindings for the Brotli compression library | full, slim |
 | [Bumble](https://github.com/google/bumble) | Apache-2.0 | Drives a USB Bluetooth stick directly, without BlueZ (Bluetooth panel) | full |
 | [cached-property](https://github.com/pydanny/cached-property) | BSD-3-Clause | Used by exchangelib: A decorator for caching properties in classes | full |
+| [cachetools](https://github.com/tkem/cachetools) | MIT | Used by matrix-nio: Extensible memoizing collections and decorators | full |
 | [certifi](https://github.com/certifi/python-certifi) | MPL-2.0 | Mozilla's CA certificate bundle for TLS verification | full, slim |
 | [cffi](https://github.com/python-cffi/cffi) | MIT-0 | Used by cryptography: Foreign Function Interface for Python calling C code | full, slim |
 | [chardet](https://github.com/chardet/chardet) | 0BSD | Text encoding detection | full, slim |
@@ -177,10 +186,12 @@ them) into the bundle under `licenses/python/<name>-<version>/`
 | [dnspython](https://github.com/rthalley/dnspython) | ISC | DNS lookups (scripting helpers and SRV discovery) | full, slim |
 | [dropbox](https://github.com/dropbox/dropbox-sdk-python) | MIT | Dropbox backend | full |
 | [dulwich](https://github.com/dulwich/dulwich) | Apache-2.0 OR GPL-2.0-or-later | Git repositories as a file system | full, slim |
+| [elementpath](https://github.com/sissaschool/elementpath) | MIT | Used by xmlschema: XPath 1.0/2.0/3.0/3.1 parsers and selectors for ElementTree and lxml | full |
 | [exchangelib](https://github.com/ecederstrand/exchangelib) | BSD-2-Clause | Microsoft Exchange backend (EWS) | full |
 | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) | MIT | Local speech recognition of the Agent dock | full |
 | [filelock](https://github.com/tox-dev/py-filelock) | MIT | Used by huggingface_hub: A platform independent file lock | full |
 | [Flask](https://github.com/pallets/flask) | BSD-3-Clause | Used by impacket: A simple framework for building complex web applications | full |
+| [frozenlist](https://github.com/aio-libs/frozenlist) | Apache-2.0 | Used by aiohttp: A list-like structure which implements collections.abc.MutableSequence | full |
 | [fsspec](https://github.com/fsspec/filesystem_spec) | BSD-3-Clause | Used by huggingface_hub: File-system specification | full |
 | [fusepy](https://github.com/fusepy/fusepy) | ISC | Mounting an axross connection as a local folder (FUSE) | full, slim |
 | [google-api-core](https://github.com/googleapis/google-cloud-python) | Apache-2.0 | Used by google-api-python-client: Google API client core library | full |
@@ -190,11 +201,14 @@ them) into the bundle under `licenses/python/<name>-<version>/`
 | [google-auth-oauthlib](https://github.com/googleapis/google-cloud-python) | Apache-2.0 | Google sign-in (OAuth) for Google Drive | full |
 | [googleapis-common-protos](https://github.com/googleapis/google-cloud-python) | Apache-2.0 | Used by google-api-core: Common protobufs used in Google APIs | full |
 | [h11](https://github.com/python-hyper/h11) | MIT | Used by httpcore2: A pure-Python, bring-your-own-I/O implementation of HTTP/1.1 | full, slim |
+| [h2](https://github.com/python-hyper/h2) | MIT | Used by matrix-nio and urllib3's HTTP/2 support: Pure-Python HTTP/2 protocol implementation | full, slim |
 | [hf-xet](https://github.com/huggingface/xet-core) | Apache-2.0 | Used by huggingface_hub: Fast transfer of large files with the Hugging Face Hub | full |
+| [hpack](https://github.com/python-hyper/hpack) | MIT | Used by h2: Pure-Python HPACK header encoding | full, slim |
 | [httpcore2](https://github.com/pydantic/httpx2) | BSD-3-Clause | Used by httpx2: A minimal low-level HTTP client | full, slim |
 | [httplib2](https://github.com/httplib2/httplib2) | MIT | Used by google-api-python-client: A comprehensive HTTP client library | full |
 | [httpx2](https://github.com/pydantic/httpx2) | BSD-3-Clause | Used by huggingface_hub: The next generation HTTP client | full, slim |
 | [huggingface_hub](https://github.com/huggingface/huggingface_hub) | Apache-2.0 | Used by faster-whisper: Client library to download and publish models, datasets and other repos on the huggingface | full |
+| [hyperframe](https://github.com/python-hyper/hyperframe) | MIT | Used by h2: Pure-Python HTTP/2 framing | full, slim |
 | [idna](https://github.com/kjd/idna) | BSD-3-Clause | Used by requests: Internationalized Domain Names in Applications (IDNA) | full, slim |
 | [impacket](https://github.com/fortra/impacket) | LicenseRef-Impacket-Apache-1.1-modified | WMI / DCOM and SMB tooling for Windows hosts | full |
 | [importlib_resources](https://github.com/python/importlib_resources) | Apache-2.0 | Used by libusb-package: Read resources from Python packages | full |
@@ -220,6 +234,7 @@ them) into the bundle under `licenses/python/<name>-<version>/`
 | [matrix-nio](https://github.com/matrix-nio/matrix-nio) | ISC | Matrix client with end-to-end encryption (Matrix panel) | full |
 | [more-itertools](https://github.com/more-itertools/more-itertools) | MIT | Used by jaraco.classes: More routines for operating on iterables, beyond itertools | full, slim |
 | [msal](https://github.com/AzureAD/microsoft-authentication-library-for-python) | MIT | Microsoft sign-in for OneDrive and SharePoint | full |
+| [multidict](https://github.com/aio-libs/multidict) | Apache-2.0 | Used by aiohttp: multidict implementation | full |
 | [multivolumefile](https://github.com/miurahr/multivolume) | LGPL-2.1-or-later | Used by py7zr: multi volume file wrapper library | full, slim |
 | [ntplib](https://github.com/cf-natali/ntplib) | MIT | NTP time queries | full, slim |
 | [numpy](https://github.com/numpy/numpy) | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 | Equalizer and spectrum of the Media Player extension | full |
@@ -229,10 +244,12 @@ them) into the bundle under `licenses/python/<name>-<version>/`
 | [packaging](https://github.com/pypa/packaging) | Apache-2.0 OR BSD-2-Clause | Used by onnxruntime: Core utilities for Python packages | full |
 | [paramiko](https://github.com/paramiko/paramiko) | LGPL-2.1-or-later | SSH, SFTP and SCP connections | full, slim |
 | [pathvalidate](https://github.com/thombashi/pathvalidate) | MIT | Used by piper-tts: pathvalidate is a Python library to sanitize/validate a string such as filenames/file-path | full |
+| [peewee](https://github.com/coleifer/peewee) | MIT | Used by matrix-nio: a little orm | full |
 | [Pillow](https://github.com/python-pillow/Pillow) | MIT-CMU | Image thumbnails, image metadata and the image viewer | full, slim |
 | [piper-tts](https://github.com/OHF-voice/piper1-gpl) | GPL-3.0-or-later | Speech output of the Agent dock (Piper) | full |
 | [platformdirs](https://github.com/tox-dev/platformdirs) | MIT | Used by Bumble: platform-specific data folders | full |
 | [prompt_toolkit](https://github.com/prompt-toolkit/python-prompt-toolkit) | BSD-3-Clause | Used by Bumble: interactive command lines | full |
+| [propcache](https://github.com/aio-libs/propcache) | Apache-2.0 | Used by aiohttp: Accelerated property cache | full |
 | [protobuf](https://github.com/protocolbuffers/protobuf) | BSD-3-Clause | Used by onnxruntime | full |
 | [psutil](https://github.com/giampaolo/psutil) | BSD-3-Clause | Drive overview extension; process information | full, slim |
 | [psycopg](https://github.com/psycopg/psycopg) | LGPL-3.0-only | PostgreSQL backend | full, slim |
@@ -243,10 +260,15 @@ them) into the bundle under `licenses/python/<name>-<version>/`
 | [pyasn1_modules](https://github.com/pyasn1/pyasn1-modules) | BSD-2-Clause | Used by impacket: A collection of ASN.1-based protocols modules | full |
 | [PyAV](https://github.com/PyAV-Org/PyAV) | BSD-3-Clause | Audio decoding for local speech recognition (PyAV, FFmpeg) | full |
 | [pybcj](https://github.com/miurahr/pybcj) | LGPL-2.1-or-later | Used by py7zr: bcj filter library | full, slim |
+| [pycares](https://github.com/saghul/pycares) | MIT | Used by aiodns: Python interface for c-ares | full |
 | [pycparser](https://github.com/eliben/pycparser) | BSD-3-Clause | Used by cffi: C parser in Python | full, slim |
+| [pycryptodome](https://github.com/Legrandin/pycryptodome) | BSD-2-Clause AND Unlicense AND MIT | Used by matrix-nio (and, when present, rarfile, pypdf and ldap3): Cryptographic library for Python | full, slim |
 | [pycryptodomex](https://github.com/Legrandin/pycryptodome) | BSD-2-Clause AND LicenseRef-PublicDomain | Used by impacket: Cryptographic library for Python | full, slim |
+| [pydantic](https://github.com/pydantic/pydantic) | MIT | Used by python-doubleratchet, python-x3dh: Data validation using Python type hints | full |
+| [pydantic_core](https://github.com/pydantic/pydantic/tree/main/pydantic-core) | MIT | Used by pydantic: Core functionality for Pydantic validation and serialization | full |
 | [pyee](https://github.com/jfhbrook/pyee) | MIT | Used by Bumble: event emitters | full |
 | [Pygments](https://github.com/pygments/pygments) | BSD-2-Clause | Syntax highlighting in the text editor | full, slim |
+| [PyInstaller](https://github.com/pyinstaller/pyinstaller) | GPL-2.0-or-later WITH Bootloader-exception AND Apache-2.0 | Builds the one-file binaries: its bootloader starts each of them, its loader and run-time hooks run inside | full, slim |
 | [PyJWT](https://github.com/jpadilla/pyjwt) | MIT | Used by msal: JSON Web Token implementation in Python | full, slim |
 | [pymongo](https://github.com/mongodb/mongo-python-driver) | Apache-2.0 | MongoDB / GridFS backend | full, slim |
 | [PyNaCl](https://github.com/pyca/pynacl) | Apache-2.0 | Used by paramiko: Python binding to the Networking and Cryptography (NaCl) library | full, slim |
@@ -262,9 +284,13 @@ them) into the bundle under `licenses/python/<name>-<version>/`
 | [PySocks](https://github.com/Anorov/PySocks) | BSD-3-Clause | SOCKS4/5 proxies for every connection | full, slim |
 | [pyspnego](https://github.com/jborean93/pyspnego) | MIT | NTLM / Kerberos (Negotiate) authentication for proxies and SMB | full, slim |
 | [python-dateutil](https://github.com/dateutil/dateutil) | Apache-2.0 AND BSD-3-Clause | Used by botocore: Extensions to the standard Python datetime module | full, slim |
+| [python-doubleratchet](https://github.com/Syndace/python-doubleratchet) | MIT | Used by python-twomemo: A Python implementation of the Double Ratchet algorithm | full |
 | [python-libusb1](https://github.com/vpelletier/python-libusb1) | LGPL-2.1-or-later | Used by Bumble: libusb from Python | full |
 | [python-omemo](https://github.com/Syndace/python-omemo) | MIT | OMEMO end-to-end encryption session manager (XMPP panel) | full |
+| [python-socks](https://github.com/romis2012/python-socks) | Apache-2.0 | Used by aiohttp_socks: Proxy (SOCKS4, SOCKS5, HTTP CONNECT) client for Python | full |
 | [python-twomemo](https://github.com/Syndace/python-twomemo) | MIT | OMEMO 2 (urn:xmpp:omemo:2) backend | full |
+| [python-x3dh](https://github.com/Syndace/python-x3dh) | MIT | Used by python-twomemo: A Python implementation of the Extended Triple Diffie-Hellman key agreement protocol | full |
+| [python-xeddsa](https://github.com/Syndace/python-xeddsa) | MIT | Used by python-omemo, python-twomemo: Python bindings to libxeddsa | full |
 | [PyUSB](https://github.com/pyusb/pyusb) | BSD-3-Clause | Used by Bumble: USB access | full |
 | [pywinrm](https://github.com/diyan/pywinrm) | MIT | WinRM backend (Windows Remote Management) | full |
 | [PyYAML](https://github.com/yaml/pyyaml) | MIT | Used by ctranslate2: YAML parser and emitter for Python | full, slim |
@@ -287,9 +313,11 @@ them) into the bundle under `licenses/python/<name>-<version>/`
 | [tokenizers](https://github.com/huggingface/tokenizers) | Apache-2.0 | Used by faster-whisper | full |
 | [tqdm](https://github.com/tqdm/tqdm) | MPL-2.0 AND MIT | Used by faster-whisper: Fast, Extensible Progress Meter | full |
 | [truststore](https://github.com/sethmlarson/truststore) | MIT | Used by httpcore2: Verify certificates using native system trust stores | full, slim |
+| [typing-inspection](https://github.com/pydantic/typing-inspection) | MIT | Used by pydantic: Runtime typing introspection tools | full |
 | [typing_extensions](https://github.com/python/typing_extensions) | PSF-2.0 | Used by azure-storage-blob: Backported and Experimental Type Hints for Python 3.9+ | full, slim |
 | [tzdata](https://github.com/python/tzdata) | Apache-2.0 | Used by exchangelib: Provider of IANA time zone data | full |
 | [tzlocal](https://github.com/regebro/tzlocal) | MIT | Used by exchangelib: tzinfo object for the local timezone | full |
+| [unpaddedbase64](https://github.com/matrix-org/python-unpaddedbase64) | Apache-2.0 | Used by matrix-nio: Encode and decode Base64 without "=" padding | full |
 | [uritemplate](https://github.com/python-hyper/uritemplate) | BSD-3-Clause OR Apache-2.0 | Used by google-api-python-client: Implementation of RFC 6570 URI Templates | full |
 | [urllib3](https://github.com/urllib3/urllib3) | MIT | HTTP connection pool (proxies, S3, WebDAV) | full, slim |
 | [vodozemac](https://github.com/matrix-nio/vodozemac-python) | MIT AND Apache-2.0 | Olm and Megolm end-to-end encryption of Matrix (used by matrix-nio) | full |
@@ -297,7 +325,9 @@ them) into the bundle under `licenses/python/<name>-<version>/`
 | [wcwidth](https://github.com/jquast/wcwidth) | MIT | Used by prompt_toolkit: terminal width of characters | full |
 | [websockets](https://github.com/python-websockets/websockets) | BSD-3-Clause | Used by Bumble: WebSocket transports | full |
 | [Werkzeug](https://github.com/pallets/werkzeug) | BSD-3-Clause | Used by Flask: The comprehensive WSGI web application library | full |
+| [xmlschema](https://github.com/sissaschool/xmlschema) | MIT | Used by python-twomemo: An XML Schema validator and decoder | full |
 | [xmltodict](https://github.com/martinblech/xmltodict) | MIT | Used by pywinrm: Makes working with XML feel like you are working with JSON | full |
+| [yarl](https://github.com/aio-libs/yarl) | Apache-2.0 | Used by aiohttp: Yet another URL library | full |
 <!-- /third-party:python-binaries -->
 
 ## Native libraries and data inside the binaries
@@ -330,7 +360,7 @@ licence text at all (libxcb, lz4-libs, sqlite-libs, xcb-util-keysyms).
 | [FFmpeg (PyAV build)](https://ffmpeg.org) | LGPL-3.0-or-later | Audio decoding for local speech recognition; the build reports "libavcodec license: LGPL version 3 or later"; it loads the x264 and x265 libraries below | full |
 | [FFmpeg (Qt Multimedia build)](https://ffmpeg.org) 7.1.5 | LGPL-2.1-or-later | Audio and video decoding of the media viewer and the Media Player (Qt Multimedia); the build reports "libavcodec license: LGPL version 2.1 or later" | full, slim |
 | [FreeType](https://freetype.org) | FTL OR GPL-2.0-or-later | Font rendering of Pillow | full, slim |
-| [GCC runtime libraries](https://gcc.gnu.org) | GPL-3.0-or-later WITH GCC-exception-3.1 | Fortran and OpenMP runtimes (numpy, CTranslate2); libquadmath is LGPL-2.1-or-later | full |
+| [GCC runtime libraries](https://gcc.gnu.org) | GPL-3.0-or-later WITH GCC-exception-3.1 | Fortran, OpenMP and atomic-operation runtimes (numpy, CTranslate2, libusb); libquadmath is LGPL-2.1-or-later | full |
 | [GLib](https://gitlab.gnome.org/GNOME/glib) | LGPL-2.1-or-later | Main loop and D-Bus integration of Qt's platform plugins | full, slim |
 | [GMP](https://gmplib.org) | LGPL-3.0-or-later OR GPL-2.0-or-later | Arbitrary-precision arithmetic used by Nettle | full |
 | [GNU dbm](https://www.gnu.org.ua/software/gdbm/) | GPL-3.0-or-later | Key-value files of Python's dbm module | full |
@@ -351,6 +381,7 @@ licence text at all (libxcb, lz4-libs, sqlite-libs, xcb-util-keysyms).
 | [libpng](https://www.libpng.org) | libpng-2.0 | PNG images (Pillow, Qt) | full, slim |
 | [libpq](https://www.postgresql.org) | PostgreSQL | PostgreSQL client library of psycopg | full, slim |
 | [libselinux](https://github.com/SELinuxProject/selinux) | LicenseRef-PublicDomain | SELinux library used by GLib and libpq | full, slim |
+| [libsodium](https://github.com/jedisct1/libsodium) | ISC | Cryptography library of python-xeddsa (the OMEMO signatures of the XMPP panel) | full |
 | [libsystemd](https://systemd.io) | LGPL-2.1-or-later AND MIT | Journal and D-Bus helpers used by system libraries | full, slim |
 | [LibTIFF](https://libtiff.gitlab.io/libtiff/) | libtiff | TIFF images (Pillow) | full, slim |
 | [libunistring](https://www.gnu.org/software/libunistring/) | LGPL-3.0-or-later OR GPL-2.0-or-later | Unicode string functions used by GnuTLS | full |

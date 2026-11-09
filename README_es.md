@@ -456,7 +456,7 @@ Más capturas de pantalla, cada una con su explicación: **[la slideshow](slides
     Scripts** guarda la llamada como una sección comentada "Try it".
 
 44. **Software de terceros, con su crédito.** **Help → Third-Party
-    Software…** lista los 240 proyectos que axross usa o incluye -
+    Software…** lista los 278 proyectos que axross usa o incluye -
     propósito, licencia, cómo te llega, enlace - desde el mismo archivo de
     datos que los agradecimientos al final de este README.
 
@@ -649,7 +649,7 @@ La lista se genera a partir de [`resources/credits/third_party.json`](resources/
 | [Feather icons](https://github.com/feathericons/feather) | Style model of axross's own SVG icons (re-drawn, no files copied) | MIT | código de axross |
 | [FFmpeg (ffmpeg, ffprobe)](https://ffmpeg.org) | Video thumbnails, media details, removing audio/video metadata | LGPL-2.1-or-later OR GPL-2.0-or-later OR GPL-3.0-only | en tu sistema |
 | [fusepy](https://github.com/fusepy/fusepy) | Mounting an axross connection as a local folder (FUSE) | ISC | axross-full, axross-slim, pip [fuse] |
-| [GCC runtime libraries](https://gcc.gnu.org) | Fortran and OpenMP runtimes (numpy, CTranslate2) | GPL-3.0-or-later WITH GCC-exception-3.1 | axross-full |
+| [GCC runtime libraries](https://gcc.gnu.org) | Fortran, OpenMP and atomic-operation runtimes (numpy, CTranslate2, libusb) | GPL-3.0-or-later WITH GCC-exception-3.1 | axross-full |
 | [GLib](https://gitlab.gnome.org/GNOME/glib) | Main loop and D-Bus integration of Qt's platform plugins | LGPL-2.1-or-later | axross-full, axross-slim |
 | [GNU dbm](https://www.gnu.org.ua/software/gdbm/) | Key-value files of Python's dbm module | GPL-3.0-or-later | axross-full |
 | [GNU Readline](https://tiswww.case.edu/php/chet/readline/rltop.html) | Line editing of Python's readline module | GPL-3.0-or-later | axross-full, axross-slim |
@@ -697,6 +697,7 @@ La lista se genera a partir de [`resources/credits/third_party.json`](resources/
 | [puremagic](https://github.com/cdgriffith/puremagic) | File type detection from file content | MIT | axross-full, axross-slim, pip [magic] |
 | [py7zr](https://github.com/miurahr/py7zr) | 7z archives (browse, extract, pack) | LGPL-2.1-or-later | axross-full, axross-slim, pip [archive] |
 | [Pygments](https://github.com/pygments/pygments) | Syntax highlighting in the text editor | BSD-2-Clause | axross-full, axross-slim, pip |
+| [PyInstaller](https://github.com/pyinstaller/pyinstaller) | Builds the one-file binaries: its bootloader starts each of them, its loader and run-time hooks run inside | GPL-2.0-or-later WITH Bootloader-exception AND Apache-2.0 | axross-full, axross-slim |
 | [pymongo](https://github.com/mongodb/mongo-python-driver) | MongoDB / GridFS backend | Apache-2.0 | axross-full, axross-slim, pip [mongo] |
 | [pypdf](https://github.com/py-pdf/pypdf) | Removing PDF metadata | BSD-3-Clause | axross-full, axross-slim, pip [metadata] |
 | [PyQt6](https://www.riverbankcomputing.com/software/pyqt/) | Python bindings for Qt: the whole user interface | GPL-3.0-only OR LicenseRef-Riverbank-Commercial | axross-full, axross-slim, pip |
@@ -739,12 +740,20 @@ La lista se genera a partir de [`resources/credits/third_party.json`](resources/
 | [Zstandard](https://github.com/facebook/zstd) | Zstandard compression (Pillow, system libraries) | BSD-3-Clause OR GPL-2.0-only | axross-full, axross-slim |
 
 <details>
-<summary>125 bibliotecas más que llegan con los proyectos de arriba</summary>
+<summary>162 bibliotecas más que llegan con los proyectos de arriba</summary>
 
 | Proyecto | Usado por | Licencia | Viene con |
 |---|---|---|---|
+| [aiodns](https://github.com/aio-libs/aiodns) | Slixmpp | MIT | axross-full, pip (con un extra) |
+| [aiofiles](https://github.com/Tinche/aiofiles) | matrix-nio | Apache-2.0 | axross-full, pip (con un extra) |
+| [aiohappyeyeballs](https://github.com/aio-libs/aiohappyeyeballs) | aiohttp | PSF-2.0 | axross-full, pip (con un extra) |
+| [aiohttp](https://github.com/aio-libs/aiohttp) | matrix-nio | Apache-2.0 AND MIT | axross-full, pip (con un extra) |
+| [aiohttp_socks](https://github.com/romis2012/aiohttp-socks) | matrix-nio | Apache-2.0 | axross-full, pip (con un extra) |
+| [aiosignal](https://github.com/aio-libs/aiosignal) | aiohttp | Apache-2.0 | axross-full, pip (con un extra) |
 | [alsa-lib](https://github.com/alsa-project/alsa-lib) | PyAV | LGPL-2.1-or-later | axross-full, pip (con un extra) |
+| [annotated-types](https://github.com/annotated-types/annotated-types) | pydantic | MIT | axross-full, pip (con un extra) |
 | [anyio](https://github.com/agronholm/anyio) | httpx2 | MIT | axross-full, axross-slim, pip (con un extra) |
+| [atomicwrites](https://github.com/untitaker/python-atomicwrites) | matrix-nio | MIT | axross-full, pip (con un extra) |
 | [attrs](https://github.com/python-attrs/attrs) | jsonschema | MIT | axross-full, axross-slim |
 | [azure-core](https://github.com/Azure/azure-sdk-for-python) | azure-storage-blob | MIT | axross-full, pip (con un extra) |
 | [bcrypt](https://github.com/pyca/bcrypt) | paramiko | Apache-2.0 | axross-full, axross-slim, pip |
@@ -752,18 +761,23 @@ La lista se genera a partir de [`resources/credits/third_party.json`](resources/
 | [botocore](https://github.com/boto/botocore) | boto3 | Apache-2.0 | axross-full, axross-slim, pip (con un extra) |
 | [brotli](https://github.com/google/brotli) | py7zr | MIT | axross-full, axross-slim, pip (con un extra) |
 | [Brotli (C library)](https://github.com/google/brotli) | Pillow | MIT | axross-full, axross-slim, pip |
+| [brotlicffi](https://github.com/python-hyper/brotlicffi) | py7zr | MIT | pip (con un extra) |
 | [cached-property](https://github.com/pydanny/cached-property) | exchangelib | BSD-3-Clause | axross-full, pip (con un extra) |
+| [cachetools](https://github.com/tkem/cachetools) | matrix-nio | MIT | axross-full, pip (con un extra) |
 | [certifi](https://github.com/certifi/python-certifi) | requests | MPL-2.0 | axross-full, axross-slim, pip (con un extra) |
 | [cffi](https://github.com/python-cffi/cffi) | cryptography | MIT-0 | axross-full, axross-slim, pip |
 | [charset-normalizer](https://github.com/jawah/charset_normalizer) | impacket | MIT | axross-full, axross-slim, pip (con un extra) |
 | [click](https://github.com/pallets/click) | Flask | BSD-3-Clause | axross-full, axross-slim, pip (con un extra) |
 | [Cyrus SASL](https://www.cyrusimap.org/sasl/) | libpq | BSD-Attribution-HPND-disclaimer | axross-full, axross-slim, pip (con un extra) |
 | [dav1d](https://code.videolan.org/videolan/dav1d) | PyAV | BSD-2-Clause | axross-full, pip (con un extra) |
+| [elementpath](https://github.com/sissaschool/elementpath) | xmlschema | MIT | axross-full, pip (con un extra) |
 | [FFmpeg (PyAV build)](https://ffmpeg.org) | PyAV | LGPL-3.0-or-later | axross-full, pip (con un extra) |
 | [FFmpeg (Qt Multimedia build)](https://ffmpeg.org) | Qt 6 | LGPL-2.1-or-later | axross-full, axross-slim, pip |
 | [filelock](https://github.com/tox-dev/py-filelock) | huggingface_hub | MIT | axross-full, pip (con un extra) |
 | [Flask](https://github.com/pallets/flask) | impacket | BSD-3-Clause | axross-full, pip (con un extra) |
+| [flatbuffers](https://github.com/google/flatbuffers) | onnxruntime | Apache-2.0 | pip (con un extra) |
 | [FreeType](https://freetype.org) | Pillow | FTL OR GPL-2.0-or-later | axross-full, axross-slim, pip |
+| [frozenlist](https://github.com/aio-libs/frozenlist) | aiohttp | Apache-2.0 | axross-full, pip (con un extra) |
 | [fsspec](https://github.com/fsspec/filesystem_spec) | huggingface_hub | BSD-3-Clause | axross-full, pip (con un extra) |
 | [GMP](https://gmplib.org) | PyAV | LGPL-3.0-or-later OR GPL-2.0-or-later | axross-full, pip (con un extra) |
 | [GnuTLS](https://www.gnutls.org) | PyAV | LGPL-2.1-or-later | axross-full, pip (con un extra) |
@@ -772,12 +786,15 @@ La lista se genera a partir de [`resources/credits/third_party.json`](resources/
 | [googleapis-common-protos](https://github.com/googleapis/google-cloud-python) | google-api-core | Apache-2.0 | axross-full, pip (con un extra) |
 | [Graphite](https://github.com/silnrsi/graphite) | HarfBuzz | LGPL-2.1-or-later OR MPL-1.1 OR GPL-2.0-or-later | axross-full, axross-slim |
 | [h11](https://github.com/python-hyper/h11) | httpcore2 | MIT | axross-full, axross-slim, pip (con un extra) |
+| [h2](https://github.com/python-hyper/h2) | matrix-nio | MIT | axross-full, axross-slim, pip (con un extra) |
 | [HarfBuzz](https://github.com/harfbuzz/harfbuzz) | Qt 6, Pillow | MIT | axross-full, axross-slim, pip |
 | [hf-xet](https://github.com/huggingface/xet-core) | huggingface_hub | Apache-2.0 | axross-full, pip (con un extra) |
+| [hpack](https://github.com/python-hyper/hpack) | h2 | MIT | axross-full, axross-slim, pip (con un extra) |
 | [httpcore2](https://github.com/pydantic/httpx2) | httpx2 | BSD-3-Clause | axross-full, axross-slim, pip (con un extra) |
 | [httplib2](https://github.com/httplib2/httplib2) | google-api-python-client | MIT | axross-full, pip (con un extra) |
 | [httpx2](https://github.com/pydantic/httpx2) | huggingface_hub | BSD-3-Clause | axross-full, axross-slim, pip (con un extra) |
 | [huggingface_hub](https://github.com/huggingface/huggingface_hub) | faster-whisper | Apache-2.0 | axross-full, pip (con un extra) |
+| [hyperframe](https://github.com/python-hyper/hyperframe) | h2 | MIT | axross-full, axross-slim, pip (con un extra) |
 | [ICU](https://icu.unicode.org) | Qt 6 | Unicode-DFS-2016 | axross-full, axross-slim, pip |
 | [idna](https://github.com/kjd/idna) | requests | BSD-3-Clause | axross-full, axross-slim, pip (con un extra) |
 | [importlib_resources](https://github.com/python/importlib_resources) | libusb-package | Apache-2.0 | axross-full, pip (con un extra) |
@@ -793,11 +810,13 @@ La lista se genera a partir de [`resources/credits/third_party.json`](resources/
 | [Jinja2](https://github.com/pallets/jinja) | Flask | BSD-3-Clause | axross-full, pip (con un extra) |
 | [jmespath](https://github.com/jmespath/jmespath.py) | boto3 | MIT | axross-full, axross-slim, pip (con un extra) |
 | [jsonschema-specifications](https://github.com/python-jsonschema/jsonschema-specifications) | jsonschema | MIT | axross-full, axross-slim |
+| [ldapdomaindump](https://github.com/dirkjanm/ldapdomaindump) | impacket | MIT | pip (con un extra) |
 | [libavif](https://github.com/AOMediaCodec/libavif) | Pillow | BSD-2-Clause | axross-full, axross-slim, pip |
 | [libdrm](https://gitlab.freedesktop.org/mesa/drm) | PyAV | MIT | axross-full, pip (con un extra) |
 | [libjpeg-turbo](https://libjpeg-turbo.org) | Pillow, Qt 6 | IJG AND BSD-3-Clause | axross-full, axross-slim, pip |
 | [libpng](https://www.libpng.org) | Pillow, Qt 6 | libpng-2.0 | axross-full, axross-slim, pip |
 | [libpq](https://www.postgresql.org) | psycopg-binary | PostgreSQL | axross-full, axross-slim, pip (con un extra) |
+| [libsodium](https://github.com/jedisct1/libsodium) | python-xeddsa | ISC | axross-full, pip (con un extra) |
 | [LibTIFF](https://libtiff.gitlab.io/libtiff/) | Pillow | libtiff | axross-full, axross-slim, pip |
 | [libunistring](https://www.gnu.org/software/libunistring/) | PyAV | LGPL-3.0-or-later OR GPL-2.0-or-later | axross-full, pip (con un extra) |
 | [libusb](https://github.com/libusb/libusb) | libusb-package | LGPL-2.1-or-later | axross-full, pip (con un extra) |
@@ -809,6 +828,7 @@ La lista se genera a partir de [`resources/credits/third_party.json`](resources/
 | [lxml](https://github.com/lxml/lxml) | exchangelib | BSD-3-Clause | axross-full, pip (con un extra) |
 | [MarkupSafe](https://github.com/pallets/markupsafe) | Flask | BSD-3-Clause | axross-full, pip (con un extra) |
 | [more-itertools](https://github.com/more-itertools/more-itertools) | jaraco.classes | MIT | axross-full, axross-slim, pip |
+| [multidict](https://github.com/aio-libs/multidict) | aiohttp | Apache-2.0 | axross-full, pip (con un extra) |
 | [multivolumefile](https://github.com/miurahr/multivolume) | py7zr | LGPL-2.1-or-later | axross-full, axross-slim, pip (con un extra) |
 | [Nettle](https://www.lysator.liu.se/~nisse/nettle/) | PyAV | LGPL-3.0-or-later OR GPL-2.0-or-later | axross-full, pip (con un extra) |
 | [oauthlib](https://github.com/oauthlib/oauthlib) | exchangelib | BSD-3-Clause | axross-full, pip (con un extra) |
@@ -819,16 +839,23 @@ La lista se genera a partir de [`resources/credits/third_party.json`](resources/
 | [Opus](https://opus-codec.org) | PyAV | BSD-3-Clause | axross-full, pip (con un extra) |
 | [packaging](https://github.com/pypa/packaging) | onnxruntime | Apache-2.0 OR BSD-2-Clause | axross-full, pip (con un extra) |
 | [pathvalidate](https://github.com/thombashi/pathvalidate) | piper-tts | MIT | axross-full, pip (con un extra) |
+| [peewee](https://github.com/coleifer/peewee) | matrix-nio | MIT | axross-full, pip (con un extra) |
 | [platformdirs](https://github.com/tox-dev/platformdirs) | Bumble | MIT | axross-full, pip (con un extra) |
 | [prompt_toolkit](https://github.com/prompt-toolkit/python-prompt-toolkit) | Bumble | BSD-3-Clause | axross-full, pip (con un extra) |
+| [propcache](https://github.com/aio-libs/propcache) | aiohttp | Apache-2.0 | axross-full, pip (con un extra) |
+| [proto-plus](https://github.com/googleapis/google-cloud-python/tree/main/packages/proto-plus) | google-api-core | Apache-2.0 | pip (con un extra) |
 | [protobuf](https://github.com/protocolbuffers/protobuf) | onnxruntime | BSD-3-Clause | axross-full, pip (con un extra) |
 | [psutil](https://github.com/giampaolo/psutil) | py7zr | BSD-3-Clause | axross-full, axross-slim, pip (con un extra) |
 | [pyasn1](https://github.com/pyasn1/pyasn1) | adb_shell | BSD-2-Clause | axross-full, axross-slim, pip (con un extra) |
 | [pyasn1_modules](https://github.com/pyasn1/pyasn1-modules) | impacket | BSD-2-Clause | axross-full, pip (con un extra) |
 | [PyAV](https://github.com/PyAV-Org/PyAV) | faster-whisper | BSD-3-Clause | axross-full, pip (con un extra) |
 | [pybcj](https://github.com/miurahr/pybcj) | py7zr | LGPL-2.1-or-later | axross-full, axross-slim, pip (con un extra) |
+| [pycares](https://github.com/saghul/pycares) | aiodns | MIT | axross-full, pip (con un extra) |
 | [pycparser](https://github.com/eliben/pycparser) | cffi | BSD-3-Clause | axross-full, axross-slim, pip |
+| [pycryptodome](https://github.com/Legrandin/pycryptodome) | matrix-nio | BSD-2-Clause AND Unlicense AND MIT | axross-full, axross-slim, pip (con un extra) |
 | [pycryptodomex](https://github.com/Legrandin/pycryptodome) | impacket | BSD-2-Clause AND LicenseRef-PublicDomain | axross-full, axross-slim, pip (con un extra) |
+| [pydantic](https://github.com/pydantic/pydantic) | python-doubleratchet, python-x3dh | MIT | axross-full, pip (con un extra) |
+| [pydantic_core](https://github.com/pydantic/pydantic/tree/main/pydantic-core) | pydantic | MIT | axross-full, pip (con un extra) |
 | [pyee](https://github.com/jfhbrook/pyee) | Bumble | MIT | axross-full, pip (con un extra) |
 | [PyJWT](https://github.com/jpadilla/pyjwt) | msal | MIT | axross-full, axross-slim, pip (con un extra) |
 | [PyNaCl](https://github.com/pyca/pynacl) | paramiko | Apache-2.0 | axross-full, axross-slim, pip |
@@ -840,8 +867,13 @@ La lista se genera a partir de [`resources/credits/third_party.json`](resources/
 | [pyserial-asyncio](https://github.com/pyserial/pyserial-asyncio) | Bumble | BSD-3-Clause | axross-full, pip (con un extra) |
 | [pyspnego](https://github.com/jborean93/pyspnego) | smbprotocol | MIT | axross-full, axross-slim, pip (con un extra) |
 | [python-dateutil](https://github.com/dateutil/dateutil) | botocore | Apache-2.0 AND BSD-3-Clause | axross-full, axross-slim, pip (con un extra) |
+| [python-doubleratchet](https://github.com/Syndace/python-doubleratchet) | python-twomemo | MIT | axross-full, pip (con un extra) |
 | [python-libusb1](https://github.com/vpelletier/python-libusb1) | Bumble | LGPL-2.1-or-later | axross-full, pip (con un extra) |
+| [python-socks](https://github.com/romis2012/python-socks) | aiohttp_socks | Apache-2.0 | axross-full, pip (con un extra) |
+| [python-x3dh](https://github.com/Syndace/python-x3dh) | python-twomemo | MIT | axross-full, pip (con un extra) |
+| [python-xeddsa](https://github.com/Syndace/python-xeddsa) | python-omemo, python-twomemo | MIT | axross-full, pip (con un extra) |
 | [PyUSB](https://github.com/pyusb/pyusb) | Bumble | BSD-3-Clause | axross-full, pip (con un extra) |
+| [pywin32-ctypes](https://github.com/enthought/pywin32-ctypes) | keyring | BSD-3-Clause | pip |
 | [PyYAML](https://github.com/yaml/pyyaml) | ctranslate2 | MIT | axross-full, axross-slim, pip (con un extra) |
 | [Qt 6](https://www.qt.io) | PyQt6 | LGPL-3.0-only | axross-full, axross-slim, pip |
 | [referencing](https://github.com/python-jsonschema/referencing) | jsonschema | MIT | axross-full, axross-slim |
@@ -852,14 +884,18 @@ La lista se genera a partir de [`resources/credits/third_party.json`](resources/
 | [s3transfer](https://github.com/boto/s3transfer) | boto3 | Apache-2.0 | axross-full, axross-slim, pip (con un extra) |
 | [SecretStorage](https://github.com/mitya57/secretstorage) | keyring | BSD-3-Clause | axross-full, axross-slim, pip |
 | [six](https://github.com/benjaminp/six) | impacket | MIT | axross-full, axross-slim, pip (con un extra) |
+| [sspilib](https://github.com/jborean93/sspilib) | pyspnego | MIT | pip (con un extra) |
 | [stone](https://github.com/dropbox/stone) | dropbox | MIT | axross-full, pip (con un extra) |
 | [SVT-AV1](https://gitlab.com/AOMediaCodec/SVT-AV1) | PyAV | BSD-3-Clause-Clear | axross-full, pip (con un extra) |
+| [texttable](https://github.com/foutaise/texttable) | py7zr | MIT | pip (con un extra) |
 | [tokenizers](https://github.com/huggingface/tokenizers) | faster-whisper | Apache-2.0 | axross-full, pip (con un extra) |
 | [tqdm](https://github.com/tqdm/tqdm) | faster-whisper | MPL-2.0 AND MIT | axross-full, pip (con un extra) |
 | [truststore](https://github.com/sethmlarson/truststore) | httpcore2 | MIT | axross-full, axross-slim, pip (con un extra) |
+| [typing-inspection](https://github.com/pydantic/typing-inspection) | pydantic | MIT | axross-full, pip (con un extra) |
 | [typing_extensions](https://github.com/python/typing_extensions) | azure-storage-blob | PSF-2.0 | axross-full, axross-slim, pip |
 | [tzdata](https://github.com/python/tzdata) | exchangelib | Apache-2.0 | axross-full, pip (con un extra) |
 | [tzlocal](https://github.com/regebro/tzlocal) | exchangelib | MIT | axross-full, pip (con un extra) |
+| [unpaddedbase64](https://github.com/matrix-org/python-unpaddedbase64) | matrix-nio | Apache-2.0 | axross-full, pip (con un extra) |
 | [uritemplate](https://github.com/python-hyper/uritemplate) | google-api-python-client | BSD-3-Clause OR Apache-2.0 | axross-full, pip (con un extra) |
 | [VMAF](https://github.com/Netflix/vmaf) | PyAV | BSD-2-Clause-Patent | axross-full, pip (con un extra) |
 | [wcwidth](https://github.com/jquast/wcwidth) | prompt_toolkit | MIT | axross-full, pip (con un extra) |
@@ -867,7 +903,9 @@ La lista se genera a partir de [`resources/credits/third_party.json`](resources/
 | [Werkzeug](https://github.com/pallets/werkzeug) | Flask | BSD-3-Clause | axross-full, pip (con un extra) |
 | [x264](https://www.videolan.org/developers/x264.html) | PyAV | GPL-2.0-or-later | axross-full, pip (con un extra) |
 | [x265](https://bitbucket.org/multicoreware/x265_git) | PyAV | GPL-2.0-or-later | axross-full, pip (con un extra) |
+| [xmlschema](https://github.com/sissaschool/xmlschema) | python-twomemo | MIT | axross-full, pip (con un extra) |
 | [xmltodict](https://github.com/martinblech/xmltodict) | pywinrm | MIT | axross-full, pip (con un extra) |
+| [yarl](https://github.com/aio-libs/yarl) | aiohttp | Apache-2.0 | axross-full, pip (con un extra) |
 
 </details>
 <!-- /third-party:readme -->

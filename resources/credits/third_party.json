@@ -26,6 +26,133 @@
    }
   },
   {
+   "id": "aiodns",
+   "name": "aiodns",
+   "kind": "python",
+   "purpose": "Used by Slixmpp: Simple DNS resolver for asyncio",
+   "license": "MIT",
+   "url": "https://github.com/aio-libs/aiodns",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "aiodns"
+   ],
+   "via": "Slixmpp",
+   "match": {
+    "modules": [
+     "aiodns"
+    ]
+   }
+  },
+  {
+   "id": "aiofiles",
+   "name": "aiofiles",
+   "kind": "python",
+   "purpose": "Used by matrix-nio: File support for asyncio",
+   "license": "Apache-2.0",
+   "url": "https://github.com/Tinche/aiofiles",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "aiofiles"
+   ],
+   "via": "matrix-nio",
+   "match": {
+    "modules": [
+     "aiofiles"
+    ]
+   }
+  },
+  {
+   "id": "aiohappyeyeballs",
+   "name": "aiohappyeyeballs",
+   "kind": "python",
+   "purpose": "Used by aiohttp: Happy Eyeballs for asyncio",
+   "license": "PSF-2.0",
+   "url": "https://github.com/aio-libs/aiohappyeyeballs",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "aiohappyeyeballs"
+   ],
+   "via": "aiohttp",
+   "match": {
+    "modules": [
+     "aiohappyeyeballs"
+    ]
+   }
+  },
+  {
+   "id": "aiohttp",
+   "name": "aiohttp",
+   "kind": "python",
+   "purpose": "Used by matrix-nio: Async http client/server framework (asyncio)",
+   "license": "Apache-2.0 AND MIT",
+   "url": "https://github.com/aio-libs/aiohttp",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "aiohttp"
+   ],
+   "via": "matrix-nio",
+   "note": "the llhttp parser inside is MIT",
+   "match": {
+    "modules": [
+     "aiohttp"
+    ]
+   }
+  },
+  {
+   "id": "aiohttp-socks",
+   "name": "aiohttp_socks",
+   "kind": "python",
+   "purpose": "Used by matrix-nio: Proxy connector for aiohttp",
+   "license": "Apache-2.0",
+   "url": "https://github.com/romis2012/aiohttp-socks",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "aiohttp_socks"
+   ],
+   "via": "matrix-nio",
+   "match": {
+    "modules": [
+     "aiohttp_socks"
+    ]
+   }
+  },
+  {
+   "id": "aiosignal",
+   "name": "aiosignal",
+   "kind": "python",
+   "purpose": "Used by aiohttp: A list of registered asynchronous callbacks",
+   "license": "Apache-2.0",
+   "url": "https://github.com/aio-libs/aiosignal",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "aiosignal"
+   ],
+   "via": "aiohttp",
+   "match": {
+    "modules": [
+     "aiosignal"
+    ]
+   }
+  },
+  {
    "id": "alsa-lib",
    "name": "alsa-lib",
    "kind": "library",
@@ -40,6 +167,27 @@
    "match": {
     "libraries": [
      "libasound"
+    ]
+   }
+  },
+  {
+   "id": "annotated-types",
+   "name": "annotated-types",
+   "kind": "python",
+   "purpose": "Used by pydantic: Reusable constraint types to use with typing.Annotated",
+   "license": "MIT",
+   "url": "https://github.com/annotated-types/annotated-types",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "annotated-types"
+   ],
+   "via": "pydantic",
+   "match": {
+    "modules": [
+     "annotated_types"
     ]
    }
   },
@@ -62,6 +210,27 @@
    "match": {
     "modules": [
      "anyio"
+    ]
+   }
+  },
+  {
+   "id": "atomicwrites",
+   "name": "atomicwrites",
+   "kind": "python",
+   "purpose": "Used by matrix-nio: Atomic file writes",
+   "license": "MIT",
+   "url": "https://github.com/untitaker/python-atomicwrites",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "atomicwrites"
+   ],
+   "via": "matrix-nio",
+   "match": {
+    "modules": [
+     "atomicwrites"
     ]
    }
   },
@@ -333,6 +502,27 @@
    }
   },
   {
+   "id": "brotlicffi",
+   "name": "brotlicffi",
+   "kind": "python",
+   "purpose": "Used by py7zr: Python CFFI bindings to the Brotli library",
+   "license": "MIT",
+   "url": "https://github.com/python-hyper/brotlicffi",
+   "ships": [
+    "pip-extra"
+   ],
+   "pypi": [
+    "brotlicffi"
+   ],
+   "via": "py7zr",
+   "note": "PyPy only; CPython uses brotli",
+   "match": {
+    "modules": [
+     "brotlicffi"
+    ]
+   }
+  },
+  {
    "id": "bubblewrap",
    "name": "Bubblewrap (bwrap)",
    "kind": "program",
@@ -367,6 +557,214 @@
    }
   },
   {
+   "id": "cachetools",
+   "name": "cachetools",
+   "kind": "python",
+   "purpose": "Used by matrix-nio: Extensible memoizing collections and decorators",
+   "license": "MIT",
+   "url": "https://github.com/tkem/cachetools",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "cachetools"
+   ],
+   "via": "matrix-nio",
+   "match": {
+    "modules": [
+     "cachetools"
+    ]
+   }
+  },
+  {
+   "id": "doubleratchet",
+   "name": "python-doubleratchet",
+   "kind": "python",
+   "purpose": "Used by python-twomemo: A Python implementation of the Double Ratchet algorithm",
+   "license": "MIT",
+   "url": "https://github.com/Syndace/python-doubleratchet",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "doubleratchet"
+   ],
+   "via": "python-twomemo",
+   "match": {
+    "modules": [
+     "doubleratchet"
+    ]
+   }
+  },
+  {
+   "id": "elementpath",
+   "name": "elementpath",
+   "kind": "python",
+   "purpose": "Used by xmlschema: XPath 1.0/2.0/3.0/3.1 parsers and selectors for ElementTree and lxml",
+   "license": "MIT",
+   "url": "https://github.com/sissaschool/elementpath",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "elementpath"
+   ],
+   "via": "xmlschema",
+   "match": {
+    "modules": [
+     "elementpath"
+    ]
+   }
+  },
+  {
+   "id": "flatbuffers",
+   "name": "flatbuffers",
+   "kind": "python",
+   "purpose": "Used by onnxruntime: The FlatBuffers serialization format for Python",
+   "license": "Apache-2.0",
+   "url": "https://github.com/google/flatbuffers",
+   "ships": [
+    "pip-extra"
+   ],
+   "pypi": [
+    "flatbuffers"
+   ],
+   "via": "onnxruntime",
+   "match": {
+    "modules": [
+     "flatbuffers"
+    ]
+   }
+  },
+  {
+   "id": "frozenlist",
+   "name": "frozenlist",
+   "kind": "python",
+   "purpose": "Used by aiohttp: A list-like structure which implements collections.abc.MutableSequence",
+   "license": "Apache-2.0",
+   "url": "https://github.com/aio-libs/frozenlist",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "frozenlist"
+   ],
+   "via": "aiohttp",
+   "match": {
+    "modules": [
+     "frozenlist"
+    ]
+   }
+  },
+  {
+   "id": "h2",
+   "name": "h2",
+   "kind": "python",
+   "purpose": "Used by matrix-nio and urllib3's HTTP/2 support: Pure-Python HTTP/2 protocol implementation",
+   "license": "MIT",
+   "url": "https://github.com/python-hyper/h2",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "h2"
+   ],
+   "via": "matrix-nio",
+   "match": {
+    "modules": [
+     "h2"
+    ]
+   }
+  },
+  {
+   "id": "hpack",
+   "name": "hpack",
+   "kind": "python",
+   "purpose": "Used by h2: Pure-Python HPACK header encoding",
+   "license": "MIT",
+   "url": "https://github.com/python-hyper/hpack",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "hpack"
+   ],
+   "via": "h2",
+   "match": {
+    "modules": [
+     "hpack"
+    ]
+   }
+  },
+  {
+   "id": "hyperframe",
+   "name": "hyperframe",
+   "kind": "python",
+   "purpose": "Used by h2: Pure-Python HTTP/2 framing",
+   "license": "MIT",
+   "url": "https://github.com/python-hyper/hyperframe",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "hyperframe"
+   ],
+   "via": "h2",
+   "match": {
+    "modules": [
+     "hyperframe"
+    ]
+   }
+  },
+  {
+   "id": "ldapdomaindump",
+   "name": "ldapdomaindump",
+   "kind": "python",
+   "purpose": "Used by impacket: Active Directory information dumper via LDAP",
+   "license": "MIT",
+   "url": "https://github.com/dirkjanm/ldapdomaindump",
+   "ships": [
+    "pip-extra"
+   ],
+   "pypi": [
+    "ldapdomaindump"
+   ],
+   "via": "impacket",
+   "match": {
+    "modules": [
+     "ldapdomaindump"
+    ]
+   }
+  },
+  {
+   "id": "libsodium",
+   "name": "libsodium",
+   "kind": "library",
+   "purpose": "Cryptography library of python-xeddsa (the OMEMO signatures of the XMPP panel)",
+   "license": "ISC",
+   "url": "https://github.com/jedisct1/libsodium",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "via": "python-xeddsa",
+   "match": {
+    "libraries": [
+     "libsodium"
+    ]
+   }
+  },
+  {
    "id": "matrix-nio",
    "name": "matrix-nio",
    "kind": "python",
@@ -386,6 +784,309 @@
    "match": {
     "modules": [
      "nio"
+    ]
+   }
+  },
+  {
+   "id": "multidict",
+   "name": "multidict",
+   "kind": "python",
+   "purpose": "Used by aiohttp: multidict implementation",
+   "license": "Apache-2.0",
+   "url": "https://github.com/aio-libs/multidict",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "multidict"
+   ],
+   "via": "aiohttp",
+   "match": {
+    "modules": [
+     "multidict"
+    ]
+   }
+  },
+  {
+   "id": "peewee",
+   "name": "peewee",
+   "kind": "python",
+   "purpose": "Used by matrix-nio: a little orm",
+   "license": "MIT",
+   "url": "https://github.com/coleifer/peewee",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "peewee"
+   ],
+   "via": "matrix-nio",
+   "match": {
+    "modules": [
+     "peewee",
+     "playhouse",
+     "pwiz"
+    ]
+   }
+  },
+  {
+   "id": "propcache",
+   "name": "propcache",
+   "kind": "python",
+   "purpose": "Used by aiohttp: Accelerated property cache",
+   "license": "Apache-2.0",
+   "url": "https://github.com/aio-libs/propcache",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "propcache"
+   ],
+   "via": "aiohttp",
+   "match": {
+    "modules": [
+     "propcache"
+    ]
+   }
+  },
+  {
+   "id": "proto-plus",
+   "name": "proto-plus",
+   "kind": "python",
+   "purpose": "Used by google-api-core: Beautiful, Pythonic protocol buffers",
+   "license": "Apache-2.0",
+   "url": "https://github.com/googleapis/google-cloud-python/tree/main/packages/proto-plus",
+   "ships": [
+    "pip-extra"
+   ],
+   "pypi": [
+    "proto-plus"
+   ],
+   "via": "google-api-core",
+   "match": {
+    "modules": [
+     "proto"
+    ]
+   }
+  },
+  {
+   "id": "pycares",
+   "name": "pycares",
+   "kind": "python",
+   "purpose": "Used by aiodns: Python interface for c-ares",
+   "license": "MIT",
+   "url": "https://github.com/saghul/pycares",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "pycares"
+   ],
+   "via": "aiodns",
+   "note": "c-ares (MIT) is linked into its extension module",
+   "match": {
+    "modules": [
+     "pycares"
+    ]
+   }
+  },
+  {
+   "id": "pycryptodome",
+   "name": "pycryptodome",
+   "kind": "python",
+   "purpose": "Used by matrix-nio (and, when present, rarfile, pypdf and ldap3): Cryptographic library for Python",
+   "license": "BSD-2-Clause AND Unlicense AND MIT",
+   "url": "https://github.com/Legrandin/pycryptodome",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "pycryptodome"
+   ],
+   "via": "matrix-nio",
+   "match": {
+    "modules": [
+     "Crypto"
+    ]
+   }
+  },
+  {
+   "id": "pydantic",
+   "name": "pydantic",
+   "kind": "python",
+   "purpose": "Used by python-doubleratchet, python-x3dh: Data validation using Python type hints",
+   "license": "MIT",
+   "url": "https://github.com/pydantic/pydantic",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "pydantic"
+   ],
+   "via": "python-doubleratchet, python-x3dh",
+   "match": {
+    "modules": [
+     "pydantic"
+    ]
+   }
+  },
+  {
+   "id": "pydantic-core",
+   "name": "pydantic_core",
+   "kind": "python",
+   "purpose": "Used by pydantic: Core functionality for Pydantic validation and serialization",
+   "license": "MIT",
+   "url": "https://github.com/pydantic/pydantic/tree/main/pydantic-core",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "pydantic-core"
+   ],
+   "via": "pydantic",
+   "match": {
+    "modules": [
+     "pydantic_core"
+    ]
+   }
+  },
+  {
+   "id": "pyinstaller",
+   "name": "PyInstaller",
+   "kind": "python",
+   "purpose": "Builds the one-file binaries: its bootloader starts each of them, its loader and run-time hooks run inside",
+   "license": "GPL-2.0-or-later WITH Bootloader-exception AND Apache-2.0",
+   "url": "https://github.com/pyinstaller/pyinstaller",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "pypi": [
+    "pyinstaller",
+    "pyinstaller-hooks-contrib"
+   ],
+   "note": "the bootloader and loader are GPL-2.0-or-later WITH Bootloader-exception, which puts no conditions on the binaries; the run-time hooks (also those of pyinstaller-hooks-contrib) are Apache-2.0"
+  },
+  {
+   "id": "python-socks",
+   "name": "python-socks",
+   "kind": "python",
+   "purpose": "Used by aiohttp_socks: Proxy (SOCKS4, SOCKS5, HTTP CONNECT) client for Python",
+   "license": "Apache-2.0",
+   "url": "https://github.com/romis2012/python-socks",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "python-socks"
+   ],
+   "via": "aiohttp_socks",
+   "match": {
+    "modules": [
+     "python_socks"
+    ]
+   }
+  },
+  {
+   "id": "pywin32-ctypes",
+   "name": "pywin32-ctypes",
+   "kind": "python",
+   "purpose": "Used by keyring: A (partial) reimplementation of pywin32 using ctypes/cffi",
+   "license": "BSD-3-Clause",
+   "url": "https://github.com/enthought/pywin32-ctypes",
+   "ships": [
+    "pip"
+   ],
+   "pypi": [
+    "pywin32-ctypes"
+   ],
+   "via": "keyring",
+   "note": "Windows only"
+  },
+  {
+   "id": "sspilib",
+   "name": "sspilib",
+   "kind": "python",
+   "purpose": "Used by pyspnego: SSPI API bindings for Python",
+   "license": "MIT",
+   "url": "https://github.com/jborean93/sspilib",
+   "ships": [
+    "pip-extra"
+   ],
+   "pypi": [
+    "sspilib"
+   ],
+   "via": "pyspnego",
+   "note": "Windows only"
+  },
+  {
+   "id": "texttable",
+   "name": "texttable",
+   "kind": "python",
+   "purpose": "Used by py7zr: module to create simple ASCII tables",
+   "license": "MIT",
+   "url": "https://github.com/foutaise/texttable",
+   "ships": [
+    "pip-extra"
+   ],
+   "pypi": [
+    "texttable"
+   ],
+   "via": "py7zr",
+   "match": {
+    "modules": [
+     "texttable"
+    ]
+   }
+  },
+  {
+   "id": "typing-inspection",
+   "name": "typing-inspection",
+   "kind": "python",
+   "purpose": "Used by pydantic: Runtime typing introspection tools",
+   "license": "MIT",
+   "url": "https://github.com/pydantic/typing-inspection",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "typing-inspection"
+   ],
+   "via": "pydantic",
+   "match": {
+    "modules": [
+     "typing_inspection"
+    ]
+   }
+  },
+  {
+   "id": "unpaddedbase64",
+   "name": "unpaddedbase64",
+   "kind": "python",
+   "purpose": "Used by matrix-nio: Encode and decode Base64 without \"=\" padding",
+   "license": "Apache-2.0",
+   "url": "https://github.com/matrix-org/python-unpaddedbase64",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "unpaddedbase64"
+   ],
+   "via": "matrix-nio",
+   "match": {
+    "modules": [
+     "unpaddedbase64"
     ]
    }
   },
@@ -1167,7 +1868,7 @@
    "id": "gcc-runtime",
    "name": "GCC runtime libraries",
    "kind": "library",
-   "purpose": "Fortran and OpenMP runtimes (numpy, CTranslate2)",
+   "purpose": "Fortran, OpenMP and atomic-operation runtimes (numpy, CTranslate2, libusb)",
    "license": "GPL-3.0-or-later WITH GCC-exception-3.1",
    "url": "https://gcc.gnu.org",
    "ships": [
@@ -1178,7 +1879,8 @@
     "libraries": [
      "libgfortran",
      "libquadmath",
-     "libgomp"
+     "libgomp",
+     "libatomic"
     ]
    }
   },
@@ -4714,6 +5416,27 @@
    }
   },
   {
+   "id": "x3dh",
+   "name": "python-x3dh",
+   "kind": "python",
+   "purpose": "Used by python-twomemo: A Python implementation of the Extended Triple Diffie-Hellman key agreement protocol",
+   "license": "MIT",
+   "url": "https://github.com/Syndace/python-x3dh",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "x3dh"
+   ],
+   "via": "python-twomemo",
+   "match": {
+    "modules": [
+     "x3dh"
+    ]
+   }
+  },
+  {
    "id": "xdg-utils",
    "name": "xdg-utils (xdg-open)",
    "kind": "program",
@@ -4723,6 +5446,49 @@
    "ships": [
     "host"
    ]
+  },
+  {
+   "id": "xeddsa",
+   "name": "python-xeddsa",
+   "kind": "python",
+   "purpose": "Used by python-omemo, python-twomemo: Python bindings to libxeddsa",
+   "license": "MIT",
+   "url": "https://github.com/Syndace/python-xeddsa",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "xeddsa"
+   ],
+   "via": "python-omemo, python-twomemo",
+   "match": {
+    "modules": [
+     "xeddsa",
+     "_libxeddsa"
+    ]
+   }
+  },
+  {
+   "id": "xmlschema",
+   "name": "xmlschema",
+   "kind": "python",
+   "purpose": "Used by python-twomemo: An XML Schema validator and decoder",
+   "license": "MIT",
+   "url": "https://github.com/sissaschool/xmlschema",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "xmlschema"
+   ],
+   "via": "python-twomemo",
+   "match": {
+    "modules": [
+     "xmlschema"
+    ]
+   }
   },
   {
    "id": "xmltodict",
@@ -4782,6 +5548,27 @@
    "match": {
     "libraries": [
      "liblzma"
+    ]
+   }
+  },
+  {
+   "id": "yarl",
+   "name": "yarl",
+   "kind": "python",
+   "purpose": "Used by aiohttp: Yet another URL library",
+   "license": "Apache-2.0",
+   "url": "https://github.com/aio-libs/yarl",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "yarl"
+   ],
+   "via": "aiohttp",
+   "match": {
+    "modules": [
+     "yarl"
     ]
    }
   },

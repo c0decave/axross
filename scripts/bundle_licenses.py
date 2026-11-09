@@ -71,8 +71,9 @@ def _licence_dest(path: PurePosixPath) -> str | None:
 
 def python_licence_datas(distributions: Iterable) -> list[tuple[str, str]]:
     """(source file, bundle folder) for the licence files of *distributions*
-    (``importlib.metadata.Distribution`` objects). Files that are listed but
-    missing on disk are skipped."""
+    (``importlib.metadata.Distribution`` objects), plus the tracked texts of
+    a library a wheel ships without its licence (:data:`WHEEL_LIBRARY_NOTICES`).
+    Files that are listed but missing on disk are skipped."""
     datas: list[tuple[str, str]] = []
     for dist in distributions:
         name = _normalise(dist.metadata["Name"])
@@ -85,6 +86,8 @@ def python_licence_datas(distributions: Iterable) -> list[tuple[str, str]]:
             if not source.is_file():
                 continue
             datas.append((str(source), f"{base}/{sub}" if sub else base))
+        # a library the wheel ships without its licence (xeddsa's libsodium)
+        datas += wheel_library_notices(name, dist.version)
     return sorted(set(datas))
 
 
@@ -394,10 +397,17 @@ WHEEL_PREFIX = "wheel:"
 #: distribution -> (folder below its licence folder, tracked texts). The
 #: libusb-package wheel carries only its own Apache-2.0 text, not libusb's
 #: LGPL-2.1 (build/licenses/libusb/: COPYING and AUTHORS of libusb v1.0.26,
-#: the version its libusb-1.0.so is built from).
+#: the version its libusb-1.0.so is built from). The xeddsa wheel's
+#: xeddsa.libs/libsodium is libsodium 1.0.18 (its version string), ISC
+#: (build/licenses/libsodium/LICENSE of tag 1.0.18); pycares links c-ares
+#: 1.34.9 into its module (deps/c-ares of the pycares 5.2.1 sdist), MIT
+#: (build/licenses/c-ares/LICENSE.md of tag v1.34.9). Both texts are
+#: upstream's, byte for byte (git blob SHA checked against GitHub's API).
 WHEEL_LIBRARY_NOTICES = {
     "libusb-package": ("libusb", ("build/licenses/libusb/COPYING",
                                   "build/licenses/libusb/AUTHORS")),
+    "xeddsa": ("libsodium", ("build/licenses/libsodium/LICENSE",)),
+    "pycares": ("c-ares", ("build/licenses/c-ares/LICENSE.md",)),
 }
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -541,7 +551,8 @@ def licence_datas(analysis, workdir: str) -> list[tuple[str, str, str]]:
             except metadata.PackageNotFoundError:
                 continue
             have.add(package[len(WHEEL_PREFIX):])
-    pairs = python_licence_datas(dists) + system
+    # a wheel both lists (a module and a top-level library) gives its notices once
+    pairs = list(dict.fromkeys(python_licence_datas(dists) + system))
     os.makedirs(workdir, exist_ok=True)
     listing = os.path.join(workdir, "LIBRARIES.txt")
     with open(listing, "w", encoding="utf-8") as fh:

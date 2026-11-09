@@ -411,6 +411,52 @@ def test_happy_a_wheel_s_top_level_library_names_the_wheel(tmp_path):
     assert "GNU LESSER GENERAL PUBLIC LICENSE" in (ROOT / "build/licenses/libusb/COPYING").read_text()
 
 
+#: The wheels the tracked notices were checked against: the library version
+#: inside them and the upstream tag of the text (WHEEL_LIBRARY_NOTICES).
+CHECKED_NOTICES = {"xeddsa": ("1.2.0", "libsodium 1.0.18"),
+                   "pycares": ("5.2.1", "c-ares 1.34.9")}
+
+
+def test_happy_a_wheel_s_inner_library_brings_its_tracked_licence(tmp_path):
+    # xeddsa ships xeddsa.libs/libsodium, pycares links c-ares in: neither
+    # wheel has their licence, the build adds the tracked upstream texts
+    site = tmp_path / "site"
+    for rel in ("xeddsa-1.2.0.dist-info/licenses/LICENSE",
+                "pycares-5.2.1.dist-info/licenses/LICENSE"):
+        (site / rel).parent.mkdir(parents=True)
+        (site / rel).write_text("MIT\n")
+    datas = BL.python_licence_datas([
+        _Dist(site, "XEdDSA", "1.2.0", ["xeddsa-1.2.0.dist-info/licenses/LICENSE",
+                                        "xeddsa.libs/libsodium-f5304dcb.so.23.3.0"]),
+        _Dist(site, "pycares", "5.2.1", ["pycares-5.2.1.dist-info/licenses/LICENSE"])])
+    assert (str(ROOT / "build/licenses/libsodium/LICENSE"),
+            "licenses/python/xeddsa-1.2.0/libsodium") in datas
+    assert (str(ROOT / "build/licenses/c-ares/LICENSE.md"),
+            "licenses/python/pycares-5.2.1/c-ares") in datas
+    assert (str(site / "xeddsa-1.2.0.dist-info/licenses/LICENSE"),
+            "licenses/python/xeddsa-1.2.0") in datas
+
+
+def test_happy_the_tracked_inner_library_texts_are_upstream_s_licences():
+    sodium = (ROOT / "build/licenses/libsodium/LICENSE").read_text(encoding="utf-8")
+    cares = (ROOT / "build/licenses/c-ares/LICENSE.md").read_text(encoding="utf-8")
+    assert "ISC License" in sodium and "Frank Denis" in sodium
+    assert cares.startswith("MIT License") and "Daniel Stenberg" in cares
+    assert "@" not in sodium + cares
+
+
+def test_happy_the_notices_match_the_pinned_wheels():
+    from tests.bundle_sources import have_bundle_sources, read
+
+    if not have_bundle_sources():
+        pytest.skip("build/ is not in an sdist")
+    lock = read("requirements-bundle.txt")
+    for dist, (version, _) in CHECKED_NOTICES.items():
+        # a new pin may ship another library version: check its text again
+        assert f"\n{dist}=={version} " in lock, (dist, version)
+        assert dist in BL.WHEEL_LIBRARY_NOTICES
+
+
 def test_happy_any_wheel_s_top_level_library_is_listed_as_its(tmp_path):
     site = tmp_path / "site"
     (site / "pkg.libs").mkdir(parents=True)
@@ -437,4 +483,7 @@ def test_edge_a_wheel_whose_extra_licence_is_missing_stops_the_build(tmp_path, m
     monkeypatch.setattr(BL, "PROJECT_ROOT", tmp_path)
     with pytest.raises(SystemExit, match="build/licenses/libusb/COPYING"):
         BL.wheel_library_notices("libusb-package", "1.0.26.4")
+    site = tmp_path / "site"
+    with pytest.raises(SystemExit, match="build/licenses/libsodium/LICENSE"):
+        BL.python_licence_datas([_Dist(site, "xeddsa", "1.2.0", [])])
     assert BL.wheel_library_notices("other-wheel", "1") == []

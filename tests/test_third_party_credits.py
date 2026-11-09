@@ -29,6 +29,19 @@ from tests.bundle_sources import REASON as NO_BUILD, have_bundle_sources, read  
 
 BUNDLE_LOCK = read("requirements-bundle.txt")
 
+#: Pins of build/requirements-bundle.txt that reach no user: tools of the
+#: build itself. build/axross.spec excludes pip and setuptools from every
+#: binary, and no ``pip install axross`` installs any of them. Everything else
+#: the lock pins needs an entry (its ``pypi``), even when it ships only on
+#: another platform (``note``: "Windows only").
+BUILD_ONLY = {
+    "altgraph",     # PyInstaller's module graph
+    "macholib",     # PyInstaller on macOS: reads Mach-O headers
+    "pefile",       # PyInstaller on Windows: reads PE headers
+    "pip",          # installs the build venv
+    "setuptools",   # PyInstaller's dependency
+}
+
 
 def _raw() -> dict:
     return json.loads(T.DATA_FILE.read_text(encoding="utf-8"))
@@ -47,6 +60,16 @@ def _doc(*entries: dict) -> dict:
 
 def _requirement_names(specs) -> list[str]:
     return [T.normalise_name(re.split(r"[ ;<>=!~\[(]", s.strip(), maxsplit=1)[0]) for s in specs]
+
+
+def _lock_pins(lock: str) -> list[str]:
+    """The distribution names a hashed uv lock pins (``name==version``)."""
+    return [T.normalise_name(m) for m in re.findall(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==", lock, re.M)]
+
+
+def _pins_without_entry(entries, lock: str) -> list[str]:
+    return [name for name in T.missing_packages(entries, _lock_pins(lock))
+            if name not in BUILD_ONLY]
 
 
 # --- happy -----------------------------------------------------------------
@@ -99,6 +122,16 @@ def test_happy_the_readme_section_is_the_last_thing_in_each_readme():
     for name in T.README_FILES:
         text = (ROOT / name).read_text(encoding="utf-8")
         assert text.rstrip().endswith(T.block_end("readme")), name
+
+
+@pytest.mark.skipif(not have_bundle_sources(), reason=NO_BUILD)
+def test_happy_every_pin_of_the_bundle_lock_has_an_entry_or_is_a_build_tool():
+    pins = set(_lock_pins(BUNDLE_LOCK))
+    assert len(pins) > 150
+    assert _pins_without_entry(T.load(), BUNDLE_LOCK) == []
+    # The list stays true: a build tool is still pinned and still has no entry.
+    assert BUILD_ONLY <= pins
+    assert set(T.missing_packages(T.load(), BUILD_ONLY)) == BUILD_ONLY
 
 
 @pytest.mark.skipif(not have_bundle_sources(), reason=NO_BUILD)
@@ -217,6 +250,17 @@ def test_sad_a_missing_or_corrupt_data_file_raises_data_error(tmp_path):
 def test_sad_a_pyproject_package_without_an_entry_is_reported():
     entries = T.parse(_doc(_entry(pypi=["Demo_Pkg"])))
     assert T.missing_packages(entries, {"demo-pkg", "other"}) == ["other"]
+
+
+def test_sad_a_bundle_pin_without_an_entry_is_reported():
+    lock = ("mystery-pkg==1.0 ; sys_platform == 'linux' \\\n"
+            "    --hash=sha256:00\n"
+            "    # via demo\n"
+            "Demo_Pkg==2.0 \\\n"
+            "pip==26.0 \\\n")
+    entries = T.parse(_doc(_entry(pypi=["demo-pkg"])))
+    assert _lock_pins(lock) == ["mystery-pkg", "demo-pkg", "pip"]
+    assert _pins_without_entry(entries, lock) == ["mystery-pkg"]
 
 
 def test_sad_a_readme_without_the_markers_is_reported_not_passed(tmp_path):

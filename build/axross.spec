@@ -28,6 +28,7 @@ from PyInstaller.utils.hooks import (
     collect_data_files,
     collect_dynamic_libs,
     collect_submodules,
+    copy_metadata,
 )
 
 # Spec files run with SPECPATH pointing at their own dir.
@@ -369,6 +370,11 @@ if FLAVOR == "full":
         datas += collect_data_files("piper", excludes=["**/hebrew/*.onnx", "**/tashkeel/*.onnx"])
         datas += collect_data_files("faster_whisper")
         bundle_binaries += collect_dynamic_libs("ctranslate2")
+        # The ctranslate2 wheel (4.8.3) has neither a licence file nor an
+        # SBOM, so nothing else in the bundle names it: its dist-info lets
+        # scripts/native_inventory.py tie ctranslate2.libs/ (libctranslate2,
+        # libgomp) to the wheel and its version. Slim never gets here.
+        datas += copy_metadata("ctranslate2")
         _copying = [f for f in (_piper.files or []) if f.name == "COPYING"]
         if not _copying:
             raise SystemExit("piper-tts is installed but its COPYING (GPL-3.0) was not found")

@@ -745,6 +745,11 @@ the old code.
   python-build-standalone's archive of the same build, checked against a
   pinned SHA-256. libusb, which the Bluetooth support ships, now comes with
   its LGPL-2.1 text.
+- **Help > Third-Party Software… names all 278 projects** - 38 more: the
+  Matrix and XMPP libraries (aiohttp, pydantic, pycryptodome, libsodium and
+  others), PyInstaller's bootloader and libatomic; a test fails when a
+  package the bundle lock pins has no entry. The full binary now carries
+  the licence texts of libsodium and c-ares, which their wheels lack.
 - **IMAP keeps mail that other programs only marked as deleted.**
   Disconnecting, or renaming or deleting the open mailbox, after a refused
   delete, a flag change or a move no longer purges every message flagged
