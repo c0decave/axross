@@ -230,14 +230,35 @@ def test_edge_the_release_flow_documents_both_ways() -> None:
 
 def test_happy_a_failed_build_leaves_its_last_lines_as_an_annotation() -> None:
     # the logs live where a sandboxed maintainer cannot reach them; the API's
-    # annotations are what is left to see why build_dist.sh stopped
+    # annotations are what is left to see why a step stopped
     job = _job()
-    build = _index(job, lambda s: "build_dist.sh" in s.get("run", "") and "--out" in s.get("run", ""))
-    step = job["steps"][build]
-    assert "pipefail" in step["run"] and "tee" in step["run"]
-    after = job["steps"][build + 1]
-    assert after.get("if") == "failure()"
-    assert "::error" in after["run"] and "%0A" in after["run"]
+    logged = [s for s in job["steps"] if "build_dist.log" in s.get("run", "")
+              and "ci_annotate" not in s.get("run", "")]
+    assert len(logged) >= 4  # the build, both inventory steps, assemble_release
+    for step in logged:
+        assert "pipefail" in step["run"] and "tee" in step["run"], step["name"]
+    last = _index(job, lambda s: "ci_annotate.py" in s.get("run", "")
+                  and "build_dist.log" in s.get("run", ""))
+    assert job["steps"][last].get("if") == "failure()"
+    for step in logged:  # every logged step runs before the annotation
+        assert job["steps"].index(step) < last
+
+
+def test_happy_native_inventory_runs_with_the_bundle_venv_s_pyinstaller() -> None:
+    # it reads the binaries with PyInstaller's archive reader; the runner's
+    # python3 has no PyInstaller (the fourth CI build stopped there)
+    runs = [r for r in _runs(_job()) if "native_inventory.py" in r]
+    assert len(runs) == 3
+    for run in runs:
+        assert '"$AXROSS_DIST_WORK/venv/bin/python" -I scripts/native_inventory.py' in run
+        assert "python3 -I scripts/native_inventory.py" not in run
+
+
+def test_happy_a_drifted_licenses_file_is_shown_as_annotations() -> None:
+    job = _job()
+    write = _index(job, lambda s: "--write" in s.get("run", "") and "native_inventory" in s.get("run", ""))
+    run = job["steps"][write]["run"]
+    assert "git diff" in run and "ci_annotate.py" in run and "--head" in run
 
 
 def test_happy_the_builder_has_debian_s_archive_keys() -> None:

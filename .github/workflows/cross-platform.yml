@@ -155,31 +155,29 @@ jobs:
       run: |
         set -o pipefail
         scripts/build_dist.sh --out dist/linux --work "$AXROSS_DIST_WORK" 2>&1 | tee "$RUNNER_TEMP/build_dist.log"
-    - name: The end of the build log as an annotation
-      # the API serves annotations where the log storage is out of reach
-      # (a sandboxed maintainer's machine): gh api .../check-runs/JOB/annotations
-      if: failure()
-      run: |
-        [ -f "$RUNNER_TEMP/build_dist.log" ] || exit 0
-        tail -n 80 "$RUNNER_TEMP/build_dist.log" | python3 -I -c '
-        import re, sys
-        text = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", sys.stdin.read())[-3800:]
-        text = text.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
-        print("::error title=build_dist.sh (last lines)::" + text)'
     - name: The native components of the release notes
+      # native_inventory.py reads the binaries with PyInstaller's archive
+      # reader: build_dist.sh's bundle venv (the locked PyInstaller), not the
+      # runner's python3, which has none (the fourth CI build stopped here)
       run: |
-        python3 -I scripts/native_inventory.py dist/linux/glibc-2.34/axross-full \
-            dist/linux/glibc-2.34/axross-slim --notes dist/linux/NATIVE-COMPONENTS.md
+        set -o pipefail
+        "$AXROSS_DIST_WORK/venv/bin/python" -I scripts/native_inventory.py dist/linux/glibc-2.34/axross-full \
+            dist/linux/glibc-2.34/axross-slim --notes dist/linux/NATIVE-COMPONENTS.md 2>&1 | tee -a "$RUNNER_TEMP/build_dist.log"
     - name: THIRD_PARTY_LICENSES.md names the native files of these binaries
       id: inventory
       run: |
-        python3 -I scripts/native_inventory.py dist/linux/glibc-2.34/axross-full \
-            dist/linux/glibc-2.34/axross-slim --check
+        set -o pipefail
+        "$AXROSS_DIST_WORK/venv/bin/python" -I scripts/native_inventory.py dist/linux/glibc-2.34/axross-full \
+            dist/linux/glibc-2.34/axross-slim --check 2>&1 | tee -a "$RUNNER_TEMP/build_dist.log"
     - name: THIRD_PARTY_LICENSES.md as these binaries want it (to commit)
       if: failure() && steps.inventory.outcome == 'failure'
+      # the artifact below cannot be fetched from everywhere: the change as
+      # annotations too (git apply-able from the top)
       run: |
-        python3 -I scripts/native_inventory.py dist/linux/glibc-2.34/axross-full \
+        "$AXROSS_DIST_WORK/venv/bin/python" -I scripts/native_inventory.py dist/linux/glibc-2.34/axross-full \
             dist/linux/glibc-2.34/axross-slim --write || true
+        git diff --no-color THIRD_PARTY_LICENSES.md \
+            | python3 -I scripts/ci_annotate.py "THIRD_PARTY_LICENSES.md wants" --head --pieces 9
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       if: failure() && steps.inventory.outcome == 'failure'
       with:
@@ -187,7 +185,16 @@ jobs:
         path: THIRD_PARTY_LICENSES.md
     - name: assemble_release.py takes the folder
       # the maintainer's step, without the key and the macOS / Windows binaries
-      run: python3 -I scripts/assemble_release.py --dist dist/linux --out "$RUNNER_TEMP/assembled"
+      run: |
+        set -o pipefail
+        python3 -I scripts/assemble_release.py --dist dist/linux --out "$RUNNER_TEMP/assembled" 2>&1 | tee -a "$RUNNER_TEMP/build_dist.log"
+    - name: The end of the job's log as annotations
+      # the API serves annotations where the log storage is out of reach
+      # (a sandboxed maintainer's machine): gh api .../check-runs/JOB/annotations
+      if: failure()
+      run: |
+        [ -f "$RUNNER_TEMP/build_dist.log" ] || exit 0
+        tail -n 150 "$RUNNER_TEMP/build_dist.log" | python3 -I scripts/ci_annotate.py "Linux job (last lines)" --pieces 3
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         # build_dist.sh's dist/<version>/: gh run download -n axross-linux-dist
