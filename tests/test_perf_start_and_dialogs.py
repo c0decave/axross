@@ -25,6 +25,7 @@ import stat
 import subprocess
 import sys
 import textwrap
+import time
 from pathlib import Path
 
 import pytest
@@ -99,8 +100,9 @@ def test_sad_a_missing_chat_library_is_named_without_importing(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "nio", None)
     monkeypatch.setitem(sys.modules, "twomemo", None)
-    assert "Help > Features…" in chat_matrix.nio_missing(load=False)
-    assert "Help > Features…" in chat_xmpp.libraries_missing(load=False)
+    # UX round 7 (L3): one separator convention - "→" in menu paths, "–" as dash.
+    assert "Help → Features…" in chat_matrix.nio_missing(load=False)
+    assert "Help → Features…" in chat_xmpp.libraries_missing(load=False)
 
 
 def test_edge_the_equalizer_imports_numpy_with_its_first_sound():
@@ -357,18 +359,33 @@ def test_happy_the_connection_dialog_searches_path_once(monkeypatch, tmp_path):
     from ui.connection_dialog import ConnectionDialog
 
     BR.init_registry()
+    # PATH stays as it is for the test: in a parallel run another test may
+    # write into a PATH folder (the venv's bin/), and a changed folder is
+    # meant to be searched again (a program installed while axross runs).
+    state = BR._path_state()
+    monkeypatch.setattr(BR, "_path_state", lambda: state)
     calls = []
     real = BR.shutil.which
     monkeypatch.setattr(BR.shutil, "which", lambda c, *a, **k: calls.append(c) or real(c, *a, **k))
     manager = ProfileManager()
-    for _ in range(2):
+
+    def open_dialog() -> None:
+        # The dialog asks the backends off the GUI thread (its label job):
+        # count once that job is done - under load (a full -n run) it ran on
+        # after the count and its lookups were taken for the third open's.
         dialog = ConnectionDialog(manager)
+        deadline = time.monotonic() + 30
+        while dialog._label_job.running and time.monotonic() < deadline:
+            APP.processEvents()
+            time.sleep(0.005)
+        assert not dialog._label_job.running
         dialog.deleteLater()
-    APP.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        APP.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    for _ in range(2):
+        open_dialog()
     first = len(calls)
-    dialog = ConnectionDialog(manager)
-    dialog.deleteLater()
-    APP.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    open_dialog()
     assert len(calls) == first  # the third open searched nothing
 
 

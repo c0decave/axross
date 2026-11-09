@@ -170,20 +170,8 @@ def test_happy_calculate_size_counts_folders_in_words():
 
 _OLD_MENU_PATH = re.compile(r"(?<=[A-Za-z…\)]) > (?=[A-Z]|…)")
 _OLD_DASH = re.compile(r"(?<=\S) [-—] (?=\S)")
-#: Keys used in files other review agents were editing at the time; their
-#: strings follow with those files.
-_LATER = {
-    "/command - /help lists them",
-    "Showing {shown} of {total} messages - search to narrow them down.",
-    "Warning: the name mixes letters of several scripts ({scripts}) - a typical look-alike.",
-    "stored - leave empty to keep",
-}
-
-
 def test_sad_no_catalogue_key_keeps_the_old_separators():
-    old = [k for k in GERMAN
-           if (_OLD_MENU_PATH.search(k) or _OLD_DASH.search(k))
-           and k not in _LATER and not k.startswith("only in the local cache")]
+    old = [k for k in GERMAN if _OLD_MENU_PATH.search(k) or _OLD_DASH.search(k)]
     assert old == [], old[:10]
 
 

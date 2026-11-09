@@ -58,11 +58,13 @@ def _entry(menu, text):
 def test_happy_tools_menu_opens_a_tab_from_a_profile(win):
     sub = _entry(_tools(win), "New Agent Tab from Profile").menu()
     sub.aboutToShow.emit()
-    labels = [a.text() for a in sub.actions() if not a.isSeparator()]
+    # UX round 7 (L8): every submenu entry gets a mnemonic ("&"), so compare
+    # the shown names.
+    labels = [a.text().replace("&", "") for a in sub.actions() if not a.isSeparator()]
     assert labels[0] == "Files Assistant (preset)" and labels[-1] == "Mine"
     dock = win._agent_dock
     before = dock.tabs.count()
-    next(a for a in sub.actions() if a.text() == "Mine").trigger()
+    next(a for a in sub.actions() if a.text().replace("&", "") == "Mine").trigger()
     tab = dock.current_tab()
     assert dock.tabs.count() == before + 1 and dock.isVisibleTo(win)
     assert tab.session.agent_profile == "Mine" and tab.session.mode == "plan"

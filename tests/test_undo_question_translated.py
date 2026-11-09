@@ -57,6 +57,7 @@ def window(tmp_path, monkeypatch):
     victim.write_text("keep me")
     win.victim = victim
     yield win
+    _ROUND[0] += 1  # stop this test's question watcher (_answer)
     win._quit_with_transfers = True
     win.close()
     win.deleteLater()
@@ -69,10 +70,21 @@ def _trash(window) -> None:
     assert not window.victim.exists()
 
 
+#: Bumped when a test ends: a watcher still waiting for its question (the
+#: test failed before it showed) must not answer the next test's question -
+#: in a full run one such leftover pressed Enter on the next test's "No"
+#: question and failed two more tests.
+_ROUND = [0]
+
+
 def _answer(seen: list, key=Qt.Key.Key_Return, button=None) -> None:
     """Record the question when it shows, then press *key* (or click the
     standard *button*)."""
+    round_ = _ROUND[0]
+
     def look() -> None:
+        if _ROUND[0] != round_:
+            return
         box = QApplication.activeModalWidget()
         if not isinstance(box, QMessageBox):
             QTimer.singleShot(30, look)

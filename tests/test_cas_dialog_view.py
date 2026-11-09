@@ -327,7 +327,7 @@ class DeleteFlowTest(_Base):
 class EmptyIndexTest(_Base):
     """Reported: with an empty index every button was enabled, "Copy list"
     said "1 row(s) copied" of an empty table and "Mark All" said "0
-    duplicate(s) marked — 0 B"."""
+    duplicate(s) marked – 0 B"."""
 
     def _buttons(self, dlg) -> dict:
         return {
@@ -360,7 +360,8 @@ class EmptyIndexTest(_Base):
         self.assertFalse(buttons["trash"].isEnabled())  # nothing selected yet
         dlg._mark_all_duplicates()
         self.assertTrue(buttons["trash"].isEnabled())
-        self.assertRegex(dlg._status.text(), r"^1 duplicate marked — ")
+        # UX round 7 (L3): one separator convention - "→" in menu paths, "–" as dash.
+        self.assertRegex(dlg._status.text(), r"^1 duplicate marked – ")
         dlg._tree.setCurrentItem(self._row(dlg, self.tree / "b.txt"))
         self.assertTrue(buttons["url"].isEnabled())
         dlg._export()

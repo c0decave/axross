@@ -865,7 +865,7 @@ class GitFsSession(SessionLifecycle):
             where = tr("on origin and in the cache {cache}").format(cache=self._workdir)
         else:
             where = tr(
-                "only in the local cache {cache} - pushing it to origin failed "
+                "only in the local cache {cache} – pushing it to origin failed "
                 "({error}), and the cache can be deleted: copy your files out soon"
             ).format(cache=self._workdir, error=error)
         return tr(

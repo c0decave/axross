@@ -44,6 +44,12 @@ def home(tmp_path, monkeypatch):
     from ui import main_window as MW
 
     monkeypatch.setattr(MW.MainWindow, "_SESSION_FILE", home / "session.json")
+    # The window stands for the whole screen here (1280x800, 1366x768); the
+    # offscreen platform's screen is only 800 px wide, so the empty Bookmarks
+    # sidebar would fold away as on a netbook (UX review round 7, L7 - tested
+    # in tests/test_ux_round7_lows.py).
+    monkeypatch.setattr(MW.MainWindow, "_small_screen",
+                        lambda self: self.width() < self.SMALL_SCREEN_WIDTH)
     monkeypatch.setattr(CP, "DEFAULT_PATH", home / "column_prefs.json")
     folder = home / "files"
     folder.mkdir()

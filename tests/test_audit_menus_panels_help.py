@@ -116,7 +116,8 @@ MENU_ICONS = {
     ("&File", "Connection &Manager…"): "connection-manager",
     ("&View", "Vie&w Selected Media…"): "media-view",
     ("&View", "&Duplicate Finder…"): "duplicates",
-    ("&View", "Duplicate Index && History…"): "duplicates",
+    # UX round 7 (L8): entries without a letter get a free one when the menu opens
+    ("&View", "D&uplicate Index && History…"): "duplicates",
     ("&View", "Scheduled &Jobs…"): "clock",
     ("&Tools", "&Find on Network Hosts (SMB)…"): "globe",
     ("&Tools", "Run Active Pane &Diagnostics…"): "diagnostics",
@@ -165,6 +166,11 @@ def test_happy_the_panel_toggles_of_view_panels_have_their_icons(window):
         assert action.property("axIcon") == name and not action.icon().isNull(), action.text()
 
 
+def _shown(action) -> str:
+    """An entry's text as shown: without its mnemonic marker."""
+    return action.text().replace("&&", "\0").replace("&", "").replace("\0", "&")
+
+
 def test_happy_a_mail_dock_is_in_view_panels_and_its_toggle_brings_it_back(window):
     docks = window._mail_docks
     dock = MD.MailDockConfig(name="Inbox Watch", mailbox_profile="imap-work", enabled=False)
@@ -174,7 +180,9 @@ def test_happy_a_mail_dock_is_in_view_panels_and_its_toggle_brings_it_back(windo
     pump()
     menu = window._dock_view_menu
     menu.aboutToShow.emit()
-    toggles = [a for a in menu.actions() if a.text() == "Mail: Inbox Watch"]
+    # UX round 7 (L8): View > Panels gives every toggle a mnemonic ("&"), so
+    # the shown names are compared.
+    toggles = [a for a in menu.actions() if _shown(a) == "Mail: Inbox Watch"]
     assert len(toggles) == 1
     assert toggles[0].property("axIcon") == "mail" and not toggles[0].icon().isNull()
     ext.close()
@@ -184,7 +192,7 @@ def test_happy_a_mail_dock_is_in_view_panels_and_its_toggle_brings_it_back(windo
     assert wait_until(ext.isVisible)
     # opening the menu again does not list it twice
     menu.aboutToShow.emit()
-    assert [a.text() for a in menu.actions()].count("Mail: Inbox Watch") == 1
+    assert [_shown(a) for a in menu.actions()].count("Mail: Inbox Watch") == 1
 
 
 def test_sad_a_removed_mail_dock_leaves_view_panels(window):
@@ -194,14 +202,14 @@ def test_sad_a_removed_mail_dock_leaves_view_panels(window):
     docks._open(dock)
     menu = window._dock_view_menu
     menu.aboutToShow.emit()
-    assert "Mail: Gone Soon" in [a.text() for a in menu.actions()]
+    assert "Mail: Gone Soon" in [_shown(a) for a in menu.actions()]
     docks.remove(dock.dock_id)
     APP.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     pump()
     menu.aboutToShow.emit()
-    assert "Mail: Gone Soon" not in [a.text() for a in menu.actions()]
+    assert "Mail: Gone Soon" not in [_shown(a) for a in menu.actions()]
     window._populate_dock_view_menu()  # a full rebuild keeps the others
-    assert [a.text() for a in menu.actions()].count("Mail: Inbox Watch") <= 1
+    assert [_shown(a) for a in menu.actions()].count("Mail: Inbox Watch") <= 1
 
 
 def _report(window, title: str):

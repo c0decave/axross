@@ -48,7 +48,7 @@ def test_sad_a_cut_table_says_how_many_it_shows(tmp_path, monkeypatch):
     dlg = UMP.MailProjectDialog(folder=str(tmp_path / "p"))
     try:
         assert dlg.table.rowCount() == 5
-        assert dlg.status.text() == "Showing 5 of 12 messages - search to narrow them down."
+        assert dlg.status.text() == "Showing 5 of 12 messages – search to narrow them down."
         dlg.search.setText("m1")            # 3 matches: all shown
         dlg.refresh()
         assert dlg.table.rowCount() == 3 and dlg.status.text() == "3 messages"
@@ -68,6 +68,6 @@ def test_edge_an_import_line_stays_and_the_cut_count_goes_below_it(tmp_path, mon
         dlg.refresh()
         dlg.refresh()
         assert dlg.status.text() == ("Imported 12 messages.\n"
-                                     "Showing 5 of 12 messages - search to narrow them down.")
+                                     "Showing 5 of 12 messages – search to narrow them down.")
     finally:
         dlg.done(0)

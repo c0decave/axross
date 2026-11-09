@@ -417,7 +417,8 @@ class LayoutOnStartTest(_WindowStateTest):
         win = self.start_window(profiles={"prod": prod})
         self.assertEqual(_shape(win._root_splitter), ("h", ("file", "placeholder")))
         placeholder = win._pane_placeholders[0]
-        self.assertIn("Not connected — prod", placeholder.title_text())
+        # UX round 7 (L3): one separator convention - "→" in menu paths, "–" as dash.
+        self.assertIn("Not connected – prod", placeholder.title_text())
         self.assertEqual(len(win._panes), 1)
         self.assertEqual(win._pane_profiles, {})
         self.assert_no_dialog_and_no_connect()

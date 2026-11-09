@@ -350,6 +350,14 @@ class NameFitsBeforeOtherColumnsTest(_PaneTestBase):
             pane._label_width(col),
         )
 
+    def _defaults(self, pane) -> list[int]:
+        """The default widths of Size, Modified, Permissions and Owner -
+        each at least its header label as drawn (UX review round 7: a
+        header is never clipped). A theme a window shown earlier in the run
+        left on the application pads the header (16 px more): then the
+        "Permissions" label needs 111 px, one more than its default 110."""
+        return [max(d, pane._label_width(c)) for c, d in zip(range(1, 5), (90, 150, 110, 150))]
+
     def _least(self, pane, col: int) -> int:
         """Narrowest the fitting may make *col*: its content, or its default
         width where that is narrower already (a column is never widened)."""
@@ -387,7 +395,7 @@ class NameFitsBeforeOtherColumnsTest(_PaneTestBase):
         self._show(pane, 760)
         self._show(pane, 2000)
         w = self._widths(pane)
-        self.assertEqual(w[1:], [90, 150, 110, 150], w)  # the defaults again
+        self.assertEqual(w[1:], self._defaults(pane), w)  # the defaults again
 
     # --- sad ----------------------------------------------------------------
 
@@ -425,7 +433,7 @@ class NameFitsBeforeOtherColumnsTest(_PaneTestBase):
         # wide again, the column is back
         self._show(pane, 1600)
         self.assertFalse(h.isSectionHidden(4))
-        self.assertEqual(self._widths(pane)[1:], [90, 150, 110, 150])
+        self.assertEqual(self._widths(pane)[1:], self._defaults(pane))
 
     def test_edge_a_column_the_user_hid_stays_hidden_when_room_returns(self) -> None:
         pane, _ = self._pane()

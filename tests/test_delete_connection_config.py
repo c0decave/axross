@@ -125,10 +125,13 @@ def test_happy_the_right_click_menu_offers_delete_after_edit(win) -> None:
     menu = _menu(win)
     profile = menu.profile_of(_entries(menu, "alpha")[0])
     sub = menu.build_profile_menu(profile)
+    # UX round 7 (M3): "Connect in New Pane" joined the connect entries
+    # (Connect itself reuses an untouched target pane).
     assert _labels(sub) == [
-        "Connect", "Connect in Background", "Edit Config…", "Delete Connection Config…"
+        "Connect", "Connect in Background", "Connect in New Pane", "Edit Config…",
+        "Delete Connection Config…",
     ]
-    assert sub.actions()[3].isSeparator()  # set apart from the harmless entries
+    assert sub.actions()[4].isSeparator()  # set apart from the harmless entries
     menu.close()
 
 

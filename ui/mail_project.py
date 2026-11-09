@@ -394,7 +394,7 @@ class MailProjectDialog(QDialog):
         only the first ones (it stopped at 1000 without a word). An import's
         result line stays; a cut table's count is added below it."""
         if shown < total:
-            text = tr("Showing {shown} of {total} messages - search to narrow them down.").format(
+            text = tr("Showing {shown} of {total} messages – search to narrow them down.").format(
                 shown=shown, total=total)
         else:
             text = tr("{n} messages").format(n=shown)

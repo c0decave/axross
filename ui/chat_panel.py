@@ -134,7 +134,7 @@ def host_warnings(ace_host: str) -> list[str]:
                                name=sanitize_for_display(".".join(shown))))
     mixed = sorted(set().union(*(s for s in map(_label_scripts, shown) if len(s) > 1)))
     if mixed:
-        warnings.append(tr("Warning: the name mixes letters of several scripts ({scripts}) - "
+        warnings.append(tr("Warning: the name mixes letters of several scripts ({scripts}) – "
                            "a typical look-alike.").format(scripts=", ".join(mixed)))
     return warnings
 
@@ -389,7 +389,7 @@ class ConversationView(QWidget):
             self._fill_members(conv)
         self.input.setEnabled(conv.joined or conv.kind != C.CONV_CHANNEL)
         self.input.setPlaceholderText(tr("Message") if conv.kind != C.CONV_SERVER
-                                      else tr("/command - /help lists them"))
+                                      else tr("/command – /help lists them"))
 
     def _fill_members(self, conv: C.Conversation) -> None:
         def rank(member: C.Member):
@@ -540,7 +540,7 @@ class AccountEditor(QDialog):
             w = QLineEdit()
             w.setEchoMode(QLineEdit.EchoMode.Password)
             stored = C.account_secret(self.account, spec.key) if self.account.name else None
-            w.setPlaceholderText(tr("stored - leave empty to keep") if stored else "")
+            w.setPlaceholderText(tr("stored – leave empty to keep") if stored else "")
             return w
         if spec.kind == "int":
             w = QSpinBox()

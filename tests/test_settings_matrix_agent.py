@@ -576,9 +576,11 @@ def _markers(ctx):
     return [(m, r) for m, r in out if r]
 
 
-def _seed_server(**over):
+def _seed_server(*, prefix: tuple[str, ...] = (), **over):
     """The MCP server "fake": the scripted stdio program (or, with
-    transport http, the recording endpoint)."""
+    transport http, the recording endpoint). *prefix* goes before the
+    interpreter (``env``: no pure launcher any more, so it starts on this
+    machine only when marked trusted)."""
 
     def seed(ctx) -> None:
         script = ctx.tmp_path / "fake_mcp.py"
@@ -586,7 +588,7 @@ def _seed_server(**over):
         ctx.extras["script"] = str(script)
         ctx.extras["http"] = SMX.keep_open(ctx, HttpMcp())
         server = {"name": "fake", "transport": "stdio",
-                  "command": [sys.executable, str(script), "normal"], **over}
+                  "command": [*prefix, sys.executable, str(script), "normal"], **over}
         server = {k: (_mark(ctx, v) if isinstance(v, str) else v) for k, v in server.items()}
         _seed_agent(ctx, mcp_servers=[server])
         # Servers started by an effect stop with the window's pool.
@@ -668,6 +670,16 @@ def effect_server_name(ctx, win, value) -> None:
 def effect_server_enabled(ctx, win, value) -> None:
     tools, errors = _tools(win)
     assert bool(tools) is value, errors
+
+
+def effect_server_trusted(ctx, win, value) -> None:
+    """A program that is no pure launcher (``env python script``) and has
+    no sandbox profile starts on this machine only when marked trusted."""
+    tools, errors = _tools(win)
+    if value:
+        assert "fake__look" in tools, errors
+    else:
+        assert not tools and "marked trusted" in str(errors), errors
 
 
 def effect_server_category(ctx, win, value) -> None:
@@ -1229,6 +1241,9 @@ SERVER_ROWS = [
                 bad_reads_as=MISSING),
     _server_row("mcp_server_enabled", "server_enabled_check", "check", (False,), True,
                 lambda s: s.enabled, "enabled", ("no", 0), effect_server_enabled),
+    _server_row("mcp_server_trusted", "server_trusted_check", "check", (True,), False,
+                lambda s: s.trusted, "trusted", ("yes", 1), effect_server_trusted,
+                seed=_seed_server(prefix=("env",))),
     _server_row("mcp_server_category", "server_category_combo", "edit", ("Security: Web",), "",
                 lambda s: s.category, "category", (5, ["x"], "a\nb"), effect_server_category),
     _server_row("mcp_server_transport", "server_transport_combo", "data", ("http",), "stdio",

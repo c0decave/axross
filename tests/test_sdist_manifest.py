@@ -54,27 +54,37 @@ def _manifest_lines() -> list[list[str]]:
     return [line.split() for line in lines if line.strip() and not line.lstrip().startswith("#")]
 
 
-def _sdist_docs() -> set[str]:
-    from setuptools._distutils.filelist import FileList
+#: The docs/ lines of MANIFEST.in (argv[1]) applied to the files under the
+#: current folder; prints what they take.
+_DOCS_FILTER = """
+import os
+import sys
+from setuptools._distutils.filelist import FileList
+files = FileList()
+files.findall()
+for line in open(sys.argv[1], encoding="utf-8").read().splitlines():
+    line = line.strip()
+    if line.startswith(("recursive-include docs", "prune docs", "exclude docs",
+                        "include docs", "graft docs", "global-")):
+        files.process_template_line(line)
+print("\\n".join(f.replace(os.sep, "/") for f in files.files))
+"""
 
+
+def _sdist_docs() -> set[str]:
     with tempfile.TemporaryDirectory() as tmp:
         for rel in (*PRIVATE, *PUBLIC):
             path = Path(tmp, rel)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("x")
-        cwd = os.getcwd()
-        os.chdir(tmp)
-        try:
-            files = FileList()
-            files.findall()
-            for line in (REPO_ROOT / "MANIFEST.in").read_text().splitlines():
-                line = line.strip()
-                if line.startswith(("recursive-include docs", "prune docs", "exclude docs",
-                                    "include docs", "graft docs", "global-")):
-                    files.process_template_line(line)
-            return {f.replace(os.sep, "/") for f in files.files}
-        finally:
-            os.chdir(cwd)
+        # In a child: setuptools' distutils shim asserts when the stdlib
+        # distutils was imported first in this process (some test modules
+        # of the suite do; seen in a full -n run), as in test_pypi_packaging.
+        out = subprocess.run(
+            [sys.executable, "-c", _DOCS_FILTER, str(REPO_ROOT / "MANIFEST.in")],
+            cwd=tmp, capture_output=True, text=True, check=True, timeout=120,
+        ).stdout
+        return set(out.split())
 
 
 class SdistManifestTest(unittest.TestCase):

@@ -284,7 +284,8 @@ class TerminalsComeBackOnStartTest(_TerminalWindowCase):
             self.assertEqual(win._terminal_panes, [])
             connect.assert_not_called()
             placeholder = win._pane_placeholders[0]
-            self.assertIn("Not connected — prod", placeholder.title_text())
+            # UX round 7 (L3): one separator convention - "→" in menu paths, "–" as dash.
+            self.assertIn("Not connected – prod", placeholder.title_text())
             placeholder.reconnect_button.click()
             self.app.processEvents()
             connect.assert_called_once()

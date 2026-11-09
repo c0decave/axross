@@ -136,8 +136,9 @@ def test_sad_missing_chat_libraries_point_at_features_not_at_pip(monkeypatch):
 
     for module in ("nio", "slixmpp"):
         monkeypatch.setitem(sys.modules, module, None)  # import fails
+    # UX round 7 (L3): one separator convention - "→" in menu paths, "–" as dash.
     for text in (chat_matrix.nio_missing(), chat_xmpp.libraries_missing()):
-        assert text and "Help > Features…" in text and "pip install" not in text
+        assert text and "Help → Features…" in text and "pip install" not in text
     source = (EXTENSIONS / "bluetooth.py").read_text(encoding="utf-8")
     assert not re.search(r"pip install", source)
 

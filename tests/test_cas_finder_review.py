@@ -389,7 +389,8 @@ def test_edge_a_clean_rebuild_report_is_no_warning():
     from ui.cas_dialog import rebuild_report
 
     text, trouble = rebuild_report(3, "/x", CAS.RebuildStats(hashed=3), True)
-    assert not trouble and text.startswith("Cancelled — 3 file(s) indexed so far")
+    # UX round 7 (L3): one separator convention - "→" in menu paths, "–" as dash.
+    assert not trouble and text.startswith("Cancelled – 3 file(s) indexed so far")
 
 
 def test_happy_progress_shows_bytes_and_the_delete_counts_n_of_m(finder):

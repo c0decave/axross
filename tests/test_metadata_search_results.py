@@ -70,8 +70,9 @@ def test_sad_more_matches_than_the_limit_are_cut_and_said(dialog, monkeypatch):
     assert _wait(lambda: dialog._table.rowCount() > 0)
     assert dialog._table.rowCount() == LIMIT
     assert asked["limit"] == LIMIT + 1
+    # UX round 7 (L3): one separator convention - "→" in menu paths, "–" as dash.
     assert dialog._status.text().startswith(
-        f"Showing the first {MSD.format_count(LIMIT)} matches - there are more; narrow the search.")
+        f"Showing the first {MSD.format_count(LIMIT)} matches – there are more; narrow the search.")
     assert dialog._table.item(LIMIT - 1, 0).text() == f"f{LIMIT - 1}.txt"
 
 

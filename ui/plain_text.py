@@ -120,6 +120,21 @@ def shown_length(text: str, limit: int = MAX_SHOWN_CHARS) -> int:
     return min(end, len(text))
 
 
+def _plain_lines(text: str, limit: int = 2 * 1024 * 1024, width: int = 1000,
+                 max_lines: int = 100_000) -> tuple[str, bool]:
+    """core.mail_html.plain_lines for a program exported without it: every
+    line broken after *width* characters, at most *limit* characters and
+    *max_lines* lines; and whether some was left out."""
+    out: list[str] = []
+    for line in text[:limit].split("\n"):
+        pieces = [line[i:i + width] for i in range(0, len(line), width)] or [""]
+        if len(out) + len(pieces) > max_lines:
+            out.extend(pieces[:max_lines - len(out)])
+            return "\n".join(out), True
+        out.extend(pieces)
+    return "\n".join(out), len(text) > limit
+
+
 def show_full_text(parent, title: str, text: str):
     """*text* in a window of its own, as plain text (a QPlainTextEdit lays
     out only the lines on screen; every line is broken after
@@ -128,12 +143,20 @@ def show_full_text(parent, title: str, text: str):
     from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QPlainTextEdit, QVBoxLayout
 
     from core.i18n import tr
-    from core.mail_html import plain_lines
+    from ui.close_corner import add_close_corner
+    from ui.icon_provider import set_window_icon
+
+    try:
+        from core.mail_html import plain_lines
+    except ImportError:  # an exported tool comes without the mail viewer
+        plain_lines = _plain_lines
 
     dialog = QDialog(parent)
     dialog.setWindowTitle(title)
+    set_window_icon(dialog, "file")
     dialog.resize(800, 600)
     layout = QVBoxLayout(dialog)
+    add_close_corner(dialog)
     view = QPlainTextEdit()
     view.setReadOnly(True)
     shown, cut = plain_lines(text)

@@ -65,13 +65,15 @@ def test_happy_the_menu_shows_the_names_and_applies_the_preset(window, monkeypat
     from ui.layout_presets import PRESET_LABELS, PRESET_ORDER
 
     menu = _preset_menu(window)
-    texts = [a.text() for a in menu.actions() if not a.isSeparator()]
+    # UX round 7 (L8): every submenu entry gets a mnemonic ("&"), so compare
+    # the shown names.
+    texts = [a.text().replace("&", "") for a in menu.actions() if not a.isSeparator()]
     assert texts[: len(PRESET_ORDER)] == [PRESET_LABELS[n] for n in PRESET_ORDER]
     assert not set(PRESET_ORDER) & set(texts)
 
     applied = []
     monkeypatch.setattr(window, "apply_layout_preset", applied.append)
-    next(a for a in menu.actions() if a.text() == "Four File Panes").trigger()
+    next(a for a in menu.actions() if a.text().replace("&", "") == "Four File Panes").trigger()
     assert applied == ["quad-files"]
 
 
