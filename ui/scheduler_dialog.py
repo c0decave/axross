@@ -238,7 +238,10 @@ class SchedulerDialog(QDialog):
         job = next((j for j in self._jobs if j.job_id == job_id), None)
         if job is None:
             return
-        if ok:
+        if ok is None:  # stopped because the application closed: not a failure
+            self._status.setText(tr("{name} was stopped: the application closed").format(
+                name=job.name))
+        elif ok:
             self._status.setText(tr("{name} finished: {detail}").format(
                 name=job.name, detail=detail or tr("ok")))
         else:

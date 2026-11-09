@@ -315,7 +315,7 @@ class NewPanesFollowTest(_WindowCase):
         from PyQt6.QtCore import Qt
 
         win = self.make_window()
-        self.assertTrue(win._hidden_action.isChecked())
+        win._hidden_action.setChecked(True)  # off for a new user (round 6)
         win._split_pane(Qt.Orientation.Horizontal)
         new = win._panes[-1]
         self.assertTrue(new._proxy.show_hidden)
@@ -331,6 +331,7 @@ class NewPanesFollowTest(_WindowCase):
         with ram.open_write("/srv/app.py") as fh:
             fh.write(b"y")
         win = self.make_window()
+        win._hidden_action.setChecked(True)
         pane = win._add_pane_to_splitter(win._root_splitter, ram)
         self.settle(pane)
         pane.navigate("/srv")
@@ -342,6 +343,7 @@ class NewPanesFollowTest(_WindowCase):
         from PyQt6.QtCore import Qt
 
         win = self.make_window()
+        win._hidden_action.setChecked(True)
         win._split_pane(Qt.Orientation.Horizontal)
         win._save_session()
         self.assertTrue(win.restore_layout_on_start())
@@ -379,6 +381,7 @@ class NewPanesFollowTest(_WindowCase):
         from PyQt6.QtTest import QTest
 
         win = self.make_window()
+        win._hidden_action.setChecked(True)
         win.show()
         win.activateWindow()
         win._split_pane(Qt.Orientation.Horizontal)
@@ -427,17 +430,47 @@ class PersistenceTest(_WindowCase):
         self.assertFalse(again._hidden_action.isChecked())
         self.assertEqual(self.states(again), [False])
 
-    def test_sad_a_garbage_value_keeps_the_default_on(self) -> None:
+    def test_sad_a_garbage_value_keeps_the_default_off(self) -> None:
         self.session.write_text(json.dumps({"window": {"show_hidden": "nope"}}))
         win = self.make_window()
-        self.assertTrue(win._hidden_action.isChecked())
-        self.assertEqual(self.states(win), [True])
+        self.assertFalse(win._hidden_action.isChecked())
+        self.assertEqual(self.states(win), [False])
 
-    def test_edge_an_old_session_without_the_key_starts_with_hidden_files_shown(self) -> None:
+    def test_edge_a_session_without_the_key_starts_with_hidden_files_off(self) -> None:
+        """UX review round 6: a new user saw dotfiles and cache folders
+        first. A saved session always carries the key (the old default
+        "on" included), so only a start without a choice is off."""
         self.session.write_text(json.dumps({"window": {"compact": False}}))
         win = self.make_window()
-        self.assertTrue(win._hidden_action.isChecked())
-        self.assertEqual(self.states(win), [True])
+        self.assertFalse(win._hidden_action.isChecked())
+        self.assertEqual(self.states(win), [False])
+
+    def test_happy_a_new_user_starts_without_hidden_files_and_a_stored_on_is_kept(self) -> None:
+        win = self.make_window()
+        self.assertFalse(win._hidden_action.isChecked())
+        self.assertNotIn(".dotfile", self.show_folder(win._panes[0]))
+        self.session.write_text(json.dumps({"window": {"show_hidden": True}}))
+        again = self.make_window()
+        self.assertTrue(again._hidden_action.isChecked())
+        self.assertIn(".dotfile", self.show_folder(again._panes[0]))
+
+
+class NavRowsTest(_QtCase):
+    def test_edge_the_dot_rows_say_what_they_are(self) -> None:
+        """Round 6: "." looked like an entry. It is this folder (a drop
+        target) and stays first; ".." is the parent."""
+        from PyQt6.QtCore import Qt
+
+        from models.file_table_model import FileTableModel
+
+        model = FileTableModel()
+        model.set_items([FileItem(name="b.txt"), FileItem(name="..", is_dir=True),
+                         FileItem(name=".", is_dir=True)])
+        tips = {model.get_item(r).name: model.data(model.index(r, 0),
+                                                   Qt.ItemDataRole.ToolTipRole)
+                for r in range(model.rowCount())}
+        self.assertIn("drop entries here", tips["."])
+        self.assertEqual(tips[".."], "The parent folder")
 
 
 if __name__ == "__main__":

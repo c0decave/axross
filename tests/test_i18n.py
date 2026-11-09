@@ -436,8 +436,8 @@ KEEP_ENGLISH = (
     "Bookmark", "Connection Manager", "Config", "Disk Usage", "Duplicate Finder",
     "Extension", "FUSE", "Hardlink", "Hex", "Jobs", "Keyring", "Layout", "Mount",
     "Pane", "Panel", "Preset", "Preview", "Profile", "Recovery", "Session",
-    "Shell", "Shortcuts", "Symlink", "Theme", "Tools", "Trash", "Workspace",
-    "XLink", "Zoom",
+    "Shell", "Shortcuts", "Symlink", "Theme", "Tools", "Workspace",
+    "XLink",
 )
 
 

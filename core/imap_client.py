@@ -632,8 +632,13 @@ class _SpooledWriter:
         mailbox: str,
         filename: str | None = None,
         lock=None,
+        session=None,
     ):
         self._imap = imap
+        # The session the handle came from: close() asks it for the live
+        # connection (the session reconnects after a drop; the handle of
+        # open_write() time is then dead).
+        self._session = session
         self._mailbox = mailbox
         self._filename = filename
         # The session's I/O lock: APPEND runs on the shared handle.
@@ -689,12 +694,35 @@ class _SpooledWriter:
             if hooks.cancelled():
                 raise transfer_hooks.UploadCancelled(transfer_hooks.CANCELLED)
         with self._lock:
-            typ, data = self._imap.append(mailbox_encoded, None, None, message_bytes)
+            imap = self._live_connection()
+            try:
+                typ, data = imap.append(mailbox_encoded, None, None, message_bytes)
+            except (imaplib.IMAP4.abort, OSError, EOFError) as exc:
+                if isinstance(exc, OSError) and exc.errno:
+                    raise
+                # A connection lost under the APPEND: typed, and saying
+                # that the message is not (known to be) in the mailbox.
+                raise ConnectionResetError(
+                    errno.ECONNRESET,
+                    f"IMAP APPEND to {self._mailbox}: the connection to the server was "
+                    f"lost ({exc or type(exc).__name__}); the message may not have been "
+                    f"stored. Reconnect and try again.",
+                ) from exc
         if typ != "OK":
-            raise OSError(f"IMAP APPEND to {self._mailbox} failed: {data}")
+            raise OSError(errno.EIO, f"IMAP APPEND to {self._mailbox} failed: {data}")
         if hooks is not None:
             hooks.sent(len(raw_bytes), len(raw_bytes), check=False)
         log.info("Appended %d bytes to mailbox %s", len(message_bytes), self._mailbox)
+
+    def _live_connection(self):
+        """The session's connection now (reconnected after a drop, by
+        _ensure_connected), else the handle of open_write() time."""
+        session = self._session
+        if session is not None:
+            ensure = getattr(session, "_ensure_connected", None)
+            if callable(ensure):
+                self._imap = ensure()
+        return self._imap
 
     def discard(self) -> None:
         """Drop buffered bytes without APPENDing to the mailbox
@@ -921,8 +949,16 @@ class ImapSession(SessionLifecycle):
         except Exception as exc:  # noqa: BLE001 - the next SELECT replaces it
             log.debug("IMAP: leaving mailbox %r failed: %s", mailbox, exc)
 
+    #: Set by disconnect() / close(): a later call through this object (a
+    #: queued or retried transfer, a scheduled job, an editor save) raises
+    #: instead of logging in again by itself with the stored password.
+    _closed_by_user = False
+
     def _ensure_connected(self) -> imaplib.IMAP4 | imaplib.IMAP4_SSL:
         """Return the IMAP connection, reconnecting if needed."""
+        if self._closed_by_user:
+            raise ConnectionError(errno.ENOTCONN,
+                                  f"IMAP {getattr(self, '_host', '')}: disconnected")
         if self._imap is None:
             self._connect()
         assert self._imap is not None
@@ -1210,6 +1246,7 @@ class ImapSession(SessionLifecycle):
         flagged \\Deleted in a mailbox left selected read-write - by a
         refused remove, a set_flags or a move - including ones another
         client had only flagged."""
+        self._closed_by_user = True
         if self._imap is not None:
             try:
                 self._imap.logout()
@@ -1827,28 +1864,28 @@ class ImapSession(SessionLifecycle):
             # A mailbox that is selected already exists; no probe needed.
             mailbox = parts[0]
             if self._selected_mailbox == mailbox:
-                return _SpooledWriter(imap, mailbox, lock=io_lock(self))
+                return _SpooledWriter(imap, mailbox, lock=io_lock(self), session=self)
             try:
                 self._select_mailbox(mailbox, readonly=True)
-                return _SpooledWriter(imap, mailbox, lock=io_lock(self))
+                return _SpooledWriter(imap, mailbox, lock=io_lock(self), session=self)
             except (OSError, imaplib.IMAP4.error):
                 pass
             # Mailbox doesn't exist — treat as filename, write to INBOX
             filename = mailbox
             mailbox = "INBOX"
             log.info("IMAP write to root-level file %r — using mailbox INBOX", filename)
-            return _SpooledWriter(imap, mailbox, filename=filename, lock=io_lock(self))
+            return _SpooledWriter(imap, mailbox, filename=filename, lock=io_lock(self), session=self)
 
         if mailbox is None:
             mailbox, rest = parts[0], parts[1:]
 
         if not rest:
             # The mailbox itself: raw RFC 822 bytes
-            return _SpooledWriter(imap, mailbox, lock=io_lock(self))
+            return _SpooledWriter(imap, mailbox, lock=io_lock(self), session=self)
 
         if len(rest) == 1:
             # Pass filename so _SpooledWriter can wrap non-.eml data
-            return _SpooledWriter(imap, mailbox, filename=rest[0], lock=io_lock(self))
+            return _SpooledWriter(imap, mailbox, filename=rest[0], lock=io_lock(self), session=self)
 
         raise OSError(f"Cannot write to {path!r}: only message-level writes are supported")
 

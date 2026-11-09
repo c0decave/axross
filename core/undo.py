@@ -71,6 +71,41 @@ log = logging.getLogger(__name__)
 _SUCCESS = frozenset({"done", "ok", "success", "completed"})
 
 
+def _tr(text: str) -> str:
+    # Imported late like the other tr() uses here: the reasons are shown
+    # in the undo question, the status bar and the "Cannot undo" box.
+    from core.i18n import tr
+
+    return tr(text)
+
+
+def _tr_n(n: int, singular: str, plural: str, **fields) -> str:
+    from core.i18n import tr_n
+
+    return tr_n(n, singular, plural, **fields)
+
+
+#: The user-facing names of the journal's operation ids (the ids stay
+#: English: the journal is data that scripts and the log read).
+_OPERATION_NAMES = {
+    "trash": "move to the trash",
+    "move": "file move",
+    "move_folder": "folder move",
+    "transfer": "file copy",
+    "metadata_remove": "metadata removal",
+    "atomic_write": "file save",
+    "undo": "undo",
+}
+
+
+def operation_name(operation: str) -> str:
+    """The translated name of the journal operation id *operation*
+    ("trash" -> "move to the trash" / "Verschieben in den Papierkorb"); an
+    unknown id is shown as it is."""
+    name = _OPERATION_NAMES.get(operation)
+    return _tr(name) if name else operation
+
+
 @dataclass(frozen=True)
 class UndoPlan:
     """What undoing one journal entry would involve."""
@@ -102,6 +137,13 @@ class UndoPlan:
     batch: str = ""
     #: ``"batch"``: the plans of its entries, newest first.
     parts: tuple = ()
+    #: A move's destination as its finish event saw it (sorted
+    #: ``(key, value)`` pairs of :func:`entry_identity`); () for entries
+    #: journaled before it was recorded.
+    identity: tuple = ()
+    #: Those older entries: the size the move wrote (its ``bytes_total``),
+    #: -1 when not known.
+    expected_size: int = -1
 
 
 @dataclass(frozen=True)
@@ -153,6 +195,130 @@ def _refuse(event: dict, reason: str) -> UndoPlan:
     )
 
 
+#: The keys :func:`entry_identity` records.
+_IDENTITY_KEYS = ("kind", "size", "mtime_ns", "ino", "dev", "mtime")
+
+
+def entry_identity(backend, path: str) -> dict:
+    """What tells the entry at *path* apart from another one put under its
+    name later: its kind and size, and on this machine's disk its inode,
+    device and mtime in nanoseconds; elsewhere the mtime *stat* reports.
+    {} when it cannot be read. Journaled with a finished move, compared
+    before an undo moves the entry back (:func:`replaced_reason`)."""
+    from core.local_fs import LocalFS
+
+    if type(backend) is LocalFS:  # subclasses (confined, MTP) map their paths
+        import os
+        import stat as stat_module
+
+        try:
+            st = os.lstat(path)
+        except (OSError, ValueError):
+            return {}
+        kind = ("link" if stat_module.S_ISLNK(st.st_mode)
+                else "dir" if stat_module.S_ISDIR(st.st_mode) else "file")
+        return {"kind": kind, "size": int(st.st_size), "mtime_ns": int(st.st_mtime_ns),
+                "ino": int(st.st_ino), "dev": int(st.st_dev)}
+    try:
+        item = backend.stat(path)
+        kind = "link" if getattr(item, "is_link", False) is True else (
+            "dir" if getattr(item, "is_dir", False) is True else "file")
+        size = getattr(item, "size", 0)
+        if not isinstance(size, int) or isinstance(size, bool):
+            return {}
+        out: dict = {"kind": kind, "size": size}
+    except Exception as exc:  # noqa: BLE001 - a backend that cannot stat records nothing
+        log.debug("undo: no identity for %s: %s", path, exc)
+        return {}
+    modified = getattr(item, "modified", None)
+    try:
+        stamp = round(modified.timestamp(), 3)
+        if isinstance(stamp, float):
+            out["mtime"] = stamp
+    except Exception:  # noqa: BLE001 - no usable time: size and kind only
+        pass
+    return out
+
+
+def _recorded_identity(event: dict, details: dict) -> tuple[tuple, int]:
+    """The identity a move's finish event recorded (sorted pairs), and for
+    an entry without one the size it wrote (-1 when unknown)."""
+    raw = details.get("dest_identity") if isinstance(details, dict) else None
+    if isinstance(raw, dict):
+        pairs = tuple(sorted((k, v) for k, v in raw.items()
+                             if k in _IDENTITY_KEYS and isinstance(v, (int, float, str))
+                             and not isinstance(v, bool)))
+        if pairs:
+            return pairs, -1
+    total = event.get("bytes_total")
+    if isinstance(total, int) and not isinstance(total, bool) and total > 0:
+        return (), total
+    return (), -1
+
+
+def replaced_reason(plan: UndoPlan, backend) -> str:
+    """Why the entry at *plan.dest* is not the one the move put there - it
+    was edited, or another file took its name (renamed away, then a new
+    one saved under the old name) - or "" when it is, when nothing was
+    recorded to compare with, or when it cannot be read (then the undo
+    reports the real error). Moving it back would move the wrong file."""
+    if plan.action not in ("move_back", "transfer_back") or not plan.dest:
+        return ""
+    if not plan.identity and plan.expected_size < 0:
+        return ""
+    now = entry_identity(backend, plan.dest)
+    if not now:
+        return ""
+    if plan.identity:
+        changed = False
+        for key, value in plan.identity:
+            if key not in now:
+                continue
+            if key == "mtime":
+                changed = abs(float(now[key]) - float(value)) > 0.001
+            else:
+                changed = now[key] != value
+            if changed:
+                break
+    else:
+        # Journaled before the identity was: only the size it wrote, and
+        # only for a plain file (a link was counted by its target's length).
+        changed = now.get("kind") == "file" and now.get("size") != plan.expected_size
+    if not changed:
+        return ""
+    from core.i18n import tr
+
+    name = plan.dest.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1] or plan.dest
+    return tr("{name} is not the file the move put there - it was changed or "
+              "replaced since").format(name=name)
+
+
+def _refuse_replaced(plan: UndoPlan, backend) -> None:
+    reason = replaced_reason(plan, backend)
+    if reason:
+        raise OSError(reason)
+
+
+def unchanged_parts(plan: UndoPlan, backend) -> tuple[UndoPlan, list[str]]:
+    """*plan* (a batch) without the moved entries whose destination is no
+    longer what the move put there (:func:`replaced_reason`), and those
+    as failures ("path: reason"). Run before the transfer engine takes
+    the rest back (the renames of apply_batch_files check themselves)."""
+    if plan.action != "batch":
+        return plan, []
+    kept: list[UndoPlan] = []
+    failures: list[str] = []
+    for part in plan.parts:
+        reason = replaced_reason(part, backend) if part.action == "transfer_back" else ""
+        if reason:
+            failures.append(f"{part.source or part.dest}: {reason}")
+        else:
+            kept.append(part)
+    if not failures:
+        return plan, []
+    return replace(plan, parts=tuple(kept)), failures
+
+
 def plan_undo(event: dict) -> UndoPlan:
     """Decide whether one journal event can be reversed, and how."""
     operation = str(event.get("operation", ""))
@@ -164,14 +330,16 @@ def plan_undo(event: dict) -> UndoPlan:
     if status not in _SUCCESS:
         return _refuse(
             event,
-            f"the operation did not complete (status {status or 'unknown'!s}) — "
-            "reversing it against unknown state could lose data",
+            _tr("the operation did not complete (status {status}) — "
+                "reversing it against unknown state could lose data").format(
+                    status=status or _tr("unknown")),
         )
 
     if operation == "move":
         if not source or not dest:
-            return _refuse(event, "the journal entry is missing one of the two paths")
+            return _refuse(event, _tr("the journal entry is missing one of the two paths"))
         direction = str(details.get("direction", ""))
+        identity, expected_size = _recorded_identity(event, details)
         if direction:
             # UPLOAD / DOWNLOAD / RELAY are all cross-backend.
             return UndoPlan(
@@ -179,34 +347,39 @@ def plan_undo(event: dict) -> UndoPlan:
                 operation=operation,
                 reversible=True,
                 action="transfer_back",
-                reason=f"transfer {dest} back to {source}",
+                reason=_tr("transfer {dest} back to {source}").format(dest=dest, source=source),
                 source=source,
                 dest=dest,
                 backend=str(event.get("backend", "")),
                 direction=direction,
                 source_backend=str(details.get("source_backend", "")),
+                identity=identity,
+                expected_size=expected_size,
             )
         return UndoPlan(
             operation_id=str(event.get("operation_id", "")),
             operation=operation,
             reversible=True,
             action="move_back",
-            reason=f"move {dest} back to {source}",
+            reason=_tr("move {dest} back to {source}").format(dest=dest, source=source),
             source=source,
             dest=dest,
             backend=str(event.get("backend", "")),
+            identity=identity,
+            expected_size=expected_size,
         )
 
     if operation == "trash":
         trash_id = str(details.get("trash_id", ""))
         if not trash_id:
-            return _refuse(event, "the journal entry carries no trash id to restore from")
+            return _refuse(event, _tr("the journal entry carries no trash id to restore from"))
         return UndoPlan(
             operation_id=str(event.get("operation_id", "")),
             operation=operation,
             reversible=True,
             action="restore_from_trash",
-            reason=f"restore {source or 'the entry'} from the trash",
+            reason=(_tr("restore {path} from the trash").format(path=source) if source
+                    else _tr("restore the entry from the trash")),
             source=source,
             dest=dest,
             backend=str(event.get("backend", "")),
@@ -217,16 +390,17 @@ def plan_undo(event: dict) -> UndoPlan:
     if operation == "metadata_remove":
         items = _metadata_items(details if isinstance(details, dict) else {})
         if not items:
-            return _refuse(event, "the journal entry names no file whose original was kept")
+            return _refuse(event, _tr("the journal entry names no file whose original was kept"))
         if len(items) == 1:
             what = items[0].path
             reason = (
-                f"put back {what} with its metadata"
+                _tr("put back {path} with its metadata").format(path=what)
                 if items[0].mode == "in_place"
-                else f"move the cleaned copy {items[0].output} to the trash"
+                else _tr("move the cleaned copy {path} to the trash").format(path=items[0].output)
             )
         else:
-            reason = f"put back the originals of {len(items)} files whose metadata was removed"
+            reason = _tr_n(len(items), "put back the original of {n} file whose metadata was removed",
+                           "put back the originals of {n} files whose metadata was removed")
         return UndoPlan(
             operation_id=str(event.get("operation_id", "")),
             operation=operation,
@@ -241,13 +415,14 @@ def plan_undo(event: dict) -> UndoPlan:
 
     if operation == "move_folder":
         if not source or not dest:
-            return _refuse(event, "the journal entry is missing one of the two paths")
+            return _refuse(event, _tr("the journal entry is missing one of the two paths"))
         return UndoPlan(
             operation_id=str(event.get("operation_id", "")),
             operation=operation,
             reversible=True,
             action="folder_back",
-            reason=f"remove the folder {dest} the move created and make {source} again",
+            reason=_tr("remove the folder {dest} the move created and make {source} again").format(
+                dest=dest, source=source),
             source=source,
             dest=dest,
             backend=str(event.get("backend", "")),
@@ -256,23 +431,24 @@ def plan_undo(event: dict) -> UndoPlan:
         )
 
     if operation == "undo":
-        return _refuse(event, "an undo is not itself undoable")
+        return _refuse(event, _tr("an undo is not itself undoable"))
 
     if operation == "transfer":
         return _refuse(
             event,
-            "a copy cannot be undone automatically: the journal does not record "
-            "whether the destination already existed, so removing it could "
-            "destroy a file the copy overwrote",
+            _tr("a copy cannot be undone automatically: the journal does not record "
+                "whether the destination already existed, so removing it could "
+                "destroy a file the copy overwrote"),
         )
 
     if operation == "atomic_write":
         return _refuse(
             event,
-            "the previous contents were replaced and no backup was kept",
+            _tr("the previous contents were replaced and no backup was kept"),
         )
 
-    return _refuse(event, f"no inverse is defined for {operation!r}")
+    return _refuse(event, _tr("no inverse is defined for {operation}").format(
+        operation=operation_name(operation)))
 
 
 def apply_undo(
@@ -308,6 +484,7 @@ def apply_undo(
                  "Move or rename it first.")
         if getattr(backend, "exists", None) and backend.exists(plan.source):
             raise OSError(again)
+        _refuse_replaced(plan, backend)
         # No-replace where the backend can: a file that appears there after
         # the check is refused too (a plain rename replaced it - LocalFS, SFTP).
         from core.server_ops import rename_no_replace
@@ -325,6 +502,7 @@ def apply_undo(
                 "undoing a cross-backend move needs the source backend and a "
                 "transfer callable; the journal records only the destination host"
             )
+        _refuse_replaced(plan, backend)
         _recreate_parent(source_backend, plan.source)
         result = transfer(
             src_backend=backend,
@@ -649,7 +827,7 @@ def _batch_plan(batch: str, parts: list[UndoPlan]) -> UndoPlan:
     backends = {p.backend for p in usable}
     if len(backends) > 1:
         return replace(_refuse({"operation_id": batch, "operation": lead.operation},
-                               "the entries of this operation are on more than one connection"),
+                               _tr("the entries of this operation are on more than one connection")),
                        batch=batch, parts=usable)
     sources = {p.source_backend for p in usable if p.action in ("transfer_back", "folder_back")}
     operation = lead.operation if lead.operation != "move_folder" else "move"
@@ -822,9 +1000,13 @@ __all__ = [
     "apply_undo",
     "batch_transfer_pairs",
     "complete_batch",
+    "entry_identity",
     "gone_reason",
+    "operation_name",
     "pick_undoable",
     "plan_undo",
     "record_undone",
+    "replaced_reason",
+    "unchanged_parts",
     "undoable",
 ]

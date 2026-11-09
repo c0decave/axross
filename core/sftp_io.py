@@ -20,25 +20,85 @@ never uses. The bytes a read asks for are always requested at once: a
 from __future__ import annotations
 
 import contextlib
+import errno
 import io
 import os
 
+from core import transfer_hooks
+
+
+def timeout_error(what: str, sftp) -> TimeoutError:
+    """The OSError (ETIMEDOUT) for an SFTP request the server did not
+    answer within the channel's time-out. The channel is closed: the
+    answer may still come and would be taken for the next request's, so
+    the session opens a new channel for the next call."""
+    seconds = None
+    try:
+        channel = sftp.get_channel()
+        seconds = channel.gettimeout()
+        channel.close()
+    except Exception:  # noqa: BLE001 - a dead channel is what we expect here
+        pass
+    waited = f"{seconds:g} s" if seconds else "the time-out"
+    return TimeoutError(
+        errno.ETIMEDOUT,
+        f"SFTP {what}: the server sent nothing for {waited}; the network connection "
+        f"is probably lost. Reconnect and try again.",
+    )
+
 
 @contextlib.contextmanager
-def _connection_errors_as_oserror(what: str):
+def _connection_errors_as_oserror(what: str, sftp=None, watch=None):
     """A lost connection mid-transfer as OSError.
 
     paramiko raises SSHException("Server connection dropped") or EOFError,
     neither an OSError, when the channel dies between two requests of a
-    read or write; the transfer worker and the pane handle OSError.
+    read or write; the transfer worker and the pane handle OSError. A
+    request the server leaves unanswered for the channel's time-out
+    (core.ssh_client.SFTP_IO_TIMEOUT) is a TimeoutError (ETIMEDOUT). When
+    *watch* (a :class:`core.transfer_hooks.CancelWatch`) closed the
+    channel because Cancel was pressed, whatever the closed channel
+    raised is the cancel: InterruptedError.
     """
     import paramiko
 
     try:
         yield
-    except (paramiko.SSHException, EOFError) as exc:
-        detail = str(exc) or type(exc).__name__
-        raise OSError(f"SFTP {what}: connection to the server failed: {detail}") from exc
+    except BaseException as exc:
+        if watch is not None and watch.fired:
+            watch.stop()  # stopped: the connection need not be closed too
+            raise InterruptedError(transfer_hooks.CANCELLED) from exc
+        if isinstance(exc, TimeoutError) and exc.errno is None:
+            raise timeout_error(what, sftp) from exc
+        if isinstance(exc, (paramiko.SSHException, EOFError)):
+            detail = str(exc) or type(exc).__name__
+            raise OSError(f"SFTP {what}: connection to the server failed: {detail}") from exc
+        raise
+
+
+def _close_transport(sftp) -> None:
+    """Close the SSH connection under *sftp*: a write blocked in the
+    kernel's send buffer of a dead link wakes only then (paramiko retries
+    a full socket for ever)."""
+    channel = sftp.get_channel()
+    transport = channel.get_transport() if channel is not None else None
+    if transport is not None:
+        transport.close()
+
+
+def _watch_cancel(sftp_file):
+    """Close *sftp_file*'s channel when the running transfer's Cancel is
+    pressed (a read or write blocked on a silent network wakes at once);
+    None outside a transfer."""
+    try:
+        sftp = getattr(sftp_file, "sftp", None)
+        if sftp is None:
+            return None
+        return transfer_hooks.watch_cancel(sftp.close, escalate=lambda: _close_transport(sftp))
+    except InterruptedError:
+        with contextlib.suppress(Exception):
+            sftp_file.close()
+        raise
 
 
 class ReadAheadRaw(io.RawIOBase):
@@ -52,6 +112,7 @@ class ReadAheadRaw(io.RawIOBase):
         self._f = None
         self._opener = opener
         self._f = opener()
+        self._watch = _watch_cancel(self._f)
         self._pos = 0
         self._buf = b""
         self._buf_start = 0
@@ -79,7 +140,7 @@ class ReadAheadRaw(io.RawIOBase):
         elif whence == os.SEEK_CUR:
             pos = self._pos + offset
         elif whence == os.SEEK_END:
-            with _connection_errors_as_oserror("seek"):
+            with _connection_errors_as_oserror("seek", getattr(self._f, "sftp", None), self._watch):
                 pos = self._remote_size(refresh=True) + offset
         else:
             raise ValueError(f"invalid whence {whence!r}")
@@ -92,7 +153,7 @@ class ReadAheadRaw(io.RawIOBase):
         n = len(b)
         if n == 0:
             return 0
-        with _connection_errors_as_oserror("read"):
+        with _connection_errors_as_oserror("read", getattr(self._f, "sftp", None), self._watch):
             data = self._read(n)
         b[: len(data)] = data
         return len(data)
@@ -100,8 +161,16 @@ class ReadAheadRaw(io.RawIOBase):
     def close(self) -> None:
         if not self.closed:
             self._buf = b""
+            if self._watch is not None:
+                self._watch.stop()
             try:
-                if self._f is not None:
+                get_channel = getattr(getattr(self._f, "sftp", None), "get_channel", None)
+                channel = get_channel() if callable(get_channel) else None
+                if getattr(channel, "closed", False) is True:
+                    # Cancelled or timed out: the channel is gone, and with
+                    # it the server's handle.
+                    pass
+                elif self._f is not None:
                     # Not waited for: paramiko ignores the answer to a
                     # CLOSE anyway (SFTPFile._close), and the server handles
                     # this connection's requests in order. A round trip less
@@ -306,7 +375,9 @@ class PipelinedWriter(io.RawIOBase):
         self._sftp = sftp_file.sftp
         self._acks = _WriteAcks()
         self._acks._sftp = self._sftp
+        self._watch = None
         self._pos = int(sftp_file.stat().st_size or 0) if append else 0
+        self._watch = _watch_cancel(sftp_file)
 
     def writable(self) -> bool:
         return True
@@ -319,7 +390,7 @@ class PipelinedWriter(io.RawIOBase):
 
         self._raise_failure()
         view = memoryview(data)
-        with _connection_errors_as_oserror("write"):
+        with _connection_errors_as_oserror("write", self._sftp, self._watch):
             for start in range(0, len(view), self.REQUEST):
                 chunk = bytes(view[start : start + self.REQUEST])
                 self._sftp._async_request(
@@ -335,7 +406,7 @@ class PipelinedWriter(io.RawIOBase):
         """Wait until every WRITE is answered; raise the first failure."""
         if self.closed:
             return
-        with _connection_errors_as_oserror("write"):
+        with _connection_errors_as_oserror("write", self._sftp, self._watch):
             while self._in_flight():
                 self._sftp._read_response()
         self._raise_failure()
@@ -344,8 +415,11 @@ class PipelinedWriter(io.RawIOBase):
         if self.closed:
             return
         try:
-            self._close_handle()
+            with _connection_errors_as_oserror("write", self._sftp, self._watch):
+                self._close_handle()
         finally:
+            if self._watch is not None:
+                self._watch.stop()
             super().close()
 
     def _close_handle(self) -> None:
@@ -378,6 +452,10 @@ class PipelinedWriter(io.RawIOBase):
             while self._in_flight() or not closing.answered:
                 self._sftp._read_response()
         except (OSError, EOFError, SSHException) as exc:
+            if isinstance(exc, TimeoutError) and exc.errno is None:
+                raise  # the caller's timeout_error, naming the time-out
+            if self._watch is not None and self._watch.fired:
+                raise
             if self._in_flight():
                 detail = str(exc) or type(exc).__name__
                 raise OSError(f"SFTP write: connection to the server failed: {detail}") from exc

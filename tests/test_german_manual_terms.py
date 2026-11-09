@@ -240,7 +240,8 @@ def test_edge_seconds_get_a_decimal_comma_in_german(monkeypatch):
     monkeypatch.setattr(i18n, "_ACTIVE", i18n.Translator("de"))
     assert settings_dialog._decimal(0.5) == "0,5"
     assert settings_dialog._decimal(2) == "2"
-    assert i18n.tr("After {n} s in the Pane").format(n=settings_dialog._decimal(0.5)) \
-        == "Nach 0,5 s im Pane"
+    # Round 6: "Nach 0,5 s im Pane" said little - the choice names the mouse.
+    assert i18n.tr("When the mouse rests on it for {n} s").format(
+        n=settings_dialog._decimal(0.5)) == "Wenn die Maus 0,5 s darauf ruht"
     monkeypatch.setattr(i18n, "_ACTIVE", i18n.Translator("en"))
     assert settings_dialog._decimal(0.5) == "0.5"

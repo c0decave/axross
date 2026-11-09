@@ -107,15 +107,26 @@ def entry(menu: QMenu, text: str):
     raise AssertionError(f"{text!r} not in {texts(menu)}")
 
 
+def _holding_send(menu: QMenu) -> QMenu:
+    """*menu*, or its More submenu when the entry sits there: a file
+    pane's right-click menu keeps Send to Workspace under More (review
+    round 6: the top level fits one column at 1024x600)."""
+    if SEND in texts(menu):
+        return menu
+    more = next((a.menu() for a in menu.actions()
+                 if a.property("axCommand") == "more-menu" and a.menu() is not None), None)
+    return more if more is not None else menu
+
+
 def send_menu(menu: QMenu) -> QMenu:
-    sub = entry(menu, SEND).menu()
+    sub = entry(_holding_send(menu), SEND).menu()
     assert sub is not None
     sub.aboutToShow.emit()
     return sub
 
 
 def has_send(menu: QMenu) -> bool:
-    return SEND in texts(menu)
+    return SEND in texts(_holding_send(menu))
 
 
 def picking(path: list[str], seen: list | None = None):
@@ -244,7 +255,7 @@ def test_edge_the_entry_sits_in_a_group_of_its_own_at_the_end(window):
             select(pane, name)
         else:
             pane._table.clearSelection()
-        actions = pane._build_context_menu().actions()
+        actions = _holding_send(pane._build_context_menu()).actions()
         send = next(a for a in actions if plain(a.text()) == SEND)
         index = actions.index(send)
         assert actions[index - 1].isSeparator()

@@ -57,17 +57,17 @@ def _after(argv: list[str], flag: str) -> list[tuple[str, str]]:
 
 
 def test_sad_bwrap_mounts_a_missing_protected_folder_as_an_empty_read_only_one(home):
-    """A missing ~/.config/autostart was writable through the home's mount."""
+    """A missing ~/bin (on PATH once it exists) was writable through the
+    home's mount; a missing ~/.config/autostart too - since round 6 the
+    whole ~/.config is read-only (default-deny), so it cannot be made."""
     argv = _argv("bubblewrap", home)
-    place = str(home / ".config" / "autostart")
+    place = str(home / "bin")
     assert place in [argv[j + 1] for j, a in enumerate(argv) if a == "--tmpfs"]
     k = argv.index(place)
     assert argv[k - 1] == "--tmpfs" and argv[k + 1:k + 3] == ["--remount-ro", place]
-    # After the ~/.config it lies in: a frame of its own since a missing
-    # ~/.config/mimeapps.list is protected too (review 5), an empty folder
-    # of the sandbox's holding the host's entries.
     config = str(home / ".config")
-    assert argv.index(config) < k and argv[argv.index(config) - 1] == "--tmpfs"
+    assert (config, config) in _after(argv, "--ro-bind")
+    assert str(home / ".config" / "autostart") not in argv  # in the read-only ~/.config
     assert not os.path.exists(place)  # nothing is made by building the command
 
 
@@ -92,8 +92,9 @@ def test_sad_containers_mount_missing_places_read_only_too(home, engine):
     argv = _argv(engine, home)
     # The home holds missing protected files: a frame (core.agent_sandbox).
     assert f"--tmpfs={home}:rw,nosuid,nodev,noexec,mode=0555" in argv
-    assert f"--tmpfs={home / '.config'}:rw,nosuid,nodev,noexec,mode=0555" in argv
-    assert any(a.startswith(f"--tmpfs={home / '.config' / 'autostart'}:ro") for a in argv)
+    # Round 6 (default-deny): ~/.config is read-only whole.
+    assert f"{home / '.config'}:{home / '.config'}:ro" in argv
+    assert not any(a.startswith(f"--tmpfs={home / '.config' / 'autostart'}") for a in argv)
     assert any(a.startswith(f"--tmpfs={home / '.local' / 'bin'}:ro") for a in argv)
     assert not [v for v in argv if v.endswith(f":{home / '.bash_profile'}:ro")]
     assert f"{home / '.bashrc'}:{home / '.bashrc'}:ro" in argv
@@ -147,7 +148,11 @@ def test_sad_places_moved_by_xdg_are_protected_in_both_locations(home, tmp_path,
                  data / "systemd" / "user" / "x.service", data / "applications" / "x.desktop",
                  config / "axross" / "agent" / "settings.json"):
         assert P.refusal(str(path)), path
-    assert P.refusal(str(config / "notes.txt")) is None
+    # Round 6 (default-deny): every entry of the settings folder, unless
+    # the folder is granted (then only the places above stay refused).
+    assert "unless that folder is granted" in P.refusal(str(config / "notes.txt"))
+    assert P.refusal(str(config / "notes.txt"), granted=[str(config)]) is None
+    assert P.refusal(str(config / "autostart" / "x.desktop"), granted=[str(config)])
 
 
 def test_sad_inside_the_sandbox_the_hosts_xdg_places_stay_protected(home, tmp_path,
@@ -160,7 +165,8 @@ def test_sad_inside_the_sandbox_the_hosts_xdg_places_stay_protected(home, tmp_pa
     argv = _argv("bubblewrap", home)
     host_var = dict((v, h) for _p, v, h in P.XDG_PLACES)["XDG_CONFIG_HOME"]
     assert (host_var, str(config)) in _after(argv, "--setenv")
-    assert str(config / "autostart") in argv  # mounted read-only as well
+    # Read-only as well: the whole moved settings folder (round 6, default-deny).
+    assert (str(config), str(config)) in _after(argv, "--ro-bind")
     assert f"--env={host_var}={config}" in _argv("podman", home)
     # The worker: HOME is /tmp, the variable names the host's folder.
     monkeypatch.delenv("XDG_CONFIG_HOME")
@@ -182,18 +188,18 @@ def test_happy_mount_points_are_removed_when_the_last_sandbox_ends(home, monkeyp
                            root=str(home), allow_write=True)
     first, second = SB.SandboxedAgent(config, profile), SB.SandboxedAgent(config, profile)
     first._argv(profile)
-    # What the engine does at start:
-    (home / ".config" / "autostart").mkdir()
-    (home / ".local" / "share" / "systemd" / "user").mkdir(parents=True)
+    # What the engine does at start (round 6: ~/.config exists and is
+    # read-only whole; ~/bin and the missing ~/.local/state get mount points):
+    (home / "bin").mkdir()
+    (home / ".local" / "state").mkdir(parents=True)
     second._argv(profile)  # sees them made, not the user's
-    assert str(home / ".config" / "autostart") in second._points
+    assert str(home / "bin") in second._points
     first._release_points()
-    assert (home / ".config" / "autostart").is_dir()
-    (home / ".local" / "share" / "keep.txt").write_text("the user's\n")
+    assert (home / "bin").is_dir()
+    (home / ".local" / "state" / "keep.txt").write_text("the user's\n")
     second._release_points()
-    assert not (home / ".config" / "autostart").exists()
-    assert not (home / ".local" / "share" / "systemd").exists()
-    assert (home / ".local" / "share" / "keep.txt").exists()  # not empty: kept
+    assert not (home / "bin").exists()
+    assert (home / ".local" / "state" / "keep.txt").exists()  # not empty: kept
     assert (home / ".config").is_dir() and (home / ".bashrc").exists()  # were there before
     assert not SB._POINTS_IN_USE
 

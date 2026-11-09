@@ -374,7 +374,7 @@ class PaneCancelInsideFolderTest(_Base):
             release.set()
             self.assertTrue(self.idle())
         self.assertFalse((self.root / "big").exists())
-        self.assertIn("Deleted 1 of 1", self.pane._status.text())
+        self.assertIn("1 item deleted", self.pane._status.text())
 
     def test_edge_cancel_after_a_finished_entry_names_both(self) -> None:
         self._tree(files=10, sub_files=0)

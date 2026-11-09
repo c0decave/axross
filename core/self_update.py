@@ -685,6 +685,9 @@ class CarriedPacks:
 
     blobs: list[str] = field(default_factory=list)  # fetched and unpacked
     dropped: list[str] = field(default_factory=list)  # units the new release does not have
+    #: The pack-manifest issue (core.packs.PACKS_ISSUE_PREFIX) of the signed
+    #: SHA256SUMS the packs were checked against; None when none were carried.
+    issue: int | None = None
 
 
 #: The first line of a release's SHA256SUMS: the version the signature is
@@ -831,7 +834,8 @@ def _signed_sums(release: Release, opener) -> bytes:
     return data
 
 
-def _expected_sha256(release: Release, asset: Asset, opener) -> str:
+def _expected_sha256(release: Release, asset: Asset, opener,
+                     packs_issue: int | None = None) -> str:
     data = _signed_sums(release, opener)
     text = data.decode("utf-8", errors="replace")
     signed_for = release_of_sums(text)
@@ -842,6 +846,21 @@ def _expected_sha256(release: Release, asset: Asset, opener) -> str:
     if signed_for != release.version:
         raise SignatureError(f"the signed {SUMS_NAME} is for axross {signed_for}, the release says "
                              f"{release.version} - refused")
+    if packs_issue is not None:
+        # The packs carried along were checked against a SHA256SUMS fetched
+        # before this one: both must name the same manifest issue, or the
+        # packs are of another issue than the release being installed (an
+        # earlier signed issue served to the pack check).
+        from core.packs import PackError, packs_issue_of_sums
+
+        try:
+            issue = packs_issue_of_sums(text)
+        except PackError as exc:
+            raise SignatureError(f"the signed {SUMS_NAME}: {exc} - refused") from None
+        if issue != packs_issue:
+            raise SignatureError(f"the packs brought along are of manifest issue {packs_issue}, "
+                                 f"the signed {SUMS_NAME} of release {release.version} names "
+                                 f"issue {issue} - refused (it changed during the update)")
     expected = parse_sums(text).get(asset.name)
     if expected is None:
         raise ChecksumError(f"the {SUMS_NAME} of release {release.version} has no entry for "
@@ -863,11 +882,14 @@ def _require_newer(release: Release, current: str | None) -> None:
 
 def download(release: Release, inst: Install, *, dest_dir, opener=None,
              progress: Callable[[int, int], None] | None = None,
-             cancel: threading.Event | None = None, current: str | None = None) -> Downloaded:
+             cancel: threading.Event | None = None, current: str | None = None,
+             packs_issue: int | None = None) -> Downloaded:
     """Fetch this build's asset of *release* into a hidden file in
     *dest_dir* and check it against the release's signed SHA256SUMS. The
     file is removed on any failure. Only a release newer than *current*
-    (the running version) is fetched."""
+    (the running version) is fetched. *packs_issue*: the manifest issue the
+    packs brought along were checked against - the signed SHA256SUMS must
+    name the same one."""
     if not inst.can_download:
         raise UpdateError(inst.why_not())
     _require_newer(release, current)
@@ -877,7 +899,7 @@ def download(release: Release, inst: Install, *, dest_dir, opener=None,
     if asset.size > MAX_ASSET_BYTES:
         raise UpdateError(f"{asset.name} is larger than {MAX_ASSET_BYTES} bytes - refused")
     opener = opener if opener is not None else build_opener()
-    expected = _expected_sha256(release, asset, opener)
+    expected = _expected_sha256(release, asset, opener, packs_issue)
     folder = Path(dest_dir)
     _remove_stale(folder, asset.name)
     fd, tmp_name = tempfile.mkstemp(dir=folder, prefix=f".{asset.name}.update-", suffix=".part")
@@ -985,18 +1007,19 @@ def update(release: Release, inst: Install, *, opener=None,
     _require_newer(release, current)
     carried = _carry_packs(release, opener, progress, cancel)
     result = _update_binary(release, inst, opener=opener, progress=progress, cancel=cancel,
-                            current=current)
+                            current=current, packs_issue=carried.issue)
     if carried.dropped:
         result = replace(result, dropped_units=tuple(carried.dropped))
     return result
 
 
 def _update_binary(release: Release, inst: Install, *, opener, progress, cancel,
-                   current: str | None = None) -> Installed:
+                   current: str | None = None, packs_issue: int | None = None) -> Installed:
     folder = inst.executable.parent
+    issue = {} if packs_issue is None else {"packs_issue": packs_issue}
     if _writable(folder):
         downloaded = download(release, inst, dest_dir=folder, opener=opener, progress=progress,
-                              cancel=cancel, current=current)
+                              cancel=cancel, current=current, **issue)
         return install(downloaded, inst)
     cache = cache_dir()
     cache.mkdir(parents=True, exist_ok=True)
@@ -1005,7 +1028,7 @@ def _update_binary(release: Release, inst: Install, *, opener, progress, cancel,
     except OSError:
         pass
     downloaded = download(release, inst, dest_dir=cache, opener=opener, progress=progress,
-                          cancel=cancel, current=current)
+                          cancel=cancel, current=current, **issue)
     final = cache / versioned_name(inst.asset, release.version)
     try:
         os.chmod(downloaded.path, _plain_mode(inst.executable))
@@ -1040,11 +1063,18 @@ def _carry_packs(release: Release, opener, progress=None, cancel=None, *, curren
     if not units:
         return CarriedPacks()
 
+    sums_asset = release.asset(SUMS_NAME)
+    sums_url = sums_asset.url if sums_asset is not None else None
+    checked: list[bytes] = []
+
     def get(url, max_bytes, hosts):
         if cancel is not None and cancel.is_set():
             raise Cancelled("cancelled")
-        return fetch(url, opener=opener or build_opener(), max_bytes=max_bytes, hosts=hosts,
+        data = fetch(url, opener=opener or build_opener(), max_bytes=max_bytes, hosts=hosts,
                      cancel=cancel)
+        if url == sums_url and not checked:
+            checked.append(data)
+        return data
     try:
         done, dropped = packs.install_available(release, units, fetch=packs.Fetcher(get),
                                                 root=root, verify=verify, progress=progress)
@@ -1054,7 +1084,10 @@ def _carry_packs(release: Release, opener, progress=None, cancel=None, *, curren
     if dropped:
         log.warning("update: release %s has no unit %s; not brought along", release.version,
                     ", ".join(dropped))
-    return CarriedPacks(done, dropped)
+    # The issue of the SHA256SUMS the packs were checked against (core.packs
+    # verified its signature): the binary's download must see the same one.
+    issue = packs.packs_issue_of_sums(checked[0].decode("utf-8", "replace")) if checked else None
+    return CarriedPacks(done, dropped, issue)
 
 
 def save_copy(installed: Installed, destination) -> Path:

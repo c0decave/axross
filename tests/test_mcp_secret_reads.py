@@ -186,8 +186,9 @@ def test_edge_a_folder_holding_secrets_is_refused_only_as_a_whole(home):
 
 
 def test_edge_the_write_list_is_unchanged(home):
-    """The read side is a list of its own: ~/.android is not write-protected."""
-    assert P.refusal(str(home / ".android" / "adbkey")) is None
+    """The read side is a list of its own: ~/.android is not write-protected
+    (only by default-deny since round 6, which a grant of it lifts)."""
+    assert P.refusal(str(home / ".android" / "adbkey"), granted=[str(home / ".android")]) is None
     assert P.refusal(str(home / ".ssh" / "id_ed25519"))
 
 

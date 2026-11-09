@@ -53,7 +53,7 @@ WINDOW_ONLY = {
 EXPECTED_KEYS = {
     "open": "Return",
     "rename": "F2",
-    "copy-path": "Ctrl+C",
+    "copy": "Ctrl+C",
     "cut": "Ctrl+X",
     "paste": "Ctrl+V",
     "copy-to-target": "F5",
@@ -231,15 +231,20 @@ def test_happy_entries_are_grouped_in_a_fixed_order(window) -> None:
 
     order = [
         "open", "rename", "copy-to-target", "trash", "new-folder",
-        "properties", "refresh",
+        "properties", "more-menu",
     ]
     positions = [group_of(c) for c in order]
     assert positions == sorted(positions) and len(set(positions)) == len(positions), groups
-    assert group_of("copy-path") == group_of("rename") == group_of("cut")
+    assert group_of("copy") == group_of("rename") == group_of("cut")
     assert group_of("move-to-target") == group_of("copy-to-target") == group_of("pack")
     assert group_of("delete") == group_of("trash")
-    assert group_of("properties") == group_of("metadata-menu") == group_of("analyse-menu")
-    assert group_of("refresh") == group_of("more-menu")
+    assert group_of("properties") == group_of("analyse-menu")
+    # Round 6: Refresh, Copy Path, Links, Metadata and Tags live under More
+    # (the top level fits one column at 1024x600); Refresh comes first there.
+    more = _top(_menu(pane, "notes.txt"))["more-menu"].menu()
+    inside = _groups(more)
+    assert inside[0][0] == "refresh", inside
+    assert {"copy-path", "links-menu", "metadata-menu", "Tags"} <= set(inside[1]), inside
 
 
 @pytest.mark.parametrize("cut", [False, True])
@@ -406,7 +411,7 @@ def test_edge_the_actions_menu_still_lists_refresh_once(window) -> None:
         a.menu() for a in window.menuBar().actions() if _plain(a.text()) == "Actions"
     )
     actions_menu.aboutToShow.emit()
-    commands = [a.property("axCommand") for a in actions_menu.actions()]
+    commands = [a.property("axCommand") for m in _menus(actions_menu) for a in m.actions()]
     assert commands.count("refresh") == 1 and commands.count("metadata-menu") == 1
     assert commands.count("copy-to-target") == 1 and commands.count("move-to-target") == 1
     assert "rename" in commands
@@ -456,9 +461,11 @@ def test_happy_the_integrated_entries_sit_in_the_grouped_menu(window) -> None:
 
     assert "disk-image" in _top(analyse), inside
     assert group_of("find-files", inside) == group_of("duplicates", inside), inside
-    assert group_of("Tags") == group_of("properties"), groups
-    assert group_of("Tags") < group_of("more-menu"), groups
-    assert "send-to-agent" in _top(_top(menu)["more-menu"].menu())
+    more = _top(menu)["more-menu"].menu()
+    more_groups = _groups(more)
+    assert group_of("Tags", more_groups) == group_of("links-menu", more_groups), more_groups
+    assert group_of("Tags", more_groups) < group_of("send-to-agent", more_groups), more_groups
+    assert "send-to-agent" in _top(more)
 
 
 def test_edge_mnemonics_stay_unique_with_a_disk_image_selected(window) -> None:
@@ -488,3 +495,39 @@ def test_edge_german_mnemonics_are_unique_within_each_menu(window, monkeypatch) 
             used = [m for m in map(_mnemonic, texts) if m]
             dupes = sorted({m for m in used if used.count(m) > 1})
             assert not dupes, (state, dupes, [t for t in texts if _mnemonic(t) in dupes])
+
+
+# --- review round 6 (F6): the last entries without a letter; media only for media -----
+
+
+@pytest.mark.parametrize("language", ["en", "de"])
+def test_happy_cut_tags_and_send_to_workspace_have_their_letter(window, monkeypatch,
+                                                                language) -> None:
+    from core import i18n
+
+    if language == "de":
+        monkeypatch.setattr(i18n, "_ACTIVE", i18n.Translator("de"))
+    pane = window._active_pane
+    menu = _menu(pane, "notes.txt")
+    labels = {i18n.tr(t).replace("&", "") for t in ("Cut", "Tags", "Send to Workspace")}
+    found = {_plain(a.text()): a.text() for m in _menus(menu) for a in m.actions()
+             if _plain(a.text()) in labels}
+    assert set(found) == labels, sorted(found)
+    for plain_text, text in found.items():
+        assert _mnemonic(text), (plain_text, text)
+    for each in _menus(menu):
+        used = [m for m in (_mnemonic(a.text()) for a in each.actions()
+                            if not a.isSeparator()) if m]
+        assert len(used) == len(set(used)), (each.title(), sorted(used))
+
+
+def test_edge_view_selected_media_is_offered_only_for_media(window) -> None:
+    pane = window._active_pane
+    folder = Path(pane.current_path)
+    (folder / "photo.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    pane.navigate(str(folder))
+    pump()
+    assert "view-selected-media" not in _by_command(_menu(pane, "notes.txt"))
+    assert "view-selected-media" in _by_command(_menu(pane, "photo.png"))
+    assert "view-selected-media" in _by_command(_menu(pane, "sub"))
+    assert "view-selected-media" in _by_command(_menu(pane, ("notes.txt", "photo.png")))

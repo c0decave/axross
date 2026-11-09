@@ -54,7 +54,7 @@ def test_happy_the_level_select_starts_continues_and_opens_worlds(tmp_path):
     assert sel.cont.isEnabled() and "37" in sel.cont.text()
     sel.code.setText("nonsense")
     sel.code.returnPressed.emit()
-    assert "no world code" in sel.message.text()
+    assert "not a world code" in sel.message.text()
     sel.code.setText(L.password(6))
     sel.code.returnPressed.emit()
     assert win.view.game.level == 61

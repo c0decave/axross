@@ -9,6 +9,7 @@ import contextlib
 import dataclasses
 import importlib
 import errno
+import functools
 import logging
 import os
 import posixpath
@@ -135,13 +136,25 @@ def _smb_error(exc: BaseException, what: str, path: str) -> OSError:
     is. A plain ``OSError(str)`` lost the cause, so a caller could not
     tell "not there" (create it) from "denied" or a dropped connection.
     A failure without a POSIX meaning stays a plain OSError; a timeout
-    or connection error keeps its class."""
+    or connection error keeps its class.
+
+    A lost or refused connection gets its errno too (and with it its
+    class: ConnectionRefusedError, ConnectionResetError, TimeoutError):
+    smbprotocol raises ValueError("Failed to connect ...") with the
+    socket error as its cause for a dial that fails, SMBConnectionClosed
+    (no OSError) for a dropped socket - also from a file handle open
+    across the drop - and SMBException "Connection timeout of 60
+    seconds exceeded" for a server that does not answer."""
     code = getattr(exc, "errno", None) if isinstance(exc, OSError) else None
     status = getattr(exc, "ntstatus", None)
     if not code and isinstance(status, int):
         code = _NT_ERRNO.get(status)
+    if not code and not isinstance(status, int):
+        code = _connection_errno(exc)
     if isinstance(status, int):
         detail = f"{getattr(exc, 'strerror', None) or exc} [NtStatus 0x{status:08x}]"
+    elif isinstance(exc, OSError) and exc.errno and exc.strerror:
+        detail = exc.strerror  # not "[Errno n] ..." a second time
     else:
         detail = str(exc) or type(exc).__name__
     if isinstance(code, int) and code in errno.errorcode:
@@ -149,6 +162,70 @@ def _smb_error(exc: BaseException, what: str, path: str) -> OSError:
     if isinstance(exc, (TimeoutError, ConnectionError)):
         return type(exc)(f"{what}: {detail}")
     return OSError(f"{what}: {detail}")
+
+
+class _SmbFile:
+    """An smbclient file handle whose failures are the backend's OSError
+    (:func:`_smb_error`): a handle open across a dropped connection
+    raised smbprotocol's SMBConnectionClosed - no OSError - from
+    ``read``/``write``/``close``, past every caller's ``except OSError``.
+    Everything else is the handle's own."""
+
+    _CHECKED = frozenset({
+        "read", "read1", "readinto", "readinto1", "readline", "readlines", "readall",
+        "write", "writelines", "flush", "close", "seek", "tell", "truncate",
+    })
+
+    def __init__(self, raw, path: str) -> None:
+        self._raw = raw
+        self._path = path
+
+    def __getattr__(self, name: str):
+        attr = getattr(self._raw, name)
+        if name not in self._CHECKED or not callable(attr):
+            return attr
+        path = self._path
+
+        @functools.wraps(attr)
+        def checked(*args, **kwargs):
+            try:
+                return attr(*args, **kwargs)
+            except _SMB_FAILURES as exc:
+                if isinstance(exc, OSError) and not isinstance(exc, SMBOSError) and exc.errno:
+                    raise  # a typed OSError already
+                if isinstance(exc, ValueError) and _connection_errno(exc) is None:
+                    raise  # io's "I/O operation on closed file" and the like
+                raise _smb_error(exc, f"SMB {name} {path}", path) from exc
+
+        return checked
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        self.close()
+
+    def __iter__(self):
+        return iter(self.readline, b"")
+
+
+def _connection_errno(exc: BaseException) -> int | None:
+    """The errno of a connection failure smbprotocol reports without one
+    (see :func:`_smb_error`); None for anything else."""
+    link: BaseException | None = exc
+    for _depth in range(4):
+        if link is None:
+            break
+        code = getattr(link, "errno", None) if isinstance(link, OSError) else None
+        if isinstance(code, int) and code in errno.errorcode:
+            return code
+        link = link.__cause__ or link.__context__
+    names = {cls.__name__ for cls in type(exc).__mro__}
+    if "SMBConnectionClosed" in names:
+        return errno.ECONNRESET
+    if "SMBException" in names and "timeout" in str(exc).lower():
+        return errno.ETIMEDOUT
+    return None
 
 
 def _is_not_found(exc: BaseException) -> bool:
@@ -284,14 +361,36 @@ def _describe_security(raw: bytes, path: str) -> dict:
 _SESSION_LOCKS: dict[str, threading.Lock] = {}
 _LOCKS_LOCK = threading.Lock()
 
-# Serialises the ``socket.gethostname`` patch used by
-# ``_patched_gethostname``. Without this, two threads constructing
-# SmbSession(host=A) and SmbSession(host=B) in parallel would both
-# swap the module-global ``socket.gethostname`` around the same
-# register_session call and thread B's choice could leak into thread
-# A's NTLM negotiation. The per-host lock above only serialises the
-# smbclient pool, not this process-global patch.
-_GETHOSTNAME_PATCH_LOCK = threading.Lock()
+# The workstation name NTLM sends from this thread (_patched_gethostname);
+# unset: the real host name.
+_WORKSTATION = threading.local()
+_WORKSTATION_INSTALL_LOCK = threading.Lock()
+
+
+class _WorkstationSocketModule:
+    """Stands in for the ``socket`` module of spnego's NTLM code
+    (``spnego._ntlm.socket``): ``gethostname()`` answers the name the
+    calling thread set with :func:`_patched_gethostname`, everything else
+    is the real :mod:`socket`."""
+
+    def __init__(self, real) -> None:
+        self._real = real
+
+    def gethostname(self) -> str:
+        return getattr(_WORKSTATION, "name", "") or self._real.gethostname()
+
+    def __getattr__(self, name: str):
+        return getattr(self._real, name)
+
+
+def _ntlm_module():
+    """spnego's pure-Python NTLM module, where the workstation name is
+    read (``_get_workstation``); None when it cannot be imported."""
+    try:
+        import spnego._ntlm as ntlm  # type: ignore[import-not-found]
+    except Exception:  # noqa: BLE001 - smbprotocol absent or another spnego
+        return None
+    return ntlm
 
 
 def _session_lock(host: str) -> threading.Lock:
@@ -305,33 +404,38 @@ def _session_lock(host: str) -> threading.Lock:
 
 @contextlib.contextmanager
 def _patched_gethostname(name: str):
-    """Temporarily override ``socket.gethostname()`` with *name*.
+    """NTLM in this thread sends *name* as its workstation, for the
+    ``with`` body.
 
     smbprotocol reaches through spnego to build the NTLM
     ``WorkstationName`` field, and spnego pulls the workstation
     identifier from ``socket.gethostname()``. There is no SDK-level
-    knob to override that; patching the function for the duration of
-    the ``register_session`` call is the least-invasive way to stop
-    the local hostname from landing in remote Event Log entries.
-    See docs/OPSEC.md #3.
+    knob to override that; answering spnego's ``socket.gethostname``
+    with *name* keeps the local hostname out of remote Event Log
+    entries. See docs/OPSEC.md #3.
 
-    The patch is process-global, so ``_GETHOSTNAME_PATCH_LOCK``
-    serialises patched regions across threads — otherwise two
-    SmbSession init paths on different hosts could interleave and
-    one thread's replacement hostname could leak into the other
-    thread's NTLM handshake.
+    Only spnego's NTLM module sees it, and only in this thread
+    (``spnego._ntlm.socket`` is a stand-in that answers the real name to
+    everyone else): the process-wide swap of ``socket.gethostname``
+    under a lock held across the whole SMB connect (up to 60 s) made
+    every other SMB dial wait, and showed the name to any other code
+    of the process asking meanwhile.
     """
     if not name:
         # No override requested — run untouched.
         yield
         return
-    with _GETHOSTNAME_PATCH_LOCK:
-        original = socket.gethostname
-        socket.gethostname = lambda: name  # type: ignore[assignment]
-        try:
-            yield
-        finally:
-            socket.gethostname = original  # type: ignore[assignment]
+    ntlm = _ntlm_module()
+    if ntlm is not None:
+        with _WORKSTATION_INSTALL_LOCK:
+            if not isinstance(getattr(ntlm, "socket", None), _WorkstationSocketModule):
+                ntlm.socket = _WorkstationSocketModule(getattr(ntlm, "socket", socket))
+    previous = getattr(_WORKSTATION, "name", "")
+    _WORKSTATION.name = name
+    try:
+        yield
+    finally:
+        _WORKSTATION.name = previous
 
 
 _EPOCH_UTC = datetime(1970, 1, 1, tzinfo=timezone.utc)
@@ -531,18 +635,27 @@ class SmbSession(SessionLifecycle):
         the first connection, after a connection dropped and for the
         server a DFS referral names."""
         import smbclient._pool as pool
-        from core.proxy import patched_create_connection
+        import smbprotocol.transport as smb_transport
 
+        from core.proxy import routed_create_connection
+
+        # Both for this thread and this library only (no process-wide
+        # swap, no lock across the up to 60 s of a connect): another
+        # thread's connection - an FTP login, another server's SMB dial -
+        # neither goes through this profile's proxy nor waits for it.
         with (
             _patched_gethostname(self._client_name),
-            patched_create_connection(self._proxy),
+            routed_create_connection(smb_transport, self._proxy),
         ):
             fresh = connection is None
             if fresh:
                 connection = pool.Connection(
                     pool.ClientConfig().client_guid, server, port, require_signing=True
                 )
-                connection.connect(timeout=60)
+                try:
+                    connection.connect(timeout=60)
+                except _SMB_FAILURES as exc:
+                    raise _smb_error(exc, f"SMB: cannot connect to {server}:{port}", server) from exc
             try:
                 session = pool.Session(
                     connection,
@@ -890,7 +1003,7 @@ class SmbSession(SessionLifecycle):
                     raise FileNotFoundError(errno.ENOENT, f"Cannot read {path}: not found", path)
                 raise NotADirectoryError(errno.ENOTDIR, f"Cannot read {path}: not a folder", path)
         try:
-            return smbclient.open_file(self._unc(path), mode="rb", **self._kw)
+            return _SmbFile(smbclient.open_file(self._unc(path), mode="rb", **self._kw), path)
         except _SMB_FAILURES as e:
             raise _smb_error(e, f"Cannot read {path}", path) from e
 
@@ -899,7 +1012,7 @@ class SmbSession(SessionLifecycle):
         refuse_folder_path(path)
         mode = "ab" if append else "wb"
         try:
-            return smbclient.open_file(self._unc(path), mode=mode, **self._kw)
+            return _SmbFile(smbclient.open_file(self._unc(path), mode=mode, **self._kw), path)
         except _SMB_FAILURES as e:
             raise _smb_error(e, f"Cannot write {path}", path) from e
 

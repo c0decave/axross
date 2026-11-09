@@ -50,7 +50,9 @@ class WindowPrefs:
     theme: str | None = None
     compact: bool = False
     monochrome_icons: bool = False
-    show_hidden: bool = True
+    #: Off for a new user (UX review round 6: dotfiles and a cache folder
+    #: crowded the first view); Ctrl+H / View → Show Hidden Files stores it.
+    show_hidden: bool = False
     highlight_hidden: bool = True
     #: ``#rrggbb`` (lower case), or None for the theme's muted colour.
     hidden_color: str | None = None
@@ -91,8 +93,8 @@ def parse(window: object) -> WindowPrefs:
         # On only when stored as true: "yes", 1 or "no" are not a choice.
         compact=window.get(COMPACT_KEY) is True,
         monochrome_icons=window.get(MONOCHROME_KEY) is True,
-        # Off only when stored as false.
-        show_hidden=window.get(SHOW_HIDDEN_KEY) is not False,
+        # On only when stored as true (a new user starts without them).
+        show_hidden=window.get(SHOW_HIDDEN_KEY) is True,
         highlight_hidden=window.get(HIGHLIGHT_HIDDEN_KEY) is not False,
         hidden_color=colour.lower() if themes.is_hex_colour(colour) else None,
         restore_layout_on_start=window.get(RESTORE_ON_START_KEY) is not False,

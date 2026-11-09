@@ -68,20 +68,23 @@ def test_sad_a_folder_holding_protected_places_is_not_made_writable_by_others(ho
         (home / d).mkdir(parents=True, exist_ok=True)
     os.chmod(home / rel, 0o755)
     out = _call(_tools(home), "chmod", {"path": str(home / rel), "mode": "0777"})
-    assert out.startswith("error") and "group or others" in out
+    # Round 6: no tool makes anything group- or world-writable.
+    assert out.startswith("error") and "group- or world-writable" in out
     assert _mode(home / rel) == 0o755
     out = _call(_tools(home), "chmod", {"path": str(home / rel), "mode": "0775"})
     assert out.startswith("error")
 
 
 def test_happy_tightening_such_a_folder_and_chmod_elsewhere_still_work(home):
-    (home / ".config" / "autostart").mkdir(parents=True)
+    # ~/go holds ~/go/bin (on PATH): a folder holding a protected place that
+    # default-deny (round 6: hidden entries of the home) leaves alone.
+    (home / "go" / "bin").mkdir(parents=True)
     (home / "proj").mkdir()
     tools = _tools(home)
-    assert _call(tools, "chmod", {"path": str(home / ".config"), "mode": "0700"}) == "ok"
-    assert _mode(home / ".config") == 0o700
-    assert _call(tools, "chmod", {"path": str(home / "proj"), "mode": "0777"}) == "ok"
-    assert _mode(home / "proj") == 0o777
+    assert _call(tools, "chmod", {"path": str(home / "go"), "mode": "0700"}) == "ok"
+    assert _mode(home / "go") == 0o700
+    assert _call(tools, "chmod", {"path": str(home / "proj"), "mode": "0755"}) == "ok"
+    assert _mode(home / "proj") == 0o755
 
 
 def test_edge_the_protected_place_itself_stays_refused_for_any_mode(home):

@@ -177,7 +177,7 @@ def test_happy_settings_offer_click_and_half_to_three_seconds(app):
         values = [combo.itemData(i) for i in range(combo.count())]
         assert values == [PA.CLICK, 0.5, 1, 2, 3]
         assert combo.currentData() == 0.5  # the default
-        assert combo.itemText(1) == "After 0.5 s in the Pane"
+        assert combo.itemText(1) == "When the mouse rests on it for 0.5 s"
         combo.setCurrentIndex(values.index(2))
         assert dialog.apply()
         assert PA.activation() == 2

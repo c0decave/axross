@@ -90,8 +90,12 @@ class TransferDock(QDockWidget):
         #: keeps saying so until the next batch or Clear Finished.
         self._ended_badly = (0, 0)
         self._idle = False
+        #: The window checks a copy for conflicts (note_preparing).
+        self._preparing = False
         self._setup_ui()
         self._set_idle(True)
+        # The model starts empty: nothing to retry, cancel or clear yet.
+        self._sync_buttons([])
 
         # Connect manager signals
         # The overall bar walks every job; recompute it once per burst of
@@ -115,11 +119,18 @@ class TransferDock(QDockWidget):
         self._rows_timer.timeout.connect(self._flush_updated_rows)
         self._manager.job_added.connect(self._on_job_added)
         self._manager.job_updated.connect(self._on_job_updated)
-        self._manager.job_finished.connect(self._on_job_updated)
+        self._manager.job_finished.connect(self._on_job_finished)
         self._manager.job_error.connect(self._on_job_error)
         trimmed = getattr(self._manager, "jobs_trimmed", None)
         if trimmed is not None:
             trimmed.connect(self._on_jobs_trimmed)
+        for name in ("walk_started", "walk_finished"):
+            signal = getattr(self._manager, name, None)
+            if signal is not None:
+                signal.connect(self._schedule_overall)
+        started = getattr(self._manager, "walk_started", None)
+        if started is not None:
+            started.connect(lambda: self._btn_cancel.setEnabled(True))
 
     def _setup_ui(self) -> None:
         container = QWidget()
@@ -215,6 +226,9 @@ class TransferDock(QDockWidget):
 
     def _on_job_added(self, job: TransferJob) -> None:
         self._set_idle(False)
+        # At once, not with the next overall pass: a job can be cancelled
+        # the moment it shows.
+        self._btn_cancel.setEnabled(True)
         self._batch.add(job.job_id)
         self._model.add_job(job)
         self._schedule_overall()
@@ -243,7 +257,14 @@ class TransferDock(QDockWidget):
         if updated:
             self.activity.emit()  # once per burst
 
+    def _on_job_finished(self, job_id: str) -> None:
+        self._btn_clear.setEnabled(True)  # at once; the overall pass refines
+        self._on_job_updated(job_id)
+
     def _on_job_error(self, job_id: str, error: str) -> None:
+        # A failed or cancelled job can be retried and cleared at once.
+        self._btn_retry.setEnabled(True)
+        self._btn_clear.setEnabled(True)
         self._on_job_updated(job_id)
         log.warning("Transfer error: %s: %s", job_id, error)
         self.activity.emit()
@@ -252,8 +273,31 @@ class TransferDock(QDockWidget):
         if not self._overall_timer.isActive():
             self._overall_timer.start()
 
+    def _sync_buttons(self, jobs) -> None:
+        """Each bottom button only while it has something to act on: Retry
+        Failed with a failed or cancelled job to retry, Cancel All with one
+        waiting or running, Clear Finished with one ended (UX review round
+        6: all three were enabled over an empty list)."""
+        running = (TransferStatus.ACTIVE, TransferStatus.PENDING)
+        ended = (TransferStatus.DONE, TransferStatus.ERROR, TransferStatus.CANCELLED)
+        self._btn_retry.setEnabled(any(self._can_retry(j) for j in jobs))
+        # A folder walk still building jobs, or the window's conflict check
+        # before a copy, counts: Cancel All stops them before a row shows.
+        walking = bool(getattr(self._manager, "_walks", ())) or self._preparing
+        self._btn_cancel.setEnabled(walking or any(j.status in running for j in jobs))
+        self._btn_clear.setEnabled(any(j.status in ended for j in jobs))
+
+    def note_preparing(self, preparing: bool) -> None:
+        """The window is checking a copy or move for conflicts (*preparing*)
+        or done with it: Cancel All follows."""
+        self._preparing = preparing
+        if preparing:
+            self._btn_cancel.setEnabled(True)
+        self._schedule_overall()
+
     def _update_overall(self) -> None:
         jobs = self._manager.all_jobs()
+        self._sync_buttons(jobs)
         self._set_idle(not jobs)
         if not jobs:
             self._batch.clear()
@@ -286,9 +330,12 @@ class TransferDock(QDockWidget):
                     parts.append(tr_n(cancelled, "{n} cancelled", "{n} cancelled"))
                 text = ", ".join(parts)
                 self._overall_progress.setFormat(text)
-                self._overall_progress.setToolTip(
-                    tr("{what} in the last batch; Retry Failed tries them again").format(
-                        what=text))
+                tip = tr("{what} in the last batch; Retry Failed tries them again").format(
+                    what=text)
+                if any(TransferManager.partial_kept(j) for j in jobs):
+                    tip += "\n" + tr("Partly transferred files are kept for Retry Failed; "
+                                     "Clear Finished deletes them.")
+                self._overall_progress.setToolTip(tip)
                 self._show_ended_badly(True)
             else:
                 self._overall_progress.setFormat(tr("Done"))

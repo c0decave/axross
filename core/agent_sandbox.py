@@ -69,9 +69,22 @@ login:
   **hard links** is read-only at its protected name only: its other names
   cannot be found without walking the file system (logged; a known limit).
 
+Default-deny (core.protected_places.write_deny_places): every hidden entry
+of a home folder in a writable mount (``~/.pdbrc``, ``~/.jupyter``, all of
+``~/.config`` and ``~/.local``) is mounted read-only as well, and the home
+folder itself is a frame, so no new hidden entry can be made in it. A
+writable mount the user names inside one of them (``~/.config/myapp``)
+stays writable (core.protected_places.grant_lifts); the protected places
+above stay read-only in it. The Git config, hooks and info folder and the
+``.gitmodules`` of a writable mount's own repository are read-only too (a
+repository deeper inside is not looked for: the worker's own refusal is the
+guard there).
+
 Secret files (core.protected_places.secret_hides: SSH and GnuPG private
 keys, the ADB key, axross's tokens and keys, the desktop's keyrings,
-``~/.netrc``, ``~/.git-credentials``) inside any mount - the home folder as
+``~/.netrc``, ``~/.git-credentials``, other programs' credential stores and
+browser profiles, and the files below a hidden folder of the home whose
+name says token, credential, key or history) inside any mount - the home folder as
 the agent's folder - are covered in the sandbox: a folder by an empty
 read-only tmpfs (all of ``~/.ssh``), a file by an empty one (``/dev/null``).
 A mount that names the secret itself (or a folder in it) gives it to the
@@ -484,6 +497,44 @@ def _mount_plan(
             _warn_hard_links(place)
         else:
             missing.append((place, folder))
+    # Default-deny (core.protected_places.write_deny_places): every hidden
+    # entry of the home folder and the settings and data folders (~/.config,
+    # ~/.local/share, ~/.local/state, ~/Library, %APPDATA%) are read-only as
+    # well - unless a writable mount of the user's lies in one of them (it
+    # named that folder: protected_places.grant_lifts). The home folder
+    # becomes a frame below, so no new hidden entry can be made in it.
+    for place, folder in protected_places.write_deny_places(foreign_missing=False):
+        if place in seen or not any(_inside(place, r) for r in writable_roots):
+            continue
+        if protected_places.grant_lifts(place, writable_roots):
+            continue
+        if os.path.lexists(place):
+            seen[place], kinds[place] = False, "bind"
+            real = os.path.realpath(place)
+            if real != place and real not in seen and os.path.lexists(real) and any(
+                    _inside(real, r) for r in writable_roots):
+                seen[real], kinds[real] = False, "bind"
+        elif folder:
+            missing.append((place, True))
+    # Git runs code from a repository's config and hooks (a shell prompt's
+    # ``git status`` is enough): those of a writable mount's own repository
+    # are read-only (a repository deeper inside is not looked for).
+    for root_path in writable_roots:
+        git_dir = os.path.join(root_path, ".git")
+        candidates = [os.path.join(root_path, ".gitmodules")]
+        if os.path.isdir(git_dir) and not os.path.islink(git_dir):
+            candidates += [os.path.join(git_dir, n) for n in ("config", "config.worktree")]
+            for name in ("hooks", "info"):
+                path = os.path.join(git_dir, name)
+                if os.path.lexists(path):
+                    candidates.append(path)
+                else:
+                    missing.append((path, True))
+        elif os.path.lexists(git_dir):
+            candidates.append(git_dir)  # a "gitdir:" file
+        for path in candidates:
+            if os.path.lexists(path) and path not in seen:
+                seen[path], kinds[path] = False, "bind"
     frames: dict[str, bool] = {}  # frame -> whether its entries are writable
     absent: list[str] = []
     for place, folder in sorted(missing, key=lambda item: item[0].count(os.sep)):
@@ -508,6 +559,22 @@ def _mount_plan(
             base = max((p for p in seen if _inside(frame, p) and kinds[p] == "bind"), key=len)
             frames[frame] = seen[base]
         absent.append(place)
+    # Every home folder in a writable mount is a frame (default-deny: a new
+    # hidden entry - ~/.pdbrc, ~/.wezterm.lua - cannot be made in it).
+    for home in protected_places.homes():
+        holders = [p for p in seen if _inside(home, p)]
+        if not holders or not os.path.isdir(home):
+            continue
+        holder = max(holders, key=len)
+        if not seen[holder] or kinds[holder] != "bind":
+            continue  # read-only already, or a frame / mount of its own
+        real_home, real_holder = os.path.realpath(home), os.path.realpath(holder)
+        if not _inside(real_home, real_holder):
+            continue
+        frame = os.path.normpath(os.path.join(holder, os.path.relpath(real_home, real_holder)))
+        if frame not in frames:
+            base = max((p for p in seen if _inside(frame, p) and kinds[p] == "bind"), key=len)
+            frames[frame] = seen[base]
     for frame in frames:
         seen[frame], kinds[frame] = False, "frame"
     for place in absent:
@@ -535,7 +602,7 @@ def _mount_plan(
     # compromised. Unless a mount names the secret itself (or a folder in
     # it): the user gave it to the agent on purpose.
     explicit = [p for path, _rw in mounts for p in (os.path.abspath(path), os.path.realpath(path))]
-    for secret, is_dir in protected_places.secret_hides():
+    for secret, is_dir in protected_places.secret_hides(within=list(seen)):
         holders = [p for p in seen if _inside(secret, p)]
         if not holders or kinds[max(holders, key=len)] not in ("bind", "entry"):
             continue  # not in the sandbox, or under a mount of its own already
@@ -1515,10 +1582,15 @@ class SandboxedAgent:
                 "outcome": "error",
                 "text": f"error: {response['error'].get('message', 'failed')}",
             }
-        A.audit.info("%s outcome=ok", fields)
+        result = response.get("result", {})
         parts = [item.get("text", "") if item.get("type") == "text"
                  else f"[{item.get('type', 'binary')} result, not shown]"
-                 for item in response.get("result", {}).get("content", [])]
+                 for item in result.get("content", [])]
+        if result.get("isError"):
+            # A failed tool is a result with isError (MCP), still an error.
+            A.audit.info("%s outcome=error", fields)
+            return {"outcome": "error", "text": "error: " + ("\n".join(parts) or "failed")}
+        A.audit.info("%s outcome=ok", fields)
         return {"outcome": "ok", "text": self._only_allowed(name, "\n".join(parts))}
 
     def _allowed(self, profile) -> bool:

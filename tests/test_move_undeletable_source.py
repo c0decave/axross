@@ -242,3 +242,51 @@ def test_edge_a_removable_move_is_not_asked_about(win, tmp_path, monkeypatch):
     win._request_transfer(left, right, [str(src / "a.txt")], move=True)
     assert _pump(lambda: (dst / "a.txt").exists() and not (src / "a.txt").exists())
     assert asked == []
+
+
+# -- a source that is not there any more (review round 6, N3) ----------------------------------
+# A cut file removed or renamed before the paste was reported as "cannot be
+# removed after the copy - you lack the permission: No such file or
+# directory" with "Move as Administrator" offered. It is left out now, said
+# so, and a Cut whose entries have all gone is dropped.
+
+
+def test_sad_a_vanished_source_is_no_permission_problem(tmp_path):
+    (tmp_path / "here.txt").write_text("x")
+    missing: list = []
+    found = MP.undeletable_sources(
+        LocalFS(), [str(tmp_path / "gone.txt"), str(tmp_path / "here.txt")], missing=missing)
+    assert found == []
+    assert missing == [str(tmp_path / "gone.txt")]
+
+
+def test_edge_a_vanished_cut_is_dropped_and_not_offered_as_administrator(
+        win, tmp_path, monkeypatch):
+    from ui.cut_clipboard import cut_clipboard
+    from ui import main_window as MW
+
+    src, dst, left, right, asked = _setup(win, tmp_path, monkeypatch, "cancel", deny=False)
+    board = cut_clipboard()
+    board.cut(left, left.backend, str(src), [str(src / "a.txt")])
+    (src / "a.txt").unlink()
+    told = []
+    monkeypatch.setattr(MW.QMessageBox, "information", lambda *a, **k: told.append(a[2]))
+    win._paste_cut_into(right)
+    assert _pump(lambda: told and not win._conflict_checks)
+    assert asked == []
+    assert "no longer there" in told[0]
+    assert board.pending is None
+    assert win._transfer_manager.all_jobs() == []
+
+
+def test_happy_the_entries_still_there_move_and_the_vanished_one_is_named(
+        win, tmp_path, monkeypatch):
+    src, dst, left, right, asked = _setup(win, tmp_path, monkeypatch, "cancel", deny=False)
+    (src / "b.txt").write_text("b")
+    shown: list = []
+    win.statusBar().messageChanged.connect(shown.append)
+    win._request_transfer(left, right, [str(src / "a.txt"), str(src / "b.txt")], move=True)
+    (src / "b.txt").unlink()
+    assert _pump(lambda: (dst / "a.txt").exists() and not (src / "a.txt").exists())
+    assert asked == []
+    assert any("1 item is no longer there" in m and "b.txt" in m for m in shown), shown

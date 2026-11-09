@@ -123,8 +123,11 @@ def test_happy_feat_is_asked_once_per_connection(connect):
         s.exists("/missing.bin")
         s.exists("/a.txt")
     assert _verbs(srv.commands).count("FEAT") == 1
-    s.disconnect()
-    assert s.exists("/a.txt") is True  # a new connection asks again
+    # The connection is lost (a user's disconnect() ends the session for
+    # good): the next call logs in again, and the new connection asks again.
+    s._ftp.close()
+    s._ftp = None
+    assert s.exists("/a.txt") is True
     assert _verbs(srv.commands).count("FEAT") == 2
 
 

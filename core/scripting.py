@@ -3805,7 +3805,7 @@ _API_ERRORS = (
     (
         "TypeError",
         "The session is the wrong kind for the helper (exec() on S3, query() on a session "
-        "that is no database) or an argument has the wrong type.",
+        "that is not a database) or an argument has the wrong type.",
         "Check the session's protocol and the signature.",
     ),
     (

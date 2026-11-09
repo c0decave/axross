@@ -55,7 +55,7 @@ IT_TERMS = (
     "Feature", "Fingerprint", "Host", "Job", "Keyring", "Layout", "Login", "Pack",
     "Pane", "Plugin", "Prompt", "Proxies", "Proxy", "Release", "Remote",
     "Script", "Server", "Shortcut", "Sync", "Tab", "Tag", "Task", "Tool", "Tooltip",
-    "Transfer", "Trash", "Upload", "Workspace", "Escape", "Enter", "Python", "axross",
+    "Transfer", "Upload", "Workspace", "Escape", "Enter", "Python", "axross",
 )
 
 MAX_STEP_CHARS = 520

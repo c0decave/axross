@@ -72,7 +72,7 @@ def add_tags_menu(pane, menu: QMenu) -> None:
     if not paths:
         return
     store = T.store()
-    sub = menu.addMenu(tr("Tags"))
+    sub = menu.addMenu(tr("T&ags"))
     for tag in store.tags():
         action = sub.addAction(tag.name)
         action.setCheckable(True)

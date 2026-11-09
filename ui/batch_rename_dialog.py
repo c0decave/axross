@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.path_policy import hidden_sibling_name
-from core.server_ops import rename_target_taken
+from core.server_ops import rename_no_replace, rename_target_taken
 from ui.close_corner import add_close_corner
 from ui.icon_provider import set_window_icon
 from ui.plain_text import as_written
@@ -197,12 +197,22 @@ class BatchRenameDialog(QDialog):
         """
         rollback_path = self._backend.join(self._base_path, old_name)
         try:
-            if not self._backend.exists(rollback_path):
-                self._backend.rename(temp_path, rollback_path)
+            # No-replace: an entry another program saved under the name
+            # after a check is refused, not replaced (core.server_ops).
+            try:
+                rename_no_replace(self._backend, temp_path, rollback_path)
                 return ""
-            log.error("Batch rename rollback target already exists: %s", rollback_path)
-            recovery_path = self._recovery_path(old_name)
-            self._backend.rename(temp_path, recovery_path)
+            except FileExistsError:
+                log.error("Batch rename rollback target already exists: %s", rollback_path)
+            for _attempt in range(8):
+                recovery_path = self._recovery_path(old_name)
+                try:
+                    rename_no_replace(self._backend, temp_path, recovery_path)
+                    break
+                except FileExistsError:
+                    continue  # taken since _recovery_path looked
+            else:
+                raise OSError(f"No free recovery name for {old_name!r}")
         except OSError as exc:
             log.error("Batch rename rollback failed for %s: %s", temp_path, exc)
             return tr("left as {path}").format(path=temp_path)
@@ -320,9 +330,13 @@ class BatchRenameDialog(QDialog):
         for old_name, new_name, temp_path in staged:
             new_path = self._backend.join(self._base_path, new_name)
             try:
-                if self._backend.exists(new_path):
-                    raise OSError(f"target already exists: {new_name}")
-                self._backend.rename(temp_path, new_path)
+                # Not "exists? then rename": a file another program saves
+                # under the new name in between was replaced (LocalFS
+                # os.rename, SFTP posix-rename) - lost.
+                try:
+                    rename_no_replace(self._backend, temp_path, new_path)
+                except FileExistsError as exc:
+                    raise OSError(f"target already exists: {new_name}") from exc
                 renamed += 1
                 log.info("Batch rename: %s -> %s", old_name, new_name)
             except OSError as e:

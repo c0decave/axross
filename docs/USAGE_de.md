@@ -17,7 +17,7 @@ Rechner - im selben Fenster und mit denselben Handgriffen.
   senkrecht; jedes Pane hat seine eigene Verbindung - links dein Rechner,
   rechts ein Server, darunter ein Cloud-Bucket. Mit F5 kopierst du von
   einem Pane ins andere, mit F6 verschiebst du.
-- **Dieselben Funktionen auf jeder Verbindung.** Trash (Papierkorb),
+- **Dieselben Funktionen auf jeder Verbindung.** Papierkorb,
   sicheres Speichern (eine Datei ist nie nur halb geschrieben),
   verschlüsselte Dateien, frühere Versionen einer Datei und die Suche nach
   doppelten Dateien funktionieren überall - auch auf Servern, die das
@@ -40,7 +40,7 @@ Rechner - im selben Fenster und mit denselben Handgriffen.
 - **F1 öffnet den Abschnitt zu dem Bereich, in dem du gerade bist**: in
   einem Datei-Pane *Multi-Pane-Layout*, in seinem Adress- oder Filterfeld
   *Pfadleiste*, im Dock *Übertragungen* den gleichnamigen Abschnitt, im
-  Agent-Dock *Agent-Dock*, in *Mit Server verbinden* den Abschnitt
+  Agent-Dock *Agent-Dock*, im *Connection Manager* den Abschnitt
   *Verbindungen*, und in *Bearbeiten → Einstellungen…* den Teil zur
   gezeigten Seite (*Logging*, *Updates*, die Seiten
   des Agenten …; der Rest *Einstellungen*). Überall sonst öffnet F1 das
@@ -104,7 +104,7 @@ Profil-JSON selbst enthält nie Klartext-Credentials.
   `~/.config/axross/<provider>_token.json` mit `0o600` ab Geburt
   gespeichert. Profil-Proxies gelten für API-/Token-Traffic, den
   axross selbst kontrolliert; die externe Browser-Consent-Seite kann
-  Browser- oder System-Proxy-Settings verwenden. App-Registrierung pro Anbieter:
+  die Proxy-Einstellungen des Browsers oder des Systems verwenden. App-Registrierung pro Anbieter:
   [OAUTH_SETUP.md](../OAUTH_SETUP.md).
 - **Proxy-Support.** Per Profil SOCKS5 / SOCKS4 / HTTP-CONNECT für
   Backends mit echtem Transport-Hook. SOCKS5 löst Hostnamen
@@ -118,20 +118,33 @@ Profil-JSON selbst enthält nie Klartext-Credentials.
   axross kontrolliert, ignorieren `HTTP_PROXY` / `HTTPS_PROXY` aus der
   Prozess-Umgebung; das Profil ist die Quelle der Route.
 - **Produktionsserver.** *Produktion (destruktive Operationen mit
-  Countdown bestätigen)* in der Gruppe Connection von Connect to Server
+  Countdown bestätigen)* in der Gruppe Verbindung des Connection Managers
   markiert das Profil: das erste Löschen, Verschieben, Umbenennen oder
   Überschreiben darauf in einem Pane wartet ein paar Sekunden mit einem
-  Countdown, den Cancel oder Esc abbricht. Siehe
+  Countdown, den *Abbrechen* oder Esc abbricht. Siehe
   [DAILY_DRIVER_de.md](DAILY_DRIVER_de.md#production-tarpit).
 - **OpSec-Overrides.** Profil-Felder steuern SSH-Keepalive,
   SMB-Workstation-Name, Telnet-NAWS, rsync-Metadaten-Stripping. Siehe
   [OPSEC.md](OPSEC.md) für das Threat-Modell.
+- **SFTP bei verlorenem Netz.** Eine Anfrage, die der Server 60 s lang
+  nicht beantwortet, scheitert mit „hat nicht rechtzeitig geantwortet“,
+  statt ewig zu warten (WLAN weg, VPN getrennt); die nächste Aktion
+  öffnet einen neuen Kanal. „Abbrechen“ stoppt eine SFTP- oder
+  SCP-Übertragung sofort, auch während sie auf das Netz wartet; eine
+  Übertragung, die hinter einer toten Leitung hängt, schließt die
+  Verbindung nach weiteren 10 s (dann neu verbinden).
 - **Google Drive: Docs, Sheets, Slides und geteilte Ablagen.** Ein
   Google Doc erscheint als `<Name>.docx`, ein Sheet als `.xlsx`, Slides
   als `.pptx`, eine Zeichnung als `.pdf` - ohne Größe - und wird als
   dieser Export gelesen (geöffnet, kopiert); Google exportiert höchstens
   10 MB eines Dokuments. Sie sind hier schreibgeschützt: Überschreiben
-  wird abgelehnt, speichere unter einem anderen Namen. Ein Formular oder
+  wird abgelehnt, speichere unter einem anderen Namen. Ein Verschieben
+  aus Drive heraus wird abgelehnt, bevor etwas kopiert wird - dem Export
+  fehlen Kommentare, Vorschläge, Versionsverlauf und Freigaben, und das
+  Verschieben würde das Original löschen: kopiere stattdessen. Ein
+  gelöschtes Google Doc, Sheet oder Slides, oder ein gelöschter Ordner,
+  landet im Papierkorb von Drive (dort 30 Tage wiederherstellbar); eine
+  normale Datei wird gelöscht. Ein Formular oder
   eine Site hat keine Dateiform und sagt das beim Lesen. Einträge einer
   geteilten Ablage (Shared Drive), die von My Drive aus erreichbar sind
   (mit dir geteilt, der Ordner einer Verknüpfung), gehen wie alle
@@ -161,9 +174,16 @@ Profil-JSON selbst enthält nie Klartext-Credentials.
   committet und gepusht (nur Fast-Forward). Scheitert ein Push, bleibt
   der Commit im Cache und das Speichern meldet es; die Statuszeile des
   Panes zeigt „nicht zu origin gepusht: main (1)“, bis das nächste
-  Speichern ihn pusht. Commits auf einem Branch, den origin umgeschrieben
-  hat, bleiben erhalten, und der Branch ist schreibgeschützt, bis er in
-  einem Git-Client gemergt ist. Ist das Remote nicht erreichbar, öffnet
+  Speichern ihn pusht. Hat jemand anderes auf den Branch gepusht, holt
+  ein Speichern erst dessen Stand: Änderungen an anderen Dateien bleiben,
+  deine kommt obendrauf; hat er dieselbe Datei geändert, wird das
+  Speichern abgelehnt (aktualisieren und wiederholen). Noch nicht
+  gepushte Commits werden auf den neuen Stand von origin gesetzt, wenn
+  sie andere Dateien betreffen; sonst bleiben sie auf einem neuen Branch
+  `axross/unpushed-<Datum>-<Zeit>` - die Meldung nennt ihn -, und der
+  Branch zeigt den Stand von origin: Öffne den neuen Branch, um deine
+  Dateien zurückzukopieren. Verloren geht so oder so nichts. Ist das
+  Remote nicht erreichbar, öffnet
   sich die zwischengespeicherte Kopie schreibgeschützt, und die
   Statuszeile sagt „offline“. Skripte können `auto_push=False` übergeben
   und mit `axross.git_push()` pushen.
@@ -176,7 +196,7 @@ Profil-JSON selbst enthält nie Klartext-Credentials.
   bekommt einen grünen. Letztes fokussiertes Pane wird Ziel.
 - Ein Pane wird aktiv, wenn die Maus 0,5 s darin ruht.
   **Bearbeiten → Einstellungen… → Allgemein → Pane aktivieren** stellt 0,5, 1, 2 oder
-  3 s ein, oder **Beim Klick**.
+  3 s ein (*Wenn die Maus … s darauf ruht*), oder **Beim Anklicken**.
   Der Tastaturfokus folgt nur aus der Dateiliste eines anderen Panes,
   nie aus einem Textfeld.
 - **Alt+Links / Alt+Rechts** durchschreiten Pane-Historie;
@@ -325,162 +345,191 @@ Remote-Panes.
 
 ## Übertragungen
 
-**Ausschneiden und Einfügen.** *Ausschneiden* (Strg+X oder Rechtsklick) merkt sich
-nur die ausgewählten Einträge - nichts wird entfernt; solange der Cut
-wartet, sind sie abgeblendet. *Einfügen* (Strg+V oder Rechtsklick,
-auch auf freier Fläche) in einem beliebigen Pane - anderer Ordner,
-andere Verbindung - verschiebt sie als Move über die Übertragungen in
-dessen Ordner: mit derselben Prüfung auf vorhandene Namen wie F5 / F6,
-und jede Quelle wird erst entfernt, wenn ihre eigene Kopie fertig und
-geprüft ist; eine fehlgeschlagene, abgebrochene oder unvollständige
-Übertragung lässt sie stehen. Ein Cut ohne Paste entfernt nichts: ein
-neuer Cut ersetzt ihn, Esc in seinem Pane verwirft ihn, Schließen des
-Panes oder ein Verbindungswechsel ebenso. Paste in den Ordner, aus dem
-die Einträge stammen, tut nichts; ein Ordner in sich selbst wird
-abgelehnt. Sobald der Move in der Queue ist, ist der Cut erledigt.
+Bevor eine Kopie oder ein Verschieben (F5, F6, Drag & Drop) in die
+Warteschlange kommt, prüft axross das Ziel im Hintergrund und fragt bei
+jedem Namen, den es dort schon gibt: *Überschreiben*, *Überschreiben,
+wenn neuer*, *Überspringen*, *Umbenennen* (`name (1).ext`), jeweils
+wahlweise für alle weiteren Konflikte, oder *Abbrechen* (nichts wird
+kopiert). Ordner werden zusammengeführt; gefragt wird nach den Namen
+darin. Ein übersprungenes Verschieben behält seine Quelle, und eine
+Datei, die nach der Rückfrage am Ziel auftaucht, lässt ihren Job
+scheitern, statt überschrieben zu werden. Ein Verschieben entfernt seine
+Quelle nur, wenn sie noch die Größe hat, die sie vor dem Kopieren hatte;
+eine, die sich inzwischen geändert hat (ein Log, in das noch geschrieben
+wird), lässt ihren Job scheitern und bleibt erhalten.
 
-Jeder pane-übergreifende Copy/Move geht in die Warteschlange der Übertragungen. Das
-untere Dock *Übertragungen* zeigt Fortschritt, Throughput und ETA. Übertragungen laufen in
-Worker-Threads und überleben einen abgewiesenen Dialog oder ein
-geschlossenes Pane. Beenden, während Übertragungen laufen oder warten,
-fragt vorher (Beenden bricht sie ab); ein Ordner, der beim Durchlaufen
-nicht lesbar ist, wird eine fehlgeschlagene Zeile der Liste, und ein
-Durchlauf, der mittendrin abbricht, sagt, wie viel eingereiht wurde.
+**Ausschneiden und Einfügen.** *Ausschneiden* (Strg+X oder Rechtsklick)
+merkt sich nur die ausgewählten Einträge – nichts wird entfernt; solange
+sie auf das Einfügen warten, sind sie abgeblendet. *Einfügen* (Strg+V
+oder Rechtsklick, auch auf freier Fläche) in einem beliebigen Pane –
+anderer Ordner, andere Verbindung – verschiebt sie über die
+Übertragungen in dessen Ordner: mit derselben Prüfung auf vorhandene
+Namen wie bei F5 / F6, und jede Quelle wird erst entfernt, wenn ihre
+eigene Kopie fertig und geprüft ist; eine fehlgeschlagene, abgebrochene
+oder unvollständige Übertragung lässt sie stehen. Ausschneiden ohne
+Einfügen entfernt nichts: erneutes Ausschneiden ersetzt die Auswahl,
+Esc in ihrem Pane verwirft sie, ebenso das Schließen des Panes oder ein
+Wechsel seiner Verbindung. Einfügen in den Ordner, aus dem die Einträge
+stammen, tut nichts; ein Ordner in sich selbst wird abgelehnt. Sobald
+das Verschieben in der Warteschlange steht, ist das Ausschneiden
+erledigt.
 
-- **Atomare Semantik.** Jeder Schreibvorgang geht in eine versteckte
-  Sibling-Tempdatei (`.<name>.part-<job>-<fingerprint>`) und wird am
-  Ende reingerannt. Auf
-  S3 / Azure / Dropbox / GDrive / OneDrive / IMAP / Rsync ist der
-  Upload selbst schon atomar; sonst ist der Rename der Commit-Punkt.
-- **Resume.** Fehlgeschlagene Übertragungen können fortgesetzt werden;
-  die Teilbytes auf dem Ziel werden wiederaufgenommen. Eine Übertragung,
-  die an einem vollen Ziel scheitert, löscht ihre Teildatei.
-- **Wiederholen.** „Fehlgeschlagene wiederholen“ wiederholt jede fehlgeschlagene Übertragung der
-  Warteschlange, jede genau einmal.
-- **Alle abbrechen** stoppt auch eine Kopie oder einen Move, dessen
-  Ordner-Walk noch läuft: keine seiner Dateien kommt in die Queue.
-- **Moves auf einem Server.** Ein Move, dessen Quelle und Ziel auf
-  derselben Verbindung liegen (Drop auf einen Ordner im selben Pane, F6
-  zwischen zwei Panes einer Verbindung, Cut und Paste), benennt jede
-  Datei auf dem Server um (SFTP RENAME, FTP RNFR/RNTO, WebDAV MOVE, SMB,
-  serverseitige S3-Kopie): kein Byte läuft durch axross. Ein Name, den
-  die Konflikt-Antworten überschreiben lassen, ein Link oder ein Rename,
-  den der Server ablehnt, geht über die normale Kopie.
+Jede Kopie und jedes Verschieben zwischen zwei Panes kommt in die
+Warteschlange der Übertragungen. Das untere Dock *Übertragungen* zeigt
+Fortschritt, Datenrate und Restzeit. Übertragungen laufen in eigenen
+Threads und überstehen einen abgelehnten Dialog oder ein geschlossenes
+Pane. Wer axross beendet, während Übertragungen laufen oder warten, wird
+vorher gefragt (Beenden bricht sie ab); ein Ordner, der beim Durchlaufen
+nicht lesbar ist, wird zu einer fehlgeschlagenen Zeile der Liste, und
+ein Durchlauf, der mittendrin abbricht, sagt, wie viel eingereiht wurde.
+
+- **Atomares Schreiben.** Jeder Schreibvorgang geht in eine versteckte
+  temporäre Datei daneben (`.<name>.part-<job>-<fingerprint>`), die am
+  Ende umbenannt wird. Auf S3 / Azure / Dropbox / GDrive / OneDrive /
+  IMAP / Rsync ist schon der Upload selbst atomar; sonst macht erst das
+  Umbenennen die Datei gültig.
+- **Fortsetzen.** Fehlgeschlagene Übertragungen lassen sich fortsetzen;
+  die schon übertragenen Bytes am Ziel werden weiterverwendet. Eine
+  Übertragung, die an einem vollen Ziel scheitert, löscht ihre
+  Teildatei.
+- **Wiederholen.** *Fehlgeschlagene wiederholen* startet jede
+  fehlgeschlagene Übertragung der Warteschlange erneut, jede genau
+  einmal.
+- **Alle abbrechen** stoppt auch eine Kopie oder ein Verschieben, dessen
+  Ordner noch durchlaufen wird: keine seiner Dateien kommt in die
+  Warteschlange.
+- **Verschieben auf einem Server.** Ein Verschieben, dessen Quelle und
+  Ziel auf derselben Verbindung liegen (Ablegen auf einem Ordner im
+  selben Pane, F6 zwischen zwei Panes einer Verbindung, Ausschneiden und
+  Einfügen), benennt jede Datei auf dem Server um (SFTP RENAME, FTP
+  RNFR/RNTO, WebDAV MOVE, SMB, serverseitige S3-Kopie): kein Byte läuft
+  durch axross. Ein Name, den die Antworten auf einen Konflikt
+  überschreiben lassen, ein Link oder ein Umbenennen, das der Server
+  ablehnt, geht stattdessen über die normale Kopie.
 - **Änderungszeiten.** Eine Kopie behält die Änderungszeit der Quelle
   auf lokalen Platten, SFTP (ganze Sekunden), SMB und FTP-Servern, die
   `MFMT` anbieten. WebDAV und S3 können sie nicht setzen: Die Kopie dort
-  trägt die Upload-Zeit, die *Panes vergleichen* und *Überschreiben, wenn neuer* als
-  die neuere lesen. *Überschreiben, wenn neuer* vergleicht ganze Sekunden.
-- **Was passiert ist.** Ist eine Kopie oder ein Move fertig, fasst die
-  Statusleiste zusammen: „2 kopiert, 1 übersprungen (Ziel behalten)",
-  „3 übersprungen (Ziele nicht älter)", Fehler mitgezählt. Der
-  Gesamtbalken des Docks endet nur dann auf *Fertig*, wenn jeder Job des
-  Durchgangs gut ausging, sonst rot auf „N fehlgeschlagen" /
-  „N abgebrochen".
-- **Widerrufen.** *Bearbeiten → Letzte Aktion widerrufen* (`Strg+Z`) macht den neuesten
-  Move oder *In den Trash verschieben* rückgängig, dessen Verbindung offen ist, und
-  zwar ganz: ein F5 / F6 / Drop / Paste oder ein *In den Trash verschieben* einer
-  Auswahl ist eine Operation und eine Frage. Ein verschobener Ordner
-  kommt mit seinen Ordnern zurück (die der Move angelegt hat, werden
+  trägt die Upload-Zeit, die *Panes vergleichen* und *Überschreiben, wenn
+  neuer* als die neuere lesen. *Überschreiben, wenn neuer* vergleicht
+  ganze Sekunden.
+- **Was passiert ist.** Ist eine Kopie oder ein Verschieben fertig, fasst
+  die Statusleiste zusammen: „2 kopiert, 1 übersprungen (Ziel
+  behalten)“, „3 übersprungen (Ziele nicht älter)“, Fehler mitgezählt.
+  Der Gesamtbalken des Docks endet nur dann auf *Fertig*, wenn jeder Job
+  des Durchgangs gut ausging, sonst rot auf „N fehlgeschlagen“ /
+  „N abgebrochen“.
+- **Widerrufen.** *Bearbeiten → Letzte Aktion widerrufen* (`Strg+Z`)
+  macht das neueste Verschieben oder *In den Papierkorb verschieben*
+  rückgängig, dessen Verbindung offen ist, und zwar ganz: ein F5 / F6 /
+  Ablegen / Einfügen oder ein *In den Papierkorb verschieben* einer
+  Auswahl ist eine Aktion und eine Frage. Ein verschobener Ordner kommt
+  mit seinen Ordnern zurück (die das Verschieben angelegt hat, werden
   entfernt, wenn sie leer sind, die Quellordner neu angelegt) und mit
-  seinen Tags; ein Name, der wieder da ist, stoppt das Undo, bevor sich
-  etwas bewegt, und was nicht zurückkam, bleibt für das nächste
+  seinen Tags; ein Name, der wieder da ist, stoppt das Widerrufen, bevor
+  sich etwas bewegt, und was nicht zurückkam, bleibt für das nächste
   `Strg+Z`. Eine Kopie lässt sich nicht rückgängig machen.
 - **Produktions-Verbindungen.** Jeder Schreibvorgang, der auf einer als
   *Produktion* markierten Verbindung überschreibt oder löscht, wartet
-  zuerst den Countdown ab: F5 / F6 / Drag & Drop / Paste mit
-  Überschreiben, ein Move von ihr weg oder auf sie, und Compare Panes →
-  *Abgleich* für jede Seite, die der Sync überschreibt.
-- **Verify.** Pro-Job-Flag `verify_checksum` re-hasht das Ziel nach
-  dem Upload und lehnt bei Mismatch ab.
-- **Parallele Übertragungen.** *Bearbeiten → Einstellungen… → Dateien & Panes →
-  Parallele Übertragungen* (1–8, vorgegeben 1) lässt mehrere Jobs
-  nebeneinander laufen, gestartet in Queue-Reihenfolge; das versteckt
-  die Round Trips vieler kleiner Dateien auf einer langsamen Leitung.
-  Eine Verbindung, die keine zwei Jobs zugleich tragen kann (SCP und
-  jedes andere Protokoll außer lokalen Dateien, RAM-Workspaces, SFTP,
-  SMB, FTP, WebDAV und S3), arbeitet ihre Jobs weiter einzeln ab, und
-  zwei Jobs schreiben nie zugleich dasselbe Ziel. Eine Änderung gilt
+  zuerst den Countdown ab: F5 / F6 / Drag & Drop / Einfügen mit
+  Überschreiben, ein Verschieben von ihr weg oder auf sie, und *Panes
+  vergleichen* → *Abgleich* für jede Seite, die der Abgleich
+  überschreibt.
+- **Prüfen.** Das Job-Flag `verify_checksum` berechnet die Prüfsumme des
+  Ziels nach dem Upload neu und verwirft das Ergebnis, wenn sie nicht
+  passt.
+- **Parallele Übertragungen.** *Bearbeiten → Einstellungen… → Dateien &
+  Panes → Parallele Übertragungen* (1–8, vorgegeben 1) lässt mehrere Jobs
+  nebeneinander laufen, gestartet in der Reihenfolge der Warteschlange;
+  das überdeckt die Wartezeit vieler kleiner Dateien auf einer langsamen
+  Leitung. Eine Verbindung, die keine zwei Jobs zugleich tragen kann (SCP
+  und jedes andere Protokoll außer lokalen Dateien, RAM-Workspaces,
+  SFTP, SMB, FTP, WebDAV und S3), arbeitet ihre Jobs weiter einzeln ab,
+  und zwei Jobs schreiben nie zugleich dasselbe Ziel. Eine Änderung gilt
   für die Jobs, die danach starten. Jeder SFTP-Job läuft auf einem
-  eigenen SSH-Channel, und Server begrenzen die Channels pro
-  Verbindung (OpenSSH `MaxSessions`, vorgegeben 10). Jeder FTP-Transfer
-  läuft auf einer eigenen Control Connection; Server begrenzen oft die
-  Verbindungen pro User oder Adresse, und eine FTP-Verbindung, deren
-  Server einen zweiten Login ablehnt, arbeitet ihre Jobs einzeln ab.
+  eigenen SSH-Kanal, und Server begrenzen die Kanäle pro Verbindung
+  (OpenSSH `MaxSessions`, vorgegeben 10). Jede FTP-Übertragung läuft auf
+  einer eigenen Steuerverbindung; Server begrenzen oft die Verbindungen
+  pro Benutzer oder Adresse, und eine FTP-Verbindung, deren Server eine
+  zweite Anmeldung ablehnt, arbeitet ihre Jobs einzeln ab.
 
 ## Backend-übergreifender Feature-Layer
 
-Diese Module funktionieren auf **jedem** Backend — auch dort, wo das
+Diese Module funktionieren auf **jedem** Backend – auch dort, wo das
 native Protokoll sie nicht kennt.
 
 | Modul | Was es liefert |
 |---|---|
-| `core.atomic_io` | `atomic_write(backend, path, data)` — native-atomar auf S3 / Azure / Dropbox / GDrive / OneDrive / IMAP / Rsync; tmp-then-rename überall sonst. |
-| `core.atomic_recovery` | Crash-Recovery-Sweep für `.tmp-*.tmp`-Leichen. Per-Pane-Navigate-Hook entfernt >1 h alte Reste. Legacy-Präfix `.axross-atomic-*.tmp` wird weiter erkannt. |
-| `core.server_ops` | `server_side_copy` / `server_side_move` mit automatischem Fallback auf `open_read` + `open_write`, wenn das Backend keinen nativen Copy hat. |
-| `core.watch` | File-Watching-API. Nativ inotify auf LocalFS (mit watchdog), Polling überall sonst. Toggle in der Pfadleiste. |
-| `core.trash` | Universaler Papierkorb: `trash` / `list_trash` / `restore` / `empty_trash`. Per-Entry-Sidecar-Metadata, kein zentrales Manifest. |
-| `core.xlink` | Cross-Protokoll-Symlinks per `.axlink`-JSON-Pointer-Datei. |
-| `core.encrypted_overlay` | AES-256-GCM at-rest, PBKDF2-HMAC-SHA256 mit 200 k Iterationen. |
-| `core.cas` | Content-Addressable-Layer: SQLite-Index `(backend, path) → checksum`, Duplikat-Erkennung, `ax-cas://<algo>:<hex>`-URLs. |
-| `core.snapshot_browser` | Uniforme Versionshistorie über S3, Dropbox, GDrive, OneDrive, Azure Blob. |
-| `core.metadata_index` | Offline-SQLite-Suche nach Name / Ext / Größe / mtime. Eine Datei: `$AXROSS_METADATA_DB`, sonst `$XDG_DATA_HOME/axross/metadata.sqlite`, sonst `~/.local/share/axross/metadata.sqlite` (ein Index, der schon dort liegt, bleibt in Gebrauch). Gefüllt nur über *Aktiven Ordner indizieren…*, nicht durchs Browsen — Details im Handbuch, Abschnitt *Metadata-Index*. |
-| `core.previews` | Lokaler Bild-Thumbnailer mit MIME-Allowlist, Größenkappen, Qt-Allocator-Gate. F3 / Doppelklick. |
-| `core.archive` | Sichere Entpackung von zip / tar / 7z (`.zip .xpi .jar .war .apk .epub .docx .xlsx .odt .tar .tar.gz .tgz .tar.bz2 .tbz2 .tar.xz .txz .7z`). Zip-Slip-/Bomb-/Lying-Metadata-Guards; Symlink- und Hardlink-Einträge (tar, und ZIP-Symlinks) werden ausgelassen - nie angelegt oder verfolgt - und das Ergebnis nennt sie; `.7z` braucht das `[archive]`-Extra. |
-| `core.elevated_io` | `pkexec`-gated lokales Lesen für `/etc/shadow` & Co. — axross hält selbst keine Privilegien. Kontextmenü „Als root öffnen…". |
-| `core.fuse_mount` | FUSE-Mount jedes Backends. Standardmäßig read-only; `writeable=True` aktiviert create / write / unlink / mkdir / rename. Optionales `[fuse]`-Extra. |
-| `core.mcp_server` | Stdio-JSON-RPC-MCP-Server, der das konfigurierte Backend als Tools exponiert. `--mcp-write` ergänzt mutierende Tools, gecappt auf einen pfad-traversal-sicheren Root. |
+| `core.atomic_io` | `atomic_write(backend, path, data)` – auf S3 / Azure / Dropbox / GDrive / OneDrive / IMAP / Rsync nativ atomar; überall sonst erst eine temporäre Datei, dann Umbenennen. |
+| `core.atomic_recovery` | Räumt nach einem Absturz verwaiste `.tmp-*.tmp`-Dateien auf: beim Navigieren eines Panes werden Reste entfernt, die älter als 1 h sind. Das alte Präfix `.axross-atomic-*.tmp` wird weiter erkannt. |
+| `core.server_ops` | `server_side_copy` / `server_side_move`, mit automatischem Rückgriff auf `open_read` + `open_write`, wenn das Backend selbst nicht kopieren kann. |
+| `core.watch` | API zum Beobachten von Dateien: nativ inotify auf LocalFS (mit watchdog), sonst Polling. Ein- und ausschaltbar in der Pfadleiste. |
+| `core.trash` | Ein Papierkorb für jedes Backend: `trash` / `list_trash` / `restore` / `empty_trash`. Die Metadaten liegen in einer Begleitdatei je Eintrag, es gibt kein zentrales Verzeichnis. |
+| `core.xlink` | Protokollübergreifende Symlinks über `.axlink`-Dateien, die als JSON auf ihr Ziel zeigen. |
+| `core.encrypted_overlay` | Verschlüsselung gespeicherter Dateien mit AES-256-GCM, Schlüssel per PBKDF2-HMAC-SHA256 mit 200 k Iterationen. |
+| `core.cas` | Inhaltsadressierte Schicht: SQLite-Index `(backend, path) → checksum`, Erkennung von Duplikaten, `ax-cas://<algo>:<hex>`-URLs. |
+| `core.snapshot_browser` | Eine einheitliche Versionshistorie über S3, Dropbox, GDrive, OneDrive und Azure Blob. |
+| `core.metadata_index` | Offline-Suche in SQLite nach Name / Endung / Größe / Änderungszeit. Eine Datei: `$AXROSS_METADATA_DB`, sonst `$XDG_DATA_HOME/axross/metadata.sqlite`, sonst `~/.local/share/axross/metadata.sqlite` (ein Index, der schon dort liegt, bleibt in Gebrauch). Gefüllt nur über *Aktiven Ordner indizieren…*, nicht durchs Browsen – siehe *Der Offline-Index* unter *Dateien finden*. |
+| `core.file_search` | Die Suche von *Dateien finden*: Name / Typ / Inhalt / Größe / Datum in Ordnern jedes Backends, auch in Archiven, mit laufenden Ergebnissen und abbrechbar; lokal mit `fd` / `rg`, wenn installiert. |
+| `core.file_categories` | Die Typ-Vorgaben von *Dateien finden* (Bilder, Datenträger- & VM-Images, Krypto-Wallets, Schlüssel & Zertifikate, …) nach Name, Ordner und Merkmalen im Inhalt. |
+| `core.previews` | Lokale Bild-Thumbnails mit strenger MIME-Allowlist, Größengrenzen und einer Sperre für zu große Qt-Speicheranforderungen. F3 / Doppelklick. |
+| `core.archive` | Sicheres Entpacken von zip / tar / 7z und einzelnen komprimierten Dateien (`.zip .xpi .jar .war .apk .epub .docx .xlsx .odt .tar .tar.gz .tgz .tar.bz2 .tbz2 .tar.xz .txz .tar.zst .tzst .7z .gz .bz2 .xz .zst`). Schutz vor Zip-Slip, Archivbomben und falschen Größenangaben; Symlink- und Hardlink-Einträge (tar, und ZIP-Symlinks) werden ausgelassen – nie angelegt oder verfolgt –, und das Ergebnis nennt sie; `.7z` braucht das Extra `[archive]`, zstd Python 3.14 oder dieses Extra. |
+| `core.packer` | Rechtsklick → **Packen**: zip, tar.gz / .zst / .xz / .bz2, 7z (wahlweise AES-256 mit verschlüsselten Dateinamen) oder eine einzelne Datei als .gz / .zst / .xz / .bz2 – von jedem Backend, ohne zu überschreiben (`name (2).zip`) und ohne je ein halb geschriebenes Archiv zu hinterlassen. |
+| `core.elevated_io` | Lokales Lesen von `/etc/shadow` & Co. über `pkexec` – axross hält selbst nie Root-Rechte. Eintrag *Als root öffnen…* im Kontextmenü. |
+| `core.fuse_mount` | Jedes Backend als FUSE-Mount. Standardmäßig read-only; `writeable=True` erlaubt create / write / unlink / mkdir / rename. Optionales Extra `[fuse]`. |
+| `core.mcp_server` | MCP-Server mit JSON-RPC über stdio, der das eingestellte Backend als Tools anbietet. `--mcp-write` ergänzt Tools, die Dateien ändern, beschränkt auf einen Root, aus dem kein Pfad hinausführt. |
 
 ## Rechtsklick-Aktionen
 
 Das Rechtsklick-Menü ist eine Spalte. **Öffnen** steht oben (ein Ordner
 öffnet sich im Pane, eine Datei in ihrem Viewer, wie mit `Enter`), dann
 *Öffnen mit ▸* (als Text, als Hex, als root, Ausgewählte Medien ansehen…,
-Archiv-Preview) und bei einem Archiv *Entpacken…*; dann *Pfad kopieren*,
-*Ausschneiden*, *Einfügen*, *Umbenennen*; *Ins Ziel-Pane kopieren*, *Ins
-Ziel-Pane verschieben*, *Packen ▸*; *In den Trash verschieben* (`Entf`) und
-*Endgültig löschen* (`Umschalt+Entf`); *Neuer Ordner*, *Neue Datei…*;
-*Eigenschaften…* und die Untermenüs *Metadaten ▸*, *Analysieren ▸*
-(Dateityp, Disk-Image, Prüfsumme, Versionen, Größe, sift, Duplicate Finder,
-In diesem Ordner suchen), *Links ▸* (Link-Ziel, neuer Symlink / Hardlink /
-XLink) und *Tags ▸*; *Aktualisieren* und *Weitere ▸* (Ansicht, Medien
-ansehen…, Bookmark, Trash anzeigen…, Terminals, FUSE, Berechtigungen…,
-Ver- und Entschlüsseln, der Agent) und am Ende *An Workspace senden ▸* für das Pane selbst. Mehr als drei
-Einträge von Extensions kommen in *Extensions ▸*. Die Tabelle nennt jeden
-Eintrag mit seiner Beschriftung.
+Archiv-Preview) und bei einem Archiv *Entpacken…*; dann *Kopieren*
+(`Strg+C`), *Ausschneiden*, *Einfügen*, *Umbenennen*; *Ins Ziel-Pane
+kopieren*, *Ins Ziel-Pane verschieben*, *Packen ▸*; *In den Papierkorb
+verschieben* (`Entf`) und *Endgültig löschen* (`Umschalt+Entf`); *Neuer
+Ordner*, *Neue Datei…*; *Eigenschaften…*, *Analysieren ▸* (Dateityp,
+Disk-Image, Prüfsumme, Versionen, Größe, sift, Duplicate Finder, In diesem
+Ordner suchen) und *Weitere ▸*: *Aktualisieren*, Ansicht, Medien ansehen…,
+Bookmark, Papierkorb anzeigen…, *Pfad kopieren*, *Links ▸* (Link-Ziel, neuer
+Symlink / Hardlink / XLink), *Metadaten ▸*, *Tags ▸*, Terminals, FUSE,
+Berechtigungen…, Ver- und Entschlüsseln, der Agent und am Ende *An
+Workspace senden ▸* für das Pane selbst. Die oberste Ebene bleibt auch auf
+einem Bildschirm mit 1024x600 eine Spalte. Mehr als drei Einträge von
+Extensions kommen in *Extensions ▸*. Die Tabelle nennt jeden Eintrag mit
+seiner Beschriftung.
 
-| Aktion | Trigger | Was passiert |
+| Aktion | Aufruf | Was passiert |
 |---|---|---|
-| Disk-Image… | Rechtsklick (eine `.img .raw .dd .iso .qcow2 .vdi .vmdk .vhd(x) .e01 …`-Datei) | Container (qcow2, VDI, VMDK, VHD/VHDX, E01), Partitionstabelle (MBR mit logischen Partitionen, GPT) sowie Dateisystem und Label jedes Volumes, in reinem Python über jedes Backend gelesen. Ein lokales Image mountet ein Volume über ein Loop-Device genau über dessen Bytes: zuerst `udisksctl` ohne Abfrage (wo polkit es erlaubt), dann `sudo`, dann `pkexec`, zuletzt `udisksctl` mit polkit-Abfrage. Das sudo-Passwort wird einmal gefragt und im Speicher gehalten, solange axross läuft (nie auf Platte, nie auf einer Kommandozeile); *Das sudo-Passwort merken* (*Bearbeiten → Einstellungen… → Sicherheit*) schaltet das ab, dann gilt wieder `udisksctl` (polkit fragt), `pkexec`, `sudo` mit Abfrage jedes Mal. Im Paranoid Security Mode wird es nie gemerkt. sudo, pkexec und udisksctl laufen nur aus root-eigenen Systemordnern, nie aus `$PATH`. **Read-only**, außer *Schreiben erlauben* ist angehakt und bestätigt. Der Mount-Ordner öffnet sich in einem neuen Pane; *Unmounten* gibt das Loop-Device zurück. Von axross angelegte Mounts bleiben über Neustarts bekannt (`~/.config/axross/mounts.json`, nur noch gemountete kommen zurück). *Dateityp erkennen…* erkennt Disk-Images auch am Inhalt (GPT, MBR, virtuelle Disks) und bietet für so eine Zeile *Disk-Image…* an, egal wie die Datei heißt. qcow2 / dynamisches VDI / VMDK erst konvertieren (`qemu-img convert -O raw`); ein festes VDI mountet direkt. |
+| Disk-Image… | Rechtsklick (eine `.img .raw .dd .iso .qcow2 .vdi .vmdk .vhd(x) .e01 …`-Datei) | Container (qcow2, VDI, VMDK, VHD/VHDX, E01), Partitionstabelle (MBR mit logischen Partitionen, GPT) sowie Dateisystem und Label jedes Volumes, in reinem Python über jedes Backend gelesen. Ein lokales Image mountet ein Volume über ein Loop-Device genau über dessen Bytes: zuerst `udisksctl` ohne Abfrage (wo polkit es erlaubt), dann `sudo`, dann `pkexec`, zuletzt `udisksctl` mit polkit-Abfrage. Das sudo-Passwort wird einmal gefragt und im Speicher gehalten, solange axross läuft (nie auf Platte, nie auf einer Kommandozeile); *Das sudo-Passwort merken* (*Bearbeiten → Einstellungen… → Sicherheit*) schaltet das ab, dann gilt wieder `udisksctl` (polkit fragt), `pkexec`, `sudo` mit Abfrage jedes Mal. Im paranoiden Sicherheitsmodus wird es nie gemerkt. sudo, pkexec und udisksctl laufen nur aus root-eigenen Systemordnern, nie aus `$PATH`. **Nur lesend**, außer *Schreiben erlauben* ist angehakt und bestätigt. Der Mount-Ordner öffnet sich in einem neuen Pane; *Unmounten* gibt das Loop-Device zurück. Von axross angelegte Mounts bleiben über Neustarts bekannt (`~/.config/axross/mounts.json`, nur noch gemountete kommen zurück). *Dateityp erkennen…* erkennt Disk-Images auch am Inhalt (GPT, MBR, virtuelle Disks) und bietet für so eine Zeile *Disk-Image…* an, egal wie die Datei heißt. qcow2 / dynamisches VDI / VMDK erst konvertieren (`qemu-img convert -O raw`); ein festes VDI mountet direkt. |
 | Tags ▸ | Rechtsklick auf eine Auswahl | Einen farbigen Tag anhaken (Wichtig und Später ansehen gibt es; Neuer Tag… legt einen an) für jede gewählte Datei auf jedem Backend; Punkte in der Namensspalte, die Tags im Tooltip; `tag:<name>` im Filterfeld zeigt nur diese Dateien; *Ansicht → Getaggte Dateien…* listet die Dateien jedes Tags und springt hin. Gespeichert in `~/.config/axross/tags.json`. |
 | Neuer Ordner | Rechtsklick | `backend.mkdir(path)` auf jedem schreibfähigen Backend. |
-| Neue Datei… | Rechtsklick | 0-Byte-Datei via `backend.open_write(path).write(b"")`. |
-| Neuer Symlink… | Rechtsklick | Zwei Prompts. Sichtbar nur auf Backends mit `supports_symlinks=True`. |
-| Neuer Hardlink… | Rechtsklick | Gleiche Form; Cross-Device → `OSError(EXDEV)`. |
-| Im Index suchen | `Strg+Umschalt+F` | Suche im Offline-Metadaten-Index. |
+| Neue Datei… | Rechtsklick | Leere Datei (0 Byte) über `backend.open_write(path).write(b"")`. |
+| Neuer Symlink… | Rechtsklick | Zwei Abfragen. Nur sichtbar auf Backends mit `supports_symlinks=True`. |
+| Neuer Hardlink… | Rechtsklick | Ebenso; ein Hardlink über Gerätegrenzen hinweg endet mit `OSError(EXDEV)`. |
+| Im Index suchen | `Strg+Umschalt+F` | Sucht im Offline-Index nach Name / Endung / Größe. |
 | In diesem Ordner suchen… | Rechtsklick (auch auf freie Fläche) | Dateien finden mit diesem (oder dem gewählten) Ordner angehakt — siehe *Dateien finden*. |
-| Größe berechnen (N Ordner) | Rechtsklick auf Ordner | Gesamtgröße, Datei- und Ordnerzahl jedes gewählten Ordners, im Hintergrund über die Connection gezählt (*Abbrechen* in der Statuszeile); die Ergebnistabelle sortiert, und die Größen stehen in der Size-Spalte des Panes, bis der Ordner neu geladen wird. **Hidden Files zählen mit**: Dotfiles, versteckte Ordner und Einträge mit Hidden-Flag des Backends werden wie jeder andere Eintrag summiert — wie bei `du` —, egal ob das Pane sie anzeigt. Ein Link zählt mit seiner eigenen Größe und wird nie verfolgt; ein Ordner, der sich nicht lesen lässt, wird im Ergebnis genannt und übersprungen. |
-| Dateien in diesem Ordner identifizieren… | Rechtsklick (auch auf freie Fläche); der Button im Fenster *Dateityp erkennen* | Jede Datei direkt im Ordner (ein gewählter Ordner, sonst der angezeigte; Unterordner werden gezählt, nicht betreten; Hidden Files eingeschlossen) wie bei *Dateityp erkennen…* am Inhalt erkannt, im Hintergrund und über die Connection — also auch in Remote-Panes. Begrenzt: höchstens 2000 Dateien, 64 KiB je Datei, 15 s Timeout je Lesevorgang, *Abbrechen*; `file(1)` wird nicht gefragt. Die Spalten sortieren: Name, erkannter Typ, MIME-Type, *Abweichung*-Verdict, Größe, eine Notiz — bei einem Disk-Image Container, Partitionstabelle und Partitionszahl (`Raw disk image, MBR, 2 partitions, 4.0 MiB`; dafür höchstens 4 MiB gelesen) — und für lokale Dateien mit installiertem `sift`-Extra die Art laut sift. Eine Zeile öffnet *Disk-Image…* (Disk-Images) oder *Eigenschaften…*; Doppelklick nimmt das Passende. |
-| Mit sift analysieren / Ordner mit sift analysieren | Rechtsklick (der Ordner-Eintrag auch auf freie Fläche), das Menü Aktionen, *Tools → Mit sift analysieren* | Öffnet das Dock *Analyse (sift)* (sifts Sieb-Icon, `Strg+Umschalt+I`) und erklärt die Datei dort ohne Modell. Mehrere gewählte Dateien oder ein Ordner (der gewählte, sonst der angezeigte) werden als ein Batch für das aktive LLM-Profil angeboten; *Tools → Mit sift analysieren* nimmt die Auswahl, ohne Auswahl den angezeigten Ordner. sifts eigene Directory-Zusammenfassung (`sift --dir-summary`, ab sift 0.1.96) gehört nicht zum Dock: ein Ordner wird Datei für Datei analysiert. Ohne sift (axross-slim oder eine Source-Installation ohne das Extra `sift`) sagt jeder Eintrag, dass sift in axross-full oder im Extra `axross[sift]` steckt, mit Link auf *Hilfe → Funktionen…*. |
-| Dateityp erkennen… | Rechtsklick (Auswahl) | Eine Zeile pro Eintrag: der echte Typ laut Inhalt (Magic Bytes über Qts MIME-Datenbank, puremagic, eine eingebaute Signaturtabelle), der MIME-Type, was die Endung behauptet, und eine hervorgehobene *Abweichung*, wenn sie sich widersprechen, Größe, bei Text Encoding und Zeilenenden. Liest höchstens 64 KiB je Datei über das Backend, außerhalb des GUI-Threads, mit 15 s Timeout je Datei — ein toter Remote gibt eine „timed out"-Zeile. Lokale Dateien zeigen auch die Beschreibung von `file(1)`, wenn es installiert ist. Scripting: `axross.file_type(b, path)`. |
-| Terminal hier öffnen | Rechtsklick (auch auf freie Fläche) | Öffnet eine Shell im Terminal-Dock im Ordner: ein gewählter Ordner, sonst der angezeigte. Lokale Panes bekommen eine lokale Shell, die in dem Ordner startet; SFTP-/SCP-Panes eine Shell auf derselben SSH-Verbindung, gefolgt von `cd -- '<ordner>'` (mit `shlex.quote` gequotet). Ausgegraut, mit dem Grund als Tooltip, bei Protokollen ohne Shell. |
-| Externes Terminal hier öffnen | Rechtsklick (lokale Panes) | Startet `$TERMINAL`, sonst das erste installierte von x-terminal-emulator, gnome-terminal, konsole, xfce4-terminal, alacritty, kitty, foot, wezterm, xterm — mit dem Ordner als Arbeitsverzeichnis, abgelöst, ohne Shell dazwischen. |
-| Duplicate Finder | Menü Ansicht, `Strg+Umschalt+D` | Gruppiert indizierte Dateien nach Content-Hash und verschiebt überzählige Kopien in den Trash — siehe *Duplicate Finder* unter *Werkzeuge*. |
-| Medien ansehen… / Ausgewählte Medien ansehen… | Rechtsklick, Menü Ansicht | Bilder, PDFs und Videos des Ordners (optional rekursiv) oder der Auswahl als Overview-Grid, Viewer zum Durchklicken oder Slideshow — siehe *Editoren und Viewer*. |
-| Metadaten anzeigen… / entfernen… / exportieren… | Rechtsklick | EXIF / GPS / XMP / IPTC, Office-Properties, PDF-Info, Audio-/Video-Tags der Auswahl — oder des ganzen Ordners, wenn nichts ausgewählt ist (Unterordner optional) — siehe *Datei-Metadata*. |
-| Ausschneiden / Einfügen | Rechtsklick (Einfügen auch auf freier Fläche), `Strg+X` / `Strg+V` | Ausschneiden merkt sich die Auswahl und entfernt nichts (die Einträge sind abgeblendet); Einfügen in einem beliebigen Pane verschiebt sie über die Übertragungen in dessen Ordner - siehe *Übertragungen*. Ausgeschnitten, aber nie eingefügt, bleibt alles, wo es ist. |
-| In den Trash verschieben | Rechtsklick, `Entf` | Universaler Papierkorb (ein Ordner `.axross-trash` im Home der Verbindung, er geht also überall, wo die Verbindung umbenennen kann; *Trash anzeigen…* holt die Einträge zurück). Read-only-Protokolle und solche ohne Umbenennen - Gopher, LDAP, NNTP, PJL, POP3, SLP, SVN, TFTP, WMI - haben keinen; dort fragt `Entf` stattdessen, ob endgültig gelöscht werden soll. Läuft wie *Endgültig löschen*: im Hintergrund, mit derselben zweiten Rückfrage für versteckte Einträge. |
-| Endgültig löschen | Rechtsklick, `Umschalt+Entf` | Zählt zuerst abseits des GUI-Threads, was wegfällt (Ordner, Dateien, Bytes, Hidden Entries), dann die Rückfrage - mit **Nein** als Standardknopf, `Enter` behält also die Dateien. Ein ausgewählter Ordner mit Hidden Entries (Dotfiles oder Hidden-Flag des Backends) - oder einer, den die Prüfung nicht vollständig lesen konnte - braucht ein zweites OK mit *Nein* als Standard. Das Löschen läuft im Hintergrund: die Statuszeile zeigt den Fortschritt, *Abbrechen* hält beim nächsten Eintrag an - auch innerhalb eines Ordners, der lokal, per SMB, SFTP oder FTP gelöscht wird; die Statuszeile sagt dann, wie viel von diesem Ordner schon weg ist (Gelöschtes bleibt gelöscht; ein Server, der einen ganzen Ordner mit einem Request löscht, etwa WebDAV oder S3, löscht diesen Ordner zu Ende) - Fehler werden je Eintrag gemeldet, danach wird der Ordner neu geladen. Ein Pfad, der gerade gelöscht wird, wird abgewiesen, auch aus dem anderen Pane. |
-| Trash anzeigen… | Rechtsklick | Dialog zum Wiederherstellen und endgültigen Löschen. |
-| Versionen anzeigen… | Rechtsklick | Snapshot-Browser — Version speichern unter, Als aktuelle wiederherstellen. |
-| Prüfsumme anzeigen… | Rechtsklick | Native-Checksum (S3 ETag, Drive md5, ssh sha256sum…) mit Stream-Hash-Fallback. |
-| Entpacken… | Rechtsklick auf Archiv | Gleichnamiger Geschwister-Ordner, cancelbar, mit `core.archive`-Safety-Guards. Nur lokale Backends. |
+| Größe berechnen (N Ordner) | Rechtsklick auf Ordner | Gesamtgröße, Datei- und Ordnerzahl jedes gewählten Ordners, im Hintergrund über die Verbindung gezählt (*Abbrechen* in der Statuszeile); die Ergebnistabelle sortiert, und die Größen stehen in der Spalte *Größe* des Panes, bis der Ordner neu geladen wird. **Versteckte Dateien zählen mit**: Dotfiles, versteckte Ordner und Einträge, die das Backend als versteckt markiert, werden wie jeder andere Eintrag summiert – wie bei `du` –, egal ob das Pane sie anzeigt. Ein Link zählt mit seiner eigenen Größe und wird nie verfolgt; ein Ordner, der sich nicht lesen lässt, wird im Ergebnis genannt und übersprungen. |
+| Dateien in diesem Ordner identifizieren… | Rechtsklick (auch auf freie Fläche); der Button im Fenster *Dateityp erkennen* | Jede Datei direkt im Ordner (ein gewählter Ordner, sonst der angezeigte; Unterordner werden gezählt, nicht betreten; versteckte Dateien eingeschlossen) wie bei *Dateityp erkennen…* am Inhalt erkannt, im Hintergrund und über die Verbindung – also auch in Remote-Panes. Begrenzt: höchstens 2000 Dateien, 64 KiB je Datei, 15 s Zeitlimit je Lesevorgang, *Abbrechen*; `file(1)` wird nicht gefragt. Die Spalten sortieren: Name, erkannter Typ, MIME-Typ, das Urteil *Abweichung*, Größe, eine Notiz – bei einem Disk-Image Container, Partitionstabelle und Partitionszahl (`Raw disk image, MBR, 2 partitions, 4.0 MiB`; dafür höchstens 4 MiB gelesen) – und für lokale Dateien mit installiertem `sift`-Extra die Art laut sift. Eine Zeile öffnet *Disk-Image…* (Disk-Images) oder *Eigenschaften…*; Doppelklick nimmt das Passende. |
+| Mit sift analysieren / Ordner mit sift analysieren | Rechtsklick (der Ordner-Eintrag auch auf freie Fläche), das Menü Aktionen, *Tools → Mit sift analysieren* | Öffnet das Dock *Analyse (sift)* (sifts Sieb-Icon, `Strg+Umschalt+I`) und erklärt die Datei dort ohne Modell. Mehrere gewählte Dateien oder ein Ordner (der gewählte, sonst der angezeigte) werden als ein Batch für das aktive LLM-Profil angeboten; *Tools → Mit sift analysieren* nimmt die Auswahl, ohne Auswahl den angezeigten Ordner. sifts eigene Ordner-Zusammenfassung (`sift --dir-summary`, ab sift 0.1.96) gehört nicht zum Dock: ein Ordner wird Datei für Datei analysiert. Ohne sift (axross-slim oder eine Installation aus dem Quellcode ohne das Extra `sift`) sagt jeder Eintrag, dass sift in axross-full oder im Extra `axross[sift]` steckt, mit Link auf *Hilfe → Funktionen…*. |
+| Dateityp erkennen… | Rechtsklick (Auswahl) | Eine Zeile pro Eintrag: der echte Typ laut Inhalt (Magic Bytes über Qts MIME-Datenbank, puremagic, eine eingebaute Signaturtabelle), der MIME-Typ, was die Endung behauptet, und eine hervorgehobene *Abweichung*, wenn sie sich widersprechen, Größe, bei Text die Zeichenkodierung und die Zeilenenden. Liest höchstens 64 KiB je Datei über das Backend, außerhalb des GUI-Threads, mit 15 s Zeitlimit je Datei – ein Server, der nicht antwortet, ergibt eine Zeile „timed out“. Lokale Dateien zeigen auch die Beschreibung von `file(1)`, wenn es installiert ist. Skripte: `axross.file_type(b, path)`. |
+| Terminal hier öffnen | Rechtsklick (auch auf freie Fläche) | Öffnet eine Shell im Terminal-Dock im Ordner: ein gewählter Ordner, sonst der angezeigte. Lokale Panes bekommen eine lokale Shell, die in dem Ordner startet; SFTP-/SCP-Panes eine Shell auf derselben SSH-Verbindung, gefolgt von `cd -- '<ordner>'` (mit `shlex.quote` maskiert). Ausgegraut, mit dem Grund als Tooltip, bei Protokollen ohne Shell. |
+| Externes Terminal hier öffnen | Rechtsklick (lokale Panes) | Startet `$TERMINAL`, sonst das erste installierte von x-terminal-emulator, gnome-terminal, konsole, xfce4-terminal, alacritty, kitty, foot, wezterm, xterm – mit dem Ordner als Arbeitsverzeichnis, eigenständig, ohne Shell dazwischen. |
+| Duplicate Finder | Menü Ansicht, `Strg+Umschalt+D` | Gruppiert indizierte Dateien nach Inhalts-Hash und verschiebt überzählige Kopien in den Papierkorb – siehe *Duplicate Finder* unter *Werkzeuge*. |
+| Medien ansehen… / Ausgewählte Medien ansehen… | Rechtsklick, Menü Ansicht | Bilder, PDFs und Videos des Ordners (optional rekursiv) oder der Auswahl als Übersichtsraster, Viewer zum Durchklicken oder Diashow – siehe *Editoren und Viewer*. |
+| Metadaten anzeigen… / entfernen… / exportieren… | Rechtsklick | EXIF / GPS / XMP / IPTC, Office-Eigenschaften, PDF-Info, Audio-/Video-Tags der Auswahl – oder des ganzen Ordners, wenn nichts ausgewählt ist (Unterordner optional) – siehe *Datei-Metadaten*. |
+| Kopieren / Ausschneiden / Einfügen | Rechtsklick (Einfügen auch auf freier Fläche), `Strg+C` / `Strg+X` / `Strg+V` | Kopieren merkt sich die Auswahl für Einfügen und legt ihre Pfade als Text für andere Programme in die Zwischenablage; Ausschneiden merkt sich die Auswahl und entfernt nichts (die Einträge sind abgeblendet); Einfügen in einem beliebigen Pane kopiert die kopierten Einträge oder verschiebt die ausgeschnittenen über die Übertragungen in dessen Ordner – siehe *Übertragungen*. Ausgeschnitten, aber nie eingefügt, bleibt alles, wo es ist. *Weitere ▸ Pfad kopieren* legt nur die Pfade in die Zwischenablage. |
+| In den Papierkorb verschieben | Rechtsklick, `Entf` | Ein Papierkorb auf jeder Verbindung (ein Ordner `.axross-trash` im Home der Verbindung, er geht also überall, wo die Verbindung umbenennen kann; *Papierkorb anzeigen…* holt die Einträge zurück). Nur lesende Protokolle und solche ohne Umbenennen – Gopher, LDAP, NNTP, PJL, POP3, SLP, SVN, TFTP, WMI – haben keinen; dort fragt `Entf` stattdessen, ob endgültig gelöscht werden soll. Läuft wie *Endgültig löschen*: im Hintergrund, mit derselben zweiten Rückfrage für versteckte Einträge. |
+| Endgültig löschen | Rechtsklick, `Umschalt+Entf` | Zählt zuerst abseits des GUI-Threads, was wegfällt (Ordner, Dateien, Bytes, versteckte Einträge), dann die Rückfrage – mit **Nein** als Standardknopf, `Enter` behält also die Dateien. Ein ausgewählter Ordner mit versteckten Einträgen (Dotfiles oder vom Backend als versteckt markiert) – oder einer, den die Prüfung nicht vollständig lesen konnte – braucht ein zweites OK mit *Nein* als Standard. Das Löschen läuft im Hintergrund: die Statuszeile zeigt den Fortschritt, *Abbrechen* hält beim nächsten Eintrag an – auch innerhalb eines Ordners, der lokal, per SMB, SFTP oder FTP gelöscht wird (SFTP entfernt die Dateien eines Ordners in Gruppen von 16 gleichzeitigen Anfragen und hält nach der laufenden Gruppe an); die Statuszeile sagt dann, wie viel von diesem Ordner schon weg ist (Gelöschtes bleibt gelöscht; ein Server, der einen ganzen Ordner mit einer Anfrage löscht, etwa WebDAV oder S3, löscht diesen Ordner zu Ende) – Fehler werden je Eintrag gemeldet, danach wird der Ordner neu geladen. Ein Pfad, der gerade gelöscht wird, wird abgewiesen, auch aus dem anderen Pane. |
+| Papierkorb anzeigen… | Rechtsklick | Dialog zum Wiederherstellen und endgültigen Löschen. |
+| Versionen anzeigen… | Rechtsklick | Versionsliste – *Version speichern unter…*, *Als aktuelle wiederherstellen*. |
+| Prüfsumme anzeigen… | Rechtsklick | Die Prüfsumme, die der Server selbst liefert (S3 ETag, Drive md5, ssh sha256sum…), sonst ein Hash über die gelesenen Daten. |
+| Entpacken… | Rechtsklick auf Archiv | In einen gleichnamigen Ordner daneben, abbrechbar, mit den Schutzprüfungen von `core.archive`. Nur lokale Backends. |
 | Mit Passphrase verschlüsseln… / entschlüsseln… | Rechtsklick | AES-256-GCM. |
-| Als root öffnen… | Rechtsklick | Lokal-only; pkexec-Flow. Versteckt wenn polkit/pkexec fehlen. |
-| XLink erstellen… | Rechtsklick | Cross-Protokoll-Pointer-Datei. |
-| Als FUSE mounten (read-only / read-write)… | Rechtsklick | Zwei Menü-Einträge, damit der Mount-Modus upfront sichtbar ist. Wird zu „FUSE unmounten", solange gemountet. |
-| Mehrere umbenennen… | Rechtsklick (Mehrfachauswahl) | Find/Replace oder Regex mit Live-Preview + atomarer Rename. |
-| Berechtigungen… | Rechtsklick | chmod-Dialog mit Checkbox-Grid + Oktal-Eingabe. |
+| Als root öffnen… | Rechtsklick | Nur lokal; läuft über `pkexec`. Ausgeblendet, wenn polkit/pkexec fehlen. |
+| XLink erstellen… | Rechtsklick | Protokollübergreifende Verweisdatei. |
+| Als FUSE mounten (read-only / read-write)… | Rechtsklick | Zwei Menüeinträge, damit der Mount-Modus von vornherein sichtbar ist. Solange gemountet, heißt der Eintrag *FUSE unmounten*. |
+| Mehrere umbenennen… | Rechtsklick (Mehrfachauswahl) | Suchen und Ersetzen oder regulärer Ausdruck, mit Live-Vorschau und atomarem Umbenennen. |
+| Berechtigungen… | Rechtsklick | chmod-Dialog mit einem Raster aus Kästchen und oktaler Eingabe. |
 
 ## Dateien finden
 
@@ -564,7 +613,7 @@ Fenster zeigt die Index-Datei.
   125 s (etwa 2 300 Einträge/s), zweiter Lauf über denselben Baum 53 s,
   Index-Datei 98 MiB; eine Namenssuche 0,4–1,2 s (jede Zeile wird gelesen;
   viele Treffer dauern länger), eine Endungssuche 37 ms. Gut für „wo war
-  diese Datei" über Verbindungen, die gerade offline sind; keine
+  diese Datei“ über Verbindungen, die gerade offline sind; keine
   Inhaltssuche (das ist *Dateien finden → Enthält*, live).
 
 ### Dateien finden und sift
@@ -907,11 +956,11 @@ eines floating Panels dockt es wieder an.
   (`pty.fork()`) und remote-SSH-über-paramiko stehen beide bereit;
   die SSH-Variante reused die bestehende Verbindung.
 
-## Datei-Metadata
+## Datei-Metadaten
 
 Rechtsklick → **Metadaten anzeigen…**, **Metadaten entfernen…** oder **Metadaten
 exportieren…** wirkt auf die ausgewählten Dateien und Ordner, ohne Auswahl
-auf den Ordner selbst. Das Metadata-Fenster zeigt je Datei eine Zeile,
+auf den Ordner selbst. Das Metadaten-Fenster zeigt je Datei eine Zeile,
 ihre Felder hintereinander als `key: value`; Doppelklick oder Rechtsklick
 → *Eigenschaften…* öffnet alle Felder dieser Datei, gruppiert und eins pro
 Zeile, Rechtsklick → *Metadaten entfernen* bereinigt nur die ausgewählten
@@ -935,7 +984,7 @@ Hintergrund mit Fortschritt und *Abbrechen*. In Bild- und Media-Viewer
 Metadaten-Einstellungen…* öffnet sie):
 
 - **Die Datei ersetzen** (Standard): die Datei wird atomar ersetzt, das Original
-  bleibt im axross-Trash. Ein Lauf — eine Datei oder ein ganzer
+  bleibt im axross-Papierkorb. Ein Lauf — eine Datei oder ein ganzer
   Ordner — ist ein Eintrag für *Bearbeiten → Letzte Aktion widerrufen* (`Strg+Z`),
   der jedes Original Byte für Byte zurückholt, aber nur solange die
   Datei noch genau das enthält, was das Entfernen geschrieben hat.
@@ -946,7 +995,7 @@ Metadaten-Einstellungen…* öffnet sie):
 Eine Nachfrage gibt es nur, wenn dort *Vor dem Entfernen von Metadaten fragen*
 angehakt ist. Remote-Dateien gehen über eine private Temp-Kopie bis zum
 *Größenlimit beim Öffnen* und zurück über den atomaren Schreibweg des Backends;
-eine Verbindung, deren Trash nicht beschreibbar ist, bekommt
+eine Verbindung, deren Papierkorb nicht beschreibbar ist, bekommt
 stattdessen eine bereinigte Kopie, und das Ergebnis sagt es. Eine Datei,
 die sich während des Bereinigens ändert, bleibt unangetastet. Im
 `paranoid`-Mode funktionieren Lesen und Entfernen, außer bei Audio /
@@ -964,7 +1013,7 @@ jedem von ihnen öffnet seinen Teil dieses Abschnitts.
 *Ansicht → Duplicate Finder…* (`Strg+Umschalt+D`; im Pane Rechtsklick →
 *Doppelte Dateien finden…*) arbeitet mit dem Duplikat-Index (`cas.sqlite`,
 siehe *Der Offline-Index*).
-Er gruppiert indizierte Dateien nach Content-Hash, die größte Verschwendung zuerst: jede Gruppe zeigt den Platz, den sie freigäbe, die Statuszeile die Summe. Leere Dateien und Gruppen, die nur Hardlinks einer Datei sind, bleiben verborgen, solange *Leere Dateien* / *Hardlinks* nicht angehakt ist. *Filter* (Text oder Muster wie `*.jpg *.png`; `Strg+F`), *Mindestens* (eine Größe) und *Sortieren* (freizugebender Platz, Größe, Kopien, Name, Ordner) grenzen die Liste ein; die Kopien einer Gruppe bleiben in Survivor-Reihenfolge (die erste bleibt). *Aus aktivem Pane neu aufbauen…* hasht den Ordner im Hintergrund mit Anzahl, Bytes und *Abbrechen*: Unveränderte Dateien werden nicht neu gehasht, seit dem letzten Scan verschwundene Dateien verlassen den Index, und der Bericht nennt Dateien, die nicht lesbar waren, Ordner, die sich nicht auflisten ließen, und übersprungene FIFOs, Sockets oder Geräte (nie gelesen: das könnte hängen). Ein Backend ohne eigene Content-Prüfsumme (SMB, einfaches FTP, WebDAV nur mit ETags) lässt seine Dateien stattdessen lesen — nur die, deren Größe eine andere Datei teilt, und nur so weit, wie ihre ersten 64 KiB übereinstimmen; ein ETag zählt nie als Hash. *Alle Duplikate markieren (erste behalten)* behält die älteste Kopie; *Markieren und behalten…* (auch im Kontextmenü) behält die neueste Kopie, den kürzesten Pfad oder eine Kopie in einem Ordner, oder markiert die Kopien in einem Ordner; ein Hardlink einer behaltenen Kopie wird nie markiert, und Hardlinks zählen nicht als freizugebender Platz. *Auswahl in den Trash verschieben…* (`Del`) verschiebt die markierten Kopien in den axross-Trash, nachdem live geprüft ist, dass eine echte andere Kopie bleibt. `Enter` öffnet den enthaltenden Ordner, die Zeile unter der Liste zeigt die aktuelle Zeile vollständig (exakte Größe, Hash, Hardlinks), und `ax-cas://…`-URLs lassen sich kopieren. Tausende Gruppen erscheinen stückweise, während das Fenster bedienbar bleibt.
+Er gruppiert indizierte Dateien nach Content-Hash, die größte Verschwendung zuerst: jede Gruppe zeigt den Platz, den sie freigäbe, die Statuszeile die Summe. Leere Dateien und Gruppen, die nur Hardlinks einer Datei sind, bleiben verborgen, solange *Leere Dateien* / *Hardlinks* nicht angehakt ist. *Filter* (Text oder Muster wie `*.jpg *.png`; `Strg+F`), *Mindestens* (eine Größe) und *Sortieren* (freizugebender Platz, Größe, Kopien, Name, Ordner) grenzen die Liste ein; die Kopien einer Gruppe bleiben in Survivor-Reihenfolge (die erste bleibt). *Aus aktivem Pane neu aufbauen…* hasht den Ordner im Hintergrund mit Anzahl, Bytes und *Abbrechen*: Unveränderte Dateien werden nicht neu gehasht, seit dem letzten Scan verschwundene Dateien verlassen den Index, und der Bericht nennt Dateien, die nicht lesbar waren, Ordner, die sich nicht auflisten ließen, und übersprungene FIFOs, Sockets oder Geräte (nie gelesen: das könnte hängen). Ein Backend ohne eigene Content-Prüfsumme (SMB, einfaches FTP, WebDAV nur mit ETags) lässt seine Dateien stattdessen lesen — nur die, deren Größe eine andere Datei teilt, und nur so weit, wie ihre ersten 64 KiB übereinstimmen; ein ETag zählt nie als Hash. *Alle Duplikate markieren (erste behalten)* behält die älteste Kopie; *Markieren und behalten…* (auch im Kontextmenü) behält die neueste Kopie, den kürzesten Pfad oder eine Kopie in einem Ordner, oder markiert die Kopien in einem Ordner; ein Hardlink einer behaltenen Kopie wird nie markiert, und Hardlinks zählen nicht als freizugebender Platz. *Auswahl in den Papierkorb verschieben…* (`Del`) verschiebt die markierten Kopien in den axross-Papierkorb, nachdem live geprüft ist, dass eine echte andere Kopie bleibt. `Enter` öffnet den enthaltenden Ordner, die Zeile unter der Liste zeigt die aktuelle Zeile vollständig (exakte Größe, Hash, Hardlinks), und `ax-cas://…`-URLs lassen sich kopieren. Tausende Gruppen erscheinen stückweise, während das Fenster bedienbar bleibt.
 
 *Ansicht → Duplikat-Index & Verlauf…* zeigt den Index für sich: jeder
 Neuaufbau wird als Scan festgehalten und mit Ordner, Backend, Beginn und
@@ -1022,9 +1071,9 @@ Die Jobs liegen in `~/.local/state/axross/jobs.json`.
 - **Tools → Recovery-Scan…** listet, was sich im Ordner des aktiven Panes
   wiederherstellen lässt: temporäre Dateien, die ein unterbrochenes
   atomares Schreiben zurückließ (`.tmp-*.tmp`, auch die älteren
-  `.axross-atomic-*.tmp`), und die Einträge im axross-Trash dieser
+  `.axross-atomic-*.tmp`), und die Einträge im axross-Papierkorb dieser
   Verbindung mit ursprünglichem Pfad und Größe. Er entfernt nichts:
-  *Trash anzeigen…* stellt wieder her, und Reste, die älter als eine
+  *Papierkorb anzeigen…* stellt wieder her, und Reste, die älter als eine
   Stunde sind, entfernt ein Pane, wenn es ihren Ordner öffnet.
 
 ## Mitgelieferte Extensions
@@ -1339,31 +1388,32 @@ darauf:
   Channel mit PTY — voll-interaktive Shell, kein zweites Login,
   kein zweiter Key-Challenge. Funktioniert gleich für SSH und SCP.
 
-Damit bekommt eine SCP-Pane den selben "Remote-Shell hier
-öffnen"-Rechtsklick wie eine SSH-Pane, auf der gleichen Verbindung.
+Damit bekommt ein SCP-Pane denselben Rechtsklick „Remote-Shell hier
+öffnen“ wie ein SSH-Pane, auf derselben Verbindung.
 
-## Keyring-Auto-Detect & Re-Detect
+## Keyring automatisch erkennen und neu erkennen
 
-Gespeicherte Passwörter landen im OS-Keyring (Secret-Service /
-KWallet / Windows Credential Locker / macOS Keychain / KeePassXC
-Secret-Service-Plug-in). axross probt beim ersten Speichern auf
-ein lauffähiges Backend. Jedes andere keyring-Backend funktioniert
-ebenso, solange es keine Eingabe im Terminal braucht (etwa
+Gespeicherte Passwörter landen im Keyring des Betriebssystems
+(Secret Service / KWallet / Windows Credential Locker / macOS Keychain /
+das Secret-Service-Plug-in von KeePassXC). axross sucht beim ersten
+Speichern ein funktionierendes Backend. Jedes andere keyring-Backend
+funktioniert ebenso, solange es keine Eingabe im Terminal braucht (etwa
 keyring-pass oder keyrings.cryptfile über ``keyringrc.cfg``); sind
 mehrere installiert, nimmt axross das, das keyring selbst zuerst
 nimmt. Klartextdateien (``PlaintextKeyring``) und das
 ``EncryptedKeyring`` von keyrings.alt, das sein Master-Passwort im
 Terminal abfragt, werden nicht genutzt. Ohne brauchbares Backend ist
-„Im Keyring speichern“ deaktiviert mit konkreter Install-Hilfe:
+„Im Keyring speichern“ ausgegraut, mit einem Hinweis, was zu
+installieren ist:
 
 - **Arch:** ``sudo pacman -S gnome-keyring`` (oder kwallet,
   oder keepassxc)
 - **Debian:** ``sudo apt install gnome-keyring``
 - **Fedora:** ``sudo dnf install gnome-keyring``
 
-Wenn du den Daemon **nach** axross-Start aufmachst, hilft
-**Datei → System-Keyring neu erkennen** (oder einfach noch mal Speichern
-versuchen — der nächste ``store_password`` re-checkt automatisch).
+Startest du den Daemon erst **nach** axross, hilft
+**Datei → System-Keyring neu erkennen** (oder einfach noch einmal
+speichern – der nächste ``store_password`` prüft automatisch neu).
 
 ## MCP-Server
 
@@ -1373,7 +1423,7 @@ konfigurierte Backend über JSON-RPC-Tools steuern kann.
 
 ```bash
 axross --mcp-server                                  # read-only, stdio
-axross --mcp-server --mcp-write --mcp-root ~/data    # Schreib-Tools (auf diesen Root gecappt)
+axross --mcp-server --mcp-write --mcp-root ~/data    # Schreib-Tools (auf diesen Root beschränkt)
 axross --mcp-server --mcp-http 127.0.0.1:7331        # HTTP-Loopback
 ```
 
@@ -1408,9 +1458,9 @@ ohne Meldung, und seine OpenAI-kompatible API nimmt keine Context-Größe
 an. Hat eine Antwort den Context gefüllt, sagt der Tab das.
 
 **Tabs.** Jeder Tab ist ein eigener Verlauf mit eigenem Modell,
-Protection-Mode, Sandbox, Ordner und Tools: „+" oder Strg+T öffnet
-einen, ein Doppelklick benennt ihn um. Mit *Keep tabs* (Tools →
-Agent-Einstellungen…) ist jeder Tab eine JSON-Datei in
+Protection-Mode, Sandbox, Ordner und Tools: „+“ oder Strg+T öffnet
+einen, ein Doppelklick benennt ihn um. Mit *Tabs und ihre Unterhaltungen behalten*
+(Tools → Agent-Einstellungen…) ist jeder Tab eine JSON-Datei in
 `~/.config/axross/agent/sessions/` (`0o600`) und kommt beim nächsten
 Start wieder. Strg+Enter sendet, Esc oder Stop beendet die Aufgabe
 sofort - auch während das Modell noch an der Antwort schreibt (der
@@ -1423,7 +1473,7 @@ ein Modell ganz ohne Antwort, steht das da.
 **Verläufe als eigene Panels.** Rechtsklick auf einen Tab → **Als Panel
 lösen** - oder den Tab weit aus der Tab-Leiste ziehen - macht den
 Verlauf zu einem eigenen Panel; **Tools → Neues Agent-Fenster** (oder ⧉
-neben „+") öffnet einen neuen Verlauf gleich als Panel. **An Workspace senden** im selben Tab-Menü erledigt es in einem Schritt: der Verlauf
+neben „+“) öffnet einen neuen Verlauf gleich als Panel. **An Workspace senden** im selben Tab-Menü erledigt es in einem Schritt: der Verlauf
 wird abgelöst und auf den gewählten Workspace gelegt, mit **Neuer Workspace** allein auf einen neuen, wo er die Hauptansicht ist - per
 Rechtsklick auf dessen Tab → **In eigenes Fenster lösen** bekommt er ein eigenes
 Fenster. Es wandert
@@ -1436,11 +1486,11 @@ Workspace, wo es ein Pane ist: an der Titelleiste ziehen, in der Größe
 den Verlauf wie das Schließen seines Tabs: gibt es einen Verlauf, fragt
 es vorher, dann ist er gelöscht. Wird sein Workspace geschlossen, bleibt
 es auf *Alle Workspaces*; *Alle Panels in diesem Bereich schließen* setzt es zurück
-ins Agent-Dock. Jedes Panel hat seine eigene Lampe; die Voice arbeitet
+ins Agent-Dock. Jedes Panel hat seine eigene Lampe; die Stimme arbeitet
 für den Verlauf, in dem sie gestartet wurde, sonst für den, in dem
-zuletzt getippt wurde; Settings, Profile und Extensions erreichen jeden
-Verlauf. Mit *Keep tabs* kommen abgelöste Verläufe nach einem Neustart
-auf ihrem Workspace bzw. auf All Workspaces wieder; einer, dessen
+zuletzt getippt wurde; Einstellungen, Profile und Extensions erreichen jeden
+Verlauf. Mit *Tabs und ihre Unterhaltungen behalten* kommen abgelöste Verläufe nach einem Neustart
+auf ihrem Workspace bzw. auf *Alle Workspaces* wieder; einer, dessen
 Workspace nicht wiederkommt (das Layout wird nicht wiederhergestellt),
 ist wieder ein Tab.
 
@@ -1467,11 +1517,11 @@ Servers, nur solange das Dock sichtbar ist.
   einem Dialog, der Tool und Argumente zeigt (Passphrasen maskiert).
 - **Plan** — der Agent liest nur und schreibt einen Plan; *Diesen Plan ausführen* führt ihn dann im Ask-Mode aus.
 - **Automatisch** — Änderungen laufen ohne Frage; Remote-Befehle und Tools
-  eines MCP-Servers auf „always" fragen weiter.
+  eines MCP-Servers auf „always“ fragen weiter.
 - **Bypass** — nichts fragt. Nur wählbar, wenn in den Agent-Einstellungen
   eingeschaltet, nie im Security-Mode paranoid, und rot markiert.
 
-**Dateien übergeben.** Das „+"-Menü hängt Auswahl oder Ordner des
+**Dateien übergeben.** Das „+“-Menü hängt Auswahl oder Ordner des
 aktiven Panes an, Dateien aus einem Dialog oder einen Pfad aus der
 Zwischenablage; Dateien lassen sich aus einem Pane auf den Tab ziehen,
 oder *An den Agenten senden* im Rechtsklick-Menü des Panes. Eine lokale Datei
@@ -1500,6 +1550,45 @@ Ordner darunter nur lesend eingehängt. Der Agent liest außerdem keine
 Tokens von axross und keine privaten SSH- und GnuPG-Keys
 (`--mcp-allow-secret-reads` hebt das für den MCP-Server auf).
 
+**Versteckte Dateien sind für Agent und MCP schreibgeschützt.** Über die
+Liste hinaus schreibt, löscht oder verschiebt kein Werkzeug des Agenten
+oder des MCP-Servers einen versteckten Eintrag des Home-Ordners
+(`~/.pdbrc`, `~/.wezterm.lua`, `~/.aliases`, `~/.jupyter`, …) oder irgendetwas
+in `~/.config`, `~/.local/share` und `~/.local/state` (auch dort, wohin XDG
+sie verlegt, `~/Library` unter macOS, `%APPDATA%` unter Windows): zu viele
+Programme führen Code von dort aus. Soll der Agent einen dieser Ordner
+ändern, gib genau diesen Ordner frei - als Wurzel des Agenten (oder
+des MCP-Servers) oder als zusätzlichen Ordner (`~/.config/myapp`); die
+Orte der Liste oben bleiben darin geschützt, und das ganze Home
+freizugeben hebt nichts auf. zsh-Dateien in `$ZDOTDIR` (aus `~/.zshenv`
+gelesen) zählen als Startdateien, und die Git-Dateien, die Code ausführen -
+`.git/config`, `.git/hooks`, `.git/info`, `.gitmodules` eines Repositorys,
+ein `.git`-Eintrag selbst -, werden überall abgelehnt. In der Sandbox werden
+die versteckten Einträge eines beschreibbaren Home nur lesend eingehängt,
+und kein neuer kann angelegt werden; Git-Konfiguration und Hooks des
+Agenten-Ordners sind ebenfalls nur lesbar. MCP-`chmod` setzt kein
+setuid-, setgid- oder Sticky-Bit und macht nichts für Gruppe oder alle
+schreibbar.
+
+**Geheimnisse, die der Agent nicht liest**, neben denen von axross: die
+Zugangsdaten gängiger Werkzeuge (`~/.aws`, `~/.kube`,
+`~/.docker/config.json`, `~/.config/gh`, `~/.config/gcloud`, `~/.azure`,
+`~/.pypirc`, `~/.npmrc`, cargo, rclone, Vault, Terraform, die Zugangsdaten
+von Claude Code, `pass`), Browser- und Mail-Profile (Firefox, Chrome,
+Chromium, Brave, Edge, Thunderbird; die macOS-Schlüsselbunde) und unter
+einem versteckten Ordner des Home jede Datei, deren Name credential,
+token, secret, key (`*.pem`, `*.key`, `id_*`, `*key*.json`), eine
+Passwort-Datenbank (`*.kdbx`), cookies oder history nennt (Shell- und
+REPL-Verläufe enthalten getippte Tokens). Ihre Namen bleiben sichtbar;
+die Sandbox zeigt sie leer. Der Papierkorb von axross (`~/.axross-trash`)
+ist für alle Werkzeuge ebenfalls geheim und schreibgeschützt: ein
+gelöschter Schlüssel bleibt ein Schlüssel, und was aus dem Papierkorb
+zurückkommt, legt axross mit seinen Rechten zurück. Der Papierkorb
+signiert jeden Eintrag: ein Eintrag, dessen Daten oder Angaben geändert
+wurden, wird nicht wiederhergestellt, und einer, der an einen geschützten
+Ort zurückgeht (eine Startdatei, einen Autostart-Eintrag), nur im
+Papierkorb-Fenster und erst nach deiner Bestätigung.
+
 **Dateien schreibgeschützt** (in der oberen Zeile des Tabs, und für jeden Tab in
 Agent-Einstellungen → Zugriff): der Agent liest Dateien, ändert aber keine —
 kein Schreiben, Löschen oder Verschieben, keine Remote Commands (ein
@@ -1523,7 +1612,7 @@ Review a config folder, Free disk space (mit den Tools des Duplicate
 Finders) — zum Ergänzen und Absenden. Extensions können eigene
 hinzufügen.
 
-**Eigene Topics** („Work prompts"): Topics ▸ *+ Neues Thema…* öffnet ein
+**Eigene Topics** („Work prompts“): Topics ▸ *+ Neues Thema…* öffnet ein
 leeres Formular, *Diese Aufgabe als Thema speichern…* übernimmt das Eingabefeld,
 *Meine Themen bearbeiten oder löschen…* ändert oder löscht sie. Ein Topic speichert
 Titel, Slash-Command,
@@ -1560,8 +1649,8 @@ heraus; deshalb sichert sie ein Hauptschalter, und der ist
 - *Zugriff…* im Tab (oder *Agent-Einstellungen → Sessions* für alle Tabs auf
   einmal) ist die eigene Wahl des Tabs innerhalb davon: sein
   Hauptschalter und seine Funktionen, sein **Netzwerk** und seine
-  **Ordner**. Ein neuer Tab startet mit dem Hauptschalter, wie Agent
-  Settings ihn hat.
+  **Ordner**. Ein neuer Tab startet mit dem Hauptschalter, wie die
+  Agent-Einstellungen ihn haben.
 
 | Netzwerk eines Tabs | Bedeutung |
 |---|---|
@@ -1586,8 +1675,8 @@ gewählt **nach Kategorie** (die Catalog-Kategorie, aus der ein Server
 installiert wurde, z. B. *Security: Reverse Engineering*; *Kategorie* in
 Agent-Einstellungen → MCP-Server setzt eine von Hand) und/oder **nach Name**
 (oder nach dem Catalog-Eintrag, aus dem er stammt — ein umbenannter
-Server passt weiter). Der Pfeil neben "+" im Agent-Dock bietet **Neuer Tab aus Profil**, **Profil anwenden…** (auch im Rechtsklick-Menü eines Tabs)
-und **Agent-Profile bearbeiten…**; Tools → Neuer Agent-Tab aus Profile öffnet
+Server passt weiter). Der Pfeil neben „+“ im Agent-Dock bietet **Neuer Tab aus Profil**, **Profil anwenden…** (auch im Rechtsklick-Menü eines Tabs)
+und **Agent-Profile bearbeiten…**; Tools → Neuer Agent-Tab aus Profil öffnet
 einen Tab für den Ordner des aktiven Panes. *Profil anwenden…* zeigt
 vorher, was der Tab bekäme; es ändert die Settings des Tabs, Ordner und
 Konversation bleiben, und ein Tab mit laufendem Task lehnt ab (erst
@@ -1599,7 +1688,7 @@ auf dieser Kategorie oder sucht den Server-Namen).
 Ein Profil **erweitert Agent-Einstellungen → Zugriff nie**: sind axross-Funktionen
 dort aus, werden die MCP-Server des Profils nicht angeboten, und der Tab
 sagt es; Bypass nur, wo er wählbar ist; ein Sandbox-Profil, das es nicht
-gibt, bleibt stehen und wird verweigert, nie still "No sandbox". Unter
+gibt, bleibt stehen und wird verweigert, nie still *Keine Sandbox*. Unter
 *Dateien schreibgeschützt* bietet ein Server mit *Fragt* „Jeder Aufruf fragt (auch in Auto)“ gar kein
 Tool an, außer er ist ein Container ohne Netzwerk mit read-only Ordnern
 (siehe *Dateien schreibgeschützt* oben) — der Tab nennt jeden solchen Server und
@@ -1610,13 +1699,13 @@ Eingebaute **Presets** (read-only, markiert *(Preset)*; *Kopieren* macht ein
 
 | Preset | Was es einrichtet |
 |---|---|
-| Files Assistant | die File-Tools von axross, die offenen Remote-Verbindungen; Änderungen fragen; keine MCP-Server |
+| Dateiassistent | die Datei-Tools von axross, die offenen Remote-Verbindungen; Änderungen fragen; keine MCP-Server |
 | Reverse Engineering | Kategorien *Security: Reverse Engineering* und *Security: Firmware & Forensics*; Sandbox *High* |
-| Forensics read-only | Kategorie *Security: Firmware & Forensics*; Files read-only |
-| Network & Web Recon | Kategorien *Security: Network Recon*, *Security: Web*, *Security: OSINT*; Mode Ask |
+| Forensik (nur lesen) | Kategorie *Security: Firmware & Forensics*; *Dateien schreibgeschützt* |
+| Netzwerk- & Web-Recon | Kategorien *Security: Network Recon*, *Security: Web*, *Security: OSINT*; Mode Ask |
 | Code & Secrets | Server *git* und *filesystem*, Kategorie *Security: Code & Secrets* |
-| Remote Ops | Remote Files, Saved Connections, Remote Commands (jedes fragt); Mode Ask |
-| Research | Server *fetch*, *memory*, *sequentialthinking*; nicht *Dateien schreibgeschützt* (fetch braucht Netzwerk), *Änderungen an Dateien erlauben* aus |
+| Remote-Betrieb | Remote Files, Saved Connections, Remote Commands (jedes fragt); Mode Ask |
+| Recherche | Server *fetch*, *memory*, *sequentialthinking*; nicht *Dateien schreibgeschützt* (fetch braucht Netzwerk), *Änderungen an Dateien erlauben* aus |
 
 Ein Preset, dessen Server nicht installiert sind, richtet den Rest des
 Tabs trotzdem ein. Agent-Einstellungen → **Profile** bearbeitet die eigenen
@@ -1663,13 +1752,13 @@ agent-image` ([PACKAGING.md](PACKAGING.md)).
 **MCP-Server** (Agent-Einstellungen → MCP-Server): weitere MCP-Server — ein
 Programm (stdio) oder ein HTTP-Endpunkt —, deren Tools ein Tab als
 `<server>__<tool>` anbieten kann. *Testen* listet ihre Tools. Ein Server
-auf „always" fragt bei jedem Aufruf; „writes" lässt Tools, die der
+auf „always“ fragt bei jedem Aufruf; „writes“ lässt Tools, die der
 Server als read-only markiert, ohne Frage laufen. Ein Programm kann in
 einem Sandbox-Profil laufen; eines ohne sagt *läuft auf diesem Rechner, nicht
 in einem Container*. Der Token eines HTTP-Servers liegt im Keyring. Ein
 getippter Befehl, der Code herunterlädt (`npx …`, `uvx …`, `docker run
 …`), wird nie als Programm auf diesem Rechner gespeichert: *In einem Container installieren* baut ihn in rootless podman (ohne Netz), oder der Grund, warum
-das nicht geht, wird gezeigt. Eine von Hand bearbeitete Settings-Datei mit
+das nicht geht, wird gezeigt. Eine von Hand bearbeitete Einstellungsdatei mit
 so einem Befehl startet ihn ebenso wenig (der Server wird ausgelassen, mit
 Log-Zeile), und eine Container-Zeile mit erweiternden Flags
 (`--privileged`, `--cap-add`, Host-Namespaces, andere Mounts) wird
@@ -1749,12 +1838,12 @@ die Server von Claude Desktop (`claude_desktop_config.json`), Claude Code
 VS Code (`settings.json` → `mcp.servers`,
 `mcp.json`, `.vscode/mcp.json`) und Cursor (`~/.cursor/mcp.json`,
 `.cursor/mcp.json`), dazu podman-Images, die axross installiert hat (auch
-wenn die Settings den Server verloren haben). Ein Haken in den Agent-Einstellungen
-fügt den Server eingeschaltet hinzu (Save behält ihn), Haken weg entfernt
+wenn die Einstellungen den Server verloren haben). Ein Haken in den Agent-Einstellungen
+fügt den Server eingeschaltet hinzu (*Speichern* behält ihn), Haken weg entfernt
 ihn; ein Haken an einer `detected:<name>`-Zeile eines Tabs fügt ihn hinzu,
-speichert die Settings und hakt `mcp:<name>` in diesem Tab an - das Modell
+speichert die Einstellungen und hakt `mcp:<name>` in diesem Tab an - das Modell
 bekommt seine Tools sofort. Danach ist er ein Server wie jeder andere
-(dieselben Confirm-Modes, standardmäßig „always"). **Was heruntergeladen
+(dieselben Confirm-Modes, standardmäßig „always“). **Was heruntergeladen
 wird, läuft im Container, nie auf diesem Rechner:** ein Befehl, der beim
 Start Code holt (`npx`, `bunx`, `pnpm dlx`, `yarn dlx`, `npm exec`, `uvx`,
 `uv tool run`, `pipx run`, `docker`/`podman run` …), wird beim Haken
@@ -1908,7 +1997,7 @@ importiert (`messages/<sha256>`), ihr Bericht (`reports/<sha256>.json`), `index.
 
 ## Einstellungen
 
-**Bearbeiten → Einstellungen…** (**Strg+,**; unter macOS im Application-Menü) bündelt
+**Bearbeiten → Einstellungen…** (**Strg+,**; unter macOS im Programm-Menü) bündelt
 alle Einstellungen von axross in einem Fenster: links die Kategorien,
 rechts die Seite der gewählten, darüber ein Feld, das eine Einstellung
 über ihren Namen findet (*sudo*, *proxy* oder *zoom* tippen).
@@ -1916,90 +2005,94 @@ rechts die Seite der gewählten, darüber ein Feld, das eine Einstellung
 | Kategorie | Einstellungen |
 |---|---|
 | Allgemein | Sprache (gilt ab dem nächsten Start), Layout der letzten Session beim Start wiederherstellen, wann ein Pane aktiv wird (per Klick oder nach 0,5–3 s Maus im Pane), die Tour „Erste Schritte“ beim nächsten Start anbieten (siehe [Handbuch und Touren](#handbuch-und-touren)) |
-| Darstellung | Theme, Compact Mode, Monochrome Icons, Icon Colours (Theme default; Own colours in every theme - auch in Hacker und Amber, die jedes Icon in einer Farbe zeichnen; One colour nach Wahl), Schriftgröße (Zoom), Hidden Files hervorheben und ihre Farbe (eine auf dem Theme schwer lesbare Farbe erst nach Rückfrage) |
-| Werkzeugleiste | Buttons nach Kategorie gruppieren, die Farbe jeder Kategorie hinter ihren Buttons zeigen, die Farbe jeder Kategorie (Connections, Windows & Panes, Files & Search, Media, LLM & Agent, Tools & System, Extensions), *Auf Standard zurücksetzen* |
-| Dateien & Panes | Hidden Files zeigen, Open Size Limit, Parallel transfers, RAM-Workspaces (an / aus, Größenlimit, frei gehaltener Speicher) und Temp-Dateien im RAM (gilt ab dem nächsten Start) |
-| Netzwerk & Proxy | Default-Proxy, Bypass-Liste, PAC-Script, ein Test |
-| LLM-Profile | Die LLM-Server von Agent- und Analysis-Dock; *Modelle abrufen* öffnet eine Liste mit Größe, Parametern, Quantisierung und dem geladenen Modell, soweit der Server sie meldet |
-| Analyse (sift) | Automatische Analyse der gewählten Datei (aus: eine Auswahl nennt die Datei nur, *Analysieren* erklärt sie), das LLM-Profil von *Mit LLM analysieren* (das aktive oder ein eigenes - der Agent behält seine Wahl), Max Bytes pro Datei (begrenzt auch die Kopie einer Remote-Datei), Time Budget pro Datei, Vision, Context Tokens (0 = was der Server meldet), Tags pro Datei, Categories (eine pro Zeile), sifts Ergebnisse im Cache behalten, *Cache leeren*; sifts Version, oder ein Link zu *Hilfe → Funktionen…*, wenn dieser Build kein sift hat |
+| Darstellung | Theme, kompakter Modus, einfarbige Symbole, Symbolfarben (*Wie das Theme*; *Eigene Farben in jedem Theme* – auch in Hacker und Amber, die jedes Symbol in einer Farbe zeichnen; *Eine Farbe* nach Wahl), Schriftgröße (Zoom), versteckte Dateien hervorheben und ihre Farbe (eine Farbe, die auf dem Theme schwer lesbar ist, erst nach Rückfrage) |
+| Werkzeugleiste | Die Knöpfe nach Kategorie gruppieren, die Farbe jeder Kategorie hinter ihren Knöpfen zeigen, die Farbe jeder Kategorie (Verbindungen, Fenster & Panes, Dateien & Suche, Medien, LLM & Agent, Tools & System, Extensions), *Auf Standard zurücksetzen* |
+| Dateien & Panes | Versteckte Dateien anzeigen, Größenlimit beim Öffnen, parallele Übertragungen, RAM-Workspaces (an / aus, Größenlimit, frei gehaltener Speicher) und temporäre Dateien im RAM (gilt ab dem nächsten Start) |
+| Netzwerk & Proxy | Der Standard-Proxy, die Ausnahmen (*Kein Proxy für*), ein PAC-Skript, ein Test |
+| LLM-Profile | Die LLM-Server des Agent-Docks und des Docks *Analyse (sift)*; *Modelle abrufen* öffnet eine Liste mit Größe, Parametern, Quantisierung und dem geladenen Modell, soweit der Server sie meldet |
+| Analyse (sift) | Automatische Analyse der gewählten Datei (aus: eine Auswahl nennt die Datei nur, *Analysieren* erklärt sie), das LLM-Profil von *Mit LLM analysieren* (das aktive oder ein eigenes – der Agent behält seine Wahl), höchstens gelesene Bytes pro Datei (begrenzt auch die Kopie einer Remote-Datei), Zeitbudget pro Datei, Vision, Kontext-Tokens (0 = was der Server meldet), Tags pro Datei, Kategorien (eine pro Zeile), Ergebnisse von sift im Cache behalten, *Cache leeren*; die Version von sift, oder ein Link auf *Hilfe → Funktionen…*, wenn dieser Build kein sift hat |
 | Agent | Allgemein, Prompts, Zugriff, Sandboxes, MCP-Server, MCP-Quellen, Sessions |
-| Stimme | Antworten vorlesen, gesprochene Sprache, die Stimme jeder Sprache (Download, Anhören) und wie sie spricht (Tempo, Tonhöhe, Ausdruck, Rhythmusvariation, Lautstärke, Pause zwischen Sätzen), Mikrofon-Modus, Hold-Taste, erkannten Text einfügen oder senden, die Pause, die das Sprechen beendet |
-| Audio | Audio-Backend (Automatic, PipeWire, PulseAudio; das Backend dieses Laufs wird gezeigt, eine Änderung gilt ab dem nächsten Start), Output-Device und Volume (skaliert alles, was axross abspielt) mit *Testton abspielen*, Input-Device und Volume (Gain) mit *Mikrofon testen* (ein Level-Meter) und *3 s aufnehmen und abspielen*, das Ergebnis des Audio-Checks und *Audio erneut prüfen* |
-| Metadaten | Wie Metadaten entfernen schreibt, vorher fragen |
-| Suche | Gleichzeitig durchsuchte Hosts von *Auf Netzwerk-Hosts suchen*; wo Offline- und Duplicate-Index liegen |
-| Sicherheit | Paranoid Security Mode (bleibt für den nächsten Start; `AXROSS_SECURITY_MODE` im Environment gewinnt), sudo-Passwort merken |
+| Stimme | Antworten vorlesen, gesprochene Sprache, die Stimme jeder Sprache (Download, Anhören) und wie sie spricht (Tempo, Tonhöhe, Ausdruck, Rhythmusvariation, Lautstärke, Pause zwischen Sätzen), Mikrofon-Modus, Haltetaste, erkannten Text einfügen oder senden, die Pause, die das Sprechen beendet |
+| Audio | Audio-Backend (Automatisch, PipeWire, PulseAudio; das Backend dieses Laufs wird gezeigt, eine Änderung gilt ab dem nächsten Start), Output-Device und Volume (skaliert alles, was axross abspielt) mit *Testton abspielen*, Input-Device und Volume (Gain) mit *Mikrofon testen* (eine Pegelanzeige) und *3 s aufnehmen und abspielen*, das Ergebnis der Audio-Prüfung und *Audio erneut prüfen* |
+| Metadaten | Wie *Metadaten entfernen* schreibt, vorher fragen |
+| Suche | Gleichzeitig durchsuchte Hosts von *Auf Netzwerk-Hosts suchen*; wo der Offline-Index und der Index des Duplicate Finders liegen |
+| Sicherheit | Paranoider Sicherheitsmodus (bleibt für den nächsten Start; `AXROSS_SECURITY_MODE` in der Umgebung hat Vorrang), das sudo-Passwort merken |
 | Extensions | Welche Extensions eingeschaltet sind |
-| Updates | Check for updates at start, Updates automatisch laden, *Jetzt prüfen*, der letzte Check (siehe [Updates](#updates)) |
-| Logging | Das Gesamt-Level (DEBUG, INFO, WARNING, ERROR), ein Level je Area (Inherit, ein Level oder Off; Third-Party-Libraries WARNING), Größe und Rotation des Logfiles, *Ins Terminal loggen (stderr)*, wiederholte Messages zusammenfassen, *Auf Standard zurücksetzen* (siehe [Logging](#logging)) |
+| Updates | Beim Start nach Updates suchen, Updates automatisch herunterladen, *Jetzt prüfen*, die letzte Prüfung (siehe [Updates](#updates)) |
+| Logging | Die Gesamtstufe (DEBUG, INFO, WARNING, ERROR), eine Stufe je Bereich (*Erben*, eine Stufe oder *Aus*; Bibliotheken von Dritten WARNING), Größe und Rotation der Log-Datei, *Ins Terminal loggen (stderr)*, wiederholte Meldungen zusammenfassen, *Auf Standard zurücksetzen* (siehe [Logging](#logging)) |
 
 Die Seite **Analyse (sift)** schreibt `~/.config/axross/analysis.json`;
-das offene Analysis-Dock nutzt eine gespeicherte Änderung sofort und
-erklärt die gezeigte Datei neu. Die Grenzen sind sifts eigene - ein Wert,
-den sift ablehnen würde (ein Context von 100 Tokens, eine Category
-doppelt), wird über der Seite genannt, und nichts wird gespeichert. sifts
-Ergebnisse liegen im Cache `~/.cache/axross/sift`
+das offene Dock *Analyse (sift)* übernimmt eine gespeicherte Änderung
+sofort und erklärt die gezeigte Datei neu. Die Grenzen sind die von sift
+– ein Wert, den sift ablehnen würde (ein Kontext von 100 Tokens, eine
+doppelte Kategorie), wird über der Seite genannt, und nichts wird
+gespeichert. Die Ergebnisse von sift liegen im Cache `~/.cache/axross/sift`
 (`$XDG_CACHE_HOME/axross/sift`, nur für dich lesbar); *Cache leeren*
-entfernt dort sifts Einträge und sonst nichts. Eine kaputte
-`analysis.json` liest sich als Defaults und bleibt als
+entfernt dort die Einträge von sift und sonst nichts. Eine beschädigte
+`analysis.json` wird wie die Standardwerte gelesen und bleibt als
 `analysis.json.unreadable-…` daneben liegen, bevor das nächste Speichern
 sie ersetzt.
 
-Die **Audio**-Seite fasst Qt Multimedia erst an, wenn der Audio-Check
-(ein eigener Prozess) geantwortet hat; scheitert er, nennt die Seite den
-Grund, die Tests bleiben aus, und das Backend lässt sich trotzdem wählen
-und speichern. Ein gespeichertes Device, das nicht eingesteckt ist,
-bleibt als *(not connected)* in seiner Liste - bis es wieder da ist,
-spielt der System-Default. Ein Device, das bei offener Seite eingesteckt
-wird, erscheint sofort.
+Die Seite **Audio** greift erst auf Qt Multimedia zu, wenn die
+Audio-Prüfung (ein eigener Prozess) geantwortet hat; scheitert sie,
+nennt die Seite den Grund, die Tests bleiben aus, und das Backend lässt
+sich trotzdem wählen und speichern. Ein gespeichertes Gerät, das nicht
+eingesteckt ist, bleibt als *(nicht verbunden)* in seiner Liste – bis
+es wieder da ist, spielt das Standardgerät des Systems. Ein Gerät, das
+bei offener Seite eingesteckt wird, erscheint sofort.
 
-**OK, Apply, Cancel** gelten auf jeder Seite gleich: geschrieben werden
-nur Seiten, deren Werte geändert wurden; OK und Apply prüfen zuerst jede
-geänderte Seite und speichern gar nichts, solange eine ein Problem hat
-(diese Seite wird gezeigt, das Problem steht darüber); dann wird jede
-geänderte Seite gespeichert und wirkt sofort. Cancel, Esc und das [x]
-verwerfen, was nicht übernommen wurde.
+**OK, Übernehmen, Abbrechen** gelten auf jeder Seite gleich: geschrieben
+werden nur Seiten, deren Werte geändert wurden; *OK* und *Übernehmen*
+prüfen zuerst jede geänderte Seite und speichern gar nichts, solange
+eine ein Problem hat (diese Seite wird gezeigt, das Problem steht
+darüber); dann wird jede geänderte Seite gespeichert und wirkt sofort.
+*Abbrechen*, Esc und das [x] verwerfen, was nicht übernommen wurde.
 
 ### Logging
 
-Die Seite **Logging** bestimmt, was ins Log kommt - ohne es
-zuzumüllen. Jeder Teil von axross gehört zu genau einer Area:
-Application, Protocols (ein Eintrag je Familie: SFTP / SSH / SCP / rsync,
-SMB / DFS, FTP / TFTP, WebDAV, Cloud Storage, NFS / iSCSI, Mail und News,
-WinRM / WMI, Datenbanken, Git / SVN, Devices, Legacy-Protokolle,
-Connections und Proxy), Local Files, Transfers, Indexing / Search,
-Analysis, Agent / LLM, MCP (Client und Server), Scripting, Media / Audio /
-Voice, Update, Security, Terminal, Extensions, User Interface und
-Third-Party Libraries (paramiko, smbprotocol, urllib3 und requests, die
-Cloud-SDKs, Pillow, asyncio, ...). Eine Area steht auf *Erben* (das
-Level der Area darüber, ganz oben das Gesamt-Level), DEBUG, INFO, WARNING,
-ERROR oder *Aus*. Das Gesamt-Level ist INFO; Third-Party-Libraries stehen
-auf WARNING, DEBUG für SMB zeigt also die SMB-Schritte von axross, nicht
-jedes Paket der Library. Eine Area auf DEBUG verfolgt ein Problem dort,
-während der Rest auf INFO bleibt - ihre Debug-Zeilen entstehen gar nicht
-erst, solange die Area leiser steht.
+Die Seite **Logging** bestimmt, was ins Log kommt – ohne es
+vollzuschreiben. Jeder Teil von axross gehört zu genau einem Bereich:
+Anwendung, Protokolle (ein Eintrag je Familie: SFTP / SSH / SCP / rsync,
+SMB / DFS, FTP / TFTP, WebDAV, Cloud-Speicher, NFS / iSCSI, Mail / News,
+WinRM / WMI, Datenbanken, Git / SVN, Geräte, Altprotokolle,
+Verbindungen & Proxy), Lokale Dateien, Übertragungen, Indexierung /
+Suche, Analyse, Agent / LLM, MCP (Client und Server), Skripte, Medien /
+Audio / Stimme, Update, Sicherheit, Terminal, Extensions, Oberfläche und
+Bibliotheken von Dritten (paramiko, smbprotocol, urllib3 und requests,
+die Cloud-SDKs, Pillow, asyncio, …). Ein Bereich steht auf *Erben* (die
+Stufe des Bereichs darüber, ganz oben die Gesamtstufe), DEBUG, INFO,
+WARNING, ERROR oder *Aus*. Die Gesamtstufe ist INFO; Bibliotheken von
+Dritten stehen auf WARNING, DEBUG für SMB zeigt also die SMB-Schritte von
+axross, nicht jedes Paket der Bibliothek. Ein Bereich auf DEBUG verfolgt
+ein Problem dort, während der Rest auf INFO bleibt – seine Debug-Zeilen
+entstehen gar nicht erst, solange der Bereich leiser steht.
 
-Das Logfile ist `~/.local/state/axross/logs/axross.log` (nur für dich
-lesbar); es rotiert bei 5 MiB und behält 3 rotierte Dateien - beides wird
-auf der Seite eingestellt (1-100 MiB, 1-20 Dateien). *Ins Terminal loggen (stderr)* schreibt dieselben Zeilen ins Terminal, aus dem axross gestartet
-wurde. *Wiederholte Meldungen zusammenfassen* (an, 10 s): eine Message, die einer vor
-weniger als dem Fenster geschriebenen gleicht (gleiche Area, Level, Text
-und Fehler), wird gezählt statt geschrieben, die Zahl folgt als eine
-Zeile, `Last message repeated 999 more times in 10.0 s: ...` - ein Timer,
-der alle 10 ms scheitert, gibt zwei Zeilen je Fenster, nicht hundert pro
-Sekunde. *Auf Standard zurücksetzen* zeigt die Defaults; OK oder Apply speichert
-sie. Jede Änderung wirkt sofort und steht in
+Die Log-Datei ist `~/.local/state/axross/logs/axross.log` (nur für dich
+lesbar); sie rotiert bei 5 MiB und behält 3 rotierte Dateien – beides
+wird auf der Seite eingestellt (1–100 MiB, 1–20 Dateien). *Ins Terminal
+loggen (stderr)* schreibt dieselben Zeilen ins Terminal, aus dem axross
+gestartet wurde. *Wiederholte Meldungen zusammenfassen* (an, 10 s): eine
+Meldung, die einer vor weniger als dieser Zeitspanne geschriebenen
+gleicht (gleicher Bereich, gleiche Stufe, gleicher Text und Fehler),
+wird gezählt statt geschrieben, die Zahl folgt als eine Zeile,
+`Last message repeated 999 more times in 10.0 s: ...` – ein Timer, der
+alle 10 ms scheitert, ergibt zwei Zeilen je Zeitspanne, nicht hundert
+pro Sekunde. *Auf Standard zurücksetzen* zeigt die Standardwerte; *OK*
+oder *Übernehmen* speichert sie. Jede Änderung wirkt sofort und steht in
 `~/.config/axross/logging.json`.
 
-`--debug` auf der Kommandozeile loggt jede axross-Area für diesen Lauf auf
-DEBUG und schreibt ins Terminal; `--verbose` hebt jede Area auf mindestens
-INFO, ebenfalls mit Terminal. Third-Party-Libraries behalten dabei ihr
-Level, und die Seite sagt, solange ein solches Flag gilt.
+`--debug` auf der Kommandozeile setzt für diesen Lauf jeden Bereich von
+axross auf DEBUG und schreibt ins Terminal; `--verbose` hebt jeden
+Bereich auf mindestens INFO, ebenfalls mit Ausgabe im Terminal.
+Bibliotheken von Dritten behalten dabei ihre Stufe, und die Seite sagt,
+solange ein solches Flag gilt.
 
 *Tools → Netzwerk & Proxy…, LLM-Profile…, Agent-Einstellungen…, MCP-Server…,
-Metadaten-Einstellungen…* und *Extensions → Extensions verwalten…* öffnen das Einstellungs-
-Fenster auf ihrer Seite. *Ansicht → Versteckte Dateien anzeigen* (**Strg+H**), *Ansicht →
-Theme* und *Ansicht → Zoom* bleiben schnelle Schalter; sie werden sofort
-gespeichert, wie die Seite.
+Metadaten-Einstellungen…* und *Extensions → Extensions verwalten…* öffnen das
+Fenster *Einstellungen* auf ihrer Seite. *Ansicht → Versteckte Dateien
+anzeigen* (**Strg+H**), *Ansicht → Theme* und *Ansicht → Vergrößern /
+Verkleinern / Normale Größe* bleiben schnelle Schalter; sie werden
+sofort gespeichert, wie die Seite.
 
 ## Updates
 
@@ -2043,8 +2136,8 @@ Windows-`axross-slim`) aktualisieren sich aus den GitHub-Releases von
   `SHA256SUMS` selbst gültig signiert sein: `SHA256SUMS.sig` ist eine
   Ed25519-Signatur mit dem axross-Release-Key, dessen Public Key in axross
   eingebaut ist. Ein Release ohne sie, oder mit einer, die nicht
-  verifiziert, wird abgelehnt ("The update is refused: release X.Y.Z is
-  not signed with the axross release key") - wer das Release ändern kann,
+  verifiziert, wird abgelehnt („The update is refused: release X.Y.Z is
+  not signed with the axross release key“) – wer das Release ändern kann,
   kann dessen Checksummen ändern, aber nicht diese Signatur erzeugen. Eine geprüfte
   Datei ersetzt das laufende Binary mit einem atomaren Rename, mit den
   Permissions der alten Datei; die alte bleibt daneben als
@@ -2081,21 +2174,21 @@ Environment. Der Check beim Start läuft nicht mit
   Dock-Layout beim letzten Beenden; beim Start wiederhergestellt,
   außer *Beim Start das Layout der letzten Session wiederherstellen*
   (Einstellungen → Allgemein) ist aus. Das `window`-Objekt hält auch das Aussehen (Theme,
-  Compact, Monochrome Icons, Schriftgröße, Hidden Files) und die Sprache.
-- `~/.config/axross/settings.json` — kleine Einstellungen: Open Size
-  Limit, Pane-Aktivierung, Metadata-Schreibweise und -Nachfrage, sudo-
-  Passwort merken, gleichzeitig durchsuchte Hosts, der Security Mode, die
+  kompakter Modus, einfarbige Symbole, Schriftgröße, versteckte Dateien hervorheben) und die Sprache.
+- `~/.config/axross/settings.json` — kleine Einstellungen: Größenlimit
+  beim Öffnen, Pane-Aktivierung, wie Metadaten entfernt werden und ob vorher gefragt wird, das sudo-
+  Passwort merken, gleichzeitig durchsuchte Hosts, der Sicherheitsmodus, die
   Update-Einstellungen (`update_check_at_start`, `update_auto_download`,
-  eine übersprungene Version, der letzte Check), ob der nächste Start die
+  eine übersprungene Version, die letzte Prüfung), ob der nächste Start die
   Tour „Erste Schritte“ anbietet (`offer_tour_at_start`).
-- `~/.config/axross/proxy.json`, `llm.json`, `extensions.json` — Default-
+- `~/.config/axross/proxy.json`, `llm.json`, `extensions.json` — Standard-
   Proxy, LLM-Profile, eingeschaltete Extensions (Secrets im Keyring).
-- `~/.config/axross/agent/voice.json` — die Voice-Einstellungen (`0o600`).
+- `~/.config/axross/agent/voice.json` — die Einstellungen der Stimme (`0o600`).
 - `~/.config/axross/audio.json` — die Audio-Einstellungen: Backend,
-  Output- und Input-Device, Volumes (`0o600`).
+  Ausgabe- und Eingabegerät, Lautstärken (`0o600`).
 - `~/.config/axross/column_prefs.json` — Spaltenbreiten und
   ausgeblendete Spalten, eine Datei für alle Panes.
-- `~/.config/axross/agent/settings.json` — Agent Settings (Modes, Access,
+- `~/.config/axross/agent/settings.json` — Agent-Einstellungen (Modi, Zugriff,
   Sandbox-Profile, MCP-Server; `0o600`).
 - `~/.config/axross/agent/sessions/` — eine JSON-Datei je behaltenem Agent-Tab (`0o600`).
 - `~/.config/axross/<provider>_token.json` — OAuth-Refresh-Tokens (`0o600`).
@@ -2109,8 +2202,8 @@ Environment. Der Check beim Start läuft nicht mit
   Handänderung), wird nie überschrieben: axross behält sie als
   `NAME.unreadable-<Zeit>-<id>` daneben und beginnt die Datei neu; eine,
   die es gar nicht lesen kann (Rechte), wird nicht geschrieben.
-- `~/.config/axross/logging.json` — die Logging-Settings: Gesamt-Level, Level je Area,
-  Größe und Rotation des Logfiles, Terminal, Zusammenfassen wiederholter Messages
+- `~/.config/axross/logging.json` — die Logging-Einstellungen: Gesamtstufe, Stufe je Bereich,
+  Größe und Rotation der Log-Datei, Terminal, Zusammenfassen wiederholter Meldungen
   (`0o600`).
 - `~/.local/state/axross/logs/axross.log` — rotierendes Logfile (5 MiB, 3 rotierte
   Dateien, sofern *Bearbeiten → Einstellungen… → Logging* nichts anderes sagt; `0o600`).

@@ -120,12 +120,24 @@ JSON de perfil mismo nunca lleva credenciales en plano.
   SSH, nombre de workstation SMB, NAWS de Telnet, stripping de
   metadata rsync. Ver [OPSEC.md](OPSEC.md) para el modelo de
   amenazas.
+- **SFTP con la red caída.** Una petición que el servidor no responde en
+  60 s falla con "no respondió a tiempo" en lugar de esperar para
+  siempre (Wi-Fi caída, VPN desconectada); la siguiente acción abre un
+  canal nuevo. Cancelar detiene una transferencia SFTP o SCP al
+  instante, también mientras espera a la red; una transferencia atascada
+  tras un enlace muerto cierra la conexión 10 s después (reconecta
+  entonces).
 - **Google Drive: Docs, Sheets, Slides y unidades compartidas.** Un
   Google Doc aparece como `<nombre>.docx`, una hoja como `.xlsx`, unas
   Slides como `.pptx`, un dibujo como `.pdf` - sin tamaño - y se lee
   (abre, copia) como esa exportación; Google exporta como máximo 10 MB
   de un documento. Aquí son de solo lectura: sobrescribir uno se
-  rechaza, guarda con otro nombre. Un formulario o un sitio no tiene
+  rechaza, guarda con otro nombre. Moverlo fuera de Drive se rechaza
+  antes de copiar nada - a la exportación le faltan comentarios,
+  sugerencias, historial de versiones y permisos, y mover borraría el
+  original: cópialo en su lugar. Borrar un Google Doc, una hoja, unas
+  Slides o una carpeta lo deja en la papelera de Drive (recuperable allí
+  30 días); un archivo normal se borra. Un formulario o un sitio no tiene
   forma de archivo y lo dice al leerlo. Los elementos de una unidad
   compartida accesibles desde My Drive (compartidos contigo, la carpeta
   de un acceso directo) funcionan como cualquier otro; las unidades
@@ -154,9 +166,14 @@ JSON de perfil mismo nunca lleva credenciales en plano.
   al momento (solo fast-forward). Si el push falla, el commit queda en
   la caché y el guardado lo informa; la línea de estado del panel
   muestra "not pushed to origin: main (1)" hasta que el siguiente
-  guardado lo envía. Los commits en una rama que origin reescribió se
-  conservan, y la rama es de solo lectura hasta fusionarla en un cliente
-  git. Si el remoto no es accesible, la copia en caché se abre en solo
+  guardado lo envía. Si otra persona hizo push a la rama, un guardado se
+  pone al día primero: los cambios en otros archivos se conservan y el
+  tuyo va encima; si cambió el mismo archivo, el guardado se rechaza
+  (actualiza y repítelo). Los commits aún sin push se aplican sobre la
+  nueva punta de origin cuando tocan otros archivos; si no, quedan en una
+  rama nueva `axross/unpushed-<fecha>-<hora>` - el mensaje la nombra - y
+  la rama muestra la versión de origin: abre esa rama para copiar tus
+  archivos de vuelta. No se pierde nada. Si el remoto no es accesible, la copia en caché se abre en solo
   lectura y la línea de estado dice "offline". Los scripts pueden pasar
   `auto_push=False` y hacer push con `axross.git_push()`.
 
@@ -169,7 +186,7 @@ JSON de perfil mismo nunca lleva credenciales en plano.
   enfocado se vuelve destino.
 - Un panel se vuelve activo cuando el ratón descansa en él 0,5 s.
   **Edit → Settings… → General → Activate a pane** fija 0,5, 1, 2 o 3 s, u
-  **On Click**. El foco del
+  **When clicked**. El foco del
   teclado solo sigue desde la lista de archivos de otro panel, nunca
   desde un campo de texto.
 - **Alt+Izq / Alt+Der** recorren la historia de panels;
@@ -1489,6 +1506,41 @@ a ellos por otro camino. En el sandbox se montan de solo lectura los que
 existen y las carpetas que faltan. El agente tampoco lee los tokens de
 axross ni las claves privadas SSH y GnuPG (`--mcp-allow-secret-reads` lo
 permite para el servidor MCP).
+
+**Los archivos ocultos son de solo lectura para el agente y MCP.** Además
+de esa lista, ninguna herramienta del agente o de MCP escribe, borra ni
+mueve una entrada oculta de la carpeta personal (`~/.pdbrc`,
+`~/.wezterm.lua`, `~/.aliases`, `~/.jupyter`, …) ni nada en `~/.config`,
+`~/.local/share` y `~/.local/state` (también donde XDG los mueve,
+`~/Library` en macOS, `%APPDATA%` en Windows): demasiados programas
+ejecutan código desde ahí. Para que el agente cambie una de esas carpetas,
+concede esa carpeta en concreto - como raíz del agente (o del servidor
+MCP) o como carpeta adicional (`~/.config/myapp`); los sitios de la lista
+siguen protegidos dentro, y conceder toda la carpeta personal no levanta
+nada. Los ficheros de zsh en `$ZDOTDIR` (leído de `~/.zshenv`) cuentan como
+ficheros de inicio, y los ficheros de Git que ejecutan código (`.git/config`,
+`.git/hooks`, `.git/info`, `.gitmodules`, una entrada `.git`) se rechazan en
+cualquier sitio. En el sandbox las entradas ocultas de una carpeta personal
+con escritura se montan de solo lectura y no se puede crear ninguna nueva;
+la configuración y los hooks de Git de la carpeta del agente también. El
+`chmod` de MCP no pone los bits setuid, setgid ni sticky ni da escritura al
+grupo o a todos.
+
+**Secretos que el agente no lee**, además de los de axross: las
+credenciales de herramientas comunes (`~/.aws`, `~/.kube`,
+`~/.docker/config.json`, `~/.config/gh`, `~/.config/gcloud`, `~/.azure`,
+`~/.pypirc`, `~/.npmrc`, cargo, rclone, Vault, Terraform, las credenciales
+de Claude Code, `pass`), los perfiles de navegadores y correo (Firefox,
+Chrome, Chromium, Brave, Edge, Thunderbird; los llaveros de macOS) y, bajo
+una carpeta oculta de la carpeta personal, todo archivo cuyo nombre diga
+credential, token, secret, key (`*.pem`, `*.key`, `id_*`, `*key*.json`), una
+base de contraseñas (`*.kdbx`), cookies o history. Sus nombres se pueden
+listar; el sandbox los muestra vacíos. La papelera de axross
+(`~/.axross-trash`) también es secreta y de solo lectura para toda
+herramienta. La papelera firma cada entrada: una entrada cuyos datos o
+registro han cambiado no se restaura, y una que vuelve a un sitio protegido
+(un fichero de inicio, una entrada de autostart) solo desde la ventana de
+la papelera y tras tu confirmación.
 
 **Files read-only** (en la fila superior de la pestaña, y para todas las
 pestañas en Agent Settings > Access): el agente lee archivos pero no

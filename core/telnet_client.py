@@ -17,7 +17,6 @@ import re
 import select
 import shlex
 import socket
-import tempfile
 import threading
 import time
 from dataclasses import dataclass
@@ -25,6 +24,7 @@ from datetime import datetime, timezone
 from typing import IO, TYPE_CHECKING
 
 from core import transfer_hooks
+from core.read_spool import new_spool
 from core.backend import SessionLifecycle
 from core.exec_util import shell_path
 from core.path_policy import refuse_control_chars
@@ -1243,7 +1243,9 @@ class _SpooledWriter:
         self._remote_path = remote_path
         self._caps = caps
         self._append = append
-        self._buf = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
+        # In the spool folder (core.read_spool), not /tmp: a tmpfs there
+        # ran out of room for a large upload.
+        self._buf = new_spool(max_size=8 * 1024 * 1024)
         self._closed = False
         # The running transfer's Cancel and progress (core.transfer_hooks):
         # the upload happens in close(), after the copy loop.
@@ -1472,8 +1474,19 @@ class TelnetSession(SessionLifecycle):
             self._caps.transfer_method,
         )
 
+    #: Set by close() / disconnect(): a later call through this object (a
+    #: queued or retried transfer, a scheduled job) raises instead of
+    #: logging in again by itself with the stored password.
+    _closed_by_user = False
+
+    def _refuse_if_closed(self) -> None:
+        if self._closed_by_user:
+            raise ConnectionError(errno.ENOTCONN,
+                                  f"Telnet {getattr(self, '_host', '')}: disconnected")
+
     def _ensure_connected(self) -> _ShellSession:
         """Reconnect if the connection has dropped."""
+        self._refuse_if_closed()
         if self._connected and self._shell and not self._transport.closed:
             return self._shell
         log.info("Telnet: reconnecting to %s:%d", self._host, self._port)
@@ -1484,6 +1497,7 @@ class TelnetSession(SessionLifecycle):
 
     def _force_reconnect(self) -> _ShellSession:
         """Force a full reconnect (close + reconnect)."""
+        self._refuse_if_closed()
         self._connected = False
         if self._transport and not self._transport.closed:
             self._transport.close()
@@ -1980,6 +1994,7 @@ class TelnetSession(SessionLifecycle):
         return (0, 0, 0)
 
     def close(self) -> None:
+        self._closed_by_user = True
         self._connected = False
         if self._transport and not self._transport.closed:
             try:

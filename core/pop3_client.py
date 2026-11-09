@@ -119,7 +119,7 @@ def _reconnecting(method):
             try:
                 return method(self, *args, **kwargs)
             except Exception as exc:  # noqa: BLE001 - re-raised unless the link is gone
-                if not _connection_lost(exc):
+                if not _connection_lost(exc) or self._closed_by_user:
                     raise
                 self._drop_connection(exc)
                 log.info("POP3: the connection to %s was lost (%s); reconnecting", self._host, exc)
@@ -386,7 +386,15 @@ class Pop3Session(SessionLifecycle):
             self._pop = None
             raise
 
+    #: Set by disconnect(): a later call through this object (a queued or
+    #: retried transfer, a scheduled job) raises instead of logging in
+    #: again by itself with the stored password.
+    _closed_by_user = False
+
     def _ensure_connected(self) -> "poplib.POP3 | poplib.POP3_SSL":
+        if self._closed_by_user:
+            raise ConnectionError(errno.ENOTCONN,
+                                  f"POP3 {getattr(self, '_host', '')}: disconnected")
         if self._pop is None:
             self._connect()
         # poplib has no NOOP probe — we trust the most-recent stat call
@@ -432,6 +440,7 @@ class Pop3Session(SessionLifecycle):
         Pop3DeletesLost when QUIT fails after DELEs were sent: the server
         commits deletions only on a QUIT it answers +OK, so the messages
         are still there - swallowed, the user was told they were gone."""
+        self._closed_by_user = True
         if self._pop is None:
             return
         pending = getattr(self, "_pending_deletes", 0)

@@ -220,6 +220,16 @@ class NfsUserSession(SessionLifecycle):
         return fh, attr, done
 
     def _resolve(self, path: str, *, follow: bool = True) -> tuple[bytes, R.Fattr]:
+        fh, attr = self._resolve_parts(path, follow=follow)
+        if path.endswith("/") and path.strip("/") and not attr.is_dir:
+            # _split() drops the slash: remove("file/") deleted the file and
+            # open_read("file/") read it. "x/" is a folder or a link to one
+            # (stat(2) follows it), else ENOTDIR.
+            if not attr.is_link or not self._resolve_parts(path, follow=True)[1].is_dir:
+                raise NotADirectoryError(errno.ENOTDIR, f"Not a directory: {path}", path)
+        return fh, attr
+
+    def _resolve_parts(self, path: str, *, follow: bool) -> tuple[bytes, R.Fattr]:
         with self._lock:
             parts = _split(path)
             try:
@@ -237,7 +247,13 @@ class NfsUserSession(SessionLifecycle):
         if not parts:
             raise PermissionError(errno.EACCES, "the export's root has no parent here")
         with self._lock:
-            fh, _attr, done = self._walk(parts[:-1], follow_last=True)
+            fh, attr, done = self._walk(parts[:-1], follow_last=True)
+        if attr is not None and not attr.is_dir:
+            # A LOOKUP / CREATE in a file: servers answer anything from
+            # NOTDIR to NOENT and EIO.
+            raise NotADirectoryError(
+                errno.ENOTDIR, f"{path}: {'/'.join(parts[:-1])} is not a folder", path
+            )
         return fh, parts[-1], tuple(done + [parts[-1]])
 
     def _forget(self, key: tuple[str, ...]) -> None:
@@ -288,9 +304,7 @@ class NfsUserSession(SessionLifecycle):
     def is_dir(self, path: str) -> bool:
         try:
             return self._resolve(path)[1].is_dir
-        except FileNotFoundError:
-            return False
-        except PermissionError:
+        except (FileNotFoundError, NotADirectoryError, PermissionError):
             return False
         except R.NfsError as exc:
             if exc.status in (2, 20):
@@ -311,6 +325,8 @@ class NfsUserSession(SessionLifecycle):
         try:
             self._resolve(path, follow=False)
             return True
+        except NotADirectoryError:
+            return False  # "file/" names nothing (lstat(2): ENOTDIR)
         except R.NfsError as exc:
             if exc.status == 2:
                 return False
@@ -344,6 +360,8 @@ class NfsUserSession(SessionLifecycle):
     def rename(self, src: str, dst: str) -> None:
         # _split() drops the slash: a file renamed to "x/" became "x".
         refuse_folder_path(dst, "rename to", source_is_file=lambda: self._is_file(src))
+        if src.endswith("/"):
+            self._resolve(src, follow=False)  # "file/" is ENOTDIR
         sdir, sname, skey = self._parent(src)
         ddir, dname, dkey = self._parent(dst)
         try:
@@ -408,7 +426,7 @@ class NfsUserSession(SessionLifecycle):
     def readlink(self, path: str) -> str:
         fh, attr = self._resolve(path, follow=False)
         if not attr.is_link:
-            raise OSError(errno.EINVAL, f"{path} is no symbolic link")
+            raise OSError(errno.EINVAL, f"{path} is not a symbolic link")
         return self._client().readlink(fh)
 
     def symlink(self, target: str, link_path: str) -> None:

@@ -647,11 +647,11 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         view_menu.setObjectName("axViewMenu")
 
         # One switch for the whole window; every file pane follows it
-        # (_new_file_pane, _toggle_hidden). On by default; a stored
-        # window.show_hidden of False switches it off at the start.
+        # (_new_file_pane, _toggle_hidden). Off by default (round 6); a
+        # stored window.show_hidden of True switches it on at the start.
         self._hidden_action = view_menu.addAction(tr("Show &Hidden Files"))
         self._hidden_action.setCheckable(True)
-        self._hidden_action.setChecked(True)
+        self._hidden_action.setChecked(False)
         self._hidden_action.setShortcut(QKeySequence("Ctrl+H"))
         self._hidden_action.toggled.connect(self._toggle_hidden)
         # Stored at once (window.show_hidden); ``triggered`` is the user's
@@ -679,7 +679,9 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
 
         for preset_name in PRESET_ORDER:
             act = layout_menu.addAction(preset_label(preset_name))
-            act.triggered.connect(lambda _checked, n=preset_name: self.apply_layout_preset(n))
+            # Asks first, like Ctrl+Alt+L: the switch closes running shells
+            # and remote connections (the first start applies one unasked).
+            act.triggered.connect(lambda _checked, n=preset_name: self._apply_layout_preset_asked(n))
             self._menu_icon(act, "toggle-layout")
         layout_menu.addSeparator()
         cycle_fwd = layout_menu.addAction(tr("Cycle Next"))
@@ -4012,6 +4014,12 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
 
         apply_preset(self, name)
 
+    def _apply_layout_preset_asked(self, name: str) -> None:
+        """View > Layout Preset > *name*: the switch, once
+        :meth:`_layout_switch_confirmed` said it may close what runs."""
+        if self._layout_switch_confirmed():
+            self.apply_layout_preset(name)
+
     def _layout_switch_confirmed(self) -> bool:
         """A layout switch rebuilds every pane: ask first when that closes
         a running shell or a remote connection. The key chord is easy to
@@ -4629,8 +4637,11 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         if dialog is not None:
             dialog.job_started(job.job_id)
 
-    def _on_scheduled_job_finished(self, job_id: str, ok: bool, detail: str) -> None:
-        """Record a finished run. Always on the GUI thread."""
+    def _on_scheduled_job_finished(self, job_id: str, ok: bool | None, detail: str) -> None:
+        """Record a finished run. Always on the GUI thread. *ok* None: the
+        run was stopped because the application closed - nothing is
+        recorded (no failure, no last run: it is due again at the next
+        start)."""
         from datetime import datetime
 
         from core.scheduler import record_result
@@ -4638,6 +4649,15 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         started = (getattr(self, "_scheduler_planned", None) or {}).pop(job_id, None)
         job = next((j for j in self._scheduler_jobs if j.job_id == job_id), None)
         if job is None:
+            return
+        if ok is None:
+            from dataclasses import replace
+
+            self._scheduler_jobs = [replace(j, running=False) if j.job_id == job_id else j
+                                    for j in self._scheduler_jobs]
+            dialog = getattr(self, "_scheduler_dialog", None)
+            if dialog is not None:
+                dialog.job_finished(job_id, None, detail)
             return
         at = started or datetime.now()
 
@@ -4725,6 +4745,12 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         if callable(status_bar):
             status_bar().showMessage(text, 5000)
 
+    def _undo_clear_status(self) -> None:
+        status_bar = getattr(self, "statusBar", None)
+        if callable(status_bar) and status_bar().currentMessage() == tr(
+                "Looking for the operation to undo…"):
+            status_bar().clearMessage()
+
     def _undo_step(self, work, done) -> None:
         """*work()* on a worker, then *done(kind, value)* here ("done" with
         its result, or "error" with the exception). One undo at a time."""
@@ -4746,6 +4772,11 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         job.start(lambda _cancelled, _report: work())
 
     def _undo_picked(self, plans, kind: str, plan) -> None:
+        from core.undo import operation_name
+
+        # The search is over: "Looking for the operation to undo…" must not
+        # stay in the status bar after a box, a No or a refusal.
+        MainWindow._undo_clear_status(self)
         if kind == "error":
             QMessageBox.warning(self, tr("Undo failed"), str(plan))
             return
@@ -4756,7 +4787,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                     self,
                     tr("Nothing to undo"),
                     tr("The most recent operation ({operation}) cannot be reversed:\n\n"
-                       "{reason}").format(operation=newest.operation, reason=newest.reason),
+                       "{reason}").format(operation=operation_name(newest.operation),
+                                          reason=newest.reason),
                 )
             else:
                 QMessageBox.information(
@@ -4774,14 +4806,20 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             QMessageBox.information(self, tr("Cannot undo"), refusal)
             return
 
+        # Yes is the default: the undo is itself the reversal of something
+        # the user did, it restores rather than destroys, and it refuses an
+        # entry that changed since (core.undo.replaced_reason) - Ctrl+Z then
+        # Enter must undo. (Reviewed exception of
+        # tests/test_destructive_questions_default_no.py.)
         if QMessageBox.question(
             self,
             tr("Undo"),
             tr("Undo the last {operation}?\n\n{reason}").format(
-                operation=plan.operation, reason=plan.reason),
+                operation=operation_name(plan.operation), reason=plan.reason),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
         ) != QMessageBox.StandardButton.Yes:
+            self._undo_status(tr("Nothing was undone."))
             return
 
         # Looked up again: while the question was open a reconnect may have
@@ -4901,8 +4939,36 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             self._undo_step(work, lambda kind, value: self._undo_batch_ended(
                 plan, (pane, source_pane), kind, value))
             return
-        from core.transfer_worker import TransferStatus
+        from core.undo import unchanged_parts
 
+        # A file the move put there may have been edited or replaced since
+        # (renamed away, a new one saved under its name): that one is not
+        # sent back - it is not the file the move put there. A stat each, so
+        # on a worker.
+        self._undo_status(tr("Undoing: {what}").format(what=plan.reason))
+        self._undo_step(lambda: unchanged_parts(plan, backend),
+                        lambda kind, value: self._undo_batch_send(
+                            plan, backend, pane, source_backend, source_pane, kind, value))
+
+    def _undo_batch_send(self, plan, backend, pane, source_backend, source_pane,
+                         kind: str, value) -> None:
+        """The files of a batch undo that are still what the move put there
+        (*value*: core.undo.unchanged_parts) go back through the transfer
+        engine; the others are reported and stay in the history."""
+        from core.transfer_worker import TransferStatus
+        from core.undo import batch_transfer_pairs
+
+        if kind == "error":
+            if not isinstance(value, (OSError, ValueError)):
+                raise value  # a bug: the error dialog
+            QMessageBox.warning(self, tr("Undo failed"), str(value))
+            return
+        sendable, changed = value
+        pairs = batch_transfer_pairs(sendable)
+        if not pairs:
+            self._undo_batch_ended(plan, (pane, source_pane), "done", ([], changed),
+                                   folders_ran=False)
+            return
         partial: list = []
 
         def queued(jobs) -> None:
@@ -4913,9 +4979,10 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             back = {current: original for current, original in pairs}
             back.update({p.dest: p.source for p in plan.parts if p.action == "folder_back"})
             self._track_undo_tags(pane, source_pane, back, jobs)
-            parts = {(p.dest, p.source): p for p in plan.parts if p.action == "transfer_back"}
+            parts = {(p.dest, p.source): p for p in sendable.parts
+                     if p.action == "transfer_back"}
             self._undo_waits.append({
-                "plan": plan, "batch": True, "jobs": list(jobs), "failed": [],
+                "plan": plan, "batch": True, "jobs": list(jobs), "failed": list(changed),
                 "pending": {j.job_id for j in jobs},
                 "parts": {j.job_id: parts.get((j.source_path, j.dest_path)) for j in jobs},
                 "panes": (pane, source_pane), "backends": (backend, source_backend),
@@ -7648,6 +7715,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         self._request_transfer(
             source, target, list(plan.paths), move=True, dest_dir=dest_dir,
             on_queued=lambda: board.clear(cut),
+            # Every entry of it removed or renamed since: nothing left to paste.
+            on_all_gone=lambda: board.clear(cut),
         )
 
     def _on_drop_transfer(
@@ -7716,6 +7785,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         *,
         dest_dir: str | None = None,
         on_queued=None,
+        on_all_gone=None,
     ) -> None:
         """F5 / F6 / drag & drop / Paste: check the destination, ask, then queue.
 
@@ -7725,7 +7795,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         refuse to replace anything the answers did not allow, so a file
         that appears in the meantime is not overwritten silently. Cancel
         All while the check runs queues nothing. *on_queued* is called once
-        the jobs are being queued (not after a refusal, error or Cancel).
+        the jobs are being queued (not after a refusal, error or Cancel);
+        *on_all_gone* when a move finds none of its sources there any more.
         """
         if not selected:
             return
@@ -7766,8 +7837,12 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         cancel_epoch = self._transfer_manager.cancel_epoch
         check = ScanJob(self)
         self._conflict_checks.add(check)
+        self._note_transfer_preparing()
         #: Sources a move could not remove afterwards (core.move_permissions).
         undeletable: list = []
+        #: Sources of a move that are not there any more (removed or renamed
+        #: since they were selected or cut) - no permission problem.
+        gone: list = []
 
         def work(cancel, _progress):
             scan = TC.scan_conflicts(
@@ -7776,11 +7851,13 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             if move:
                 from core.move_permissions import undeletable_sources
 
-                undeletable.extend(undeletable_sources(source_backend, paths, cancel=cancel))
+                undeletable.extend(undeletable_sources(source_backend, paths, cancel=cancel,
+                                                       missing=gone))
             return scan
 
         def finished(kind: str, value, cancelled: bool) -> None:
             self._conflict_checks.discard(check)
+            self._note_transfer_preparing()
             check.deleteLater()
             self.statusBar().clearMessage()
             if cancelled:
@@ -7810,6 +7887,9 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             ):
                 log.info("Transfer dropped: a pane closed or changed connection meanwhile")
                 return
+            if gone:
+                if not self._leave_out_gone(gone, paths, value, on_all_gone):
+                    return
             move_now = move
             if move and undeletable:
                 choice = self._ask_undeletable_move(undeletable)
@@ -7901,6 +7981,33 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         gate = getattr(target, "_production_ok", None)
         return gate(what) if callable(gate) else True
 
+    def _leave_out_gone(self, gone: list, paths: list, scan, on_all_gone=None) -> bool:
+        """Leave the sources of a move that are not there any more out of
+        *paths* (and their names out of the conflict *scan*), and say so.
+        False when nothing is left to move: then *on_all_gone* runs (a
+        pending Cut of only such entries is dropped)."""
+        missing = set(gone)
+        paths[:] = [p for p in paths if p not in missing]
+        scan.conflicts[:] = [c for c in scan.conflicts if c.source_path not in missing]
+        names = "\n".join(gone[:5])
+        if len(gone) > 5:
+            names += "\n" + tr_n(len(gone) - 5, "… and {n} more", "… and {n} more")
+        log.info("Move: %d source(s) are no longer there, first %s", len(gone), gone[0])
+        if paths:
+            self.statusBar().showMessage(tr_n(
+                len(gone), "{n} item is no longer there and was left out: {names}",
+                "{n} items are no longer there and were left out: {names}",
+                names=", ".join(gone[:3])), 10000)
+            return True
+        if on_all_gone is not None:
+            on_all_gone()
+        QMessageBox.information(self, tr("Move"), tr_n(
+            len(gone), "Nothing was moved: the item is no longer there (removed or "
+                       "renamed since):\n{names}",
+            "Nothing was moved: the {n} items are no longer there (removed or "
+            "renamed since):\n{names}", names=names))
+        return False
+
     def _ask_undeletable_move(self, undeletable: list) -> str:
         """Some sources of a move could not be removed after the copy: move
         them as administrator, copy only, or cancel. ``"elevated"``,
@@ -7947,6 +8054,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         backend = source.backend
         job = ScanJob(self)
         self._conflict_checks.add(job)
+        self._note_transfer_preparing()
 
         def work(cancel, _progress):
             EIO.elevated_move(backend, list(paths), dest_dir)
@@ -7954,6 +8062,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
 
         def finished(kind: str, value, cancelled: bool) -> None:
             self._conflict_checks.discard(job)
+            self._note_transfer_preparing()
             job.deleteLater()
             self.statusBar().clearMessage()
             for pane in (source, target):
@@ -8107,6 +8216,14 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             relay,
         )
 
+    def _note_transfer_preparing(self) -> None:
+        """A conflict check began or ended: the Transfers dock's Cancel All
+        stops it, though no row shows yet (ui.transfer_dock._sync_buttons)."""
+        dock = getattr(self, "_transfer_dock", None)
+        note = getattr(dock, "note_preparing", None)
+        if callable(note):
+            note(bool(getattr(self, "_conflict_checks", ())))
+
     # -- the summary of a copy or move ------------------------------------------
 
     def _watch_transfer_summary(self, jobs, move: bool, kept: int) -> None:
@@ -8152,7 +8269,16 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             parts.append(tr_n(failed, "{n} failed", "{n} failed"))
         if cancelled:
             parts.append(tr_n(cancelled, "{n} cancelled", "{n} cancelled"))
-        self.statusBar().showMessage(", ".join(parts), 15000)
+        text = ", ".join(parts)
+        # A cancelled or failed copy keeps its hidden partial file for a
+        # resume (core.transfer_manager.TransferManager.partial_kept): said,
+        # with what Retry Failed and Clear Finished then do with it.
+        from core.transfer_manager import TransferManager
+
+        if any(TransferManager.partial_kept(j) for j in jobs):
+            text += " – " + tr("partly transferred files are kept for Retry Failed; "
+                               "Clear Finished deletes them")
+        self.statusBar().showMessage(text, 15000)
 
     # -- tags follow moves -------------------------------------------------------
 
@@ -8670,7 +8796,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         connect a bookmark click uses - and transfers once the pane is up."""
         if getattr(bookmark, "is_terminal", False):
             # The sidebar refuses this drop already; a terminal is no folder.
-            self._drop_status(tr("A terminal bookmark is no folder: nothing was moved."))
+            self._drop_status(tr("A terminal bookmark is not a folder: nothing was moved."))
             return
         source = self._pane_by_id(source_pane_id)
         if source is None:
@@ -9216,7 +9342,6 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         "Proxies (SOCKS, HTTP, HTTPS, PAC) per profile or globally",
         "An LLM agent in a sandbox, with MCP servers and agent profiles",
         "An MCP server for other LLM agents (axross --mcp-server)",
-        "Themes: Modern (light/dark), Classic, Light, Hacker, Amber",
     )
     #: Help > About: (panel, what it shows).
     _ABOUT_PANELS = (
@@ -9254,6 +9379,11 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             return "".join(f"<li><b>{e(name)}</b> — {e(what)}</li>" for name, what in pairs)
 
         features = "".join(f"<li>{e(line)}</li>" for line in self._ABOUT_FEATURES)
+        # The themes by the names View → Theme gives them (round 6: About
+        # said "Classic, Light" where the German menu says "Klassisch").
+        theme_names = ", ".join(tr(label) for _id, label in themes.THEME_CHOICES)
+        features += "<li>{}</li>".format(
+            html.escape(tr("Themes: {names}").format(names=theme_names), quote=False))
         summary = e("Multi-protocol file manager with a pane-based UI, an LLM agent, "
                     "a scripting surface and an MCP server.")
         return (

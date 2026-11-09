@@ -124,7 +124,10 @@ def test_edge_local_commits_not_pushed_yet_are_kept(upstream):
         s2.close()
 
 
-def test_sad_a_diverged_branch_is_kept_and_not_built_on(upstream):
+def test_sad_a_diverged_branch_keeps_its_commit_on_top_of_upstream(upstream):
+    """Round 6: a diverged branch is no longer read-only "until it is
+    merged in a git client": the local commit touches another file than
+    upstream's, so it is replayed onto upstream's tip - kept, not lost."""
     branch = _branch(upstream)
     s = _session(upstream)
     with s.open_write(f"/{branch}/local.txt") as fh:
@@ -134,9 +137,11 @@ def test_sad_a_diverged_branch_is_kept_and_not_built_on(upstream):
     _commit(upstream, "notes.txt", b"version 2\n", b"v2")
     s2 = _session(upstream)
     try:
-        assert s2._repo.refs[f"refs/heads/{branch}".encode()] == local_tip
-        with pytest.raises(G.GitForceRefused):
-            with s2.open_write(f"/{branch}/more.txt") as fh:
-                fh.write(b"x")
+        tip = s2._repo.refs[f"refs/heads/{branch}".encode()]
+        assert tip != local_tip
+        assert s2.open_read(f"/{branch}/local.txt").read() == b"not pushed\n"
+        assert s2.open_read(f"/{branch}/notes.txt").read() == b"version 2\n"
+        with s2.open_write(f"/{branch}/more.txt") as fh:
+            fh.write(b"x")
     finally:
         s2.close()

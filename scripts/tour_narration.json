@@ -33,7 +33,7 @@
         },
         "Undo": {
           "en": "Undo Last Operation in the Edit menu, or Control Z, reverses the newest move or Move to Trash whose connection is open. A copy cannot be undone, and axross says so instead of guessing. So when in doubt, move to the trash rather than delete.",
-          "de": "Letzte Aktion widerrufen im Menü Bearbeiten, oder Steuerung Z, macht das neueste Verschieben oder In den {Trash} verschieben rückgängig, dessen Verbindung offen ist. Eine Kopie lässt sich nicht widerrufen, und {axross} sagt das, statt zu raten. Im Zweifel verschiebst du also lieber in den {Trash}, statt zu löschen."
+          "de": "Letzte Aktion widerrufen im Menü Bearbeiten, oder Steuerung Z, macht das neueste Verschieben oder Verschieben in den Papierkorb rückgängig, dessen Verbindung offen ist. Eine Kopie lässt sich nicht widerrufen, und {axross} sagt das, statt zu raten. Im Zweifel verschiebst du also lieber in den Papierkorb, statt zu löschen."
         }
       },
       "outro": {
@@ -70,13 +70,13 @@
       },
       "outro": {
         "en": "Next, the tour Copy and sync safely shows you the target pane, conflicts, the trash and Undo.",
-        "de": "Als Nächstes zeigt dir die Tour Sicher kopieren und synchronisieren das Ziel-{Pane}, Konflikte, den {Trash} und das Widerrufen."
+        "de": "Als Nächstes zeigt dir die Tour Sicher kopieren und synchronisieren das Ziel-{Pane}, Konflikte, den Papierkorb und das Widerrufen."
       }
     },
     "copy-safely": {
       "intro": {
         "en": "This tour, Copy and sync safely, shows you the target pane, conflicts, resuming, Compare Panes, the trash and Undo.",
-        "de": "Diese Tour, Sicher kopieren und synchronisieren, zeigt dir das Ziel-{Pane}, Konflikte, das Fortsetzen, das Vergleichen von {Panes}, den {Trash} und das Widerrufen."
+        "de": "Diese Tour, Sicher kopieren und synchronisieren, zeigt dir das Ziel-{Pane}, Konflikte, das Fortsetzen, das Vergleichen von {Panes}, den Papierkorb und das Widerrufen."
       },
       "steps": {
         "Check the target first": {
@@ -97,11 +97,11 @@
         },
         "The trash first": {
           "en": "The Delete key moves the selection to the trash, and Show Trash restores from it. Delete Permanently, on Shift and Delete, counts first, asks with No as the default, and asks again when hidden files are inside. Use the trash for anything you might want back.",
-          "de": "Die Taste Entfernen verschiebt die Auswahl in den {Trash}, und {Trash} anzeigen stellt daraus wieder her. Endgültig löschen, auf Umschalt und Entfernen, zählt erst, fragt mit Nein als Vorauswahl und fragt noch einmal, wenn versteckte Dateien darin sind. Nimm den {Trash} für alles, was du vielleicht zurückhaben willst."
+          "de": "Die Taste Entfernen verschiebt die Auswahl in den Papierkorb, und Papierkorb anzeigen stellt daraus wieder her. Endgültig löschen, auf Umschalt und Entfernen, zählt erst, fragt mit Nein als Vorauswahl und fragt noch einmal, wenn versteckte Dateien darin sind. Nimm den Papierkorb für alles, was du vielleicht zurückhaben willst."
         },
         "Undo": {
           "en": "Control Z reverses the newest move or Move to Trash whose connection is open. A copy is reported as not reversible, instead of being guessed at.",
-          "de": "Steuerung Z macht das neueste Verschieben oder In den {Trash} verschieben rückgängig, dessen Verbindung offen ist. Bei einer Kopie meldet {axross}, dass sie sich nicht widerrufen lässt, statt zu raten."
+          "de": "Steuerung Z macht das neueste Verschieben oder Verschieben in den Papierkorb rückgängig, dessen Verbindung offen ist. Bei einer Kopie meldet {axross}, dass sie sich nicht widerrufen lässt, statt zu raten."
         }
       },
       "outro": {

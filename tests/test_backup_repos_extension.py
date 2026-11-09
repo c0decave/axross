@@ -175,7 +175,7 @@ def test_happy_the_context_action_is_offered_for_one_folder():
 def test_sad_a_plain_folder_is_no_repository(tmp_path):
     (tmp_path / "x.txt").write_text("x")
     assert BR.detect(FS, str(tmp_path)) is None
-    with pytest.raises(BR.RepoError, match="no restic, Borg or duplicity"):
+    with pytest.raises(BR.RepoError, match="not a restic, Borg or duplicity"):
         BR.basic_info(FS, str(tmp_path))
 
 

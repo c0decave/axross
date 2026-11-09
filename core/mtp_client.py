@@ -45,6 +45,7 @@ import threading
 from dataclasses import dataclass
 
 from core.local_fs import LocalFS
+from core.path_policy import refuse_root_removal
 from core.subprocess_env import clean_child_env
 from security.protocol_line_split import split_lf_only_stream
 
@@ -579,6 +580,12 @@ def _confined(name: str, count: int):
     def method(self, *args, **kwargs):
         for path in (*args[:count], *(kwargs[k] for k in _PATH_KEYWORDS if k in kwargs)):
             self._check_inside(path)
+        if name == "remove":
+            # remove(mount folder, recursive=True) emptied the whole device.
+            path = args[0] if args else kwargs.get("path")
+            refuse_root_removal(
+                os.path.realpath(os.fspath(path)) == os.path.realpath(self._mount_dir),
+                path, "MTP")
         return base(self, *args, **kwargs)
 
     return method

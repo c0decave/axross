@@ -70,7 +70,10 @@ def test_edge_case_insensitive_systems_compare_without_case(home, monkeypatch):
     with pytest.raises(PermissionError):
         M._refuse_protected(str(home / ".SSH" / "authorized_keys"))
     monkeypatch.setattr(P, "_case_insensitive", lambda: False)
-    assert P.refusal(str(home / ".SSH" / "authorized_keys")) is None
+    # Not ~/.ssh here: only default-deny refuses it (round 6), which a grant
+    # of the folder lifts - ~/.ssh's refusal would not be lifted.
+    grant = [str(home / ".SSH")]
+    assert P.refusal(str(home / ".SSH" / "authorized_keys"), granted=grant) is None
 
 
 def test_edge_places_are_joined_per_component():
@@ -120,5 +123,6 @@ def test_edge_posix_keeps_trailing_dots_as_part_of_the_name(home, monkeypatch):
     """On Linux ``.bashrc.`` is another file than ``.bashrc``."""
     monkeypatch.setattr(P, "_case_insensitive", lambda: False)
     monkeypatch.setattr(P, "_windows_names", lambda: False)
-    assert P.refusal(str(home / ".bashrc.")) is None
-    assert P.refusal(str(home / ".bashrc"))
+    # Not ~/.bashrc: only default-deny refuses it (round 6), which a grant lifts.
+    assert P.refusal(str(home / ".bashrc."), granted=[str(home / ".bashrc.")]) is None
+    assert P.refusal(str(home / ".bashrc"), granted=[str(home / ".bashrc")])

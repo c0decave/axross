@@ -9,6 +9,7 @@ Requires: nfs-utils (system package)
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import posixpath
@@ -21,7 +22,12 @@ from typing import IO
 from core import posix_compat, removal_cancel
 from core.backend import SessionLifecycle
 from core.local_fs import LocalFS, copy_file_onto, entry_stat
-from core.path_policy import confined_path, refuse_folder_path
+from core.path_policy import (
+    confined_path,
+    refuse_folder_path,
+    refuse_root_removal,
+    refuse_slash_on_file,
+)
 from core.private_mount_dir import make_private_mount_point, remove_private_mount_point
 from core.subprocess_env import clean_child_env
 from models.file_item import FileItem, local_time
@@ -85,6 +91,18 @@ def _with_context(exc: OSError, where: str) -> OSError:
     if exc.errno is None:
         return OSError(f"{where}: {exc}")
     return OSError(exc.errno, f"{where}: {exc.strerror or exc}")
+
+
+def _make_parent(parent: str, path: str) -> None:
+    """The folders above *path* (mapped to *parent*), made as needed. One
+    of them a file is NotADirectoryError, as open(2) says - makedirs
+    called it a FileExistsError."""
+    try:
+        os.makedirs(parent, exist_ok=True)
+    except FileExistsError as exc:
+        raise NotADirectoryError(
+            errno.ENOTDIR, f"Cannot write {path}: a folder on its way is a file", path
+        ) from exc
 
 
 class NfsSession(SessionLifecycle):
@@ -203,8 +221,9 @@ class NfsSession(SessionLifecycle):
 
     def _full_path(self, path: str, *, follow: bool = True) -> str:
         """Convert virtual path to real mounted path, confined to the mount
-        even through server-planted symlinks (see confined_path)."""
-        return confined_path(self._mount_point, path, follow=follow)
+        even through server-planted symlinks (see confined_path). "file/"
+        is NotADirectoryError, as stat(2) says: the join drops the slash."""
+        return refuse_slash_on_file(path, confined_path(self._mount_point, path, follow=follow))
 
     @property
     def name(self) -> str:
@@ -291,7 +310,7 @@ class NfsSession(SessionLifecycle):
         answer (ETIMEDOUT, EIO, ESTALE) is an OSError."""
         try:
             full = self._full_path(path)
-        except PermissionError:
+        except (PermissionError, NotADirectoryError):
             return False  # a link out of the mount is no folder of it
         st = entry_stat(full, follow=True)
         return st is not None and stat_module.S_ISDIR(st.st_mode)
@@ -300,7 +319,11 @@ class NfsSession(SessionLifecycle):
         """False only when nothing is there; a failed lstat is an
         OSError - server_side_copy(overwrite=False) takes False as its
         go-ahead to write."""
-        return entry_stat(self._full_path(path, follow=False)) is not None
+        try:
+            full = self._full_path(path, follow=False)
+        except NotADirectoryError:
+            return False  # "file/" names nothing (lstat(2): ENOTDIR)
+        return entry_stat(full) is not None
 
     def _is_file(self, path: str) -> bool:
         """True for an entry that is not a folder (False when nothing is there)."""
@@ -312,6 +335,7 @@ class NfsSession(SessionLifecycle):
 
     def remove(self, path: str, recursive: bool = False) -> None:
         full = self._full_path(path, follow=False)
+        refuse_root_removal(full == os.path.abspath(self._mount_point), path, "NFS")
         if os.path.islink(full):
             os.remove(full)  # the link, never what it points at
         elif os.path.isdir(full):
@@ -337,7 +361,7 @@ class NfsSession(SessionLifecycle):
         refuse_folder_path(path)
         mode = "ab" if append else "wb"
         parent = os.path.dirname(self._full_path(path))
-        os.makedirs(parent, exist_ok=True)
+        _make_parent(parent, path)
         return open(self._full_path(path), mode)
 
     def normalize(self, path: str) -> str:

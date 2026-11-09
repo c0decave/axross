@@ -19,8 +19,8 @@ construyen sobre esto.
 
 ## Tarpit de producción
 
-Marcar un perfil como producción: en **Connect to Server** (el
-Connection Manager, Ctrl+Shift+N, o al editar un perfil) marque
+Marcar un perfil como producción: en el **Connection Manager** (File →
+Connection Manager…, Ctrl+Shift+N, o al editar un perfil) marque
 **Production (confirm destructive operations with a countdown)** en el
 grupo Connection - está ahí para todos los protocolos y se guarda con el
 perfil. O en Python:

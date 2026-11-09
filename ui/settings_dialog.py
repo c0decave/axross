@@ -257,10 +257,10 @@ class GeneralPage(_FormPage):
         form.addRow(tr("Start"), self.restore_check)
 
         self.activation_combo = QComboBox()
-        self.activation_combo.addItem(tr("On Click"), PA.CLICK)
+        self.activation_combo.addItem(tr("When clicked"), PA.CLICK)
         for seconds in PA.HOVER_SECONDS:
             self.activation_combo.addItem(
-                tr("After {n} s in the Pane").format(n=_decimal(seconds)), seconds
+                tr("When the mouse rests on it for {n} s").format(n=_decimal(seconds)), seconds
             )
         current = PA.activation()
         self.activation_combo.setCurrentIndex(

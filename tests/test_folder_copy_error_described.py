@@ -96,7 +96,10 @@ def test_happy_a_folder_that_cannot_be_created_is_said_in_german(setup, german):
     assert status.startswith("Fehler: Der Ordner ließ sich nicht anlegen, sein Inhalt wurde "
                              "daher nicht kopiert:"), status
     assert "[Errno" not in status and "cannot create" not in status
-    assert "Read-only file system" in tip  # the raw text stays reachable
+    # Round 6: the tooltip is the whole sentence; the raw English text of
+    # the error ("[Errno 30] Read-only file system: …") is in the log only.
+    assert tip.startswith("Fehler: Der Ordner ließ sich nicht anlegen"), tip
+    assert "[Errno" not in tip and "Read-only file system" not in tip
 
 
 def test_sad_an_unreadable_folder_is_said_in_german_too(setup, german):
@@ -107,10 +110,11 @@ def test_sad_an_unreadable_folder_is_said_in_german_too(setup, german):
     assert "[Errno" not in status
 
 
-def test_edge_english_keeps_the_raw_reason_in_the_tooltip(setup):
+def test_edge_english_keeps_the_raw_reason_on_the_job_not_in_the_tooltip(setup):
     tmp, mgr = setup
     [row] = _run(mgr, LocalFS(), _ReadOnlyDest(), str(tmp / "Documents"), str(tmp / "dst"))
     status, tip = _cells(row)
     assert status.startswith("error: The folder could not be created"), status
     assert "cannot create the folder, its contents were not copied" in row.error_message
-    assert row.error_message in tip
+    assert tip.startswith("error: The folder could not be created"), tip
+    assert "[Errno" not in tip

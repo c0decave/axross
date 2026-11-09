@@ -451,7 +451,7 @@ def still_ours(mount: Mount) -> str:
     loop device and the folder may belong to something else, and a
     privileged unmount must not hit that."""
     if not re.fullmatch(r"/dev/loop\d+", mount.device):
-        return f"{mount.device} is no loop device"
+        return f"{mount.device} is not a loop device"
     backing_file = os.path.join(SYS_ROOT, "block", os.path.basename(mount.device),
                                 "loop", "backing_file")
     try:

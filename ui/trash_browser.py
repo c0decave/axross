@@ -266,11 +266,27 @@ class TrashBrowserDialog(QDialog):
                 tr("Select at least one entry to restore."),
             )
             return
+        self._restore_entries(entries, allow_protected=False)
+
+    def _restore_entries(self, entries, *, allow_protected: bool) -> None:
+        """Restore *entries* in the background. An authenticated entry whose
+        place is protected (core.trash.ProtectedRestoreError: a shell start
+        file, an autostart entry, ...) is put back only after the user
+        confirms it here."""
         backend = self._backend
+        protected: list = []
+        asked: set[str] = set()  # their lines in the errors: asked about instead
 
         def restore(entry, errors) -> None:
             try:
-                T.restore(backend, entry.trash_id)
+                T.restore(backend, entry.trash_id, allow_protected=allow_protected)
+            except T.ProtectedRestoreError as exc:
+                line = f"{entry.original_path}: {exc}"
+                if exc.verified and not allow_protected:
+                    protected.append(entry)
+                    asked.add(line)
+                errors.append(line)
+                log.warning("Restore refused for %s: %s", entry.trash_id, exc)
             except OSError as exc:
                 errors.append(f"{entry.original_path}: {exc}")
                 log.warning("Restore failed for %s: %s", entry.trash_id, exc)
@@ -280,15 +296,35 @@ class TrashBrowserDialog(QDialog):
                 QMessageBox.warning(self, tr("Restore"), tr("Failed:\n{value}").format(value=value))
                 return
             restored, errors = value
-            if errors:
+            others = [e for e in errors if e not in asked]
+            if others:
                 QMessageBox.warning(
                     self,
                     tr("Restore"),
                     tr("{restored} restored, {failed} failed:\n").format(
-                        restored=restored, failed=len(errors)) + "\n".join(errors[:10]),
+                        restored=restored, failed=len(others)) + "\n".join(others[:10]),
                 )
+            if protected and not cancelled and self._confirm_protected(protected):
+                self._restore_entries(protected, allow_protected=True)
 
         self._run(self._per_entry(entries, restore), done)
+
+    def _confirm_protected(self, entries) -> bool:
+        """Ask before putting entries back into protected places."""
+        shown = "\n".join(e.original_path for e in entries[:10])
+        if len(entries) > 10:
+            shown += "\n…"
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle(tr("Restore"))
+        box.setTextFormat(Qt.TextFormat.PlainText)
+        box.setText(
+            tr("These go back into places programs run code from (start files, "
+               "autostart, settings). Restore them only if you deleted them yourself:")
+            + "\n\n" + shown)
+        box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        box.setDefaultButton(QMessageBox.StandardButton.No)
+        return box.exec() == QMessageBox.StandardButton.Yes
 
     def _do_delete_permanent(self) -> None:
         if self.busy:

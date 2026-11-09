@@ -15,7 +15,6 @@ import logging
 import os
 import shutil
 import stat as stat_module
-import tempfile
 import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -236,6 +235,19 @@ class WriteTraits:
     #: stores: Exchange reports the EWS store size and the copy is the MIME
     #: text; IMAP servers (Exchange's among them) estimate RFC822.SIZE.
     exact_size: bool = True
+    #: open_write() touches nothing on the server: the writer spools and
+    #: sends the whole file in close() (FTP STOR, a WebDAV PUT, an SCP /
+    #: ADB push, a shell here-doc, a DB row written at commit). The
+    #: rollback snapshot is taken right before that close(), not before
+    #: the copy - a copy that fails or is cancelled first leaves the
+    #: destination as it was, with nothing to read back or restore.
+    spools_until_close: bool = False
+    #: copy() runs on the server - no byte through this machine - and
+    #: leaves no trace but the copy (shell cp, WebDAV COPY, an SQLite row):
+    #: the safety copy of a destination about to be overwritten is made
+    #: there instead of reading it back. Not git (a copy is a commit), not
+    #: the network databases (their copy() moves the row through here).
+    server_copy: bool = False
 
 
 #: By registry protocol id; a backend not named here has the defaults.
@@ -243,6 +255,10 @@ class WriteTraits:
 #: as it goes. (AZURE_FILES_CAPS in core.backend_registry still declares
 #: append_native - its append is the read-modify-write described above.)
 _RMW_APPEND = WriteTraits(real_append=False)
+_SPOOLED = WriteTraits(spools_until_close=True)
+_SPOOLED_RMW = WriteTraits(real_append=False, spools_until_close=True)
+_SPOOLED_COPIES = WriteTraits(spools_until_close=True, server_copy=True)
+_SPOOLED_RMW_COPIES = WriteTraits(real_append=False, spools_until_close=True, server_copy=True)
 _WRITE_TRAITS = {
     "s3": WriteTraits(commits_on_close=True, real_append=False),
     "azure_blob": WriteTraits(commits_on_close=True, real_append=False),
@@ -251,12 +267,21 @@ _WRITE_TRAITS = {
     "gdrive": _RMW_APPEND,
     "onedrive": _RMW_APPEND,
     "sharepoint": _RMW_APPEND,
-    "webdav": _RMW_APPEND,
-    "scp": _RMW_APPEND,
+    "webdav": _SPOOLED_RMW_COPIES,
+    "scp": _SPOOLED_RMW_COPIES,
     "rsync": _RMW_APPEND,
     "git": _RMW_APPEND,
     "imap": WriteTraits(append_only=True, real_append=False, exact_size=False),
     "exchange": WriteTraits(append_only=True, real_append=False, exact_size=False),
+    "ftp": _SPOOLED,
+    "ftps": _SPOOLED,
+    "telnet": _SPOOLED_COPIES,
+    "adb": _SPOOLED_RMW_COPIES,
+    "tftp": _SPOOLED,
+    "sqlite": _SPOOLED_COPIES,
+    "postgres": _SPOOLED,
+    "redis": _SPOOLED,
+    "mongodb": _SPOOLED,
 }
 _DEFAULT_TRAITS = WriteTraits()
 
@@ -293,7 +318,7 @@ def _commits_on_close(backend) -> bool:
     return write_traits(backend).commits_on_close
 
 
-def _snapshot_direct_destination(backend, dst: str):
+def _snapshot_direct_destination(backend, dst: str, *, defer: bool = False, check=None):
     """Return ``(existed, snapshot)`` before an unsafe direct write.
 
     Some backends cannot create a sibling temp and commit via rename.
@@ -301,6 +326,12 @@ def _snapshot_direct_destination(backend, dst: str):
     ``dst`` half-updated. For those paths we keep a local snapshot of an
     existing destination so error handling can restore it. The snapshot
     is intentionally only used when temp+rename is unavailable.
+
+    *defer*: the writer spools until close() (WriteTraits.spools_until_
+    close): no snapshot now - the caller takes it with
+    :func:`read_destination_snapshot` right before that close(), so a copy
+    cancelled or failed before it reads back and restores nothing.
+    *check* is called before every chunk read (Cancel: InterruptedError).
     """
     try:
         existed = _exists_true(backend, dst)
@@ -316,20 +347,46 @@ def _snapshot_direct_destination(backend, dst: str):
         # on a store that only adds), so a failed upload leaves the old
         # object — no copy needed.
         return True, None
+    if defer:
+        return True, None
+    return True, read_destination_snapshot(backend, dst, check=check)
+
+
+#: Bytes of a rollback snapshot kept in memory before it spills to disk.
+SNAPSHOT_IN_MEMORY = 16 * 1024 * 1024
+
+
+def read_destination_snapshot(backend, dst: str, *, check=None):
+    """The bytes of the existing *dst*, read back into a spool for a
+    rollback. The spool goes to the spool folder (core.read_spool: next to
+    a local destination, the configured folder or the user's cache - not
+    /tmp, a tmpfs on many systems), and its size, when stat tells it, is
+    checked against the free space there first (ENOSPC before reading a
+    byte). *check* runs before every chunk: Cancel stops the read-back,
+    which has changed nothing yet."""
+    from core.read_spool import new_spool
+
     if not hasattr(backend, "open_read"):
         raise OSError(
             f"Cannot safely overwrite existing destination without read-back support: {dst}"
         )
-    snapshot = tempfile.SpooledTemporaryFile(max_size=16 * 1024 * 1024)
+    size = None
+    try:
+        size = int(getattr(backend.stat(dst), "size", 0) or 0) or None
+    except Exception as exc:  # noqa: BLE001 - size unknown: no early check
+        log.debug("size of %s for its snapshot unknown: %s", dst, exc)
+    snapshot = new_spool(size, max_size=SNAPSHOT_IN_MEMORY)
     try:
         with backend.open_read(dst) as rf:
             while True:
+                if check is not None:
+                    check()
                 chunk = rf.read(1024 * 1024)
                 if not chunk:
                     break
                 snapshot.write(chunk)
         snapshot.seek(0)
-        return True, snapshot
+        return snapshot
     except BaseException:
         snapshot.close()
         raise
@@ -609,10 +666,12 @@ def stream_copy_between_backends(
         target = temp_path
     destination_existed = False
     destination_snapshot = None
+    defer = temp_path is None and write_traits(dst_backend).spools_until_close
     if temp_path is None:
         destination_existed, destination_snapshot = _snapshot_direct_destination(
             dst_backend,
             dst,
+            defer=defer,
         )
 
     transferred = 0
@@ -620,16 +679,20 @@ def stream_copy_between_backends(
     try:
         with src_backend.open_read(src) as rf:
             wf = dst_backend.open_write(target)
-            opened = True
             completed = False
             try:
+                if not defer:
+                    opened = True
                 while True:
                     chunk = rf.read(buffer_size)
                     if not chunk:
                         break
                     wf.write(chunk)
                     transferred += len(chunk)
-                completed = True
+                if defer and destination_existed:
+                    # The writer has sent nothing so far: the old bytes now.
+                    destination_snapshot = read_destination_snapshot(dst_backend, dst)
+                completed = opened = True
             finally:
                 _discard_or_close_writer(wf, completed=completed)
         if temp_path is not None:

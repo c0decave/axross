@@ -15,6 +15,13 @@ from core.local_fs import LocalFS
 AUDIT = "core.mcp_server.audit"
 
 
+#: The "code" of a :class:`RpcError` for a tool that ran and failed: MCP
+#: answers that as a RESULT flagged ``isError`` (its text the message,
+#: ``_meta`` the data), not as a JSON-RPC error - those are for unknown
+#: tools (-32601) and bad arguments (-32602).
+TOOL_ERROR = "isError"
+
+
 class RpcError(Exception):
     def __init__(self, code: int, message: str, data=None) -> None:
         super().__init__(f"{code}: {message}")
@@ -36,7 +43,8 @@ def build(root, groups, *, allow_write: bool = False, backend=None, **kw) -> dic
 
 def call(tools: dict, name: str, args: dict | None = None, *, session_id=None):
     """tools/call through the dispatcher; returns the decoded result or
-    raises :class:`RpcError`."""
+    raises :class:`RpcError` - for a JSON-RPC error, or with the code
+    :data:`TOOL_ERROR` for a result flagged ``isError``."""
     resp = M._handle_request(
         {
             "jsonrpc": "2.0",
@@ -51,7 +59,10 @@ def call(tools: dict, name: str, args: dict | None = None, *, session_id=None):
     if "error" in resp:
         err = resp["error"]
         raise RpcError(err["code"], err["message"], err.get("data"))
-    return json.loads(resp["result"]["content"][0]["text"])
+    result = resp["result"]
+    if result.get("isError"):
+        raise RpcError(TOOL_ERROR, result["content"][0]["text"], result.get("_meta"))
+    return json.loads(result["content"][0]["text"])
 
 
 def run_handler(tools: dict, name: str, args: dict, *, cancel: threading.Event | None = None):

@@ -235,3 +235,20 @@ def test_edge_a_long_subject_is_capped_in_bytes_and_its_old_name_still_works(mak
         assert s.open_read(f"/1_{subject}.eml").read().endswith(b"body\r\n")
     finally:
         s.disconnect()
+
+
+def test_sad_after_the_users_disconnect_no_new_login(make_server):
+    """Round 6: after disconnect() the next call through the same session
+    (a queued transfer, a scheduled job) logged in again by itself."""
+    import errno
+
+    srv = make_server([("u1", "hello", "a")])
+    s = _session(srv)
+    assert [i.name for i in s.list_dir("/")] == ["1_hello.eml"]
+    s.disconnect()
+    seen = len(srv.commands)
+    with pytest.raises(ConnectionError) as exc_info:
+        s.list_dir("/")
+    assert exc_info.value.errno == errno.ENOTCONN
+    assert "disconnected" in str(exc_info.value)
+    assert srv.commands[seen:] == []

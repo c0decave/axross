@@ -286,6 +286,12 @@ class JobStore:
         write_secret_file(str(self.path), json.dumps(payload, indent=2))
 
 
+class RunCancelled(RuntimeError):
+    """A run stopped because the application closed during it: no failure
+    of the job (it counted towards disabling it, and "failed" stood in
+    the Scheduler)."""
+
+
 def run_job(job: Job, *, runner, on_finished) -> None:
     """Execute one job and report the outcome through ``on_finished``.
 
@@ -298,9 +304,17 @@ def run_job(job: Job, *, runner, on_finished) -> None:
     first wiring called the script straight from the timer slot, which
     froze the window for as long as the job took, which is the one thing
     a background schedule must never do.
+
+    ``on_finished(job, ok, detail)``: *ok* is None for a run stopped
+    because the application closed (:class:`RunCancelled`) - not run,
+    rather than failed.
     """
     try:
         detail = runner(job)
+    except RunCancelled as exc:
+        log.info("scheduler: job %s stopped: %s", job.name, exc)
+        on_finished(job, None, str(exc))
+        return
     except BaseException as exc:  # noqa: BLE001 — a bad job must not escape
         # BaseException, not Exception: this is the top of a worker
         # thread, and a SystemExit leaving it took the whole app down.
@@ -350,8 +364,8 @@ def run_script_job(
     except FileNotFoundError:
         # Not "[Errno 2] No such file or directory: '/home/…/scripts/x.py'".
         raise RuntimeError(
-            f"the saved script {name!r} does not exist (any more): save it in the Script "
-            "Editor under that name, or remove this job") from None
+            f"the saved script {name!r} does not exist (any more): save it in the Scripts "
+            "dock under that name, or remove this job") from None
     run = script_runner.run_bounded(
         name,
         timeout_s=timeout_s,
@@ -360,7 +374,7 @@ def run_script_job(
         env_overrides={ENV_NONINTERACTIVE: "1"},
     )
     if run.cancelled:
-        raise RuntimeError("cancelled: the application closed during the run")
+        raise RunCancelled("cancelled: the application closed during the run")
     if run.timed_out:
         raise RuntimeError(f"timed out after {timeout_s:g} s")
     if run.output_exceeded:
@@ -398,6 +412,7 @@ __all__ = [
     "MIN_INTERVAL_S",
     "Job",
     "JobStore",
+    "RunCancelled",
     "due_jobs",
     "next_run_at",
     "planned_start",

@@ -463,7 +463,7 @@ class _Child:
             self._send({"id": None, "ok": False, "error": "the request is no JSON"})
             return
         if not isinstance(req, dict):
-            self._send({"id": None, "ok": False, "error": "the request is no object"})
+            self._send({"id": None, "ok": False, "error": "the request is not an object"})
             return
         rid, op = req.get("id"), req.get("op")
         try:

@@ -885,7 +885,7 @@ def read_playlist(path: str):
     except OSError as exc:
         raise PlaylistError(f"cannot read the playlist: {exc.strerror or exc}") from exc
     if not stat_module.S_ISREG(st.st_mode):
-        raise PlaylistError("the playlist is no regular file")
+        raise PlaylistError("the playlist is not a regular file")
     if st.st_size > MAX_PLAYLIST_BYTES:
         raise PlaylistError(f"the playlist is larger than {MAX_PLAYLIST_BYTES >> 10} KiB")
     try:

@@ -132,10 +132,13 @@ def test_sad_xdg_folders_the_gui_ran_with_are_protected_without_the_variable(hom
     """The reviewer's mcp/xdg_env_mismatch.py: the GUI records them."""
     target = home / ".xdgconf" / "autostart" / "x.desktop"
     mcp_env = {"HOME": str(home)}
-    assert P.refusal(str(target), environ=mcp_env) is None  # nothing known yet
+    # Nothing known yet: only default-deny refuses it (a hidden folder of the
+    # home, round 6), which a grant of that folder lifts.
+    grant = [str(home / ".xdgconf")]
+    assert P.refusal(str(target), environ=mcp_env, granted=grant) is None
     P.remember_xdg({"XDG_CONFIG_HOME": str(home / ".xdgconf")})
     assert (home / ".config" / "axross" / "xdg-locations.json").is_file()
-    assert P.refusal(str(target), environ=mcp_env)
+    assert P.refusal(str(target), environ=mcp_env, granted=grant)
     assert P.refusal(str(home / ".xdgconf" / "axross" / "settings.json"), environ=mcp_env)
     # The record itself lies in a protected place wherever XDG points.
     assert P.refusal(str(home / ".config" / "axross" / "xdg-locations.json"), environ=mcp_env)

@@ -531,8 +531,9 @@ root. Without the second pass, a symlink placed under the
 configured root (either externally or by the LLM using the
 `symlink` write tool) would point at `/` and let
 `write_file("/root/escape/etc/cron.d/evil")` slip past. Now
-rejected with `PermissionError`, answered as -32603 with
-`data.type = "PermissionError"` and a message naming the root. The
+rejected with `PermissionError`, answered as a tool result flagged
+`isError` with `_meta.type = "PermissionError"` and a text naming the
+root (§8). The
 capability groups (§9) run every local path through the same check.
 Tools that check many paths in one call (`grep`, `search`,
 `recursive_checksum`) resolve the root once per call and still resolve
@@ -674,9 +675,27 @@ places of `core.protected_places`) is a list of its own and unchanged.
 | -32600   | INVALID_REQUEST         | Missing method, non-object body.                      |
 | -32601   | METHOD_NOT_FOUND        | Unknown method / tool / disabled capability.          |
 | -32602   | INVALID_PARAMS          | jsonschema failure, ValueError in handler, bad URI.   |
-| -32603   | INTERNAL                | Handler raised an exception other than ValueError/TypeError (OSError, `PermissionError` of a root escape, a refused profile, …; `data.type` names it), or cancel. |
+| -32603   | INTERNAL                | A result that cannot be sent (not serialisable, over the size cap), or a call cancelled by the client. |
 | **-32001** | **RATE_LIMITED**      | `tools/call` / `tasks/start` throttled, or running-task cap reached. |
 | **-32002** | **TIMEOUT**           | Tool exceeded its wall-clock timeout.                 |
+
+A tool that ran and failed - its handler raised anything other than
+ValueError / TypeError: an OSError (a missing file, a name that exists),
+the `PermissionError` of a root escape or a secret file, a refused
+profile, … - is not a JSON-RPC error. As the MCP specification asks, it is
+a normal **result flagged `isError`**, so the model sees the reason and
+can react:
+
+```json
+{"jsonrpc": "2.0", "id": 7, "result": {
+  "content": [{"type": "text", "text": "tool 'read_file' failed: [Errno 2] No such file or directory: '/w/missing.txt'"}],
+  "isError": true,
+  "_meta": {"type": "FileNotFoundError"}}}
+```
+
+The text is redacted like every error message (credentials in URLs,
+`password=` pairs, auth headers); `_meta.type` names the exception.
+Bad arguments stay -32602 and an unknown tool -32601.
 
 ---
 

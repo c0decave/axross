@@ -33,6 +33,161 @@ the old code.
 
 ### Fixed
 
+- **Someone else pushed to your Git branch: your save still lands.** A
+  save to a Git URL session asks origin first and builds on its new tip
+  when only other files changed (the same file: refused, refresh and
+  repeat). A push origin refuses all the same now catches up instead of
+  showing "Git push main: (b'8148…', b'0aaa…')" and piling every later
+  save onto a diverged branch: unpushed commits that touch other files
+  are replayed onto origin's tip and pushed; ones that touch the same
+  files are kept on a new branch `axross/unpushed-<time>` that the
+  message names, and the branch follows origin. A cache that had
+  diverged is no longer read-only until merged in a git client. dulwich's
+  "counting objects" no longer goes to the terminal.
+- **SFTP no longer hangs on a lost network, and Cancel stops it.** A
+  request the server leaves unanswered for 60 s fails with "did not
+  answer in time" (also the opening of a new channel); before, a listing,
+  download or upload on a connection that went silent waited for ever.
+  Cancel closes the SFTP or SCP channel of a transfer at once, also while
+  it waits on the network.
+- **Moving a Google Doc out of Drive no longer deletes it.** The move
+  exported a .docx (no comments, history or sharing) and then deleted
+  the original past Drive's trash. It is now refused before anything is
+  copied (copy instead); deleting a Google Doc, Sheet, Slides deck or a
+  folder puts it in Drive's trash.
+- **Retry after a reconnect no longer freezes the window.** Retry asked
+  the dropped SMB session whether it was connected - a redial of up to a
+  minute per job on the window's thread - and then bound the retry to
+  that retired session; it now takes the pane's session without asking.
+- **An SMB connection through a proxy no longer takes others with it.**
+  Its proxy and workstation name applied to the whole program during the
+  up to 60 s connect: an FTP or IMAP login in another pane went through
+  that proxy, and another server's SMB connect waited. Both are now for
+  the SMB connection only. SMB connection failures are typed
+  (connection refused / reset / timed out) also from an open file.
+- **Dropbox: a move or delete answered 5xx after it was done is no
+  longer "not found"; Paper documents open (as their export).** Cancel in
+  the pause after such an answer on the last upload request no longer
+  reports the file untouched when it had been written.
+- **An IMAP upload after a reconnect is stored.** The message was sent on
+  the connection of before the reconnect and lost with an error without
+  a reason; it now goes over the live connection.
+- **Ctrl+Z, then Enter, undoes - in your language.** The undo question
+  named the operation by its internal id ("trash") and the reason in
+  English, and No was the default, so Enter restored nothing. Now both are
+  translated ("Die letzte Aktion (Verschieben in den Papierkorb)
+  widerrufen?"), Yes is the default (the undo is itself the reversal and
+  refuses an entry that changed since), and the status bar no longer keeps
+  saying "Looking for the operation to undo…" after No or "nothing to undo".
+- **German says "Papierkorb".** The German window, handbook and tour
+  narration called the trash "Trash" in some 60 places; View → Zoom reads
+  Vergrößern / Verkleinern / Normale Größe; menu paths use "→" and dashes
+  "–" throughout; the German handbook's Transfers, right-click, feature,
+  keyring and settings sections were rewritten in German with the labels
+  the window shows.
+- **The right-click menu is one column on a 1024x600 screen.** Refresh,
+  Copy Path, Links, Metadata, Tags and Send to Workspace moved under More;
+  the top level holds at most eighteen entries, also with an archive
+  selected and a Paste pending. The Ctrl+C entry says *Copy* (Ctrl+C then
+  Ctrl+V copies the files); *More → Copy Path* puts only the paths on the
+  clipboard, and the shortcut list says what Ctrl+C and Ctrl+V do.
+- **A cancelled copy says what it left.** A copy cancelled half-way keeps
+  its hidden partial file so Retry Failed can resume it; the status now
+  says so, and Clear Finished removes the partial files of the rows it
+  clears. The Transfers buttons are enabled only when they have something
+  to act on.
+- **Copy errors name your file, not the temp file.** "Fehler:
+  /usr/share/.todo.txt.part-c71d0b6a-58df0d1a liegt auf einem
+  schreibgeschützten Dateisystem" now names /usr/share/todo.txt, and the
+  tooltip no longer repeats the raw English error (it is in the log).
+- **Smaller UX fixes.** Moving a folder with hidden files to the trash asks
+  once; "1 of 1 item moved" reads "1 item moved"; the connection window is
+  called Connection Manager like its menu entry; agent presets have German
+  names in the German menus; About names the themes as View → Theme does;
+  a tour video that cannot be fetched says so about GitHub, not about DNS;
+  hidden files are off for a new user (Ctrl+H shows them; a stored choice
+  is kept), and the "." row (this folder, a drop target) is set apart;
+  German column headers are no longer clipped; a local-to-local copy shows
+  "→" instead of a download arrow; *Activate a pane* offers "When clicked"
+  or "When the mouse rests on it for … s".
+
+- **A download that ends early fails instead of finishing short.** An FTP
+  data connection cut half-way, followed by the server's "226 Transfer
+  complete", gave a job marked done with 1.5 of 3 MB; the download is now
+  checked against the size SIZE (or the server's 150 reply) announced, and
+  every copy from a remote source against the size known at its start
+  (one stat of the source when it came out short). A short copy fails and
+  leaves the destination as it was.
+- **Overwriting a file on FTP, WebDAV, SCP, Telnet, ADB or a database
+  backend no longer reads the old file back before it is needed.** The
+  safety copy that restores it after a failed upload is taken right before
+  the upload starts: a Cancel or an error during the copy changes nothing
+  and ends at once (a Cancel 0.3 s into overwriting a 400 MiB FTP file
+  waited 3.3 s while the old file was downloaded and uploaded again). Where
+  the server can copy (cp, WebDAV COPY, a database row) the safety copy is
+  made there; a read-back checks Cancel and the free space first.
+- **Downloads are spooled outside /tmp.** Large FTP, S3, Azure, WebDAV,
+  OneDrive and Dropbox downloads (and FTP / Telnet uploads) spooled in
+  /tmp, a RAM disk on many systems, and failed with "no space left"
+  half-way. They now go next to the local destination, or to
+  `$AXROSS_SPOOL_DIR`, or `~/.cache/axross/spool` (a temp folder you chose
+  with TMPDIR or the tmpfs setting is kept); a download of known size that
+  does not fit fails before it starts, with a message that says so.
+- **A session you disconnected stays disconnected.** FTP, IMAP, POP3 and
+  Telnet logged in again by themselves - with the stored password - when a
+  queued transfer, a scheduled job or an editor save used the session after
+  you disconnected it; they now fail with "disconnected".
+- **FTP folders without MLSD list fast.** 10,000 files took 15-30 s (each
+  name was searched in the whole listing and asked MDTM on its own),
+  20,000 files 77 s; now 2.8 s and 5 s. At most 64 files per listing are
+  asked MDTM; the others keep their LIST date, corrected by the server's
+  clock offset the asked ones show.
+- **"Delete" on the root of an NFS mount, an iSCSI disk or an MTP device is
+  refused** instead of emptying the whole export, disk or phone.
+- **A file path ending in "/" no longer names the file** on RamFS, the
+  database backends, NFS (mounted and without a mount) and iSCSI:
+  `remove("file/")` deleted the file and `open_read("file/")` read it; they
+  now say "Not a directory", as the operating system does. Writing below a
+  file on NFS or iSCSI says the same (it said "file exists"); iSCSI says
+  "not found" and "not a directory" as such.
+- A file name that is not valid UTF-8 is a per-file error on SQLite (and
+  the other database backends), not a crash of the whole copy; a cancelled
+  copy from a source without modification times (rsh) no longer leaves a
+  hidden partial file that no resume could use.
+
+- **Ctrl+Z after a move never moves a different file back.** A move now
+  records what it put at the destination (size, modification time, and on
+  this machine's disk the inode and device); undo moves an entry back only
+  while it is still that file. A file renamed away after the move and a new
+  one saved under its name was moved back in its place; now the undo is
+  refused with "… is not the file the move put there - it was changed or
+  replaced since" (in a folder move, that file stays and the rest goes
+  back). Moves journaled before compare the size they wrote.
+- **Batch Rename never replaces a file saved meanwhile under a new or old
+  name.** The final renames and the rollback refuse a name that appeared
+  after the check instead of overwriting it, and report it.
+- **A cut or selected file that is gone is no permission problem.** Pasting
+  a Cut whose file was removed or renamed since asked "cannot be removed
+  after the copy - you lack the permission" and offered Move as
+  Administrator; it is left out now and named, and a Cut whose entries are
+  all gone is dropped.
+- **View > Layout Preset asks before closing running shells and remote
+  connections**, as Ctrl+Alt+L does, and the new layout keeps the folders
+  of the active and the target pane instead of opening the home folder in
+  every pane.
+- **An extension handler that fails on every event logs its traceback
+  once.** 50 selection changes logged 101 tracebacks; repeats are now
+  counted, and the status bar and the Extensions window follow at most every
+  five seconds.
+- **MCP: a tool that fails answers a result flagged `isError`** (MCP
+  specification), not the JSON-RPC error -32603, so the model sees the
+  reason; bad arguments stay -32602, unknown tools -32601 (docs/MCP.md §8).
+- A scheduled run stopped because axross closed is no longer recorded as a
+  failure (nor counted towards disabling the job); Open With > View
+  Selected Media… is offered only for media and folders; Cut, Tags and
+  Send to Workspace in the right-click menu have their letter; English
+  messages say "is not a …" (a restic repository, a world code, a regular
+  file, an e-mail address, …) and the scheduler names the Scripts dock.
 - Create SHA256SUMS with every file selected no longer lists the manifest itself (Verify then failed on it); an open Scheduled Jobs window shows the result of Run Now.
 - **Space marks files again instead of moving one mark down.** "Mark the
   file and move down" moved the cursor with a call that cleared every
@@ -399,6 +554,81 @@ the old code.
 
 ### Security
 
+- **TFTP takes data only from the transfer's peer.** A packet from another
+  port or host (a spoofed DATA block) was logged as "discarding" by tftpy
+  and then written into the download - into a firmware image, for example.
+  It is now dropped, and the client keeps waiting for the server's block.
+- **Agent and MCP: hidden files of the home and the settings folders are
+  read-only (default-deny).** Beyond the listed places, no tool writes,
+  deletes or moves a hidden entry of the home folder or anything in
+  `~/.config`, `~/.local/share`, `~/.local/state` (where XDG moves them too,
+  `~/Library`, `%APPDATA%`) unless that folder itself is the agent's or MCP
+  server's root or extra folder: `~/.pdbrc`, `~/.wezterm.lua`,
+  `~/.config/kitty`, `~/.config/starship.toml`, GNOME Shell extensions, KWin
+  scripts and 25 more places that run code were writable. zsh files in
+  `$ZDOTDIR` (read from `~/.zshenv`) are start files, and Git's files that
+  run code (`.git/config`, `.git/hooks`, `.git/info`, `.gitmodules`, a `.git`
+  entry) are refused anywhere. The agent sandbox mounts the hidden entries
+  read-only, keeps new ones from being made in the home, and mounts the Git
+  config and hooks of its folder read-only.
+- **Agent and MCP: credential stores are secret.** AWS, Azure, gcloud, gh,
+  kube, docker, PyPI, npm, cargo, rclone, Vault and Terraform credentials,
+  Claude Code's, `pass`, browser and mail profiles, shell histories and,
+  below a hidden folder of the home, every file named like a credential,
+  token, secret, key, password database or cookie jar were handed out by
+  `read_file` and visible in the sandbox; now refused and shown empty.
+- **Trash: no longer a confused deputy.** `~/.axross-trash` is protected and
+  secret for every tool (a trashed SSH key was readable, an agent could plant
+  an entry whose Restore wrote `~/.bash_profile` or an autostart entry, or
+  rewrite a trashed one before Restore / Undo). Each entry's record is signed
+  (HMAC with this user's key) with a hash of its data: a forged or changed
+  entry is not restored, an older unsigned one only outside protected places,
+  and a signed one back into a protected place only after the user confirms
+  it in the Trash window.
+- **MCP archive_extract: members are checked too.** The new folder is checked
+  as an entry and every member before it is made: a folder that would hold a
+  protected place (`~/go` with `go/bin`, `~/.local/share/systemd`) and members
+  such as `.git/config` or `evil.pth` were written. The packer checks the
+  archive's name before writing it, new files are checked as entries.
+- **MCP chmod sets no setuid, setgid or sticky bit and makes nothing group- or
+  world-writable** (4755, 2755, 1777 and 777 were accepted).
+- **Mail view and labels: table spans no longer freeze the GUI.** A cell's
+  `colspan` / `rowspan` is at most 8 (a mail's larger span is cut to 8, a
+  label, tooltip or message box asking for more is shown as written), and
+  both guards count the cells of the grid Qt lays out - the ones spans join
+  and the empty ones that fill short rows, a nested table's double per
+  table around it - instead of the cells written: a 4.7 KB mail took 34 s,
+  an 841-byte label 31.7 s.
+- **Media viewer: an SVG whose `<use>` references fan out is refused.** What
+  the references draw is worked out before QtSvg sees the file; past 20,000
+  elements, or with a reference cycle, there is no thumbnail (ten levels of
+  ten references, 2.4 KB, drew a billion paths and pinned a worker).
+- **Message boxes: a name with an HTML comment is shown as written.** An
+  archive member named `report.pdf - <b>scan finished: no threats.</b><!--`
+  hid the error after it in "Could not open …" and showed a verdict of its
+  own.
+- **Self-update: carried packs and the new binary are checked against the same pack issue.**
+  The packs brought along were checked against one SHA256SUMS and the binary
+  against another one fetched later; the signed SHA256SUMS that verifies the
+  binary must now name the pack-manifest issue the carried packs were checked
+  against, else the update is refused.
+- **MCP over HTTP: the bearer token is checked before the per-address rate
+  cap.** Requests without the token (another local user, a web page's image
+  requests to the loopback port) used up the token holder's budget; they now
+  draw from a small budget of their own.
+- **Reverse WebDAV/S3: one file name no longer breaks the listing for every
+  client.** A name with a control character or bytes that are not UTF-8 made
+  PROPFIND and the S3 listing malformed XML or dropped the connection; it is
+  now percent-encoded in hrefs (no displayname), escaped in the HTML index,
+  URL-encoded in S3 listings asked with encoding-type=url and left out (logged)
+  otherwise.
+- **MCP Discover: a cached cross-reference only applies to its own server.** A
+  planted crossref.json could make a listed server install another registry
+  package; the cached registry entry must name the server's repository and
+  folder, a Docker Hub image its name.
+- MCP servers started with cargo, go (install, build, get, …), mvn/mvnw,
+  gradle, sbt and similar build tools count as commands that download and run
+  code (never run on the host as they are).
 - Trust Host Key? defaults to No: Enter no longer trusts an SSH host key nobody compared.
 - **SMB reconnects with the same identity, proxy and workstation name.**
   After the connection dropped, the next operation dialled again without

@@ -1094,8 +1094,9 @@ def _enforce_root(path: str, root: str, *, real_root: str | None = None) -> str:
 
     Returns the cleaned absolute path on success. Raises
     :class:`PermissionError` when either pass finds an escape; the
-    dispatcher answers it as -32603 with ``data.type`` =
-    ``"PermissionError"`` (only ValueError / TypeError map to -32602).
+    dispatcher answers it as a tool result with ``isError`` and
+    ``_meta.type`` = ``"PermissionError"`` (only ValueError / TypeError
+    map to the JSON-RPC error -32602).
     """
     if not isinstance(path, str) or not path:
         raise ValueError("path must be a non-empty string")
@@ -1188,17 +1189,24 @@ def _enforce_root_entry(path: str, root: str) -> str:
     return op.join(parent, name)
 
 
-def _refuse_protected(path: str, *, entry: bool = False) -> str:
+def _refuse_protected(path: str, *, entry: bool = False, granted=()) -> str:
     """*path* unless it is (or lies in) a protected place of the home
     folder (core.protected_places); PermissionError otherwise. *entry*:
     the path's entry is created, removed or moved, so a folder holding a
-    protected place is refused too (deleting ~/.config takes ~/.config/autostart)."""
+    protected place is refused too (deleting ~/.config takes ~/.config/autostart).
+    *granted*: the writable roots - one inside a hidden folder of the home
+    or a settings folder lifts default-deny below it."""
     from core import protected_places
 
-    reason = protected_places.refusal(path, entry=entry)
+    reason = protected_places.refusal(path, entry=entry, granted=granted)
     if reason is not None:
         raise PermissionError(reason)
     return path
+
+
+#: The mode bits MCP chmod sets (core.mcp_server): read and execute for
+#: everyone, write for the owner only - no setuid, setgid or sticky bit.
+_CHMOD_ALLOWED_BITS = 0o755
 
 
 def _refuse_configured_root(path: str, root: str, operation: str) -> None:
@@ -1505,7 +1513,8 @@ def _build_tools(
         if _is_remote(active_backend):
             remote_registry.refuse_production(active_backend)
             return _groups.check_remote_path(path)
-        return _refuse_protected(_refuse_read_only(_confined(path, write_roots)))
+        return _refuse_protected(_refuse_read_only(_confined(path, write_roots)),
+                                 granted=write_roots)
 
     def _entry_path(path: str, active_backend) -> str:
         """Confine a path whose directory entry itself is removed or
@@ -1514,7 +1523,29 @@ def _build_tools(
             remote_registry.refuse_production(active_backend)
             return _groups.check_remote_path(path)
         return _refuse_protected(_refuse_read_only_below(
-            _refuse_read_only(_confined(path, write_roots, _enforce_root_entry))), entry=True)
+            _refuse_read_only(_confined(path, write_roots, _enforce_root_entry))), entry=True,
+            granted=write_roots)
+
+    def _entry_checker(active_backend):
+        """``check(path) -> path``: :func:`_entry_path` (and the secret
+        check) for the many new entries of ONE tool call - an archive's
+        members - with the protected places resolved once."""
+        if _is_remote(active_backend):
+            return lambda path: _entry_path(path, active_backend)
+        from core import protected_places
+
+        places = protected_places.write_checker(granted=write_roots)
+        secret = _secret_check(active_backend)
+
+        def check(path: str) -> str:
+            confined = _refuse_read_only_below(
+                _refuse_read_only(_confined(path, write_roots, _enforce_root_entry)))
+            reason = places(confined, entry=True)
+            if reason is not None:
+                raise PermissionError(reason)
+            return secret(confined, entry=True)
+
+        return check
 
     def _secret_check(active_backend):
         """``refuse(path, entry=False) -> path`` for the paths of ONE tool
@@ -1578,7 +1609,8 @@ def _build_tools(
             if after == before:
                 return
             try:
-                _refuse_protected(_write_path(after, active_backend), entry=True)
+                _refuse_protected(_write_path(after, active_backend), entry=True,
+                                  granted=write_roots)
             except PermissionError as exc:
                 raise PermissionError(
                     f"{link}: moved to {new_link}, the symlink would point to {after}: {exc}"
@@ -2934,7 +2966,7 @@ def _build_tools(
             try:
                 # realpath walks the links in it the way the kernel will.
                 resolved = _write_path(op.realpath(where), active_backend)
-                _refuse_protected(resolved, entry=True)
+                _refuse_protected(resolved, entry=True, granted=write_roots)
             except PermissionError as exc:
                 raise PermissionError(f"symlink target {target!r} is refused: {exc}") from exc
 
@@ -3021,6 +3053,16 @@ def _build_tools(
                 raise ValueError(
                     f"chmod: mode {mode_int:o} out of range (0..07777)",
                 )
+            if mode_int & ~_CHMOD_ALLOWED_BITS:
+                # setuid / setgid run a file with its owner's rights, a
+                # world- or group-writable file or folder lets others change
+                # it, the sticky bit belongs to shared folders: none is a mode
+                # an agent needs, and each hands others the user's account.
+                raise PermissionError(
+                    f"chmod: mode {mode_int:o} refused: the agent does not set the "
+                    "setuid, setgid or sticky bit or make a file group- or world-writable "
+                    f"(allowed: the bits of {_CHMOD_ALLOWED_BITS:o})"
+                )
             _audit("chmod", "attempt", path=path, mode=oct(mode_int))
             try:
                 safe = _write_path(path, backend)
@@ -3031,7 +3073,7 @@ def _build_tools(
                     # ~/.config/autostart for their own: an operation on the
                     # entry, not on its contents.
                     try:
-                        _refuse_protected(safe, entry=True)
+                        _refuse_protected(safe, entry=True, granted=write_roots)
                     except PermissionError as exc:
                         raise PermissionError(
                             f"chmod {mode_int:o}: group or others could write {safe}: {exc}"
@@ -3504,6 +3546,7 @@ def _build_tools(
                     scope_path=_read_path,
                     write_path=_write_path,
                     entry_path=lambda p, b: _refuse_secret(_entry_path(p, b), b, entry=True),
+                    entry_checker=_entry_checker,
                     refuse_root=_refuse_root,
                     refuse_moved_links=_refuse_moved_links,
                     index_backend_id=lambda b: (
@@ -4547,11 +4590,19 @@ def _dispatch(
                         f"tool {name!r} rejected args: {exc}",
                         data={"type": type(exc).__name__},
                     )
-                return _err(
+                # The tool ran and failed (a missing file, a refused path, a
+                # server that said no): MCP wants that in the RESULT, flagged
+                # isError, so the model sees it and can react - a JSON-RPC
+                # error is for the protocol (unknown tool, bad arguments).
+                # Redacted like _err: backend text can carry credentials.
+                return _ok(
                     req_id,
-                    ERR_INTERNAL,
-                    f"tool {name!r} failed: {exc}",
-                    data={"type": type(exc).__name__},
+                    {
+                        "content": [{"type": "text",
+                                     "text": redact_text(f"tool {name!r} failed: {exc}")}],
+                        "isError": True,
+                        "_meta": {"type": type(exc).__name__},
+                    },
                 )
             result = result_box[0]
         finally:

@@ -182,6 +182,9 @@ class _DriveHttp:
         q = parse_qs(parts.query).get("q", [""])[0]
         if method == "DELETE":
             return httplib2.Response({"status": "204"}), b""
+        if method == "PATCH" and json.loads(body or b"{}").get("trashed") is True:
+            # files.update trashed=True: a folder goes to Drive's trash
+            self.calls[-1] = ("TRASH", parts.path)
         if parts.path.endswith("/files/P"):
             answer = {"id": "P", "name": "proj", "mimeType": _FOLDER_MIME}
         elif parts.path.endswith("/files/F"):
@@ -198,7 +201,12 @@ class _DriveHttp:
         return resp, json.dumps(answer).encode()
 
     def deleted(self) -> list[str]:
-        return [p.rsplit("/", 1)[-1] for m, p in self.calls if m == "DELETE"]
+        """Removed: deleted for good, or (a folder, a Google Doc - round 6)
+        put into Drive's trash."""
+        return [p.rsplit("/", 1)[-1] for m, p in self.calls if m in ("DELETE", "TRASH")]
+
+    def trashed(self) -> list[str]:
+        return [p.rsplit("/", 1)[-1] for m, p in self.calls if m == "TRASH"]
 
 
 def _gdrive(children: list[dict]):
@@ -227,6 +235,7 @@ def test_happy_gdrive_empty_folder_file_and_recursive_remove():
     s.remove("/proj", recursive=False)
     s.remove("/f.txt", recursive=False)
     assert http.deleted() == ["P", "F"]
+    assert http.trashed() == ["P"]  # the folder into Drive's trash, the file deleted
     s, http = _gdrive([{"id": "C", "name": "a.txt", "mimeType": "text/plain"}])
     s.remove("/proj", recursive=True)
     assert http.deleted() == ["P"]

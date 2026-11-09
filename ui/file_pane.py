@@ -100,7 +100,8 @@ CONTEXT_COMMANDS: dict[str, tuple[str | None, str | None]] = {
     "extract": ("download", None),
     "view-selected-media": ("media-view", None),
     # clipboard / edit
-    "copy-path": (None, "Ctrl+C"),
+    "copy": (None, "Ctrl+C"),
+    "copy-path": (None, None),
     "cut": (None, "Ctrl+X"),
     "paste": (None, "Ctrl+V"),
     "rename": ("edit", "F2"),
@@ -1037,6 +1038,19 @@ _DEFAULT_COLUMN_WIDTHS = {1: 90, 2: 150, 3: 110, 4: 150}
 # _MEASURE_ROWS is judged by its first rows in the current sort order.
 _MEASURE_ROWS = 5000
 _MEASURE_LONGEST = 8
+
+
+def _may_hold_media(item) -> bool:
+    """A selected entry View Selected Media… has something to show for: a
+    folder (or a link to one) or a file of a media kind
+    (core.media_collect.classify)."""
+    if getattr(item, "is_nav", False):
+        return False
+    if getattr(item, "is_dir", False):
+        return True
+    from core.media_collect import classify
+
+    return classify(getattr(item, "name", "")) is not None
 
 
 class FilePaneWidget(QWidget):
@@ -2424,6 +2438,20 @@ class FilePaneWidget(QWidget):
             sel.blockSignals(False)
         self.selection_changed.emit()
 
+    def _copy_path_text(self) -> None:
+        """More ▸ Copy Path: the selected paths as text, one per line and
+        control characters escaped - nothing marked for Paste."""
+        paths = self.selected_items()
+        if not paths:
+            return
+        lines = [_sanitize_clipboard_text(p) for p in paths]
+        QApplication.clipboard().setText("\n".join(text for text, _had in lines))
+        status = tr_n(len(paths), "Copied {n} path to the clipboard",
+                      "Copied {n} paths to the clipboard")
+        if any(had for _text, had in lines):
+            status += " " + tr("(control characters escaped)")
+        self._status.setText(status)
+
     def _copy_paths_to_clipboard(self) -> None:
         """Copy selected file paths to clipboard (Ctrl+C).
 
@@ -2455,7 +2483,7 @@ class FilePaneWidget(QWidget):
                              clipboard.text())
         status = tr_n(len(paths), "Copied {n} path to the clipboard",
                       "Copied {n} paths to the clipboard")
-        status += " - " + tr("Paste (Ctrl+V) in a folder copies the files there")
+        status += " – " + tr("Paste (Ctrl+V) in a folder copies the files there")
         if any_escaped:
             status += " " + tr("(control characters escaped)")
             log.warning(
@@ -3717,13 +3745,13 @@ class FilePaneWidget(QWidget):
         self._menus = keep
 
     def _build_base_context_menu(self) -> QMenu:
-        """The pane's own right-click entries: one column of about twenty,
-        the rarer ones in submenus. Open first (a folder opens in this
-        pane, a file in its viewer, as Enter does), then the core file
-        operations - clipboard and rename, copy / move to the target pane,
-        trash and delete, new - then Properties and the submenus
-        (Metadata, Analyse, Links, Tags), Refresh and More (this folder,
-        terminals, mounts, the agent, Send to Workspace). Each entry shows
+        """The pane's own right-click entries: one column of at most
+        eighteen, the rarer ones in submenus. Open first (a folder opens in
+        this pane, a file in its viewer, as Enter does), then the core file
+        operations - copy, cut, paste and rename, copy / move to the target
+        pane, trash and delete, new - then Properties, Analyse and More
+        (Refresh, this folder, Copy Path, Links, Metadata, Tags, terminals,
+        mounts, the agent, Send to Workspace). Each entry shows
         the icon its command has in the toolbar or a dock and the key the
         pane or the window reacts to (:data:`CONTEXT_COMMANDS`); the
         underlined letter (``&``) picks it while the menu is open, unique
@@ -3759,14 +3787,15 @@ class FilePaneWidget(QWidget):
             sub.setToolTipsVisible(True)
             return sub
 
-        def attach(sub: QMenu, command: str | None = None) -> QMenu | None:
-            """Add *sub* to the menu when it has an entry; drop it otherwise."""
+        def attach(sub: QMenu, command: str | None = None,
+                   target: QMenu = menu) -> QMenu | None:
+            """Add *sub* to *target* when it has an entry; drop it otherwise."""
             while sub.actions() and sub.actions()[-1].isSeparator():
                 sub.removeAction(sub.actions()[-1])
             if not sub.actions():
                 sub.deleteLater()
                 return None
-            action = menu.addMenu(sub)
+            action = target.addMenu(sub)
             if command is not None:
                 decorate_command(action, command)
             return sub
@@ -3790,7 +3819,9 @@ class FilePaneWidget(QWidget):
                 with_entry("open-root", tr("Open as root…"),
                            lambda: self._open_as_root(single_path))
             archive = self._add_archive_actions(with_entry, single, single_path)
-        if selected:
+        # Only for a selection with something to view: a folder (its media
+        # are collected) or an image, PDF or video - not for a README.md.
+        if any(_may_hold_media(item) for item in selected):
             with_entry(
                 "view-selected-media",
                 tr("View Selected Media…"),
@@ -3810,13 +3841,15 @@ class FilePaneWidget(QWidget):
         if selected or self.can_paste():
             group()
         if selected:
-            entry(
-                "copy-path",
-                tr("&Copy Path"),
-                lambda _checked=False: self._copy_paths_to_clipboard(),
-            )
+            # Ctrl+C: Paste (Ctrl+V) in a folder copies the entries there;
+            # other programs get their paths as text. More ▸ Copy Path puts
+            # only the paths on the clipboard.
+            copy = entry("copy", tr("&Copy"),
+                         lambda _checked=False: self._copy_paths_to_clipboard())
+            copy.setToolTip(tr("Copy the selected entries: Paste (Ctrl+V) in a folder copies "
+                               "them there; other programs get their paths as text"))
             if not hostile:
-                entry("cut", tr("Cut"), lambda _checked=False: self.cut_selected())
+                entry("cut", tr("Cu&t"), lambda _checked=False: self.cut_selected())
         if self.can_paste():
             paste = entry("paste", tr("Paste"), lambda _checked=False: self.paste_cut())
             from ui.cut_clipboard import cut_clipboard
@@ -3867,21 +3900,34 @@ class FilePaneWidget(QWidget):
         group()
         if selected:
             entry("properties", tr("Propert&ies…"), self._show_properties)
-        # Metadata acts on the selection, or on this folder when nothing is
-        # selected - "remove all metadata" for a directory is one click.
-        metadata = submenu(tr("Me&tadata"))
-        meta_entry = entry_in(metadata)
-        for command, label, meta_action in (
-            ("metadata", "Show Metadata…", "show"),
-            ("metadata-remove", "Remove Metadata…", "remove"),
-            ("metadata-export", "Export Metadata…", "export"),
-        ):
-            meta_entry(command, tr(label),
-                       lambda _checked=False, a=meta_action: self.open_metadata(a))
-        attach(metadata, "metadata-menu")
         attach(self._build_analyse_menu(submenu(tr("Anal&yse")), entry_in, selected, files,
                                         dirs, single, single_path, hostile), "analyse-menu")
-        links = submenu(tr("&Links"))
+
+        # -- More ▸ for the rest: this folder (Refresh first), the paths,
+        # links, metadata and tags, terminals, mounts, the agent, Send to
+        # Workspace. The top level stays one column at 1024x600 in English
+        # and German, an archive selected and a Paste pending included
+        # (review round 6, tests/test_context_menu_one_column.py).
+        group()
+        more = submenu(tr("&More"))
+        more_entry = entry_in(more)
+        # In the background, as Ctrl+R and the toolbar: refresh() lists the
+        # folder on the GUI thread (scripts and tests want it that way).
+        more_entry("refresh", tr("R&efresh"), lambda _checked=False: self.refresh_async())
+        view_as = "Vie&w as Details" if self.view_mode == "thumbnails" else "Vie&w as Thumbnails"
+        more_entry("view-mode", tr(view_as), lambda _checked=False: self.toggle_view_mode())
+        more_entry("media-view", tr("View Media…"), lambda _checked=False: self.view_media())
+        more_entry("bookmark", tr("&Bookmark This Directory"), self._add_bookmark)
+        more_entry("trash-browser", tr("Show Trash…"), self._show_trash_browser)
+        group(more)
+        # The paths alone, as text (Copy - Ctrl+C - marks the entries for
+        # Paste as well), and the links: rarer than the top level's
+        # entries, which fit one column at 1024x600 (review round 6).
+        if selected:
+            more_entry("copy-path", tr("Copy &Path"),
+                       lambda _checked=False: self._copy_path_text())
+        links = QMenu(tr("&Links"), more)
+        links.setToolTipsVisible(True)
         link_entry = entry_in(links)
         if any(i.is_link for i in selected) and not hostile:
             link_entry("link-target", tr("Show Link Target"), self._show_link_target)
@@ -3890,24 +3936,24 @@ class FilePaneWidget(QWidget):
         if getattr(self._backend, "supports_hardlinks", False):
             link_entry("new-hardlink", tr("New Hardlink…"), self._create_hardlink)
         link_entry("xlink", tr("Create XLink…"), self._create_xlink)
-        attach(links, "links-menu")
+        attach(links, "links-menu", target=more)
+        # Metadata acts on the selection, or on this folder when nothing is
+        # selected - "remove all metadata" for a directory is one click.
+        metadata = QMenu(tr("Me&tadata"), more)
+        metadata.setToolTipsVisible(True)
+        meta_entry = entry_in(metadata)
+        for command, label, meta_action in (
+            ("metadata", "Show Metadata…", "show"),
+            ("metadata-remove", "Remove Metadata…", "remove"),
+            ("metadata-export", "Export Metadata…", "export"),
+        ):
+            meta_entry(command, tr(label),
+                       lambda _checked=False, a=meta_action: self.open_metadata(a))
+        attach(metadata, "metadata-menu", target=more)
         # -- tags of the selection (nothing without one)
         from ui.tag_ui import add_tags_menu
 
-        add_tags_menu(self, menu)
-
-        # -- this folder: Refresh, and More ▸ for the rest
-        group()
-        # In the background, as Ctrl+R and the toolbar: refresh() lists the
-        # folder on the GUI thread (scripts and tests want it that way).
-        entry("refresh", tr("R&efresh"), lambda _checked=False: self.refresh_async())
-        more = submenu(tr("&More"))
-        more_entry = entry_in(more)
-        view_as = "Vie&w as Details" if self.view_mode == "thumbnails" else "Vie&w as Thumbnails"
-        more_entry("view-mode", tr(view_as), lambda _checked=False: self.toggle_view_mode())
-        more_entry("media-view", tr("View Media…"), lambda _checked=False: self.view_media())
-        more_entry("bookmark", tr("&Bookmark This Directory"), self._add_bookmark)
-        more_entry("trash-browser", tr("Show Trash…"), self._show_trash_browser)
+        add_tags_menu(self, more)
         group(more)
         self._add_terminal_actions(more)
         self._add_fuse_actions(more, more_entry)
@@ -3925,15 +3971,15 @@ class FilePaneWidget(QWidget):
         # -- the agent
         group(more)
         self._add_agent_action(more)
-        attach(more, "more-menu")
         # -- the pane itself: Send to Workspace ▸, in a group of its own at
-        # the end (none off a workspace) - as in the pane header's menu.
+        # the end of More (none off a workspace) - as in the pane header's menu.
         from ui.workspaces import add_send_to_workspace_menu
 
-        group()
-        send = add_send_to_workspace_menu(self, menu)
+        group(more)
+        send = add_send_to_workspace_menu(self, more)
         if send is not None:
             decorate_command(send.menuAction(), "send-to-workspace")
+        attach(more, "more-menu")
         while menu.actions() and menu.actions()[-1].isSeparator():
             menu.removeAction(menu.actions()[-1])
         return menu
@@ -4876,19 +4922,32 @@ class FilePaneWidget(QWidget):
         explicit OK (default No). So does one the walk could not fully see:
         hidden entries cannot be ruled out there. Plain files, and a hidden
         entry selected by name, need none."""
-        if not any(is_dir for _name, _path, is_dir in ctx["entries"]):
+        folders = [name for name, _path, is_dir in ctx["entries"] if is_dir]
+        if not folders:
+            return True
+        if ctx["trash"]:
+            # Asked once (UX review round 6): the trash keeps everything and
+            # Undo / Show Trash… bring it back, and the first question has
+            # counted the hidden entries already ("… of them 1 hidden").
             return True
         if preview is not None and not preview.hidden_count and not preview.incomplete:
             return True
-        trash = ctx["trash"]
         if preview is not None and preview.hidden_count:
             n = preview.hidden_count
             shown = preview.hidden[:5]
+            if len(folders) == 1:
+                intro = tr_n(n, "The folder {name} contains {n} hidden entry that a listing "
+                             "without hidden files does not show:",
+                             "The folder {name} contains {n} hidden entries that a listing "
+                             "without hidden files does not show, for example:",
+                             name=folders[0])
+            else:
+                intro = tr_n(n, "The selected folders contain {n} hidden entry that a listing "
+                             "without hidden files does not show:",
+                             "The selected folders contain {n} hidden entries that a listing "
+                             "without hidden files does not show, for example:")
             lines = [
-                tr_n(n, "The selected folders contain {n} hidden entry that a listing "
-                     "without hidden files does not show:",
-                     "The selected folders contain {n} hidden entries that a listing "
-                     "without hidden files does not show, for example:"),
+                intro,
                 *(f"  {_shorten_path(p, 80)}" for p in shown),
             ]
             if n > len(shown):
@@ -4908,9 +4967,8 @@ class FilePaneWidget(QWidget):
                    "({reason}), so hidden entries cannot be ruled out.").format(reason=reason)
             ]
         lines.append("")
-        lines.append(
-            tr("Move them to the trash as well?") if trash else tr("Delete them as well?")
-        )
+        # No keeps everything - the whole delete, not only the hidden part.
+        lines.append(tr("Delete them as well? No deletes nothing."))
         reply = QMessageBox.warning(
             self,
             tr("{title}: hidden entries").format(title=ctx["title"]),
@@ -4983,9 +5041,15 @@ class FilePaneWidget(QWidget):
                          "Delete cancelled after {done} of {n} items; {kept} kept.",
                          done=done, kept=kept)
                 )
+            elif trash and done == total:
+                # All of it: "1 of 1" read like a partial result (round 6).
+                note = tr_n(total, "{n} item moved to the trash.",
+                            "{n} items moved to the trash.")
             elif trash:
                 note = tr_n(total, "Moved {done} of {n} item to the trash.",
                             "Moved {done} of {n} items to the trash.", done=done)
+            elif done == total:
+                note = tr_n(total, "{n} item deleted.", "{n} items deleted.")
             else:
                 note = tr_n(total, "Deleted {done} of {n} item.", "Deleted {done} of {n} items.",
                             done=done)
@@ -5430,12 +5494,19 @@ class FilePaneWidget(QWidget):
         return width
 
     def _preferred_width(self, col: int) -> int:
-        """The width the user gave column *col*, else its default."""
+        """The width the user gave column *col*, else its default - at
+        least its header label's width: a German "Eigentümer" is wider
+        than the default and was clipped to "igentüme" (UX review round 6;
+        a column that does not fit steps aside instead)."""
         prefs = getattr(self, "_column_prefs", None)
         stored = prefs.widths.get(col) if prefs is not None else None
         if stored and stored > 10:
             return int(stored)
-        return _DEFAULT_COLUMN_WIDTHS.get(col, 100)
+        default = _DEFAULT_COLUMN_WIDTHS.get(col, 100)
+        table = getattr(self, "_table", None)
+        if table is None:
+            return default
+        return max(default, table.horizontalHeader().sectionSizeHint(col))
 
     def _column_floor(self, col: int) -> int:
         """Narrowest *col* may get to make room for a name: its own content
@@ -5457,7 +5528,11 @@ class FilePaneWidget(QWidget):
         characters - the other columns shrink or step aside for it."""
         chars = self._table.fontMetrics().horizontalAdvance("n" * 24)
         icon = self._table.iconSize().width() if self._table.iconSize().isValid() else 16
-        return min(self._content_width(0), max(viewport * 2 // 5, chars + icon + 24))
+        # Never less than its header label: an empty folder (only "." and
+        # "..") left Name a few pixels wide beside full-width columns
+        # (UX review round 6).
+        label = self._table.horizontalHeader().sectionSizeHint(0)
+        return max(label, min(self._content_width(0), max(viewport * 2 // 5, chars + icon + 24)))
 
     def _fit_widths(self, others: list[int], viewport: int, chosen: set[int]) -> dict[int, int]:
         """Widths of *others*: their preferred ones, minus the slack a name

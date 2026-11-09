@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from core import ftp_client as FC  # noqa: E402
 from tests.test_ftp_symlink_delete import _DirFtpServer  # noqa: E402
@@ -218,3 +219,92 @@ def test_edge_the_link_type_view_is_unchanged():
     ]
     assert FC._parse_unix_list(lines) == [("l", "link -> ../t"), ("d", "a b")]
     assert FC._parse_unix_list_details(["10-15-26  12:00PM   <DIR>  x"]) is None
+
+
+# --- round 6: a large folder without MLSD ---------------------------------
+
+
+def _big_listing_server(count: int, *, mdtm: bool = True, zone_hours: int = 2):
+    """A server without MLSD whose LIST prints its wall clock *zone_hours*
+    ahead of UTC and whose MDTM answers UTC (proftpd, IIS)."""
+    from ftp_fuzz_server import FakeFtpServer
+
+    base = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(days=10)
+    names = [f"file_{i:05d}.dat" for i in range(count)]
+    real = {n: base + timedelta(minutes=i) for i, n in enumerate(names)}
+
+    def list_lines(_arg):
+        lines = []
+        for n in names:
+            wall = real[n] + timedelta(hours=zone_hours)
+            lines.append(f"-rw-r--r--    1 owner    group           1 "
+                         f"{wall.strftime('%b %d %H:%M')} {n}\r\n")
+        return "".join(lines).encode()
+
+    def mdtm_reply(arg):
+        name = arg.rsplit("/", 1)[-1]
+        if not mdtm or name not in real:
+            return b"500 MDTM not understood\r\n"
+        return f"213 {real[name].strftime('%Y%m%d%H%M%S')}\r\n".encode()
+
+    srv = FakeFtpServer(
+        replies={"MLSD": b"500 not understood\r\n", "FEAT": b"502 no\r\n",
+                 "MDTM": mdtm_reply},
+        data={"NLST": ("".join(n + "\r\n" for n in names)).encode(), "LIST": list_lines},
+    )
+    return srv, real
+
+
+def _local(value: datetime) -> datetime:
+    """As FileItem keeps a time: naive local."""
+    return value.astimezone().replace(tzinfo=None)
+
+
+def test_edge_a_large_folder_asks_mdtm_for_a_bounded_number_of_files():
+    """Measured before: 10000 files without MLSD took 14.6 s and 10000
+    MDTM round trips (the LIST line of each name was searched in the whole
+    listing, 20000 files: 77 s). Now MDTM_PER_LISTING files are probed;
+    the others keep their LIST date, put on the zone offset the probed
+    ones show."""
+    count = FC.MDTM_PER_LISTING + 136
+    srv, real = _big_listing_server(count)
+    with srv:
+        s = FC.FtpSession(srv.host, srv.port, "u", "p")
+        try:
+            items = s.list_dir("/big")
+        finally:
+            s.disconnect()
+        verbs = [c.split(" ", 1)[0].upper() for c in srv.commands]
+    assert verbs.count("MDTM") == FC.MDTM_PER_LISTING
+    assert len(items) == count
+    wrong = [i.name for i in items if i.modified != _local(real[i.name])]
+    assert wrong == []  # the probed by MDTM, the rest by LIST + 2 h offset
+
+
+def test_sad_a_server_without_mdtm_is_asked_only_a_few_times():
+    srv, real = _big_listing_server(200, mdtm=False, zone_hours=0)
+    with srv:
+        s = FC.FtpSession(srv.host, srv.port, "u", "p")
+        try:
+            items = s.list_dir("/big")
+        finally:
+            s.disconnect()
+        verbs = [c.split(" ", 1)[0].upper() for c in srv.commands]
+    assert verbs.count("MDTM") == FC._MDTM_REFUSALS
+    assert all(i.modified == _local(real[i.name]) for i in items)
+
+
+def test_edge_the_list_index_answers_as_the_linear_search():
+    lines = [
+        "lrwxrwxrwx 1 o g 3 Jan 01 2020 a -> b -> c",
+        "-rw-r--r-- 1 o g 3 Jan 01 2020 a -> b",
+        "drwxr-xr-x 1 o g 3 Jan 01 2020 d",
+        "-rw-r--r-- 1 o g 3 Jan 01 2020 dup",
+        "-rw-r--r-- 1 o g 3 Jan 01 2020 dup",
+        "lrwxrwxrwx 1 o g 3 Jan 01 2020 l -> t",
+    ]
+    details = FC._parse_unix_list_details(lines)
+    index = FC._ListIndex(details)
+    for name in ("a", "a -> b", "d", "dup", "l", "t", "missing", "a -> b -> c"):
+        assert index.detail(name) is FC._entry_detail(details, name), name
+        assert index.entry(name) == FC._unix_entry(details, name), name

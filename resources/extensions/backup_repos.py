@@ -130,7 +130,7 @@ def basic_info(backend, folder: str, kind: str | None = None) -> RepoInfo:
         return _borg_basic(backend, folder)
     if kind == "duplicity":
         return duplicity_chains([i for i in backend.list_dir(folder)][:MAX_LISTED])
-    raise RepoError("This folder is no restic, Borg or duplicity repository.")
+    raise RepoError("This folder is not a restic, Borg or duplicity repository.")
 
 
 def _borg_basic(backend, folder: str) -> RepoInfo:

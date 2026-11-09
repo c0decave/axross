@@ -1316,13 +1316,19 @@ class Agent:
         if "error" in response:
             audit.info("%s outcome=error", fields)
             return name, "error", f"error: {response['error'].get('message', 'failed')}"
-        audit.info("%s outcome=ok", fields)
+        result = response.get("result", {})
         parts = []
-        for item in response.get("result", {}).get("content", []):
+        for item in result.get("content", []):
             if item.get("type") == "text":
                 parts.append(item.get("text", ""))
             else:
                 parts.append(f"[{item.get('type', 'binary')} result, not shown]")
+        if result.get("isError"):
+            # A failed tool comes back as a result with isError (the MCP way,
+            # so the model sees why) - it is still an error, not an "ok".
+            audit.info("%s outcome=error", fields)
+            return name, "error", "error: " + ("\n".join(parts) or "failed")
+        audit.info("%s outcome=ok", fields)
         return name, "ok", "\n".join(parts)
 
     def _registry_holds(self, ids: list[str]) -> bool:

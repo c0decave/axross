@@ -20,8 +20,8 @@ build on top of these.
 
 ## Production tarpit
 
-Mark a profile as production: in **Connect to Server** (the Connection
-Manager, Ctrl+Shift+N, or editing a profile) tick **Production (confirm
+Mark a profile as production: in the **Connection Manager** (File →
+Connection Manager…, Ctrl+Shift+N, or editing a profile) tick **Production (confirm
 destructive operations with a countdown)** in the Connection group - it
 is there for every protocol and is saved with the profile. Or in Python:
 

@@ -69,7 +69,9 @@ def test_sad_pack_leaves_the_ssh_keys_in_a_named_folder_out(home):
 
 
 def test_sad_pack_refuses_a_secret_named_directly(home):
-    tools = T.build(home, {"packer"}, allow_write=True)
+    # ~/.android granted as the root: a hidden folder of the home is
+    # written only then (round 6, default-deny).
+    tools = T.build(home / ".android", {"packer"}, allow_write=True)
     out = T.call(tools, "pack", {"folder": str(home / ".android"), "names": ["adbkey"],
                                  "archive_name": "y"})
     assert out["skipped"] == ["adbkey"] and out["files"] == 0

@@ -410,12 +410,21 @@ class RamFsSession(SessionLifecycle):
                 )
         return sorted(items, key=lambda i: (not i.is_dir, i.name))
 
+    def _refuse_slash_on_file(self, raw: str, entry: _Entry | None) -> None:
+        """NotADirectoryError for "file/", as stat(2) says: normalize()
+        drops the slash, and remove("file/") deleted the file."""
+        if entry is not None and not entry.is_dir and raw.endswith("/") and raw.strip("/"):
+            raise NotADirectoryError(
+                errno.ENOTDIR, f"RamFS({self._label}): not a directory: {raw}", raw
+            )
+
     def stat(self, path: str) -> FileItem:
-        path = self.normalize(path)
+        raw, path = path, self.normalize(path)
         with self._lock:
             entry = self._tree.get(path)
             if entry is None:
                 raise FileNotFoundError(errno.ENOENT, f"RamFS({self._label}): no such path: {path}")
+            self._refuse_slash_on_file(raw, entry)
             return FileItem(
                 name=posixpath.basename(path) or "/",
                 size=len(entry.data) if not entry.is_dir else 0,
@@ -432,16 +441,21 @@ class RamFsSession(SessionLifecycle):
             return bool(entry and entry.is_dir)
 
     def exists(self, path: str) -> bool:
-        path = self.normalize(path)
+        raw, path = path, self.normalize(path)
         with self._lock:
-            return path in self._tree
+            entry = self._tree.get(path)
+            # "file/" names no entry (lstat(2): ENOTDIR).
+            return entry is not None and not (
+                not entry.is_dir and raw.endswith("/") and raw.strip("/")
+            )
 
     def open_read(self, path: str, mode: str = "rb") -> IO:
-        path = self.normalize(path)
+        raw, path = path, self.normalize(path)
         with self._lock:
             entry = self._tree.get(path)
             if entry is None:
                 raise FileNotFoundError(errno.ENOENT, f"RamFS({self._label}): no such path: {path}")
+            self._refuse_slash_on_file(raw, entry)
             if entry.is_dir:
                 raise IsADirectoryError(errno.EISDIR, f"RamFS({self._label}): not a file: {path}")
             return io.BytesIO(entry.data)
@@ -514,13 +528,14 @@ class RamFsSession(SessionLifecycle):
                 self._tree[path] = _Entry(is_dir=True, mode=0o755)
 
     def remove(self, path: str, recursive: bool = False) -> None:
-        path = self.normalize(path)
+        raw, path = path, self.normalize(path)
         if path == "/":
             raise OSError(f"RamFS({self._label}): refusing to remove root")
         with self._lock:
             entry = self._tree.get(path)
             if entry is None:
                 raise FileNotFoundError(errno.ENOENT, f"RamFS({self._label}): no such path: {path}")
+            self._refuse_slash_on_file(raw, entry)
             if entry.is_dir:
                 children = [p for p in self._tree if p.startswith(path + "/")]
                 if children and not recursive:
@@ -555,7 +570,9 @@ class RamFsSession(SessionLifecycle):
     def rename(self, src: str, dst: str) -> None:
         from core.path_policy import refuse_folder_path
 
-        src = self.normalize(src)
+        raw_src, src = src, self.normalize(src)
+        with self._lock:
+            self._refuse_slash_on_file(raw_src, self._tree.get(src))
         if src != "/":
             # normalize() drops the slash: a file renamed to "x/" became "x".
             refuse_folder_path(dst, "rename to", source_is_file=lambda: self._is_file(src))
@@ -587,11 +604,12 @@ class RamFsSession(SessionLifecycle):
                     self._tree[new] = self._tree.pop(old)
 
     def chmod(self, path: str, mode: int) -> None:
-        path = self.normalize(path)
+        raw, path = path, self.normalize(path)
         with self._lock:
             entry = self._tree.get(path)
             if entry is None:
                 raise FileNotFoundError(errno.ENOENT, f"RamFS({self._label}): no such path: {path}")
+            self._refuse_slash_on_file(raw, entry)
             entry.mode = int(mode) & 0o7777
 
     def copy(self, src: str, dst: str) -> None:

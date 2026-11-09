@@ -107,7 +107,8 @@ def test_sad_a_failed_transfer_says_why_in_german(german):
     cell = model.data(model.index(0, COL_STATUS))
     assert cell.startswith("Fehler: ") and "/srv/x" in cell and "[Errno" not in cell
     tip = model.data(model.index(0, COL_STATUS), Qt.ItemDataRole.ToolTipRole)
-    assert "[Errno 13]" in tip  # the raw text stays in the tooltip
+    # Round 6: the raw text is in the log, not in the tooltip.
+    assert tip.startswith("Fehler: ") and "[Errno" not in tip
 
 
 def test_edge_a_job_without_its_exception_shows_its_text():

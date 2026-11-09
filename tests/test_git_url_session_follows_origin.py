@@ -175,19 +175,41 @@ def test_sad_a_failed_push_keeps_the_commit_and_says_so(origin):
     assert {"a.txt", "b.txt"} <= _tree_names(repo, "main")
 
 
-def test_edge_unpushed_commits_survive_a_force_push_and_block_writes(origin):
+def test_edge_unpushed_commits_survive_a_force_push(origin):
+    """Round 6: the unpushed commit (another file than the force-push
+    rewrote) is replayed onto the rewritten tip instead of leaving the
+    branch read-only."""
     repo, _first = origin
     s = _session(repo, auto_push=False)
     _write(s, "/main/local.txt", b"not pushed\n")
+    s.close()
+    _commit(repo, "main", {"f.txt": b"rewritten\n"}, [])
+    s2 = _session(repo, auto_push=False)
+    try:
+        assert s2.open_read("/main/local.txt").read() == b"not pushed\n"  # nothing lost
+        assert s2.open_read("/main/f.txt").read() == b"rewritten\n"
+        assert "main (1)" in s2.status_note()  # local.txt only
+        _write(s2, "/main/more.txt", b"x")
+        s2.flush_push()
+    finally:
+        s2.close()
+    assert {"f.txt", "local.txt", "more.txt"} <= _tree_names(repo, "main")
+
+
+def test_edge_unpushed_commits_of_a_force_pushed_file_go_to_a_side_branch(origin):
+    repo, _first = origin
+    s = _session(repo, auto_push=False)
+    _write(s, "/main/f.txt", b"mine\n")
     local_tip = s._repo.refs[b"refs/heads/main"]
     s.close()
     _commit(repo, "main", {"f.txt": b"rewritten\n"}, [])
     s2 = _session(repo, auto_push=False)
     try:
-        assert s2._repo.refs[b"refs/heads/main"] == local_tip  # nothing lost
-        assert "main (2)" in s2.status_note()  # v1 and local.txt: origin has neither
-        with pytest.raises(G.GitForceRefused):
-            _write(s2, "/main/more.txt", b"x")
+        side = [b for b in s2.branch_list() if b.startswith("axross/unpushed-")]
+        assert len(side) == 1
+        assert s2._repo.refs[f"refs/heads/{side[0]}".encode()] == local_tip  # nothing lost
+        assert s2.open_read("/main/f.txt").read() == b"rewritten\n"
+        _write(s2, "/main/more.txt", b"x")  # main is writable again
     finally:
         s2.close()
 

@@ -175,3 +175,87 @@ def test_edge_rename_selects_the_name_without_its_extension(name, length):
     from ui.file_pane import rename_stem_length
 
     assert rename_stem_length(name) == length
+
+
+# --- round 6: one column at 1024x600, Copy says what Ctrl+C does -------------
+#
+# UX review round 6: at 1024x600 the German menu split into two columns
+# ("An Workspace senden" alone in the second), and the Ctrl+C entry was
+# labelled "Copy Path" although Ctrl+C then Ctrl+V copies the files. Now the
+# top level holds at most eighteen entries (Refresh, Copy Path, Links,
+# Metadata, Tags and Send to Workspace live under More) and the Ctrl+C entry
+# is "Copy"; More > Copy Path puts only the paths on the clipboard.
+
+#: A 600-pixel screen less a desktop panel of 30 pixels.
+SMALL_SCREEN_HEIGHT = 570
+
+
+def _worst_case_menu(window, tmp_path) -> QMenu:
+    """An archive selected (Extract… joins the top level) while a Cut waits
+    for its Paste - the longest top level the pane builds."""
+    import zipfile
+
+    from ui.cut_clipboard import cut_clipboard
+
+    pane = window._active_pane
+    folder = Path(pane.current_path)
+    with zipfile.ZipFile(folder / "pack.zip", "w") as archive:
+        archive.writestr("a.txt", "x")
+    pane.navigate(str(folder))
+    pump()
+    cut_clipboard().cut(pane, pane.backend, str(folder), [str(folder / "report.pdf")])
+    return _menu(pane, "pack.zip")
+
+
+@pytest.mark.parametrize("language", ["en", "de"])
+def test_sad_the_longest_menu_fits_a_600_pixel_screen_in_one_column(
+        window, tmp_path, monkeypatch, language):
+    from core import i18n
+
+    monkeypatch.setattr(i18n, "_ACTIVE", i18n.Translator(language))
+    menu = _worst_case_menu(window, tmp_path)
+    commands = [a.property("axCommand") for a in _entries(menu)]
+    assert "extract" in commands and "paste" in commands, commands
+    assert len(_entries(menu)) <= 18, [a.text() for a in _entries(menu)]
+    hint = menu.sizeHint()
+    assert hint.height() <= SMALL_SCREEN_HEIGHT, hint
+    # One column: every entry starts at the same x.
+    columns = {menu.actionGeometry(a).x() for a in menu.actions()}
+    assert len(columns) == 1, columns
+
+
+def test_happy_ctrl_c_entry_is_copy_and_copy_path_is_its_own_entry(window):
+    pane = window._active_pane
+    menu = _menu(pane, "report.pdf")
+    top = {a.property("axCommand"): a for a in _entries(menu)}
+    assert top["copy"].text() == "&Copy"
+    assert top["copy"].shortcut().toString() == "Ctrl+C"
+    assert "copy-path" not in top
+    more = top["more-menu"].menu()
+    inside = {a.property("axCommand"): a for a in more.actions() if a.property("axCommand")}
+    assert inside["copy-path"].text() == "Copy &Path"
+    assert inside["copy-path"].shortcut().isEmpty()
+    for moved in ("refresh", "links-menu", "metadata-menu", "send-to-workspace"):
+        assert moved not in top, moved
+
+
+def test_edge_copy_path_puts_only_the_paths_on_the_clipboard(window):
+    from ui.cut_clipboard import cut_clipboard
+
+    pane = window._active_pane
+    menu = _menu(pane, "report.pdf")
+    more = next(a.menu() for a in menu.actions() if a.property("axCommand") == "more-menu")
+    clip = cut_clipboard()
+    clip.clear()
+    next(a for a in more.actions() if a.property("axCommand") == "copy-path").trigger()
+    assert QApplication.clipboard().text().endswith("report.pdf")
+    assert clip.pending is None
+
+
+def test_sad_german_copy_entries_say_kopieren_and_pfad_kopieren(window, german):
+    pane = window._active_pane
+    menu = _menu(pane, "report.pdf")
+    texts = [a.text() for a in _entries(menu)]
+    assert "&Kopieren" in texts and "Pfad &kopieren" not in texts, texts
+    more = next(a.menu() for a in menu.actions() if a.property("axCommand") == "more-menu")
+    assert "&Pfad kopieren" in [a.text() for a in more.actions()]

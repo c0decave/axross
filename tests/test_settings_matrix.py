@@ -1031,7 +1031,8 @@ ROWS = [
         lambda c, v: _edit_window(c, TC.COLORS_KEY, v),
         ("red", 5, {"media": "#12"}, {"nope": "#ffffff"}, ["#ffffff"]),
         effect_toolbar_colours, new_window=True),
-    Row("show_hidden", "files", "session.json window.show_hidden", (False,), True,
+    # Off by default since round 6 (a new user starts without dotfiles).
+    Row("show_hidden", "files", "session.json window.show_hidden", (True,), False,
         _set_check("files", "show_hidden_check"), _page_attr("files", "show_hidden_check"),
         lambda c: _window_pref(c, "show_hidden"),
         lambda c, v: _edit_window(c, window_prefs.SHOW_HIDDEN_KEY, v), ("no", 0),
@@ -1566,6 +1567,9 @@ def test_cross_theme_and_compact_in_one_ok(ctx) -> None:
 
 def test_cross_show_and_highlight_hidden_are_independent(ctx) -> None:
     dialog = ctx.dialog()
+    dialog.page("files").show_hidden_check.setChecked(True)  # off by default
+    assert dialog.apply()
+    dialog = ctx.dialog()
     dialog.page("appearance").highlight_check.setChecked(False)
     assert dialog.apply()
     assert ".dotfile" in _listing(ctx, ctx.win)  # highlight changes the look only
@@ -1576,7 +1580,10 @@ def test_cross_show_and_highlight_hidden_are_independent(ctx) -> None:
 
 
 def test_cross_the_ctrl_h_switch_and_the_settings_page_agree(ctx) -> None:
-    ctx.win._hidden_action.trigger()  # Ctrl+H: off, stored at once
+    ctx.win._hidden_action.trigger()  # Ctrl+H: on (off by default), stored at once
+    assert _window_pref(ctx, "show_hidden") is True
+    assert ctx.dialog().page("files").show_hidden_check.isChecked()
+    ctx.win._hidden_action.trigger()  # and off again
     assert _window_pref(ctx, "show_hidden") is False
     assert not ctx.dialog().page("files").show_hidden_check.isChecked()
 

@@ -123,12 +123,19 @@ def asks_for_resource(text) -> bool:
 MAX_LENGTH_PX = 2000
 #: The largest font size (px) a style may ask for.
 MAX_FONT_PX = 200
-#: The most cells a span attribute may join (and the largest size attribute).
-MAX_SPAN = 100
+#: The most rows or columns a span attribute may join: Qt lays out the
+#: grid the spans make, and an 841-byte label of ``colspan=99 rowspan=99``
+#: cells kept the GUI thread 31 s.
+MAX_SPAN = 8
+#: The largest ``size`` attribute (a font step is 1-7, a rule's thickness a few px).
+MAX_SIZE = 100
 #: How deep tables may nest, and lists / quotes (each indents 30-40 px).
 MAX_TABLE_DEPTH = 6
 MAX_INDENT_DEPTH = 24
-#: The most table cells (5000 took 4 s to lay out, 50000 px wide).
+#: The most table cells (5000 took 4 s to lay out, 50000 px wide) - the
+#: cells of the grid Qt lays out: the ones spans join and the empty ones
+#: that fill a short row up to the widest count, and a nested table's
+#: count double for each table around it (core.mail_html.TableGrid).
 MAX_CELLS = 1000
 
 _NUMBER = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?"
@@ -153,7 +160,9 @@ _DECLARATION = re.compile(r"(-?[a-z][a-z-]*)\s*:\s*([^;{}]*)", re.IGNORECASE)
 #: properties whose unitless number Qt multiplies: -> pixels per unit
 _UNITLESS = {"-qt-block-indent": 40.0, "-qt-list-indent": 40.0, "line-height": 14.0}
 _NESTING = re.compile(r"<\s*(/?)\s*(table|blockquote|ul|ol|dl)\b", re.IGNORECASE)
-_CELL = re.compile(r"<\s*t[dh]\b", re.IGNORECASE)
+#: a table, a row or a cell, start or end tag, with its attributes
+_GRID_TAG = re.compile(r"<\s*(/?)\s*(table|tr|td|th)\b((?:[^>\"']|\"[^\"]*\"?|'[^']*'?)*)",
+                       re.IGNORECASE)
 
 
 def _number(text: str) -> float:
@@ -167,10 +176,14 @@ def _number(text: str) -> float:
 def _too_large_attribute(tag: str) -> bool:
     for match in _SIZE_ATTRIBUTE.finditer(tag):
         name, value = match.group(1).lower(), _number(match.group(2))
+        # a span joins cells; a size is a font step (1-7) or a rule's thickness
+        if name in ("colspan", "rowspan"):
+            if value > MAX_SPAN:
+                return True
+            continue
         if match.group(3):  # a percentage of the room there is: no bomb
             continue
-        # a span joins cells; a size is a font step (1-7) or a rule's thickness
-        if value > (MAX_SPAN if name in ("colspan", "rowspan", "size") else MAX_LENGTH_PX):
+        if value > (MAX_SIZE if name == "size" else MAX_LENGTH_PX):
             return True
     return False
 
@@ -199,8 +212,43 @@ def _too_large_style(css: str) -> bool:
     return False
 
 
+def _too_many_cells(text: str) -> bool:
+    """The tables of *text* lay out more than :data:`MAX_CELLS` grid cells."""
+    from core.mail_html import TableGrid
+
+    grids: list[TableGrid] = []
+    cost = 0
+    for match in _GRID_TAG.finditer(text):
+        closing, tag = match.group(1), match.group(2).lower()
+        if tag == "table":
+            if closing:
+                if grids:
+                    grids.pop()
+            else:
+                grids.append(TableGrid())
+            continue
+        if closing:
+            continue
+        if not grids:
+            cost += tag != "tr"          # a cell outside a table
+        else:
+            spans = {"colspan": 1, "rowspan": 1}
+            if tag != "tr":
+                attrs = match.group(3)
+                for attr in _SIZE_ATTRIBUTE.finditer(html.unescape(attrs) if "&" in attrs else attrs):
+                    name = attr.group(1).lower()
+                    if name in spans:
+                        spans[name] = max(1, int(min(_number(attr.group(2)), MAX_SPAN)))
+            grid = grids[-1]
+            cells = grid.new_row() if tag == "tr" else grid.cell(spans["colspan"], spans["rowspan"])
+            cost += cells << min(len(grids) - 1, MAX_TABLE_DEPTH)
+        if cost > MAX_CELLS:
+            return True
+    return False
+
+
 def _too_deep(text: str) -> bool:
-    if len(_CELL.findall(text)) > MAX_CELLS:
+    if _too_many_cells(text):
         return True
     depth = {"table": 0, "indent": 0}
     for match in _NESTING.finditer(text):
@@ -267,12 +315,26 @@ def holds_link(text) -> bool:
     return bool(Qt.mightBeRichText(text))
 
 
+#: An HTML comment: as rich text it hides the rest of the text.
+_COMMENT = "<!--"
+
+
 def defuse_message(text):
     """:func:`defuse` for a message box text: a link (opened in the browser
-    on a click) is shown as written too."""
-    if holds_link(text):
+    on a click) is shown as written too, and so is a text with an HTML
+    comment in it - a file named ``report.pdf - <b>scan finished: no
+    threats.</b><!--`` hid the error after it ("Could not open {name}:
+    {error}") and put a verdict of its own there. axross' own message
+    texts hold neither."""
+    if holds_link(text) or (isinstance(text, str) and _COMMENT in text and _rich(text)):
         return f"{_DEFUSED_HEAD}{html.escape(text)}{_DEFUSED_TAIL}"
     return defuse(text)
+
+
+def _rich(text: str) -> bool:
+    from PyQt6.QtCore import Qt
+
+    return bool(Qt.mightBeRichText(text))
 
 
 #: The head of a text :func:`ui.plain_text.as_written` escaped.
@@ -600,6 +662,6 @@ def install() -> None:
         cls.loadResource = _safe_load_resource(cls.loadResource)
 
 
-__all__ = ["MAX_CELLS", "MAX_FONT_PX","MAX_IMAGE_BYTES", "MAX_INDENT_DEPTH", "MAX_LENGTH_PX", "MAX_SPAN",
+__all__ = ["MAX_CELLS", "MAX_FONT_PX","MAX_IMAGE_BYTES", "MAX_INDENT_DEPTH", "MAX_LENGTH_PX", "MAX_SIZE", "MAX_SPAN",
            "MAX_TABLE_DEPTH", "asks_for_resource", "bombs_layout", "defuse", "defuse_message",
            "holds_link", "install", "original_of", "show_as_written"]

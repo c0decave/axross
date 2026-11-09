@@ -10,6 +10,7 @@ No extra Python packages required -- only the system tools:
 
 from __future__ import annotations
 
+import errno
 import glob
 import logging
 import os
@@ -33,7 +34,12 @@ from core.local_fs import (
     owner_name,
     unstattable_item,
 )
-from core.path_policy import confined_path, refuse_folder_path
+from core.path_policy import (
+    confined_path,
+    refuse_folder_path,
+    refuse_root_removal,
+    refuse_slash_on_file,
+)
 from core.private_mount_dir import make_private_mount_point, remove_private_mount_point
 from core.subprocess_env import clean_child_env
 from models.file_item import FileItem
@@ -84,8 +90,20 @@ def validate_interface(name: str) -> str:
         return ""
     if (len(name.encode()) > 15 or name in (".", "..") or "/" in name or "#" in name
             or any(not ("!" <= c <= "~") for c in name)):
-        raise ValueError(f"{name!r} is no network interface name")
+        raise ValueError(f"{name!r} is not a network interface name")
     return name
+
+
+def _make_parent(parent: str, path: str) -> None:
+    """The folders above *path* (mapped to *parent*), made as needed. One
+    of them a file is NotADirectoryError, as open(2) says - makedirs
+    called it a FileExistsError."""
+    try:
+        os.makedirs(parent, exist_ok=True)
+    except FileExistsError as exc:
+        raise NotADirectoryError(
+            errno.ENOTDIR, f"Cannot write {path}: a folder on its way is a file", path
+        ) from exc
 
 
 class IscsiSession(SessionLifecycle):
@@ -265,7 +283,12 @@ class IscsiSession(SessionLifecycle):
                         log.warning("Cannot stat %s: %s", entry.path, exc)
                         items.append(unstattable_item(entry, exc))  # as LocalFS
         except OSError as exc:
-            raise OSError(f"Cannot list {path}: {exc}") from exc
+            # Typed as the kernel said it (FileNotFoundError,
+            # NotADirectoryError ...): a bare OSError told "not there" and
+            # "a file" apart from nothing.
+            if exc.errno is None:
+                raise OSError(f"Cannot list {path}: {exc}") from exc
+            raise OSError(exc.errno, f"Cannot list {path}: {exc.strerror or exc}") from exc
         return items
 
     def stat(self, path: str) -> FileItem:
@@ -279,7 +302,7 @@ class IscsiSession(SessionLifecycle):
         mount; a failed lstat (EIO from the LUN, EACCES) is an OSError."""
         try:
             real = self._real(path, follow=False)
-        except PermissionError:
+        except (PermissionError, NotADirectoryError):
             return False  # a path out of the mount is no folder of it
         st = entry_stat(real)
         return st is not None and stat_module.S_ISDIR(st.st_mode)
@@ -288,7 +311,11 @@ class IscsiSession(SessionLifecycle):
         """False only when nothing is there; any other failure is an
         OSError - server_side_copy(overwrite=False) takes False as its
         go-ahead to write."""
-        return entry_stat(self._real(path, follow=False)) is not None
+        try:
+            real = self._real(path, follow=False)
+        except NotADirectoryError:
+            return False  # "file/" names nothing (lstat(2): ENOTDIR)
+        return entry_stat(real) is not None
 
     def _is_file(self, path: str) -> bool:
         """True for an entry that is not a folder (False when nothing is there)."""
@@ -300,6 +327,7 @@ class IscsiSession(SessionLifecycle):
 
     def remove(self, path: str, recursive: bool = False) -> None:
         real = self._real(path, follow=False)
+        refuse_root_removal(real == os.path.abspath(self._mount_point), path, "iSCSI")
         st = os.lstat(real)
         if stat_module.S_ISLNK(st.st_mode):
             os.remove(real)
@@ -324,7 +352,7 @@ class IscsiSession(SessionLifecycle):
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
         # The mount path join drops the slash: "x/" was written as a FILE "x".
         real = self._real(refuse_folder_path(path))
-        os.makedirs(os.path.dirname(real), exist_ok=True)
+        _make_parent(os.path.dirname(real), path)
         return open(real, "ab" if append else "wb")
 
     def normalize(self, path: str) -> str:
@@ -564,8 +592,10 @@ class IscsiSession(SessionLifecycle):
 
     def _real(self, path: str, *, follow: bool = True) -> str:
         """Map a virtual path (``/``, ``/foo/bar``) to the mounted filesystem,
-        confined to it even through symlinks on the LUN (confined_path)."""
-        return confined_path(self._mount_point, path, follow=follow)
+        confined to it even through symlinks on the LUN (confined_path).
+        "file/" is NotADirectoryError, as stat(2) says: the join drops the
+        slash."""
+        return refuse_slash_on_file(path, confined_path(self._mount_point, path, follow=follow))
 
     @staticmethod
     def _masked_command(cmd: list[str]) -> list[str]:

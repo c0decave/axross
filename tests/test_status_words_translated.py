@@ -54,7 +54,7 @@ def test_happy_a_failed_transfer_says_why_in_its_status_cell():
     job = _failed()
     assert _cell(job, COL_STATUS) == "error: Permission denied: /srv/out/a.txt"
     tip = _cell(job, COL_STATUS, Qt.ItemDataRole.ToolTipRole)
-    assert tip.splitlines() == ["error", "Permission denied: /srv/out/a.txt"]
+    assert tip == "error: Permission denied: /srv/out/a.txt"
 
 
 def test_happy_the_status_words_and_headers_are_german(german):

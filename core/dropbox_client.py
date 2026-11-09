@@ -233,6 +233,29 @@ def _retry_after(exc: BaseException):
     return _NO_RETRY
 
 
+class _CancelledAfterUncertainTry(InterruptedError):
+    """Cancel during the retry pause after a try whose fate is unknown (a
+    5xx a gateway may send after the backend did the work): that try may
+    have committed. :meth:`_SpooledWriter.close` looks before it reports
+    the destination untouched."""
+
+
+def _route_tags_in(exc: BaseException) -> list[str]:
+    """The route-error tags (_route_tags) of the first ApiError in the
+    cause chain of *exc*."""
+    seen = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        error = getattr(cur, "error", None)
+        if error is not None:
+            tags = _route_tags(error)
+            if tags:
+                return tags
+        cur = cur.__cause__ or cur.__context__
+    return []
+
+
 class _GuardedDropbox:
     """The SDK client, with every call failing as a typed OSError.
 
@@ -243,10 +266,35 @@ class _GuardedDropbox:
     PermissionError, ENOSPC for insufficient_space ... The SDK error is
     the ``__cause__``. Only the SDK call is guarded: errors in this
     module's own code are not masked.
+
+    A 5xx may come after the backend did the work (a gateway timing out
+    in front of it), so its retry can find the work done: a delete
+    retried after a 5xx that finds nothing is that first try's delete
+    (done, as asked), a move whose source is gone and whose destination
+    is there is that first try's move - not "not found" for an operation
+    that succeeded (:meth:`_done_by_an_earlier_try`).
     """
 
     def __init__(self, dbx) -> None:
         self._sdk = dbx
+
+    def _done_by_an_earlier_try(self, name: str, args, kwargs, err: OSError) -> bool:
+        """After a 5xx and a retry that failed with *err*: whether the
+        first try did what *name* asked."""
+        if not isinstance(err, FileNotFoundError):
+            return False
+        if name == "files_delete_v2":
+            return True
+        if name == "files_move_v2":
+            to_path = kwargs.get("to_path", args[1] if len(args) > 1 else None)
+            if not isinstance(to_path, str):
+                return False
+            try:
+                self._sdk.files_get_metadata(to_path)
+            except Exception:  # noqa: BLE001 - not there, or not knowable: not done
+                return False
+            return True
+        return False
 
     def __getattr__(self, name: str):
         attr = getattr(self._sdk, name)
@@ -255,6 +303,8 @@ class _GuardedDropbox:
 
         def call(*args, **kwargs):
             attempt = 0
+            # A 5xx went before: that try may have done the work.
+            uncertain = False
             while True:
                 attempt += 1
                 try:
@@ -269,15 +319,38 @@ class _GuardedDropbox:
                 except (ApiError,) + _SDK_ANSWER_ERRORS as exc:
                     retry_after = _retry_after(exc)
                     if retry_after is _NO_RETRY or attempt >= cloud_http.ATTEMPTS:
-                        raise _sdk_error(
+                        err = _sdk_error(
                             exc, f"Dropbox {name} failed: {type(exc).__name__}: {exc}"
-                        ) from exc
+                        )
+                        if uncertain and self._done_by_an_earlier_try(name, args, kwargs, err):
+                            log.info("Dropbox %s: done by the try the 5xx answered", name)
+                            return None
+                        raise err from exc
+                    if type(exc).__name__ != "RateLimitError":
+                        uncertain = True  # a 429 is "not processed"
                     log.debug("Dropbox %s: %s; retry %d", name, type(exc).__name__, attempt)
                 # Outside the except: a Cancel during the pause is no
                 # error "during handling of" the SDK's.
-                cloud_http.pause(attempt, retry_after)
+                try:
+                    cloud_http.pause(attempt, retry_after)
+                except InterruptedError:
+                    if uncertain:
+                        raise _CancelledAfterUncertainTry(transfer_hooks.CANCELLED) from None
+                    raise
 
         return call
+
+
+def _content_hash(fh) -> str:
+    """Dropbox's content_hash of the binary file *fh* (read from its
+    start): SHA-256 of the SHA-256 digests of its 4 MiB blocks."""
+    import hashlib
+
+    fh.seek(0)
+    outer = hashlib.sha256()
+    for block in iter(lambda: fh.read(4 * 1024 * 1024), b""):
+        outer.update(hashlib.sha256(block).digest())
+    return outer.hexdigest()
 
 
 def _correct_offset(exc: BaseException) -> int | None:
@@ -352,7 +425,13 @@ class _SpooledWriter:
                         hooks.sent(size, size, check=False)
                 else:
                     self._upload_in_session(size, hooks)
-        except InterruptedError:
+        except InterruptedError as exc:
+            if isinstance(exc, _CancelledAfterUncertainTry) and self._landed(size):
+                # Cancelled in the pause after a 5xx, but that try had
+                # committed the file: the destination did change, so the
+                # engine rolls it back (a plain InterruptedError) instead
+                # of reporting it untouched.
+                raise InterruptedError(transfer_hooks.CANCELLED) from None
             # Cancelled before files/upload or upload_session/finish: an
             # unfinished session commits nothing (Dropbox drops it), the
             # file stays as it was.
@@ -366,6 +445,25 @@ class _SpooledWriter:
             ) from exc
         finally:
             self._buf.close()
+
+    def _landed(self, size: int) -> bool:
+        """Whether the remote file is (or may be) this writer's upload:
+        True when it has our size and content hash, or when that cannot
+        be found out; False when it is absent or another content."""
+        try:
+            with transfer_hooks.active(None):  # the job's Cancel is pressed already
+                meta = self._dbx.files_get_metadata(self._remote_path)
+        except FileNotFoundError:
+            return False
+        except Exception as exc:  # noqa: BLE001 - unknown: assume it landed
+            log.debug("Dropbox: cannot look at %s after a cancel: %s", self._remote_path, exc)
+            return True
+        if getattr(meta, "size", None) != size:
+            return False
+        remote_hash = getattr(meta, "content_hash", None)
+        if not isinstance(remote_hash, str) or not remote_hash:
+            return True
+        return remote_hash == _content_hash(self._buf)
 
     def _upload_in_session(self, size: int, hooks=None) -> None:
         """start, append_v2 ..., finish: one chunk per request.
@@ -871,8 +969,32 @@ class DropboxSession(SessionLifecycle):
         try:
             _metadata, response = dbx.files_download(api_path)
         except OSError as exc:
+            if "unsupported_file" in _route_tags_in(exc):
+                # A Dropbox Paper document (or another file Dropbox only
+                # exports): no bytes to download.
+                return self._export(dbx, api_path, path, exc)
             raise _sdk_error(exc, f"Cannot read {path}: {cloud_http.reason(exc)}", path) from exc
         # The SDK streams a download: spooled, not one bytes object in RAM.
+        return spool_response(response, what=f"Cannot read {path}")
+
+    def _export(self, dbx, api_path: str, path: str, refused: BaseException) -> IO[bytes]:
+        """*path* - a file Dropbox does not download (a Paper document) -
+        read as its export in the default format (files/export: Paper as
+        Markdown); refused with that reason when it has none."""
+        from core.i18n import tr
+
+        try:
+            _result, response = dbx.files_export(api_path)
+        except OSError as exc:
+            raise OSError(
+                errno.EOPNOTSUPP,
+                tr(
+                    "Cannot read {path}: Dropbox does not download this file (a Paper "
+                    "document or another cloud-only file) and its export failed ({reason}). "
+                    "Open it on dropbox.com and export it there."
+                ).format(path=path, reason=cloud_http.reason(exc)),
+                path,
+            ) from refused
         return spool_response(response, what=f"Cannot read {path}")
 
     # See core/s3_client.py for the rationale on the cap.

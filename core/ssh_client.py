@@ -72,6 +72,16 @@ def _read_limited_stream(stream, cap: int, label: str) -> bytes:
 # (sftp_client._read_response); neither is an OSError.
 _SFTP_CONNECTION_ERRORS = (paramiko.SSHException, EOFError)
 
+#: Seconds an SFTP channel waits for the server's next bytes (an answer,
+#: window space for a write) before the request fails with
+#: ``TimeoutError`` (ETIMEDOUT). Without it a request on a connection
+#: that went silent (Wi-Fi gone, a NAT entry dropped, a VPN down: no RST
+#: arrives) waited for ever - the pane, the transfer and Cancel with it.
+#: It bounds silence, not the length of a transfer: a large download
+#: gets its bytes long before this. Also the longest wait for the server
+#: to open a channel.
+SFTP_IO_TIMEOUT = 60.0
+
 
 def _sftp_errors_as_oserror(fn):
     """Re-raise what paramiko raises for a bad answer from ``fn`` as
@@ -84,6 +94,14 @@ def _sftp_errors_as_oserror(fn):
     def wrapper(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
+        except TimeoutError as exc:
+            if exc.errno is not None:
+                raise  # already a sentence (core.sftp_io.timeout_error)
+            from core.sftp_io import timeout_error
+
+            session = args[0] if args else None
+            client = getattr(getattr(session, "_thread_local", None), "sftp", None)
+            raise timeout_error(fn.__name__, client) from exc
         except _SFTP_CONNECTION_ERRORS as exc:
             detail = str(exc) or type(exc).__name__
             raise OSError(f"SFTP {fn.__name__}: connection to the server failed: {detail}") from exc
@@ -137,6 +155,52 @@ class _SurrogateSftpClient(paramiko.SFTPClient):
 
     def _adjust_cwd(self, path):
         return super()._adjust_cwd(wire_path(path))
+
+    @classmethod
+    def from_transport(cls, t, window_size=None, max_packet_size=None):
+        """paramiko's, with the channel time-out (:data:`SFTP_IO_TIMEOUT`)
+        set before the SFTP version exchange - a server gone silent then
+        fails the open too, instead of hanging it."""
+        limit = SFTP_IO_TIMEOUT
+
+        def silent() -> TimeoutError:
+            return TimeoutError(
+                errno.ETIMEDOUT,
+                f"SFTP: the server did not open a channel within {limit:g} s; the "
+                f"network connection is probably lost. Reconnect and try again.",
+            )
+
+        try:
+            chan = t.open_session(
+                window_size=window_size, max_packet_size=max_packet_size, timeout=limit
+            )
+        except paramiko.SSHException as exc:
+            if str(exc).startswith("Timeout opening channel"):
+                raise silent() from exc
+            raise
+        if chan is None:
+            return None
+        chan.settimeout(limit)
+        # paramiko waits for the subsystem's answer without a time-out;
+        # closing the channel ends that wait.
+        timed_out: list[bool] = []
+
+        def give_up() -> None:
+            timed_out.append(True)
+            chan.close()
+
+        timer = threading.Timer(limit, give_up)
+        timer.daemon = True
+        timer.start()
+        try:
+            chan.invoke_subsystem("sftp")
+        except (paramiko.SSHException, EOFError) as exc:
+            if timed_out:
+                raise silent() from exc
+            raise
+        finally:
+            timer.cancel()
+        return cls(chan)
 
 
 class _AnswersByNumber:
@@ -636,6 +700,8 @@ class SSHSession(SessionLifecycle):
             self._transport.local_version = SSH_LOCAL_VERSION
             self._prefer_known_host_key_types()
             self._transport.start_client(timeout=10.0)
+            # paramiko waits an hour for the server to open a channel.
+            self._transport.channel_timeout = SFTP_IO_TIMEOUT
             self._verify_host_key(on_unknown_host=on_unknown_host)
             # Keepalive off by default — a fixed 30-s cadence is a
             # cross-session fingerprint. Opt-in per profile. See
@@ -886,9 +952,10 @@ class SSHSession(SessionLifecycle):
             # Room for two read-ahead windows: with paramiko's 2 MiB default
             # the server could send only 2 MiB of the 8 MiB a window asks
             # for per round trip (a download at 20 ms: ~52 MB/s, not ~90).
-            return _SurrogateSftpClient.from_transport(
+            client = _SurrogateSftpClient.from_transport(
                 self._transport, window_size=2 * ReadAheadRaw.MAX_WINDOW
             )
+            return client
         except paramiko.ChannelException as exc:
             # The server would not open one more channel at all - not an
             # SFTP question (ChannelException is an SSHException, so it
@@ -931,7 +998,8 @@ class SSHSession(SessionLifecycle):
             # OpenSSH answers OPENDIR of a file with SSH_FX_NO_SUCH_FILE
             # (its errno_to_portable maps ENOTDIR there), others with a
             # bare failure: the entry itself says whether it is a file.
-            if not isinstance(exc, PermissionError) and self._is_non_folder(path):
+            # A time-out is no answer at all: asking again waits as long.
+            if not isinstance(exc, PermissionError | TimeoutError) and self._is_non_folder(path):
                 raise NotADirectoryError(
                     errno.ENOTDIR, f"Cannot list {path}: not a folder", path
                 ) from exc

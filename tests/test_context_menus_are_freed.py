@@ -94,7 +94,7 @@ def test_happy_an_entry_chosen_in_the_menu_still_runs(window, monkeypatch):
 
     def choose(menu, *_a, **_k):
         for action in menu.actions():
-            if action.property("axCommand") == "copy-path":
+            if action.property("axCommand") == "copy":
                 action.triggered.connect(lambda *_: ran.append(True))
                 action.trigger()
                 return action

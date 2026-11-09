@@ -127,22 +127,25 @@ def test_edge_a_symlink_in_the_frame_stays_a_link(home, tmp_path):
     assert not any(str(home / "out") in a for a in podman)  # left out there
 
 
-def test_edge_an_existing_pip_folder_is_a_frame_of_its_own(home):
+def test_edge_an_existing_pip_folder_is_read_only_whole(home):
+    """Round 6 (default-deny): a hidden entry of the home is read-only as a
+    whole - it was a frame of its own, writable inside, before."""
     (home / ".pip").mkdir()
     (home / ".pip" / "keep.txt").write_text("x\n")
     plan = _plan(home)
-    assert plan[str(home / ".pip")] == (False, "frame")
-    assert plan[str(home / ".pip" / "pip.conf")] == (False, "absent")
-    assert plan[str(home / ".pip" / "keep.txt")] == (True, "entry")
+    assert plan[str(home / ".pip")] == (False, "bind")
+    assert str(home / ".pip" / "pip.conf") not in plan  # inside the read-only mount
+    assert str(home / ".pip" / "keep.txt") not in plan
 
 
-def test_edge_a_frame_reached_through_a_link_is_its_target(home):
-    """~/.pip -> ~/dotfiles/pip: pip.conf would be made in the target."""
+def test_edge_a_hidden_entry_reached_through_a_link_is_read_only_at_its_target(home):
+    """~/.pip -> ~/dotfiles/pip: pip.conf would be made in the target, which
+    is read-only too (round 6: whole, not a frame)."""
     (home / "dotfiles" / "pip").mkdir(parents=True)
     (home / ".pip").symlink_to(home / "dotfiles" / "pip")
     plan = _plan(home)
-    assert plan[str(home / "dotfiles" / "pip")] == (False, "frame")
-    assert plan[str(home / ".pip")][1] == "link"
+    assert plan[str(home / "dotfiles" / "pip")] == (False, "bind")
+    assert plan[str(home / ".pip")] == (False, "bind")
 
 
 def test_edge_folders_of_the_profile_keep_their_own_mount(home):

@@ -12,6 +12,11 @@ only in SmbSession.__init__. The same for the server a DFS referral names.
 Now the session's pool dials every connection itself, inside both patches
 and with the session's credentials; after close() nothing dials again.
 
+Round 6: both "patches" are for the dialling thread and the SMB libraries
+only (smbprotocol.transport's create_connection, spnego's gethostname):
+the recorder below asks those, and checks the process-wide socket
+functions stay untouched.
+
 smbprotocol's Connection / Session are recorders (no SMB server here);
 SmbSession.__init__ and smbclient's register_session run for real.
 """
@@ -46,13 +51,22 @@ class _Connection:
         self.session_table: dict = {}
 
     def connect(self, timeout=60):
+        import smbprotocol.transport as transport
+        import spnego._ntlm as ntlm
+
+        from core.proxy import routed_proxy
+
+        assert socket.create_connection is _REAL_CREATE  # nothing process-wide
+        assert socket.gethostname() == _REAL_HOSTNAME
         _events.append(
             (
                 "dial",
                 self.server,
                 self.port,
-                socket.create_connection is not _REAL_CREATE,  # via the proxy
-                socket.gethostname(),
+                # via the proxy: smbprotocol's create_connection, this thread
+                routed_proxy() is not None
+                and type(transport.socket).__name__ == "_RoutedSocketModule",
+                ntlm.socket.gethostname(),
             )
         )
         if _fail_dial:
@@ -68,7 +82,9 @@ class _Session:
         self.connection, self.username, self.password = connection, username, password
 
     def connect(self):
-        _events.append(("login", self.username, self.password, socket.gethostname()))
+        import spnego._ntlm as ntlm
+
+        _events.append(("login", self.username, self.password, ntlm.socket.gethostname()))
         self.connection.session_table[id(self)] = self
 
 

@@ -102,7 +102,7 @@ def _voice_id(value) -> str | None:
 def _tuning_entry(value) -> dict[str, float]:
     """A complete tuning from a partial one; ValueError for a bad value."""
     if not isinstance(value, dict):
-        raise ValueError(f"a voice's tuning is no object: {value!r}")
+        raise ValueError(f"a voice's tuning is not an object: {value!r}")
     out = default_tuning()
     for name, number in value.items():
         if not tuning_value_ok(name, number):
@@ -117,7 +117,7 @@ def _normal_tuning(value, *, strict: bool) -> dict[str, dict[str, float]]:
     out (a voice keeps its valid values)."""
     if not isinstance(value, dict):
         if strict:
-            raise ValueError(f"the tuning is no object: {value!r}")
+            raise ValueError(f"the tuning is not an object: {value!r}")
         return {}
     out = {}
     for voice, entry in value.items():

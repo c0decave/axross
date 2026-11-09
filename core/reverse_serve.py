@@ -2019,7 +2019,7 @@ class _S3Handler(_BaseHandler):
             f"<Bucket><Name>{_xml_escape(item.name)}</Name>"
             f"<CreationDate>{when}</CreationDate></Bucket>"
             for item in entries
-            if getattr(item, "is_dir", False)
+            if getattr(item, "is_dir", False) and _xml_ok(item.name)
         )
         body = (
             "<?xml version='1.0' encoding='UTF-8'?>"
@@ -2093,9 +2093,28 @@ class _S3Handler(_BaseHandler):
         # the HTTP boundary so a regression in _walk_keys cannot blow
         # the response body up.
         contents, defense_truncated = enforce_listing_caps(contents)
+        page_count = len(contents) + len(prefixes)
+        url_encoded = (self._query_param("encoding-type") or "").lower() == "url"
+        if url_encoded:
+            def enc(value: str) -> str:
+                return _url_quote(value)
+        else:
+            def enc(value: str) -> str:
+                return value
+            # A key XML cannot carry (a control character, a name that is
+            # not UTF-8) is left out - a client asking with encoding-type=url
+            # gets it percent-encoded. One such name must not make the
+            # whole listing malformed.
+            unfit = [rel for rel, _item in contents if not _xml_ok(rel)]
+            unfit += [cp for cp in prefixes if not _xml_ok(cp)]
+            if unfit:
+                log.warning("reverse-s3 list %s: %d key(s) left out that XML cannot carry "
+                            "(ask with encoding-type=url): %r", bucket, len(unfit), unfit[:5])
+                contents = [(rel, item) for rel, item in contents if _xml_ok(rel)]
+                prefixes = [cp for cp in prefixes if _xml_ok(cp)]
         contents_xml = "".join(
             f"<Contents>"
-            f"<Key>{_xml_escape(rel)}</Key>"
+            f"<Key>{_xml_escape(enc(rel))}</Key>"
             f"<LastModified>{_iso_date(item['mtime'])}</LastModified>"
             f"<Size>{item['size']}</Size>"
             f"<StorageClass>STANDARD</StorageClass>"
@@ -2103,14 +2122,14 @@ class _S3Handler(_BaseHandler):
             for rel, item in contents
         )
         prefixes_xml = "".join(
-            f"<CommonPrefixes><Prefix>{_xml_escape(cp)}</Prefix></CommonPrefixes>"
+            f"<CommonPrefixes><Prefix>{_xml_escape(enc(cp))}</Prefix></CommonPrefixes>"
             for cp in prefixes
         )
         # Defense-in-depth: consolidate the truncation signals through a
         # single boundary helper so a regression that drops one signal
         # cannot re-introduce the IsTruncated=false lie when keys remain.
         truncated = validate_truncation_flag(
-            entry_count=len(contents) + len(prefixes),
+            entry_count=page_count,
             max_keys=max_keys,
             claimed_truncated=page_truncated or defense_truncated,
             walk_truncated=walk_truncated,
@@ -2120,7 +2139,7 @@ class _S3Handler(_BaseHandler):
             if token:
                 paging += f"<ContinuationToken>{_xml_escape(token)}</ContinuationToken>"
             if start_after:
-                paging += f"<StartAfter>{_xml_escape(start_after)}</StartAfter>"
+                paging += f"<StartAfter>{_xml_escape(enc(start_after))}</StartAfter>"
             if truncated and last:
                 paging += (
                     "<NextContinuationToken>"
@@ -2128,16 +2147,18 @@ class _S3Handler(_BaseHandler):
                     "</NextContinuationToken>"
                 )
         else:
-            paging = f"<Marker>{_xml_escape(after)}</Marker>"
+            paging = f"<Marker>{_xml_escape(enc(after))}</Marker>"
             if truncated and last:
-                paging += f"<NextMarker>{_xml_escape(last)}</NextMarker>"
+                paging += f"<NextMarker>{_xml_escape(enc(last))}</NextMarker>"
         if delimiter:
-            paging += f"<Delimiter>{_xml_escape(delimiter)}</Delimiter>"
+            paging += f"<Delimiter>{_xml_escape(enc(delimiter))}</Delimiter>"
+        if url_encoded:
+            paging += "<EncodingType>url</EncodingType>"
         body = (
             "<?xml version='1.0' encoding='UTF-8'?>"
             "<ListBucketResult xmlns='http://s3.amazonaws.com/doc/2006-03-01/'>"
             f"<Name>{_xml_escape(bucket)}</Name>"
-            f"<Prefix>{_xml_escape(prefix)}</Prefix>"
+            f"<Prefix>{_xml_escape(enc(prefix))}</Prefix>"
             f"<MaxKeys>{max_keys}</MaxKeys>"
             f"{paging}"
             f"<IsTruncated>{'true' if truncated else 'false'}</IsTruncated>"
@@ -2734,9 +2755,28 @@ def _decode_continuation_token(token: str) -> str:
     return raw.decode("utf-8", "surrogateescape")
 
 
+#: What XML 1.0 cannot carry: control characters other than tab, LF and
+#: CR, lone surrogates (a name that is not UTF-8, read with
+#: surrogateescape) and U+FFFE/U+FFFF. A file name may hold any of them.
+_XML_INVALID = re.compile("[^\t\n\r\x20-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
+
+
+def _xml_ok(s: str) -> bool:
+    """Whether *s* can stand in an XML 1.0 document as it is."""
+    return _XML_INVALID.search(s) is None
+
+
+def _url_quote(s: str, safe: str = "/") -> str:
+    """Percent-encoded *s*; a name that is not UTF-8 keeps its bytes."""
+    return quote(s, safe=safe, errors="surrogateescape")
+
+
 def _xml_escape(s: str) -> str:
+    # A character XML cannot carry becomes U+FFFD: one name must never make
+    # a whole listing malformed (or fail to encode and drop the connection).
     return (
-        s.replace("&", "&amp;")
+        _XML_INVALID.sub("\ufffd", s)
+        .replace("&", "&amp;")
         .replace("<", "&lt;")
         .replace(">", "&gt;")
         .replace('"', "&quot;")
@@ -3101,7 +3141,7 @@ class _DAVHandler(_BaseHandler):
         root = self.config.root_path.rstrip("/")
         if root and rel.startswith(root):
             rel = rel[len(root) :] or "/"
-        return quote(rel, safe="/")
+        return _url_quote(rel)
 
     def _build_propfind_xml(self, items: list[tuple[str, Any]]) -> bytes:
         ns = "DAV:"
@@ -3113,7 +3153,12 @@ class _DAVHandler(_BaseHandler):
             href_el.text = href
             propstat = ET.SubElement(response, f"{{{ns}}}propstat")
             prop = ET.SubElement(propstat, f"{{{ns}}}prop")
-            ET.SubElement(prop, f"{{{ns}}}displayname").text = item.name
+            if _xml_ok(item.name):
+                ET.SubElement(prop, f"{{{ns}}}displayname").text = item.name
+            else:
+                # The href carries the name percent-encoded; XML cannot.
+                log.info("reverse-webdav: %r listed without a displayname (not XML text)",
+                         item.name)
             length_el = ET.SubElement(prop, f"{{{ns}}}getcontentlength")
             length_el.text = str(_entry_size(item))
             mtime_el = ET.SubElement(prop, f"{{{ns}}}getlastmodified")
@@ -3129,7 +3174,8 @@ class _DAVHandler(_BaseHandler):
         # The title is the path as the client asked for it, never the local one.
         shown = unquote(self._url_for(path))
         rows = "".join(
-            f"<li><a href='{quote(item.name)}{'/' if getattr(item, 'is_dir', False) else ''}'>"
+            f"<li><a href='{_url_quote(item.name, '')}"
+            f"{'/' if getattr(item, 'is_dir', False) else ''}'>"
             f"{_xml_escape(item.name)}</a> "
             f"<span class='size'>{_entry_size(item)} bytes</span></li>"
             for item in entries

@@ -129,6 +129,13 @@ SVG_MIME = "image/svg+xml"
 # drawing anyone hand-made, and the XML parser should never see it.
 MAX_SVG_INPUT_SIZE = 8 * 1024 * 1024
 
+# The most elements ``<use>`` (and ``url(#id)``) references may add to an
+# SVG's drawing: each one draws its target again, the target's own
+# references included, so ten levels of ten references in a 2.4 KB file
+# drew a billion paths and pinned a thumbnail worker for minutes (10^6
+# took 12.6 s). The elements written in the file are bounded by its size.
+MAX_SVG_USE_EXPANSION = 20_000
+
 # MIME types we're willing to decode for previews. Anything else is
 # refused — even if Qt claims it can read it. Keep this small on
 # purpose. SVG is NOT here (script/XXE surface): only callers that pass
@@ -584,11 +591,96 @@ _SVG_URL = re.compile(rb"""url\(\s*["']?\s*([^)"'\s]*)""")
 _SVG_DATA_IMAGE = (b"data:image/png", b"data:image/jpeg", b"data:image/gif", b"data:image/webp")
 
 
+_SVG_LOCAL_URL = re.compile(r"url\(\s*[\"']?\s*#([^)\"'\s]*)")
+
+
+def _svg_expansion(data: bytes) -> str | None:
+    """Why the references of *data* draw too much (see
+    :data:`MAX_SVG_USE_EXPANSION`), or ``None``. A streaming parse that
+    keeps a few numbers per element, no tree; each element's sizes are
+    worked out once, so the time grows with the file, not the drawing."""
+    from xml.parsers import expat
+
+    ids: dict[str, int] = {}
+    refs: list = []                     # per element: the ids it references
+    children: dict[int, list[int]] = {}  # elements that have any
+    open_: list[int] = []
+    parser = expat.ParserCreate()
+
+    def start(_name, attrs):
+        index = len(refs)
+        if open_:
+            children.setdefault(open_[-1], []).append(index)
+        own = ()
+        for key, value in attrs.items():
+            local = key.rsplit(":", 1)[-1].lower()
+            if local == "id":
+                ids.setdefault(value, index)
+            elif local == "href" and value.strip().startswith("#"):
+                own += (value.strip()[1:],)
+            elif "url(" in value:
+                own += tuple(_SVG_LOCAL_URL.findall(value))
+        refs.append(own)
+        open_.append(index)
+
+    def end(_name):
+        open_.pop()
+
+    def refuse_declarations(*_args):
+        raise ValueError("declarations are not allowed")
+
+    parser.StartElementHandler = start
+    parser.EndElementHandler = end
+    parser.EntityDeclHandler = refuse_declarations
+    parser.StartDoctypeDeclHandler = refuse_declarations
+    try:
+        parser.Parse(data, True)
+    except (expat.ExpatError, ValueError) as exc:
+        return f"SVG is not well-formed XML ({exc})"
+    if not refs:
+        return None
+    limit = MAX_SVG_USE_EXPANSION
+    # Per element, worked out once (post-order over its children and its
+    # references' targets, a target still being worked out is a cycle):
+    # size[i] the elements of its subtree, extra[i] what the references in
+    # its subtree draw. Both are capped past the limit.
+    size: list[int] = [0] * len(refs)
+    extra: list[int] = [0] * len(refs)
+    state = bytearray(len(refs))        # 0 new, 1 being worked out, 2 done
+    stack = [0]
+    while stack:
+        node = stack[-1]
+        if state[node] == 2:
+            stack.pop()
+            continue
+        targets = [t for t in (ids.get(r) for r in refs[node]) if t is not None]
+        kids = children.get(node, ())
+        if state[node] == 0:
+            state[node] = 1
+            for dep in (*kids, *targets):
+                if state[dep] == 1:
+                    return "SVG references itself"
+                if state[dep] == 0:
+                    stack.append(dep)
+            continue
+        if any(state[dep] != 2 for dep in (*kids, *targets)):
+            return "SVG references itself"
+        size[node] = min(1 + sum(size[c] for c in kids), limit + 1)
+        extra[node] = min(sum(extra[c] for c in kids)
+                          + sum(size[t] + extra[t] for t in targets), limit + 1)
+        state[node] = 2
+        stack.pop()
+    if extra[0] > limit:
+        return f"SVG references draw more than {limit} elements"
+    return None
+
+
 def svg_refusal(data: bytes) -> str | None:
     """Why *data* must not reach the SVG renderer, or ``None`` when it may.
 
     Allowed: a UTF-8 document whose references all stay inside it
-    (``#id``) or embed a common raster as a ``data:`` URI."""
+    (``#id``) or embed a common raster as a ``data:`` URI, and whose
+    references draw at most :data:`MAX_SVG_USE_EXPANSION` elements."""
     if b"\x00" in data:
         return "SVG is not UTF-8 text"
     lowered = data.lower()
@@ -602,7 +694,7 @@ def svg_refusal(data: bytes) -> str | None:
     for match in _SVG_URL.finditer(lowered):
         if not match.group(1).startswith(b"#"):
             return "SVG references something outside the file"
-    return None
+    return _svg_expansion(data)
 
 
 def _svg_options(qtsvg):
@@ -813,6 +905,7 @@ __all__ = [
     "MAX_DIMENSION",
     "MAX_INPUT_SIZE",
     "MAX_SVG_INPUT_SIZE",
+    "MAX_SVG_USE_EXPANSION",
     "PreviewDecodeFailed",
     "PreviewError",
     "PreviewNotAvailable",

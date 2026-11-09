@@ -184,6 +184,17 @@ class GroupEnv:
     #: ``refuse_moved_links(src, dst, backend)`` - a move that re-points a
     #: relative symlink out of the root or at a protected place is refused.
     refuse_moved_links: Callable[[str, str, Any], None] | None = None
+    #: ``entry_checker(backend)`` -> ``check(path)``: :attr:`entry_path` for
+    #: the many new entries of ONE call (an archive's members), with the
+    #: protected places resolved once. None: entry_path per path.
+    entry_checker: Callable[[Any], Callable[[str], str]] | None = None
+
+
+def _entry_checker(env: GroupEnv, backend) -> Callable[[str], str]:
+    """``check(path)`` confining each new entry of one tool call."""
+    if env.entry_checker is not None:
+        return env.entry_checker(backend)
+    return lambda path: env.entry_path(path, backend)
 
 
 def _tool(
@@ -366,7 +377,9 @@ def _place_new(env: GroupEnv, backend, path: str, data: bytes, *, ext: str | Non
     else:
         stem, ext = _split_name(name)
     for n in range(1, 10_000):
-        candidate = env.write_path(backend.join(folder, _free_name(stem, ext, n)), backend)
+        # A new entry: checked as one (a missing folder that would hold a
+        # protected place is refused, not only the places themselves).
+        candidate = env.entry_path(backend.join(folder, _free_name(stem, ext, n)), backend)
         if hasattr(backend, "create_new"):
             # core.confined_fs: created beneath the root's descriptor - a
             # folder of the path swapped for a symlink meanwhile is refused.
@@ -951,7 +964,15 @@ def _build_duplicates(env: GroupEnv) -> list:
                                   for group in groups) if len(g) > 1]
             trash_root = None
             if backend is env.default_backend and env.root:
-                trash_root = env.write_path(os.path.join(env.root, ".axross-trash"), backend)
+                # axross's own trash: no tool writes there (core.protected_places),
+                # core.trash does - into the root's, which must be the root's own
+                # folder (not a link leading elsewhere).
+                from core.trash import TRASH_DIRNAME
+
+                trash_root = os.path.join(env.write_path(env.root, backend), TRASH_DIRNAME)
+                if os.path.islink(trash_root) or (os.path.lexists(trash_root)
+                                                  and not os.path.isdir(trash_root)):
+                    raise PermissionError(f"{trash_root} is not a folder of the root")
             result = cas.dedupe(
                 groups,
                 {bid: backend},
@@ -1222,6 +1243,8 @@ def _build_packer(env: GroupEnv) -> list:
                     # transfer_copy does - packed, read_file on the archive
                     # would hand it out.
                     refuse=_secret_refuser(env, backend),
+                    # Each name the archive may get, before it is made there.
+                    check_target=lambda p: env.entry_path(p, backend),
                 )
             except P.PackCancelled as exc:
                 raise CancelledError("request cancelled by client") from exc
@@ -1380,7 +1403,11 @@ def _build_archive(env: GroupEnv) -> list:
             if not os.path.isdir(dest):
                 raise ValueError(f"dest_dir must be an existing folder: {dest}")
             base = A.strip_archive_extension(path) or "extracted"
-            target = env.write_path(A.auto_suffix_dir(dest, base), backend)
+            # The new folder is an entry (a missing folder that holds a
+            # protected place - ~/.local/share/systemd - is refused), and so
+            # is every member below it, before it is made (core.archive
+            # check_member): a member can land in a protected place.
+            target = env.entry_path(A.auto_suffix_dir(dest, base), backend)
             if ctx.is_cancelled:
                 raise CancelledError("request cancelled by client")
 
@@ -1394,7 +1421,8 @@ def _build_archive(env: GroupEnv) -> list:
                 # Beneath the confined backend's descriptors (core.archive._Sink):
                 # a folder swapped for a symlink while it extracts is refused.
                 files = A.extract(path, target, progress=progress,
-                                  parent_dir=getattr(backend, "parent_dir", None))
+                                  parent_dir=getattr(backend, "parent_dir", None),
+                                  check_member=_entry_checker(env, backend))
             except A.ExtractCancelled as exc:
                 raise CancelledError("request cancelled by client") from exc
             out = {"path": target, "files": int(files)}

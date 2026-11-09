@@ -15,6 +15,7 @@ what its daemon may do - and it does not change any permission.
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import stat as stat_module
@@ -27,6 +28,9 @@ log = logging.getLogger(__name__)
 
 #: Problems reported at most; the dialog names a few, the count is enough.
 MAX_PROBLEMS = 50
+
+#: The errors that say the entry is not there (any more).
+_GONE = frozenset({errno.ENOENT, errno.ENOTDIR})
 
 
 @dataclass(frozen=True)
@@ -62,9 +66,15 @@ def undeletable_sources(
     *,
     cancel: Callable[[], bool] | None = None,
     limit: int = MAX_PROBLEMS,
+    missing: list[str] | None = None,
 ) -> list[Undeletable]:
     """The entries of *paths* (and below them, for folders) a move could not
-    remove afterwards. Empty for a backend other than the local one."""
+    remove afterwards. Empty for a backend other than the local one.
+
+    An entry that is not there any more (removed or renamed since it was
+    selected or cut) is no permission problem - moving it as administrator
+    would not help: it is appended to *missing* instead, and an entry below
+    a folder that vanishes during the walk is left out."""
     if not _is_plain_local(backend):
         return []
     problems: list[Undeletable] = []
@@ -73,12 +83,21 @@ def undeletable_sources(
         problems.append(Undeletable(path, reason))
         return len(problems) >= limit
 
+    def walk_error(exc: OSError, top: str) -> None:
+        if exc.errno in _GONE:
+            return
+        note(exc.filename or top, exc.strerror or str(exc))
+
     for top in paths:
         if cancel is not None and cancel():
             break
         try:
             st = os.lstat(top)
         except OSError as exc:
+            if exc.errno in _GONE:
+                if missing is not None:
+                    missing.append(top)
+                continue
             if note(top, exc.strerror or str(exc)):
                 break
             continue
@@ -91,8 +110,7 @@ def undeletable_sources(
         # let its own entries go. os.walk does not follow links (a link is
         # removed itself, not its target).
         full = False
-        for root, dirs, files in os.walk(top, onerror=lambda e: note(e.filename or top,
-                                                                    e.strerror or str(e))):
+        for root, dirs, files in os.walk(top, onerror=lambda e, t=top: walk_error(e, t)):
             if cancel is not None and cancel():
                 full = True
                 break

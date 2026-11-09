@@ -48,10 +48,18 @@ def _call(tools, name="boom", args=None) -> dict:
     )
 
 
+def _failure_text(resp: dict) -> str:
+    """The text of a tool that ran and failed: a result flagged isError
+    (MCP), not a JSON-RPC error."""
+    assert "error" not in resp, resp
+    assert resp["result"]["isError"] is True
+    return resp["result"]["content"][0]["text"]
+
+
 class ToolsCallErrorRedactionTest(unittest.TestCase):
     def test_backend_oserror_message_is_redacted(self) -> None:
         resp = _call([_raising_tool(OSError(_LEAKY))])
-        message = resp["error"]["message"]
+        message = _failure_text(resp)
         self.assertNotIn(_SECRET, message)
         self.assertIn("files.example", message)
         self.assertIn("<redacted>", message)
@@ -63,7 +71,8 @@ class ToolsCallErrorRedactionTest(unittest.TestCase):
 
     def test_message_without_secrets_is_unchanged(self) -> None:
         resp = _call([_raising_tool(OSError("No such file: /tmp/a b.txt"))])
-        self.assertEqual(resp["error"]["message"], "tool 'boom' failed: No such file: /tmp/a b.txt")
+        self.assertEqual(_failure_text(resp), "tool 'boom' failed: No such file: /tmp/a b.txt")
+        self.assertEqual(resp["result"]["_meta"], {"type": "OSError"})
 
 
 class TaskErrorRedactionTest(unittest.TestCase):

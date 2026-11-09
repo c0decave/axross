@@ -39,6 +39,23 @@ from core.thread_relay import GuiCall
 
 log = logging.getLogger(__name__)
 
+#: A failure of extension code repeated (the same handler, the same
+#: exception type) updates the status bar and the manager at most this often.
+ERROR_REPEAT_SECONDS = 5.0
+
+
+def _handler_key(fn) -> str:
+    """Which handler failed, stable across calls (lambdas too: by where
+    their code is). "" when unknown."""
+    if fn is None:
+        return ""
+    target = getattr(fn, "__func__", fn)
+    code = getattr(target, "__code__", None)
+    name = getattr(target, "__qualname__", None) or type(target).__name__
+    if code is not None:
+        return f"{code.co_filename}:{code.co_firstlineno}:{name}"
+    return f"{getattr(target, '__module__', '')}.{name}"
+
 #: Events an extension can subscribe to with ``api.on``.
 EVENTS = ("selection_changed", "path_changed", "pane_activated")
 #: The order a resumed extension gets the events it missed: the pane,
@@ -767,11 +784,31 @@ class ExtensionHost(QObject):
         try:
             return fn(*args)
         except Exception as exc:  # noqa: BLE001 - extension code
-            self._record(api, exc)
+            self._record(api, exc, fn)
             return None
 
-    def _record(self, api: ExtensionAPI, exc: BaseException) -> None:
+    def _record(self, api: ExtensionAPI, exc: BaseException, fn: Callable | None = None) -> None:
+        """Report a failure of extension code: the full traceback once per
+        (extension, handler, exception type); a repeat - a selection handler
+        that raises on every click - is counted at DEBUG, and the status bar
+        and the manager's error text follow at most every
+        :data:`ERROR_REPEAT_SECONDS` (50 clicks logged 101 tracebacks)."""
         text = f"{type(exc).__name__}: {exc}"
+        key = (_handler_key(fn), type(exc))
+        seen = api.__dict__.setdefault("_error_repeats", {})
+        now = time.monotonic()
+        entry = seen.get(key)
+        if entry is not None:
+            entry["count"] += 1
+            log.debug("Extension %s failed again (%d times): %s",
+                      api.info.ext_id, entry["count"], text)
+            if now - entry["shown"] < ERROR_REPEAT_SECONDS:
+                return
+            entry["shown"] = now
+            self._errors[api.info.ext_id] = text
+            self._show_failure(api, text, entry["count"])
+            return
+        seen[key] = {"count": 1, "shown": now}
         self._errors[api.info.ext_id] = text
         log.error(
             "Extension %s failed: %s\n%s",
@@ -779,12 +816,22 @@ class ExtensionHost(QObject):
             text,
             "".join(traceback.format_exception(exc)).rstrip(),
         )
-        bar = self.window.statusBar()
-        if bar is not None:
-            from core.i18n import tr
+        self._show_failure(api, text, 1)
 
-            bar.showMessage(tr("Extension {name} failed: {error}").format(
-                name=api.info.name, error=text), 10000)
+    def _show_failure(self, api: ExtensionAPI, text: str, count: int) -> None:
+        bar = self.window.statusBar()
+        if bar is None:
+            return
+        from core.i18n import tr, tr_n
+
+        if count > 1:
+            message = tr_n(count, "Extension {name} failed {n} time: {error}",
+                           "Extension {name} failed {n} times: {error}",
+                           name=api.info.name, error=text)
+        else:
+            message = tr("Extension {name} failed: {error}").format(
+                name=api.info.name, error=text)
+        bar.showMessage(message, 10000)
 
     def emit(self, event: str, pane) -> None:
         """Tell every subscribed extension about *event* on *pane*."""

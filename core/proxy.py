@@ -1309,7 +1309,41 @@ def patched_create_connection(profile_or_config):
     process-global lock serialises the patch across threads.
 
     Yields without patching when no proxy is configured.
+
+    Process-wide: while it is active, EVERY thread's create_connection
+    goes through the proxy, and other users wait for the lock across the
+    whole connect. A library whose own module calls
+    ``socket.create_connection`` is better served by
+    :func:`routed_create_connection` (that module, this thread only).
     """
+    proxy_cfg = _enabled_proxy_config(profile_or_config)
+    if proxy_cfg is None:
+        yield
+        return
+
+    with _CREATE_CONNECTION_LOCK:
+        original = socket.create_connection
+
+        def proxied(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, **kwargs):
+            host, port = address
+            t = timeout if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT else 10.0
+            return create_proxy_socket(
+                proxy_cfg,
+                host,
+                int(port),
+                timeout=float(t),
+            )
+
+        socket.create_connection = proxied  # type: ignore[assignment]
+        try:
+            yield
+        finally:
+            socket.create_connection = original  # type: ignore[assignment]
+
+
+def _enabled_proxy_config(profile_or_config) -> "ProxyConfig | None":
+    """The ProxyConfig of *profile_or_config* (a ProxyConfig or a profile
+    with ``proxy_*`` fields) with its port checked; None without a proxy."""
     proxy_cfg: "ProxyConfig | None" = None
     if isinstance(profile_or_config, ProxyConfig):
         if profile_or_config.enabled:
@@ -1333,10 +1367,8 @@ def patched_create_connection(profile_or_config):
                 password=ppassword,
             )
     if proxy_cfg is None:
-        yield
-        return
-
-    proxy_cfg = ProxyConfig(
+        return None
+    return ProxyConfig(
         proxy_cfg.proxy_type,
         proxy_cfg.host,
         _validate_proxy_port(proxy_cfg.port),
@@ -1345,24 +1377,68 @@ def patched_create_connection(profile_or_config):
         proxy_cfg.ca_file,
     )
 
-    with _CREATE_CONNECTION_LOCK:
-        original = socket.create_connection
 
-        def proxied(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, **kwargs):
-            host, port = address
-            t = timeout if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT else 10.0
-            return create_proxy_socket(
-                proxy_cfg,
-                host,
-                int(port),
-                timeout=float(t),
-            )
+# The proxy create_connection of a routed module uses in this thread
+# (routed_create_connection); unset: a direct connection.
+_ROUTE = threading.local()
+_ROUTE_INSTALL_LOCK = threading.Lock()
 
-        socket.create_connection = proxied  # type: ignore[assignment]
-        try:
-            yield
-        finally:
-            socket.create_connection = original  # type: ignore[assignment]
+
+class _RoutedSocketModule:
+    """Stands in for the ``socket`` module of ONE library module (its
+    ``module.socket``): ``create_connection`` goes through the proxy the
+    calling thread set with :func:`routed_create_connection`, direct when
+    it set none; every other name is the real :mod:`socket`."""
+
+    def __init__(self, real) -> None:
+        self._real = real
+
+    def create_connection(self, address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, *args, **kwargs):
+        proxy_cfg = getattr(_ROUTE, "proxy", None)
+        if proxy_cfg is None:
+            return self._real.create_connection(address, timeout, *args, **kwargs)
+        host, port = address[0], address[1]
+        t = timeout if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT and timeout else 10.0
+        return create_proxy_socket(proxy_cfg, host, int(port), timeout=float(t))
+
+    def __getattr__(self, name: str):
+        return getattr(self._real, name)
+
+
+def routed_proxy() -> "ProxyConfig | None":
+    """The proxy :func:`routed_create_connection` set for this thread."""
+    return getattr(_ROUTE, "proxy", None)
+
+
+@contextlib.contextmanager
+def routed_create_connection(module, profile_or_config):
+    """Route *module*'s ``socket.create_connection`` through the proxy of
+    *profile_or_config* - in this thread, for the ``with`` body.
+
+    Unlike :func:`patched_create_connection` nothing process-wide changes
+    and no lock is held across the connect: a connection another thread
+    (or library) opens meanwhile goes where it was meant to - an SMB
+    dial through a SOCKS proxy took every ftplib / imaplib connect of
+    the process with it, and held a second SMB dial to another host for
+    the up to 60 s of its own connect. *module* (e.g.
+    ``smbprotocol.transport``) must reach the function as
+    ``socket.create_connection``: its ``socket`` name is replaced once
+    by a stand-in that is the real module for every other thread and
+    name. Yields untouched without a proxy."""
+    proxy_cfg = _enabled_proxy_config(profile_or_config)
+    if proxy_cfg is None:
+        yield
+        return
+    with _ROUTE_INSTALL_LOCK:
+        current = getattr(module, "socket", None)
+        if not isinstance(current, _RoutedSocketModule):
+            module.socket = _RoutedSocketModule(current if current is not None else socket)
+    previous = getattr(_ROUTE, "proxy", None)
+    _ROUTE.proxy = proxy_cfg
+    try:
+        yield
+    finally:
+        _ROUTE.proxy = previous
 
 
 def enable_tcp_nodelay(sock) -> bool:

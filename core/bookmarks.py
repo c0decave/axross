@@ -229,13 +229,13 @@ def host_bookmark_problem(bookmark: Bookmark) -> str | None:
     if _has_control(host) or _has_control(bookmark.username) or _has_control(bookmark.key_file):
         return "The host, user or key file contains control characters."
     if not host or host.startswith("-") or not _HOST_CHARS.fullmatch(host):
-        return f"'{host}' is no host name or IP address."
+        return f"'{host}' is not a host name or IP address."
     if isinstance(bookmark.port, bool) or not isinstance(bookmark.port, int) or not (
         0 < bookmark.port < 65536
     ):
         return f"The port {bookmark.port!r} is not between 1 and 65535."
     if any(c.isspace() or c == "@" for c in bookmark.username):
-        return f"'{bookmark.username}' is no user name."
+        return f"'{bookmark.username}' is not a user name."
     return None
 
 

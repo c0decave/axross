@@ -925,20 +925,7 @@ MAKERS.update(gdrive=_gdrive, onedrive=_onedrive, dropbox=_dropbox, azure_files=
 #: xfail, so a fix shows up as XPASS and its line here must go. The 28
 #: gaps of round 3 are fixed; these are what the cases added in the final
 #: protocol review found in backends that review did not change.
-KNOWN_GAPS: dict[tuple[str, str], str] = {
-    **{
-        ("test_a_file_with_a_trailing_slash_is_no_folder", name): (
-            "stat('file/') answers with the file (the slash is normalized away)"
-        )
-        for name in ("iscsi", "nfs", "nfs_user_v3", "nfs_user_v4", "ramfs", "sqlite")
-    },
-    ("test_list_dir_of_a_file_is_not_a_directory", "iscsi"): (
-        "list_dir of a file is a bare OSError, not NotADirectoryError"
-    ),
-    ("test_not_found_is_said_as_such_by_open_read_and_list_dir", "iscsi"): (
-        "open_read / list_dir of a missing path is a bare OSError"
-    ),
-}
+KNOWN_GAPS: dict[tuple[str, str], str] = {}
 
 
 # -- fixtures and helpers ------------------------------------------------------

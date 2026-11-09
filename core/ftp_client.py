@@ -13,7 +13,6 @@ import posixpath
 import re
 import select
 import socket
-import tempfile
 import threading
 import time
 import weakref
@@ -31,7 +30,7 @@ from core.path_policy import (
     refuse_folder_path,
     safe_join,
 )
-from core.read_spool import READ_CHUNK, new_read_spool
+from core.read_spool import READ_CHUNK, new_read_spool, new_spool
 from core.session_lock import io_lock, liveness_check, serialized
 from core.transfer_pool import MAX_PARALLEL
 from models.file_item import FileItem
@@ -231,6 +230,40 @@ def _unix_entry(
     return found.pop() if len(found) == 1 else None
 
 
+class _ListIndex:
+    """The entries of one parsed LIST by name, built once per listing:
+    :func:`_entry_detail` and :func:`_unix_entry` walk the whole listing
+    for each name, and asked for every entry of a folder that made a
+    listing quadratic (10000 entries: 10^8 comparisons). Same answers:
+    a link line "a -> b" is found under every name it may stand for (the
+    text before each " -> "), and a name more than one line may stand
+    for is ambiguous."""
+
+    def __init__(self, details: list[_ListEntry] | None) -> None:
+        self._by_name: dict[str, list[_ListEntry]] = {}
+        for entry in details or ():
+            if entry.kind != "l":
+                self._by_name.setdefault(entry.rest, []).append(entry)
+                continue
+            at = entry.rest.find(" -> ")
+            while at >= 0:
+                self._by_name.setdefault(entry.rest[:at], []).append(entry)
+                at = entry.rest.find(" -> ", at + 1)
+
+    def detail(self, name: str) -> _ListEntry | None:
+        """As :func:`_entry_detail`."""
+        found = self._by_name.get(name, ())
+        return found[0] if len(found) == 1 else None
+
+    def entry(self, name: str) -> tuple[str, str] | None:
+        """As :func:`_unix_entry`."""
+        found = {
+            ("l", e.rest[len(name) + 4 :]) if e.kind == "l" else (e.kind, "")
+            for e in self._by_name.get(name, ())
+        }
+        return found.pop() if len(found) == 1 else None
+
+
 def _option_refused(exc: BaseException) -> bool:
     """Whether the refusal of a ``LIST -a`` / ``NLST -a`` means "try it
     without the option": any 5xx, and a 4xx other than 421 - wu-ftpd and
@@ -296,6 +329,11 @@ def _list_lines_all(ftp, path: str) -> tuple[str | None, list[str]]:
 #: The largest offset of a server's LIST clock from UTC that is taken
 #: for one (UTC-12 .. UTC+14).
 _MAX_ZONE_OFFSET = timedelta(hours=14)
+#: MDTM probes one listing without MLSD sends at most (see list_dir).
+MDTM_PER_LISTING = 64
+#: MDTM refused this many times in a row at the start of a listing: the
+#: server has none (or refuses it here), the rest is not asked.
+_MDTM_REFUSALS = 3
 
 
 def _list_zone_offset(pairs: list[tuple[datetime, datetime]]) -> timedelta | None:
@@ -375,6 +413,35 @@ def _mlst_exists(ftp, path: str) -> bool | None:
         # the one before it. Closed, the next call logs in again.
         _close_quietly(ftp)
     raise OSError(f"FTP exists: unexpected reply to MLST {path}: {resp[:80]!r}")
+
+
+def _announced_size(ftp, path: str) -> int | None:
+    """The size the server gives for *path* by ``SIZE`` (RFC 3659 4), on
+    a connection in ``TYPE I`` (the caller's part); None when it offers no SIZE in FEAT or
+    refuses it for this path. A download is checked against it: a data
+    connection that ends early still gets "226 Transfer complete" from
+    some servers, and the short file looked like the whole one."""
+    if "SIZE" not in _features(ftp):
+        return None
+    try:
+        resp = ftp.sendcmd(f"SIZE {path}")
+    except error_perm:
+        return None
+    if resp[:3] != "213":
+        return None
+    try:
+        size = int(resp[3:].strip())
+    except ValueError:
+        return None
+    return size if size >= 0 else None
+
+
+def _short_download(path: str, received: int, expected: int) -> OSError:
+    return OSError(
+        errno.EIO,
+        f"FTP read {path}: the download ended after {received} of {expected} bytes "
+        "(the server reported success)",
+    )
 
 
 def _binary_mode(ftp) -> None:
@@ -525,7 +592,9 @@ class _SpooledWriter:
         self._append = append
         self._lock = lock if lock is not None else contextlib.nullcontext()
         self._store = store
-        self._buf = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
+        # In the spool folder (core.read_spool), not /tmp: a tmpfs there
+        # ran out of room for a large upload.
+        self._buf = new_spool(max_size=8 * 1024 * 1024)
         self._closed = False
         # The running transfer's Cancel and progress (core.transfer_hooks):
         # the STOR happens in close(), after the copy loop.
@@ -613,14 +682,18 @@ class _StreamedDownload(io.RawIOBase):
 
     _BLOCK = 64 * 1024
 
-    def __init__(self, ftp: FTP, conn, path: str, done) -> None:
+    def __init__(self, ftp: FTP, conn, path: str, done, expected: int | None = None,
+                 spool=None) -> None:
         super().__init__()
         self._ftp = ftp
         self._conn = conn
         self._path = path
+        # The size SIZE (or the 150 reply) gave before RETR: "226" after a
+        # data connection that ended early is not the end of the file.
+        self._expected = expected
         # Called with the control connection after a complete transfer.
         self._done = done
-        self._spool = new_read_spool()
+        self._spool = spool if spool is not None else new_read_spool(expected)
         self._received = 0
         self._pos = 0
         self._failed: OSError | None = None
@@ -707,6 +780,9 @@ class _StreamedDownload(io.RawIOBase):
         self._ftp.voidresp()
         ftp, self._ftp = self._ftp, None
         self._done(ftp)
+        if self._expected is not None and self._received != self._expected:
+            self._failed = _short_download(self._path, self._received, self._expected)
+            raise self._failed
 
     def _fail(self, exc: OSError) -> NoReturn:
         self._failed = exc
@@ -1207,8 +1283,20 @@ class FtpSession(SessionLifecycle):
             log.debug("FTP liveness check of %s failed: %s", getattr(self, "_host", "?"), exc)
             return False
 
+    #: Set by disconnect(): a later call through this object (a queued or
+    #: retried transfer, a scheduled job) raises instead of logging in
+    #: again by itself with the stored password - nothing would track or
+    #: close that connection.
+    _closed_by_user = False
+
+    def _refuse_if_closed(self) -> None:
+        if self._closed_by_user:
+            raise ConnectionError(errno.ENOTCONN,
+                                  f"FTP {getattr(self, '_host', '')}: disconnected")
+
     @serialized
     def disconnect(self) -> None:
+        self._closed_by_user = True
         for idle in self._drain_pool():
             _quit_quietly(idle)
         if self._ftp:
@@ -1251,6 +1339,7 @@ class FtpSession(SessionLifecycle):
         return info
 
     def _ensure_connected(self) -> FTP:
+        self._refuse_if_closed()
         if self._ftp is not None and self._recently_verified():
             return self._ftp
         if self._ftp is None or not self.connected:
@@ -1327,10 +1416,18 @@ class FtpSession(SessionLifecycle):
         # every entry is probed with stat(), whose CWD follows a symbolic
         # link - LIST is also the only source that says which are links.
         details = self._unix_listing(ftp, path) if names else None
+        index = _ListIndex(details)
         # Dates LIST alone gives (folders; files without MDTM) are put on
         # the server's clock offset that MDTM and LIST of its files show.
         list_dated: list[int] = []
         clock_pairs: list[tuple[datetime, datetime]] = []
+        # One MDTM round trip per file made a large folder take minutes
+        # (20000 files: 77 s): at most MDTM_PER_LISTING per listing; the
+        # files after them keep their LIST date, put on the clock offset
+        # the probed ones show. A server that refuses the first ones is
+        # not asked for the rest.
+        mdtm_left = MDTM_PER_LISTING
+        mdtm_answered = False
         for full_path in names:
             entry_name = posixpath.basename(full_path) or full_path
             if entry_name in (".", ".."):
@@ -1338,9 +1435,16 @@ class FtpSession(SessionLifecycle):
             stat_path = (
                 posixpath.join(path, entry_name) if not full_path.startswith("/") else full_path
             )
-            detail = _entry_detail(details, entry_name)
+            detail = index.detail(entry_name)
             if detail is not None and detail.kind in ("-", "d"):
-                modified = self._mdtm(ftp, stat_path) if detail.kind == "-" else None
+                modified = None
+                if detail.kind == "-" and mdtm_left > 0:
+                    mdtm_left -= 1
+                    modified = self._mdtm(ftp, stat_path)
+                    if modified is not None:
+                        mdtm_answered = True
+                    elif not mdtm_answered and mdtm_left <= MDTM_PER_LISTING - _MDTM_REFUSALS:
+                        mdtm_left = 0
                 if detail.modified is not None and detail.has_time:
                     if modified is not None:
                         clock_pairs.append((modified, detail.modified))
@@ -1695,6 +1799,7 @@ class FtpSession(SessionLifecycle):
         # (or, when LIST cannot tell, an MLSD server says so); a link is
         # unlinked. Every child is classified before anything is deleted.
         listing = self._unix_listing(ftp, path)
+        index = _ListIndex(listing)
         children = []
         for item in self.list_dir(path):
             try:
@@ -1703,7 +1808,7 @@ class FtpSession(SessionLifecycle):
                 raise OSError(
                     f"Cannot recursively remove {path}: unsafe child name {item.name!r}: {exc}"
                 ) from exc
-            entry = _unix_entry(listing, item.name)
+            entry = index.entry(item.name)
             if item.is_link or (entry is not None and entry[0] == "l"):
                 descend = False
             elif not item.is_dir:
@@ -1765,17 +1870,35 @@ class FtpSession(SessionLifecycle):
             return self._open_read_shared(path)
         ftp, generation = got
         done = functools.partial(self._release_connection, generation=generation)
+        spool = None
         try:
             ftp.voidcmd("TYPE I")
-            conn = ftp.transfercmd(f"RETR {path}")
+            expected = _announced_size(ftp, path)
+            # Before RETR: a file that cannot fit in the spool folder fails
+            # now, not when the disk is full half-way.
+            spool = new_read_spool(expected)
+            conn, announced = ftp.ntransfercmd(f"RETR {path}")
         except error_perm as e:
             # "550 No such file": answered, the connection is fine.
+            if spool is not None:
+                spool.close()
             done(ftp)
             raise self._read_refused(path, e) from e
-        except BaseException:
+        except OSError as e:
+            if spool is None and getattr(e, "errno", None) == errno.ENOSPC:
+                done(ftp)  # refused before RETR: the connection is fine
+                raise
+            if spool is not None:
+                spool.close()
             _close_quietly(ftp)
             raise
-        return _StreamedDownload(ftp, conn, path, done)
+        except BaseException:
+            if spool is not None:
+                spool.close()
+            _close_quietly(ftp)
+            raise
+        return _StreamedDownload(ftp, conn, path, done,
+                                 expected if expected is not None else announced, spool)
 
     def _store(self, command: str, fileobj) -> None:
         """Upload *fileobj* with *command* (STOR / APPE): on a control
@@ -1820,6 +1943,7 @@ class FtpSession(SessionLifecycle):
         to log in with, a server that refused a second connection is not
         asked again, and one that refused a further one is not asked for
         more than it allowed."""
+        self._refuse_if_closed()
         if not self._separate_transfers:
             return None
         while True:
@@ -1965,13 +2089,18 @@ class FtpSession(SessionLifecycle):
         lock: for a server that allows one connection per user."""
         ftp = self._ensure_connected()
         # Spooled, not a BytesIO: the whole file used to sit in RAM.
-        buf = new_read_spool()
+        _binary_mode(ftp)
+        expected = _announced_size(ftp, path)
+        buf = new_read_spool(expected)
         # In a running transfer every block checks Cancel and counts as
         # received: the whole RETR happens here, before the copy loop.
         hooks = transfer_hooks.current()
         sink = buf if hooks is None else transfer_hooks.WriteProgress(buf, hooks)
         try:
             ftp.retrbinary(f"RETR {path}", sink.write)
+            received = buf.tell()
+            if expected is not None and received != expected:
+                raise _short_download(path, received, expected)
         except error_perm as e:
             buf.close()
             raise self._read_refused(path, e) from e

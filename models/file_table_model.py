@@ -483,6 +483,13 @@ class FileTableModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.DisplayRole:
             return self.display_text(item, col)
 
+        if item.is_nav and col == COL_NAME and role == Qt.ItemDataRole.ToolTipRole:
+            # The pane's own rows say what they are (round 6: "." looked
+            # like an entry): "." is this folder - a drop target - and
+            # ".." the parent. Not italic: that is the look of a hidden entry.
+            return (tr("This folder: drop entries here to put them into it")
+                    if item.name == "." else tr("The parent folder"))
+
         if role == Qt.ItemDataRole.ToolTipRole and col == COL_NAME and not item.is_nav:
             # Tooltips are always rendered as rich text: escape the name so
             # markup inside a hostile file name is shown literally, and keep

@@ -15,6 +15,14 @@ read-only here: a write to one is refused. A Google-native item without
 an export (a Form, a Site) is listed and refused on reading with that
 reason - not "permission denied".
 
+Moving a Google-native file out of Drive is refused (copy it instead):
+the copy would be its export, which loses comments, suggestions, version
+history and sharing, and the move would then delete the original
+(:meth:`GDriveSession.refuse_move_out`). Removing one - or a folder,
+which may hold some - puts it into Drive's trash (``trashed=True``,
+restorable there for 30 days) rather than deleting it for good: nothing
+else holds its content. A plain file is deleted (``files.delete``).
+
 Shared drives: items of a shared drive that are reachable from My Drive
 (shared into it, a shortcut's folder) are listed, read and written
 (``supportsAllDrives``). The shared drives themselves are not listed:
@@ -255,6 +263,12 @@ def _upload(request, hooks, size: int) -> None:
         done = getattr(status, "resumable_progress", None)
         if isinstance(done, int):
             hooks.sent(done, size)
+
+
+class GoogleNativeMoveRefused(OSError):
+    """A move of a Google Doc / Sheet / Slides deck (any Google-native
+    file) out of Drive: only its export would arrive, and the move would
+    delete the original. Copy it instead."""
 
 
 class _SpooledWriter:
@@ -1014,18 +1028,61 @@ class GDriveSession(SessionLifecycle):
         log.info("Created directory: %s", path)
 
     def remove(self, path: str, recursive: bool = False) -> None:
+        """Remove *path*. A plain file is deleted (``files.delete``); a
+        Google-native file (a Doc, Sheet, Slides deck ...) and a folder -
+        which may hold such files - go to Drive's trash instead
+        (``trashed=True``): nothing outside Drive holds a Google Doc, so a
+        delete for good (Shift+Del, a move whose copy was only the export)
+        lost it beyond recovery."""
         file_id = self._resolve_for_change(path, "remove")
+        mime = self._get_metadata(file_id).get("mimeType")
         # files.delete takes a folder with everything in it, so a
         # non-recursive remove refuses a folder with children first.
-        if not recursive and self._get_metadata(file_id).get("mimeType") == _FOLDER_MIME:
+        if not recursive and mime == _FOLDER_MIME:
             if self._has_children(file_id, path):
                 raise OSError(errno.ENOTEMPTY, f"Directory not empty: {path}", path)
+        to_trash = mime == _FOLDER_MIME or _is_native(mime)
         try:
-            _run(self._service.files().delete(fileId=file_id, **_ALL_DRIVES), gone_ok=True)
+            if to_trash:
+                _run(self._service.files().update(
+                    fileId=file_id, body={"trashed": True}, **_ALL_DRIVES), gone_ok=True)
+            else:
+                _run(self._service.files().delete(fileId=file_id, **_ALL_DRIVES), gone_ok=True)
         except Exception as e:
             raise _drive_error(e, f"Cannot remove {path}: {e}") from e
         self._invalidate_cache(path)
-        log.info("Removed: %s", path)
+        if to_trash:
+            log.info("Moved to Drive's trash: %s", path)
+        else:
+            log.info("Removed: %s", path)
+
+    def refuse_move_out(self, path: str, dest_backend=None) -> None:
+        """Raise :class:`GoogleNativeMoveRefused` when *path* is a
+        Google-native file and the move goes to another backend than this
+        session: the copy would be its export (comments, suggestions,
+        version history and sharing lost) and the move would then remove
+        the original. A move inside Drive is a rename and keeps it.
+        Called by the transfer engine before a move copies anything."""
+        if dest_backend is self:
+            return
+        try:
+            mime = self._get_metadata(self._resolve_path(path)).get("mimeType")
+        except FileNotFoundError:
+            return  # the move itself reports it
+        if not _is_native(mime):
+            return
+        from core.i18n import tr
+
+        raise GoogleNativeMoveRefused(
+            errno.EPERM,
+            tr(
+                "{name} is a Google file (a Doc, Sheet or Slides deck): out of Drive "
+                "only its export arrives, without comments, suggestions, version "
+                "history or sharing, and a move would then delete the original. It "
+                "was not moved. Copy it instead; the original stays in Drive."
+            ).format(name=posixpath.basename(path.rstrip("/")) or path),
+            path,
+        )
 
     def rename(self, src: str, dst: str) -> None:
         # normalize() drops the slash: "x/" named the FILE x.

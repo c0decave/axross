@@ -273,6 +273,9 @@ class TransferManager(QObject):
     jobs_trimmed = pyqtSignal(list)
     # A background walk (transfer_files_in_background) registered its jobs.
     walk_finished = pyqtSignal()
+    # A background walk began: Cancel All has something to stop before any
+    # job shows (the Transfers dock enables it).
+    walk_started = pyqtSignal()
 
     def __init__(self, parent=None, *, max_parallel: int | None = None):
         """*max_parallel*: jobs that may run at the same time (1..MAX_PARALLEL); None
@@ -748,6 +751,7 @@ class TransferManager(QObject):
         thread; its jobs are registered on the GUI thread (_finish_walk)."""
         walk = [source_backend, dest_backend, threading.Event()]
         self._walks.append(walk)
+        self.walk_started.emit()
 
         def run() -> None:
             self._local.pending = []
@@ -1246,8 +1250,16 @@ class TransferManager(QObject):
         return moved
 
     def _current_backend(self, backend: object) -> object:
-        """*backend*, or - when it is no longer connected and the resolver
-        names another one for the same connection - that one."""
+        """*backend*, or the one the resolver names for the same connection
+        (the session a pane uses now, after a reconnect).
+
+        The resolver's session wins without asking *backend* whether it is
+        still connected: retry_job runs on the GUI thread, and on SMB
+        ``connected`` lists the share - on a dead pooled connection that
+        redialled the replaced session (up to a minute's connect time-out
+        per job and side), and when the server was back it bound the retry
+        to the session the pane had retired and the connection manager
+        closes under it. Nothing here touches the network."""
         resolver = self._backend_resolver
         if backend is None or resolver is None:
             return backend
@@ -1258,11 +1270,7 @@ class TransferManager(QObject):
             return backend
         if replacement is None or replacement is backend:
             return backend
-        try:
-            still_up = bool(getattr(backend, "connected", True))
-        except Exception:  # noqa: BLE001 - asking failed: it is not up
-            still_up = False
-        return backend if still_up else replacement
+        return replacement
 
     def retry_job(self, job_id: str) -> TransferJob | None:
         """Retry a failed or cancelled job, resuming from partial data if possible.
@@ -1329,18 +1337,79 @@ class TransferManager(QObject):
         log.info("Retrying transfer (resume): %s -> %s", old_job.source_path, old_job.dest_path)
         return new_job
 
+    @staticmethod
+    def partial_kept(job: TransferJob) -> str:
+        """The hidden partial file (``.<name>.part-…``) a failed or
+        cancelled *job* may have left for a resume, or "".
+
+        The worker keeps it where the destination really appends
+        (core.server_ops.write_traits ``real_append``) and bytes had
+        arrived: Retry then continues it - only while the source is
+        unchanged (its fingerprint is in the name). Said in the status
+        line, and removed with the job by :meth:`clear_finished`."""
+        if job.status not in (TransferStatus.ERROR, TransferStatus.CANCELLED):
+            return ""
+        if not (job.use_temp_file and job.temp_path and job.dest_backend is not None):
+            return ""
+        if job.transferred_bytes <= 0 and not job.resume:
+            return ""
+        from core.server_ops import write_traits
+
+        try:
+            if not write_traits(job.dest_backend).real_append:
+                return ""
+        except Exception:  # noqa: BLE001 - unknown traits: assume it may be there
+            pass
+        return job.temp_path
+
     def clear_finished(self) -> None:
-        """Remove completed/errored/cancelled jobs."""
+        """Remove completed/errored/cancelled jobs - and the partial files
+        the failed and cancelled ones kept for a resume (:meth:`partial_kept`):
+        once the row is gone nothing could resume them, and the hidden
+        ``.name.part-…`` stayed behind with its bytes (UX review round 6)."""
         to_remove = [
             jid
             for jid, j in self._jobs.items()
             if j.status in (TransferStatus.DONE, TransferStatus.ERROR, TransferStatus.CANCELLED)
         ]
+        partials = [(self._jobs[jid].dest_backend, path) for jid in to_remove
+                    if (path := self.partial_kept(self._jobs[jid]))]
         for jid in to_remove:
             del self._jobs[jid]
+        # A retry still queued or running continues the same partial.
+        in_use = {j.temp_path for j in self._jobs.values() if j.temp_path}
+        self._remove_partials([(b, p) for b, p in partials if p not in in_use])
         self._done_order.clear()
         # No failed move is left to retry, so no kept folder will empty.
         self._kept_move_dirs.clear()
+
+    @staticmethod
+    def _remove_partials(partials: list) -> threading.Thread | None:
+        """Remove each kept partial ``(backend, path)`` off the GUI thread
+        (a remote one is a round trip each). Only names the worker gives a
+        partial (core.transfer_worker.PARTIAL_MARK) are touched."""
+        from core.transfer_worker import PARTIAL_MARK
+
+        chosen = []
+        for backend, path in partials:
+            name = path.replace("\\", "/").rsplit("/", 1)[-1]
+            if backend is not None and name.startswith(".") and PARTIAL_MARK in name:
+                chosen.append((backend, path))
+        if not chosen:
+            return None
+
+        def run() -> None:
+            for backend, path in chosen:
+                try:
+                    if backend.exists(path):
+                        backend.remove(path)
+                        log.info("Removed the partial file of a cleared transfer: %s", path)
+                except Exception as exc:  # noqa: BLE001 - reported, the rest go on
+                    log.warning("Could not remove the partial file %s: %s", path, exc)
+
+        thread = threading.Thread(target=run, name="axross-clear-partials", daemon=True)
+        thread.start()
+        return thread
 
     def shutdown(self) -> None:
         self._shut_down = True  # a walk still running registers nothing

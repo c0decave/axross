@@ -468,6 +468,15 @@ class _Sink:
         self.parent_fd = parent_fd
         self.name = name
         self.fd = fd
+        #: ``check(path)`` run on the path of every folder and file before it
+        #: is made (raises to refuse it): the MCP server's write confinement.
+        self.check: Callable[[str], None] | None = None
+
+    def _check(self, member_name: str, dest: str | None) -> None:
+        if self.check is None:
+            return
+        parts = _member_parts(member_name)
+        self.check(os.path.join(self.target, *parts) if parts else (dest or self.target))
 
     @classmethod
     def create(cls, target: str, parent_dir=None) -> "_Sink":
@@ -537,8 +546,10 @@ class _Sink:
             ) from exc
 
     def makedirs(self, member_name: str, dest: str) -> None:
+        self._check(member_name, dest)
         if self.fd is None:
-            os.makedirs(dest, exist_ok=True)
+            os.makedirs(dest or os.path.join(self.target, *_member_parts(member_name)),
+                        exist_ok=True)
             return
         from core import confined_fs as CF
 
@@ -547,6 +558,7 @@ class _Sink:
 
     def open_new(self, member_name: str, dest: str, perm: int = 0o666):
         """A new file for the member, open for writing (``O_EXCL``)."""
+        self._check(member_name, dest)
         if self.fd is None:
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             return open(dest, "xb")
@@ -571,6 +583,8 @@ class _Sink:
         """A member's bytes, with its stored mode and time (see
         :func:`_write_member_file`)."""
         if self.fd is None:
+            self._check(member_name, dest)
+            dest = dest or os.path.join(self.target, *_member_parts(member_name))
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             _write_member_file(dest, src, mode, mtime)
             return
@@ -587,8 +601,9 @@ class _Sink:
     def staged(self, extract_into: Callable[[str], None]) -> None:
         """Run *extract_into(folder)* of a library that writes by path
         (py7zr, rarfile): without a descriptor into the target itself, else
-        into a private temporary folder whose files are then copied in."""
-        if self.fd is None:
+        into a private temporary folder whose files are then copied in (also
+        without a descriptor when every member is checked: :attr:`check`)."""
+        if self.fd is None and self.check is None:
             extract_into(self.target)
             return
         staging = tempfile.mkdtemp(prefix="axross-extract-")
@@ -1543,8 +1558,10 @@ def extract_members(
     progress: Callable[[int, int, str], None] | None = None,
     *,
     parent_dir=None,
+    check_member: Callable[[str], None] | None = None,
 ) -> ExtractResult:
     """Extract ONLY the named *members* from *archive_path* into *target*.
+    *check_member(path)* as in :func:`extract`.
 
     *members* is a list of member names as reported by
     :func:`list_archive`. A name that refers to a DIRECTORY pulls in
@@ -1625,6 +1642,7 @@ def extract_members(
     # Same symlink-swap-race guard as extract(): written beneath a
     # descriptor of the folder made here, nothing followed (_Sink).
     sink = _Sink.create(target, parent_dir)
+    sink.check = check_member
     try:
         written = runner(archive_path, target, members, progress, sink)
         # Post-extraction size re-verification, same as extract(): the
@@ -1908,6 +1926,7 @@ def extract(
     *,
     progress: Callable[[int, int, str], None] | None = None,
     parent_dir=None,
+    check_member: Callable[[str], None] | None = None,
 ) -> ExtractResult:
     """Extract *archive_path* into *target*.
 
@@ -1929,6 +1948,11 @@ def extract(
     giving ``(descriptor of target's folder, name)`` - the MCP server's
     confined backend passes its ``parent_dir``, so even the folder the
     target is made in is reached without following a symlink.
+
+    *check_member(path)*: run on the path of every folder and file before
+    it is made; what it raises refuses the extraction (nothing is left).
+    The MCP server checks each against its root and the protected places:
+    a member can land in a protected folder below a new target.
     """
     if not os.path.isfile(archive_path):
         raise FileNotFoundError(
@@ -1983,6 +2007,7 @@ def extract(
     # *parent_dir* (the MCP server's confined backend) opens the parent
     # beneath its root instead.
     sink = _Sink.create(target, parent_dir)
+    sink.check = check_member
     try:
         written = runner(archive_path, target, progress, sink)
         # Post-extraction sanity: some archive formats (notably 7z via

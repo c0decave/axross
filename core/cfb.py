@@ -138,7 +138,7 @@ class CompoundFile:
 
     def read(self, entry: Entry, limit: int = MAX_FILE) -> bytes:
         if entry.kind != STREAM:
-            raise CfbError(f"{entry.name!r} is no stream")
+            raise CfbError(f"{entry.name!r} is not a stream")
         size = min(entry.size, limit)
         if entry.size > len(self.data) * 2 + 4096:
             raise CfbError(f"{entry.name!r} claims more bytes than the file has")

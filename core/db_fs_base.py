@@ -89,6 +89,14 @@ def _driver_errors_as_oserror(method):
             return method(self, *args, **kwargs)
         except self._DRIVER_ERRORS as exc:
             raise OSError(f"{type(self).__name__}.{method.__name__}: {exc}") from exc
+        except UnicodeEncodeError as exc:
+            # A name from a non-UTF-8 file system (surrogate escapes) cannot
+            # be stored as text: an OSError the copy reports per file, not
+            # a UnicodeEncodeError that ended the whole job.
+            raise OSError(
+                errno.EILSEQ,
+                f"{type(self).__name__}.{method.__name__}: the name is not valid UTF-8",
+            ) from exc
 
     return wrapper
 
@@ -239,9 +247,16 @@ class DbFsBackend(_RowAdapter, SessionLifecycle):
             items.append(item)
         return items
 
+    @staticmethod
+    def _refuse_slash_on_file(raw: str, row: dict | None) -> None:
+        """NotADirectoryError for "file/", as stat(2) says: normalize()
+        drops the slash, and remove("file/") deleted the file."""
+        if row is not None and not row.get("is_dir") and raw.endswith("/") and raw.strip("/"):
+            raise NotADirectoryError(errno.ENOTDIR, f"Not a directory: {raw}", raw)
+
     @_driver_errors_as_oserror
     def stat(self, path: str) -> FileItem:
-        path = self.normalize(path)
+        raw, path = path, self.normalize(path)
         if path == "/":
             return FileItem(
                 name="/",
@@ -254,6 +269,7 @@ class DbFsBackend(_RowAdapter, SessionLifecycle):
         row = self._db_get_meta(path)
         if row is None:
             raise FileNotFoundError(errno.ENOENT, f"No such path: {path}")
+        self._refuse_slash_on_file(raw, row)
         item = self._row_to_item(row)
         if item is None:
             raise OSError(f"Unusable row for {path}: it has no path")
@@ -269,17 +285,22 @@ class DbFsBackend(_RowAdapter, SessionLifecycle):
 
     @_driver_errors_as_oserror
     def exists(self, path: str) -> bool:
-        path = self.normalize(path)
+        raw, path = path, self.normalize(path)
         if path == "/":
             return True
-        return self._db_get_meta(path) is not None
+        row = self._db_get_meta(path)
+        # "file/" names no entry (lstat(2): ENOTDIR).
+        return row is not None and not (
+            not row.get("is_dir") and raw.endswith("/") and raw.strip("/")
+        )
 
     @_driver_errors_as_oserror
     def open_read(self, path: str) -> IO[bytes]:
-        path = self.normalize(path)
+        raw, path = path, self.normalize(path)
         row = self._db_get(path)
         if row is None:
             raise FileNotFoundError(errno.ENOENT, f"No such path: {path}")
+        self._refuse_slash_on_file(raw, row)
         if row.get("is_dir"):
             raise IsADirectoryError(errno.EISDIR, f"Is a directory: {path}")
         return io.BytesIO(self._content_bytes(row, path))
@@ -338,12 +359,13 @@ class DbFsBackend(_RowAdapter, SessionLifecycle):
 
     @_driver_errors_as_oserror
     def remove(self, path: str, recursive: bool = False) -> None:
-        path = self.normalize(path)
+        raw, path = path, self.normalize(path)
         if path == "/":
             raise OSError("Refusing to remove root")
         row = self._db_get(path)
         if row is None:
             raise FileNotFoundError(errno.ENOENT, f"No such path: {path}")
+        self._refuse_slash_on_file(raw, row)
         if row.get("is_dir"):
             children = list(self._db_list(path))
             if children and not recursive:
@@ -356,7 +378,9 @@ class DbFsBackend(_RowAdapter, SessionLifecycle):
     def rename(self, src: str, dst: str) -> None:
         from core.path_policy import refuse_folder_path
 
-        src = self.normalize(src)
+        raw_src, src = src, self.normalize(src)
+        if raw_src.endswith("/"):
+            self._refuse_slash_on_file(raw_src, self._db_get_meta(src))
         if src != "/":
             # normalize() drops the slash: a file renamed to "x/" became "x".
             refuse_folder_path(dst, "rename to", source_is_file=lambda: self._is_file(src))
@@ -420,22 +444,28 @@ class DbFsBackend(_RowAdapter, SessionLifecycle):
 
     @_driver_errors_as_oserror
     def chmod(self, path: str, mode: int) -> None:
-        path = self.normalize(path)
+        raw, path = path, self.normalize(path)
         if path == "/":
             return
-        if self._db_get(path) is None:
+        row = self._db_get_meta(path)
+        if row is None:
             raise FileNotFoundError(errno.ENOENT, f"No such path: {path}")
+        self._refuse_slash_on_file(raw, row)
         self._db_update(path, mode=int(mode))
 
     @_driver_errors_as_oserror
     def copy(self, src: str, dst: str) -> None:
-        src = self.normalize(src)
-        dst = self.normalize(dst)
+        from core.path_policy import refuse_folder_path
+
+        raw_src, src = src, self.normalize(src)
+        # normalize() drops the slash: a copy to "x/" was written as a FILE "x".
+        dst = self.normalize(refuse_folder_path(dst, "copy to"))
         if dst == "/":
             raise OSError("Refusing to overwrite root")
         row = self._db_get(src)
         if row is None:
             raise FileNotFoundError(errno.ENOENT, f"No such path: {src}")
+        self._refuse_slash_on_file(raw_src, row)
         if self._db_get(dst) is not None:
             raise FileExistsError(errno.EEXIST, f"Destination already exists: {dst}")
         if row.get("is_dir"):

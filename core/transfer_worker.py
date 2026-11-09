@@ -468,6 +468,9 @@ class _JobProgress:
         self._job = job
         self._report = report  # report(done, total): the bar, the speed
         self.hooks = transfer_hooks.TransferHooks(job.cancel_event, self._network)
+        if _is_local(job.dest_backend) and job.dest_path:
+            # A download spools next to its local destination, not in /tmp.
+            self.hooks.spool_dir = os.path.dirname(os.path.abspath(job.dest_path))
         self._finished = 0  # network phases done
         self._phases = 1  # network phases in all (known once both ends are open)
         self._copy_weight = 1
@@ -674,6 +677,15 @@ class TransferWorker(QObject):
         try:
             from core.operation_journal import finish_operation
 
+            fields = TransferWorker._journal_identity(job)
+            if job.move and status == "done" and job.dest_backend is not None:
+                # What the move put there: undo moves it back only while the
+                # entry under that name is still this one (core.undo).
+                from core.undo import entry_identity
+
+                identity = entry_identity(job.dest_backend, job.dest_path)
+                if identity:
+                    fields["details"]["dest_identity"] = identity
             finish_operation(
                 job.operation_id,
                 "move" if job.move else "transfer",
@@ -683,7 +695,7 @@ class TransferWorker(QObject):
                 bytes_total=job.total_bytes,
                 bytes_done=job.transferred_bytes,
                 error=error,
-                **TransferWorker._journal_identity(job),
+                **fields,
             )
         except Exception as exc:  # noqa: BLE001
             log.debug("transfer journal finish failed: %s", exc)
@@ -785,6 +797,11 @@ class TransferWorker(QObject):
         progress_callback = _JobProgress(job, report_progress)
 
         try:
+            # A source the backend will not let go out by a move (a Google
+            # Doc: only its export would arrive) is refused before any copy.
+            refuse_move_out = getattr(job.source_backend, "refuse_move_out", None)
+            if job.move and callable(refuse_move_out):
+                refuse_move_out(job.source_path, job.dest_backend)
             renamed = self._move_by_rename(job)
             if renamed is None:
                 renamed = self._move_on_server(job)
@@ -1333,24 +1350,46 @@ class TransferWorker(QObject):
         )
 
         traits = write_traits(dest_backend)
+        # A writer that spools and sends everything in close() (FTP, WebDAV,
+        # SCP, Telnet, ADB, a DB row): the destination is untouched until
+        # then. Its safety copy is taken right before that close(), so a
+        # copy cancelled or failed before it neither reads back the old
+        # file nor uploads it again (400 MiB: 1.2 s read + 2.3 s rollback
+        # after a Cancel 0.3 s in).
+        spools = traits.spools_until_close
+
+        def check_cancel() -> None:
+            if job.cancel_event.is_set():
+                raise InterruptedError("Transfer cancelled")
 
         # Outside the rollback: until the snapshot exists nothing has been
         # written, and a failed read-back of an existing destination
         # must not reach the rollback, which would take it for a partial
         # file of ours and remove it.
         if known_absent:
-            destination_existed, destination_snapshot = False, None
+            destination_existed = False
         else:
-            destination_existed, destination_snapshot = _snapshot_direct_destination(
-                dest_backend,
-                job.dest_path,
-            )
+            destination_existed, _ = _snapshot_direct_destination(
+                dest_backend, job.dest_path, defer=True)
+        needs_copy = destination_existed and not (traits.commits_on_close or traits.append_only)
+        destination_snapshot = None
+        #: A server-side copy of the old destination (cp, WebDAV COPY, a DB
+        #: row): no byte through this machine, put back on failure.
+        server_copy = None
+        if needs_copy and not spools:
+            server_copy, destination_snapshot = self._safety_copy(job, check_cancel)
         backup = None
         #: The writer was opened: before that nothing of the destination
         #: was touched, and a rollback could only do harm - on Google Drive
         #: it wrote the snapshot of the file listed over the one the
         #: refused open_write had just found under the name (ESTALE).
         opened = False
+        #: A spooling writer's close() was called: from then on the
+        #: destination may have changed.
+        sent = False
+        # The size known when the copy starts: a read that ends short of it
+        # is checked against the source before the copy counts as done.
+        expected = int(job.total_bytes or 0)
         try:
             size_before = None
             if destination_existed and not traits.append_only:
@@ -1366,7 +1405,8 @@ class TransferWorker(QObject):
                     # one before the check runs: a mismatch left the corrupt
                     # copy in its place, with nothing to put back.
                     backup = self._back_up_committed_destination(job)
-                if destination_snapshot is not None and self._same_leaf_name(job):
+                if (destination_snapshot is not None or server_copy is not None) \
+                        and self._same_leaf_name(job):
                     # A writer that truncates at open, aimed at the source
                     # under another path, empties it before it is read: the
                     # copy then comes out short and "succeeds". The snapshot
@@ -1394,10 +1434,20 @@ class TransferWorker(QObject):
                             streamed.update(chunk)
                             transferred += len(chunk)
                             progress_callback(transferred, job.total_bytes)
+                        # Before a spooling writer sends anything: a short
+                        # read then costs no upload and no rollback.
+                        self._refuse_short_read(job, transferred, expected)
+                        if needs_copy and spools:
+                            # Not under the hooks: the read-back is no part
+                            # of the job's progress (Cancel still stops it).
+                            with transfer_hooks.active(None):
+                                server_copy, destination_snapshot = self._safety_copy(
+                                    job, check_cancel)
                         completed = True
                         streamed.finish()
                         _copy_ends(progress_callback)
                     finally:
+                        sent = completed
                         try:
                             _discard_or_close_writer(dst, completed=completed)
                         except transfer_hooks.UploadCancelled:
@@ -1424,11 +1474,24 @@ class TransferWorker(QObject):
                                 f"and is kept as {kept}"
                             ) from exc
                         raise
+                # A writer that spools and was discarded before its close()
+                # sent anything left the destination as it was.
+                touched = opened and (sent or not spools)
+                if touched and server_copy is not None:
+                    kept, server_copy = server_copy, None
+                    if not self._put_back_server_copy(job, kept):
+                        note = (f"{exc}; the previous {job.dest_path} could not be put back "
+                                f"and is kept as {kept}")
+                        if isinstance(exc, _ChecksumMismatch):
+                            raise _ChecksumMismatch(note) from exc
+                        if isinstance(exc, OSError) and exc.errno is not None:
+                            raise OSError(exc.errno, note) from exc
+                        raise OSError(note) from exc
                 # A writer that commits only at close and never got there
                 # (S3, Azure Blob) left nothing of this transfer behind: a
                 # file now under the name is someone else's, not a partial
                 # to remove.
-                if opened and (completed or not traits.commits_on_close):
+                elif touched and (completed or not traits.commits_on_close):
                     _rollback_direct_destination(
                         dest_backend,
                         job.dest_path,
@@ -1441,10 +1504,92 @@ class TransferWorker(QObject):
                 destination_snapshot.close()
             if backup is not None:  # the check passed (or never ran: nothing written)
                 self._drop_destination_backup(job, backup)
+            if server_copy is not None:  # done, or nothing was touched
+                self._drop_destination_backup(job, server_copy)
         # FTP (MFMT) is written directly: the temp-file route was the only
         # one that kept the source's time.
         self._apply_source_mtime(job)
         return transferred
+
+    @staticmethod
+    def _server_copy_usable(backend) -> bool:
+        """Whether *backend* copies on the server (WriteTraits.server_copy:
+        cp, WebDAV COPY, an SQLite row): a safety copy there moves no byte
+        through this machine."""
+        from core.server_ops import write_traits
+
+        return write_traits(backend).server_copy and callable(getattr(backend, "copy", None))
+
+    def _safety_copy(self, job: TransferJob, check_cancel):
+        """What restores the existing destination should the write fail:
+        ``(server-side copy path, None)`` where the backend copies on the
+        server, else ``(None, local snapshot)`` - read back with Cancel
+        checked per chunk, spooled in the spool folder after a free-space
+        check (core.server_ops.read_destination_snapshot)."""
+        from core.server_ops import read_destination_snapshot
+
+        check_cancel()
+        if self._server_copy_usable(job.dest_backend):
+            try:
+                return self._back_up_committed_destination(job), None
+            except OSError as exc:
+                log.info("No server-side copy of %s (%s); reading it back instead",
+                         job.dest_path, exc)
+                check_cancel()
+        return None, read_destination_snapshot(job.dest_backend, job.dest_path,
+                                               check=check_cancel)
+
+    @staticmethod
+    def _put_back_server_copy(job: TransferJob, backup: str) -> bool:
+        """The failed write is undone from the server-side copy *backup*:
+        copied back over the destination in place (its mode and links
+        stay), or - a backend whose copy refuses an existing target -
+        the destination removed and the copy renamed to it. False (the
+        copy kept, logged) when neither worked."""
+        dest_backend = job.dest_backend
+        try:
+            dest_backend.copy(backup, job.dest_path)
+        except Exception as exc:  # noqa: BLE001 - try the rename next
+            try:
+                if dest_backend.exists(job.dest_path):
+                    dest_backend.remove(job.dest_path)
+                dest_backend.rename(backup, job.dest_path)
+            except Exception as exc2:  # noqa: BLE001 - the caller names the kept copy
+                log.error("Could not put %s back from %s: %s; %s",
+                          job.dest_path, backup, exc, exc2)
+                return False
+            log.info("Put %s back as it was before the transfer", job.dest_path)
+            return True
+        log.info("Put %s back as it was before the transfer", job.dest_path)
+        TransferWorker._drop_destination_backup(job, backup)
+        return True
+
+    @staticmethod
+    def _refuse_short_read(job: TransferJob, transferred: int, expected: int) -> None:
+        """Raise :class:`OSError` when the copy read fewer bytes than the
+        source holds: a stream that ended early without an error (an FTP
+        data connection cut, then "226" all the same) gave a short file
+        that was committed as the copy - for every transfer, not only a
+        move. *expected* is the size the job knew at open (the listing's,
+        or the live size of a resume); only a copy short of it costs one
+        stat of the source, which decides: a source that shrank meanwhile
+        was copied as it is now. A source whose size cannot be read (a
+        symlink, a mail store's estimate, a failed stat) is not refused,
+        nor a local one: its reads fail rather than end early, and sysfs
+        lists 4096 bytes for attributes that read a few. Called before the
+        copy replaces the destination, so the destination stays as it was."""
+        if expected <= 0 or transferred >= expected or _is_local(job.source_backend):
+            return
+        from core.server_ops import source_size
+
+        live = source_size(job.source_backend, job.source_path)
+        if live is None or transferred >= live:
+            return
+        raise OSError(
+            errno.EIO,
+            f"only {transferred} of {live} bytes of {job.source_path} were read; "
+            f"the copy is incomplete and {job.dest_path} was left as it was",
+        )
 
     @staticmethod
     def _destination_backup_path(job: TransferJob) -> str:
@@ -1648,6 +1793,7 @@ class TransferWorker(QObject):
 
                 streamed = _StreamedHash(job, resume_offset)
                 completed = False
+                expected = int(job.total_bytes or 0)
                 try:
                     transferred = resume_offset
                     if transferred > 0 and transferred < job.total_bytes:
@@ -1677,6 +1823,9 @@ class TransferWorker(QObject):
                         # nothing - no resume appends to it.
                         _discard_or_close_writer(dst, completed=False)
 
+            # A short read is not committed: the temp file never replaces
+            # the destination (a resume can continue it where it is real).
+            self._refuse_short_read(job, transferred, expected)
             self._refuse_aliased_source(job, temp_path)
             # The temp file, before it replaces the destination: checked
             # after the rename, a mismatch left the corrupt copy where the
@@ -1709,14 +1858,16 @@ class TransferWorker(QObject):
             # after a failed integrity check, holds the wrong bytes.
             raise
         except InterruptedError:
-            keep_partial = real_append and (transferred > 0 or resume_offset > 0)
+            keep_partial = (real_append and (transferred > 0 or resume_offset > 0)
+                            and self._partial_resumable(job, temp_path))
             raise
         except Exception as exc:
             # Kept for a resume - unless the destination is full: the
             # hidden partial is what fills it, and a resume needs the
             # room as well.
             keep_partial = (real_append and (transferred > 0 or resume_offset > 0)
-                            and not is_out_of_space(exc))
+                            and not is_out_of_space(exc)
+                            and self._partial_resumable(job, temp_path))
             raise
         finally:
             if cleanup_temp and not keep_partial:
@@ -1953,6 +2104,17 @@ class TransferWorker(QObject):
         except (OSError, TypeError, ValueError) as exc:
             log.debug("Resume: cannot stat source %s: %s", job.source_path, exc)
             return None
+
+    @staticmethod
+    def _partial_resumable(job: TransferJob, temp_path: str) -> bool:
+        """Whether a resume could ever adopt the partial *temp_path*: only
+        one whose name records the source's fingerprint. A source without
+        a modification time (rsh, a shell listing without one) has none:
+        its hidden partial was kept after Cancel and never resumed."""
+        sep = job.dest_backend.separator() or "/"
+        dest_name = job.dest_path.rsplit(sep, 1)[-1]
+        temp_name = temp_path.rsplit(sep, 1)[-1]
+        return bool(partial_fingerprint(temp_name, dest_name))
 
     @staticmethod
     def _partial_is_of_this_source(job: TransferJob, temp_path: str, live_source) -> bool:

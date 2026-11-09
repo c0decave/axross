@@ -293,7 +293,7 @@ def test_happy_the_areas_the_review_named_are_translated(texts):
     german = {text for _kind, text in texts["de"]}
     for expected in (
         "Aktives Pane schließen (Strg+W)",          # toolbar tooltip
-        "Mit Server verbinden",                     # Connect to Server
+        "Connection Manager",                       # its window (round 6: one name)
         "Dateioperationen",                         # Keyboard Shortcuts section
         "Strg+Umschalt+H",                          # a key, the German way
         "Richtung",                                 # transfer dock header

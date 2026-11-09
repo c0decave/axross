@@ -198,7 +198,9 @@ def test_happy_each_handbook_explains_the_precise_rule(name):
     paragraph = " ".join(text[start:text.index("\n\n", start)].split())
     for needle in ("`--network=none`", "`:ro`", EVERY_CALL_ASKS[name]):
         assert needle in paragraph, (name, needle)
-    table = next(line for line in text.splitlines() if line.startswith("| Research |"))
+    # The preset's row, by its name as each handbook shows it.
+    row = {"USAGE_de.md": "| Recherche |"}.get(name, "| Research |")
+    table = next(line for line in text.splitlines() if line.startswith(row))
     assert "read-only" not in table or "not" in table.lower() or "nicht" in table \
         or "no " in table
 

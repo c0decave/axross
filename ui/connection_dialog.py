@@ -139,7 +139,9 @@ class ConnectionDialog(QDialog):
         # it, so fields the form has no widget for survive a save.
         self._loaded_profile: ConnectionProfile | None = None
 
-        self.setWindowTitle(tr("Connect to Server"))
+        # One name with the menu entry that opens it (File → Connection
+        # Manager…; UX review round 6: the window said "Connect to Server").
+        self.setWindowTitle(tr("Connection Manager"))
         self.setMinimumWidth(500)
         # Not init_registry() on every open (a dozen PATH searches): the
         # commands check themselves when PATH changes, and a package missing

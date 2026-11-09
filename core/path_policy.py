@@ -6,6 +6,7 @@ import errno
 import hashlib
 import os
 import posixpath
+import stat
 from dataclasses import dataclass
 
 from core.remote_name import (
@@ -250,6 +251,33 @@ def refuse_folder_path(path: str, action: str = "write", *, source_is_file=None)
     return path
 
 
+def refuse_slash_on_file(path: str, real: str) -> str:
+    """*real* unchanged; :class:`NotADirectoryError` (ENOTDIR) when the
+    virtual *path* ends in ``/`` (the root aside) and *real*, the local
+    path it maps to, is there and is no folder - as stat(2) of ``file/``.
+
+    For a backend that maps its paths onto a local directory (an NFS or
+    iSCSI mount): the path join drops the slash, so ``remove("file/")``
+    deleted the file and ``open_read("file/")`` read it. A path that is
+    not there is left to the operation's own FileNotFoundError."""
+    if path.endswith("/") and path.strip("/"):
+        try:
+            st = os.stat(real)
+        except OSError:
+            return real
+        if not stat.S_ISDIR(st.st_mode):
+            raise NotADirectoryError(errno.ENOTDIR, f"Not a directory: {path}", path)
+    return real
+
+
+def refuse_root_removal(is_root: bool, path: str, what: str) -> None:
+    """:class:`PermissionError` (EPERM) when *path* is the root of *what*:
+    ``remove(root, recursive=True)`` emptied a whole NFS export, iSCSI
+    LUN or MTP device (RamFS, SQLite and NFS without a mount refuse it)."""
+    if is_root:
+        raise PermissionError(errno.EPERM, f"{what}: refusing to remove the root", path)
+
+
 def _inside(root: str, path: str) -> bool:
     return os.path.commonpath([root, path]) == root
 
@@ -293,6 +321,8 @@ __all__ = [
     "drop_unsafe_names",
     "refuse_control_chars",
     "refuse_folder_path",
+    "refuse_root_removal",
+    "refuse_slash_on_file",
     "safe_join",
     "safe_leaf",
     "transfer_leaf",

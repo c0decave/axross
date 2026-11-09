@@ -126,7 +126,7 @@ def add_send_to_workspace_menu(pane, menu: QMenu) -> QMenu | None:
     can_send = getattr(owner, "can_send_to_workspace", None)
     if can_send is None or not can_send(pane):
         return None
-    sub = menu.addMenu(tr("Send to Workspace"))
+    sub = menu.addMenu(tr("&Send to Workspace"))
     owner.fill_move_menu_for(pane, sub)
     return sub
 

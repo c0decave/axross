@@ -291,6 +291,10 @@ class _WindowCase(_QtCase):
     def make_window(self):
         with mock.patch("pathlib.Path.home", return_value=self.home):
             win = self.MW.MainWindow()
+        # Hidden files are off for a new user (round 6); these tests look
+        # at how they are drawn, so they are listed.
+        if not self.session.exists():
+            win.set_show_hidden(True, store=False)
         self.windows.append(win)
         return win
 

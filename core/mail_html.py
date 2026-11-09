@@ -45,6 +45,11 @@ MAX_INDENT_DEPTH = 16
 #: Past it the tables end there and the rest is shown as text.
 TABLE_WORK = 1_000_000
 CELL_WORK = 64
+#: The most rows or columns one cell may span; a larger span is cut to it.
+#: Qt lays out the grid the spans make: ``colspan=99 rowspan=99`` cells
+#: made a 4.7 KB mail's tables millions of grid cells (34 s of GUI
+#: thread), and each cell of the grid counts (:class:`TableGrid`).
+MAX_SPAN = 8
 INDENT = {"ul", "ol", "dl", "blockquote"}
 #: A word longer than this gets a break opportunity (a zero-width space)
 #: every so many characters: Qt lays out one long word in quadratic time -
@@ -54,6 +59,57 @@ MAX_WORD = 200
 _SPACE = re.compile(r"(\s+)")
 #: The parts of a table: without their table they are left out too.
 TABLE_PARTS = {"thead", "tbody", "tfoot", "tr", "td", "th", "caption"}
+
+
+def span(value) -> int:
+    """The span a ``colspan`` / ``rowspan`` value asks for, cut to
+    1..:data:`MAX_SPAN` (Qt reads a missing, zero or broken one as 1)."""
+    value = (value or "").strip()
+    if not value.isdigit() or not value.isascii():
+        return 1
+    return max(1, min(int(value[:4]), MAX_SPAN))
+
+
+class TableGrid:
+    """The cells Qt lays out for one table: its rows times its columns,
+    the rows and columns the spans join included - also the empty cells
+    that fill a short row up to the widest one (one row of 120 cells over
+    1000 rows of one cell is a 120 x 1000 grid). An upper bound: a cell
+    spanning rows keeps its columns in each row below it."""
+
+    __slots__ = ("cols", "row", "rows", "spans", "width")
+
+    def __init__(self) -> None:
+        self.row = 0          # rows started
+        self.rows = 0         # rows of the grid, spans included
+        self.width = 0        # columns of the current row
+        self.cols = 0         # columns of the grid
+        self.spans: list[tuple[int, int]] = []   # (columns, rows still to cover) from rows above
+
+    @property
+    def size(self) -> int:
+        return self.rows * self.cols
+
+    def new_row(self) -> int:
+        """Start a row; returns how many grid cells that added."""
+        before = self.size
+        self.row += 1
+        self.spans = [(c, r - 1) for c, r in self.spans if r > 1]
+        self.width = sum(c for c, _ in self.spans)
+        self.rows = max(self.rows, self.row)
+        self.cols = max(self.cols, self.width)
+        return self.size - before
+
+    def cell(self, colspan: int = 1, rowspan: int = 1) -> int:
+        """Add a cell; returns how many grid cells that added."""
+        added = self.new_row() if not self.row else 0    # a cell before any <tr>
+        before = self.size
+        self.width += colspan
+        self.cols = max(self.cols, self.width)
+        self.rows = max(self.rows, self.row - 1 + rowspan)
+        if rowspan > 1:
+            self.spans.append((colspan, rowspan))
+        return added + self.size - before
 
 
 def split_url(url: str) -> SplitResult | None:
@@ -116,6 +172,8 @@ class _Sanitiser(HTMLParser):
         self.link_target: list[str] = []
         self.open = {"table": 0, "indent": 0}     # open tables, open lists and quotes
         self.table_work = 0
+        self.grids: list[TableGrid] = []           # one per open table, the innermost last
+        self.cell_span = (1, 1)                    # (colspan, rowspan) of the cell starting
         self.flat = False                          # the tables ended: text only
         self.refused: dict[str, int] = {}          # elements left out, still open
         self.run = 0                               # length of the word shown last
@@ -167,7 +225,10 @@ class _Sanitiser(HTMLParser):
             if self.refused.get("table") or not self.open["table"]:
                 return True
             if tag in ("td", "th", "tr"):
-                self._table_work(CELL_WORK)
+                # each cell of the grid counts, the ones a span makes too
+                grid = self.grids[-1]
+                cells = grid.new_row() if tag == "tr" else grid.cell(*self.cell_span)
+                self._table_work(CELL_WORK * (1 + cells))
                 return not self.open["table"]
         return False
 
@@ -185,6 +246,9 @@ class _Sanitiser(HTMLParser):
             return
         if tag not in ALLOWED:
             return
+        if tag in ("td", "th"):
+            spans = {k.lower(): span(v) for k, v in attrs if k.lower() in ("colspan", "rowspan")}
+            self.cell_span = (spans.get("colspan", 1), spans.get("rowspan", 1))
         if tag not in VOID and self._too_deep(tag):
             self._refuse(tag)
             return
@@ -205,9 +269,9 @@ class _Sanitiser(HTMLParser):
             else:
                 self.link_target.append(("", "not a web address"))
         elif tag in ("td", "th"):
-            for k, v in attrs:
-                if k.lower() in ("colspan", "rowspan") and (v or "").isdigit() and int(v) < 100:
-                    kept += f' {k.lower()}="{int(v)}"'
+            for name, value in zip(("colspan", "rowspan"), self.cell_span):
+                if value > 1:
+                    kept += f' {name}="{value}"'
         self._emit(f"<{tag}{kept}>")
         if tag not in VOID:
             self.stack.append(tag)
@@ -216,6 +280,10 @@ class _Sanitiser(HTMLParser):
     def _count(self, tag: str, step: int) -> None:
         if tag == "table":
             self.open["table"] += step
+            if step > 0:
+                self.grids.append(TableGrid())
+            else:
+                self.grids.pop()
         elif tag in INDENT:
             self.open["indent"] += step
 

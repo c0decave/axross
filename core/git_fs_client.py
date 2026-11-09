@@ -33,11 +33,19 @@ URL sessions and the remote (the cache is a mirror, not a fork):
   new tip (logged); deleted upstream with nothing unpushed → deleted
   here too. A branch with commits that never reached origin keeps
   them (nothing is thrown away): ahead of origin they are pushed with
-  the next write; diverged from origin (upstream force-pushed over
-  them) the branch is read-only here until it is merged in a real git
-  client (:class:`GitForceRefused`).
+  the next write; diverged from origin (someone else pushed, or
+  force-pushed over them) they are replayed onto origin's tip when they
+  touch other files than origin's new commits did, else kept on a new
+  local branch ``axross/unpushed-<time>`` while the branch follows
+  origin (the user copies the files back from there).
 * **Every write is pushed** (``auto_push=True``, the default): the
-  commit goes to origin straight away, fast-forward only. When the
+  commit goes to origin straight away, fast-forward only. Before the
+  commit origin is asked where the branch is (ls-remote); when someone
+  else pushed, the session fetches and builds on their tip - unless
+  they changed the file being written (:class:`GitBranchMoved`). A push
+  origin refuses all the same (someone pushed in between) is caught up
+  the same way as a diverged branch above and pushed again; a side
+  branch is named in :class:`GitPushFailed`. When the
   push fails (network, rejected) the commit stays in the cache, the
   write raises :class:`GitPushFailed` naming the commit, and the next
   write - or ``flush_push()`` / ``axross.git_push`` - pushes it along.
@@ -226,8 +234,11 @@ class GitForceRefused(OSError):
 
 class GitPushFailed(OSError):
     """A write was committed into the session's cache but could not be
-    pushed to origin (unreachable, rejected). The commit is kept and is
-    pushed with the next write or ``flush_push()``."""
+    pushed to origin (unreachable, or someone else pushed and the
+    change could not be put on top of theirs). The commit is kept: it
+    is pushed with the next write or ``flush_push()``, or - when the
+    same files were changed on origin - it is on the side branch the
+    message names."""
 
 
 class GitBranchMoved(OSError):
@@ -365,6 +376,14 @@ class GitFsSession(SessionLifecycle):
         **_ignored,
     ):
         self._tunnels: list = []
+        # What the last fetch did to a branch that had diverged from origin
+        # (_reconcile_diverged): {branch: ("rebased", n) | ("side", side
+        # branch, commit, overlapping paths)}.
+        self._reconciled: dict[str, tuple] = {}
+        # Branches whose push origin refused (someone else pushed) while
+        # origin could not be read to bring them up to date: no further
+        # commit lands on them until it can ({branch: the error}).
+        self._push_blocked: dict[str, str] = {}
         # Why origin could not be reached when the session opened ("" =
         # it could): the cache is shown read-only then.
         self.offline = ""
@@ -425,6 +444,9 @@ class GitFsSession(SessionLifecycle):
                         str(cache_dir),
                         bare=True,
                         depth=None,
+                        # dulwich's progress ("counting objects: ...")
+                        # went to the terminal axross was started from.
+                        errstream=io.BytesIO(),
                         **self._transport_kwargs,
                     )
                     _guard_loose_objects(self._repo)
@@ -493,8 +515,26 @@ class GitFsSession(SessionLifecycle):
             config=self._repo.get_config_stack(),
             **self._transport_kwargs,
         )
-        result = client.fetch(path.encode() if isinstance(path, str) else path, self._repo)
+        result = client.fetch(
+            path.encode() if isinstance(path, str) else path,
+            self._repo,
+            progress=lambda _data: None,  # not to the terminal
+        )
         self._update_from_remote_refs(getattr(result, "refs", None) or {})
+
+    def _remote_branch_tip(self, branch: str) -> bytes | None:
+        """The sha origin's ``refs/heads/<branch>`` points at now (an
+        ls-remote: no objects are fetched); None when origin has no such
+        branch. Raises what the transport raises when origin is not
+        reachable."""
+        client, path = get_transport_and_path(
+            self._connect_url,
+            config=self._repo.get_config_stack(),
+            **self._transport_kwargs,
+        )
+        result = client.get_refs(path.encode() if isinstance(path, str) else path)
+        refs = getattr(result, "refs", result) or {}
+        return refs.get(b"refs/heads/" + branch.encode())
 
     _REMOTE_PREFIX = b"refs/remotes/origin/"
 
@@ -512,8 +552,10 @@ class GitFsSession(SessionLifecycle):
           dropped, and the session no longer shows (and refuses writes
           to) content upstream has replaced.
         * a branch with commits of its own (not pushed yet) keeps them:
-          ahead of origin they are pushed with the next write; diverged,
-          _commit_modification refuses to build on it until it is merged.
+          ahead of origin they are pushed with the next write; diverged
+          (someone else pushed meanwhile) they are replayed onto origin's
+          tip, or kept on a side branch when origin changed the same
+          files - see :meth:`_reconcile_diverged`.
         * a branch origin deleted goes here too when nothing of it is
           unpushed; its remote-tracking ref goes in every case.
         * a tag the cache does not have yet is added; one it has stays.
@@ -554,12 +596,7 @@ class GitFsSession(SessionLifecycle):
                     shown, _short_sha(previous), _short_sha(sha),
                 )
             else:
-                log.warning(
-                    "Git-FS: local branch %s has commits origin does not have and origin "
-                    "has diverged from it (%s vs %s); it is kept as it is here and is "
-                    "read-only until it is merged in a git client",
-                    shown, _short_sha(local), _short_sha(sha),
-                )
+                self._reconcile_diverged(name, local, sha, previous)
         if remote_branches:
             for ref in list(refs.keys(base=self._REMOTE_PREFIX)):
                 if ref == b"HEAD" or ref in remote_branches:
@@ -578,6 +615,260 @@ class GitFsSession(SessionLifecycle):
                         "Git-FS: origin deleted branch %s, which has commits not pushed; "
                         "it is kept here", shown,
                     )
+
+    # ------------------------------------------------------------------
+    # Someone else pushed: bring unpushed commits up to date
+    # ------------------------------------------------------------------
+
+    #: The most unpushed commits replayed onto origin's tip; more go to a
+    #: side branch.
+    _REPLAY_CAP = 1000
+
+    def _changed_paths(self, tree_a: bytes | None, tree_b: bytes | None) -> dict:
+        """``{path: (mode, sha) | None}`` - what turns tree *tree_a* into
+        *tree_b*, per file (None = the file is deleted)."""
+        from dulwich.diff_tree import tree_changes  # type: ignore[import-not-found]
+
+        out: dict[bytes, tuple | None] = {}
+        for change in tree_changes(self._repo.object_store, tree_a, tree_b):
+            new = change.new
+            old = change.old
+            if new is not None and new.path is not None:
+                out[new.path] = (new.mode, new.sha)
+            if old is not None and old.path is not None and old.path not in out:
+                out[old.path] = None
+        return out
+
+    @staticmethod
+    def _overlapping(paths_a, paths_b) -> list[str]:
+        """The paths of *paths_a* that are, contain or lie under a path of
+        *paths_b* (both sets of bytes, "/"-separated), sorted."""
+        exact = set(paths_b)
+        parents: set[bytes] = set()
+        for path in exact:
+            parts = path.split(b"/")
+            for i in range(1, len(parts)):
+                parents.add(b"/".join(parts[:i]))
+        hits = set()
+        for path in paths_a:
+            parts = path.split(b"/")
+            ancestors = {b"/".join(parts[:i]) for i in range(1, len(parts))}
+            if path in exact or path in parents or ancestors & exact:
+                hits.add(path.decode("utf-8", "replace"))
+        return sorted(hits)
+
+    def _apply_changes(self, tree_sha: bytes | None, changes: dict) -> Tree:
+        """A new tree: the tree *tree_sha* (None = empty) with *changes*
+        (``{path: (mode, sha) | None}``) applied; every new tree object
+        is added to the store."""
+        new_tree = Tree()
+        if tree_sha is not None:
+            for entry in self._repo[tree_sha].items():
+                new_tree.add(entry.path, entry.mode, entry.sha)
+        nested: dict[bytes, dict] = {}
+        for path, value in changes.items():
+            head, _sep, rest = path.partition(b"/")
+            if rest:
+                nested.setdefault(head, {})[rest] = value
+            elif value is None:
+                if head in new_tree:
+                    del new_tree[head]
+            else:
+                new_tree[head] = (value[0], value[1])
+        for head, sub_changes in nested.items():
+            existing = new_tree[head] if head in new_tree else None
+            if existing is not None and not st_mod.S_ISDIR(existing[0]):
+                # A file now has the name the changes put a directory
+                # under: the file (the newer change of the two) stays.
+                continue
+            sub_tree = self._apply_changes(existing[1] if existing else None, sub_changes)
+            if len(sub_tree):
+                new_tree[head] = (st_mod.S_IFDIR, sub_tree.id)
+            elif head in new_tree:
+                del new_tree[head]
+        self._repo.object_store.add_object(new_tree)
+        return new_tree
+
+    def _side_branch_name(self) -> str:
+        """A new local branch name ``axross/unpushed-<time>``."""
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        name = f"axross/unpushed-{stamp}"
+        n = 2
+        while _ref_or_none(self._repo.refs, f"refs/heads/{name}".encode()) is not None:
+            name = f"axross/unpushed-{stamp}-{n}"
+            n += 1
+        return name
+
+    def _reconcile_diverged(
+        self, name: bytes, local: bytes, remote: bytes, previous: bytes | None
+    ) -> None:
+        """Local branch *name* has commits origin does not have and origin
+        moved on meanwhile (someone else pushed, or force-pushed). Nothing
+        of either side is dropped:
+
+        * the local commits (a straight line of them, not more than
+          :attr:`_REPLAY_CAP`) touch none of the files origin changed:
+          they are replayed onto origin's tip, the same changes with the
+          same author, date and message (what ``git pull --rebase`` does
+          when nothing conflicts); the branch is then ahead and pushed
+          with the next write;
+        * otherwise the local tip is kept on a new branch
+          ``axross/unpushed-<time>`` and the branch follows origin: the
+          user copies the files back from there (or merges in a git
+          client).
+
+        The outcome is noted in ``self._reconciled[branch]``."""
+        shown = name.decode("utf-8", "replace")
+        local_ref = b"refs/heads/" + name
+        store = self._repo.object_store
+        exclude = [remote] + ([previous] if previous and previous in store else [])
+        walker = self._repo.get_walker(
+            include=[local], exclude=exclude, max_entries=self._REPLAY_CAP + 1
+        )
+        ours = {entry.commit.id for entry in walker}
+        chain: list = []
+        sha = local
+        while sha in ours:
+            commit = self._repo[sha]
+            if len(commit.parents) != 1:
+                break
+            chain.append(commit)
+            sha = commit.parents[0]
+        overlap: list[str] = []
+        linear = bool(chain) and len(chain) == len(ours) and len(ours) <= self._REPLAY_CAP
+        if linear:
+            chain.reverse()  # oldest first
+            base_tree = self._repo[chain[0].parents[0]].tree
+            theirs = self._changed_paths(base_tree, self._repo[remote].tree)
+            mine: set[bytes] = set()
+            for commit in chain:
+                mine.update(self._changed_paths(self._repo[commit.parents[0]].tree, commit.tree))
+            overlap = self._overlapping(mine, set(theirs))
+        if linear and not overlap:
+            tip = remote
+            for commit in chain:
+                changes = self._changed_paths(self._repo[commit.parents[0]].tree, commit.tree)
+                tree = self._apply_changes(self._repo[tip].tree, changes)
+                replayed = Commit()
+                replayed.tree = tree.id
+                replayed.parents = [tip]
+                replayed.author = commit.author
+                replayed.committer = commit.committer
+                replayed.author_time = commit.author_time
+                replayed.author_timezone = commit.author_timezone
+                replayed.commit_time = commit.commit_time
+                replayed.commit_timezone = commit.commit_timezone
+                replayed.encoding = commit.encoding
+                replayed.message = commit.message
+                self._repo.object_store.add_object(replayed)
+                tip = replayed.id
+            if self._repo.refs.set_if_equals(local_ref, local, tip):
+                self._reconciled[shown] = ("rebased", len(chain))
+                log.warning(
+                    "Git-FS: someone else pushed to %s; the %d commit(s) not pushed from "
+                    "here touch other files and were replayed onto origin's tip "
+                    "(%s -> %s)",
+                    shown, len(chain), _short_sha(local), _short_sha(tip),
+                )
+            return
+        side = self._side_branch_name()
+        if not self._repo.refs.add_if_new(f"refs/heads/{side}".encode(), local):
+            return
+        self._repo.refs.set_if_equals(local_ref, local, remote)
+        self._reconciled[shown] = ("side", side, local, overlap)
+        log.warning(
+            "Git-FS: someone else pushed to %s and the commits not pushed from here "
+            "cannot be replayed onto it (%s); they are kept on the branch %s "
+            "(commit %s) and %s follows origin (%s)",
+            shown,
+            ("both changed: " + ", ".join(overlap[:5])) if overlap else "merges or too many",
+            side, _short_sha(local), shown, _short_sha(remote),
+        )
+
+    def _side_branch_message(self, branch: str, outcome: tuple) -> str:
+        """The sentence for a branch whose unpushed commits went to a side
+        branch (see :meth:`_reconcile_diverged`)."""
+        from core.i18n import tr
+
+        _kind, side, commit, overlap = outcome
+        return tr(
+            "Git: someone else pushed to {branch}, and your change could not be "
+            "added on top of theirs{paths}. Nothing is lost: your change is kept "
+            "on the branch {side} (commit {sha}, in the cache {cache}), and "
+            "{branch} now shows what origin has. Open {side} to copy your files "
+            "back, or merge it in a git client."
+        ).format(
+            branch=branch,
+            paths=(
+                tr(" (both changed {files})").format(files=", ".join(overlap[:5]))
+                if overlap
+                else ""
+            ),
+            side=side,
+            sha=_short_sha(commit),
+            cache=self._workdir,
+        )
+
+    def _sync_before_commit(self, branch: str, sub: str) -> None:
+        """Before a commit that is pushed straight away: ask origin where
+        *branch* is now and, when someone else pushed, fetch - a commit on
+        the stale tip would be refused by the push. When the fetch moved
+        the branch only by files other than *sub*, the commit is built on
+        the new tip; when it touched *sub*, the commit is refused
+        (:class:`GitBranchMoved`: their change of the file is not
+        overwritten). Origin unreachable: the commit goes ahead and its
+        push reports it - unless a refused push of the branch is still
+        unresolved."""
+        from core.i18n import tr
+
+        if not self._pushes():
+            return
+        refs = self._repo.refs
+        ref_name = f"refs/heads/{branch}".encode()
+        tracking = self._REMOTE_PREFIX + branch.encode()
+        before = _ref_or_none(refs, ref_name) or _ref_or_none(refs, tracking)
+        self._reconciled.clear()
+        try:
+            if self._remote_branch_tip(branch) != _ref_or_none(refs, tracking):
+                self._fetch_origin()
+        except Exception as exc:  # noqa: BLE001 - network, auth, a server error
+            error = self._push_blocked.get(branch)
+            if error is not None:
+                raise GitForceRefused(
+                    errno.EIO,
+                    tr(
+                        "Git: someone else pushed to {branch} and origin cannot be read "
+                        "now to bring your earlier change up to date ({error}). axross "
+                        "makes no further commit on {branch} until it can: reconnect "
+                        "when origin is reachable."
+                    ).format(branch=branch, error=exc),
+                ) from exc
+            log.info("Git-FS: could not ask origin about %s before committing: %s", branch, exc)
+            return
+        self._push_blocked.pop(branch, None)
+        outcome = self._reconciled.pop(branch, None)
+        if outcome and outcome[0] == "side":
+            self._refresh_branch_tips()
+            raise GitPushFailed(
+                errno.EIO,
+                self._side_branch_message(branch, outcome)
+                + " "
+                + tr("The change you just made was not committed; repeat it on {branch}.").format(
+                    branch=branch
+                ),
+            )
+        after = _ref_or_none(refs, ref_name) or _ref_or_none(refs, tracking)
+        if after == before or before is None or after is None:
+            return
+        if self._branch_tips.get(branch) != before:
+            return  # the session's view was stale already: GitBranchMoved
+        changed = self._changed_paths(self._repo[before].tree, self._repo[after].tree)
+        if not self._overlapping(set(changed), {sub.encode("utf-8")}):
+            self._branch_tips[branch] = after
+            log.info(
+                "Git-FS: %s moved on origin (%s -> %s) by other files; committing on it",
+                branch, _short_sha(before), _short_sha(after),
+            )
 
     def _git_config_value(self, section: str, key: str) -> str:
         try:
@@ -1442,6 +1733,9 @@ class GitFsSession(SessionLifecycle):
                     "not commit to it (git refuses such a push too). Write to another "
                     "branch or a bare clone.",
                 )
+            # Someone else may have pushed: catch up first, so the commit
+            # is built on origin's tip and its push is not refused.
+            self._sync_before_commit(branch, sub)
             # The tip the session read (and the caller decided on) may
             # be stale: someone may have committed or pushed to the
             # branch since. Building on it would drop that work from
@@ -1525,6 +1819,12 @@ class GitFsSession(SessionLifecycle):
         if push and self._pushes():
             try:
                 self._push_branch(branch)
+            except GitPushFailed:
+                # Its own sentence: someone else pushed (side branch, or
+                # origin unreadable to catch up).
+                self._refresh_branch_tips()
+                self._refresh_status_note()
+                raise
             except OSError as exc:
                 self._refresh_status_note()
                 raise GitPushFailed(
@@ -1749,9 +2049,24 @@ class GitFsSession(SessionLifecycle):
         finally:
             self._refresh_status_note()
 
-    def _push_branch(self, b: str) -> None:
+    #: Words a server (or dulwich) uses for a push refused because the
+    #: branch moved on: someone else pushed first.
+    _REJECTED_PUSH_WORDS = (
+        "non-fast-forward", "fetch first", "diverged", "stale info", "failed to lock",
+        "cannot lock ref",
+    )
+
+    def _push_branch(self, b: str, *, catch_up: bool = True) -> None:
         """Push local branch *b* to origin (fast-forward only) and move
-        ``refs/remotes/origin/<b>`` to what was pushed."""
+        ``refs/remotes/origin/<b>`` to what was pushed.
+
+        Origin refusing it because someone else pushed first (dulwich's
+        ``DivergedBranches``, a server's "non-fast-forward"/"fetch
+        first"): the branch is fetched - which replays the commits not
+        pushed onto origin's tip, or keeps them on a side branch (see
+        :meth:`_reconcile_diverged`) - and, replayed, pushed once more
+        (*catch_up*). What is left raises :class:`GitPushFailed` with a
+        sentence for the user."""
         if b in self._origin_checked_out_branches():
             raise OSError(
                 errno.EBUSY,
@@ -1762,7 +2077,7 @@ class GitFsSession(SessionLifecycle):
         pushed = _ref_or_none(self._repo.refs, ref)
         out = io.BytesIO()
         try:
-            porcelain.push(
+            result = porcelain.push(
                 self._repo,
                 remote_location=self._connect_url,
                 refspecs=[ref + b":" + ref],
@@ -1773,14 +2088,69 @@ class GitFsSession(SessionLifecycle):
             )
         except Exception as exc:
             text = f"{exc} {out.getvalue().decode('utf-8', 'replace')}".lower()
-            if "non-fast-forward" in text or "diverged" in text:
-                raise GitForceRefused(
-                    f"push refused: branch {b} would require force-push"
-                ) from exc
+            if type(exc).__name__ == "DivergedBranches" or any(
+                word in text for word in self._REJECTED_PUSH_WORDS
+            ):
+                self._catch_up_after_rejected_push(b, pushed, exc, catch_up)
+                return
             raise OSError(f"Git push {b}: {exc}") from exc
+        # dulwich reports a ref the server refused in ref_status and
+        # raises nothing: the push did not happen.
+        status = getattr(result, "ref_status", None)
+        refused = status.get(ref) if isinstance(status, dict) else None
+        if isinstance(refused, (bytes, str)) and refused:
+            text = refused.decode("utf-8", "replace") if isinstance(refused, bytes) else refused
+            if any(word in text.lower() for word in self._REJECTED_PUSH_WORDS):
+                self._catch_up_after_rejected_push(b, pushed, OSError(text), catch_up)
+                return
+            raise OSError(errno.EACCES, f"Git push {b}: origin refused it: {text}")
         if isinstance(pushed, bytes):
             self._repo.refs[self._REMOTE_PREFIX + b.encode()] = pushed
         display_origin = getattr(self, "_display_origin_url", "") or redact_url(
             self._origin_url
         )
         log.info("Git-FS pushed %s → %s", b, display_origin)
+
+    def _catch_up_after_rejected_push(
+        self, b: str, pushed, cause: BaseException, catch_up: bool
+    ) -> None:
+        """Origin refused the push of *b*: someone else pushed first. Fetch
+        (replaying the unpushed commits onto their tip, or keeping them on
+        a side branch) and push again once; raise :class:`GitPushFailed`
+        with what the user has to know otherwise."""
+        from core.i18n import tr
+
+        kept = tr(
+            "your change is kept as commit {sha} in the cache {cache}"
+        ).format(sha=_short_sha(pushed), cache=self._workdir)
+        if not catch_up:
+            raise GitPushFailed(
+                errno.EIO,
+                tr(
+                    "Git: someone else pushed to {branch} again while axross brought "
+                    "your change up to date; {kept}, and it is pushed with the next "
+                    "write to the branch."
+                ).format(branch=b, kept=kept),
+            ) from cause
+        self._reconciled.clear()
+        try:
+            self._fetch_origin()
+        except Exception as exc:  # noqa: BLE001 - network, auth, a server error
+            self._push_blocked[b] = str(exc) or type(exc).__name__
+            raise GitPushFailed(
+                errno.EIO,
+                tr(
+                    "Git: someone else pushed to {branch}; {kept}. Origin could not be "
+                    "read to bring it up to date ({error}), so axross makes no further "
+                    "commit on {branch} until it can: reconnect when origin is reachable."
+                ).format(branch=b, kept=kept, error=exc),
+            ) from cause
+        self._push_blocked.pop(b, None)
+        self._refresh_branch_tips()
+        outcome = self._reconciled.pop(b, None)
+        if outcome and outcome[0] == "side":
+            raise GitPushFailed(errno.EIO, self._side_branch_message(b, outcome)) from cause
+        local = _ref_or_none(self._repo.refs, f"refs/heads/{b}".encode())
+        if local is None or local == _ref_or_none(self._repo.refs, self._REMOTE_PREFIX + b.encode()):
+            return  # origin has it all now (the same change was pushed)
+        self._push_branch(b, catch_up=False)

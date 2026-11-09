@@ -196,7 +196,7 @@ def probe_seconds() -> float:
     except ValueError:
         value = math.nan
     if not math.isfinite(value) or value <= 0:
-        log.warning("%s=%r is no number of seconds; using %s", SECONDS_ENV, raw, PROBE_SECONDS)
+        log.warning("%s=%r is not a number of seconds; using %s", SECONDS_ENV, raw, PROBE_SECONDS)
         return PROBE_SECONDS
     return min(MAX_PROBE_SECONDS, max(MIN_PROBE_SECONDS, value))
 

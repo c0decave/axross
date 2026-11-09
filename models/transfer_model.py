@@ -49,17 +49,44 @@ REFUSAL_CONTEXTS = {
 }
 
 
+def _both_local(job: TransferJob) -> bool:
+    """Both ends of *job* on this machine (a local-to-local copy)."""
+    from core.local_fs import LocalFS
+
+    return (isinstance(getattr(job, "source_backend", None), LocalFS)
+            and isinstance(getattr(job, "dest_backend", None), LocalFS))
+
+
+def _named_as_destination(job: TransferJob, text: str) -> str:
+    """*text* with the job's hidden temp file (``.name.part-<id>-<fp>``)
+    named as the destination it was written for: the user never chose the
+    temp name ("/usr/share/.todo.txt.part-c71d0b6a-58df0d1a is on a
+    read-only file system" -> "/usr/share/todo.txt …", UX review round 6).
+    The log keeps the raw text."""
+    temp = getattr(job, "temp_path", "") or ""
+    dest = getattr(job, "dest_path", "") or ""
+    if not temp or not dest or temp == dest or not text:
+        return text
+    text = text.replace(temp, dest)
+    temp_name = temp.replace("\\", "/").rsplit("/", 1)[-1]
+    dest_name = dest.replace("\\", "/").rsplit("/", 1)[-1]
+    if temp_name and dest_name:
+        text = text.replace(temp_name, dest_name)
+    return text
+
+
 def _sentence(job: TransferJob) -> str:
     """:func:`_reason` as core.user_errors.describe() says it, in the
     interface language, when the job kept its exception ("[Errno 13]
-    Permission denied: '/x'" -> "Permission denied for /x. ...")."""
-    reason = _reason(job)
+    Permission denied: '/x'" -> "Permission denied for /x. ..."). A temp
+    file's name is shown as the destination's (:func:`_named_as_destination`)."""
+    reason = _named_as_destination(job, _reason(job))
     error = getattr(job, "error", None)
     if not reason or error is None or job.status != TransferStatus.ERROR:
         return reason
     from core.user_errors import describe
 
-    sentence = describe(error) or reason
+    sentence = _named_as_destination(job, describe(error) or reason)
     context = REFUSAL_CONTEXTS.get(getattr(job, "error_context", ""))
     return tr(context).format(error=sentence) if context else sentence
 
@@ -153,6 +180,9 @@ class TransferModel(QAbstractTableModel):
             if col == COL_DIR:
                 if job.direction == TransferDirection.RELAY:
                     arrow = "\u21c4"  # ⇄ bidirectional arrow for relay
+                elif _both_local(job):
+                    # Neither up- nor download: one disk to another.
+                    arrow = "\u2192"  # →
                 elif job.direction == TransferDirection.UPLOAD:
                     arrow = "\u2191"
                 else:
@@ -185,10 +215,10 @@ class TransferModel(QAbstractTableModel):
             if reason:
                 word = tr(STATUS_WORDS.get(job.status, job.status.value))
                 sentence = _sentence(job)
-                # The sentence, and the raw text of the error under it.
-                if sentence != reason:
-                    return f"{word}: {sentence}\n{reason}"
-                return f"{word}\n{reason}"
+                # The whole sentence, in the interface language; the raw
+                # text of the error ("[Errno 30] Read-only file system:
+                # '…part-…'") is in the log (TransferDock._on_job_error).
+                return f"{word}: {sentence}"
             return None
 
         if role == Qt.ItemDataRole.UserRole and col == COL_PROGRESS:

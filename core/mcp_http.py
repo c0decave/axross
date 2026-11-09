@@ -161,6 +161,13 @@ SSE_REPLAY_BUFFER_SIZE = 256
 # + a handful of tools/call) while killing obvious floods.
 DEFAULT_HTTP_IP_BURST = 120
 DEFAULT_HTTP_IP_REFILL_PER_SEC = 60.0
+# Requests without the bearer token draw from a budget of their own (per
+# IP): a flood of them - any local user, or a web page's <img> requests to
+# the loopback port - must not use up the budget of the token holder on
+# the same address (the bearer check is a constant-time compare, cheaper
+# than anything the cap protects).
+DEFAULT_HTTP_UNAUTH_BURST = 20
+DEFAULT_HTTP_UNAUTH_REFILL_PER_SEC = 5.0
 
 
 class _PerIPRateLimiter:
@@ -584,6 +591,7 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
     # unauthenticated POSTs that otherwise spend CPU in the
     # dispatcher before hitting the tools/call rate limit.
     _http_ip_limiter: "_PerIPRateLimiter | None" = None
+    _http_unauth_limiter: "_PerIPRateLimiter | None" = None
     # Bearer token (empty: none demanded - an mTLS server without one).
     _auth_token: str = ""
     # Long-running-task registry. Shared across all sessions; the
@@ -643,18 +651,43 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
             return None
         return hashlib.sha256(der).hexdigest()
 
-    def _check_ip_cap(self) -> bool:
+    def _check_ip_cap(self, authenticated: bool = True) -> bool:
         """Return True when the per-IP rate cap lets the request
         through. On reject, already sent a 429; caller should just
         return. /health is exempted because reverse-proxy health
-        probes would otherwise starve themselves out."""
-        if self._http_ip_limiter is None or self.path == "/health":
+        probes would otherwise starve themselves out. A request without
+        the token (*authenticated* False) counts against its own, small
+        per-IP budget - never against the token holder's."""
+        limiter = self._http_ip_limiter if authenticated else self._http_unauth_limiter
+        if limiter is None or self.path == "/health":
             return True
         ip = self.client_address[0] if self.client_address else "?"
-        if self._http_ip_limiter.try_acquire(ip):
+        if limiter.try_acquire(ip):
             return True
         self._send_error(429, "too many requests from this IP — slow down")
         return False
+
+    def _token_ok(self) -> bool:
+        """Whether the request carries the bearer token (constant-time);
+        True when the server has none or for /health."""
+        if not self._auth_token or self.path == "/health":
+            return True
+        header = self.headers.get("Authorization") or ""
+        scheme, _, presented = header.partition(" ")
+        return scheme.lower() == "bearer" and hmac.compare_digest(
+            presented.strip().encode("utf-8"), self._auth_token.encode("utf-8")
+        )
+
+    def _check_access(self) -> bool:
+        """The token first, then the rate cap of what it says: the
+        token holder's per-IP budget for an authenticated request, the
+        separate unauthenticated budget (then a 401) for any other. On
+        refusal an answer was already sent."""
+        if self._token_ok():
+            return self._check_ip_cap(True)
+        if not self._check_ip_cap(False):
+            return False
+        return self._check_auth()
 
     def _check_local_origin(self) -> bool:
         """Refuse DNS-rebinding on the unauthenticated loopback listener.
@@ -684,13 +717,7 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
 
     def _check_auth(self) -> bool:
         """Demand the bearer token. On refusal a 401 was already sent."""
-        if not self._auth_token or self.path == "/health":
-            return True
-        header = self.headers.get("Authorization") or ""
-        scheme, _, presented = header.partition(" ")
-        if scheme.lower() == "bearer" and hmac.compare_digest(
-            presented.strip().encode("utf-8"), self._auth_token.encode("utf-8")
-        ):
+        if self._token_ok():
             return True
         self.send_response(401)
         body = json.dumps({"error": "missing or wrong bearer token"}).encode("utf-8")
@@ -704,9 +731,7 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 — stdlib naming
         if not self._check_local_origin():
             return
-        if not self._check_ip_cap():
-            return
-        if not self._check_auth():
+        if not self._check_access():
             return
         if self.path == "/health":
             self._send_json(
@@ -731,9 +756,7 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
     def do_DELETE(self) -> None:  # noqa: N802 — stdlib naming
         if not self._check_local_origin():
             return
-        if not self._check_ip_cap():
-            return
-        if not self._check_auth():
+        if not self._check_access():
             return
         if self.path != "/messages":
             self._send_error(404, "not found")
@@ -763,9 +786,7 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 — stdlib naming
         if not self._check_local_origin():
             return
-        if not self._check_ip_cap():
-            return
-        if not self._check_auth():
+        if not self._check_access():
             return
         if self.path != "/messages":
             self._send_error(404, "not found")
@@ -1069,6 +1090,7 @@ def _build_handler_class(
     tasks=None,
     local_only: bool = False,
     auth_token: str = "",
+    http_unauth_limiter=None,
 ) -> type:
     """Return a _McpHTTPHandler subclass with ``_tools`` bound.
 
@@ -1086,6 +1108,7 @@ def _build_handler_class(
     _Bound._sessions = sessions
     _Bound._log_forwarder = log_forwarder
     _Bound._http_ip_limiter = http_ip_limiter
+    _Bound._http_unauth_limiter = http_unauth_limiter
     _Bound._tasks = tasks
     _Bound._local_only = local_only
     _Bound._auth_token = auth_token
@@ -1154,6 +1177,14 @@ def build_server(config: HTTPServerConfig) -> _ThreadingServer:
         if config.http_ip_rate_enabled
         else None
     )
+    http_unauth_limiter = (
+        _PerIPRateLimiter(
+            burst=DEFAULT_HTTP_UNAUTH_BURST,
+            refill_per_sec=DEFAULT_HTTP_UNAUTH_REFILL_PER_SEC,
+        )
+        if config.http_ip_rate_enabled
+        else None
+    )
     # Shared task registry: tasks/start + tasks/status + tasks/cancel +
     # tasks/list. The dispatcher scopes tasks by session id internally.
     tasks = _mcp._TaskRegistry()
@@ -1166,6 +1197,7 @@ def build_server(config: HTTPServerConfig) -> _ThreadingServer:
         tasks=tasks,
         local_only=not config.tls_enabled(),
         auth_token=config.auth_token or "",
+        http_unauth_limiter=http_unauth_limiter,
     )
     # An IPv6 literal ("::1") needs an AF_INET6 socket.
     server_cls = _ThreadingServerV6 if ":" in config.host else _ThreadingServer

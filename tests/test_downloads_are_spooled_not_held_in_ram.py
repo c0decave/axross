@@ -157,6 +157,12 @@ class _Ftp:
         self.body = body
         self.perm_error = perm_error
 
+    def voidcmd(self, cmd):  # TYPE I
+        return "200 ok"
+
+    def sendcmd(self, cmd):  # FEAT (the SIZE check before RETR): an old server
+        raise error_perm("502 not implemented")
+
     def retrbinary(self, cmd, callback, blocksize=8192, rest=None):
         if self.perm_error:
             raise error_perm("550 No such file")

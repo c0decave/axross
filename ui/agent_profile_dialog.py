@@ -26,8 +26,12 @@ from ui.icon_provider import set_window_icon
 
 
 def profile_label(profile: AP.AgentProfile) -> str:
-    """How menus and lists name a profile: presets carry "(preset)"."""
-    return tr("{name} (preset)").format(name=profile.name) if profile.preset else profile.name
+    """How menus and lists name a profile: presets carry "(preset)", in
+    the interface language (the stored name stays the English one, which
+    profiles and settings refer to); a user's own name as written."""
+    if not profile.preset:
+        return profile.name
+    return tr("{name} (preset)").format(name=tr(profile.name))
 
 
 class ProfilePickerDialog(QDialog):

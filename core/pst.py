@@ -227,7 +227,7 @@ class PstFile:
         raw = self.block(bid)
         btype, level, count = struct.unpack_from("<BBH", raw)
         if btype != 2:
-            raise PstError(f"block {bid:#x} is no subnode block")
+            raise PstError(f"block {bid:#x} is not a subnode block")
         out = {}
         if level == 0:
             for i in range(count):
@@ -390,7 +390,7 @@ class _Heap:
 
     def alloc(self, hid: int) -> bytes:
         if hid & 0x1F:
-            raise PstError(f"{hid:#x} is no heap id")
+            raise PstError(f"{hid:#x} is not a heap id")
         index, block = (hid >> 5) & 0x7FF, hid >> 16
         if block >= len(self.blocks) or index == 0:
             raise PstError(f"heap id {hid:#x} outside the heap")

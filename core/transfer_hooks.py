@@ -73,6 +73,11 @@ class TransferHooks:
         self.upload_expected = False
         #: Set once a reader reported a download of its own.
         self.downloaded = False
+        #: The folder of the transfer's local destination, when it has one:
+        #: a download spooled there needs no room in /tmp (a tmpfs) and
+        #: lands on the file system that must hold the file anyway
+        #: (core.read_spool.spool_dir).
+        self.spool_dir: str | None = None
 
     def cancelled(self) -> bool:
         event = self.cancel_event
@@ -223,3 +228,79 @@ class WriteProgress:
         if self._hooks is not None:
             self._hooks.received(self._received, self._total)
         return written
+
+
+class CancelWatch:
+    """Calls *close* from a watcher thread once *event* (a transfer's
+    Cancel) is set, until :meth:`stop`.
+
+    For network I/O that blocks inside a library call - an SFTP read
+    waiting for its answer, an SSH channel ``sendall`` waiting for window
+    space - Cancel between two chunks comes only when the call returns,
+    which on a silent network loss is never (or after the I/O time-out).
+    Closing the channel from here wakes the call at once; :attr:`fired`
+    then tells the caller to raise InterruptedError, not a "connection
+    failed".
+
+    *escalate* (optional) is called when the I/O has still not returned
+    :attr:`GRACE` seconds after *close*: a write stuck in the kernel's
+    send buffer of a dead link does not notice a closed channel, only a
+    closed connection."""
+
+    #: How often the watcher looks whether it was stopped.
+    POLL = 0.2
+    #: Seconds after *close* before *escalate*.
+    GRACE = 10.0
+
+    def __init__(
+        self,
+        event: threading.Event,
+        close: Callable[[], object],
+        escalate: Callable[[], object] | None = None,
+    ) -> None:
+        self.fired = False
+        self._event = event
+        self._close = close
+        self._escalate = escalate
+        self._stopped = threading.Event()
+        threading.Thread(target=self._run, name="axross-cancel-watch", daemon=True).start()
+
+    def _run(self) -> None:
+        while not self._stopped.is_set():
+            if self._event.wait(self.POLL):
+                if self._stopped.is_set():
+                    return
+                self.fired = True
+                # In a thread of its own: closing a channel sends a message,
+                # which waits behind a write stuck on a dead link.
+                threading.Thread(target=self._call, args=(self._close,), daemon=True).start()
+                if self._escalate is not None and not self._stopped.wait(self.GRACE):
+                    self._call(self._escalate)
+                return
+
+    @staticmethod
+    def _call(step: Callable[[], object]) -> None:
+        try:
+            step()
+        except Exception:  # noqa: BLE001 - closing a dead channel may fail
+            pass
+
+    def stop(self) -> None:
+        self._stopped.set()
+
+
+def watch_cancel(
+    close: Callable[[], object],
+    hooks: TransferHooks | None = None,
+    escalate: Callable[[], object] | None = None,
+) -> CancelWatch | None:
+    """A :class:`CancelWatch` that calls *close* (and later *escalate*) on
+    Cancel of *hooks* (default: the current transfer); None outside a
+    transfer; InterruptedError when Cancel was pressed already."""
+    hooks = hooks if hooks is not None else current()
+    event = getattr(hooks, "cancel_event", None)
+    if event is None:
+        return None
+    if event.is_set():
+        raise InterruptedError(CANCELLED)
+    return CancelWatch(event, close, escalate)

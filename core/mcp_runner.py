@@ -273,13 +273,20 @@ _PACKAGE_TOOLS = frozenset({
     "gem", "pip-run", "jbang", "cs", "coursier", "mise", "asdf", "volta", "hatch", "pdm",
     "poetry", "conda", "mamba", "micromamba", "pipenv", "rye", "dotnet",
 })
+#: Build tools that fetch dependencies and plugins and run what they build
+#: (``cargo install x``, ``cargo run``, ``mvn exec:java``, ``gradle run``):
+#: their build scripts and plugins are downloaded code as well.
+_BUILD_TOOLS = frozenset({
+    "cargo", "cargo-binstall", "rustup", "mvn", "mvnw", "gradle", "gradlew", "sbt", "lein",
+    "cabal", "composer", "cpanm", "luarocks",
+})
 #: Programs that download (or install) what they run, wherever they stand
 #: in a command line: a word naming one makes the command a runner.
 _RUNNER_NAMES = frozenset({
     "npx", "bunx", "pnpx", "npm", "pnpm", "yarn", "bun", "uvx", "uv", "pipx", "pip", "pip3",
     "docker", "podman", "nerdctl", "docker-compose", "deno", "go", "nix", "nix-shell",
     "nix-env", "nix-build", "nix-store", "pixi", "pkgx", "dnx", "corepack",
-    *_DOWNLOADERS, *_PACKAGE_TOOLS,
+    *_DOWNLOADERS, *_PACKAGE_TOOLS, *_BUILD_TOOLS,
 })
 #: Node options whose value is code when it is a data: or a remote URL.
 _NODE_MODULE_OPTIONS = frozenset({"--import", "--loader", "--experimental-loader", "-r",
@@ -929,6 +936,15 @@ def _direct(program: str, argv: list[str], depth: int) -> RunnerPlan | None:
         return RunnerPlan("deno", why_not="deno fetches code by URL: not converted")
     if program == "go" and sub == "run":
         return RunnerPlan("go run", why_not="go run fetches modules: not converted")
+    if program == "go":
+        # go install x@latest, go get, go build, go tool …: fetch modules too.
+        return RunnerPlan(f"go {M.clean_text(sub, 20)}".strip(),
+                          why_not=f"go {M.clean_text(sub, 20)} fetches and builds modules: "
+                                  "not converted")
+    if program in _BUILD_TOOLS:
+        return RunnerPlan(f"{program} {M.clean_text(sub, 20)}".strip(),
+                          why_not=f"{program} fetches dependencies and runs what it builds: "
+                                  "not converted")
     if program in ("nix", "nix-shell", "nix-env", "nix-build", "nix-store"):
         return RunnerPlan(f"{program} {M.clean_text(sub, 20)}".strip(),
                           why_not=f"{program} fetches and builds what it runs: not converted")

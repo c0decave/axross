@@ -138,8 +138,8 @@ def test_happy_the_trash_question_in_german(window, german):
     pane = window._panes[0]
     _select(pane, "big.bin")
     [(title, text, default)] = _ask(pane, Qt.Key.Key_Delete)
-    assert title == "In den Trash verschieben"
-    assert text.startswith("1 Element in den Trash verschieben?")
+    assert title == "In den Papierkorb verschieben"
+    assert text.startswith("1 Element in den Papierkorb verschieben?")
     assert "Insgesamt: 1 Datei, 180,1 KB" in text
     assert default == QMessageBox.StandardButton.Yes  # the trash can be undone
 
@@ -158,7 +158,7 @@ def test_sad_no_english_or_item_s_in_the_german_delete_flow(window, german):
     assert text.startswith("2 Elemente endgültig löschen?")
     assert _wait(lambda: not (window.test_folder / "todo.txt").exists())
     assert _wait(lambda: "gelöscht" in pane._status.text())
-    assert pane._status.text().startswith("2 von 2 Elementen gelöscht")
+    assert pane._status.text().startswith("2 Elemente gelöscht")
 
 
 def test_sad_a_cancelled_trash_says_so_in_german(window, german):
@@ -168,7 +168,7 @@ def test_sad_a_cancelled_trash_says_so_in_german(window, german):
     from ui.file_pane import _removal_cancelled_text
 
     assert _removal_cancelled_text(True) == (
-        "Verschieben in den Trash abgebrochen – nichts wurde angefasst.")
+        "Verschieben in den Papierkorb abgebrochen – nichts wurde angefasst.")
     assert "Move to Trash" not in _removal_cancelled_text(True)
 
 

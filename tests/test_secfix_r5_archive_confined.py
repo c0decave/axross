@@ -141,6 +141,9 @@ def test_sad_place_new_does_not_follow_a_swapped_folder(tmp_path):
                 os.symlink(outside, root / "w")
             return path
 
+        # A new file is checked as an entry since round 6.
+        entry_path = write_path
+
     with pytest.raises(PermissionError):
         G._place_new(Env(), fs, str(root / "w" / "x.desktop"), b"[Desktop Entry]\n")
     assert os.listdir(outside) == []

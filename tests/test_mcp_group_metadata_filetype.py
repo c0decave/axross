@@ -238,7 +238,8 @@ def test_sad_metadata_remove_missing_file(tree):
     root, _ = tree
     with pytest.raises(T.RpcError) as err:
         T.call(_meta(root, write=True), "metadata_remove", {"path": str(root / "nope.jpg")})
-    assert "nope.jpg" in err.value.message and err.value.code == M.ERR_INTERNAL
+    # The tool ran and failed: a result with isError, not JSON-RPC -32603.
+    assert "nope.jpg" in err.value.message and err.value.code == T.TOOL_ERROR
 
 
 # -- file_type -----------------------------------------------------------------

@@ -21,6 +21,25 @@ SMB, WebDAV). A locking scheme would be either best-effort or
 protocol-specific. Per-entry sidecars sidestep the problem
 entirely.
 
+Authenticated sidecars
+----------------------
+The trash is a confused deputy waiting to happen: whoever can write into
+it (an agent, a shared server) plants an entry whose ``original_path`` is
+``~/.bashrc``, or rewrites a trashed autostart entry, and the user's
+Restore puts it there with axross's rights. Every sidecar written here
+carries an HMAC (``mac``) of its id, original path, kind and a fingerprint
+of the data (a local file's SHA-256 - its size and time above
+:data:`MAX_HASH_BYTES` -, a local folder's tree), keyed with this user's
+secret (the one of core.extension_code_cache, in ``~/.config/axross``,
+under a key of its own). On a local backend :func:`restore` refuses an
+entry whose HMAC or fingerprint does not verify (:class:`TamperedTrashEntry`),
+puts an unauthenticated one (made before, or without a secret) back only
+outside the protected places (core.protected_places), and an authenticated
+one there only when the caller says the user confirmed it
+(``allow_protected``; :class:`ProtectedRestoreError` otherwise). The local
+trash itself is a protected place and secret: no MCP or agent tool reads
+or writes it.
+
 Trash root
 ----------
 Defaults to ``<backend.home()>/.axross-trash``. Callers can pin a
@@ -33,10 +52,12 @@ from __future__ import annotations
 
 import errno
 import hashlib
+import hmac
 import json
 import logging
 import os
 import shutil
+import stat
 import uuid
 from datetime import datetime
 
@@ -51,6 +72,37 @@ META_SUFFIX = ".meta.json"
 # Bound on sidecar JSON size — protects us from malicious actors who
 # gain write access to the trash dir and plant a multi-MB "sidecar".
 MAX_META_SIZE = 64 * 1024
+#: The data of a local entry hashed into its sidecar's fingerprint, at most
+#: (a folder's files together); beyond, their size and modification time.
+MAX_HASH_BYTES = 64 * 1024 * 1024
+#: Most entries of a trashed local folder in its fingerprint.
+MAX_TREE_ENTRIES = 10_000
+#: Domain of the sidecar HMAC key (derived from core.extension_code_cache's secret).
+_MAC_CONTEXT = b"axross-trash-sidecar-v1\n"
+#: The sidecar fields the HMAC covers.
+_SIGNED_FIELDS = ("trash_id", "original_path", "is_dir", "kept_copy", "fingerprint")
+
+
+class TrashRestoreRefused(OSError):
+    """A restore core.trash refuses to do on its own (see the module docstring)."""
+
+
+class TamperedTrashEntry(TrashRestoreRefused):
+    """The entry's sidecar or data is not what axross wrote (its HMAC or the
+    fingerprint of the data does not verify): never restored."""
+
+
+class ProtectedRestoreError(TrashRestoreRefused):
+    """The entry would go back into a protected place (core.protected_places).
+    *verified*: its sidecar is authenticated - the user may confirm it
+    (``restore(..., allow_protected=True)``); an unauthenticated one is not
+    put there at all."""
+
+    def __init__(self, message: str, *, target: str, reason: str, verified: bool) -> None:
+        super().__init__(message)
+        self.target = target
+        self.reason = reason
+        self.verified = verified
 
 
 #: Backends that cannot move an entry into a trash folder: read-only ones
@@ -114,6 +166,159 @@ def _write_meta(backend, meta_file: str, payload: dict) -> None:
     from core.atomic_io import atomic_write
 
     atomic_write(backend, meta_file, data)
+
+
+def _mac_key() -> bytes | None:
+    """The sidecar HMAC key: derived from this user's secret of
+    core.extension_code_cache (``~/.config/axross``), or None when there is
+    none to be had safely (sidecars are then written unauthenticated)."""
+    try:
+        from core import extension_code_cache
+
+        secret = extension_code_cache._secret()
+    except Exception as exc:  # noqa: BLE001 - no key: unauthenticated sidecars
+        log.debug("trash: no sidecar key: %s", exc)
+        return None
+    if not secret:
+        return None
+    return hmac.new(secret, _MAC_CONTEXT, hashlib.sha256).digest()
+
+
+def _mac_of(key: bytes, payload: dict) -> str:
+    signed = {name: payload.get(name) for name in _SIGNED_FIELDS}
+    text = json.dumps(signed, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hmac.new(key, text.encode("ascii"), hashlib.sha256).hexdigest()
+
+
+def _file_digest(path: str) -> str:
+    digest = hashlib.sha256()
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
+    with os.fdopen(fd, "rb") as fh:
+        while True:
+            chunk = fh.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _fingerprint(backend, path: str) -> dict | None:
+    """What a local entry's data is, for its sidecar: a file's size and
+    SHA-256 (size and time above :data:`MAX_HASH_BYTES`), a link's target,
+    a folder's tree (names, kinds, sizes and the files' hashes, within the
+    same budget). None on another backend or when it cannot be read."""
+    if not _is_local(backend):
+        return None
+    try:
+        st = os.lstat(path)
+        if stat.S_ISLNK(st.st_mode):
+            return {"kind": "link", "target": os.readlink(path)}
+        if stat.S_ISREG(st.st_mode):
+            if st.st_size <= MAX_HASH_BYTES:
+                return {"kind": "file", "size": st.st_size, "sha256": _file_digest(path)}
+            return {"kind": "file", "size": st.st_size, "mtime_ns": st.st_mtime_ns}
+        if not stat.S_ISDIR(st.st_mode):
+            return {"kind": "other", "mode": stat.S_IFMT(st.st_mode)}
+        tree = hashlib.sha256()
+        budget = MAX_HASH_BYTES
+        count = 0
+        complete = True
+        for dirpath, dirnames, filenames in os.walk(path, followlinks=False):
+            dirnames.sort()
+            rel = os.path.relpath(dirpath, path)
+            for name in sorted(filenames) + [d for d in dirnames
+                                             if os.path.islink(os.path.join(dirpath, d))]:
+                count += 1
+                if count > MAX_TREE_ENTRIES:
+                    complete = False
+                    break
+                full = os.path.join(dirpath, name)
+                fst = os.lstat(full)
+                line = [os.path.join(rel, name), stat.S_IFMT(fst.st_mode), fst.st_size]
+                if stat.S_ISLNK(fst.st_mode):
+                    line.append(os.readlink(full))
+                elif stat.S_ISREG(fst.st_mode) and fst.st_size <= budget:
+                    budget -= fst.st_size
+                    line.append(_file_digest(full))
+                else:
+                    line.append(fst.st_mtime_ns)
+                tree.update(json.dumps(line).encode("utf-8") + b"\n")
+            if not complete:
+                break
+            for d in dirnames:
+                tree.update(json.dumps([os.path.join(rel, d), "dir"]).encode("utf-8") + b"\n")
+        return {"kind": "dir", "tree": tree.hexdigest(), "complete": complete}
+    except OSError as exc:
+        log.debug("trash: no fingerprint of %s: %s", path, exc)
+        return None
+
+
+def _signed(backend, payload: dict, data_file: str) -> dict:
+    """*payload* with the data's fingerprint and the HMAC (when there is a key)."""
+    key = _mac_key()
+    if key is None:
+        return payload
+    payload = dict(payload)
+    payload["fingerprint"] = _fingerprint(backend, data_file)
+    payload["mac"] = _mac_of(key, payload)
+    return payload
+
+
+def _verify(backend, meta: dict | None, trash_id: str, data_file: str) -> str:
+    """"ok" (axross wrote this sidecar and the data is unchanged), "unsigned"
+    (no HMAC: older than authenticated sidecars, or no key) or "bad"."""
+    if not isinstance(meta, dict) or "mac" not in meta:
+        return "unsigned"
+    key = _mac_key()
+    mac = meta.get("mac")
+    if key is None or not isinstance(mac, str):
+        return "bad" if not isinstance(mac, str) else "unsigned"
+    if meta.get("trash_id") != trash_id or not hmac.compare_digest(_mac_of(key, meta), mac):
+        return "bad"
+    expected = meta.get("fingerprint")
+    if expected is not None and _is_local(backend):
+        if _fingerprint(backend, data_file) != expected:
+            return "bad"
+    return "ok"
+
+
+def _refuse_unverified(backend, meta, trash_id: str, data_file: str) -> str:
+    """:func:`_verify`; TamperedTrashEntry for "bad" on a local backend (a
+    remote trash may hold another user's entries, signed with their key)."""
+    status = _verify(backend, meta, trash_id, data_file)
+    if status == "bad":
+        if _is_local(backend):
+            raise TamperedTrashEntry(
+                f"restore: trash entry {trash_id} was changed after it was trashed (its "
+                "record or data is not what axross wrote) - it is not restored"
+            )
+        log.info("trash: entry %s is not signed with this user's key", trash_id)
+        return "unsigned"
+    return status
+
+
+def _refuse_protected(backend, dst: str, status: str, allow_protected: bool) -> None:
+    """ProtectedRestoreError when the local *dst* is a protected place
+    (core.protected_places) - unless the entry is authenticated and the
+    caller says the user confirmed it."""
+    if not _is_local(backend):
+        return
+    from core import protected_places
+
+    reason = protected_places.refusal(dst, entry=True)
+    if reason is None:
+        return
+    if status != "ok":
+        raise ProtectedRestoreError(
+            f"restore: {dst} is a protected place and this trash entry is not authenticated "
+            "(trashed by an older axross, or its record was written by someone else): it is "
+            "not put back there - restore it to another folder and move it yourself",
+            target=dst, reason=reason, verified=False)
+    if not allow_protected:
+        raise ProtectedRestoreError(
+            f"restore: {dst} is a protected place (programs run code from there): "
+            "confirm the restore in the Trash window",
+            target=dst, reason=reason, verified=True)
 
 
 def _read_meta(backend, meta_file: str) -> dict | None:
@@ -262,14 +467,14 @@ def trash(backend, path: str, root: str | None = None, *, journal: bool = True) 
         )
         raise OSError(f"trash: move {path} -> {dst} failed: {exc}") from exc
 
-    payload = {
+    payload = _signed(backend, {
         "trash_id": trash_id,
         "original_path": path,
         "trashed_at": datetime.now().isoformat(timespec="seconds"),
         "size": int(getattr(info, "size", 0) or 0),
         "is_dir": bool(getattr(info, "is_dir", False)),
         "label": getattr(info, "name", "") or "",
-    }
+    }, dst)
     try:
         _write_meta(backend, meta, payload)
     except OSError as exc:
@@ -456,7 +661,7 @@ def trash_copy(
     except OSError as exc:
         _remove_quietly(backend, dst)
         raise OSError(f"trash_copy: cannot keep a copy of {path}: {exc}") from exc
-    payload = {
+    payload = _signed(backend, {
         "trash_id": trash_id,
         "original_path": path,
         "trashed_at": datetime.now().isoformat(timespec="seconds"),
@@ -464,7 +669,7 @@ def trash_copy(
         "is_dir": False,
         "label": getattr(info, "name", "") or "",
         "kept_copy": True,
-    }
+    }, dst)
     try:
         _write_meta(backend, meta, payload)
     except OSError as exc:
@@ -544,6 +749,9 @@ def restore_over(
         raise OSError(f"restore: unsafe trash id {trash_id!r}: {exc}") from exc
     if not backend.exists(data_file):
         raise OSError(f"restore: trash entry not found: {trash_id}")
+    # The kept copy must still be what was kept (the target comes from the
+    # caller's own record, not from the sidecar).
+    _refuse_unverified(backend, _read_meta(backend, meta_file), trash_id, data_file)
     from core.remote_name import MAX_REMOTE_PATH_BYTES, RemoteNameError, validate_remote_name
 
     try:
@@ -669,12 +877,17 @@ def list_trash(backend, root: str | None = None) -> list[TrashEntry]:
     return out
 
 
-def restore(backend, trash_id: str, root: str | None = None, target: str | None = None) -> str:
+def restore(backend, trash_id: str, root: str | None = None, target: str | None = None,
+            *, allow_protected: bool = False) -> str:
     """Move a trashed entry back to its original path (or *target*).
 
     Returns the path where the entry now lives. If the destination
     already exists the caller's rename will fail; this is intentional
     — silently overwriting is surprising and hard to undo.
+
+    On a local backend the entry must verify (:class:`TamperedTrashEntry`)
+    and a protected destination needs an authenticated entry and
+    *allow_protected* - the user confirmed it (:class:`ProtectedRestoreError`).
     """
     trash_root = _resolve_root(backend, root)
     try:
@@ -713,6 +926,11 @@ def restore(backend, trash_id: str, root: str | None = None, target: str | None 
         )
     except RemoteNameError as exc:
         raise OSError(f"restore: sidecar {trash_id} has an unsafe original_path: {exc}") from exc
+
+    status = _refuse_unverified(backend, meta, trash_id, data_file)
+    _refuse_protected(backend, dst, status, allow_protected)
+    if status == "unsigned":
+        log.info("restore: trash entry %s has no authenticated record (an older one)", trash_id)
 
     if backend.exists(dst):
         raise OSError(f"restore: target already exists: {dst}")

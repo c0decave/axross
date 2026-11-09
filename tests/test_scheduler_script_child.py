@@ -111,7 +111,8 @@ def test_edge_a_cancel_stops_a_running_script(script):
     threading.Timer(0.5, cancel.set).start()
     started = time.monotonic()
     [(ok, detail)] = _run(_job(name), cancel_event=cancel)
-    assert ok is False
+    # Stopped because the application closed: not run, not failed (None).
+    assert ok is None
     assert "cancel" in detail
     assert time.monotonic() - started < 30
 

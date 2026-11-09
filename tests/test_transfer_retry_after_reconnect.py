@@ -172,12 +172,44 @@ def test_sad_queued_and_failed_jobs_move_running_done_and_retried_stay(manager):
     assert other.source_backend is not new
 
 
-def test_sad_a_still_connected_backend_is_kept_on_retry(manager):
-    up, other = _B(connected=True), _B()
-    manager.set_backend_resolver(lambda b: other)
-    job = _job(manager, TW.TransferStatus.ERROR, up)
+class _Probed(_B):
+    """A session whose ``connected`` goes to the network (SMB lists the
+    share; on a dead pooled connection that redials for up to a minute)."""
+
+    def __init__(self) -> None:
+        self.name = "fake"
+        self._axross_profile_key = "k"
+        self.probes = 0
+
+    @property
+    def connected(self) -> bool:
+        self.probes += 1
+        time.sleep(2)  # the redial the GUI thread waited for
+        return True
+
+
+def test_sad_retry_takes_the_panes_session_without_probing_the_old_one(manager):
+    """Round 6 (repro_retry_probe_blocks_gui / repro_retry_resurrects_old_smb):
+    retry_job (GUI thread) read ``old.connected`` - a share listing that
+    redialled the replaced SMB session, ~59 s per job and side, and bound
+    the retry to that retired session when the server answered."""
+    old, pane_session = _Probed(), _B()
+    manager.set_backend_resolver(lambda b: pane_session if b is old else None)
+    job = _job(manager, TW.TransferStatus.ERROR, old)
+    t0 = time.monotonic()
     retry = manager.retry_job(job.job_id)
-    assert retry.source_backend is up
+    assert time.monotonic() - t0 < 1.0
+    assert old.probes == 0  # no network on the GUI thread
+    assert retry.source_backend is pane_session  # not the retired one
+    retry.cancel_event.set()
+
+
+def test_happy_retry_keeps_the_jobs_session_when_no_pane_has_another(manager):
+    own = _B(connected=True)
+    manager.set_backend_resolver(lambda b: None)
+    job = _job(manager, TW.TransferStatus.ERROR, own)
+    retry = manager.retry_job(job.job_id)
+    assert retry.source_backend is own
     retry.cancel_event.set()
 
 

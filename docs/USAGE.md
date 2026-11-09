@@ -106,20 +106,30 @@ profile goes, with its stored password.
   Backends that cannot be proxied fail closed instead of going direct.
   See [PROXY_SUPPORT.md](PROXY_SUPPORT.md).
 - **Production servers.** *Production (confirm destructive operations
-  with a countdown)* in the Connection group of Connect to Server marks
+  with a countdown)* in the Connection group of the Connection Manager marks
   the profile: the first delete, move, rename or overwrite on it in a
   pane waits a few seconds with a countdown that Cancel or Esc stops.
   See [DAILY_DRIVER.md](DAILY_DRIVER.md#production-tarpit).
 - **OpSec overrides.** Profile fields control SSH keepalive, SMB
   workstation name, Telnet NAWS, rsync metadata stripping. See
   [OPSEC.md](OPSEC.md) for the threat model.
+- **SFTP on a lost network.** A request the server leaves unanswered
+  for 60 s fails with "did not answer in time" instead of waiting for
+  ever (Wi-Fi gone, a VPN down); the next action opens a new channel.
+  Cancel stops an SFTP or SCP transfer at once, also while it waits on
+  the network; a transfer stuck behind a dead link closes the
+  connection after 10 s more (reconnect then).
 - **Google Drive: Docs, Sheets, Slides and shared drives.** A Google
   Doc is listed as `<name>.docx`, a Sheet as `.xlsx`, a Slides deck as
   `.pptx`, a drawing as `.pdf` - without a size - and read (opened,
   copied) as that export; Google exports at most 10 MB of a document.
   They are read-only here: writing over one is refused, save under
-  another name. A Form or a Site has no file form and says so on
-  reading. Items of a shared drive that are reachable from My Drive
+  another name. Moving one out of Drive is refused before anything is
+  copied - the export lacks comments, suggestions, version history and
+  sharing, and the move would delete the original: copy it instead.
+  Deleting a Google Doc, Sheet or Slides deck, or a folder, puts it in
+  Drive's trash (restorable there for 30 days); a plain file is deleted.
+  A Form or a Site has no file form and says so on reading. Items of a shared drive that are reachable from My Drive
   (shared with you, a shortcut's folder) work as any other; the shared
   drives themselves are not listed (there is no `/Shared drives/<name>`
   folder yet) - open them in the browser or add a shortcut to My Drive.
@@ -143,9 +153,14 @@ profile goes, with its stored password.
   deletion), and every save is committed and pushed at once (fast-forward
   only). A push that fails keeps the commit in the cache and the save
   reports it; the pane's status line shows "not pushed to origin:
-  main (1)" until the next save pushes it. Commits that never reached a
-  branch origin has rewritten are kept, and the branch is read-only
-  until it is merged in a git client. When the remote cannot be reached
+  main (1)" until the next save pushes it. When someone else pushed to
+  the branch, a save first catches up: changes to other files are kept
+  and yours goes on top; if they changed the same file the save is
+  refused (refresh and repeat it). Commits not pushed yet are replayed
+  onto origin's new tip when they touch other files; otherwise they are
+  kept on a new branch `axross/unpushed-<date>-<time>` - the message names
+  it - and the branch shows origin's version: open that branch to copy
+  your files back. Nothing is lost either way. When the remote cannot be reached
   the cached copy opens read-only and the status line says "offline".
   Scripts can pass `auto_push=False` and push with `axross.git_push()`.
 
@@ -156,8 +171,8 @@ profile goes, with its stored password.
 - Active pane gets a blue border; the **target** pane (where copies
   land) gets a green border. Last-focused pane becomes target.
 - A pane becomes the active one when the mouse rests in it for 0.5 s.
-  **Edit → Settings… → General → Activate a pane** sets 0.5, 1, 2 or 3 s,
-  or **On Click**. Keyboard
+  **Edit → Settings… → General → Activate a pane** sets 0.5, 1, 2 or 3 s
+  (*When the mouse rests on it for … s*), or **When clicked**. Keyboard
   focus follows only from another pane's file list, never out of a text
   field.
 - **Alt+Left / Alt+Right** walk through pane history; **Tab** /
@@ -415,7 +430,7 @@ native protocol doesn't support them.
 
 ## Right-click actions
 
-The right-click menu is one column. **Open** comes first (a folder opens in the pane, a file in its viewer, as `Enter` does), then *Open With ▸* (as text, as hex, as root, View Selected Media…, Preview Archive) and, for an archive, *Extract…*; then *Copy Path*, *Cut*, *Paste*, *Rename*; *Copy to Target Pane*, *Move to Target Pane*, *Pack ▸*; *Move to Trash* (`Del`) and *Delete Permanently* (`Shift+Del`); *New Folder*, *New File…*; *Properties…* and the submenus *Metadata ▸*, *Analyse ▸* (file type, disk image, checksum, versions, size, sift, Duplicate Finder, Find in This Folder), *Links ▸* (link target, new symlink / hardlink / XLink) and *Tags ▸*; *Refresh* and *More ▸* (view mode, View Media…, bookmark, Show Trash…, terminals, FUSE, Permissions…, encrypt / decrypt, the agent), and at the end *Send to Workspace ▸* for the pane itself. More than three extension entries go into *Extensions ▸*. The table names each entry by its label.
+The right-click menu is one column. **Open** comes first (a folder opens in the pane, a file in its viewer, as `Enter` does), then *Open With ▸* (as text, as hex, as root, View Selected Media…, Preview Archive) and, for an archive, *Extract…*; then *Copy* (`Ctrl+C`), *Cut*, *Paste*, *Rename*; *Copy to Target Pane*, *Move to Target Pane*, *Pack ▸*; *Move to Trash* (`Del`) and *Delete Permanently* (`Shift+Del`); *New Folder*, *New File…*; *Properties…*, *Analyse ▸* (file type, disk image, checksum, versions, size, sift, Duplicate Finder, Find in This Folder) and *More ▸*: *Refresh*, view mode, View Media…, bookmark, Show Trash…, *Copy Path*, *Links ▸* (link target, new symlink / hardlink / XLink), *Metadata ▸*, *Tags ▸*, terminals, FUSE, Permissions…, encrypt / decrypt, the agent, and at the end *Send to Workspace ▸* for the pane itself. The top level stays one column even on a 1024x600 screen. More than three extension entries go into *Extensions ▸*. The table names each entry by its label.
 
 | Action | Trigger | What it does |
 |---|---|---|
@@ -436,7 +451,7 @@ The right-click menu is one column. **Open** comes first (a folder opens in the 
 | Identify File Type… | Right-click (selection) | One row per entry: the real type from the content (magic bytes via Qt's MIME database, puremagic, a built-in signature table), the MIME type, what the extension claims and a highlighted *mismatch* when they disagree, size, and for text the encoding and line endings. Reads at most 64 KiB per file through the backend, off the GUI thread, with a 15 s timeout per file — a dead remote gives a "timed out" row. Local files also show `file(1)`'s description when it is installed. Scripting: `axross.file_type(b, path)`. |
 | Open Terminal Here | Right-click (also on empty space) | Opens a shell in the terminal dock in the folder: a selected folder, otherwise the folder shown. Local panes get a local shell started in that folder; SFTP / SCP panes get a shell on the same SSH connection followed by `cd -- '<folder>'` (quoted with `shlex.quote`). Disabled, with the reason as tooltip, on protocols without a shell. |
 | Open External Terminal Here | Right-click (local panes) | Starts `$TERMINAL`, else the first installed of x-terminal-emulator, gnome-terminal, konsole, xfce4-terminal, alacritty, kitty, foot, wezterm, xterm — with the folder as working directory, detached, no shell involved. |
-| Cut / Paste | Right-click (Paste also on empty space), `Ctrl+X` / `Ctrl+V` | Cut remembers the selection and removes nothing (the entries are dimmed); Paste in any pane moves them into its folder through the transfer queue - see *Transfers*. A cut never pasted leaves everything in place. |
+| Copy / Cut / Paste | Right-click (Paste also on empty space), `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy remembers the selection for Paste and puts its paths on the clipboard as text for other programs; Cut remembers the selection and removes nothing (the entries are dimmed); Paste in any pane copies the copied entries, or moves the cut ones, into its folder through the transfer queue - see *Transfers*. A cut never pasted leaves everything in place. *More ▸ Copy Path* puts only the paths on the clipboard. |
 | Move to Trash | Right-click, `Del` | Universal recycle bin (a folder `.axross-trash` in the connection's home, so it works wherever the connection can rename; read-only protocols and ones without rename - Gopher, LDAP, NNTP, PJL, POP3, SLP, SVN, TFTP, WMI - have none, and there `Del` asks for a permanent delete instead). Runs like Delete Permanently: in the background, with the same second question for hidden entries. |
 | Delete Permanently | Right-click, `Shift+Del` | First counts what will go (folders, files, size, hidden entries) off the GUI thread, then asks - with **No** as the default button, so `Enter` keeps the files. A selected folder that holds hidden entries (dotfiles, or a backend's hidden flag) - or one the check could not fully read - needs a second OK whose default is No. The removal runs in the background: the status line shows the progress, Cancel stops at the next entry - also inside a folder being deleted on a local path, SMB, SFTP or FTP (SFTP removes a folder's files in batches of 16 requests at once and stops after the running batch), and the status line then says how much of that folder went (removed entries stay removed; a server that deletes a whole folder in one request, such as WebDAV or S3, finishes that folder first) - failures are listed per entry, and the folder is reloaded at the end. A path that is already being deleted is refused, also from the other pane. |
 | Show Trash… | Right-click | Restore / permanently-delete dialog. |
@@ -1508,6 +1523,40 @@ GnuPG keys (`--mcp-allow-secret-reads` lifts that for the MCP server); in
 the sandbox they, `~/.ssh` as a whole, the ADB key, the desktop keyrings,
 `~/.netrc` and `~/.git-credentials` are empty unless you mount the folder
 itself for the agent.
+
+**Hidden files are read-only for the agent and MCP.** Beyond that list, no
+agent or MCP tool writes, deletes or moves a hidden entry of your home
+folder (`~/.pdbrc`, `~/.wezterm.lua`, `~/.aliases`, `~/.jupyter`, …) or
+anything in `~/.config`, `~/.local/share` and `~/.local/state` (also where
+XDG moves them, `~/Library` on macOS, `%APPDATA%` on Windows): too many
+programs run code from there to list them. To let the agent change one of
+those folders, grant that folder itself - make it the agent's (or the MCP
+server's) root or an extra folder (`~/.config/myapp`); the places listed
+above stay protected inside it, and granting the whole home lifts nothing.
+zsh files in `$ZDOTDIR` (read from `~/.zshenv`) count as start files, and
+Git's files that run code - a repository's `.git/config`, `.git/hooks`,
+`.git/info`, `.gitmodules`, a `.git` entry itself - are refused anywhere.
+In the sandbox the hidden entries of a writable home are mounted read-only
+and no new one can be made; the Git config and hooks of the agent's folder
+are read-only too. MCP `chmod` sets no setuid, setgid or sticky bit and
+makes nothing group- or world-writable.
+
+**Secrets the agent does not read**, besides axross's own: the credential
+stores of common tools (`~/.aws`, `~/.kube`, `~/.docker/config.json`,
+`~/.config/gh`, `~/.config/gcloud`, `~/.azure`, `~/.pypirc`, `~/.npmrc`,
+cargo, rclone, Vault, Terraform, Claude Code's credentials, `pass`),
+browser and mail profiles (Firefox, Chrome, Chromium, Brave, Edge,
+Thunderbird; the macOS keychains), and below a hidden folder of the home
+every file whose name says credential, token, secret, key (`*.pem`,
+`*.key`, `id_*`, `*key*.json`), password database (`*.kdbx`), cookies or
+history (shell and REPL histories hold typed tokens). Their names stay
+listable; the sandbox shows them empty. axross's trash (`~/.axross-trash`)
+is secret and read-only for every tool as well: a trashed key is still a
+key, and what is restored from the trash is put back with axross's rights.
+The trash records each entry with a signature: an entry whose record or
+data was changed is not restored, and one that goes back into a protected
+place (a start file, an autostart entry) is restored from the Trash window
+only after you confirm it.
 
 **Files read-only** (in the tab's top row, and for every tab in Agent
 Settings > Access): the agent reads files but changes none - no

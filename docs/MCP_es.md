@@ -548,8 +548,8 @@ pasada, un symlink colocado bajo la root (externamente o por el
 propio LLM usando la herramienta de escritura `symlink`) apunta
 a `/` y dejaría pasar
 `write_file("/root/escape/etc/cron.d/evil")`. Ahora
-`PermissionError`, respondido como -32603 con
-`data.type = "PermissionError"` y un mensaje que nombra la raíz. Los
+`PermissionError`, respondido como resultado de herramienta con
+`isError` y `_meta.type = "PermissionError"` y un texto que nombra la raíz (§8). Los
 grupos de capacidades (§9) pasan cada ruta local por la misma
 comprobación. Las herramientas que comprueban muchas rutas en una
 llamada (`grep`, `search`, `recursive_checksum`) resuelven la root una
@@ -698,9 +698,17 @@ una lista aparte y no cambia.
 | -32600   | INVALID_REQUEST         | Falta el método, el cuerpo no es un objeto.           |
 | -32601   | METHOD_NOT_FOUND        | Método / herramienta desconocidos o capability desactivada. |
 | -32602   | INVALID_PARAMS          | Fallo de jsonschema, ValueError en el handler, URI inválida. |
-| -32603   | INTERNAL                | Una excepción distinta de ValueError/TypeError en el handler (OSError, el `PermissionError` de un escape de la raíz, un perfil rechazado, …; `data.type` la nombra), o cancelación. |
+| -32603   | INTERNAL                | Un resultado que no se puede enviar (no serializable, por encima del límite de tamaño), o una llamada cancelada por el cliente. |
 | **-32001** | **RATE_LIMITED**      | `tools/call` / `tasks/start` limitados, o tope de tareas en ejecución alcanzado. |
 | **-32002** | **TIMEOUT**           | La herramienta superó su timeout de tiempo real.      |
+
+Una herramienta que se ejecutó y falló (el handler lanzó algo distinto de
+ValueError / TypeError: un OSError, el `PermissionError` de un escape de la
+raíz o de un fichero secreto, un perfil rechazado, …) no es un error
+JSON-RPC: como pide la especificación MCP, es un **resultado con
+`isError: true`** (texto `tool '<name>' failed: …`, redactado como todo
+mensaje de error; `_meta.type` nombra la excepción). Los argumentos
+incorrectos siguen siendo -32602 y una herramienta desconocida -32601.
 
 ---
 

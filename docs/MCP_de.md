@@ -546,8 +546,8 @@ erneut gegen die Root zu prüfen. Ohne den zweiten Pass könnte ein
 Symlink unter der Root (extern oder vom LLM selbst über das
 `symlink`-Write-Tool angelegt) nach `/` zeigen und
 `write_file("/root/escape/etc/cron.d/evil")` durchlassen. Jetzt
-`PermissionError`, beantwortet als -32603 mit
-`data.type = "PermissionError"` und einer Message, die die Root nennt.
+`PermissionError`, beantwortet als Tool-Ergebnis mit `isError` und
+`_meta.type = "PermissionError"` und einem Text, der die Root nennt (§8).
 Die Capability-Gruppen (§9) schicken jeden lokalen Pfad durch
 denselben Check. Tools, die in einem Call viele Pfade prüfen (`grep`,
 `search`, `recursive_checksum`), lösen die Root einmal pro Call auf und
@@ -693,9 +693,18 @@ immer. Die Schreibseite (§2, die geschützten Orte von
 | -32600   | INVALID_REQUEST         | Method fehlt, Body ist kein Objekt.                  |
 | -32601   | METHOD_NOT_FOUND        | Method/Tool unbekannt oder Capability deaktiviert.   |
 | -32602   | INVALID_PARAMS          | jsonschema-Fehler, ValueError im Handler, bad URI.   |
-| -32603   | INTERNAL                | Andere Exception als ValueError/TypeError im Handler (OSError, `PermissionError` eines Root-Escapes, ein verweigertes Profil, …; `data.type` nennt sie), oder Cancel. |
+| -32603   | INTERNAL                | Ein Ergebnis, das sich nicht senden lässt (nicht serialisierbar, über dem Größenlimit), oder ein vom Client abgebrochener Call. |
 | **-32001** | **RATE_LIMITED**      | `tools/call` / `tasks/start` gedrosselt, oder Cap laufender Tasks erreicht. |
 | **-32002** | **TIMEOUT**           | Tool hat seinen Wall-Clock-Timeout gerissen.         |
+
+Ein Tool, das lief und scheiterte - der Handler warf etwas anderes als
+ValueError / TypeError: ein OSError (Datei fehlt, Name existiert), der
+`PermissionError` eines Root-Escapes oder einer Secret-Datei, ein
+verweigertes Profil, … -, ist kein JSON-RPC-Fehler. Wie die
+MCP-Spezifikation es verlangt, ist es ein normales **Ergebnis mit
+`isError: true`** (Text: `tool '<name>' failed: …`, redigiert wie jede
+Fehlermeldung; `_meta.type` nennt die Exception), damit das Modell den
+Grund sieht. Falsche Argumente bleiben -32602, ein unbekanntes Tool -32601.
 
 ---
 

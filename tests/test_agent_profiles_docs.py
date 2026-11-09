@@ -30,10 +30,15 @@ def _section(name: str) -> str:
 @pytest.mark.parametrize("name", HEADINGS)
 def test_happy_every_preset_is_in_the_table_with_its_categories(name):
     section = _section(name)
+    # The German guide names a preset as the German window shows it
+    # (ui.agent_profile_dialog.profile_label, review round 6).
+    german = (json.loads((ROOT / "resources/i18n/de.json").read_text(encoding="utf-8"))
+              if name.endswith("_de.md") else {})
     for preset in AP.presets():
+        shown = german.get(preset.name, preset.name)
         row = next((line for line in section.splitlines()
-                    if line.startswith(f"| {preset.name} |")), None)
-        assert row is not None, preset.name
+                    if line.startswith(f"| {shown} |")), None)
+        assert row is not None, shown
         for category in preset.mcp_categories:
             assert f"*{category}*" in row, (preset.name, category)
         for server in preset.mcp_servers:
@@ -74,7 +79,9 @@ def test_happy_the_menu_entries_and_the_store_are_named_as_on_screen(name):
 @pytest.mark.parametrize("name", HEADINGS)
 def test_sad_no_preset_or_category_is_named_that_the_code_does_not_have(name):
     section = _section(name)
-    names = {p.name for p in AP.presets()}
+    german = (json.loads((ROOT / "resources/i18n/de.json").read_text(encoding="utf-8"))
+              if name.endswith("_de.md") else {})
+    names = {german.get(p.name, p.name) for p in AP.presets()}
     rows = [line.split("|")[1].strip() for line in section.splitlines()
             if line.startswith("| ") and not line.startswith("| Preset")]
     assert set(rows) == names

@@ -94,7 +94,11 @@ def test_sad_a_planted_entry_replacing_a_real_one_is_never_run(tmp_path):
 def test_sad_the_cache_folder_is_a_protected_place(own_home, tmp_path, rel):
     for base in (own_home / ".cache" / "axross", tmp_path / "cache" / "axross"):
         assert P.refusal(str(base / rel)), base / rel
-    assert P.refusal(str(own_home / ".cache" / "pip" / "x")) is None  # other caches are not
+    # Other caches: refused by default-deny since round 6 (a hidden folder of
+    # the home), not as axross's cache - a grant of the folder lifts it.
+    pip = own_home / ".cache" / "pip"
+    assert "unless that folder is granted" in P.refusal(str(pip / "x"))
+    assert P.refusal(str(pip / "x"), granted=[str(pip)]) is None
 
 
 def test_sad_the_cache_secret_is_a_secret_and_protected(own_home):

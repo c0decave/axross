@@ -57,9 +57,11 @@ class VideoError(Exception):
         if self.kind == "unpublished":
             return tr("This tour video is not published yet.")
         if self.kind == "network":
-            from core.user_errors import describe
-
-            return describe(self.cause or self)
+            # Not core.user_errors' sentence about a host name and DNS
+            # (UX review round 6): the user asked for a video, not a host.
+            # The technical cause is in the log.
+            return tr("The video could not be loaded from GitHub: this computer seems to "
+                      "be offline, or GitHub cannot be reached. Try again later.")
         if self.kind == "checksum":
             return tr("The downloaded video does not match the checksum axross expects, so "
                       "it was not kept. Try again later.")

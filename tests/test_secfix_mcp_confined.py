@@ -140,7 +140,7 @@ def test_sad_write_file_through_a_swapped_folder_does_not_create_bash_profile(
 @pytest.mark.parametrize("tool, args, after_check", [
     ("mkdir", lambda w: {"path": f"{w}/made"}, None),
     ("remove", lambda w: {"path": f"{w}/victim.txt"}, None),
-    ("chmod", lambda w: {"path": f"{w}/victim.txt", "mode": "777"}, None),
+    ("chmod", lambda w: {"path": f"{w}/victim.txt", "mode": "700"}, None),  # allowed (round 6)
     ("rename", lambda w: {"src": f"{w}/../w1.keep", "dst": f"{w}/moved.txt"},
      "rename destination"),
     ("copy", lambda w: {"src": f"{w}/../w1.keep", "dst": f"{w}/copied.txt"}, None),

@@ -80,7 +80,10 @@ def test_sad_offline_gets_the_network_sentence(lang, cache, monkeypatch):
     assert error.kind == "network"
     text = error.user_text()
     assert "Errno" not in text and "cannot reach" not in text
-    assert "DNS" in text
+    # Round 6: about the video and GitHub, not a host name and DNS.
+    assert "GitHub" in text and "DNS" not in text
+    assert text.startswith("Das Video ließ sich nicht von GitHub laden" if lang == "de"
+                           else "The video could not be loaded from GitHub")
 
 
 def test_sad_other_errors_are_generic_with_the_detail(lang, cache, monkeypatch):

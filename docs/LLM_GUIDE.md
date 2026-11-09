@@ -874,7 +874,7 @@ Needs: `--mcp-tools transfer` `--mcp-write` `--mcp-root DIR`.
 | `PermissionError` | `OSError` | A refusal: the server denied access, remove() or trash() was called without confirm=True, or the security mode blocks the feature. | Do not route around it. confirm=True is for deletes the operator asked for. |
 | `NonInteractiveError` | `PermissionError` | The call needs a human and none can answer: confirm() without assume_yes=True, or a change on a production profile. | Pass assume_yes=True only for what the operator asked for; production changes need the operator. |
 | `KeyError` | `LookupError` | open() got a profile name that is not saved, or docs() an unknown topic. | list_profiles() gives the saved names. |
-| `TypeError` | `Exception` | The session is the wrong kind for the helper (exec() on S3, query() on a session that is no database) or an argument has the wrong type. | Check the session's protocol and the signature. |
+| `TypeError` | `Exception` | The session is the wrong kind for the helper (exec() on S3, query() on a session that is not a database) or an argument has the wrong type. | Check the session's protocol and the signature. |
 | `ValueError` | `Exception` | An argument value is invalid: an unknown URL scheme, a port out of range, a script name outside [A-Za-z0-9_-], an unknown mode or format. | Fix the argument; the message names it. |
 | `KeyboardInterrupt` | `BaseException` | Someone stopped the production countdown before a change. | Do not repeat the change. |
 

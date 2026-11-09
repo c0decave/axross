@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import binascii
 import codecs
+import contextlib
 import errno
 import hashlib
 import logging
@@ -177,6 +178,32 @@ def _probe_capabilities(exec_fn: Callable[[str, float], tuple[str, int]]) -> _Ca
 # SCP protocol (scp -f / scp -t) for shells without cat and base64
 # ---------------------------------------------------------------------------
 _SCP_LINE_MAX = 4096
+
+
+@contextlib.contextmanager
+def _closed_on_cancel(channel):
+    """In a running transfer: close *channel* the moment Cancel is pressed
+    (core.transfer_hooks.CancelWatch) - a ``recv``/``sendall`` blocked on a
+    silent network wakes at once instead of after the channel time-out -
+    and raise InterruptedError for whatever the closed channel caused (a
+    short stream, "Socket is closed", exit status -1)."""
+    try:
+        watch = transfer_hooks.watch_cancel(lambda: channel.close())
+    except InterruptedError:
+        channel.close()  # cancelled already: the command is not run on
+        raise
+    try:
+        yield
+    except BaseException as exc:
+        if watch is not None and watch.fired and not isinstance(exc, InterruptedError):
+            raise InterruptedError(transfer_hooks.CANCELLED) from exc
+        raise
+    else:
+        if watch is not None and watch.fired:
+            raise InterruptedError(transfer_hooks.CANCELLED)
+    finally:
+        if watch is not None:
+            watch.stop()
 
 
 def _scp_read_line(chan) -> bytes:
@@ -612,21 +639,27 @@ class SCPSession(SessionLifecycle):
                     timeout=timeout,
                 )
                 channel = stdin.channel
-                if stdin_data is not None:
-                    for chunk in _chunks(stdin_data):
-                        stdin.channel.sendall(chunk)
-                    stdin.channel.shutdown_write()
-                out_bytes = _read_limited_stream(
-                    stdout,
-                    COMMAND_STDOUT_CAP,
-                    "SCP command stdout",
+                watched = (
+                    _closed_on_cancel(channel)
+                    if stdin_data is not None
+                    else contextlib.nullcontext()
                 )
-                err_bytes = _read_limited_stream(
-                    stderr,
-                    COMMAND_STDERR_CAP,
-                    "SCP command stderr",
-                )
-                exit_code = stdout.channel.recv_exit_status()
+                with watched:
+                    if stdin_data is not None:
+                        for chunk in _chunks(stdin_data):
+                            stdin.channel.sendall(chunk)
+                        stdin.channel.shutdown_write()
+                    out_bytes = _read_limited_stream(
+                        stdout,
+                        COMMAND_STDOUT_CAP,
+                        "SCP command stdout",
+                    )
+                    err_bytes = _read_limited_stream(
+                        stderr,
+                        COMMAND_STDERR_CAP,
+                        "SCP command stderr",
+                    )
+                    exit_code = stdout.channel.recv_exit_status()
                 if exit_code != 0 and err_bytes:
                     out_bytes += b"\n" + err_bytes
                 out = out_bytes.decode("utf-8", errors="replace")
@@ -1001,25 +1034,28 @@ class SCPSession(SessionLifecycle):
                         cmd, timeout=TRANSFER_TIMEOUT
                     )
                     channel = stdout.channel
-                    stdin.channel.shutdown_write()
-                    carry = b""
-                    while True:
-                        if hooks is not None:
-                            hooks.received(spool.tell())
-                        chunk = stdout.read(_READ_CHUNK)
-                        if not chunk:
-                            break
-                        if not use_base64:
-                            spool.write(chunk)
-                            continue
-                        text = carry + b"".join(chunk.split())
-                        whole = len(text) - len(text) % 4
-                        spool.write(base64.b64decode(text[:whole], validate=True))
-                        carry = text[whole:]
-                    err = _read_limited_stream(stderr, COMMAND_STDERR_CAP, "SCP command stderr")
-                    # -1: the channel closed without an exit status, i.e.
-                    # the stream was cut - never a complete file.
-                    code = stdout.channel.recv_exit_status()
+                    with _closed_on_cancel(channel):
+                        stdin.channel.shutdown_write()
+                        carry = b""
+                        while True:
+                            if hooks is not None:
+                                hooks.received(spool.tell())
+                            chunk = stdout.read(_READ_CHUNK)
+                            if not chunk:
+                                break
+                            if not use_base64:
+                                spool.write(chunk)
+                                continue
+                            text = carry + b"".join(chunk.split())
+                            whole = len(text) - len(text) % 4
+                            spool.write(base64.b64decode(text[:whole], validate=True))
+                            carry = text[whole:]
+                        err = _read_limited_stream(
+                            stderr, COMMAND_STDERR_CAP, "SCP command stderr"
+                        )
+                        # -1: the channel closed without an exit status, i.e.
+                        # the stream was cut - never a complete file.
+                        code = stdout.channel.recv_exit_status()
                 except InterruptedError:
                     if channel is not None:
                         channel.close()  # the remote cat stops on the closed channel
@@ -1060,39 +1096,40 @@ class SCPSession(SessionLifecycle):
         try:
             with self._lock:
                 chan = self._scp_channel(f"scp -f {shell_path(path)}")
-                try:
-                    chan.sendall(b"\0")
-                    header = _scp_read_line(chan)
-                    if header[:1] in (b"\1", b"\2"):
-                        _scp_raise(path, header[1:])
-                    if not header.startswith(b"C"):
-                        raise OSError(f"Cannot read {path}: not a regular file over SCP")
+                with _closed_on_cancel(chan):
                     try:
-                        size = int(header.split(b" ", 2)[1])
-                    except (IndexError, ValueError):
-                        raise OSError(f"Cannot read {path}: bad SCP header {header[:80]!r}")
-                    chan.sendall(b"\0")
-                    left = size
-                    hooks = transfer_hooks.current()
-                    while left:
-                        if hooks is not None:
-                            hooks.received(size - left, size)
-                        chunk = chan.recv(min(_READ_CHUNK, left))
-                        if not chunk:
-                            raise OSError(
-                                f"Cannot read {path}: the SCP stream ended after "
-                                f"{size - left} of {size} bytes"
-                            )
-                        spool.write(chunk)
-                        left -= len(chunk)
-                    _scp_status(chan, path)
-                    chan.sendall(b"\0")
-                except (paramiko.SSHException, socket.error) as exc:
-                    if isinstance(exc, FileNotFoundError | PermissionError | InterruptedError):
-                        raise
-                    raise OSError(f"Cannot read {path}: {exc}") from exc
-                finally:
-                    chan.close()
+                        chan.sendall(b"\0")
+                        header = _scp_read_line(chan)
+                        if header[:1] in (b"\1", b"\2"):
+                            _scp_raise(path, header[1:])
+                        if not header.startswith(b"C"):
+                            raise OSError(f"Cannot read {path}: not a regular file over SCP")
+                        try:
+                            size = int(header.split(b" ", 2)[1])
+                        except (IndexError, ValueError):
+                            raise OSError(f"Cannot read {path}: bad SCP header {header[:80]!r}")
+                        chan.sendall(b"\0")
+                        left = size
+                        hooks = transfer_hooks.current()
+                        while left:
+                            if hooks is not None:
+                                hooks.received(size - left, size)
+                            chunk = chan.recv(min(_READ_CHUNK, left))
+                            if not chunk:
+                                raise OSError(
+                                    f"Cannot read {path}: the SCP stream ended after "
+                                    f"{size - left} of {size} bytes"
+                                )
+                            spool.write(chunk)
+                            left -= len(chunk)
+                        _scp_status(chan, path)
+                        chan.sendall(b"\0")
+                    except (paramiko.SSHException, socket.error) as exc:
+                        if isinstance(exc, FileNotFoundError | PermissionError | InterruptedError):
+                            raise
+                        raise OSError(f"Cannot read {path}: {exc}") from exc
+                    finally:
+                        chan.close()
         except BaseException:
             spool.close()
             raise
@@ -1109,26 +1146,27 @@ class SCPSession(SessionLifecycle):
             raise ConnectionError("Not connected")
         with self._lock:
             chan = self._scp_channel(f"scp -t {shell_path(path)}")
-            try:
-                _scp_status(chan, path)
-                if isinstance(data, bytes):
-                    size = len(data)
-                else:
-                    size = data.seek(0, os.SEEK_END)
-                    data.seek(0)
-                chan.sendall(b"C0644 %d %s\n" % (size, name.encode("utf-8")))
-                _scp_status(chan, path)
-                for chunk in _chunks(data):
-                    chan.sendall(chunk)
-                chan.sendall(b"\0")
-                _scp_status(chan, path)
-                chan.shutdown_write()
-            except (paramiko.SSHException, socket.error) as exc:
-                if isinstance(exc, FileNotFoundError | PermissionError | InterruptedError):
-                    raise
-                raise OSError(f"Cannot write {path}: {exc}") from exc
-            finally:
-                chan.close()
+            with _closed_on_cancel(chan):
+                try:
+                    _scp_status(chan, path)
+                    if isinstance(data, bytes):
+                        size = len(data)
+                    else:
+                        size = data.seek(0, os.SEEK_END)
+                        data.seek(0)
+                    chan.sendall(b"C0644 %d %s\n" % (size, name.encode("utf-8")))
+                    _scp_status(chan, path)
+                    for chunk in _chunks(data):
+                        chan.sendall(chunk)
+                    chan.sendall(b"\0")
+                    _scp_status(chan, path)
+                    chan.shutdown_write()
+                except (paramiko.SSHException, socket.error) as exc:
+                    if isinstance(exc, FileNotFoundError | PermissionError | InterruptedError):
+                        raise
+                    raise OSError(f"Cannot write {path}: {exc}") from exc
+                finally:
+                    chan.close()
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
         if path.endswith("/") and path.strip("/"):

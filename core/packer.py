@@ -519,9 +519,11 @@ def _unique(backend, folder: str, stem: str, suffix: str) -> str:
     return candidate
 
 
-def _place_local(tmp: str, backend, folder: str, stem: str, suffix: str) -> str:
+def _place_local(tmp: str, backend, folder: str, stem: str, suffix: str, check=None) -> str:
     for _attempt in range(100):
         target = _unique(backend, folder, stem, suffix)
+        if check is not None:
+            check(target)
         try:
             os.link(tmp, target)  # fails instead of replacing an existing file
         except FileExistsError:
@@ -536,12 +538,15 @@ def _place_local(tmp: str, backend, folder: str, stem: str, suffix: str) -> str:
     raise PackError("no free archive name")
 
 
-def _place_confined(tmp: str, backend, folder: str, stem: str, suffix: str, cancel) -> str:
+def _place_confined(tmp: str, backend, folder: str, stem: str, suffix: str, cancel,
+                    check=None) -> str:
     """Copy the archive to the first free name, created with O_EXCL beneath
     the confined backend's root (``create_new``): never over a file, never
     through a symlink. A failed copy removes what it wrote."""
     for _attempt in range(100):
         target = _unique(backend, folder, stem, suffix)
+        if check is not None:
+            check(target)
         try:
             dst = backend.create_new(target, 0o600)
         except FileExistsError:
@@ -565,7 +570,8 @@ def _place_confined(tmp: str, backend, folder: str, stem: str, suffix: str, canc
     raise PackError("no free archive name")
 
 
-def _place_remote(tmp: str, backend, folder: str, stem: str, suffix: str, cancel) -> str:
+def _place_remote(tmp: str, backend, folder: str, stem: str, suffix: str, cancel,
+                  check=None) -> str:
     """Upload the archive under a hidden temporary name next to its place,
     then rename it there: a dropped connection leaves no truncated
     ``bundle.zip`` under the final name - at most the hidden part."""
@@ -575,6 +581,8 @@ def _place_remote(tmp: str, backend, folder: str, stem: str, suffix: str, cancel
     from core.server_ops import server_side_move
 
     target = _unique(backend, folder, stem, suffix)
+    if check is not None:
+        check(target)
     name = target.rsplit(backend.separator(), 1)[-1]
     part = backend.join(folder, hidden_sibling_name(name, f".{secrets.token_hex(6)}.part"))
     try:
@@ -607,12 +615,14 @@ def pack(
     progress: Callable[[int, int, str], None] | None = None,
     cancel: threading.Event | None = None,
     refuse: Callable[[str], bool] | None = None,
+    check_target: Callable[[str], None] | None = None,
 ) -> PackResult:
     """Pack *names* (entries of *folder*) into ``folder/archive_name +
     suffix``. *progress(done_files, total_files, name)* runs on the calling
     thread; *cancel* stops at the next file or chunk. *refuse(path)*: true
     for a source (a name, or anything below one) that is left out and
-    listed in ``skipped`` instead."""
+    listed in ``skipped`` instead. *check_target(path)*: run on each name
+    the archive may get before it is made there (raises to refuse it)."""
     fmt = FORMATS[options.fmt]
     ok, reason = fmt.available()
     if not ok:
@@ -668,11 +678,13 @@ def pack(
             raise PackCancelled("cancelled")
         result.bytes_out = os.path.getsize(tmp)
         if local:
-            result.path = _place_local(tmp, backend, folder, stem, fmt.suffix)
+            result.path = _place_local(tmp, backend, folder, stem, fmt.suffix, check_target)
         elif hasattr(backend, "create_new"):
-            result.path = _place_confined(tmp, backend, folder, stem, fmt.suffix, cancel)
+            result.path = _place_confined(tmp, backend, folder, stem, fmt.suffix, cancel,
+                                          check_target)
         else:
-            result.path = _place_remote(tmp, backend, folder, stem, fmt.suffix, cancel)
+            result.path = _place_remote(tmp, backend, folder, stem, fmt.suffix, cancel,
+                                        check_target)
         return result
     except PackError:
         raise

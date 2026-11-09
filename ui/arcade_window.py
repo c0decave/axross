@@ -168,7 +168,7 @@ class LevelSelect(QWidget):
         def open_world():
             w = world_of(self.code.text())
             if w is None:
-                self.message.setText(tr("That is no world code."))
+                self.message.setText(tr("That is not a world code."))
                 return
             start(kind, w * levels_per_world + 1)
         go.clicked.connect(open_world)

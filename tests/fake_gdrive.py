@@ -129,6 +129,9 @@ class FakeDrive:
         self.export_calls = []
         self.export_limit = 10 * 1024 * 1024
         self._tokens = {}
+        # Every page token is new: "t{len(_tokens)}" gave page 3 the token
+        # of page 2 once page 2's was used (popped).
+        self._token_seq = itertools.count()
 
     def files(self):
         return _Files(self)
@@ -169,7 +172,7 @@ class FakeDrive:
             hits.append(self._meta(it))
         if want is not None and self.empty_first_page > 0:
             self.empty_first_page -= 1
-            tok = f"t{len(self._tokens)}"
+            tok = f"t{next(self._token_seq)}"
             self._tokens[tok] = hits
             return {"files": [], "nextPageToken": tok}
         return self._page(hits, page_size)
@@ -178,7 +181,7 @@ class FakeDrive:
         head, rest = hits[:size], hits[size:]
         out = {"files": head}
         if rest:
-            tok = f"t{len(self._tokens)}"
+            tok = f"t{next(self._token_seq)}"
             self._tokens[tok] = rest
             out["nextPageToken"] = tok
         return out
@@ -215,6 +218,8 @@ class FakeDrive:
             it["data"] = self._media_bytes(media)
         if "name" in body:
             it["name"] = body["name"]
+        if "trashed" in body:
+            it["trashed"] = bool(body["trashed"])
         if add:
             it["parents"].append(add)
         if remove:

@@ -140,7 +140,7 @@ class CompareDeleteAsyncTest(_Base):
         warning.assert_not_called()
         self.assertFalse((self.left_dir / "a.txt").exists())
         self.assertFalse((self.left_dir / "b.txt").exists())
-        self.assertIn("Deleted 2 of 2", self.left._status.text())
+        self.assertIn("2 items deleted", self.left._status.text())
         self.assertEqual(self.errors, [])
 
     def test_sad_a_failing_entry_is_reported_and_the_others_go(self) -> None:
@@ -244,8 +244,8 @@ class CompareDeleteAsyncTest(_Base):
         warning.assert_not_called()
         self.assertEqual(sorted(os.listdir(self.left_dir)), [])
         self.assertEqual(sorted(os.listdir(self.right_dir)), [])
-        self.assertIn("Deleted 5 of 5", self.left._status.text())
-        self.assertIn("Deleted 1 of 1", self.right._status.text())
+        self.assertIn("5 items deleted", self.left._status.text())
+        self.assertIn("1 item deleted", self.right._status.text())
         self.assertEqual(self.errors, [])
 
 

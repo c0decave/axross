@@ -23,6 +23,15 @@ PAGE = 2
 _rev = itertools.count(0x100000000)
 
 
+def _content_hash(data: bytes) -> str:
+    """Dropbox's content_hash: SHA-256 of the SHA-256 digests of the 4 MiB
+    blocks (as the service computes it)."""
+    outer = hashlib.sha256()
+    for i in range(0, len(data), 4 * 1024 * 1024):
+        outer.update(hashlib.sha256(data[i : i + 4 * 1024 * 1024]).digest())
+    return outer.hexdigest()
+
+
 def _err(e):
     return ApiError("req", e, None, None)
 
@@ -61,7 +70,7 @@ class FakeDropbox:
             name=name, id="id:" + low, path_lower=low, path_display=n["display"],
             client_modified=n["mtime"], server_modified=n["mtime"],
             rev=f"{n['rev']:x}", size=len(n["data"]),
-            content_hash=hashlib.sha256(n["data"]).hexdigest(), is_downloadable=True,
+            content_hash=_content_hash(n["data"]), is_downloadable=True,
         )
 
     def _lookup_error(self, low):

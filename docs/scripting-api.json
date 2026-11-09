@@ -133,7 +133,7 @@
     {
       "name": "TypeError",
       "base": "Exception",
-      "meaning": "The session is the wrong kind for the helper (exec() on S3, query() on a session that is no database) or an argument has the wrong type.",
+      "meaning": "The session is the wrong kind for the helper (exec() on S3, query() on a session that is not a database) or an argument has the wrong type.",
       "action": "Check the session's protocol and the signature."
     },
     {

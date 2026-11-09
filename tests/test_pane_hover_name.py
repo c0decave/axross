@@ -71,11 +71,12 @@ class HoverNameTest(unittest.TestCase):
         self.assertNotIn("<b>", tip)
         self.assertIn("&lt;b&gt;bold&lt;u&gt;.txt", tip)
 
-    def test_the_parent_entry_has_no_tooltip(self) -> None:
+    def test_the_parent_entry_says_what_it_is_not_a_name(self) -> None:
+        # Round 6: "." and ".." say what they are (no name box for them).
         proxy = self.pane._proxy
         for r in range(proxy.rowCount()):
             if proxy.data(proxy.index(r, 0)) == "..":
-                self.assertIsNone(self._tip(proxy.index(r, 0)))
+                self.assertEqual(self._tip(proxy.index(r, 0)), "The parent folder")
 
     def test_hovering_the_row_pops_the_box_up(self) -> None:
         from PyQt6.QtCore import QEvent, QPoint

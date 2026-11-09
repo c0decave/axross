@@ -54,7 +54,7 @@ def _addresses(label: str, values) -> list[str]:
     out = []
     for name, addr in getaddresses([_one_line(label, v) for v in values or []]):
         if not addr or "@" not in addr or any(c in addr for c in " <>,;\"\\"):
-            raise ValueError(f"{label}: {addr or name!r} is no e-mail address")
+            raise ValueError(f"{label}: {addr or name!r} is not an e-mail address")
         out.append(formataddr((name, addr)) if name else addr)
     return out
 

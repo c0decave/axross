@@ -177,7 +177,7 @@ class DeleteInBackgroundTest(_Base):
         self.assertFalse((self.root / "a.txt").exists())
         self.assertNotIn("a.txt", self.names())  # the listing was reloaded
         self.assertFalse(self.pane._cancel_delete_btn.isVisible())
-        self.assertIn("Deleted 1", self.pane._status.text())
+        self.assertIn("1 item deleted", self.pane._status.text())
 
     def test_happy_the_check_before_the_question_runs_in_the_background(self) -> None:
         gate = self.fs.hold(str(self.root / "plain"))
@@ -441,19 +441,20 @@ class HiddenEntriesConfirmTest(_Base):
         self.assertEqual(warning.call_args[0][4], QMessageBox.StandardButton.No)
         self.assertTrue((self.root / "plain").exists())
 
-    def test_happy_move_to_trash_asks_the_same_second_question(self) -> None:
+    def test_happy_move_to_trash_asks_once_for_a_folder_with_hidden_entries(self) -> None:
+        """Round 6 (L6): the trash keeps the hidden entries too and Undo
+        brings them back - one question, which counts them, is enough."""
         from PyQt6.QtWidgets import QMessageBox
 
         self.select("dotted")
-        with mock.patch("core.trash.trash") as trash, self.question(), self.warning(
-            QMessageBox.StandardButton.No
-        ) as warning:
+        with mock.patch("core.trash.trash") as trash, self.question() as question, \
+                self.warning(QMessageBox.StandardButton.No) as warning:
             self.pane._trash_selected()
             self.assertTrue(self.idle())
-        warning.assert_called_once()
-        self.assertIn("2 hidden", warning.call_args[0][2])
-        self.assertIn("trash", warning.call_args[0][2])
-        trash.assert_not_called()
+        question.assert_called_once()
+        self.assertIn("hidden", question.call_args[0][2])
+        warning.assert_not_called()
+        trash.assert_called_once()
 
     def test_happy_move_to_trash_runs_in_the_background(self) -> None:
         from PyQt6.QtCore import QTimer
@@ -481,7 +482,7 @@ class HiddenEntriesConfirmTest(_Base):
             gate.set()
             self.assertTrue(self.idle())
         self.assertEqual(moved, [str(self.root / "a.txt")])
-        self.assertIn("Moved 1", self.pane._status.text())
+        self.assertIn("1 item moved to the trash", self.pane._status.text())
 
 
 if __name__ == "__main__":

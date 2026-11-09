@@ -50,7 +50,9 @@ import logging
 import os
 import posixpath
 import re
+import socket
 import tempfile
+import time
 from datetime import datetime
 from typing import IO
 
@@ -66,6 +68,74 @@ try:
 except ImportError:
     tftpy = None  # type: ignore[assignment]
     TFTPY_AVAILABLE = False
+
+
+class _TidFilter:
+    """A tftpy context's UDP socket that hands it only packets from the
+    transfer's peer.
+
+    tftpy's ``TftpContext.cycle`` logs "Discarding" for a packet from
+    another host or from a port other than the transfer ID (RFC 1350 4)
+    - and then processes it all the same: anyone who can send UDP to the
+    client's port could put a block of their own into a download
+    (firmware). Here such a packet is dropped and the wait goes on for
+    what is left of the timeout. Before the server's first answer fixes
+    the TID any port of the server's address is taken, as the RFC says.
+    """
+
+    def __init__(self, sock, context) -> None:
+        self._sock = sock
+        self._context = context
+
+    def recvfrom(self, size: int, *args):
+        sock, context = self._sock, self._context
+        timeout = sock.gettimeout()
+        deadline = None if timeout is None else time.monotonic() + timeout
+        try:
+            while True:
+                buffer, peer = sock.recvfrom(size, *args)
+                host, port = peer[0], peer[1]
+                tid = context.tidport
+                if host == context.address and (not tid or port == tid):
+                    return buffer, peer
+                log.warning(
+                    "TFTP: dropped a packet from %s:%s; the transfer is with %s:%s",
+                    host, port, context.address, tid or context.port,
+                )
+                if deadline is not None:
+                    left = deadline - time.monotonic()
+                    if left <= 0:
+                        raise socket.timeout("timed out")
+                    sock.settimeout(left)
+        finally:
+            if sock.gettimeout() != timeout:
+                sock.settimeout(timeout)
+
+    def __getattr__(self, name):
+        return getattr(self._sock, name)
+
+
+def _install_tid_guard() -> None:
+    """Make every tftpy context receive through :class:`_TidFilter`
+    (idempotent; tftpy creates its socket in the context's __init__)."""
+    import tftpy.TftpContexts as contexts
+
+    base = contexts.TftpContext
+    if getattr(base.cycle, "_axross_tid_guard", False):
+        return
+    original = base.cycle
+
+    def cycle(self):
+        if not isinstance(self.sock, _TidFilter):
+            self.sock = _TidFilter(self.sock, self)
+        return original(self)
+
+    cycle._axross_tid_guard = True  # type: ignore[attr-defined]
+    base.cycle = cycle
+
+
+if TFTPY_AVAILABLE:
+    _install_tid_guard()
 
 
 # Default per-transfer cap. Classic TFTP without ``blksize`` blows

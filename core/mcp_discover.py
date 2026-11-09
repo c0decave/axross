@@ -294,6 +294,34 @@ def name_core(text: str) -> str:
     return core
 
 
+def _location(entry) -> tuple[str, str, str]:
+    """``(repository, path, leaf)`` of a listed server's GitHub link: the
+    folder *path* below the repository's ref ("" for its root) and the
+    name the server goes by (that folder's last part or the repository's
+    name); ``("", "", "")`` without a GitHub repository."""
+    repo, folder = github_location(entry.repository)
+    if not repo:
+        return "", "", ""
+    path = folder.split("/", 2)[2] if folder else ""
+    leaf = folder.rsplit("/", 1)[-1] if folder else repo.rsplit("/", 1)[-1]
+    return repo, path, leaf
+
+
+_HUB_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}")
+
+
+def _hub_name_fits(name: str, leaf: str, path: str) -> bool:
+    """Whether the Docker Hub image *name* may be the server *leaf* (as
+    :meth:`DiscoverSource._match_hub` ranks them): the same name core, or
+    for a whole repository one containing the other."""
+    if not _HUB_NAME.fullmatch(name):
+        return False
+    term, core = name_core(leaf), name_core(name)
+    if len(term) < 2:
+        return False
+    return core == term or (not path and len(core) >= 3 and (term in core or core in term))
+
+
 # -- the cache -------------------------------------------------------------------------------
 
 
@@ -533,12 +561,25 @@ class DiscoverSource(M.Source):
         note = M.clean_text(record.get("note"), 500)
         if record["xref"] == "link":
             return dataclasses.replace(entry, xref="link", why_not=LINK_ONLY, notes=note)
+        # The cache file is only a cache: a verdict in it is taken only for
+        # the server it was made for - the registry item must name the
+        # entry's own repository (and folder), the Docker Hub image the
+        # entry's name - else a planted crossref.json would make a listed
+        # server install another package.
+        repo, path, leaf = _location(entry)
+        if not repo:
+            return entry
         if record["xref"] == "mcpregistry":
-            found = M.entry_from_registry(record.get("item"))
+            item = record.get("item")
+            match = self._match_registry([item], repo, path) if isinstance(item, dict) else None
+            found = match[0] if match is not None else None
         else:
             name = record.get("hub")
-            found = self._hub._entry({"name": name}) if isinstance(name, str) else None
+            found = (self._hub._entry({"name": name})
+                     if isinstance(name, str) and _hub_name_fits(name, leaf, path) else None)
         if found is None or not found.installable:
+            log.info("mcp discover: the cached cross-reference of %s does not fit it - ignored",
+                     entry.id)
             return entry
         return self._installable(entry, found, record["xref"])
 
@@ -603,11 +644,9 @@ class DiscoverSource(M.Source):
         found, _ = self._hub._search(term, cancel)
         ranked = []
         for entry in found:
-            core = name_core(entry.identifier.rsplit("/", 1)[-1])
-            if core == term:
-                ranked.append((0, entry))
-            elif not path and len(core) >= 3 and (term in core or core in term):
-                ranked.append((1, entry))
+            name = entry.identifier.rsplit("/", 1)[-1]
+            if _hub_name_fits(name, leaf, path):
+                ranked.append((0 if name_core(name) == term else 1, entry))
         for _rank, entry in sorted(ranked, key=lambda r: r[0])[:3]:
             if cancel is not None and cancel.is_set():
                 raise M.CatalogError("cancelled")
@@ -629,12 +668,10 @@ class DiscoverSource(M.Source):
         applied = self.apply_verdict(entry)
         if applied.xref in ("link", "mcpregistry", "dockerhub") and applied is not entry:
             return applied
-        repo, folder = github_location(entry.repository)
+        repo, path, leaf = _location(entry)
         if not repo:
             return dataclasses.replace(entry, xref="link", why_not=LINK_ONLY)
         owner, name = repo.rsplit("/", 2)[-2:]
-        path = folder.split("/", 2)[2] if folder else ""
-        leaf = folder.rsplit("/", 1)[-1] if folder else name
         errors: list[str] = []
         note = ""
         try:
