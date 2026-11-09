@@ -182,8 +182,12 @@ def _settings(*servers):
     return s
 
 
-DOC_FILES = {"USAGE.md": "**Files read-only**", "USAGE_de.md": "**Files read-only**",
+DOC_FILES = {"USAGE.md": "**Files read-only**", "USAGE_de.md": "**Dateien schreibgeschützt**",
              "USAGE_es.md": "**Files read-only**"}
+#: The "Every call asks" setting as each handbook names it (the German one
+#: uses the label the German interface shows).
+EVERY_CALL_ASKS = {"USAGE.md": "Every call asks", "USAGE_de.md": "Jeder Aufruf fragt",
+                   "USAGE_es.md": "Every call asks"}
 
 
 @pytest.mark.parametrize("name", DOC_FILES)
@@ -192,7 +196,7 @@ def test_happy_each_handbook_explains_the_precise_rule(name):
     text = (root / "docs" / name).read_text(encoding="utf-8")
     start = text.index(DOC_FILES[name])
     paragraph = " ".join(text[start:text.index("\n\n", start)].split())
-    for needle in ("`--network=none`", "`:ro`", "Every call asks"):
+    for needle in ("`--network=none`", "`:ro`", EVERY_CALL_ASKS[name]):
         assert needle in paragraph, (name, needle)
     table = next(line for line in text.splitlines() if line.startswith("| Research |"))
     assert "read-only" not in table or "not" in table.lower() or "nicht" in table \

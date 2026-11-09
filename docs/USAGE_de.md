@@ -1616,7 +1616,7 @@ Eingebaute **Presets** (read-only, markiert *(Preset)*; *Kopieren* macht ein
 | Network & Web Recon | Kategorien *Security: Network Recon*, *Security: Web*, *Security: OSINT*; Mode Ask |
 | Code & Secrets | Server *git* und *filesystem*, Kategorie *Security: Code & Secrets* |
 | Remote Ops | Remote Files, Saved Connections, Remote Commands (jedes fragt); Mode Ask |
-| Research | Server *fetch*, *memory*, *sequentialthinking*; nicht Files read-only (fetch braucht Netzwerk), *Änderungen an Dateien erlauben* aus |
+| Research | Server *fetch*, *memory*, *sequentialthinking*; nicht *Dateien schreibgeschützt* (fetch braucht Netzwerk), *Änderungen an Dateien erlauben* aus |
 
 Ein Preset, dessen Server nicht installiert sind, richtet den Rest des
 Tabs trotzdem ein. Agent-Einstellungen → **Profile** bearbeitet die eigenen

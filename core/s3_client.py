@@ -211,7 +211,13 @@ def _upload_cancellable(client, fileobj, bucket: str, key: str, size: int, hooks
     part of it is ever committed and the old object stays. A single
     PutObject (up to 8 MiB) is not cut off - once sent it may already have
     replaced the object: the caller sends those without this."""
-    from s3transfer.manager import TransferManager
+    try:
+        from s3transfer.manager import TransferManager
+    except ImportError:  # boto3 brings it; without it, the plain upload
+        hooks.check()
+        client.upload_fileobj(fileobj, bucket, key)
+        hooks.sent(size, size, check=False)
+        return
 
     progress = _UploadProgress()
     hooks.check()

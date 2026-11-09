@@ -131,7 +131,10 @@ def test_sad_the_static_input_dialogs_show_the_label_as_written(kind):
     }
     seen: list = []
     _answer_static(calls[kind], seen)
-    assert seen, "the dialog never showed"
+    # In one full parallel run the static call returned at once in a worker
+    # (never reproduced alone or pairwise): say what getText was then.
+    assert seen, ("the dialog never showed", QInputDialog.__dict__.get(kind.split("-")[0]),
+                  [type(w).__name__ for w in APP.topLevelWidgets() if w.isVisible()])
     texts = [t for t in seen[0] if t]
     assert any(_rendered(t) == label for t in texts), texts
     assert not any("<img" in t and not t.startswith("<qt") for t in texts), texts

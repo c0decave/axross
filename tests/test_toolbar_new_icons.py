@@ -150,8 +150,13 @@ def test_sad_buttons_without_a_file_pane_do_not_raise(window) -> None:
 def test_edge_no_shortcut_is_bound_twice_with_the_new_buttons(window) -> None:
     from PyQt6.QtGui import QAction
 
+    from PyQt6.QtCore import Qt
+
     owners: dict[str, set[int]] = {}
     for action in window.findChildren(QAction):
+        # The Actions menu's stand-ins only show the key (WidgetShortcut).
+        if action.shortcutContext() == Qt.ShortcutContext.WidgetShortcut:
+            continue
         for seq in action.shortcuts():
             if seq.toString():
                 owners.setdefault(seq.toString(), set()).add(id(action))
