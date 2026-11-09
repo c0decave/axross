@@ -43,11 +43,12 @@ for line in sys.stdin:
 '''
 
 
-@pytest.fixture
 #: Looks like a token to the redaction; built here so no token-shaped
 #: string sits in the source.
 _FAKE_TOKEN = "gh" + "p_" + "abcdefghijklmnop1234"
 
+
+@pytest.fixture
 def state_home(tmp_path, monkeypatch):
     state = tmp_path / "state"
     monkeypatch.setenv("XDG_STATE_HOME", str(state))
