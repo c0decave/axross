@@ -313,6 +313,37 @@ RESOURCE_SCHEME = "axross"
 MAX_RESOURCES_LISTED = 100
 
 
+def _utf8_tail(data: bytes) -> int:
+    """How many bytes at the end of *data* are an unfinished UTF-8 character."""
+    for back in range(1, min(4, len(data)) + 1):
+        byte = data[-back]
+        if byte < 0x80:
+            return 0
+        if byte >= 0xC0:  # a lead byte: how long its character is
+            need = 2 if byte < 0xE0 else 3 if byte < 0xF0 else 4
+            return back if back < need else 0
+    return 0
+
+
+def _skip_stream(fh, count: int) -> None:
+    """Move *count* bytes into a backend stream: a seek where the stream has
+    one, else read and drop (chunk by chunk, never more than one chunk held)."""
+    seek = getattr(fh, "seek", None)
+    seekable = getattr(fh, "seekable", None)
+    try:
+        if callable(seek) and (not callable(seekable) or seekable()):
+            seek(count, 1)
+            return
+    except (OSError, ValueError, AttributeError):
+        pass
+    left = count
+    while left > 0:
+        chunk = fh.read(min(_READ_CHUNK_BYTES, left))
+        if not chunk:
+            return
+        left -= len(chunk)
+
+
 def _read_capped_stream(fh, cap: int) -> tuple[bytes, bool]:
     """Read at most ``cap`` bytes plus one sentinel byte from a backend
     stream. Returns ``(data_at_cap, truncated)``.
@@ -1714,8 +1745,22 @@ def _build_tools(
             raise ValueError("read_file: encoding must be 'base64' or 'text'")
         cap = int(args.get("max_bytes") or MAX_READ_BYTES)
         cap = max(0, min(cap, MAX_READ_BYTES))
+        offset = args.get("offset") or 0
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValueError("read_file: offset must be a whole number >= 0")
         with backend.open_read(path) as fh:
+            if offset:
+                _skip_stream(fh, offset)
             data, truncated = _read_capped_stream(fh, cap)
+        if encoding == "text" and offset:
+            # Started inside a UTF-8 character: begin at the next one.
+            lead = 0
+            while lead < min(3, len(data)) and 0x80 <= data[lead] <= 0xBF:
+                lead += 1
+            data, offset = data[lead:], offset + lead
+        if encoding == "text" and truncated:
+            data = data[:len(data) - _utf8_tail(data)]  # the next read starts with that character
+        extra = {"offset": offset, "next_offset": offset + len(data)} if offset or truncated else {}
         if encoding == "text":
             import codecs
 
@@ -1730,11 +1775,13 @@ def _build_tools(
                 replaced = False
             except UnicodeDecodeError:
                 replaced = True
-            return {"text": text, "size": len(data), "truncated": truncated, "replaced": replaced}
+            return {"text": text, "size": len(data), "truncated": truncated, "replaced": replaced,
+                    **extra}
         return {
             "content_b64": base64.b64encode(data).decode("ascii"),
             "size": len(data),
             "truncated": truncated,
+            **extra,
         }
 
     def _checksum(args, ctx):
@@ -2065,17 +2112,19 @@ def _build_tools(
         _Tool(
             name="read_file",
             description=(
-                "Read up to max_bytes (default 4 MiB) from a file. Returns "
-                "{content_b64, size, truncated} - or with encoding='text' "
-                "{text, size, truncated, replaced}: UTF-8, undecodable bytes "
-                "replaced (replaced=true). truncated=true when the file "
-                "exceeds the cap."
+                "Read up to max_bytes (default 4 MiB) from a file, from byte "
+                "offset on (default 0). Returns {content_b64, size, truncated} - "
+                "or with encoding='text' {text, size, truncated, replaced}: UTF-8, "
+                "undecodable bytes replaced (replaced=true). truncated=true when "
+                "more follows; then next_offset is where to continue (also given "
+                "with an offset)."
             ),
             schema={
                 "type": "object",
                 "properties": {
                     "path": {"type": "string"},
                     "max_bytes": {"type": "integer", "minimum": 0},
+                    "offset": {"type": "integer", "minimum": 0, "default": 0},
                     "encoding": {
                         "type": "string",
                         "enum": ["base64", "text"],

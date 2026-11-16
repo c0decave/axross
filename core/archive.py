@@ -519,7 +519,15 @@ class _Sink:
             fd = os.open(name, flags, dir_fd=pfd)
         except OSError as exc:
             # The folder just made was swapped for a symlink (ELOOP, or
-            # ENOTDIR for one to a file) by another local process.
+            # ENOTDIR for one to a file) by another local process. Take
+            # the planted link away again (only a link: unlink never
+            # follows it), so nothing later walks into the decoy through
+            # the name the user asked for - as the path-based branch does.
+            try:
+                if stat.S_ISLNK(os.stat(name, dir_fd=pfd, follow_symlinks=False).st_mode):
+                    os.unlink(name, dir_fd=pfd)
+            except OSError:
+                pass
             raise UnsafeArchive(
                 f"target directory {target!r} is a symlink — refusing "
                 "to extract into an indirection (likely symlink-swap "

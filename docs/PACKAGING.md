@@ -614,7 +614,7 @@ it).
 
 ```bash
 export GH_HOST=github.com   # gh must talk to github.com, whatever its default host is
-VERSION=0.15.177
+VERSION=0.15.178
 ```
 
 1. **maintainer** - prepare the commit. `axross/_version.py` says
@@ -773,7 +773,7 @@ VERSION=0.15.177
 
 8. **maintainer** - assemble, sign and check the release, with the
    **field key**: a key of `FIELD_KEYS` in `scripts/sign_release.py`, the
-   key the binaries in use pin (for 0.15.177 that is the first key,
+   key the binaries in use pin (for 0.15.178 that is the first key,
    `rJX0yymA5/...`; see "Key rotation" below):
 
    ```bash
@@ -1016,10 +1016,10 @@ it is refused by every installed binary, nothing is replaced:
   the keys of the newest release with binaries).
   **Rotation under way:** 0.15.176 pins both keys and is signed with the
   first one, but it shipped no binaries; every installed binary (0.14.136
-  and older) pins only the first key. So **0.15.177 is signed with the
+  and older) pins only the first key. So **0.15.178 is signed with the
   first key** (`rJX0yymA5/...`, the only entry of `FIELD_KEYS`), pins both
   and carries every binary: it is the release of step (2). The second key
-  signs at the earliest the release after it, once the 0.15.177 binaries
+  signs at the earliest the release after it, once the 0.15.178 binaries
   are in use; a later release then drops the first key.
   **Migration:** binaries of 0.14.50 and older do not check signatures;
   they pick their assets by exact name (`axross-full`, `SHA256SUMS`, ...)

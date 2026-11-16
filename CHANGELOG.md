@@ -4,9 +4,9 @@ What changed in each axross release, for the people who use it. The full
 notes of a release, with every fix, are on its
 [GitHub release page](https://github.com/c0decave/axross/releases).
 
-## 0.15.177 - 2026-11-09
+## 0.15.178 - 2026-11-16
 
-0.15.177 is the first release since 0.14.136 with one-file binaries for
+0.15.178 is the first release since 0.14.136 with one-file binaries for
 Linux, macOS and Windows: installed binaries update to it. Nine rounds of
 reviews of the whole code (backends and transfers, security, the windows,
 the extensions, the entry points, concurrency, the docs against the code)
@@ -18,7 +18,9 @@ the old code.
 - **New since 0.14.136:** Help > Handbook (F1 everywhere) and guided
   Tours with narrated videos in English and German; packs (optional
   features added to a small binary), an axross-base binary and a glibc 2.36
-  build; mail projects and mail docks, chat, Bluetooth; a German interface.
+  build; mail projects and mail docks, chat, Bluetooth; a German interface;
+  a Markdown viewer (F3 on a `.md` file) and a live Markdown preview in the
+  editor.
 - **Safer:** the agent's sandbox and the MCP server keep to their folders
   even against racing symlinks; protected places on Linux, macOS and
   Windows; reverse-serve confined to its folder; hostile file names are
@@ -32,6 +34,19 @@ the old code.
   destroy default to No.
 
 ### Fixed
+
+- **Mail docks:** a reply sent without asking goes only to the sender's
+  *From* address; a *Reply-To* the mail names needs your yes. A mail file
+  whose name starts with a dot is never read as a message.
+- **Agent with LM Studio and other local servers:** a failed request
+  leaves no two user turns in a row (strict chat templates refused the
+  next one), a wrong model name is said, and `read_file` reads a large
+  file to its end in pages (`offset` / `next_offset`, also over MCP).
+- **Archives:** when the folder an archive is extracted into is swapped for
+  a symbolic link during the extraction, the link is removed again (the
+  extraction was already refused).
+- **DFS-N:** an smbclient that cannot turn DFS resolution on is refused
+  with a message that says so.
 
 - **A copy of a local file that got shorter while it was read fails**
   instead of ending "done" with the short file, as a move already did:
@@ -1313,6 +1328,25 @@ the old code.
 
 ### New
 
+- **Markdown viewer.** F3 or a double-click on a `.md` file (local or
+  remote) shows it rendered: GitHub's Markdown with the headings as an
+  outline beside it, footnotes, highlighted code, the images beside the
+  file, find, zoom, Reload and Edit (F4 still edits). Raw HTML is shown as
+  text, nothing is loaded from the network, images are read only next to
+  the file and never from a secret file. In the editor, *View > Markdown
+  Preview* (Ctrl+Shift+M) renders the text beside it as you type. With
+  markdown-it-py installed (axross-markdown brings it) the full set:
+  footnotes, definition lists, front matter, aligned tables, task lists,
+  code coloured by Pygments, colours for light and dark themes.
+- **axross-mdcat** (with axross-markdown): Markdown in the terminal, in
+  colour - tables drawn with box characters, coloured code, hyperlinks
+  (OSC 8), images through kitty's or iTerm2's protocol or in coloured
+  half-blocks, `less -R` for long texts; nothing in a file can send the
+  terminal an escape sequence of its own.
+- **axross-amp and axross-markdown**, programs of their own built from the
+  same code: the Media Player with the Audio Mixer and the Bluetooth
+  connector in one window, and the Markdown viewer (on PyPI and as their
+  own repositories).
 - **Help > Handbook** (F1, opened at the part of the window in use, in every
   window) and **Help > Tours** with six guided tours in English and German.
 - **Help > Tours > Watch Video**: a narrated video of each tour, in English

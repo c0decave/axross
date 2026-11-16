@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSplitter,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -109,7 +110,40 @@ class EditorTab(QWidget):
         self.editor.document().modificationChanged.connect(self.modified_changed.emit)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.editor)
+        # The text and, beside it on request, its Markdown rendering
+        # (set_preview): made only when first shown.
+        self.split = QSplitter(Qt.Orientation.Horizontal)
+        self.split.addWidget(self.editor)
+        layout.addWidget(self.split)
+        self.preview = None
+        self.editor.textChanged.connect(self._text_changed)
+
+    @property
+    def previewing(self) -> bool:
+        return self.preview is not None and not self.preview.isHidden()
+
+    def set_preview(self, on: bool) -> None:
+        """Show (or hide) the text rendered as Markdown beside it, following
+        the typing (ui.markdown_view: no HTML, nothing loaded from the
+        network, images only from beside the file)."""
+        if on and self.preview is None:
+            from ui import markdown_view as MDV
+
+            source = MDV.ImageSource(self.backend, self.path) if self.backend is not None else None
+            self.preview = MDV.MarkdownView(source, outline=False, parent=self)
+            self.preview.link.connect(lambda _url: self.preview.status.setText(
+                tr("Links open in the Markdown viewer (F3 in the pane).")))
+            self.split.addWidget(self.preview)
+            self.split.setSizes([1, 1])
+        if self.preview is None:
+            return
+        self.preview.setHidden(not on)
+        if on:
+            self.preview.render(self.editor.toPlainText())
+
+    def _text_changed(self) -> None:
+        if self.previewing:
+            self.preview.show_later(self.editor.toPlainText())
 
     @property
     def untitled(self) -> bool:
@@ -296,6 +330,8 @@ class EditorWindow(QMainWindow):
         for widget in (self.position_label, self.encoding_label, self.eol_label, self.language_combo):
             self.statusBar().addPermanentWidget(widget)
         self._untitled_count = 0
+        #: Markdown files open with their preview beside them (axross-markdown).
+        self.preview_new_tabs = False
         self._build_menus()
         self._add_corner()
 
@@ -348,6 +384,9 @@ class EditorWindow(QMainWindow):
         self.wrap_action = self._action(view, "&Wrap Lines", lambda on: self._set_wrap(on), checkable=True)
         self._action(view, "Zoom &In", lambda: self._zoom(1), "Ctrl++")
         self._action(view, "Zoom &Out", lambda: self._zoom(-1), "Ctrl+-")
+        view.addSeparator()
+        self.preview_action = self._action(view, "&Markdown Preview", lambda on: self._set_preview(on),
+                                           "Ctrl+Shift+M", checkable=True)
         fmt = bar.addMenu(tr("F&ormat"))
         endings = fmt.addMenu(tr("Line &Endings"))
         for label, newline in (("LF (Unix)", "\n"), ("CRLF (Windows)", "\r\n"), ("CR (old Mac)", "\r")):
@@ -514,7 +553,10 @@ class EditorWindow(QMainWindow):
             else QPlainTextEdit.LineWrapMode.NoWrap)
         index = self.tabs.addTab(tab, "")
         self._update_title(tab)
+        if self.preview_new_tabs and tab.path.lower().endswith((".md", ".markdown", ".mdown", ".mkd")):
+            tab.set_preview(True)
         self.tabs.setCurrentIndex(index)
+        self._update_status()
         tab.editor.setFocus()
         self.opened.emit(tab)
         return tab
@@ -553,6 +595,12 @@ class EditorWindow(QMainWindow):
         self.encoding_label.setText(tab.document.encoding_name)
         self.eol_label.setText(tab.document.newline_name)
         self.language_combo.setCurrentText(tab.editor.language)
+        self.preview_action.setChecked(tab.previewing)
+
+    def _set_preview(self, on: bool) -> None:
+        tab = self.current_tab()
+        if tab is not None:
+            tab.set_preview(on)
 
     def _language_chosen(self) -> None:
         tab = self.current_tab()

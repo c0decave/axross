@@ -766,6 +766,28 @@ eines floating Panels dockt es wieder an.
   rechts in der Menüleiste sitzen Maximize und [x]. Geöffnet werden Dateien bis zum Open-Size-Limit
   (32 MB vorgegeben, *Bearbeiten → Einstellungen… → Dateien & Panes*).
 - **Hex-Editor** – nützlich für Triage auf Remote-Dateien.
+- **Markdown-Viewer** – F3 / Doppelklick auf eine `.md`-, `.markdown`-,
+  `.mdown`- oder `.mkd`-Datei, lokal oder remote (F4 bearbeitet sie
+  weiterhin): GitHubs Markdown (Tabellen, Aufgabenlisten, Durchstreichen,
+  Autolinks, Fußnoten) mit den Überschriften als Gliederung daneben,
+  hervorgehobenem Code, Zoom (Strg +/-/0), Suche (Strg+F, Eingabe oder F3
+  für den nächsten Treffer), Neu laden (F5) und Bearbeiten (F4). Was die
+  Datei enthält, wird gezeigt, nie ausgeführt: rohes HTML erscheint als
+  Text, nichts wird aus dem Netz geladen (ein entferntes Bild ist ein
+  Kasten mit seiner Adresse), Bilder werden nur relativ zur Datei gelesen
+  (kein absoluter Pfad, kein `file:`), nur reguläre Dateien, nie eine
+  geheime Datei, höchstens 8 MiB und 40 Millionen Pixel je Bild und 200
+  pro Datei. Ein Link auf eine andere Markdown-Datei öffnet sie in einem
+  eigenen Viewer; ein Web-Link öffnet sich im Browser erst nach einer
+  Frage, die seine echte Adresse zeigt (im Sicherheitsmodus `paranoid`
+  gar nicht). Im Editor zeigt der Eintrag *Markdown-Preview* seines
+  Menüs *Ansicht* (Strg+Umschalt+M) den Text daneben dargestellt,
+  während man tippt.
+  Mit markdown-it-py (axross-markdown bringt es mit) zeigt der Viewer den
+  vollen Umfang - Fußnoten, Definitionslisten, Front Matter, ausgerichtete
+  Tabellen, von Pygments eingefärbten Code - in Farben für helle und dunkle
+  Themes; ohne es nimmt er Qts eigenes Markdown. Im Terminal zeigt
+  `axross-mdcat DATEI.md` (axross-markdown) dasselbe in Farbe.
 - **Bild-Viewer** – F3 / Doppelklick, MIME-Allowlist, Größen-
   kappen.
 - **PDF** – F3 / Doppelklick öffnet das PDF allein im Media Viewer
@@ -2113,7 +2135,8 @@ Postfachs nie), die **Sende-Regel** und der SMTP-Server.
   (nach 30 Minuten ohne Antwort nicht gesendet).
 - *Dem Absender ohne Nachfrage antworten*: Antworten an den Absender der beantworteten
   Mail (und an die *erlaubten Empfänger*, Adressen oder `@domain`) gehen sofort raus;
-  alle anderen warten auf dein Ja.
+  alle anderen warten auf dein Ja. Der Absender ist die From-Adresse der Mail: ein *Reply-To*,
+  das die Mail nennt, ist jemand anderes und wartet ebenfalls auf dein Ja.
 
 Der Agent eines Docks hat nur die Mail-Werkzeuge (`mail_list_new`, `mail_list`,
 `mail_read`, `mail_analyse`, `mail_draft`, `mail_send`, `dock_report`) und schreibt keine

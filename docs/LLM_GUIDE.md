@@ -300,11 +300,12 @@ Return name, type, size, and mtime for one path.
 
 #### `read_file` — read-only · quick (15 s) · stdio + http · *backend*
 
-Read up to max_bytes (default 4 MiB) from a file. Returns {content_b64, size, truncated} - or with encoding='text' {text, size, truncated, replaced}: UTF-8, undecodable bytes replaced (replaced=true). truncated=true when the file exceeds the cap.
+Read up to max_bytes (default 4 MiB) from a file, from byte offset on (default 0). Returns {content_b64, size, truncated} - or with encoding='text' {text, size, truncated, replaced}: UTF-8, undecodable bytes replaced (replaced=true). truncated=true when more follows; then next_offset is where to continue (also given with an offset).
 
 - `path` (string, required)
 - `encoding` (string, one of `base64`, `text`, default `"base64"`): base64 (exact bytes) or text (UTF-8, for text files).
 - `max_bytes` (integer, >= 0)
+- `offset` (integer, default `0`, >= 0)
 
 #### `checksum` — read-only · stream (300 s) · stdio + http · *backend*
 

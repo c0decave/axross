@@ -125,10 +125,14 @@ def test_happy_a_mail_project_lists_by_score_and_opens_a_read_only_agent_tab(tmp
         def __init__(self):
             self.opened = []
 
-        def new_tab(self, folder, task):
+        def new_tab(self, folder, task, save=True):
             self.opened.append((folder, task))
+            self.saved_at_open = save
             self.tab = Tab()
             return self.tab
+
+        def save_tab(self, tab):
+            self.saved_read_only = tab.session.files_read_only
 
         def show(self):
             pass
@@ -148,6 +152,8 @@ def test_happy_a_mail_project_lists_by_score_and_opens_a_read_only_agent_tab(tmp
     dlg.ask_agent()
     assert agent.opened == [(str(tmp_path / "proj"), ANALYST_PROMPT)]
     assert agent.tab.session.files_read_only is True
+    # stored only once it is read-only: a restart brings it back read-only
+    assert agent.saved_at_open is False and agent.saved_read_only is True
     dlg.search.setText("Lunch")
     assert dlg.table.rowCount() == 1
     dlg.done(0)
@@ -159,7 +165,8 @@ def test_happy_mail_docks_open_from_the_settings_file_and_can_be_removed(tmp_pat
     from ui.mail_docks import MailDocks
 
     store = MD.MailDockStore(tmp_path / "docks.json")
-    a, b = MD.MailDockConfig(name="A"), MD.MailDockConfig(name="B")
+    a = MD.MailDockConfig(name="A", mailbox_profile="p")
+    b = MD.MailDockConfig(name="B", mailbox_profile="p")
     store.save([a, b])
     window = QMainWindow()
     docks = MailDocks(window, store=store, runner_factory=FakeRunner)

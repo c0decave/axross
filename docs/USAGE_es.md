@@ -710,6 +710,27 @@ vuelve a acoplar.
   ventana, y la barra de menús lleva los botones maximize y [x]. Se abren ficheros hasta el límite de
   apertura (32 MB por defecto, *Edit → Settings… → Files & Panes*).
 - **Editor hex** — útil para triage en ficheros remotos.
+- **Visor de Markdown** — F3 / doble-click en un archivo `.md`,
+  `.markdown`, `.mdown` o `.mkd`, local o remoto (F4 lo sigue
+  editando): el Markdown de GitHub (tablas, listas de tareas, tachado,
+  autolinks, notas al pie) con los encabezados como índice al lado,
+  código resaltado, zoom (Ctrl +/-/0), búsqueda (Ctrl+F, Enter o F3 para
+  el siguiente), Recargar (F5) y Editar (F4). Lo que contiene el archivo
+  se muestra, nunca se ejecuta: el HTML se muestra como texto, nada se
+  carga de la red (una imagen remota es un recuadro con su dirección),
+  las imágenes se leen solo relativas al archivo (sin ruta absoluta, sin
+  `file:`), solo archivos regulares, nunca un archivo secreto, como
+  máximo 8 MiB y 40 millones de píxeles cada una y 200 por archivo. Un
+  enlace a otro archivo Markdown lo abre en un visor propio; un enlace
+  web se abre en el navegador solo tras una pregunta que muestra su
+  dirección real (en el modo de seguridad `paranoid`, nunca). En el
+  editor, *Ver → Markdown Preview* (Ctrl+Shift+M) muestra el texto
+  renderizado al lado mientras se escribe.
+  Con markdown-it-py instalado (axross-markdown lo trae), el visor muestra
+  el conjunto completo - notas al pie, listas de definiciones, front matter,
+  tablas alineadas, código coloreado por Pygments - con colores para temas
+  claros y oscuros; sin él usa el Markdown de Qt. En una terminal,
+  `axross-mdcat ARCHIVO.md` (axross-markdown) muestra lo mismo en color.
 - **Visor de imágenes** — F3 / doble-click, allow-list MIME,
   caps de tamaño.
 - **PDF** — F3 / doble-click abre el PDF solo en el media viewer
@@ -2045,7 +2066,8 @@ envío** con el servidor SMTP.
   respuesta en 30 minutos no se envía).
 - *Answer the sender without asking*: la respuesta al remitente del correo contestado (y
   a los *destinatarios permitidos*, direcciones o `@dominio`) sale enseguida; cualquier
-  otro espera tu sí.
+  otro espera tu sí. El remitente es la dirección *From* del correo: un *Reply-To*
+  que nombre el correo es otra persona y también espera tu sí.
 
 El agente de un dock solo tiene las herramientas de correo (`mail_list_new`, `mail_list`,
 `mail_read`, `mail_analyse`, `mail_draft`, `mail_send`, `dock_report`) y no escribe

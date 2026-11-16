@@ -175,6 +175,9 @@ class MailProject:
         """Parse, keep, analyse and index one message; its SHA-256, or None
         when it was already there."""
         msg = parse_any(data, name, source)
+        if msg.kind != "msg" and not msg.headers:
+            # An empty file or random bytes named .eml: no header field at all.
+            raise ValueError("no mail header fields - not a mail message")
         sha = msg.sha256
         with self._lock:
             if self._db.execute("SELECT 1 FROM messages WHERE sha256=?", (sha,)).fetchone():
@@ -443,6 +446,11 @@ def _walk(root: Path):
         return
     if all((root / d).is_dir() for d in ("cur", "new", "tmp")):
         yield "maildir", root
+        with contextlib.suppress(OSError):
+            for child in sorted(root.iterdir()):
+                if child.name.startswith(".") and not child.is_symlink() and child.is_dir() \
+                        and all((child / d).is_dir() for d in ("cur", "new", "tmp")):
+                    yield "maildir", child
         return
     with contextlib.suppress(OSError):
         for child in sorted(root.iterdir()):

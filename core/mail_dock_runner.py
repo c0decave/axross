@@ -60,9 +60,14 @@ class MailDockRunner:
         d = self.dock
         if not d.smtp_host:
             raise OSError("this dock has no SMTP server")
+        from core import proxy_settings
+
+        # axross's default proxy (Settings > Proxy), as mail_send promises; the
+        # settings unreadable: refused (resolve fails closed).
+        proxy = proxy_settings.resolve("default", None, d.smtp_host, int(d.smtp_port), "smtp").config
         return MS.SmtpSettings(host=d.smtp_host, port=int(d.smtp_port), security=d.smtp_security,
                                username=d.smtp_username, password=MD.smtp_password(d),
-                               from_address=d.from_address)
+                               from_address=d.from_address, proxy=proxy)
 
     def close(self) -> None:
         self.cancel.set()
@@ -86,8 +91,13 @@ class MailDockRunner:
         from core import agent as A
 
         self.cancel.clear()
+        where = (self.dock.mailbox_profile, self.dock.folder)
+        if self.backend is not None and getattr(self, "_where", where) != where:
+            self.close()                        # the settings name another mailbox
+            self.cancel.clear()
         if self.backend is None:
             self.backend = self._connect(self.dock)
+            self._where = where
         work = self.state_dir / "work"          # the agent's only folder: empty, read-only
         work.mkdir(parents=True, exist_ok=True)
         mailbox = _ListingMailbox(self.backend, self.dock.folder, self.state_dir / "seen.json")
@@ -123,6 +133,10 @@ class MailDockRunner:
             agent = A.Agent(config, confirm=confirm, on_event=self._on_event, cancel=self.cancel)
         try:
             result = agent.run(task)
+        except BaseException:
+            for note in reports:                # not read: kept for the next run
+                self.bus.post(self.dock.name, note["from"], note["text"])
+            raise
         finally:
             close = getattr(agent, "close", None)
             if callable(close):

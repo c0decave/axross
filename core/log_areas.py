@@ -159,10 +159,12 @@ AREAS: tuple[Area, ...] = (
     Area("media", "Media / Audio / Voice", (
         *_core("audio_eq", "audio_route", "audio_settings", "multimedia_env", "multimedia_probe",
                "media_collect", "media_load", "previews", "svg_worker", "voice_audio", "voice_models",
-               "voice_settings", "voice_stt", "voice_text", "voice_worker", "system_mixer"),
+               "voice_settings", "voice_stt", "voice_text", "voice_worker", "system_mixer",
+               "markdown_doc", "markdown_term", "markdown_cli"),
         *_ui("audio_settings_page", "system_mixer_page", "voice", "voice_lens",
              "voice_settings_page",
-             "media_viewer", "image_viewer"),
+             "media_viewer", "image_viewer", "markdown_view", "markdown_viewer", "markdown_safe",
+             "markdown_html"),
     )),
     Area("update", "Update and packs", (*_core("self_update", "packs", "units"), *_ui("update_ui", "packs_dialog"))),
     Area("security", "Security / Credentials", (
@@ -195,7 +197,7 @@ AREAS: tuple[Area, ...] = (
              "properties_dialog", "scan_job", "settings_dialog", "shortcuts_dialog", "text_editor",
              "themes", "third_party_dialog", "thread_lifetime", "thumbnail_view",
              "toolbar_categories", "toolbar_order", "viewer_file_actions", "viewer_window",
-             "window_dock_bar", "window_move", "window_prefs", "title_bar", "state_files", "standalone_app", "media_player_app", "system_info_app", "workspaces", "dock_bindings",
+             "window_dock_bar", "window_move", "window_prefs", "title_bar", "state_files", "standalone_app", "media_player_app", "system_info_app", "amp_app", "markdown_app", "workspaces", "dock_bindings",
              "screen_fit", "guide_view", "handbook", "tour_engine", "tours"),
         *_models("file_item", "file_table_model", "file_version"),
     )),

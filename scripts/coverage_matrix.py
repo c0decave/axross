@@ -886,11 +886,34 @@ FEATURES: tuple[Feature, ...] = (
     ),
     _f(
         "Viewers & editors",
+        "markdown-viewer",
+        "Markdown viewer and the editor's Markdown preview",
+        [
+            "ui/markdown_view.py",
+            "ui/markdown_viewer.py",
+            "ui/markdown_safe.py",
+            "ui/markdown_app.py",
+            "ui/markdown_html.py",
+            "core/markdown_doc.py",
+            "core/markdown_term.py",
+            "core/markdown_cli.py",
+        ],
+        [
+            (
+                "tests/test_markdown_viewer.py::"
+                "test_happy_the_viewer_renders_outline_footnotes_code_and_images",
+                "ui",
+            )
+        ],
+    ),
+    _f(
+        "Viewers & editors",
         "media-player",
         "Media Player extension",
         [
             "resources/extensions/media_player.py",
             "ui/media_player_app.py",
+            "ui/amp_app.py",
             "core/multimedia_env.py",
             "core/multimedia_probe.py",
         ],

@@ -2612,6 +2612,10 @@ class AgentDock(ExtensionDock):
         tab.input.setFocus()
         return tab
 
+    def save_tab(self, tab: AgentTab) -> None:
+        """Store *tab*'s session now (after a caller changed its settings)."""
+        self._save(tab)
+
     def current_tab(self) -> AgentTab | None:
         widget = self.tabs.currentWidget()
         return widget if isinstance(widget, AgentTab) else None

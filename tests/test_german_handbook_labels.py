@@ -151,13 +151,16 @@ def test_sad_an_english_label_is_reported():
 
 
 def test_sad_the_old_handbook_is_caught():
-    """The handbook of 0.15.177 (before this fix) fails the check."""
-    try:
-        old = subprocess.run(["git", "show", "660a69d:docs/USAGE_de.md"], cwd=ROOT,
-                             capture_output=True, text=True, check=True).stdout
-    except (OSError, subprocess.CalledProcessError):
-        pytest.skip("no git history here")
-    bad = english_labels(old, _catalogue())
+    """A handbook as it was before this fix - German prose naming the
+    English labels of the window - fails the check (built here from the
+    catalogue, so the test needs no git history)."""
+    catalogue = _catalogue()
+    labels = [key for key, german in catalogue.items()
+              if key != german and key.isascii() and " " in key and len(key) < 30
+              and "{" not in key and "&" not in key and key[:1].isalpha()][:150]
+    labels += ["Connect to Server", "Reveal in Pane"]
+    old = "\n\n".join(f"Wähle *{label}*, dann geht es weiter." for label in labels)
+    bad = english_labels(old, catalogue)
     assert len(bad) > 100, bad
     assert "Connect to Server" in bad and "Reveal in Pane" in bad
 

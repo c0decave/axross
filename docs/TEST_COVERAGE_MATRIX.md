@@ -5,9 +5,9 @@ refresh it with the commands under *How to refresh*.
 
 ## Summary
 
-- Main features: **75** (in 10 groups)
-- Features with at least one end-to-end test: **75**; with one that runs on the host (not only in the lab): **71**
-- Features whose tests include happy, sad and edge cases: **75**
+- Main features: **76** (in 10 groups)
+- Features with at least one end-to-end test: **76**; with one that runs on the host (not only in the lab): **72**
+- Features whose tests include happy, sad and edge cases: **76**
 - Measured code (`core/`, `ui/`, `resources/extensions/`, `main.py`): 101911 statements, line coverage **88.8 %**, 30650 branches, branch coverage **81.5 %**
 
 Command that produced the coverage data:
@@ -124,6 +124,7 @@ Lines / branches: coverage of the feature's main modules together. Tests: test f
 | Tabbed text editor (`text-editor`) | 6 | 93.5 % | 85.1 % | 37 | 300 / 243 / 215 | `ui` |
 | Hex editor (`hex-editor`) | 1 | 97.1 % | 85.3 % | 10 | 49 / 33 / 32 | `ui` |
 | Image / PDF / video viewer (`media-viewer`) | 5 | 93.5 % | 82.8 % | 23 | 144 / 107 / 107 | `ui` |
+| Markdown viewer and the editor's Markdown preview (`markdown-viewer`) | 2 | 88.5 % | 72.4 % | 1 | 7 / 3 / 2 | `ui` |
 | Media Player extension (`media-player`) | 3 | 94.5 % | 87.4 % | 40 | 295 / 153 / 217 | `ui` |
 
 ### Mount, serve, shell
@@ -319,6 +320,8 @@ Lines / branches: coverage of the feature's main modules together. Tests: test f
   - `tests/test_hex_editor_matrix.py::test_happy_e2e_type_hex_and_ascii_then_save_writes_the_file` (ui)
 - `media-viewer`:
   - `tests/test_media_viewer_e2e.py::test_e2e_view_media_recursive_overview_viewer_slideshow_escape` (ui)
+- `markdown-viewer`:
+  - `tests/test_markdown_viewer.py::test_happy_the_viewer_renders_outline_footnotes_code_and_images` (ui)
 - `media-player`:
   - `tests/test_media_player_controls.py::test_e2e_panel_seeks_a_real_track_with_the_slider` (ui)
 - `fuse-mount`:
@@ -596,6 +599,8 @@ Sorted by uncovered branches - the order in which closing them helps most.
 | `ui/viewer_window.py` | `media-viewer` | 229 | 96.9 % | 87.2 % |
 | `core/media_collect.py` | `media-viewer` | 154 | 93.5 % | 91.7 % |
 | `core/media_load.py` | `media-viewer` | 205 | 91.2 % | 81.2 % |
+| `ui/markdown_view.py` | `markdown-viewer` | 478 | 87.7 % | 71.0 % |
+| `ui/markdown_viewer.py` | `markdown-viewer` | 149 | 91.3 % | 79.4 % |
 | `resources/extensions/media_player.py` | `media-player` | 3963 | 94.8 % | 86.7 % |
 | `core/multimedia_env.py` | `media-player` | 51 | 94.1 % | 100.0 % |
 | `core/multimedia_probe.py` | `media-player` | 441 | 92.3 % | 92.0 % |

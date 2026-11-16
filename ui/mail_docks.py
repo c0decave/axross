@@ -100,6 +100,7 @@ class MailDockPanel(QWidget):
         self._post_event = GuiCall(self._event)
         self._post_approval = GuiCall(self._show_approval)
         self._post_done = GuiCall(self._done)
+        self._post_expire = GuiCall(self._expire)
         self.runner = runner_factory(dock, ask_send=self._ask_send, on_log=self._post_log,
                                      on_event=self._post_event)
         self._running = False
@@ -280,6 +281,7 @@ class MailDockPanel(QWidget):
         approval = _Approval(summary)
         self._post_approval(approval)
         if not approval.event.wait(APPROVAL_TIMEOUT_S):
+            self._post_expire(approval)
             self._post_log(tr("Nobody answered within 30 minutes: not sent."))
             return False
         return approval.answer
@@ -293,6 +295,18 @@ class MailDockPanel(QWidget):
         for w in (self.approvals, self.send_button, self.decline_button):
             w.setVisible(True)
         self._log(tr("A mail waits for your answer."))
+
+    def _expire(self, approval: _Approval) -> None:
+        """A mail nobody answered in time: no longer offered for Send."""
+        for row in range(self.approvals.count()):
+            if self.approvals.item(row).data(Qt.ItemDataRole.UserRole) == id(approval):
+                self.approvals.takeItem(row)
+                break
+        if approval in self._pending:
+            self._pending.remove(approval)
+        if not self._pending:
+            for w in (self.approvals, self.send_button, self.decline_button):
+                w.setVisible(False)
 
     def _answer(self, yes: bool) -> None:
         item = self.approvals.currentItem()

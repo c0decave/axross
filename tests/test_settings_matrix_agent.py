@@ -192,12 +192,15 @@ def _seed_big_file(ctx) -> None:
 
 
 def effect_max_tool_chars(ctx, win, value) -> None:
-    """A tool result longer than the limit reaches the model cut to it."""
+    """A tool result longer than the limit reaches the model cut to it. (A
+    read_file without max_bytes is sized to fit the limit and pages with
+    next_offset - core.agent.read_bytes_that_fit - so the model asks for
+    more than fits here.)"""
     call = {"role": "assistant", "content": "", "tool_calls": [{
         "id": "c1", "type": "function", "function": {
             "name": "read_file",
             "arguments": json.dumps({"path": str(ctx.tmp_path / "big.txt"),
-                                     "encoding": "text"})}}]}
+                                     "encoding": "text", "max_bytes": 1 << 20})}}]}
     chats = _send(ctx, win, "read big.txt", replies=[call])
     tool = [m for m in chats[-1]["messages"] if m.get("role") == "tool"][-1]
     assert len(tool["content"]) == value, len(tool["content"])

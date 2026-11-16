@@ -102,6 +102,35 @@ NO_ANSWER_NOTICE = "The model ended without an answer."
 #: Said before an answer the model wrote only into its reasoning.
 REASONING_NOTICE = "The model gave its answer only as reasoning:"
 
+#: File reads that page with offset / next_offset (core.mcp_server).
+PAGED_READS = frozenset({"read_file"})
+
+
+def read_bytes_that_fit(max_tool_chars: int, text: bool) -> int:
+    """The bytes of a file a read may ask for so that its JSON answer stays
+    within *max_tool_chars*: text can double when escaped (newlines, quotes),
+    base64 makes 4 characters of 3 bytes; 400 characters for the rest."""
+    room = max(200, int(max_tool_chars)) - 400
+    return max(64, room // 2 if text else room * 3 // 4)
+
+
+def model_mismatch(wanted: str, answered: object) -> str:
+    """The model a server answered with when it is not the profile's one, else
+    "". Some servers (LM Studio) answer an unknown model name with whatever
+    model is loaded; a dated snapshot ("gpt-4o-2024-08-06" for "gpt-4o"), a
+    vendor prefix ("qwen/qwen3") or Ollama's ":latest" is the same model."""
+    if not isinstance(answered, str) or not answered.strip() or not wanted:
+        return ""
+
+    def norm(name: str) -> str:
+        name = name.strip().lower()
+        return name[:-len(":latest")] if name.endswith(":latest") else name
+
+    a, b = norm(wanted), norm(answered)
+    if a.startswith(b) or b.startswith(a) or a.endswith("/" + b) or b.endswith("/" + a):
+        return ""
+    return answered.strip()[:200]
+
 _THINK_OPEN, _THINK_CLOSE = "<think>", "</think>"
 
 
@@ -1114,6 +1143,7 @@ class Agent:
         self.messages: list[dict] = [{"role": "system", "content": system_prompt_for(config)}]
         self._request_id = 0
         self._context_watch = OllamaContextWatch(config.profile, config.api_key)
+        self._model_warned = False
 
     def _ensure_built(self) -> tuple[list, dict]:
         built = self._built
@@ -1231,6 +1261,12 @@ class Agent:
                 self._on_event({"type": "connection", "state": "failed", "detail": str(exc)})
                 raise
             self._on_event({"type": "connection", "state": "connected"})
+        other = model_mismatch(profile.model, payload.get("model") if isinstance(payload, dict) else None)
+        if other and not self._model_warned:
+            self._model_warned = True
+            self._on_event({"type": "notice", "text": (
+                f"The server answered with the model {other!r}, not {profile.model!r} as the profile "
+                "names - the name may be wrong (some servers then use whatever model is loaded).")})
         usage = payload.get("usage") if isinstance(payload, dict) else None
         if isinstance(usage, dict):
             counts = {k: usage[k] for k in ("prompt_tokens", "completion_tokens")
@@ -1272,6 +1308,11 @@ class Agent:
             )
             return name, "error", f"error: the arguments are not a JSON object{reason}"
         fields = f"tool={name} args_sha256={_digest(args_text)} args_len={len(args_text)}"
+        if name in PAGED_READS and "max_bytes" not in args:
+            # A read the tool-result limit would cut: ask for what fits, so the
+            # next_offset it answers is where the model really stopped reading.
+            args["max_bytes"] = read_bytes_that_fit(self.config.max_tool_chars,
+                                                    args.get("encoding") == "text")
         if self.config.files_read_only:
             # The offer leaves these out already; the call is checked too.
             for candidate in (external, tool, spec):
@@ -1441,7 +1482,13 @@ class Agent:
         self._load_external()
         if self.cancel.is_set():
             return AgentResult("", "cancelled", [])
-        self.messages.append({"role": "user", "content": task})
+        last = self.messages[-1] if self.messages else {}
+        if last.get("role") == "user" and isinstance(last.get("content"), str):
+            # The last request failed before any answer: one user turn, not two in a
+            # row - chat templates with strict user/assistant turns refuse that.
+            last["content"] = f"{last['content']}\n\n{task}"
+        else:
+            self.messages.append({"role": "user", "content": task})
         calls: list[dict] = []
         for _step in range(max(1, int(self.config.max_steps))):
             if self.cancel.is_set():

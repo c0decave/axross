@@ -724,6 +724,26 @@ bar docks it again.
 - **Open size limit** — the text / hex viewers read the whole file,
   so there is a cap: 32 MB by default, changeable under
   *Edit → Settings… → Files & Panes* (1–4096 MB, stored in `settings.json`).
+- **Markdown viewer** — F3 / double-click on a `.md` / `.markdown` /
+  `.mdown` / `.mkd` file, local or remote (F4 still edits it): GitHub's
+  Markdown (tables, task lists, strike-through, autolinks, footnotes)
+  with the headings in an outline beside it, highlighted code, zoom
+  (Ctrl +/-/0), find (Ctrl+F, Enter or F3 for the next), Reload (F5) and
+  Edit (F4). What the file holds is shown, never run: raw HTML is shown
+  as text, nothing is loaded from the network (a remote image is a box
+  naming its address), images are read only relative to the file (no
+  absolute path, no `file:`), only regular files, never a secret file,
+  at most 8 MiB and 40 million pixels each and 200 per file. A link to
+  another Markdown file opens it in a viewer of its own; a web link opens
+  in the browser only after a question that shows its real address (and
+  not at all in the `paranoid` security mode). In the editor, *View →
+  Markdown Preview* (Ctrl+Shift+M) shows the text rendered beside it,
+  following the typing.
+  With markdown-it-py installed (axross-markdown brings it), the viewer
+  shows the full set - footnotes, definition lists, front matter, aligned
+  tables, code coloured by Pygments - in colours for light and dark themes;
+  without it Qt's own Markdown is used. In a terminal, `axross-mdcat
+  FILE.md` (axross-markdown) shows the same in colour.
 - **Image viewer** — F3 / double-click, MIME-allow-listed, size-
   capped to keep Qt's allocator happy.
 - **PDF** — F3 / double-click opens the PDF on its own in the media
@@ -2093,7 +2113,8 @@ mailbox's credentials never do), the **send policy** and the SMTP server.
   *Send* / *Don't Send* (declined after 30 minutes without an answer).
 - *Answer the sender without asking*: a reply to the sender of the mail answered (and
   to the *allowed recipients*, addresses or `@domain`) goes out at once; anyone else
-  still waits for your yes.
+  still waits for your yes. The sender is the mail's *From* address: a *Reply-To*
+  the mail names is someone else and waits for your yes too.
 
 A dock's agent has only the mail tools - `mail_list_new`, `mail_list`, `mail_read`,
 `mail_analyse`, `mail_draft`, `mail_send`, `dock_report` - and no file writes. Mail

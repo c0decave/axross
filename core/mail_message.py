@@ -100,6 +100,13 @@ def _date(value: str) -> datetime | None:
 
 def _clean(value) -> str:
     text = str(value) if value is not None else ""
+    if any("\udc80" <= c <= "\udcff" for c in text):
+        # Raw 8-bit bytes in a header (surrogateescape): UTF-8 if they are, else cp1252.
+        raw = text.encode("utf-8", "surrogateescape")
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            text = raw.decode("cp1252", "replace")
     return "".join(c if c >= " " or c == "\t" else " " for c in text)[:8192]
 
 

@@ -36,7 +36,7 @@ global-exclude *.py[cod]
 # workflows. build/ (the bundle spec and lock) cannot be in an sdist -
 # setuptools prunes its build_base - so its tests skip there
 # (tests/bundle_sources.py).
-include scripts/*.py scripts/*.sh
+include scripts/*.py scripts/*.sh scripts/*.json
 exclude scripts/_scrub_rules.py scripts/export-public.py
 include Dockerfile.agent Dockerfile.build Dockerfile.gui Dockerfile.mcp .dockerignore
 include .github/workflows/*.yml

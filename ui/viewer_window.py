@@ -46,6 +46,7 @@ VIEWERS_KEY = "viewers"
 #: Size a viewer opens at when nothing (valid) is remembered.
 DEFAULT_SIZES: dict[str, tuple[int, int]] = {
     "image": (900, 680),
+    "markdown": (960, 720),
     "media": (1000, 720),
     "system_info": (1180, 800),
 }

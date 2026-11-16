@@ -30,6 +30,7 @@ axross's panel share them.
 from __future__ import annotations
 
 import argparse
+import json
 import ast
 import re
 import shutil
@@ -39,7 +40,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 #: axross's top-level packages a copied module may import.
-PACKAGES = ("core", "ui", "resources", "axross")
+PACKAGES = ("core", "ui", "resources", "axross", "models")
 #: Packages whose __init__ is written here instead of copied (axross's own
 #: imports the scripting API on first use - not part of a tool).
 STUB_INITS = {"axross/__init__.py": '"""The version of the axross code this tool comes from."""\n'}
@@ -59,6 +60,12 @@ class App:
     rewrites: tuple[tuple[str, str, str], ...] = ()
     readme: str = ""
     smoke_args: tuple[str, ...] = field(default=())
+    #: the tool's own repository (its pyproject's Homepage); "" - axross's
+    repo: str = ""
+    #: more commands: name -> module (relative to the axross tree) with main()
+    scripts: tuple[tuple[str, str], ...] = ()
+    #: pip extras of the exported project: name -> requirements
+    extras: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 def _probe_rewrites(package: str) -> tuple[tuple[str, str, str], ...]:
@@ -98,6 +105,113 @@ axross-media-player https://example.org/radio.mp3
 
 Keys: Space play / pause, Left / Right seek, Up / Down volume, M mute.
 Files on axross's remote connections (SFTP, SMB, S3 ...) are a feature of axross itself.
+""",
+    ),
+    "amp": App(
+        dist="axross-amp",
+        package="axross_amp",
+        repo="https://github.com/c0decave/axross-amp",
+        start="ui/amp_app.py",
+        title="axross-amp",
+        summary="axross's Media Player, Audio Mixer and Bluetooth connector as one program: "
+                "playlists, a 10-band equalizer, visualizations, internet radio, a mixer per "
+                "source and Bluetooth headphones and speakers",
+        requires=("PyQt6>=6.6,<6.12", "numpy>=2.0"),
+        lazy=("resources/extensions/media_player.py", "resources/extensions/audio_mixer.py",
+              "resources/extensions/bluetooth.py", "core/secure_storage.py",
+              "core/multimedia_probe.py", "core/thread_relay.py", "core/tls_env.py",
+              "ui/close_corner.py", "ui/icon_provider.py",
+              "ui/window_dock_bar.py", "ui/screen_fit.py", "ui/state_files.py",
+              "ui/window_prefs.py", "ui/qt_translations.py", "core/qt_exit.py",
+              "core/posix_compat.py", "core/audio_eq.py", "core/subprocess_env.py",
+              "core/json_store.py", "core/path_policy.py", "core/bluetooth_presence.py",
+              "ui/bluetooth_presence.py", "core/bluetooth_adv.py", "core/bluetooth_companies.py",
+              "core/bluetooth_direct.py", "ui/system_mixer_page.py", "ui/bluetooth_map.py",
+              "ui/bluetooth_details.py", "ui/bluetooth_add.py", "ui/bluetooth_streams.py",
+              "core/connect_worker.py", "core/voice_audio.py"),
+        rewrites=_probe_rewrites("axross_amp"),
+        readme="""\
+Three tabs in one window:
+
+- **Media Player** - local files, folders and M3U playlists, and internet radio by its
+  http / https URL. A 10-band equalizer with presets, animated visualizations (in a
+  window of their own or full screen), shuffle, repeat and a sleep timer; the list, the
+  track and its position come back at the next start.
+- **Audio Mixer** - a volume, mute and output device per source, the shared equalizer
+  and the system's sound server (PipeWire / PulseAudio). The player's sound menu
+  (*Audio Mixer...*) opens this tab.
+- **Bluetooth** - find, pair, trust and connect headphones, speakers and other devices
+  through BlueZ (or a USB Bluetooth stick driven directly, with the optional `bumble`),
+  battery levels, a presence log of devices in range, the audio profile per device.
+
+```sh
+axross-amp                      # the last list
+axross-amp ~/Music/album/       # add a folder and play it
+axross-amp https://example.org/radio.mp3
+```
+
+Keys in the player: Space play / pause, Left / Right seek, Up / Down volume, M mute.
+Bluetooth needs BlueZ on the system bus (Linux) or a supported USB stick.
+""",
+    ),
+    "markdown": App(
+        dist="axross-markdown",
+        package="axross_markdown",
+        repo="https://github.com/c0decave/axross-markdown",
+        start="ui/markdown_app.py",
+        title="axross-markdown",
+        summary="axross's Markdown viewer on its own: GitHub Markdown with an outline, "
+                "footnotes, highlighted code and local images - shown, never run",
+        requires=("PyQt6>=6.6,<6.12", "markdown-it-py>=3.0", "mdit-py-plugins>=0.4",
+                  "Pygments>=2.17", "Pillow>=10.0"),
+        extras=(("linkify", ("linkify-it-py>=2.0",)),),
+        scripts=(("axross-mdcat", "core/markdown_cli.py"),),
+        lazy=("ui/markdown_viewer.py", "ui/markdown_view.py", "ui/markdown_safe.py",
+              "ui/markdown_html.py", "core/markdown_doc.py", "core/markdown_term.py",
+              "core/markdown_cli.py",
+              "ui/editor_window.py", "ui/text_editor.py", "ui/guide_view.py",
+              "core/local_fs.py", "core/protected_places.py", "core/security_mode.py",
+              "core/desktop_open.py", "core/thread_relay.py", "core/tls_env.py",
+              "ui/close_corner.py", "ui/icon_provider.py", "ui/window_dock_bar.py",
+              "ui/screen_fit.py", "ui/state_files.py", "ui/window_prefs.py",
+              "ui/qt_translations.py", "core/qt_exit.py", "core/posix_compat.py",
+              "core/subprocess_env.py", "core/multimedia_env.py", "core/json_store.py",
+              "axross/_version.py", "core/backend_guard.py", "core/atomic_io.py",
+              "ui/off_gui.py", "core/connect_worker.py"),
+        readme="""\
+A Markdown file rendered in a window of its own - or in the terminal. The full set:
+CommonMark, GitHub's tables (aligned as written), task lists, strike-through and
+autolinks, footnotes, definition lists, YAML / TOML front matter; the headings as an
+outline beside the text, fenced code coloured by Pygments, the images beside the file
+(clickable when linked), colours for light and dark themes, find (Ctrl+F), zoom
+(Ctrl + / - / 0), Reload (F5). Edit (F4) opens an editor with the rendering beside the text, following the
+typing. A link to another Markdown file opens it; a web link opens in the browser only
+after a question that shows its real address.
+
+What a file holds is shown, never run: raw HTML is shown as text, nothing is loaded from
+the network (a remote image is a box naming its address), images are read only relative
+to the file - regular files, never a secret file such as an SSH key, bounded in size,
+pixels and count; an SVG that names other files is not shown.
+
+```sh
+axross-markdown README.md docs/*.md     # a window for each
+axross-markdown                         # a window with Open... (Ctrl+O)
+axross-mdcat README.md                  # in the terminal, in colour (no Qt needed)
+axross-mdcat --toc README.md            # the headings only
+cat notes.md | axross-mdcat -
+```
+
+In the terminal: headings, emphasis, inline and fenced code (coloured), quotes, nested
+and task lists, tables drawn with box characters (wrapped to fit), definition lists and
+footnotes; links are terminal hyperlinks (OSC 8) with their address beside them;
+images are drawn with kitty's or iTerm2's picture protocol where the terminal has one,
+else in coloured half-blocks. Colours follow NO_COLOR / FORCE_COLOR / COLORTERM
+(`--color`), the theme the background (`--theme`), long texts go through `less -R`
+(`--no-pager`). Nothing in a file can send the terminal an escape sequence of its own.
+
+The Markdown view started as the Markdown viewer of
+[sandbox-ai](https://github.com/c0decave/sandbox-ai)'s Files page (MIT, the same
+author), ported to PyQt6 and axross's backends.
 """,
     ),
     "system-info": App(
@@ -274,6 +388,13 @@ def _unprefix(text: str, prefix: str) -> str:
 
 def _pyproject(app: App, version: str) -> str:
     deps = ",\n    ".join(f'"{d}"' for d in app.requires)
+    scripts = "".join(f'{name} = "{app.package}._ax.{module[:-3].replace("/", ".")}:main"\n'
+                      for name, module in app.scripts)
+    extras = ""
+    if app.extras:
+        extras = "[project.optional-dependencies]\n" + "".join(
+            f"{name} = [{', '.join(json.dumps(r) for r in reqs)}]\n"
+            for name, reqs in app.extras) + "\n"
     return f'''[build-system]
 requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
@@ -289,9 +410,14 @@ dependencies = [
     {deps},
 ]
 
-[project.scripts]
-{app.dist} = "{app.package}.__main__:main"
+[project.urls]
+Homepage = "{app.repo or AXROSS_URL}"
+Source = "{app.repo or AXROSS_URL}"
+axross = "{AXROSS_URL}"
 
+{extras}[project.scripts]
+{app.dist} = "{app.package}.__main__:main"
+{scripts}
 [project.gui-scripts]
 {app.dist}-gui = "{app.package}.__main__:main"
 
@@ -301,6 +427,51 @@ where = ["src"]
 [tool.setuptools.package-data]
 "*" = ["*.json"]
 '''
+
+
+AXROSS_URL = "https://github.com/c0decave/axross"
+
+#: What the exported project ignores.
+GITIGNORE = """__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+.pytest_cache/
+"""
+
+
+def _workflow(app: App) -> str:
+    """CI of the exported project: its tests on Linux with Qt offscreen."""
+    return """name: tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Qt's system libraries
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libpulse0
+      - name: Install
+        run: python -m pip install . pytest
+      - name: Tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q tests
+      - name: Build sdist and wheel
+        run: python -m pip install build && python -m build
+"""
 
 
 def _smoke_test(app: App) -> str:
@@ -371,10 +542,14 @@ def export(name: str, out: Path) -> Path:
         "It is the same code as in [axross](https://github.com/c0decave/axross), written out by\n"
         f"axross's `scripts/export_standalone.py {name}`; its settings are axross's\n"
         "(`~/.config/axross`), so both share the language, the theme and the tool's state.\n\n"
-        "## Install and run\n\n```sh\npip install .\n"
+        f"## Install and run\n\n```sh\npip install {app.dist}      # or, from this folder: pip install .\n"
         f"{app.dist}\n```\n\n## Tests\n\n```sh\npython -m pytest tests\n```\n\n"
         "## Licence\n\nApache-2.0, as axross.\n", encoding="utf-8")
     shutil.copyfile(ROOT / "LICENSE", out / "LICENSE")
+    (out / ".gitignore").write_text(GITIGNORE, encoding="utf-8")
+    workflows = out / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "tests.yml").write_text(_workflow(app), encoding="utf-8")
     (out / "tests").mkdir()
     (out / "tests" / "test_smoke.py").write_text(_smoke_test(app), encoding="utf-8")
     return out

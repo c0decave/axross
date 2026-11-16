@@ -21,7 +21,8 @@ pytest.importorskip("PyQt6.QtGui")
 
 from PyQt6.QtGui import QTextDocument  # noqa: E402
 
-from ui import update_ui as U  # noqa: E402
+from ui import markdown_safe as U  # noqa: E402
+from ui import update_ui  # noqa: E402
 
 
 def test_sad_a_non_member_value_is_built_by_hand_when_the_enum_refuses_it(monkeypatch):
@@ -40,5 +41,5 @@ def test_sad_a_non_member_value_is_built_by_hand_when_the_enum_refuses_it(monkey
 
 
 def test_happy_the_two_flag_sets_keep_their_bits():
-    assert U.NOTES_MARKDOWN_NO_TABLES.value == U.NOTES_MARKDOWN.value & ~0x100
+    assert update_ui.NOTES_MARKDOWN_NO_TABLES.value == U.NOTES_MARKDOWN.value & ~0x100
     assert U.NOTES_MARKDOWN.value & 0x100

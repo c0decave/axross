@@ -36,7 +36,7 @@ from core.undo import (  # noqa: E402
 _DET = {"direction": "UPLOAD", "source_backend": "Local"}
 
 
-def _ev(op, kind, batch, i, phase, src="/home/a/pics", dst="/srv/nas/pics"):
+def _ev(op, kind, batch, i, phase, src="/home/me/pics", dst="/srv/nas/pics"):
     kw = dict(source=f"{src}/f{i:04d}.jpg", dest=f"{dst}/f{i:04d}.jpg", backend="nas (SFTP)",
               bytes_total=10, details={**_DET, "batch": batch})
     if phase == "start":
@@ -151,7 +151,7 @@ def test_sad_a_batch_whose_start_was_rotated_away_behind_another_batch_is_refuse
         _ev(b_ops[i], "move", b, i, "finish")
     _rotate(journal)
     for i in range(100):
-        _ev(None, "transfer", c, i, "start", "/home/a/docs", "/mnt/usb")
+        _ev(None, "transfer", c, i, "start", "/home/me/docs", "/mnt/usb")
     for i in range(100, n):
         _ev(b_ops[i], "move", b, i, "worker_start")
         _ev(b_ops[i], "move", b, i, "finish")

@@ -276,6 +276,7 @@ def open_local_file_in_viewer(
     as :meth:`FilePaneWidget._on_double_click` (reported: archive members
     had no syntax highlighting and a PDF only opened in the hex editor):
 
+    * a Markdown file -> the Markdown viewer,
     * an image -> the image viewer,
     * a PDF or a video -> the media viewer, that file alone,
     * text -> a tab of the window's editor (highlighting, read-only),
@@ -284,7 +285,7 @@ def open_local_file_in_viewer(
       and it is no launcher or script, else the hex editor.
 
     *view* ``"hex"`` or ``"text"`` skips the choice (the archive's
-    Hex View / Text View). Returns what was opened (``"image"``,
+    Hex View / Text View). Returns what was opened (``"markdown"``, ``"image"``,
     ``"media"``, ``"text"``, ``"hex"``, ``"system"``) or ``""`` when nothing
     was. A broken preview never crashes the caller.
     """
@@ -326,6 +327,13 @@ def open_local_file_in_viewer(
             return hex_view()
         if view == "text":
             return text_view()
+        from ui import markdown_view as MDV
+
+        if MDV.is_markdown(name):
+            from ui.markdown_viewer import open_markdown_viewer
+
+            open_markdown_viewer(backend, path, owner)
+            return "markdown"
         if FilePaneWidget._looks_like_image(name):
             from ui.image_viewer import ImageViewerDialog
 
@@ -2028,6 +2036,8 @@ class FilePaneWidget(QWidget):
         full_path = self._safe_item_path(item)
         if full_path is None:
             return
+        if self._open_markdown_viewer(full_path, item.name):
+            return
         if self._looks_like_image(item.name) and self._open_image_viewer(full_path):
             return
         if self._open_document_viewer(full_path, item.name):
@@ -2096,6 +2106,19 @@ class FilePaneWidget(QWidget):
             VW.show_independent(dlg)
         else:  # it said why; nothing to show
             dlg.deleteLater()
+        return True
+
+    def _open_markdown_viewer(self, path: str, name: str) -> bool:
+        """Open the Markdown file *name* rendered in the Markdown viewer
+        (ui.markdown_viewer): local or remote, read in the background.
+        False when *name* is no Markdown file."""
+        from ui import markdown_view as MDV
+
+        if not MDV.is_markdown(name):
+            return False
+        from ui.markdown_viewer import open_markdown_viewer
+
+        open_markdown_viewer(self._backend, path, self, source_pane=self)
         return True
 
     def _open_document_viewer(self, path: str, name: str) -> bool:
@@ -3427,6 +3450,9 @@ class FilePaneWidget(QWidget):
         #   binaries            -> hex
         #   text                -> text editor
         #   fallthrough         -> emit for other handlers
+        #   Markdown            -> the Markdown viewer (F4 still edits it)
+        if self._open_markdown_viewer(full_path, item.name):
+            return
         if self._looks_like_image(item.name) and self._open_image_viewer(full_path):
             return
         if self._open_document_viewer(full_path, item.name):

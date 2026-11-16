@@ -34,7 +34,7 @@ class GuideBrowser(QTextBrowser):
         self.refused_resources: set[str] = set()
 
     def set_guide_markdown(self, text: str) -> None:
-        from ui.update_ui import NOTES_MARKDOWN
+        from ui.markdown_safe import NOTES_MARKDOWN
 
         self.document().setMarkdown(text, NOTES_MARKDOWN)
         self.moveCursor(QTextCursor.MoveOperation.Start)

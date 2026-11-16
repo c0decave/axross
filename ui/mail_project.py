@@ -471,8 +471,11 @@ class MailProjectDialog(QDialog):
         if dock is None:
             QMessageBox.information(self, tr("Mail Project"), tr("The Agent dock is not available."))
             return
-        tab = dock.new_tab(folder=str(self.project.folder), task=ANALYST_PROMPT)
+        tab = dock.new_tab(folder=str(self.project.folder), task=ANALYST_PROMPT, save=False)
         tab.session.files_read_only = True     # the messages are evidence: read, never changed
+        save = getattr(dock, "save_tab", None)
+        if callable(save):
+            save(tab)                          # saved read-only, so it comes back read-only
         refresh = getattr(tab, "refresh_choices", None)
         if callable(refresh):
             refresh()

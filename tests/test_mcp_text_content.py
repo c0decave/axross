@@ -83,7 +83,10 @@ def test_edge_a_cut_inside_a_character_is_not_a_replacement(tmp_path):
     (tmp_path / "u.txt").write_text("aä", encoding="utf-8")  # 'ä' is two bytes
     r = T.call(_tools(tmp_path), "read_file", {"path": str(tmp_path / "u.txt"), "encoding": "text",
                                                "max_bytes": 2})
-    assert r == {"text": "a", "size": 2, "truncated": True, "replaced": False}
+    # The read stops before the cut character and the next one starts with it
+    # (read_file pages with offset / next_offset).
+    assert r == {"text": "a", "size": 1, "truncated": True, "replaced": False,
+                 "offset": 0, "next_offset": 1}
 
 
 def test_edge_empty_text_writes_an_empty_file(tmp_path):

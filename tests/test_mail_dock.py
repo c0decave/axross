@@ -213,7 +213,8 @@ def test_sad_configs_that_cannot_work_are_refused(tmp_path):
     with pytest.raises(ValueError):
         MD.MailDockConfig(name="x", send_policy="sometimes").validate()
     store = MD.MailDockStore(tmp_path / "docks.json")
-    store.save([MD.MailDockConfig(name="a"), MD.MailDockConfig(name="b", send_policy="never")])
+    store.save([MD.MailDockConfig(name="a", mailbox_profile="p"),
+                MD.MailDockConfig(name="b", send_policy="never", mailbox_profile="p")])
     assert [d.name for d in store.load()] == ["a", "b"]
     assert (tmp_path / "docks.json").stat().st_mode & 0o777 == 0o600
 

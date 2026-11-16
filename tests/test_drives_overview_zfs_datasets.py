@@ -27,7 +27,7 @@ MOUNTS = """\
 rpool/ROOT/ubuntu / zfs rw,relatime,xattr,posixacl 0 0
 tank /tank zfs rw,xattr,noacl 0 0
 tank/media /tank/media zfs rw,xattr,noacl 0 0
-rpool/USERDATA/anna_x1 /home/anna zfs rw,relatime 0 0
+rpool/USERDATA/anna_x1 /home/me zfs rw,relatime 0 0
 usbpool/backup /media/anna/backup zfs rw 0 0
 tank/docker/3f1a9c /var/lib/docker/zfs/graph/3f1a9c zfs rw 0 0
 """
@@ -41,7 +41,7 @@ def test_sad_a_zfs_pool_and_its_datasets_are_local_drives():
     kinds = _kinds()
     assert kinds["/tank"] == "local"
     assert kinds["/tank/media"] == "local"
-    assert kinds["/home/anna"] == "local"
+    assert kinds["/home/me"] == "local"
     assert all(kind in DO.SHOWN_KINDS for mount, kind in kinds.items()
                if not mount.startswith("/var/lib/docker/"))
 

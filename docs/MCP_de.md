@@ -160,7 +160,7 @@ siehe §9.
 |----------------------|-----------------------------------------------------------------------|
 | `list_dir(path)`     | Verzeichniseinträge.                                                  |
 | `stat(path)`         | Name, Typ, Größe, mtime.                                              |
-| `read_file(path, max_bytes=, encoding=)` | Base64-kodierter Inhalt; standardmäßig auf 4 MiB gekappt. `encoding="text"` liefert `text` (UTF-8, `replaced=true`, wenn nicht dekodierbare Bytes ersetzt wurden) — für Modelle, die kein Base64 dekodieren können. |
+| `read_file(path, max_bytes=, encoding=, offset=)` | Base64-kodierter Inhalt; standardmäßig auf 4 MiB gekappt. `encoding="text"` liefert `text` (UTF-8, `replaced=true`, wenn nicht dekodierbare Bytes ersetzt wurden) — für Modelle, die kein Base64 dekodieren können. `offset` beginnt bei diesem Byte; folgt noch mehr (`truncated=true`), sagt `next_offset`, wo es weitergeht (eine Textseite endet nie mitten in einem Zeichen). Das Agent-Dock bemisst jeden Lesevorgang nach seinem Limit für Tool-Ergebnisse. |
 | `checksum(path, algorithm=)`  | `sha256` (Default), `sha1`, `md5` oder `sha512`. Nutzt den nativen Hash des Backends nur, wenn er vom angefragten Algorithmus ist, sonst Streaming durch hashlib (sendet Progress). |
 | `search(needle, ext, min_size, max_size)` | Offline-Metadaten-Index, auf die aktive Backend-ID und die MCP-Root beschränkt. |
 | `walk(path, max_depth, max_entries)`      | Begrenzte rekursive Listung; sendet `notifications/progress`. Ordner, die sich nicht listen ließen, stehen in `unreadable`; `complete` ist dann false. |

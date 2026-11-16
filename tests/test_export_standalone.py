@@ -37,9 +37,15 @@ def test_happy_the_project_has_its_command_and_only_what_the_tool_needs(exported
     assert (ax / "resources" / "i18n" / "de.json").is_file()
     files = {p.relative_to(ax).as_posix() for p in ax.rglob("*.py")}
     assert app.start in files
-    for heavy in ("ui/main_window.py", "ui/file_pane.py", "core/bluetooth.py", "core/scripting.py"):
-        assert heavy not in files, heavy
-    assert len(files) < 45
+    # axross-amp carries the Bluetooth connector on purpose; nothing else of
+    # axross's file manager, scripting or voice comes along with any tool.
+    heavy = ["ui/main_window.py", "ui/file_pane.py", "core/scripting.py", "ui/voice.py",
+             "core/analysis_worker.py", "core/agent.py"]
+    if name != "amp":
+        heavy.append("core/bluetooth.py")
+    for module in heavy:
+        assert module not in files, module
+    assert len(files) < {"amp": 75, "markdown": 60}.get(name, 45), len(files)
 
 
 def test_happy_no_exported_module_imports_axross_directly(exported):
@@ -53,7 +59,7 @@ def test_happy_no_exported_module_imports_axross_directly(exported):
             for n in names:
                 assert n.split(".")[0] not in EXP.PACKAGES, f"{path}: {n}"
     probe = out / "src" / app.package / "_ax" / "core" / "multimedia_probe.py"
-    if name == "media-player":
+    if name in ("media-player", "amp"):
         # The probe starts itself as a child: by its new module name.
         assert f'"-m", "{app.package}._ax.core.multimedia_probe"' in probe.read_text()
     else:

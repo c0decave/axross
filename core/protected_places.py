@@ -1442,9 +1442,15 @@ def write_checker(environ=os.environ, *, granted=(), members: bool = False):
         if hook_path is not None and (value.startswith("~") or os.path.isabs(value)):
             global_keys += _folded_keys(hook_path)
     repo_memo: dict[str, list[tuple[str, ...]]] = {}
-    from core.mcp_script_pin import write_guard  # files host-run MCP servers run
-
-    mcp_files = write_guard(environ)
+    try:
+        from core.mcp_script_pin import write_guard  # files host-run MCP servers run
+    except ImportError:
+        # A program exported without axross's MCP servers (axross-markdown)
+        # starts none; axross itself still refuses to start a server whose
+        # pinned files changed since the user confirmed them.
+        mcp_files = None
+    else:
+        mcp_files = write_guard(environ)
 
     def repo_keys(folder: str) -> list[tuple[str, ...]]:
         keys = repo_memo.get(folder)
@@ -1489,7 +1495,7 @@ def write_checker(environ=os.environ, *, granted=(), members: bool = False):
                 return (f"{path}: the agent does not write Python start files "
                         f"({', '.join(START_NAMES)}): Python runs them at every start")
         keyed = [(_key(c), c) for c in candidates]
-        for candidate in candidates:
+        for candidate in candidates if mcp_files is not None else ():
             refused = mcp_files(candidate, entry)
             if refused:
                 return refused.replace(candidate, path, 1)

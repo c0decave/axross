@@ -220,7 +220,7 @@
       ]
     },
     {
-      "description": "Read up to max_bytes (default 4 MiB) from a file. Returns {content_b64, size, truncated} - or with encoding='text' {text, size, truncated, replaced}: UTF-8, undecodable bytes replaced (replaced=true). truncated=true when the file exceeds the cap.",
+      "description": "Read up to max_bytes (default 4 MiB) from a file, from byte offset on (default 0). Returns {content_b64, size, truncated} - or with encoding='text' {text, size, truncated, replaced}: UTF-8, undecodable bytes replaced (replaced=true). truncated=true when more follows; then next_offset is where to continue (also given with an offset).",
       "group": "core",
       "input_schema": {
         "properties": {
@@ -238,6 +238,11 @@
             "type": "string"
           },
           "max_bytes": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
             "minimum": 0,
             "type": "integer"
           },

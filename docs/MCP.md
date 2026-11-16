@@ -155,7 +155,7 @@ transfers, remote profiles, extensions) is a capability group, see §9.
 |----------------------|---------------------------------------------------------------------|
 | `list_dir(path)`     | Directory entries.                                                  |
 | `stat(path)`         | Name, type, size, mtime.                                            |
-| `read_file(path, max_bytes=, encoding=)` | Base64-encoded file content; capped at 4 MiB by default. `encoding="text"` returns `text` (UTF-8, `replaced=true` when undecodable bytes were replaced) — for models that cannot decode Base64. |
+| `read_file(path, max_bytes=, encoding=, offset=)` | Base64-encoded file content; capped at 4 MiB by default. `encoding="text"` returns `text` (UTF-8, `replaced=true` when undecodable bytes were replaced) — for models that cannot decode Base64. `offset` starts at that byte; when more follows (`truncated=true`) `next_offset` says where to continue (a text page never ends inside a character). The Agent dock sizes each read to its tool-result limit. |
 | `checksum(path, algorithm=)`  | `sha256` (default), `sha1`, `md5` or `sha512`. Uses the backend's native hash only when it is of the requested algorithm, else streams the file through hashlib (emits progress). |
 | `search(needle, ext, min_size, max_size)` | Offline metadata index, scoped to the active backend's id and the MCP root. |
 | `walk(path, max_depth, max_entries)`      | Bounded recursive listing; emits `notifications/progress`. Folders it could not list are named in `unreadable`; `complete` is false then. |

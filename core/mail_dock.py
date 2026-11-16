@@ -121,9 +121,15 @@ class MailDockStore:
         for item in raw.get("docks", []) if isinstance(raw, dict) else []:
             if isinstance(item, dict) and isinstance(item.get("name"), str):
                 try:
-                    out.append(MailDockConfig(**{k: v for k, v in item.items() if k in names}))
-                except TypeError:
+                    dock = MailDockConfig(**{k: v for k, v in item.items() if k in names})
+                    if isinstance(dock.send_policy, str):
+                        dock.send_policy = dock.send_policy.strip().lower()
+                    dock.validate()
+                except (TypeError, ValueError, AttributeError) as exc:
+                    # One broken entry (a hand edit) must not stop the docks after it.
+                    log.warning("mail docks: %r in %s skipped: %s", item.get("name"), self.path, exc)
                     continue
+                out.append(dock)
         return out
 
     def save(self, docks: list[MailDockConfig]) -> None:
@@ -201,6 +207,7 @@ class Mailbox:
         self.folder = "" if flat else (folder.strip("/") or "INBOX")
         self._seen: set[str] = set()
         self._ids: dict[str, str] = {}       # short id -> backend path
+        self._pending: set[str] = set()      # handed out by list_new, not yet committed
         try:
             self._seen = set(json.loads(state_file.read_text(encoding="utf-8")).get("seen", []))
         except (OSError, ValueError, RecursionError):
@@ -238,11 +245,9 @@ class Mailbox:
             out.append({"id": self._short(item.name), "name": item.name, "size": item.size,
                         "date": item.modified.isoformat()})
             if mark:
-                self._seen.add(item.name)
+                self._pending.add(item.name)
             if len(out) >= MAX_NEW_PER_RUN:
                 break
-        if mark and out:
-            self._save()
         return out
 
     def _was_seen(self, name: str) -> bool:
@@ -297,8 +302,9 @@ class Mailbox:
 
 
 def _bare_name(name: str) -> bool:
-    """*name* is one entry of a folder: no separator, no "." or "..", no NUL."""
-    return bool(name) and name not in (".", "..") and not any(c in name for c in "/\\\0")
+    """*name* is one entry of a folder: no separator, no NUL, not hidden
+    ("." and "..", a Maildir's or a mail program's own dot files)."""
+    return bool(name) and not name.startswith(".") and not any(c in name for c in "/\\\0")
 
 
 # --- the tools --------------------------------------------------------------------------
@@ -405,7 +411,9 @@ class MailTools:
         msg_id = str(args.get("id", ""))
         msg = self.mailbox.message(msg_id)
         self.mailbox.mark_seen(msg_id)
-        addr = parseaddr(msg.header("Reply-To") or msg.header("From") or msg.from_)[1]
+        # The sender a reply may go to without asking is the From address:
+        # a Reply-To the mail names (anyone can write one) needs the user's yes.
+        addr = parseaddr(msg.header("From") or msg.from_)[1]
         self._replied_to[str(args.get("id", ""))] = addr
         text = msg.text or re.sub(r"<[^>]+>", " ", msg.html)
         return (json.dumps(self._brief(msg), ensure_ascii=False) + "\n" + UNTRUSTED + "\n"
@@ -440,9 +448,9 @@ class MailTools:
         if reply_id:
             original = self.mailbox.message(reply_id)
             self.mailbox.mark_seen(reply_id)
-            self._replied_to[reply_id] = parseaddr(original.header("Reply-To") or original.header("From"))[1]
+            self._replied_to[reply_id] = parseaddr(original.header("From"))[1]
             if not to:
-                to = [self._replied_to[reply_id]]
+                to = [parseaddr(original.header("Reply-To") or original.header("From"))[1]]
             if not subject:
                 subject = original.subject if original.subject.lower().startswith("re:") else f"Re: {original.subject}"
             in_reply_to, references = original.message_id, original.header("References")

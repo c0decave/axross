@@ -143,7 +143,7 @@ def test_edge_a_remote_backend_compares_what_stat_reports(tmp_path):
     first = Remote(10, datetime(2026, 1, 1, 12, 0, 0))
     identity = entry_identity(first, "/srv/f")
     assert set(identity) == {"kind", "size", "mtime"}
-    plan = plan_undo(_event("/home/f", "/srv/f", identity=identity))
+    plan = plan_undo(_event("/home/x/f", "/srv/f", identity=identity))
     from core.undo import replaced_reason
 
     assert replaced_reason(plan, first) == ""

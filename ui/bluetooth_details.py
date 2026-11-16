@@ -118,24 +118,32 @@ def overview(device: BT.Device, now: float | None = None) -> dict[str, str]:
     }
 
 
+def _audio_page():
+    """ui.audio_settings_page (its players and recorders, from ui.voice). A
+    program exported without axross's voice parts (axross-amp) has none:
+    the test sound and the microphone test then say so (an OSError, which
+    the dialog shows like any other audio failure)."""
+    try:
+        from ui import audio_settings_page
+    except ImportError as exc:
+        raise OSError(tr("not part of this program")) from exc
+    return audio_settings_page
+
+
 def test_sound() -> bytes:
     """The test sound as int16 mono PCM at TEST_RATE."""
-    from ui.audio_settings_page import sine_tone
-
+    sine_tone = _audio_page().sine_tone
     return b"".join(sine_tone(TEST_RATE, seconds, hz) for hz, seconds in TEST_SOUND)
 
 
 def _default_player(device_id: str):
     from core import audio_route
-    from ui.audio_settings_page import _make_player
 
-    return _make_player(device_id, audio_route.output_gain())
+    return _audio_page()._make_player(device_id, audio_route.output_gain())
 
 
 def _default_recorder(device_id: str):
-    from ui.audio_settings_page import _make_recorder
-
-    return _make_recorder(device_id, 1.0)
+    return _audio_page()._make_recorder(device_id, 1.0)
 
 
 class DeviceDialog(QDialog):

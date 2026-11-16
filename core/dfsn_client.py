@@ -133,7 +133,10 @@ class DFSNamespaceSession(smb_client.SmbSession):
         """
         if smb_client.smbclient is None:
             return
-        config = smb_client.smbclient.ClientConfig(skip_dfs=False)
+        try:
+            config = smb_client.smbclient.ClientConfig(skip_dfs=False)
+        except (AttributeError, TypeError) as exc:  # an smbclient without the option
+            raise OSError(f"DFS-N: this smbclient cannot turn DFS resolution on: {exc}") from exc
         if getattr(config, "skip_dfs", False):
             raise OSError("DFS-N: smbclient refused to turn DFS resolution on (skip_dfs)")
 

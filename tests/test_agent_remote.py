@@ -139,8 +139,10 @@ def test_happy_a_call_naming_a_remote_backend_goes_to_axross(fake, tmp_path):
     agent = A.Agent(_config(server, tmp_path), confirm=lambda n, a: asked.append(n) or True,
                     host_tools=[_spec("read_file"), _spec("remote_profiles")], host_call=host_call)
     agent.run("read both")
+    # sized to the tool-result limit (core.agent.read_bytes_that_fit), like a local read
+    fit = A.read_bytes_that_fit(A.AgentConfig(profile=_config(server, tmp_path).profile, root="/").max_tool_chars, True)
     assert routed == [
-        ("read_file", {"path": "/data/f.txt", "encoding": "text", "backend": "pane:box"})
+        ("read_file", {"path": "/data/f.txt", "encoding": "text", "backend": "pane:box", "max_bytes": fit})
     ]
     first, second = _tool_messages(server.requests[1])
     assert "from axross" in first["content"] and "local text" in second["content"]
