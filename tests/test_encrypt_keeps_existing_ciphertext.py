@@ -97,3 +97,38 @@ class EncryptExistingCiphertextTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EncryptReadsToTheEndTest(EncryptExistingCiphertextTest):
+    """A backend whose reader returns short reads (a network stream): one
+    read(n) took only the first part, which then "decrypted cleanly"."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        import io
+
+        real = self.fs.open_read
+
+        class _Trickle(io.RawIOBase):
+            def __init__(self, fh):
+                self._fh = fh
+
+            def readable(self):
+                return True
+
+            def read(self, n=-1):
+                return self._fh.read(min(3, n if n and n > 0 else 3))
+
+            def close(self):
+                self._fh.close()
+                super().close()
+
+        self.fs.open_read = lambda path: _Trickle(real(path))
+
+    def test_sad_a_short_reading_source_is_encrypted_whole(self) -> None:
+        self.encrypt(None)
+        self.assertEqual(self.E.read_encrypted(self.fs, str(self.cipher), "pw"), b"new plaintext")
+
+    test_happy_a_first_encryption_asks_nothing = None
+    test_sad_declining_keeps_the_existing_ciphertext = None
+    test_edge_confirming_replaces_it = None

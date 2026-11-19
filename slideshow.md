@@ -2,6 +2,30 @@
 
 Every screenshot of axross, each with what it shows. Back to the [README](README.md).
 
+## One window, four file systems
+
+![Local, SFTP, FTP and WebDAV panes in one window](docs/screenshots/remote-panes.png)
+
+A local folder and an SFTP share side by side in the thumbnail view, an FTP web root and a WebDAV folder below. Every pane names its connection; the blue **SOURCE** and the green **TARGET** set the direction for copy (F5) and move (F6).
+
+## Hacker Mode
+
+![Four file panes and two local terminals in Hacker Mode](docs/screenshots/quad-files-shells.png)
+
+Four file panes and two local terminals in one layout. Terminals sit in the splitter next to file panes; the presets `dev-shells`, `triage` and `shells-quad` place them for you.
+
+## Agent dock
+
+![The Agent dock: a local model reads a file from inside a bubblewrap sandbox](docs/screenshots/agent-dock.png)
+
+A local model (here Qwen 2.5 on llama.cpp) reads a file for you. The tab runs in the `Normal` sandbox (bubblewrap), the mode is `Ask`, and every tool call shows in the transcript.
+
+## Markdown viewer
+
+![The Markdown viewer: outline, highlighted code, footnotes](docs/screenshots/markdown-viewer.png)
+
+A Markdown file rendered in a window of its own (F3 on a `.md` file): the headings as an outline beside the text, GitHub's tables and task lists, code coloured by Pygments, footnotes and formulas. What a file holds is shown, never run; Edit (F4) opens the editor with the rendering beside the text.
+
 ## Upload to SFTP
 
 ![Upload from a local pane to SFTP with the Transfers dock](docs/screenshots/remote-transfer.png)

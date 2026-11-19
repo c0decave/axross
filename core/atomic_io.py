@@ -255,7 +255,48 @@ def _private_local(backend) -> bool:
         return False
 
 
-def _open_temp(backend, tmp: str, previous_mode: int | None):
+class _ModeLeftToSet:
+    """A writer opened with the file's mode as the server took it (its umask
+    applies): the exact mode is set once the data is in."""
+
+    def __init__(self, fh) -> None:
+        self._fh = fh
+
+    def __getattr__(self, name):
+        return getattr(self._fh, name)
+
+    def __enter__(self):
+        self._fh.__enter__()
+        return self
+
+    def __exit__(self, *exc):
+        return self._fh.__exit__(*exc)
+
+
+def _mode_left_to_set(f, written, previous_mode) -> bool:
+    return written is None and previous_mode is not None and (
+        not previous_mode & _OWNER_WRITE or isinstance(f, _ModeLeftToSet))
+
+
+def _open_new_with_mode(backend, path: str, mode: int):
+    """*path* created with *mode* from its first byte by a backend that can
+    (``open_write_new``: SFTP sends the mode with its OPEN request), else
+    None. Precreated empty and chmod-ed after, a file sat in the server's
+    default mode (0644) for a moment: anyone who opened it then could read
+    what was written into it later through that handle."""
+    # Defined by the backend's class: an attribute a stand-in makes up on
+    # request (a MagicMock) is no such promise.
+    if not callable(getattr(type(backend), "open_write_new", None)):
+        return None
+    opener = backend.open_write_new
+    try:
+        return opener(path, mode)
+    except (NotImplementedError, AttributeError, TypeError) as exc:
+        log.debug("cannot create %s with its mode at once: %s", path, exc)
+        return None
+
+
+def _open_temp(backend, tmp: str, previous_mode: int | None, group: int | None = None):
     """``(handle, its fstat or None)`` of the new temp file *tmp*.
 
     On the local file system it is created exclusively (O_EXCL, no link
@@ -268,13 +309,18 @@ def _open_temp(backend, tmp: str, previous_mode: int | None):
     if _private_local(backend):
         from core.local_fs import create_private_file
 
-        fh = create_private_file(tmp, previous_mode)
+        fh = create_private_file(tmp, previous_mode, group=group)
         try:
             return fh, os.fstat(fh.fileno())
         except BaseException:
             fh.close()
             raise
     if previous_mode is not None:
+        fh = _open_new_with_mode(backend, tmp, previous_mode | _OWNER_WRITE)
+        if fh is not None:
+            # The server's umask may have narrowed it: given exactly after
+            # the write (_mode_left_to_set).
+            return _ModeLeftToSet(fh), None
         _precreate_with_mode(backend, tmp, previous_mode | _OWNER_WRITE)
     return backend.open_write(tmp), None
 
@@ -411,11 +457,33 @@ def _overwrite_local(path: str, data: bytes) -> None:
         os.fsync(fh.fileno())
 
 
+def _private_backup(path: str, backup: str) -> None:
+    """Copy *path* to the new file *backup*, made O_EXCL and never readable
+    by more than the file itself (its mode, 0600 at most while it is
+    written): shutil.copyfile made it 0666 less the umask, and a 0600
+    file's old content was readable by anyone for the save - for good
+    when the restore failed. A copy that fails leaves no part of it."""
+    import shutil
+
+    from core.local_fs import create_private_file
+
+    mode = (os.stat(path).st_mode & 0o600) | 0o400  # the owner reads it back
+    try:
+        with open(path, "rb") as src, create_private_file(backup, mode) as dst:
+            shutil.copyfileobj(src, dst, 1024 * 1024)
+            dst.flush()
+            os.fsync(dst.fileno())
+    except BaseException:
+        try:
+            os.remove(backup)
+        except OSError:
+            pass
+        raise
+
+
 def _write_in_place(path: str, data: bytes) -> None:
     """Overwrite the local file *path*, keeping inode, links, owner and
     attributes, with the old bytes recoverable until the write is done."""
-    import shutil
-
     from core.path_policy import hidden_sibling_name
 
     if not os.access(path, os.W_OK):
@@ -430,7 +498,7 @@ def _write_in_place(path: str, data: bytes) -> None:
             folder,
             hidden_sibling_name(os.path.basename(path), f".{secrets.token_hex(6)}.bak"),
         )
-        shutil.copyfile(path, backup)
+        _private_backup(path, backup)
     else:
         with open(path, "rb") as fh:
             old = fh.read()
@@ -483,11 +551,13 @@ def _in_place_journaled(op_id: str, path: str, data: bytes, reason: str) -> None
     )
 
 
-def atomic_write(backend, path: str, data: bytes) -> None:
+def atomic_write(backend, path: str, data: bytes, *, new_mode: int | None = None) -> None:
     """Write *data* to *path* atomically.
 
     Raises :class:`OSError` on I/O failure. On failure the target path
     is left untouched (either its previous content or non-existent).
+    *new_mode*: the mode a NEW file gets (from its first byte on: the
+    clear text of a decrypted file is 0600); an existing one keeps its own.
     """
     op_id = ""
     try:
@@ -521,6 +591,8 @@ def atomic_write(backend, path: str, data: bytes) -> None:
             direct = True
         else:
             path, previous_mode = resolved
+            if previous_mode is None and new_mode is not None and not backend.exists(path):
+                previous_mode = new_mode & 0o7777
             reason = _keep_identity_reason(backend, path)
             if reason is not None:
                 _in_place_journaled(op_id, path, data, reason)
@@ -558,19 +630,27 @@ def atomic_write(backend, path: str, data: bytes) -> None:
     # 0644 and the next X session would not start. ``previous_mode``
     # comes from _resolve_destination, i.e. from the file, not a link.
     carried = True
+    group = None
+    if _is_local(backend) and previous_mode is not None:
+        try:
+            group = os.stat(path).st_gid  # the file's group, from the temp's first byte
+        except (OSError, AttributeError):
+            group = None
     try:
-        f, written = _open_temp(backend, tmp, previous_mode)
+        f, written = _open_temp(backend, tmp, previous_mode, group)
+        # A remote temp file gets the owner and group of the file it
+        # replaces while it is still empty: given after the data, the
+        # login's group could read a 0640 file for the time of the write.
+        owned = _carry_remote_owner(backend, path, tmp)
         with f:
-            f.write(data)
-        if written is None and previous_mode is not None and not previous_mode & _OWNER_WRITE:
+            if owned:
+                f.write(data)
+        if owned and _mode_left_to_set(f, written, previous_mode):
             _restore_mode(backend, tmp, previous_mode)
         _refuse_swapped_temp(tmp, written)
-        carried = _carry_local_attributes(backend, path, tmp)
-        owned = carried and _carry_remote_owner(backend, path, tmp)
-        carried = carried and owned
+        carried = owned and _carry_local_attributes(backend, path, tmp)
         if carried:
-            from core.server_ops import _finalize_temp_destination
-
+            _finalize_temp_destination = _temp_commit()
             _finalize_temp_destination(backend, tmp, path)
             log.debug("atomic_write: rename-based commit for %s", path)
             _finish_journal(
@@ -624,12 +704,14 @@ def atomic_write_stream(
     *,
     chunk_size: int = 1024 * 1024,
     on_chunk=None,
+    new_mode: int | None = None,
 ) -> int:
     """Atomically stream bytes from ``reader`` into ``path``.
 
     ``reader`` must expose ``read(size)``. Returns bytes written. The
     optional ``on_chunk(bytes_done)`` callback is invoked after each
-    successful chunk write.
+    successful chunk write. *new_mode* as in :func:`atomic_write`: the
+    mode a NEW file gets from its first byte on.
     """
     bytes_done = 0
     direct = _is_native_atomic(backend) or _cannot_rename(backend)
@@ -640,6 +722,8 @@ def atomic_write_stream(
             direct = True  # a link we cannot read: write through it
         else:
             path, previous_mode = resolved
+            if previous_mode is None and new_mode is not None and not backend.exists(path):
+                previous_mode = new_mode & 0o7777
     if direct:
         with backend.open_write(path) as f:
             while True:
@@ -653,8 +737,18 @@ def atomic_write_stream(
         return bytes_done
 
     tmp = _temp_sibling(backend, path)
+    group = None
+    if _is_local(backend) and previous_mode is not None:
+        try:
+            group = os.stat(path).st_gid  # the file's group, from the temp's first byte
+        except (OSError, AttributeError):
+            group = None
     try:
-        f, written = _open_temp(backend, tmp, previous_mode)
+        f, written = _open_temp(backend, tmp, previous_mode, group)
+        # The owner and group of the file it replaces, while it is still
+        # empty (best effort here: a stream cannot be written in place).
+        if not _carry_remote_owner(backend, path, tmp):
+            log.info("atomic_write_stream: %s gets a new owner (it could not be kept)", path)
         with f:
             while True:
                 chunk = reader.read(chunk_size)
@@ -664,11 +758,12 @@ def atomic_write_stream(
                 bytes_done += len(chunk)
                 if on_chunk:
                     on_chunk(bytes_done)
-        if written is None and previous_mode is not None and not previous_mode & _OWNER_WRITE:
+        if _mode_left_to_set(f, written, previous_mode):
             _restore_mode(backend, tmp, previous_mode)
         _refuse_swapped_temp(tmp, written)
-        from core.server_ops import _finalize_temp_destination
-
+        if not _carry_local_attributes(backend, path, tmp):  # best effort: xattrs
+            log.info("atomic_write_stream: %s loses a group or extended attribute", path)
+        _finalize_temp_destination = _temp_commit()
         _finalize_temp_destination(backend, tmp, path)
         return bytes_done
     except BaseException:
@@ -682,3 +777,17 @@ def atomic_write_stream(
                 cleanup_exc,
             )
         raise
+
+
+def _temp_commit():
+    """core.server_ops' commit of a temp file to its place (a backup of the
+    file there first) - or, in a program exported without axross's transfers
+    (axross-markdown's editor: local files only), the backend's rename,
+    which replaces the file there. Its import unguarded, the editor's Save
+    always failed there."""
+    try:
+        from core.server_ops import _finalize_temp_destination
+    except ImportError:
+        def _finalize_temp_destination(backend, temp_path: str, dst: str) -> None:
+            backend.rename(temp_path, dst)
+    return _finalize_temp_destination

@@ -90,6 +90,9 @@ class WindowTest(unittest.TestCase):
         self.saved: list = []
         self.win._profile_manager = mock.Mock()
         self.win._profile_manager.get.return_value = None
+        # The window's save at close applies the profile renames another
+        # axross recorded, against the names the manager holds.
+        self.win._profile_manager.list_names.return_value = []
         # add() returns the save's result (core.profiles.SaveResult) since
         # the UX review round 3; the import reads it.
         from core.profiles import SAVED

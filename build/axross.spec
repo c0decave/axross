@@ -65,6 +65,11 @@ hiddenimports += [
     "PyQt6.QtGui",
     "PyQt6.QtWidgets",
     "PyQt6.QtSvg",          # icon_provider renders SVGs via QSvgRenderer
+    # The --pdf-worker child (core.pdf_worker) draws with QtPdf from source
+    # PyInstaller does not trace (a string run by the child); QPdfView
+    # (QtPdfWidgets) is no longer used - the media viewer shows the pages
+    # that child draws, and the spec leaves it out below.
+    "PyQt6.QtPdf",
     "PyQt6.QtDBus",         # core.bluetooth talks to BlueZ (the Bluetooth extension)
     "PyQt6.sip",
 ]
@@ -257,6 +262,7 @@ excludes += [
     "wheel",
     "pytest",
     "tkinter",              # we use PyQt6
+    "PyQt6.QtPdfWidgets",   # nothing uses QPdfView any more (see PyQt6.QtPdf above)
     # Documentation / dev tooling that got pulled in via extras
     "sphinx",
     "jupyter",

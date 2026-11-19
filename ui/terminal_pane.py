@@ -7,7 +7,7 @@ import os
 from typing import TYPE_CHECKING
 
 from PyQt6 import sip
-from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QEvent, QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QFrame,
@@ -58,6 +58,28 @@ def _send_to_workspace_hook(pane: QWidget):
     return hook
 
 
+_PIN_KEY_EVENTS = (QEvent.Type.KeyPress, QEvent.Type.ShortcutOverride)
+
+
+class _PinKeyFilter(QObject):
+    """The application-wide half of a pin: a key goes to the focus widget,
+    not to the window, so a filter on the window alone saw only the keys
+    the focus widget left alone. This one hands the pane the keys of every
+    widget in its pinned window (TerminalPaneWidget._pin_takes)."""
+
+    def __init__(self, pane: "TerminalPaneWidget") -> None:
+        super().__init__(pane)
+        self._pane = pane
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 - Qt override
+        if event.type() not in _PIN_KEY_EVENTS:
+            return False
+        pane = self._pane
+        if sip.isdeleted(pane) or not pane._pin_takes(obj):
+            return False
+        return pane._pinned_key(event)
+
+
 class TerminalPaneWidget(QWidget):
     """Terminal session embedded as a pane in the main splitter."""
 
@@ -93,6 +115,9 @@ class TerminalPaneWidget(QWidget):
         self._refs = 0
         #: The window the pin's key filter is installed on (see _pin_to).
         self._pin_window = None
+        #: The application filter that brings the keys of the window's
+        #: other widgets (made when first pinned).
+        self._pin_app_filter: _PinKeyFilter | None = None
 
         self._setup_ui()
         self._start_session()
@@ -372,10 +397,31 @@ class TerminalPaneWidget(QWidget):
                 old.destroyed.disconnect(self._pin_window_destroyed)
             except TypeError:  # not connected
                 pass
+        app = QCoreApplication.instance()
         if window is not None:
             window.installEventFilter(self)
             window.destroyed.connect(self._pin_window_destroyed)
             self._pin_window = window
+            if self._pin_app_filter is None:
+                self._pin_app_filter = _PinKeyFilter(self)
+            if app is not None:
+                app.installEventFilter(self._pin_app_filter)
+        elif self._pin_app_filter is not None and app is not None:
+            app.removeEventFilter(self._pin_app_filter)
+
+    def _pin_takes(self, obj) -> bool:
+        """True for a widget of the pinned window whose keys the pin takes:
+        not the terminal itself nor its own widgets (the search bar), which
+        get their keys as unpinned; not a widget of another window."""
+        window = self._pin_window
+        if window is None or obj is window or not isinstance(obj, QWidget):
+            return False  # the window itself: its own filter (eventFilter)
+        if sip.isdeleted(obj) or obj.window() is not window or window is not self.window():
+            return False
+        terminal = self._terminal
+        if sip.isdeleted(terminal):
+            return False
+        return obj is not terminal and not terminal.isAncestorOf(obj)
 
     def _pin_window_destroyed(self, *_args) -> None:
         # The window went (a detached workspace came back as a tab): the
@@ -419,6 +465,13 @@ class TerminalPaneWidget(QWidget):
             if obj is self._pin_window and window is not self:
                 self._pin_to(window if self.is_pinned else None)
             return False
+        if event.type() not in _PIN_KEY_EVENTS:
+            return False
+        return self._pinned_key(event)
+
+    def _pinned_key(self, event) -> bool:
+        """A key of the pinned window: to the terminal, except Ctrl+Shift+P
+        (unpin). True when the event is taken."""
         etype = event.type()
 
         if etype == QEvent.Type.ShortcutOverride:

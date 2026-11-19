@@ -530,9 +530,10 @@ def test_sad_an_ssh_profile_named_like_the_local_shell_is_never_offered_as_local
     from core.profiles import ConnectionProfile
     from ui.terminal_pane import TerminalPaneWidget
 
-    win._profile_manager.add(
-        ConnectionProfile(name="local", protocol="sftp", host="far.lab", username="u")
-    )
+    # One stored by an older version: a new profile may not take the name
+    # any more (tests/test_profile_rename_round2.py).
+    win._profile_manager._profiles["local"] = ConnectionProfile(
+        name="local", protocol="sftp", host="far.lab", username="u")
     try:
         assert "local" not in win._terminal_profile_names()
         assert "alpha" in win._terminal_profile_names()
@@ -547,7 +548,7 @@ def test_sad_an_ssh_profile_named_like_the_local_shell_is_never_offered_as_local
             term.shutdown()
             term.deleteLater()
     finally:
-        win._profile_manager.remove("local")
+        win._profile_manager._profiles.pop("local", None)
 
 
 def test_edge_e2e_a_local_working_folder_typed_with_a_tilde_opens_there(

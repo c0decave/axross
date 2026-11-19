@@ -359,12 +359,9 @@ class LLMSettings:
         if self.file_not_fully_loaded and not keep_unreadable_copy(path):
             raise OSError(f"Not saving: the unreadable {path} could not be kept as a copy")
         data = {"profiles": [asdict(p) for p in self.profiles], "active": self.active}
-        tmp = path.with_suffix(".json.tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, indent=2)
-        os.chmod(tmp, 0o600)
-        tmp.replace(path)
+        from core.json_store import write_private
+
+        write_private(path, json.dumps(data, indent=2))
         self.file_not_fully_loaded = False
 
 

@@ -55,6 +55,7 @@ import time
 from datetime import datetime
 from typing import IO
 
+from core import transfer_hooks
 from core.backend import SessionLifecycle
 from core.read_spool import new_named_spool
 from models.file_item import FileItem
@@ -164,13 +165,53 @@ def _validate_filename(name: str) -> str:
     return cleaned
 
 
-def _rrq_error(name: str, exc: Exception) -> OSError:
-    """The OSError for a failed read request: FileNotFoundError only for
-    error code 1 (tftpy's TftpFileNotFoundError); a timeout, an access
-    violation and every other error packet say nothing about the file."""
+#: The options of a size probe: ``tsize`` asks the server for the size
+#: in its option acknowledgement (RFC 2349).
+_TSIZE_OPTIONS = {"tsize": "0"}
+
+
+def _tftp_error(request: str, name: str, exc: Exception) -> OSError:
+    """The OSError for a failed request (``RRQ`` / ``WRQ``):
+    FileNotFoundError only for error code 1 (tftpy's
+    TftpFileNotFoundError); TimeoutError when the server did not answer
+    (tftpy's TftpTimeout: "Timed-out waiting for traffic", which read as
+    an unknown failure); an access violation and every other error packet
+    say nothing about the file."""
     if tftpy is not None and isinstance(exc, tftpy.TftpFileNotFoundError):
-        return FileNotFoundError(errno.ENOENT, f"TFTP RRQ {name!r}: {exc}", name)
-    return OSError(f"TFTP RRQ {name!r}: {exc}")
+        return FileNotFoundError(errno.ENOENT, f"TFTP {request} {name!r}: {exc}", name)
+    if tftpy is not None and isinstance(exc, tftpy.TftpTimeout):
+        return TimeoutError(
+            errno.ETIMEDOUT, f"TFTP {request} {name!r}: the server did not answer ({exc})"
+        )
+    return OSError(f"TFTP {request} {name!r}: {exc}")
+
+
+def _rrq_error(name: str, exc: Exception) -> OSError:
+    """The OSError for a failed read request (see :func:`_tftp_error`)."""
+    return _tftp_error("RRQ", name, exc)
+
+
+class _NewBlocks:
+    """Bytes of the DATA blocks seen so far, each block counted once.
+
+    tftpy hands the packet hook every DATA packet it receives or sends, a
+    resent one too (a lost ACK on a busy network): counted twice, a
+    download could pass the size cap below its real size."""
+
+    def __init__(self) -> None:
+        self.total = 0
+        self._last: int | None = None
+
+    def add(self, pkt) -> bool:
+        """Count *pkt* if it is a DATA block not seen yet (True)."""
+        import tftpy.TftpPacketTypes as packets
+
+        if not isinstance(pkt, packets.TftpPacketDAT) or pkt.blocknumber == self._last:
+            return False
+        self._last = pkt.blocknumber
+        data = getattr(pkt, "data", b"")
+        self.total += len(data) if isinstance(data, (bytes, bytearray)) else 0
+        return True
 
 
 class TftpSession(SessionLifecycle):
@@ -203,6 +244,7 @@ class TftpSession(SessionLifecycle):
         proxy_port: int = 0,
         proxy_username: str = "",
         proxy_password: str = "",
+        address_family: str = "auto",
     ):
         import ipaddress
 
@@ -235,6 +277,14 @@ class TftpSession(SessionLifecycle):
                     "tftpy resolves host names locally, which would leak the lookup "
                     "around the proxy; use the server's IP address.",
                 )
+        if (address_family or "auto") == "ipv6":
+            # tftpy opens an AF_INET socket and resolves with
+            # gethostbyname: an "IPv6 only" profile would go out over IPv4.
+            raise OSError(
+                errno.EAFNOSUPPORT,
+                "TFTP in axross speaks IPv4 only (the tftpy library); set the "
+                "profile's IP version to Auto or IPv4",
+            )
         if not TFTPY_AVAILABLE:
             raise ImportError(
                 "TFTP support requires tftpy. Install with: pip install axross[tftp]",
@@ -357,8 +407,13 @@ class TftpSession(SessionLifecycle):
                         is_link=False,
                     )
                 continue
-            # Leaf file. Probe size if cheap; otherwise mark as 0.
-            size = self._probe_size(entry)
+            # Leaf file. Probe size if cheap; otherwise mark as 0. A file
+            # the server answers "File not found" for is not shown: it
+            # read as an empty file that could not be opened.
+            try:
+                size = self._probe_size(entry, missing_raises=True)
+            except FileNotFoundError:
+                continue
             entries[tail] = FileItem(
                 name=tail,
                 size=size,
@@ -380,7 +435,8 @@ class TftpSession(SessionLifecycle):
 
         return patched_module_udp_socket(contexts, self._proxy)
 
-    def _probe_size(self, name: str, *, strict: bool = False) -> int:
+    def _probe_size(self, name: str, *, strict: bool = False,
+                    missing_raises: bool = False) -> int:
         """Best-effort: ask the server for the file's ``tsize`` via
         the OACK option. Many tftpd daemons honour this; some don't.
         Returns 0 when unavailable. *strict*: a failed request raises as
@@ -391,13 +447,18 @@ class TftpSession(SessionLifecycle):
         tftpy passes every received packet to the packet hook, the OACK
         included, so a server that reports ``tsize`` answers before any
         data block and the transfer is abandoned there. Without tsize
-        the file is downloaded and measured, as before.
+        the file is downloaded and measured - up to the size cap: a larger
+        one stops there, its size unknown (0). *missing_raises*: error
+        code 1 is a FileNotFoundError, everything else still 0.
         """
         import tftpy.TftpPacketTypes as packets
 
         class _SizeKnown(Exception):
             def __init__(self, size: int) -> None:
                 self.size = size
+
+        blocks = _NewBlocks()
+        cap = self._max_size_bytes
 
         def _hook(pkt) -> None:
             if isinstance(pkt, packets.TftpPacketOACK):
@@ -408,17 +469,19 @@ class TftpSession(SessionLifecycle):
                     return
                 if size >= 0:
                     raise _SizeKnown(size)
+            elif blocks.add(pkt) and blocks.total > cap:
+                raise _SizeKnown(0)  # larger than a transfer may be
 
         try:
             client = tftpy.TftpClient(  # type: ignore[union-attr]
                 self._host,
                 self._port,
-                options={"tsize": "0"},
+                options=dict(_TSIZE_OPTIONS),
             )
             with new_named_spool(tag="tftp") as tmp, self._udp_scope():
                 client.download(
                     name,
-                    tmp.name,
+                    tmp,
                     packethook=_hook,
                     timeout=self._timeout,
                     retries=1,
@@ -430,10 +493,11 @@ class TftpSession(SessionLifecycle):
             return known.size
         except Exception as exc:  # noqa: BLE001
             log.debug("TFTP probe(%r) failed: %s", name, exc)
-            if strict:
+            if strict or missing_raises:
                 error = _rrq_error(name, exc)
                 if isinstance(error, FileNotFoundError):
                     raise error from exc
+            if strict:
                 # Another refusal may be of the tsize option alone (error 8):
                 # the plain read request decides; a file it opens is there,
                 # its size unknown.
@@ -515,7 +579,7 @@ class TftpSession(SessionLifecycle):
                 with self._udp_scope():
                     client.download(
                         name,
-                        tmp.name,
+                        tmp,
                         packethook=_hook,
                         timeout=self._timeout,
                         retries=self._retries,
@@ -532,29 +596,31 @@ class TftpSession(SessionLifecycle):
         name = _validate_filename(path)
         client = tftpy.TftpClient(self._host, self._port)  # type: ignore[union-attr]
 
-        # tftpy writes to a file path. Use a NamedTemporaryFile so the
-        # bytes round-trip cleanly. Enforce the size cap by checking
-        # the file's size after each chunk via packethook.
+        # tftpy writes into the open spool (a file object: given a path,
+        # tftpy deletes that file on "File not found", and the spool's own
+        # clean-up then reported the spool as the missing file). The size
+        # cap, progress and Cancel (core.transfer_hooks) are checked per
+        # new DATA block in the packet hook.
         cap = self._max_size_bytes
-        bytes_so_far = [0]
+        blocks = _NewBlocks()
+        hooks = transfer_hooks.current()
 
         def _packethook(pkt):
-            # tftpy passes a TftpPacketDAT to packethook for each
-            # incoming data block. We accumulate the byte count and
-            # raise to abort the transfer when over the cap.
-            data = getattr(pkt, "data", b"")
-            bytes_so_far[0] += len(data) if isinstance(data, (bytes, bytearray)) else 0
-            if bytes_so_far[0] > cap:
+            if not blocks.add(pkt):
+                return
+            if blocks.total > cap:
                 raise OSError(
-                    f"TFTP read of {name!r} exceeded {cap} byte cap (at {bytes_so_far[0]} bytes)",
+                    f"TFTP read of {name!r} exceeded {cap} byte cap (at {blocks.total} bytes)",
                 )
+            if hooks is not None:
+                hooks.received(blocks.total)  # InterruptedError on Cancel
 
         with new_named_spool(tag="tftp") as tmp:
             try:
                 with self._udp_scope():
                     client.download(
                         name,
-                        tmp.name,
+                        tmp,
                         packethook=_packethook,
                         timeout=self._timeout,
                         retries=self._retries,
@@ -752,12 +818,21 @@ class TftpSession(SessionLifecycle):
     # Internal: actual upload (called by _TftpWriter.close)
     # ------------------------------------------------------------------
 
-    def _upload_bytes(self, name: str, data: bytes) -> None:
+    def _upload_bytes(self, name: str, data: bytes, hooks=None) -> None:
+        """Send *data* as *name* (WRQ). *hooks* (core.transfer_hooks):
+        progress per new DATA block, and Cancel between blocks."""
         if len(data) > self._max_size_bytes:
             raise OSError(
                 f"TFTP upload of {name!r} ({len(data)} bytes) exceeds "
                 f"{self._max_size_bytes} byte cap.",
             )
+        blocks = _NewBlocks()
+        total = len(data)
+
+        def _packethook(pkt):
+            if blocks.add(pkt) and hooks is not None:
+                hooks.sent(blocks.total, total)  # InterruptedError on Cancel
+
         with new_named_spool(tag="tftp") as tmp:
             tmp.write(data)
             tmp.flush()
@@ -767,12 +842,15 @@ class TftpSession(SessionLifecycle):
                 with self._udp_scope():
                     client.upload(
                         name,
-                        tmp.name,
+                        tmp,
+                        packethook=_packethook,
                         timeout=self._timeout,
                         retries=self._retries,
                     )
+            except InterruptedError:
+                raise
             except Exception as exc:
-                raise OSError(f"TFTP WRQ {name!r}: {exc}") from exc
+                raise _tftp_error("WRQ", name, exc) from exc
 
 
 class _TftpWriter:
@@ -784,6 +862,11 @@ class _TftpWriter:
         self._name = name
         self._buf = io.BytesIO()
         self._closed = False
+        # The running transfer's progress and Cancel: the WRQ happens in
+        # close(), after the copy loop.
+        self._hooks = transfer_hooks.current()
+        if self._hooks is not None:
+            self._hooks.expect_upload()
 
     def write(self, data: bytes) -> int:
         if self._closed:
@@ -803,7 +886,7 @@ class _TftpWriter:
             return
         self._closed = True
         try:
-            self._session._upload_bytes(self._name, self._buf.getvalue())
+            self._session._upload_bytes(self._name, self._buf.getvalue(), self._hooks)
         finally:
             self._buf.close()
 

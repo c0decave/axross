@@ -128,3 +128,26 @@ def test_edge_the_api_key_is_never_part_of_the_url(server):
     STT.transcribe_server(_profile(server), "sk-secret", PCM)
     assert "sk-secret" not in server.seen[0]["path"]
     assert os.environ.get("AXROSS_STT_KEY") is None
+
+
+def test_sad_a_redirect_is_not_followed_with_the_api_key(server):
+    """Review B, item 5: urllib followed a 302 to another host and sent the
+    Authorization header there."""
+    class _Redirect(_Handler):
+        def do_POST(self):  # noqa: N802
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            self.send_response(302)
+            self.send_header("Location", f"http://127.0.0.1:{server.server_port}/steal")
+            self.end_headers()
+
+    first = HTTPServer(("127.0.0.1", 0), _Redirect)
+    first.seen = []
+    thread = threading.Thread(target=first.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with pytest.raises(STT.TranscriptionError, match="302"):
+            STT.transcribe_server(_profile(first), "sk-secret", PCM)
+    finally:
+        first.shutdown()
+        first.server_close()
+    assert server.seen == []

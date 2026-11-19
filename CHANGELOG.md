@@ -4,14 +4,186 @@ What changed in each axross release, for the people who use it. The full
 notes of a release, with every fix, are on its
 [GitHub release page](https://github.com/c0decave/axross/releases).
 
-## 0.15.178 - 2026-11-16
+## 0.15.180 - 2026-11-20
 
-0.15.178 is the first release since 0.14.136 with one-file binaries for
-Linux, macOS and Windows: installed binaries update to it. Nine rounds of
-reviews of the whole code (backends and transfers, security, the windows,
+0.15.180 closes three complete review rounds of every area of axross - files
+and transfers, the protocols, the terminal and scripting, the viewers and
+the Media Player, security with the agent and the MCP server, the window
+with search and translations - and the reviews of search, file operations
+and every connection type before them. Every fix comes with tests that fail
+on the old code. The full list is in the release notes
+(`RELEASE-NOTES-0.15.180.md` on the
+[release page](https://github.com/c0decave/axross/releases/tag/v0.15.180)).
+The downloads are the same as for 0.15.179; installed binaries update to it.
+
+**In short:**
+
+- **Security:** IMAP, POP3 and LDAP encrypt with STARTTLS before the login
+  on their plain ports (the password went in clear text); the agent's
+  approval shows where a write really goes, and neither the agent nor the
+  MCP server can change axross's own code; an MCP server run on this
+  machine has its whole folder pinned; the mail docks' leak check catches
+  codes however they are written; PDFs, pictures, SVGs and code
+  highlighting are handled in separate processes that a hostile file can
+  only hang or crash themselves; a host name with shell syntax in an rsync
+  profile behind a proxy no longer runs a command here; a WinRM folder
+  delete or copy never goes into a junction's target.
+- **Your data:** transfers, the trash, archives and Remove Metadata were
+  gone through once more - a move keeps a source written to meanwhile, a
+  copy onto a hard link of itself does nothing, resumes check what they
+  continue, temp files are private from their first byte, a file trashed
+  with other hard links comes back, Pack and Extract keep modes, dates and
+  folders and refuse names they cannot store.
+- **Flash-safe:** no visualization of the Media Player and no arcade game
+  flashes more than three times a second or in saturated red, at any size
+  and frame rate (WCAG 2.3.1 / 2.3.2).
+- **New:** passwords for encrypted 7z and ZipCrypto ZIP archives; the
+  right-click menu from the keyboard (F10, Shift+F10, the Menu key); Move
+  to Trash says when a share's trash is shared; Find Files finds folders
+  and names in any Unicode form; Find in Index stays open beside the
+  window; a light or dark theme in axross-markdown; bracketed paste and Alt
+  as Meta in the terminal; SSH config import with `Include`, `Match` and
+  `ProxyJump`.
+
+### Compatibility
+
+- **STARTTLS for IMAP, POP3 and LDAP.** A profile on a plain port (143,
+  110, 389) - also one saved before - now upgrades with STARTTLS and checks
+  the certificate; a server that does not offer it is refused before the
+  password goes out. Untick *STARTTLS before the login* only for a server
+  without any TLS. In scripts `imap+plain://`, `pop3+plain://` and
+  `ldap+plain://` are the plain choice.
+- **No new profile named `local`.** It is the local shell's name in
+  terminal bookmarks and saved layouts; one saved by an older version stays
+  usable.
+- **Qt's SQL driver plugins are no longer bundled** in the binaries (axross
+  does not use QtSql); a script or extension that needs them uses a PyPI
+  install.
+- **macOS and Windows binaries pass the supply-chain gate**, as the Linux
+  ones did: they are built only from reviewed, hash-pinned wheels.
+- **Printing in the one-file Linux binaries** goes to a PDF (no CUPS
+  plugin), as noted for 0.15.179.
+- Smaller ones: with a proxy, a pinned IP version needs the server's IP
+  address; the MCP tools `walk`, `recursive_checksum`, `bulk_copy` and
+  `search` refuse arguments above their caps; the update check also
+  contacts `objects.githubusercontent.com`.
+
+### Security
+
+- STARTTLS for IMAP, POP3 and LDAP; what a server sent before the upgrade
+  is not believed after it.
+- Agent and MCP: approvals name the real target of a write; axross's own
+  code, a folder whose name makes its files secret and the whole folder of
+  a host-run MCP server are protected; symlinks with `..` are made as the
+  place checked; a remote's grep hits and read windows are checked for
+  keys.
+- Mail docks: a reply that carries another mail's codes, links or text
+  waits for your yes, however the code is written.
+- Hostile files: PDFs, pictures, SVGs (also in Markdown), code highlighting
+  and video probing run in child processes with time limits.
+- Hostile names: invisible and direction characters are shown as � in
+  every list, title and message; logs escape control characters; archives
+  with such member names are refused.
+- Tokens stay where they belong: speech to text, OneDrive paging links,
+  WebDAV redirects, the Git cache, iSCSI CHAP secrets.
+- rsync behind a proxy refuses a host with shell syntax; WinRM never
+  follows a junction; SSH config imports ask before a ProxyCommand runs.
+
+### Data safety
+
+- **Transfers:** a move keeps a local source written to or replaced while
+  it was copied; a copy onto a hard link of its source does nothing; a
+  resume compares windows of the partial with the source first; names that
+  differ only in case are asked about on SMB, Windows, macOS and FAT
+  disks; temp files over SFTP, SCP and NFS have the source's mode from
+  their first byte, and an SFTP save keeps owner and group.
+- **Trash:** a file of a RAM disk is not copied onto another disk; a file
+  trashed with other hard links comes back; Empty Trash can be cancelled.
+- **Archives:** Pack keeps modes, dates before 1980 and 7z folder times,
+  leaves out (and names) sockets, pipes and names it cannot store; Extract
+  keeps folder modes, extracts read-only 7z folders whole and reads ZIP
+  names without the UTF-8 flag in their own encoding; the ZIP ratio guard
+  applies from 64 MiB per member.
+- **Metadata:** Remove Metadata cleans hidden PDF and Office parts, a
+  hard-linked file in itself, and says what a folder run left out; Ctrl+Z
+  passes over a removal it can no longer reverse.
+- **Elsewhere:** New File never empties a file that appeared meanwhile;
+  Compare Panes deletes only rows known to be on one side; an rsh upload
+  replaces the file only when complete; editors and Encrypt read a file to
+  its end on network readers.
+
+### New
+
+- **Archive passwords:** an encrypted 7z and ZipCrypto ZIP members open
+  with their password, asked for by the pane and the archive view and kept
+  in memory only while the archive is open.
+- **The right-click menu from the keyboard:** F10, Shift+F10 and the Menu
+  key, at the current row.
+- **Shared-trash warnings:** on S3, SMB, WebDAV, FTP and the cloud drives
+  Move to Trash, Remove Metadata and the Duplicate Finder say that the
+  share's trash is shared and offer a permanent delete or cleaned copies.
+- **axross-markdown follows the desktop's light or dark scheme;** *View →
+  Theme* chooses another.
+- **Search:** Find Files lists matching folders, ignores the Unicode form
+  (`strasse` finds `Straße`), reads Latin-1 and UTF-16 files; the pane
+  filter takes `*.pdf`; Find in Index searches by size and date and stays
+  open beside the window.
+- **Terminal:** bracketed paste, Alt as Meta, Shift+Tab; a pinned terminal
+  pane takes every key typed in its window.
+- **Also:** SSH config import reads `Include`, `Match` and `ProxyJump`; the
+  path bar takes `~` and relative paths; going up selects the folder just
+  left; a profile rename takes its bookmarks, Smart Folders and saved panes
+  along; Show Checksum can be cancelled and falls back to reading the file;
+  the image viewer opens every picture fitted; viewer Del moves to the
+  trash.
+
+### Fixed
+
+- **Files and transfers:** see *Data safety*; also FUSE modes, Compare
+  Panes' Cancel, Calculate Size's lower bounds, Batch Rename with tags.
+- **Protocols:** WebDAV redirects and UTF-8 logins, cloud overwrite
+  rollback, Azure snapshots, odd S3 and Azure keys, Telnet, Cisco Telnet,
+  rsh, NFS, iSCSI, ADB, Exchange, Git, SVN, SNMP.
+- **Terminal and scripting:** pastes never freeze the window, keys as
+  xterm sends them, wide characters, the Console runs a pasted block,
+  scheduled jobs run once across windows, Scripts dock runs end with
+  axross, extensions can no longer take axross down.
+- **Viewers and media:** the Media Player's visualizations and the arcade
+  are flash-safe; zooming far into a picture no longer crashes; large
+  files and long lines in the editor; the Markdown reader's seventeenth to
+  nineteenth reviews.
+- **Window, search and translations:** Find Files, the pane filter, Find
+  in Index and the network search find what they should; every window fits
+  a 1024x600 screen, also in German; counts read "1 file", "3 files";
+  bookmarks, settings and the session survive a second axross and a newer
+  version.
+
+### Known limitations
+
+As for 0.15.179: the macOS binaries are only ad-hoc signed and the Windows
+ones not signed; there is no build for Intel Macs or Linux on arm64; the
+AppImages need FUSE (or `--appimage-extract-and-run`); over HTTP, slow
+trickling connections from the MCP client's own address can push out a
+slow TLS handshake (docs/MCP.md).
+
+## 0.15.179 - 2026-11-19
+
+0.15.179 is the first release since 0.14.136 with one-file binaries for
+Linux, macOS and Windows: installed binaries update to it. It takes in the
+never-published 0.15.177 and 0.15.178 (their notes are below). Nine rounds
+of reviews of the whole code (backends and transfers, security, the windows,
 the extensions, the entry points, concurrency, the docs against the code)
-found and fixed several hundred bugs; every fix comes with tests that fail on
-the old code.
+found and fixed several hundred bugs; then a review of every connection type,
+nine rounds of an adversarial review of the MCP server and sixteen of the
+Markdown reader. Every fix comes with tests that fail on the old code.
+
+New downloads: AppImages for Linux (`axross-full-x86_64.AppImage`,
+`-slim-`, `-base-`) and axross-full for macOS and Windows
+(`axross-full-macos-arm64`, `axross-full-windows-x64.exe`) beside the
+slim ones, and macOS disk images with axross.app
+(`axross-slim-macos-arm64.dmg`, `axross-full-macos-arm64.dmg`: drag it to
+Applications; axross.app does not update itself - a new version comes as a
+new image from the release page).
 
 **In short** (the update dialog shows the start of these notes):
 
@@ -32,8 +204,68 @@ the old code.
   downloads and leaves nothing half-written; undo checks it moves the file
   it moved; Del moves to the trash (Shift+Del deletes); questions that
   destroy default to No.
+- **Since 0.15.178 (never published):** every connection type reviewed -
+  SFTP, SCP, rsync, rsh, Telnet, Cisco Telnet, WinRM, WMI, FTP/FTPS, TFTP;
+  SMB, DFS-N, WebDAV, NFS, iSCSI, MTP, S3, Azure; the cloud drives, mail
+  (IMAP, Exchange, NNTP), the databases, Git, LDAP; Android phones over
+  ADB (TCP, USB, pairing, Wireless debugging): refused logins, missing
+  shares and closed ports say what to check, dropped connections are
+  noticed and reconnect, the profile's IP version reaches every backend,
+  long transfers show progress and cancel. The MCP server hardened in
+  nine review rounds (bounded answers and listings, fair admission of
+  HTTP connections, per-backend write locks). The Markdown reader after
+  sixteen reviews: TeX formulas in the common forms, big documents laid
+  out without holding up the window, Copy that takes what is shown.
+  Ctrl + / Ctrl - / Ctrl 0 and Ctrl + wheel zoom images and PDFs in the
+  viewers; the Media Player has -15 s / +15 s buttons.
+
+### Known limitations
+
+- **Markdown reader:** a few large documents still pause the window for
+  about a quarter of a second (0.25-0.3 s) while a part is laid out.
+  `\overset`, `\underset`, `\stackrel` and `\cfrac` are stacked only in
+  display formulas; inline and in the terminal (`axross-mdcat`) they are
+  written beside each other.
+- **MCP server over HTTP:** from the client's own address (or its IPv6
+  /64), connections that trickle a byte every few milliseconds look more
+  alive than a slow TLS handshake and can push it out of a full server -
+  an attacker needs that very address (docs/MCP.md).
+- **Binaries:** the macOS binaries are only ad-hoc signed, not
+  notarized, and the Windows ones are not signed (Gatekeeper and
+  SmartScreen warn at the first start); there
+  is no macOS build for Intel Macs and no Linux build for arm64. The
+  AppImages need FUSE to mount themselves; without it, start them with
+  `--appimage-extract-and-run`.
+- **Printing on Linux (binaries):** the one-file Linux binaries carry no CUPS
+  print plugin; *Print* writes a PDF there, and printers are reached from
+  the PDF viewer. The PyPI install uses the host's Qt plugins as before.
+- **Tours:** the narrated videos of *Help → Tours* are not published with
+  this release yet, so a tour's video cannot be downloaded; the tours
+  themselves (the steps through the window) work.
 
 ### Fixed
+
+- **Connections (the review of every connection type, since 0.15.178):**
+  SFTP and SCP say when a key passphrase is wrong or no SSH agent runs,
+  notice a dropped or silent connection and ask to reconnect, fail a
+  stalled key exchange instead of hanging, store host keys under the
+  lower-case host name and keep a ProxyCommand's `%h` / `%r` free of shell
+  syntax; SCP lists names that are not UTF-8 and huge folders. FTP takes
+  implicit FTPS on port 990, keeps the bytes of names that are not UTF-8
+  and reads MLSD support from FEAT. Telnet and Cisco Telnet notice a
+  closed connection at once, count silence rather than a whole answer as a
+  time-out and transfer large files in pieces with progress and Cancel;
+  rsh and rsync stream with progress and Cancel and honour the IP version.
+  WinRM and WMI: Test Connection fails when the host does, 5985 is HTTP.
+  TFTP names a missing file. SMB, S3, WebDAV and Azure say whether a login,
+  a share, a bucket or a container was refused or a port is closed; a
+  container or share SAS connects; NFS, MTP and iSCSI notice a dropped
+  connection; a hung NFS mount no longer hangs its probe. Cloud drives ask
+  to sign in again when a sign-in expired. Exchange, IMAP, NNTP, LDAP,
+  PostgreSQL, Redis, MongoDB, SQLite and Git-as-FS: clear connect errors,
+  time-outs, a folder rename that lands whole. Android phones over ADB: TCP
+  and USB, pairing and Wireless debugging, reconnects. Every profile type
+  connects from Connect to Server.
 
 - **Mail docks:** a reply sent without asking goes only to the sender's
   *From* address; a *Reply-To* the mail names needs your yes. A mail file
@@ -1228,7 +1460,7 @@ the old code.
 - Updates: an update is refused unless the release is newer than the
   running version, and a re-issued pack manifest is numbered in the signed
   checksums so an older one cannot be put back.
-- 0.15.177 is signed with the release key that installed binaries trust
+- 0.15.179 is signed with the release key that installed binaries trust
   (the first of the two keys 0.15.176 pins); the second key signs only
   once binaries that carry it are in use.
 - MCP file tools open every local path beneath their root without
@@ -1328,6 +1560,36 @@ the old code.
 
 ### New
 
+- **The MCP server on its own: `axross-headless-mcp`.** `pip install axross-headless-mcp`
+  is axross's headless MCP server without Qt - for a server, a container
+  or CI - with the flags of `axross --mcp-server` (stdio by default,
+  `--mcp-http` for HTTP), every tool group, and axross's settings and
+  saved profiles. The image `ghcr.io/c0decave/axross-headless-mcp` and the entry
+  `io.github.c0decave/axross-headless-mcp` in the official MCP registry come with
+  every release.
+- **MCP 2025-11-25 and 2025-06-18.** The server speaks the current MCP
+  revisions besides 2024-11-05 (it answers the client's): every tool has
+  a title and annotations (read-only, destructive, idempotent, open
+  world), `stat`, `read_file`, `checksum` and `walk` declare their output
+  and every object result also comes as `structuredContent`, refused
+  arguments come back as an error the model can read and correct, and
+  HTTP checks the `MCP-Protocol-Version` header and answers a
+  notification with 202. Tested with the official MCP Python SDK.
+- **The headless MCP server, hardened** (eight rounds of an adversarial
+  review before its first release): a private key anywhere in a file is
+  refused by every read, `resources/read`, encrypt, pack and copy (PuTTY,
+  ssh.com, age, UTF-16 and UTF-32 spellings too); copies from a remote stop
+  at max_file_bytes, refuse symlinks and devices, and appear whole or not at
+  all; every answer and listing is bounded (an SFTP answer's counts by its
+  bytes); on stdio `ping` and `notifications/cancelled` work during a long
+  call; over HTTP each connection has a deadline for its request head and a
+  minimum rate for its body (`AXROSS_MCP_MIN_BODY_RATE`), a full server
+  makes room from the address that clearly holds the most connections and
+  never pushes out one that showed its token, sessions share the rate
+  fairly, and writes are serialised per backend. File names that are not
+  UTF-8 no longer hang the official SDK client (U+FFFD plus the raw bytes
+  in `*_b64`). The background-task methods are now `axross/tasks/*`.
+  docs/MCP.md has every limit.
 - **Markdown viewer.** F3 or a double-click on a `.md` file (local or
   remote) shows it rendered: GitHub's Markdown with the headings as an
   outline beside it, footnotes, highlighted code, the images beside the
@@ -1467,7 +1729,7 @@ Mixer, System Information, the NFSv4 client and more.
 **It shipped without binaries:** the release page has only the wheel and
 the sdist - no `axross-*` binaries, no `SHA256SUMS`, no `SHA256SUMS.sig` -
 and it was not uploaded to PyPI. Installed binaries therefore stayed on
-0.14.136 and update straight to 0.15.177.
+0.14.136 and update straight to 0.15.179.
 
 ## Earlier releases
 

@@ -17,8 +17,10 @@ from PyQt6.QtWidgets import (
 from core.i18n import tr, tr_n
 from core.transfer_conflicts import ConflictAction, TransferConflict
 from ui.close_corner import add_close_corner
+from ui.elided_label import WrapAnywhereLabel
 from ui.format_utils import format_size
 from ui.icon_provider import set_window_icon
+from ui.plain_text import defused
 
 
 def _when(mtime: float | None) -> str:
@@ -60,8 +62,14 @@ class TransferConflictDialog(QDialog):
             headline = tr("“{name}” already exists in {folder}.").format(
                 name=conflict.name, folder=conflict.dest_dir
             )
-        title = QLabel(headline)
-        title.setWordWrap(True)
+        # The names are the servers': plain text (a name "<b>x</b>" was
+        # drawn bold), shown as the pane shows a name (a bidi override as
+        # U+FFFD), wrapped inside the window (a long folder without blanks
+        # made the window as wide as its path).
+        # Wrapped anywhere inside a word wider than the window: a QLabel
+        # wraps at blanks only and cut the path off at the window's edge.
+        title = WrapAnywhereLabel(defused(headline))
+        title.setMinimumWidth(320)
         layout.addWidget(title)
 
         grid = QGridLayout()

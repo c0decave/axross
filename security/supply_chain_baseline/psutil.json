@@ -4,18 +4,58 @@
   "7.2.2": {
    "accepted_findings": [
     "yara|capability_filesystem_read|psutil/_common.py|1bbce9fd97e6f543",
+    "yara|capability_filesystem_read|psutil/_common.py|6fc6bf5f86491ba9",
+    "yara|capability_filesystem_read|psutil/_psbsd.py|68de935cb6556674",
     "yara|capability_filesystem_read|psutil/_psbsd.py|c1a8314a9640649c",
+    "yara|capability_filesystem_read|psutil/_pslinux.py|571c6cd7919971df",
     "yara|capability_filesystem_read|psutil/_pslinux.py|a8a09bab87848075",
     "yara|capability_network_outbound|psutil/_common.py|1bbce9fd97e6f543",
+    "yara|capability_network_outbound|psutil/_common.py|6fc6bf5f86491ba9",
+    "yara|capability_process_spawn|psutil/__init__.py|7b6a0675824eb1fa",
     "yara|capability_process_spawn|psutil/__init__.py|d138a5786b163b56",
+    "yara|capability_process_spawn|psutil/_psaix.py|a51e0031f92ba5da",
     "yara|capability_process_spawn|psutil/_psaix.py|afe4038d5e145455",
+    "yara|capability_process_spawn|psutil/_pssunos.py|5b9be0b2790a0313",
     "yara|capability_process_spawn|psutil/_pssunos.py|cc348442008a54cb",
+    "yara|threat_process_memory|psutil/__init__.py|7b6a0675824eb1fa",
     "yara|threat_process_memory|psutil/__init__.py|d138a5786b163b56",
+    "yara|threat_process_memory|psutil/_pslinux.py|571c6cd7919971df",
     "yara|threat_process_memory|psutil/_pslinux.py|a8a09bab87848075",
+    "yara|threat_process_memory|psutil/_pswindows.py|0bbd52dcb214735b",
     "yara|threat_process_memory|psutil/_pswindows.py|580ad391de734c11",
+    "yara|threat_runtime_enumeration|psutil/__init__.py|7b6a0675824eb1fa",
     "yara|threat_runtime_enumeration|psutil/__init__.py|d138a5786b163b56"
    ],
    "archives": {
+    "psutil-7.2.2-cp36-abi3-macosx_11_0_arm64.whl": {
+     "entry_points": [],
+     "files": {
+      "psutil-7.2.2.dist-info/LICENSE": "b89c063b3786e28e0c0a38f1931db61fed35e69dd2a2966fbecffee0f46c8d10",
+      "psutil-7.2.2.dist-info/METADATA": "525f8ba78523cf7bc3759d62a105e7c57fd679ea702402b9449fb0746aa0217f",
+      "psutil-7.2.2.dist-info/RECORD": "f7f7d239fd0bd713c722f24875c1f8217947e8c576dfda94621e9fa6b7ab4541",
+      "psutil-7.2.2.dist-info/WHEEL": "51e27ab3fc49cf96c9613fae02157c7539c5fb5cff359293443ce280e85e4bf0",
+      "psutil-7.2.2.dist-info/top_level.txt": "8023619f9ef0ce4b038d20084a680c2746a25f342e964d062616f6f81032620c",
+      "psutil/__init__.py": "d138a5786b163b56ba86ea0b2d5589dfca37e1bcdf8de1057fe1e933d6ab808a",
+      "psutil/_common.py": "1bbce9fd97e6f5439a0d385f28401f527c5a9d978d9d062593d7ef6fe215fc75",
+      "psutil/_ntuples.py": "9b8e8b938abae2786a515f686f4d8132218be897eb6b459b9324ed17d88a31c7",
+      "psutil/_psaix.py": "afe4038d5e1454559f17dac9e6c2c56ad8cf873d43880f6503e8549cc06a18ec",
+      "psutil/_psbsd.py": "c1a8314a9640649c99197ff261dbeec1f0080175e4a3f6b5cb370a39332deb94",
+      "psutil/_pslinux.py": "a8a09bab87848075b691c46112b00692745785a8c9d5a2c87037ae124b469749",
+      "psutil/_psosx.py": "89f0ea0e9c1fe38f224b612792bf31d07c8880d79281806e5379c00514f6b3f2",
+      "psutil/_psposix.py": "288887b58f5939e3b00e021f6e7b490c2f7f4852804a359918ab7d9c6fb39839",
+      "psutil/_pssunos.py": "cc348442008a54cb6054299b2ecae0d9a123c07bb4ba1f8e14b319487f83cee5",
+      "psutil/_psutil_osx.abi3.so": "ff4568b9187ca7b37c5134aaf614ffb061e7fedccebd84158343afb05991b8e2",
+      "psutil/_pswindows.py": "580ad391de734c113682200ee9f4245e34737f5e26af0a73a4e8c9b4458de220"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "fcbfdc92a639656098aad613a827aff9b4ae450832b5e86127279207616d4ced",
+     "native": {
+      "psutil/_psutil_osx.abi3.so": "macho"
+     },
+     "pth": {},
+     "sha256": "1a7b04c10f32cc88ab39cbf606e117fd74721c831c98a27dc04578deb0c16979"
+    },
     "psutil-7.2.2-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl": {
      "entry_points": [],
      "files": {
@@ -44,11 +84,42 @@
      },
      "pth": {},
      "sha256": "076a2d2f923fd4821644f5ba89f059523da90dc9014e85f8e45a5774ca5bc6f9"
+    },
+    "psutil-7.2.2-cp37-abi3-win_amd64.whl": {
+     "entry_points": [],
+     "files": {
+      "psutil-7.2.2.dist-info/LICENSE": "c7adc4d5d1337a548b967421f1fbe258b93033a0417708fd6f4e38f8ecbceb80",
+      "psutil-7.2.2.dist-info/METADATA": "a263a40220d921d9cb963fc636d34f817aa2eb72c2696e3e3465d088cdb1976b",
+      "psutil-7.2.2.dist-info/RECORD": "c2beb439b78dc605156d8fa39ab6f2de33d2d0b48dcfffa3b92b1106646b58b6",
+      "psutil-7.2.2.dist-info/WHEEL": "d4e0a5b3c507754487a0cdd46a453f48ec93d5ff66e527d511df0e830f267494",
+      "psutil-7.2.2.dist-info/top_level.txt": "8023619f9ef0ce4b038d20084a680c2746a25f342e964d062616f6f81032620c",
+      "psutil/__init__.py": "7b6a0675824eb1fa2ff0cb1eb36e358dc454703e51dfa4e9a0e6ccd26a159f0c",
+      "psutil/_common.py": "6fc6bf5f86491ba962521374472570238929003cebea8e9b6c55224084b52bb0",
+      "psutil/_ntuples.py": "96f42bc24549636b5707a949b7cc92e89c87f7cea7d343a6d17821ac670dfcd2",
+      "psutil/_psaix.py": "a51e0031f92ba5dab84f7750a0315e41b4b0bba545b6e62a8fb5d357dc8a0346",
+      "psutil/_psbsd.py": "68de935cb6556674a09f6106b36d70c18c4cc82ed9f8236b895ad98d869c33aa",
+      "psutil/_pslinux.py": "571c6cd7919971df4c1381cfd514808ff934f7f7fc79c312b52278fcd0c7dd10",
+      "psutil/_psosx.py": "c766ad9002385269c313afb8a1fa883364e1f951b46b54dde72a8de4896d85fc",
+      "psutil/_psposix.py": "3bad08a5eaec4e081fce822e1c4a3f95b1d54d9d0b0d5ca31583fbcdc7574809",
+      "psutil/_pssunos.py": "5b9be0b2790a0313c68f52a7a730aa15dd9f467ed0f849f79ec73d92b4c3a147",
+      "psutil/_psutil_windows.pyd": "0035450801bd7d938e9e146c5ec28e619cb5a5f4a18cdc53ac7e9734c7f94f78",
+      "psutil/_pswindows.py": "0bbd52dcb214735be4168d11a2ae192d5bc7265c8cf72c611179476479687f54"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "63e81aedab52c8106f1a8a610f80c6abc19db1dfef6b3ab9d42b51cd810589b4",
+     "native": {
+      "psutil/_psutil_windows.pyd": "pe"
+     },
+     "pth": {},
+     "sha256": "eb7e81434c8d223ec4a219b5fc1c47d0417b12be7ea866e24fb5ad6e84b3d988"
     }
    },
    "name": "psutil",
    "provenance": {
-    "psutil-7.2.2-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl": null
+    "psutil-7.2.2-cp36-abi3-macosx_11_0_arm64.whl": null,
+    "psutil-7.2.2-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl": null,
+    "psutil-7.2.2-cp37-abi3-win_amd64.whl": null
    },
    "pypi": {
     "author": "Giampaolo Rodola",
@@ -62,11 +133,84 @@
    },
    "reviewed": {
     "by": "claude",
-    "date": "2026-11-05",
-    "note": "Hits read: process enumeration and memory info are psutil's purpose; the native module's socket import lists connections (net_connections). Content review only."
+    "date": "2026-11-20",
+    "earlier": [
+     {
+      "by": "claude",
+      "date": "2026-11-05",
+      "note": "Hits read: process enumeration and memory info are psutil's purpose; the native module's socket import lists connections (net_connections). Content review only."
+     }
+    ],
+    "note": "macOS arm64 and Windows amd64 wheels of the reviewed version: the same 16 members, with _psutil_osx resp. _psutil_windows in place of _psutil_linux (the platform backend). Python identical (Windows CRLF only); the 11 'new' keys are the reviewed process-enumeration hits, CRLF-changed. The Mach-O's socket import lists connections (net_connections), as on Linux; the .pyd's AdjustTokenPrivileges/OpenProcessToken (capa: acquire debug privileges) is psutil's documented SeDebugPrivilege for reading other processes, TerminateProcess is Process.kill(), IPHLPAPI/WS2_32 list connections. No .pth, no hook. No attestation: content review only."
    },
    "scans": {
     "capa": {
+     "0035450801bd7d938e9e146c5ec28e619cb5a5f4a18cdc53ac7e9734c7f94f78": {
+      "capabilities": [
+       "accept command line arguments",
+       "acquire debug privileges",
+       "contain loop",
+       "create or open file",
+       "create thread",
+       "delay execution",
+       "enumerate disk volumes",
+       "enumerate process modules",
+       "enumerate processes",
+       "enumerate services",
+       "enumerate threads",
+       "get disk information",
+       "get disk size",
+       "get local IPv4 addresses",
+       "get number of processors",
+       "get service handle",
+       "get system information on Windows",
+       "interact with driver via IOCTL",
+       "link function at runtime on Windows",
+       "modify access privileges",
+       "open process",
+       "open thread",
+       "query environment variable",
+       "query service status",
+       "start service",
+       "stop service",
+       "terminate process",
+       "terminate thread"
+      ],
+      "note": "",
+      "path": "psutil/_psutil_windows.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ],
+        "dynamic-code": [
+         "GetProcAddress",
+         "LoadLibraryA"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "ADVAPI32.dll",
+        "IPHLPAPI.DLL",
+        "KERNEL32.dll",
+        "POWRPROF.dll",
+        "PSAPI.DLL",
+        "SHELL32.dll",
+        "VCRUNTIME140.dll",
+        "WS2_32.dll",
+        "api-ms-win-crt-environment-l1-1-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "pdh.dll",
+        "python3.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "8085c743a77f6059be6d18d54317ccce2e715425bb5f15aa8835770463d6b9fd": {
       "capabilities": [
        "contain loop",
@@ -101,19 +245,43 @@
        "rpath": [],
        "urls": []
       }
+     },
+     "ff4568b9187ca7b37c5134aaf614ffb061e7fedccebd84158343afb05991b8e2": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "psutil/_psutil_osx.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
      }
     },
     "keys": [
      "yara|capability_filesystem_read|psutil/_common.py|1bbce9fd97e6f543",
+     "yara|capability_filesystem_read|psutil/_common.py|6fc6bf5f86491ba9",
+     "yara|capability_filesystem_read|psutil/_psbsd.py|68de935cb6556674",
      "yara|capability_filesystem_read|psutil/_psbsd.py|c1a8314a9640649c",
+     "yara|capability_filesystem_read|psutil/_pslinux.py|571c6cd7919971df",
      "yara|capability_filesystem_read|psutil/_pslinux.py|a8a09bab87848075",
      "yara|capability_network_outbound|psutil/_common.py|1bbce9fd97e6f543",
+     "yara|capability_network_outbound|psutil/_common.py|6fc6bf5f86491ba9",
+     "yara|capability_process_spawn|psutil/__init__.py|7b6a0675824eb1fa",
      "yara|capability_process_spawn|psutil/__init__.py|d138a5786b163b56",
+     "yara|capability_process_spawn|psutil/_psaix.py|a51e0031f92ba5da",
      "yara|capability_process_spawn|psutil/_psaix.py|afe4038d5e145455",
+     "yara|capability_process_spawn|psutil/_pssunos.py|5b9be0b2790a0313",
      "yara|capability_process_spawn|psutil/_pssunos.py|cc348442008a54cb",
+     "yara|threat_process_memory|psutil/__init__.py|7b6a0675824eb1fa",
      "yara|threat_process_memory|psutil/__init__.py|d138a5786b163b56",
+     "yara|threat_process_memory|psutil/_pslinux.py|571c6cd7919971df",
      "yara|threat_process_memory|psutil/_pslinux.py|a8a09bab87848075",
+     "yara|threat_process_memory|psutil/_pswindows.py|0bbd52dcb214735b",
      "yara|threat_process_memory|psutil/_pswindows.py|580ad391de734c11",
+     "yara|threat_runtime_enumeration|psutil/__init__.py|7b6a0675824eb1fa",
      "yara|threat_runtime_enumeration|psutil/__init__.py|d138a5786b163b56"
     ],
     "yara": [

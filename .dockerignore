@@ -53,3 +53,19 @@ security/scanner_reports/
 
 *.log
 :memory:
+
+# Release signing keys and any private key material - never in a build
+# context (a bare "*.pem" matches only at the context root in Docker and
+# Podman; "**/" reaches every folder). The review of 2026-11-19 found the
+# field keys under build/release-key/ going into the builder image.
+build/release-key/
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+# Operator notes and scratch files at the top level (untracked, private)
+docs/HANDOFF.md
+docs/FEEDBACK_HANDOFF_*.md
+neue-dinge.txt
+start.sh
+*.txt.local

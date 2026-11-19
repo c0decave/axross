@@ -11,17 +11,32 @@ space "Frei: 249,0 MB / 274,5" (UX review round 7, M2).
 * :class:`MessageFirstRow` is a QHBoxLayout in which the *yielding* label
   (the free space) gives its width up first, so the *message* label keeps
   as much of the message as the row allows.
+* :class:`WrapAnywhereLabel` shows a value from outside - a name, a path -
+  whole: plain text, wrapped at blanks and, inside a word wider than the
+  label, anywhere. A QLabel wraps at blanks only, so a long name or path
+  either made its window wider than the screen or, held to the window's
+  width, was cut off at its edge (round 3 of the 2026-11 reviews:
+  Properties, Permissions, Show Checksum, File Already Exists).
 """
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QRect, QSize, Qt
-from PyQt6.QtGui import QPainter
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QWidget
+import math
+
+from PyQt6.QtCore import QPointF, QRect, QSize, Qt
+from PyQt6.QtGui import QGuiApplication, QPainter, QTextLayout, QTextOption
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QMenu, QSizePolicy, QStatusBar, QWidget
+
+from ui.plain_text import one_line
 
 ELLIPSIS = "…"
 #: Fewer characters than this (the "…" included) are not worth showing.
 MIN_SHOWN = 8
+#: The size hint asks for at most this many average characters: a status
+#: quoting a 5000-character name asked for some 35 000 px, and every
+#: layout and window sized from a hint took it (``needed_width`` still
+#: tells the whole text's width).
+MAX_HINT_CHARS = 100
 
 
 class ElidedLabel(QLabel):
@@ -40,11 +55,12 @@ class ElidedLabel(QLabel):
     # --- text -----------------------------------------------------------
     def setText(self, text: str) -> None:  # noqa: N802 - Qt
         self._short = ""
-        super().setText(text)
+        super().setText(one_line(text))
         self._refresh_tip()
 
     def set_texts(self, text: str, short: str = "") -> None:
         """*text*, and *short* to show when *text* does not fit."""
+        text, short = one_line(text), one_line(short)
         super().setText(text)
         self._short = short if short and short != text else ""
         self.updateGeometry()
@@ -86,7 +102,9 @@ class ElidedLabel(QLabel):
     # --- geometry and painting ----------------------------------------------
     def sizeHint(self) -> QSize:  # noqa: N802 - Qt
         hint = super().sizeHint()
-        return QSize(self.needed_width(), hint.height())
+        m = self.contentsMargins()
+        cap = self.fontMetrics().averageCharWidth() * MAX_HINT_CHARS + m.left() + m.right() + 2
+        return QSize(min(self.needed_width(), cap), hint.height())
 
     def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt
         return QSize(0, super().minimumSizeHint().height())
@@ -151,3 +169,111 @@ class MessageFirstRow(QHBoxLayout):
         if self.yielding.maximumWidth() != cap:
             self.yielding.setMaximumWidth(cap)
         super().setGeometry(rect)
+
+
+class OneLineStatusBar(QStatusBar):
+    """The window's status bar: a message is shown as the file pane shows
+    a name (:func:`ui.plain_text.one_line`) - a bidi override in a quoted
+    name read the message reversed, a line break pushed it out of the bar."""
+
+    def showMessage(self, text: str, timeout: int = 0) -> None:  # noqa: N802 - Qt
+        super().showMessage(one_line(text), timeout)
+
+
+class WrapAnywhereLabel(QWidget):
+    """A value shown whole: plain text wrapped at blanks, and anywhere
+    inside a word wider than the label. ``text()`` is the text as given;
+    the context menu's Copy copies it."""
+
+    #: The width it asks for at most, in average characters (it wraps below).
+    HINT_CHARS = 60
+
+    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._text = ""
+        policy = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._menu)
+        self.setText(text)
+
+    def text(self) -> str:
+        return self._text
+
+    def textFormat(self) -> Qt.TextFormat:  # noqa: N802 - as QLabel's
+        """Always plain text: nothing in it is markup."""
+        return Qt.TextFormat.PlainText
+
+    def wordWrap(self) -> bool:  # noqa: N802 - as QLabel's
+        return True
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt
+        self._text = text or ""
+        self.updateGeometry()
+        self.update()
+
+    def _lines(self, width: int):
+        """The laid-out QTextLayout at *width* and its height."""
+        # (a line break of the text is a line separator for QTextLayout)
+        layout = QTextLayout(self._text.replace("\r\n", "\n").replace("\n", "\u2028"),
+                             self.font())
+        option = QTextOption()
+        option.setWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+        layout.setTextOption(option)
+        layout.beginLayout()
+        y = 0.0
+        while True:
+            line = layout.createLine()
+            if not line.isValid():
+                break
+            line.setLineWidth(max(1, width))
+            line.setPosition(QPointF(0, y))
+            y += line.height()
+        layout.endLayout()
+        return layout, max(math.ceil(y), self.fontMetrics().height())
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802 - Qt
+        return True
+
+    def heightForWidth(self, width: int) -> int:  # noqa: N802 - Qt
+        m = self.contentsMargins()
+        inner = width - m.left() - m.right()
+        return self._lines(inner)[1] + m.top() + m.bottom()
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt
+        m = self.contentsMargins()
+        metrics = self.fontMetrics()
+        full = max((metrics.horizontalAdvance(line) for line in self._text.split("\n")),
+                   default=0)
+        width = min(full + 1, metrics.averageCharWidth() * self.HINT_CHARS)
+        width += m.left() + m.right()
+        return QSize(width, self.heightForWidth(width))
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt
+        metrics = self.fontMetrics()
+        m = self.contentsMargins()
+        return QSize(metrics.averageCharWidth() * 8 + m.left() + m.right(),
+                     metrics.height() + m.top() + m.bottom())
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt
+        # A window's layout does not ask a child's height for its width:
+        # the height the text needs at this width is the least it gets.
+        super().resizeEvent(event)
+        need = self.heightForWidth(self.width())
+        if self.minimumHeight() != need:
+            self.setMinimumHeight(need)
+
+    def paintEvent(self, _event) -> None:  # noqa: N802 - Qt
+        rect = self.contentsRect()
+        layout, _height = self._lines(rect.width())
+        painter = QPainter(self)
+        painter.setPen(self.palette().color(self.foregroundRole()))
+        layout.draw(painter, QPointF(rect.topLeft()))
+
+    def _menu(self, pos) -> None:
+        menu = QMenu(self)
+        from core.i18n import tr
+
+        menu.addAction(tr("Copy"), lambda: QGuiApplication.clipboard().setText(self._text))
+        menu.exec(self.mapToGlobal(pos))

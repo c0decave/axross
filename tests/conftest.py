@@ -225,6 +225,36 @@ def _axross_runtime_env_restored():
     restore_runtime_env(saved)
 
 
+def _icon_state(module) -> tuple:
+    return (module._monochrome, module._tint, module._backdrop, dict(module._ICON_COLORS))
+
+
+@pytest.fixture(autouse=True)
+def _icon_provider_restored():
+    """Put ui.icon_provider's process-wide look back after the test:
+    monochrome, the theme's tint and backdrop and the icon colours. A test
+    that applied a theme or a setting left them set, and a later test's
+    icons were drawn in them - test_window_icons' monochrome switch then
+    changed nothing and failed, depending on which tests ran before it.
+    The module is not imported here (a test without Qt never loads it)."""
+    module = sys.modules.get("ui.icon_provider")
+    saved = _icon_state(module) if module is not None else None
+    yield
+    module = sys.modules.get("ui.icon_provider")
+    if module is None:
+        return
+    if saved is None:  # loaded during the test: back to the module's defaults
+        saved = (False, None, None, None)
+    if _icon_state(module)[:3] == saved[:3] and (
+            saved[3] is None or _icon_state(module)[3] == saved[3]):
+        return
+    if saved[3] is not None:
+        module._ICON_COLORS.clear()
+        module._ICON_COLORS.update(saved[3])
+    module._monochrome, module._tint, module._backdrop = saved[:3]
+    module._render_icon.cache_clear()
+
+
 @pytest.fixture(autouse=True)
 def _shared_audio_settings_restored():
     """Put axross's audio settings back after the test: the run's home's

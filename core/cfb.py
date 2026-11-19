@@ -120,19 +120,22 @@ class CompoundFile:
         return b"".join(self._sector(s) for s in sectors)[:limit] if limit else b""
 
     def _link(self, storage: Entry, seen: set[int]) -> None:
-        stack = [storage.child]
+        """Hang every entry below *storage* into its storage's children -
+        without recursion: storages nested thousands deep (a crafted .msg)
+        took Python's recursion limit with them (review B)."""
+        stack = [(storage, storage.child)]
         while stack:
-            i = stack.pop()
+            parent, i = stack.pop()
             if i == NOSTREAM:
                 continue
             if i in seen or i >= len(self.entries):
                 raise CfbError("a broken directory tree")
             seen.add(i)
             e = self.entries[i]
-            storage.children[e.name] = e
-            stack += [e.left, e.right]
+            parent.children[e.name] = e
+            stack += [(parent, e.left), (parent, e.right)]
             if e.kind == STORAGE:
-                self._link(e, seen)
+                stack.append((e, e.child))
 
     # --- reading ---------------------------------------------------------------
 

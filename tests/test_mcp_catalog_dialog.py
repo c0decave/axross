@@ -213,9 +213,10 @@ def test_happy_sources_are_switched_added_and_checked(tmp_path):
     QTest.mouseClick(box, Qt.MouseButton.LeftButton, pos=QPoint(8, box.height() // 2))
     assert dlg.add_source_file(str(good))
     QTest.mouseClick(dlg.source_check_button, Qt.MouseButton.LeftButton)
-    _wait(lambda: "servers" in dlg.source_check_label.text())
+    _wait(lambda: "server" in dlg.source_check_label.text())
     text = dlg.source_check_label.text()
-    assert text.startswith("1 servers") and "skipped" in text and "kind" in text
+    # one server, one entry skipped: counted as one ("1 servers" before round 3)
+    assert text.startswith("1 server, 1 entry skipped") and "kind" in text
     assert dlg.save()
     back = S.AgentSettings.load(path).mcp_sources
     assert back.mcpregistry and not back.dockerhub and back.extra == (str(good),)

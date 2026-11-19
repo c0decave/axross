@@ -95,6 +95,61 @@ archive whose members differ, a new finding or YARA hit, a new binary.
    then `accept-survey DIR VERDICTS.json --by WHO`.
 6. Commit the baseline with the lock.
 
+## The tools exported as programs of their own
+
+A tool axross writes out as a project of its own (`scripts/export_standalone.py
+APP`) installs its dependencies from PyPI on the user's machine, not from
+axross's bundle. For axross-markdown those are locked like axross's own:
+`scripts/lock_standalone_deps.sh markdown` writes
+`build/requirements-standalone-markdown.txt` (the exported pyproject's
+dependencies and every extra, `export_standalone.py --requirements markdown`;
+uv `--universal --python-version 3.11 --generate-hashes`, only releases at
+least 14 days old, axross's own pins preferred). The lock is one of the gate's
+`LOCKS`: every pin needs a reviewed baseline here, the tests fail without one,
+and `build_dist.sh` checks it with the rest before it builds the tool's sdist
+and wheel. The exporter refuses a lock made for other requirements (its
+header records the input's SHA-256) and ships it as `requirements.lock.txt`
+with a `supply-chain-gate.toml`; the exported CI installs exactly those files
+(`pip install --require-hashes -r requirements.lock.txt`, then
+`pip install --no-deps .`) and runs this gate on them in a job of its own: a
+sparse checkout of axross's `security/` and scanners' lock into `.axross`,
+the standard-library check, the scanners installed from the lock cut down to
+what the check inspected, `verify-env`, then the check with the scanners - the
+same order as `build_dist.sh`, against axross's reviewed baseline.
+
+First review (2026-11-17): axross-markdown's lock holds 9 pins (PyQt6, PyQt6-Qt6,
+PyQt6-sip, markdown-it-py, mdurl, Pygments, Pillow - already reviewed for axross in
+the same versions - and linkify-it-py 2.2.0 and mdit-py-plugins 0.6.1, new: pure
+Python, nothing flagged, every module identical to the upstream release tag;
+linkify-it-py's attestation verifies, mdit-py-plugins has none). OSV: no advisory.
+
+## Rust: crates from crates.io (`security/supply_chain_cargo.py`)
+
+The same principles for a `Cargo.lock` (axross-amp, the player rewritten in
+Rust). Standard library only; the YARA and capa stage runs from the same
+scanner venv (`--scan-python`). A project points it at its lock and its own
+baseline with a small TOML file (`lock`, `own`, `baseline_dir`, `cache_dir`,
+`min_age_days`); the baseline lives in the project, next to its lock, so a
+dependency change and its review are one commit there.
+
+| Check | What fails |
+|---|---|
+| source | a package from git, a path (other than the project's own) or another registry |
+| crates.io | the lock's checksum is not the one crates.io's index publishes; a yanked version; a .crate download with another SHA-256 |
+| age | published less than 14 days ago (crates.io's `created_at`), unless the baseline names a security fix (`--young`) |
+| advisories | RustSec's advisory-db (read from its GitHub archive every run) and OSV (`crates.io`): a vulnerability or a `MAL-*` entry fails; a notice (unmaintained, unsound) fails until the crate's baseline says why it is acceptable (`--advisory ID=WHY`). Without both sources the gate does not run; `--require-osv` (CI) also fails without OSV alone |
+| names | a crate new to the baseline that looks like a typo of a popular crate (`security/top_crates.txt`, the 5 000 most downloaded, `top-crates` refreshes it; Rust's prefixes and suffixes: `-rs`, `-sys`, `-derive`, `-macros` ...) or of another locked crate - a family in the same lock (`zbus` / `zbus_macros`) is reviewed together |
+| content | anything the review did not see: the .crate's SHA-256 and members, its build script (and the modules it includes) and whether it is a proc macro - code that runs on the build machine; bundled binaries and prebuilt libraries (ELF, PE, Mach-O, ar archives with the DLLs an import library names, COFF objects, WebAssembly); vendored C/C++/assembly by folder; findings: in build-time code network use, programs started (`curl`, a shell ...), the environment dumped, the home folder, files written; anywhere the language-independent rules of `package_inspect.py` (key, wallet, browser-data paths, webhooks, paste sites, encoded blobs) and memory made executable |
+| scanners | GuardDog's and axross's YARA rules over every member, capa on every ELF / PE file |
+| publisher | the crates.io account that published the version differs from the one the review saw |
+
+`review NAME==VERSION` shows everything about a crate (and the source diff
+against the reviewed version), `accept` records it, `survey DIR` and
+`accept-survey DIR VERDICTS.json` do the first review of a whole lock, and
+`upstream NAME==VERSION --prefix DIR/ --url URL --sha256 SHA` compares vendored
+sources with an upstream release tarball and records the result in the
+crate's baseline entry.
+
 ## Night sessions
 
 `scripts/supply_chain_nightly.sh [BUDGET_MINUTES] [WORKERS]` runs capa

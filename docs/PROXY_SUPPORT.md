@@ -20,7 +20,7 @@ scheme (HTTP kinds only).
 | Kind | Meaning |
 |---|---|
 | `socks4` | SOCKS4. Host names are sent as SOCKS4a; a server that only speaks plain SOCKS4 (e.g. Dante) needs an IPv4 address as target |
-| `socks5` | SOCKS5 (host names resolved at the proxy), optional username/password. Exception: a profile that pins the address family (IPv4 / IPv6) resolves the target locally to pick that family |
+| `socks5` | SOCKS5 (host names resolved at the proxy), optional username/password. A profile that pins the address family (IPv4 / IPv6) needs an IP address of that family as target: with a host name the connect is refused (choosing the family would resolve the name on this computer, around the proxy) |
 | `http` | HTTP CONNECT; Basic when a username is set |
 | `https` | HTTP CONNECT over **TLS to the proxy**; certificate verified against `ca_file`, else the system store |
 | `http+basic` / `+ntlm` / `+negotiate` / `+kerberos` | explicit scheme; `https+…` likewise |
@@ -99,8 +99,8 @@ reach their host through a ProxyCommand.
 | **Dropbox** | ⚠ | ⚠ | ⚠ | ⚠ | Dropbox API calls use the SDK's internal proxied `requests.Session` and fail closed if the hook disappears; first-time browser consent is external, and the no-redirect OAuth code exchange is SDK-owned. |
 | **Exchange (EWS)** | ⚠ | ⚠ | ⚠ | ✅ | constructor-only support with `autodiscover=False` and explicit `server=...`; saved profiles warn because they do not expose those fields yet. Session-pool proxy hooks fail closed if they cannot be verified. |
 | **WinRM** | ✅ | ✅ | ✅ | ✅ | walks the pywinrm `Session → Protocol → Transport → requests.Session` chain and sets `.proxies`; fails closed if a configured proxy cannot be attached. |
-| **Rsync (daemon)** | ✅ | ✅ | ✅ | ⚠ username only | `RSYNC_CONNECT_PROG` env var with `nc -X 5 -P user -x …` (rsync 3.0+, OpenBSD nc required). Proxy passwords cannot be passed non-interactively and are rejected. |
-| **Rsync (over SSH)** | ✅ | ✅ | ✅ | ⚠ username only | `-o ProxyCommand=nc -X 5 -P user -x …` injected into the `-e ssh` arg. Proxy passwords cannot be passed non-interactively and are rejected. |
+| **Rsync (daemon)** | ✅ | ✅ | ✅ | ✅ | `RSYNC_CONNECT_PROG` env var with `nc -X 5 -P user -x …` (rsync 3.0+, OpenBSD nc required). A proxy password, SOCKS4 (nc has no SOCKS4a and would resolve the host locally), HTTPS or NTLM / Negotiate go through the loopback shim: nc dials it with `-X connect`, the shim authenticates upstream. |
+| **Rsync (over SSH)** | ✅ | ✅ | ✅ | ✅ | `-o ProxyCommand=nc -X 5 -P user -x …` injected into the `-e ssh` arg; a proxy password, SOCKS4, HTTPS or NTLM / Negotiate through the loopback shim as for the daemon. |
 | **ADB (Android, TCP)** | ✅ | ✅ | ✅ | ✅ | scoped monkey-patch of `socket.create_connection` during `AdbDeviceTcp.connect` |
 | **ADB (Android, USB)** | ❌ | ❌ | ❌ | — | USB transport has no TCP layer. Setting a proxy on a USB profile raises a clear error rather than silently ignoring it. |
 | **MTP (Android)** | ❌ | ❌ | ❌ | — | external FUSE mounter, USB-only — not a network transport. |
@@ -307,9 +307,11 @@ after that warning.
 
 The OpenBSD `nc -X` flags accept `-x host:port` and, on supported
 builds, `-P proxy_username`. They do **not** provide a safe
-non-interactive `proxy_password` flag. Axross therefore passes
-`proxy_username` when available, but rejects `proxy_password` for both
-rsync-daemon and rsync-over-SSH mode instead of pretending it was used.
+non-interactive `proxy_password` flag, and `-X 4` is plain SOCKS4 (the
+host is resolved locally). With a proxy password, a SOCKS4 proxy, TLS to
+the proxy or NTLM / Negotiate, nc dials the loopback shim without
+credentials (`-X connect`); the shim authenticates upstream and speaks
+SOCKS4a there. The password never reaches nc's command line.
 
 ### ADB USB mode
 

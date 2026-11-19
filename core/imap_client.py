@@ -26,6 +26,7 @@ import io
 import logging
 import posixpath
 import re
+import ssl
 from datetime import datetime, timedelta, timezone
 from typing import IO
 
@@ -111,6 +112,13 @@ _SEARCH_LINE_CAP = 24 * 1024 * 1024
 _BODY_SLACK = 64 * 1024
 
 
+class LoginError(PermissionError):
+    """The server refused the login (a NO or BAD to LOGIN / AUTHENTICATE):
+    an OSError (EACCES) that core.user_errors reads as "check the user name
+    and the password" - imaplib's own error carried the raw server bytes
+    and was no OSError."""
+
+
 class ImapAnswerTooLarge(OSError):
     """A server's answer to one command went over its byte budget.
 
@@ -131,6 +139,26 @@ def _human(n: int) -> str:
     if n >= 1024 * 1024:
         return f"{n / (1024 * 1024):.0f} MiB"
     return f"{n // 1024} KiB" if n >= 1024 else f"{n} bytes"
+
+
+#: What an IMAP atom cannot hold (RFC 3501 atom-specials and "]").
+_NOT_IN_ATOM = re.compile(r'[\x00-\x20\x7f(){%*"\\\]]')
+
+
+def _login_word(name: str) -> str:
+    """*name* as one LOGIN argument: a bare atom when it is one, else a
+    quoted string (imaplib quotes the password only)."""
+    if name and not _NOT_IN_ATOM.search(name):
+        return name
+    return '"' + name.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _server_text(exc: BaseException) -> str:
+    """imaplib's error text: the server's answer, bytes decoded."""
+    arg = exc.args[0] if exc.args else ""
+    if isinstance(arg, bytes):
+        arg = arg.decode("utf-8", "replace")
+    return str(arg)[:300]
 
 
 class _LiteralInSteps:
@@ -482,6 +510,22 @@ def _imap_errors_as_oserror(fn):
     return wrapper
 
 
+def _wire_uid(uid) -> str:
+    """*uid* (an int, or ASCII digits as str or bytes) as it goes into a
+    UID command; ValueError for anything else. ``int()`` takes any Unicode
+    digit, so ``_wire_uid(uid)`` made a fullwidth "1" message 1."""
+    if isinstance(uid, bool):
+        raise ValueError(f"IMAP UID must be a number, not {uid!r}")
+    if isinstance(uid, int):
+        if uid < 0:
+            raise ValueError(f"IMAP UID must not be negative: {uid!r}")
+        return str(uid)
+    text = uid.decode("ascii", "replace") if isinstance(uid, bytes) else str(uid)
+    if not re.fullmatch(r"[0-9]+", text):
+        raise ValueError(f"IMAP UID must be ASCII digits: {uid!r}")
+    return text
+
+
 def _expunge_one(imap, uid) -> tuple[str, list]:
     """Expunge only message *uid*, never the mailbox's other \\Deleted mail.
 
@@ -792,6 +836,9 @@ class _SpooledWriter:
         import email.mime.text
         from email.utils import formatdate
 
+        # A local name with CR / LF raised HeaderParseError (no OSError)
+        # and must never become a header line of its own.
+        filename = re.sub(r"[\x00-\x1f\x7f]", "_", filename)
         msg = email.mime.multipart.MIMEMultipart()
         msg["Subject"] = f"File: {filename}"
         msg["From"] = "axross@localhost"
@@ -841,12 +888,19 @@ class ImapSession(SessionLifecycle):
         proxy_username: str = "",
         proxy_password: str = "",
         verify_tls: bool = True,
+        tls_mode: str | None = None,
     ):
         self._host = host
         self._port = port
         self._username = username
         self._password = password
-        self._use_ssl = use_ssl
+        # "tls" (IMAPS), "starttls" (upgraded before the login, refused
+        # without it) or "plain". Without tls_mode, use_ssl=False is the
+        # caller's explicit choice of plain text; profiles pass the mode.
+        from core.tls_context import session_tls_mode
+
+        self._tls_mode = session_tls_mode(tls_mode, use_ssl)
+        self._use_ssl = self._tls_mode == "tls"
         self._verify_tls = bool(verify_tls)
         from core.proxy import ProxyConfig
 
@@ -871,13 +925,58 @@ class ImapSession(SessionLifecycle):
         raised UnicodeEncodeError at every connect. PLAIN carries UTF-8
         (RFC 4616). ``(typ, data)`` as imaplib answers."""
         if (self._username + self._password).isascii():
-            return self._imap.login(self._username, self._password)
+            # imaplib quotes the password only: a user name with a blank,
+            # "\" (DOMAIN\user) or a quote was a syntax error.
+            return self._imap.login(_login_word(self._username), self._password)
         caps = {str(c).upper() for c in getattr(self._imap, "capabilities", ())}
         if "AUTH=PLAIN" not in caps:
             raise ConnectionError("IMAP: the user name or password has characters beyond "
                                   "ASCII, and the server offers no AUTH=PLAIN to send them")
         credentials = f"\0{self._username}\0{self._password}".encode("utf-8")
         return self._imap.authenticate("PLAIN", lambda _challenge: credentials)
+
+    def _starttls(self) -> None:
+        """Upgrade the plain connection with STARTTLS before anything of
+        the login is sent. A server that does not offer it (or a man in the
+        middle that took it out of the capabilities), refuses it, greeted
+        PREAUTH or fails the certificate check gets no password: the
+        connection is closed and ConnectionError says why."""
+        from core.tls_context import client_tls_context
+
+        imap = self._imap
+        why = ""
+        if imap.state != "NONAUTH":
+            # PREAUTH on a plain connection: anyone on the path can say it.
+            why = "it greeted PREAUTH on a connection without TLS"
+        elif not _has_capability(imap, "STARTTLS"):
+            why = "it does not offer STARTTLS"
+        if not why:
+            ctx = client_tls_context(getattr(self, "_verify_tls", True), label="IMAP")
+            try:
+                imap.starttls(ssl_context=ctx)
+            except ssl.SSLError as exc:
+                why = f"the TLS handshake failed ({exc})"
+            except imaplib.IMAP4.error as exc:
+                why = f"it refused STARTTLS ({_server_text(exc)})"
+            else:
+                if not isinstance(imap.sock, ssl.SSLSocket):
+                    why = "the connection is not encrypted after STARTTLS"
+                else:
+                    # imaplib keeps the untagged answers read in clear text
+                    # (anyone on the path could put a "* LIST" in front of
+                    # the OK); only what came over TLS counts. The
+                    # capabilities were asked again over TLS by starttls().
+                    imap.untagged_responses.clear()
+        if why:
+            with contextlib.suppress(Exception):
+                imap.shutdown()
+            raise ConnectionError(
+                errno.EPROTO,
+                f"IMAP {self._host}: {why} - the password is not sent in clear text. "
+                "Use IMAPS (port 993), or choose 'no encryption' in the profile "
+                "if this server really has no TLS",
+            )
+        log.info("IMAP STARTTLS done with %s:%d", self._host, self._port)
 
     def _connect(self) -> None:
         """Establish IMAP connection and authenticate."""
@@ -904,23 +1003,34 @@ class ImapSession(SessionLifecycle):
                         self._host, self._port, ssl_context=tls_ctx, timeout=IMAP_TIMEOUT
                     )
             else:
-                # Credentials will traverse the wire in plaintext — this is
-                # occasionally legitimate (localhost, overlay VPN), but it
-                # is almost always a misconfiguration the user wants to know
-                # about.
-                log.warning(
-                    "IMAP connecting to %s:%d WITHOUT TLS — credentials will be sent in plaintext",
-                    self._host,
-                    self._port,
-                )
+                starttls = getattr(self, "_tls_mode", "plain") == "starttls"
+                if not starttls:
+                    # Credentials will traverse the wire in plaintext - this
+                    # is occasionally legitimate (localhost, overlay VPN),
+                    # but it is almost always a misconfiguration the user
+                    # wants to know about.
+                    log.warning(
+                        "IMAP connecting to %s:%d WITHOUT TLS — credentials will be sent in plaintext",
+                        self._host,
+                        self._port,
+                    )
                 if proxy_active:
                     self._imap = _ProxyIMAP4(self._host, self._port, proxy)
                 else:
                     self._imap = _IMAP4(self._host, self._port, timeout=IMAP_TIMEOUT)
+                if starttls:
+                    self._starttls()
 
-            typ, data = self._login()
+            try:
+                typ, data = self._login()
+            except imaplib.IMAP4.abort:
+                raise  # the connection, not the login
+            except imaplib.IMAP4.error as exc:
+                raise LoginError(
+                    errno.EACCES, f"IMAP {self._host}: the login was refused ({_server_text(exc)})"
+                ) from exc
             if typ != "OK":
-                raise ConnectionError(f"IMAP LOGIN failed: {data}")
+                raise LoginError(errno.EACCES, f"IMAP {self._host}: the login was refused ({data})")
             self._refresh_capabilities()
 
             # Detect hierarchy separator from LIST
@@ -939,7 +1049,7 @@ class ImapSession(SessionLifecycle):
 
             log.info(
                 "IMAP%s connected: %s@%s:%d (sep=%r)",
-                "S" if self._use_ssl else "",
+                {"tls": "S", "starttls": " (STARTTLS)"}.get(getattr(self, "_tls_mode", ""), ""),
                 self._username,
                 self._host,
                 self._port,
@@ -1218,12 +1328,14 @@ class ImapSession(SessionLifecycle):
         name_part = remainder[0]
         if name_part.lower().endswith(".eml"):
             # The UID is the part before the first underscore
-            uid_match = re.match(r"^(\d+)", name_part[:-4])
+            # ASCII digits only: "\d" took any Unicode digit, and int()
+            # made a fullwidth one message 1 (_wire_uid).
+            uid_match = re.match(r"^([0-9]+)", name_part[:-4])
         else:
             # Only the bare UID names the attachments' folder: a file such
             # as "2024_report.pdf" was taken for message 2024's folder and
             # "existed" without a question to the server.
-            uid_match = re.fullmatch(r"(\d+)", name_part)
+            uid_match = re.fullmatch(r"([0-9]+)", name_part)
         if not uid_match:
             # Non-UID filename (e.g. transfer temp file ".readme.txt.part-xxx"
             # or an arbitrary file being written).  Return mailbox + raw name
@@ -1256,7 +1368,8 @@ class ImapSession(SessionLifecycle):
 
     @property
     def name(self) -> str:
-        proto = "IMAPS" if self._use_ssl else "IMAP"
+        proto = {"tls": "IMAPS", "starttls": "IMAP+STARTTLS"}.get(
+            getattr(self, "_tls_mode", "tls" if self._use_ssl else "plain"), "IMAP")
         return f"{self._username}@{self._host} ({proto})"
 
     def security_info(self):
@@ -1267,10 +1380,11 @@ class ImapSession(SessionLifecycle):
         sock = getattr(self._imap, "sock", None) if self._imap is not None else None
         if sock is None:
             return None
-        if not self._use_ssl:
+        if not isinstance(sock, ssl.SSLSocket):
             return CS.SecurityInfo(CS.LEVEL_CLEARTEXT, "IMAP without TLS - cleartext - anyone on the "
                                    "network can read it, the password too", True)
-        return CS.tls_socket(sock, verified=self._verify_tls, what="IMAP")
+        what = "IMAP (STARTTLS)" if getattr(self, "_tls_mode", "") == "starttls" else "IMAP"
+        return CS.tls_socket(sock, verified=self._verify_tls, what=what)
 
     @property
     @liveness_check
@@ -1582,6 +1696,7 @@ class ImapSession(SessionLifecycle):
         return leaf.casefold() in (_message_name(uid, subject).casefold(), legacy.casefold())
 
     @_imap_errors_as_oserror
+    @serialized
     def is_dir(self, path: str) -> bool:
         """Check if the path refers to a directory-like entity."""
         parsed = self._parse_path(path)
@@ -2166,7 +2281,7 @@ class ImapSession(SessionLifecycle):
         ``["\\Seen", "\\Answered"]``)."""
         imap = self._ensure_connected()
         self._select_mailbox(mailbox, readonly=True)
-        typ, data = imap.uid("FETCH", str(int(uid)), "(FLAGS)")
+        typ, data = imap.uid("FETCH", _wire_uid(uid), "(FLAGS)")
         if typ != "OK" or not data:
             raise OSError(f"IMAP FETCH FLAGS failed: {data}")
         raw = data[0].decode() if isinstance(data[0], bytes) else str(data[0])
@@ -2209,7 +2324,7 @@ class ImapSession(SessionLifecycle):
         self._select_mailbox(mailbox, readonly=False)
         typ, data = imap.uid(
             "STORE",
-            str(int(uid)),
+            _wire_uid(uid),
             verb,
             "(" + " ".join(flags) + ")",
         )
@@ -2273,7 +2388,7 @@ class ImapSession(SessionLifecycle):
         for label, val in (("src_mailbox", src_mailbox), ("dst_mailbox", dst_mailbox)):
             if "\r" in val or "\n" in val:
                 raise ValueError(f"IMAP move: {label} must not contain CR/LF. F32.")
-        uid = str(int(uid))
+        uid = _wire_uid(uid)
         self._select_mailbox(src_mailbox, readonly=False)
         typ, data = self._ensure_connected().uid("FETCH", uid, "(UID)")
         if typ != "OK":

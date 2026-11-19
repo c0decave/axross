@@ -73,8 +73,10 @@ FEATURES: tuple[Feature, ...] = (
         "Connection Manager, Quick Connect, profiles, SSH config import, keyring",
         [
             "core/profiles.py",
+            "core/profile_references.py",
             "core/connection_manager.py",
             "core/connect_worker.py",
+            "core/connect_notice.py",
             "core/credentials.py",
             "core/ssh_config.py",
             "core/secure_storage.py",
@@ -468,7 +470,8 @@ FEATURES: tuple[Feature, ...] = (
         "Panes & layout",
         "thumbnails",
         "Thumbnail view and previews",
-        ["ui/thumbnail_view.py", "core/previews.py", "core/svg_worker.py"],
+        ["ui/thumbnail_view.py", "core/previews.py", "core/image_worker.py", "core/svg_worker.py",
+         "core/svg_gate.py"],
         [("tests/test_thumbnail_view.py::test_happy_double_click_on_a_folder_tile_opens_it", "ui")],
     ),
     # ------------------------------------------------- transfers, file ops
@@ -479,6 +482,7 @@ FEATURES: tuple[Feature, ...] = (
         [
             "core/transfer_manager.py",
             "core/transfer_worker.py",
+            "core/process_umask.py",
             "core/transfer_hooks.py",
             "core/transfer_pool.py",
             "core/transfer_conflicts.py",
@@ -527,6 +531,7 @@ FEATURES: tuple[Feature, ...] = (
         "Delete preview, trash, undo, cancel inside a folder",
         [
             "core/trash.py",
+            "ui/shared_trash.py",
             "ui/trash_browser.py",
             "core/destructive_preview.py",
             "core/undo.py",
@@ -760,7 +765,7 @@ FEATURES: tuple[Feature, ...] = (
         "Files & formats",
         "archive-browse",
         "Archives as folders (browse, nested, extract)",
-        ["core/archive.py", "ui/archive_pane.py"],
+        ["core/archive.py", "ui/archive_pane.py", "ui/archive_password.py"],
         [
             (
                 "tests/test_archive_nested_ui.py::test_happy_e2e_double_click_opens_a_zip_in_a_tar_and_back_returns",
@@ -832,6 +837,7 @@ FEATURES: tuple[Feature, ...] = (
         [
             "ui/text_editor.py",
             "ui/code_editor.py",
+            "core/lex_worker.py",
             "ui/editor_window.py",
             "ui/off_gui.py",
             "core/text_document.py",
@@ -876,6 +882,8 @@ FEATURES: tuple[Feature, ...] = (
             "ui/viewer_window.py",
             "core/media_collect.py",
             "core/media_load.py",
+            "core/media_gate.py",
+            "core/pdf_worker.py",
         ],
         [
             (
@@ -1067,11 +1075,14 @@ FEATURES: tuple[Feature, ...] = (
         "MCP & agent",
         "mcp-server",
         "MCP server (stdio / HTTP, capability groups)",
-        ["core/mcp_server.py", "core/mcp_http.py", "core/mcp_groups.py", "core/confined_fs.py",
-         "core/regex_worker.py"],
+        ["core/mcp_server.py", "core/mcp_http.py", "core/mcp_groups.py", "core/mcp_cli.py",
+         "core/partials.py",
+         "core/confined_fs.py", "core/regex_worker.py"],
         [
             ("tests/test_mcp_groups_e2e.py::test_happy_stdio_server_serves_every_group", "process"),
             ("tests/test_mcp_groups_e2e.py::test_happy_http_server_serves_every_group", "process"),
+            ("tests/test_mcp_without_qt.py::test_happy_http_without_qt", "process"),
+            ("tests/test_mcp_without_qt.py::test_happy_start_and_tools_list_of_every_group_never_touch_qt", "process"),
         ],
     ),
     _f(
@@ -1102,6 +1113,7 @@ FEATURES: tuple[Feature, ...] = (
         "Agent dock, sessions, topics, prompts",
         [
             "core/agent.py",
+            "core/approval_notes.py",
             "core/agent_session.py",
             "core/agent_topics.py",
             "core/agent_prompts.py",
@@ -1426,7 +1438,7 @@ INFRASTRUCTURE: dict[str, str] = {
     "ui/thread_lifetime.py": "lets a worker QThread outlive its starter",
     "core/thread_relay.py": "worker-thread calls into the GUI thread, safe from a deleted receiver",
     "ui/close_corner.py": "the close corner every dialog gets",
-    "ui/elided_label.py": "one-line labels cut with an ellipsis (the pane footer, its free space)",
+    "ui/elided_label.py": "one-line labels cut with an ellipsis (the pane footer, its free space); values wrapped anywhere (WrapAnywhereLabel)",
     "ui/mnemonics.py": "an underlined letter for every menu entry that has none",
     "ui/title_bar.py": "axross's own title bar of every window (frameless), or the window manager's",
     "ui/state_files.py": "the window's state files, read bounded and written privately",

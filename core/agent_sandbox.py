@@ -623,10 +623,14 @@ def _mount_plan(
     # hides ~/.profile from every later login): the folder it would be made
     # in becomes a frame instead, in which nothing can be created.
     from core import protected_places
+    from core.mcp_script_pin import guarded_paths
 
     writable_roots = [p for p, rw in seen.items() if rw]
     missing: list[tuple[str, bool]] = []
-    for place, folder in protected_places.protected_paths(foreign_missing=False):
+    # With them the folders of the host-run MCP servers (core.mcp_script_pin):
+    # the worker knows them only when it can read Agent Settings.
+    for place, folder in [*protected_places.protected_paths(foreign_missing=False),
+                          *guarded_paths()]:
         if not any(_inside(place, r) for r in writable_roots):
             continue
         if os.path.lexists(place):
@@ -713,8 +717,11 @@ def _mount_plan(
             frames[frame] = seen[base]
         absent.append(place)
     # Every home folder in a writable mount is a frame (default-deny: a new
-    # hidden entry - ~/.pdbrc, ~/.wezterm.lua - cannot be made in it).
-    for home in protected_places.homes():
+    # hidden entry - ~/.pdbrc, ~/.wezterm.lua - cannot be made in it); so is
+    # the source folder axross runs from (a new json.py or PyQt6/ there is
+    # imported by its next start).
+    source = protected_places.own_source_folder()
+    for home in [*protected_places.homes(), *([source] if source else [])]:
         holders = [p for p in seen if _inside(home, p)]
         if not holders or not os.path.isdir(home):
             continue
@@ -1708,6 +1715,13 @@ class SandboxedAgent:
                 "text": "error: the local files are reached inside the sandbox; axross only runs "
                 "calls on a remote backend",
             }
+        if not external:
+            try:
+                # The twin wins (core.mcp_server): asked for as it is written.
+                args = A.plain_path_args(args)
+            except ValueError as exc:
+                A.audit.info("%s outcome=error", fields)
+                return {"outcome": "error", "text": f"error: {exc}"}
         sandbox = self.profile()
         if not external and sandbox is not None and sandbox.network == "none":
             A.audit.info("%s outcome=refused", fields)

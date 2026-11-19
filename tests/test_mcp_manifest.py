@@ -76,10 +76,14 @@ def test_happy_manifest_describes_every_served_tool():
         tool_groups=frozenset(G.GROUPS), allow_exec=True)]
     assert [t["name"] for t in manifest["tools"]] == served
     for tool in manifest["tools"]:
-        assert set(tool) == {
-            "name", "group", "mutating", "required_flags", "transports", "timeout_class",
-            "timeout_seconds", "description", "input_schema",
+        # title and annotations: what tools/list sends (MCP 2025-03-26 /
+        # 2025-06-18); output_schema only for the tools that have one.
+        assert set(tool) - {"output_schema"} == {
+            "name", "title", "group", "mutating", "required_flags", "transports",
+            "timeout_class", "timeout_seconds", "description", "annotations", "input_schema",
         }
+        if tool["mutating"]:
+            assert tool["annotations"]["readOnlyHint"] is False
         assert tool["input_schema"]["type"] == "object"
         assert manifest["timeout_classes"][tool["timeout_class"]] == tool["timeout_seconds"]
     assert manifest["generated_for"] == {

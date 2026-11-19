@@ -8056,6 +8056,7 @@ def _make_azure_session():
 
     class _SvcStub:
         account_name = "fakeaccount"
+        url = "https://fakeaccount.blob.core.windows.net/"
 
     s._service = _SvcStub()
     return s
@@ -8486,7 +8487,7 @@ class _FakeAdbDevice:
                 return val
         return ""
 
-    def push(self, local, remote):
+    def push(self, local, remote, **_kwargs):
         self.push_calls.append((local, remote))
 
 

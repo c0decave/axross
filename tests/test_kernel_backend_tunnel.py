@@ -136,12 +136,15 @@ class NfsTunnelTest(unittest.TestCase):
         self.assertEqual(run.with_prefix("mount")[0][-2], "10.9.9.9:/export")
 
     def test_without_proxy_v3_still_works(self) -> None:
+        """mountd is found through rpcbind: mountport=2049 (the NFS port)
+        sent the MOUNT call to nfsd, and the v3 mount of a standard server
+        (mountd on 20048 or a random port) failed."""
         run = _Recorder()
         session = self._session(run, version=3)
-        self.assertIn(
-            "mountport=2049",
-            run.with_prefix("mount")[0][run.with_prefix("mount")[0].index("-o") + 1],
-        )
+        opts = run.with_prefix("mount")[0][run.with_prefix("mount")[0].index("-o") + 1]
+        self.assertNotIn("mountport", opts)
+        self.assertIn("vers=3", opts)
+        self.assertIn("port=2049", opts)
         self.assertIsNone(session._tunnel)
 
 

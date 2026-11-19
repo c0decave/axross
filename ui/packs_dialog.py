@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import packs as P
-from core.i18n import tr
+from core.i18n import tr, tr_n
 from core.thread_relay import GuiCall
 from ui.close_corner import add_close_corner
 from ui.icon_provider import set_window_icon
@@ -136,16 +136,28 @@ class PacksDialog(QDialog):
         try:
             _folders, waiting = P.activate_now(self.version, units, self.root, self.path)
         except Exception as exc:  # noqa: BLE001 - shown; the next start activates them
-            self._done(tr("Added: {n} files checked and unpacked, but not activated ({e}). "
-                          "Restart axross to use them.").format(n=files, e=exc))
+            self._done(tr_n(
+                files,
+                "Added: {n} file checked and unpacked, but not activated ({e}). Restart axross to use them.",
+                "Added: {n} files checked and unpacked, but not activated ({e}). Restart axross to use them.",
+                e=exc,
+            ))
             return
         if waiting:
-            self._done(tr("Added: {n} files checked and unpacked. {w} contain native code: "
-                          "restart axross to use them.").format(n=files, w=", ".join(waiting)))
+            self._done(tr_n(
+                files,
+                "Added: {n} file checked and unpacked. {w} contain native code: restart axross to use them.",
+                "Added: {n} files checked and unpacked. {w} contain native code: restart axross to use them.",
+                w=", ".join(waiting),
+            ))
             return
         _refresh_features()
         self._retry_extensions()
-        self._done(tr("Added: {n} files checked and unpacked – ready to use.").format(n=files))
+        self._done(tr_n(
+            files,
+            "Added: {n} file checked and unpacked – ready to use.",
+            "Added: {n} files checked and unpacked – ready to use.",
+        ))
         self.activated.emit(list(units))
 
     def _retry_extensions(self) -> None:

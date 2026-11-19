@@ -355,6 +355,11 @@ def test_happy_the_text_dialog_of_a_pane_without_main_window_is_non_modal(folder
             pane._open_editor(str(folder / "notes.txt"))
             (dialog,) = [w for w in _all_independent() if isinstance(w, TextEditorDialog)]
             assert dialog.isVisible() and QApplication.activeModalWidget() is None
+            end = time.time() + 5  # read in the background
+            while time.time() < end and not dialog.loaded:
+                APP.processEvents()
+                time.sleep(0.01)
+            assert dialog.loaded
             dialog._editor.setPlainText("changed\n")
             dialog._save_file()
         assert (folder / "notes.txt").read_text() == "changed\n"

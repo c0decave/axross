@@ -27,8 +27,7 @@ def qtpdf_missing() -> str:
     either: the viewer then offers no PDFs and a PDF opens in the hex editor
     (tests/test_media_viewer_without_qtpdf.py)."""
     try:
-        import PyQt6.QtPdf  # noqa: F401
-        import PyQt6.QtPdfWidgets  # noqa: F401
+        import PyQt6.QtPdf  # noqa: F401 - QtPdfWidgets is not needed (no QPdfView)
     except ImportError as exc:
         return str(exc)
     return ""

@@ -172,8 +172,16 @@ def test_happy_the_assembler_knows_the_artifact_name() -> None:
 # -- sad: no secret, no key ------------------------------------------------------------
 
 
+def _without_the_stage_job(text: str) -> str:
+    """The workflow's text without the ``stage`` job (the last job): the one
+    place that holds the run's own token, see the test below."""
+    head, sep, _stage = text.partition("\n  stage:\n")
+    assert sep, "the stage job is the last job of the workflow"
+    return head
+
+
 def test_sad_no_secret_and_no_release_key_anywhere_in_the_workflow() -> None:
-    text = WORKFLOW.read_text(encoding="utf-8")
+    text = _without_the_stage_job(WORKFLOW.read_text(encoding="utf-8"))
     for needle in ("secrets.", "release-key", "release-identity-terms", "sign_release",
                    "--key", "SHA256SUMS.sig", "id-token", "PYPI", "TWINE", "GH_TOKEN",
                    "GITHUB_TOKEN"):
@@ -270,3 +278,24 @@ def test_happy_the_builder_has_debian_s_archive_keys() -> None:
     tools = _index(_job(), lambda s: "debian-archive-keyring" in s.get("run", ""))
     build = _index(_job(), lambda s: "build_dist.sh --out" in s.get("run", ""))
     assert tools < build
+
+
+def test_sad_the_stage_job_runs_no_code_of_the_repository_and_holds_no_secret() -> None:
+    """``stage`` puts the run's build files on a draft release (the artifact
+    storage is out of reach of a sandboxed maintainer, release assets are
+    not). It is the only job with write access, so it checks nothing out,
+    runs no repository code, uses only the run's own short-lived token
+    (no stored secret, no release key) and runs only for ci/<version>
+    pushes; publishing and signing stay on the maintainer's machine."""
+    job = _job("stage")
+    text = WORKFLOW.read_text(encoding="utf-8").partition("\n  stage:\n")[2]
+    assert job["permissions"] == {"contents": "write", "actions": "read"}
+    assert job["if"] == "github.event_name == 'push' && startsWith(github.ref, 'refs/heads/ci/')"
+    assert set(job["needs"]) == {"bundle", "linux"}
+    assert all("uses" not in step for step in job["steps"]), "no actions, no checkout"
+    for needle in ("secrets.", "release-key", "sign_release", "--key", "SHA256SUMS.sig",
+                   "id-token", "PYPI", "TWINE", "python", "scripts/", "pip "):
+        assert needle not in text, needle
+    assert text.count("${{ github.token }}") == 1
+    run = " ".join(job["steps"][0]["run"].split())
+    assert "--draft" in run and "gh release create" in run

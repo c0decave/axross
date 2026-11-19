@@ -114,9 +114,12 @@ def test_edge_a_last_run_with_a_time_zone_is_compared_in_local_time(tmp_path, st
     due_jobs(jobs, now=NOW)  # comparable with the naive local "now"
 
 
-def test_edge_a_job_that_last_ran_at_the_end_of_the_calendar_is_not_due():
+def test_edge_a_job_that_last_ran_at_the_end_of_the_calendar_is_due_without_an_overflow():
+    # A stamp more than an interval ahead means the clock was set back
+    # (review 2026-11-20, tests/test_scheduler_round2.py): due now - and
+    # no OverflowError past the calendar either.
     job = Job("j", "n", "script", "t", 60, last_run_at=datetime.max)
-    assert next_run_at(job, now=NOW) is None
+    assert next_run_at(job, now=NOW) == NOW
 
 
 def test_edge_a_save_after_a_dropped_row_round_trips_the_rest(tmp_path):

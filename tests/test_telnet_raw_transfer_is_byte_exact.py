@@ -140,7 +140,22 @@ def test_sad_reading_a_missing_file_raises(telnet):
         sess.open_read(str(tmp / "missing.txt"))
 
 
-@pytest.mark.parametrize("payload", [b"dos\r\nline\r\n", b"nul\x00byte"])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"dos\r\nline\r\n",
+        b"nul\x00byte",
+        # The terminal acts on these before the shell reads the heredoc:
+        # ^C ends it and the next lines run as commands, ^U / ^W erase,
+        # ^D ends the input, ESC and TAB are line-editing keys.
+        b"x\x03\ntouch PWNED\n",
+        b"erase\x15me\n",
+        b"eof\x04\n",
+        b"esc\x1b[Ax\n",
+        b"tab\there\n",
+        b"del\x7f\n",
+    ],
+)
 def test_sad_an_upload_raw_cannot_carry_is_refused(telnet, payload):
     sess, tmp = telnet
     with pytest.raises(OSError, match="raw"):

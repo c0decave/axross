@@ -9,7 +9,9 @@
   tooltip says why.
 
 No test here ever starts a terminal emulator: ``subprocess.Popen`` is
-replaced wherever the launcher would call it.
+replaced where the launcher calls it - in core.terminal_here only, so a
+process something else starts meanwhile (fusepy's ``ldconfig -p`` when the
+first context menu imports core.fuse_mount) is neither faked nor counted.
 """
 
 from __future__ import annotations
@@ -121,10 +123,29 @@ class FakePopen:
         return 0
 
 
+class _LauncherSubprocess:
+    """core.terminal_here's ``subprocess`` with another Popen. Patching
+    ``TH.subprocess.Popen`` replaced the Popen of the whole process: the
+    first context menu of a run imports core.fuse_mount, fusepy runs
+    ``ldconfig -p`` to find libfuse, and that call was faked and counted
+    as a terminal launch (the tests failed when one of them built the
+    run's first menu)."""
+
+    def __init__(self, popen) -> None:
+        self.Popen = popen
+
+    def __getattr__(self, name):
+        return getattr(subprocess, name)
+
+
+def _launcher_popen(monkeypatch, popen) -> None:
+    monkeypatch.setattr(TH, "subprocess", _LauncherSubprocess(popen))
+
+
 @pytest.fixture()
 def popen(monkeypatch):
     FakePopen.calls = []
-    monkeypatch.setattr(TH.subprocess, "Popen", FakePopen)
+    _launcher_popen(monkeypatch, FakePopen)
     return FakePopen
 
 
@@ -268,7 +289,7 @@ def test_sad_emulator_that_fails_to_start(tmp_path, monkeypatch):
     def broken(*_a, **_k):
         raise PermissionError(13, "Permission denied")
 
-    monkeypatch.setattr(TH.subprocess, "Popen", broken)
+    _launcher_popen(monkeypatch, broken)
     with pytest.raises(TH.TerminalLaunchError) as err:
         TH.launch_external_terminal(str(tmp_path), environ={})
     assert "xterm" in str(err.value)
@@ -292,7 +313,7 @@ def test_edge_launch_reaps_the_child_without_blocking(tmp_path, monkeypatch):
             time.sleep(0.5)
             return 0
 
-    monkeypatch.setattr(TH.subprocess, "Popen", SlowPopen)
+    _launcher_popen(monkeypatch, SlowPopen)
     started = time.monotonic()
     TH.launch_external_terminal(str(tmp_path), environ={})
     assert time.monotonic() - started < 0.4

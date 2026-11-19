@@ -36,7 +36,7 @@ legitimate symlink inside the root still works - it was resolved before.
 Windows has no ``dir_fd``: there the class is LocalFS with a check after
 each open (the opened file must be the file the path resolves to now, and
 that file must lie beneath a folder), and the server serialises its
-mutating tool calls (core.mcp_server._MUTATION_LOCK), so its own calls
+mutating tool calls (core.mcp_server._MutationTable, per backend), so its own calls
 cannot race each other.
 """
 
@@ -50,6 +50,7 @@ import logging
 import os
 import platform
 import secrets
+import shutil
 import stat as stat_module
 import sys
 import threading
@@ -256,15 +257,19 @@ class ConfinedLocalFS(LocalFS):
     display_class = "LocalFS"
 
     def __init__(self, roots: Iterable[str], *,
-                 follow_check: Callable[[str], None] | None = None) -> None:
+                 follow_check: Callable[[str], None] | None = None,
+                 read_wrap: Callable[[IO[bytes], str], IO[bytes]] | None = None) -> None:
         """*follow_check(resolved_path)* raises PermissionError for a file
         open_read must not reach through a symlink that is the path's last
-        component (core.mcp_server: the secret files)."""
+        component (core.mcp_server: the secret files). *read_wrap(handle,
+        path)* wraps every handle open_read gives out (core.mcp_server: a
+        reader that refuses a private key anywhere in the bytes read)."""
         super().__init__()
         self._roots = tuple(str(r) for r in roots if r)
         if not self._roots:
             raise ValueError("ConfinedLocalFS needs at least one folder")
         self._follow_check = follow_check
+        self._read_wrap = read_wrap
 
     @property
     def roots(self) -> tuple[str, ...]:
@@ -414,6 +419,10 @@ class ConfinedLocalFS(LocalFS):
 
     # -- contents ---------------------------------------------------------
     def open_read(self, path: str) -> IO[bytes]:
+        fh = self._open_read(path)
+        return self._read_wrap(fh, path) if self._read_wrap is not None else fh
+
+    def _open_read(self, path: str) -> IO[bytes]:
         if not FD_CONFINED:
             return self._verified(path, super().open_read(path))
         try:
@@ -642,15 +651,19 @@ class ConfinedLocalFS(LocalFS):
                 tmp, fd = _create_temp(dfd, name, 0o600)
                 try:
                     with os.fdopen(fd, "wb") as fout:
+                        from core import transfer_hooks
+
                         while True:
+                            transfer_hooks.check()  # a cancelled call stops here
                             chunk = fin.read(1024 * 1024)
                             if not chunk:
                                 break
                             fout.write(chunk)
                         fout.flush()
-                        fchmod_private(fout.fileno(), stat_module.S_IMODE(st.st_mode))
+                        fchmod_private(fout.fileno(), _carried_mode(st.st_mode))
                         os.utime(fout.fileno(), ns=(st.st_atime_ns, st.st_mtime_ns))
                     os.rename(tmp, name, src_dir_fd=dfd, dst_dir_fd=dfd)
+                    _temp_settled(dfd, tmp)
                 except BaseException:
                     _unlink_quietly(dfd, tmp)
                     raise
@@ -718,8 +731,9 @@ class ConfinedLocalFS(LocalFS):
                         done += len(chunk)
                     fh.flush()
                     if mode is not None:
-                        fchmod_private(fh.fileno(), mode)
+                        fchmod_private(fh.fileno(), _carried_mode(mode))
                 os.rename(tmp, name, src_dir_fd=dfd, dst_dir_fd=dfd)
+                _temp_settled(dfd, tmp)
             except BaseException:
                 _unlink_quietly(dfd, tmp)
                 raise
@@ -757,18 +771,61 @@ def _unlink_quietly(dfd: int, name: str) -> None:
         os.unlink(name, dir_fd=dfd)
     except OSError as exc:
         log.debug("could not remove the temp file %s: %s", name, exc)
+    _temp_settled(dfd, name)
+
+
+#: (folder descriptor, temp name) -> its core.partials record: a process
+#: killed before the rename leaves the temp file, the next MCP start sweeps it.
+_TEMP_RECORDS: dict[tuple[int, str], str] = {}
+
+
+def _track_temp(dfd: int, tmp: str) -> None:
+    try:
+        folder = os.readlink(f"/proc/self/fd/{dfd}")
+    except OSError:
+        return  # no /proc: the temp is not recorded (it is removed on errors anyway)
+    if not os.path.isabs(folder):
+        return
+    from core import partials
+
+    record = partials.track(os.path.join(folder, tmp))
+    if record:
+        _TEMP_RECORDS[(dfd, tmp)] = record
+
+
+def _temp_settled(dfd: int, tmp: str) -> None:
+    """*tmp* was renamed into place or removed: forget its record."""
+    record = _TEMP_RECORDS.pop((dfd, tmp), None)
+    if record:
+        from core import partials
+
+        partials.done(record)
+
+
+#: The mode bits a written or copied file keeps: those the MCP chmod tool
+#: allows. setuid / setgid / sticky and group or world write are dropped -
+#: write_file over a setuid program kept it setuid with the agent's code in
+#: it, a copy carried 6755 and 0666 to the new file.
+CARRIED_MODE_BITS = 0o755
+
+
+def _carried_mode(mode: int) -> int:
+    return stat_module.S_IMODE(mode) & CARRIED_MODE_BITS
 
 
 def _create_temp(dfd: int, name: str, mode: int) -> tuple[str, int]:
     from core.path_policy import hidden_sibling_name
 
     for _ in range(16):
-        tmp = hidden_sibling_name(name, f".{secrets.token_hex(6)}.tmp")
+        # The process id in the name: core.partials sweeps a leftover only
+        # when it is the dead process's own.
+        tmp = hidden_sibling_name(name, f".{os.getpid()}-{secrets.token_hex(6)}.tmp")
         try:
             fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW | _O_CLOEXEC,
                          mode, dir_fd=dfd)
         except FileExistsError:
             continue
+        _track_temp(dfd, tmp)
         return tmp, fd
     raise FileExistsError(errno.EEXIST, "no free temp name", name)
 
@@ -854,7 +911,7 @@ def _write_beneath(dfd: int, name: str, path: str, data: bytes) -> None:
     try:
         with os.fdopen(fd, "wb") as fh:
             if mode is not None:
-                fchmod_private(fh.fileno(), mode | 0o200)
+                fchmod_private(fh.fileno(), _carried_mode(mode) | 0o200)
                 carried = True
                 try:
                     src_fd = os.open(name, os.O_RDONLY | _O_NOFOLLOW | _O_NONBLOCK | _O_CLOEXEC,
@@ -872,8 +929,9 @@ def _write_beneath(dfd: int, name: str, path: str, data: bytes) -> None:
             fh.flush()
             os.fsync(fh.fileno())
             if mode is not None:
-                fchmod_private(fh.fileno(), mode)
+                fchmod_private(fh.fileno(), _carried_mode(mode))
         os.rename(tmp, name, src_dir_fd=dfd, dst_dir_fd=dfd)
+        _temp_settled(dfd, tmp)
     except _KeepIdentity:
         _unlink_quietly(dfd, tmp)
         return _write_in_place(dfd, name, path, data, "an attribute would not survive a rename")
@@ -980,9 +1038,10 @@ def _move_entry_across(sfd: int, sname: str, dfd: int, dname: str, st: os.stat_r
                             break
                         fout.write(chunk)
                     fout.flush()
-                    fchmod_private(fout.fileno(), stat_module.S_IMODE(st.st_mode))
+                    fchmod_private(fout.fileno(), _carried_mode(st.st_mode))
                     os.utime(fout.fileno(), ns=(st.st_atime_ns, st.st_mtime_ns))
                 os.rename(tmp, dname, src_dir_fd=dfd, dst_dir_fd=dfd)
+                _temp_settled(dfd, tmp)
             except BaseException:
                 _unlink_quietly(dfd, tmp)
                 raise
@@ -1055,4 +1114,63 @@ def makedirs_beneath(root_fd: int, parts: list[str], *, path: str = "") -> int:
 
 
 __all__ = ["FD_CONFINED", "ConfinedLocalFS", "SymlinkRefused", "confinable", "makedirs_beneath",
+           "pinned_path",
            "open_beneath", "uses_openat2"]
+
+
+@contextlib.contextmanager
+def pinned_path(backend, path: str):
+    """A path that names exactly the file *backend* opened for *path* -
+    for code that opens files by name (core.archive, zipfile, tarfile,
+    py7zr, an unrar child, core.previews).
+
+    Checking a path and then letting a library open it by name lost the
+    race against a folder swapped for a symlink meanwhile: an archive from
+    outside the root was extracted into it. Here the confined backend
+    opens the file (beneath the root's descriptor, no link followed), and
+    the library gets ``<private dir>/<same name>`` -> ``/proc/<pid>/fd/N``:
+    whatever happens to *path* afterwards, that name is the file opened.
+    The name keeps the original's (formats are told by suffix); /proc/<pid>
+    rather than /proc/self so a child process (unrar) reaches it too.
+    Without /proc (not Linux) the path itself is given."""
+    import stat as _stat
+    import tempfile
+
+    fh = backend.open_read(path)
+    folder = None
+    try:
+        fd = fh.fileno()
+        if not _stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError(f"not a regular file: {path}")
+        proc = f"/proc/{os.getpid()}/fd/{fd}"
+        if not os.path.exists(proc):
+            yield path
+            return
+        folder = tempfile.mkdtemp(prefix="axross-pin-")
+        name = os.path.join(folder, os.path.basename(path.rstrip("/")) or "file")
+        os.symlink(proc, name)
+        try:
+            yield name
+        except Exception as exc:
+            # An error names the file asked for, not the private pin.
+            _name_the_original(exc, name, path)
+            raise
+    finally:
+        if folder is not None:
+            shutil.rmtree(folder, ignore_errors=True)
+        fh.close()
+
+
+def _name_the_original(exc: BaseException, pinned: str, path: str) -> None:
+    """Put *path* where *exc* (its message, its args, an OSError's file
+    names) says *pinned*."""
+    if isinstance(exc, OSError):
+        if exc.filename == pinned:
+            exc.filename = path
+        if exc.filename2 == pinned:
+            exc.filename2 = path
+    try:
+        exc.args = tuple(a.replace(pinned, path) if isinstance(a, str) else a
+                         for a in exc.args)
+    except (AttributeError, TypeError):
+        pass

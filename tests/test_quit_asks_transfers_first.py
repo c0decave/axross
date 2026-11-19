@@ -73,7 +73,7 @@ def test_sad_no_at_transfers_running_keeps_the_editor_and_the_viewers(tmp_path, 
 
     win.close()
     _settle()
-    assert asked and "transfer(s) are running" in asked[0]
+    assert asked and "2 transfers are running" in asked[0]
     assert win.isVisible()
     assert editor.isVisible() and editor.tabs.count() == 1
     assert not sip.isdeleted(viewer) and viewer.isVisible()

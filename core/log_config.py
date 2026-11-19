@@ -45,6 +45,7 @@ import json
 import logging
 import logging.handlers
 import os
+import re
 import sys
 import threading
 import time
@@ -176,12 +177,9 @@ class LogSettings:
     def save(self, path: Path | None = None) -> None:
         target = Path(path or settings_file())
         target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_name(target.name + ".tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(self.to_dict(), handle, indent=2)
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, target)
+        from core.json_store import write_private
+
+        write_private(target, json.dumps(self.to_dict(), indent=2))
 
 
 # ---------------------------------------------------------------------------
@@ -380,6 +378,45 @@ def flush_repeats() -> None:
         filt.flush()
 
 
+#: What a log line never holds raw (review B: a remote's file name with
+#: ``ESC ] 52`` ran in the terminal that showed the log, a CR made a fake
+#: line): every C0 and C1 control and DEL, the bidi controls, the line and
+#: paragraph separators.
+_LOG_ESCAPED = re.compile("[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u2028\u2029"
+                          "\u202a-\u202e\u2066-\u2069]")
+#: The same but the line break: a traceback's own lines.
+_TRACE_ESCAPED = re.compile("[\x00-\x09\x0b-\x1f\x7f-\x9f\u061c\u200e\u200f\u2028"
+                            "\u2029\u202a-\u202e\u2066-\u2069]")
+
+
+def _escape(match: re.Match) -> str:
+    code = ord(match.group())
+    return f"\\x{code:02x}" if code < 0x100 else f"\\u{code:04x}"
+
+
+def escape_log_text(text: str, *, lines: bool = False) -> str:
+    """*text* with the characters of :data:`_LOG_ESCAPED` as ``\\xNN`` /
+    ``\\uNNNN`` (*lines*: line breaks kept)."""
+    return (_TRACE_ESCAPED if lines else _LOG_ESCAPED).sub(_escape, text)
+
+
+class EscapingFormatter(logging.Formatter):
+    """A formatter whose message holds no control character: what a server
+    names (a file, an error text) cannot write escape sequences or extra
+    lines into the log file or the terminal. A traceback keeps its line
+    breaks and loses the rest."""
+
+    def formatMessage(self, record: logging.LogRecord) -> str:  # noqa: N802 - logging's name
+        record.message = escape_log_text(record.message)
+        return super().formatMessage(record)
+
+    def formatException(self, ei) -> str:  # noqa: N802 - logging's name
+        return escape_log_text(super().formatException(ei), lines=True)
+
+    def formatStack(self, stack_info: str) -> str:  # noqa: N802 - logging's name
+        return escape_log_text(super().formatStack(stack_info), lines=True)
+
+
 def _make_file_handler(path: Path, settings: LogSettings) -> logging.Handler:
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -396,8 +433,10 @@ def _make_file_handler(path: Path, settings: LogSettings) -> logging.Handler:
         pass
     handler = logging.handlers.RotatingFileHandler(
         path, maxBytes=settings.file_max_mib * MIB, backupCount=settings.file_backups,
-        encoding="utf-8")
-    handler.setFormatter(logging.Formatter(FILE_FORMAT))
+        # A path with an undecodable byte arrives as a surrogate: escaped
+        # (bad\udcffname) instead of a "Logging error" and a lost line.
+        encoding="utf-8", errors="backslashreplace")
+    handler.setFormatter(EscapingFormatter(FILE_FORMAT))
     handler._axross_handler = True  # type: ignore[attr-defined]
     handler._axross_role = "file"  # type: ignore[attr-defined]
     return handler
@@ -405,7 +444,7 @@ def _make_file_handler(path: Path, settings: LogSettings) -> logging.Handler:
 
 def _make_terminal_handler() -> logging.Handler:
     handler = logging.StreamHandler(sys.stderr)
-    handler.setFormatter(logging.Formatter(TERMINAL_FORMAT))
+    handler.setFormatter(EscapingFormatter(TERMINAL_FORMAT))
     handler._axross_handler = True  # type: ignore[attr-defined]
     handler._axross_role = "terminal"  # type: ignore[attr-defined]
     return handler

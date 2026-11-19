@@ -15,7 +15,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 GUIDES = ("docs/USAGE.md", "docs/USAGE_de.md", "docs/USAGE_es.md")
-READMES = ("README.md", "README_de.md", "README_es.md")
+#: The extended READMEs (the short README.md links them) list every setting page.
+READMES = ("docs/README-extended.md", "docs/README-extended_de.md", "docs/README-extended_es.md")
 
 
 def _text(name: str) -> str:

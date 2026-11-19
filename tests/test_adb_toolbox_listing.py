@@ -86,7 +86,7 @@ def test_sad_device_nodes_are_listed_not_dropped(out, names):
 def test_edge_a_listed_device_node_is_not_pulled():
     s = _session(DEV_TOYBOX)
     pulled = []
-    s._device = type("D", (), {"pull": lambda self, a, b: pulled.append(a)})()
+    s._device = type("D", (), {"pull": lambda self, a, b, **_kw: pulled.append(a)})()
     s._conn_lock = __import__("threading").Lock()
     s._label = "dev"
     s.list_dir("/dev")

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=axross Markdown
+GenericName=Markdown Viewer
+Comment=Markdown files rendered with an outline, footnotes and highlighted code - shown, never run
+Exec=axross-markdown %F
+Icon=axross-markdown
+Categories=Office;Viewer;TextTools;Utility;
+MimeType=text/markdown;text/x-markdown;
+Terminal=false
+StartupNotify=true
+Keywords=markdown;md;viewer;readme;

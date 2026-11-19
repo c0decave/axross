@@ -105,6 +105,10 @@ def walk(
             return
         if depth >= max_depth:
             log.debug("tree_compare: depth cap reached at %s", path)
+            if unlisted is not None:
+                # Not read is not "the same": what lies below shows as
+                # unknown (it was left out, and Sync said the sides match).
+                unlisted[prefix.rstrip("/")] = f"not compared: deeper than {max_depth} folders"
             return
         try:
             entries = backend.list_dir(path)
@@ -121,12 +125,16 @@ def walk(
             # A name a sync cannot use here (a control character, a bidi
             # override) is still an entry: shown as not compared, never
             # left out - a sync that skips it silently looks complete.
-            # Names no folder can hold ("..", "a/b", NUL) stay dropped.
+            # A name no folder can hold ("a/b", NUL) is shown under its
+            # marked name (core.path_policy.drop_impossible_names); "." and
+            # ".." go.
             kept_ids = {id(item) for item in kept}
             for item in entries:
-                name = getattr(item, "name", "")
-                if id(item) not in kept_ids and drop_impossible_names([item]):
-                    found[f"{prefix}{name}"] = item  # listed, never descended
+                if id(item) in kept_ids:
+                    continue
+                for shown in drop_impossible_names([item]):
+                    name = getattr(shown, "name", "")
+                    found[f"{prefix}{name}"] = shown  # listed, never descended
                     unlisted[f"{prefix}{name}"] = UNUSABLE_NAME
         for item in kept:
             rel = f"{prefix}{item.name}"
@@ -303,6 +311,10 @@ def compare_trees(
 
     entries = []
     for rel in sorted(set(left_items) | set(right_items)):
+        if should_continue is not None and not should_continue():
+            # Cancelled: the result is not wanted, and classifying the rest
+            # reads (hashes) every same-size pair on both sides.
+            break
         left, right = left_items.get(rel), right_items.get(rel)
         entry = _unlisted_entry(rel, left, right, left_unlisted, right_unlisted)
         if entry is None:

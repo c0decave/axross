@@ -4,6 +4,57 @@
   "1.6.2": {
    "accepted_findings": [],
    "archives": {
+    "pynacl-1.6.2-cp38-abi3-macosx_10_10_universal2.whl": {
+     "entry_points": [],
+     "files": {
+      "nacl/__init__.py": "087fb534f9ec3855f15ee069c8e9ab5957b0f2d0e22658a15647fdd7ac01e96b",
+      "nacl/_sodium.abi3.so": "49032c357199dde6ae341319e558ce3ed9daa80f5ac83972aa9a63158b0b5371",
+      "nacl/bindings/__init__.py": "fc250d01caf65e01d052496ff0706a6fda9d1f354359620d461c61438f0deee5",
+      "nacl/bindings/crypto_aead.py": "5ce670643de7cac3abf38e67d022526bccb2a2596339d71dbc9cd16fc5eb02bc",
+      "nacl/bindings/crypto_box.py": "32f6cdf964eb9779fdc60bb9217b4e5ec97e4a8a6d5e7cb724dcd0f0d109e71d",
+      "nacl/bindings/crypto_core.py": "9301f155177261208b46d9287b50ddf3bbc53b0e62ceaf16ba6c339691b06b91",
+      "nacl/bindings/crypto_generichash.py": "f665f40c6208ce272bfae5eba853359d4e2d8ab6ac6e2c43c1b71d7d5ed6d5f7",
+      "nacl/bindings/crypto_hash.py": "460d6bb04c04ddace1b104fe74d54f038341f55a202402a7d447f162dd293ded",
+      "nacl/bindings/crypto_kx.py": "1b55fc5fb3f5d1d0e104ec6718c1b5aad7065c6cc1201fe1c63414460affa593",
+      "nacl/bindings/crypto_pwhash.py": "495e4a2ff084ce3a07ef08de3be5880ad47e8d8a27a8544a7bc789f29d256196",
+      "nacl/bindings/crypto_scalarmult.py": "fc35fe9acb76b829f38e8e9f3f91d14e786fd410bde41f609897372ffa2bd7a8",
+      "nacl/bindings/crypto_secretbox.py": "abc8fd1bf91d0d408aaaff84a54e168468196dcebe74805b1dca828f725e6b33",
+      "nacl/bindings/crypto_secretstream.py": "774f7b8d2490e586c29e84d943479d207e74bea56534ccea52f818741809133c",
+      "nacl/bindings/crypto_shorthash.py": "3d053b7631d32c319d56cfb0fd3b22be31471e9e442b9936621ea9fbacf44fad",
+      "nacl/bindings/crypto_sign.py": "3f948b91f440ab9963e452db03506e06b283c305b45e30caff1a67f091386aa2",
+      "nacl/bindings/randombytes.py": "b812b75b859c8e09e365d59a9eb5f47e3619a6bf4a1db06034c97daee8be3a37",
+      "nacl/bindings/sodium_core.py": "f58f425fefacabe4da3da4113d1a71f12583492f4f24e8dafc2a9bfb2ab224d4",
+      "nacl/bindings/utils.py": "283c109da75778d31ba840354a6a4dc82568e64f0c89441ad3b40ceba5737d73",
+      "nacl/encoding.py": "a9300f7363174a4761e1ca83558d2b6ba907c95887302984a3fadeedc806939c",
+      "nacl/exceptions.py": "8f954ecc355f348ec3b95965a78028a1e01f99bb77477375d9f9e2b5813b7ea5",
+      "nacl/hash.py": "c2f73e813c5c61663aea3ce38193db2362a8ebc82c402340dc9ab572a168329d",
+      "nacl/hashlib.py": "b8d76856f2baac3819ef06a1e384d16d4e348dc3ecb71bdb52f8cd8edaeb97aa",
+      "nacl/public.py": "dbefb1b43d960beec4960c629a6a787b61e4244292d5327b9683630879a57012",
+      "nacl/pwhash/__init__.py": "5d20d777bc101cd2c41e5d269077d56f994542ca7aca01e485e9fbd7c8740523",
+      "nacl/pwhash/_argon2.py": "8cbd42851f5b8b0621dd14ae73e2c9dbe5b80e554b1e98abf971c65fc7297894",
+      "nacl/pwhash/argon2i.py": "208bc8b8ef6c88a52ee7e5a9cf44868a5b4b42fec3bbf9a2f41504f083512bfe",
+      "nacl/pwhash/argon2id.py": "7994c345cccdd479049f07281df8120bd979d2758b574a206be06c04e59c06f0",
+      "nacl/pwhash/scrypt.py": "663270299d1697cfb71262f8e4b28792e6f470e0e350f86bc5a2d96704aa89e5",
+      "nacl/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "nacl/secret.py": "4f35ef1f06114d733fbd588e2a6e635906a9539a9a093a91d7e8d08ec82ad361",
+      "nacl/signing.py": "d96e50f4d33cd7bd00aefbf5fbd066a3e6591cec5a15275bb3351f1cd188f61d",
+      "nacl/utils.py": "8269530f5c7d64dc331ddf0ba402c7d421ee77e1edbfc7a345bdf2ed3c92f5fd",
+      "pynacl-1.6.2.dist-info/METADATA": "143914f93191bef3bff7ba953dea6a38fb05f7f9e38e2a2e6ae31bd14ba81709",
+      "pynacl-1.6.2.dist-info/RECORD": "baccf10bff6ea4a424353f3fad985076d9bd23abd1bfc909bd17010ae33ccf01",
+      "pynacl-1.6.2.dist-info/WHEEL": "774f57056f629491b487caf13d1c741cc38b9b845b1120836d216c7014bddfa4",
+      "pynacl-1.6.2.dist-info/licenses/LICENSE": "d3174ad63e721d4c9dccb8ad4320848992d314369bc46319720b5802c9153fe9",
+      "pynacl-1.6.2.dist-info/licenses/licenses/LICENSE.libsodium.txt": "508a76d186356c0dd807a670ef510964f8724557024796a2c426c6c0e19ab683",
+      "pynacl-1.6.2.dist-info/top_level.txt": "c1f744388fc6d912339b3b0cca1a6a3f5ec7521e8972a8bdf6da3d6872c4b25a"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "842d8558f1c153cfaac9586ee5ec7d882fff77f0015e16944e52f57c7402908b",
+     "native": {
+      "nacl/_sodium.abi3.so": "macho-fat"
+     },
+     "pth": {},
+     "sha256": "c949ea47e4206af7c8f604b8278093b674f7c79ed0d4719cc836902bf4517465"
+    },
     "pynacl-1.6.2-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": {
      "entry_points": [],
      "files": {
@@ -54,11 +105,72 @@
      },
      "pth": {},
      "sha256": "22de65bb9010a725b0dac248f353bb072969c94fa8d6b1f34b87d7953cf7bbe4"
+    },
+    "pynacl-1.6.2-cp38-abi3-win_amd64.whl": {
+     "entry_points": [],
+     "files": {
+      "nacl/__init__.py": "448741bdd28fc4529c2b95892eecd397660910ff9d7c3fe924b54015d925d02b",
+      "nacl/_sodium.pyd": "57822e7aed944269943bcb855fc14560a5b6ae38869de4e3d00c380a5119ecc7",
+      "nacl/bindings/__init__.py": "8fa1af69c68bca8d3ae273a40c26ed20a03642b81960673226a71f360a77bfdf",
+      "nacl/bindings/crypto_aead.py": "8ed5893915583e4d3fd1600bab4202712edb0d9150dc54da91a733a768653791",
+      "nacl/bindings/crypto_box.py": "7a029ed3135d19dc1c7b8c074db534cd57a532232cf67562ab61696c6b2e66c2",
+      "nacl/bindings/crypto_core.py": "a265ef249c194f220ac6bc95ffd5c2803da66198d0cc90606cdd0a70b13c18e6",
+      "nacl/bindings/crypto_generichash.py": "f27106d67b594aa54e4c057afbf11983e80d6d5e5425cf926c351ad86764c51b",
+      "nacl/bindings/crypto_hash.py": "f063bc7a5feb6600f621327211b89e8c75d98a67ebc5c91773d714a69bf5be99",
+      "nacl/bindings/crypto_kx.py": "31802ab43ef7dc5b88595535afe0e2a94abc42c1e3c314e962d4789bcdb0b0db",
+      "nacl/bindings/crypto_pwhash.py": "73b4222e24e4eadf64e8366fdbd3bb324512b7c4ef2ca0155d942dd2822ddf2e",
+      "nacl/bindings/crypto_scalarmult.py": "80c34381697e3fab9af08de400cdb2b7874dccaf6063be360b8db8cfec813145",
+      "nacl/bindings/crypto_secretbox.py": "c7ec5b329efef71639a8ffdb0eb0dbd5aff22c32b8218b926dbd324e566e0b46",
+      "nacl/bindings/crypto_secretstream.py": "5e5b9bd4a05b808a580b2da1cd72c72db0e2fbc2f08edc2f061989ae3ed81263",
+      "nacl/bindings/crypto_shorthash.py": "3439a6bc6efb66118b99b2b4512a0b5b674ebde51c19d505a8bd5f8b9a337037",
+      "nacl/bindings/crypto_sign.py": "0006b5bc544b61114e0230d649ecf9097062e44e4d90db0ea01b819e91051b7b",
+      "nacl/bindings/randombytes.py": "26647ea360698f5b2c269f060e3e0a82eb4f9271191a0a205127675b89112394",
+      "nacl/bindings/sodium_core.py": "f28e260c36a19a60087f85e4de1244e42f81e8cb3999b7aeeb8ff2956f6463a2",
+      "nacl/bindings/utils.py": "d9679f66bd4c3854d62a7ea1e8e0eec38bbc0fd3c47c358c69ac9788f526e910",
+      "nacl/encoding.py": "c4ac2315be45d6311f99acdeb70b5a429b143efcd82e1dd153a5a48aae7a3732",
+      "nacl/exceptions.py": "6d03ec6a82a44226ebc641b0349b38b749b0a05f5ac62c8caf1c5c1950ab28aa",
+      "nacl/hash.py": "cf2951aeb5ea351582b3bb02300c0ed60033c4fe2ca7ce19a56c08429bd62dc4",
+      "nacl/hashlib.py": "7b20ef0ee87e3175258b38e2f482d207d667cc6f26316299c9a57ead699c1e82",
+      "nacl/public.py": "86bc7c3d94edff1591cba27d52143be86e3fcb934c4ef9faa06f3406217f1125",
+      "nacl/pwhash/__init__.py": "daf5fd3a2bca66cacc563876be37db741543b149a5f00127211b1ad5de99cc6d",
+      "nacl/pwhash/_argon2.py": "b91d58fc39d7f116487e64c76e8ae55d6709fab7bfc03af238885562cb238fc2",
+      "nacl/pwhash/argon2i.py": "74998cfdb54fd0b00b2bd2384df699b16a846a1ef3eeca6b7779b0f1344fafee",
+      "nacl/pwhash/argon2id.py": "a5d1c29abe546452d641d50c4a092e8277c6108de48dc0dedb64588c5f026bf8",
+      "nacl/pwhash/scrypt.py": "0eb65b831c5e6eaa345257f3b1f6387c5d6a0fb48126090dac2a716c27fded24",
+      "nacl/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "nacl/secret.py": "bcea151b376ccccd2236f4fb44627f7168ccd12be5a0e0821810e05c8209ef44",
+      "nacl/signing.py": "81989d7a709a1034f46f7a3c75e60670365ecd78b723fd6ceb8db828cddb07df",
+      "nacl/utils.py": "8844342ed3edc95ec2aa8e30a67f42bd0ba7c2c3394a111994ef48bd3d6be1d9",
+      "pynacl-1.6.2.dist-info/METADATA": "e4761a7bcc1975a303c4e4487100cd912386eb2e65e3e5a88e283645dce767d9",
+      "pynacl-1.6.2.dist-info/RECORD": "0564abd4fedce47ea5ed28d688117be0a4fc8b3e824a8b1d705788c5b48e75e1",
+      "pynacl-1.6.2.dist-info/WHEEL": "a6d2fed6d20e118c83b165c8df8258199ae5c5e38737cb53a751c65f76ee46fa",
+      "pynacl-1.6.2.dist-info/licenses/LICENSE": "77af5bbded959114b6d7a5eea518b2be364e04f4f4a95f9e87d9870c27713d24",
+      "pynacl-1.6.2.dist-info/licenses/licenses/LICENSE.libsodium.txt": "93e7cac854d71cdafc9d9e4e9f8fd28d87ae541b3dda224d7c8fe23d37875704",
+      "pynacl-1.6.2.dist-info/top_level.txt": "c1f744388fc6d912339b3b0cca1a6a3f5ec7521e8972a8bdf6da3d6872c4b25a"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "ba7d0a8dfa482e497c17f5cdf3bcfdf130bc8f6b4876923c64219fbdc156042b",
+     "native": {
+      "nacl/_sodium.pyd": "pe"
+     },
+     "pth": {},
+     "sha256": "62985f233210dee6548c223301b6c25440852e13d59a8b81490203c3227c5ba0"
     }
    },
    "name": "pynacl",
    "provenance": {
+    "pynacl-1.6.2-cp38-abi3-macosx_10_10_universal2.whl": {
+     "kind": "GitHub",
+     "repository": "pyca/pynacl",
+     "workflow": "pypi-publish.yml"
+    },
     "pynacl-1.6.2-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": {
+     "kind": "GitHub",
+     "repository": "pyca/pynacl",
+     "workflow": "pypi-publish.yml"
+    },
+    "pynacl-1.6.2-cp38-abi3-win_amd64.whl": {
      "kind": "GitHub",
      "repository": "pyca/pynacl",
      "workflow": "pypi-publish.yml"
@@ -77,8 +189,15 @@
    },
    "reviewed": {
     "by": "claude",
-    "date": "2026-11-05",
-    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 native binaries profiled, none with network/process imports or addresses; attestation verifies (pyca/pynacl)."
+    "date": "2026-11-20",
+    "earlier": [
+     {
+      "by": "claude",
+      "date": "2026-11-05",
+      "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 native binaries profiled, none with network/process imports or addresses; attestation verifies (pyca/pynacl)."
+     }
+    ],
+    "note": "macOS universal2 and Windows amd64 wheels of the reviewed version: same 38 members, only nacl/_sodium (libsodium) differs; Windows Python CRLF only. No finding, no .pth, no hook; the binaries import nothing networked or process-starting (mprotect: libsodium's guarded memory). Attestations verify, same publisher (pyca/pynacl pypi-publish.yml)."
    },
    "scans": {
     "capa": {
@@ -97,6 +216,60 @@
        "needed": [
         "libc.so.6",
         "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "49032c357199dde6ae341319e558ce3ed9daa80f5ac83972aa9a63158b0b5371": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "nacl/_sodium.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "57822e7aed944269943bcb855fc14560a5b6ae38869de4e3d00c380a5119ecc7": {
+      "capabilities": [
+       "contain loop",
+       "delay execution",
+       "encode data using Base64",
+       "encode data using XOR",
+       "encrypt data using AES via x86 extensions",
+       "encrypt data using Curve25519",
+       "encrypt data using RC4 PRGA",
+       "encrypt data using Salsa20 or ChaCha",
+       "enumerate PE sections",
+       "generate random numbers via RtlGenRandom",
+       "get number of processors",
+       "get system information on Windows",
+       "hash data using SHA256",
+       "hash data using SHA512",
+       "resolve function by parsing PE exports"
+      ],
+      "note": "",
+      "path": "nacl/_sodium.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "ADVAPI32.dll",
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "python3.dll"
        ],
        "rpath": [],
        "urls": []

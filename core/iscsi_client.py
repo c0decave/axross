@@ -50,6 +50,9 @@ log = logging.getLogger(__name__)
 _DEVICE_POLL_INTERVAL = 0.5  # seconds
 _DEVICE_POLL_TIMEOUT = 30.0  # seconds
 _PRIVILEGED_CMD_TIMEOUT = 30.0  # seconds
+#: The kernel's iSCSI sessions (open-iscsi): <session>/targetname, /state.
+_ISCSI_SESSIONS = "/sys/class/iscsi_session"
+_PROC_MOUNTS = "/proc/mounts"
 
 # Allowlist for the iqn/ip values that get interpolated into a shell
 # glob when resolving the node-config file path. iqn grammar per
@@ -104,6 +107,14 @@ def _make_parent(parent: str, path: str) -> None:
         raise NotADirectoryError(
             errno.ENOTDIR, f"Cannot write {path}: a folder on its way is a file", path
         ) from exc
+
+
+def _names_iqn(tokens: list[str], iqn: str) -> bool:
+    """True when one of *tokens* is *iqn* itself (IQNs compare in lower
+    case, RFC 3720 3.2.6.1). A part of a longer name is not it: ``...:disk1``
+    is no session or discovery entry of ``...:disk10``."""
+    want = iqn.strip().lower()
+    return bool(want) and any(tok.strip().lower() == want for tok in tokens)
 
 
 class IscsiSession(SessionLifecycle):
@@ -202,7 +213,50 @@ class IscsiSession(SessionLifecycle):
 
     @property
     def connected(self) -> bool:
-        return self._logged_in and (not self._auto_mount or self._mounted)
+        """Logged in (and mounted) - and still so in the kernel: a target
+        that dropped the session (sysfs state FAILED / FREE, or no session
+        any more) or a file system unmounted under it is not connected, so
+        a reconnect logs in again instead of reusing a dead session."""
+        if not (self._logged_in and (not self._auto_mount or self._mounted)):
+            return False
+        if self._auto_mount and not self._mount_listed():
+            return False
+        state = self._kernel_session_state()
+        return state is None or state == "LOGGED_IN"
+
+    def _kernel_session_state(self) -> str | None:
+        """The sysfs state of this target's session ("LOGGED_IN",
+        "FAILED", "FREE"; "" for none); None where there is no sysfs
+        (not Linux, a container without it) - the flags decide then."""
+        try:
+            names = os.listdir(_ISCSI_SESSIONS)
+        except OSError:
+            return None
+        states = []
+        for name in names:
+            base = os.path.join(_ISCSI_SESSIONS, name)
+            try:
+                with open(os.path.join(base, "targetname")) as fh:
+                    if fh.read().strip() != self._target_iqn:
+                        continue
+                with open(os.path.join(base, "state")) as fh:
+                    states.append(fh.read().strip())
+            except OSError:
+                continue
+        if "LOGGED_IN" in states:
+            return "LOGGED_IN"
+        return states[0] if states else ""
+
+    def _mount_listed(self) -> bool:
+        """The mount point is in /proc/mounts (True where it cannot be read)."""
+        try:
+            with open(_PROC_MOUNTS) as fh:
+                mounts = fh.read().splitlines()
+        except OSError:
+            return True
+        target = os.path.abspath(self._mount_point)
+        return any(len(parts) > 1 and parts[1] == target
+                   for parts in (line.split() for line in mounts))
 
     # ------------------------------------------------------------------
     # Connect / disconnect
@@ -747,7 +801,8 @@ class IscsiSession(SessionLifecycle):
         )
         log.debug("Discovery output:\n%s", result.stdout)
 
-        if self._target_iqn not in result.stdout:
+        if not any(_names_iqn(line.split()[1:], self._target_iqn)
+                   for line in split_lf_only_stream(result.stdout or "") if line.strip()):
             raise OSError(
                 f"Target {self._target_iqn} not found on portal {portal}. "
                 f"Discovered:\n{result.stdout}"
@@ -768,13 +823,12 @@ class IscsiSession(SessionLifecycle):
            tee`` pair where the secret text traverses stdin/stdout
            only — never appearing in ``/proc/<pid>/cmdline``.
 
-        Fallback: when the node config path cannot be resolved (the
-        record doesn't exist yet, the iqn/ip contain characters we
-        refuse to pass to a shell glob, or sudo is unavailable) we
-        log a warning and fall back to the argv-based
-        ``iscsiadm --op=update -v <password>`` flow. That retains
-        the original behaviour on restricted systems while opting
-        into the safer path everywhere else.
+        When the node config file cannot be written (the record is not
+        there, the iqn/ip hold characters refused in a shell glob, sudo
+        is not allowed) the connect is refused (PermissionError): the
+        argv-based ``iscsiadm --op=update -v <password>`` it fell back to
+        put the secret into /proc/<pid>/cmdline, readable by every local
+        user, and into sudo's log.
         """
         if not self._username:
             return
@@ -808,21 +862,19 @@ class IscsiSession(SessionLifecycle):
                 self._target_iqn,
             )
             return
-        # Step 2 fallback: argv-based update. Secrets brief-appear in
-        # /proc/<pid>/cmdline; same-user exposure only, but a known
-        # downgrade from the file-based path.
-        log.warning(
-            "Falling back to argv-based CHAP update for %s — "
-            "secrets will be briefly visible in /proc/<pid>/cmdline "
-            "during the iscsiadm call. Run this host with sudo access "
-            "to /etc/iscsi/nodes to switch to the file-based path.",
-            self._target_iqn,
+        # No argv fallback: a password on iscsiadm's (and sudo's) command
+        # line is readable in /proc/<pid>/cmdline by every local user, and
+        # sudo logs the whole command (COMMAND=...) to the system journal.
+        from core.i18n import tr
+
+        raise PermissionError(
+            errno.EACCES,
+            tr("The CHAP secret of {target} could not be written to its open-iscsi node "
+               "record (/etc/iscsi/nodes); axross does not pass it on a command line, "
+               "where every local user and the system log would see it. Run axross as "
+               "root or allow 'cat' and 'tee' on the node files through sudo.").format(
+                target=self._target_iqn),
         )
-        for flags in [
-            ("-n", "node.session.auth.username", "-v", self._username),
-            ("-n", "node.session.auth.password", "-v", self._password),
-        ]:
-            self._run_privileged(base + list(flags))
 
     def _node_config_paths(self) -> list[str]:
         """Resolve the open-iscsi node-config files that correspond to
@@ -1030,7 +1082,7 @@ class IscsiSession(SessionLifecycle):
         for line in split_lf_only_stream(result.stdout or ""):
             stripped = line.strip()
             if stripped.startswith("Target:"):
-                in_target = self._target_iqn in stripped
+                in_target = _names_iqn(stripped.split()[1:2], self._target_iqn)
             elif in_target and stripped.startswith(("Current Portal:", "Persistent Portal:")):
                 seen.append(stripped.split(":", 1)[1].strip().split(",")[0])
         if seen and all(addr == portal for addr in seen):
@@ -1124,7 +1176,7 @@ class IscsiSession(SessionLifecycle):
         for line in split_lf_only_stream(output):
             stripped = line.strip()
             if stripped.startswith("Target:"):
-                in_our_target = want in stripped
+                in_our_target = _names_iqn(stripped.split()[1:2], want)
             elif in_our_target and "Attached scsi disk" in stripped:
                 # Example: "Attached scsi disk sdb\t\tState: running"
                 parts = stripped.split()
@@ -1205,7 +1257,7 @@ class IscsiSession(SessionLifecycle):
         """Return the first mountpoint where our block device is mounted,
         or an empty string if none."""
         try:
-            with open("/proc/mounts") as fh:
+            with open(_PROC_MOUNTS) as fh:
                 for line in fh:
                     parts = line.split()
                     if len(parts) < 2:

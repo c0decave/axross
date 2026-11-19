@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import socket
 import sys
+import time
 import types
 from pathlib import Path
 
@@ -85,6 +86,14 @@ def windows(monkeypatch):
             pass
 
 
+def _written(proc, count=1, timeout=5.0):
+    """What the shell got: input goes out on the session's writer thread."""
+    deadline = time.monotonic() + timeout
+    while len(proc.written) < count and time.monotonic() < deadline:
+        time.sleep(0.01)
+    return proc.written
+
+
 def _started(cwd=None):
     session = TW.LocalTerminalSession(cwd=cwd)
     session.start()
@@ -108,7 +117,7 @@ def test_happy_output_reads_as_bytes_and_input_writes_as_text(windows):
     spawned["proc"].emit("C:\\Users\\alex> ")
     assert session.read() == "C:\\Users\\alex> ".encode()
     session.write(b"dir\r\n")
-    assert spawned["proc"].written == ["dir\r\n"]
+    assert _written(spawned["proc"]) == ["dir\r\n"]
     session.resize(40, 120)
     assert spawned["proc"].sizes == [(40, 120)]
     session.close()
@@ -147,5 +156,5 @@ def test_edge_nothing_to_read_returns_empty_without_blocking(windows):
 def test_edge_undecodable_input_is_replaced_not_raised(windows):
     session, spawned = _started()
     session.write(b"caf\xe9\r\n")
-    assert spawned["proc"].written == ["caf\ufffd\r\n"]
+    assert _written(spawned["proc"]) == ["caf\ufffd\r\n"]
     session.close()

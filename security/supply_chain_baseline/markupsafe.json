@@ -4,6 +4,30 @@
   "3.0.4": {
    "accepted_findings": [],
    "archives": {
+    "markupsafe-3.0.4-cp312-cp312-macosx_11_0_arm64.whl": {
+     "entry_points": [],
+     "files": {
+      "markupsafe-3.0.4.dist-info/METADATA": "66767d76388ece15d49d50dafb655891ef5d868715e7128e7f7d737a70b353c4",
+      "markupsafe-3.0.4.dist-info/RECORD": "1d111ccbb87f88b6da8af06d58cd6738679fbde1a6a8d3085d133e8a0e1f84fc",
+      "markupsafe-3.0.4.dist-info/WHEEL": "7156dcce88ca058d4e5118bde8900f7f0cacc719d55b67b78cb6de2362e7dbdb",
+      "markupsafe-3.0.4.dist-info/licenses/LICENSE.txt": "489a8e1108509ed98a37bb983e11e0f7e1d31f0bd8f99a79c8448e7ff37d07ea",
+      "markupsafe-3.0.4.dist-info/top_level.txt": "ab2d0f9637b9209bafb020637a32728430a310075c0cb2bfd9a81571ec7c67a5",
+      "markupsafe/__init__.py": "1f512743b0ba6e96c1d7a9450e425889e9978eb3d2d15e72dd57c8c47f518686",
+      "markupsafe/_native.py": "8522ecf099b3e5aa9acae7a780927791d4f93f0369056a4aae6412762a67742f",
+      "markupsafe/_speedups.c": "b77b42ea8555efe6e6294aaf08ee69552932f86f000885e958c689c2436d2638",
+      "markupsafe/_speedups.cpython-312-darwin.so": "c5dff96c03976c47aa7d1cae3a73b4c57099259b49305c9486735ee9f7022304",
+      "markupsafe/_speedups.pyi": "10d7756d87bb81b0547f6cb0c9858e194a675ce1cd27e7204cda9eb655bc8799",
+      "markupsafe/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "59ebad16a63058b48165a85c92009b1cc7209aef5dac05d853a8ed90e36dba8d",
+     "native": {
+      "markupsafe/_speedups.cpython-312-darwin.so": "macho"
+     },
+     "pth": {},
+     "sha256": "0930db9bdc62d22944e10b066448bb65dc9abe9112880c7cab8da54db4284d5f"
+    },
     "markupsafe-3.0.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
      "entry_points": [],
      "files": {
@@ -27,11 +51,47 @@
      },
      "pth": {},
      "sha256": "8e124f974786f831d6043728e38296969d3579db8896fe004682f5758e613581"
+    },
+    "markupsafe-3.0.4-cp312-cp312-win_amd64.whl": {
+     "entry_points": [],
+     "files": {
+      "markupsafe-3.0.4.dist-info/METADATA": "08fa79954ab288d778b0fee4f0e6c7dbc869e545a415747d1324622465d3b08d",
+      "markupsafe-3.0.4.dist-info/RECORD": "a33813fa7018901d9a688bab566cfa7f371726b19ef782d5bfd2ae1fbcaf5b76",
+      "markupsafe-3.0.4.dist-info/WHEEL": "547199cfb31450578b25778938b82f94e190e69e750e6c850e3b6d657fa1a30f",
+      "markupsafe-3.0.4.dist-info/licenses/LICENSE.txt": "4631ec0db5fd90a547e336817264c6798214338146f8ac94b4a57f96ee8c9ec4",
+      "markupsafe-3.0.4.dist-info/top_level.txt": "ab2d0f9637b9209bafb020637a32728430a310075c0cb2bfd9a81571ec7c67a5",
+      "markupsafe/__init__.py": "f16b1936306299dc0ed098d142949dd00c2979dab90125cabeda5e09a5383f33",
+      "markupsafe/_native.py": "da9b64278d3209ca7d92adcbd4daa98237e9641fa86e789828514a50e9078784",
+      "markupsafe/_speedups.c": "79f73a6b3739d166cac523629f1578ae4b485f6c7359f2ac2ef9dc0bc67723fc",
+      "markupsafe/_speedups.cp312-win_amd64.pyd": "a1bf1fb566f920b5670dca3b31acb0148636cfff8aa8108d938f91550358b231",
+      "markupsafe/_speedups.pyi": "2d20e65d839e7c7e07569017b8bf2c97b02db4bc34a178759e3568559a76c2a4",
+      "markupsafe/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "288e67cc5fc6872435f087158e5b8d192d44c122ffd1979aece7702391b8269d",
+     "native": {
+      "markupsafe/_speedups.cp312-win_amd64.pyd": "pe"
+     },
+     "pth": {},
+     "sha256": "11935df9bf455ed0c04eb87bcd720f02b1fe5e02128a9430f23aed6f93336fc7"
     }
    },
    "name": "markupsafe",
    "provenance": {
+    "markupsafe-3.0.4-cp312-cp312-macosx_11_0_arm64.whl": {
+     "environment": "publish",
+     "kind": "GitHub",
+     "repository": "pallets/markupsafe",
+     "workflow": "publish.yaml"
+    },
     "markupsafe-3.0.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "environment": "publish",
+     "kind": "GitHub",
+     "repository": "pallets/markupsafe",
+     "workflow": "publish.yaml"
+    },
+    "markupsafe-3.0.4-cp312-cp312-win_amd64.whl": {
      "environment": "publish",
      "kind": "GitHub",
      "repository": "pallets/markupsafe",
@@ -52,8 +112,15 @@
    },
    "reviewed": {
     "by": "claude",
-    "date": "2026-11-05",
-    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 native binaries profiled, none with network/process imports or addresses; attestation verifies (pallets/markupsafe)."
+    "date": "2026-11-20",
+    "earlier": [
+     {
+      "by": "claude",
+      "date": "2026-11-05",
+      "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 native binaries profiled, none with network/process imports or addresses; attestation verifies (pallets/markupsafe)."
+     }
+    ],
+    "note": "macOS arm64 and Windows amd64 wheels of the reviewed version: same 11 members, only _speedups differs (Windows text CRLF only). No finding, no .pth, no hook, no network/process imports. Attestations verify, same publisher (pallets/markupsafe publish.yaml)."
    },
    "scans": {
     "capa": {
@@ -71,6 +138,41 @@
         "libc.so.6",
         "libpthread.so.0"
        ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "a1bf1fb566f920b5670dca3b31acb0148636cfff8aa8108d938f91550358b231": {
+      "capabilities": [
+       "contain loop",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "markupsafe/_speedups.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "c5dff96c03976c47aa7d1cae3a73b4c57099259b49305c9486735ee9f7022304": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "markupsafe/_speedups.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
        "rpath": [],
        "urls": []
       }

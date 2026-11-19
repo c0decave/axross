@@ -105,7 +105,7 @@ def test_sad_a_late_answer_is_never_taken_for_the_next_command():
         def send(self, text):
             sent.append(text)
 
-        def read_until_re(self, pattern, timeout=None):
+        def read_until_re(self, pattern, timeout=None, **_kw):
             text = ""
             for i, s in enumerate(sent, 1):
                 start = re.search(r"echo '(__AXX_CMD_START_[^']+)'", s).group(1)
@@ -153,7 +153,7 @@ def test_edge_two_threads_never_interleave_on_one_shell():
                 overlap.append(text)
             self.last = text
 
-        def read_until_re(self, pattern, timeout=None):
+        def read_until_re(self, pattern, timeout=None, **_kw):
             start = re.search(r"echo '(__AXX_CMD_START_[^']+)'", self.last).group(1)
             exit_ = re.search(r'echo "(__AXX_CMD_EXIT_[^$]+)\$\?__"', self.last).group(1)
             threading.Event().wait(0.01)

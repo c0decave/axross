@@ -26,7 +26,10 @@ RE = "Security: Reverse Engineering"
 @pytest.fixture
 def env(tmp_path):
     e = Env(tmp_path)
-    script = tmp_path / "fake_mcp.py"
+    # In a folder of its own: every file of a host-run server's folder is
+    # pinned (core.mcp_script_pin), and the test's files change beside it.
+    (tmp_path / "srv").mkdir(exist_ok=True)
+    script = tmp_path / "srv" / "fake_mcp.py"
     script.write_text(FAKE)
 
     def server(name, category="", **kw):

@@ -98,7 +98,7 @@ def _twin(kind: str):
     if kind == "rsh":
         s = object.__new__(RshSession)
 
-        def run_remote(cmd, *, stdin=None):
+        def run_remote(cmd, *, stdin=None, timeout=None):
             p = _local_sh(cmd)
             if p.returncode:
                 raise RshError(p.stderr.decode())
@@ -111,6 +111,8 @@ def _twin(kind: str):
     else:
         s = object.__new__(SCPSession if kind == "scp" else TelnetSession)
         s._exec_raw = exec_raw
+        # Telnet's checksum is a long command, sent once.
+        s._exec_tree_op = exec_raw
     return s
 
 

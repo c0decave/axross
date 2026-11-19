@@ -17,6 +17,53 @@
     "yara|capability_process_spawn|cffi/setuptools_ext.py|a59ae74ea5429063"
    ],
    "archives": {
+    "cffi-2.1.1-cp312-cp312-macosx_11_0_arm64.whl": {
+     "entry_points": [
+      "cffi-gen-src = cffi._cffi_gen_src:run",
+      "cffi_modules = cffi.setuptools_ext:cffi_modules"
+     ],
+     "files": {
+      "_cffi_backend.cpython-312-darwin.so": "90177c34e639a067ee1f5a2028320b3af2940d47dfaf9583727b59abf0b3263f",
+      "cffi-2.1.1.dist-info/METADATA": "558bafb9093a8e790175d9ecff9688382981d744877dad86fd6770db0f4dc918",
+      "cffi-2.1.1.dist-info/RECORD": "bd3e69c84e8a60c2b5390c1aef67a7ae124a98e782ca1c51ca7d1a665fe8464f",
+      "cffi-2.1.1.dist-info/WHEEL": "65d47419e480660d7ba329a734f3f7358ce8eba23b2db4806ef595c5328959fe",
+      "cffi-2.1.1.dist-info/entry_points.txt": "a6b6108011f8e27050fe5269bba88c8051b414697880d3b0b6fbe3a03a0b001c",
+      "cffi-2.1.1.dist-info/licenses/LICENSE": "5ba24ddc57067f9249add644c3afc41a5d6dc37e23433ef759d95df370b0af63",
+      "cffi-2.1.1.dist-info/top_level.txt": "ac4ed6477ad97cd2b1588f7e8e7ea1b0708097b303901f859ae41bc568c57a14",
+      "cffi/__init__.py": "c47b2db28c5f197e242d4dd4af95b7ebb0da65763fc76972cafd06f93e942cda",
+      "cffi/_cffi_errors.h": "5b383ed01bb5fcad8610ad29494e5be90d86000b9d71a17cec7346f0ba05996c",
+      "cffi/_cffi_gen_src.py": "c94479de91526ec6b7b2c17bfd53aa5d368a78be402531ccfddc99f48198f6cc",
+      "cffi/_cffi_include.h": "cd8e8a168a3f6e96b4d8f6a042cd61cde5bd3b9eac9e2a25a32c6abd1280a2df",
+      "cffi/_embedding.h": "3e101d00c70a0a5013559fa505c65e0c4735d85e85a9575a1ed689d8f920e84f",
+      "cffi/_imp_emulation.py": "4714441bccc06c8d913c6070c3dd2eff97e2f2c59d6a1a5d8a93a83f3929ec2d",
+      "cffi/_shimmed_dist_utils.py": "0638f6c26f3265bbc5bd6131e4011f9aa6aa6726458587e8c8b2d01e45d9b9aa",
+      "cffi/api.py": "7165f5665b1c98ec9392fb61881a5458b712441b6a9699fe9a806ee1eb019b32",
+      "cffi/backend_ctypes.py": "4fb092735e0fe6fca5a22e61ca8c7af2a841597d3bf68c075da1836d8fd4edba",
+      "cffi/cffi_opcode.py": "e7ed5c53aa691c6cecb2d17f7a88250fff2d08393bebf6619338f77d6e1289cd",
+      "cffi/commontypes.py": "ecdeb33ed08596fc57316847574f29b148dd6082b65e0b0ddf2a39760b9afefe",
+      "cffi/cparser.py": "598fa8c785064ae552613b609b4d8598681b99cb9a6812b79a816591d1529ac5",
+      "cffi/error.py": "bfac53892e14d24bc3732e21fc10d1a39bf7f5942e8fe20c4582efe444dd759b",
+      "cffi/ffiplatform.py": "6afc458dd8a460626812d9893bb7b0566c06fd511597a119fd668d859602aafe",
+      "cffi/gen_src.py": "4d4fd9543c282e71cf95a97cfe63e6a71ab2589ed4ef9da34dcdd4b13984d502",
+      "cffi/lock.py": "97d4d37703083298ba8c39091a742013d72f4c847b0809ed209afc1061edde96",
+      "cffi/model.py": "700f9b10089b70751bb5ba9f80cab408b42314f02357425247333229588d805e",
+      "cffi/parse_c_type.h": "39dc107f033d92dababe5081e377b11509b10c1b63d8c04d74af0b625d79b63c",
+      "cffi/pkgconfig.py": "bb2b75d7b4d079e6b77636a03355b9828f11a67c921938280b337c407c997657",
+      "cffi/recompiler.py": "4c9545d3b985cd819357ab33a76ccfac977674928737e781fd2ba22621a5f4ac",
+      "cffi/setuptools_ext.py": "a59ae74ea54290632abbc37123191d6c8b65eb981e84c3f52e8ada51d4fbfb85",
+      "cffi/vengine_cpy.py": "ad1a2e610e819650085cd8d91933d45b9e2b07de76aa2de0726d7a4965d628b7",
+      "cffi/vengine_gen.py": "67f2aa685eabe789f98b886341385975bfb50c14c48a69d4e32e04fcac520838",
+      "cffi/verifier.py": "c48cd5f220cc859d7eaa15f74515f80d6a36934ed6a5c271761840157023ae66"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "39f0d2199b67cc1e3fd33ddc1b5ded955bbe0a51ca8c9d8238021ee934e84022",
+     "native": {
+      "_cffi_backend.cpython-312-darwin.so": "macho"
+     },
+     "pth": {},
+     "sha256": "f81b3b8f3d4e343550fa4baa0e479bba9f2d29ce9c2e9b51d1ce1718d7442fcf"
+    },
     "cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": {
      "entry_points": [
       "cffi-gen-src = cffi._cffi_gen_src:run",
@@ -63,11 +110,60 @@
      },
      "pth": {},
      "sha256": "c1453022f490d2459a11819d83ad1d586e9ff65a12ac3e705ffebd46d3685dcf"
+    },
+    "cffi-2.1.1-cp312-cp312-win_amd64.whl": {
+     "entry_points": [
+      "cffi-gen-src = cffi._cffi_gen_src:run",
+      "cffi_modules = cffi.setuptools_ext:cffi_modules"
+     ],
+     "files": {
+      "_cffi_backend.cp312-win_amd64.pyd": "9af5e4f68a41f26b726f2e9424f9d58a4f5666189f6a48be95f406b257102aec",
+      "cffi-2.1.1.dist-info/METADATA": "67b6a7595df7ede2195016a05d285faa7d362a8f57c238984edb8bb674b5770d",
+      "cffi-2.1.1.dist-info/RECORD": "41d6abd77790b379db2d1a28f2ff334cded6e202d406e3bba7a28cec606b4437",
+      "cffi-2.1.1.dist-info/WHEEL": "f767fbbf21c4fc6662c119c3d88d39bc24ff4b7f54be4472ba0b980c028e19bf",
+      "cffi-2.1.1.dist-info/entry_points.txt": "a6b6108011f8e27050fe5269bba88c8051b414697880d3b0b6fbe3a03a0b001c",
+      "cffi-2.1.1.dist-info/licenses/LICENSE": "5ba24ddc57067f9249add644c3afc41a5d6dc37e23433ef759d95df370b0af63",
+      "cffi-2.1.1.dist-info/top_level.txt": "ac4ed6477ad97cd2b1588f7e8e7ea1b0708097b303901f859ae41bc568c57a14",
+      "cffi/__init__.py": "c47b2db28c5f197e242d4dd4af95b7ebb0da65763fc76972cafd06f93e942cda",
+      "cffi/_cffi_errors.h": "5b383ed01bb5fcad8610ad29494e5be90d86000b9d71a17cec7346f0ba05996c",
+      "cffi/_cffi_gen_src.py": "c94479de91526ec6b7b2c17bfd53aa5d368a78be402531ccfddc99f48198f6cc",
+      "cffi/_cffi_include.h": "cd8e8a168a3f6e96b4d8f6a042cd61cde5bd3b9eac9e2a25a32c6abd1280a2df",
+      "cffi/_embedding.h": "3e101d00c70a0a5013559fa505c65e0c4735d85e85a9575a1ed689d8f920e84f",
+      "cffi/_imp_emulation.py": "4714441bccc06c8d913c6070c3dd2eff97e2f2c59d6a1a5d8a93a83f3929ec2d",
+      "cffi/_shimmed_dist_utils.py": "0638f6c26f3265bbc5bd6131e4011f9aa6aa6726458587e8c8b2d01e45d9b9aa",
+      "cffi/api.py": "7165f5665b1c98ec9392fb61881a5458b712441b6a9699fe9a806ee1eb019b32",
+      "cffi/backend_ctypes.py": "4fb092735e0fe6fca5a22e61ca8c7af2a841597d3bf68c075da1836d8fd4edba",
+      "cffi/cffi_opcode.py": "e7ed5c53aa691c6cecb2d17f7a88250fff2d08393bebf6619338f77d6e1289cd",
+      "cffi/commontypes.py": "ecdeb33ed08596fc57316847574f29b148dd6082b65e0b0ddf2a39760b9afefe",
+      "cffi/cparser.py": "598fa8c785064ae552613b609b4d8598681b99cb9a6812b79a816591d1529ac5",
+      "cffi/error.py": "bfac53892e14d24bc3732e21fc10d1a39bf7f5942e8fe20c4582efe444dd759b",
+      "cffi/ffiplatform.py": "6afc458dd8a460626812d9893bb7b0566c06fd511597a119fd668d859602aafe",
+      "cffi/gen_src.py": "4d4fd9543c282e71cf95a97cfe63e6a71ab2589ed4ef9da34dcdd4b13984d502",
+      "cffi/lock.py": "97d4d37703083298ba8c39091a742013d72f4c847b0809ed209afc1061edde96",
+      "cffi/model.py": "700f9b10089b70751bb5ba9f80cab408b42314f02357425247333229588d805e",
+      "cffi/parse_c_type.h": "39dc107f033d92dababe5081e377b11509b10c1b63d8c04d74af0b625d79b63c",
+      "cffi/pkgconfig.py": "bb2b75d7b4d079e6b77636a03355b9828f11a67c921938280b337c407c997657",
+      "cffi/recompiler.py": "4c9545d3b985cd819357ab33a76ccfac977674928737e781fd2ba22621a5f4ac",
+      "cffi/setuptools_ext.py": "a59ae74ea54290632abbc37123191d6c8b65eb981e84c3f52e8ada51d4fbfb85",
+      "cffi/vengine_cpy.py": "ad1a2e610e819650085cd8d91933d45b9e2b07de76aa2de0726d7a4965d628b7",
+      "cffi/vengine_gen.py": "67f2aa685eabe789f98b886341385975bfb50c14c48a69d4e32e04fcac520838",
+      "cffi/verifier.py": "c48cd5f220cc859d7eaa15f74515f80d6a36934ed6a5c271761840157023ae66"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "b91f1052508e0997d5bb5dcd6e4aa4daa6bc3de11696e8067230655c116a03a7",
+     "native": {
+      "_cffi_backend.cp312-win_amd64.pyd": "pe"
+     },
+     "pth": {},
+     "sha256": "f53e442b08449d42821fa4a4fba000095af9f62742a500f978a9f557ec44339a"
     }
    },
    "name": "cffi",
    "provenance": {
-    "cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": null
+    "cffi-2.1.1-cp312-cp312-macosx_11_0_arm64.whl": null,
+    "cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": null,
+    "cffi-2.1.1-cp312-cp312-win_amd64.whl": null
    },
    "pypi": {
     "author": "Armin Rigo, Maciej Fijalkowski",
@@ -85,11 +181,79 @@
    },
    "reviewed": {
     "by": "claude",
-    "date": "2026-11-05",
-    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_delete, filesystem_read, filesystem_write_executable, network_download, process_spawn; 1 native binaries profiled, none with network/process imports or addresses; no attestation: content review only."
+    "date": "2026-11-20",
+    "earlier": [
+     {
+      "by": "claude",
+      "date": "2026-11-05",
+      "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_delete, filesystem_read, filesystem_write_executable, network_download, process_spawn; 1 native binaries profiled, none with network/process imports or addresses; no attestation: content review only."
+     }
+    ],
+    "note": "macOS arm64 and Windows amd64 wheels of the reviewed version: same 31 members, only _cffi_backend differs (METADATA CRLF on Windows). No new finding or YARA hit, no .pth, no hook; the extensions import dlopen/dlsym resp. LoadLibraryExW/GetProcAddress (cffi's dlopen API, as on Linux) and nothing networked or process-starting. No attestation, as for the Linux wheel: content review only."
    },
    "scans": {
     "capa": {
+     "90177c34e639a067ee1f5a2028320b3af2940d47dfaf9583727b59abf0b3263f": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "_cffi_backend.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": [
+        "https://cffi.readthedocs.io/en/latest/using.html#callbacks"
+       ]
+      }
+     },
+     "9af5e4f68a41f26b726f2e9424f9d58a4f5666189f6a48be95f406b257102aec": {
+      "capabilities": [
+       "allocate memory",
+       "allocate or change RWX memory",
+       "allocate thread local storage",
+       "contain loop",
+       "create thread",
+       "delay execution",
+       "get number of processors",
+       "get system information on Windows",
+       "get thread local storage value",
+       "link function at runtime on Windows",
+       "set thread local storage value"
+      ],
+      "note": "",
+      "path": "_cffi_backend.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ],
+        "dynamic-code": [
+         "GetProcAddress",
+         "LoadLibraryExW"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "USER32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-convert-l1-1-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-math-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": [
+        "https://cffi.readthedocs.io/en/latest/using.html#callbacks"
+       ]
+      }
+     },
      "9bc1d08072255a5ec2db10fc75df1dd9e73097a75cd9150cfe875ebd6712f17c": {
       "capabilities": [
        "check file permission on Linux",

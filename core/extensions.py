@@ -72,6 +72,10 @@ log = logging.getLogger(__name__)
 #: An activation running longer than this counts as hung: the startup
 #: watchdog reports a window missing after the same time.
 HUNG_ACTIVATION_SECONDS = WATCHDOG_SECONDS
+#: A marker older than this names a process that is gone, whatever runs
+#: under its pid now: where a process's start time cannot be read (macOS,
+#: Windows) a reused pid kept the extension suspended at every start.
+MAX_MARKER_AGE_SECONDS = 24 * 3600
 #: An activation taking longer than this is logged as a warning. Measured:
 #: the slowest bundled extension (Media Player, it builds a QAudioDecoder)
 #: takes about 0.24 s, all others under 0.02 s.
@@ -294,25 +298,30 @@ def _id_list(key: str) -> set[str]:
 def _set_member(key: str, ext_id: str, on: bool, *, also_off: tuple[str, ...] = ()) -> None:
     """Add *ext_id* to (or remove it from) the list under *key* - and
     remove it from the lists under *also_off* in the same write - keeping
-    every other key of the settings file."""
-    from core.secure_storage import keep_unreadable_copy, write_secret_file
+    every other key of the settings file.
 
-    data, readable = _read_settings()
-    if not readable and not keep_unreadable_copy(settings_file()):
-        raise OSError(f"{settings_file()} is unreadable and could not be kept aside")
-    data = dict(data) if readable else {}
-    for name in (key, *also_off):
-        old = data.get(name)
-        ids = {i for i in old if isinstance(i, str)} if isinstance(old, list) else set()
-        if name != key and name not in data:
-            continue  # nothing to remove from a list that is not there
-        if on and name == key:
-            ids.add(ext_id)
-        else:
-            ids.discard(ext_id)
-        data[name] = sorted(ids)
+    Every axross process writes this file (a second window, the startup
+    guard of another start): the read, the change and the write hold the
+    store's file lock, so a change made in between is not dropped."""
+    from core.secure_storage import keep_unreadable_copy, locked_store_update, write_secret_file
+
     os.makedirs(settings_file().parent, mode=0o700, exist_ok=True)
-    write_secret_file(str(settings_file()), json.dumps(data, indent=2) + "\n")
+    with locked_store_update(settings_file()):
+        data, readable = _read_settings()
+        if not readable and not keep_unreadable_copy(settings_file()):
+            raise OSError(f"{settings_file()} is unreadable and could not be kept aside")
+        data = dict(data) if readable else {}
+        for name in (key, *also_off):
+            old = data.get(name)
+            ids = {i for i in old if isinstance(i, str)} if isinstance(old, list) else set()
+            if name != key and name not in data:
+                continue  # nothing to remove from a list that is not there
+            if on and name == key:
+                ids.add(ext_id)
+            else:
+                ids.discard(ext_id)
+            data[name] = sorted(ids)
+        write_secret_file(str(settings_file()), json.dumps(data, indent=2) + "\n")
 
 
 def enabled_ids() -> set[str]:
@@ -522,7 +531,8 @@ def collect_stale_activations() -> list[dict]:
             continue
         name = data.get("name") if isinstance(data.get("name"), str) else ext_id
         entry = {"ext_id": ext_id, "name": name, "pid": pid, "started": started}
-        if not _process_alive(pid, data.get("proc_start")):
+        if (time.time() - started > MAX_MARKER_AGE_SECONDS
+                or not _process_alive(pid, data.get("proc_start"))):
             found.append({**entry, "reason": "ended"})
             _remove(path)
         elif time.time() - started > HUNG_ACTIVATION_SECONDS:

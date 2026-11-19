@@ -71,6 +71,21 @@ class _Host:
     def run_ps(self, script):
         self.scripts.append(script)
         paths = self._paths(script)
+        if "Copy-Item" in script:
+            s, d = paths
+            if s not in self.fs:
+                return self._res(script, _NOT_FOUND) if _NOT_FOUND in script else (
+                    self._missing(script, s))
+            taken = d in self.fs
+            if taken and _TAKEN in script and (self.fs[s] is None or self.fs[d] is None):
+                return self._res(script, _TAKEN)
+            self.fs[d] = self.fs[s]
+            # copy() walks a folder itself (Get-ChildItem per folder).
+            if self.fs[s] is None and "Get-ChildItem" in script:
+                for k in list(self.fs):
+                    if k.startswith(s + "\\"):
+                        self.fs[d + k[len(s):]] = self.fs[k]
+            return self._res(script)
         if "Get-ChildItem" in script:
             p = paths[0]
             if p not in self.fs:
@@ -81,19 +96,6 @@ class _Host:
                 return self._res(script, json.dumps([self._row(p)], ensure_ascii=False))
             rows = [self._row(k) for k in self.fs if k.rsplit("\\", 1)[0] == p]
             return self._res(script, json.dumps(rows, ensure_ascii=False))
-        if "Copy-Item" in script:
-            s, d = paths
-            if s not in self.fs:
-                return self._missing(script, s)
-            taken = d in self.fs
-            if taken and _TAKEN in script and (self.fs[s] is None or self.fs[d] is None):
-                return self._res(script, _TAKEN)
-            self.fs[d] = self.fs[s]
-            if self.fs[s] is None and "Copy-Item -Recurse" in script:
-                for k in list(self.fs):
-                    if k.startswith(s + "\\"):
-                        self.fs[d + k[len(s):]] = self.fs[k]
-            return self._res(script)
         if "Remove-Item" in script or "ReadAllBytes" in script:
             p = paths[0]
             if p not in self.fs:
@@ -219,3 +221,30 @@ def test_sad_remove_open_read_and_list_dir_of_a_missing_path_are_file_not_found(
 def test_sad_list_dir_of_a_file_is_not_a_directory():
     with pytest.raises(NotADirectoryError):
         _session(_Host(_TREE)).list_dir("C:\\data\\proj\\main.c")
+
+
+# -- copy through links (review round 3) ---------------------------------------
+
+
+def test_sad_a_folder_copy_never_goes_into_a_junction_or_symlink():
+    """Copy-Item -Recurse (Windows PowerShell 5.1) copies what a junction or
+    directory symlink points to - a junction to C:\\ copied the disk, one to
+    an upper folder for ever. The walk makes the link again as a link and
+    descends only into a folder that is no link."""
+    host = _Host(_TREE)
+    _session(host).copy("C:\\data\\proj", "C:\\data\\proj-copy")
+    script = host.scripts[-1]
+    assert "-Recurse" not in script
+    link_test = script.index("$kind -eq 'Junction' -or $kind -eq 'SymbolicLink'")
+    descend = script.index("Get-ChildItem -Force -LiteralPath $i.FullName")
+    assert "ReparsePoint" in script and link_test < script.index("elseif ($i.PSIsContainer)") < descend
+    assert "New-Item -ItemType Junction -Path $to -Value $target" in script
+    assert "CreateSymbolicLink($to, $target" in script
+    # Still a full copy of a folder without links.
+    assert host.fs["C:\\data\\proj-copy\\src\\util.c"] == b"util"
+
+
+def test_edge_the_link_branch_keeps_names_out_of_the_script_text():
+    host = _Host({"C:\\x": None, "C:\\x\\j'; rd C:\\ -Recurse; '": None})
+    _session(host).copy("C:\\x\\j'; rd C:\\ -Recurse; '", "C:\\x\\k")
+    assert "rd C:" not in host.scripts[-1]

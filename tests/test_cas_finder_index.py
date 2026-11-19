@@ -204,7 +204,7 @@ class SelectAllDeleteTest(_Base):
         self.assertEqual(len(dlg.selected_entries()), 5)
         self._run_delete(dlg)
         text = self.ask().call_args[0][2]
-        self.assertIn("3 file(s)", text)
+        self.assertIn("3 files", text)
         self.assertIn("2 copies are kept", text)
         for keep in ("a_old", "b_old", "unique"):
             self.assertTrue(f[keep].exists(), keep)

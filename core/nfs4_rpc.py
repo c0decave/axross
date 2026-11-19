@@ -425,13 +425,21 @@ class Nfs4:
         out: list[R.DirEntry] = []
         cookie, verf = 0, b"\0" * 8
         want = pack_bitmap(R.Packer(), bitmap(STAT_ATTRS + (A_FILEHANDLE,))).bytes()
+        asked: set[int] = set()
         for _round in range(R.MAX_LIST):
+            # A cookie asked for before: the same page again, for ever.
+            if cookie in asked:
+                raise R.RpcError(errno.EPROTO, "READDIR made no progress (a cookie came back)")
+            asked.add(cookie)
             args = R.Packer().hyper(cookie).fixed(verf).uint(dircount).uint(maxcount).bytes() + want
             verf, entries, eof = self.compound([self._putfh(dir_fh), (OP_READDIR, args)], "READDIR")[-1][1]
             for cookie, name, attrs in entries:
                 if name not in (".", ".."):
                     out.append(R.DirEntry(name, attrs.get(A_FILEID, 0), to_fattr(attrs),
                                           attrs.get(A_FILEHANDLE)))
+                # The whole folder, not only one reply (as NFSv3 does).
+                if len(out) > R.MAX_LIST:
+                    raise R.RpcError(errno.EMSGSIZE, f"more than {R.MAX_LIST} entries in one folder")
             if eof:
                 return out
             if not entries:

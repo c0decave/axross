@@ -221,6 +221,14 @@ def test_sad_escape_in_fullscreen_leaves_fullscreen_and_keeps_the_image_viewer(s
         json.dumps(
             {"window": {"viewers": {"image": {"x": True, "y": 0, "width": 500, "height": 400}}}}
         ),
+        # Past QRect's int range (review 2026-11-20): OverflowError in the
+        # viewer's constructor, so the viewer never opened again.
+        json.dumps(
+            {"window": {"viewers": {"image": {"x": 10**12, "y": 0, "width": 500, "height": 400}}}}
+        ),
+        json.dumps(
+            {"window": {"viewers": {"image": {"x": 0, "y": 0, "width": 2**31, "height": 400}}}}
+        ),
     ],
 )
 def test_sad_a_broken_stored_state_opens_at_the_default_size(settings, image, garbage):
@@ -258,7 +266,8 @@ def _odd_geometry(dlg) -> QRect:
     above the layout's minimum width, so Qt keeps it as set."""
     width = dlg.minimumSizeHint().width() + 6
     assert width < _available().width() - 10, "the image viewer must fit the screen"
-    return QRect(3, 7, width, 433)
+    # (inside the frame's room - x 5, y 30 - see clamp_to_screen)
+    return QRect(13, 47, width, 433)
 
 
 def _as_entry(rect: QRect, maximized: bool) -> dict:
@@ -355,20 +364,42 @@ def _store(settings: Path, name: str, **entry) -> None:
 
 
 def test_edge_clamp_to_screen_shrinks_and_moves_inside_the_available_area():
+    """The rect is the window's inside (setGeometry): its frame - the
+    title bar above, the edges around - must fit as well. Clamped to the
+    available area itself, a too-large viewer opened with its title bar
+    above the screen's top, where it cannot be dragged or closed."""
     a = _available()
-    # larger than the screen: exactly the available area
-    assert VW.clamp_to_screen(QRect(a.x(), a.y(), a.width() * 3, a.height() * 3)) == a
+    left, top, right, bottom = VW.FRAME_ESTIMATE
+    inner = a.adjusted(left, top, -right, -bottom)
+    # larger than the screen: the available area less the frame
+    assert VW.clamp_to_screen(QRect(a.x(), a.y(), a.width() * 3, a.height() * 3)) == inner
     # off-screen bottom-left, fits: same size, pinned to the nearest edges
     assert VW.clamp_to_screen(QRect(-40_000, 90_000, 300, 200)) == QRect(
-        a.left(), a.top() + a.height() - 200, 300, 200
+        inner.left(), inner.top() + inner.height() - 200, 300, 200
     )
-    # off-screen top-right
+    # off-screen top-right: the title bar stays on the screen
     assert VW.clamp_to_screen(QRect(90_000, -90_000, 300, 200)) == QRect(
-        a.left() + a.width() - 300, a.top(), 300, 200
+        inner.left() + inner.width() - 300, inner.top(), 300, 200
     )
+    assert inner.top() >= a.top() + 20
     # already inside: untouched
-    inside = QRect(a.x() + 5, a.y() + 5, 100, 80)
+    inside = QRect(inner.x() + 5, inner.y() + 5, 100, 80)
     assert VW.clamp_to_screen(inside) == inside
+
+
+def test_edge_clamp_to_screen_takes_a_shown_windows_own_frame():
+    from PyQt6.QtWidgets import QWidget
+
+    class Framed(QWidget):
+        def frameGeometry(self):  # noqa: N802 - Qt
+            g = self.geometry()
+            return g.adjusted(-3, -27, 3, 3)
+
+    window = Framed()
+    window.setGeometry(200, 200, 100, 100)
+    a = _available()
+    got = VW.clamp_to_screen(QRect(a.x(), a.y(), a.width() * 3, a.height() * 3), window)
+    assert got == a.adjusted(3, 27, -3, -3)
 
 
 def test_edge_a_geometry_larger_than_the_screen_is_clamped(settings, image):

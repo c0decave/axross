@@ -45,7 +45,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import llm_profiles as LP
-from core.i18n import tr
+from core.i18n import tr, tr_n
 from ui.format_utils import ui_locale
 from core.thread_relay import GuiCall
 from ui.close_corner import add_close_corner
@@ -543,7 +543,7 @@ class _LLMProfilesForm:
     def _models_status(models) -> str:
         """The line under the form: how many, which are loaded - or that the
         server does not say - and whether it reports sizes."""
-        lines = [tr("{n} model(s) on the server.").format(n=len(models))]
+        lines = [tr_n(len(models), "{n} model on the server.", "{n} models on the server.")]
         if not models:
             return lines[0]
         if all(m.loaded is None for m in models):

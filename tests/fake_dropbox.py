@@ -132,7 +132,10 @@ class FakeDropbox:
 
     def _page(self, entries, size):
         head, rest = entries[:size], entries[size:]
-        cursor = f"c{len(self._cursors)}"
+        # A counter, not len(): the dict shrinks as cursors are used, and a
+        # third page reused the first cursor ("the server repeats a cursor").
+        self._cursor_count = getattr(self, "_cursor_count", 0) + 1
+        cursor = f"c{self._cursor_count}"
         self._cursors[cursor] = rest
         return F.ListFolderResult(entries=head, cursor=cursor, has_more=bool(rest))
 

@@ -113,7 +113,11 @@ class UnsafeNameTest(unittest.TestCase):
         left = _HostileListing({"/r": [_f(n) for n in names]})
         entries = compare_trees(left, "/r", LocalFS(), str(self.right_root), hasher=_no_hash)
         self.assertEqual(sorted(e.rel_path for e in entries), sorted(names))
-        self.assertTrue(all(e.status == Status.LEFT_ONLY for e in entries))
+        # A line break no sync uses any more (review B: CR / LF in a remote
+        # name are refused): listed, shown as not compared.
+        self.assertTrue(all(e.status == Status.LEFT_ONLY for e in entries
+                            if "\n" not in e.rel_path))
+        self.assertEqual([e.status for e in entries if "\n" in e.rel_path], [Status.UNKNOWN])
 
 
 if __name__ == "__main__":

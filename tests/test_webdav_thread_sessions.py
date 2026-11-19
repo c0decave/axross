@@ -307,7 +307,8 @@ def test_edge_auth_and_timeout_go_with_every_thread_s_requests():
 
     _in_threads(3, request)
     assert len({c[0] for c in calls}) == 3
-    assert all(c[1:] == (("user", "pw"), 7.5) for c in calls)
+    # Credentials go as UTF-8 bytes (RFC 7617; requests would use latin-1).
+    assert all(c[1:] == ((b"user", b"pw"), 7.5) for c in calls)
     client.close()
 
 

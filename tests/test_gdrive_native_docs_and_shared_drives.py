@@ -112,3 +112,19 @@ def test_edge_requests_support_shared_drives(drive):
     assert seen["list"].get("includeItemsFromAllDrives") is True
     assert seen["get"].get("supportsAllDrives") is True
     assert seen["get_media"].get("supportsAllDrives") is True
+
+
+def test_edge_writes_support_shared_drives(drive):
+    """Protocol review (round 1): uploads (create, update) and mkdir went
+    without supportsAllDrives, so Drive answered 404 for a shared drive's
+    folder or file while listing and reading it worked."""
+    s = fake_gdrive.make_session(drive)
+    drive.kwargs.clear()
+    s.mkdir("/newdir")
+    with s.open_write("/newdir/a.txt") as fh:
+        fh.write(b"1")
+    with s.open_write("/newdir/a.txt") as fh:
+        fh.write(b"2")
+    writes = [(name, kw) for name, kw in drive.kwargs if name in ("create", "update")]
+    assert {name for name, _ in writes} == {"create", "update"}
+    assert all(kw.get("supportsAllDrives") is True for _, kw in writes), writes

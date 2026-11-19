@@ -61,7 +61,9 @@ class RsyncGlobTest(unittest.TestCase):
         self.assertEqual(esc("*"), r"\*")
         self.assertEqual(esc("a?b"), r"a\?b")
         self.assertEqual(esc("[abc]"), r"\[abc]")
-        self.assertEqual(esc("back\\slash"), "back\\\\slash")
+        # A backslash escapes only in a pattern with a wildcard.
+        self.assertEqual(esc("back\\slash"), "back\\slash")
+        self.assertEqual(esc("back\\slash*"), "back\\\\slash\\*")
 
 
 class ImapExpungeTest(unittest.TestCase):

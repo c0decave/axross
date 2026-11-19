@@ -118,6 +118,13 @@ def test_happy_the_readmes_and_the_licence_file_match_the_data():
     assert T.check(ROOT) == []
 
 
+def _copy_views(root: Path) -> None:
+    """The generated files (the extended READMEs in docs/, the licence file) under *root*."""
+    for name in (*T.README_FILES, T.LICENSES_FILE):
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text((ROOT / name).read_text(encoding="utf-8"), encoding="utf-8")
+
+
 def test_happy_the_readme_section_is_the_last_thing_in_each_readme():
     for name in T.README_FILES:
         text = (ROOT / name).read_text(encoding="utf-8")
@@ -170,14 +177,13 @@ def test_happy_the_cli_check_passes_on_the_tree():
 
 
 def test_happy_write_regenerates_a_drifted_copy(tmp_path):
-    for name in (*T.README_FILES, T.LICENSES_FILE):
-        (tmp_path / name).write_text((ROOT / name).read_text(encoding="utf-8"), encoding="utf-8")
-    readme = tmp_path / "README.md"
+    _copy_views(tmp_path)
+    readme = tmp_path / "docs" / "README-extended.md"
     readme.write_text(readme.read_text(encoding="utf-8").replace("| Qt 6 |", "| Qt 5 |"),
                       encoding="utf-8")
     entries = T.load()
-    assert T.check(tmp_path, entries) == ["README.md"]
-    assert T.write(tmp_path, entries) == ["README.md"]
+    assert T.check(tmp_path, entries) == ["docs/README-extended.md"]
+    assert T.write(tmp_path, entries) == ["docs/README-extended.md"]
     assert T.check(tmp_path, entries) == []
 
 
@@ -264,18 +270,19 @@ def test_sad_a_bundle_pin_without_an_entry_is_reported():
 
 
 def test_sad_a_readme_without_the_markers_is_reported_not_passed(tmp_path):
-    for name in (*T.README_FILES, T.LICENSES_FILE):
-        (tmp_path / name).write_text((ROOT / name).read_text(encoding="utf-8"), encoding="utf-8")
-    (tmp_path / "README_de.md").write_text("# axross\n\nno markers here\n", encoding="utf-8")
+    _copy_views(tmp_path)
+    (tmp_path / "docs" / "README-extended_de.md").write_text("# axross\n\nno markers here\n",
+                                                             encoding="utf-8")
     problems = T.check(tmp_path)
-    assert problems == ["README_de.md"]
-    with pytest.raises(T.DataError, match="README_de.md"):
+    assert problems == ["docs/README-extended_de.md"]
+    with pytest.raises(T.DataError, match="README-extended_de.md"):
         T.write(tmp_path)
 
 
 def test_sad_the_cli_check_fails_on_drift(tmp_path):
     for name in (*T.README_FILES, T.LICENSES_FILE):
         text = (ROOT / name).read_text(encoding="utf-8")
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / name).write_text(text.replace("| paramiko |", "| paramikko |"),
                                      encoding="utf-8")
     result = subprocess.run([sys.executable, "-m", "core.third_party", "--check",
@@ -322,8 +329,7 @@ def test_edge_every_via_names_entries_of_the_data_file():
 
 
 def test_edge_write_is_idempotent(tmp_path):
-    for name in (*T.README_FILES, T.LICENSES_FILE):
-        (tmp_path / name).write_text((ROOT / name).read_text(encoding="utf-8"), encoding="utf-8")
+    _copy_views(tmp_path)
     assert T.write(tmp_path) == []
     before = {n: (tmp_path / n).read_bytes() for n in (*T.README_FILES, T.LICENSES_FILE)}
     assert T.write(tmp_path) == []

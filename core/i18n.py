@@ -30,7 +30,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import tempfile
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -192,6 +191,9 @@ def detect_language(
 #: already uses for persistent visual settings, rather than a second
 #: settings store to keep in sync.
 SETTINGS_FILE = Path.home() / ".config" / "axross" / "session.json"
+#: A session.json larger than this is not read for the language (the window
+#: refuses it too: ui.state_files.MAX_UI_STATE_BYTES).
+MAX_SESSION_BYTES = 1024 * 1024
 
 
 def stored_language(path: str | Path | None = None) -> str | None:
@@ -204,7 +206,11 @@ def stored_language(path: str | Path | None = None) -> str | None:
     """
     target = Path(path or SETTINGS_FILE)
     try:
-        data = json.loads(target.read_text(encoding="utf-8"))
+        with open(target, "rb") as handle:
+            raw = handle.read(MAX_SESSION_BYTES + 1)
+        if len(raw) > MAX_SESSION_BYTES:
+            return None
+        data = json.loads(raw.decode("utf-8"))
     except (OSError, ValueError, RecursionError):
         return None
     window = data.get("window") if isinstance(data, dict) else None
@@ -214,32 +220,25 @@ def stored_language(path: str | Path | None = None) -> str | None:
 
 
 def store_language(language: str, path: str | Path | None = None) -> None:
-    """Persist the picked language, merging into the existing settings."""
-    from core.json_store import read_for_merge
+    """Persist the picked language, merging into the existing settings
+    under the file lock every writer of session.json takes."""
+    from core.json_store import read_for_merge, write_private
+    from core.secure_storage import locked_store_update
 
     target = Path(path or SETTINGS_FILE)
-    # A broken file is set aside, an unreadable one (OSError) not written:
-    # the window's layout, panes and preferences share it.
-    data = read_for_merge(target)
-    window = data.get("window")
-    if not isinstance(window, dict):
-        window = {}
-    window["language"] = language
-    data["window"] = window
     target.parent.mkdir(parents=True, exist_ok=True)
-    # 0600 like the window's own save: the file also lists the profiles and
-    # remote paths of the open panes.
-    fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(json.dumps(data, indent=2))
-        os.replace(tmp, target)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    with locked_store_update(target):
+        # A broken file is set aside, an unreadable one (OSError) not written:
+        # the window's layout, panes and preferences share it.
+        data = read_for_merge(target, max_bytes=MAX_SESSION_BYTES)
+        window = data.get("window")
+        if not isinstance(window, dict):
+            window = {}
+        window["language"] = language
+        data["window"] = window
+        # 0600 like the window's own save: the file also lists the profiles and
+        # remote paths of the open panes. Synced before it replaces the old one.
+        write_private(target, json.dumps(data, indent=2))
 
 
 #: Where the shipped catalogues live, relative to the project root.
@@ -351,7 +350,7 @@ def install(language: str, catalogue_dir: str | Path | None = None) -> Translato
     """Make ``language`` the active one and return its translator."""
     global _ACTIVE
     _ACTIVE = Translator(language, catalogue_dir)
-    log.info("i18n: language %s (%d translated strings)", language, len(_ACTIVE))
+    log.debug("i18n: language %s (%d translated strings)", language, len(_ACTIVE))
     return _ACTIVE
 
 
@@ -421,7 +420,7 @@ _KEY_NAMES = {
         "PgUp": "Bild auf", "PgDown": "Bild ab", "PageUp": "Bild auf",
         "PageDown": "Bild ab", "Left": "Links", "Right": "Rechts", "Up": "Hoch",
         "Down": "Runter", "Click": "Klick", "Drag": "Ziehen",
-        "Header drag": "Spaltenkopf ziehen",
+        "Header drag": "Spaltenkopf ziehen", "Menu": "Menütaste",
     },
 }
 

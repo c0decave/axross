@@ -28,6 +28,10 @@ from datetime import datetime, timedelta, timezone
 MAX_DEPTH = 16
 MAX_BLOCK = 1024 * 1024
 MAX_NODE = 128 * 1024 * 1024
+#: Blocks one node's data tree or subnode tree may read (each XBLOCK,
+#: XXBLOCK, subnode block and data block, an empty one too): a node of
+#: MAX_NODE bytes in 8 KiB blocks needs about 16 400.
+MAX_NODE_BLOCKS = 65536
 
 NID_TYPE_NORMAL_FOLDER, NID_TYPE_NORMAL_MESSAGE, NID_TYPE_ATTACHMENT = 0x02, 0x04, 0x05
 NID_ATTACHMENT_TABLE, NID_RECIPIENT_TABLE = 0x671, 0x692
@@ -191,39 +195,66 @@ class PstFile:
             data = data.translate(_DECODE)
         return data
 
-    def data_tree(self, bid: int, depth: int = 0, total: list | None = None) -> list[bytes]:
-        """The blocks of a node's data (an XBLOCK / XXBLOCK tree, or one block)."""
-        total = total if total is not None else [0]
+    def data_tree(self, bid: int, depth: int = 0, total: list | None = None,
+                  seen: set | None = None) -> list[bytes]:
+        """The blocks of a node's data (an XBLOCK / XXBLOCK tree, or one
+        block). Bounded (review B): every block read counts against
+        :data:`MAX_NODE_BLOCKS` (an empty one too), its bytes against
+        MAX_NODE, and an XBLOCK appears once in a tree - a fan-out of
+        entries all naming the next XBLOCK is corrupt, not count**4 reads."""
+        total = total if total is not None else [0, 0]
+        seen = seen if seen is not None else set()
         if depth > 3:
             raise PstError("a data tree deeper than XXBLOCK")
+        self._count_block(total)
         raw = self.block(bid)
         if not bid & 2:
             total[0] += len(raw)
             if total[0] > MAX_NODE:
                 raise PstError(f"a node larger than {MAX_NODE} bytes")
             return [raw]
+        if bid & ~1 in seen:
+            raise PstError(f"corrupt .pst: block {bid:#x} appears twice in one data tree")
+        seen.add(bid & ~1)
         btype, level, count = struct.unpack_from("<BBH", raw)
         if btype != 1 or count * 8 + 8 > len(raw):
             raise PstError(f"block {bid:#x} is no XBLOCK")
+        if total[1] + count > MAX_NODE_BLOCKS:
+            raise PstError(f"a node of more than {MAX_NODE_BLOCKS} blocks")
         out = []
         for i in range(count):
             child = struct.unpack_from("<Q", raw, 8 + 8 * i)[0]
-            out += self.data_tree(child, depth + 1, total) if level > 1 else [self._external(child, total)]
+            out += self.data_tree(child, depth + 1, total, seen) if level > 1 \
+                else [self._external(child, total)]
         return out
 
+    def _count_block(self, total: list) -> None:
+        total[1] += 1
+        if total[1] > MAX_NODE_BLOCKS:
+            raise PstError(f"a node of more than {MAX_NODE_BLOCKS} blocks")
+
     def _external(self, bid: int, total: list) -> bytes:
+        self._count_block(total)
         data = self.block(bid)
         total[0] += len(data)
         if total[0] > MAX_NODE:
             raise PstError(f"a node larger than {MAX_NODE} bytes")
         return data
 
-    def subnodes(self, bid: int, depth: int = 0) -> dict[int, tuple[int, int]]:
-        """nid -> (data bid, sub bid) of a node's subnode tree."""
+    def subnodes(self, bid: int, depth: int = 0, seen: set | None = None,
+                 reads: list | None = None) -> dict[int, tuple[int, int]]:
+        """nid -> (data bid, sub bid) of a node's subnode tree (each block
+        read once, :data:`MAX_NODE_BLOCKS` at most)."""
         if not bid:
             return {}
         if depth > 3:
             raise PstError("a subnode tree too deep")
+        seen = seen if seen is not None else set()
+        reads = reads if reads is not None else [0, 0]
+        if bid & ~1 in seen:
+            raise PstError(f"corrupt .pst: block {bid:#x} appears twice in one subnode tree")
+        seen.add(bid & ~1)
+        self._count_block(reads)
         raw = self.block(bid)
         btype, level, count = struct.unpack_from("<BBH", raw)
         if btype != 2:
@@ -236,7 +267,7 @@ class PstFile:
         else:
             for i in range(count):
                 _nid, child = struct.unpack_from("<QQ", raw, 8 + 16 * i)
-                out.update(self.subnodes(child, depth + 1))
+                out.update(self.subnodes(child, depth + 1, seen, reads))
         return out
 
     # --- LTP: heap-on-node, BTH, PC, TC --------------------------------------------------

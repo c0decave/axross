@@ -72,8 +72,13 @@ def test_happy_a_listing_holds_exactly_what_one_stat_per_entry_gives(folder):
 
 
 def test_happy_permission_strings_are_the_former_ones_for_every_mode():
+    from models.file_item import permission_string
+
+    # setuid, setgid and sticky are marked as ls -l does (s/S/t/T) since
+    # they are shown alike in the pane, Properties and Permissions.
     for mode in range(0o10000):
-        assert FileItem("x", permissions=mode).permissions_str == _former_permissions(mode)
+        expected = _former_permissions(mode) if mode < 0o1000 else permission_string(mode)
+        assert FileItem("x", permissions=mode).permissions_str == expected
     assert FileItem("x", permissions=-1).permissions_str == _former_permissions(-1)
 
 

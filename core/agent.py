@@ -52,6 +52,7 @@ import functools
 import hashlib
 import json
 import logging
+import os
 import re
 import socket
 import threading
@@ -755,9 +756,17 @@ class FunctionTool:
             return "error", f"error: the tool {self.name} is gone (its extension was switched off)"
         try:
             value = self.handler(dict(args))
-        except Exception as exc:  # noqa: BLE001 - the tool's failure is the model's to read
-            log.warning("agent: the tool %s failed: %s", self.name, exc)
-            return "error", f"error: {type(exc).__name__}: {exc}"
+        except KeyboardInterrupt:
+            raise  # the user's Ctrl+C
+        except BaseException as exc:  # noqa: BLE001 - the tool's failure is the model's to read
+            # BaseException: sys.exit() or CancelledError in an extension's
+            # tool left the agent loop and the run thread, the tab busy for good.
+            try:
+                message = str(exc)
+            except Exception:  # noqa: BLE001 - its own __str__ failed
+                message = "<the exception's message cannot be shown>"
+            log.warning("agent: the tool %s failed: %s: %s", self.name, type(exc).__name__, message)
+            return "error", f"error: {type(exc).__name__}: {message}"
         if isinstance(value, str):
             return "ok", value
         try:
@@ -1040,6 +1049,76 @@ def _digest(args_text: str) -> str:
     return hashlib.sha256(args_text.encode("utf-8", "surrogatepass")).hexdigest()[:16]
 
 
+#: The arguments of the local write tools (core.mcp_server) that name where
+#: they write, and the (tool, argument) pairs that follow a final symlink
+#: (the others act on the link itself: remove, rename, a new link).
+_WRITE_PATH_ARGS = ("path", "src", "dst", "link_path", "dest_dir", "folder", "out")
+_FOLLOWS_FINAL_LINK = frozenset({("write_file", "path"), ("copy", "dst"), ("chmod", "path"),
+                                 ("archive_extract", "dest_dir"), ("pack", "folder"),
+                                 ("metadata_export_file", "out")})
+#: The key of the approval's own note (what the write means).
+APPROVAL_NOTE = "axross_note"
+
+
+def plain_path_args(args: dict) -> dict:
+    """*args* with every ``*_b64`` twin of a path argument decoded into the
+    argument itself, as the tool will read them (the twin wins); a
+    malformed twin is a ValueError."""
+    from core.mcp_server import _decode_path_args
+
+    return _decode_path_args(args)
+
+
+def write_targets(name: str, args: dict, root: str) -> dict[str, str]:
+    """{argument: the real path it writes} of the write tool *name*'s
+    *args*: every symlink on the way resolved (the final one too where the
+    tool follows it)."""
+    out: dict[str, str] = {}
+    for key in _WRITE_PATH_ARGS:
+        value = args.get(key)
+        if not isinstance(value, str) or not value or "\0" in value:
+            continue
+        try:
+            path = os.path.abspath(os.path.join(str(root or os.sep), value))
+            if (name, key) in _FOLLOWS_FINAL_LINK:
+                real = os.path.realpath(path)
+            else:
+                real = os.path.join(os.path.realpath(os.path.dirname(path)),
+                                    os.path.basename(path))
+        except (OSError, ValueError):
+            continue
+        out[key] = real
+    return out
+
+
+def approval_args(args: dict, targets: dict[str, str]) -> dict:
+    """*args* as the approval shows them: a path that leads elsewhere (a
+    symlink) with its real target, and a note when a target belongs to a
+    host-run MCP server (its files run on this machine)."""
+    shown = dict(args)
+    notes = []
+    for key, real in targets.items():
+        value = str(args.get(key))
+        typed = os.path.abspath(value) if os.path.isabs(value) else None
+        if typed is None or real != typed:
+            shown[key] = f"{value} → {real}"
+            if typed is not None:
+                from core.approval_notes import link_note
+
+                notes.append(link_note(value, real))
+        try:
+            from core.mcp_script_pin import owner, owner_note
+
+            server = owner(real) or (owner(typed) if typed else None)
+        except Exception:  # noqa: BLE001 - a note never fails the question
+            server = None
+        if server is not None:
+            notes.append(owner_note(server))
+    if notes:
+        shown[APPROVAL_NOTE] = " ".join(dict.fromkeys(notes))
+    return shown
+
+
 def _shown(args: dict, schema: dict, *, cut: bool = True) -> dict:
     """The arguments as the transcript shows them: secrets masked, long
     strings cut. *cut* False is for the confirmation: what the user allows
@@ -1047,8 +1126,12 @@ def _shown(args: dict, schema: dict, *, cut: bool = True) -> dict:
     props = (schema or {}).get("properties") if isinstance(schema, dict) else None
     props = props if isinstance(props, dict) else {}
     out = {}
+    from core.mcp_server import _wire_safe
+
     for key, value in args.items():
         spec = props.get(key)
+        # A name that is not UTF-8 (a lone surrogate) as U+FFFD: shown, not run.
+        value = _wire_safe(value)
         if isinstance(spec, dict) and spec.get("writeOnly"):
             out[key] = "•••"
         elif cut and isinstance(value, str) and len(value) > _EVENT_ARG_CHARS:
@@ -1334,17 +1417,35 @@ class Agent:
             # field would refuse it.
             if key in args and key not in tool.schema.get("properties", {}) and not remote:
                 args.pop(key)
+        try:
+            # A ``*_b64`` twin wins over its plain argument (core.mcp_server):
+            # the question and the target check see the name that is written.
+            args = plain_path_args(args)
+        except ValueError as exc:
+            audit.info("%s outcome=error", fields)
+            return name, "error", f"error: {exc}"
         self._on_event({"type": "tool_call", "name": name, "args": _shown(args, tool.schema)})
         if needs_confirmation(name, write=tool.write, group=tool.group):
             allowed = False
+            # Where the call really writes - asked for, and again before it runs.
+            targets = write_targets(name, args, self.config.root) if tool.write else {}
             if self._confirm is not None:
                 try:
-                    allowed = bool(self._confirm(name, args))
+                    allowed = bool(self._confirm(name, approval_args(args, targets)))
                 except Exception as exc:  # noqa: BLE001 - a broken prompt is a "no"
                     log.warning("agent: the confirmation of %s failed: %s", name, exc)
             if not allowed:
                 audit.info("%s outcome=declined", fields)
                 return name, "declined", "declined: the user did not allow this call"
+            now = write_targets(name, args, self.config.root) if tool.write else {}
+            moved = [key for key in targets if now.get(key) != targets[key]]
+            if moved:
+                audit.info("%s outcome=error target_changed=1", fields)
+                key = moved[0]
+                return name, "error", (
+                    f"error: the target of {args.get(key)!r} changed after the user allowed "
+                    f"the call (it was {targets[key]!r}, now {now.get(key)!r}): nothing was "
+                    "written; ask again")
         from core import mcp_server
 
         self._request_id += 1

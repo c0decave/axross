@@ -354,9 +354,9 @@ def save_cache(server_list: ServerList, cache: Path | None = None) -> Path:
     folder = cache or cache_dir()
     os.makedirs(folder, mode=0o700, exist_ok=True)
     path = folder / f"{server_list.protocol}.json"
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(list_data(server_list), indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
+    from core.json_store import write_private
+
+    write_private(path, json.dumps(list_data(server_list), indent=1, ensure_ascii=False) + "\n")
     return path
 
 

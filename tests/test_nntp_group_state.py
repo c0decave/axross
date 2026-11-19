@@ -132,6 +132,7 @@ def test_edge_oversized_response_drops_the_connection_instead_of_desyncing(sessi
         session.list_dir("/alt.a")
     monkeypatch.setattr(nntp_lib, "MAX_MULTILINE_BYTES", 10**6)
     # Whatever happens next, it must not be another command's leftovers
-    # served as an article.
-    with pytest.raises(OSError):
-        session.open_read("/alt.b/1_x.eml")
+    # served as an article: the dropped connection is replaced by a new
+    # one (tests/test_nntp_reconnect_after_idle_drop.py), which serves
+    # the article asked for.
+    assert _article_group(session.open_read("/alt.b/1_x.eml").read()) == "alt.b"

@@ -105,7 +105,7 @@ def test_sad_a_cancelled_countdown_stops_a_sync_that_overwrites_production(win, 
     shown = _countdown(monkeypatch, QDialog.DialogCode.Rejected)
     win._apply_sync(ctx["left"], ctx["right"],
                     [_copy(ctx, "cfg.txt"), _copy(ctx, "new.txt", overwrites=False)])
-    assert shown == ["overwrite 1 item(s)"]
+    assert shown == ["overwrite 1 item"]
     assert ctx["queued"] == []  # not even the new file: nothing changes
     assert "Sync cancelled" in win.statusBar().currentMessage()
 
@@ -115,7 +115,7 @@ def test_happy_an_accepted_countdown_queues_the_sync(win, monkeypatch):
     _make_production(ctx["right"].backend)
     shown = _countdown(monkeypatch, QDialog.DialogCode.Accepted)
     win._apply_sync(ctx["left"], ctx["right"], [_copy(ctx, "a.txt"), _copy(ctx, "b.txt")])
-    assert shown == ["overwrite 2 item(s)"]
+    assert shown == ["overwrite 2 items"]
     assert [(t, len(p)) for t, p, _kw in ctx["queued"]] == [(ctx["right"], 2)]
 
 
@@ -131,5 +131,5 @@ def test_edge_only_the_side_the_plan_overwrites_is_asked(win, monkeypatch):
     assert len(ctx["queued"]) == 2
     ctx["queued"].clear()
     win._apply_sync(ctx["left"], ctx["right"], [_copy(ctx, "o.txt", "to_left")])
-    assert shown == ["overwrite 1 item(s)"]
+    assert shown == ["overwrite 1 item"]
     assert ctx["queued"] == []

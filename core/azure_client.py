@@ -84,6 +84,8 @@ _CODE_ERRNO = {
     "ServerBusy": errno.EAGAIN,
     "OperationTimedOut": errno.ETIMEDOUT,
     "LeaseIdMissing": errno.EBUSY,
+    # Delete Blob without x-ms-delete-snapshots on a blob with snapshots.
+    "SnapshotsPresent": errno.EBUSY,
     "LeaseAlreadyPresent": errno.EBUSY,
     "SharingViolation": errno.EBUSY,
     "InvalidResourceName": errno.EINVAL,
@@ -116,6 +118,12 @@ def _azure_error(exc: BaseException, message: str, filename: str | None = None, 
         return InterruptedError(*exc.args)
     if isinstance(exc, OSError) and isinstance(exc.errno, int) and exc.errno:
         return cloud_http.rewrap(exc, message, filename)
+    if getattr(exc, "status_code", None) is None:
+        # No answer at all: a refused port, a name that does not resolve,
+        # a time-out - not "closed by the other side" for every one.
+        transport = cloud_http.transport_oserror(exc, message)
+        if transport is not None:
+            return transport
     code = _error_code(exc)
     if code == "ResourceTypeMismatch":
         return cloud_http.oserror(type_mismatch, message, filename)
@@ -138,6 +146,67 @@ def _azure_error(exc: BaseException, message: str, filename: str | None = None, 
     if name in ("ServiceRequestError", "ServiceResponseError"):
         return cloud_http.oserror(errno.ECONNRESET, message, filename)
     return cloud_http.oserror(errno.EIO, message, filename)
+
+
+#: The answers to a SAS that may list a container / share but not read its
+#: properties: a service SAS ("Generate SAS" on one container or share).
+_PROPERTIES_NOT_PERMITTED = frozenset({
+    "AuthorizationPermissionMismatch", "AuthorizationResourceTypeMismatch",
+})
+#: The answers to a key, SAS or connection string Azure does not accept
+#: (wrong or rotated key, expired or edited SAS, the account's firewall).
+_LOGIN_REFUSED = frozenset({
+    "AuthenticationFailed", "AuthorizationFailure", "InvalidAuthenticationInfo",
+})
+#: Liveness and connect probes are not retried on a dead connection: the
+#: SDK's retry waits 15 s, 18 s and 24 s before it gives up - a closed port
+#: kept Test Connection (and every reconnect) waiting a minute.
+_PROBE_OPTIONS = {"retry_connect": 0, "retry_read": 0}
+
+
+def _probe_options(fn) -> dict:
+    """_PROBE_OPTIONS for an SDK call that passes keywords to its pipeline."""
+    return dict(_PROBE_OPTIONS) if _takes_keyword(fn, "retry_connect") else {}
+
+
+def _probe(read_properties, list_first_page) -> None:
+    """Ask the container / share whether this login may use it: its
+    properties, or - for a SAS that may not read them - the first page of
+    its listing. Raises the SDK's error of the probe that decides."""
+    try:
+        read_properties(**_probe_options(read_properties))
+    except Exception as exc:  # noqa: BLE001 - the SDK's HttpResponseError and the rest
+        if _error_code(exc) not in _PROPERTIES_NOT_PERMITTED:
+            raise
+        list_first_page()
+
+
+def _connect_error(exc: BaseException, kind: str, name: str) -> OSError:
+    """The connect failure *exc* of the container / share *name* as an
+    OSError whose text says what to check (shown as it is by
+    core.user_errors: no errno, so no generic sentence replaces it)."""
+    from core.i18n import tr
+
+    code = _error_code(exc)
+    if code in _LOGIN_REFUSED or type(exc).__name__ == "ClientAuthenticationError":
+        return PermissionError(tr(
+            "Azure Storage refused the login for the {kind} {name}. Check the account key, "
+            "the SAS token or the connection string: a SAS token may have expired, and the "
+            "storage account's firewall may not let this network in."
+        ).format(kind=tr(kind), name=name))
+    if code in ("ContainerNotFound", "ShareNotFound") or (
+        _is_not_found(exc) and code in ("", "ResourceNotFound")
+    ):
+        return FileNotFoundError(tr(
+            "The {kind} {name} does not exist in this storage account. Check its name "
+            "(Azure names are lowercase)."
+        ).format(kind=tr(kind), name=name))
+    if code in _PROPERTIES_NOT_PERMITTED:
+        return PermissionError(tr(
+            "The SAS token may not list the {kind} {name}. Create a SAS with the List "
+            "permission (and Read, Write, Delete for the operations you need)."
+        ).format(kind=tr(kind), name=name))
+    return _azure_error(exc, f"Cannot access the Azure {kind} '{name}': {cloud_http.reason(exc)}")
 
 
 def _client_name(client, attr: str) -> str:
@@ -580,9 +649,9 @@ class AzureBlobSession(SessionLifecycle):
 
         try:
             self._container = self._service.get_container_client(container)
-            self._container.get_container_properties()
+            self._probe()
         except Exception as e:
-            raise _azure_error(e, f"Cannot access Azure Blob container '{container}': {cloud_http.reason(e)}") from e
+            raise _connect_error(e, "container", container) from e
 
         log.info("Azure Blob connected: container=%s, account=%s", container, account_name)
 
@@ -592,10 +661,18 @@ class AzureBlobSession(SessionLifecycle):
     def name(self) -> str:
         return f"azure-blob://{self._container_name} (Azure Blob)"
 
+    def _probe(self) -> None:
+        _probe(
+            self._container.get_container_properties,
+            lambda: next(iter(self._container.list_blobs(
+                results_per_page=1, **_probe_options(self._container.list_blobs)
+            ).by_page()), None),
+        )
+
     @property
     def connected(self) -> bool:
         try:
-            self._container.get_container_properties()
+            self._probe()
             return True
         except Exception as exc:  # noqa: BLE001 - any failure means not connected
             log.debug("Azure Blob liveness check of %s failed: %s", self._container_name, exc)
@@ -615,6 +692,8 @@ class AzureBlobSession(SessionLifecycle):
     # -- listing / stat ------------------------------------------------------
 
     def list_dir(self, path: str) -> list[FileItem]:
+        from core.path_policy import unaddressable_segment_name
+
         prefix = self._to_prefix(path)
         items: list[FileItem] = []
         folders: set[str] = set()
@@ -622,8 +701,10 @@ class AzureBlobSession(SessionLifecycle):
 
         def add_folder(name: str) -> None:
             # A hierarchical-namespace folder comes twice: as the prefix
-            # "name/" and as its placeholder blob "name".
-            if name and name not in folders:
+            # "name/" and as its placeholder blob "name". The blob "a//x"
+            # is the folder "" under "a" (core.path_policy).
+            name = unaddressable_segment_name(name) or name
+            if name not in folders:
                 folders.add(name)
                 items.append(FileItem(name=name, is_dir=True))
 
@@ -637,11 +718,12 @@ class AzureBlobSession(SessionLifecycle):
                 seen_any = True  # the folder marker "prefix" itself too
                 # item can be BlobPrefix (virtual dir) or BlobProperties (file)
                 if hasattr(item, "prefix"):
-                    add_folder(item.prefix[len(prefix) :].rstrip("/"))
+                    add_folder(item.prefix[len(prefix) :].removesuffix("/"))
                 else:
                     blob_name = item.name[len(prefix) :]
                     if not blob_name or blob_name.endswith("/"):
                         continue  # directory marker or prefix itself
+                    blob_name = unaddressable_segment_name(blob_name) or blob_name
                     if _is_folder_placeholder(getattr(item, "metadata", None)):
                         add_folder(blob_name)
                         continue
@@ -782,7 +864,7 @@ class AzureBlobSession(SessionLifecycle):
                     target = key.rstrip("/") if kind == "folder" else prefix
                 try:
                     blob_client = self._container.get_blob_client(target)
-                    blob_client.delete_blob()
+                    blob_client.delete_blob(delete_snapshots="include")
                 except Exception as e:
                     raise _azure_error(e, f"Cannot remove {path}: {cloud_http.reason(e)}") from e
             else:
@@ -790,7 +872,8 @@ class AzureBlobSession(SessionLifecycle):
                     self._remove_prefix(prefix)
                     if kind == "folder":
                         # Last: the placeholder is the folder itself.
-                        self._container.get_blob_client(key.rstrip("/")).delete_blob()
+                        self._container.get_blob_client(key.rstrip("/")).delete_blob(
+                            delete_snapshots="include")
                 except OSError:
                     raise
                 except Exception as e:
@@ -798,7 +881,7 @@ class AzureBlobSession(SessionLifecycle):
         else:
             try:
                 blob_client = self._container.get_blob_client(key)
-                blob_client.delete_blob()
+                blob_client.delete_blob(delete_snapshots="include")
             except Exception as e:
                 if _is_not_found(e):
                     # Delete Blob answers 404 BlobNotFound, as unlink(2) ENOENT.
@@ -853,7 +936,7 @@ class AzureBlobSession(SessionLifecycle):
         from azure.storage.blob import PartialBatchErrorException
 
         try:
-            self._container.delete_blobs(*names)
+            self._container.delete_blobs(*names, delete_snapshots="include")
         except PartialBatchErrorException as exc:
             # Some sub-requests failed - or the whole batch was refused in
             # the shape of one: Azurite answers ANY batch with a single
@@ -876,13 +959,13 @@ class AzureBlobSession(SessionLifecycle):
                 exc,
             )
             for name in retry:
-                self._container.delete_blob(name)
+                self._container.delete_blob(name, delete_snapshots="include")
         except Exception as exc:  # noqa: BLE001
             # The batch call itself was refused (no batch support on this
             # account / emulator): delete one by one, as before.
             log.debug("Azure batch delete unavailable (%s); deleting one by one", exc)
             for name in names:
-                self._container.delete_blob(name)
+                self._container.delete_blob(name, delete_snapshots="include")
 
     def rename(self, src: str, dst: str) -> None:
         """Azure Blob doesn't support rename -- copy + delete."""
@@ -956,12 +1039,13 @@ class AzureBlobSession(SessionLifecycle):
                 try:
                     dst_blob.start_copy_from_url(src_blob.url)
                     self._wait_for_copy(dst_blob)
-                    src_blob.delete_blob()
+                    src_blob.delete_blob(delete_snapshots="include")
                 except Exception as e:
                     raise _azure_error(e, f"Cannot rename {src} -> {dst}: {cloud_http.reason(e)}") from e
             if kind == "folder":
                 try:
-                    self._container.get_blob_client(src_key).delete_blob()
+                    self._container.get_blob_client(src_key).delete_blob(
+                        delete_snapshots="include")
                 except Exception as e:
                     raise _azure_error(e, f"Cannot rename {src} -> {dst}: {cloud_http.reason(e)}") from e
         else:
@@ -970,7 +1054,7 @@ class AzureBlobSession(SessionLifecycle):
                 dst_blob = self._container.get_blob_client(dst_key)
                 dst_blob.start_copy_from_url(src_blob.url)
                 self._wait_for_copy(dst_blob)
-                src_blob.delete_blob()
+                src_blob.delete_blob(delete_snapshots="include")
             except Exception as e:
                 raise _azure_error(e, f"Cannot rename {src} -> {dst}: {cloud_http.reason(e)}") from e
 
@@ -1020,7 +1104,7 @@ class AzureBlobSession(SessionLifecycle):
     # -- path helpers --------------------------------------------------------
 
     def normalize(self, path: str) -> str:
-        return posixpath.normpath(path) or "/"
+        return posixpath.normpath(path) if path else "/"  # normpath("") is "."
 
     def separator(self) -> str:
         return "/"
@@ -1220,9 +1304,15 @@ class AzureBlobSession(SessionLifecycle):
             permission=BlobSasPermissions(**kw),
             expiry=datetime.now(timezone.utc) + timedelta(seconds=int(expires_in)),
         )
+        # The name quoted ("#" and "?" cut the
+        # pasted one), at the account's own endpoint (Azurite, a sovereign
+        # cloud, a custom domain), never a guessed blob.core.windows.net.
+        from urllib.parse import quote
+
+        endpoint = self._service.url.split("?", 1)[0].rstrip("/")
         url = (
-            f"https://{self._service.account_name}.blob.core.windows.net/"
-            f"{self._container_name}/{self._to_key(path)}?{sas}"
+            f"{endpoint}/{quote(self._container_name, safe='')}/"
+            f"{quote(self._to_key(path), safe='/')}?{sas}"
         )
         log.info(
             "Azure SAS-URL: container=%s blob=%s perms=%s expires=%ds",
@@ -1320,7 +1410,9 @@ class AzureBlobSession(SessionLifecycle):
 
     def _to_key(self, path: str) -> str:
         """Convert a UI path to a blob key (no leading slash)."""
-        return path.lstrip("/")
+        from core.path_policy import refuse_unaddressable
+
+        return refuse_unaddressable(path, "Azure").lstrip("/")
 
     def _file_key(self, path: str, action: str) -> str:
         """The blob key a FILE at *path* is written to. A key ending in
@@ -1338,7 +1430,9 @@ class AzureBlobSession(SessionLifecycle):
 
     def _to_prefix(self, path: str) -> str:
         """Convert a UI path to a blob prefix for listing."""
-        key = path.lstrip("/")
+        from core.path_policy import refuse_unaddressable
+
+        key = refuse_unaddressable(path, "Azure").lstrip("/")
         if key and not key.endswith("/"):
             key += "/"
         return key
@@ -1418,9 +1512,9 @@ class AzureFilesSession(SessionLifecycle):
 
         try:
             self._share = self._service.get_share_client(share_name)
-            self._share.get_share_properties()
+            self._probe()
         except Exception as e:
-            raise _azure_error(e, f"Cannot access Azure Files share '{share_name}': {cloud_http.reason(e)}") from e
+            raise _connect_error(e, "file share", share_name) from e
 
         log.info("Azure Files connected: share=%s, account=%s", share_name, account_name)
 
@@ -1430,10 +1524,20 @@ class AzureFilesSession(SessionLifecycle):
     def name(self) -> str:
         return f"azure-files://{self._share_name} (Azure Files)"
 
+    def _probe(self) -> None:
+        _probe(
+            self._share.get_share_properties,
+            lambda: self._list_first_page(),
+        )
+
+    def _list_first_page(self) -> None:
+        listing = self._share.get_directory_client("").list_directories_and_files
+        next(iter(listing(results_per_page=1, **_probe_options(listing)).by_page()), None)
+
     @property
     def connected(self) -> bool:
         try:
-            self._share.get_share_properties()
+            self._probe()
             return True
         except Exception as exc:  # noqa: BLE001 - any failure means not connected
             log.debug("Azure Files liveness check of %s failed: %s", self._share_name, exc)
@@ -1701,7 +1805,7 @@ class AzureFilesSession(SessionLifecycle):
     # -- path helpers --------------------------------------------------------
 
     def normalize(self, path: str) -> str:
-        return posixpath.normpath(path) or "/"
+        return posixpath.normpath(path) if path else "/"  # normpath("") is "."
 
     def separator(self) -> str:
         return "/"

@@ -74,7 +74,7 @@ class _Wbem:
         if self.query_fails is not None:
             raise self.query_fails
         rows = [o for (cls, name), o in self.objects.items()
-                if f"FROM {cls} WHERE Name = '{name}'" in query]
+                if f'FROM {cls} WHERE Name = "{name}"' in query]
         return _Enum(rows, self.end)
 
 

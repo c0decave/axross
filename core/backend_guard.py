@@ -75,6 +75,16 @@ _PSDRIVE = re.compile(r"[\\/]?[^\\/:]+:")
 #: Marks a wrapper, so that a subclass inheriting it is not wrapped twice.
 _GUARDED = "_axross_backend_guard"
 GUARDED_METHODS = ("remove", "rename", "open_read", "stat", "list_dir")
+#: Methods checked only for a NUL in their paths (see :data:`_NUL_ARGS`).
+NUL_GUARDED_METHODS = ("open_write", "mkdir", "chmod", "checksum", "readlink", "copy",
+                       "symlink", "hardlink", "exists", "is_dir")
+#: The path arguments (by position) of a method that must hold no NUL - the
+#: mark of a listing entry no path can name (core.path_policy, a server's
+#: "a/b" or "../x"): a server that ends a string at a NUL acted on the
+#: folder above it, OpenSSH's ends the session. A symlink's target is data.
+_NUL_ARGS = {"rename": (0, 1), "copy": (0, 1), "hardlink": (0, 1), "symlink": (1,)}
+#: Methods that answer "no" for such a path instead of raising.
+_NUL_ANSWERS_NO = frozenset({"exists", "is_dir"})
 #: The keyword of ``remove()`` - taken by the guard, never passed on - that
 #: says yes to a Windows name that names the folder above it.
 CONFIRM_ALIAS = "confirm_alias"
@@ -311,6 +321,41 @@ def _path_argument(args, kwargs, name: str, index: int = 0):
     return kwargs.get(name)
 
 
+class _AnswerNo(Exception):
+    pass
+
+
+def _refuse_nul(name: str, nul_args, names, args, kwargs) -> None:
+    for index in nul_args:
+        value = _path_argument(args, kwargs, names[index], index)
+        if isinstance(value, str) and "\x00" in value:
+            if name in _NUL_ANSWERS_NO:
+                raise _AnswerNo
+            raise OSError(errno.EINVAL, "this entry's name cannot be used as a path (the "
+                          f"server listed an impossible name): {value!r}", value)
+
+
+def _wrap_nul(name: str, method):
+    """*method* refusing a path with a NUL (:data:`_NUL_ARGS`) - nothing else."""
+    try:
+        params = [p for p in inspect.signature(method).parameters if p != "self"]
+    except (TypeError, ValueError):
+        params = []
+    names = (params[0] if params else "path", params[1] if len(params) > 1 else "dst")
+    nul_args = _NUL_ARGS.get(name, (0,))
+
+    @functools.wraps(method)
+    def checked(self, *args, **kwargs):
+        try:
+            _refuse_nul(name, nul_args, names, args, kwargs)
+        except _AnswerNo:
+            return False
+        return method(self, *args, **kwargs)
+
+    setattr(checked, _GUARDED, True)
+    return checked
+
+
 def _wrap(name: str, method):
     try:
         params = [p for p in inspect.signature(method).parameters if p != "self"]
@@ -319,8 +364,14 @@ def _wrap(name: str, method):
     first = params[0] if params else "path"
     second = params[1] if len(params) > 1 else "dst"
 
+    nul_args = _NUL_ARGS.get(name, (0,))
+    names = (first, second)
+
     @functools.wraps(method)
     def guarded(self, *args, **kwargs):
+        # Also for a call the backend makes on itself: a recursive remove
+        # joins the names it lists.
+        _refuse_nul(name, nul_args, names, args, kwargs)
         inside = _INSIDE.get()
         key = id(self)
         if key in inside:
@@ -360,14 +411,15 @@ def _wrap(name: str, method):
 def guard_class(cls) -> None:
     """Wrap :data:`GUARDED_METHODS` of backend class *cls* (those it
     defines or inherits unwrapped, e.g. from a mixin)."""
-    for name in GUARDED_METHODS:
+    for name in GUARDED_METHODS + NUL_GUARDED_METHODS:
         # Plain functions only: a staticmethod, a property or a callable
         # object keeps its own binding.
         method = inspect.getattr_static(cls, name, None)
         if not inspect.isfunction(method) or getattr(method, _GUARDED, False):
             continue
-        setattr(cls, name, _wrap(name, method))
+        wrap = _wrap if name in GUARDED_METHODS else _wrap_nul
+        setattr(cls, name, wrap(name, method))
 
 
-__all__ = ["CONFIRM_ALIAS", "GUARDED_METHODS", "guard_class", "has_parent_component",
+__all__ = ["CONFIRM_ALIAS", "GUARDED_METHODS", "NUL_GUARDED_METHODS", "guard_class", "has_parent_component",
            "is_root_path", "windows_alias_of"]

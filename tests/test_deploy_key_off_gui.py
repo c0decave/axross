@@ -148,3 +148,18 @@ def test_edge_a_key_already_there_is_said_and_not_written_again(dialog):
         dialog._deploy_ssh_key()
     assert "already deployed" in info.call_args.args[2]
     assert dialog.written == {}
+
+
+def test_sad_an_authorized_keys_without_end_is_not_read_whole(dialog, monkeypatch):
+    """Review round 2: authorized_keys was read whole - a link to
+    /dev/zero or a file of gigabytes filled the memory. It is read up to
+    MAX_AUTHORIZED_KEYS_BYTES, and a longer one is refused, not written."""
+    from ui import connection_dialog as CD
+
+    monkeypatch.setattr(CD, "MAX_AUTHORIZED_KEYS_BYTES", 1024)
+    dialog._confirm_unknown_host = lambda _error: True
+    FakeSession.files["/home/u/.ssh/authorized_keys"] = b"ssh-rsa AAAA x\n" * 1000
+    with mock.patch.object(QMessageBox, "critical") as critical:
+        dialog._deploy_ssh_key()
+    assert critical.called and "authorized_keys" in critical.call_args.args[2]
+    assert dialog.written == {}

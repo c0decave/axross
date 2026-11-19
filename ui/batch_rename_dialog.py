@@ -30,7 +30,7 @@ from core.server_ops import rename_no_replace, rename_target_taken
 from ui.close_corner import add_close_corner
 from ui.icon_provider import set_window_icon
 from ui.plain_text import as_written
-from core.i18n import tr
+from core.i18n import tr, tr_n
 
 if TYPE_CHECKING:
     from core.backend import FileBackend
@@ -39,10 +39,28 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-def _validate_leaf_name(name: str) -> None:
-    from core.path_policy import safe_leaf
+def _validate_leaf_name(name: str, backend=None) -> None:
+    """One safe name, by *backend*'s own rules as a transfer checks it
+    (a backslash is an ordinary character of a local name on POSIX)."""
+    from core.path_policy import BackendPathPolicy, safe_leaf
 
-    safe_leaf(name)
+    if backend is None:
+        safe_leaf(name)
+    else:
+        BackendPathPolicy.for_backend(backend).validate_leaf(name)
+
+
+def _validate_new_name(name: str, backend=None) -> None:
+    """safe_leaf, and no control character at all: safe_leaf lets a TAB
+    through (a remote listing may hold one), but a name made here with one
+    - a regex template's "\\t" - is a mistake."""
+    import unicodedata
+
+    _validate_leaf_name(name, backend)
+    bad = sorted({c for c in name if unicodedata.category(c) == "Cc"})
+    if bad:
+        raise ValueError("name contains control characters: "
+                         + ",".join(f"U+{ord(c):04X}" for c in bad))
 
 
 class BatchRenameDialog(QDialog):
@@ -60,8 +78,9 @@ class BatchRenameDialog(QDialog):
         self._backend = backend
         self._base_path = base_path
         self._items = items
+        self._renamed_paths: list[tuple[str, str, str]] = []
 
-        self.setWindowTitle(tr("Batch Rename – {n} files").format(n=len(items)))
+        self.setWindowTitle(tr_n(len(items), "Batch Rename – {n} file", "Batch Rename – {n} files"))
         self.setMinimumWidth(600)
         self.setMinimumHeight(400)
         self._setup_ui()
@@ -122,7 +141,8 @@ class BatchRenameDialog(QDialog):
         self._table.resizeColumnsToContents()
         preview_layout.addWidget(self._table)
 
-        self._status = QLabel(tr("{n} files selected, 0 will be renamed").format(n=len(self._items)))
+        self._status = QLabel(tr_n(len(self._items), "{n} file selected, 0 will be renamed",
+                                   "{n} files selected, 0 will be renamed"))
         preview_layout.addWidget(self._status)
 
         layout.addWidget(preview_group, stretch=1)
@@ -158,9 +178,11 @@ class BatchRenameDialog(QDialog):
                         else:
                             new_name = item.name.replace(find, replace, 1)
                     else:
-                        # Case-insensitive find & replace
+                        # Case-insensitive find & replace. The replacement
+                        # as written, not a template: "C:\temp" made a TAB.
                         pattern = re.escape(find)
-                        new_name = re.sub(pattern, replace, item.name, count=count, flags=flags)
+                        new_name = re.sub(pattern, lambda _m: replace, item.name,
+                                          count=count, flags=flags)
             except re.error:
                 new_name = item.name
             results.append((item.name, new_name))
@@ -227,7 +249,8 @@ class BatchRenameDialog(QDialog):
                 item.setForeground(Qt.GlobalColor.blue)
                 changed += 1
             self._table.setItem(row, 1, item)
-        self._status.setText(tr("{n} files selected, {changed} will be renamed").format(n=len(self._items), changed=changed))
+        self._status.setText(tr_n(len(self._items), "{n} file selected, {changed} will be renamed",
+                                   "{n} files selected, {changed} will be renamed", changed=changed))
 
     def _apply(self) -> None:
         pairs = self._compute_new_names()
@@ -246,8 +269,8 @@ class BatchRenameDialog(QDialog):
         selected_old_names = {old for old, _ in to_rename}
         for old_name, new_name in to_rename:
             try:
-                _validate_leaf_name(old_name)
-                _validate_leaf_name(new_name)
+                _validate_leaf_name(old_name, self._backend)
+                _validate_new_name(new_name, self._backend)
             except ValueError as exc:
                 QMessageBox.warning(
                     self,
@@ -285,6 +308,7 @@ class BatchRenameDialog(QDialog):
             self._update_preview()
             return
         _kind, renamed, errors = outcome
+        self._tags_follow(self._renamed_paths)
         if errors:
             QMessageBox.warning(
                 self,
@@ -293,6 +317,28 @@ class BatchRenameDialog(QDialog):
                     renamed=renamed, n=len(errors)) + "\n".join(errors[:10])),
             )
         self.accept()
+
+    def _tags_follow(self, moves: list[tuple[str, str, str]]) -> None:
+        """The tags of each renamed entry (and of everything below a
+        renamed folder) move to its new name - by way of its temporary
+        name, as the files did: one after the other, x -> xx while
+        xx -> xxx handed x's tags on to xxx."""
+        from core import tags as T
+
+        backend_name = getattr(self._backend, "name", "")
+        try:
+            store = T.store()
+            index = store.tagged_index(backend_name)
+            moves = [m for m in moves if index.has_tags_under(m[0])]
+            if not moves:
+                return
+            with store.batch():
+                for old_path, temp_path, _new_path in moves:
+                    store.rename_path(backend_name, old_path, temp_path)
+                for _old_path, temp_path, new_path in moves:
+                    store.rename_path(backend_name, temp_path, new_path)
+        except OSError as exc:  # tags.json not writable: the renames stand
+            log.warning("Tags could not follow the batch rename: %s", exc)
 
     def _rename_all(self, to_rename, selected_old_names, progress) -> tuple:
         """On a worker: ("conflict", name) before anything moved when a new
@@ -312,6 +358,9 @@ class BatchRenameDialog(QDialog):
         errors = []
         renamed = 0
         staged: list[tuple[str, str, str]] = []
+        # (old path, temporary path, new path) of each entry renamed: its
+        # tags follow (_tags_follow), on the GUI thread.
+        self._renamed_paths = []
         progress["phase"] = "Preparing"
         for done, (old_name, new_name) in enumerate(to_rename, 1):
             old_path = self._backend.join(self._base_path, old_name)
@@ -338,6 +387,8 @@ class BatchRenameDialog(QDialog):
                 except FileExistsError as exc:
                     raise OSError(f"target already exists: {new_name}") from exc
                 renamed += 1
+                self._renamed_paths.append(
+                    (self._backend.join(self._base_path, old_name), temp_path, new_path))
                 log.info("Batch rename: %s -> %s", old_name, new_name)
             except OSError as e:
                 log.error("Batch rename finalize failed: %s -> %s: %s", old_name, new_name, e)

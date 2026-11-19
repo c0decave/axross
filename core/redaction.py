@@ -220,3 +220,20 @@ __all__ = [
     "redact_text",
     "redact_url",
 ]
+
+
+def command_summary(cmd) -> str:
+    """How a log names a command line without its text: its length and a
+    hash prefix. A command carries passwords in ways no pattern catches
+    (``mysql -pSECRET``, a token in a URL, a variable), and the log file
+    outlives the call."""
+    import hashlib
+
+    if isinstance(cmd, bytes):
+        raw = cmd
+    else:
+        try:
+            raw = str(cmd).encode("utf-8", "surrogateescape")
+        except UnicodeEncodeError:  # a lone surrogate that stands for no byte
+            raw = str(cmd).encode("utf-8", "surrogatepass")
+    return f"<command, {len(raw)} bytes, sha256 {hashlib.sha256(raw).hexdigest()[:12]}>"

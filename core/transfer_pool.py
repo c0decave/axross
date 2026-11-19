@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+import os
 import threading
 from collections import deque
 from collections.abc import Callable
@@ -142,9 +143,16 @@ def _always_safe(backend: object) -> bool:
     return parallel_safe(backend)
 
 
-def _path_key(backend: object, path: str) -> tuple[int, str]:
+def _path_key(backend: object, path: str) -> tuple:
     # casefold: on a case-insensitive destination two spellings are one
     # file; serializing two that differ costs only time.
+    # Every pane has its own LocalFS: by the object, a job writing /x
+    # through one ran beside a move of /x through another. This
+    # machine's files are one namespace (absolute path, no lookups).
+    from core.local_fs import LocalFS
+
+    if isinstance(backend, LocalFS) and not hasattr(backend, "create_new"):
+        return "local", os.path.abspath(path or "").casefold()
     return id(backend), (path or "").casefold()
 
 

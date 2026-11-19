@@ -176,7 +176,8 @@ def test_edge_onedrive_upload_url_must_be_https(od, monkeypatch):
     s, calls, _upload_url = od
     real = s._graph_post
     monkeypatch.setattr(
-        s, "_graph_post", lambda url, data: {**real(url, data), "uploadUrl": "http://evil.test/x"}
+        s, "_graph_post",
+        lambda url, data, **kw: {**real(url, data, **kw), "uploadUrl": "http://evil.test/x"},
     )
     with pytest.raises(OSError, match="upload URL"):
         with s.open_write("/big.bin") as fh:

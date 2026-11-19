@@ -72,6 +72,16 @@ def schedule_start_check(window, delay_ms: int = START_CHECK_DELAY_MS) -> None:
     QTimer.singleShot(delay_ms, window.start_update_check)
 
 
+def _stored(store, *args) -> None:
+    """``store(*args)`` - a write to settings.json - or a line in the log
+    when it cannot be written (read-only home, disk full): the check and
+    its answers go on, never an error dialog out of a slot."""
+    try:
+        store(*args)
+    except OSError as exc:
+        log.warning("update settings not saved: %s", exc)
+
+
 class UpdateController(QObject):
     """The update state of one window; ``changed`` after every step."""
 
@@ -173,11 +183,11 @@ class UpdateController(QObject):
             reason = str(value) if isinstance(value, SU.UpdateError) else repr(value)
             log.warning("update check failed: %s", reason)
             message = tr("The update check failed: {reason}").format(reason=reason)
-            SU.record_check(message)
+            _stored(SU.record_check, message)
             self._set(ERROR, message)
             return
         result: SU.CheckResult = value
-        SU.record_check(result.message)
+        _stored(SU.record_check, result.message)
         self.release = result.release
         if not result.newer:
             log.info("update check: %s", result.message)
@@ -283,7 +293,7 @@ class UpdateController(QObject):
     # -- the answers ------------------------------------------------------------------
     def skip_version(self) -> None:
         if self.release is not None:
-            SU.set_skipped_version(self.release.version)
+            _stored(SU.set_skipped_version, self.release.version)
         self._dismissed = True
         self.changed.emit()
 

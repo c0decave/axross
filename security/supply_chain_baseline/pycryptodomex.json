@@ -7,48 +7,490 @@
     "secret-paths|Cryptodome/PublicKey/RSA.py|2fe1b54750c775a7",
     "ssh-keys|Cryptodome/PublicKey/ECC.py|4c81a98d3877c773",
     "ssh-keys|Cryptodome/PublicKey/RSA.py|2fe1b54750c775a7",
+    "yara|capability_filesystem_read|Cryptodome/Hash/KMAC128.py|0d2f99d8a5420b84",
     "yara|capability_filesystem_read|Cryptodome/Hash/KMAC128.py|12e3277ae64f5e65",
+    "yara|capability_filesystem_read|Cryptodome/Hash/KangarooTwelve.py|196e3b4fe478b72e",
     "yara|capability_filesystem_read|Cryptodome/Hash/KangarooTwelve.py|8d1d4df49aecadf4",
+    "yara|capability_filesystem_read|Cryptodome/Hash/TupleHash128.py|443d41ebc9f4384e",
     "yara|capability_filesystem_read|Cryptodome/Hash/TupleHash128.py|d99730509b24d3e8",
     "yara|capability_filesystem_read|Cryptodome/PublicKey/ECC.py|4428581002a090e7",
+    "yara|capability_filesystem_read|Cryptodome/PublicKey/ECC.py|6994c232937958d8",
     "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_CBC.py|b853cc4c2d8b6fbf",
+    "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_CBC.py|c051240d42f4d787",
     "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_CCM.py|7cb7002aa796c65f",
+    "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_CCM.py|8b4edb93a8e72dd9",
     "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_CFB.py|2117519db8783c72",
+    "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_CFB.py|8c8e7064d74d5feb",
+    "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_CTR.py|a0b3aa6e7c8eeff7",
     "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_CTR.py|acfdb5a40599ea70",
+    "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_ChaCha20_Poly1305.py|5abaa42791eea74a",
     "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_ChaCha20_Poly1305.py|759428c6fab16f73",
     "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_EAX.py|cbde21049d533c36",
+    "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_EAX.py|e88222f910617630",
+    "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_GCM.py|4c74dac5a5c6c9c1",
     "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_GCM.py|503485a1c836ccf2",
+    "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_OCB.py|2880ba6f625dea89",
     "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_OCB.py|c2edd37f0ab0f951",
+    "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_OFB.py|2e80b42d5b78fab6",
     "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_OFB.py|cc7ce89c67054d08",
     "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_OpenPGP.py|438ace094d1ac61f",
+    "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_OpenPGP.py|8a26ffc64b50c468",
     "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_SIV.py|7c313d92675898a9",
+    "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_SIV.py|c3c3cea65eabd657",
     "yara|capability_filesystem_read|Cryptodome/SelfTest/Hash/test_CMAC.py|8663a7e172d02634",
+    "yara|capability_filesystem_read|Cryptodome/SelfTest/Hash/test_CMAC.py|e18d99f498286a1c",
     "yara|capability_filesystem_read|Cryptodome/SelfTest/Hash/test_KangarooTwelve.py|8d7e993b45f4dfc0",
+    "yara|capability_filesystem_read|Cryptodome/SelfTest/Hash/test_KangarooTwelve.py|9949cc916a894269",
     "yara|capability_filesystem_read|Cryptodome/SelfTest/Hash/test_SHAKE.py|0adba41632ff7ece",
+    "yara|capability_filesystem_read|Cryptodome/SelfTest/Hash/test_SHAKE.py|fd6b462d6aead0d3",
     "yara|capability_filesystem_read|Cryptodome/SelfTest/Hash/test_TurboSHAKE.py|0722f585d54bae8e",
+    "yara|capability_filesystem_read|Cryptodome/SelfTest/Hash/test_TurboSHAKE.py|2fa6b5cd5ef1842e",
     "yara|capability_filesystem_read|Cryptodome/SelfTest/Hash/test_cSHAKE.py|5f440e9ff0ca194d",
+    "yara|capability_filesystem_read|Cryptodome/SelfTest/Hash/test_cSHAKE.py|85785ef08b1bf94d",
+    "yara|capability_filesystem_read|Cryptodome/SelfTest/Math/test_modexp.py|6f3f7a79f8a43104",
     "yara|capability_filesystem_read|Cryptodome/SelfTest/Math/test_modexp.py|aeca0af3a1bc8c35",
     "yara|capability_filesystem_read|Cryptodome/SelfTest/Protocol/test_SecretSharing.py|39a38938069b4d31",
+    "yara|capability_filesystem_read|Cryptodome/SelfTest/Protocol/test_SecretSharing.py|eeb9a9cb378a1237",
     "yara|capability_filesystem_read|Cryptodome/SelfTest/PublicKey/test_import_Curve25519.py|2b49f517c1be5923",
+    "yara|capability_filesystem_read|Cryptodome/SelfTest/PublicKey/test_import_Curve25519.py|4dafb5db4b63193d",
     "yara|capability_filesystem_read|Cryptodome/SelfTest/PublicKey/test_import_Curve448.py|3ff80a10bb734dbd",
+    "yara|capability_filesystem_read|Cryptodome/SelfTest/PublicKey/test_import_Curve448.py|c23f1e383aa5f786",
     "yara|capability_filesystem_read|Cryptodome/SelfTest/PublicKey/test_import_ECC.py|76a427ac86e5f5eb",
+    "yara|capability_filesystem_read|Cryptodome/SelfTest/PublicKey/test_import_ECC.py|db19efbd574200d6",
+    "yara|capability_filesystem_read|Cryptodome/SelfTest/PublicKey/test_import_RSA.py|309ae3b0bff42c6f",
     "yara|capability_filesystem_read|Cryptodome/SelfTest/PublicKey/test_import_RSA.py|56c6fb97682d1ff6",
     "yara|capability_filesystem_read|Cryptodome/SelfTest/Random/test_random.py|56d6ed11774fffa1",
+    "yara|capability_filesystem_read|Cryptodome/SelfTest/Random/test_random.py|84cec4047fd05e44",
     "yara|capability_filesystem_read|Cryptodome/SelfTest/loader.py|a1f4de0f24bec951",
+    "yara|capability_filesystem_read|Cryptodome/SelfTest/loader.py|c66f48941234c4a4",
+    "yara|capability_filesystem_read|Cryptodome/Signature/eddsa.py|c9ac188ec9a0038e",
     "yara|capability_filesystem_read|Cryptodome/Signature/eddsa.py|efa0989a194c329b",
+    "yara|capability_filesystem_read|Cryptodome/Util/asn1.py|302c42bb264a7e34",
     "yara|capability_filesystem_read|Cryptodome/Util/asn1.py|64b0b088b8ee7a15",
     "yara|capability_filesystem_write_executable|Cryptodome/SelfTest/Cipher/test_AES.py|bc035e1453dcd9fb",
+    "yara|capability_filesystem_write_executable|Cryptodome/SelfTest/Cipher/test_AES.py|ee07f5393e015511",
+    "yara|capability_filesystem_write_executable|Cryptodome/SelfTest/Cipher/test_OCB.py|2880ba6f625dea89",
     "yara|capability_filesystem_write_executable|Cryptodome/SelfTest/Cipher/test_OCB.py|c2edd37f0ab0f951",
+    "yara|capability_filesystem_write_executable|Cryptodome/SelfTest/Protocol/test_ecdh.py|5c80462639fc8822",
     "yara|capability_filesystem_write_executable|Cryptodome/SelfTest/Protocol/test_ecdh.py|97fcae522e3651b0",
     "yara|capability_filesystem_write_executable|Cryptodome/SelfTest/PublicKey/test_import_DSA.py|e9f2e62884d2a0fd",
+    "yara|capability_filesystem_write_executable|Cryptodome/SelfTest/PublicKey/test_import_DSA.py|ec1261d609d8d8a7",
+    "yara|capability_filesystem_write_executable|Cryptodome/SelfTest/Signature/test_dss.py|248d798ff7495350",
     "yara|capability_filesystem_write_executable|Cryptodome/SelfTest/Signature/test_dss.py|f335c89d07b093af",
     "yara|capability_filesystem_write_executable|Cryptodome/SelfTest/Signature/test_eddsa.py|488e0aff1008014d",
+    "yara|capability_filesystem_write_executable|Cryptodome/SelfTest/Signature/test_eddsa.py|56ea04e4e4caa834",
     "yara|capability_filesystem_write_executable|Cryptodome/Util/number.py|9de93309adb16a7c",
+    "yara|capability_filesystem_write_executable|Cryptodome/Util/number.py|b8a08b1d91ad11c2",
     "yara|capability_process_spawn|Cryptodome/SelfTest/Cipher/test_DES.py|12c81047d82fbc91",
+    "yara|capability_process_spawn|Cryptodome/SelfTest/Cipher/test_DES.py|c41578e0f083953c",
     "yara|threat_filesystem_read|Cryptodome/PublicKey/ECC.py|4428581002a090e7",
+    "yara|threat_filesystem_read|Cryptodome/PublicKey/ECC.py|6994c232937958d8",
+    "yara|threat_filesystem_read|Cryptodome/PublicKey/RSA.py|4a38379fdc81b54d",
     "yara|threat_filesystem_read|Cryptodome/PublicKey/RSA.py|79dce3255be9878f"
    ],
    "archives": {
+    "pycryptodomex-3.24.1-cp37-abi3-macosx_10_9_universal2.whl": {
+     "entry_points": [],
+     "files": {
+      "Cryptodome/Cipher/AES.py": "27ded551191d42e4728dac1d713628d048bc7d5518b1b070c033cda060f3151b",
+      "Cryptodome/Cipher/AES.pyi": "0acc0a34c1181da01355250df065dc6e6176a6915da53281243518878f916adb",
+      "Cryptodome/Cipher/ARC2.py": "3703b8d8a581a6e4d74b94e1c7482c0d19b1cabbdf8ae771ecf29e775291d022",
+      "Cryptodome/Cipher/ARC2.pyi": "17059725be1e485d8b0178cdc856fb3b62ab44839bbfc5aa26e238145587b8c8",
+      "Cryptodome/Cipher/ARC4.py": "4c3c6b986189bf0b6afd76517637b956749988a2daa1cb3ffaf4b22199ce7d07",
+      "Cryptodome/Cipher/ARC4.pyi": "2e19723b7003e781d84a3f872d8f8ebab0e9faa5ba648fa85bc4cde1b044a5f9",
+      "Cryptodome/Cipher/Blowfish.py": "2b9845ea76f6afc16c1e180b5f68ab77250caa0e0f0b0ac082eebc34d854d5a8",
+      "Cryptodome/Cipher/Blowfish.pyi": "f3ee30e6475725e9a7eceeedaa97f2cb9d6660cede743be62fc664ebc1f8e3e3",
+      "Cryptodome/Cipher/CAST.py": "dd70e3b5506c89ada43ef76e701d7dfc511cdf333b8522bc24a2a62be6fc72f5",
+      "Cryptodome/Cipher/CAST.pyi": "f2985085faf39709ce1fad6bcb9bee0de7050c02e25a3030db37e6652d71c7ea",
+      "Cryptodome/Cipher/ChaCha20.py": "295998dd9234627bcc3fb8889e006adac9f8f7d9c33458754f71595fc9337aef",
+      "Cryptodome/Cipher/ChaCha20.pyi": "f92a6df2523f5f753a8f3f01460c2c6fd0d72966871967b84c609036edda57b6",
+      "Cryptodome/Cipher/ChaCha20_Poly1305.py": "79d7737700467623780178ddc02b03f91ceedc65fbf140160e148ecb2afb2e18",
+      "Cryptodome/Cipher/ChaCha20_Poly1305.pyi": "36b0511365588733f330a7c068fcc62d5c9bf1cdc697d9f197b41f536a3c4861",
+      "Cryptodome/Cipher/DES.py": "79b8073aa3468c2625228161dd6e4a5d8d7b6909ef7248e1402f533c42aa3ee6",
+      "Cryptodome/Cipher/DES.pyi": "71a7b6c9a8be1146dc740a90d255231dbbc05aa035c6985f0658eef33ec17012",
+      "Cryptodome/Cipher/DES3.py": "aa621a80e2e13061b6db5b02ec1007f717b9967c64da2ca295b798a02de2b787",
+      "Cryptodome/Cipher/DES3.pyi": "ce06720d9eef41a2ea1279670d1d7ece20905a6a48b77a078b752a4f062ea09c",
+      "Cryptodome/Cipher/PKCS1_OAEP.py": "c5b613bb12f5e973125d9ace32bc2b355472237d7f1e9fbebdb1a01ad7de24f5",
+      "Cryptodome/Cipher/PKCS1_OAEP.pyi": "5d1679ff4bfcc362d4603d381b3dc491ecbd3f16016499d497ed2b56fdaafe06",
+      "Cryptodome/Cipher/PKCS1_v1_5.py": "9022ba6f051355863b88a3bb70ea40359debd50fa69989d032a911c52e5b1daf",
+      "Cryptodome/Cipher/PKCS1_v1_5.pyi": "7eb0a3ce6489ae53d5a7e6743ff11e7fdc9849f04d6577de8f1bfed35ec6e89a",
+      "Cryptodome/Cipher/Salsa20.py": "4aecda62105cfd0eefa0e0c3990dab0b320b9dd3e9985d67eaa8ad0cc9a4ee7a",
+      "Cryptodome/Cipher/Salsa20.pyi": "dc761abeea18e132325f92310b3826a3601d745d1b292d01e8a9344bdc3d3c45",
+      "Cryptodome/Cipher/_ARC4.abi3.so": "25715e093aa7598e6bc11cc55133cfef77ec2cd47c024a2b0c2460a1585cea5a",
+      "Cryptodome/Cipher/_EKSBlowfish.py": "7e2e9311e3746d77339c59322f3b1aa0bc4d9aef623d3f939a9dc22ef26c1340",
+      "Cryptodome/Cipher/_EKSBlowfish.pyi": "e898405ec4956c931895cb9da4dc123440c1f57e4d8e17d118fcd9bdc39cfc0b",
+      "Cryptodome/Cipher/_Salsa20.abi3.so": "d11feec49f3e56f30ce4957176c40c5634330b764f1378f1cac64d7fb05bcf07",
+      "Cryptodome/Cipher/__init__.py": "1f32063a88f2e937f6bcd86c6edeb995de6add57a061581e2f0539027b00f21b",
+      "Cryptodome/Cipher/__init__.pyi": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "Cryptodome/Cipher/_chacha20.abi3.so": "e4f532afc01e8873db4bd7b880213f5d7d3167b739147fd15451b7e7e1a36ea2",
+      "Cryptodome/Cipher/_mode_cbc.py": "48ea170225e2ad0eeb799f372817a09062438e0c8eec0a8e9c6fb7408c8ce973",
+      "Cryptodome/Cipher/_mode_cbc.pyi": "a87e6911036e79f69b79157e5f3fba000f79dcc15dfd9db4cc67814f06bab74b",
+      "Cryptodome/Cipher/_mode_ccm.py": "9aa085196e7c5dc6dc3719309b25647a0a1b380c98fd1fc5c8389c511b7a1762",
+      "Cryptodome/Cipher/_mode_ccm.pyi": "5dad51f9b5e1529dd674e577ff9b6e024c98a9cfa165c19c41c76574ed5d6a36",
+      "Cryptodome/Cipher/_mode_cfb.py": "3c22c26524f2fc058ce44b4cdf9388ac4e571946094d2cfa60ae89de1ad955c5",
+      "Cryptodome/Cipher/_mode_cfb.pyi": "3ccd2c94105f59d03811cd098ccf8e2617a26640853d60000ef2ecbcaa434426",
+      "Cryptodome/Cipher/_mode_ctr.py": "233515d12b7501369183572d7febab60b7fd4da7e25bc86ba78bf957c19222ce",
+      "Cryptodome/Cipher/_mode_ctr.pyi": "51c675cce6655674d29646bd475c85a3b91a0e1ade88b2827bb014d3901c02e2",
+      "Cryptodome/Cipher/_mode_eax.py": "303c26a8b3f04050143c9565c6096db49d57b81d3bcf46a8a221b4c606d9cf65",
+      "Cryptodome/Cipher/_mode_eax.pyi": "5473ed4dd03ed9bb42bd113ee27a51b460ab02983bac1356a47499575a68f09d",
+      "Cryptodome/Cipher/_mode_ecb.py": "d9c8880ba23b7178060d95bdc1d909fd4280731b2b1c772fee3cd5ade2de0ea1",
+      "Cryptodome/Cipher/_mode_ecb.pyi": "3e0cd43ec558d8344cef6c0cfa1ef8bc289c78d17fc9e681c4e03a6edfd97e60",
+      "Cryptodome/Cipher/_mode_gcm.py": "fb66285b7f86d4835dddc7982b4f0d2a82f086876c623eebb95967a73ae1cd96",
+      "Cryptodome/Cipher/_mode_gcm.pyi": "e6def6407412d200eaeb0b7361f695a93c668c1ce952fb10bc368fd83a8dbcb1",
+      "Cryptodome/Cipher/_mode_kw.py": "0b11b33703a07d95d00626b66e58497cd177e42f241af9b0f0d34c02cc30ecf6",
+      "Cryptodome/Cipher/_mode_kwp.py": "353c9408dff7393584d8c3b311f1d3e3972deb2ccc058c108dc2787cde18c3c5",
+      "Cryptodome/Cipher/_mode_ocb.py": "f2f3f8e554c64ecba0c263d19da5a9e87697c7b1f9e357130b13f48849e99afa",
+      "Cryptodome/Cipher/_mode_ocb.pyi": "4973146b5b35758fb6ef6964b7148eb723a8a8b76d3ef7cd9115ea9978c1138a",
+      "Cryptodome/Cipher/_mode_ofb.py": "3a928662f5566097ecd4c7555bbc7da6f5118fa59bb709dd6c7145845752f252",
+      "Cryptodome/Cipher/_mode_ofb.pyi": "98f219d9efd7f94464fbc2c136267269c7dc4b7122d6f813f18961c88fb40bc9",
+      "Cryptodome/Cipher/_mode_openpgp.py": "c2121cf74aa2a2ac4c88bd910b2b39f97c1f0e7b439de558271e01afa5f7cc3e",
+      "Cryptodome/Cipher/_mode_openpgp.pyi": "1682eb16a9efc497f417f9e91ce80f5117d4c864ade83c72229da29285e2f822",
+      "Cryptodome/Cipher/_mode_siv.py": "89ab65dbd7ec52ec61e781e3e3edd4c408d429886f3420e408c76cbe70b5c437",
+      "Cryptodome/Cipher/_mode_siv.pyi": "b326f79179f2ba1a1057a157be8cc88ee75609004269d39bd48d81b95fba022d",
+      "Cryptodome/Cipher/_pkcs1_decode.abi3.so": "1b0c523b9a70c29ea9a72e433b5873b3898a219bf3d5ddfea7acf52fb32c8b8b",
+      "Cryptodome/Cipher/_pkcs1_oaep_decode.py": "1963085eab7db1dcc4a13e5f62087a2b06a222b4ff00e9c3e7977b2d9b7a24e4",
+      "Cryptodome/Cipher/_raw_aes.abi3.so": "a318c57b03c2b317a1427477f5505a1eacf7d12ce65b7832cc37ab233b5070ca",
+      "Cryptodome/Cipher/_raw_arc2.abi3.so": "cd4ac70ec518b7ef3d50f3b855367b0d3ee9a7a52172bf5906a756f6f8badc6a",
+      "Cryptodome/Cipher/_raw_blowfish.abi3.so": "a88c97c7c74fc72d774df0a962246ab31d1bbfdc0b783897d87e703bd22762fb",
+      "Cryptodome/Cipher/_raw_cast.abi3.so": "eaf04a15bcb22b7fbaa314966b66432f0127184ed414650c26bb09cfeee3b2d5",
+      "Cryptodome/Cipher/_raw_cbc.abi3.so": "f0bbe7396e6d9074deb57e5680081296cf0fccf8b075e325b7ca1230ac20f3cb",
+      "Cryptodome/Cipher/_raw_cfb.abi3.so": "ffe3178d71217d4803939569f72df4a72f19f00b7e2fe31fa49fb77899f4ef89",
+      "Cryptodome/Cipher/_raw_ctr.abi3.so": "7b139c957ca7dc9eef525ee73b0769a7f969219d13f97dd490aa71d676673ca9",
+      "Cryptodome/Cipher/_raw_des.abi3.so": "4205ef49088070245f25a8d51309708e6cf643825c497f37cffaab27efb6162f",
+      "Cryptodome/Cipher/_raw_des3.abi3.so": "79f110a75894f01ca5b8c878b25a16b50cebebb4c444e6b58ef33ce2865fa836",
+      "Cryptodome/Cipher/_raw_ecb.abi3.so": "04df74da7cb27de6f30037795302b90ccbbd6ddaa5825a058a8d5b03ed66bc76",
+      "Cryptodome/Cipher/_raw_eksblowfish.abi3.so": "68465f03fb71104100596e0096f2286a523b9d5729105dea09a6a639e40785da",
+      "Cryptodome/Cipher/_raw_ocb.abi3.so": "1e5920b1e80e4b93008c257c8501c6bc34e06852b46a6c82f2ddb1e149001836",
+      "Cryptodome/Cipher/_raw_ofb.abi3.so": "d93e1ebd4bd1787c0b3dbe2cd259cb5b447ac2afc11d0e2efb2a6aebb8baeaef",
+      "Cryptodome/Hash/BLAKE2b.py": "8adacb04f67d36134afe48e2325a2a3ffa07b3bcef37cf9a6b3ce641dafeb208",
+      "Cryptodome/Hash/BLAKE2b.pyi": "5382b799aa5d61e1d51eb9481207df295f487c02d56ea90ead56c946e8e7b35d",
+      "Cryptodome/Hash/BLAKE2s.py": "b389cba582680e5a826afd0dae83054984d90a242450ad0f0a12480016875f3c",
+      "Cryptodome/Hash/BLAKE2s.pyi": "f63b0be232d0ab9fcc6fc58cf7d2cfbab1f50fe14bfa02c0799c817fc4225add",
+      "Cryptodome/Hash/CMAC.py": "60ec3216c3d874633a094f278164338bdc845c7cc3232f957b1098e3bba18ef3",
+      "Cryptodome/Hash/CMAC.pyi": "9195c0794cf1437f2763e6986c83eb6599913b18236b61e7bd4cfbc6e017ba81",
+      "Cryptodome/Hash/HMAC.py": "cfe656d150189dd2a9a4e493d7a694c780000455bed1da30be140af474a90d99",
+      "Cryptodome/Hash/HMAC.pyi": "7c0c870447f911ee8ba226184d9f4f66998846f8ad53a3ab88a19f8c550cff87",
+      "Cryptodome/Hash/KMAC128.py": "12e3277ae64f5e65f7b1b0a937d722550c956bba7439a6998366e941389fe7e8",
+      "Cryptodome/Hash/KMAC128.pyi": "08772389a34a8ef59080b5ec6b06f7571b6dc66b7f8552be0effb9455b3aa0e1",
+      "Cryptodome/Hash/KMAC256.py": "17a19a02de2ab4488380ac5ccd6cab5d139515068b4367de7b7beab35bb18eaa",
+      "Cryptodome/Hash/KMAC256.pyi": "a0078a832b5ada2aa357d62ff35f31a16e5e2768b178b3f88e850ff17522d9ed",
+      "Cryptodome/Hash/KangarooTwelve.py": "8d1d4df49aecadf44663dd109e5227335b9502ed4b169a76b0bd2b786bdb5bbc",
+      "Cryptodome/Hash/KangarooTwelve.pyi": "d4c5a224e8f0f3659d974e5e3917577b6f97052fb7fef445c516b941abac1e07",
+      "Cryptodome/Hash/MD2.py": "99fb9c3515d8223f2239718a11718de13230c871e122095bd92712a30ca0e6d7",
+      "Cryptodome/Hash/MD2.pyi": "c1aec6498529ccbdbbb28e18822244668d1d3b6d352b21caf3b436d0fbe6f9b3",
+      "Cryptodome/Hash/MD4.py": "152198ee4f2b61ac91e8f13484da480914dad6e3622125718b1229682dbccf38",
+      "Cryptodome/Hash/MD4.pyi": "ed9b594048090b022cc2779bd0d068bffb8bd3f4e882587d10f3272d5146ab0a",
+      "Cryptodome/Hash/MD5.py": "09de70b59e0e056f8eeedbde6ef39bb1acbf8c8ead46da147c87e46c4d1aa8c4",
+      "Cryptodome/Hash/MD5.pyi": "738302247bd84e2d982f8866a84bbd8af6d2be4049751f92da5754a84a732bcb",
+      "Cryptodome/Hash/Poly1305.py": "c4449efec05a260ee304913cf3f4b78d6534b88bbc975f0d6908e6a25fee21e0",
+      "Cryptodome/Hash/Poly1305.pyi": "4d21a8b6d8ab2cf211ca2bd28d9b9c401eda3da61f86b5249fca28b7a3ab9a65",
+      "Cryptodome/Hash/RIPEMD.py": "d2845a1ae29c4d45537c1657666e4d64b400bf23db0218c1a60ccde4a7f66ba8",
+      "Cryptodome/Hash/RIPEMD.pyi": "f83cd993d3ad880644f84dbf3c2c85cf8a47437468ba82e5528dcd79a6dfdd27",
+      "Cryptodome/Hash/RIPEMD160.py": "1980e2052c3f0fb48238f03cd22de5de68d9b0fbe69a165255510d2b0914b3f9",
+      "Cryptodome/Hash/RIPEMD160.pyi": "450f725f18c7d4149a5379b086c0a7f7eebb0b46bf05cbf730375a7d00a2b8fb",
+      "Cryptodome/Hash/SHA.py": "d7e3b718529b9b586dda357b33da5d2aee86a400ac0929c044f1e59457054c0a",
+      "Cryptodome/Hash/SHA.pyi": "4491e9e2fb95ff5f52b60138ab196721f0e5b60163c7e2fdaba1f4b6387e464d",
+      "Cryptodome/Hash/SHA1.py": "a32cfd3dd1a06956bdd12e8ed4d3e17bb38fabb02f0db248b07ea92020e94cde",
+      "Cryptodome/Hash/SHA1.pyi": "bcdb41fdbe0ccad26af08a35c6e7dd38ee952fe9cc05c0a70cf220250b8d3c23",
+      "Cryptodome/Hash/SHA224.py": "450dc408e91526c9e1d9ae5f08f2fb0227a7a62db695ca6cb91354ca99167c1b",
+      "Cryptodome/Hash/SHA224.pyi": "f11b1bc88c087cef0573f7e95b0d4c9c5c34e19e27faa2f41b4d6a090670bf1f",
+      "Cryptodome/Hash/SHA256.py": "d9f85534f18aae27e3e3d0741316b1acc0ae6ed0d37108876abaf337424f5540",
+      "Cryptodome/Hash/SHA256.pyi": "ce774d123bfa0d939668ea6ea142ac0368538b627bfa824580e435d2c4919d71",
+      "Cryptodome/Hash/SHA384.py": "683bb935d0db202cab4addac8f43787c85b01aeac4bb4f16601e66322a9f5bb8",
+      "Cryptodome/Hash/SHA384.pyi": "28859b0fe9416ddee5bd6805aae22a50031a8aca2f7b2d075743669aafa9bce6",
+      "Cryptodome/Hash/SHA3_224.py": "40c0782ca76c0701e2a2ce01669779a590780110c0bfef3f9ba89e7c51111fd2",
+      "Cryptodome/Hash/SHA3_224.pyi": "60dbcdf86c55a4f2baffe79ed3f9feef080086aec9cc168169e1a235d56841d9",
+      "Cryptodome/Hash/SHA3_256.py": "d9db77113a1817309f07e48b5f12c07fa19f782377d441681b151952e7498bbe",
+      "Cryptodome/Hash/SHA3_256.pyi": "2653ce895b4454d25eac6591b810ee9d7053d7d597ffa39ba54b8c697ed0744b",
+      "Cryptodome/Hash/SHA3_384.py": "91283b690f0bbf8fa37c31a9950df55824d15aa09bfcaf17ec03ad3b9968a173",
+      "Cryptodome/Hash/SHA3_384.pyi": "737c1bd1ce918e570c70adb6995e11656b0399403636ccda8212c05c8acdf13f",
+      "Cryptodome/Hash/SHA3_512.py": "14fb4bf3598153b1a2d628dee4cd845f008f8f9f7c02848ec8a46bae2e064cf5",
+      "Cryptodome/Hash/SHA3_512.pyi": "6d9d16a334c3fe643fe6dff3e12582a429fad5884255a985e74d63b107548e9b",
+      "Cryptodome/Hash/SHA512.py": "ae64a77754646b63422263b47beb2e2dbcc017d1045eb6358a99e74bc4651be4",
+      "Cryptodome/Hash/SHA512.pyi": "55f3331f1fb453879f0b2642ae0b3f68ecf5ed6f2dd191cbff7b91f33698cc25",
+      "Cryptodome/Hash/SHAKE128.py": "bcf1a7883511c5cddba8517e0bebb8e76144dad1958b5e7d0ec0cf2ec7f56f2f",
+      "Cryptodome/Hash/SHAKE128.pyi": "02cf754a1f5a44880515160be7429385604e4a56f563d13856c303407a760c14",
+      "Cryptodome/Hash/SHAKE256.py": "f89b870969da17c43c1311e613f8e5ea38d65fed191bc714a33d809fa5ae0977",
+      "Cryptodome/Hash/SHAKE256.pyi": "cab8d7a853e01386eb295ff7eba3a885304ad84b583281f8cc1eb286a74f759e",
+      "Cryptodome/Hash/TupleHash128.py": "d99730509b24d3e87621329a84075d59600f42c60248284e4ec740373cc93961",
+      "Cryptodome/Hash/TupleHash128.pyi": "9800dd2a4b45d663df2ad5dffb15b2b63d1b7e0ca7ce3c2da6977545d30bd6ea",
+      "Cryptodome/Hash/TupleHash256.py": "b909caaa03646c244e8d8c08fbd1509eaa3aaa24617f19d296ef033ebbc14509",
+      "Cryptodome/Hash/TupleHash256.pyi": "7acba8b968761e60aedcce242e30a0bb98eb43cecdac1414e61f68e71db5925d",
+      "Cryptodome/Hash/TurboSHAKE128.py": "710eb40a1bb75f3c2dc1f68a062f694bcd32fa8c33a3a346a0ec7f46b95145e2",
+      "Cryptodome/Hash/TurboSHAKE128.pyi": "1ed6ceb9937db9f8262d36b0d8316179329667ff4d68ba0db4714cb3fb199d0a",
+      "Cryptodome/Hash/TurboSHAKE256.py": "0d3ca20bdb1e67d473902d8544ae7d33c98d87f34574407ced04d533fe652a42",
+      "Cryptodome/Hash/TurboSHAKE256.pyi": "bb00d513daa6c3861832b08a3243923d32502f2d4586eb069b9f62fa28bc1ee2",
+      "Cryptodome/Hash/_BLAKE2b.abi3.so": "1b4b41370e91a6f9829511f84c9b766420435df449dea854ae7d2db783b6f4a4",
+      "Cryptodome/Hash/_BLAKE2s.abi3.so": "b1db13457704130f2fd8a1a4bff128a6d81be35956bdda7e55aed36398cee55e",
+      "Cryptodome/Hash/_MD2.abi3.so": "fe87162df457f97635a928c0bdc8120e22c73100497503e0945f3b1eb1ad50bc",
+      "Cryptodome/Hash/_MD4.abi3.so": "9c2705602c2b6031b99bae3864c8ac36fe33b10b2ebe251fe2999a0d9f31ab0f",
+      "Cryptodome/Hash/_MD5.abi3.so": "d7d765c9700aa359d45da1f731db2a15665e1a5d4b3a042499cd176177ff51cd",
+      "Cryptodome/Hash/_RIPEMD160.abi3.so": "659ea5124dca8dd02cbf7b222fcf61cfb689e8729fe60797418e165b27434dd6",
+      "Cryptodome/Hash/_SHA1.abi3.so": "b36a179bd6379171de58de165da1ec83f5479a5eb5e7094e42d76c8a5803c81c",
+      "Cryptodome/Hash/_SHA224.abi3.so": "4163e36757714bf9c128c55aee89fd8254f34b7beb6fb9283cb7678c0a742ede",
+      "Cryptodome/Hash/_SHA256.abi3.so": "e9fc352b1660733b25bef6ab6239b2e4831f051fab3a25ab5b4ab4ecf9a4ecdc",
+      "Cryptodome/Hash/_SHA384.abi3.so": "8f90118fe52a79085ec7c22365de671648babf1244fca5c704035d0857aac8aa",
+      "Cryptodome/Hash/_SHA512.abi3.so": "92dce5dfea915d7491a6ce5313adbd9f89cf5c9016da570992448bdc817fc70e",
+      "Cryptodome/Hash/__init__.py": "df08b30541432c1e94800f18f0e228fb50928adc7de6a2f79e4b4cabb857911b",
+      "Cryptodome/Hash/__init__.pyi": "aa9c7cf02d7ba18bc74e902fbeae887fa05374c18edc89bcacf5bb998eb66965",
+      "Cryptodome/Hash/_ghash_portable.abi3.so": "9abed18c06f47047842324eda5d6b5b4c885c6567a0d0077cbbaff1ce73fc472",
+      "Cryptodome/Hash/_keccak.abi3.so": "3f3ff4a3fe04e5f53c58952632b82e194203b336f58781c517f6ece00462092b",
+      "Cryptodome/Hash/_poly1305.abi3.so": "f97dc6c88fa03e61e92747e327858cb26daaaa68c35ace0fc0d4ab0ebbd73398",
+      "Cryptodome/Hash/cSHAKE128.py": "0e42d68b1095e589b0370e6b9bc629ee69a577cd5a578178b46c6d1fdcdf8355",
+      "Cryptodome/Hash/cSHAKE128.pyi": "20b7a71438b39e3d5c8c85db8c806fcc4a9f14e8ce6ca5d6c8cb0eafaddac14a",
+      "Cryptodome/Hash/cSHAKE256.py": "0843849a9e555136a153e753123ac8ed85d1da9505be98134bb8e89351bb84af",
+      "Cryptodome/Hash/cSHAKE256.pyi": "32b5576b27a04f07107a3d595afdb84038c9b639d432872cfd9e8b8b9d9e8ead",
+      "Cryptodome/Hash/keccak.py": "36444c003a8ba534ebb512ab7c29d56eab8cc16f496b7ac83e53c67fb0e22f90",
+      "Cryptodome/Hash/keccak.pyi": "a5701968d7dac9909733107b20316bd85f078b4ebf870141dc65e337363bb013",
+      "Cryptodome/IO/PEM.py": "0d2bd7b3e777cd5e40e7075f691e8f417ca06b1fcf77412f73c837f398264f5b",
+      "Cryptodome/IO/PEM.pyi": "6b51b4ed142d66f12d5c79726f17437284cf3379ea31b74e34d8f3733e471ad1",
+      "Cryptodome/IO/PKCS8.py": "3a06c3872fee4f3fb4ca4c2df5ea5eb103bfffb5704f7cd9c99c62ca4d762498",
+      "Cryptodome/IO/PKCS8.pyi": "335cb327beb6a7f664a6ceb38805d45c418547c7428020f0fbdf6fca5b98eea9",
+      "Cryptodome/IO/_PBES.py": "9428c3bf679f973980e111070abebfc9b231cd241dd36355f7d92f5f9ce67d66",
+      "Cryptodome/IO/_PBES.pyi": "7f2eccf033432fa3ad3f69079fd1975b4cd34901415c89c272e0a273194dc14d",
+      "Cryptodome/IO/__init__.py": "414be7a035a59ae386123c5787fb971cca129a83e2fe749e87e12decc4a87de8",
+      "Cryptodome/Math/Numbers.py": "cca11c6bc53f5fa09440ade099cec1af2c80f17fcd2185c29d253f74fcf8bd2a",
+      "Cryptodome/Math/Numbers.pyi": "a1e03bc7be7714a302d1bc98063e7dd4c94082722352debb2f9b7b1056ce6d1f",
+      "Cryptodome/Math/Primality.py": "d58f720d8d41f0fddbd1c54ec63c9cb4e42cebb21bd85babb6fc3c41c3d63582",
+      "Cryptodome/Math/Primality.pyi": "897018d20526722212fc5bc7e552708507cafb4b4399a1f6bdc0cb1c7172c481",
+      "Cryptodome/Math/_IntegerBase.py": "cee07aace8b017860a68a4bc53cf16fe28db2dd20717cede3f4a98a49aba17aa",
+      "Cryptodome/Math/_IntegerBase.pyi": "7bc901e4d03ce2f99db7be9b22135b5d4d4fab4c2cf8ff0faf775fc81cfe5cca",
+      "Cryptodome/Math/_IntegerCustom.py": "fa85ce2be21d491a9d97226782cc87167180a666daabfb99f6a14cd0c69cebfa",
+      "Cryptodome/Math/_IntegerCustom.pyi": "b3d5198a0044814bc74b820e76df235e1b19df73bd8f5f69ee589ea1bd51f846",
+      "Cryptodome/Math/_IntegerGMP.py": "5aeaaa6ffaa19b6d803f3a4a0df32155c683e8da5c1f40681ab12bc34fb23bb3",
+      "Cryptodome/Math/_IntegerGMP.pyi": "51c24e18c613d5df86d0f8db0b90724a1165e68ca8ac547c877f1f16dd2e63db",
+      "Cryptodome/Math/_IntegerNative.py": "2f549eb90941dcc16c8398c25d93dfe195b525b79a79e0496aa997e3ca0fc132",
+      "Cryptodome/Math/_IntegerNative.pyi": "a5968dd715e707cbbb55facc829ea3aa2fe309a278c78b7411cb3ba99ff6c7ee",
+      "Cryptodome/Math/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "Cryptodome/Math/_modexp.abi3.so": "6545b8d01a02795c21aff0347379f12b5fb61a8c5b2ecdd130ff9a2959dd29bc",
+      "Cryptodome/Protocol/DH.py": "dbdea7936c78464cbaceff39933124de2617742321ab9d541e3ed3c023ecaf67",
+      "Cryptodome/Protocol/DH.pyi": "11b6400caea9928dc15a32f4a6ac7e19ff13fb4718c0ea5cc5d23016028917f5",
+      "Cryptodome/Protocol/HPKE.py": "9300112e45c309982990bc20b917a5d2b0b3d4476f85b06240ba658d74f807b0",
+      "Cryptodome/Protocol/KDF.py": "b4516ee6ed726c9096b4d4dea767498640b9bf65519903a474e48d2c4cf04657",
+      "Cryptodome/Protocol/KDF.pyi": "2635ab2397ec2ae7e2fcb4ca37f3d1df6b9ef26f233f33fcf521b473172bfe4d",
+      "Cryptodome/Protocol/SecretSharing.py": "586d9ef7a00fe5be39364e6974f6de1770528d3f420fa0a9d183cddaa6fe9b8b",
+      "Cryptodome/Protocol/SecretSharing.pyi": "fa512b57646f68d3ee380d33e1ce385a6352bbd8ab0b0fc30dbef03e0092d816",
+      "Cryptodome/Protocol/__init__.py": "a17d783139cdad6b3c07a13af15affc80fdc2397b6d32f171bb81ef60860920a",
+      "Cryptodome/Protocol/__init__.pyi": "44d76bc0c823b7d6fd2e672475191a6180b83c2ccd57ed478b64f707630781db",
+      "Cryptodome/Protocol/_scrypt.abi3.so": "d8248f134f51c8c641deb4c185273dfe11e52cdf129a209bdeafea3f1ccd38f3",
+      "Cryptodome/PublicKey/DSA.py": "4ff9cbc6b2aab83cc25a8a9d74e380c702c6824e7edc48f559c7280a6ac33af1",
+      "Cryptodome/PublicKey/DSA.pyi": "b7acb7b7fc3fa1da397b12d34b82b7fddefa39b76a7cde91d501ca39f7ff2c0e",
+      "Cryptodome/PublicKey/ECC.py": "4428581002a090e7075eb2cd5e38186ddfc84f63b5cebb4a9bee94f5d8b2a9b5",
+      "Cryptodome/PublicKey/ECC.pyi": "32e00815fd06becfb5a987dbc6f35f572301cd77dc446ed98eeff725f2b6efe4",
+      "Cryptodome/PublicKey/ElGamal.py": "a9ed495d944b0a73103bcbbcf7655903cd2ef762015e74eafab57409cbcc29af",
+      "Cryptodome/PublicKey/ElGamal.pyi": "facdedcb4bffa3ef11abcfe7ad8877d95a3a8a1afc39a49675cfc7eff095182a",
+      "Cryptodome/PublicKey/RSA.py": "79dce3255be9878fe71ad7d3756a2426210bdd23c9eadbb92234ec899ab8ba1b",
+      "Cryptodome/PublicKey/RSA.pyi": "b8766a36515fb66d7c170bb629361815a8387c9775aef380952998de119f84c5",
+      "Cryptodome/PublicKey/__init__.py": "6fbab114f748e5b6d2ab990b2e21ad407b6e7ae0eb2a1a970147991d5c880ff6",
+      "Cryptodome/PublicKey/__init__.pyi": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "Cryptodome/PublicKey/_curve.py": "539b760ed0d60b2be2891f03364ca3b9e31ad5a2b55defbe9dc20f5ed21c340d",
+      "Cryptodome/PublicKey/_curve25519.abi3.so": "a4e34ce1750e76190d13e373a7e137571e79e950a4aac281eea1463b9038eb56",
+      "Cryptodome/PublicKey/_curve448.abi3.so": "4c8ba414c980e8be06747aa67c51860bbfc783a90ca87d96064795b1f1eb99fe",
+      "Cryptodome/PublicKey/_ec_ws.abi3.so": "124b3caa9d72ef6dcdac7e03e48cf708b9261eeb4b3f5c4c04f2a49a89067247",
+      "Cryptodome/PublicKey/_ed25519.abi3.so": "34a47fffa7fc699b6399419b9db3a824e2bfa9d167278fc99dbf2375123ac530",
+      "Cryptodome/PublicKey/_ed448.abi3.so": "0695577ef50dea4a65fe22a27098dca02ed8db34ee13ac0c67a1035a398b2c32",
+      "Cryptodome/PublicKey/_edwards.py": "49a2607205af96e72d0b2a3f12048e7e434f5d35ffc1d4439acdca085e2d9ebc",
+      "Cryptodome/PublicKey/_montgomery.py": "91b91ea30c10b7030152bda7ad8615ea8cd8fbd3f89e56f2821cf5aa764ce123",
+      "Cryptodome/PublicKey/_nist_ecc.py": "b1b4882c7a6985c946f3a6d3ff41ff03966d3cd575273c460a27b6ce469da7b1",
+      "Cryptodome/PublicKey/_openssh.py": "b7c67c7ce24387ae195e6aa9482aa576cf8e29bd82e459dc426a82b2d7c62263",
+      "Cryptodome/PublicKey/_openssh.pyi": "cb00b2f540eedbf01023ad02856c46c72a87899a18c0c282dd3557267fd95483",
+      "Cryptodome/PublicKey/_point.py": "08685f3a4e22beb3a4f9ea12d674458b78df72d707d00d384be2a672691d4a86",
+      "Cryptodome/PublicKey/_point.pyi": "c909257ee44b84172eff2241ab6a399e851d6500d4b19007b256892b8733728c",
+      "Cryptodome/Random/__init__.py": "1099ddf654d7a39645be682b033bf6c075fc6fced234f3b7b03181dd4a1f55ed",
+      "Cryptodome/Random/__init__.pyi": "89e89f868301daf78abac451059590a7a8a03eb8b9d36ed5aea7dd74ee5bf965",
+      "Cryptodome/Random/random.py": "696703eef038796ad19a3224868f981b16eb542dda9c54f31dafcdffb49db3ae",
+      "Cryptodome/Random/random.pyi": "b97116e3e9aa91d02fcce25259332ffd95aeee9e15c028ac9fe0263a3d8a4c71",
+      "Cryptodome/SelfTest/Cipher/__init__.py": "0e556f6e9e705e27c5e2af14b840081be4ba81a9cc07a38271b92c705fbcd021",
+      "Cryptodome/SelfTest/Cipher/common.py": "4b3778b6df9ef372bc358bc5d8c1451972688d61375c04fe45504b9b4e7eab2c",
+      "Cryptodome/SelfTest/Cipher/test_AES.py": "bc035e1453dcd9fb945b223b4e3d64e9706fbb4493896d42bf57fbf1f822d81c",
+      "Cryptodome/SelfTest/Cipher/test_ARC2.py": "807da283eb4d8986cde7f8ecbfa1ec7905b045d90ae99d51ad03d127d6a7e3af",
+      "Cryptodome/SelfTest/Cipher/test_ARC4.py": "40a5128049f575393c61cceff7254a00899b2075d619fddd425e003466dfa4e6",
+      "Cryptodome/SelfTest/Cipher/test_Blowfish.py": "1f72fd97f21f36fc73bedc62c6ae1fac7e53a0b380d471a7428174f031c1e4b3",
+      "Cryptodome/SelfTest/Cipher/test_CAST.py": "37e25233e5f19ec6da0a4da535c0d520046e335a0aa912a1d9c117cc605268b2",
+      "Cryptodome/SelfTest/Cipher/test_CBC.py": "b853cc4c2d8b6fbfeadfa4cd2ffc077d1243953d634a9289ac09090d355eda85",
+      "Cryptodome/SelfTest/Cipher/test_CCM.py": "7cb7002aa796c65fac605ca5eb2eaae5ec8bdb0f567e6eb4cb4090c24e62238e",
+      "Cryptodome/SelfTest/Cipher/test_CFB.py": "2117519db8783c7295558f1f225b2b9f152e491b8118e16e720d0db9ec9eb1b4",
+      "Cryptodome/SelfTest/Cipher/test_CTR.py": "acfdb5a40599ea7049d89b84718a6d59d1158b8ef1952d7a3da190b8209d80c9",
+      "Cryptodome/SelfTest/Cipher/test_ChaCha20.py": "c822d9eb51f5a2f6abbc4856faaa1e2080c1b84422c7ef80a856364148c066ba",
+      "Cryptodome/SelfTest/Cipher/test_ChaCha20_Poly1305.py": "759428c6fab16f731938f98e3d7d0911427e9b593aa402621ceee3de7e486819",
+      "Cryptodome/SelfTest/Cipher/test_DES.py": "12c81047d82fbc911daebe7c1420f5694ce6ca36cb4fe14c6b0a0563f80caa8e",
+      "Cryptodome/SelfTest/Cipher/test_DES3.py": "db911f20e784806b2daf058ae22e480420de72e6836e139d438ff877f9f9da5b",
+      "Cryptodome/SelfTest/Cipher/test_EAX.py": "cbde21049d533c3699f362aa77eb6808a5165f5de8020abd31a30eae457b2803",
+      "Cryptodome/SelfTest/Cipher/test_GCM.py": "503485a1c836ccf26e7dc5cbbfc1a3c2fb31e38b62cdb589dd3c20d9415193bf",
+      "Cryptodome/SelfTest/Cipher/test_KW.py": "5d3de5bb7b3961b8413eeda26349b72e9c8e26eebf04731b86bce9a05abb8665",
+      "Cryptodome/SelfTest/Cipher/test_OCB.py": "c2edd37f0ab0f951f43cb5010f8555b6612f35eb89b437f92780054b1df0808f",
+      "Cryptodome/SelfTest/Cipher/test_OFB.py": "cc7ce89c67054d089bb6c113525209b409ae8ba720c73ba0e18a50b46861143d",
+      "Cryptodome/SelfTest/Cipher/test_OpenPGP.py": "438ace094d1ac61ff3ed4e0c49419d6b7f67ba392d3e50546aa5557c4e64321b",
+      "Cryptodome/SelfTest/Cipher/test_SIV.py": "7c313d92675898a9f43386eea782f31c2cb32068049bc60a31fd8cda9312c0d0",
+      "Cryptodome/SelfTest/Cipher/test_Salsa20.py": "87cb9bb4724275f1836f194a3ccfe96d33c9ddea2b89b226dfa57e89ec8be33d",
+      "Cryptodome/SelfTest/Cipher/test_pkcs1_15.py": "dc699df4f6e1829bd2bbc73a618cc9f6e911c0b687895aff017fb0b10ab78638",
+      "Cryptodome/SelfTest/Cipher/test_pkcs1_oaep.py": "dc11d4b11fdd0093e0e48d559d1d4c6f5809d8c28af8b9cadcc4819d3851359d",
+      "Cryptodome/SelfTest/Hash/__init__.py": "d8ad7ad855517e29f17e7fba335abec5fc6c87f12d966bcd24b932fec165c53c",
+      "Cryptodome/SelfTest/Hash/common.py": "728dc54bb272eed5758ec4460cbea025d153b55b6a70c003d4ce8593eb182646",
+      "Cryptodome/SelfTest/Hash/test_BLAKE2.py": "0f64bc1b0112836985e84054792a4626276d757874374a2fa42a32ede29db067",
+      "Cryptodome/SelfTest/Hash/test_CMAC.py": "8663a7e172d026345b4e185e8e1c935b812a390cbcf6af77954157dcffc80015",
+      "Cryptodome/SelfTest/Hash/test_HMAC.py": "c6aae8f5300169704109f77c9182bfa002926274e5065474cec8598f2fd0b0a5",
+      "Cryptodome/SelfTest/Hash/test_KMAC.py": "f46244130df4dbbe689d6edf0d26adf40e88100f371a589574acf25dd62336d3",
+      "Cryptodome/SelfTest/Hash/test_KangarooTwelve.py": "8d7e993b45f4dfc0d8c6d4c27b89723cc2e8d460a0e3dc5fb18a351d4a477e9e",
+      "Cryptodome/SelfTest/Hash/test_MD2.py": "1252b3374b4bdd4fb44de2d53f47bb23cb71b241d7480f18b3adda6232d6fc13",
+      "Cryptodome/SelfTest/Hash/test_MD4.py": "f5214765c6c1dccd8086362d2be63dc34b5613f71d99ea3642b1ef9777fd4b85",
+      "Cryptodome/SelfTest/Hash/test_MD5.py": "063e82e78f2ef1dcf477ea46c60ec96657b33d6b977c3fd30678fb40e246b71c",
+      "Cryptodome/SelfTest/Hash/test_Poly1305.py": "f7d818467b6882ba84fdd85ae948ae140efe2108ae3f945c2de87b6a7d7c3768",
+      "Cryptodome/SelfTest/Hash/test_RIPEMD160.py": "575abb606174c4a7b40de5d98409ad7388486db0ca844a6390d7cfb0d901faa1",
+      "Cryptodome/SelfTest/Hash/test_SHA1.py": "e533b4581989a0651e401a32f6a845dce73852a510025e08b6ec93db39136e27",
+      "Cryptodome/SelfTest/Hash/test_SHA224.py": "0f3eec44bba1f802595daac867b2f36b8654cbdb4d353e69512b009b943a031d",
+      "Cryptodome/SelfTest/Hash/test_SHA256.py": "a66578af95a88c5666b55580205025d6e3b9e463bbc0c59709d13f2367bcec9d",
+      "Cryptodome/SelfTest/Hash/test_SHA384.py": "ebf84beeea197506001280b4813da662e650b8210b1def5e6f170585065de013",
+      "Cryptodome/SelfTest/Hash/test_SHA3_224.py": "7b87df0dc21b54eaec271df08120ba18fc5c1f88ea239aa75803ab525e050b56",
+      "Cryptodome/SelfTest/Hash/test_SHA3_256.py": "19e932c27e788b3744ca6d60f344bd1b6e1c53cffd052e5f4d6959194f905ee4",
+      "Cryptodome/SelfTest/Hash/test_SHA3_384.py": "69dd13db305f34b08b6242c375e7ef8059ab02ebfede9366932f25534c71e348",
+      "Cryptodome/SelfTest/Hash/test_SHA3_512.py": "f8e1e396d7ff512ccec0464cc89ee62069cb420ebb414624731e0ec5686428dd",
+      "Cryptodome/SelfTest/Hash/test_SHA512.py": "15fa4ef246029f1fdfc3bb3cf857622bef76e39c3e5fcb78f426b63c6da07d4b",
+      "Cryptodome/SelfTest/Hash/test_SHAKE.py": "0adba41632ff7ece390089267aca8099ac9be778f95efb4ec4db2fb5ccb793e7",
+      "Cryptodome/SelfTest/Hash/test_TupleHash.py": "3dba5764f69ef6e79edf9600956243c47aac2ee7042444464081ff6db51f14cd",
+      "Cryptodome/SelfTest/Hash/test_TurboSHAKE.py": "0722f585d54bae8e80f2790db56b9699885d1921bbda673e40d189201495bc20",
+      "Cryptodome/SelfTest/Hash/test_cSHAKE.py": "5f440e9ff0ca194dc04bf0c1b1717c20418f4852d633e629f886bfa0875944b6",
+      "Cryptodome/SelfTest/Hash/test_keccak.py": "f838e7aaf086c03090f955957e954fdc3c327e6d8bc24ecfd44eff688c9d8a84",
+      "Cryptodome/SelfTest/IO/__init__.py": "eb697e364424f563eb458a0301bb5628c39cf4b4f9c8013a10dc2ceedefebb35",
+      "Cryptodome/SelfTest/IO/test_PBES.py": "7a85ce9e290540207b2ab3a1e1329f00106c545b5c9100c7fffa4b50a4bb9669",
+      "Cryptodome/SelfTest/IO/test_PKCS8.py": "ae1077831278eda2bd23338ee7954888318c986ef3a357b658faec07d74f7893",
+      "Cryptodome/SelfTest/Math/__init__.py": "e884c1e285d7071028c1a4535b20ddef1d2462b81f8026d34a5513e337b5b155",
+      "Cryptodome/SelfTest/Math/test_Numbers.py": "03a3d6bd4fdeaab33438a66952a6be86ac8cc764e8ae1da1f245a52a40df8ad8",
+      "Cryptodome/SelfTest/Math/test_Primality.py": "d15fe0cdc056ca4d5215810172c12061568f7f0dfe519b5c5a5d1eb55fdb82f0",
+      "Cryptodome/SelfTest/Math/test_modexp.py": "aeca0af3a1bc8c350d3e2560e6ebb77374ba5d5378c33f5d97fb72d286a37302",
+      "Cryptodome/SelfTest/Math/test_modmult.py": "4f6bb9ee96589a9adfdd954e53788767c7a478a8eace64a2dc8a464b7c9f0ab7",
+      "Cryptodome/SelfTest/Protocol/__init__.py": "219f69e2e808600c0d6f2f9bb3d683bd40c144f32bf0a03978c2a0d0a99c9478",
+      "Cryptodome/SelfTest/Protocol/test_HPKE.py": "41326f0cc25bb33ef0970e19200678eabaeb58682410a063c42d968a55f49fb6",
+      "Cryptodome/SelfTest/Protocol/test_KDF.py": "98139d91b074a15503be26c158905bb34d0fd4862b51d91e85de67548df794ba",
+      "Cryptodome/SelfTest/Protocol/test_SecretSharing.py": "39a38938069b4d31cabd715e794361c261d89c9c33120cae33cb33f3667cd1a7",
+      "Cryptodome/SelfTest/Protocol/test_ecdh.py": "97fcae522e3651b0d25db4ba41e20eab3c015af622116125d68b8cfb987ed4e2",
+      "Cryptodome/SelfTest/Protocol/test_rfc1751.py": "e90bb151413e34ff3fd6d40d8fd31a723b5ce78d339388fce59ec6d4dcb2d9c2",
+      "Cryptodome/SelfTest/PublicKey/__init__.py": "cd24a1f8b06bfe4c09ccea59dc5990cdd8897a22483b10f26f2b1cabfbef3797",
+      "Cryptodome/SelfTest/PublicKey/test_DSA.py": "4cc130814918178ebb4bd1073286a935c977418e9201665bde4896108eb9a249",
+      "Cryptodome/SelfTest/PublicKey/test_ECC_Curve25519.py": "36fa03f36654c08469117339ed66ddafb9bd2ac85b8f28f7a753ccefbccf5d03",
+      "Cryptodome/SelfTest/PublicKey/test_ECC_Curve448.py": "5e19034a42b517160128fe6be2750c1ba8314e824f5c40528733f3bb17b636e2",
+      "Cryptodome/SelfTest/PublicKey/test_ECC_Ed25519.py": "d2fbc26ec6ddfdf7ad704cea71bf104e33843739eedb5fe4c12bb7e8ae0eb288",
+      "Cryptodome/SelfTest/PublicKey/test_ECC_Ed448.py": "0bdacf9e2904be45cbcb195724ea874c407cc47ca701741e884f491d7777fcdf",
+      "Cryptodome/SelfTest/PublicKey/test_ECC_NIST.py": "537f1bd6be3a758c4ed914b2d9edc5741747f4ff0d2c4ae0022621b1ae2bd47a",
+      "Cryptodome/SelfTest/PublicKey/test_ElGamal.py": "35a19eb8970a7dc9b9f84fb1f967dbcc0f28c9f3c38d1ffde21364bd5d1c28e1",
+      "Cryptodome/SelfTest/PublicKey/test_RSA.py": "bbd5775e6d8d7368ee87be3c30fbebfa134362230704865dfff77b65d692d470",
+      "Cryptodome/SelfTest/PublicKey/test_import_Curve25519.py": "2b49f517c1be592346a22642071d2b6c73ef17ce0ecc30d9cda64b846f326832",
+      "Cryptodome/SelfTest/PublicKey/test_import_Curve448.py": "3ff80a10bb734dbd4c6cd538cb7654a8869334abce40a36a076fd34df6546c08",
+      "Cryptodome/SelfTest/PublicKey/test_import_DSA.py": "e9f2e62884d2a0fd7976568a66ad5db77f201e952c8e663a678811d07e417247",
+      "Cryptodome/SelfTest/PublicKey/test_import_ECC.py": "76a427ac86e5f5eb35255b0fa4d8a32a2f74297ade810ec9c16d148cdcb8edbb",
+      "Cryptodome/SelfTest/PublicKey/test_import_RSA.py": "56c6fb97682d1ff6a5a7800f437b5d07c8f1e07a173bdb8425abbaeb92ca6d14",
+      "Cryptodome/SelfTest/Random/__init__.py": "bd698a03ef885f3388b337f5e74c1b1aad7e393015053237b2a2278eeb480569",
+      "Cryptodome/SelfTest/Random/test_random.py": "56d6ed11774fffa11ac59fe144bdeb3fe1eb055044a9bfc034dee5f077e84453",
+      "Cryptodome/SelfTest/Signature/__init__.py": "e01c48381f4831ecb57755e2c7297b991609627bb33695e4f372a5cc60621043",
+      "Cryptodome/SelfTest/Signature/test_dss.py": "f335c89d07b093af482459f3713c2acbd9137004bd41969b10a10cd4620f4340",
+      "Cryptodome/SelfTest/Signature/test_eddsa.py": "488e0aff1008014de3d9154948afab32032595a4f331a8a77d2c6c928f792285",
+      "Cryptodome/SelfTest/Signature/test_pkcs1_15.py": "ea9750ffba082a50de6833b1d26e57492a5123adc8b9a4fb962ddff27b70c528",
+      "Cryptodome/SelfTest/Signature/test_pss.py": "536e4123b0b734ece634b4ec241e444a1eda5a13b4ec5e3d5750957daa23951a",
+      "Cryptodome/SelfTest/Util/__init__.py": "d0ebf4807aa8f75351d1feb7f48cd0314f945f5a713a6f743c8fae51a38996ba",
+      "Cryptodome/SelfTest/Util/test_Counter.py": "8171fd0de8facdf8a1f1c03c0c524afd021b2c835845e9d7983c38daf56506d4",
+      "Cryptodome/SelfTest/Util/test_Padding.py": "557a6fc260e6381b0ab28209826448eccf3d6f6e26754350c7863c8e709b8d0b",
+      "Cryptodome/SelfTest/Util/test_asn1.py": "9a8d217ce9e9a6812ec2d8092232509d69771fb820a3f0f9ce4c6e6cbdbaae69",
+      "Cryptodome/SelfTest/Util/test_number.py": "f0dc8567aef407f400d38a8186eb1f617fb168326cfe7eaa3ba678af8c3a2aee",
+      "Cryptodome/SelfTest/Util/test_rfc1751.py": "891bbec4b2ec95bfe4b4d38f90ab384c058f963af10cc92c1674aaa36e6af5d0",
+      "Cryptodome/SelfTest/Util/test_strxor.py": "05154e6488a7df2a66c8c7dd079d9fb026e65eed5633074b152c7bb30dc1532c",
+      "Cryptodome/SelfTest/__init__.py": "fe3704de8505269e3192e29da0c4f4b6b5e4840418f0965eb8e710f242d95a9f",
+      "Cryptodome/SelfTest/__main__.py": "3605505f0226b8f852347b307741176d31ebf59bffcd464951910009ba493f1c",
+      "Cryptodome/SelfTest/loader.py": "a1f4de0f24bec9513976c7cea55b8a2f6fa05955a09811947a5341efafbf3b1e",
+      "Cryptodome/SelfTest/st_common.py": "5eca051e647f83294cc4685126b4077daacd9c84ff32ef2df6801e6d13d179c9",
+      "Cryptodome/Signature/DSS.py": "11db1db19a167ec5a8ebc75866fab74b9a6eaa3f473ba94b44174e8438653c10",
+      "Cryptodome/Signature/DSS.pyi": "cdacba2cd67734896ee3643adc8093de6644733fda546d6b5cb3a4276b5f6ac7",
+      "Cryptodome/Signature/PKCS1_PSS.py": "a372b2f4317d888fb0a461c38b9bd9b3bb29cc54a500d60892a82abb4cc2900a",
+      "Cryptodome/Signature/PKCS1_PSS.pyi": "c1f1137065889921b57b13b7786746e49f4005c025236e41c71ca31a82fac6c0",
+      "Cryptodome/Signature/PKCS1_v1_5.py": "684cf3b7571c14cef5a497c6e9daf0cc665e4c8fa7b4ce3e2cbc413f26855cb0",
+      "Cryptodome/Signature/PKCS1_v1_5.pyi": "44201d70c89024deb59359b25e71c1d059b35df2314603c052b3f3dcb0cf1b13",
+      "Cryptodome/Signature/__init__.py": "9e450e0c7007c2a985bde99d44b293157098d2587a59dc6616526e2c3d0805fc",
+      "Cryptodome/Signature/eddsa.py": "efa0989a194c329b2abbe21ab8a8073d8d6d54cbfd3ea0f28ebcc4efb0b04a1d",
+      "Cryptodome/Signature/eddsa.pyi": "bc0bf8a1e119630871c6aeceb9288d3b6ba2ad78e32b684e5d9b6fb66503d2c6",
+      "Cryptodome/Signature/pkcs1_15.py": "897e5c309c09d730da5acb44a66d04226fc6beb267c74907c498433d729fc409",
+      "Cryptodome/Signature/pkcs1_15.pyi": "93ca3be15569fd9c35d5599b84b0713e253a0b3cd39bb35b68dc0679678d9fd0",
+      "Cryptodome/Signature/pss.py": "cd2685d9fc4ad2bbdb0f224699b20951567a2dc3fe65256a68bc90caf9e76c91",
+      "Cryptodome/Signature/pss.pyi": "63446877de0046b49bde58bfa9cfc1557f0944066b79bed43dcf568052db9067",
+      "Cryptodome/Util/Counter.py": "0a7c57ee5b5c107806cd8aea449c3f67aa07468b486a1d1af0b7d11766569ef4",
+      "Cryptodome/Util/Counter.pyi": "d89ad31c962adbadd7a2c4120bf3483f44ee7d4b13946ed652bfa546a8c90ae0",
+      "Cryptodome/Util/Padding.py": "cbd6b5413ab179272e57af144c1e9872117464e66b00cd667e9461a15e02bf81",
+      "Cryptodome/Util/Padding.pyi": "e3b4771f6904eba3ed28ef36793fd57397824a035ee2a38582a3883d1765a7d7",
+      "Cryptodome/Util/RFC1751.py": "cc70badc9c7e3ea650d9e6dc606521686eb6bdf9054a495073c31999aa44ed26",
+      "Cryptodome/Util/RFC1751.pyi": "078d8bbec13a1bbf3aacd12cae1b5afc100d6b382ba5bd16a1204fa8aca3b798",
+      "Cryptodome/Util/__init__.py": "7ec65646a197651da098cd23c6e8a880a5b75b0ce5ccab934515988b0b4e39dd",
+      "Cryptodome/Util/_cpu_features.py": "7ff26296ec33c619a5b4c6e9b4843ca80d3761476048d06bdd1c1cc97f73fb17",
+      "Cryptodome/Util/_cpu_features.pyi": "df029767467c965736bb1003bdb873ddd1d5e982f246b0ee8ceb1a6d795f7c24",
+      "Cryptodome/Util/_cpuid_c.abi3.so": "f9a6dc47cac6e0db2dfe5fb5501991935ac202f9572d52707efb831cf1939c50",
+      "Cryptodome/Util/_file_system.py": "9bb1ec3e02ae291b13423828bfa560d36767ed7b1ae76c6108b9aa2e33c8a198",
+      "Cryptodome/Util/_file_system.pyi": "e50aee1163c4e2eacfb65093e4483cb41432855f5f7c17d92008e6328ef6edd3",
+      "Cryptodome/Util/_raw_api.py": "918c3098139c2e6f49638dffc279086786531763323b2ab4cff1cb569a097756",
+      "Cryptodome/Util/_raw_api.pyi": "3a1736aebe914be9e1b3a4f900bd58c90b5aaacc7a055ac96b4f760a2c00bcd3",
+      "Cryptodome/Util/_strxor.abi3.so": "ce54d8b9d24c472536d8f1f7c66f0a8b2df75eb9000c34506cb27b4426f0fe8a",
+      "Cryptodome/Util/asn1.py": "64b0b088b8ee7a15318b10fdd30922f2f9fb8d303989d0d46c434efdf4532b9d",
+      "Cryptodome/Util/asn1.pyi": "820bb663c9edc582a8c7bbd199c14979e69b44d42c54bd49d6a9eb7995ecf3e4",
+      "Cryptodome/Util/number.py": "9de93309adb16a7cbc15ceef7ab30e66453018a34d1d7deb67ad557f4fed8af1",
+      "Cryptodome/Util/number.pyi": "8b15f5052f04befb8f5cdd7ff1aa2c7581ca9ad5c607d36544d548f53f4c000f",
+      "Cryptodome/Util/py3compat.py": "8e7700df080b6681443b3acceef7696e2bd97d98c1eb8733531070fdcef1b15e",
+      "Cryptodome/Util/py3compat.pyi": "95c2c05d557ab7877fcbf12c51939811882b394733733325ff721ac08b71629c",
+      "Cryptodome/Util/strxor.py": "8089cd262c3e342aa3dd42dbec404267f177bdb1921c6c5c66b548dceb783c84",
+      "Cryptodome/Util/strxor.pyi": "3ae06fbae2bf7b3ab779a1d8d7427cf71a4447d210f70718cc523b8f5b69965d",
+      "Cryptodome/__init__.py": "b6d72d54ada9618c2fe55c0f71214faad11d801f22c104c00571a611fed90003",
+      "Cryptodome/__init__.pyi": "7b911ae39272d9174eafa6e62c5f63892d81c3ae569d84c3d4d30b2656c601ac",
+      "Cryptodome/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "pycryptodomex-3.24.1.dist-info/AUTHORS.rst": "1cb670b6cc5bc3a1c38d7e12cdf944442ca790425cf2a628ffbe3012445fe1e4",
+      "pycryptodomex-3.24.1.dist-info/LICENSE.rst": "4e04660d77c1c64e89d79537919fb8240fa21484a7e3db29f358b2c7f84ea073",
+      "pycryptodomex-3.24.1.dist-info/METADATA": "e0a6ad831779ef612e92989d858d78d4a56c6dc89595bd038d22cfff18b36226",
+      "pycryptodomex-3.24.1.dist-info/RECORD": "37b492fde4f6b0f7e3144137228a560ecb8c447797b904aaf9051ab613f7bacd",
+      "pycryptodomex-3.24.1.dist-info/WHEEL": "f86f14f53ad0c767a91d9b9e010bc6d14e4219ceec632b523bc42bb126799f09",
+      "pycryptodomex-3.24.1.dist-info/top_level.txt": "78753d6ac7ba8a7d5948112d4c3a65edfc083c838de369dba99d6e153c9c731b"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "774ca24f7fde19f3f3cf2d45d6a36ebb95e0e606c568e4a65802092a0fed4cef",
+     "native": {
+      "Cryptodome/Cipher/_ARC4.abi3.so": "macho-fat",
+      "Cryptodome/Cipher/_Salsa20.abi3.so": "macho-fat",
+      "Cryptodome/Cipher/_chacha20.abi3.so": "macho-fat",
+      "Cryptodome/Cipher/_pkcs1_decode.abi3.so": "macho-fat",
+      "Cryptodome/Cipher/_raw_aes.abi3.so": "macho-fat",
+      "Cryptodome/Cipher/_raw_arc2.abi3.so": "macho-fat",
+      "Cryptodome/Cipher/_raw_blowfish.abi3.so": "macho-fat",
+      "Cryptodome/Cipher/_raw_cast.abi3.so": "macho-fat",
+      "Cryptodome/Cipher/_raw_cbc.abi3.so": "macho-fat",
+      "Cryptodome/Cipher/_raw_cfb.abi3.so": "macho-fat",
+      "Cryptodome/Cipher/_raw_ctr.abi3.so": "macho-fat",
+      "Cryptodome/Cipher/_raw_des.abi3.so": "macho-fat",
+      "Cryptodome/Cipher/_raw_des3.abi3.so": "macho-fat",
+      "Cryptodome/Cipher/_raw_ecb.abi3.so": "macho-fat",
+      "Cryptodome/Cipher/_raw_eksblowfish.abi3.so": "macho-fat",
+      "Cryptodome/Cipher/_raw_ocb.abi3.so": "macho-fat",
+      "Cryptodome/Cipher/_raw_ofb.abi3.so": "macho-fat",
+      "Cryptodome/Hash/_BLAKE2b.abi3.so": "macho-fat",
+      "Cryptodome/Hash/_BLAKE2s.abi3.so": "macho-fat",
+      "Cryptodome/Hash/_MD2.abi3.so": "macho-fat",
+      "Cryptodome/Hash/_MD4.abi3.so": "macho-fat",
+      "Cryptodome/Hash/_MD5.abi3.so": "macho-fat",
+      "Cryptodome/Hash/_RIPEMD160.abi3.so": "macho-fat",
+      "Cryptodome/Hash/_SHA1.abi3.so": "macho-fat",
+      "Cryptodome/Hash/_SHA224.abi3.so": "macho-fat",
+      "Cryptodome/Hash/_SHA256.abi3.so": "macho-fat",
+      "Cryptodome/Hash/_SHA384.abi3.so": "macho-fat",
+      "Cryptodome/Hash/_SHA512.abi3.so": "macho-fat",
+      "Cryptodome/Hash/_ghash_portable.abi3.so": "macho-fat",
+      "Cryptodome/Hash/_keccak.abi3.so": "macho-fat",
+      "Cryptodome/Hash/_poly1305.abi3.so": "macho-fat",
+      "Cryptodome/Math/_modexp.abi3.so": "macho-fat",
+      "Cryptodome/Protocol/_scrypt.abi3.so": "macho-fat",
+      "Cryptodome/PublicKey/_curve25519.abi3.so": "macho-fat",
+      "Cryptodome/PublicKey/_curve448.abi3.so": "macho-fat",
+      "Cryptodome/PublicKey/_ec_ws.abi3.so": "macho-fat",
+      "Cryptodome/PublicKey/_ed25519.abi3.so": "macho-fat",
+      "Cryptodome/PublicKey/_ed448.abi3.so": "macho-fat",
+      "Cryptodome/Util/_cpuid_c.abi3.so": "macho-fat",
+      "Cryptodome/Util/_strxor.abi3.so": "macho-fat"
+     },
+     "pth": {},
+     "sha256": "9bb353c764c144a9fc03302ef3763ad0c3e75bc7ca41f445cc98455f36da6c59"
+    },
     "pycryptodomex-3.24.1-cp37-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": {
      "entry_points": [],
      "files": {
@@ -454,11 +896,419 @@
      },
      "pth": {},
      "sha256": "9b94a8c647c1f80b4c82c7ac9642dda94a71abbb4efa29ad652c410ad7a39879"
+    },
+    "pycryptodomex-3.24.1-cp37-abi3-win_amd64.whl": {
+     "entry_points": [],
+     "files": {
+      "Cryptodome/Cipher/AES.py": "d2a4192cf60f569986d394010d2fdfd648143de06fc34c9f82324216b92f4368",
+      "Cryptodome/Cipher/AES.pyi": "80df19a540d99137f731c79ad0816f370e86c76900d7549d9d457ab19674bd06",
+      "Cryptodome/Cipher/ARC2.py": "57d9fce3483474dd53d13a6dcdd3e6993ea5b3dd7480b7bc85c6a8d4a6e1dd9f",
+      "Cryptodome/Cipher/ARC2.pyi": "c724c1eb1442caeee70643125d96de0a7793a2e8470775e5d1e7628fca67af82",
+      "Cryptodome/Cipher/ARC4.py": "0152a932bc4b0e5238af5c9c145ef25a69e66e395804a700d60fbcee80e5ec8c",
+      "Cryptodome/Cipher/ARC4.pyi": "28855bc2ff6531efd40c42075eb5e506ad8a5f8d98b8041fb218725c7c484054",
+      "Cryptodome/Cipher/Blowfish.py": "297d5a2e4eb626583edc3e8c39194770b27773a8df00c17d71ce0b7e6f5de00b",
+      "Cryptodome/Cipher/Blowfish.pyi": "a363ef5a112333f407470a884e23357f1c251fe733091b95dc8e86ae3ff73a6d",
+      "Cryptodome/Cipher/CAST.py": "e8ba9158aa0d7dc7a881cfd411602a4c626bb8ce6aafc222c089de5e6dfb9bc2",
+      "Cryptodome/Cipher/CAST.pyi": "1469d7505976c0a27f8b23f64e402be8a897b00898539b5bb6803792178dfe1d",
+      "Cryptodome/Cipher/ChaCha20.py": "5b1f7024418f5f04a28da414ae94f9853a3cb230983705c7807f36a1e27f4185",
+      "Cryptodome/Cipher/ChaCha20.pyi": "ce31a7182e4369dc8f65d929813ce67e7afa67eceed9821b124bbeab13d9e668",
+      "Cryptodome/Cipher/ChaCha20_Poly1305.py": "0a2c38cda9bf82a356f65d7f8340209868fcc72b91bca727dba32f712a789748",
+      "Cryptodome/Cipher/ChaCha20_Poly1305.pyi": "6d880a3628c47d9bce851019c82720d570f44699e1b453af432ae4a7b20a1273",
+      "Cryptodome/Cipher/DES.py": "41aef064734cf279388bcd875f0252d27fdfb3565904b7fa1935f63c82f7ef47",
+      "Cryptodome/Cipher/DES.pyi": "bfbaf8aec79dfc45cb8c26053797a43735a7aaca50aa5504fe080e900a6a38e6",
+      "Cryptodome/Cipher/DES3.py": "c35476642d7b26e9c71cf16f6fb0e4c44f9cc643a3bf11f1990e38ac07332eed",
+      "Cryptodome/Cipher/DES3.pyi": "3b868d2e9a2b41c27fcac90e4c0dbae1634f7198720805ff9f450c4c4d7cb57f",
+      "Cryptodome/Cipher/PKCS1_OAEP.py": "fb7506c0c3cf900be360732641e00dfbbdde6d6c5a231412ed39740e90f434a0",
+      "Cryptodome/Cipher/PKCS1_OAEP.pyi": "6a2570614ace35d86e25eab9f2aaafd351b6b7ff85a9893556fb1a47524e099f",
+      "Cryptodome/Cipher/PKCS1_v1_5.py": "28d6dbd60684f210a8cf662a7ac66bcb978e308b7e2f24f9b579c664c70df960",
+      "Cryptodome/Cipher/PKCS1_v1_5.pyi": "49dcc3570b0637bf76aff4bb389af7e1388aad93cbffbf9a1feb7a3c12186adf",
+      "Cryptodome/Cipher/Salsa20.py": "27402b67081e01512474926a3f1153c6fca1ae528038cf7e645c179bca5fca1d",
+      "Cryptodome/Cipher/Salsa20.pyi": "edcd33b9365ad546cf6b01c7fefc73f1e7558bb50bfdb47fef26212c2e027ae6",
+      "Cryptodome/Cipher/_ARC4.pyd": "dd3a9c4651fae8ba9f44937dc5c3afd6e443f0a622036e21180fdf558cf163f6",
+      "Cryptodome/Cipher/_EKSBlowfish.py": "87d7cb3a47e3234519a1e01a2b0d007319264e2cb94e54a8864a22fd00165a36",
+      "Cryptodome/Cipher/_EKSBlowfish.pyi": "f2130e49c75b0660fcfd28d505bef95fa392cbc2ef636717f49f855546440706",
+      "Cryptodome/Cipher/_Salsa20.pyd": "cf27f0b954cb12880813b274c2a6afbde7b9f82f6f9767a0b3ad49af5c452425",
+      "Cryptodome/Cipher/__init__.py": "f78b5dd0f54af9d78107f27bb5d0e6605fc64bc21bb940cb52bb88ac335fb3f0",
+      "Cryptodome/Cipher/__init__.pyi": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "Cryptodome/Cipher/_chacha20.pyd": "a6ae1f2f1463e649660fb3f5585508b19944380d41371d43965645954b8a16db",
+      "Cryptodome/Cipher/_mode_cbc.py": "ac4572721d16342b0f4b4b81e06f1108dc391736f68b5f723c176f414002238c",
+      "Cryptodome/Cipher/_mode_cbc.pyi": "32c4737f3237691dac8534ea506cd139e17fa709139b07a3cdf3513ebc850dcc",
+      "Cryptodome/Cipher/_mode_ccm.py": "7c10cf1527b21202d23cdf182e04e37e3bb5124dd66d17120e0be68871188655",
+      "Cryptodome/Cipher/_mode_ccm.pyi": "0f134c396e824cbf0c5706faf704a9186ce9e2e01aff9eaef7f8dd5f3274d662",
+      "Cryptodome/Cipher/_mode_cfb.py": "56b7966054d1d7353546fa480bc0bb11a70e1bf01e909568cb00dc994ce30058",
+      "Cryptodome/Cipher/_mode_cfb.pyi": "15ee428028300fcb807af557db278f229c260ec98e8ae1971661b436cfe5c2a9",
+      "Cryptodome/Cipher/_mode_ctr.py": "9ca9b129a8d5ea8f08ae2cb0442ebc660c656ed2415b111037f241cdb2495abf",
+      "Cryptodome/Cipher/_mode_ctr.pyi": "ab8697e3cda28729d9cb6a6545ea1e3fcdc184c9e07bfb70d9faee38f27012ef",
+      "Cryptodome/Cipher/_mode_eax.py": "4f4f61208dab1a58ba3a03e70de3b9e31e5274d132bea3692faacb0e736404dc",
+      "Cryptodome/Cipher/_mode_eax.pyi": "c5246506d2ff0e2b13bae3a5d47467c47994932c24499fefcf32126c39bf9611",
+      "Cryptodome/Cipher/_mode_ecb.py": "d0a75e9cc56230e1c044411a1a6760ff7678d449e1263aeffef7e2752e360ff8",
+      "Cryptodome/Cipher/_mode_ecb.pyi": "8a8a5ed79efafc9cb7a3ad95bae1abcaa4e447776760778e91fdd6e510714352",
+      "Cryptodome/Cipher/_mode_gcm.py": "4443c5717af74dbd1531a6df05e5f5531a5262dae2636ed9e83f42ea7ed194f2",
+      "Cryptodome/Cipher/_mode_gcm.pyi": "49b6a847d2c71da556387d1987946edd0c259ccf3952c63c9d1061cb4eb731fe",
+      "Cryptodome/Cipher/_mode_kw.py": "4d09dbbb98de96c855e5338e748fcc88d788c4a702c767b2316b7f4094d4736c",
+      "Cryptodome/Cipher/_mode_kwp.py": "54e95bb968cacafbece6dcb2f15ef250f6da816781204021a26eca88950fc911",
+      "Cryptodome/Cipher/_mode_ocb.py": "3263550c7ade01e3088bc5773101c9d8f6b24628916ebc58ce763f3029d9d9fa",
+      "Cryptodome/Cipher/_mode_ocb.pyi": "e0c136e3762dd93c24793daf989d94061af30a300d7308bc8ad2ef69e73a92e5",
+      "Cryptodome/Cipher/_mode_ofb.py": "a86d0acfabadf852ef126484a267a6c3953af68fd17e6fce496c4d2dfc9bcfe7",
+      "Cryptodome/Cipher/_mode_ofb.pyi": "d1b1a685abe48604348da3ae3c54baf54ed0bd5cc9f0cb93867a82f8877f9ecf",
+      "Cryptodome/Cipher/_mode_openpgp.py": "46650bb1bb4a35ee304abac23817a48704babe4f93ecec4ce62ee97d49c44189",
+      "Cryptodome/Cipher/_mode_openpgp.pyi": "5e1521b1ea98d146374597a94ff5df82fbe49f7c3dc06f6db03379e1ea79d7e5",
+      "Cryptodome/Cipher/_mode_siv.py": "7610b08153895261645f469f4fb7d2d5211d86cbe7f46d27e49cbb1ba4ec5f94",
+      "Cryptodome/Cipher/_mode_siv.pyi": "80dae2a187b04f2e3729bcdf78de0db31e22ca0922ad420f65077c448f1538e5",
+      "Cryptodome/Cipher/_pkcs1_decode.pyd": "6a23a4639eb6fb17ba079ac66226e371ecd6226a37d48de37f920feb607020e1",
+      "Cryptodome/Cipher/_pkcs1_oaep_decode.py": "cd2d0a19763488d875f8f986a9711dd0eec9cfef663556a21f9393489ed4cc9c",
+      "Cryptodome/Cipher/_raw_aes.pyd": "c476ef00bde0e7c9d70e3928f4bfe04b5b8707d30c295751cc1a5a6e69247472",
+      "Cryptodome/Cipher/_raw_aesni.pyd": "4fb4db0f874d3c6c0f0b60bb054d1913106a8c155f33263ab43a28c6ada45f61",
+      "Cryptodome/Cipher/_raw_arc2.pyd": "624a1c62f94e2d97c98b1b9abe445b35f3738dc69f31db38ccb3d533212c0463",
+      "Cryptodome/Cipher/_raw_blowfish.pyd": "fdc14a5a9f4c977ebe5f6a1a83a6aee916a7be3fc138755458e1e900b37ebfeb",
+      "Cryptodome/Cipher/_raw_cast.pyd": "b908734eef3113437ae4f27c2f550a282e0a18de3619cd436370efcc165a0718",
+      "Cryptodome/Cipher/_raw_cbc.pyd": "054910d9f916df27e12a2af768953f5b2c399ed877042e81c29e7b550ac0acba",
+      "Cryptodome/Cipher/_raw_cfb.pyd": "d832ec85310cd7f9abb56544f7522d28c0e47dd87f92dba038cc7a5471de7bbf",
+      "Cryptodome/Cipher/_raw_ctr.pyd": "b51570afc00f4208d20b0a9fda23294fc90dd76d0c0d14e97f307654a30d9862",
+      "Cryptodome/Cipher/_raw_des.pyd": "c7f7b4ddffb27fdee044701db76cc655b2090baef170b3c8d875e69b2bf86242",
+      "Cryptodome/Cipher/_raw_des3.pyd": "30681a8e5d35c9afe6c910559df2719ed38d155d472af39f6d008ec21e88cc46",
+      "Cryptodome/Cipher/_raw_ecb.pyd": "3de1140d5bc0406009da25a7b512a0143b0538868a658faa3098f6934ab1337d",
+      "Cryptodome/Cipher/_raw_eksblowfish.pyd": "8fbab48bfbafcd89fe95208a2e0ae287d6efdf8afb34e91ae3de0bd034b0acc4",
+      "Cryptodome/Cipher/_raw_ocb.pyd": "8e52ed6946296e07f01d571937ba4b27878b8b44bc59e8fcfbc88bf37d6c28cd",
+      "Cryptodome/Cipher/_raw_ofb.pyd": "50888d7356b74637fbca7ae75fbaf3cb6a00233465dee5c8e0910b3fe21d35ca",
+      "Cryptodome/Hash/BLAKE2b.py": "3609267696b509fbfbc95575aebf10eca15e6de01975b9bd08498149d997c020",
+      "Cryptodome/Hash/BLAKE2b.pyi": "2f79fa6d217978db2c5a7cf297e73e555c2100e86fa5b2cb4c1deffccae353df",
+      "Cryptodome/Hash/BLAKE2s.py": "d74f1ab750f01aa9226901b59ec16a5accf1c1f82deca62c84bd893f6dc0877e",
+      "Cryptodome/Hash/BLAKE2s.pyi": "25933f08745028c43450b44e6926a00942023e68bf934d2a4d032b8f9557c251",
+      "Cryptodome/Hash/CMAC.py": "4f7813ffc544ffaa03acf5611948bd992714461d7f9f527c289f8a1bf8bf7ac1",
+      "Cryptodome/Hash/CMAC.pyi": "8a9787a689f900e660207c419a0c2b66d3d40db46d09f4ea9c19543640d26f57",
+      "Cryptodome/Hash/HMAC.py": "bd15c5f9573f25be1d886bca6d867d1727b9cc0d515dad6a3920663f0e308b5a",
+      "Cryptodome/Hash/HMAC.pyi": "c2c617969e9c441dcc4f844e9b8ba9767f49999272c239bde88d5f4faf6a672c",
+      "Cryptodome/Hash/KMAC128.py": "0d2f99d8a5420b8497bf7b3df0cf867960350e1c8df3d2b2c54b8efa3e79dc06",
+      "Cryptodome/Hash/KMAC128.pyi": "383b57b62578122cd924bfa4dcb324233ed0d7a847f89d16bdbd3ed8251240c2",
+      "Cryptodome/Hash/KMAC256.py": "cda06d88f0c0f2e04f94189b7534522326fc0161941b2bbd4e28d76ffb792d92",
+      "Cryptodome/Hash/KMAC256.pyi": "b220806e584ff8fa9c4a28733f1a096b631b700096020eadcf766b96f86a82e7",
+      "Cryptodome/Hash/KangarooTwelve.py": "196e3b4fe478b72e87e5909e04b7e074ecbc162a73a090ed894f3c88551b6074",
+      "Cryptodome/Hash/KangarooTwelve.pyi": "408945c89b54a2cc8eebf041dbd2f8db88adb46ce71f3eaaf7e091ac4baf597e",
+      "Cryptodome/Hash/MD2.py": "9601d8d74a4028c92fb70cfce74ba0d60452626fdee745449ca0422f673fddc5",
+      "Cryptodome/Hash/MD2.pyi": "3b3c9e78a4313ac9d7935d4ae92c650879be8f55007478154429919b4794bb42",
+      "Cryptodome/Hash/MD4.py": "ed0d926bd378a41527ca814a5dfb5cf6cfb98d3809103e2673f40bcb9b085477",
+      "Cryptodome/Hash/MD4.pyi": "0602da2a342d9ef1f7c015f953b2df27f51c25a5e99f89044e71579662eba5ff",
+      "Cryptodome/Hash/MD5.py": "1a2d335c1b8ff41727d9b6671d784f38a477c66fc8b7b8b73c666d1c11e9dc30",
+      "Cryptodome/Hash/MD5.pyi": "8a3e274302454bff4450c1df6da89a048f13eb048e64c6781408f18066f8430b",
+      "Cryptodome/Hash/Poly1305.py": "6294a5c148749ff8125fb3c487bdf6ec27b192a7c04260d8121df1424cb02e60",
+      "Cryptodome/Hash/Poly1305.pyi": "7da8b1db291f97f8751ebe26aafb6663571467c4a13827f8114895990e3dd81a",
+      "Cryptodome/Hash/RIPEMD.py": "eff0bb4c5f58362c0629da431fa0e104cc940afa056c10816fb09dd6fb4929a6",
+      "Cryptodome/Hash/RIPEMD.pyi": "385d71a0a5da965f3d2eb35f4b206f9451db73f4541342e095cc3d13cb0caffa",
+      "Cryptodome/Hash/RIPEMD160.py": "3e6529101d697fa20b8a312b179e3d246df35713bf5d89221e31d0151ceac2be",
+      "Cryptodome/Hash/RIPEMD160.pyi": "84f643a25df20e6a761ad4e1ecdc6f04493db5ccaf6108254b944a31662a00e7",
+      "Cryptodome/Hash/SHA.py": "3f9736a9577a2ecb370b3794d84371ad29a50c0a6bb96f33bfd3416f2c111b22",
+      "Cryptodome/Hash/SHA.pyi": "583bef611f4709956ae4271173e91f7dac236d9dfe8d357095653cd63b870a21",
+      "Cryptodome/Hash/SHA1.py": "0476ff36d5a6474745f8bc52abcb65f5644160d793e38eb4994578028156649d",
+      "Cryptodome/Hash/SHA1.pyi": "4fc9652243b1b4a443c08c6b22f5c5343c63453405a13fbe9cc9dd12de6951ea",
+      "Cryptodome/Hash/SHA224.py": "ecf616ecf66b9c468c7381d670bf1c51b1047a9a56ee8fcbd559f186ddcdc990",
+      "Cryptodome/Hash/SHA224.pyi": "a3fbcee498c3c4cadc8d5136aced4c69de9b941802aea4aef8c6b272df1e054a",
+      "Cryptodome/Hash/SHA256.py": "3a1c4d67ea737135a97b135016463ac3b970faea8ab5e3245759587393636e65",
+      "Cryptodome/Hash/SHA256.pyi": "07892d70c0fa32a19dda232203bd7ff0d25b19f30e599924836a8d4bb6161a71",
+      "Cryptodome/Hash/SHA384.py": "53e46c03bd71d4042c3815b139c5dcb7b3897959950a995083504fae94b6edd4",
+      "Cryptodome/Hash/SHA384.pyi": "102f8dcec4b3e3e3e019f6ce2b165c0fddc41b70eb2e3169270be35f227f2d5f",
+      "Cryptodome/Hash/SHA3_224.py": "28737bb6b59bbdffa0335d3e2115d134745cf175dd42723172b9a548bd804069",
+      "Cryptodome/Hash/SHA3_224.pyi": "ab9abf3623247f77fde55038c8531ff4c22e70532cdef140fa9f0b645a15ac36",
+      "Cryptodome/Hash/SHA3_256.py": "dd98eb04bb1de3445702412e886b4fd09cd369caa882dd0eba16bae9c78eff54",
+      "Cryptodome/Hash/SHA3_256.pyi": "7eef366e028519327074aadf07fef65fd87564deae82a1de1e03634a928047ab",
+      "Cryptodome/Hash/SHA3_384.py": "f7e48a1a8f4d94bb3467f8c3938e74e60b4f6599c317e1a76d97527f9a353fb0",
+      "Cryptodome/Hash/SHA3_384.pyi": "d328a5327c257aca3516c7c11b617d30d5e0c7c9915a32f4c6b3ddfe269dcf7f",
+      "Cryptodome/Hash/SHA3_512.py": "3c0e8daa31c75580e3906e09dd234af781bdfc75173e9577c59a43a2301098fd",
+      "Cryptodome/Hash/SHA3_512.pyi": "5699b054358a0c556096c132c09c8b3052e5efe815a26edabc5ad5e896bf8e9c",
+      "Cryptodome/Hash/SHA512.py": "d383ebf0f852240410b4d2a983d318a997e222fb47e6c9e3e74f5e5e3c30c6f4",
+      "Cryptodome/Hash/SHA512.pyi": "bb0e0df4f3fffb4a2b9efe5b674d7407bbd248678b0bf2a44ff0aa07d247dbda",
+      "Cryptodome/Hash/SHAKE128.py": "22248c62ff803acc69578982bcd96080bcaedab2062c032b35a3c064bae381b8",
+      "Cryptodome/Hash/SHAKE128.pyi": "00caa4065ad97561e5cd6f89916bdfdda4766aec85c462aba8b608a7fcd8a282",
+      "Cryptodome/Hash/SHAKE256.py": "6d17e4a23c9abe1ecc53428b6242384aa213c94f4611e0cf6a92fcad0f84ba12",
+      "Cryptodome/Hash/SHAKE256.pyi": "d96adc2383419787bf7af4fc5c0ea95b75592ab6832b4021c7ed96f3996d7504",
+      "Cryptodome/Hash/TupleHash128.py": "443d41ebc9f4384e370ac51be01c56913cbdbe1df4c93769b1e85220b505052c",
+      "Cryptodome/Hash/TupleHash128.pyi": "b5671e5e8fc4513c2e0c9f072c1a9c868656f0cd66783dc011fc4556c1bd2306",
+      "Cryptodome/Hash/TupleHash256.py": "96bb2970b54cc270de193fb71155affbf54f9acf21310ac4ad968893a478b3df",
+      "Cryptodome/Hash/TupleHash256.pyi": "0b014a808207e4c2a6375dfd6ade40c97b5802c8f9ea76748f333c1386c6704c",
+      "Cryptodome/Hash/TurboSHAKE128.py": "34eed4fe42ffa176d466f5b3e7c55071eae79ea5fce4ea31c38d1d5796d5ac9a",
+      "Cryptodome/Hash/TurboSHAKE128.pyi": "b7617049d0b2131180ea0b73ae8cac73839a27d394be6b4d9796f9d0198de6b7",
+      "Cryptodome/Hash/TurboSHAKE256.py": "ad79e152a2c83ee90ac61ff7245df570673fbe28720d9de8e07e2fddbf0e51db",
+      "Cryptodome/Hash/TurboSHAKE256.pyi": "86dea501f8ed56bae7652415243b38845ab1c94a1e4ad0e737a98a37a80235ea",
+      "Cryptodome/Hash/_BLAKE2b.pyd": "8ec098753c772b47230ba41e405913126dc05ab64b393333f36c318b51489590",
+      "Cryptodome/Hash/_BLAKE2s.pyd": "7c6049038561f0a5ced6e1e475f1efad7e40763987c4444979a5dedd613fc618",
+      "Cryptodome/Hash/_MD2.pyd": "b17c95abe715e67312a8ec4db515e5287ca5258158cf1a45905db08f49872731",
+      "Cryptodome/Hash/_MD4.pyd": "10a4d1768ad89cdf96cded5fbcdee7ed223599c10c01d8075b8153c8019406b4",
+      "Cryptodome/Hash/_MD5.pyd": "96381b3a405d1a5f4919500a25605a66aef21022f017a5ac6a62c639b79879ff",
+      "Cryptodome/Hash/_RIPEMD160.pyd": "782ebe9212b6a2dd8fe7b5617e38e334d2028f0e76d101c93386ed0ccde3706c",
+      "Cryptodome/Hash/_SHA1.pyd": "95a407910688654832b9c234fd493339b8463ac5a0cc499bb8e871452059e5bd",
+      "Cryptodome/Hash/_SHA224.pyd": "528a3cca54cdefe104f378e6b6798d8796dba5a95eaf7d7bd0b1df489ca97f08",
+      "Cryptodome/Hash/_SHA256.pyd": "2faf8c0ba8b7dd04f53edde98a02f65654053184a95642bc42b0d9c100e09876",
+      "Cryptodome/Hash/_SHA384.pyd": "90128cdd9d178ad1cbfa8d5ee16f43d95fe02c63cd7fa9f77f74fe182698c335",
+      "Cryptodome/Hash/_SHA512.pyd": "1f9a2b97c3d9a8198b1bcd810e3c2ef628b4b072dee92ecb0921cb13733377ca",
+      "Cryptodome/Hash/__init__.py": "79aa947f1c29d838adf9fb696fe5efc169fa67c73ccee8abb89fd65985d6b440",
+      "Cryptodome/Hash/__init__.pyi": "b8a157c035f24a8e3c29e5ff77c39836c4fde12b7d6ebe30cb2207b565da2b5c",
+      "Cryptodome/Hash/_ghash_clmul.pyd": "255486a3f9c18a66e5cbe4e0b7c4c8df7bbe17801ac037664020fb1b7345a360",
+      "Cryptodome/Hash/_ghash_portable.pyd": "886853a7d66cc698f4056054cc39742d4e7496371b5dfeb4c780f60943d7adb8",
+      "Cryptodome/Hash/_keccak.pyd": "4731fcb3ba86ec62374e1f022a796cf951dabb2b2202b9e89004778061bffb4e",
+      "Cryptodome/Hash/_poly1305.pyd": "8a29d20bfc01ff7948e2e116aa88003f668cd7a69f5b9e51efa2a5c7c2518feb",
+      "Cryptodome/Hash/cSHAKE128.py": "349cab0602ea40bcff277ffb4bdc28349eb5ba22abacaa2787c065be5e632fdb",
+      "Cryptodome/Hash/cSHAKE128.pyi": "996de23b6a41d7158b3c0dd8b3de5de532f6953706640866cbe19243a882f3a3",
+      "Cryptodome/Hash/cSHAKE256.py": "d7f74253988ad96510f53cebd756e94e4b1b45cc339b325349ee25d5b3b57458",
+      "Cryptodome/Hash/cSHAKE256.pyi": "5da57a092d8d896ce5d295d7dd69d56b6ef1e4aa38294346f7ea0a6fdc56aef2",
+      "Cryptodome/Hash/keccak.py": "e8cabc02084e2f8ec46fbb3c03eba01230d70b8865a410e1b777dab1207d169b",
+      "Cryptodome/Hash/keccak.pyi": "3a1db3e7321efb30c4aaf0fad5728728c7aadcebbbe91e4272940db1f9a677f9",
+      "Cryptodome/IO/PEM.py": "5fa5afddf9013c0325cbee30de98939d41e1147795618c957e66e02af8792eca",
+      "Cryptodome/IO/PEM.pyi": "fd17de9b1d9eeb3950223be5e5b16a8ca3ee0a7e4822557f0b882bff3d67a1d0",
+      "Cryptodome/IO/PKCS8.py": "80e7a78285d704570a75e1ee028f15f5473405160b38844062b1d8a7eadaaa6e",
+      "Cryptodome/IO/PKCS8.pyi": "fad405161c2dc747135241b41988e65295d43b7f3f971fccfc8b76d634c7d144",
+      "Cryptodome/IO/_PBES.py": "285606486f8e7779da33568ed3f5cc4351152729ddb19f03555c213e48209628",
+      "Cryptodome/IO/_PBES.pyi": "47f4fd8c81c49bc886bcc7ceee74bb61d5d92b2962bd50a5137393be82874730",
+      "Cryptodome/IO/__init__.py": "655dbe52f138022ccdaef6db28569eba1d513617d12ad88685d793e40c21f5fa",
+      "Cryptodome/Math/Numbers.py": "cd5927aa7d4b57e550abcc6d2a3290f6f165e51e583baad185ac4e10e32b373a",
+      "Cryptodome/Math/Numbers.pyi": "36e3014b15693406377c64fbc0e58407e6419a3ff10816f1fc5961da545ed142",
+      "Cryptodome/Math/Primality.py": "9e315f65030720826ee4a6596e7ec90315f02a9d090386d8c01abda23087b500",
+      "Cryptodome/Math/Primality.pyi": "f73daea86e4577fde3b6e314a1da38441a8f0ca8ac64a018821e10706b80c903",
+      "Cryptodome/Math/_IntegerBase.py": "b7b746cf7e40e3fb9001c82ece5981707db37a9d911bf48ac048c2a23e8afa28",
+      "Cryptodome/Math/_IntegerBase.pyi": "c8a26aff672f06b9c4d80286e0ef8dde8b2b41ff4c317ab75aca0fd0d01c751e",
+      "Cryptodome/Math/_IntegerCustom.py": "26ba8c29ba0b6cedb713c07bf55bbc616a967d0d6bfa5ff5d28d0f931541c5c8",
+      "Cryptodome/Math/_IntegerCustom.pyi": "baf20195fdb64efab526fe676151ce94716dce7ef897edfbf92bc744e53aecfd",
+      "Cryptodome/Math/_IntegerGMP.py": "76c11acf70b22b480a64d2f624f7d78b0f061dceddce2c9ac01667670e205f8c",
+      "Cryptodome/Math/_IntegerGMP.pyi": "32d4d0b0b2fd179f5dfd1a04c22a2d3fd4d178d5c7645ecf15754fc073c7e508",
+      "Cryptodome/Math/_IntegerNative.py": "1fe14a732f00f32402dc64b8ba413bcf8d3e413f0bd0788419622f4f16676e6a",
+      "Cryptodome/Math/_IntegerNative.pyi": "ca1dd04ecac1474b1fbdad15ab86881fb10e182a32c3aeb88c3f9f1b468e62e7",
+      "Cryptodome/Math/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "Cryptodome/Math/_modexp.pyd": "fec06d1ef2ba26f193d7117508dd2be88bb3536ac1ea9f9f8e0dcc86cb14e851",
+      "Cryptodome/Protocol/DH.py": "0e94b71f9c9a9c1947fa073afbbbd445e19af8b6660ad905274b60516c3b36ea",
+      "Cryptodome/Protocol/DH.pyi": "0165954822e201884855d758ecd526b2d53556065a67f40211b039d4d7761133",
+      "Cryptodome/Protocol/HPKE.py": "2fd5670abe4ea83d84426965d289e4a72f3e94432a887347f6cb1de5eabec24d",
+      "Cryptodome/Protocol/KDF.py": "35b294d8bbcac58c0a25a0218f755c0c8f2a175bf76520f2a5e8acdca9663e64",
+      "Cryptodome/Protocol/KDF.pyi": "2bb0a80795e8ab20b2078d7317dc0e76aa6cd7b6263fedc4d8f45b0c6b75b204",
+      "Cryptodome/Protocol/SecretSharing.py": "4b9c052857d34758d4baf7330bc1ff20ce1c891f91ed80320931715968f7c329",
+      "Cryptodome/Protocol/SecretSharing.pyi": "17bb4b071a5baab986780546a7b0f506f186a683cb2a2a9c9c3b727c3d9c0921",
+      "Cryptodome/Protocol/__init__.py": "5e519ac6fbc45fdc85a460e0ddad070baf48bc16c1ba2906a67168f89e3f0899",
+      "Cryptodome/Protocol/__init__.pyi": "d17ff2840e82e8bdf3fc2378b27b824fe0c97506473295746c18253407fda61b",
+      "Cryptodome/Protocol/_scrypt.pyd": "d6004b77fa942ee830039a67ac34b2a244162a66db7218b45bf0d0cc366fac2d",
+      "Cryptodome/PublicKey/DSA.py": "5d782dd2936b5b2a224719e9b84e5b06db05382f0074fe78b4035c6590a50621",
+      "Cryptodome/PublicKey/DSA.pyi": "7e2d92cc91313869ffb9acbde0f4628f6bb9995ff154bcc0e8c2f1f733e96c4f",
+      "Cryptodome/PublicKey/ECC.py": "6994c232937958d86cb31d47bba084145d25869aaad18164af736518e45313ab",
+      "Cryptodome/PublicKey/ECC.pyi": "3ae7c24acc1cf9f4aa774a706e63cc398c38d0fceea4a05d70956a7575fdcb3d",
+      "Cryptodome/PublicKey/ElGamal.py": "3f4ef17d18bf3ed07e1e86975539a1d51e4f9c693b2b0bd5a58eb953b8cb6d5c",
+      "Cryptodome/PublicKey/ElGamal.pyi": "701c7ca660a0ecbf8b633fbb1a080f447fc693e128965d369c6165f621cd80b6",
+      "Cryptodome/PublicKey/RSA.py": "4a38379fdc81b54d4d3237fb212bf9ae514ce48ca109e4a995cfde2f460a0b3e",
+      "Cryptodome/PublicKey/RSA.pyi": "fed5301843faddb9262e17df269746d55b9a594e26b736de9c493731aba319d5",
+      "Cryptodome/PublicKey/__init__.py": "ebe86d392cd784966390aa48e472ea116b944c9f1a2ac38fe088dfbe3776948e",
+      "Cryptodome/PublicKey/__init__.pyi": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "Cryptodome/PublicKey/_curve.py": "5ccc3bc94e70a3fcb0d5ed0ea47b1211d3bf4e4ee0286bb8d2c2078b60caa14a",
+      "Cryptodome/PublicKey/_curve25519.pyd": "13ff69fbb08c90faad33dc2facb25f6fd188e5011623a60a20bfa8aa04102d5a",
+      "Cryptodome/PublicKey/_curve448.pyd": "4f7b5d9bde1788081882bb18cd9dcac6fa48285ca06b836e1d6871d7611d82f6",
+      "Cryptodome/PublicKey/_ec_ws.pyd": "a771ca51feb93b70532611c5fa3145ba3bd5019c412b365632df2058f3d42806",
+      "Cryptodome/PublicKey/_ed25519.pyd": "af1ebd5f5290d376537ef2dd06acbd5ee1054b834fac3bd4f20a2b7461685d48",
+      "Cryptodome/PublicKey/_ed448.pyd": "430c834c7ea0bd1dc413d6e711844ce2f879a5f517b8cb347610198becfa65ea",
+      "Cryptodome/PublicKey/_edwards.py": "7a4b1978ba0509756db8f50369e9c08d9d73f9ccad42910ab2240788cca4c38e",
+      "Cryptodome/PublicKey/_montgomery.py": "28fa6f7096a1ed303df98c840190ae0a7c8a34330d53899a64ca74e7cdc75c46",
+      "Cryptodome/PublicKey/_nist_ecc.py": "6e4f16a6930871681261bdb94ad0254ade17ec0e8c1ba035fee46d692c391554",
+      "Cryptodome/PublicKey/_openssh.py": "1770b5eb194c3f501755156016c72b7d53c3e9c30b9af483b1278496f711abb0",
+      "Cryptodome/PublicKey/_openssh.pyi": "564c2b01dc5d096bf508761db881e201172e2d60e939ba2f78e20be46a74dda0",
+      "Cryptodome/PublicKey/_point.py": "b5f502614d2e3329f30095e1af4b209208bea42e646f24f54437dbe06b37718d",
+      "Cryptodome/PublicKey/_point.pyi": "444a7983a33256d6f929fe441e08730ec90ba9e072157623c31c5c710b649a7d",
+      "Cryptodome/Random/__init__.py": "6970818adb817aa3021e624c7bfaeac0ebe70179f38d832ecb8fb82f77f9cf69",
+      "Cryptodome/Random/__init__.pyi": "3a9548ef07a83c2f2bf7db05edb776bd788b9d9c112ea8155333242839cc27d7",
+      "Cryptodome/Random/random.py": "847d850d2878e5dddc5c984b08ecbce8a4b698d3890d9a71f20c5659424306f0",
+      "Cryptodome/Random/random.pyi": "043aeda2f263a42a0086fcbb0ca801ff1d9bf396ffcc966452ff25dd5030a013",
+      "Cryptodome/SelfTest/Cipher/__init__.py": "eed90c4704b6c5a076015b67c96e78c644024bb4b40e552808cbe33740c74b90",
+      "Cryptodome/SelfTest/Cipher/common.py": "15c9270c773fbf33890895429527f88dbfae79c7a0d9da3afffcda2ad4764371",
+      "Cryptodome/SelfTest/Cipher/test_AES.py": "ee07f5393e0155111e8ddbe238154d6bf501b9e038890279154a90dec0ae3211",
+      "Cryptodome/SelfTest/Cipher/test_ARC2.py": "5069a1bd0a5710482d4fb179c776b26c388a79a1764cf129d3c34b51867be9b3",
+      "Cryptodome/SelfTest/Cipher/test_ARC4.py": "c27fe407553bdda4b317777ea16304119649f703fe7e394b72fb2c6952f116bf",
+      "Cryptodome/SelfTest/Cipher/test_Blowfish.py": "1c0a6cd28c17e605b4b38859539915a48188b80c065d3e6105a75d18b2085d1f",
+      "Cryptodome/SelfTest/Cipher/test_CAST.py": "d254ee98ae5448be3325495b760488584fd7aa01c84e7c37dc575c3b67c48353",
+      "Cryptodome/SelfTest/Cipher/test_CBC.py": "c051240d42f4d787c4fcf8d9b93e7d57c6c06a9522ce6491560f5787fa720ebb",
+      "Cryptodome/SelfTest/Cipher/test_CCM.py": "8b4edb93a8e72dd904e97c390ef544fe7b9e0a106c4bb39fd696ca29f7c4e0c7",
+      "Cryptodome/SelfTest/Cipher/test_CFB.py": "8c8e7064d74d5febb6dda2d8f732b0fdc8b9dbd8c60628850b1a9edd0e928ec9",
+      "Cryptodome/SelfTest/Cipher/test_CTR.py": "a0b3aa6e7c8eeff74262e46241fe243384f092fbf12739c37e220c103a8a670c",
+      "Cryptodome/SelfTest/Cipher/test_ChaCha20.py": "38ab297958c0f5cae2740874b3a4fec39dae50544a0549afac27ac970bb79c4c",
+      "Cryptodome/SelfTest/Cipher/test_ChaCha20_Poly1305.py": "5abaa42791eea74a443a8af27f6b30789ada4da25eafd3c27b55e6fd0a72b5bc",
+      "Cryptodome/SelfTest/Cipher/test_DES.py": "c41578e0f083953cd2db20bca178ea025555bfff316226554660d9d022629d5a",
+      "Cryptodome/SelfTest/Cipher/test_DES3.py": "3c3f70949ba35a7ad857f868a965cb3c60deccf647ad8f57d1376a927d4fe6b0",
+      "Cryptodome/SelfTest/Cipher/test_EAX.py": "e88222f910617630cc5a787aa5cd9ed2aa7fe97e2afede81081a1a49563950da",
+      "Cryptodome/SelfTest/Cipher/test_GCM.py": "4c74dac5a5c6c9c13bc13ef24b785da7a6a3152021170853b381cb01657d3be3",
+      "Cryptodome/SelfTest/Cipher/test_KW.py": "9f09079569353dea1e6455eb4f348ba7afc3ca38df6a49a0f69dc7d195cd4886",
+      "Cryptodome/SelfTest/Cipher/test_OCB.py": "2880ba6f625dea89877c48779f483200bf30cfc0ede1d6760544ef15fb157cdc",
+      "Cryptodome/SelfTest/Cipher/test_OFB.py": "2e80b42d5b78fab6cefdfd3a0c673fe4b4c7acd980f0591ceb8273818a0e61a1",
+      "Cryptodome/SelfTest/Cipher/test_OpenPGP.py": "8a26ffc64b50c468a32bb086525829707fdc65f944f49cd533741ffd755a7fed",
+      "Cryptodome/SelfTest/Cipher/test_SIV.py": "c3c3cea65eabd6573a1eaac18d39800fbc0327d89ed17705c1b7747d60e34dce",
+      "Cryptodome/SelfTest/Cipher/test_Salsa20.py": "7c46c82be5de22a6254199e3998a0d09b2a29489aca1a1b1dad66d2e9441a097",
+      "Cryptodome/SelfTest/Cipher/test_pkcs1_15.py": "f6246a4990bd7f2f862829af855a324b207ed435a3939a29be02d512306ab6ee",
+      "Cryptodome/SelfTest/Cipher/test_pkcs1_oaep.py": "fffe36539a06b60d92d1e7030ba0ff72c87e28e9e583f7aa633310e897432a3c",
+      "Cryptodome/SelfTest/Hash/__init__.py": "114a5761ae6b99d817537aa5b474e0a085e1333d5d6b9f4d8b57d0e4be44a632",
+      "Cryptodome/SelfTest/Hash/common.py": "0c56560d68a2b9f7442e0ba76e6fbcda2da6924eea8d7485e0f5dcf46c184f53",
+      "Cryptodome/SelfTest/Hash/test_BLAKE2.py": "65852d9901d26e3829abe9ef0077ccea7adc4c2b884438d7befd122fafb931aa",
+      "Cryptodome/SelfTest/Hash/test_CMAC.py": "e18d99f498286a1c516bb8beffdf078efd0d8a12e8112b0ff93713be7375a840",
+      "Cryptodome/SelfTest/Hash/test_HMAC.py": "8e3927366532393ea4f31c27897554deef7464e53c2fd01c91b4dc117cfcc237",
+      "Cryptodome/SelfTest/Hash/test_KMAC.py": "5f6f4ceb9ab1413ab60f86e0d30e051cd3633bfbeac0950574dea47246118e5b",
+      "Cryptodome/SelfTest/Hash/test_KangarooTwelve.py": "9949cc916a894269ae3ac4723cb8cd90caea1fa273235784b419f7cf3e37d07e",
+      "Cryptodome/SelfTest/Hash/test_MD2.py": "ea04cba208fca5181913674787512a7cfab1636222f02c456e9bdb756298d4f5",
+      "Cryptodome/SelfTest/Hash/test_MD4.py": "b508b4b2b329f22d9b30b9aa9058411eea42452322b70211421b874740474112",
+      "Cryptodome/SelfTest/Hash/test_MD5.py": "50b3666e4d8bfdf0b2064a97b11887cccded151b4106b03fb4b06ab336517995",
+      "Cryptodome/SelfTest/Hash/test_Poly1305.py": "9f2140617b0dac2112b567e81b81ea215852f13a035654726ad9c0cb8a3dc4c0",
+      "Cryptodome/SelfTest/Hash/test_RIPEMD160.py": "ab262d4592b76e2531eef56fe38239ff0e630b51eaeec2adc8420b3524c9782e",
+      "Cryptodome/SelfTest/Hash/test_SHA1.py": "1f5b9af1e96aabfab2ff173085b89f3170b57caa2e8fea086e802bf4e65cceef",
+      "Cryptodome/SelfTest/Hash/test_SHA224.py": "b2d11b3990ae7b31e019fce45b92eb0686be016a01921393765c7be5eabbe45d",
+      "Cryptodome/SelfTest/Hash/test_SHA256.py": "1f2ece73919964e7a78f57aa85fdd9a0ac1d8fa892451872a94212cbe0d627c6",
+      "Cryptodome/SelfTest/Hash/test_SHA384.py": "f92bfdfc3723c4f4e6cc2c68533bcd0a6575b2b88454c260e9a3aea8fea24807",
+      "Cryptodome/SelfTest/Hash/test_SHA3_224.py": "7cbddabfbce5983da07e9b9f89df0d74bddf0b19e86d601ded56eceaaf13c2b6",
+      "Cryptodome/SelfTest/Hash/test_SHA3_256.py": "bb1f328e905caaa246f80b0717c33752b1bd76cd701b251115ddc8de46803dc3",
+      "Cryptodome/SelfTest/Hash/test_SHA3_384.py": "2d0d15100dfb710824dd98254eada038e5e4f6d013343e6ab9211bbdde91c16f",
+      "Cryptodome/SelfTest/Hash/test_SHA3_512.py": "8f70a96a6a296fce8dc35b6e9fa0b7165165db7c6cc19eaabfa35880041e6441",
+      "Cryptodome/SelfTest/Hash/test_SHA512.py": "5e1635b3909ec13b64b52fe3de2403fded79e072abb7605626fd07f97d18d864",
+      "Cryptodome/SelfTest/Hash/test_SHAKE.py": "fd6b462d6aead0d373b58ae317ca4158fa6c1a9a22535d5eb1cc3cdd5d9f4af9",
+      "Cryptodome/SelfTest/Hash/test_TupleHash.py": "39607a6008c85d1757b07a685aeae41bb4f3448147bb9e665e55abbe7d28d96d",
+      "Cryptodome/SelfTest/Hash/test_TurboSHAKE.py": "2fa6b5cd5ef1842e92c9662cea1b1d5090ab51e057260317cde09b2583199bfe",
+      "Cryptodome/SelfTest/Hash/test_cSHAKE.py": "85785ef08b1bf94d3f68deb94d74e261b87005cdd49ba6f1dc6126f7f8f4eb55",
+      "Cryptodome/SelfTest/Hash/test_keccak.py": "0fc4806701bd580c32aa321cd78a6d1270bf95b27f6ffbc703257d1105ee7c15",
+      "Cryptodome/SelfTest/IO/__init__.py": "dff0c0d77894ea9767c1e7164bbe481377a8fd79602115c3e46236e9fdb5d77d",
+      "Cryptodome/SelfTest/IO/test_PBES.py": "cb9925c506675cc57cf11d0a0cb41b3273586e29f6e1cd7922a3f0eb64bfc16b",
+      "Cryptodome/SelfTest/IO/test_PKCS8.py": "a89da6f7538a6e1a9e1d602aff6056ce651989c6c0279ffa348bb36dba0d5aad",
+      "Cryptodome/SelfTest/Math/__init__.py": "96655a808ee891d1861ecaa4058f51a5b134492d9e992aa6ed855472d6ae8fa8",
+      "Cryptodome/SelfTest/Math/test_Numbers.py": "ece6ccc7200be98838c5155f1fa1a55f38b476bdaa64b9992322ae70de9afe0f",
+      "Cryptodome/SelfTest/Math/test_Primality.py": "7fdb4557551c95f2267d3cc010018955d18cbc07e5fc7b39486504d029b6b6ce",
+      "Cryptodome/SelfTest/Math/test_modexp.py": "6f3f7a79f8a431047b05e3c6a70a6772c147a9c2ee8f7d855ce022b2995ba8e4",
+      "Cryptodome/SelfTest/Math/test_modmult.py": "48a5d3899c5efce0f4c63131c3beb5239c204a52eacb53c05b71ecfa3f7fc25c",
+      "Cryptodome/SelfTest/Protocol/__init__.py": "138cf10f3bb54e13b06f9cc4966c55a4548631c8bf85bd63dddba43955353f6b",
+      "Cryptodome/SelfTest/Protocol/test_HPKE.py": "377d4bf599f288816bc35849b2b47fee5eda25952a7cf90cc7f47f9b59a072ea",
+      "Cryptodome/SelfTest/Protocol/test_KDF.py": "2752a17f62c54459d300680826300a308f6dc164168ce2023b90ea8680f5a927",
+      "Cryptodome/SelfTest/Protocol/test_SecretSharing.py": "eeb9a9cb378a123701a307df1d919731278f13bad2080c330822f972adb84eb2",
+      "Cryptodome/SelfTest/Protocol/test_ecdh.py": "5c80462639fc882200556487d6de9245441ad31d6a5bacd7201016aabc930068",
+      "Cryptodome/SelfTest/Protocol/test_rfc1751.py": "24a724c38bde4f10188f2bb99391aa45ee6ffefdd0b014f5ff596754133cee84",
+      "Cryptodome/SelfTest/PublicKey/__init__.py": "6520d5f34b8961fcc8ffa2eb99e16571497b9e5142791126a4c8c646c1683a30",
+      "Cryptodome/SelfTest/PublicKey/test_DSA.py": "9df5dea71102e4ee6f0a657cc6d6ee8b955d2789d2470b871aa8a80ef3e795a3",
+      "Cryptodome/SelfTest/PublicKey/test_ECC_Curve25519.py": "8447b2d7e1a8794235497d6eab3f3ceb4f51d7954525bae5f72f3cf9beb2b90f",
+      "Cryptodome/SelfTest/PublicKey/test_ECC_Curve448.py": "672ca0c7cee8530723552d1c90c211eef7f996e0a7ef654e61f4e1144e938a46",
+      "Cryptodome/SelfTest/PublicKey/test_ECC_Ed25519.py": "2ba61599653c470bc5fed0df164d696c4b362ab46f164bc1a5437cd8868ca058",
+      "Cryptodome/SelfTest/PublicKey/test_ECC_Ed448.py": "640aaf9127669af76bb9ccbf6371af99ff7ee3c6f335953df14caa221a5c28ff",
+      "Cryptodome/SelfTest/PublicKey/test_ECC_NIST.py": "32708a24002d6d5feeeb2cf23682659363c254492d2dbec20c861411db5e5a17",
+      "Cryptodome/SelfTest/PublicKey/test_ElGamal.py": "4d60c3e9d374a4cf2b012c1b5cc5b51f7aa7d0b5b4a54ef7455f39593624f960",
+      "Cryptodome/SelfTest/PublicKey/test_RSA.py": "49ccda5101bfa3d2e7769decd6d6c4e7660aac61ed02cd380942e80407f6e4bf",
+      "Cryptodome/SelfTest/PublicKey/test_import_Curve25519.py": "4dafb5db4b63193d32599409a651ee233bcf59b0d65527f2b6e5bc68fdb14719",
+      "Cryptodome/SelfTest/PublicKey/test_import_Curve448.py": "c23f1e383aa5f786d5cf9cbf4dcc1b873505923b3d44a9097ed9288c6a7ef495",
+      "Cryptodome/SelfTest/PublicKey/test_import_DSA.py": "ec1261d609d8d8a7d4cdf9ad2fca2d1efd47b6ed5cfe6c606bc1f6764d23aabb",
+      "Cryptodome/SelfTest/PublicKey/test_import_ECC.py": "db19efbd574200d680ace6f08bcdfdc1e0c31475f9da90db9f0f68f0ca7eccc5",
+      "Cryptodome/SelfTest/PublicKey/test_import_RSA.py": "309ae3b0bff42c6f77ba3f89285fcfcf825e10300a4fd1c77c260fb812f93c59",
+      "Cryptodome/SelfTest/Random/__init__.py": "9c6d9f1bb2b129d937be32403efee8c48ce3a163d7091df48a032d3976d105d0",
+      "Cryptodome/SelfTest/Random/test_random.py": "84cec4047fd05e44bc93e612a74b9a72554b499297a64f0ca4e93738cea182ba",
+      "Cryptodome/SelfTest/Signature/__init__.py": "ee9d77a0f03e91170605ee5bbc1fdd351030504b68840e5d1ac87c688b2bdaed",
+      "Cryptodome/SelfTest/Signature/test_dss.py": "248d798ff749535095806ec9e19e0533cd54d6dee32b218f764690bbde4802d4",
+      "Cryptodome/SelfTest/Signature/test_eddsa.py": "56ea04e4e4caa834cbf9941351cc417ff833246da5637fca24d462e417fcab3d",
+      "Cryptodome/SelfTest/Signature/test_pkcs1_15.py": "374b05bbb8483d18953477106db16090b495bc18f014e69dbfe11f8f0c17fcff",
+      "Cryptodome/SelfTest/Signature/test_pss.py": "98f05602150cf5a3351ebe3d53e1681a63d1a180e825dddcf2f6f70a465f128b",
+      "Cryptodome/SelfTest/Util/__init__.py": "b0a12a8b242df32813f9e53643d3b1b15789f840b50b093b085cd52c0052a916",
+      "Cryptodome/SelfTest/Util/test_Counter.py": "02763deb01564fe43af6bdc7dc576d6b08f7a1ddde04b0dc6bfbba541cdf85d3",
+      "Cryptodome/SelfTest/Util/test_Padding.py": "b0fd374cc65649ce9ae54e7ef99e492f6206ec73fa960d302626b22abef84bef",
+      "Cryptodome/SelfTest/Util/test_asn1.py": "3662dd95061792f239d6e8dc41b6f2479443a038702e6e9ca489bb8dc5beb29f",
+      "Cryptodome/SelfTest/Util/test_number.py": "067df10041a13d4c622586aca5fe641cf9f539d72f028238aef2a8569d260027",
+      "Cryptodome/SelfTest/Util/test_rfc1751.py": "2ffbd2ce2a6c2ca32880eda89cd6fa1ca360aca01dcb14040d22b72e1909681f",
+      "Cryptodome/SelfTest/Util/test_strxor.py": "2d5816dc682f8906306355f4e1f699a5d6de5f87cfa85d4a9de0905d6ddef81a",
+      "Cryptodome/SelfTest/__init__.py": "d7801594955dc3ea5724cbdb44f0f46f6cfa3b1f092f5f1b898a3e374827eb3a",
+      "Cryptodome/SelfTest/__main__.py": "371f82a4438a90a0bb7ecd4cd5b10df6ba7a92e9659ed942da7f1431b12e7eae",
+      "Cryptodome/SelfTest/loader.py": "c66f48941234c4a4bde73f0adfbac0ee23a06ba95570e50c0ab26d1175f1f9bf",
+      "Cryptodome/SelfTest/st_common.py": "e3c8c0c68add996cddd2652b0bd95cadd0a658822b592301283869707b75738a",
+      "Cryptodome/Signature/DSS.py": "e12160b0ce21353cfefd1c3f76c2e9dd72056f5b2e7ac6d71a48c254d9c76855",
+      "Cryptodome/Signature/DSS.pyi": "c3eb4f62111c8c8a72fa79ffadc95468dbaad42fcdaee982f056d40a9ad3d499",
+      "Cryptodome/Signature/PKCS1_PSS.py": "f5b9708e62bdbabc879a2f221331e8d5e6624bfc5bb66a610a81b49d24300b41",
+      "Cryptodome/Signature/PKCS1_PSS.pyi": "3618d4e6762716a5ef09643d71106c232ccde052f393bd46dcb3bc02eed50a4a",
+      "Cryptodome/Signature/PKCS1_v1_5.py": "a2f5de0c27fd578c169730b5aadaa6c4d9eb212c69998b0e68854870fb4c5e1d",
+      "Cryptodome/Signature/PKCS1_v1_5.pyi": "8a76e96eb20b5f500db3f4366bdada47a2598cdbf9a617fcd589ebd6a6563b67",
+      "Cryptodome/Signature/__init__.py": "2567d9dade66c8ce9981c1b3856398708fff5037e6abbf4c0a9d60afbd1e8678",
+      "Cryptodome/Signature/eddsa.py": "c9ac188ec9a0038e02117ab07558d1d09ccc7355ba56b9ad37480a92a3f09e8c",
+      "Cryptodome/Signature/eddsa.pyi": "6d25f1d512e42b6e7329c8b26ae11daa330e0f12d5e79b5206634ffe609f8f9d",
+      "Cryptodome/Signature/pkcs1_15.py": "fe079e7777a6296a273901a9eb310600ed872e67d4944cb4a7692f2ab0e213ff",
+      "Cryptodome/Signature/pkcs1_15.pyi": "d9df93028c824c4d4d171611b6ec4d2fe4600f352dc10292d4eeaa60e0a9b7eb",
+      "Cryptodome/Signature/pss.py": "9b686b9b931fbaffa121395eb256d8d50720ed075b24bd8763aa949044bb8876",
+      "Cryptodome/Signature/pss.pyi": "1b98011074b37e537e2a2b1d90d1bc4003e18db7f7b4eeb8816f2690491a912b",
+      "Cryptodome/Util/Counter.py": "3bf557288883a4d778ad2156b5ad5f20f4e111aeae00d26b05b2676fa592e7df",
+      "Cryptodome/Util/Counter.pyi": "7a86661370c3b894aeb4edad8755466de52226588608a530f63f3e3379585ad0",
+      "Cryptodome/Util/Padding.py": "4e7f6ef995c8d8174e18b468276b64a2d47e8349ab31aad702a8dce59a587e46",
+      "Cryptodome/Util/Padding.pyi": "ed464b7b39d2481d2c4de1ff908308adf7f035b21b3f7a242e469f1bd173def6",
+      "Cryptodome/Util/RFC1751.py": "d602e2c3bc7a5eb7aa6955c64cfa7e90f6aed55bccaf8c3b197ca58f4eb1ef80",
+      "Cryptodome/Util/RFC1751.pyi": "76b2da534877f2226ea2d41ec36651ea9b0344f541b7b127dd6c51994f90f2c5",
+      "Cryptodome/Util/__init__.py": "089f8ec508f03dec008884e1824b9793f9f37a486aed7eafef943cc365f8fccd",
+      "Cryptodome/Util/_cpu_features.py": "4a489250ae5c59c2ba6ad9f0727e88b0ddfbbbc079d236fa342905f58f9981c4",
+      "Cryptodome/Util/_cpu_features.pyi": "72fd9c4bbff5954c58e3ae5c421334e7a570e5e8108dcb45499f8b497b359f5e",
+      "Cryptodome/Util/_cpuid_c.pyd": "8b3df53a5e7b9ca0c20db71cac696a0473c297bbead93ef7ea3bddf6f74d6aef",
+      "Cryptodome/Util/_file_system.py": "33a36137b3f9b3cf48eccd7012dae2ac898e593888b60206ba4c320b13c87573",
+      "Cryptodome/Util/_file_system.pyi": "2f8b0576992c17d8191119b78cf52f73540f11f2502360f71266f5ff848fb5b5",
+      "Cryptodome/Util/_raw_api.py": "54bb681d15d64b7f17cce32e27d53dd2102a7bcb5c7b59bd06a423a30abb2e50",
+      "Cryptodome/Util/_raw_api.pyi": "83c6b0310c82b4193830d59b3dabe23544acf53ff2b53e0f918f2e8db01f7485",
+      "Cryptodome/Util/_strxor.pyd": "c2045e1eda9b76a7855140229fca3f2600f1e822cb28f988608f831d033f4be9",
+      "Cryptodome/Util/asn1.py": "302c42bb264a7e34f124435842f0ed731cfa1a199c122e261f5c730703f9eb3d",
+      "Cryptodome/Util/asn1.pyi": "4db889724654605ff759c5b7d754174d13f71b3b621792e48ad0f9be0cfccc57",
+      "Cryptodome/Util/number.py": "b8a08b1d91ad11c28f6b4580d0dead14d7cbc9ecd34a765dc09fbfee9add2d3f",
+      "Cryptodome/Util/number.pyi": "6bd67e3a908997245fb373bc1c4971bac0cfdd5fc17d4b7cdbd3f51ad6774af1",
+      "Cryptodome/Util/py3compat.py": "12db063125825cabea85697faa72bfd7ee5a5a36a5777eceff82713df67e6902",
+      "Cryptodome/Util/py3compat.pyi": "a1913976f178c28b8a7c117093233aac0d3e772c4876da9c084382bb95f2ac2d",
+      "Cryptodome/Util/strxor.py": "23e79442b11d45c61cc4d2e047f7981e73d3b44b5697cc2fc2210da53c239604",
+      "Cryptodome/Util/strxor.pyi": "ca7d073c74998cffb501a2e6e1c99af62f49272a5fdfb3527769e2a632dfe1a0",
+      "Cryptodome/__init__.py": "c5378d6244f60ebdc6d2667c00daf461374aaec29fddda6ae1032f18c3840fae",
+      "Cryptodome/__init__.pyi": "748d33339311187c619df8eaa40c8f1a8b4a4eb3e59de4cdd90fa30105cd8351",
+      "Cryptodome/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "pycryptodomex-3.24.1.dist-info/AUTHORS.rst": "ac94de284f1522aee4f3e7e301e68af190786b4c8388d1a60cba4a3a1bbe3465",
+      "pycryptodomex-3.24.1.dist-info/LICENSE.rst": "60b8958a9ef9b7ec512087b725555372175ed2b02b969f8725b8534fde48acdd",
+      "pycryptodomex-3.24.1.dist-info/METADATA": "e23b7012d6be70d623a1ebd73d716b618cda40662afc506fe3c9e32b05c25dbe",
+      "pycryptodomex-3.24.1.dist-info/RECORD": "da777da6bafa5e3b02f4cc8e0929a7ff02e6328ac15f7f83a6d1ffc071404594",
+      "pycryptodomex-3.24.1.dist-info/WHEEL": "daf7c2177bb571a95bc653eb6cebfc46c3b805949e625d12f781f73bade870fb",
+      "pycryptodomex-3.24.1.dist-info/top_level.txt": "78753d6ac7ba8a7d5948112d4c3a65edfc083c838de369dba99d6e153c9c731b"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "8ea393ae1db65ca4919252c01641573b491f492c72c881554787a63b7bad0939",
+     "native": {
+      "Cryptodome/Cipher/_ARC4.pyd": "pe",
+      "Cryptodome/Cipher/_Salsa20.pyd": "pe",
+      "Cryptodome/Cipher/_chacha20.pyd": "pe",
+      "Cryptodome/Cipher/_pkcs1_decode.pyd": "pe",
+      "Cryptodome/Cipher/_raw_aes.pyd": "pe",
+      "Cryptodome/Cipher/_raw_aesni.pyd": "pe",
+      "Cryptodome/Cipher/_raw_arc2.pyd": "pe",
+      "Cryptodome/Cipher/_raw_blowfish.pyd": "pe",
+      "Cryptodome/Cipher/_raw_cast.pyd": "pe",
+      "Cryptodome/Cipher/_raw_cbc.pyd": "pe",
+      "Cryptodome/Cipher/_raw_cfb.pyd": "pe",
+      "Cryptodome/Cipher/_raw_ctr.pyd": "pe",
+      "Cryptodome/Cipher/_raw_des.pyd": "pe",
+      "Cryptodome/Cipher/_raw_des3.pyd": "pe",
+      "Cryptodome/Cipher/_raw_ecb.pyd": "pe",
+      "Cryptodome/Cipher/_raw_eksblowfish.pyd": "pe",
+      "Cryptodome/Cipher/_raw_ocb.pyd": "pe",
+      "Cryptodome/Cipher/_raw_ofb.pyd": "pe",
+      "Cryptodome/Hash/_BLAKE2b.pyd": "pe",
+      "Cryptodome/Hash/_BLAKE2s.pyd": "pe",
+      "Cryptodome/Hash/_MD2.pyd": "pe",
+      "Cryptodome/Hash/_MD4.pyd": "pe",
+      "Cryptodome/Hash/_MD5.pyd": "pe",
+      "Cryptodome/Hash/_RIPEMD160.pyd": "pe",
+      "Cryptodome/Hash/_SHA1.pyd": "pe",
+      "Cryptodome/Hash/_SHA224.pyd": "pe",
+      "Cryptodome/Hash/_SHA256.pyd": "pe",
+      "Cryptodome/Hash/_SHA384.pyd": "pe",
+      "Cryptodome/Hash/_SHA512.pyd": "pe",
+      "Cryptodome/Hash/_ghash_clmul.pyd": "pe",
+      "Cryptodome/Hash/_ghash_portable.pyd": "pe",
+      "Cryptodome/Hash/_keccak.pyd": "pe",
+      "Cryptodome/Hash/_poly1305.pyd": "pe",
+      "Cryptodome/Math/_modexp.pyd": "pe",
+      "Cryptodome/Protocol/_scrypt.pyd": "pe",
+      "Cryptodome/PublicKey/_curve25519.pyd": "pe",
+      "Cryptodome/PublicKey/_curve448.pyd": "pe",
+      "Cryptodome/PublicKey/_ec_ws.pyd": "pe",
+      "Cryptodome/PublicKey/_ed25519.pyd": "pe",
+      "Cryptodome/PublicKey/_ed448.pyd": "pe",
+      "Cryptodome/Util/_cpuid_c.pyd": "pe",
+      "Cryptodome/Util/_strxor.pyd": "pe"
+     },
+     "pth": {},
+     "sha256": "82eb0dd8a95be97f03527b108ee49f9b86a7c534fa47fa7a510be3eab8ea9acd"
     }
    },
    "name": "pycryptodomex",
    "provenance": {
-    "pycryptodomex-3.24.1-cp37-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": null
+    "pycryptodomex-3.24.1-cp37-abi3-macosx_10_9_universal2.whl": null,
+    "pycryptodomex-3.24.1-cp37-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": null,
+    "pycryptodomex-3.24.1-cp37-abi3-win_amd64.whl": null
    },
    "pypi": {
     "author": "Helder Eijs",
@@ -474,11 +1324,69 @@
    },
    "reviewed": {
     "by": "claude",
-    "date": "2026-11-05",
-    "note": "Hits read: ~/.ssh/id_ecdsa named in ECC/RSA import_key docstrings. Content review only."
+    "date": "2026-11-20",
+    "earlier": [
+     {
+      "by": "claude",
+      "date": "2026-11-05",
+      "note": "Hits read: ~/.ssh/id_ecdsa named in ECC/RSA import_key docstrings. Content review only."
+     }
+    ],
+    "note": "macOS universal2 and Windows amd64 wheels of the reviewed version: the 352 members of the Linux wheel (macOS without the x86-only _raw_aesni and _ghash_clmul accelerators, which Cryptodome falls back from), only the extension modules differ; Windows Python CRLF only. The 40 'new' keys and the ssh-key 'high' lines are the reviewed docstrings of ECC.py/RSA.py (~/.ssh/id_ecdsa as an example of key format), CRLF-changed. No .pth, no hook; no binary imports anything networked or process-starting, none links a non-system library. No attestation, as for the Linux wheel: content review only."
    },
    "scans": {
     "capa": {
+     "04df74da7cb27de6f30037795302b90ccbbd6ddaa5825a058a8d5b03ed66bc76": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Cipher/_raw_ecb.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "054910d9f916df27e12a2af768953f5b2c399ed877042e81c29e7b550ac0acba": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Cryptodome/Cipher/_raw_cbc.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "0695577ef50dea4a65fe22a27098dca02ed8db34ee13ac0c67a1035a398b2c32": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/PublicKey/_ed448.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "0efa40777c951c5f508c12bf0f1fee141ab9d8012c011e874c0630ab4a261d81": {
       "capabilities": [
        "contain loop",
@@ -499,6 +1407,44 @@
        "urls": []
       }
      },
+     "10a4d1768ad89cdf96cded5fbcdee7ed223599c10c01d8075b8153c8019406b4": {
+      "capabilities": [
+       "contain loop",
+       "hash data with MD5"
+      ],
+      "note": "",
+      "path": "Cryptodome/Hash/_MD4.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "124b3caa9d72ef6dcdac7e03e48cf708b9261eeb4b3f5c4c04f2a49a89067247": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/PublicKey/_ec_ws.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "1279fda58eba3013152a5470abe872bc948587fc2251e905ceabd0e424e51ad8": {
       "capabilities": [
        "contain loop",
@@ -514,6 +1460,30 @@
        "needed": [
         "libc.so.6",
         "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "13ff69fbb08c90faad33dc2facb25f6fd188e5011623a60a20bfa8aa04102d5a": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "Cryptodome/PublicKey/_curve25519.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
        ],
        "rpath": [],
        "urls": []
@@ -559,6 +1529,71 @@
        "urls": []
       }
      },
+     "1b0c523b9a70c29ea9a72e433b5873b3898a219bf3d5ddfea7acf52fb32c8b8b": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Cipher/_pkcs1_decode.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "1b4b41370e91a6f9829511f84c9b766420435df449dea854ae7d2db783b6f4a4": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Hash/_BLAKE2b.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "1e5920b1e80e4b93008c257c8501c6bc34e06852b46a6c82f2ddb1e149001836": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Cipher/_raw_ocb.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "1f9a2b97c3d9a8198b1bcd810e3c2ef628b4b072dee92ecb0921cb13733377ca": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "hash data using SHA512"
+      ],
+      "note": "",
+      "path": "Cryptodome/Hash/_SHA512.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "1fd3c232c2ea188c6d6cc78a3527376ac6691ffe04c95ac420e6c5aa5bbc6b54": {
       "capabilities": [
        "contain loop",
@@ -575,6 +1610,44 @@
         "libc.so.6",
         "libpthread.so.0"
        ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "255486a3f9c18a66e5cbe4e0b7c4c8df7bbe17801ac037664020fb1b7345a360": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Cryptodome/Hash/_ghash_clmul.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "25715e093aa7598e6bc11cc55133cfef77ec2cd47c024a2b0c2460a1585cea5a": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Cipher/_ARC4.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
        "rpath": [],
        "urls": []
       }
@@ -615,6 +1688,94 @@
        "urls": []
       }
      },
+     "2faf8c0ba8b7dd04f53edde98a02f65654053184a95642bc42b0d9c100e09876": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "hash data using SHA256"
+      ],
+      "note": "",
+      "path": "Cryptodome/Hash/_SHA256.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "30681a8e5d35c9afe6c910559df2719ed38d155d472af39f6d008ec21e88cc46": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "encrypt data using DES"
+      ],
+      "note": "",
+      "path": "Cryptodome/Cipher/_raw_des3.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "34a47fffa7fc699b6399419b9db3a824e2bfa9d167278fc99dbf2375123ac530": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/PublicKey/_ed25519.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "3de1140d5bc0406009da25a7b512a0143b0538868a658faa3098f6934ab1337d": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "Cryptodome/Cipher/_raw_ecb.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "3ecfbf0b55be47fc32b755f9c1797d2fa9877f01977af500c05efb4e430c4ab6": {
       "capabilities": [
        "contain loop",
@@ -630,6 +1791,19 @@
         "libc.so.6",
         "libpthread.so.0"
        ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "3f3ff4a3fe04e5f53c58952632b82e194203b336f58781c517f6ece00462092b": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Hash/_keccak.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
        "rpath": [],
        "urls": []
       }
@@ -674,6 +1848,83 @@
        "urls": []
       }
      },
+     "4163e36757714bf9c128c55aee89fd8254f34b7beb6fb9283cb7678c0a742ede": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Hash/_SHA224.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "4205ef49088070245f25a8d51309708e6cf643825c497f37cffaab27efb6162f": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Cipher/_raw_des.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "430c834c7ea0bd1dc413d6e711844ce2f879a5f517b8cb347610198becfa65ea": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Cryptodome/PublicKey/_ed448.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "4731fcb3ba86ec62374e1f022a796cf951dabb2b2202b9e89004778061bffb4e": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "encrypt data using RC4 PRGA"
+      ],
+      "note": "",
+      "path": "Cryptodome/Hash/_keccak.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "48e3dfd8293f72cc5ad942ee55c4908b3254a568bf0f1674279fc31a9b52ed68": {
       "capabilities": [
        "contain loop",
@@ -689,6 +1940,121 @@
        "needed": [
         "libc.so.6",
         "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "4c8ba414c980e8be06747aa67c51860bbfc783a90ca87d96064795b1f1eb99fe": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/PublicKey/_curve448.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "4f7b5d9bde1788081882bb18cd9dcac6fa48285ca06b836e1d6871d7611d82f6": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Cryptodome/PublicKey/_curve448.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "4fb4db0f874d3c6c0f0b60bb054d1913106a8c155f33263ab43a28c6ada45f61": {
+      "capabilities": [
+       "contain loop",
+       "decrypt data using AES via x86 extensions",
+       "encrypt data using AES via x86 extensions"
+      ],
+      "note": "",
+      "path": "Cryptodome/Cipher/_raw_aesni.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "50888d7356b74637fbca7ae75fbaf3cb6a00233465dee5c8e0910b3fe21d35ca": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Cryptodome/Cipher/_raw_ofb.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "528a3cca54cdefe104f378e6b6798d8796dba5a95eaf7d7bd0b1df489ca97f08": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "hash data using SHA224"
+      ],
+      "note": "",
+      "path": "Cryptodome/Hash/_SHA224.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
        ],
        "rpath": [],
        "urls": []
@@ -770,6 +2136,99 @@
        "urls": []
       }
      },
+     "624a1c62f94e2d97c98b1b9abe445b35f3738dc69f31db38ccb3d533212c0463": {
+      "capabilities": [
+       "contain loop",
+       "decompress data using QuickLZ",
+       "encode data using XOR",
+       "encrypt data using RC4 PRGA",
+       "enumerate PE sections"
+      ],
+      "note": "",
+      "path": "Cryptodome/Cipher/_raw_arc2.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "6545b8d01a02795c21aff0347379f12b5fb61a8c5b2ecdd130ff9a2959dd29bc": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Math/_modexp.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "659ea5124dca8dd02cbf7b222fcf61cfb689e8729fe60797418e165b27434dd6": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Hash/_RIPEMD160.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "68465f03fb71104100596e0096f2286a523b9d5729105dea09a6a639e40785da": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Cipher/_raw_eksblowfish.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "6a23a4639eb6fb17ba079ac66226e371ecd6226a37d48de37f920feb607020e1": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "encrypt data using RC4 PRGA"
+      ],
+      "note": "",
+      "path": "Cryptodome/Cipher/_pkcs1_decode.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "713c0925d73197071b1066a8faa1cabdbda9d79f0a2056608dc59d5c71b2709b": {
       "capabilities": [
        "contain loop",
@@ -784,6 +2243,84 @@
        "needed": [
         "libc.so.6",
         "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "782ebe9212b6a2dd8fe7b5617e38e334d2028f0e76d101c93386ed0ccde3706c": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "hash data using RIPEMD128"
+      ],
+      "note": "",
+      "path": "Cryptodome/Hash/_RIPEMD160.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "79f110a75894f01ca5b8c878b25a16b50cebebb4c444e6b58ef33ce2865fa836": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Cipher/_raw_des3.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "7b139c957ca7dc9eef525ee73b0769a7f969219d13f97dd490aa71d676673ca9": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Cipher/_raw_ctr.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "7c6049038561f0a5ced6e1e475f1efad7e40763987c4444979a5dedd613fc618": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "hash data using SHA256"
+      ],
+      "note": "",
+      "path": "Cryptodome/Hash/_BLAKE2s.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
        ],
        "rpath": [],
        "urls": []
@@ -824,6 +2361,196 @@
        "urls": []
       }
      },
+     "886853a7d66cc698f4056054cc39742d4e7496371b5dfeb4c780f60943d7adb8": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "encrypt data using RC4 PRGA"
+      ],
+      "note": "",
+      "path": "Cryptodome/Hash/_ghash_portable.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "8a29d20bfc01ff7948e2e116aa88003f668cd7a69f5b9e51efa2a5c7c2518feb": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "Cryptodome/Hash/_poly1305.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "8b3df53a5e7b9ca0c20db71cac696a0473c297bbead93ef7ea3bddf6f74d6aef": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "Cryptodome/Util/_cpuid_c.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "8e52ed6946296e07f01d571937ba4b27878b8b44bc59e8fcfbc88bf37d6c28cd": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Cryptodome/Cipher/_raw_ocb.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "8ec098753c772b47230ba41e405913126dc05ab64b393333f36c318b51489590": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "hash data using SHA512"
+      ],
+      "note": "",
+      "path": "Cryptodome/Hash/_BLAKE2b.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "8f90118fe52a79085ec7c22365de671648babf1244fca5c704035d0857aac8aa": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Hash/_SHA384.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "8fbab48bfbafcd89fe95208a2e0ae287d6efdf8afb34e91ae3de0bd034b0acc4": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "encrypt data using blowfish"
+      ],
+      "note": "",
+      "path": "Cryptodome/Cipher/_raw_eksblowfish.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "90128cdd9d178ad1cbfa8d5ee16f43d95fe02c63cd7fa9f77f74fe182698c335": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "hash data using SHA384",
+       "hash data using SHA512"
+      ],
+      "note": "",
+      "path": "Cryptodome/Hash/_SHA384.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "91cfb82c3ff953b5d2749278b830eea64f58a8aa528c680353af12297ad56500": {
       "capabilities": [
        "contain loop"
@@ -837,6 +2564,71 @@
        "needed": [
         "libc.so.6",
         "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "92dce5dfea915d7491a6ce5313adbd9f89cf5c9016da570992448bdc817fc70e": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Hash/_SHA512.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "95a407910688654832b9c234fd493339b8463ac5a0cc499bb8e871452059e5bd": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "hash data using SHA1"
+      ],
+      "note": "",
+      "path": "Cryptodome/Hash/_SHA1.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "96381b3a405d1a5f4919500a25605a66aef21022f017a5ac6a62c639b79879ff": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "hash data with MD5"
+      ],
+      "note": "",
+      "path": "Cryptodome/Hash/_MD5.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
        ],
        "rpath": [],
        "urls": []
@@ -900,6 +2692,32 @@
        "urls": []
       }
      },
+     "9abed18c06f47047842324eda5d6b5b4c885c6567a0d0077cbbaff1ce73fc472": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Hash/_ghash_portable.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "9c2705602c2b6031b99bae3864c8ac36fe33b10b2ebe251fe2999a0d9f31ab0f": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Hash/_MD4.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "9c2bfda92a78790e3c7e34c72ebbda5b7e8e8a2888b83d9aedb7c09aa1a38bef": {
       "capabilities": [
        "contain loop",
@@ -939,6 +2757,98 @@
        "urls": []
       }
      },
+     "a318c57b03c2b317a1427477f5505a1eacf7d12ce65b7832cc37ab233b5070ca": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Cipher/_raw_aes.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "a4e34ce1750e76190d13e373a7e137571e79e950a4aac281eea1463b9038eb56": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/PublicKey/_curve25519.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "a6ae1f2f1463e649660fb3f5585508b19944380d41371d43965645954b8a16db": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "encrypt data using Salsa20 or ChaCha",
+       "resolve function by parsing PE exports"
+      ],
+      "note": "",
+      "path": "Cryptodome/Cipher/_chacha20.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "a771ca51feb93b70532611c5fa3145ba3bd5019c412b365632df2058f3d42806": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "reference analysis tools strings"
+      ],
+      "note": "",
+      "path": "Cryptodome/PublicKey/_ec_ws.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "a88c97c7c74fc72d774df0a962246ab31d1bbfdc0b783897d87e703bd22762fb": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Cipher/_raw_blowfish.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "ac4b744938151389a70182391bb4f17ed28a626002fba31e78f101435e393e2d": {
       "capabilities": [
        "contain loop",
@@ -953,6 +2863,106 @@
        "needed": [
         "libc.so.6",
         "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "af1ebd5f5290d376537ef2dd06acbd5ee1054b834fac3bd4f20a2b7461685d48": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "Cryptodome/PublicKey/_ed25519.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "b17c95abe715e67312a8ec4db515e5287ca5258158cf1a45905db08f49872731": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Cryptodome/Hash/_MD2.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "b1db13457704130f2fd8a1a4bff128a6d81be35956bdda7e55aed36398cee55e": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Hash/_BLAKE2s.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "b36a179bd6379171de58de165da1ec83f5479a5eb5e7094e42d76c8a5803c81c": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Hash/_SHA1.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "b51570afc00f4208d20b0a9fda23294fc90dd76d0c0d14e97f307654a30d9862": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Cryptodome/Cipher/_raw_ctr.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
        ],
        "rpath": [],
        "urls": []
@@ -973,6 +2983,30 @@
        "needed": [
         "libc.so.6",
         "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "b908734eef3113437ae4f27c2f550a282e0a18de3619cd436370efcc165a0718": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "Cryptodome/Cipher/_raw_cast.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
        ],
        "rpath": [],
        "urls": []
@@ -1016,6 +3050,30 @@
        "urls": []
       }
      },
+     "c2045e1eda9b76a7855140229fca3f2600f1e822cb28f988608f831d033f4be9": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Cryptodome/Util/_strxor.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "c28f9ad6bf36ad3222ae7e86131d0b369305dc374668a5570b90bdfc1ebda572": {
       "capabilities": [
        "contain loop"
@@ -1029,6 +3087,33 @@
        "needed": [
         "libc.so.6",
         "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "c476ef00bde0e7c9d70e3928f4bfe04b5b8707d30c295751cc1a5a6e69247472": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "encrypt data using AES",
+       "resolve function by parsing PE exports"
+      ],
+      "note": "",
+      "path": "Cryptodome/Cipher/_raw_aes.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
        ],
        "rpath": [],
        "urls": []
@@ -1072,6 +3157,32 @@
        "urls": []
       }
      },
+     "c7f7b4ddffb27fdee044701db76cc655b2090baef170b3c8d875e69b2bf86242": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "encrypt data using DES"
+      ],
+      "note": "",
+      "path": "Cryptodome/Cipher/_raw_des.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "cb6d8f7369a9e0277728a4a587f31883bb2051c4f297abc84ecd1d82e15772bb": {
       "capabilities": [
        "contain loop",
@@ -1088,6 +3199,71 @@
         "libc.so.6",
         "libpthread.so.0"
        ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "cd4ac70ec518b7ef3d50f3b855367b0d3ee9a7a52172bf5906a756f6f8badc6a": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Cipher/_raw_arc2.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "ce54d8b9d24c472536d8f1f7c66f0a8b2df75eb9000c34506cb27b4426f0fe8a": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Util/_strxor.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "cf27f0b954cb12880813b274c2a6afbde7b9f82f6f9767a0b3ad49af5c452425": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "encrypt data using Salsa20 or ChaCha"
+      ],
+      "note": "",
+      "path": "Cryptodome/Cipher/_Salsa20.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "d11feec49f3e56f30ce4957176c40c5634330b764f1378f1cac64d7fb05bcf07": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Cipher/_Salsa20.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
        "rpath": [],
        "urls": []
       }
@@ -1124,6 +3300,95 @@
         "libc.so.6",
         "libpthread.so.0"
        ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "d6004b77fa942ee830039a67ac34b2a244162a66db7218b45bf0d0cc366fac2d": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Cryptodome/Protocol/_scrypt.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "d7d765c9700aa359d45da1f731db2a15665e1a5d4b3a042499cd176177ff51cd": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Hash/_MD5.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "d8248f134f51c8c641deb4c185273dfe11e52cdf129a209bdeafea3f1ccd38f3": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Protocol/_scrypt.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "d832ec85310cd7f9abb56544f7522d28c0e47dd87f92dba038cc7a5471de7bbf": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Cryptodome/Cipher/_raw_cfb.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "d93e1ebd4bd1787c0b3dbe2cd259cb5b447ac2afc11d0e2efb2a6aebb8baeaef": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Cipher/_raw_ofb.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
        "rpath": [],
        "urls": []
       }
@@ -1166,6 +3431,46 @@
        "urls": []
       }
      },
+     "dd3a9c4651fae8ba9f44937dc5c3afd6e443f0a622036e21180fdf558cf163f6": {
+      "capabilities": [
+       "contain loop",
+       "encode data using ADD XOR SUB operations",
+       "encode data using XOR",
+       "encrypt data using RC4 PRGA"
+      ],
+      "note": "",
+      "path": "Cryptodome/Cipher/_ARC4.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "e4f532afc01e8873db4bd7b880213f5d7d3167b739147fd15451b7e7e1a36ea2": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Cipher/_chacha20.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "e8e8e21b11137920ca472605aa401eb9809202bafa56366896638411e3d03548": {
       "capabilities": [
        "contain loop",
@@ -1181,6 +3486,19 @@
         "libc.so.6",
         "libpthread.so.0"
        ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "e9fc352b1660733b25bef6ab6239b2e4831f051fab3a25ab5b4ab4ecf9a4ecdc": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Hash/_SHA256.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
        "rpath": [],
        "urls": []
       }
@@ -1204,6 +3522,32 @@
        "urls": []
       }
      },
+     "eaf04a15bcb22b7fbaa314966b66432f0127184ed414650c26bb09cfeee3b2d5": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Cipher/_raw_cast.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "f0bbe7396e6d9074deb57e5680081296cf0fccf8b075e325b7ca1230ac20f3cb": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Cipher/_raw_cbc.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "f4265907fce6174d7e043039af0f244d650861a8b1c50d135b738602dde37578": {
       "capabilities": [
        "contain loop",
@@ -1221,6 +3565,32 @@
         "libc.so.6",
         "libpthread.so.0"
        ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "f97dc6c88fa03e61e92747e327858cb26daaaa68c35ace0fc0d4ab0ebbd73398": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Hash/_poly1305.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "f9a6dc47cac6e0db2dfe5fb5501991935ac202f9572d52707efb831cf1939c50": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Util/_cpuid_c.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
        "rpath": [],
        "urls": []
       }
@@ -1265,6 +3635,69 @@
        "urls": []
       }
      },
+     "fdc14a5a9f4c977ebe5f6a1a83a6aee916a7be3fc138755458e1e900b37ebfeb": {
+      "capabilities": [
+       "contain loop",
+       "encrypt data using blowfish"
+      ],
+      "note": "",
+      "path": "Cryptodome/Cipher/_raw_blowfish.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "fe87162df457f97635a928c0bdc8120e22c73100497503e0945f3b1eb1ad50bc": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Hash/_MD2.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "fec06d1ef2ba26f193d7117508dd2be88bb3536ac1ea9f9f8e0dcc86cb14e851": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Cryptodome/Math/_modexp.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "ff9a06e126354cd518769ef2fa7541f82962a895c9306e52695da85281eba718": {
       "capabilities": [
        "contain loop",
@@ -1284,48 +3717,101 @@
        "rpath": [],
        "urls": []
       }
+     },
+     "ffe3178d71217d4803939569f72df4a72f19f00b7e2fe31fa49fb77899f4ef89": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "Cryptodome/Cipher/_raw_cfb.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
      }
     },
     "keys": [
+     "yara|capability_filesystem_read|Cryptodome/Hash/KMAC128.py|0d2f99d8a5420b84",
      "yara|capability_filesystem_read|Cryptodome/Hash/KMAC128.py|12e3277ae64f5e65",
+     "yara|capability_filesystem_read|Cryptodome/Hash/KangarooTwelve.py|196e3b4fe478b72e",
      "yara|capability_filesystem_read|Cryptodome/Hash/KangarooTwelve.py|8d1d4df49aecadf4",
+     "yara|capability_filesystem_read|Cryptodome/Hash/TupleHash128.py|443d41ebc9f4384e",
      "yara|capability_filesystem_read|Cryptodome/Hash/TupleHash128.py|d99730509b24d3e8",
      "yara|capability_filesystem_read|Cryptodome/PublicKey/ECC.py|4428581002a090e7",
+     "yara|capability_filesystem_read|Cryptodome/PublicKey/ECC.py|6994c232937958d8",
      "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_CBC.py|b853cc4c2d8b6fbf",
+     "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_CBC.py|c051240d42f4d787",
      "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_CCM.py|7cb7002aa796c65f",
+     "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_CCM.py|8b4edb93a8e72dd9",
      "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_CFB.py|2117519db8783c72",
+     "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_CFB.py|8c8e7064d74d5feb",
+     "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_CTR.py|a0b3aa6e7c8eeff7",
      "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_CTR.py|acfdb5a40599ea70",
+     "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_ChaCha20_Poly1305.py|5abaa42791eea74a",
      "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_ChaCha20_Poly1305.py|759428c6fab16f73",
      "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_EAX.py|cbde21049d533c36",
+     "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_EAX.py|e88222f910617630",
+     "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_GCM.py|4c74dac5a5c6c9c1",
      "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_GCM.py|503485a1c836ccf2",
+     "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_OCB.py|2880ba6f625dea89",
      "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_OCB.py|c2edd37f0ab0f951",
+     "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_OFB.py|2e80b42d5b78fab6",
      "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_OFB.py|cc7ce89c67054d08",
      "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_OpenPGP.py|438ace094d1ac61f",
+     "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_OpenPGP.py|8a26ffc64b50c468",
      "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_SIV.py|7c313d92675898a9",
+     "yara|capability_filesystem_read|Cryptodome/SelfTest/Cipher/test_SIV.py|c3c3cea65eabd657",
      "yara|capability_filesystem_read|Cryptodome/SelfTest/Hash/test_CMAC.py|8663a7e172d02634",
+     "yara|capability_filesystem_read|Cryptodome/SelfTest/Hash/test_CMAC.py|e18d99f498286a1c",
      "yara|capability_filesystem_read|Cryptodome/SelfTest/Hash/test_KangarooTwelve.py|8d7e993b45f4dfc0",
+     "yara|capability_filesystem_read|Cryptodome/SelfTest/Hash/test_KangarooTwelve.py|9949cc916a894269",
      "yara|capability_filesystem_read|Cryptodome/SelfTest/Hash/test_SHAKE.py|0adba41632ff7ece",
+     "yara|capability_filesystem_read|Cryptodome/SelfTest/Hash/test_SHAKE.py|fd6b462d6aead0d3",
      "yara|capability_filesystem_read|Cryptodome/SelfTest/Hash/test_TurboSHAKE.py|0722f585d54bae8e",
+     "yara|capability_filesystem_read|Cryptodome/SelfTest/Hash/test_TurboSHAKE.py|2fa6b5cd5ef1842e",
      "yara|capability_filesystem_read|Cryptodome/SelfTest/Hash/test_cSHAKE.py|5f440e9ff0ca194d",
+     "yara|capability_filesystem_read|Cryptodome/SelfTest/Hash/test_cSHAKE.py|85785ef08b1bf94d",
+     "yara|capability_filesystem_read|Cryptodome/SelfTest/Math/test_modexp.py|6f3f7a79f8a43104",
      "yara|capability_filesystem_read|Cryptodome/SelfTest/Math/test_modexp.py|aeca0af3a1bc8c35",
      "yara|capability_filesystem_read|Cryptodome/SelfTest/Protocol/test_SecretSharing.py|39a38938069b4d31",
+     "yara|capability_filesystem_read|Cryptodome/SelfTest/Protocol/test_SecretSharing.py|eeb9a9cb378a1237",
      "yara|capability_filesystem_read|Cryptodome/SelfTest/PublicKey/test_import_Curve25519.py|2b49f517c1be5923",
+     "yara|capability_filesystem_read|Cryptodome/SelfTest/PublicKey/test_import_Curve25519.py|4dafb5db4b63193d",
      "yara|capability_filesystem_read|Cryptodome/SelfTest/PublicKey/test_import_Curve448.py|3ff80a10bb734dbd",
+     "yara|capability_filesystem_read|Cryptodome/SelfTest/PublicKey/test_import_Curve448.py|c23f1e383aa5f786",
      "yara|capability_filesystem_read|Cryptodome/SelfTest/PublicKey/test_import_ECC.py|76a427ac86e5f5eb",
+     "yara|capability_filesystem_read|Cryptodome/SelfTest/PublicKey/test_import_ECC.py|db19efbd574200d6",
+     "yara|capability_filesystem_read|Cryptodome/SelfTest/PublicKey/test_import_RSA.py|309ae3b0bff42c6f",
      "yara|capability_filesystem_read|Cryptodome/SelfTest/PublicKey/test_import_RSA.py|56c6fb97682d1ff6",
      "yara|capability_filesystem_read|Cryptodome/SelfTest/Random/test_random.py|56d6ed11774fffa1",
+     "yara|capability_filesystem_read|Cryptodome/SelfTest/Random/test_random.py|84cec4047fd05e44",
      "yara|capability_filesystem_read|Cryptodome/SelfTest/loader.py|a1f4de0f24bec951",
+     "yara|capability_filesystem_read|Cryptodome/SelfTest/loader.py|c66f48941234c4a4",
+     "yara|capability_filesystem_read|Cryptodome/Signature/eddsa.py|c9ac188ec9a0038e",
      "yara|capability_filesystem_read|Cryptodome/Signature/eddsa.py|efa0989a194c329b",
+     "yara|capability_filesystem_read|Cryptodome/Util/asn1.py|302c42bb264a7e34",
      "yara|capability_filesystem_read|Cryptodome/Util/asn1.py|64b0b088b8ee7a15",
      "yara|capability_filesystem_write_executable|Cryptodome/SelfTest/Cipher/test_AES.py|bc035e1453dcd9fb",
+     "yara|capability_filesystem_write_executable|Cryptodome/SelfTest/Cipher/test_AES.py|ee07f5393e015511",
+     "yara|capability_filesystem_write_executable|Cryptodome/SelfTest/Cipher/test_OCB.py|2880ba6f625dea89",
      "yara|capability_filesystem_write_executable|Cryptodome/SelfTest/Cipher/test_OCB.py|c2edd37f0ab0f951",
+     "yara|capability_filesystem_write_executable|Cryptodome/SelfTest/Protocol/test_ecdh.py|5c80462639fc8822",
      "yara|capability_filesystem_write_executable|Cryptodome/SelfTest/Protocol/test_ecdh.py|97fcae522e3651b0",
      "yara|capability_filesystem_write_executable|Cryptodome/SelfTest/PublicKey/test_import_DSA.py|e9f2e62884d2a0fd",
+     "yara|capability_filesystem_write_executable|Cryptodome/SelfTest/PublicKey/test_import_DSA.py|ec1261d609d8d8a7",
+     "yara|capability_filesystem_write_executable|Cryptodome/SelfTest/Signature/test_dss.py|248d798ff7495350",
      "yara|capability_filesystem_write_executable|Cryptodome/SelfTest/Signature/test_dss.py|f335c89d07b093af",
      "yara|capability_filesystem_write_executable|Cryptodome/SelfTest/Signature/test_eddsa.py|488e0aff1008014d",
+     "yara|capability_filesystem_write_executable|Cryptodome/SelfTest/Signature/test_eddsa.py|56ea04e4e4caa834",
      "yara|capability_filesystem_write_executable|Cryptodome/Util/number.py|9de93309adb16a7c",
+     "yara|capability_filesystem_write_executable|Cryptodome/Util/number.py|b8a08b1d91ad11c2",
      "yara|capability_process_spawn|Cryptodome/SelfTest/Cipher/test_DES.py|12c81047d82fbc91",
+     "yara|capability_process_spawn|Cryptodome/SelfTest/Cipher/test_DES.py|c41578e0f083953c",
      "yara|threat_filesystem_read|Cryptodome/PublicKey/ECC.py|4428581002a090e7",
+     "yara|threat_filesystem_read|Cryptodome/PublicKey/ECC.py|6994c232937958d8",
+     "yara|threat_filesystem_read|Cryptodome/PublicKey/RSA.py|4a38379fdc81b54d",
      "yara|threat_filesystem_read|Cryptodome/PublicKey/RSA.py|79dce3255be9878f"
     ],
     "yara": [

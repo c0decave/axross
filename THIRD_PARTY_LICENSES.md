@@ -5,7 +5,8 @@ It is built on the work of many other projects - thank you to all of them.
 The tables below are generated from
 [`resources/credits/third_party.json`](resources/credits/third_party.json)
 (`python -m core.third_party --write`); the same data is shown in the app
-under Help > Third-Party Software… and at the end of [README.md](README.md).
+under Help > Third-Party Software… and at the end of the
+[extended README](docs/README-extended.md).
 A test fails when a table drifts from the data, when a package that
 `pyproject.toml` installs has no entry, and - at release time - when a built
 binary contains a library or package without an entry.
@@ -365,7 +366,7 @@ licence text at all (libxcb, lz4-libs, sqlite-libs, xcb-util-keysyms).
 | [GMP](https://gmplib.org) | LGPL-3.0-or-later OR GPL-2.0-or-later | Arbitrary-precision arithmetic used by Nettle | full |
 | [GNU dbm](https://www.gnu.org.ua/software/gdbm/) | GPL-3.0-or-later | Key-value files of Python's dbm module | full |
 | [GNU Readline](https://tiswww.case.edu/php/chet/readline/rltop.html) | GPL-3.0-or-later | Line editing of Python's readline module | full, slim |
-| [GnuTLS](https://www.gnutls.org) | LGPL-2.1-or-later | TLS for network streams of PyAV's FFmpeg | full |
+| [GnuTLS](https://www.gnutls.org) | LGPL-2.1-or-later | TLS library: the system copy in the Linux binaries (with its libraries Nettle, p11-kit, libtasn1, libidn2, libunistring) and PyAV's FFmpeg network streams; axross-slim carries the system copy only; PyAV's own copy is in axross-full and the av wheel | full, slim |
 | [Graphite](https://github.com/silnrsi/graphite) | LGPL-2.1-or-later OR MPL-1.1 OR GPL-2.0-or-later | Smart-font rendering used by HarfBuzz | full, slim |
 | [HarfBuzz](https://github.com/harfbuzz/harfbuzz) | MIT | Text shaping (Qt, Pillow) | full, slim |
 | [ICU](https://icu.unicode.org) 73.2 | Unicode-DFS-2016 | Unicode support of Qt (collation, conversion, text boundaries) | full, slim |
@@ -377,14 +378,16 @@ licence text at all (libxcb, lz4-libs, sqlite-libs, xcb-util-keysyms).
 | [libffi](https://sourceware.org/libffi/) | MIT | Foreign function calls (Python's ctypes, cffi) | full, slim |
 | [libfuse 2](https://github.com/libfuse/libfuse) | LGPL-2.1-only | Kernel FUSE interface of the FUSE mounts (fusepy) | full, slim |
 | [Libgcrypt and libgpg-error](https://www.gnupg.org/software/libgcrypt/) | LGPL-2.1-or-later | Cryptography used by libsystemd | full, slim |
+| [libidn2](https://gitlab.com/libidn/libidn2) | LGPL-3.0-or-later OR GPL-2.0-or-later | Internationalised domain names (IDNA 2008) used by GnuTLS | full, slim |
 | [libjpeg-turbo](https://libjpeg-turbo.org) | IJG AND BSD-3-Clause | JPEG images (Pillow, Qt image plugins) | full, slim |
 | [libpng](https://www.libpng.org) | libpng-2.0 | PNG images (Pillow, Qt) | full, slim |
 | [libpq](https://www.postgresql.org) | PostgreSQL | PostgreSQL client library of psycopg | full, slim |
 | [libselinux](https://github.com/SELinuxProject/selinux) | LicenseRef-PublicDomain | SELinux library used by GLib and libpq | full, slim |
 | [libsodium](https://github.com/jedisct1/libsodium) | ISC | Cryptography library of python-xeddsa (the OMEMO signatures of the XMPP panel) | full |
 | [libsystemd](https://systemd.io) | LGPL-2.1-or-later AND MIT | Journal and D-Bus helpers used by system libraries | full, slim |
+| [libtasn1](https://www.gnu.org/software/libtasn1/) | LGPL-2.1-or-later | ASN.1 parsing used by GnuTLS and p11-kit | full, slim |
 | [LibTIFF](https://libtiff.gitlab.io/libtiff/) | libtiff | TIFF images (Pillow) | full, slim |
-| [libunistring](https://www.gnu.org/software/libunistring/) | LGPL-3.0-or-later OR GPL-2.0-or-later | Unicode string functions used by GnuTLS | full |
+| [libunistring](https://www.gnu.org/software/libunistring/) | LGPL-3.0-or-later OR GPL-2.0-or-later | Unicode string functions used by GnuTLS (the system copy, and PyAV's own in axross-full) | full, slim |
 | [libusb](https://github.com/libusb/libusb) | LGPL-2.1-or-later | USB access of the Bluetooth stick used directly (in libusb-package) | full |
 | [libvpx](https://chromium.googlesource.com/webm/libvpx) | BSD-3-Clause | VP8/VP9 codec library of PyAV's FFmpeg | full |
 | [libwebp](https://chromium.googlesource.com/webm/libwebp) | BSD-3-Clause | WebP images (Pillow, Qt image plugin) | full, slim |
@@ -397,12 +400,13 @@ licence text at all (libxcb, lz4-libs, sqlite-libs, xcb-util-keysyms).
 | [MIT Kerberos](https://web.mit.edu/kerberos/) | MIT | Kerberos / GSSAPI (libpq, system libraries); libcom_err comes from e2fsprogs (MIT) | full, slim |
 | [mpdecimal](https://www.bytereef.org/mpdecimal/) | BSD-2-Clause | Decimal arithmetic of Python's decimal module | full, slim |
 | [ncurses (libtinfo)](https://invisible-island.net/ncurses/) | X11 | Terminal capabilities used by Readline | full, slim |
-| [Nettle](https://www.lysator.liu.se/~nisse/nettle/) | LGPL-3.0-or-later OR GPL-2.0-or-later | Cryptographic library used by GnuTLS | full |
+| [Nettle](https://www.lysator.liu.se/~nisse/nettle/) | LGPL-3.0-or-later OR GPL-2.0-or-later | Cryptographic library used by GnuTLS (the system copy, and PyAV's own in axross-full) | full, slim |
 | [OpenBLAS](https://github.com/OpenMathLib/OpenBLAS) | BSD-3-Clause | Linear algebra of numpy | full |
 | [OpenJPEG](https://www.openjpeg.org) | BSD-2-Clause | JPEG 2000 images in Pillow | full, slim |
 | [OpenLDAP client libraries](https://www.openldap.org) | OLDAP-2.8 | LDAP support of libpq | full, slim |
 | [OpenSSL](https://www.openssl.org) | Apache-2.0 | TLS and cryptography (Python's ssl module, Qt, libpq) | full, slim |
 | [Opus](https://opus-codec.org) | BSD-3-Clause | Opus audio codec library of PyAV's FFmpeg | full |
+| [p11-kit](https://p11-glue.github.io/p11-glue/p11-kit.html) | BSD-3-Clause | PKCS #11 module loading and the system trust store, used by GnuTLS | full, slim |
 | [PCRE and PCRE2](https://www.pcre.org) | BSD-3-Clause | Regular expressions used by GLib and libselinux | full, slim |
 | [Python](https://www.python.org) 3.12 | PSF-2.0 | The Python interpreter and standard library inside the binaries | full, slim |
 | [Qt 6](https://www.qt.io) | LGPL-3.0-only | The GUI toolkit: widgets, graphics, PDF, SVG, multimedia, networking; Qt libraries and plugins as packaged in the PyQt6-Qt6 wheel | full, slim |
@@ -429,24 +433,25 @@ The release notes name the components and their versions.
 <!-- third-party:native-files -->
 <!-- Generated from the built binaries by `python scripts/native_inventory.py --write dist/axross-full dist/axross-slim`; tests/test_native_inventory.py fails at release time when it drifts. -->
 
-`axross-full` 436 ELF files (233 of them Python extension modules); `axross-slim` 306 ELF files (143 of them Python extension modules). *Read from*: `rpm` the builder image's package, `cpython` the libpython of the Python the build ran with, `wheel` the library is the wheel's own, `sbom` the wheel's SBOM, `file` a version string in the file, `sibling` that string in the library of the same build next to it, `soname` only the ABI number of the file name, `credits` not in the binary: the version resources/credits/third_party.json names.
+`axross-full` 443 ELF files (233 of them Python extension modules); `axross-slim` 313 ELF files (143 of them Python extension modules). *Read from*: `rpm` the builder image's package, `cpython` the libpython of the Python the build ran with, `wheel` the library is the wheel's own, `sbom` the wheel's SBOM, `file` a version string in the file, `sibling` that string in the library of the same build next to it, `soname` only the ABI number of the file name, `credits` not in the binary: the version resources/credits/third_party.json names.
 
 | File | Component | Version | Read from | Shipped by | In |
 |---|---|---|---|---|---|
 | `libbz2.so.1` | [bzip2](https://sourceware.org/bzip2/) | 1.0.8-11.el9 | rpm | rpm bzip2-libs | full, slim |
-| `libdbus-1.so.3` | [D-Bus](https://www.freedesktop.org/wiki/Software/dbus/) | 1.12.20-8.el9 | rpm | rpm dbus-libs | full, slim |
-| `libglib-2.0.so.0` | [GLib](https://gitlab.gnome.org/GNOME/glib) | 2.68.4-19.el9_8.10 | rpm | rpm glib2 | full, slim |
-| `libgobject-2.0.so.0` | [GLib](https://gitlab.gnome.org/GNOME/glib) | 2.68.4-19.el9_8.10 | rpm | rpm glib2 | full, slim |
-| `libgthread-2.0.so.0` | [GLib](https://gitlab.gnome.org/GNOME/glib) | 2.68.4-19.el9_8.10 | rpm | rpm glib2 | full, slim |
+| `libdbus-1.so.3` | [D-Bus](https://www.freedesktop.org/wiki/Software/dbus/) | 1.12.20-10.el9 | rpm | rpm dbus-libs | full, slim |
+| `libglib-2.0.so.0` | [GLib](https://gitlab.gnome.org/GNOME/glib) | 2.68.4-29.el9_9.1 | rpm | rpm glib2 | full, slim |
+| `libgobject-2.0.so.0` | [GLib](https://gitlab.gnome.org/GNOME/glib) | 2.68.4-29.el9_9.1 | rpm | rpm glib2 | full, slim |
+| `libgthread-2.0.so.0` | [GLib](https://gitlab.gnome.org/GNOME/glib) | 2.68.4-29.el9_9.1 | rpm | rpm glib2 | full, slim |
+| `libgnutls.so.30` | [GnuTLS](https://www.gnutls.org) | 3.8.10-9.el9_8 | rpm | rpm gnutls | full, slim |
 | `libgraphite2.so.3` | [Graphite](https://github.com/silnrsi/graphite) | 1.3.14-9.el9 | rpm | rpm graphite2 | full, slim |
 | `libharfbuzz.so.0` | [HarfBuzz](https://github.com/harfbuzz/harfbuzz) | 2.7.4-10.el9 | rpm | rpm harfbuzz | full, slim |
 | `libkeyutils.so.1` | [keyutils](https://git.kernel.org/pub/scm/linux/kernel/git/dhowells/keyutils.git) | 1.6.3-1.el9 | rpm | rpm keyutils-libs | full, slim |
-| `libgssapi_krb5.so.2` | [MIT Kerberos](https://web.mit.edu/kerberos/) | 1.21.1-10.el9_8.1 | rpm | rpm krb5-libs | full, slim |
-| `libk5crypto.so.3` | [MIT Kerberos](https://web.mit.edu/kerberos/) | 1.21.1-10.el9_8.1 | rpm | rpm krb5-libs | full, slim |
-| `libkrb5.so.3` | [MIT Kerberos](https://web.mit.edu/kerberos/) | 1.21.1-10.el9_8.1 | rpm | rpm krb5-libs | full, slim |
-| `libkrb5support.so.0` | [MIT Kerberos](https://web.mit.edu/kerberos/) | 1.21.1-10.el9_8.1 | rpm | rpm krb5-libs | full, slim |
-| `libatomic.so.1` | [GCC runtime libraries](https://gcc.gnu.org) | 11.5.0-14.el9.alma.1 | rpm | rpm libatomic | full |
-| `libblkid.so.1` | [util-linux libraries](https://github.com/util-linux/util-linux) | 2.37.4-25.el9 | rpm | rpm libblkid | full, slim |
+| `libgssapi_krb5.so.2` | [MIT Kerberos](https://web.mit.edu/kerberos/) | 1.21.1-10.el9_9.2 | rpm | rpm krb5-libs | full, slim |
+| `libk5crypto.so.3` | [MIT Kerberos](https://web.mit.edu/kerberos/) | 1.21.1-10.el9_9.2 | rpm | rpm krb5-libs | full, slim |
+| `libkrb5.so.3` | [MIT Kerberos](https://web.mit.edu/kerberos/) | 1.21.1-10.el9_9.2 | rpm | rpm krb5-libs | full, slim |
+| `libkrb5support.so.0` | [MIT Kerberos](https://web.mit.edu/kerberos/) | 1.21.1-10.el9_9.2 | rpm | rpm krb5-libs | full, slim |
+| `libatomic.so.1` | [GCC runtime libraries](https://gcc.gnu.org) | 11.5.0-17.el9_9.alma.1 | rpm | rpm libatomic | full |
+| `libblkid.so.1` | [util-linux libraries](https://github.com/util-linux/util-linux) | 2.37.4-28.el9_9.1 | rpm | rpm libblkid | full, slim |
 | `libbrotlicommon.so.1` | [Brotli (C library)](https://github.com/google/brotli) | 1.0.9-10.el9_8.1 | rpm | rpm libbrotli | full, slim |
 | `libbrotlidec.so.1` | [Brotli (C library)](https://github.com/google/brotli) | 1.0.9-10.el9_8.1 | rpm | rpm libbrotli | full, slim |
 | `libcap.so.2` | [libcap](https://sites.google.com/site/fullycapable/) | 2.48-10.el9_8.1 | rpm | rpm libcap | full, slim |
@@ -454,11 +459,14 @@ The release notes name the components and their versions.
 | `libffi.so.8` | [libffi](https://sourceware.org/libffi/) | 3.4.2-8.el9 | rpm | rpm libffi | full, slim |
 | `libgcrypt.so.20` | [Libgcrypt and libgpg-error](https://www.gnupg.org/software/libgcrypt/) | 1.10.0-13.el9_8 | rpm | rpm libgcrypt | full, slim |
 | `libgpg-error.so.0` | [Libgcrypt and libgpg-error](https://www.gnupg.org/software/libgcrypt/) | 1.42-5.el9 | rpm | rpm libgpg-error | full, slim |
-| `libmount.so.1` | [util-linux libraries](https://github.com/util-linux/util-linux) | 2.37.4-25.el9 | rpm | rpm libmount | full, slim |
-| `libpng16.so.16` | [libpng](https://www.libpng.org) | 1.6.37-15.el9_8.2 | rpm | rpm libpng | full, slim |
-| `libselinux.so.1` | [libselinux](https://github.com/SELinuxProject/selinux) | 3.6-3.el9 | rpm | rpm libselinux | full, slim |
-| `libX11.so.6` | [X.Org client libraries](https://www.x.org) | 1.8.12-1.el9_8.1 | rpm | rpm libX11 | full, slim |
-| `libX11-xcb.so.1` | [X.Org client libraries](https://www.x.org) | 1.8.12-1.el9_8.1 | rpm | rpm libX11-xcb | full, slim |
+| `libidn2.so.0` | [libidn2](https://gitlab.com/libidn/libidn2) | 2.3.0-7.el9 | rpm | rpm libidn2 | full, slim |
+| `libmount.so.1` | [util-linux libraries](https://github.com/util-linux/util-linux) | 2.37.4-28.el9_9.1 | rpm | rpm libmount | full, slim |
+| `libpng16.so.16` | [libpng](https://www.libpng.org) | 1.6.37-17.el9 | rpm | rpm libpng | full, slim |
+| `libselinux.so.1` | [libselinux](https://github.com/SELinuxProject/selinux) | 3.6-4.el9 | rpm | rpm libselinux | full, slim |
+| `libtasn1.so.6` | [libtasn1](https://www.gnu.org/software/libtasn1/) | 4.16.0-10.el9_8 | rpm | rpm libtasn1 | full, slim |
+| `libunistring.so.2` | [libunistring](https://www.gnu.org/software/libunistring/) | 0.9.10-15.el9 | rpm | rpm libunistring | full, slim |
+| `libX11.so.6` | [X.Org client libraries](https://www.x.org) | 1.8.12-1.el9_9.1 | rpm | rpm libX11 | full, slim |
+| `libX11-xcb.so.1` | [X.Org client libraries](https://www.x.org) | 1.8.12-1.el9_9.1 | rpm | rpm libX11-xcb | full, slim |
 | `libXau.so.6` | [X.Org client libraries](https://www.x.org) | 1.0.9-8.el9 | rpm | rpm libXau | full, slim |
 | `libxcb-glx.so.0` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 1.13.1-9.el9 | rpm | rpm libxcb | full, slim |
 | `libxcb-randr.so.0` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 1.13.1-9.el9 | rpm | rpm libxcb | full, slim |
@@ -471,23 +479,26 @@ The release notes name the components and their versions.
 | `libXext.so.6` | [X.Org client libraries](https://www.x.org) | 1.3.4-8.el9 | rpm | rpm libXext | full, slim |
 | `libxkbcommon.so.0` | [libxkbcommon](https://xkbcommon.org) | 1.0.3-4.el9 | rpm | rpm libxkbcommon | full, slim |
 | `libxkbcommon-x11.so.0` | [libxkbcommon](https://xkbcommon.org) | 1.0.3-4.el9 | rpm | rpm libxkbcommon-x11 | full, slim |
-| `libxml2.so.2` | [libxml2](https://gitlab.gnome.org/GNOME/libxml2) | 2.9.13-14.el9_8.5 | rpm | rpm libxml2 | full, slim |
+| `libxml2.so.2` | [libxml2](https://gitlab.gnome.org/GNOME/libxml2) | 2.9.13-18.el9_9.1 | rpm | rpm libxml2 | full, slim |
 | `libXrandr.so.2` | [X.Org client libraries](https://www.x.org) | 1.5.2-8.el9 | rpm | rpm libXrandr | full, slim |
-| `libXrender.so.1` | [X.Org client libraries](https://www.x.org) | 0.9.10-16.el9_8.2 | rpm | rpm libXrender | full, slim |
+| `libXrender.so.1` | [X.Org client libraries](https://www.x.org) | 0.9.10-17.el9_9.1 | rpm | rpm libXrender | full, slim |
 | `libzstd.so.1` | [Zstandard](https://github.com/facebook/zstd) | 1.5.5-1.el9 | rpm | rpm libzstd | full, slim |
 | `liblz4.so.1` | [LZ4](https://github.com/lz4/lz4) | 1.9.3-5.el9 | rpm | rpm lz4-libs | full, slim |
-| `libcrypto.so.3` | [OpenSSL](https://www.openssl.org) | 3.5.8-2.el9_8 | rpm | rpm openssl-libs | full, slim |
-| `libssl.so.3` | [OpenSSL](https://www.openssl.org) | 3.5.8-2.el9_8 | rpm | rpm openssl-libs | full, slim |
+| `libhogweed.so.6` | [Nettle](https://www.lysator.liu.se/~nisse/nettle/) | 3.10.1-1.el9 | rpm | rpm nettle | full, slim |
+| `libnettle.so.8` | [Nettle](https://www.lysator.liu.se/~nisse/nettle/) | 3.10.1-1.el9 | rpm | rpm nettle | full, slim |
+| `libcrypto.so.3` | [OpenSSL](https://www.openssl.org) | 3.5.9-1.el9_9 | rpm | rpm openssl-libs | full, slim |
+| `libssl.so.3` | [OpenSSL](https://www.openssl.org) | 3.5.9-1.el9_9 | rpm | rpm openssl-libs | full, slim |
+| `libp11-kit.so.0` | [p11-kit](https://p11-glue.github.io/p11-glue/p11-kit.html) | 0.26.4-1.el9_8 | rpm | rpm p11-kit | full, slim |
 | `libpcre.so.1` | [PCRE and PCRE2](https://www.pcre.org) | 8.44-4.el9 | rpm | rpm pcre | full, slim |
 | `libpcre2-8.so.0` | [PCRE and PCRE2](https://www.pcre.org) | 10.40-7.el9_8 | rpm | rpm pcre2 | full, slim |
-| `libsystemd.so.0` | [libsystemd](https://systemd.io) | 252-67.el9_8.6.alma.1 | rpm | rpm systemd-libs | full, slim |
+| `libsystemd.so.0` | [libsystemd](https://systemd.io) | 252-79.el9_9.alma.1 | rpm | rpm systemd-libs | full, slim |
 | `libxcb-util.so.1` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 0.4.0-19.el9 | rpm | rpm xcb-util | full, slim |
 | `libxcb-cursor.so.0` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 0.1.4-3.el9 | rpm | rpm xcb-util-cursor | full, slim |
 | `libxcb-image.so.0` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 0.4.0-19.el9 | rpm | rpm xcb-util-image | full, slim |
 | `libxcb-keysyms.so.1` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 0.4.0-17.el9 | rpm | rpm xcb-util-keysyms | full, slim |
 | `libxcb-render-util.so.0` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 0.3.9-20.el9 | rpm | rpm xcb-util-renderutil | full, slim |
 | `libxcb-icccm.so.4` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 0.4.1-22.el9 | rpm | rpm xcb-util-wm | full, slim |
-| `liblzma.so.5` | [XZ Utils (liblzma)](https://tukaani.org/xz/) | 5.2.5-8.el9_8.1 | rpm | rpm xz-libs | full, slim |
+| `liblzma.so.5` | [XZ Utils (liblzma)](https://tukaani.org/xz/) | 5.2.5-8.el9_9.1 | rpm | rpm xz-libs | full, slim |
 | `libz.so.1` | [zlib](https://zlib.net) | 1.2.11-40.el9 | rpm | rpm zlib | full, slim |
 | `libpython3.12.so.1.0` | [Python](https://www.python.org) | 3.12.8 | cpython | python-build-standalone 3.12.8 | full, slim |
 | `av.libs/libasound-c7818c60.so.2.0.0` | [alsa-lib](https://github.com/alsa-project/alsa-lib) | 2.0.0 | soname | wheel av 19.0.2 | full |
@@ -581,7 +592,7 @@ The release notes name the components and their versions.
 | `PyQt6/Qt6/lib/libQt6Network.so.6` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
 | `PyQt6/Qt6/lib/libQt6OpenGL.so.6` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
 | `PyQt6/Qt6/lib/libQt6Pdf.so.6` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
-| `PyQt6/Qt6/lib/libQt6PdfWidgets.so.6` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libQt6PrintSupport.so.6` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
 | `PyQt6/Qt6/lib/libQt6Qml.so.6` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
 | `PyQt6/Qt6/lib/libQt6QmlMeta.so.6` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
 | `PyQt6/Qt6/lib/libQt6QmlModels.so.6` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
@@ -723,6 +734,24 @@ Axross calls out to.
 | [axross MCP hub](https://github.com/c0decave/axross-mcp-hub) | MIT | Catalogue of container-packaged MCP servers that the MCP catalog installs on request | each server's tool, wrapper, licence and base image are listed in servers/<name>/PROVENANCE.md of the hub |
 | [Python container image (python:3.12-slim)](https://hub.docker.com/_/python) | PSF-2.0 AND LicenseRef-Debian-Packages | Base image of Dockerfile.mcp, Dockerfile.agent and Dockerfile.gui | built on Debian; each Debian package's licence is in /usr/share/doc/<package>/copyright inside the image |
 <!-- /third-party:containers -->
+
+## The AppImage runtime (the `*-x86_64.AppImage` assets)
+
+Each AppImage of a release (`axross-{full,slim,base}-x86_64.AppImage`,
+made by `scripts/build_appimage.sh`) starts with the AppImage project's
+[type-2 runtime](https://github.com/AppImage/type2-runtime) - release
+`20251108`, `runtime-x86_64`, SHA-256 pinned in
+`scripts/fetch_appimagetool.sh` - followed by a SquashFS image holding the
+unchanged `axross-<flavor>` binary, `axross.desktop` and `axross.svg`. The
+runtime is MIT-licensed and statically linked; by the AppImage project's
+account it contains libfuse 3 (LGPL-2.1), squashfuse (BSD-2-Clause), zstd
+(BSD-3-Clause), zlib (Zlib), liblzma (0BSD) and musl libc (MIT). The
+runtime is a separate program at the start of the file: replacing it (for
+example with a rebuilt one, `appimagetool --runtime-file`) leaves the axross
+binary inside as it is, and `--appimage-extract` unpacks that binary to run
+it without the runtime. The source of the runtime is the tag `20251108` of
+that repository. `appimagetool` itself (1.9.1, MIT) only builds the images
+and is not shipped.
 
 ## Notes for redistributors
 

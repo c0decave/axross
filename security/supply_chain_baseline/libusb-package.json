@@ -3,9 +3,37 @@
  "versions": {
   "1.0.26.4": {
    "accepted_findings": [
+    "yara|capability_process_spawn|libusb_package/__init__.py|6dd530a289e61d59",
     "yara|capability_process_spawn|libusb_package/__init__.py|e0901f16719309f0"
    ],
    "archives": {
+    "libusb_package-1.0.26.4-py3-none-macosx_11_0_arm64.whl": {
+     "entry_points": [
+      "hook-dirs = libusb_package.__pyinstaller:get_hook_dirs"
+     ],
+     "files": {
+      "libusb_package-1.0.26.4.dist-info/METADATA": "449b016ee5b9f0a4d330975c92fca4979d47c941f12bdbddfa357a4b1757994d",
+      "libusb_package-1.0.26.4.dist-info/RECORD": "daed566101468f77944ee8f13b6f8c35b83294b8115e34e3a32d86db88141c3e",
+      "libusb_package-1.0.26.4.dist-info/WHEEL": "9f7eae614988ea71ec1c2f559cd747f9e6a420331cf6a817f24658affd768b72",
+      "libusb_package-1.0.26.4.dist-info/entry_points.txt": "41acef68d704dd0ab23bdb0d2605ee594b18fa7c2f01b0c4d6b36f49d9b8c7c9",
+      "libusb_package-1.0.26.4.dist-info/licenses/LICENSE": "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9",
+      "libusb_package-1.0.26.4.dist-info/top_level.txt": "d20e6f14c285da75113c043dfead9396320331841fbebbbc8f331959eb3e3d6e",
+      "libusb_package/__init__.py": "e0901f16719309f01269291a75b8a9a9c3a35971f0efec06d069238ef463df44",
+      "libusb_package/__pyinstaller/__init__.py": "a1b4f44a68bc42094c71c550ae5795aae262e8ddc1758f9bd47fbab3c8fad76d",
+      "libusb_package/__pyinstaller/hook-libusb_package.py": "7b4c387d9c719d81e78ae3a08bad54e51b502d96676db5b7d50bc8a73426e3b8",
+      "libusb_package/_version.py": "5ae5e499dd2065623a4d420dfe5b7d911802d4f36a56a846733991fb53c7dbff",
+      "libusb_package/libusb-1.0.dylib": "fe0956ff919e13efa29e1b86dda47be62712be153cc7a406f4786559f0038649",
+      "libusb_package/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "28b6eef4f740b29b584cff3bc5cfe23380bf5a721835f9c5fe3428d85ba0c915",
+     "native": {
+      "libusb_package/libusb-1.0.dylib": "macho"
+     },
+     "pth": {},
+     "sha256": "4ef4accbadd40f8a054b0298604555d8175ebd376a87978302a83d0311a0b116"
+    },
     "libusb_package-1.0.26.4-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
      "entry_points": [
       "hook-dirs = libusb_package.__pyinstaller:get_hook_dirs"
@@ -32,11 +60,40 @@
      },
      "pth": {},
      "sha256": "44baf60d639f97e61d2091212295b9f34e7ca58082c355f5fab44ad46ac4595e"
+    },
+    "libusb_package-1.0.26.4-py3-none-win_amd64.whl": {
+     "entry_points": [
+      "hook-dirs = libusb_package.__pyinstaller:get_hook_dirs"
+     ],
+     "files": {
+      "libusb_package-1.0.26.4.dist-info/METADATA": "d8e2ceb4b6bc205ce5c8c772fb08cdc8bdb2f944e23ca9101db9061716c01b42",
+      "libusb_package-1.0.26.4.dist-info/RECORD": "89fb88dce3b153006623ede960521322436fd0b3616fafc2797c98c2f5dacb58",
+      "libusb_package-1.0.26.4.dist-info/WHEEL": "1a30cf3d0c0472b8a954fe8fdabdd1c4b6be8792dbf627c607b15862d6cb0d3d",
+      "libusb_package-1.0.26.4.dist-info/entry_points.txt": "41acef68d704dd0ab23bdb0d2605ee594b18fa7c2f01b0c4d6b36f49d9b8c7c9",
+      "libusb_package-1.0.26.4.dist-info/licenses/LICENSE": "6d1d968fb225eca367cb7f0b8831ab012a35d92b547e945e17ef8e7b05c3e5cc",
+      "libusb_package-1.0.26.4.dist-info/top_level.txt": "d20e6f14c285da75113c043dfead9396320331841fbebbbc8f331959eb3e3d6e",
+      "libusb_package/__init__.py": "6dd530a289e61d59b4f6287b3329b9a192342e1217c492594c130dd94fe6b2db",
+      "libusb_package/__pyinstaller/__init__.py": "fd2c7ff282cba4bb5485647774063f0c63c6af956b5466862c6cb0d1bec91e2b",
+      "libusb_package/__pyinstaller/hook-libusb_package.py": "e7cb059fd3ae4ef07e9eb10365a5326e38e7713acaae873b1879c640743b3950",
+      "libusb_package/_version.py": "80fd766101369de20584bf82afa215f26d06af08a6428d69d4be9e39fd2ce76a",
+      "libusb_package/libusb-1.0.dll": "c96a3a34b2b044ae49bc7c2d573eda712b8a8e3c863153115be0b6b3fe422463",
+      "libusb_package/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "153974e49566875310a6e8b065cdd984e6341f71bfe867a2969ccf505f3e30b1",
+     "native": {
+      "libusb_package/libusb-1.0.dll": "pe"
+     },
+     "pth": {},
+     "sha256": "cd8c1f5df3906444ba6eff82ef44a75515b0444b76bba8abf21cc8569637af63"
     }
    },
    "name": "libusb-package",
    "provenance": {
-    "libusb_package-1.0.26.4-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": null
+    "libusb_package-1.0.26.4-py3-none-macosx_11_0_arm64.whl": null,
+    "libusb_package-1.0.26.4-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": null,
+    "libusb_package-1.0.26.4-py3-none-win_amd64.whl": null
    },
    "pypi": {
     "author": "Chris Reed",
@@ -53,8 +110,15 @@
    },
    "reviewed": {
     "by": "claude",
-    "date": "2026-11-05",
-    "note": "libusb's bind/socket imports are its netlink hotplug monitor (Linux). Content review only."
+    "date": "2026-11-20",
+    "earlier": [
+     {
+      "by": "claude",
+      "date": "2026-11-05",
+      "note": "libusb's bind/socket imports are its netlink hotplug monitor (Linux). Content review only."
+     }
+    ],
+    "note": "macOS arm64 and Windows amd64 wheels of the reviewed version: same 12 members, only the bundled libusb-1.0 (.dylib / .dll) differs; Windows Python and the PyInstaller hook CRLF only (the one 'new' key is the reviewed hit, CRLF-changed). The DLL is libusb 1.0.26.11727 (version resource, libusb.info) built in the project's own CI; capa: driver IOCTLs, threads, runtime linking - libusb's job. No network imports, no .pth. No attestation, as for the Linux wheel: content review only."
    },
    "scans": {
     "capa": {
@@ -99,9 +163,79 @@
         "http://libusb.info"
        ]
       }
+     },
+     "c96a3a34b2b044ae49bc7c2d573eda712b8a8e3c863153115be0b6b3fe422463": {
+      "capabilities": [
+       "allocate thread local storage",
+       "check OS version",
+       "check if file exists",
+       "contain loop",
+       "contains PDB path",
+       "create or open file",
+       "create thread",
+       "delay execution",
+       "get OS version",
+       "get common file path",
+       "get thread local storage value",
+       "hash data using djb2",
+       "interact with driver via IOCTL",
+       "link function at runtime on Windows",
+       "link many functions at runtime",
+       "query environment variable",
+       "read file on Windows",
+       "resolve function by parsing PE exports",
+       "set thread local storage value",
+       "write file on Windows"
+      ],
+      "note": "",
+      "path": "libusb_package/libusb-1.0.dll",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ],
+        "dynamic-code": [
+         "GetProcAddress",
+         "LoadLibraryA"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-convert-l1-1-0.dll",
+        "api-ms-win-crt-environment-l1-1-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": [
+        "http://libusb.info",
+        "http://msdn.microsoft.com/en-us/library/ms792901.aspx"
+       ]
+      }
+     },
+     "fe0956ff919e13efa29e1b86dda47be62712be153cc7a406f4786559f0038649": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "libusb_package/libusb-1.0.dylib",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": [
+        "http://libusb.info"
+       ]
+      }
      }
     },
     "keys": [
+     "yara|capability_process_spawn|libusb_package/__init__.py|6dd530a289e61d59",
      "yara|capability_process_spawn|libusb_package/__init__.py|e0901f16719309f0"
     ],
     "yara": [

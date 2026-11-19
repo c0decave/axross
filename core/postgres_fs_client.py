@@ -59,6 +59,10 @@ def _dsn_quote(value: object) -> str:
 
 
 #: Connection parameters a URL names outside its query.
+#: Seconds libpq waits for the server to take the connection (a URL's own
+#: connect_timeout wins).
+PG_CONNECT_TIMEOUT = 10
+
 _URL_BASE_KEYS = frozenset({"host", "port", "user", "password", "dbname"})
 
 
@@ -127,6 +131,13 @@ class PostgresFsSession(DbFsBackend):
             else:
                 params = [("host", host), ("port", port)]
             params += [("user", username), ("password", password), ("dbname", database)]
+            # A server that takes the connection and never answers (a TLS
+            # port, a black hole) held the connect for ever; keepalives
+            # find a link that died under an idle session.
+            for key, value in (("connect_timeout", str(PG_CONNECT_TIMEOUT)),
+                               ("keepalives", "1"), ("keepalives_idle", "60")):
+                if key not in url_params:
+                    params.append((key, value))
             # The URL's query (sslmode, sslrootcert, ...) - dropping it
             # turned "sslmode=verify-full" into libpq's plaintext-capable
             # default "prefer".
@@ -171,6 +182,24 @@ class PostgresFsSession(DbFsBackend):
     @property
     def name(self) -> str:
         return f"PostgreSQL: {self._display}"
+
+    @property
+    def connected(self) -> bool:
+        """False once the server dropped the connection (psycopg does not
+        reconnect: every call failed with "the connection is closed"
+        while the connection manager kept handing the session out)."""
+        conn = getattr(self, "_conn", None)
+        return conn is not None and not conn.closed and not getattr(conn, "broken", False)
+
+    def _transaction(self):
+        import contextlib
+
+        @contextlib.contextmanager
+        def transaction():
+            with self._lock, self._conn.transaction():
+                yield
+
+        return transaction()
 
     def close(self) -> None:
         log.info("PostgreSQL-FS disconnecting: %s", self._display)

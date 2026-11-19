@@ -57,7 +57,7 @@ from PyQt6.QtWidgets import (
 from core import mcp_catalog as M
 from core import mcp_client as MC
 from core import mcp_install as I
-from core.i18n import tr
+from core.i18n import tr, tr_n
 from ui.close_corner import add_close_corner
 from ui.column_fit import ColumnFitter
 from ui.handbook import install_help_key
@@ -304,10 +304,15 @@ class McpCatalogDialog(QDialog):
             notes.extend(tr("{source}: {why}").format(source=result.title, why=note)
                          for note in result.notes)
             if result.warnings:
-                notes.append(tr("{source}: {n} entries skipped ({first})").format(
-                    source=result.title, n=len(result.warnings), first=result.warnings[0]))
+                notes.append(tr_n(
+                    len(result.warnings),
+                    "{source}: {n} entry skipped ({first})",
+                    "{source}: {n} entries skipped ({first})",
+                    source=result.title,
+                    first=result.warnings[0],
+                ))
         self.status_label.setText(
-            tr("{n} servers found.").format(n=total) + ("\n" + "\n".join(notes) if notes else ""))
+            tr_n(total, "{n} server found.", "{n} servers found.") + ("\n" + "\n".join(notes) if notes else ""))
         chosen = self.category_combo.currentData()
         categories = sorted({e.category for r in results for e in r.entries}
                             | ({chosen} if chosen and chosen == self._wanted_category else set()))
@@ -354,8 +359,11 @@ class McpCatalogDialog(QDialog):
         lines = [line for line in self.status_label.text().split("\n")
                  if not line.startswith(tr("Discover: checking"))]
         if left:
-            lines.append(tr("Discover: checking {n} entries against the MCP Registry and "
-                            "Docker Hub…").format(n=left))
+            lines.append(tr_n(
+                left,
+                "Discover: checking {n} entry against the MCP Registry and Docker Hub…",
+                "Discover: checking {n} entries against the MCP Registry and Docker Hub…",
+            ))
         self.status_label.setText("\n".join(lines))
 
     def _take_checked(self, generation: int, entry: M.CatalogEntry) -> None:

@@ -71,33 +71,67 @@ def _build_auth(
     auth_proto: str | None,
     priv_proto: str | None,
 ):
-    """Choose CommunityData (v1/v2c) or UsmUserData (v3)."""
-    from pysnmp.hlapi.v3arch.asyncio import (  # type: ignore
-        CommunityData,
-        UsmUserData,
-        usmAesCfb128Protocol,
-        usmDESPrivProtocol,
-        usmHMACMD5AuthProtocol,
-        usmHMACSHAAuthProtocol,
-    )
+    """Choose CommunityData (v1/v2c) or UsmUserData (v3).
+
+    An auth or priv protocol name that is not known is ValueError: it fell
+    back to SHA-1 / AES-128 without a word - a weaker protocol than the
+    one asked for, or a login failing as "wrong digest"."""
+    from pysnmp.hlapi.v3arch import asyncio as _h  # type: ignore
 
     if user:
-        proto_map_a = {
-            "md5": usmHMACMD5AuthProtocol,
-            "sha": usmHMACSHAAuthProtocol,
+        auth_protocols = {
+            "md5": _h.usmHMACMD5AuthProtocol,
+            "sha": _h.usmHMACSHAAuthProtocol,
+            "sha1": _h.usmHMACSHAAuthProtocol,
+            "sha224": _h.usmHMAC128SHA224AuthProtocol,
+            "sha256": _h.usmHMAC192SHA256AuthProtocol,
+            "sha384": _h.usmHMAC256SHA384AuthProtocol,
+            "sha512": _h.usmHMAC384SHA512AuthProtocol,
         }
-        proto_map_p = {
-            "aes": usmAesCfb128Protocol,
-            "des": usmDESPrivProtocol,
+        priv_protocols = {
+            "aes": _h.usmAesCfb128Protocol,
+            "aes128": _h.usmAesCfb128Protocol,
+            "aes192": _h.usmAesCfb192Protocol,
+            "aes256": _h.usmAesCfb256Protocol,
+            "des": _h.usmDESPrivProtocol,
+            "3des": _h.usm3DESEDEPrivProtocol,
         }
-        return UsmUserData(
+        auth_name = (auth_proto or "sha").strip().lower().replace("-", "")
+        priv_name = (priv_proto or "aes").strip().lower().replace("-", "")
+        if auth_name not in auth_protocols:
+            raise ValueError(
+                f"SNMPv3: unknown auth protocol {auth_proto!r}; one of {', '.join(auth_protocols)}"
+            )
+        if priv_name not in priv_protocols:
+            raise ValueError(
+                f"SNMPv3: unknown priv protocol {priv_proto!r}; one of {', '.join(priv_protocols)}"
+            )
+        return _h.UsmUserData(
             user,
             auth_key,
             priv_key,
-            authProtocol=proto_map_a.get((auth_proto or "sha").lower(), usmHMACSHAAuthProtocol),
-            privProtocol=proto_map_p.get((priv_proto or "aes").lower(), usmAesCfb128Protocol),
+            authProtocol=auth_protocols[auth_name] if auth_key else _h.usmNoAuthProtocol,
+            privProtocol=priv_protocols[priv_name] if priv_key else _h.usmNoPrivProtocol,
         )
+    from pysnmp.hlapi.v3arch.asyncio import CommunityData  # type: ignore
+
     return CommunityData(community or "public")
+
+
+#: The varbind values that say "nothing here" (RFC 3416 4.2.1): an
+#: answer with error-status 0 that is no value.
+_EXCEPTION_VALUES = ("NoSuchObject", "NoSuchInstance", "EndOfMibView")
+
+
+def _refuse_exception_value(varbind, what: str) -> None:
+    """FileNotFoundError when *varbind* holds noSuchObject, noSuchInstance
+    or endOfMibView: returned as a value, a GET of a missing OID was a
+    success holding the text "No Such Object currently exists"."""
+    import errno
+
+    kind = type(varbind[1]).__name__
+    if kind in _EXCEPTION_VALUES:
+        raise FileNotFoundError(errno.ENOENT, f"{what}: the agent has no such object ({kind})")
 
 
 def _to_var(varbind) -> SnmpVar:
@@ -212,6 +246,7 @@ async def _snmp_get_async(
         )
     if not var_binds:
         raise OSError(f"SNMP GET {host}:{port} {oid}: empty varbinds")
+    _refuse_exception_value(var_binds[0], f"SNMP GET {host}:{port} {oid}")
     return _to_var(var_binds[0])
 
 
@@ -299,6 +334,8 @@ async def _snmp_walk_async(
                 f"{error_status.prettyPrint()} (index {error_index})"
             )
         for vb in var_binds:
+            if type(vb[1]).__name__ in _EXCEPTION_VALUES:
+                continue  # the end of the view, or a hole: no value
             out.append(_to_var(vb))
             if len(out) >= max_vars:
                 return out

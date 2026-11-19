@@ -100,6 +100,8 @@ def _copied(path: Path, target: str) -> tuple[set[str], set[str]]:
     for word, args in _instructions(path):
         if word == "FROM":
             stages.append([])
+        if not stages:
+            continue  # an ARG before the first FROM (the base image)
         stages[-1].append((word, args))
     context: set[str] = set()
     final: set[str] = set()
@@ -194,3 +196,34 @@ def test_sad_a_missing_copy_is_seen(tmp_path) -> None:
     context, final = _copied(tmp_path / "Dockerfile.mcp", "/app")
     assert "security" not in context
     assert "security" in final  # the final stage still names it; the build stage lacks it
+
+
+def test_happy_the_mcp_image_installs_what_the_pypi_package_requires() -> None:
+    """Dockerfile.mcp and axross-headless-mcp (scripts/export_standalone.py
+    mcp) install the same: the package's dependencies and the extras the
+    image carries - not two sets that drift apart."""
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location("export_standalone_img",
+                                                  REPO / "scripts" / "export_standalone.py")
+    exp = importlib.util.module_from_spec(spec)
+    sys.modules["export_standalone_img"] = exp
+    spec.loader.exec_module(exp)
+    app = exp.APPS["mcp"]
+    extras = dict(exp.project_extras(app))
+    expected = {Requirement(r).name.lower() for r in app.requires}
+    for name in ("smb", "webdav", "s3", "adb", "images"):
+        expected |= {Requirement(r).name.lower() for r in extras[name]}
+    expected.add("py7zr")  # the archive extra's 7z (rarfile needs unrar, zstd is 3.14's own)
+    installed = {r.name.lower() for r in _pip_requirements("Dockerfile.mcp")}
+    assert installed == expected
+
+
+def test_happy_the_mcp_base_image_is_pinned_at_release() -> None:
+    text = (REPO / "Dockerfile.mcp").read_text(encoding="utf-8")
+    assert "ARG PYTHON_IMAGE=" in text and "FROM ${PYTHON_IMAGE}" in text
+    workflow = (REPO / ".github" / "workflows" / "mcp-release.yml").read_text(encoding="utf-8")
+    assert "imagetools inspect python:3.12-slim" in workflow
+    assert "PYTHON_IMAGE=python:3.12-slim@$DIGEST" in workflow
+

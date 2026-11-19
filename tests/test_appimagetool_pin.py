@@ -19,6 +19,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 FETCH = ROOT / "scripts" / "fetch_appimagetool.sh"
 BUNDLE = ROOT / "scripts" / "build_bundle.sh"
+APPIMAGE = ROOT / "scripts" / "build_appimage.sh"
 
 pytestmark = pytest.mark.skipif(
     shutil.which("bash") is None or shutil.which("curl") is None
@@ -50,8 +51,44 @@ def test_happy_the_pin_is_a_release_and_a_sha256() -> None:
 def test_happy_the_bundle_script_fetches_through_the_pin() -> None:
     text = BUNDLE.read_text(encoding="utf-8")
     assert "continuous" not in text
-    assert 'bash "$SCRIPT_DIR/fetch_appimagetool.sh" "$DL"' in text
+    assert 'bash "$SCRIPT_DIR/build_appimage.sh"' in text
     assert "curl" not in text.split("# AppImage wrap", 1)[1]
+    image = APPIMAGE.read_text(encoding="utf-8")
+    assert 'bash "$SCRIPT_DIR/fetch_appimagetool.sh" "$APPIMAGETOOL"' in image
+    assert "curl" not in image and "wget" not in image
+
+
+def test_happy_the_runtime_is_pinned_and_given_to_appimagetool() -> None:
+    """The type-2 runtime is part of every AppImage built: appimagetool must
+    not fetch its "continuous" build, so the pinned one goes in with
+    --runtime-file."""
+    assert re.fullmatch(r"\d{8}", _pin("APPIMAGE_RUNTIME_VERSION"))
+    assert re.fullmatch(r"[0-9a-f]{64}", _pin("APPIMAGE_RUNTIME_SHA256"))
+    assert _pin("APPIMAGE_RUNTIME_URL").startswith(
+        "https://github.com/AppImage/type2-runtime/releases/download/${APPIMAGE_RUNTIME_VERSION}/")
+    image = APPIMAGE.read_text(encoding="utf-8")
+    assert 'fetch_appimagetool.sh" "$RUNTIME" --runtime' in image
+    assert '--runtime-file "$RUNTIME"' in image
+    call = next(line for line in image.splitlines() if '"$TOOL" --no-appstream' in line)
+    assert not re.search(r" -(g|u)\b|--guess|--updateinformation|--sign", call)
+
+
+def test_happy_the_dist_builds_the_appimages_through_the_script() -> None:
+    dist = (ROOT / "scripts" / "build_dist.sh").read_text(encoding="utf-8")
+    assert 'bash "$SRC/scripts/build_appimage.sh"' in dist
+    assert '"$OUT/glibc-2.34/axross-$flavor" "$OUT/appimage/axross-$flavor-x86_64.AppImage"' in dist
+
+
+def test_happy_runtime_mode_fetches_the_runtime_pin(tmp_path) -> None:
+    """--runtime selects the runtime's pin; --url / --sha256 still override (tests)."""
+    src = tmp_path / "runtime"
+    src.write_bytes(b"runtime stand-in\n")
+    digest = hashlib.sha256(src.read_bytes()).hexdigest()
+    dest = tmp_path / "build" / "appimage-runtime-x86_64"
+    done = _fetch(dest, "--runtime", "--url", src.as_uri(), "--sha256", digest)
+    assert done.returncode == 0, done.stderr
+    assert "AppImage runtime" in done.stdout
+    assert dest.read_bytes() == src.read_bytes()
 
 
 def test_happy_a_matching_download_lands_executable(tmp_path) -> None:

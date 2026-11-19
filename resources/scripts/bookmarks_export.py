@@ -2,7 +2,9 @@
 
 Useful for sharing the bookmark set with a colleague or for
 versioning it via git. ``import_json`` reverses the process for the
-JSON variant.
+JSON variant - for folder bookmarks: a terminal bookmark or a Smart Folder
+is exported with its kind, and the import leaves it out and names it (the
+scripting API adds folder bookmarks only; one came back as a broken folder).
 
 Usage::
 
@@ -28,6 +30,8 @@ def write_json(path: str) -> int:
                     "backend_name": b.backend_name,
                     "profile_name": b.profile_name,
                     "icon_name": b.icon_name,
+                    "kind": b.kind,
+                    "smart_folder": bool(b.search),
                 }
                 for b in bms
             ],
@@ -56,6 +60,10 @@ def import_json(path: str) -> int:
     entries = json.loads(text)
     n = 0
     for entry in entries:
+        if entry.get("kind", "folder") != "folder" or entry.get("smart_folder"):
+            what = "a Smart Folder" if entry.get("smart_folder") else f"a {entry.get('kind')} bookmark"
+            print(f"left out {entry.get('name')!r}: {what} is not imported here")
+            continue
         axross.add_bookmark(
             name=entry["name"],
             path=entry["path"],

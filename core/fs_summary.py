@@ -105,6 +105,8 @@ def summarize_selection(
             summary.directories += 1
             return
         summary.files += 1
+        if getattr(item, "stat_error", ""):
+            _note_unreadable(child)  # listed, size unknown: not an exact 0
         summary.total_bytes += int(item.size or 0)
 
     for item in items:

@@ -1,7 +1,7 @@
 """docs/EXTENSIONS.md lists exactly the extensions bundled with axross.
 
 The names come from each module's ``EXTENSION["name"]``, read with ``ast``
-so no extension (and no PyQt6) is imported. The README counts them in
+so no extension (and no PyQt6) is imported. The extended README counts them in
 words; that word follows the number of bundled extensions.
 """
 
@@ -59,7 +59,7 @@ def test_happy_every_bundled_extension_is_documented():
 
 def test_happy_the_readme_counts_the_bundled_extensions_in_words():
     word = NUMBER_WORDS[len(bundled_names())]
-    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    text = (ROOT / "docs" / "README-extended.md").read_text(encoding="utf-8")
     assert f"{word.capitalize()} bundled ones" in text
     assert f"the {word} bundled extensions" in text
 

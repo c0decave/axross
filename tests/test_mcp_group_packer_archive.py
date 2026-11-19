@@ -170,6 +170,7 @@ def test_edge_pack_honours_cancel_and_leaves_nothing(tree):
             cancel=cancel,
         )
     assert not list(tree.glob("c*")) and not list(tree.glob(".axross-pack-*"))
+    assert not list(tree.glob(".tmp-*.tmp"))  # the packer's temp name
 
 
 # -- archive_list -------------------------------------------------------------------

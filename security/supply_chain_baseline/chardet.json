@@ -4,10 +4,104 @@
   "7.7.0": {
    "accepted_findings": [
     "yara|capability_filesystem_read|chardet/cli.py|3419cf524d9fb54e",
+    "yara|capability_filesystem_read|chardet/cli.py|5096b353f508279b",
+    "yara|capability_network_outbound|chardet/evaluation.py|371518986e812cb5",
     "yara|capability_network_outbound|chardet/evaluation.py|804a12f658a100c7",
-    "yara|capability_network_outbound|chardet/registry.py|8ebbcae8b9157394"
+    "yara|capability_network_outbound|chardet/registry.py|8ebbcae8b9157394",
+    "yara|capability_network_outbound|chardet/registry.py|b026f40f2362a8c9"
    ],
    "archives": {
+    "chardet-7.7.0-cp312-cp312-macosx_11_0_arm64.whl": {
+     "entry_points": [
+      "chardetect = chardet.cli:main"
+     ],
+     "files": {
+      "650fdafa2468af73c11f__mypyc.cpython-312-darwin.so": "e5c48e6780425eba9f9d867a46751fa6d4f3741eb45b3df9fdb1634885a9dc18",
+      "chardet-7.7.0.dist-info/METADATA": "1989d603002276a861d8c4f996bbd83dcad728458cafe0c9252abae1c467891c",
+      "chardet-7.7.0.dist-info/RECORD": "6b059f71bffb798d67e3c0bb7e9df658aa8c7234fc18fd40d1b56cf3e2b0bbe9",
+      "chardet-7.7.0.dist-info/WHEEL": "28a35204f59491f7928eaf7240b0eb37722b51b585f5ebd6b7947be84476715a",
+      "chardet-7.7.0.dist-info/entry_points.txt": "06649487a25f140e56652a507e3ffbe9772e8300a13315cc6e9e4e942f525da4",
+      "chardet-7.7.0.dist-info/licenses/LICENSE": "0d4cf67e7a26e9957b8948e7dfc0e380e61b427a94b061e618889aba89bb9616",
+      "chardet/__init__.py": "6c712baeef201b7b086b21109276b6ef25bd8b9354efb237771daaac6c1928de",
+      "chardet/__main__.py": "ad1228c76fe1c88612441fe146c1a05e361ecc301247f4a456d3d7300a71ed40",
+      "chardet/_kernel.cpython-312-darwin.so": "3d666a9f94bf062814e8b028dda59f555db4352a12ed6abd1b79edc33a863a4d",
+      "chardet/_kernel.py": "8637c04aaf03353bdd44d8a83254a70b55bdf973f990c7f3e24b297bfdd822d8",
+      "chardet/_utils.py": "35091efd0d91e60a2c0338530aff1e811f20f6735295ba8a05cf5eb59a9a53e9",
+      "chardet/_version.py": "e9702368a9680697d805579728d066402afd7e43e3482973dbb04c1d69c411c2",
+      "chardet/cli.py": "3419cf524d9fb54e1b927e47cc3ea3b731b7247b379d4ece4ee1452e9bd85add",
+      "chardet/detector.py": "18a6441af78af8258c8d2b9a79e9e5501bd9c30d76608a14fe015fed7346fa0e",
+      "chardet/enums.py": "e9977429f18ca1bb0b1302c9edca55332103c191167acb1f6997f71b2b322036",
+      "chardet/equivalences.py": "2702a0ac3b50e485cdeb416d91253e2fc6176db8e97c662f6944e2fdf049dd0b",
+      "chardet/evaluation.py": "804a12f658a100c72e2a18f584370a6201b1ff419e184ebc4a9d36b08e27b1d5",
+      "chardet/models/__init__.cpython-312-darwin.so": "007ce902e830255436e07e34ad6c09fb01147bb72a4d1aa9f8b94f7cb9079700",
+      "chardet/models/__init__.py": "70feebdb7a9a12119b41cbf007f85448b79d354f73385d743de5a87a2a8af7e6",
+      "chardet/models/_format.cpython-312-darwin.so": "bd88e60b1f7ce6a0a7ea23e955a4b4a04417a0215b30c17b2edcae2831c17da7",
+      "chardet/models/_format.py": "0628cfc923f1f991d2dc2baa1426e577a748e53d5dce20b4c42966ad73063370",
+      "chardet/models/confusion.bin": "1c853cd04b400bd2d3772fcaddc4466b32d32db703a7aa415df5a20810bf9ecb",
+      "chardet/models/idf.bin": "37c51eea179643870b8ff5e441655ee8f21c68d4d94618df3371055d16c12f3d",
+      "chardet/models/langnorm.bin": "0d633eb028b7f7847f9840974799b2247a9d2fc2ea66e7846bd04ab59850a417",
+      "chardet/models/models.bin": "47371a8ad8422dc67df2f46db6e9a8e67551d6f5472d7d0c957655759e4922f0",
+      "chardet/models/rowmax.bin": "9a966228520b7e424525cd56bd11ea41038c29e0c375545d32d82375943b3e39",
+      "chardet/models/training_metadata.yaml": "d003b85bd1fe3658c0ce10d9554a9cd4919ca34a4b89ee2237d40af7b9148566",
+      "chardet/output_names.py": "b61dd4eba977b04e07e152bff321ba9503c830362925eaf5e12d0ea8c45635de",
+      "chardet/pipeline/__init__.py": "b52368ba9ac0baff0dcc314cd1eabf75ef91e31f9f387f249f9842777cdb8fd0",
+      "chardet/pipeline/ascii.cpython-312-darwin.so": "790c7cec33ba1e9287c064fad765389e8f5e229bfcd9b17346c5b7d52b82fdfe",
+      "chardet/pipeline/ascii.py": "3e12c19ee6b9cb0fb533359d76f77b8d453413b6cdaecfd2a8d26d5ef999a101",
+      "chardet/pipeline/binary.py": "59c9ebc540e84e6683bad29036324f556075e8db7494efb3ab4b0666f4eea6c6",
+      "chardet/pipeline/bom.py": "ac8fbaffa183a69b54b31bca90f853bc522e1a883eec81740acde625bb57e5b8",
+      "chardet/pipeline/confusion.cpython-312-darwin.so": "ba9eb69727eba5aebd50b274b93c22e995584f84ed4653c56274b5686c892761",
+      "chardet/pipeline/confusion.py": "0f174152c1b748d0b1f8faf8d7cd7ba112fbeb750038f8ecf8d038c928d624d7",
+      "chardet/pipeline/escape.cpython-312-darwin.so": "ecbd1519160e61010fc64fef381357aacf18b0e2c085d5d35e382e5afefccd70",
+      "chardet/pipeline/escape.py": "5c5ffb11a23bf95d22c2052e91238691a234f709d64781fd03bb58fbb0979ef9",
+      "chardet/pipeline/language.cpython-312-darwin.so": "8eca63e983b9fc7875f9bb37b913027e3ac2f2f1c3c0b8b219f426a8435d8365",
+      "chardet/pipeline/language.py": "53aec49242bef29a9c1f87825431464303ef88266dbf1edef9daa8366f6f9a96",
+      "chardet/pipeline/magic.cpython-312-darwin.so": "d19519af0dcecd1a59d55ef070644cf7532473789aed296b0e84a61bd1e2bae6",
+      "chardet/pipeline/magic.py": "2c869a727c941f2860d556ae357aaa0de81b995a81b5966d0c63b4a879c1cc19",
+      "chardet/pipeline/markup.cpython-312-darwin.so": "c7bd009d053ad00ae2b75371a7dd01bc3caea6daa8ecd4527ae511d078d59721",
+      "chardet/pipeline/markup.py": "fba35dcec4604111b556bc1795a8ccc1df6918527eb143076b74751ccbb7a1ed",
+      "chardet/pipeline/orchestrator.cpython-312-darwin.so": "433af62f409abb1851f109b9e9b3b2f35b2da6148d23ca7fc29bba4020d41da4",
+      "chardet/pipeline/orchestrator.py": "6a789f1def4efa8ca8fb6e997305d870480d70117d0d4a63d1b2613a3aef10a5",
+      "chardet/pipeline/postprocess.cpython-312-darwin.so": "ea1c279bbc145c80a1fdc99609e2707effb2ee58ab9f8577e9221f0f5434172d",
+      "chardet/pipeline/postprocess.py": "7a9cf166bc41388a554ca93f6c5aeb248a90b47a0dd2dba774e2d3c533e258a4",
+      "chardet/pipeline/statistical.cpython-312-darwin.so": "c826c8c061e2467ce9c61990992ef9ebe346888ac27ef2a5c42a52ae6f0f07a3",
+      "chardet/pipeline/statistical.py": "450ea102bfc5a24a84d6e3ad28b0b8f768effeaab44a212f00071088277fb832",
+      "chardet/pipeline/structural.cpython-312-darwin.so": "0242ebd821c17700adb2b944d61c1b6aac9e19b09ed3934342a495b54d4a6308",
+      "chardet/pipeline/structural.py": "7cae7b85320678f0716eea609c93049346eadabc9d343ce8418362e4d004900c",
+      "chardet/pipeline/utf1632.cpython-312-darwin.so": "d1a9e40e0f1e4c109575c1757512bbd31afcc94e394036e28e76c1baa7b0f88d",
+      "chardet/pipeline/utf1632.py": "371cbd0b7c9a901735be29ff356d200414cce0e707745f0d8e56775b3db57568",
+      "chardet/pipeline/utf8.cpython-312-darwin.so": "eb932f754877582c348c7786d80f37b95f7fe5d461090c0071bbaba036368d6f",
+      "chardet/pipeline/utf8.py": "e45c8eeaa22358cb764668fed8996cf92b2574c15ae14eabe438330c8d8ae247",
+      "chardet/pipeline/validity.cpython-312-darwin.so": "bdcfdddfd13aa55a85574f1db46a70a09f3e72c69df7a6622d60fa4ceeceaee2",
+      "chardet/pipeline/validity.py": "04e3fcfdc55a1a2e32cad1f820a09043384c12d0d50b02282987b14929a11271",
+      "chardet/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "chardet/registry.py": "8ebbcae8b9157394f148c77501a5c97b6bbf34788f36d4a14fb0596abcc5f3a0",
+      "chardet/universaldetector.py": "abb4efc1d0a1555aed20946bd6ef68a2390c11d38b8d1f6a87146cf4ee71ea63"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "87b9b7041050670dd3f4bd69649159276d9f8b58abeeb67241962b11200844c4",
+     "native": {
+      "650fdafa2468af73c11f__mypyc.cpython-312-darwin.so": "macho",
+      "chardet/_kernel.cpython-312-darwin.so": "macho",
+      "chardet/models/__init__.cpython-312-darwin.so": "macho",
+      "chardet/models/_format.cpython-312-darwin.so": "macho",
+      "chardet/pipeline/ascii.cpython-312-darwin.so": "macho",
+      "chardet/pipeline/confusion.cpython-312-darwin.so": "macho",
+      "chardet/pipeline/escape.cpython-312-darwin.so": "macho",
+      "chardet/pipeline/language.cpython-312-darwin.so": "macho",
+      "chardet/pipeline/magic.cpython-312-darwin.so": "macho",
+      "chardet/pipeline/markup.cpython-312-darwin.so": "macho",
+      "chardet/pipeline/orchestrator.cpython-312-darwin.so": "macho",
+      "chardet/pipeline/postprocess.cpython-312-darwin.so": "macho",
+      "chardet/pipeline/statistical.cpython-312-darwin.so": "macho",
+      "chardet/pipeline/structural.cpython-312-darwin.so": "macho",
+      "chardet/pipeline/utf1632.cpython-312-darwin.so": "macho",
+      "chardet/pipeline/utf8.cpython-312-darwin.so": "macho",
+      "chardet/pipeline/validity.cpython-312-darwin.so": "macho"
+     },
+     "pth": {},
+     "sha256": "7df40e5267a4e9952ecb39cc23109c389fca61fc27a6e807ec9ea894a41e83d7"
+    },
     "chardet-7.7.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
      "entry_points": [
       "chardetect = chardet.cli:main"
@@ -98,11 +192,138 @@
      },
      "pth": {},
      "sha256": "feb66c96264e3e6a9ff0c7318ce0028800b6c18ad07c8000d2404a108d1ef767"
+    },
+    "chardet-7.7.0-cp312-cp312-win_amd64.whl": {
+     "entry_points": [
+      "chardetect = chardet.cli:main"
+     ],
+     "files": {
+      "chardet-7.7.0.dist-info/METADATA": "1989d603002276a861d8c4f996bbd83dcad728458cafe0c9252abae1c467891c",
+      "chardet-7.7.0.dist-info/RECORD": "deb86f49a7251779180ea6e842baf123c3906cf7e943cb5318581a273230e8a4",
+      "chardet-7.7.0.dist-info/WHEEL": "e42d744e4e87f3eb0029f1791b1bd32825de51d2c3b497c7afd719a39e897650",
+      "chardet-7.7.0.dist-info/entry_points.txt": "06649487a25f140e56652a507e3ffbe9772e8300a13315cc6e9e4e942f525da4",
+      "chardet-7.7.0.dist-info/licenses/LICENSE": "0517f574b0183d991eb7a9ec5dbf0add8d8ade5ac00341bd28ca0c18914d52e5",
+      "chardet/__init__.py": "de1377dfbca5f18c2300c57d411ced7b0e58eb7c6cbcdbbd4bcf2ccde00375a9",
+      "chardet/__main__.py": "4ad4dc6c5b0fc9f6c51fcd844fad39eeee54acff0fcd9fc65e6e42ee1494abcb",
+      "chardet/_kernel.cp312-win_amd64.pyd": "08327b07ce40fb15919311034b1219e1cc8f7cc90ae61a0d058d0ae822b6c388",
+      "chardet/_kernel.py": "862b9ca108a39a8b3f4225679e9d548649ae302d1dd28b2c7228e0229b570e9f",
+      "chardet/_utils.py": "b1ad4844cd6a130ebffaf8b3f4ea8e821638aef41bd3813fd1b8b48861c689b0",
+      "chardet/_version.py": "276a181430790b489f18679a445081f6f3645e5abe601c4f1e7f89af00b3d069",
+      "chardet/cli.py": "5096b353f508279bbb5de1c0e810e39129042263a065a25aa76e33b2db22add0",
+      "chardet/detector.py": "9a4d66a70c0ec0974cfe3045eb55dec20c636b447bd9f979b1c460f9aa98431c",
+      "chardet/enums.py": "100fc25bf0e599d6d97c8045bd2667b9b75c6e3f19b5d1389472dd8366143690",
+      "chardet/equivalences.py": "2e7c7df0dcc01af4af62f0b1ed259ea3472e21902c73abf6a252d61dd39e8c3d",
+      "chardet/evaluation.py": "371518986e812cb5f5da272019411098465464a0d1269be104e45414a1f72047",
+      "chardet/models/__init__.py": "52bcb2637b010cc60f2a262b75e2449703a3a1f0bd2c50e3666ba555614801ac",
+      "chardet/models/_format.cp312-win_amd64.pyd": "6ecb61d6f7bdb39d7fe1dc79dfd3c16f6c65cf390476ec70a1d8f44a068a99f0",
+      "chardet/models/_format.py": "c4c0f0c1d4c117691812df50676f85d2c7be4104e8eb0c1676a2f9f425b9bb97",
+      "chardet/models/_format__mypyc.cp312-win_amd64.pyd": "e3668f92fd599db551535ab3fe503684177b741a894a1a15d19295df92e97d32",
+      "chardet/models/confusion.bin": "1c853cd04b400bd2d3772fcaddc4466b32d32db703a7aa415df5a20810bf9ecb",
+      "chardet/models/idf.bin": "37c51eea179643870b8ff5e441655ee8f21c68d4d94618df3371055d16c12f3d",
+      "chardet/models/langnorm.bin": "0d633eb028b7f7847f9840974799b2247a9d2fc2ea66e7846bd04ab59850a417",
+      "chardet/models/models.bin": "47371a8ad8422dc67df2f46db6e9a8e67551d6f5472d7d0c957655759e4922f0",
+      "chardet/models/rowmax.bin": "9a966228520b7e424525cd56bd11ea41038c29e0c375545d32d82375943b3e39",
+      "chardet/models/training_metadata.yaml": "a1781a2fbaf8123830c0223ab47be12e5207f5bf985fb2ae6dcf357e954671c2",
+      "chardet/output_names.py": "2f480f9035cc8a13e0eae2e357580a9cbfd1fd5f322da6932f8c64c132577c55",
+      "chardet/pipeline/__init__.py": "4ae5f79ef078cfac0a40c5a73f2c08b5561ce3a71dac04c981ce6365710e9def",
+      "chardet/pipeline/ascii.cp312-win_amd64.pyd": "d3ee88c5b7316daf49fe672810c10151a558e2f487356fb3e37cd6331e99ad95",
+      "chardet/pipeline/ascii.py": "ce057a41ec1a819ff6974db45132b3ec5b80e805e9bde4ffdc957e15b3c04932",
+      "chardet/pipeline/ascii__mypyc.cp312-win_amd64.pyd": "2ba5ed02c601d602da796fde82d9a43c08461108475cf24d8de8aa64dc053ff1",
+      "chardet/pipeline/binary.py": "931b2a82493b349c83f7f7de45a4d0325dc7417c51a3bb0e2c94f93faedb1f06",
+      "chardet/pipeline/bom.py": "981e3a4653afea902891e53e878500986ab9864ab7fbc2d6e614eec9bf840a04",
+      "chardet/pipeline/confusion.cp312-win_amd64.pyd": "48f38e40158f6e2cf0fadc2cd8664b8710c0bf8dc21106db39e36a34e9b9b08e",
+      "chardet/pipeline/confusion.py": "c8cd11d76bd94f5de10aea2743b17e70df6b4610a5ad5cfe8e9f805eb32e0c6c",
+      "chardet/pipeline/confusion__mypyc.cp312-win_amd64.pyd": "7a330fb88e860f5a383fe22652afca975bc3d8995f761dc520d5a238e2e406f3",
+      "chardet/pipeline/escape.cp312-win_amd64.pyd": "819b17603099e6551dad1ca8b103405d8d276841623f371595602e2ec5c6c851",
+      "chardet/pipeline/escape.py": "d6afcb53f4ffc45c219192c29ec3aa70948ac2366f77eef79a3720bc5bdcf1ee",
+      "chardet/pipeline/escape__mypyc.cp312-win_amd64.pyd": "df8c77fc918765f18a3792773de4931a17c8c68d8e128e0b4730c1def1ca71cc",
+      "chardet/pipeline/language.cp312-win_amd64.pyd": "be2e0784946adc0d0125cc8c03f1974448ae69de69503e6617948f11c4dba5b8",
+      "chardet/pipeline/language.py": "4c0baed1166b13e78e70ced71198a4d6d9b4e35c802c1210607f72cb8777c2bb",
+      "chardet/pipeline/language__mypyc.cp312-win_amd64.pyd": "80c932e275b7a7c2a2cc5a28b014a1084bbb71a66caa4f5328fc354c21d28d24",
+      "chardet/pipeline/magic.cp312-win_amd64.pyd": "16d1f7a415b1bbfdc22e1fe4cbaccdacca5b5dfaecc55e9d623601d7d331dd2d",
+      "chardet/pipeline/magic.py": "c21a8fe6dba355d358fb708c7c6cd02e6aae3e1032538d39079e12c5fc2e01de",
+      "chardet/pipeline/magic__mypyc.cp312-win_amd64.pyd": "1aa16000e8d3f9025efdd5f465358b51032e066f207ef7c3afc05f1ce5b615b1",
+      "chardet/pipeline/markup.cp312-win_amd64.pyd": "9657318065df38c701c1f6dbe3e7019957b07f30d4dc3cdf37877e1b589409b7",
+      "chardet/pipeline/markup.py": "adfcc83362f67eef1272b7a368aabd955307a4f45656f8c0074738d50bf7558d",
+      "chardet/pipeline/markup__mypyc.cp312-win_amd64.pyd": "ca5459b792a2026429a09f89d6eb8ade5916492aed4e5f8b5df32ecdc7874186",
+      "chardet/pipeline/orchestrator.cp312-win_amd64.pyd": "ed1bf7ff6b05b008ff3eadb7c9fee29ead9d34cf5677ade99f087853b98ca399",
+      "chardet/pipeline/orchestrator.py": "17342b11fda6982023334ed54f1612adfc2b5ca0c00f4754fb9feb779253107a",
+      "chardet/pipeline/orchestrator__mypyc.cp312-win_amd64.pyd": "9d212d0662f9ae10ae9a792a9442cdce774d7aee55c25f128548a6fb76cd29a1",
+      "chardet/pipeline/postprocess.cp312-win_amd64.pyd": "b9e6fc1fffbe006205f6d1117d13f5e6aeb2284c2ffa70455f4dd226c732d25a",
+      "chardet/pipeline/postprocess.py": "6e7a48368634a521e5a7bab02441e83e6eb0119bc6285616a5652b9d7f7c3e7f",
+      "chardet/pipeline/postprocess__mypyc.cp312-win_amd64.pyd": "21b668984bf208187d72c132207a652f492ac87aafe87f3c38ea214187e7d38a",
+      "chardet/pipeline/statistical.cp312-win_amd64.pyd": "a7d409f1f9d8f8f88a492dbba79581fab965741cd1668366ae08f67d09eba9a0",
+      "chardet/pipeline/statistical.py": "1a6984ac383b11a8e87826b66044a016584f2845f87dded27c1cda1da8229c34",
+      "chardet/pipeline/statistical__mypyc.cp312-win_amd64.pyd": "4a31a8fc938587598b7ab7f3ef176d0a0ae96777aa5b2564fb34eb83ee3982e5",
+      "chardet/pipeline/structural.cp312-win_amd64.pyd": "ae57724d091eb98bca6f25281d86fec861fc37b6a814b99fbc3f33ce3fd1fb95",
+      "chardet/pipeline/structural.py": "2096b918fa010dae195c3a96f64bff1fb41343064cac6a45ee54822cf7c04696",
+      "chardet/pipeline/structural__mypyc.cp312-win_amd64.pyd": "1c5f3a2788d82727b7a090ff6733c109bca1329be1dccaeed9ba145fc8d13ce1",
+      "chardet/pipeline/utf1632.cp312-win_amd64.pyd": "bdde4e3ada06b3f9c7712c908c4e11b9fa57151ec9412201c3f81bf7e03a26c5",
+      "chardet/pipeline/utf1632.py": "4dc58fa00271b0f1048b5029a009c80ff7dedc6378eb2351c70a621d4b47ef09",
+      "chardet/pipeline/utf1632__mypyc.cp312-win_amd64.pyd": "9c64f551cfa0e4487e4e062efc302772bd8c7b2ae565c2e3f4ae69d4984c2f9c",
+      "chardet/pipeline/utf8.cp312-win_amd64.pyd": "bd458cd67df8d3b39204fadd97bff08ebe0164bed5da0f12a76beb534e5e88ae",
+      "chardet/pipeline/utf8.py": "d20094fd14e58c714f43a89f02f7eed38a27d0889a4f093684518d92d5ca327c",
+      "chardet/pipeline/utf8__mypyc.cp312-win_amd64.pyd": "22282e80f615e98a3c7609e6de01c3bd863f2e579b2fc3b3dc58c943b19a1c73",
+      "chardet/pipeline/validity.cp312-win_amd64.pyd": "0d8bc758542ccf10255f4c0c20ab47e518d978758c4044e8597c4bc74186ce07",
+      "chardet/pipeline/validity.py": "25bfb526a274f3e03d46dc4037b56db551ca880a62a58d8992140bd1b8d587a0",
+      "chardet/pipeline/validity__mypyc.cp312-win_amd64.pyd": "4dc8f297e86420f847d9f3e11918f05c4887483fe3e5f90e71ee937ca7d957a0",
+      "chardet/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "chardet/registry.py": "b026f40f2362a8c9ba15e26339e3dc90a937c234f4ec43d2433b9e4a6f116e8f",
+      "chardet/universaldetector.py": "88f3a82fed49e9945371ca5a7b7f5ce55ab4b982d5a4831a739b74bd70ed6b3a"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "f1953d47cfa1c22c5be3f24005a7a585d15727e132b95e01f96d4d3b12443b1f",
+     "native": {
+      "chardet/_kernel.cp312-win_amd64.pyd": "pe",
+      "chardet/models/_format.cp312-win_amd64.pyd": "pe",
+      "chardet/models/_format__mypyc.cp312-win_amd64.pyd": "pe",
+      "chardet/pipeline/ascii.cp312-win_amd64.pyd": "pe",
+      "chardet/pipeline/ascii__mypyc.cp312-win_amd64.pyd": "pe",
+      "chardet/pipeline/confusion.cp312-win_amd64.pyd": "pe",
+      "chardet/pipeline/confusion__mypyc.cp312-win_amd64.pyd": "pe",
+      "chardet/pipeline/escape.cp312-win_amd64.pyd": "pe",
+      "chardet/pipeline/escape__mypyc.cp312-win_amd64.pyd": "pe",
+      "chardet/pipeline/language.cp312-win_amd64.pyd": "pe",
+      "chardet/pipeline/language__mypyc.cp312-win_amd64.pyd": "pe",
+      "chardet/pipeline/magic.cp312-win_amd64.pyd": "pe",
+      "chardet/pipeline/magic__mypyc.cp312-win_amd64.pyd": "pe",
+      "chardet/pipeline/markup.cp312-win_amd64.pyd": "pe",
+      "chardet/pipeline/markup__mypyc.cp312-win_amd64.pyd": "pe",
+      "chardet/pipeline/orchestrator.cp312-win_amd64.pyd": "pe",
+      "chardet/pipeline/orchestrator__mypyc.cp312-win_amd64.pyd": "pe",
+      "chardet/pipeline/postprocess.cp312-win_amd64.pyd": "pe",
+      "chardet/pipeline/postprocess__mypyc.cp312-win_amd64.pyd": "pe",
+      "chardet/pipeline/statistical.cp312-win_amd64.pyd": "pe",
+      "chardet/pipeline/statistical__mypyc.cp312-win_amd64.pyd": "pe",
+      "chardet/pipeline/structural.cp312-win_amd64.pyd": "pe",
+      "chardet/pipeline/structural__mypyc.cp312-win_amd64.pyd": "pe",
+      "chardet/pipeline/utf1632.cp312-win_amd64.pyd": "pe",
+      "chardet/pipeline/utf1632__mypyc.cp312-win_amd64.pyd": "pe",
+      "chardet/pipeline/utf8.cp312-win_amd64.pyd": "pe",
+      "chardet/pipeline/utf8__mypyc.cp312-win_amd64.pyd": "pe",
+      "chardet/pipeline/validity.cp312-win_amd64.pyd": "pe",
+      "chardet/pipeline/validity__mypyc.cp312-win_amd64.pyd": "pe"
+     },
+     "pth": {},
+     "sha256": "e3fa9ea40e766b26b10360edbb4742cfef9e52728b644b39aae7fa39e89df767"
     }
    },
    "name": "chardet",
    "provenance": {
+    "chardet-7.7.0-cp312-cp312-macosx_11_0_arm64.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "chardet/chardet",
+     "workflow": "release.yml"
+    },
     "chardet-7.7.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "chardet/chardet",
+     "workflow": "release.yml"
+    },
+    "chardet-7.7.0-cp312-cp312-win_amd64.whl": {
      "environment": "pypi",
      "kind": "GitHub",
      "repository": "chardet/chardet",
@@ -125,11 +346,70 @@
    },
    "reviewed": {
     "by": "claude",
-    "date": "2026-11-05",
-    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read, network_outbound; 17 native binaries profiled, none with network/process imports or addresses; attestation verifies (chardet/chardet)."
+    "date": "2026-11-20",
+    "earlier": [
+     {
+      "by": "claude",
+      "date": "2026-11-05",
+      "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read, network_outbound; 17 native binaries profiled, none with network/process imports or addresses; attestation verifies (chardet/chardet)."
+     }
+    ],
+    "note": "macOS arm64 and Windows amd64 wheels of the reviewed version, all mypyc-compiled: macOS has the same 60 members (17 Mach-O), Windows builds each mypyc module separately (14 per-module __mypyc .pyd instead of the one shared group library). Python sources identical (Windows CRLF only); the 3 'new' YARA keys are the reviewed capability hits on cli.py, evaluation.py and registry.py, CRLF-changed. No .pth, no hook, no network/process imports in any binary. Attestations verify, same publisher (chardet/chardet release.yml)."
    },
    "scans": {
     "capa": {
+     "007ce902e830255436e07e34ad6c09fb01147bb72a4d1aa9f8b94f7cb9079700": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "chardet/models/__init__.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "0242ebd821c17700adb2b944d61c1b6aac9e19b09ed3934342a495b54d4a6308": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "chardet/pipeline/structural.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "08327b07ce40fb15919311034b1219e1cc8f7cc90ae61a0d058d0ae822b6c388": {
+      "capabilities": [
+       "contain loop",
+       "encrypt data using RC4 PRGA",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "chardet/_kernel.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "0ab2e748cb93b6512e14038f5f51ced1499b3bf86dd39673e8139bf191d4b13c": {
       "capabilities": [],
       "note": "",
@@ -141,6 +421,50 @@
        "needed": [
         "libc.so.6",
         "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "0d8bc758542ccf10255f4c0c20ab47e518d978758c4044e8597c4bc74186ce07": {
+      "capabilities": [
+       "contain loop",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "chardet/pipeline/validity.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "16d1f7a415b1bbfdc22e1fe4cbaccdacca5b5dfaecc55e9d623601d7d331dd2d": {
+      "capabilities": [
+       "contain loop",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "chardet/pipeline/magic.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "python312.dll"
        ],
        "rpath": [],
        "urls": []
@@ -162,6 +486,54 @@
        "urls": []
       }
      },
+     "1aa16000e8d3f9025efdd5f465358b51032e066f207ef7c3afc05f1ce5b615b1": {
+      "capabilities": [
+       "contain loop",
+       "encrypt data using RC4 PRGA",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "chardet/pipeline/magic__mypyc.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "1c5f3a2788d82727b7a090ff6733c109bca1329be1dccaeed9ba145fc8d13ce1": {
+      "capabilities": [
+       "contain loop",
+       "encrypt data using RC4 PRGA",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "chardet/pipeline/structural__mypyc.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "1ea68e3051c8712ba8020b398dec861be016831a316a4a868a23a4e6c9f6c09a": {
       "capabilities": [],
       "note": "",
@@ -174,6 +546,93 @@
         "libc.so.6",
         "libpthread.so.0"
        ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "21b668984bf208187d72c132207a652f492ac87aafe87f3c38ea214187e7d38a": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "encrypt data using RC4 PRGA",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "chardet/pipeline/postprocess__mypyc.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "22282e80f615e98a3c7609e6de01c3bd863f2e579b2fc3b3dc58c943b19a1c73": {
+      "capabilities": [
+       "contain loop",
+       "encrypt data using RC4 PRGA",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "chardet/pipeline/utf8__mypyc.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "2ba5ed02c601d602da796fde82d9a43c08461108475cf24d8de8aa64dc053ff1": {
+      "capabilities": [
+       "contain loop",
+       "encrypt data using RC4 PRGA",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "chardet/pipeline/ascii__mypyc.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "3d666a9f94bf062814e8b028dda59f555db4352a12ed6abd1b79edc33a863a4d": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "chardet/_kernel.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
        "rpath": [],
        "urls": []
       }
@@ -194,6 +653,66 @@
        "urls": []
       }
      },
+     "433af62f409abb1851f109b9e9b3b2f35b2da6148d23ca7fc29bba4020d41da4": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "chardet/pipeline/orchestrator.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "48f38e40158f6e2cf0fadc2cd8664b8710c0bf8dc21106db39e36a34e9b9b08e": {
+      "capabilities": [
+       "contain loop",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "chardet/pipeline/confusion.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "4a31a8fc938587598b7ab7f3ef176d0a0ae96777aa5b2564fb34eb83ee3982e5": {
+      "capabilities": [
+       "contain loop",
+       "encrypt data using RC4 PRGA",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "chardet/pipeline/statistical__mypyc.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "4ac2e24323633eb60e12111319bd03a65a48519d7b5486961a9bd103146d8584": {
       "capabilities": [],
       "note": "",
@@ -205,6 +724,30 @@
        "needed": [
         "libc.so.6",
         "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "4dc8f297e86420f847d9f3e11918f05c4887483fe3e5f90e71ee937ca7d957a0": {
+      "capabilities": [
+       "contain loop",
+       "encrypt data using RC4 PRGA",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "chardet/pipeline/validity__mypyc.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "python312.dll"
        ],
        "rpath": [],
        "urls": []
@@ -244,6 +787,28 @@
        "urls": []
       }
      },
+     "6ecb61d6f7bdb39d7fe1dc79dfd3c16f6c65cf390476ec70a1d8f44a068a99f0": {
+      "capabilities": [
+       "contain loop",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "chardet/models/_format.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "72d2f80026b3d46c02aecedfc1f5a09d988aa69f6c159f6f1f555da58739cfaa": {
       "capabilities": [],
       "note": "",
@@ -255,6 +820,43 @@
        "needed": [
         "libc.so.6",
         "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "790c7cec33ba1e9287c064fad765389e8f5e229bfcd9b17346c5b7d52b82fdfe": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "chardet/pipeline/ascii.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "7a330fb88e860f5a383fe22652afca975bc3d8995f761dc520d5a238e2e406f3": {
+      "capabilities": [
+       "contain loop",
+       "encrypt data using RC4 PRGA",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "chardet/pipeline/confusion__mypyc.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "python312.dll"
        ],
        "rpath": [],
        "urls": []
@@ -276,6 +878,52 @@
        "urls": []
       }
      },
+     "80c932e275b7a7c2a2cc5a28b014a1084bbb71a66caa4f5328fc354c21d28d24": {
+      "capabilities": [
+       "contain loop",
+       "encrypt data using RC4 PRGA",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "chardet/pipeline/language__mypyc.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "819b17603099e6551dad1ca8b103405d8d276841623f371595602e2ec5c6c851": {
+      "capabilities": [
+       "contain loop",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "chardet/pipeline/escape.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "890b4c81c006854c38528a7b5816fee3e5d53e721ac20bd71840547d33f60366": {
       "capabilities": [],
       "note": "",
@@ -292,6 +940,90 @@
        "urls": []
       }
      },
+     "8eca63e983b9fc7875f9bb37b913027e3ac2f2f1c3c0b8b219f426a8435d8365": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "chardet/pipeline/language.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "9657318065df38c701c1f6dbe3e7019957b07f30d4dc3cdf37877e1b589409b7": {
+      "capabilities": [
+       "contain loop",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "chardet/pipeline/markup.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "9c64f551cfa0e4487e4e062efc302772bd8c7b2ae565c2e3f4ae69d4984c2f9c": {
+      "capabilities": [
+       "contain loop",
+       "encrypt data using RC4 PRGA",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "chardet/pipeline/utf1632__mypyc.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "9d212d0662f9ae10ae9a792a9442cdce774d7aee55c25f128548a6fb76cd29a1": {
+      "capabilities": [
+       "contain loop",
+       "encrypt data using RC4 PRGA",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "chardet/pipeline/orchestrator__mypyc.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "a415a1255e4d5a1bda6dcdcb344ec019f6e180d54868a56ecc4da7b8a8f3a574": {
       "capabilities": [],
       "note": "",
@@ -303,6 +1035,50 @@
        "needed": [
         "libc.so.6",
         "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "a7d409f1f9d8f8f88a492dbba79581fab965741cd1668366ae08f67d09eba9a0": {
+      "capabilities": [
+       "contain loop",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "chardet/pipeline/statistical.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "ae57724d091eb98bca6f25281d86fec861fc37b6a814b99fbc3f33ce3fd1fb95": {
+      "capabilities": [
+       "contain loop",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "chardet/pipeline/structural.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "python312.dll"
        ],
        "rpath": [],
        "urls": []
@@ -340,6 +1116,133 @@
        "urls": []
       }
      },
+     "b9e6fc1fffbe006205f6d1117d13f5e6aeb2284c2ffa70455f4dd226c732d25a": {
+      "capabilities": [
+       "contain loop",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "chardet/pipeline/postprocess.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "ba9eb69727eba5aebd50b274b93c22e995584f84ed4653c56274b5686c892761": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "chardet/pipeline/confusion.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "bd458cd67df8d3b39204fadd97bff08ebe0164bed5da0f12a76beb534e5e88ae": {
+      "capabilities": [
+       "contain loop",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "chardet/pipeline/utf8.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "bd88e60b1f7ce6a0a7ea23e955a4b4a04417a0215b30c17b2edcae2831c17da7": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "chardet/models/_format.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "bdcfdddfd13aa55a85574f1db46a70a09f3e72c69df7a6622d60fa4ceeceaee2": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "chardet/pipeline/validity.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "bdde4e3ada06b3f9c7712c908c4e11b9fa57151ec9412201c3f81bf7e03a26c5": {
+      "capabilities": [
+       "contain loop",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "chardet/pipeline/utf1632.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "be2e0784946adc0d0125cc8c03f1974448ae69de69503e6617948f11c4dba5b8": {
+      "capabilities": [
+       "contain loop",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "chardet/pipeline/language.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "bf486157af0f539c8359b99864235afb83ef28010b9275ec8720bbaf943b4466": {
       "capabilities": [],
       "note": "",
@@ -351,6 +1254,105 @@
        "needed": [
         "libc.so.6",
         "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "c7bd009d053ad00ae2b75371a7dd01bc3caea6daa8ecd4527ae511d078d59721": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "chardet/pipeline/markup.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "c826c8c061e2467ce9c61990992ef9ebe346888ac27ef2a5c42a52ae6f0f07a3": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "chardet/pipeline/statistical.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "ca5459b792a2026429a09f89d6eb8ade5916492aed4e5f8b5df32ecdc7874186": {
+      "capabilities": [
+       "contain loop",
+       "encrypt data using RC4 PRGA",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "chardet/pipeline/markup__mypyc.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "d19519af0dcecd1a59d55ef070644cf7532473789aed296b0e84a61bd1e2bae6": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "chardet/pipeline/magic.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "d1a9e40e0f1e4c109575c1757512bbd31afcc94e394036e28e76c1baa7b0f88d": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "chardet/pipeline/utf1632.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "d3ee88c5b7316daf49fe672810c10151a558e2f487356fb3e37cd6331e99ad95": {
+      "capabilities": [
+       "contain loop",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "chardet/pipeline/ascii.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "python312.dll"
        ],
        "rpath": [],
        "urls": []
@@ -372,6 +1374,58 @@
        "urls": []
       }
      },
+     "df8c77fc918765f18a3792773de4931a17c8c68d8e128e0b4730c1def1ca71cc": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "encrypt data using RC4 PRGA",
+       "enumerate PE sections",
+       "parse PE header",
+       "reference Base64 string"
+      ],
+      "note": "",
+      "path": "chardet/pipeline/escape__mypyc.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "e3668f92fd599db551535ab3fe503684177b741a894a1a15d19295df92e97d32": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "encrypt data using RC4 PRGA",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "chardet/models/_format__mypyc.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-math-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "e52538a81e9499ab34bbe046c82f4355eecc261cc39b6feb056bc5908b15e8a7": {
       "capabilities": [],
       "note": "",
@@ -383,6 +1437,80 @@
        "needed": [
         "libc.so.6",
         "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "e5c48e6780425eba9f9d867a46751fa6d4f3741eb45b3df9fdb1634885a9dc18": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "650fdafa2468af73c11f__mypyc.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "ea1c279bbc145c80a1fdc99609e2707effb2ee58ab9f8577e9221f0f5434172d": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "chardet/pipeline/postprocess.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "eb932f754877582c348c7786d80f37b95f7fe5d461090c0071bbaba036368d6f": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "chardet/pipeline/utf8.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "ecbd1519160e61010fc64fef381357aacf18b0e2c085d5d35e382e5afefccd70": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "chardet/pipeline/escape.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "ed1bf7ff6b05b008ff3eadb7c9fee29ead9d34cf5677ade99f087853b98ca399": {
+      "capabilities": [
+       "contain loop",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "chardet/pipeline/orchestrator.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "python312.dll"
        ],
        "rpath": [],
        "urls": []
@@ -412,8 +1540,11 @@
     },
     "keys": [
      "yara|capability_filesystem_read|chardet/cli.py|3419cf524d9fb54e",
+     "yara|capability_filesystem_read|chardet/cli.py|5096b353f508279b",
+     "yara|capability_network_outbound|chardet/evaluation.py|371518986e812cb5",
      "yara|capability_network_outbound|chardet/evaluation.py|804a12f658a100c7",
-     "yara|capability_network_outbound|chardet/registry.py|8ebbcae8b9157394"
+     "yara|capability_network_outbound|chardet/registry.py|8ebbcae8b9157394",
+     "yara|capability_network_outbound|chardet/registry.py|b026f40f2362a8c9"
     ],
     "yara": [
      "capability_filesystem_read:capability_filesystem_read chardet/cli.py",

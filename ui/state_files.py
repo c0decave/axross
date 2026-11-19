@@ -63,6 +63,10 @@ def _write_private_text(path: Path | str, text: str, *, private_dir: bool = True
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             fd = -1
             handle.write(text)
+            # On disk before the rename: a crash or power cut right after
+            # it otherwise left an empty session.json (the layout gone).
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(temp_name, target)
         try:
             os.chmod(target, 0o600)

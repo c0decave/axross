@@ -586,7 +586,10 @@ def _seed_server(*, prefix: tuple[str, ...] = (), **over):
     machine only when marked trusted)."""
 
     def seed(ctx) -> None:
-        script = ctx.tmp_path / "fake_mcp.py"
+        # In a folder of its own: every file of a host-run server's folder
+        # is pinned (core.mcp_script_pin), and the settings change beside it.
+        (ctx.tmp_path / "srv").mkdir(exist_ok=True)
+        script = ctx.tmp_path / "srv" / "fake_mcp.py"
         script.write_text(FAKE_MCP)
         ctx.extras["script"] = str(script)
         ctx.extras["http"] = SMX.keep_open(ctx, HttpMcp())

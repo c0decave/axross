@@ -31,7 +31,7 @@ _UTF16_BOMS = (b"\xff\xfe", b"\xfe\xff")
 #: Everything QPlainTextEdit turns into a block break (QTextCursor::insertText
 #: also splits at the frame marks U+FDD0 and U+FDD1). The widget keeps none
 #: of them, so the save has to put back the one each line had.
-_LINE_BREAK = re.compile("(\r\n|\r|\n| |\ufdd0|\ufdd1)")
+_LINE_BREAK = re.compile("(\r\n|\r|\n|\u2029|\ufdd0|\ufdd1)")
 NEWLINE_NAMES = {"\n": "LF", "\r\n": "CRLF", "\r": "CR"}
 
 
@@ -52,12 +52,21 @@ def _common_newline(endings: list[str]) -> str:
     return max(counts, key=counts.get) if counts else "\n"
 
 
+#: Old x new changed lines the matcher of _line_endings is run on at most
+#: (200 x 200 lines: about 0.2 s at worst).
+MATCHER_BUDGET = 40_000
+
+
 def _line_endings(old_lines, old_endings, new_lines, default: str) -> list[str]:
     """The ending for each of *new_lines*: a line that is still there, or
     was edited in place, keeps the one it had; a new line gets *default*.
 
     Joining every line with one ending rewrote the untouched lines of a
     file that mixes LF and CRLF."""
+    if all(ending == default for ending in old_endings[:-1]):
+        # One style in the whole file (the usual case): every line ends
+        # with it, and the matcher below has nothing to find out.
+        return [default] * (len(new_lines) - 1) + [""] if new_lines else []
     endings = [default] * len(new_lines)
     # Common head and tail first: an edit is local, and the matcher then
     # only sees the changed middle of a large file.
@@ -75,12 +84,22 @@ def _line_endings(old_lines, old_endings, new_lines, default: str) -> list[str]:
         tail += 1
     old_mid = old_lines[head : len(old_lines) - tail]
     new_mid = new_lines[head : len(new_lines) - tail]
-    matcher = difflib.SequenceMatcher(None, old_mid, new_mid, autojunk=False)
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag not in ("equal", "replace"):
-            continue
-        for k in range(min(i2 - i1, j2 - j1)):
-            endings[head + j1 + k] = old_endings[head + i1 + k]
+    if len(old_mid) == len(new_mid):
+        # Changed line for line (Replace All, a re-wrap that kept the
+        # lines): each keeps the ending of the line in its place.
+        for k in range(len(new_mid)):
+            endings[head + k] = old_endings[head + k]
+    elif len(old_mid) * len(new_mid) <= MATCHER_BUDGET:
+        # The matcher grows with the cube of the lines when many are the
+        # same (blank lines, autojunk=False): 600 changed lines of prose
+        # took 2.7 s, a few thousand minutes. Above the budget the changed
+        # middle gets the file's most common ending.
+        matcher = difflib.SequenceMatcher(None, old_mid, new_mid, autojunk=False)
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag not in ("equal", "replace"):
+                continue
+            for k in range(min(i2 - i1, j2 - j1)):
+                endings[head + j1 + k] = old_endings[head + i1 + k]
     for k in range(len(endings) - 1):
         if not endings[k]:
             endings[k] = default
@@ -92,9 +111,19 @@ def _line_endings(old_lines, old_endings, new_lines, default: str) -> list[str]:
 def _read_capped(handle, cap: int | None = None) -> bytes:
     if cap is None:
         cap = open_limits.max_open_bytes()
-    data = handle.read(cap + 1)
-    if isinstance(data, str):
-        data = data.encode("utf-8", errors="replace")
+    # Read to the end (or past the cap) across short reads: a network
+    # reader may give less per call, and one read showed - and a save wrote
+    # back - only the first part of the file.
+    parts, size = [], 0
+    while size <= cap:
+        chunk = handle.read(cap + 1 - size)
+        if not chunk:
+            break
+        if isinstance(chunk, str):
+            chunk = chunk.encode("utf-8", errors="replace")
+        parts.append(bytes(chunk))
+        size += len(chunk)
+    data = b"".join(parts)
     if len(data) > cap:
         raise EditorReadLimitError(f"file exceeds {cap} byte editor cap")
     return bytes(data)

@@ -59,6 +59,10 @@ class Recording(LocalFS):
         self._note("list_dir")
         return super().list_dir(path)
 
+    def rename(self, src, dst):
+        self._note("rename")
+        return super().rename(src, dst)
+
 
 def _off_gui(fs, name):
     threads = [t for n, t in fs.calls if n == name]
@@ -123,8 +127,15 @@ def test_happy_delete_in_the_viewer_runs_off_the_gui_thread(tmp_path):
     path.write_bytes(b"x")
     fs = Recording()
     with mock.patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
-        assert VFA.delete_file(None, fs, str(path), None) is True
+        assert VFA.delete_file(None, fs, str(path), None, permanent=True) is True
     assert not path.exists() and _off_gui(fs, "remove")
+    # Del moves to the trash (a rename into it), off the GUI thread too
+    path.write_bytes(b"x")
+    with mock.patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes), \
+            mock.patch.object(Recording, "home", lambda self: str(tmp_path / "home")):
+        (tmp_path / "home").mkdir()
+        assert VFA.delete_file(None, fs, str(path), None) is True
+    assert not path.exists() and _off_gui(fs, "rename")
 
 
 def test_happy_recovery_scan_runs_off_the_gui_thread(tmp_path):

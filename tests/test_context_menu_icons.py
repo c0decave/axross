@@ -119,6 +119,7 @@ def test_happy_every_archive_entry_has_the_file_pane_icon_of_its_command(archive
         "open": CONTEXT_COMMANDS["open-text"][0],
         "open-hex": CONTEXT_COMMANDS["open-hex"][0],
         "open-text": CONTEXT_COMMANDS["open-text"][0],
+        "open-with": CONTEXT_COMMANDS["open-with"][0],
         "extract-selected": CONTEXT_COMMANDS["extract"][0],
         "extract-selected-to": CONTEXT_COMMANDS["extract"][0],
         "extract-all": CONTEXT_COMMANDS["extract"][0],
@@ -144,7 +145,8 @@ def test_edge_an_archive_member_opens_with_the_archive_icon(archive):
     assert opener.text().replace("&", "") == "Open Archive"
     assert opener.property("axIcon") == CONTEXT_COMMANDS["preview-archive"][0]
     _assert_unique_mnemonics(menu)
-    assert _layout(menu) == ["Open Archive", "Open as Hex", "Open as Text", "|",
+    assert _layout(menu) == ["Open Archive", "Open as Hex", "Open as Text",
+                             "Open with the System Application…", "|",
                              "Extract Selected", "Extract Selected To…", "|",
                              "Extract All", "Extract All To…", "|", "Properties…"]
 

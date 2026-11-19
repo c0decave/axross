@@ -361,3 +361,82 @@ def test_edge_a_clean_child_environment_passes(tmp_path):
     tree = _tree(tmp_path / "mei", {"libok.so": ["libc.so.6"]})
     _leaky_stand_in(tmp_path / "dist", "axross-slim", tree, QT_PLUGIN_PATH="/opt/own/plugins")
     assert _system_libs(tmp_path / "dist") == []
+
+
+# --- the drawing and decoding children of a frozen build ---------------------
+
+
+def _marker(**parts) -> str:
+    sys.path.insert(0, str(SMOKE.parent))
+    import bundle_smoke
+
+    values = dict(bundle_smoke.EXPECTED_PARTS)
+    values.update(parts)
+    return bundle_smoke.format_marker(values)
+
+
+def test_happy_a_frozen_marker_with_every_child_passes():
+    import bundle_smoke
+
+    assert bundle_smoke.marker_problem(_marker()) is None
+
+
+def test_sad_a_script_that_renders_no_pdf_fails():
+    """The PDF viewer draws only through the frozen --pdf-worker child: a
+    bundle whose child cannot start (or cannot load QtPdf) showed no PDF at
+    all while every smoke check passed."""
+    import bundle_smoke
+
+    problem = bundle_smoke.marker_problem(_marker(pdf="none"))
+    assert problem is not None and "pdf" in problem.lower()
+
+
+@pytest.mark.parametrize("part", ["pdf", "image", "lex"])
+def test_sad_a_frozen_build_that_does_not_use_its_own_child_fails(part):
+    import bundle_smoke
+
+    problem = bundle_smoke.marker_problem(_marker(**{f"{part}_via": "-I"}))
+    assert problem is not None and f"--{part}-worker" in problem
+
+
+def test_edge_a_source_run_may_use_python_children():
+    """The stand-in binary (main.py) is not frozen: its children are
+    ``python -I -c``."""
+    import bundle_smoke
+
+    marker = _marker(frozen="0", pdf_via="-I", image_via="-I", lex_via="-I")
+    assert bundle_smoke.marker_problem(marker) is None
+
+
+def test_edge_the_smoke_pdf_is_one_qtpdf_opens(tmp_path):
+    from tests.media_testkit import qtpdf_missing
+
+    if qtpdf_missing():
+        pytest.skip(qtpdf_missing())
+    import bundle_smoke
+
+    from core import media_load
+
+    pdf = tmp_path / "a.pdf"
+    pdf.write_bytes(bundle_smoke.minimal_pdf())
+    assert media_load.pdf_page_count(str(pdf)) == 1
+    image = media_load.render_pdf_page(str(pdf), 0, 100)
+    assert (image.width(), image.height()) == bundle_smoke.PDF_SIZE
+
+
+def test_edge_the_smoke_takes_a_binary_itself(tmp_path):
+    """The Linux release job names each built binary (axross-full and
+    axross-slim lie in one folder there)."""
+    exe = _fake_binary(tmp_path / "dist", f'exec "{sys.executable}" "{ROOT / "main.py"}" "$@"')
+    full = exe.with_name("axross-full")
+    exe.rename(full)
+    import bundle_smoke
+
+    assert bundle_smoke.find_binary(full) == full
+
+
+def test_edge_the_linux_release_job_runs_the_script_smoke():
+    workflow = (ROOT / ".github" / "workflows" / "cross-platform.yml").read_text(encoding="utf-8")
+    linux = workflow[workflow.index("\n  linux:"):]
+    assert "scripts/bundle_smoke.py \"$binary\"" in linux
+    assert "glibc-2.34/axross-full" in linux and "glibc-2.34/axross-slim" in linux

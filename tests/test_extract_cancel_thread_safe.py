@@ -50,7 +50,7 @@ def test_happy_cancel_stops_the_worker_which_never_reads_the_dialog(tmp_path):
 
     steps: list[int] = []
 
-    def slow_extract(path, target, progress=None):
+    def slow_extract(path, target, progress=None, **_kwargs):
         for i in range(200):
             steps.append(i)
             progress(i, 200, f"m{i}")

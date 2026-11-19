@@ -121,6 +121,8 @@ class DiskImageDialog(QDialog):
         self._local = _is_local(backend)
 
         self.summary = QLabel(tr("Reading {name}…").format(name=path))
+        # a path is never markup ("<img width=4000 ...>" was drawn)
+        self.summary.setTextFormat(Qt.TextFormat.PlainText)
         self.summary.setWordWrap(True)
         self.summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.table = QTableWidget(0, len(COLUMNS))

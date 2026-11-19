@@ -20,15 +20,31 @@ Requires: ``pip install axross[mongo]`` — pymongo>=4.
 
 from __future__ import annotations
 
+import errno
 import logging
 import threading
 from datetime import datetime, timezone
 from typing import Iterable
 from urllib.parse import urlsplit
 
-from core.db_fs_base import DbFsBackend
+from core.db_fs_base import DbFsBackend, parse_mode
 
 log = logging.getLogger(__name__)
+
+#: pymongo's own defaults: 30 s to find a server, no limit on an answer.
+#: A URL's own options win.
+_MONGO_TIMEOUTS = {
+    "serverSelectionTimeoutMS": 10000,
+    "connectTimeoutMS": 10000,
+    "socketTimeoutMS": 60000,
+}
+
+
+def _first_line(exc: BaseException) -> str:
+    """The first line of *exc* (pymongo appends the whole topology)."""
+    text = str(exc).strip()
+    return (text.split(", Timeout:")[0].splitlines() or [type(exc).__name__])[0][:300]
+
 
 try:
     import gridfs  # type: ignore[import-not-found]
@@ -103,7 +119,11 @@ class MongoFsSession(DbFsBackend):
         self._tunnel = proxy_mod.open_tunnel(_ignored, host, int(port))
         # The URL's options (tls, tlsCAFile, authSource, ...) - dropping
         # them turned "tls=true" into a plaintext connection.
-        client_kwargs: dict = {**url_options, "host": host, "port": int(port)}
+        # Time-outs unless the URL sets them: a refused server took 30 s
+        # (server selection) and an answer that never came had no limit.
+        given = {key.lower() for key in url_options}
+        defaults = {k: v for k, v in _MONGO_TIMEOUTS.items() if k.lower() not in given}
+        client_kwargs: dict = {**defaults, **url_options, "host": host, "port": int(port)}
         if self._tunnel is not None:
             client_kwargs.update(
                 host=self._tunnel.host,
@@ -121,13 +141,36 @@ class MongoFsSession(DbFsBackend):
             self._dirs = self._db["axross_dirs"]
             self._dirs.create_index("path", unique=True)
             self._dirs.create_index("parent")
+        except pymongo.errors.OperationFailure as exc:
+            self._close_after_failed_connect()
+            if getattr(exc, "code", None) in (13, 18):  # Unauthorized, AuthenticationFailed
+                raise PermissionError(
+                    errno.EACCES, f"MongoDB {host}:{port}: the login was refused") from exc
+            raise OSError(errno.EIO, f"MongoDB {host}:{port}: {_first_line(exc)}") from exc
+        except pymongo.errors.PyMongoError as exc:
+            # ServerSelectionTimeoutError: no OSError, and its text is the
+            # whole topology description.
+            self._close_after_failed_connect()
+            raise ConnectionError(
+                errno.EHOSTUNREACH,
+                f"Cannot reach MongoDB {host}:{port}: {_first_line(exc)}",
+            ) from exc
         except BaseException:
-            if self._tunnel is not None:
-                self._tunnel.close()
+            self._close_after_failed_connect()
             raise
         self._lock = threading.RLock()
         self._display = f"mongodb://{host}:{port}/{database}"
         log.info("Mongo-FS connected: %s", self._display)
+
+    def _close_after_failed_connect(self) -> None:
+        client = getattr(self, "_client", None)
+        if client is not None:
+            try:
+                client.close()
+            except Exception:  # noqa: BLE001
+                pass
+        if self._tunnel is not None:
+            self._tunnel.close()
 
     @property
     def name(self) -> str:
@@ -330,7 +373,9 @@ class MongoFsSession(DbFsBackend):
                 filename=path,
                 metadata={
                     "parent": parent,
-                    "mode": int(row.get("mode") or 0o644),
+                    # A mode another client stored as text ("rw-r--r--")
+                    # raised a bare ValueError on save.
+                    "mode": parse_mode(row.get("mode"), 0o644),
                 },
             )
             for old_id in old_ids:

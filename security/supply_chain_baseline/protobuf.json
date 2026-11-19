@@ -149,6 +149,82 @@
     "yara|capability_process_schedule|google/protobuf/internal/json_format_benchmark.py|bd66310ea1208274"
    ],
    "archives": {
+    "protobuf-7.36.2-cp310-abi3-macosx_10_9_universal2.whl": {
+     "entry_points": [],
+     "files": {
+      "google/_upb/_message.abi3.so": "5fe9c5aa8c22f90136ea60aa2e46bdbd95d1953c1a35bdd3ca4cd643b1d74f6d",
+      "google/protobuf/__init__.py": "5f8761b56ede91285b915b3be83dd3ba4ee872bdb856fae73141d22401c7ada7",
+      "google/protobuf/any.py": "d563db4061f17713e176318dd400f0033ae39267c4703ce9900b51e7b98ed380",
+      "google/protobuf/any_pb2.py": "031916122469be9d2281278baf10ca157bc34054a85c6c876c4feec926aba2d5",
+      "google/protobuf/api_pb2.py": "2579217716172d799d54883be75a30bd45154197e9e524848ca5299650a32391",
+      "google/protobuf/compiler/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "google/protobuf/compiler/plugin_pb2.py": "a3efdd0595dc89a3ed15650607d7ffac097722a1d819cc5a1e007c7b72907e39",
+      "google/protobuf/descriptor.py": "9b1239b4ecb00eac2a12b4a1d15d90a72aa3856420e1357ee64a16465074b894",
+      "google/protobuf/descriptor_database.py": "d27fb0f8d420add42231e67a2e70b02c08b0a281e3170c0370956916655fa2e7",
+      "google/protobuf/descriptor_pb2.py": "3c01edd3fc6f21f4b368fdee5d6754e92c3f671629b4001ab2fa8d09adcd9587",
+      "google/protobuf/descriptor_pool.py": "319322d01b4bde165221d4323f3fe356bc50e4081adae8c873ec3c835bbc7e9a",
+      "google/protobuf/duration.py": "bd04f05728a2c869b75b2dcb5bca21037b641a4ad42a84e7fe9e12744054f1b3",
+      "google/protobuf/duration_pb2.py": "87fe6713613829152feec032b0e18b1862f83ea77363a46f9edcb0fd298497e7",
+      "google/protobuf/empty_pb2.py": "6cd89faa9479b246faf7ce1bbca491194d815de7ef04c584b665802c28f31739",
+      "google/protobuf/field_mask_pb2.py": "2362b8b693dba24cd90499b40047def8052223c10d3225c5f4e7d431d86153c7",
+      "google/protobuf/internal/__init__.py": "b93e0182c8f2283152dcbaba56bb4000dfa54ac7a17c9c60d600a55f94e164d1",
+      "google/protobuf/internal/api_implementation.py": "e651f709c17bc034344726a3a6863bd404bf8fb254c4c558a50a1ab4e2e1be2a",
+      "google/protobuf/internal/builder.py": "a6dd21583d41378032592f7c51ffa6da6a8eee25e81254cc7ecf6b821d53bff0",
+      "google/protobuf/internal/containers.py": "327ba2e1cea0304321ee7436f2f9196e9893d26646219d5bc22fd11883df25c8",
+      "google/protobuf/internal/decoder.py": "16cd39157aebf77f020fb635a2f65bbb059aa3e07e0ad60aebb0d20553eb2806",
+      "google/protobuf/internal/encoder.py": "54ab81264e52c8c779c601238936c6a0414e739c8c1a37c597bfcb7a18dbdac2",
+      "google/protobuf/internal/enum_type_wrapper.py": "d5cab3075b586cd12cd2436a3869a6bc220002f16ad35749dab85ea578c075ef",
+      "google/protobuf/internal/extension_dict.py": "82d7c196c76fbad10a83c2c317a04dd7b103e8b0299e1f7793ed58ba1219aa88",
+      "google/protobuf/internal/field_mask.py": "651c7fe7460883c914cc3e83a91b99690dea90d2e6474c11702964f28ea34788",
+      "google/protobuf/internal/json_format_benchmark.py": "bd66310ea12082741daa7d026e78583682bb0e8d3ecebfd1b221114d24220b3e",
+      "google/protobuf/internal/message_benchmark.py": "c19b8e9a048b5c30c8c37a15497a81b12660d7e6bf8be20ea619f8ccd61871dd",
+      "google/protobuf/internal/message_listener.py": "8404f4120a76ab5092d2e8a62831d6dfc3525109aa3c4d8e876ee08d6ca1bff4",
+      "google/protobuf/internal/python_edition_defaults.py": "7fb7071b6bc4845347c1f3312dcb8de0451949a476cbff94af7a793fa3097118",
+      "google/protobuf/internal/python_message.py": "7e882bd51ddaf133e1d6fd23a63bf485feac3ee28464dbd6bc50f37b23cc2fd1",
+      "google/protobuf/internal/testing_refleaks.py": "39a36642b2e695cc1979104af5fe1718fe2daf4816faf849ed644b15ef4f5666",
+      "google/protobuf/internal/type_checkers.py": "4c6a3fa576c81227095156f88da878f8c406b29d40164d13abff0e16bcabd3e4",
+      "google/protobuf/internal/well_known_types.py": "a0fdac8e76f32657f6c414c51b2904e062bfab8d98c6e68911c51b86492d769c",
+      "google/protobuf/internal/wire_format.py": "3aa64c99d0cea9579aae6088b18b5515f7511006f33f0574e6956456804cc167",
+      "google/protobuf/json_enumvalue_options_pb2.py": "b159bba28a0e4288dfa7b9570ec9ef42220075e1c5168cc5a5e5beec0a3fb43e",
+      "google/protobuf/json_format.py": "29377061b3f412b132b2289a9558f73aff8c8d39b1e48bfe7a41094ca7b15515",
+      "google/protobuf/json_options_pb2.py": "e5c54388f0d33441c9bb7db4069ea568d96de8acad6b87aab48a269fd3f787ad",
+      "google/protobuf/message.py": "65e00c107f9422abb2df305e3dce4770b0b0234ac8f3f55b56921b925f57f700",
+      "google/protobuf/message_factory.py": "5b8a8cf7d0d9c07ebd4fb7b4f6b00c24445239ead246583feef17285deb22c6f",
+      "google/protobuf/proto.py": "720fe4f668f52787069a7b7df9ee2b167937c6a89a66a43327c0bc0a8c32bd57",
+      "google/protobuf/proto_builder.py": "ee9417fdcc246cf33e63b3fa5ea1f4390cf896a54ad135f303272b061ccbe05a",
+      "google/protobuf/proto_json.py": "cffa128b5ca72ff42f71c20aff6c8f117327409b04c088e8b4a40212be33ffc0",
+      "google/protobuf/proto_text.py": "81a9191ecd194ac078f5fdd8c8d16a844ae3f3466842cbd680c9e8bfa62c5486",
+      "google/protobuf/pyext/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "google/protobuf/pyext/cpp_message.py": "33215a6e51a61422474d204ea2ecda38a7c62509ce8de18e249fcafe8ef78230",
+      "google/protobuf/reflection.py": "74d1990d195b4fa12edbb081ec1bd7c5756678044fee74482caae242c036acd6",
+      "google/protobuf/runtime_version.py": "a29ee07c9d81c789e3a620c895cfc83af0b2dfbeccde6dc38338fffc2552b2dd",
+      "google/protobuf/service_reflection.py": "a98d7c8a8ac56e7cdc61a6d0b9f7ef57876c0f16a120d40fafdb55daee46266f",
+      "google/protobuf/source_context_pb2.py": "694625504d69c22b5abc3b897d8e95af5f32581e464bbf80318879925dc2daef",
+      "google/protobuf/struct_pb2.py": "99f1850625e2e5f58128676e1a396496f3a30404cb1f35178e7e9220cf55250f",
+      "google/protobuf/symbol_database.py": "61da9188d8be686f547289473b39aec144fff21ad69b785f324ef7adb6176928",
+      "google/protobuf/testdata/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "google/protobuf/text_encoding.py": "9a76280ab63e5cdac1d8d21d56e1c9261633835501bdc5e70f25f556ac5f3825",
+      "google/protobuf/text_format.py": "7ac692a079a16b502cc17519591e234c5fa4b66f1ba6b17778100834e20ffcf8",
+      "google/protobuf/timestamp.py": "b36dcb5aaea10e2148780b55527f0bc1f11ce5a44ced60304f3fe109a3959dd9",
+      "google/protobuf/timestamp_pb2.py": "7114dfb9a7352c2116dc8b169c9c5f8908f91f82674aa5171abfd18402106c72",
+      "google/protobuf/type_pb2.py": "9221aa4298b062c02125b5358925fc1b84a06fc3229d6e3cd6be6e18d32a6f21",
+      "google/protobuf/unknown_fields.py": "c13630d365876920b97c37e3c394e5f5cda9a325903d0a81151620169303542b",
+      "google/protobuf/util/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "google/protobuf/wrappers_pb2.py": "2775987cac2c21bdb5aab0471c0a631d2f3b5c583f6d7dc394d9e70e74111237",
+      "protobuf-7.36.2.dist-info/LICENSE": "6e5e117324afd944dcf67f36cf329843bc1a92229a8cd9bb573d7a83130fea7d",
+      "protobuf-7.36.2.dist-info/METADATA": "445916389cc3a87d5f815d763192372a17a221339d474cb661523157bf07d61c",
+      "protobuf-7.36.2.dist-info/RECORD": "4f427419d7cf33dee1dedb1e38d15966cd3ba2bb4d4e95713bec65daea20a624",
+      "protobuf-7.36.2.dist-info/WHEEL": "e049178cb32aec5d05afb78277559c7a43bfb6ceeca227d43768b2a19a66c5ef"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "10eee14f7b5517e2930b1204b512bf4c480d458a5c7447c72032cc64a620ca63",
+     "native": {
+      "google/_upb/_message.abi3.so": "macho-fat"
+     },
+     "pth": {},
+     "sha256": "cbc70b17ee27e28894c7fee8bb04be1abead49e936bc70eb60052531eee2079e"
+    },
     "protobuf-7.36.2-cp310-abi3-manylinux2014_x86_64.whl": {
      "entry_points": [],
      "files": {
@@ -224,11 +300,89 @@
      },
      "pth": {},
      "sha256": "89f23aa53c24553a2416fd4fd1ec06f74fa42b14b546d8883128813f775bbfd2"
+    },
+    "protobuf-7.36.2-cp310-abi3-win_amd64.whl": {
+     "entry_points": [],
+     "files": {
+      "google/_upb/_message.pyd": "58a206771b73f129d45dd2cda625bd4f7d6347b5f2d6dd76b4dbf4d2c6e3ac59",
+      "google/protobuf/__init__.py": "5f8761b56ede91285b915b3be83dd3ba4ee872bdb856fae73141d22401c7ada7",
+      "google/protobuf/any.py": "d563db4061f17713e176318dd400f0033ae39267c4703ce9900b51e7b98ed380",
+      "google/protobuf/any_pb2.py": "031916122469be9d2281278baf10ca157bc34054a85c6c876c4feec926aba2d5",
+      "google/protobuf/api_pb2.py": "2579217716172d799d54883be75a30bd45154197e9e524848ca5299650a32391",
+      "google/protobuf/compiler/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "google/protobuf/compiler/plugin_pb2.py": "a3efdd0595dc89a3ed15650607d7ffac097722a1d819cc5a1e007c7b72907e39",
+      "google/protobuf/descriptor.py": "9b1239b4ecb00eac2a12b4a1d15d90a72aa3856420e1357ee64a16465074b894",
+      "google/protobuf/descriptor_database.py": "d27fb0f8d420add42231e67a2e70b02c08b0a281e3170c0370956916655fa2e7",
+      "google/protobuf/descriptor_pb2.py": "3c01edd3fc6f21f4b368fdee5d6754e92c3f671629b4001ab2fa8d09adcd9587",
+      "google/protobuf/descriptor_pool.py": "319322d01b4bde165221d4323f3fe356bc50e4081adae8c873ec3c835bbc7e9a",
+      "google/protobuf/duration.py": "bd04f05728a2c869b75b2dcb5bca21037b641a4ad42a84e7fe9e12744054f1b3",
+      "google/protobuf/duration_pb2.py": "87fe6713613829152feec032b0e18b1862f83ea77363a46f9edcb0fd298497e7",
+      "google/protobuf/empty_pb2.py": "6cd89faa9479b246faf7ce1bbca491194d815de7ef04c584b665802c28f31739",
+      "google/protobuf/field_mask_pb2.py": "2362b8b693dba24cd90499b40047def8052223c10d3225c5f4e7d431d86153c7",
+      "google/protobuf/internal/__init__.py": "b93e0182c8f2283152dcbaba56bb4000dfa54ac7a17c9c60d600a55f94e164d1",
+      "google/protobuf/internal/api_implementation.py": "e651f709c17bc034344726a3a6863bd404bf8fb254c4c558a50a1ab4e2e1be2a",
+      "google/protobuf/internal/builder.py": "a6dd21583d41378032592f7c51ffa6da6a8eee25e81254cc7ecf6b821d53bff0",
+      "google/protobuf/internal/containers.py": "327ba2e1cea0304321ee7436f2f9196e9893d26646219d5bc22fd11883df25c8",
+      "google/protobuf/internal/decoder.py": "16cd39157aebf77f020fb635a2f65bbb059aa3e07e0ad60aebb0d20553eb2806",
+      "google/protobuf/internal/encoder.py": "54ab81264e52c8c779c601238936c6a0414e739c8c1a37c597bfcb7a18dbdac2",
+      "google/protobuf/internal/enum_type_wrapper.py": "d5cab3075b586cd12cd2436a3869a6bc220002f16ad35749dab85ea578c075ef",
+      "google/protobuf/internal/extension_dict.py": "82d7c196c76fbad10a83c2c317a04dd7b103e8b0299e1f7793ed58ba1219aa88",
+      "google/protobuf/internal/field_mask.py": "651c7fe7460883c914cc3e83a91b99690dea90d2e6474c11702964f28ea34788",
+      "google/protobuf/internal/json_format_benchmark.py": "bd66310ea12082741daa7d026e78583682bb0e8d3ecebfd1b221114d24220b3e",
+      "google/protobuf/internal/message_benchmark.py": "c19b8e9a048b5c30c8c37a15497a81b12660d7e6bf8be20ea619f8ccd61871dd",
+      "google/protobuf/internal/message_listener.py": "8404f4120a76ab5092d2e8a62831d6dfc3525109aa3c4d8e876ee08d6ca1bff4",
+      "google/protobuf/internal/python_edition_defaults.py": "7fb7071b6bc4845347c1f3312dcb8de0451949a476cbff94af7a793fa3097118",
+      "google/protobuf/internal/python_message.py": "7e882bd51ddaf133e1d6fd23a63bf485feac3ee28464dbd6bc50f37b23cc2fd1",
+      "google/protobuf/internal/testing_refleaks.py": "39a36642b2e695cc1979104af5fe1718fe2daf4816faf849ed644b15ef4f5666",
+      "google/protobuf/internal/type_checkers.py": "4c6a3fa576c81227095156f88da878f8c406b29d40164d13abff0e16bcabd3e4",
+      "google/protobuf/internal/well_known_types.py": "a0fdac8e76f32657f6c414c51b2904e062bfab8d98c6e68911c51b86492d769c",
+      "google/protobuf/internal/wire_format.py": "3aa64c99d0cea9579aae6088b18b5515f7511006f33f0574e6956456804cc167",
+      "google/protobuf/json_enumvalue_options_pb2.py": "b159bba28a0e4288dfa7b9570ec9ef42220075e1c5168cc5a5e5beec0a3fb43e",
+      "google/protobuf/json_format.py": "29377061b3f412b132b2289a9558f73aff8c8d39b1e48bfe7a41094ca7b15515",
+      "google/protobuf/json_options_pb2.py": "e5c54388f0d33441c9bb7db4069ea568d96de8acad6b87aab48a269fd3f787ad",
+      "google/protobuf/message.py": "65e00c107f9422abb2df305e3dce4770b0b0234ac8f3f55b56921b925f57f700",
+      "google/protobuf/message_factory.py": "5b8a8cf7d0d9c07ebd4fb7b4f6b00c24445239ead246583feef17285deb22c6f",
+      "google/protobuf/proto.py": "720fe4f668f52787069a7b7df9ee2b167937c6a89a66a43327c0bc0a8c32bd57",
+      "google/protobuf/proto_builder.py": "ee9417fdcc246cf33e63b3fa5ea1f4390cf896a54ad135f303272b061ccbe05a",
+      "google/protobuf/proto_json.py": "cffa128b5ca72ff42f71c20aff6c8f117327409b04c088e8b4a40212be33ffc0",
+      "google/protobuf/proto_text.py": "81a9191ecd194ac078f5fdd8c8d16a844ae3f3466842cbd680c9e8bfa62c5486",
+      "google/protobuf/pyext/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "google/protobuf/pyext/cpp_message.py": "33215a6e51a61422474d204ea2ecda38a7c62509ce8de18e249fcafe8ef78230",
+      "google/protobuf/reflection.py": "74d1990d195b4fa12edbb081ec1bd7c5756678044fee74482caae242c036acd6",
+      "google/protobuf/runtime_version.py": "a29ee07c9d81c789e3a620c895cfc83af0b2dfbeccde6dc38338fffc2552b2dd",
+      "google/protobuf/service_reflection.py": "a98d7c8a8ac56e7cdc61a6d0b9f7ef57876c0f16a120d40fafdb55daee46266f",
+      "google/protobuf/source_context_pb2.py": "694625504d69c22b5abc3b897d8e95af5f32581e464bbf80318879925dc2daef",
+      "google/protobuf/struct_pb2.py": "99f1850625e2e5f58128676e1a396496f3a30404cb1f35178e7e9220cf55250f",
+      "google/protobuf/symbol_database.py": "61da9188d8be686f547289473b39aec144fff21ad69b785f324ef7adb6176928",
+      "google/protobuf/testdata/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "google/protobuf/text_encoding.py": "9a76280ab63e5cdac1d8d21d56e1c9261633835501bdc5e70f25f556ac5f3825",
+      "google/protobuf/text_format.py": "7ac692a079a16b502cc17519591e234c5fa4b66f1ba6b17778100834e20ffcf8",
+      "google/protobuf/timestamp.py": "b36dcb5aaea10e2148780b55527f0bc1f11ce5a44ced60304f3fe109a3959dd9",
+      "google/protobuf/timestamp_pb2.py": "7114dfb9a7352c2116dc8b169c9c5f8908f91f82674aa5171abfd18402106c72",
+      "google/protobuf/type_pb2.py": "9221aa4298b062c02125b5358925fc1b84a06fc3229d6e3cd6be6e18d32a6f21",
+      "google/protobuf/unknown_fields.py": "c13630d365876920b97c37e3c394e5f5cda9a325903d0a81151620169303542b",
+      "google/protobuf/util/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "google/protobuf/wrappers_pb2.py": "2775987cac2c21bdb5aab0471c0a631d2f3b5c583f6d7dc394d9e70e74111237",
+      "protobuf-7.36.2.dist-info/LICENSE": "6e5e117324afd944dcf67f36cf329843bc1a92229a8cd9bb573d7a83130fea7d",
+      "protobuf-7.36.2.dist-info/METADATA": "445916389cc3a87d5f815d763192372a17a221339d474cb661523157bf07d61c",
+      "protobuf-7.36.2.dist-info/RECORD": "1f0c2136a17ccff253f0bf6e6c907328a250b88299f7699fc6314e13798cc0cd",
+      "protobuf-7.36.2.dist-info/WHEEL": "30d18a8aa5737049bf47ec7833f079f591ab68a9aef577a21773d55a595d7ece"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "be97f1a2baa99dae6ead81a874f2b14d8eca30487f6900b0218c60e296063687",
+     "native": {
+      "google/_upb/_message.pyd": "pe"
+     },
+     "pth": {},
+     "sha256": "a300819d441e078a5608c0d3c709796bb548136058fda017ae51d425b44fd353"
     }
    },
    "name": "protobuf",
    "provenance": {
-    "protobuf-7.36.2-cp310-abi3-manylinux2014_x86_64.whl": null
+    "protobuf-7.36.2-cp310-abi3-macosx_10_9_universal2.whl": null,
+    "protobuf-7.36.2-cp310-abi3-manylinux2014_x86_64.whl": null,
+    "protobuf-7.36.2-cp310-abi3-win_amd64.whl": null
    },
    "pypi": {
     "author": "protobuf@googlegroups.com",
@@ -241,8 +395,15 @@
    },
    "reviewed": {
     "by": "claude",
-    "date": "2026-11-05",
-    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read, filesystem_write_executable, process_schedule; 1 native binaries profiled, none with network/process imports or addresses; no attestation: content review only."
+    "date": "2026-11-20",
+    "earlier": [
+     {
+      "by": "claude",
+      "date": "2026-11-05",
+      "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read, filesystem_write_executable, process_schedule; 1 native binaries profiled, none with network/process imports or addresses; no attestation: content review only."
+     }
+    ],
+    "note": "macOS universal2 and Windows amd64 wheels of the reviewed version: same 63 members, only google/_upb/_message differs. No new finding, no .pth, no hook; the PE is MinGW-built (GCC 10-win32, msvcrt.dll) and its VirtualProtect import is MinGW's pseudo-relocation runtime; nothing networked or process-starting; the only URL is the protobuf news link. No attestation, as for the Linux wheel: content review only."
    },
    "scans": {
     "capa": {
@@ -268,6 +429,57 @@
        "urls": [
         "https://developers.google.com/protocol-buffers/docs/news/2022-05-06#python-updates",
         "https://github.com/llvm/llvm-project"
+       ]
+      }
+     },
+     "58a206771b73f129d45dd2cda625bd4f7d6347b5f2d6dd76b4dbf4d2c6e3ac59": {
+      "capabilities": [
+       "allocate or change RW memory",
+       "allocate or change RWX memory",
+       "change memory protection",
+       "contain a thread local storage (.tls) section",
+       "contain loop",
+       "delay execution",
+       "encode data using XOR",
+       "encrypt data using RC4 PRGA",
+       "enumerate PE sections",
+       "get thread local storage value",
+       "parse PE header",
+       "write file on Windows"
+      ],
+      "note": "",
+      "path": "google/_upb/_message.pyd",
+      "profile": {
+       "categories": {
+        "dynamic-code": [
+         "VirtualProtect"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "msvcrt.dll",
+        "python3.dll"
+       ],
+       "rpath": [],
+       "urls": [
+        "https://developers.google.com/protocol-buffers/docs/news/2022-05-06#python-updates"
+       ]
+      }
+     },
+     "5fe9c5aa8c22f90136ea60aa2e46bdbd95d1953c1a35bdd3ca4cd643b1d74f6d": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "google/_upb/_message.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": [
+        "https://developers.google.com/protocol-buffers/docs/news/2022-05-06#python-updates"
        ]
       }
      }

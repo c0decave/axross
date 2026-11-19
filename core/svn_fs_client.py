@@ -79,6 +79,9 @@ _DEFAULT_TIMEOUT = 60.0
 # so we have to load the full file. 256 MiB is the same ceiling we
 # use for in-memory archive inspection.
 _MAX_CAT_BYTES = 256 * 1024 * 1024
+#: Cap on one ``svn ls --xml`` answer (about 200 000 entries): collected
+#: whole by subprocess.run, a listing without end filled the memory.
+_MAX_LS_BYTES = 64 * 1024 * 1024
 #: Bytes per read of svn cat's output, and of its stderr kept for the error.
 _CAT_CHUNK = 256 * 1024
 _STDERR_KEEP = 64 * 1024
@@ -244,7 +247,9 @@ class SvnFsSession(SessionLifecycle):
             (parts.scheme, netloc, parts.path, parts.query, parts.fragment)
         )
         if scheme == "svn+ssh":
-            self._child_env["SVN_SSH"] = f"ssh -o HostKeyAlias={shlex.quote(host)}"
+            # The real host's key - of its port (a bare alias is port 22's).
+            alias = host if port == 22 else f"[{host}]:{port}"
+            self._child_env["SVN_SSH"] = f"ssh -o HostKeyAlias={shlex.quote(alias)}"
 
     def _write_servers_file(self, cfg) -> None:
         import tempfile
@@ -410,6 +415,8 @@ class SvnFsSession(SessionLifecycle):
             )
         except FileNotFoundError as exc:
             raise OSError("svn binary disappeared mid-session") from exc
+        except subprocess.TimeoutExpired as exc:  # a wrapper's own time-out
+            raise OSError(f"SVN command timed out after {timeout:.0f}s: {args[0]}") from exc
         out = bytearray()
         err = bytearray()
         over = threading.Event()
@@ -489,13 +496,14 @@ class SvnFsSession(SessionLifecycle):
 
     def list_dir(self, path: str) -> list[FileItem]:
         url = self._full_url(path)
-        out = self._run(
+        out = self._run_capped(
             "ls",
             url,
             "--xml",
             "--revision",
             self._revision,
-        )
+            cap=_MAX_LS_BYTES,
+        ).decode("utf-8", "replace")
         try:
             root = _xml_fromstring(out)
         except _XML_PARSE_ERRORS as exc:
@@ -532,6 +540,11 @@ class SvnFsSession(SessionLifecycle):
                     owner=author,
                 )
             )
+        # A name with a "/" is no entry of this folder (a hostile server's
+        # "../../etc/passwd"): listed as unusable (marked); "." / ".." go.
+        from core.path_policy import drop_impossible_names
+
+        items = drop_impossible_names(items, origin=f"SVN {path}")
         # SVN does not guarantee ordering; sort to give the UI a
         # stable view.
         items.sort(key=lambda f: (not f.is_dir, f.name.lower()))

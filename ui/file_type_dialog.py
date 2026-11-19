@@ -38,7 +38,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import file_type as FT
-from core.i18n import tr
+from core.i18n import tr, tr_n
 from ui.close_corner import add_close_corner
 from ui.format_utils import format_size
 from ui.scan_job import BusyStrip, ScanJob
@@ -320,7 +320,7 @@ class FileTypeDialog(QDialog):
             for i in self._results
             if i is not None and i.kind in (FT.KIND_ERROR, FT.KIND_TIMEOUT)
         )
-        parts = [tr("{n} file(s) identified").format(n=len(files))]
+        parts = [tr_n(len(files), "{n} file identified", "{n} files identified")]
         parts.append(
             tr("1 mismatch") if mismatches == 1 else tr("{n} mismatches").format(n=mismatches)
         )
@@ -371,7 +371,7 @@ class FileTypeDialog(QDialog):
         )
         lines = ["\t".join(COLUMNS)] + ["\t".join(self.row_texts(r)) for r in rows]
         QApplication.clipboard().setText("\n".join(lines))
-        self.status_label.setText(tr("{n} row(s) copied").format(n=len(rows)))
+        self.status_label.setText(tr_n(len(rows), "{n} row copied", "{n} rows copied"))
 
     # -- teardown ----------------------------------------------------------------
     def _abandon(self) -> None:
@@ -472,6 +472,8 @@ class FolderFileTypeDialog(QDialog):
         root.addWidget(self.table, stretch=1)
 
         self.status_label = QLabel(tr("Listing {folder}…").format(folder=folder))
+        # a folder's name is never markup ("<img width=4000 ...>" was drawn)
+        self.status_label.setTextFormat(Qt.TextFormat.PlainText)
         self.status_label.setProperty("role", "muted")
         self.status_label.setWordWrap(True)
         root.addWidget(self.status_label)
@@ -639,11 +641,11 @@ class FolderFileTypeDialog(QDialog):
         mismatches = sum(1 for i in files if i.mismatch)
         images = sum(1 for i in files if FT.is_disk_image(i))
         problems = sum(1 for i in infos if i.kind in (FT.KIND_ERROR, FT.KIND_TIMEOUT))
-        parts = [tr("{n} file(s) identified").format(n=len(files))]
+        parts = [tr_n(len(files), "{n} file identified", "{n} files identified")]
         parts.append(tr("1 mismatch") if mismatches == 1
                      else tr("{n} mismatches").format(n=mismatches))
         if images:
-            parts.append(tr("{n} disk image(s)").format(n=images))
+            parts.append(tr_n(images, "{n} disk image", "{n} disk images"))
         if problems:
             parts.append(tr("{n} unreadable").format(n=problems))
         listing = self._listing
@@ -652,7 +654,11 @@ class FolderFileTypeDialog(QDialog):
                 parts.append(tr("1 folder not entered") if listing.folders == 1
                              else tr("{n} folders not entered").format(n=listing.folders))
             if listing.skipped:
-                parts.append(tr("{n} unsafe name(s) skipped").format(n=listing.skipped))
+                parts.append(tr_n(
+                    listing.skipped,
+                    "{n} unsafe name skipped",
+                    "{n} unsafe names skipped",
+                ))
             if listing.truncated:
                 parts.append(tr("only the first {n} files").format(n=self._max_files))
         if cancelled:
@@ -713,7 +719,7 @@ class FolderFileTypeDialog(QDialog):
         lines = ["\t".join(FOLDER_COLUMNS[c] for c in visible)]
         lines += ["\t".join(self.row_texts(r)[c] for c in visible) for r in rows]
         QApplication.clipboard().setText("\n".join(lines))
-        self.status_label.setText(tr("{n} row(s) copied").format(n=len(rows)))
+        self.status_label.setText(tr_n(len(rows), "{n} row copied", "{n} rows copied"))
 
     # -- teardown ----------------------------------------------------------------
     def _abandon(self) -> None:

@@ -117,7 +117,17 @@ def copy_file_onto(src: str, dst: str) -> None:
     now, as the shell backends' ``cp`` refuses it (copy_command)."""
     if os.path.isdir(dst):
         raise IsADirectoryError(errno.EISDIR, "copy target is a folder", dst)
+    st = os.stat(src)
+    if not stat_module.S_ISREG(st.st_mode):
+        # copyfile refuses only a FIFO: a character device (/dev/zero, a
+        # tty) was read for ever.
+        raise OSError(errno.EINVAL, "not a regular file (a device, pipe or socket has no "
+                      "content to copy)", src)
     shutil.copy2(src, dst)
+    if st.st_mode & 0o7000:
+        # copystat kept setuid, setgid and sticky: a copy never gets them
+        # (core.transfer_worker.copy_mode), here as in every transfer.
+        os.chmod(dst, stat_module.S_IMODE(st.st_mode) & 0o777)
 
 
 def unstattable_item(entry: os.DirEntry, error: OSError) -> FileItem:
@@ -254,17 +264,31 @@ def own_file_problem(st: os.stat_result) -> str:
     return ""
 
 
-def create_private_file(path: str, mode: int | None = None) -> IO[bytes]:
+def create_private_file(path: str, mode: int | None = None, *,
+                        group: int | None = None) -> IO[bytes]:
     """A NEW file at *path*, open for writing: FileExistsError when anything
     (a symlink too) is there already. With *mode* it is created 0600 and
     given *mode* through its descriptor before a byte is written - never
     readable by more than *mode* allows, not for a moment (a 0600 key copied
     through a 0644 temp file could be opened by anyone meanwhile); without,
     it gets a new file's default mode (0666 less the umask). The handle
-    writes into that file whatever its name is made to point to later."""
+    writes into that file whatever its name is made to point to later.
+
+    *group* (with *mode*): the group the file gets first, through the same
+    descriptor - the group of the file a save replaces. Given after the
+    data, a 0640 file of group "staff" sat readable by the user's own group
+    meanwhile. A group that cannot be given keeps the group bits out of
+    *mode* (the wrong group must not get them)."""
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW | _O_CLOEXEC | _O_BINARY
     fd = os.open(path, flags, 0o666 if mode is None else 0o600)
     try:
+        if mode is not None and group is not None and hasattr(os, "fchown"):
+            try:
+                if os.fstat(fd).st_gid != group:
+                    os.fchown(fd, -1, group)
+            except OSError as exc:
+                log.debug("could not give %s the group %s: %s", path, group, exc)
+                mode &= ~0o070
         if mode is not None:
             from core.posix_compat import fchmod_private
 
@@ -433,7 +457,11 @@ class LocalFS(SessionLifecycle):
             if stat_module.S_ISDIR(mode):
                 raise IsADirectoryError(errno.EISDIR, os.strerror(errno.EISDIR), path)
             if not stat_module.S_ISREG(mode):
-                from core.file_type import _special_description
+                try:
+                    from core.file_type import _special_description
+                except ImportError:  # (a program exported without it: axross-markdown)
+                    def _special_description(_mode: int) -> str:
+                        return "not a regular file"
 
                 raise OSError(
                     errno.EINVAL,

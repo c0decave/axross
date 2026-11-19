@@ -30,6 +30,7 @@ Requires: ``pip install axross[ldap]`` — ldap3>=2.9.
 
 from __future__ import annotations
 
+import errno
 import io
 import logging
 from datetime import datetime
@@ -44,6 +45,7 @@ try:
     import ldap3  # type: ignore[import-not-found]
     from ldap3 import (
         ALL,
+        AUTO_BIND_TLS_BEFORE_BIND,
         BASE,
         LEVEL,
         SUBTREE,
@@ -51,7 +53,7 @@ try:
         Server,
         Tls,
     )
-    from ldap3.core.exceptions import LDAPException
+    from ldap3.core.exceptions import LDAPException, LDAPStartTLSError
 except ImportError:  # pragma: no cover
     ldap3 = None  # type: ignore[assignment]
 
@@ -129,6 +131,7 @@ class LdapFsSession(SessionLifecycle):
         use_tls: bool = False,
         timeout: float = 10.0,
         verify_tls: bool = True,
+        tls_mode: str | None = None,
         **_ignored,
     ):
         self._tunnel = None
@@ -138,7 +141,14 @@ class LdapFsSession(SessionLifecycle):
         self._port = int(port)
         self._username = username
         self._password = password
-        self._use_tls = bool(use_tls)
+        from core.tls_context import session_tls_mode
+
+        # "tls" (LDAPS), "starttls" (StartTLS before the bind, refused
+        # without it) or "plain". Without tls_mode, use_tls=False is the
+        # caller's explicit choice of plain text; profiles pass the mode.
+        self._tls_mode = session_tls_mode(tls_mode, use_tls)
+        self._use_tls = self._tls_mode == "tls"
+        self._verify_tls = bool(verify_tls)
         self._timeout = float(timeout)
         # ldap3 defaults to Tls(validate=CERT_NONE) when none is given,
         # i.e. LDAPS would accept any certificate. Validate unless the
@@ -152,15 +162,22 @@ class LdapFsSession(SessionLifecycle):
         if self._tunnel is not None:
             connect_host, connect_port = self._tunnel.host, self._tunnel.port
         tls = None
-        if self._use_tls:
+        starttls = self._tls_mode == "starttls"
+        if self._use_tls or starttls:
             import ssl
 
             if not verify_tls:
                 log.warning("LDAP: certificate verification DISABLED by profile option")
-            tls_kwargs: dict = {"validate": ssl.CERT_REQUIRED if verify_tls else ssl.CERT_NONE}
+            tls_kwargs: dict = {"validate": ssl.CERT_REQUIRED if verify_tls else ssl.CERT_NONE,
+                                "sni": host}
             if self._tunnel is not None:
-                tls_kwargs.update(valid_names=[host], sni=host)
+                # ldap3 checks the name it dialled (the tunnel's loopback)
+                # and these: the certificate must name the real server.
+                tls_kwargs.update(valid_names=[host])
             tls = Tls(**tls_kwargs)
+        elif self._username or self._password:
+            log.warning("LDAP connecting to %s:%d WITHOUT TLS — the bind password will be sent "
+                        "in plaintext", host, self._port)
         try:
             self._server = Server(
                 connect_host,
@@ -174,9 +191,25 @@ class LdapFsSession(SessionLifecycle):
                 self._server,
                 user=username or None,
                 password=password or None,
-                auto_bind=True,
+                # StartTLS (RFC 4513 3.1.5) before the bind: a server that
+                # refuses it - or a man in the middle answering for it -
+                # ends the connect before the DN and password are sent.
+                auto_bind=AUTO_BIND_TLS_BEFORE_BIND if starttls else True,
                 receive_timeout=int(self._timeout),
+                # ldap3 follows a referral to ANY host it names and binds
+                # there with this DN and password - directly (around the
+                # proxy) and over plain ldap:// even from an LDAPS session.
+                auto_referrals=False,
             )
+        except LDAPStartTLSError as exc:
+            if self._tunnel is not None:
+                self._tunnel.close()
+            raise ConnectionError(
+                errno.EPROTO,
+                f"LDAP {host}: StartTLS failed ({exc}) - the bind password is not sent in "
+                "clear text. Use LDAPS (port 636), or choose 'no encryption' in the profile "
+                "if this server really has no TLS",
+            ) from exc
         except LDAPException as exc:
             if self._tunnel is not None:
                 self._tunnel.close()
@@ -196,6 +229,7 @@ class LdapFsSession(SessionLifecycle):
             pass
         self._display = (
             f"ldap{'s' if self._use_tls else ''}://{username or 'anon'}@{host}:{self._port}"
+            + (" (StartTLS)" if starttls else "")
         )
         log.info("LDAP-FS connected: %s", self._display)
 
@@ -210,6 +244,22 @@ class LdapFsSession(SessionLifecycle):
     @property
     def connected(self) -> bool:
         return bool(getattr(self._conn, "bound", False))
+
+    def security_info(self):
+        """The negotiated protection of the LDAP connection for the security
+        badge (None when not connected - the profile tells then)."""
+        import ssl
+
+        from core import conn_security as CS
+
+        sock = getattr(getattr(self, "_conn", None), "socket", None)
+        if sock is None:
+            return None
+        if not isinstance(sock, ssl.SSLSocket):
+            return CS.SecurityInfo(CS.LEVEL_CLEARTEXT, "LDAP without TLS - cleartext - anyone on the "
+                                   "network can read it, the bind password too", True)
+        what = "LDAP (StartTLS)" if getattr(self, "_tls_mode", "") == "starttls" else "LDAPS"
+        return CS.tls_socket(sock, verified=getattr(self, "_verify_tls", True), what=what)
 
     def close(self) -> None:
         try:

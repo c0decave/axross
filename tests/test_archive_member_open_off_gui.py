@@ -80,7 +80,7 @@ def test_happy_the_member_is_extracted_off_the_gui_thread(window, archive):
 
 
 def test_sad_cancel_opens_nothing(window, archive):
-    def endless(archive_path, target, members, progress=None):
+    def endless(archive_path, target, members, progress=None, **_kwargs):
         while True:
             progress(0, 1, "x")
             time.sleep(0.01)

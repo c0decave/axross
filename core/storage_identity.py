@@ -22,6 +22,7 @@ import ipaddress
 import os
 import posixpath
 import socket
+import stat as stat_module
 
 # Filesystems whose files live on another machine; the mount source names it.
 NETWORK_FS = frozenset(
@@ -142,13 +143,19 @@ def _same_view(backend_a, backend_b) -> bool:
 
 
 def _norm_view_path(backend, path: str) -> str:
+    text = _norm_view_path_exact(backend, path)
+    return text if getattr(backend, "case_sensitive", True) else text.casefold()
+
+
+def _norm_view_path_exact(backend, path: str) -> str:
+    """_norm_view_path without the case folding (the server resolves
+    the name as spelled)."""
     try:
         sep = backend.separator() or "/"
     except Exception:  # noqa: BLE001 - a backend without separator() is POSIX-like
         sep = "/"
     text = path.replace("\\", "/") if sep == "\\" else path
-    text = posixpath.normpath("/" + text.lstrip("/"))
-    return text if getattr(backend, "case_sensitive", True) else text.casefold()
+    return posixpath.normpath("/" + text.lstrip("/"))
 
 
 def _local_entry(path: str) -> str:
@@ -226,6 +233,40 @@ def _same_entry(backend_a, path_a: str, backend_b, path_b: str) -> bool:
     return _norm_view_path(backend_a, path_a) == _norm_view_path(backend_b, path_b)
 
 
+def is_hard_link_of(backend_a, path_a: str, backend_b, path_b: str) -> bool:
+    """True when the local *path_a* and *path_b* are two names of one file
+    (hard links): two entries each listed in its own folder, one inode. A
+    case-insensitive spelling, a bind mount or a symlinked folder of one
+    entry is not that - its folder lists the one name only once."""
+    try:
+        local_a = _strict_local_path(backend_a, path_a)
+        local_b = _strict_local_path(backend_b, path_b)
+        if not (local_a and local_b):
+            return False
+        head_a, name_a = os.path.split(os.path.abspath(local_a))
+        head_b, name_b = os.path.split(os.path.abspath(local_b))
+        st_a, st_b = os.lstat(local_a), os.lstat(local_b)
+        if not (os.path.samestat(st_a, st_b) and st_a.st_nlink > 1
+                and stat_module.S_ISREG(st_a.st_mode)):
+            return False
+        if name_a == name_b and os.path.samestat(os.stat(head_a), os.stat(head_b)):
+            return False  # one entry under two paths of its folder
+        # Each name as its folder lists it: a case-insensitive spelling of
+        # the one entry is not listed.
+        return name_a in os.listdir(head_a) and name_b in os.listdir(head_b)
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def same_target_message(backend_a, path_a: str, backend_b, path_b: str) -> str:
+    """Why a copy or move of *path_a* to *path_b* (one entry, see
+    :func:`same_entry`) does nothing - said apart for hard links."""
+    if is_hard_link_of(backend_a, path_a, backend_b, path_b):
+        return (f"{path_b} is the same file as {path_a} (a hard link): nothing is copied "
+                "or moved, both names stay")
+    return f"source and destination are the same: {path_b}"
+
+
 def is_within(backend_a, root_a: str, backend_b, path_b: str) -> bool:
     """True when ``path_b`` is provably ``root_a`` itself or lies below it.
 
@@ -250,7 +291,73 @@ def _is_within(backend_a, root_a: str, backend_b, path_b: str) -> bool:
         return False
     root = _norm_view_path(backend_a, root_a)
     target = _norm_view_path(backend_b, path_b)
+    if _is_below(root, target):
+        return True
+    # As text the two are apart; a symlink on the server may still lead
+    # the one into the other (/b/link -> /a): the server's realpath says.
+    root = resolved_path(backend_a, root_a)
+    target = resolved_path(backend_b, path_b) if root is not None else None
+    return root is not None and target is not None and _is_below(root, target)
+
+
+def _is_below(root: str, target: str) -> bool:
     return target == root or target.startswith(root.rstrip("/") + "/")
+
+
+def resolved_path(backend, path: str) -> str | None:
+    """*path* with every symlink resolved, or None where that cannot be
+    known.
+
+    A local path: os.path.realpath. A remote one: the backend's
+    ``realpath`` where it has one (SFTP's REALPATH, which OpenSSH answers
+    with the server's realpath(3)); the parts below the deepest existing
+    folder are kept as they are, so a folder about to be made resolves
+    too. Other backends compare paths as text only: None.
+    """
+    local = _strict_local_path(backend, path)
+    if local:
+        return os.path.realpath(local)
+    realpath = getattr(backend, "realpath", None)
+    if not callable(realpath):
+        return None
+    current = _norm_view_path_exact(backend, path)
+    tail: list[str] = []
+    for _ in range(MAX_RESOLVE_STEPS):
+        try:
+            base = realpath(current)
+        except (OSError, UnicodeError, ValueError):
+            base = None
+        if isinstance(base, str) and base.startswith("/"):
+            text = posixpath.normpath(posixpath.join(base, *reversed(tail)))
+            return text if getattr(backend, "case_sensitive", True) else text.casefold()
+        parent = posixpath.dirname(current)
+        if parent == current:
+            return None
+        tail.append(posixpath.basename(current))
+        current = parent
+    return None
+
+
+#: Missing path parts resolved_path walks up past at most.
+MAX_RESOLVE_STEPS = 64
+
+
+def same_namespace(backend_a, path_a: str, backend_b, path_b: str) -> bool:
+    """True when the two paths provably name places in one file tree: both
+    on this machine, or one server seen through the same kind of session."""
+    local_a = _strict_local_path(backend_a, path_a)
+    local_b = _strict_local_path(backend_b, path_b)
+    if local_a and local_b:
+        return True
+    return not local_a and not local_b and _same_view(backend_a, backend_b)
+
+
+def folder_key(backend, path: str) -> str:
+    """The resolved path where it can be had (resolved_path), else the
+    normalised text; equal keys of two paths in one namespace
+    (same_namespace) name the same folder."""
+    resolved = resolved_path(backend, path)
+    return resolved if resolved is not None else _norm_view_path(backend, path)
 
 
 def _local_ancestor_is(root: str, target: str) -> bool:

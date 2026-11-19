@@ -32,6 +32,7 @@ from core.i18n import tr
 from ui.close_corner import add_close_corner
 from ui.column_fit import ColumnFitter
 from ui.icon_provider import set_window_icon
+from ui.screen_fit import fit_size
 
 COL_NAME, COL_PURPOSE, COL_LICENSE, COL_SHIPS, COL_LINK = range(5)
 #: Item role holding what the filter looks at (core.third_party.search_text).
@@ -74,7 +75,7 @@ class ThirdPartyDialog(QDialog):
         super().__init__(parent)
         set_window_icon(self, "book")
         self.setWindowTitle(tr("Third-Party Software"))
-        self.resize(1000, 640)
+        self.resize(fit_size((1000, 640), parent))  # at most the screen (1024x600)
         self._last_open = ("", 0.0)
 
         layout = QVBoxLayout(self)

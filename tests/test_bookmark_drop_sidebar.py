@@ -156,6 +156,10 @@ class PayloadTest(_Qt):
         (tmp / "f.txt").write_text("x")
         pane = FilePaneWidget(LocalFS())
         self.addCleanup(pane.deleteLater)
+        # Its folder watcher stopped before the folder goes: deleteLater is
+        # not run here, the watcher polled the deleted folder (and logged
+        # it) for the rest of the run.
+        self.addCleanup(pane.shutdown)
         pane.navigate(str(tmp))
         proxy = pane._table.model()
         end = time.time() + 10

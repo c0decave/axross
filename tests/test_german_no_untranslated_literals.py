@@ -142,7 +142,6 @@ ALLOWED: dict[str, str] = {
     "INFO": "a Python log level name",
     "WARNING": "a Python log level name",
     "ERROR": "a Python log level name",
-    "Latin-1": "an encoding name (the text editor's fallback encoding)",
     "[HEX]": "the hex editor's input mode, named as hex editors name it",
     "[ASCII]": "the hex editor's input mode, named as hex editors name it",
     "Xg": "a font-metric probe of ui.dock_fit, never shown",

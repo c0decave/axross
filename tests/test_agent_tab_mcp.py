@@ -17,7 +17,10 @@ from tests.test_mcp_client import FAKE
 @pytest.fixture
 def env(tmp_path):
     e = Env(tmp_path)
-    script = tmp_path / "fake_mcp.py"
+    # In a folder of its own: every file of a host-run server's folder is
+    # pinned (core.mcp_script_pin), and the tab's files change beside it.
+    (tmp_path / "srv").mkdir()
+    script = tmp_path / "srv" / "fake_mcp.py"
     script.write_text(FAKE)
     e.server_config = lambda **kw: C.McpServerConfig(
         name="fake", command=(sys.executable, str(script), "normal"), **kw)

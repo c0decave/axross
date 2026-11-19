@@ -383,6 +383,7 @@ def create_proxy_socket(
     # metadata address unless the user has explicitly opted in.
     _assert_proxy_host_not_private(proxy.host, proxy.port)
     transport, auth = parse_proxy_type(proxy.proxy_type)
+    _refuse_family_through_proxy(target_host, family)
     if transport in ("socks4", "socks5"):
         return _create_socks_socket(proxy, target_host, target_port, timeout, family)
     if transport == "http" and auth in ("", "basic"):
@@ -390,6 +391,29 @@ def create_proxy_socket(
     from core.proxy_http import open_connect_tunnel
 
     return open_connect_tunnel(proxy, target_host, target_port, timeout, family)
+
+
+def _refuse_family_through_proxy(target_host: str, family: int) -> None:
+    """A forced IP version (IPv4 / IPv6) and a host NAME through a proxy
+    cannot go together: the proxy resolves the name, SOCKS5 and HTTP
+    CONNECT have no way to ask it for one family. Choosing one meant
+    resolving the name on this computer - a DNS query around the proxy,
+    and a name only the proxy's network knows failed. Refused with what
+    to do instead; an IP address of that version goes on."""
+    if family not in (socket.AF_INET, socket.AF_INET6):
+        return
+    wanted = "IPv4" if family == socket.AF_INET else "IPv6"
+    try:
+        literal = ipaddress.ip_address(target_host.strip("[]"))
+    except ValueError:
+        raise _host_error(
+            f"IP Version {wanted} cannot be kept through a proxy for the host name "
+            f"{target_host!r}: the proxy resolves the name, and choosing the version would "
+            "resolve it on this computer, around the proxy. Set IP Version to Automatic, "
+            f"or give the server's {wanted} address", target_host) from None
+    if (literal.version == 4) != (family == socket.AF_INET):
+        raise _host_error(
+            f"{target_host} is no {wanted} address, but IP Version is {wanted}", target_host)
 
 
 def _create_socks_socket(

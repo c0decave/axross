@@ -7,6 +7,9 @@
 #   dist/<version>/glibc-2.34/axross-{base,slim,full}   AlmaLinux 9 libraries: glibc 2.34+
 #   dist/<version>/glibc-2.36/axross-{base,slim,full}   Debian 12 libraries:  glibc 2.36+
 #       GitHub release binaries (scripts/build_bundle.sh, PyInstaller)
+#   dist/<version>/appimage/axross-{base,slim,full}-x86_64.AppImage   the glibc-2.34
+#       binaries as AppImages (scripts/build_appimage.sh: pinned appimagetool and
+#       runtime, SHA-256 checked)
 #   dist/<version>/packs/   the units an axross-base adds (core.packs): the
 #       locked wheels and packs-<version>.json (scripts/build_packs.py)
 #   dist/<version>/glibc-2.3x/axross-{media-player,system-info}   axross's tools as
@@ -20,7 +23,7 @@
 #                         [--standalone media-player,system-info|none]
 #   scripts/build_dist.sh --lock-tools   # refresh build/requirements-dist-tools.txt
 #
-# What it needs: git, curl, gpgv and dpkg-deb (Debian-based machine), uv
+# What it needs: git, curl, gpgv, dpkg-deb and file (Debian-based machine), uv
 # (fetches CPython 3.12.8 from python-build-standalone, hash-checked by uv),
 # and the network to pypi.org/files.pythonhosted.org, github.com,
 # deb.debian.org, security.debian.org and repo.almalinux.org.
@@ -336,6 +339,20 @@ if [[ "$ONLY" != "wheel" ]]; then
         done
         (cd "$dest" && sha256sum axross-* > SHA256SUMS)
     done
+    # The AppImages: the glibc-2.34 binaries (they run on the most systems)
+    # wrapped as they are - the binary inside is the same file, so it knows
+    # its flavour and variant and updates its image (core.self_update).
+    if [[ -d "$OUT/glibc-2.34" && ${#FLAVOR_LIST[@]} -gt 0 ]]; then
+        mkdir -p "$OUT/appimage"
+        for flavor in "${FLAVOR_LIST[@]}"; do
+            echo ">>> AppImage: axross-$flavor-x86_64.AppImage"
+            APPIMAGE_TOOLS_DIR="$WORK/appimage-tools" bash "$SRC/scripts/build_appimage.sh" \
+                "$OUT/glibc-2.34/axross-$flavor" "$OUT/appimage/axross-$flavor-x86_64.AppImage" \
+                >"$WORK/appimage-$flavor.log" 2>&1 \
+                || { tail -40 "$WORK/appimage-$flavor.log"; exit 1; }
+        done
+        (cd "$OUT/appimage" && sha256sum axross-*.AppImage > SHA256SUMS)
+    fi
     if [[ -n "$FLAVORS" ]]; then
         # The packs: the units an axross-base adds from this release - the same
         # locked wheels the gate checked above.
@@ -361,6 +378,7 @@ fi
     [[ -f "$OUT/axross-$VERSION.tar.gz" ]] && echo "| axross-$VERSION.tar.gz, axross-$VERSION-py3-none-any.whl | PyPA build $BUILD_VERSION, isolated; platform-independent (PyPI) |"
     [[ -d "$OUT/glibc-2.34" ]] && echo "| glibc-2.34/axross-* | AlmaLinux 9 libraries: run on glibc 2.34+ (RHEL / Alma / Rocky 9, Ubuntu 22.04, Debian 12, Fedora, Arch) |"
     [[ -d "$OUT/glibc-2.36" ]] && echo "| glibc-2.36/axross-* | Debian 12 libraries: run on glibc 2.36+ (Debian 12+, Ubuntu 22.10+, Fedora 37+, Arch) |"
+    [[ -d "$OUT/appimage" ]] && echo "| appimage/axross-*-x86_64.AppImage | the glibc-2.34 binaries as AppImages ($(grep -E '^APPIMAGE(TOOL)?(_RUNTIME)?_VERSION=' "$SRC/scripts/fetch_appimagetool.sh" | tr -d '"' | tr '\n' ' ')- both SHA-256 pinned) |"
     [[ -d "$OUT/packs" ]] && echo "| packs/ | the units an axross-base adds (core.packs): locked wheels and packs-$VERSION.json |"
     [[ -d "$OUT/standalone" ]] && echo "| standalone/, glibc-2.3x/axross-{media-player,system-info} | the Media Player and System Information as programs of their own (scripts/export_standalone.py): sdist, wheel and binaries |"
     echo

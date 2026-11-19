@@ -34,18 +34,21 @@ from core.ram_fs import RamFsSession
 from tests import mcp_group_testkit as T
 
 #: Registered protocols without a saved profile; reached over MCP only by
-#: the script tools' axross.open_url. Each with a URL that names it.
-URL_ONLY = {
+#: the script tools' axross.open_url. None left: the databases, Git, LDAP,
+#: SLP and Exchange got their profiles in the connection review.
+URL_ONLY: dict[str, str] = {}
+
+#: Protocols a script also opens straight from a URL (axross.open_url),
+#: each with a URL that names it.
+OPEN_BY_URL = {
     "exchange": "exchange://mail.example.test",
     "git": "git+https://git.example.test/repo.git",
     "ldap": "ldap://ldap.example.test",
     "mongodb": "mongodb://db.example.test",
     "postgres": "postgres://db.example.test/vault",
     "redis": "redis://cache.example.test",
-    "rsh": "rsh://host.example.test",
     "slp": "slp://directory.example.test",
     "sqlite": "sqlite:////nonexistent/vault.db",
-    "wmi": "wmi://win.example.test",
 }
 
 
@@ -168,13 +171,13 @@ def test_edge_remote_profiles_says_why_each_one_cannot_open(fake_backends):
 # --- route 2: URL only, through the script tools ----------------------------------
 
 
-@pytest.mark.parametrize("proto", sorted(URL_ONLY))
+@pytest.mark.parametrize("proto", sorted(OPEN_BY_URL))
 def test_happy_open_url_reaches_the_url_only_protocol(monkeypatch, proto):
     from core import scripting
 
     monkeypatch.setattr(R, "load_backend_class", lambda p: _Fake)
     _Fake.made = []
-    backend = scripting.open_url(URL_ONLY[proto], proxy_type="none")
+    backend = scripting.open_url(OPEN_BY_URL[proto], proxy_type="none")
     assert isinstance(backend, _Fake) and len(_Fake.made) == 1
 
 

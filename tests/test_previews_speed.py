@@ -60,6 +60,9 @@ def _qt_reads_no_tiff(monkeypatch):
             return super().canRead()
 
     monkeypatch.setattr(QtGui, "QImageReader", _Reader)
+    # This process's reader is the one told so: decode here, not in the
+    # child of core.image_worker (tests/test_image_worker.py covers that).
+    monkeypatch.setattr(previews, "ISOLATED", False)
 
 
 def _noise(mode: str, size=(96, 64), seed: int = 1) -> Image.Image:

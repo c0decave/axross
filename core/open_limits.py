@@ -18,12 +18,10 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import tempfile
 import threading
 from pathlib import Path
 
-from core.json_store import read_for_merge
+from core.json_store import read_for_merge, write_private
 
 log = logging.getLogger(__name__)
 
@@ -92,24 +90,18 @@ def write_setting(key: str, value) -> None:
 
     The small preferences of several features share this file (the open
     size limit, the metadata tools' write mode); the write is atomic and
-    the file stays 0600."""
+    the file stays 0600. Every axross process writes it: the read, the
+    change and the write hold a file lock (``settings.json.lock``) the
+    others take as well, so a change of another process made between this
+    read and this write is not dropped."""
+    from core.secure_storage import locked_store_update
+
     with _LOCK:
-        data = read_for_merge(SETTINGS_PATH)
-        data[key] = value
-        target_dir = SETTINGS_PATH.parent
-        target_dir.mkdir(parents=True, exist_ok=True)
-        fd, tmp_name = tempfile.mkstemp(dir=target_dir, prefix=".settings.", suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as tmp:
-                tmp.write(json.dumps(data, indent=2) + "\n")
-            os.replace(tmp_name, SETTINGS_PATH)
-            os.chmod(SETTINGS_PATH, 0o600)
-        except BaseException:
-            try:
-                os.unlink(tmp_name)
-            except OSError:
-                pass
-            raise
+        SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with locked_store_update(SETTINGS_PATH):
+            data = read_for_merge(SETTINGS_PATH)
+            data[key] = value
+            write_private(SETTINGS_PATH, json.dumps(data, indent=2) + "\n")
 
 
 __all__ = [

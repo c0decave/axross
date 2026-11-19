@@ -169,7 +169,7 @@ MAX_PROFILE_IMPORT_BYTES = 8 * 1024 * 1024
 MAX_SESSION_DEPTH = 32
 #: Splitters plus panes. Real layouts hold a dozen; every terminal entry
 #: starts a shell, so a hostile file must not ask for thousands.
-MAX_SESSION_NODES = 128
+MAX_SESSION_NODES = 256
 MAX_RESTORED_WINDOW_PX = 100_000
 #: Base64 of QMainWindow.saveGeometry / saveState: a few hundred bytes.
 MAX_SAVED_WINDOW_STATE_CHARS = 64 * 1024
@@ -189,7 +189,16 @@ def _session_problem(data) -> str:
     problem, trees = _workspaces_problem(data.get("workspaces"))
     if problem:
         return problem
-    stack = [(data.get("splitter", {}), 1)] + [(tree, 1) for tree in trees]
+    # The legacy "splitter" is the first workspace again, for an older
+    # axross (_save_session): it is restored - and counted - only in a
+    # session written before the workspaces. Counted twice, a layout
+    # axross had saved itself was refused at the next start.
+    # Only the leading workspaces that fit in MAX_SESSION_NODES come back
+    # (_session_workspaces): the rest is neither checked nor restored.
+    trees = trees[: _fitting_workspaces(trees)] if trees else trees
+    if data.get("workspaces") and not trees:
+        return f"The layout holds more than {MAX_SESSION_NODES} entries."
+    stack = [(tree, 1) for tree in trees] or [(data.get("splitter", {}), 1)]
     nodes = 0
     while stack:
         node, depth = stack.pop()
@@ -219,22 +228,63 @@ def _session_problem(data) -> str:
         children = node.get("children", [])
         if not isinstance(children, list):
             return "A splitter's children are not a list."
+        sizes = node.get("sizes", [])
+        if (not isinstance(sizes, list) or len(sizes) > MAX_SESSION_NODES
+                or any(not isinstance(s, int) or isinstance(s, bool) for s in sizes)):
+            # Out-of-range whole numbers are no problem: the restore clamps
+            # them (ui.layout_utils.MAX_SPLITTER_SIZE).
+            return "A splitter's sizes are not a list of whole numbers."
         stack.extend((child, depth + 1) for child in children)
     return ""
 
 
+def _layout_entries(tree, limit: int) -> int:
+    """The entries (splitters, panes) of the layout *tree*, counted up to
+    *limit* + 1; anything that is no splitter's list counts as one."""
+    count = 0
+    stack = [tree]
+    while stack and count <= limit:
+        node = stack.pop()
+        count += 1
+        children = node.get("children") if isinstance(node, dict) else None
+        if isinstance(children, list):
+            stack.extend(children)
+    return count
+
+
+def _fitting_workspaces(trees: list) -> int:
+    """How many of the leading layout *trees* fit in MAX_SESSION_NODES
+    together. "Up to 256 layout entries come back": a layout past them,
+    made in the window (32 workspaces of 8 panes), was refused as a whole
+    and the start showed the default single pane."""
+    total = 0
+    for index, tree in enumerate(trees):
+        total += _layout_entries(tree, MAX_SESSION_NODES)
+        if total > MAX_SESSION_NODES:
+            return index
+    return len(trees)
+
+
 def _session_workspaces(data: dict) -> list[dict]:
-    """The workspaces of a checked session: its ``workspaces`` entry, or
-    one workspace from the ``splitter`` of a session written before them."""
+    """The workspaces of a checked session: its ``workspaces`` entry (the
+    leading ones that fit in MAX_SESSION_NODES), or one workspace from the
+    ``splitter`` of a session written before them."""
     entries = data.get("workspaces")
     if isinstance(entries, list) and entries:
-        return entries
+        fitting = _fitting_workspaces(
+            [e.get("splitter", {}) if isinstance(e, dict) else e for e in entries])
+        if fitting < len(entries):
+            log.warning("Session: %d of %d workspaces come back (more than %d layout entries)",
+                        fitting, len(entries), MAX_SESSION_NODES)
+        return entries[:fitting]
     return [{"name": "Workspace 1", "splitter": data.get("splitter", {}), "current": True}]
 
 
 def _session_has_panes(data: dict) -> bool:
     return any(
-        isinstance(entry.get("splitter"), dict) and entry["splitter"].get("children")
+        isinstance(entry, dict)
+        and isinstance(entry.get("splitter"), dict)
+        and entry["splitter"].get("children")
         for entry in _session_workspaces(data)
     )
 
@@ -337,10 +387,8 @@ def _desktop_font_size() -> int:
 
 def _already_in(source_backend, paths, dest_backend, dest_dir: str) -> set[str]:
     """The *paths* whose folder is *dest_dir* itself (core.storage_identity:
-    proven the same entry, not merely the same text): copying them there
+    proven the same folder, not merely the same text): copying them there
     would write each file onto itself."""
-    from core.storage_identity import same_entry
-
     verdict: dict[str, bool] = {}
     here = set()
     for path in paths:
@@ -349,10 +397,37 @@ def _already_in(source_backend, paths, dest_backend, dest_dir: str) -> set[str]:
         except Exception:  # noqa: BLE001 - no parent known: not provably here
             continue
         if folder not in verdict:
-            verdict[folder] = same_entry(source_backend, folder, dest_backend, dest_dir)
+            verdict[folder] = _same_folder(source_backend, folder, dest_backend, dest_dir)
         if verdict[folder]:
             here.add(path)
     return here
+
+
+def _same_folder(source_backend, folder: str, dest_backend, dest_dir: str) -> bool:
+    """*folder* and *dest_dir* are one folder: the same entry, or - on this
+    machine - one folder reached through a symlink or a bind mount (the
+    target pane in ``b/alias -> a``; same_entry keeps a link its own
+    entry, right for the files a transfer replaces, not for the folder
+    they are in)."""
+    from core.storage_identity import _strict_local_path, same_entry
+
+    if same_entry(source_backend, folder, dest_backend, dest_dir):
+        return True
+    try:
+        local_a = _strict_local_path(source_backend, folder)
+        local_b = _strict_local_path(dest_backend, dest_dir)
+        return bool(local_a and local_b and os.path.samefile(local_a, local_b))
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def _into_itself(source_backend, paths, dest_backend, dest_dir: str) -> list[str]:
+    """The *paths* that are *dest_dir* or a folder above it: a copy there
+    would list itself while it is made (core.storage_identity.is_within;
+    the transfer refuses each one again)."""
+    from core.storage_identity import is_within
+
+    return [p for p in paths if is_within(source_backend, p, dest_backend, dest_dir)]
 
 
 class _Translated(str):
@@ -370,6 +445,9 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         super().__init__(parent)
         self.setWindowTitle("axross")
         self.resize(1200, 700)
+        from ui.elided_label import OneLineStatusBar
+
+        self.setStatusBar(OneLineStatusBar(self))
         _desktop_font_size()  # before a stored zoom changes the font
 
         self._panes: list[FilePaneWidget] = []
@@ -1370,7 +1448,13 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         )
         if answer != QMessageBox.StandardButton.Yes:
             return False
-        host.set_enabled(ext_id, True)
+        try:
+            host.set_enabled(ext_id, True)
+        except OSError as exc:  # extensions.json cannot be written: said here
+            self.statusBar().showMessage(
+                tr("{title} could not be switched on: {why}").format(title=tr(title), why=exc),
+                8000)
+            return False
         if ext_id not in host.loaded_ids():
             why = host.error(ext_id) or tr("see the log")
             self.statusBar().showMessage(
@@ -1391,7 +1475,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             return
         try:
             opener(self)
-        except Exception as exc:  # noqa: BLE001 - extension code must not reach Qt
+        except (Exception, SystemExit) as exc:  # noqa: BLE001 - extension code must not reach Qt
+            # SystemExit too: sys.exit() in show_window ended axross, unclean.
             log.warning("%s could not open its window", title, exc_info=True)
             self.statusBar().showMessage(
                 tr("{title} could not open: {why}").format(title=tr(title), why=exc), 8000)
@@ -1891,14 +1976,29 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         dialog.activateWindow()
 
     def _go_to_tagged_file(self, entry) -> None:
-        """The folder of a tagged file, reached like a bookmark (the same
-        backend, or its connection profile)."""
-        import posixpath as _pp
+        """Tagged Files > Go to File: the file selected in a pane on its
+        backend (as Find Files' Reveal); a closed connection is opened like
+        a bookmark (its profile) and shows the file's folder. It opened the
+        folder and selected nothing, and a backslash in a local name sent
+        it to a folder that is not there (tag_ui.split_tagged_path)."""
+        from ui.tag_ui import split_tagged_path
 
-        folder = _pp.dirname(entry.path.replace("\\", "/")) or "/"
-        if "\\" in entry.path and "/" not in entry.path:
-            folder = entry.path.rsplit("\\", 1)[0] or entry.path
-        self._navigate_bookmark(Bookmark(name=_pp.basename(folder) or folder, path=folder,
+        pane = self._active_pane if self._active_pane in self._panes else None
+        if entry.backend_name == "Local":
+            if pane is None or not isinstance(pane.backend, LocalFS):
+                pane = self._pane_for_backend(LocalFS())
+            self._set_active_pane(pane)
+            pane.reveal_path(entry.path)
+            return
+        if pane is None or pane.backend.name != entry.backend_name:
+            pane = next((p for p in self._panes if not isinstance(p.backend, LocalFS)
+                         and p.backend.name == entry.backend_name), None)
+        if pane is not None:
+            self._set_active_pane(pane)
+            pane.reveal_path(entry.path)
+            return
+        folder, _name = split_tagged_path(entry.path)
+        self._navigate_bookmark(Bookmark(name=split_tagged_path(folder)[1] or folder, path=folder,
                                          backend_name=entry.backend_name,
                                          profile_name=entry.profile_name))
 
@@ -2465,7 +2565,11 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                 if not i.is_dir and not i.is_link
             ]
             if targets:
-                dock.offer_batch(targets, tr("{n} files selected").format(n=len(targets)))
+                dock.offer_batch(targets, tr_n(
+                    len(targets),
+                    "{n} file selected",
+                    "{n} files selected",
+                ))
             else:
                 dock.show_message(tr("Select a single file to see its analysis."))
             return
@@ -2501,7 +2605,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         targets = [self._analysis_target(pane, item, path) for path, item in entries
                    if not item.is_dir and not item.is_link]
         if targets:
-            dock.offer_batch(targets, tr("{n} files selected").format(n=len(targets)))
+            dock.offer_batch(targets, tr_n(len(targets), "{n} file selected", "{n} files selected"))
         else:
             dock.show_message(tr("Select a single file to see its analysis."))
 
@@ -2584,7 +2688,9 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         # wired below so the slot is the MainWindow's extractor rather
         # than a pane-internal callback.
         # Listed on a worker: a large .tar.gz is read through to its end.
-        pane = ArchivePaneWidget(path, on_open_member=None, chain=chain, background=True)
+        pane = ArchivePaneWidget(path, on_open_member=None, chain=chain, background=True,
+                                 password=view.get("password"))
+        pane.password_entered.connect(lambda pw, v=view: v.__setitem__("password", pw))
         # The name as the file table shows it: bidi controls kept intact made
         # "invoice\u202efdp.exe" read as "invoiceexe.pdf" in the dock title.
         from core.remote_name import sanitize_for_display
@@ -2644,16 +2750,18 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         view = self._archive_views[-1]
         workdir = _tempfile.mkdtemp(prefix="axross-archive-nested-")
         try:
-            nested = self._extract_off_the_gui_thread(
-                tr("Opening {name}…").format(name=os.path.basename(member)),
-                lambda progress: ARCH.extract_nested_archive(
-                    archive_path,
-                    member,
-                    workdir,
-                    depth=len(view["chain"]) + 1,
-                    progress=progress,
-                ),
-            )
+            nested = self._with_archive_password(archive_path, lambda password: (
+                self._extract_off_the_gui_thread(
+                    tr("Opening {name}…").format(name=os.path.basename(member)),
+                    lambda progress: ARCH.extract_nested_archive(
+                        archive_path,
+                        member,
+                        workdir,
+                        depth=len(view["chain"]) + 1,
+                        progress=progress,
+                        password=password,
+                    ),
+                )))
         except ARCH.ExtractCancelled:
             shutil.rmtree(workdir, ignore_errors=True)
             return
@@ -2682,6 +2790,23 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             {"path": nested, "chain": chain, "origin": view["origin"], "tempdir": workdir}
         )
         self._show_archive_view()
+
+    def _with_archive_password(self, archive_path: str, call):
+        """``call(password)`` with the password of the open view of
+        *archive_path*; asked for (and *call* repeated) while it raises
+        core.archive.ArchivePasswordRequired. Cancel there is
+        ExtractCancelled."""
+        from core import archive as ARCH
+
+        password = self._archive_password(archive_path)
+        while True:
+            try:
+                return call(password)
+            except ARCH.ArchivePasswordRequired as exc:
+                password = self._ask_archive_password(
+                    archive_path, wrong=exc.wrong or password is not None)
+                if password is None:
+                    raise ARCH.ExtractCancelled("no password given") from None
 
     def _extract_off_the_gui_thread(self, text: str, work):
         """Run ``work(progress)`` on a worker thread while the window stays
@@ -2745,9 +2870,27 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         import shutil
 
         for view in self._archive_views[keep:]:
+            view.pop("password", None)
             if view["tempdir"]:
                 shutil.rmtree(view["tempdir"], ignore_errors=True)
         del self._archive_views[keep:]
+
+    def _archive_password(self, archive_path: str) -> str | None:
+        """The password entered for the archive view of *archive_path*
+        while it is open (memory only), or None."""
+        view = next((v for v in reversed(self._archive_views) if v["path"] == archive_path), None)
+        return view.get("password") if view is not None else None
+
+    def _ask_archive_password(self, archive_path: str, wrong: bool) -> str | None:
+        """Ask for the password of *archive_path* (ui.archive_password);
+        the open view of it keeps the answer for its next extraction."""
+        from ui.archive_password import ask_archive_password
+
+        password = ask_archive_password(self, os.path.basename(archive_path), wrong=wrong)
+        for view in self._archive_views:
+            if password and view["path"] == archive_path:
+                view["password"] = password
+        return password
 
     def _register_archive_dock_view_action(self) -> None:
         """Add the archive dock's toggle to the Panels menu once.
@@ -2773,6 +2916,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         members: list[str] | None,
         *,
         title: str,
+        password: str | None = None,
     ) -> None:
         """Drive a daemon-thread extraction behind a QProgressDialog.
 
@@ -2793,6 +2937,11 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         from ui.plain_text import as_written
 
         arc_name = os.path.basename(archive_path)
+        password = password or self._archive_password(archive_path)
+        if password is None and ARCH.archive_needs_password(archive_path):
+            password = self._ask_archive_password(archive_path, wrong=False)
+            if password is None:
+                return
         progress = QProgressDialog(
             as_written(tr("Extracting {name} → {target}…").format(
                 name=arc_name, target=os.path.basename(target_dir))),
@@ -2821,15 +2970,19 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             try:
                 if members is None:
                     state["count"] = ARCH.extract(
-                        archive_path, target_dir, progress=_progress_cb
+                        archive_path, target_dir, progress=_progress_cb, password=password
                     )
                 else:
                     state["count"] = ARCH.extract_members(
-                        archive_path, target_dir, members, progress=_progress_cb
+                        archive_path, target_dir, members, progress=_progress_cb,
+                        password=password,
                     )
                 state["ok"] = True
             except ARCH.ExtractCancelled:
                 state["error"] = "cancelled"
+            except ARCH.ArchivePasswordRequired as exc:
+                state["error"] = "password"
+                state["wrong"] = exc.wrong or password is not None
             except ARCH.RarUnavailable as exc:
                 state["error"] = f"RAR support unavailable: {exc}"
             except ARCH.UnsafeArchive as exc:
@@ -2875,6 +3028,12 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             return
         if state["error"] == "cancelled":
             log.info("Extraction cancelled: %s", archive_path)
+            return
+        if state["error"] == "password":
+            again = self._ask_archive_password(archive_path, wrong=state["wrong"])
+            if again is not None:
+                self._run_archive_extraction(archive_path, target_dir, members, title=title,
+                                             password=again)
             return
         if state["error"] == "notimplemented":
             QMessageBox.information(
@@ -3016,10 +3175,12 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             # On a worker, with Cancel after 250 ms: one member can be
             # gigabytes, and a .tar.gz is decompressed up to it - that held
             # every window (_extract_off_the_gui_thread).
-            result = self._extract_off_the_gui_thread(
-                tr("Opening {name}…").format(name=os.path.basename(member_name.rstrip("/"))),
-                lambda progress: ARCH.extract_members(
-                    archive_path, target, [member_name], progress=progress))
+            result = self._with_archive_password(archive_path, lambda password: (
+                self._extract_off_the_gui_thread(
+                    tr("Opening {name}…").format(name=os.path.basename(member_name.rstrip("/"))),
+                    lambda progress: ARCH.extract_members(
+                        archive_path, target, [member_name], progress=progress,
+                        password=password))))
         except ARCH.ExtractCancelled:
             return None
         except NotImplementedError:
@@ -3938,7 +4099,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             self.statusBar().showMessage(message, 5000)
             return
         if placeholder.kind == KIND_TERMINAL:
-            self._swap_placeholder(placeholder, self._preset_make_terminal_pane(name))
+            self._swap_placeholder(placeholder,
+                                   self._preset_make_terminal_pane(name, as_profile=True))
             return
         self._quick_connect_profile(
             profile,
@@ -3978,6 +4140,70 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             return widget.width()
         return widget.height()
 
+    def _room_to_split(self, pane: QWidget, splitter: QSplitter,
+                       orientation: Qt.Orientation, leaving: QWidget | None = None) -> bool:
+        """Whether the panes still fit in their area when *pane* is split
+        in two along *orientation* (*leaving*: a pane dragged away from its
+        place at the same time). Before, a split went on regardless and the
+        splitters' minimum widened the window past the screen: at 1024x600
+        the fourth pane side by side made it 1098 wide, the third one above
+        the other 653 high. A pane not on screen yet (a session being
+        restored) is not measured."""
+        if not pane.isVisible():
+            return True
+        horizontal = orientation == Qt.Orientation.Horizontal
+
+        def least(widget: QWidget) -> int:
+            # as a splitter takes it: a minimum size set is the minimum,
+            # else the minimum size hint
+            hint, size = widget.minimumSizeHint(), widget.minimumSize()
+            if horizontal:
+                return size.width() or hint.width()
+            return size.height() or hint.height()
+
+        def needed(widget: QWidget) -> int:
+            if widget is pane:
+                return 2 * least(pane) + splitter.handleWidth()
+            if not isinstance(widget, QSplitter):
+                return least(widget)
+            parts = [needed(widget.widget(i)) for i in range(widget.count())
+                     if widget.widget(i) is not leaving and not widget.widget(i).isHidden()]
+            if not parts:
+                return 0
+            if widget.orientation() == orientation:
+                return sum(parts) + widget.handleWidth() * (len(parts) - 1)
+            return max(parts)
+
+        root = splitter
+        while isinstance(root.parent(), QSplitter):
+            root = root.parent()
+        after = needed(root)
+        if after <= self._splitter_extent(root, orientation):
+            return True
+        # The area is too small, but the docks may give room: the split
+        # fits when the window's own minimum, with the area that large,
+        # is no larger than the window.
+        def relayout() -> None:  # the cached minimums up to the window
+            widget = root
+            while widget is not None:
+                widget.updateGeometry()
+                if widget.layout() is not None:
+                    widget.layout().invalidate()
+                widget = widget.parentWidget()
+
+        kept = root.minimumSize()
+        try:
+            if horizontal:
+                root.setMinimumWidth(after)
+            else:
+                root.setMinimumHeight(after)
+            relayout()
+            hint = self.minimumSizeHint()
+        finally:
+            root.setMinimumSize(kept)
+            relayout()
+        return (hint.width() <= self.width()) if horizontal else (hint.height() <= self.height())
+
     def _split_pane(self, orientation: Qt.Orientation) -> None:
         if not self._active_pane:
             return
@@ -3987,7 +4213,12 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
 
         if not isinstance(parent_splitter, QSplitter):
             return
+        if not self._room_to_split(pane, parent_splitter, orientation):
+            self.statusBar().showMessage(
+                tr("No room to split this pane: make the window larger or close a pane."), 8000)
+            return
 
+        held = self._focus_held_by(pane)
         idx = parent_splitter.indexOf(pane)
         new_splitter = QSplitter(orientation)
 
@@ -3997,6 +4228,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         new_splitter.show()
         pane.show()
         new_pane.show()
+        self._give_focus_back(pane, held)
 
         def _apply_equal_split() -> None:
             new_splitter.setSizes(
@@ -4026,14 +4258,15 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         return pane
 
     def _preset_make_terminal_pane(
-        self, profile_name: str, cwd: str | None = None
+        self, profile_name: str, cwd: str | None = None, *, as_profile: bool = False
     ) -> "TerminalPaneWidget":
         """Factory hook for layout_presets and the session restore — returns
         a TerminalPaneWidget. ``profile_name`` is "local" for a local shell
         or a saved connection profile name for an SSH session, which
         connects as the pane starts; either starts in *cwd* when given (a
-        remote shell is sent a ``cd`` there)."""
-        if profile_name == "local":
+        remote shell is sent a ``cd`` there). *as_profile*: the name is a
+        profile's, also when it is "local" (one an older version allowed)."""
+        if profile_name == "local" and not as_profile:
             term = TerminalPaneWidget(label="Local Shell", cwd=cwd)
         else:
             profile = self._profile_manager.get(profile_name)
@@ -4248,9 +4481,38 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             except Exception:  # noqa: BLE001 - a dead session must not stop the others
                 log.debug("Releasing %s after its transfers failed", profile.name, exc_info=True)
 
+    @staticmethod
+    def _focus_held_by(pane: FilePaneWidget) -> QWidget | None:
+        """The focused widget when it is *pane* or inside it. A pane
+        command that takes the pane out of its splitter for a moment -
+        split, extract, close - hides it, and Qt moved the focus on to the
+        next widget in the focus chain: the bottom docks' tab bar, another
+        pane's frame, or none. The command puts it back
+        (:meth:`_give_focus_back`)."""
+        focus = QApplication.focusWidget()
+        if focus is not None and (focus is pane or pane.isAncestorOf(focus)):
+            return focus
+        return None
+
+    def _give_focus_back(self, pane: FilePaneWidget, held: QWidget | None) -> None:
+        """*held* (from :meth:`_focus_held_by`) gets the focus again, and
+        *pane* is the source once more; the pane's list when *held* is
+        its list or gone with a closed pane."""
+        from PyQt6 import sip
+
+        if held is None or pane not in self._panes:
+            return
+        if sip.isdeleted(held) or held in (pane, pane._table, getattr(pane, "_thumbs", None)) \
+                or not pane.isAncestorOf(held):
+            self._focus_area(pane)
+            return
+        self._set_active_pane(pane)
+        held.setFocus(Qt.FocusReason.OtherFocusReason)
+
     def _close_pane(self, pane: FilePaneWidget) -> None:
         if pane not in self._panes or len(self._panes) <= 1:
             return
+        held = self._focus_held_by(pane)
 
         profile = self._pane_profiles.pop(pane, None)
         self._pane_passwords.pop(pane, None)
@@ -4323,6 +4585,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             self._active_pane = None
             self._target_pane = None
             self._refresh_pane_styles()
+        if held is not None and self._active_pane in self._panes:
+            self._focus_area(self._active_pane)  # the closed pane's focus: the source's list
 
     def _toggle_splitter_orientation(self) -> None:
         """Toggle the orientation of the splitter containing the active pane."""
@@ -4430,6 +4694,10 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             log.warning("Ignoring pane drop with unknown zone %r", zone)
             return
         orientation = Qt.Orientation.Horizontal if axis == "horizontal" else Qt.Orientation.Vertical
+        if not self._room_to_split(target_pane, target_parent, orientation, leaving=source_pane):
+            self.statusBar().showMessage(
+                tr("No room to split this pane: make the window larger or close a pane."), 8000)
+            return
 
         # Remove source pane from its current splitter
         source_parent = source_pane.parent()
@@ -4497,6 +4765,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             return  # Already at root level
 
         pane = self._active_pane
+        held = self._focus_held_by(pane)
         workspace = self.workspace_of(pane)
         root = workspace.root if workspace is not None else self._root_splitter
 
@@ -4527,6 +4796,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                 count,
             )
         )
+        self._give_focus_back(pane, held)  # and the source again: the focus moving on changed it
         log.info("Pane extracted to root: %s", pane.backend.name)
 
     def _toggle_hidden(self, show: bool) -> None:
@@ -4672,6 +4942,12 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         jobs = getattr(self, "_scheduler_jobs", None)
         if not jobs:
             return
+        from core.security_mode import current_policy
+
+        if not current_policy().allow_scripts:
+            # The paranoid mode runs no script: no job is started, and none
+            # counts a refused slot as a failure (ten disabled it for good).
+            return
         now = datetime.now()
         planned = getattr(self, "_scheduler_planned", None)
         if planned is None:
@@ -4690,13 +4966,14 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             self._run_scheduled_job(job)
 
     @staticmethod
-    def _scheduled_runner(job, cancel_event=None):
+    def _scheduled_runner(job, cancel_event=None, lease_dir=None):
         """What a job actually does. Runs on a worker thread; a script
         runs in a child process (core.scheduler.run_script_job), which
-        *cancel_event* stops."""
+        *cancel_event* stops. *lease_dir* (the store's folder) holds the
+        job's lease: a job running in another axross is not started."""
         from core.scheduler import run_script_job
 
-        return run_script_job(job, cancel_event=cancel_event)
+        return run_script_job(job, cancel_event=cancel_event, lease_dir=lease_dir)
 
     def _run_scheduled_job(self, job) -> None:
         """Start one job on a worker thread.
@@ -4711,6 +4988,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         """
         import functools
         import threading
+        from datetime import datetime
 
         from PyQt6.QtCore import QThread
 
@@ -4719,12 +4997,25 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         # Not a signal of the window: closeEvent hands a running job thread
         # over, and the window is deleted at quit while the job may still
         # report (core/thread_relay.py). Dropped once the window is gone.
-        done = GuiCall(self._on_scheduled_job_finished)
+        # One for every run: each new GuiCall left an entry in the relay's
+        # table for as long as the window lived.
+        done = getattr(self, "_scheduled_done", None)
+        if done is None:
+            done = self._scheduled_done = GuiCall(self._on_scheduled_job_finished)
+        # The run's start is its last run (the tick notes the planned slot;
+        # Run Now recorded the finish, which moved the next slot by the run).
+        planned = getattr(self, "_scheduler_planned", None)
+        if planned is None:
+            planned = self._scheduler_planned = {}
+        planned.setdefault(job.job_id, datetime.now())
         cancel = getattr(self, "_scheduler_cancel", None)
         if cancel is None:
             # Set on close: a scheduled script's child process ends with the app.
             cancel = self._scheduler_cancel = threading.Event()
-        runner = functools.partial(self._scheduled_runner, cancel_event=cancel)
+        # The job's lease beside the store: never two runs of one job at a
+        # time, also across axross processes (core.scheduler.take_job_lease).
+        runner = functools.partial(self._scheduled_runner, cancel_event=cancel,
+                                   lease_dir=self._job_store().path.parent)
 
         def _report(j, ok, detail):
             done(j.job_id, ok, detail)
@@ -5585,10 +5876,15 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
 
         from ui.plain_text import plain_message
 
-        plain_message(self, QMessageBox.Icon.Warning, "Not saved",
-                      f"The {what} could not be saved: {error}\n\nThe change is "
-                      "kept until axross ends; free some space or fix the permissions "
-                      "of ~/.config/axross to keep it.").open()
+        known = {
+            "bookmarks": tr("The bookmarks could not be saved: {error}"),
+            "connection profiles": tr("The connection profiles could not be saved: {error}"),
+        }
+        first = known.get(what) or tr("{what} could not be saved: {error}")
+        plain_message(self, QMessageBox.Icon.Warning, tr("Not saved"),
+                      first.format(what=what, error=error) + "\n\n"
+                      + tr("The change is kept until axross ends; free some space or fix the "
+                           "permissions of ~/.config/axross to keep it.")).open()
 
     def _apply_sync(self, left, right, items: list) -> None:
         """Carry out a confirmed sync plan.
@@ -5866,11 +6162,22 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         without the user re-stating the obvious."""
         from ui.metadata_search_dialog import MetadataSearchDialog
 
-        dlg = MetadataSearchDialog(active_pane=self._active_pane, parent=self)
-        dlg.open_requested.connect(self._on_metadata_search_open)
-        self._index_dialog = dlg
-        dlg.finished.connect(lambda _code, d=dlg: self._forget_index_dialog(d))
-        dlg.open()
+        # Modeless, as Find Files: opened with open() (window-modal) it
+        # held the panes, menus and keys while it was open - an opened hit
+        # was shown in a pane nobody could reach, and Index Active Folder
+        # held the window for the whole indexing. One window: a second
+        # Ctrl+Shift+F raises it.
+        dlg = self._index_dialog
+        if dlg is None:
+            dlg = MetadataSearchDialog(
+                active_pane=lambda: self._active_pane if self._active_pane in self._panes else None,
+                parent=self)
+            dlg.open_requested.connect(self._on_metadata_search_open)
+            self._index_dialog = dlg
+            dlg.finished.connect(lambda _code, d=dlg: self._forget_index_dialog(d))
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
 
     def _forget_index_dialog(self, dlg) -> None:
         if self._index_dialog is dlg:
@@ -5878,34 +6185,33 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         dlg.deleteLater()
 
     def _on_metadata_search_open(self, backend_id: str, path: str, is_dir: bool) -> None:
-        """User double-clicked a search result. Navigate the active
-        pane to the path's parent (or the path itself if it's a dir)
-        when it lives on the active pane's backend; otherwise just
-        beep — the index is multi-backend but pane targeting requires
-        the right session, which we don't auto-spawn."""
-        from ui.metadata_search_dialog import _backend_id_for
-
-        pane = self._active_pane
+        """An index hit was opened (Find in Index, Find Files' index rows):
+        a folder opens, a file is shown selected in its folder - in the
+        active pane when it is on the hit's connection, else in another
+        open pane that is (it used to answer "open the matching session
+        first" while one was open). The index spans connections; one that
+        no pane is on is not opened from here."""
+        pane = self._pane_for_backend_id(backend_id)
         if pane is None:
-            return
-        if _backend_id_for(pane.backend) != backend_id:
             QMessageBox.information(
                 self,
                 tr("Find in Index"),
-                tr("That entry lives on backend [{backend}] but the active pane is on "
-                   "[{active}]. Open the matching session first.").format(
-                    backend=backend_id, active=_backend_id_for(pane.backend)),
+                tr("No pane is open on [{backend}].").format(backend=backend_id),
             )
             return
-        target = path if is_dir else pane.backend.parent(path)
+        if pane is not self._active_pane:
+            self._set_active_pane(pane)
         try:
-            pane.navigate_async(target)
+            if is_dir:
+                pane.navigate_async(path)
+            else:
+                pane.reveal_path(path)
         except OSError as exc:
             QMessageBox.warning(
                 self,
                 tr("Find in Index"),
                 tr("Could not navigate to {path}:\n{error}").format(
-                    path=target, error=describe(exc, target)),
+                    path=path, error=describe(exc, path)),
             )
 
     # ------------------------------------------------------------------
@@ -6317,6 +6623,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             host_key_prompt=self._confirm_unknown_host,
             on_success=_wrap_success,
             on_failure=_wrap_failure,
+            # What the connect waits for ("Check the phone: allow USB debugging").
+            on_notice=lambda text: self.statusBar().showMessage(text, 0),
         )
         self._connect_tasks.append(task)
 
@@ -6496,6 +6804,39 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
     # The viewers and the language setting read and write the same file.
     _SESSION_FILE = i18n.SETTINGS_FILE
 
+    def _on_profile_renamed(self, old: str, new: str) -> None:
+        """Profile *old* is *new* now (the Connection dialog saved it under
+        a new name): the open panes, terminals, placeholders, the recent
+        list and the bookmarks follow, so neither a bookmark click nor the
+        session saved at exit names a profile that is gone. The files on
+        disk were rewritten already (core.profile_references)."""
+        # The live profile objects are renamed in place: the connection
+        # manager holds them by identity, so a swap would break release().
+        for pane, profile in list(self._pane_profiles.items()):
+            if profile is not None and profile.name == old:
+                profile.name = new
+            if getattr(pane, "profile_name", None) == old:
+                pane.profile_name = new
+        for term in self.findChildren(TerminalPaneWidget):
+            if term.profile is not None and term.profile.name == old:
+                term.profile.name = new
+        for placeholder in self.findChildren(DisconnectedPanePlaceholder):
+            if placeholder.profile_name == old:
+                placeholder.rename_profile(new)
+        if old in self._recent_profiles:
+            renamed = []
+            for name in self._recent_profiles:
+                name = new if name == old else name
+                if name not in renamed:
+                    renamed.append(name)
+            self._recent_profiles = renamed
+            self._save_recents()
+        self._bookmark_manager.load()
+        sidebar = getattr(self, "_bookmark_sidebar", None)
+        if sidebar is not None:
+            sidebar.rebuild()
+        self._populate_bookmarks_menu()
+
     def _add_to_recent(self, name: str) -> None:
         """Add a profile name to the recent list (max 8, deduplicated) and persist."""
         if name in self._recent_profiles:
@@ -6532,6 +6873,17 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         and the "Restore layout on start" switch). The layout itself is
         restore_layout_on_start's job.
 
+        Ends with :meth:`_prefs_snapshot` as the values this window knows
+        stored (see _save_session).
+        """
+        try:
+            self._read_persistent_visual_settings()
+        finally:
+            self._prefs_seen = self._prefs_snapshot()
+
+    def _read_persistent_visual_settings(self) -> None:
+        """The work of :meth:`_load_persistent_visual_settings`.
+
         Guarantee kept from before the layout came back on start: a fresh
         start never connects to anything. Remote panes of the restored
         layout are placeholders until the user clicks Reconnect.
@@ -6554,9 +6906,31 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         self._restore_on_start = prefs.restore_layout_on_start
         self._apply_window_prefs(prefs)
 
+    def _prefs_snapshot(self) -> dict:
+        """The window preferences as the window has them now, under their
+        session.json keys."""
+        from ui.icon_provider import is_monochrome
+
+        return {
+            window_prefs.THEME_KEY: self._current_theme,
+            window_prefs.COMPACT_KEY: self._compact_mode,
+            window_prefs.MONOCHROME_KEY: is_monochrome(),
+            SHOW_HIDDEN_KEY: self._hidden_action.isChecked(),
+            HIGHLIGHT_HIDDEN_KEY: self._highlight_hidden,
+            HIDDEN_COLOR_KEY: self._hidden_color,
+            RESTORE_ON_START_KEY: self._restore_on_start,
+            FONT_SIZE_KEY: self._font_size,
+        }
+
     def _apply_window_prefs(self, prefs: window_prefs.WindowPrefs) -> None:
         """Bring the window to *prefs* (a start, a layout restore). Stores
         nothing: the values came from the file."""
+        try:
+            self._apply_window_prefs_now(prefs)
+        finally:
+            self._prefs_seen = self._prefs_snapshot()
+
+    def _apply_window_prefs_now(self, prefs: window_prefs.WindowPrefs) -> None:
         # One theme pass for theme and compact, none when both are as they
         # are; set_monochrome_icons re-icons by itself.
         theme = prefs.theme or self._current_theme
@@ -6579,24 +6953,31 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         only on close (Edit > Settings…, Ctrl+H, the Theme menu, zoom).
         Every other key of the file is kept."""
         from core.json_store import read_for_merge
+        from core.secure_storage import locked_store_update
 
-        try:
-            # A broken file is set aside; an unreadable one is not written
-            # over (it holds the panes, the layout, every preference).
-            session = read_for_merge(self._SESSION_FILE, max_bytes=MAX_UI_STATE_BYTES)
-        except OSError as exc:
-            log.warning("Window preferences not stored: %s", exc)
-            return
-        window = session.get("window")
-        if not isinstance(window, dict):
-            window = {}
-        window.update(values)
-        session["window"] = window
-        try:
-            _write_private_text(self._SESSION_FILE, json.dumps(session, indent=2))
-        except OSError as exc:
-            log.warning("Could not store the window settings %s: %s", sorted(values), exc)
-            raise
+        # The file lock every writer of session.json takes (another axross,
+        # a viewer, the language): no change made in between is dropped.
+        with locked_store_update(self._SESSION_FILE):
+            try:
+                # A broken file is set aside; an unreadable one is not written
+                # over (it holds the panes, the layout, every preference).
+                session = read_for_merge(self._SESSION_FILE, max_bytes=MAX_UI_STATE_BYTES)
+            except OSError as exc:
+                log.warning("Window preferences not stored: %s", exc)
+                return
+            window = session.get("window")
+            if not isinstance(window, dict):
+                window = {}
+            window.update(values)
+            session["window"] = window
+            try:
+                _write_private_text(self._SESSION_FILE, json.dumps(session, indent=2))
+            except OSError as exc:
+                log.warning("Could not store the window settings %s: %s", sorted(values), exc)
+                raise
+        seen = getattr(self, "_prefs_seen", None)
+        if seen is not None:
+            seen.update((key, value) for key, value in values.items() if key in seen)
 
     def current_window_prefs(self) -> window_prefs.WindowPrefs:
         """The preferences as the window has them now."""
@@ -6671,54 +7052,71 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             self.store_window_prefs(**{RESTORE_ON_START_KEY: self._restore_on_start})
 
     def _save_session(self) -> None:
-        """Save current pane layout and connections for later restore."""
-        from ui.icon_provider import is_monochrome as _is_mono
+        """Save current pane layout and connections for later restore.
 
+        The window's size, the layout of its workspaces and docks - and of
+        the preferences (theme, hidden files, font size, Restore Layout on
+        Start, ...) only those this window changed without storing them:
+        each is stored the moment it changes (store_window_prefs), and all
+        of them written again from this window's memory undid at the quit
+        what another axross had stored since."""
         # session.json is shared: core.i18n.store_language keeps the
-        # language the user picked in window.language. Keep what this
-        # window does not write itself instead of dropping it.
+        # language the user picked in window.language, every preference is
+        # in it. Keep what this window does not write itself.
         from core.json_store import read_for_merge
+        from core.profile_references import apply_recorded_renames
+        from core.secure_storage import locked_store_update
 
-        try:
-            session = read_for_merge(self._SESSION_FILE, max_bytes=MAX_UI_STATE_BYTES)
-        except OSError as exc:
-            log.warning("Session not saved: %s", exc)
-            return
-        window = session.get("window")
-        if not isinstance(window, dict):
-            window = {}
-        window.update(
-            {
-                "width": self.width(),
-                "height": self.height(),
-                "ui_theme": self._current_theme,
-                "compact": self._compact_mode,
-                "monochrome_icons": _is_mono(),
-                SHOW_HIDDEN_KEY: self._hidden_action.isChecked(),
-                HIGHLIGHT_HIDDEN_KEY: self._highlight_hidden,
-                HIDDEN_COLOR_KEY: self._hidden_color,
-                RESTORE_ON_START_KEY: self._restore_on_start,
-                FONT_SIZE_KEY: self._font_size,
-                # Base64 of Qt's own formats: window geometry and the dock
-                # layout (which docks are open, where, and how large).
-                "geometry": bytes(self.saveGeometry().toBase64()).decode("ascii"),
-                "dock_state": bytes(self.saveState().toBase64()).decode("ascii"),
-                # The tabs axross made itself, which come apart with room.
-                DOCK_FIT_SESSION_KEY: self._dock_fit.session_state(),
-                # Docks shown only on one workspace (ui.dock_bindings).
-                DOCK_BINDINGS_KEY: self.dock_bindings_session(),
-            }
-        )
+        seen = getattr(self, "_prefs_seen", None)
+        prefs = self._prefs_snapshot()
+        changed = {
+            key: value for key, value in prefs.items()
+            if seen is None or key not in seen or seen[key] != value
+        }
+        own = {
+            "width": self.width(),
+            "height": self.height(),
+            # Base64 of Qt's own formats: window geometry and the dock
+            # layout (which docks are open, where, and how large).
+            "geometry": bytes(self.saveGeometry().toBase64()).decode("ascii"),
+            "dock_state": bytes(self.saveState().toBase64()).decode("ascii"),
+            # The tabs axross made itself, which come apart with room.
+            DOCK_FIT_SESSION_KEY: self._dock_fit.session_state(),
+            # Docks shown only on one workspace (ui.dock_bindings).
+            DOCK_BINDINGS_KEY: self.dock_bindings_session(),
+        }
         workspaces = self._serialize_workspaces()
-        session["workspaces"] = workspaces
-        # An axross from before workspaces reads this one: the first.
-        session["splitter"] = workspaces[0]["splitter"]
-        session["window"] = window
         try:
-            _write_private_text(
-                self._SESSION_FILE,
-                json.dumps(session, indent=2),
-            )
+            with locked_store_update(self._SESSION_FILE):
+                try:
+                    session = read_for_merge(self._SESSION_FILE, max_bytes=MAX_UI_STATE_BYTES)
+                except OSError as exc:
+                    log.warning("Session not saved: %s", exc)
+                    return
+                window = session.get("window")
+                if not isinstance(window, dict):
+                    window = {}
+                # A saved session carries every preference: one the file
+                # lacks is written as this window has it.
+                window.update({k: v for k, v in prefs.items() if k not in window})
+                window.update(changed)
+                window.update(own)
+                # A profile another axross renamed since: its new name, not
+                # this window's copy of the old one (core.profile_references).
+                try:
+                    known = self._profile_manager.list_names()
+                except Exception:  # noqa: BLE001 - no rename then, the save goes on
+                    known = None
+                if known is not None:
+                    apply_recorded_renames(session, workspaces, known)
+                session["workspaces"] = workspaces
+                # An axross from before workspaces reads this one: the first.
+                session["splitter"] = workspaces[0]["splitter"]
+                session["window"] = window
+                _write_private_text(
+                    self._SESSION_FILE,
+                    json.dumps(session, indent=2),
+                )
             log.info("Session saved (%d panes)", len(self._panes))
         except OSError as e:
             log.warning("Could not save session: %s", e)
@@ -6876,6 +7274,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         problem = _session_problem(data)
         if problem:
             log.warning("Layout not restored from %s: %s", self._SESSION_FILE, problem)
+            self._keep_unrestorable_session()
             return False
         if not _session_has_panes(data):
             return False
@@ -6883,9 +7282,29 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             self._apply_session(data, connect_remote=False)
         except Exception:  # noqa: BLE001 - a bad layout must not stop the start
             log.exception("Layout restore failed; starting with the default layout")
+            self._keep_unrestorable_session()
             self._reset_to_default_layout()
             return False
         return True
+
+    def _keep_unrestorable_session(self) -> None:
+        """A copy of a session.json the start could not restore, next to
+        it (``session.json.unrestorable-STAMP-ID``): the quit writes the
+        default layout into session.json, and the saved layout would be
+        gone. Copied, not moved - the file also holds the language and the
+        window preferences, which still count."""
+        import uuid
+
+        source = Path(self._SESSION_FILE)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        aside = source.with_name(f"{source.name}.unrestorable-{stamp}-{uuid.uuid4().hex[:8]}")
+        try:
+            _write_private_text(aside, source.read_text(encoding="utf-8", errors="replace"),
+                                private_dir=False)
+        except OSError as exc:
+            log.warning("Could not keep a copy of %s: %s", source, exc)
+            return
+        log.warning("The layout that could not be restored is kept in %s", aside)
 
     #: The layout of the very first start: two file panes side by side, the
     #: source and target of a transfer (a fresh start used to show one).
@@ -6905,6 +7324,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             data = {}
         except (OSError, ValueError):
             return False  # a damaged file: restore_layout_on_start logged it
+        if data and _session_problem(data):
+            return False  # refused by restore_layout_on_start, which logged it
         if not isinstance(data, dict) or _session_has_panes(data):
             return False
         self.apply_layout_preset(self.FIRST_START_PRESET)
@@ -7090,6 +7511,11 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         active_pane = target_pane = None
         current = None
         detach = []
+        # The workspace each entry of the file became (None: none), for the
+        # dock bindings, which name a workspace by its place in the file: an
+        # empty one pruned below moved every later one up a place.
+        slots: list = []
+        self._restored_workspace_slots = slots
         for index, entry in enumerate(entries):
             if index == 0:
                 ws = self._current_ws
@@ -7098,7 +7524,9 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             else:
                 ws = self.new_workspace(entry.get("name"), with_pane=False, activate=False)
                 if ws is None:
+                    slots.append(None)
                     continue
+            slots.append(ws)
             a, t = self._restore_splitter(
                 ws.root, entry.get("splitter", {}), connect_remote=connect_remote
             )
@@ -7212,10 +7640,15 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             cwd = self._local_folder_or_home(data.get("cwd"))
             splitter.addWidget(self._preset_make_terminal_pane("local", cwd=cwd))
             return
-        if not connect_remote:
+        if not connect_remote or self._profile_manager.get(profile_name) is None:
+            # A missing profile is a placeholder that says so, as a file
+            # pane's is - the local shell it became ran the commands meant
+            # for the server on this machine.
+            if connect_remote:
+                log.warning("Session restore: profile %r of a terminal not found", profile_name)
             self._make_placeholder(splitter, KIND_TERMINAL, profile_name)
             return
-        splitter.addWidget(self._preset_make_terminal_pane(profile_name))
+        splitter.addWidget(self._preset_make_terminal_pane(profile_name, as_profile=True))
 
     def _restore_pane(
         self, splitter: QSplitter, data: dict, *, connect_remote: bool = True
@@ -7406,6 +7839,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         from ui.connection_dialog import ConnectionDialog
 
         dialog = ConnectionDialog(self._profile_manager, parent=self, profile=profile)
+        dialog.profile_renamed.connect(self._on_profile_renamed)
         try:
             if dialog.exec() != ConnectionDialog.DialogCode.Accepted or not dialog.result_profile:
                 return
@@ -7508,6 +7942,10 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                 auth_type=auth_type,
                 key_file=host.identity_file,
                 proxy_command=host.proxy_command,
+                # A ProxyCommand from a config file is a shell command from
+                # whoever wrote it: it runs only after the user saw and
+                # confirmed it on Connect (core.connection_manager).
+                proxy_command_confirmed=not host.proxy_command,
                 address_family=host.address_family,
             )
             try:
@@ -7950,14 +8388,19 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                           "folder below it ({folder}).").format(folder=dest_dir)
             QMessageBox.warning(self, tr("Paste"), text)
             return
+        if not cut.move:
+            # A copy pasted into the folder it came from is a copy under a
+            # new name ("a (1).txt"), as file managers do; it said "Nothing
+            # to copy" and Ctrl+C, Ctrl+V in one folder did nothing.
+            if plan.already_here:
+                self._duplicate_here(source, target, list(plan.already_here), dest_dir)
+            if plan.paths:
+                self._request_transfer(source, target, list(plan.paths), dest_dir=dest_dir)
+            return
         if not plan.paths:
             self.statusBar().showMessage(
-                (tr("Nothing to move: the cut entries already are in {folder}") if cut.move
-                 else tr("Nothing to copy: the copied entries already are in {folder}")
-                 ).format(folder=dest_dir), 8000)
-            return
-        if not cut.move:
-            self._request_transfer(source, target, list(plan.paths), dest_dir=dest_dir)
+                tr("Nothing to move: the cut entries already are in {folder}").format(
+                    folder=dest_dir), 8000)
             return
         # The production countdown for the move is _request_transfer's.
         self._request_transfer(
@@ -7966,6 +8409,60 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             # Every entry of it removed or renamed since: nothing left to paste.
             on_all_gone=lambda: board.clear(cut),
         )
+
+    def _duplicate_here(self, source: FilePaneWidget, target: FilePaneWidget,
+                        paths: list[str], dest_dir: str) -> None:
+        """Copy *paths* into *dest_dir*, the folder they are in, each under a
+        name of its own (``a (1).txt``; TC.ConflictPlan.duplicates). The
+        folder is listed off the GUI thread; the copies go through the
+        transfer queue like any other, never replacing a name."""
+        from core import transfer_conflicts as TC
+        from ui.scan_job import ScanJob
+
+        source_backend, dest_backend = source.backend, target.backend
+        check = ScanJob(self)
+        self._conflict_checks.add(check)
+        self._note_transfer_preparing()
+
+        def work(_cancel, _progress):
+            taken = {item.name for item in dest_backend.list_dir(dest_dir)}
+            folders = {p for p in paths if source_backend.is_dir(p)}
+            return taken, folders
+
+        def finished(kind: str, value, cancelled: bool) -> None:
+            self._conflict_checks.discard(check)
+            self._note_transfer_preparing()
+            check.deleteLater()
+            self.statusBar().clearMessage()
+            if cancelled:
+                return
+            if kind == "error":
+                QMessageBox.warning(
+                    self, tr("Copy"),
+                    tr("Could not check {dest} for existing names, so nothing was "
+                       "queued:\n{error}").format(dest=dest_dir, error=describe(value)))
+                return
+            if (source not in self._panes or target not in self._panes
+                    or source.backend is not source_backend
+                    or target.backend is not dest_backend):
+                log.info("Copy dropped: a pane closed or changed connection meanwhile")
+                return
+            taken, folders = value
+            try:
+                plan = TC.ConflictPlan.duplicates(source_backend, dest_backend, dest_dir,
+                                                  paths, taken, folders)
+            except ValueError as exc:
+                QMessageBox.warning(self, tr("Copy"), describe(exc))
+                return
+            self._start_transfer_between(source, target, paths, dest_dir=dest_dir,
+                                         conflict_plan=plan)
+            self.statusBar().showMessage(tr_n(
+                len(paths), "Copying {n} item into its own folder under a new name",
+                "Copying {n} items into their own folder under new names"), 8000)
+
+        check.finished.connect(finished)
+        self.statusBar().showMessage(tr("Checking the destination for existing names…"))
+        check.start(work)
 
     def _on_drop_transfer(
         self,
@@ -8047,6 +8544,21 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         *on_all_gone* when a move finds none of its sources there any more.
         """
         if not selected:
+            return
+        # A folder into itself or a folder below it: said now, as Paste says
+        # it (plan_paste), instead of a failed row after the check - and
+        # before a production source asks about a move that cannot happen.
+        inside = _into_itself(source.backend, list(selected), target.backend,
+                              target.current_path if dest_dir is None else dest_dir)
+        if inside:
+            QMessageBox.warning(
+                self, tr("Move") if move else tr("Copy"),
+                (tr("Nothing was moved: a folder cannot be moved into itself or a folder "
+                    "below it ({folder}).") if move else
+                 tr("Nothing was copied: a folder cannot be copied into itself or a folder "
+                    "below it ({folder}).")).format(
+                    folder=target.current_path if dest_dir is None else dest_dir))
+            log.info("Transfer not queued: %s is the destination or above it", inside[0])
             return
         # Every move (F6, the toolbar, the pane's menu, drag & drop, Paste,
         # a drop on a bookmark) removes the sources afterwards: a production
@@ -8221,9 +8733,9 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         through _target_production_ok, Compare -> Sync through _apply_sync).
         A plain copy of new names does not ask."""
         if overwrites:
-            what = tr("overwrite {count} item(s)").format(count=overwrites)
+            what = tr_n(overwrites, "overwrite {n} item", "overwrite {n} items")
         elif moved_here:
-            what = tr("move {count} item(s) here").format(count=moved_here)
+            what = tr_n(moved_here, "move {n} item here", "move {n} items here")
         else:
             return True
         gate = getattr(target, "_production_ok", None)
@@ -8269,8 +8781,10 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
         box.setWindowTitle(tr("Move"))
-        box.setText(tr("{count} source(s) cannot be removed after the copy – "
-                       "you lack the permission:").format(count=len(undeletable)))
+        box.setText(tr_n(len(undeletable),
+                         "{n} source cannot be removed after the copy – you lack the permission:",
+                         "{n} sources cannot be removed after the copy – "
+                         "you lack the permission:"))
         box.setInformativeText(shown + "\n\n" + tr(
             "As administrator, the move runs as root (one password prompt); names "
             "already in the destination are not replaced. No permission is changed."))
@@ -8326,10 +8840,12 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                     "The move as administrator failed:\n{error}").format(error=value))
                 return
             if value:
-                QMessageBox.information(self, tr("Move"), tr(
-                    "{count} item(s) were not moved – a name already in the destination "
-                    "is not replaced:\n{names}").format(
-                        count=len(value), names="\n".join(value[:10])))
+                QMessageBox.information(self, tr("Move"), tr_n(
+                    len(value),
+                    "{n} item was not moved – a name already in the destination is not replaced:\n{names}",
+                    "{n} items were not moved – a name already in the destination is not replaced:\n{names}",
+                    names="\n".join(value[:10]),
+                ))
 
         job.finished.connect(finished)
         self.statusBar().showMessage(tr("Moving as administrator…"))
@@ -8424,10 +8940,14 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
 
                 from ui.plain_text import plain_message
 
-                plain_message(self, QMessageBox.Icon.Warning, "Transfer incomplete",
-                              f"Reading the folders to {'move' if move else 'copy'} stopped: "
-                              f"{walk_errors[0]}\n\n{len(jobs)} file(s) were queued; the rest of "
-                              "the selection was not transferred.").open()
+                stopped = (tr("Reading the folders to move stopped: {error}") if move
+                           else tr("Reading the folders to copy stopped: {error}"))
+                queued = tr_n(
+                    len(jobs),
+                    "{n} file was queued; the rest of the selection was not transferred.",
+                    "{n} files were queued; the rest of the selection was not transferred.")
+                plain_message(self, QMessageBox.Icon.Warning, tr("Transfer incomplete"),
+                              stopped.format(error=walk_errors[0]) + "\n\n" + queued).open()
             if move:
                 self._track_tag_moves(source, target, selected,
                                       target.current_path if dest_dir is None else dest_dir, jobs,
@@ -8912,6 +9432,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         which Qt opens on hover."""
         from core.bookmarks import BookmarkGroup
         from ui.icon_provider import icon as _bm_icon
+        from ui.plain_text import defused
 
         # QAction text is rendered via Qt's AutoText, which flips to
         # Rich-Text the moment it sees ``<tag>`` markup. A hostile name
@@ -8920,7 +9441,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         # form, and double ``&`` so Qt's mnemonic parser treats it as a
         # literal character instead of an underscore-next-letter trigger.
         def _safe(text: str) -> str:
-            return text.replace("<", "").replace(">", "").replace("&", "&&")
+            # (a bidi override or control as U+FFFD, as the pane shows a name)
+            return defused(text).replace("<", "").replace(">", "").replace("&", "&&")
 
         for node in nodes:
             if isinstance(node, BookmarkGroup):
@@ -10370,9 +10892,12 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
 
             from ui.plain_text import plain_message
 
-            box = plain_message(self, QMessageBox.Icon.Warning, "Transfers running",
-                                f"{unfinished} transfer(s) are running or waiting. Quitting cancels "
-                                "them; partly copied files are left behind.\n\nQuit anyway?",
+            box = plain_message(self, QMessageBox.Icon.Warning, tr("Transfers running"),
+                                tr_n(unfinished,
+                                     "{n} transfer is running or waiting. Quitting cancels it; "
+                                     "a partly copied file is left behind.\n\nQuit anyway?",
+                                     "{n} transfers are running or waiting. Quitting cancels "
+                                     "them; partly copied files are left behind.\n\nQuit anyway?"),
                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
             box.setDefaultButton(QMessageBox.StandardButton.No)
             if box.exec() != QMessageBox.StandardButton.Yes:

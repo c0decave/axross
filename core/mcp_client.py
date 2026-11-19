@@ -464,6 +464,38 @@ def run_dir(name: str) -> str:
     return str(folder)
 
 
+def pycache_prefix() -> str:
+    """The byte-code folder of the Python servers run on this machine:
+    ``$XDG_STATE_HOME/axross/mcp-pycache``. Python keeps the servers'
+    compiled modules there instead of in ``__pycache__`` beside the sources
+    (which it then never reads: a planted .pyc stays unused). Safe because
+    the agent never writes there - a protected place (core.protected_places:
+    axross's state folder, also where XDG_STATE_HOME moves it) - and used
+    only as a real folder of this user with mode 0700 whose parents no one
+    else may change (core.self_update.private_dir_problem); made so when
+    missing, never "repaired": McpClientError otherwise."""
+    import stat as _stat
+
+    from core.posix_compat import effective_uid
+    from core.self_update import private_dir_problem
+    from core.xdg_dirs import base_dir
+
+    folder = base_dir("XDG_STATE_HOME") / "axross" / "mcp-pycache"
+    problem = private_dir_problem(folder)
+    if not problem and effective_uid() is not None:
+        try:
+            mode = _stat.S_IMODE(os.lstat(folder).st_mode)
+        except OSError as exc:
+            problem = f"{folder} cannot be used: {exc.strerror or exc}"
+        else:
+            if mode & 0o077:
+                problem = (f"{folder} is open to other users (mode {mode:o}): not used "
+                           f"(make it private: chmod 700 '{folder}')")
+    if problem:
+        raise McpClientError(f"no byte-code folder for the server: {problem}")
+    return str(folder)
+
+
 def _python_module(argv) -> bool:
     """*argv* is ``python … -m module``: python puts its working folder
     first on its import path, unless PYTHONSAFEPATH is set (3.11+)."""
@@ -982,7 +1014,11 @@ def _start_container(config: McpServerConfig, secrets: dict) -> _Stdio:
         filled = [a.replace(TOKEN_ENV_FD, str(read_end)).replace(TOKEN_RUN, run_id)
                   .replace(TOKEN_EGRESS, str(port or "")) for a in argv]
         name = next((a.split("=", 1)[1] for a in filled if a.startswith("--name=")), "")
-        program = filled[0] if filled else "podman"
+        # The system's podman only, also when PATH names another first.
+        from core.mcp_runner import container_program
+
+        program = container_program(filled[0] if filled else "podman", McpClientError)
+        filled[0:1] = [program]
 
         def cleanup() -> None:
             if name:
@@ -1020,6 +1056,8 @@ class McpClient:
                 from core.mcp_script_pin import start_check
 
                 why, files = start_check(config)
+                if why and not files:
+                    raise McpClientError(why)  # its folder cannot all be pinned
                 if why:
                     raise McpFilesChanged(why, config.name, files)
             if refused:
@@ -1038,6 +1076,11 @@ class McpClient:
                     cwd = run_dir(config.name)
                     if _python_module(argv):
                         env["PYTHONSAFEPATH"] = "1"
+                    # No byte code from (or into) the server's folder: Python
+                    # would load a .pyc planted there instead of the pinned
+                    # source (core.mcp_script_pin) - a private prefix only
+                    # axross and its servers write.
+                    env["PYTHONPYCACHEPREFIX"] = pycache_prefix()
                 self._transport = _Stdio(wrap(argv) if wrap else argv, env, config.timeout,
                                          cwd=cwd)
         else:

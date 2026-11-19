@@ -45,10 +45,11 @@ def test_happy_a_missing_file_is_a_result_flagged_iserror(tmp_path):
     assert result["_meta"]["type"] in ("FileNotFoundError", "OSError")
 
 
-def test_sad_bad_arguments_stay_32602_and_an_unknown_tool_32601(tmp_path):
+def test_sad_bad_arguments_and_an_unknown_tool_stay_32602(tmp_path):
+    # MCP names an unknown tool "invalid params" (-32602), as bad arguments.
     tools = _tools(tmp_path)
     assert _call(tools, "read_file", {"path": 5})["error"]["code"] == M.ERR_INVALID_PARAMS
-    assert _call(tools, "no_such_tool", {})["error"]["code"] == M.ERR_METHOD_NOT_FOUND
+    assert _call(tools, "no_such_tool", {})["error"]["code"] == M.ERR_INVALID_PARAMS
 
 
 def test_edge_a_root_escape_is_a_result_too(tmp_path):

@@ -20,6 +20,8 @@ from PyQt6.QtWidgets import (
 )
 
 from ui.close_corner import add_close_corner
+from ui.elided_label import WrapAnywhereLabel
+from ui.plain_text import defused
 from ui.icon_provider import set_window_icon
 from core.i18n import tr
 
@@ -41,9 +43,10 @@ class ChecksumDialog(QDialog):
         root = QVBoxLayout(self)
         add_close_corner(self)
 
-        path_label = QLabel(path)
+        # The path as the pane shows a name (plain text, a bidi override as
+        # U+FFFD), wrapped inside the window also where it has no blank.
+        path_label = WrapAnywhereLabel(defused(path))
         path_label.setProperty("role", "muted")
-        path_label.setWordWrap(True)
         root.addWidget(path_label)
 
         meta = QLabel(f"{algo}  ({tr(source)})")

@@ -17,6 +17,7 @@ import re
 import shutil
 import stat as stat_module
 import subprocess
+import threading
 from typing import IO
 
 from core import posix_compat, removal_cancel
@@ -35,6 +36,9 @@ from security.protocol_line_split import split_lf_only_stream
 
 log = logging.getLogger(__name__)
 
+
+#: Seconds the liveness probe waits for the mount to answer.
+_LIVENESS_TIMEOUT = 10.0
 
 #: Mount options that keep a server's files from acting on this machine:
 #: no set-uid/set-gid, no device nodes, nothing executable from the export.
@@ -194,15 +198,16 @@ class NfsSession(SessionLifecycle):
         """Mount the NFS export."""
         # With a proxy the kernel dials the loopback tunnel, not the server.
         source = f"{self._mount_host}:{self._export}"
-        # NFSv4 does not use a separate MOUNT protocol, so passing
-        # mountport= only makes sense for v3. Including it on v4 causes
-        # mount.nfs to reject the request ("Protocol not supported").
+        # NFSv4 does not use a separate MOUNT protocol. NFSv3's mountd is
+        # found through rpcbind: mountport= set to the NFS port sent the
+        # MOUNT call to nfsd, and the mount of a standard server (mountd on
+        # 20048 or a random port) failed. v3 is never tunnelled (__init__).
         port = self._mount_port
         if self._version >= 4:
             vers = f"{self._version}.{self._minor}" if self._minor else str(self._version)
             opts = f"vers={vers},port={port},nolock,tcp"
         else:
-            opts = f"vers={self._version},port={port},mountport={port},nolock,tcp"
+            opts = f"vers={self._version},port={port},nolock,tcp"
         # Mounted as root: without these a set-uid binary on the export is
         # a local root shell for anyone on this machine.
         opts = f"{opts},{_SAFE_MOUNT_OPTIONS}"
@@ -213,6 +218,16 @@ class NfsSession(SessionLifecycle):
             log.info("NFS mounted: %s -> %s", source, self._mount_point)
         except subprocess.CalledProcessError as e:
             stderr = e.stderr.strip() if e.stderr else str(e)
+            if "password is required" in stderr or "only root" in stderr:
+                from core.i18n import tr
+
+                log.info("NFS mount of %s refused: %s", source, stderr)
+                raise PermissionError(tr(
+                    "Mounting NFS needs root rights, and they were refused ({reason}). Run "
+                    "axross as root or allow it 'mount' through sudo without a password – or "
+                    "enter a machine name or UID in the profile: axross's own NFS client then "
+                    "connects without mounting."
+                ).format(reason=stderr.splitlines()[-1][:120])) from None
             raise OSError(f"Failed to mount NFS {source}: {stderr}") from e
 
     def local_path(self, path: str) -> str:
@@ -231,13 +246,29 @@ class NfsSession(SessionLifecycle):
 
     @property
     def connected(self) -> bool:
+        """The mount answers a listing within _LIVENESS_TIMEOUT. A hard NFS
+        mount whose server went away blocks every call on it: the probe
+        runs in a thread of its own, so a reuse of the session and the
+        health probe get "not connected" instead of hanging with it."""
         if not self._mounted:
             return False
-        try:
-            os.listdir(self._mount_point)
-            return True
-        except OSError:
+        answer: list[bool] = []
+
+        def probe() -> None:
+            try:
+                os.listdir(self._mount_point)
+                answer.append(True)
+            except OSError:
+                answer.append(False)
+
+        worker = threading.Thread(target=probe, name="nfs-liveness", daemon=True)
+        worker.start()
+        worker.join(_LIVENESS_TIMEOUT)
+        if not answer:
+            log.warning("NFS %s:%s did not answer within %.0f s",
+                        self._host, self._export, _LIVENESS_TIMEOUT)
             return False
+        return answer[0]
 
     def close(self) -> None:
         self.disconnect()
@@ -363,6 +394,15 @@ class NfsSession(SessionLifecycle):
         parent = os.path.dirname(self._full_path(path))
         _make_parent(parent, path)
         return open(self._full_path(path), mode)
+
+    def open_write_new(self, path: str, mode: int) -> IO[bytes]:
+        """*path* created with *mode* from its first byte (less the umask):
+        core.atomic_io._open_new_with_mode - not created 0644 and chmod-ed."""
+        refuse_folder_path(path)
+        full = self._full_path(path)
+        _make_parent(os.path.dirname(full), path)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_CLOEXEC", 0)
+        return os.fdopen(os.open(full, flags, mode & 0o7777), "wb")
 
     def normalize(self, path: str) -> str:
         # Not normpath("/" + path): POSIX keeps a leading "//", so "/"

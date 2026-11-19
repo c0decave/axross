@@ -8,6 +8,13 @@ lines, CSI sequences and strings in whole pieces and must not change
 what the screen shows by it. Kept as it was - only this docstring is new.
 A change of VTScreen's behaviour on purpose (a new control function, say)
 has to be made here too, the same way.
+
+Changed on purpose since (review 2026-11-19): a string is dropped however
+long it is and CAN / SUB abort it; a C0 control inside a CSI runs and the
+CSI goes on, ESC inside a CSI or a string starts a new sequence; a
+character written over half of a wide character erases its other half.
+Review 2026-11-20: an erase, insert or delete inside a wide character and
+a resize through one take it whole; none is printed on a one-column screen.
 """
 
 from __future__ import annotations
@@ -42,6 +49,32 @@ def _width(ch: str) -> int:
     if unicodedata.combining(ch):
         return 0
     return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+
+
+def _erase_split_wide(line: list[str], start: int, stop: int) -> None:
+    """Cells start..stop-1 are written next: a wide character only half
+    of which is among them leaves a blank for its other half."""
+    if 0 < start < len(line) and line[start] == "" and _width(line[start - 1]) == 2:
+        line[start - 1] = " "
+    if stop < len(line) and line[stop] == "":
+        line[stop] = " "
+
+
+def _blank_cells(line: list[str], start: int, stop: int) -> None:
+    """Cells *start* to *stop* (exclusive) of *line* become blanks; a wide
+    character with one half among them goes whole (erase, CSI K / X)."""
+    stop = min(stop, len(line))
+    if start >= stop:
+        return
+    _erase_split_wide(line, start, stop)
+    line[start:stop] = [" "] * (stop - start)
+
+
+def _close_right_edge(line: list[str]) -> None:
+    """A wide character in the last cell of *line* lost its right half
+    (a resize, CSI @ pushed it over the edge): it goes as a whole."""
+    if line and line[-1] and _width(line[-1]) == 2:
+        line[-1] = " "
 
 
 class VTScreen:
@@ -128,6 +161,8 @@ class VTScreen:
             """*grid* at the new size and how many rows left it at the top;
             blank rows below the cursor *row* go first."""
             grid = [(line + [" "] * cols)[:cols] for line in grid]
+            for line in grid:
+                _close_right_edge(line)
             while len(grid) > rows and not "".join(grid[-1]).strip() and len(grid) - 1 > row:
                 grid.pop()
             dropped = max(0, len(grid) - rows)
@@ -185,17 +220,16 @@ class VTScreen:
             elif state == _CSI:
                 self._csi_char(ch)
             elif state == _STRING:
-                if ch == "\x07":
+                if ch in "\x07\x18\x1a":
                     self._state = _GROUND
                 elif ch == "\x1b":
                     self._state = _STRING_ESC
                 else:
                     self._string_len += 1
-                    if self._string_len > _MAX_STRING:
-                        self._state = _GROUND
-            else:  # _STRING_ESC: ESC \ ends the string, anything else too
+            else:  # _STRING_ESC: ESC \ ends the string, else ESC began a sequence
                 self._state = _GROUND
                 if ch != "\\":
+                    self._state = _ESC
                     self.feed(ch)
 
     def _control(self, ch: str) -> None:
@@ -245,17 +279,24 @@ class VTScreen:
             if len(self._params) < 4 * _MAX_PARAMS:
                 self._params += ch
             return
+        if code < 0x20:
+            if ch == "\x1b":
+                self._state = _ESC
+            elif ch in "\x18\x1a":
+                self._state = _GROUND
+            else:
+                self._control(ch)  # and the CSI goes on
+            return
         self._state = _GROUND
         if 0x40 <= code <= 0x7E:
             self._csi(ch, self._params)
-        # A control character inside a CSI aborts it.
 
     # -- printing --------------------------------------------------------------
 
     def _print(self, ch: str) -> None:
         width = _width(ch)
-        if width == 0:
-            return
+        if width == 0 or width > self.cols:
+            return  # a wide character does not fit a screen one column wide
         if self._wrap_pending:
             self._col = 0
             self._linefeed()
@@ -263,10 +304,12 @@ class VTScreen:
         if width == 2 and self._col == self.cols - 1:
             if not self._autowrap:
                 return
+            _erase_split_wide(self._grid[self._row], self._col, self._col + 1)
             self._grid[self._row][self._col] = " "
             self._col = 0
             self._linefeed()
         line = self._grid[self._row]
+        _erase_split_wide(line, self._col, self._col + width)
         line[self._col] = ch
         if width == 2:
             line[self._col + 1] = ""
@@ -289,6 +332,7 @@ class VTScreen:
             line = self._grid[self._row]
             col = self._col
             take = min(cols - col, end - i)
+            _erase_split_wide(line, col, col + take)
             line[col:col + take] = run[i:i + take]
             i += take
             if col + take < cols:
@@ -387,19 +431,20 @@ class VTScreen:
         elif final == "K":
             self._erase_line(arg(0, 0))
         elif final == "X":
-            line = self._grid[self._row]
-            for c in range(self._col, min(cols, self._col + arg())):
-                line[c] = " "
+            _blank_cells(self._grid[self._row], self._col, self._col + arg())
         elif final == "P":
             line = self._grid[self._row]
             n = min(arg(), cols - self._col)
+            _erase_split_wide(line, self._col, self._col + n)
             del line[self._col:self._col + n]
             line.extend([" "] * n)
         elif final == "@":
             line = self._grid[self._row]
             n = min(arg(), cols - self._col)
+            _erase_split_wide(line, self._col, self._col)
             line[self._col:self._col] = [" "] * n
             del line[cols:]
+            _close_right_edge(line)
         elif final == "L":
             if self._top <= self._row <= self._bottom:
                 for _ in range(min(arg(), self._bottom - self._row + 1)):
@@ -460,8 +505,7 @@ class VTScreen:
             start, end = 0, self._col + 1
         else:
             start, end = 0, self.cols
-        for c in range(start, min(end, self.cols)):
-            line[c] = " "
+        _blank_cells(line, start, end)
 
     def _erase_display(self, how: int) -> None:
         if how == 0:

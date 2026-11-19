@@ -29,12 +29,13 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from core.i18n import tr
+from core.i18n import tr, tr_n
 from core.mail_project import MailProject
 from core.remote_name import sanitize_for_display
 from core.thread_relay import GuiCall
 from ui.close_corner import add_close_corner
 from ui.icon_provider import set_window_icon
+from ui.screen_fit import fit_size
 
 log = logging.getLogger(__name__)
 
@@ -121,7 +122,7 @@ class MailProjectDialog(QDialog):
         super().__init__(parent)
         set_window_icon(self, "mail-project")
         self.setWindowTitle(tr("Mail Project"))
-        self.resize(1100, 680)
+        self.resize(fit_size((1100, 680), parent))  # at most the screen (1024x600)
         self.project: MailProject | None = None
         self._agent_dock = agent_dock
         self._connect = connect
@@ -140,7 +141,12 @@ class MailProjectDialog(QDialog):
         self._writers_lock = threading.Lock()
         layout = QVBoxLayout(self)
         top = QHBoxLayout()
-        self.folder_label = QLabel(tr("No project open."))
+        # Cut with "…" (the whole path as its tooltip): a QLabel's path took
+        # its whole width, and with the buttons beside it the German window
+        # was 1014 px wide - past a 1024x600 screen.
+        from ui.elided_label import ElidedLabel
+
+        self.folder_label = ElidedLabel(tr("No project open."))
         top.addWidget(self.folder_label, 1)
         for label, slot in ((tr("Open / New…"), self.choose_folder), (tr("Import Files…"), self.import_files),
                             (tr("Import Folder…"), self.import_folder),
@@ -328,7 +334,7 @@ class MailProjectDialog(QDialog):
                                                 tr("Mail (*.eml *.msg *.pst *.ost *.mbox *.mbx);;All files (*)"))
         if paths:
             project = self.project
-            self._run_import(tr("{n} files").format(n=len(paths)),
+            self._run_import(tr_n(len(paths), "{n} file", "{n} files"),
                              lambda cancel: project.import_paths(paths, cancel=cancel))
 
     def import_folder(self) -> None:
@@ -397,7 +403,7 @@ class MailProjectDialog(QDialog):
             text = tr("Showing {shown} of {total} messages – search to narrow them down.").format(
                 shown=shown, total=total)
         else:
-            text = tr("{n} messages").format(n=shown)
+            text = tr_n(shown, "{n} message", "{n} messages")
         current, last = self.status.text(), self._count_text
         if not current or current == last:
             self.status.setText(text)

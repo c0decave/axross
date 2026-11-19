@@ -147,8 +147,9 @@ def test_edge_a_package_folder_beside_the_script_counts_too(server):
     package.mkdir()
     (package / "__init__.py").write_text("")
     assert PIN.changed(config) == [str(package / "__init__.py")]
-    (server.parent / "notes.txt").write_text("not a module")  # not code: not pinned
-    assert PIN.changed(config) == [str(package / "__init__.py")]
+    # Every file of the folder counts (review B: a server may load any of them).
+    (server.parent / "notes.txt").write_text("not a module")
+    assert PIN.changed(config) == [str(package / "__init__.py"), str(server.parent / "notes.txt")]
 
 
 def test_happy_a_new_command_saved_by_the_user_is_pinned_anew(server, home):
@@ -192,8 +193,7 @@ def test_edge_the_folder_listing_is_bounded(server, monkeypatch):
     for i in range(6):
         (server.parent / f"m{i}.py").write_text(f"# {i}\n")
     pin = PIN.compute((PYTHON, str(server)))
-    hashed = [v for v in pin["files"].values() if v.startswith("sha256:")]
-    assert len(pin["files"]) == 7 and len(hashed) == 3 + 1 and pin["complete"] is False
+    assert len(pin["files"]) <= 3 + 1 and pin["complete"] is False
 
 
 def test_edge_a_fifo_in_place_of_the_script_never_blocks(server):
@@ -215,9 +215,11 @@ def test_sad_the_agent_does_not_write_the_files_of_an_enabled_host_run_server(se
     assert "MCP server runs" in (P.refusal(str(server.parent / "json.py")) or "")
     assert "MCP server runs" in (P.refusal(str(server.parent / "json" / "__init__.py")) or "")
     assert "MCP server runs" in (P.refusal(str(server.parent), entry=True) or "")
-    # what is no code of the server stays the agent's to change
-    assert P.refusal(str(server.parent / "README.md")) is None
-    assert P.refusal(str(server.parent / "sub" / "x.py")) is None
+    # Anything below its folder (review B: sub-packages, __pycache__, data files)
+    assert "MCP server runs" in (P.refusal(str(server.parent / "README.md")) or "")
+    assert "MCP server runs" in (P.refusal(str(server.parent / "sub" / "x.py")) or "")
+    # beside it stays the agent's to change
+    assert P.refusal(str(server.parent.parent / "other.py")) is None
 
 
 def test_happy_a_disabled_or_sandboxed_server_leaves_its_files_to_the_agent(server, home):
@@ -451,7 +453,8 @@ def test_sad_inline_code_or_a_stdlib_tool_is_no_pure_launcher(line):
 @pytest.mark.parametrize("line", [
     "python3 -m mcp_server_git --repository /r", "python3 -m mcp_server_time",
     "python3 -u -m mcp_server_fetch", "python3 -m tools_mcp", "python3 -m my_mcp_server",
-    "python3 /usr/lib/python3/dist-packages/srv/server.py", "python3 /srv/server.py",
+    # a script inside an installed package counts as -m <package> (review B)
+    "python3 /usr/lib/python3/dist-packages/mcp_server_x/server.py", "python3 /srv/server.py",
     "node --no-warnings /srv/s.js",
 ])
 def test_happy_mcp_server_packages_and_scripts_stay_pure_launchers(line):

@@ -4,6 +4,25 @@
   "13.13.0": {
    "accepted_findings": [],
    "archives": {
+    "pyqt6_sip-13.13.0-cp312-cp312-macosx_10_9_universal2.whl": {
+     "entry_points": [],
+     "files": {
+      "PyQt6/sip.cpython-312-darwin.so": "51d61163b88aab7c2a6a3e25796cff0fa1651432bb1b0e8100715d4c7cb63ac1",
+      "pyqt6_sip-13.13.0.dist-info/METADATA": "db00a90846e1e869a9bf3f73e9eb9d1d14b058872ab9330432cf457bfa0b6ec5",
+      "pyqt6_sip-13.13.0.dist-info/RECORD": "de70b72d2cfadc56e67ea45cfa4d10dd65d4edb1f9acaec74b2086ab5deca995",
+      "pyqt6_sip-13.13.0.dist-info/WHEEL": "228601abd5e1d758b7ee7be2cde463121a5696b5afba947f18d7b8223780bfee",
+      "pyqt6_sip-13.13.0.dist-info/licenses/LICENSE": "3e6f5b427c36f94ecf86bc01698af7030a1ed6eb3748110d5dbb8d142d804611",
+      "pyqt6_sip-13.13.0.dist-info/top_level.txt": "b8685577efad0bd45ce6f3148070b22522ef2ba420869010bb0fde1a6340871f"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "e200b2379aa80c414e7d635b96a348fc476e0f9eb5c3ac759f9c1ea6e3f4f4ab",
+     "native": {
+      "PyQt6/sip.cpython-312-darwin.so": "macho-fat"
+     },
+     "pth": {},
+     "sha256": "da1a8e350b927c281d4f155fb3b84859e6e8c04ea36fe159cf9b939ee957d151"
+    },
     "pyqt6_sip-13.13.0-cp312-cp312-manylinux1_x86_64.manylinux_2_5_x86_64.whl": {
      "entry_points": [],
      "files": {
@@ -22,11 +41,32 @@
      },
      "pth": {},
      "sha256": "7429e63fc8279a0508ed5cbc1b33da76c15a61a06a745825e807a3604fbde4f2"
+    },
+    "pyqt6_sip-13.13.0-cp312-cp312-win_amd64.whl": {
+     "entry_points": [],
+     "files": {
+      "PyQt6/sip.cp312-win_amd64.pyd": "0c7c7abf5a9d1cef66c6b566a74c1ae38bffa7e1ab4b3365fc0085f2b191ee77",
+      "pyqt6_sip-13.13.0.dist-info/METADATA": "5469205065d07066c98a3543888a7362dc70c1339f65d3b6473245a3ef1803bb",
+      "pyqt6_sip-13.13.0.dist-info/RECORD": "e092ed46f869bad7375ae3ce8dd44f6cb06ecca94373d5dd0f7436e147dd96c6",
+      "pyqt6_sip-13.13.0.dist-info/WHEEL": "547199cfb31450578b25778938b82f94e190e69e750e6c850e3b6d657fa1a30f",
+      "pyqt6_sip-13.13.0.dist-info/licenses/LICENSE": "3e6f5b427c36f94ecf86bc01698af7030a1ed6eb3748110d5dbb8d142d804611",
+      "pyqt6_sip-13.13.0.dist-info/top_level.txt": "b8685577efad0bd45ce6f3148070b22522ef2ba420869010bb0fde1a6340871f"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "4bbcafd6e6050f7f1809802ee8beed924237206c7ec102c650c1ac6cbab4cfcf",
+     "native": {
+      "PyQt6/sip.cp312-win_amd64.pyd": "pe"
+     },
+     "pth": {},
+     "sha256": "c6b67d301ef64e13d313c728020616315c952473abb27029b2e5857b44a7b3e6"
     }
    },
    "name": "pyqt6-sip",
    "provenance": {
-    "pyqt6_sip-13.13.0-cp312-cp312-manylinux1_x86_64.manylinux_2_5_x86_64.whl": null
+    "pyqt6_sip-13.13.0-cp312-cp312-macosx_10_9_universal2.whl": null,
+    "pyqt6_sip-13.13.0-cp312-cp312-manylinux1_x86_64.manylinux_2_5_x86_64.whl": null,
+    "pyqt6_sip-13.13.0-cp312-cp312-win_amd64.whl": null
    },
    "pypi": {
     "author": "Phil Thompson",
@@ -40,11 +80,57 @@
    },
    "reviewed": {
     "by": "claude",
-    "date": "2026-11-05",
-    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 native binaries profiled, none with network/process imports or addresses; no attestation: content review only."
+    "date": "2026-11-20",
+    "earlier": [
+     {
+      "by": "claude",
+      "date": "2026-11-05",
+      "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 native binaries profiled, none with network/process imports or addresses; no attestation: content review only."
+     }
+    ],
+    "note": "macOS universal2 and Windows amd64 wheels of the reviewed version: same 6 members, only the sip extension module differs (METADATA CRLF on Windows). No finding, no .pth, no hook; neither binary imports anything networked or process-starting or links a non-system library. No attestation, as for the Linux wheel: content review only."
    },
    "scans": {
     "capa": {
+     "0c7c7abf5a9d1cef66c6b566a74c1ae38bffa7e1ab4b3365fc0085f2b191ee77": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "PyQt6/sip.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-utility-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "51d61163b88aab7c2a6a3e25796cff0fa1651432bb1b0e8100715d4c7cb63ac1": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "PyQt6/sip.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "7ef4c972f4f70b5303025819dbb4ae3cc4a6767ff9bd53b4da36480a1909332c": {
       "capabilities": [
        "contain loop",

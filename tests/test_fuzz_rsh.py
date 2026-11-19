@@ -41,7 +41,7 @@ class FakeRsh:
         self.answers: dict[str, object] = {
             "echo axross-rsh-probe": (b"axross-rsh-probe\n", 0),
             "ls -la": (LS, 0),
-            "head -c": (b"hello", 0),
+            "cat --": (b"hello", 0),
             "df -P": (
                 b"Filesystem 1024-blocks Used Available Capacity Mounted\n/dev/x 100 40 60 40% /\n",
                 0,
@@ -50,7 +50,16 @@ class FakeRsh:
             "readlink": (b"/etc\n", 0),
         }
 
-    def run(self, argv, input=None, capture_output=True, timeout=None, check=False, env=None):
+    def run(self, argv, input=None, capture_output=True, timeout=None, check=False, env=None,
+            stdin=None):
+        out = self._answer(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout=out, stderr=b"")
+
+    def popen(self, argv, stdin=None, stdout=None, stderr=None, env=None):
+        """A streamed transfer (open_read / open_write): the same answers."""
+        return _FakeProc(self._answer(argv))
+
+    def _answer(self, argv) -> bytes:
         script = argv[-1]
         tag = TAG_RE.search(script.encode()).group(0)
         inner = script.split("sh -c ", 1)[1].strip("'")
@@ -66,7 +75,26 @@ class FakeRsh:
         else:
             body, status = ans
             out = body + b"\n" + tag + b" " + str(status).encode() + b"\n"
-        return subprocess.CompletedProcess(argv, 0, stdout=out, stderr=b"")
+        return out
+
+
+class _FakeProc:
+    def __init__(self, out: bytes) -> None:
+        import io
+
+        self.stdout = io.BytesIO(out)
+        self.stderr = io.BytesIO(b"")
+        self.stdin = io.BytesIO()
+        self.returncode = 0
+
+    def poll(self):
+        return 0
+
+    def wait(self, timeout=None):
+        return 0
+
+    def kill(self):
+        pass
 
 
 @pytest.fixture
@@ -74,6 +102,7 @@ def rsh(monkeypatch):
     fake = FakeRsh()
     monkeypatch.setattr(R, "_ensure_rsh_available", lambda: "/usr/bin/rsh")
     monkeypatch.setattr(R.subprocess, "run", fake.run)
+    monkeypatch.setattr(R.subprocess, "Popen", fake.popen)
     return fake
 
 
@@ -113,7 +142,9 @@ def test_happy_listing(rsh):
         ("ls -la", b"no trailer at all"),
         ("ls -la", b"\n__AXROSS_RSH_STATUS_0000000000000000__ 0\n"),  # forged tag
         ("ls -la", subprocess.TimeoutExpired(cmd="rsh", timeout=1)),
-        ("head -c", b""),
+        ("cat --", b""),
+        ("cat --", b"short\n__AXROSS_RSH_STATUS_0000000000000000__ 0\n"),  # forged tag
+        ("cat --", (b"", 1)),
         ("df -P", (b"garbage", 0)),
         ("df -P", (b"h\n/dev/x \xb2 1 1 1% /\n", 0)),
         ("sha256sum", (b"", 0)),

@@ -109,8 +109,8 @@ def test_happy_shows_owner_group_permissions_and_size(opened):
 
     assert fields["Owner"] == "alice"
     assert fields["Group"] == "staff"
-    assert fields["Permissions"].startswith("rw-r--r--")
-    assert "644" in fields["Permissions"]
+    # As the Permissions dialog's "Current:" shows it: the type, then rwx.
+    assert fields["Permissions"] == "-rw-r--r--  (0644)"
     assert "2048" in fields["Size"]
 
 

@@ -7,6 +7,13 @@ the decoder thread, the GUI thread for the audio thread. A file on a slow
 mount held the window for as long as the open took, and every seek did the
 same. The decoder thread now starts the decoder on its own; an error it
 reports reaches the engine the way a later decoder error always did.
+
+The GUI thread's stall is measured in the time it slept (schedstat), less
+what the engine's threads hold the GIL for while it plays: on a loaded host
+the wall clock between two looks of a busy loop said 30-90 ms with the fix
+in place (the test preempted, threads holding the GIL preempted). That no
+Python frame calls QAudioDecoder.start() - the cause - is checked on its
+own, on any host.
 """
 
 from __future__ import annotations
@@ -127,32 +134,131 @@ def test_happy_play_returns_before_the_decoder_has_opened_the_file(tmp_path, slo
         engine.close()
 
 
-def test_happy_the_gui_thread_runs_on_while_the_real_decoder_opens_the_file(tmp_path):
+def _sleep_clock():
+    """A reader of the seconds the calling thread has spent asleep (blocked:
+    waiting for the GIL, a lock, I/O) - wall time less its CPU time and less
+    the time it waited in the run queue for a CPU (/proc's schedstat): a
+    loaded host keeping the test from a CPU is no stall. Wall time where
+    there is no schedstat."""
+    try:
+        handle = open(f"/proc/self/task/{threading.get_native_id()}/schedstat", "rb")  # noqa: SIM115
+        handle.read()
+    except (OSError, AttributeError):
+        return time.perf_counter
+
+    def asleep() -> float:
+        handle.seek(0)
+        ran, queued = (int(v) for v in handle.read().split()[:2])
+        return time.perf_counter() - (ran + queued) / 1e9
+
+    return asleep
+
+
+def longest_sleep(action, window: float = 0.15) -> float:
+    """The longest the GUI thread was held asleep in *action()* and in the
+    *window* after it (a busy loop that only reads the clock)."""
+    clock = _sleep_clock()
+    t0 = clock()
+    action()
+    last = clock()
+    longest = last - t0
+    end = time.perf_counter() + window
+    while time.perf_counter() < end:
+        now = clock()
+        longest = max(longest, now - last)
+        last = now
+    return longest
+
+
+@pytest.fixture
+def python_starts(monkeypatch):
+    """Records every call of QAudioDecoder.start() made from Python, in any
+    thread: such a call holds the GIL for as long as the decoder opens and
+    probes the file. The slot started by Qt's event loop (the fix) is the
+    C++ one and is never seen here - start() is no virtual to override."""
+    from PyQt6.QtMultimedia import QAudioDecoder
+
+    seen: list[str] = []
+    real = QAudioDecoder.start
+
+    def start(self):
+        seen.append(threading.current_thread().name)
+        return real(self)
+
+    monkeypatch.setattr(QAudioDecoder, "start", start)
+    return seen
+
+
+def test_happy_the_real_decoder_is_started_without_the_gil(tmp_path, python_starts):
     """QAudioDecoder.start() called from Python holds the GIL for the 20 ms
-    it takes to open a WAV: the GUI thread stood still that long even with
-    the call in the decoder thread. Started from Qt's event loop it holds
-    nothing. Measured: the longest stall of the GUI thread around play()
-    21-24 ms before, about 1 ms after (the shortest of five tries here)."""
+    it takes to open a WAV (as long as a slow mount takes): the GUI thread
+    stood still that long even with the call in the decoder thread. Started
+    from Qt's event loop it holds nothing - and no Python frame calls it,
+    which holds on any host, loaded or not."""
     sink = Sink()
     engine = MP.EqEngine(sink_factory=lambda fmt: sink)
     path = str(tone_wav(tmp_path / "t.wav", 20.0))
-    stalls = []
+    try:
+        for _ in range(3):
+            engine.load(path)
+            gui(0.05)
+            engine.play()
+            assert wait_for(lambda: sink.frames() > 0)
+        assert python_starts == []
+        assert engine._decoder_starts >= 3
+        assert engine.error == ""
+    finally:
+        engine.close()
+
+
+def test_happy_the_gui_thread_runs_on_while_the_real_decoder_opens_the_file(tmp_path):
+    """The stall itself. Measured: the longest the GUI thread was held around
+    play() 21-24 ms before, about 1 ms after (the shortest of five tries).
+    Counted is the time the GUI thread slept, never the time a loaded host
+    gave its CPU to something else; and what the engine's other threads
+    hold the GIL for while it plays (preempted on a busy host, measured with
+    the track playing) is this host's floor, not the decoder's start."""
+    sink = Sink()
+    engine = MP.EqEngine(sink_factory=lambda fmt: sink)
+    path = str(tone_wav(tmp_path / "t.wav", 20.0))
+    over = []
     try:
         for _ in range(5):
             engine.load(path)
             gui(0.05)
-            longest, end = 0.0, time.perf_counter() + 0.15
-            start = last = time.perf_counter()
-            engine.play()
-            longest = time.perf_counter() - start
-            while time.perf_counter() < end:
-                now = time.perf_counter()
-                longest = max(longest, now - last)
-                last = now
-            stalls.append(longest)
+            stall = longest_sleep(engine.play)
             assert wait_for(lambda: sink.frames() > 0)
-        assert min(stalls) < 0.010, [f"{s * 1000:.1f} ms" for s in stalls]
+            floor = longest_sleep(lambda: None)  # playing, no decoder start
+            over.append((stall, floor))
+            if stall < 0.010:
+                break
+        assert min(stall - floor for stall, floor in over) < 0.010, [
+            f"{stall * 1000:.1f} ms (floor {floor * 1000:.1f} ms)" for stall, floor in over]
         assert engine.error == ""
+    finally:
+        engine.close()
+
+
+def test_edge_a_start_called_from_python_is_seen(tmp_path, monkeypatch, python_starts):
+    """The checks above catch what they guard: with start() called from
+    Python in the decoder thread (as before the fix) it is recorded."""
+
+    def post_slot_from_python(self, obj, slot, before=None):
+        def call():
+            if before is not None:
+                before()
+            getattr(obj, slot)()
+
+        self.post(call)
+
+    monkeypatch.setattr(MP._ThreadHost, "post_slot", post_slot_from_python)
+    sink = Sink()
+    engine = MP.EqEngine(sink_factory=lambda fmt: sink)
+    try:
+        engine.load(str(tone_wav(tmp_path / "t.wav", 3.0)))
+        engine.play()
+        assert wait_for(lambda: sink.frames() > 0)
+        assert python_starts, "a start() from Python went unseen"
     finally:
         engine.close()
 

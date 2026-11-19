@@ -39,7 +39,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import analysis_settings as AS
-from core.i18n import tr
+from core.i18n import tr, tr_n
 from core.thread_relay import GuiCall
 
 log = logging.getLogger(__name__)
@@ -305,7 +305,11 @@ class AnalysisPage(QWidget):
             self.cache_label.setText(tr("The cache could not be cleared: {error}").format(
                 error=error))
             return
-        self.cache_label.setText(tr("Removed {n} cached result(s).").format(n=count))
+        self.cache_label.setText(tr_n(
+            count,
+            "Removed {n} cached result.",
+            "Removed {n} cached results.",
+        ))
 
     def _show_features(self, _link: str = "") -> None:
         show = getattr(self._window, "_show_features", None)

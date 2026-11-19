@@ -122,6 +122,7 @@ def test_sad_the_scheduler_does_not_save_over_a_store_it_cannot_read(tmp_path, m
         raise PermissionError("denied")
 
     monkeypatch.setattr(Path, "read_text", unreadable)
+    monkeypatch.setattr(Path, "read_bytes", unreadable)
     with pytest.raises(OSError):
         store.update(lambda jobs: jobs)
 

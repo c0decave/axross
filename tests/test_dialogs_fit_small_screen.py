@@ -154,6 +154,53 @@ def _fits(size: QSize, limit: QSize = LIMIT) -> bool:
 
 @pytest.mark.timeout(240)
 def test_happy_every_window_the_menus_open_fits_1280x800(window):
+    _every_window_fits(window, LIMIT)
+
+
+@pytest.mark.timeout(240)
+@pytest.mark.parametrize("screen", [SMALL_SCREEN])
+def test_sad_every_window_the_menus_open_fits_1024x600(window, screen, tmp_path, monkeypatch):
+    """Review (round 1 of the 2026-11 reviews): at 1024x600 Find Files
+    (1100x760, at least 1040 px wide), the Duplicate Finder (1100x650, at
+    least 1043), Duplicate Index & History, Find on Network Hosts, Mail
+    Project, the Scripting Guide, Third-Party Software and System
+    Information (its status line, 1144 px) stood past the screen."""
+    from core import i18n
+
+    # No size remembered by an earlier test (the viewers' sizes are kept
+    # in settings.json, whose path is fixed at import).
+    monkeypatch.setattr(i18n, "SETTINGS_FILE", tmp_path / "settings.json")
+    _every_window_fits(window, SMALL_LIMIT)
+
+
+@pytest.mark.timeout(300)
+@pytest.mark.parametrize("screen", [SMALL_SCREEN])
+def test_sad_every_window_the_menus_open_fits_1024x600_in_german(screen, tmp_path, monkeypatch,
+                                                                  request):
+    """Round 3 of the 2026-11 reviews: the same walk with the window in
+    German (longer words: a dialog fitting in English may not)."""
+    from core import i18n
+
+    monkeypatch.setattr(i18n, "SETTINGS_FILE", tmp_path / "settings.json")
+    monkeypatch.setattr(i18n, "_ACTIVE", i18n.Translator("de"))
+    window = request.getfixturevalue("window")
+    assert window.menuBar().actions()[0].text().replace("&", "") == "Datei"
+    _every_window_fits(window, SMALL_LIMIT, english=_english_of_german())
+
+
+def _english_of_german() -> dict[str, str]:
+    """The English text of each German menu text (by the catalogue), so
+    SKIP - written in English - leaves out the same entries."""
+    import json
+
+    catalogue = json.loads((ROOT / "resources" / "i18n" / "de.json").read_text(encoding="utf-8"))
+    english: dict[str, str] = {}
+    for key, value in catalogue.items():
+        english.setdefault(value.replace("&", ""), key.replace("&", ""))
+    return english
+
+
+def _every_window_fits(window, limit: QSize, english: dict[str, str] | None = None) -> None:
     # Marked on the widget, not kept as id(): a closed and deleted window's
     # id() came back for a later one (About axross), which then counted as
     # seen and the walk "never opened" it - now and then.
@@ -173,8 +220,10 @@ def test_happy_every_window_the_menus_open_fits_1280x800(window):
             opened.append(where)
             for what, size in (("size", widget.size()), ("minimum", widget.minimumSize()),
                                ("minimum hint", widget.minimumSizeHint())):
-                if not _fits(size):
+                if not _fits(size, limit):
                     too_big.append(f"{where}: {what} {size.width()}x{size.height()}")
+            from tests.test_r3_ui_pane_dialogs_fit_small_screen import _cut_texts
+            too_big.extend(f"{where}: cut {c}" for c in _cut_texts(widget))
             widget.close()
             pump()
             found = True
@@ -182,15 +231,19 @@ def test_happy_every_window_the_menus_open_fits_1280x800(window):
 
     for top in window.menuBar().actions():
         for path, action in list(_entries(top.menu(), [top.text().replace("&", "")])):
-            if SKIP.search(" ".join(path[1:])) or not action.isEnabled():
+            words = path[1:] if english is None else [english.get(p, p) for p in path[1:]]
+            if SKIP.search(" ".join(words)) or not action.isEnabled():
                 continue
             action.trigger()
             pump(0.15)
             if not collect(path):
                 quiet.append((path, action))
+    named = ["Connection Manager", "System Information", "About axross"]
+    if english is not None:  # (as the German menus name them)
+        named = [next((de for de, en in english.items() if en == name), name) for name in named]
     # A window that took longer than 0.15 s under load (a busy machine in a
     # full parallel run) gets a second, patient try - only these entries.
-    for name in ("Connection Manager", "System Information", "About axross"):
+    for name in named:
         if any(name in where for where in opened):
             continue
         for path, action in quiet:
@@ -200,9 +253,9 @@ def test_happy_every_window_the_menus_open_fits_1280x800(window):
                 while time.monotonic() < end and not collect(path):
                     pump(0.05)
     # the walk reached the windows the report named
-    for name in ("Connection Manager", "System Information", "About axross"):
+    for name in named:
         assert any(name in where for where in opened), (name, opened)
-    assert too_big == []
+    assert too_big == [], "\n".join(too_big)
 
 
 def test_sad_connect_to_server_with_a_custom_proxy_scrolls_instead_of_growing(window):

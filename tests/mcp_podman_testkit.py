@@ -194,4 +194,10 @@ def fake_podman(tmp_path: Path, monkeypatch, **state) -> FakePodman:
     initial.update(state)
     (folder / "state.json").write_text(json.dumps(initial))
     monkeypatch.setenv("PATH", f"{folder}{os.pathsep}{os.environ.get('PATH', '')}")
+    # Not in a folder of the system's: allowed as the containers' podman here.
+    from core import mcp_runner
+
+    real = mcp_runner.container_program_problem
+    monkeypatch.setattr(mcp_runner, "container_program_problem",
+                        lambda p: "" if os.path.dirname(p) == str(folder) else real(p))
     return FakePodman(folder)

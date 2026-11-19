@@ -145,8 +145,10 @@ def test_happy_the_bootstrap_lock_is_the_lock_s_own_pip_and_setuptools():
 
 def test_happy_the_ci_bundles_install_from_the_same_lock():
     bundle_job = CI[CI.index("\n  bundle:"):]
-    assert "-r build/requirements-bootstrap.txt" in bundle_job
-    assert "-r build/requirements-bundle.txt" in bundle_job
+    # the gate checks the two locks, pip installs them cut down to what it inspected
+    assert "--lock build/requirements-bootstrap.txt --lock build/requirements-bundle.txt" in bundle_job
+    assert '-r "$RUNNER_TEMP/reviewed-locks/requirements-bootstrap.txt"' in bundle_job
+    assert '-r "$RUNNER_TEMP/reviewed-locks/requirements-bundle.txt"' in bundle_job
     assert bundle_job.count("--require-hashes") == 2
     assert '".[all]"' not in bundle_job
 

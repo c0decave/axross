@@ -514,3 +514,17 @@ def test_sad_non_finite_times_in_the_log_are_dropped(log, tmp_path):
     _client, p = log()
     assert [s.address for s in p.sessions()] == [PHONE]
     assert p.listening() == []
+
+
+def test_edge_the_vendor_notifier_outlives_the_exit_clean_up():
+    """The exit clean-up deletes every Python-owned QObject; the notifier is
+    C++-owned, and one deleted all the same is made anew (a panel started
+    after it failed: "wrapped C/C++ object of type _Notifier has been deleted")."""
+    from PyQt6 import sip
+
+    first = BV.notifier()
+    assert not sip.ispyowned(first)
+    sip.delete(first)
+    again = BV.notifier()
+    assert again is not first and not sip.isdeleted(again)
+    again.loaded.connect(lambda: None)

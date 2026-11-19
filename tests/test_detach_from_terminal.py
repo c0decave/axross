@@ -139,10 +139,16 @@ class _Terminal:
         return self.output
 
     def wait(self, seconds: float) -> int | None:
-        try:
-            return self.proc.wait(timeout=seconds)
-        except subprocess.TimeoutExpired:
-            return None
+        # The terminal is read while waiting: a mode that prints more than
+        # the pty holds (the --mcp-list-tools manifest) blocks in its write
+        # until someone reads, and never exits otherwise.
+        end = time.time() + seconds
+        while time.time() < end:
+            code = self.proc.poll()
+            if code is not None:
+                return code
+            self.read(0.1)
+        return self.proc.poll()
 
     def wait_ready(self) -> bool:
         log = _log_file(self.tmp_path)

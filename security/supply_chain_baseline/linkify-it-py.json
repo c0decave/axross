@@ -1,0 +1,59 @@
+{
+ "name": "linkify-it-py",
+ "versions": {
+  "2.2.0": {
+   "accepted_findings": [],
+   "archives": {
+    "linkify_it_py-2.2.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "linkify_it/__init__.py": "b9dcf712ce4c48b0521a37c5047417bfba8795a157a0522aef1bd0b21c3b98ba",
+      "linkify_it/_ucre_data.py": "a0fa94b3c7e400259377c2156637186787b546384b70601f501d46cf0a44a7b1",
+      "linkify_it/main.py": "3d3803ff9bd6ceacd04d984b1d3c2065f1f8fd7082c2bdb0c40b888b7e4ea7be",
+      "linkify_it/tlds.py": "a2221039beef7724237194ac3bd1e5130e2ba02d626de0cfc8df1c26eabf5c9b",
+      "linkify_it/ucre.py": "36aac79b6cc99febce47f25031992abae08b16d983c6030ec137cdd15a497e6e",
+      "linkify_it_py-2.2.0.dist-info/METADATA": "5bc112f7a322ec1d8b3a71c3357daf6340353f773ad386fa9784c22de8339eb9",
+      "linkify_it_py-2.2.0.dist-info/RECORD": "d51f315341ea2273730dee882478adbce38081f4278740b4b9d90b12f4f88a34",
+      "linkify_it_py-2.2.0.dist-info/WHEEL": "61532836a2b3111b7ec23519c09df7c41180c27165fb872a6d8913b566b88ad1",
+      "linkify_it_py-2.2.0.dist-info/licenses/LICENSE": "db5d71f61f0f781f5078df4b6a00d5d3c799fb0bb82bcf448a688e9762618a2e",
+      "linkify_it_py-2.2.0.dist-info/top_level.txt": "197d9c7f163e481092769eabbc6d584a7238490ad3c53f2dcd414716f7e2336b"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "a157ab748c7749d9d5a59e89b96871867c1f0c08c695c7b736e7da4ccac315c1",
+     "native": {},
+     "pth": {},
+     "sha256": "3adc40eb5af300b2605fcfdb968c24e1d780a90f1f2221af7c15e5111e94d443"
+    }
+   },
+   "name": "linkify-it-py",
+   "provenance": {
+    "linkify_it_py-2.2.0-py3-none-any.whl": {
+     "environment": "prod",
+     "kind": "GitHub",
+     "repository": "tsutsu3/linkify-it-py",
+     "workflow": "github-ci.yml"
+    }
+   },
+   "pypi": {
+    "author": "tsutsu3",
+    "license": "MIT",
+    "project_urls": {
+     "Homepage": "https://github.com/tsutsu3/linkify-it-py"
+    },
+    "summary": "Links recognition library with FULL unicode support."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-17",
+    "note": "axross-markdown's linkify extra. Read all 4 modules: regexes, the IANA TLD list and Unicode class data (_ucre_data.py, generated; 2.2.0 vendors what uc-micro-py gave, so no dependency) - no I/O, no network, no exec/eval, no process; the only odd line is upstream's setattr(LinkifyIt, 'func', ...) for user schemas. No finding, no YARA hit, no hook, no binary. Package identical to the v2.2.0 tag on github.com/tsutsu3/linkify-it-py; attestation (tsutsu3/linkify-it-py github-ci.yml, env prod) verifies."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "2.2.0"
+  }
+ }
+}

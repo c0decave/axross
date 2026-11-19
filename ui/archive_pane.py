@@ -60,6 +60,7 @@ from PyQt6.QtWidgets import (
 
 from core.archive import (
     ArchiveEntry,
+    ArchivePasswordRequired,
     RarUnavailable,
     UnsafeArchive,
     is_supported_archive,
@@ -342,11 +343,13 @@ def selected_member_names(tree_view: QTreeView) -> list[str]:
     current selection.
 
     * A selected FILE row contributes its own member name.
-    * A selected FOLDER row contributes every descendant FILE member name
-      under it (recursively); the folder prefix itself is not returned.
+    * A selected FOLDER row contributes its folder prefix (``d/sub/``):
+      core.archive.extract_members takes everything below it - the files,
+      and the folder entries with their stored modes and the empty
+      subfolders (handing over only the files lost those). A file or
+      folder below a selected folder is not named again.
 
-    De-duplication is by value (a file selected both directly and via an
-    ancestor folder appears once). Insertion order is preserved for a
+    De-duplication is by value. Insertion order is preserved for a
     stable, testable result.
     """
     model = tree_view.model()
@@ -371,19 +374,28 @@ def selected_member_names(tree_view: QTreeView) -> list[str]:
     if not indexes:
         indexes = [ix for ix in sel_model.selectedIndexes() if ix.column() == COL_NAME]
 
+    picked: list[str] = []
     for index in indexes:
         item = model.itemFromIndex(index)
         if item is None:
             continue
+        member = item.data(Qt.ItemDataRole.UserRole)
         if _is_folder_item(item):
-            files: list[str] = []
-            _collect_descendant_files(item, files)
-            for f in files:
-                _add(f)
-        else:
-            member = item.data(Qt.ItemDataRole.UserRole)
-            if isinstance(member, str):
-                _add(member)
+            if isinstance(member, str) and member.endswith("/"):
+                picked.append(member)
+            else:  # a caller-built model without a folder prefix
+                files: list[str] = []
+                _collect_descendant_files(item, files)
+                picked.extend(files)
+        elif isinstance(member, str):
+            picked.append(member)
+    folders = {"/".join(_split_segments(m)) for m in picked if m.endswith("/")}
+    for member in picked:
+        segments = _split_segments(member)
+        # Below a selected folder: that folder already brings it along.
+        if any("/".join(segments[:depth]) in folders for depth in range(1, len(segments))):
+            continue
+        _add(member)
 
     return ordered
 
@@ -509,6 +521,9 @@ class ArchivePaneWidget(QWidget):
     extract_selected_to = pyqtSignal(list)
     #: Back to the archive this nested one was opened from.
     back_requested = pyqtSignal()
+    #: The password typed for an archive whose listing needs one (a 7z
+    #: with an encrypted header): the window keeps it for the extractions.
+    password_entered = pyqtSignal(str)
 
     def __init__(
         self,
@@ -518,13 +533,17 @@ class ArchivePaneWidget(QWidget):
         *,
         chain: tuple[str, ...] = (),
         background: bool = False,
+        password: str | None = None,
     ) -> None:
         """*background*: list the archive on a worker - the window's way
         (a large .tar.gz is read through to its end, minutes on the GUI
         thread); the tree fills when it is done (:attr:`loading`).
-        Without it the listing is there when the constructor returns."""
+        Without it the listing is there when the constructor returns.
+        *password*: the archive's, when it is known already (memory only);
+        a listing that needs one asks for it (ui.archive_password)."""
         super().__init__(parent)
         self._archive_path = archive_path
+        self._password = password
         self._on_open_member = on_open_member
         #: The names of the archives this one is nested in, outermost first.
         self.chain = tuple(chain)
@@ -600,7 +619,7 @@ class ArchivePaneWidget(QWidget):
         caught and surfaced via :attr:`load_error` + the status label;
         the widget never raises out of ``__init__``."""
         try:
-            entries = list_archive(self._archive_path)
+            entries = list_archive(self._archive_path, password=self._password)
         except Exception as exc:  # noqa: BLE001 - each kind is reported (_listing_failed)
             self._listing_failed(exc)
             return
@@ -620,12 +639,13 @@ class ArchivePaneWidget(QWidget):
         self._list_job = ScanJob(self)
         self._list_job.finished.connect(self._on_listed)
         path = self._archive_path
+        password = self._password
 
         def work(cancelled, _report):
             # Cancel (closing the pane) stops a long tar listing between
             # headers. The tree's items are made here too: 250,000 of them
             # for 50,000 members held the GUI thread 2 s.
-            entries = list_archive(path, cancel=cancelled)
+            entries = list_archive(path, cancel=cancelled, password=password)
             try:
                 return entries, archive_rows(entries, cancel=cancelled)
             except _Cancelled:
@@ -644,7 +664,11 @@ class ArchivePaneWidget(QWidget):
 
     def _listing_failed(self, exc: BaseException) -> None:
         basename = self.display_name()
-        if isinstance(exc, RarUnavailable):
+        if isinstance(exc, ArchivePasswordRequired) and self._ask_password(exc):
+            return
+        if isinstance(exc, ArchivePasswordRequired):
+            self.load_error = tr("The archive is encrypted; no password was given.")
+        elif isinstance(exc, RarUnavailable):
             # Missing optional capability — surface the remediation hint
             # verbatim. NOT a hostile archive; show its message, empty tree.
             self.load_error = str(exc)
@@ -661,6 +685,23 @@ class ArchivePaneWidget(QWidget):
         self._set_empty_model()
         self._header_label.setText(basename)
         self._status_label.setText(self.load_error)
+
+    def _ask_password(self, exc: ArchivePasswordRequired) -> bool:
+        """Ask for the password the listing needs and list again with it;
+        False when the user gives none."""
+        from ui.archive_password import ask_archive_password
+
+        password = ask_archive_password(
+            self, self.display_name(), wrong=exc.wrong or self._password is not None)
+        if password is None:
+            return False
+        self._password = password
+        self.password_entered.emit(password)
+        if self._list_job is not None:
+            self._load_in_background()
+        else:
+            self._load()
+        return True
 
     def _show_entries(self, entries, rows=None) -> None:
         """Show *entries*; *rows* are their tree's rows when the worker
@@ -811,6 +852,7 @@ class ArchivePaneWidget(QWidget):
         "open": "open-text",
         "open-hex": "open-hex",
         "open-text": "open-text",
+        "open-with": "open-with",
         "open-archive": "preview-archive",
         "extract-selected": "extract",
         "extract-selected-to": "extract",
@@ -847,6 +889,10 @@ class ArchivePaneWidget(QWidget):
                   lambda m=member: self.open_member_as.emit(m, "hex"))
             entry("open-text", tr("Open as T&ext"),
                   lambda m=member: self.open_member_as.emit(m, "text"))
+            # The desktop's application: asks first for anything but a
+            # recognised document (ui.file_pane._open_with_system_app).
+            entry("open-with", tr("Open with the S&ystem Application…"),
+                  lambda m=member: self.open_member_as.emit(m, "system"))
             menu.addSeparator()
         if items:
             entry("extract-selected", tr("E&xtract Selected"), self._emit_extract_selected)
@@ -901,8 +947,10 @@ class ArchivePaneWidget(QWidget):
             from ui.format_utils import human_bytes
 
             rows = [r for r in rows if r[0] not in ("Size", "Compressed")]
-            rows.insert(2, ("Contents", tr("{files} file(s), {folders} folder(s), {size}").format(
-                files=len(files), folders=len(folders), size=human_bytes(total))))
+            rows.insert(2, ("Contents", ", ".join((
+                tr_n(len(files), "{n} file", "{n} files"),
+                tr_n(len(folders), "{n} folder", "{n} folders"),
+                human_bytes(total)))))
         rows.append(("Archive", self.display_name()))
         return rows
 

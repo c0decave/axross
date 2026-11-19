@@ -375,7 +375,7 @@ def test_edge_folder_properties_count_members_stored_with_backslashes(window, tm
     window.open_archive_pane(str(path))
     pane = _pane(window)
     rows = dict(pane.properties_rows("dir/"))
-    assert rows["Contents"].startswith("2 file(s), 1 folder(s)"), rows
+    assert rows["Contents"].startswith("2 files, 1 folder"), rows
 
 
 def _wait_for(win, cond, timeout: float = 20.0):

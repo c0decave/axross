@@ -4,6 +4,27 @@
   "1.0.4": {
    "accepted_findings": [],
    "archives": {
+    "inflate64-1.0.4-cp312-cp312-macosx_10_13_universal2.whl": {
+     "entry_points": [],
+     "files": {
+      "inflate64-1.0.4.dist-info/METADATA": "13e11072df128a4006ffc486edade23db2f483587de9dda9de84f9a46dc0ba9e",
+      "inflate64-1.0.4.dist-info/RECORD": "e82d0552094aa14099188496cf3f18c20edb3af0145d6d4a11cf0d917ae62b0e",
+      "inflate64-1.0.4.dist-info/WHEEL": "dc3cd984afab348924108a69077a9bbbab324f891ac9e5791e4bac9d622a3088",
+      "inflate64-1.0.4.dist-info/licenses/COPYING": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551",
+      "inflate64-1.0.4.dist-info/top_level.txt": "af382abc4cb41c7229c5ab90e318e63b996a31b5db6c6cff74469595aed221ca",
+      "inflate64/__init__.py": "7616a7db3a614c28c973741814b66aa02a88ca1b7ca928604c898e76d9f9e550",
+      "inflate64/_inflate64.cpython-312-darwin.so": "688902cf4d7cff669ffdf6bf5afd4e8bae5b411988d594c35057afe5e10b26a1",
+      "inflate64/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "7405dba40a64242f1c2ad76084537b54f80b44697fc51dddc45b2776fd4c34cf",
+     "native": {
+      "inflate64/_inflate64.cpython-312-darwin.so": "macho-fat"
+     },
+     "pth": {},
+     "sha256": "c8009e4a4918ee6c8cbc49e58fe159464895064cfdf0565fed3f49ca81e45272"
+    },
     "inflate64-1.0.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
      "entry_points": [],
      "files": {
@@ -24,11 +45,44 @@
      },
      "pth": {},
      "sha256": "62d1aac3aba094ae42e27ce7581b414c90f218248be0953b6aeb11a127225e5d"
+    },
+    "inflate64-1.0.4-cp312-cp312-win_amd64.whl": {
+     "entry_points": [],
+     "files": {
+      "inflate64-1.0.4.dist-info/METADATA": "eae4cb6c7dcc2721f280e20bda4368b0d5fed5cbb13399f7fc7333c70ccd580f",
+      "inflate64-1.0.4.dist-info/RECORD": "24e243da7829e2a7ccc293de81798a67d35651a1ae8dd79942ed8903297f1ea0",
+      "inflate64-1.0.4.dist-info/WHEEL": "f143fdc7da6e588d0fd55fddecada831306a7de2cd9b6d424f367f3edaf43575",
+      "inflate64-1.0.4.dist-info/licenses/COPYING": "1e7e6bae5a5bde32f1ae5a7c37a082d1ab03cf89354f7f936ac40be9e39a6531",
+      "inflate64-1.0.4.dist-info/top_level.txt": "af382abc4cb41c7229c5ab90e318e63b996a31b5db6c6cff74469595aed221ca",
+      "inflate64/__init__.py": "943e4990263b4d2d1df9d032ef727e4d820d34d4025c2108cde56234a62d8d6e",
+      "inflate64/_inflate64.cp312-win_amd64.pyd": "e42826555bb29d3fb150fc830b56e7b4250ad22bda500d144b42e768968f3975",
+      "inflate64/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "f3d80a4d133364f5a15177e3adc02422ef5eccbd07e80899e8ec036ca14f5e3c",
+     "native": {
+      "inflate64/_inflate64.cp312-win_amd64.pyd": "pe"
+     },
+     "pth": {},
+     "sha256": "2c6befdf83d088a6e0d10d0873a9d4bfde2ce00ad7a52c8189cf303306f98030"
     }
    },
    "name": "inflate64",
    "provenance": {
+    "inflate64-1.0.4-cp312-cp312-macosx_10_13_universal2.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "miurahr/inflate64",
+     "workflow": "publish-to-pypi.yml"
+    },
     "inflate64-1.0.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "miurahr/inflate64",
+     "workflow": "publish-to-pypi.yml"
+    },
+    "inflate64-1.0.4-cp312-cp312-win_amd64.whl": {
      "environment": "pypi",
      "kind": "GitHub",
      "repository": "miurahr/inflate64",
@@ -49,11 +103,31 @@
    },
    "reviewed": {
     "by": "claude",
-    "date": "2026-11-05",
-    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 native binaries profiled, none with network/process imports or addresses; attestation verifies (miurahr/inflate64)."
+    "date": "2026-11-20",
+    "earlier": [
+     {
+      "by": "claude",
+      "date": "2026-11-05",
+      "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 native binaries profiled, none with network/process imports or addresses; attestation verifies (miurahr/inflate64)."
+     }
+    ],
+    "note": "macOS universal2 and Windows amd64 wheels of the reviewed version: same 8 members, only _inflate64 differs (Windows METADATA/COPYING/__init__.py CRLF only). No finding, no .pth, no hook; the PE imports the CRT (IsDebuggerPresent from MSVC's CRT start-up), nothing networked. Attestations verify, same publisher (miurahr/inflate64 publish-to-pypi.yml)."
    },
    "scans": {
     "capa": {
+     "688902cf4d7cff669ffdf6bf5afd4e8bae5b411988d594c35057afe5e10b26a1": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "inflate64/_inflate64.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "ac7d61d6e84618143384624da534661131babca1c0cf73c4f67104ec2d9ce572": {
       "capabilities": [
        "contain loop"
@@ -67,6 +141,31 @@
        "needed": [
         "libc.so.6",
         "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "e42826555bb29d3fb150fc830b56e7b4250ad22bda500d144b42e768968f3975": {
+      "capabilities": [
+       "contain loop",
+       "enumerate PE sections"
+      ],
+      "note": "",
+      "path": "inflate64/_inflate64.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "python312.dll"
        ],
        "rpath": [],
        "urls": []

@@ -1,0 +1,104 @@
+{
+ "name": "mdit-py-plugins",
+ "versions": {
+  "0.6.1": {
+   "accepted_findings": [],
+   "archives": {
+    "mdit_py_plugins-0.6.1-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "mdit_py_plugins-0.6.1.dist-info/METADATA": "cd9486029c276a4bf819a85ca25f32f3bcff07a7e1c577dd45be523c7f0c472e",
+      "mdit_py_plugins-0.6.1.dist-info/RECORD": "170ff4c090df3179c59d2077f30259a07e5c513a9d9d1f6bb0e93fe5510385fd",
+      "mdit_py_plugins-0.6.1.dist-info/WHEEL": "1b68144734c4b66791f27add5d425f3620775585718a03d0f9b110ba3a4d88db",
+      "mdit_py_plugins-0.6.1.dist-info/licenses/LICENSE": "4a2260d6e2cd0f5a151a1e86dbfe7d3ed552b1e2beabf9941c1ba5c49cbce484",
+      "mdit_py_plugins/__init__.py": "6da01c1232d260521e359179d6d38c980ff300c84df07bca69e97e514f91b9e7",
+      "mdit_py_plugins/admon/LICENSE": "699355a44cb248631a4cde542029b593b7e6663823b0518338e85fd65360bac3",
+      "mdit_py_plugins/admon/__init__.py": "86cf37a9863845dfc9dc0522035eaf00c83e77d3ab0c4143dff520636b1a7a49",
+      "mdit_py_plugins/admon/index.py": "d7e0d307b1c97f05616259b80d7b2952506ba79d9008751d180e1eb8c22c3777",
+      "mdit_py_plugins/admon/port.yaml": "cb3e32219ce4109b8195a9248380d1d47f9443c46ea62dac15f52012845dec7b",
+      "mdit_py_plugins/amsmath/__init__.py": "daf1ae028534ce781e5b48ed005db60c6093e993f6852a223f86d83775901187",
+      "mdit_py_plugins/anchors/__init__.py": "2718752285c154f0aad6c272e58d87554ef9489617d673c72d075f7e0cbbb67e",
+      "mdit_py_plugins/anchors/index.py": "13184b7edb3883f1542b3224ac36732197262bbb006bba960825770ff8d0c164",
+      "mdit_py_plugins/attrs/__init__.py": "ce51b071b4976cff63ddef4c43193b1fb13a4c251a1f8356a30a80dc096da0f0",
+      "mdit_py_plugins/attrs/index.py": "0c9ae31684b0c3d88fbb5b0f2ae718e9d0f7a2fcf289ae32170d34a9d69843dc",
+      "mdit_py_plugins/attrs/parse.py": "4ce70d6283145468e0e1329507fa8a7daa787790524c61395a0772101f6c3cc7",
+      "mdit_py_plugins/colon_fence.py": "d4f0455d65ad098625fb8f821afab0e0fdcb14e4482c78ec9670382f6df18963",
+      "mdit_py_plugins/container/LICENSE": "c91339910d300f163edcaddbfb3909f1cffae19a496b7fe3935a9a4073dc305a",
+      "mdit_py_plugins/container/README.md": "a7744ba99d43dbd71ddd840795027d2fec01a94f25604df80f123ad72d61278b",
+      "mdit_py_plugins/container/__init__.py": "f7bdb90497883a6844e74e56cd461585160e364c40f3a19e683a160920241245",
+      "mdit_py_plugins/container/index.py": "5ede31ea641a6af9a48532749e3860c043dc6bdc8157a14df46e079b06b5cb43",
+      "mdit_py_plugins/container/port.yaml": "547e35e8ede4a52dc41325c25dd6cf981e5e91fb4b7efb7cfd666bcc032db5a7",
+      "mdit_py_plugins/deflist/LICENSE": "81d61236a5f25294b2dad0c866d4ad6a40b865148b28df9a71f49ba771a6c54b",
+      "mdit_py_plugins/deflist/README.md": "18626b788958dae421a7ba6eecfe8d053adeecea0e6c9ce9596afccb22fc85d9",
+      "mdit_py_plugins/deflist/__init__.py": "bbe43f5dd85daf428e968fd274c09966ef7198d7ada38118e6269ae448356676",
+      "mdit_py_plugins/deflist/index.py": "a46ff832686b435f3173dc760078bc4193f0204018a1cd545174eec1202525f7",
+      "mdit_py_plugins/deflist/port.yaml": "bd46ddf35c801c61d65799ade0396c28417bb6961e6c206687b29735bed3f51f",
+      "mdit_py_plugins/dollarmath/__init__.py": "fb6f13e1d5db254a7ded61aaeba7c225edbc57cbadfc2b8d75d437ecc93443ed",
+      "mdit_py_plugins/dollarmath/index.py": "a3289837e2cba6b3a58e5f882f75dc7c17f53c15d7d8897b86ea0e314a584ffe",
+      "mdit_py_plugins/field_list/__init__.py": "cba25a04738ceeb97cb9f7d1f2eb973900905a44bdd36f4c6f44ebbb51b23f86",
+      "mdit_py_plugins/footnote/LICENSE": "81d61236a5f25294b2dad0c866d4ad6a40b865148b28df9a71f49ba771a6c54b",
+      "mdit_py_plugins/footnote/__init__.py": "920e90579b3be45d10162f868363db0f76efa67a56a470fe2e69cc198698013c",
+      "mdit_py_plugins/footnote/index.py": "5f99aa16092579aa4491b83fa657b051f1b49db82b5ee2074617096f6e954b41",
+      "mdit_py_plugins/footnote/port.yaml": "5d7b632f05bc93d28e03a36db41dd4e5c177ef8435b0a0cbdf1c4ffdee66dd58",
+      "mdit_py_plugins/front_matter/LICENSE": "9e1bc1fafae020b5c33cc9cb745c707a5addf109cd814f0dac2d41424b83554a",
+      "mdit_py_plugins/front_matter/__init__.py": "7c1bd9dedd9c61e02d2994d5b0ed5cc3222c94b3f9e18510c77a274de6fa5c7f",
+      "mdit_py_plugins/front_matter/index.py": "2125cdd070293128fddca5b9b9984fac7bbb59d867f5ff63aa51e16db6e7f47e",
+      "mdit_py_plugins/front_matter/port.yaml": "ec071db3b4a4eed4e8d4dec2ba5b3e033c3e9a1478919225cf7913afe05b251c",
+      "mdit_py_plugins/gfm/__init__.py": "8d6be912310b86a46d162112502a68485fd18a2ac9c1d63a2dda7bea6179d54f",
+      "mdit_py_plugins/gfm_autolink/__init__.py": "7305cd883b59f71aac52c049c588179a5bd10c17fcfd4fd180cbfe415c70f6a8",
+      "mdit_py_plugins/gfm_autolink/_match.py": "546c3caea548a4f63e3dd4fb01384a8b56b0d2ddc51bae5a71eccae6c9f26793",
+      "mdit_py_plugins/gfm_autolink/index.py": "e6082f53816966a3607bae08be29e4402f9f810a45e9d3c7c2603e922a2d5b78",
+      "mdit_py_plugins/myst_blocks/__init__.py": "451e261058774adb31a98f48171240ebef6c8fe36c87321c3d968ba0f394ee66",
+      "mdit_py_plugins/myst_blocks/index.py": "f2e956ba97a401dcddc7ed527f5762f4dbbb7f2f198298d42d15c408dd498609",
+      "mdit_py_plugins/myst_role/__init__.py": "5c4aab3980dd0c240668c9d9fc26e3aab8269c015ec36eed64c4312c70e614c5",
+      "mdit_py_plugins/myst_role/index.py": "fc55b687bfdd8aa3ebb035c1ebf5b3d39d40ae3e0bc94ca5388ae2a86267a1e3",
+      "mdit_py_plugins/py.typed": "f0f8f2675695a10a5156fb7bd66bafbaae6a13e8d315990af862c792175e6e67",
+      "mdit_py_plugins/subscript/__init__.py": "81ede6d9990a86437d4ec11c458b242fc9917657ef2b385cca6633f851be28d1",
+      "mdit_py_plugins/subscript/port.yaml": "f8ecf1be72833b662e2d22f266ef1e37be3cfd0f4be2d9a290a437caa5f3ee6c",
+      "mdit_py_plugins/substitution.py": "3dd80be1a9b77b18ae3502e60c76af2c506b9d28afbd38a9af4a71c143a91701",
+      "mdit_py_plugins/superscript/__init__.py": "df4a82f370b8095500a50d93cbbe975ab76bb35d7d4a0ff6164d680883f3af2a",
+      "mdit_py_plugins/superscript/index.py": "e886d353f381cd9d4335e521fd5f78a757ad7a8e99e0900aadc7d5cc0cc6c55e",
+      "mdit_py_plugins/tasklists/__init__.py": "ad64b85220873f84d7e0a6ceee6c908751a7733476219a42d2f223d667aea4ad",
+      "mdit_py_plugins/tasklists/port.yaml": "054922ae6c15044ee8342e0bec20dafe87aaaef2797d9a9c635ce7dcecbaa2a9",
+      "mdit_py_plugins/texmath/LICENSE": "012a56cf9e23a2917336178cca417ab4c88fc64ad7086d621d6a8b956593629f",
+      "mdit_py_plugins/texmath/README.md": "82de8b49d756843182950bc4096e4bc1c76d81af0df1c24912be270b3d7d1326",
+      "mdit_py_plugins/texmath/__init__.py": "92ddf4bd682117c31f17f5de0f4f2c76b619a8e7540fa41dd58b72ae6ae1cdb5",
+      "mdit_py_plugins/texmath/index.py": "1bad8a2001a8ce75261286a1135f10703c49cd7fc4a9908b93dadb6e59d4e601",
+      "mdit_py_plugins/texmath/port.yaml": "43f58a2d8e6aa362248144df36bd1b79c4908019867ff00d403d56e3519154f0",
+      "mdit_py_plugins/utils.py": "fc397c99361b25fb724a7c4fe1c87a406ab9493f45b02cb936ec143dc5163014",
+      "mdit_py_plugins/wordcount/__init__.py": "383187385983943eb51c234a67f8dd78679408c149dc84e7bec255fe6bace51f"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "e6c4608c7def4bfd21341c3b0b4e5ec848d9971107bf07b280a7220091ac6512",
+     "native": {},
+     "pth": {},
+     "sha256": "214c82fb2ac524472ab6a5bcab1de80f73b50443e187f401bfd77efbc7c6481d"
+    }
+   },
+   "name": "mdit-py-plugins",
+   "provenance": {
+    "mdit_py_plugins-0.6.1-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Chris Sewell <chrisj_sewell@hotmail.com>",
+    "project_urls": {
+     "Documentation": "https://mdit-py-plugins.readthedocs.io",
+     "Homepage": "https://github.com/executablebooks/mdit-py-plugins"
+    },
+    "summary": "Collection of plugins for markdown-it-py"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-17",
+    "note": "axross-markdown's plugins (footnotes, deflists, front matter, tasklists, texmath ...). Read the imports and grepped all 38 modules: stdlib only (re, string, unicodedata, uuid4 for footnote ids), no file, network, process, exec/eval or pickle. No finding, no YARA hit, no hook, no binary. No attestation: the evidence is the content - every .py identical to the v0.6.1 tag on github.com/executablebooks/mdit-py-plugins."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "0.6.1"
+  }
+ }
+}

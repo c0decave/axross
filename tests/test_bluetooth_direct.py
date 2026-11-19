@@ -390,7 +390,11 @@ def test_sad_without_bumble_the_stick_entry_says_what_to_install(monkeypatch):
     host.source_combo, host.source, host._sticks = QComboBox(), "bluez", None
     ext.BluetoothHost.fill_sources(host)
     assert host.source_combo.count() == 2
-    assert "bluetooth-raw" in host.source_combo.itemText(1)
+    # Help > Features installs it (no pip command to type): the entry
+    # names that menu and the feature as the Features window lists it.
+    text = host.source_combo.itemText(1)
+    assert "Help → Features" in text
+    assert "Bluetooth USB stick without BlueZ" in text
     assert not host.source_combo.model().item(1).isEnabled()
 
 

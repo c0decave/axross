@@ -26,3 +26,15 @@ def client_tls_context(verify: bool = True, *, label: str = "TLS") -> ssl.SSLCon
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     return ctx
+
+
+def session_tls_mode(tls_mode, use_ssl) -> str:
+    """The TLS mode an IMAP, POP3 or LDAP session was given: *tls_mode*
+    (``"tls"``, ``"starttls"`` or ``"plain"``) when named, else
+    *use_ssl*'s (True: implicit TLS, False: plain, as the caller said)."""
+    if tls_mode is None:
+        return "tls" if use_ssl else "plain"
+    mode = str(tls_mode).lower()
+    if mode not in ("tls", "starttls", "plain"):
+        raise ValueError(f"tls_mode must be 'tls', 'starttls' or 'plain', not {tls_mode!r}")
+    return mode

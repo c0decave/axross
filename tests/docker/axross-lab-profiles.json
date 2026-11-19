@@ -129,6 +129,7 @@
     "auth_type": "password",
     "store_password": false,
     "imap_ssl": false,
+    "imap_starttls": false,
     "_password": "imap123"
   },
   "Lab Telnet": {

@@ -162,70 +162,11 @@ def _install_excepthook() -> None:
     sys.excepthook = _hook
 
 
-MCP_HTTP_TOKEN_ENV = "AXROSS_MCP_HTTP_TOKEN"
-
-
-def _parse_mcp_http(value: str) -> tuple[str, int]:
-    """``HOST:PORT`` of --mcp-http as (host, port); an IPv6 host goes in
-    brackets (``[::1]:7331``), an empty host is 127.0.0.1. ValueError
-    with the one-line message otherwise."""
-    if value.startswith("["):
-        host, sep, rest = value[1:].partition("]")
-        if not sep or not rest.startswith(":"):
-            raise ValueError(f"--mcp-http expects [IPV6]:PORT, got {value!r}")
-        port_str = rest[1:]
-    else:
-        if ":" not in value:
-            raise ValueError(f"--mcp-http expects HOST:PORT, got {value!r}")
-        host, _, port_str = value.rpartition(":")
-        if ":" in host:
-            raise ValueError(
-                f"--mcp-http: an IPv6 address goes in brackets ([::1]:7331), got {value!r}"
-            )
-    if not port_str:
-        raise ValueError(f"--mcp-http expects HOST:PORT, got {value!r}")
-    try:
-        port = int(port_str)
-    except ValueError:
-        raise ValueError(f"--mcp-http port {port_str!r} is not an integer") from None
-    # Port 0 means "OS picks an ephemeral port" which is pointless for a
-    # server you want to connect to; negative and >65535 are invalid by
-    # the TCP spec. Reject up-front rather than letting bind() surface a
-    # cryptic error.
-    if not (1 <= port <= 65535):
-        raise ValueError(f"--mcp-http port must be 1..65535, got {port}")
-    return host or "127.0.0.1", port
-
-
-def _mcp_http_token(args, port: int) -> str | None:
-    """The bearer token of an ``--mcp-http`` server.
-
-    Plain HTTP (no mTLS) always gets one: ``$AXROSS_MCP_HTTP_TOKEN`` when
-    set, else a fresh random token. It is written to a 0600 file and
-    shown once on stderr, for the client's ``Authorization: Bearer``
-    header. An mTLS server uses the variable only when it is set."""
-    import secrets
-
-    from core import mcp_http as MH
-
-    token = os.environ.get(MCP_HTTP_TOKEN_ENV, "").strip()
-    if args.mcp_cert and args.mcp_key and args.mcp_ca:
-        return token or None
-    token = token or secrets.token_urlsafe(32)
-    path = MH.publish_token(token, port)
-    print(
-        "MCP HTTP: every request needs the header 'Authorization: Bearer <token>'.\n"
-        f"Token: {token}\n(also in {path}, readable only by you)",
-        file=sys.stderr,
-    )
-    return token
-
-
-def _resolve_mcp_root(backend, raw_root: str | None) -> str:
-    if not raw_root:
-        return backend.home()
-    root = Path(raw_root).expanduser()
-    return str(root.resolve(strict=False))
+# The MCP command line lives in core.mcp_cli (shared with the Qt-free
+# axross-mcp); the names stay here for callers and tests that use them.
+from core.mcp_cli import MCP_HTTP_TOKEN_ENV  # noqa: E402,F401
+from core.mcp_cli import parse_mcp_http as _parse_mcp_http  # noqa: E402,F401
+from core.mcp_cli import resolve_mcp_root as _resolve_mcp_root  # noqa: E402,F401
 
 
 def _gui_smoke_ms() -> int | None:
@@ -519,6 +460,24 @@ def main() -> int:
         from core.svg_worker import _child_main as svg_worker_main
 
         return svg_worker_main()
+    if sys.argv[1:2] == ["--pdf-worker"]:
+        # PDF pages drawn for the media viewer and the thumbnails
+        # (core.pdf_worker starts it): stdin/stdout are its channel.
+        from core.pdf_worker import _child_main as pdf_worker_main
+
+        return pdf_worker_main()
+    if sys.argv[1:2] == ["--image-worker"]:
+        # Pictures decoded for the viewers and the thumbnails
+        # (core.image_worker starts it): stdin/stdout are its channel.
+        from core.image_worker import _child_main as image_worker_main
+
+        return image_worker_main()
+    if sys.argv[1:2] == ["--lex-worker"]:
+        # The editor's syntax highlighting lexed (core.lex_worker starts
+        # it): stdin/stdout are its channel.
+        from core.lex_worker import _child_main as lex_worker_main
+
+        return lex_worker_main()
     if sys.argv[1:] == ["--voice-worker"]:
         # Speech synthesis and recognition for the Agent dock
         # (core.voice_worker starts it): no GUI, stdin/stdout are its channel.
@@ -571,101 +530,9 @@ def _add_mode_arguments(parser: argparse.ArgumentParser) -> None:
         "--mcp-http and --mcp-list-tools.",
     )
     parser.set_defaults(script_args=[])
-    parser.add_argument(
-        "--mcp-server",
-        action="store_true",
-        help="Run as an MCP (Model Context Protocol) server on stdio instead "
-        "of launching the GUI (--mcp-http: over HTTP). Can also be enabled via "
-        "AXROSS_MCP=1.",
-    )
-    parser.add_argument(
-        "--mcp-write",
-        action="store_true",
-        help="When running as an MCP server, expose the nine write tools "
-        "(write_file, mkdir, remove, rename, copy, bulk_copy, symlink, "
-        "hardlink, chmod) and the mutating tools of the --mcp-tools groups. "
-        "Needs --mcp-root. Off by default — read-only is safe.",
-    )
-    parser.add_argument(
-        "--mcp-allow-scripts",
-        action="store_true",
-        help="Expose the script_list/api_schema/read/write/run/delete tools to the "
-        "MCP client. script_run executes arbitrary Python as you (in a "
-        "child process), so this is gated behind its own opt-in (separate from "
-        "--mcp-write). stdio only: refused together with --mcp-http.",
-    )
-    parser.add_argument(
-        "--mcp-allow-exec",
-        action="store_true",
-        help="Serve the exec group (remote_exec, remote_script, exec_backends): "
-        "commands and scripts on remote hosts over SSH, SCP, Telnet, rsh, ADB, "
-        "WinRM and Cisco (show only). Needs --mcp-tools exec (or all); its own "
-        "opt-in, separate from --mcp-write. Refused in the paranoid security mode.",
-    )
-    parser.add_argument(
-        "--mcp-tools",
-        action="append",
-        default=None,
-        metavar="GROUP[,GROUP...]",
-        help="Add optional MCP capability groups on top of the file tools; "
-        "repeatable or comma-separated, also via AXROSS_MCP_TOOLS. Groups: "
-        "metadata, duplicates, packer, archive, crypto, index, filetype, "
-        "transfer, remote, exec, agent, extensions; 'all' is every group. Mutating tools "
-        "of a group additionally need --mcp-write (exec: --mcp-allow-exec). "
-        "Default: no group (the file tools only).",
-    )
-    parser.add_argument(
-        "--mcp-list-tools",
-        action="store_true",
-        help="Print a JSON manifest of the MCP tools that --mcp-server with the "
-        "same --mcp-tools / --mcp-write / --mcp-allow-scripts / --mcp-allow-exec "
-        "flags (and their AXROSS_MCP_* variables) would serve - name, group, "
-        "read-only or mutating, required flags, input schema, timeout class, "
-        "description - and exit without starting a server. docs/mcp-tools.json "
-        "is this output for '--mcp-tools all --mcp-write --mcp-allow-scripts "
-        "--mcp-allow-exec'.",
-    )
-    parser.add_argument(
-        "--mcp-allow-secret-reads",
-        action="store_true",
-        help="Let MCP tools read the contents of secret files: axross's own "
-        "tokens and keys (cloud OAuth tokens, the MCP HTTP token, chat and "
-        "Bluetooth keys, its ADB key) and the private keys in ~/.ssh and "
-        "~/.gnupg. Off by default: read_file, grep, checksum, preview, copies "
-        "and the groups refuse them, whatever --mcp-root says (their names "
-        "are still listed). stdio only: refused together with --mcp-http.",
-    )
-    parser.add_argument(
-        "--mcp-root",
-        default=None,
-        help="Filesystem root exposed to MCP file tools. Defaults to the "
-        "backend home directory.",
-    )
-    parser.add_argument(
-        "--mcp-http",
-        default=None,
-        help="Run the MCP server as HTTP on HOST:PORT (e.g. 127.0.0.1:7331, "
-        "[::1]:7331) instead of stdio; implies --mcp-server. Non-loopback hosts "
-        "require TLS flags; without TLS every request needs the bearer token "
-        "printed at start.",
-    )
-    parser.add_argument(
-        "--mcp-cert",
-        default=None,
-        help="Server certificate file for mTLS (PEM).",
-    )
-    parser.add_argument(
-        "--mcp-key",
-        default=None,
-        help="Server private-key file for mTLS (PEM).",
-    )
-    parser.add_argument(
-        "--mcp-ca",
-        default=None,
-        help="CA bundle that signs valid client certificates. mTLS is "
-        "enabled when all three of --mcp-cert / --mcp-key / --mcp-ca "
-        "are supplied.",
-    )
+    from core.mcp_cli import add_arguments as add_mcp_arguments
+
+    add_mcp_arguments(parser)
 
 
 def _run(args) -> int:
@@ -722,7 +589,6 @@ def _run(args) -> int:
     # path so the server runs on headless machines without a display.
     truthy = _TRUTHY
     mcp_env = os.environ.get("AXROSS_MCP", "").strip().lower()
-    write_env = os.environ.get("AXROSS_MCP_WRITE", "").strip().lower()
     mcp_flags = bool(args.mcp_list_tools or args.mcp_server or args.mcp_http)
     if args.script and mcp_flags:
         print(
@@ -739,153 +605,9 @@ def _run(args) -> int:
         log.info("AXROSS_MCP is set, --script wins: running the script")
     # --mcp-http is a mode of its own (SPEC.md): it implies --mcp-server.
     if mcp_flags or (mcp_env in truthy and not args.script):
-        log.info(
-            "%s Axross MCP server (read-only=%s, http=%s)",
-            "Listing the tools of the" if args.mcp_list_tools else "Starting",
-            not args.mcp_write,
-            bool(args.mcp_http),
-        )
-        _install_excepthook()
-        from core.backend_registry import init_registry
+        from core import mcp_cli
 
-        init_registry()
-        from core import mcp_server as M
-
-        allow_write = args.mcp_write or write_env in truthy
-        from core.security_mode import current_policy
-
-        if args.mcp_allow_scripts and not current_policy().allow_scripts:
-            print(
-                "Security mode 'paranoid' blocks MCP script execution.",
-                file=sys.stderr,
-            )
-            return 2
-        if args.mcp_allow_exec and not current_policy().allow_remote_exec:
-            print(
-                "Security mode 'paranoid' blocks MCP remote command execution.",
-                file=sys.stderr,
-            )
-            return 2
-        if args.mcp_allow_secret_reads and args.mcp_http:
-            # The HTTP transport keeps the secret files out: a network
-            # client reading the SSH keys and cloud tokens is not offered.
-            print(
-                "--mcp-allow-secret-reads is stdio-only: secret files are not "
-                "read over a network transport (--mcp-http).",
-                file=sys.stderr,
-            )
-            return 2
-        if args.mcp_allow_scripts and args.mcp_http:
-            # The HTTP transport never wires the script tools. Accepting
-            # the flag there would let an operator believe scripts are
-            # reachable (or, worse, later wire them by accident) — and
-            # Python execution over a network transport is not offered.
-            print(
-                "--mcp-allow-scripts is stdio-only: script execution over a "
-                "network transport (--mcp-http) is not offered.",
-                file=sys.stderr,
-            )
-            return 2
-        from core import mcp_groups as MG
-
-        try:
-            tool_groups = MG.groups_from(args.mcp_tools, env_value=os.environ.get(MG.ENV_VAR))
-        except MG.GroupError as exc:
-            print(str(exc), file=sys.stderr)
-            return 2
-        if args.mcp_allow_exec and "exec" not in tool_groups:
-            # The flag alone serves nothing: the exec tools are a group.
-            print(
-                "--mcp-allow-exec needs the exec group: add --mcp-tools exec "
-                "(or all, or AXROSS_MCP_TOOLS=exec).",
-                file=sys.stderr,
-            )
-            return 2
-        backend = M.default_backend()
-        if args.mcp_list_tools:
-            # The manifest of exactly what this start would serve; nothing
-            # is served, so the write root is not demanded here.
-            tools = M._build_tools(
-                backend,
-                allow_write=allow_write,
-                root=_resolve_mcp_root(backend, args.mcp_root),
-                allow_scripts=args.mcp_allow_scripts,
-                tool_groups=tool_groups,
-                allow_exec=args.mcp_allow_exec,
-                allow_secret_reads=args.mcp_allow_secret_reads,
-            )
-            manifest = MG.tool_manifest(
-                tools,
-                groups=tool_groups,
-                allow_write=allow_write,
-                allow_scripts=args.mcp_allow_scripts,
-                allow_exec=args.mcp_allow_exec,
-            )
-            sys.stdout.write(MG.manifest_json(manifest))
-            return 0
-        # Default the MCP root to the backend's home() so an LLM
-        # cannot read or write outside what we deliberately exposed
-        # (e.g. read_file("/etc/passwd")). Users who want a wider
-        # surface have to lower the root explicitly.
-        if allow_write and not args.mcp_root:
-            # The default root is $HOME. A writable $HOME lets a
-            # prompt-injected client plant ~/.bashrc, ~/.ssh/authorized_keys
-            # or an autostart entry, which the user then executes.
-            print(
-                "MCP write tools need an explicit --mcp-root DIR: the default "
-                "root (your home directory) is too wide to be writable.",
-                file=sys.stderr,
-            )
-            return 2
-        root = _resolve_mcp_root(backend, args.mcp_root)
-        if args.mcp_root and not os.path.isdir(root):
-            # A typo served an empty tree: every call answered "not found".
-            print(f"--mcp-root {args.mcp_root}: no such directory.", file=sys.stderr)
-            return 2
-        if args.mcp_http:
-            # CLI-usage errors go to stderr regardless of the logging
-            # config - the user may not have --debug on, and a silent
-            # failure with exit 2 is worse than a one-line complaint. A
-            # refusal is one line, never a traceback.
-            try:
-                host, port = _parse_mcp_http(args.mcp_http)
-            except ValueError as exc:
-                print(str(exc), file=sys.stderr)
-                return 2
-            from core import mcp_http as MH
-
-            config = MH.HTTPServerConfig(
-                backend=backend,
-                host=host,
-                port=port,
-                allow_write=allow_write,
-                root=root,
-                cert_file=args.mcp_cert,
-                key_file=args.mcp_key,
-                ca_file=args.mcp_ca,
-                tool_groups=tool_groups,
-                allow_exec=args.mcp_allow_exec,
-            )
-            try:
-                # Refused before a token is handed out for nothing.
-                MH.check_config(config)
-                config.auth_token = _mcp_http_token(args, port)
-                MH.serve_http(config)
-            except (ValueError, OSError) as exc:
-                print(f"--mcp-http {args.mcp_http}: {exc}", file=sys.stderr)
-                return 2
-            return 0
-        return M.serve(
-            M.ServerConfig(
-                backend=backend,
-                allow_write=allow_write,
-                allow_scripts=args.mcp_allow_scripts,
-                root=root,
-                tool_groups=tool_groups,
-                allow_exec=args.mcp_allow_exec,
-                allow_secret_reads=args.mcp_allow_secret_reads,
-            )
-        )
+        return mcp_cli.run(args, install_excepthook=_install_excepthook)
 
     if args.script:
         from core.security_mode import current_policy

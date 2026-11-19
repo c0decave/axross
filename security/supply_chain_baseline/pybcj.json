@@ -4,6 +4,30 @@
   "1.0.8": {
    "accepted_findings": [],
    "archives": {
+    "pybcj-1.0.8-cp312-cp312-macosx_10_13_universal2.whl": {
+     "entry_points": [],
+     "files": {
+      "bcj/__init__.py": "5313e39074d2746a2667f970daff103047a0bb39d61d705570d6083de2a9fccd",
+      "bcj/_bcj.cpython-312-darwin.so": "d35040793ba85d5935d5bce8654efd061fcb50c17d0a7a71deff211208b1b99b",
+      "bcj/_bcjfilter.py": "97ff688a4db80131f297c95200d360f3eab50f78c7f1b44f06c4803e6b889d71",
+      "bcj/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "pybcj-1.0.8.dist-info/METADATA": "44871022ef06368336eb8a108c82bc8d10c50c646fd556f2303cbbd174d27908",
+      "pybcj-1.0.8.dist-info/RECORD": "a0eaaea861bdf8d1bf5ada8a5de4a0dcc340cefabde75c1f426d0b30c15402b1",
+      "pybcj-1.0.8.dist-info/WHEEL": "d02cc4a2accf6c2e88d09e7f6a44a176cd940efa5de04a484c017a67a35998cb",
+      "pybcj-1.0.8.dist-info/licenses/LICENSE": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551",
+      "pybcj-1.0.8.dist-info/scm_file_list.json": "d589dc806bd7019e57e607d6e170f4fe3453bfa9dc7aa387a5a95323905efdaa",
+      "pybcj-1.0.8.dist-info/scm_version.json": "a87b0ceefa89b188280a19ca07e0af02f80c0ee04b0de0bba6c62f43b2ad7d90",
+      "pybcj-1.0.8.dist-info/top_level.txt": "dabd2308a79b76502bebf4d782715062a72406170de8d94add07d6bd95ccf394"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "c22587dfd853c6e28b89c8907c189191a06cb36642a903f9958e6d7eddc2358a",
+     "native": {
+      "bcj/_bcj.cpython-312-darwin.so": "macho-fat"
+     },
+     "pth": {},
+     "sha256": "748af4545040da68dfae8cdf9f902ac7c29f209aaf6450a970abe0302d1b0f58"
+    },
     "pybcj-1.0.8-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
      "entry_points": [],
      "files": {
@@ -27,11 +51,45 @@
      },
      "pth": {},
      "sha256": "a50b58f9b9d9978c55e3219b6816a1021a778b028a810b36aa754407591cb5ae"
+    },
+    "pybcj-1.0.8-cp312-cp312-win_amd64.whl": {
+     "entry_points": [],
+     "files": {
+      "bcj/__init__.py": "26facd2d30d7ce8c7e6a6422f3e01bf2a8bda41fac86e26b877b9e59a8bc1148",
+      "bcj/_bcj.cp312-win_amd64.pyd": "fa5d5f08ac3aa2ce1f4338cf9e862ae8c09228fc219322292aa95a72cf1de2d2",
+      "bcj/_bcjfilter.py": "0fe64e74a36fdf7c1d00c428de27dda34a3af8587054ffebe11f87c735808aca",
+      "bcj/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "pybcj-1.0.8.dist-info/METADATA": "a51499b20c36249c4be988c24610342c17b2d2c8e618262369ab309e7cbb1751",
+      "pybcj-1.0.8.dist-info/RECORD": "822f5e9bfe2e1d3ad71d9a9b87003bc728aa6fd74dc2ba7f1e3191879dc0bb2b",
+      "pybcj-1.0.8.dist-info/WHEEL": "f767fbbf21c4fc6662c119c3d88d39bc24ff4b7f54be4472ba0b980c028e19bf",
+      "pybcj-1.0.8.dist-info/licenses/LICENSE": "1e7e6bae5a5bde32f1ae5a7c37a082d1ab03cf89354f7f936ac40be9e39a6531",
+      "pybcj-1.0.8.dist-info/scm_file_list.json": "d29db9346e8fb856f7d654905bb1cb6dae136ea295303d1b789b64d50d166a15",
+      "pybcj-1.0.8.dist-info/scm_version.json": "bc413df2e9487438fda4ecc3b31d58db1640c3e761bbd4d0f158c074e2b2a8ea",
+      "pybcj-1.0.8.dist-info/top_level.txt": "dabd2308a79b76502bebf4d782715062a72406170de8d94add07d6bd95ccf394"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "274b4a7b00f62197d9294c4a622ef7e8bd33d96f6614b974a5600e7656901e00",
+     "native": {
+      "bcj/_bcj.cp312-win_amd64.pyd": "pe"
+     },
+     "pth": {},
+     "sha256": "26e3e4d287f306996902289fc0e88b36d0fc817802f4fc4537b40a6518726585"
     }
    },
    "name": "pybcj",
    "provenance": {
+    "pybcj-1.0.8-cp312-cp312-macosx_10_13_universal2.whl": {
+     "kind": "GitHub",
+     "repository": "miurahr/pybcj",
+     "workflow": "publish-to-pypi.yml"
+    },
     "pybcj-1.0.8-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "kind": "GitHub",
+     "repository": "miurahr/pybcj",
+     "workflow": "publish-to-pypi.yml"
+    },
+    "pybcj-1.0.8-cp312-cp312-win_amd64.whl": {
      "kind": "GitHub",
      "repository": "miurahr/pybcj",
      "workflow": "publish-to-pypi.yml"
@@ -50,8 +108,15 @@
    },
    "reviewed": {
     "by": "claude",
-    "date": "2026-11-05",
-    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 native binaries profiled, none with network/process imports or addresses; attestation verifies (miurahr/pybcj)."
+    "date": "2026-11-20",
+    "earlier": [
+     {
+      "by": "claude",
+      "date": "2026-11-05",
+      "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 native binaries profiled, none with network/process imports or addresses; attestation verifies (miurahr/pybcj)."
+     }
+    ],
+    "note": "macOS universal2 and Windows amd64 wheels of the reviewed version: same 11 members, only _bcj differs; scm_file_list.json lists the same files (macOS in another order, Windows with backslashes); Windows Python CRLF only. No finding, no .pth, no hook, no network/process imports. Attestations verify, same publisher (miurahr/pybcj publish-to-pypi.yml)."
    },
    "scans": {
     "capa": {
@@ -69,6 +134,41 @@
        "needed": [
         "libc.so.6",
         "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "d35040793ba85d5935d5bce8654efd061fcb50c17d0a7a71deff211208b1b99b": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "bcj/_bcj.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "fa5d5f08ac3aa2ce1f4338cf9e862ae8c09228fc219322292aa95a72cf1de2d2": {
+      "capabilities": [
+       "contain loop",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "bcj/_bcj.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "python312.dll"
        ],
        "rpath": [],
        "urls": []

@@ -27,6 +27,7 @@ from core import extensions as EX
 from core.i18n import tr
 from ui.close_corner import add_close_corner
 from ui.icon_provider import set_window_icon
+from ui.plain_text import plain_tooltip
 
 _COLUMNS = ("On", "Name", "Version", "Source", "Description", "Status")
 
@@ -123,7 +124,9 @@ class _ExtensionsForm:
                 cells = (info.name, info.version, info.source, info.description, status)
                 for col, text in enumerate(cells, start=1):
                     item = QTableWidgetItem(text)
-                    item.setToolTip(f"{info.path}\n{text}" if col == 1 else text)
+                    # Manifest text is the extension author's: shown as
+                    # written, never as markup (ui.plain_text).
+                    item.setToolTip(plain_tooltip(f"{info.path}\n{text}" if col == 1 else text))
                     self.table.setItem(row, col, item)
         finally:
             self._filling = False

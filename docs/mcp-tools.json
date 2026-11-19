@@ -150,7 +150,12 @@
       ]
     }
   },
-  "protocol_version": "2024-11-05",
+  "protocol_version": "2025-11-25",
+  "protocol_versions": [
+    "2025-11-25",
+    "2025-06-18",
+    "2024-11-05"
+  ],
   "server": "axross-mcp",
   "timeout_classes": {
     "long": 1800.0,
@@ -163,6 +168,13 @@
   },
   "tools": [
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "List folder"
+      },
       "description": "List entries in a directory on the configured backend.",
       "group": "core",
       "input_schema": {
@@ -173,6 +185,10 @@
           },
           "path": {
             "description": "Absolute path on the backend.",
+            "type": "string"
+          },
+          "path_b64": {
+            "description": "Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).",
             "type": "string"
           }
         },
@@ -186,12 +202,20 @@
       "required_flags": [],
       "timeout_class": "quick",
       "timeout_seconds": 15.0,
+      "title": "List folder",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "File details"
+      },
       "description": "Return name, type, size, and mtime for one path.",
       "group": "core",
       "input_schema": {
@@ -202,6 +226,10 @@
           },
           "path": {
             "type": "string"
+          },
+          "path_b64": {
+            "description": "Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).",
+            "type": "string"
           }
         },
         "required": [
@@ -211,15 +239,51 @@
       },
       "mutating": false,
       "name": "stat",
+      "output_schema": {
+        "properties": {
+          "is_dir": {
+            "type": "boolean"
+          },
+          "modified": {
+            "description": "ISO 8601, or null",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "size": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "is_dir",
+          "size",
+          "modified"
+        ],
+        "type": "object"
+      },
       "required_flags": [],
       "timeout_class": "quick",
       "timeout_seconds": 15.0,
+      "title": "File details",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Read file"
+      },
       "description": "Read up to max_bytes (default 4 MiB) from a file, from byte offset on (default 0). Returns {content_b64, size, truncated} - or with encoding='text' {text, size, truncated, replaced}: UTF-8, undecodable bytes replaced (replaced=true). truncated=true when more follows; then next_offset is where to continue (also given with an offset).",
       "group": "core",
       "input_schema": {
@@ -248,6 +312,10 @@
           },
           "path": {
             "type": "string"
+          },
+          "path_b64": {
+            "description": "Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).",
+            "type": "string"
           }
         },
         "required": [
@@ -257,15 +325,60 @@
       },
       "mutating": false,
       "name": "read_file",
+      "output_schema": {
+        "properties": {
+          "content_b64": {
+            "description": "the bytes (encoding=base64)",
+            "type": "string"
+          },
+          "next_offset": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "offset": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "replaced": {
+            "description": "text: undecodable bytes replaced",
+            "type": "boolean"
+          },
+          "size": {
+            "description": "bytes read",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "text": {
+            "description": "the text (encoding=text)",
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "size",
+          "truncated"
+        ],
+        "type": "object"
+      },
       "required_flags": [],
       "timeout_class": "quick",
       "timeout_seconds": 15.0,
+      "title": "Read file",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "File checksum"
+      },
       "description": "Content hash of a file. Tries the backend's native fingerprint first (S3 ETag, Drive md5Checksum, ssh sha256sum, etc.); falls back to streaming the file through hashlib when the backend has no cheap hash. The streaming fallback emits MCP progress notifications every few MiB when the caller supplied _meta.progressToken, and stops within one chunk of a notifications/cancelled. algorithm must be one of sha256 / sha1 / md5 / sha512 — backend-specific hash names (etag, dropbox, quickxor) are rejected.",
       "group": "core",
       "input_schema": {
@@ -285,6 +398,10 @@
           },
           "path": {
             "type": "string"
+          },
+          "path_b64": {
+            "description": "Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).",
+            "type": "string"
           }
         },
         "required": [
@@ -294,16 +411,47 @@
       },
       "mutating": false,
       "name": "checksum",
+      "output_schema": {
+        "properties": {
+          "algorithm": {
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "native",
+              "stream"
+            ],
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "algorithm",
+          "source"
+        ],
+        "type": "object"
+      },
       "required_flags": [],
       "timeout_class": "stream",
       "timeout_seconds": 300.0,
+      "title": "File checksum",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
-      "description": "Search the offline metadata index by name substring, extension, and size range. Free of network round-trips.",
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Search the file index"
+      },
+      "description": "Search the offline metadata index by name substring, extension, and size range. Free of network round-trips. At most limit results (default 1000, at most 10000): ask for one more than you need to learn whether there are more. A notifications/cancelled stops it.",
       "group": "core",
       "input_schema": {
         "properties": {
@@ -313,6 +461,11 @@
           },
           "ext": {
             "type": "string"
+          },
+          "limit": {
+            "maximum": 10000,
+            "minimum": 1,
+            "type": "integer"
           },
           "max_size": {
             "minimum": 0,
@@ -333,13 +486,21 @@
       "required_flags": [],
       "timeout_class": "quick",
       "timeout_seconds": 15.0,
+      "title": "Search the file index",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
-      "description": "Breadth-first recursive listing under path. Caps at max_depth (default 4) and max_entries (default 1000). Returns {entries: [{path, name, is_dir, size}], truncated, unreadable: [{path, error}], complete}: unreadable names every folder below path that could not be listed; complete is true only when nothing was cut or left out. An unreadable path itself is an error. Emits MCP progress notifications when the caller supplied _meta.progressToken.",
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Walk folder tree"
+      },
+      "description": "Breadth-first recursive listing under path. Caps at max_depth (default 4, at most 64) and max_entries (default 1000, at most 100000). Returns {entries: [{path, name, is_dir, size}], truncated, unreadable: [{path, error}], complete}: unreadable names every folder below path that could not be listed; complete is true only when nothing was cut or left out. An unreadable path itself is an error. Emits MCP progress notifications when the caller supplied _meta.progressToken.",
       "group": "core",
       "input_schema": {
         "properties": {
@@ -348,14 +509,20 @@
             "type": "string"
           },
           "max_depth": {
+            "maximum": 64,
             "minimum": 0,
             "type": "integer"
           },
           "max_entries": {
+            "maximum": 100000,
             "minimum": 1,
             "type": "integer"
           },
           "path": {
+            "type": "string"
+          },
+          "path_b64": {
+            "description": "Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).",
             "type": "string"
           }
         },
@@ -366,16 +533,86 @@
       },
       "mutating": false,
       "name": "walk",
+      "output_schema": {
+        "properties": {
+          "complete": {
+            "type": "boolean"
+          },
+          "entries": {
+            "items": {
+              "properties": {
+                "is_dir": {
+                  "type": "boolean"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "size": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "path",
+                "name",
+                "is_dir",
+                "size"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "unreadable": {
+            "items": {
+              "properties": {
+                "error": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "error"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "entries",
+          "truncated",
+          "unreadable",
+          "complete"
+        ],
+        "type": "object"
+      },
       "required_flags": [],
       "timeout_class": "walk",
       "timeout_seconds": 60.0,
+      "title": "Walk folder tree",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
-      "description": "Hash every file under path breadth-first. Each record is either {path, size, algorithm, checksum, source} (hashed), {path, size, algorithm, skipped: \"too-large\"} (file above max_file_bytes), or {path, size, algorithm, error: \"<msg>\"} (backend refused that one file), or {path, folder: true, algorithm, error} (a folder that could not be listed: the files below it are missing). complete is true only when every file was hashed and nothing was cut; an unreadable path itself is an error. Emits one progress notification per hashed file; a notifications/cancelled lands within one chunk of the current file. algorithm is one of sha256 / sha1 / md5 / sha512. Defaults: max_files=500, max_depth=10, max_file_bytes=1 GiB. If path names a file instead of a directory the result contains exactly one record.",
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Checksum folder tree"
+      },
+      "description": "Hash every file under path breadth-first. Each record is either {path, size, algorithm, checksum, source} (hashed), {path, size, algorithm, skipped: \"too-large\"} (file above max_file_bytes), or {path, size, algorithm, error: \"<msg>\"} (backend refused that one file), or {path, folder: true, algorithm, error} (a folder that could not be listed: the files below it are missing). complete is true only when every file was hashed and nothing was cut; an unreadable path itself is an error. Emits one progress notification per hashed file; a notifications/cancelled lands within one chunk of the current file. algorithm is one of sha256 / sha1 / md5 / sha512. Defaults: max_files=500, max_depth=10, max_file_bytes=1 GiB (at most max_files=50000, max_depth=64). If path names a file instead of a directory the result contains exactly one record.",
       "group": "core",
       "input_schema": {
         "properties": {
@@ -393,6 +630,7 @@
             "type": "string"
           },
           "max_depth": {
+            "maximum": 64,
             "minimum": 0,
             "type": "integer"
           },
@@ -401,10 +639,15 @@
             "type": "integer"
           },
           "max_files": {
+            "maximum": 50000,
             "minimum": 1,
             "type": "integer"
           },
           "path": {
+            "type": "string"
+          },
+          "path_b64": {
+            "description": "Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).",
             "type": "string"
           }
         },
@@ -418,12 +661,20 @@
       "required_flags": [],
       "timeout_class": "stream",
       "timeout_seconds": 300.0,
+      "title": "Checksum folder tree",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Image thumbnail"
+      },
       "description": "Render a thumbnail of an image file. Returns MCP image content (base64 + mimeType). edge (default 256) is clamped to [16, 2048]. MIME allow-list + size/dimension caps from core.previews apply. Local backends only.",
       "group": "core",
       "input_schema": {
@@ -439,6 +690,10 @@
           },
           "path": {
             "type": "string"
+          },
+          "path_b64": {
+            "description": "Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).",
+            "type": "string"
           }
         },
         "required": [
@@ -451,12 +706,20 @@
       "required_flags": [],
       "timeout_class": "preview",
       "timeout_seconds": 30.0,
+      "title": "Image thumbnail",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Search file contents"
+      },
       "description": "Regex search inside file contents under a root path. Recurses up to max_depth (default 2); skips files larger than 4 MiB. Returns {matches: up to max_matches (default 100, ceiling 500) {path, line_no, line}, files_scanned, truncated, unreadable: [{path, error}] (folders and files that could not be read), complete}. No match with complete=false is no answer. An unreadable path itself is an error. Cooperates with notifications/cancelled.",
       "group": "core",
       "input_schema": {
@@ -476,6 +739,10 @@
           "path": {
             "type": "string"
           },
+          "path_b64": {
+            "description": "Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).",
+            "type": "string"
+          },
           "pattern": {
             "type": "string"
           }
@@ -490,12 +757,20 @@
       "required_flags": [],
       "timeout_class": "walk",
       "timeout_seconds": 60.0,
+      "title": "Search file contents",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "List file versions"
+      },
       "description": "List historical versions of a file (S3 ObjectVersions, Dropbox revisions, GDrive revision-history, Azure blob snapshots, WebDAV DeltaV, Git: one per commit that changed the file). Empty list on backends with no native versioning.",
       "group": "core",
       "input_schema": {
@@ -505,6 +780,10 @@
             "type": "string"
           },
           "path": {
+            "type": "string"
+          },
+          "path_b64": {
+            "description": "Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).",
             "type": "string"
           }
         },
@@ -518,12 +797,20 @@
       "required_flags": [],
       "timeout_class": "quick",
       "timeout_seconds": 15.0,
+      "title": "List file versions",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Read file version"
+      },
       "description": "Read a specific historical version of a file. Same max_bytes cap (default 4 MiB) as read_file. version_id comes from list_versions.",
       "group": "core",
       "input_schema": {
@@ -537,6 +824,10 @@
             "type": "integer"
           },
           "path": {
+            "type": "string"
+          },
+          "path_b64": {
+            "description": "Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).",
             "type": "string"
           },
           "version_id": {
@@ -554,12 +845,20 @@
       "required_flags": [],
       "timeout_class": "quick",
       "timeout_seconds": 15.0,
+      "title": "Read file version",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Write file"
+      },
       "description": "Overwrite a file with content (UTF-8 text) or content_b64 (base64 bytes) - exactly one of them. Returns {size}.",
       "group": "write",
       "input_schema": {
@@ -578,6 +877,10 @@
           },
           "path": {
             "type": "string"
+          },
+          "path_b64": {
+            "description": "Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).",
+            "type": "string"
           }
         },
         "required": [
@@ -593,12 +896,20 @@
       ],
       "timeout_class": "write",
       "timeout_seconds": 30.0,
+      "title": "Write file",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Create folder"
+      },
       "description": "Create a directory on the backend.",
       "group": "write",
       "input_schema": {
@@ -608,6 +919,10 @@
             "type": "string"
           },
           "path": {
+            "type": "string"
+          },
+          "path_b64": {
+            "description": "Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).",
             "type": "string"
           }
         },
@@ -624,12 +939,20 @@
       ],
       "timeout_class": "write",
       "timeout_seconds": 30.0,
+      "title": "Create folder",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Delete file or folder"
+      },
       "description": "Delete a file or directory.",
       "group": "write",
       "input_schema": {
@@ -639,6 +962,10 @@
             "type": "string"
           },
           "path": {
+            "type": "string"
+          },
+          "path_b64": {
+            "description": "Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).",
             "type": "string"
           },
           "recursive": {
@@ -658,12 +985,20 @@
       ],
       "timeout_class": "write",
       "timeout_seconds": 30.0,
+      "title": "Delete file or folder",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Move or rename"
+      },
       "description": "Move/rename a file or directory. Both src and dst must live under the configured root.",
       "group": "write",
       "input_schema": {
@@ -675,7 +1010,15 @@
           "dst": {
             "type": "string"
           },
+          "dst_b64": {
+            "description": "Instead of dst: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a dst_b64 / name_b64 field).",
+            "type": "string"
+          },
           "src": {
+            "type": "string"
+          },
+          "src_b64": {
+            "description": "Instead of src: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a src_b64 / name_b64 field).",
             "type": "string"
           }
         },
@@ -693,12 +1036,20 @@
       ],
       "timeout_class": "write",
       "timeout_seconds": 30.0,
+      "title": "Move or rename",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Copy (server-side)"
+      },
       "description": "Server-side copy of src to dst. Uses the backend's native copy primitive (S3 CopyObject, WebDAV COPY, shell cp) where available — no client-side streaming.",
       "group": "write",
       "input_schema": {
@@ -710,7 +1061,15 @@
           "dst": {
             "type": "string"
           },
+          "dst_b64": {
+            "description": "Instead of dst: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a dst_b64 / name_b64 field).",
+            "type": "string"
+          },
           "src": {
+            "type": "string"
+          },
+          "src_b64": {
+            "description": "Instead of src: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a src_b64 / name_b64 field).",
             "type": "string"
           }
         },
@@ -728,13 +1087,21 @@
       ],
       "timeout_class": "write",
       "timeout_seconds": 30.0,
+      "title": "Copy (server-side)",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
-      "description": "Copy a file OR directory tree from src into dst. Per-file records: {src, dst, size, action} where action is \"copied\", \"skipped\" (reason: \"too-large\", \"exists\", \"unsafe-name\", or \"max-depth\" for a folder below max_depth), or \"error\" (folder: true for a folder that could not be listed). \"truncated\" is true when max_files or max_depth cut the walk; \"complete\" is true only when every file was copied or already existed. Emits one progress notification per copied file; a notifications/cancelled stops within one file. Defaults: max_files=1000, max_depth=10, max_file_bytes=10 GiB, overwrite=false. Missing dst parent directories are created automatically. Same-backend only in V1 — cross-backend copy is handled by the transfer manager, not the MCP surface.",
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Copy folder tree"
+      },
+      "description": "Copy a file OR directory tree from src into dst. Per-file records: {src, dst, size, action} where action is \"copied\", \"skipped\" (reason: \"too-large\", \"exists\", \"unsafe-name\", or \"max-depth\" for a folder below max_depth), or \"error\" (folder: true for a folder that could not be listed). \"truncated\" is true when max_files or max_depth cut the walk; \"complete\" is true only when every file was copied or already existed. Emits one progress notification per copied file; a notifications/cancelled stops within one file. Defaults: max_files=1000, max_depth=10, max_file_bytes=10 GiB, overwrite=false (at most max_files=100000, max_depth=64). Missing dst parent directories are created automatically. Same-backend only in V1 — cross-backend copy is handled by the transfer manager, not the MCP surface.",
       "group": "write",
       "input_schema": {
         "properties": {
@@ -745,7 +1112,12 @@
           "dst": {
             "type": "string"
           },
+          "dst_b64": {
+            "description": "Instead of dst: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a dst_b64 / name_b64 field).",
+            "type": "string"
+          },
           "max_depth": {
+            "maximum": 64,
             "minimum": 0,
             "type": "integer"
           },
@@ -754,6 +1126,7 @@
             "type": "integer"
           },
           "max_files": {
+            "maximum": 100000,
             "minimum": 1,
             "type": "integer"
           },
@@ -761,6 +1134,10 @@
             "type": "boolean"
           },
           "src": {
+            "type": "string"
+          },
+          "src_b64": {
+            "description": "Instead of src: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a src_b64 / name_b64 field).",
             "type": "string"
           }
         },
@@ -778,12 +1155,20 @@
       ],
       "timeout_class": "stream",
       "timeout_seconds": 300.0,
+      "title": "Copy folder tree",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Create symbolic link"
+      },
       "description": "Create a symbolic link. target may point anywhere the backend permits (dangling links are allowed); link_path is capped to the MCP root. Raises on backends without symlink support (S3, cloud stores).",
       "group": "write",
       "input_schema": {
@@ -795,7 +1180,15 @@
           "link_path": {
             "type": "string"
           },
+          "link_path_b64": {
+            "description": "Instead of link_path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a link_path_b64 / name_b64 field).",
+            "type": "string"
+          },
           "target": {
+            "type": "string"
+          },
+          "target_b64": {
+            "description": "Instead of target: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a target_b64 / name_b64 field).",
             "type": "string"
           }
         },
@@ -813,12 +1206,20 @@
       ],
       "timeout_class": "write",
       "timeout_seconds": 30.0,
+      "title": "Create symbolic link",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Create hard link"
+      },
       "description": "Create a hard link (second name for the same inode). Cross-device errors surface as the backend's OSError. Most protocols refuse — POSIX/SSH only.",
       "group": "write",
       "input_schema": {
@@ -830,7 +1231,15 @@
           "link_path": {
             "type": "string"
           },
+          "link_path_b64": {
+            "description": "Instead of link_path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a link_path_b64 / name_b64 field).",
+            "type": "string"
+          },
           "target": {
+            "type": "string"
+          },
+          "target_b64": {
+            "description": "Instead of target: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a target_b64 / name_b64 field).",
             "type": "string"
           }
         },
@@ -848,12 +1257,20 @@
       ],
       "timeout_class": "write",
       "timeout_seconds": 30.0,
+      "title": "Create hard link",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Change permissions"
+      },
       "description": "Change POSIX mode bits. Accepts integer (420 for 0o644) or octal-string (\"0o644\" / \"644\"). Backends without POSIX bits (S3, WebDAV, etc.) raise.",
       "group": "write",
       "input_schema": {
@@ -876,6 +1293,10 @@
           },
           "path": {
             "type": "string"
+          },
+          "path_b64": {
+            "description": "Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).",
+            "type": "string"
           }
         },
         "required": [
@@ -892,12 +1313,20 @@
       ],
       "timeout_class": "write",
       "timeout_seconds": 30.0,
+      "title": "Change permissions",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "List scripts"
+      },
       "description": "Names of every saved Python script in the server's script directory (~/.config/axross/scripts/).",
       "group": "scripts",
       "input_schema": {
@@ -911,17 +1340,32 @@
       ],
       "timeout_class": "quick",
       "timeout_seconds": 15.0,
+      "title": "List scripts",
       "transports": [
         "stdio"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Scripting API reference"
+      },
       "description": "Describe the ``axross`` scripting API that script_run gives a script, as JSON built from the live code: rules and errors (the conventions and exceptions a script meets), groups (the names by topic), per public function its signature, parameters with types and defaults, return type, whole docstring, examples, ``raises``, ``mutates`` (can change files, remote state or settings) and ``prompts`` (needs a human: under script_run it raises NonInteractiveError unless the script opts in, e.g. confirm(assume_yes=True)); the public classes; the types the API returns (FileItem, results) with fields and methods; the methods every backend session has (with close() and the with statement); and a legend of every field. Same data as axross.api_schema(names) and docs/scripting-api.json. The whole API is large: call it with names=[] for the index, then with the names you need.",
       "group": "scripts",
       "input_schema": {
         "properties": {
           "names": {
             "description": "Only these functions, classes and types, plus the types they use; [] gives the index alone. Default: everything.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "names_b64": {
+            "description": "Instead of names: base64 of each name's raw bytes.",
             "items": {
               "type": "string"
             },
@@ -937,11 +1381,19 @@
       ],
       "timeout_class": "quick",
       "timeout_seconds": 15.0,
+      "title": "Scripting API reference",
       "transports": [
         "stdio"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Read script"
+      },
       "description": "Read the source of a saved script by name. Names are [A-Za-z0-9_-]+; the path is built relative to the server's script directory.",
       "group": "scripts",
       "input_schema": {
@@ -962,11 +1414,19 @@
       ],
       "timeout_class": "quick",
       "timeout_seconds": 15.0,
+      "title": "Read script",
       "transports": [
         "stdio"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Save script"
+      },
       "description": "Save Python source as ``<name>.py`` (mode 0600) in the server's script directory. Overwrites any existing script with the same name.",
       "group": "scripts",
       "input_schema": {
@@ -991,11 +1451,19 @@
       ],
       "timeout_class": "quick",
       "timeout_seconds": 15.0,
+      "title": "Save script",
       "transports": [
         "stdio"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Delete script"
+      },
       "description": "Remove a saved script by name. Idempotent — no error when the file is already gone.",
       "group": "scripts",
       "input_schema": {
@@ -1016,11 +1484,19 @@
       ],
       "timeout_class": "quick",
       "timeout_seconds": 15.0,
+      "title": "Delete script",
       "transports": [
         "stdio"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Run script"
+      },
       "description": "Run a saved script in its own Python process with ``axross`` (the scripting API; see script_api_schema) in its namespace. stdin is empty, so input() gets EOF and axross.confirm() raises NonInteractiveError unless the script passes assume_yes=True. ``args`` become sys.argv[1:]. The run is stopped after ``timeout_s`` seconds, with every process it started. Returns {name, exit, timed_out, duration_ms, stdout, stderr, namespace_keys} and, after an uncaught exception, error_type, error and traceback; exit follows SystemExit (None is 0, an int is itself, anything else is printed and gives 1) and is the negative signal number of a stopped run. stdout and stderr hold up to 1048576 characters each; more stops the run and fails the call.",
       "group": "scripts",
       "input_schema": {
@@ -1056,11 +1532,19 @@
       ],
       "timeout_class": "script",
       "timeout_seconds": 610.0,
+      "title": "Run script",
       "transports": [
         "stdio"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Read file metadata"
+      },
       "description": "Read the metadata of a file or of every supported file in a folder: images (JPEG/PNG/WebP/GIF/TIFF), Office (docx/xlsx/pptx/odt/ods/odp), PDF, audio/video (ffprobe). Returns {path, is_dir, truncated, files: [{path, name, kind, size, error, truncated, removable_count, fields: [{group, name, value, removable}]}]}}. An unsupported or unreadable file is a report with error set, not a failure. Values are length-bounded. Local paths are confined to the MCP root.",
       "group": "metadata",
       "input_schema": {
@@ -1082,6 +1566,10 @@
             "minLength": 1,
             "type": "string"
           },
+          "path_b64": {
+            "description": "Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).",
+            "type": "string"
+          },
           "recursive": {
             "default": false,
             "description": "For a folder: descend into subfolders.",
@@ -1100,12 +1588,20 @@
       ],
       "timeout_class": "stream",
       "timeout_seconds": 300.0,
+      "title": "Read file metadata",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Export file metadata"
+      },
       "description": "The metadata_read data of a file or folder as one text in JSON or CSV. Returns {path, format, files, truncated, text}.",
       "group": "metadata",
       "input_schema": {
@@ -1136,6 +1632,10 @@
             "minLength": 1,
             "type": "string"
           },
+          "path_b64": {
+            "description": "Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).",
+            "type": "string"
+          },
           "recursive": {
             "default": false,
             "description": "For a folder: descend into subfolders.",
@@ -1154,12 +1654,20 @@
       ],
       "timeout_class": "stream",
       "timeout_seconds": 300.0,
+      "title": "Export file metadata",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Export metadata to a file"
+      },
       "description": "Write the metadata_export text of path into the new file out (under the MCP root, mode 0600). An existing file is never overwritten: 'meta.json' becomes 'meta (2).json'. Returns {path (the file written), format, files, truncated, size}.",
       "group": "metadata",
       "input_schema": {
@@ -1190,9 +1698,17 @@
             "minLength": 1,
             "type": "string"
           },
+          "out_b64": {
+            "description": "Instead of out: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a out_b64 / name_b64 field).",
+            "type": "string"
+          },
           "path": {
             "description": "A file, or a folder whose supported files are used.",
             "minLength": 1,
+            "type": "string"
+          },
+          "path_b64": {
+            "description": "Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).",
             "type": "string"
           },
           "recursive": {
@@ -1216,12 +1732,20 @@
       ],
       "timeout_class": "stream",
       "timeout_seconds": 300.0,
+      "title": "Export metadata to a file",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Remove metadata (clean copy)"
+      },
       "description": "Remove the metadata of a file, or of every supported file in a folder, by writing a cleaned copy next to each ('photo.jpg' -> 'photo.clean.jpg', then 'photo.clean (1).jpg'); the original is never modified and nothing is overwritten. Images keep orientation and colour profile, pixels are not re-encoded. PDF removal needs pypdf, audio/video needs ffmpeg (both blocked in the paranoid security mode). Returns {path, mode: 'copy', truncated, results: [{path, status (cleaned|unchanged|unsupported|error), output, removed, error, note, sha256}]}.",
       "group": "metadata",
       "input_schema": {
@@ -1241,6 +1765,10 @@
           "path": {
             "description": "A file, or a folder whose supported files are used.",
             "minLength": 1,
+            "type": "string"
+          },
+          "path_b64": {
+            "description": "Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).",
             "type": "string"
           },
           "recursive": {
@@ -1263,12 +1791,20 @@
       ],
       "timeout_class": "long",
       "timeout_seconds": 1800.0,
+      "title": "Remove metadata (clean copy)",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Scan for duplicates"
+      },
       "description": "Hash every file under a folder into the Duplicate Finder's index (the same index the GUI uses), skipping symlinks, the axross trash and secret files (private keys, tokens); files whose size and mtime did not change are not hashed again unless rehash. Returns {scan_id, root, backend_id, algorithm, files_indexed, status}. One progress notification per file; cancellable (rows indexed so far are kept). Run it before duplicates_groups.",
       "group": "duplicates",
       "input_schema": {
@@ -1289,9 +1825,19 @@
             "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
             "type": "string"
           },
+          "max_files": {
+            "description": "Visit at most this many entries (truncated=true); default 100,000 on a remote, 1,000,000 locally.",
+            "maximum": 1000000,
+            "minimum": 1,
+            "type": "integer"
+          },
           "path": {
             "description": "Folder; default: the MCP root (local backend).",
             "minLength": 1,
+            "type": "string"
+          },
+          "path_b64": {
+            "description": "Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).",
             "type": "string"
           },
           "rehash": {
@@ -1309,12 +1855,20 @@
       ],
       "timeout_class": "long",
       "timeout_seconds": 1800.0,
+      "title": "Scan for duplicates",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "List duplicate scans"
+      },
       "description": "The scan history of the addressed backend, newest first, limited to scans of folders inside the MCP root: {scans: [{scan_id, root, backend_id, algorithm, started_at, finished_at, files_indexed, files_in_index, duplicate_groups, status (complete|cancelled|failed|running), error}], truncated}.",
       "group": "duplicates",
       "input_schema": {
@@ -1334,12 +1888,20 @@
       ],
       "timeout_class": "quick",
       "timeout_seconds": 15.0,
+      "title": "List duplicate scans",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "List duplicate groups"
+      },
       "description": "Groups of identical files from the index, every copy inside path. Each group is {algorithm, value (hash), size, copies: [{path, size, mtime, scan_id, keep}]} in survivor order: the first copy (keep=true) is the oldest by mtime (ties: shorter, then alphabetically first path) and is what duplicates_dedupe keeps. The index is a record of the last scan; nothing is read from the files. Returns {path, groups, truncated}.",
       "group": "duplicates",
       "input_schema": {
@@ -1371,6 +1933,10 @@
             "minLength": 1,
             "type": "string"
           },
+          "path_b64": {
+            "description": "Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).",
+            "type": "string"
+          },
           "scan_id": {
             "description": "Only groups with at least one copy from this scan (duplicates_scans); 0 = rows from before scans were recorded.",
             "maximum": 2147483647,
@@ -1387,12 +1953,20 @@
       ],
       "timeout_class": "quick",
       "timeout_seconds": 15.0,
+      "title": "List duplicate groups",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Move duplicates to trash"
+      },
       "description": "Keep the first copy of every duplicate group inside path and move the others to the axross trash (restorable; for the local backend the trash is <MCP root>/.axross-trash). A dry run unless dry_run=false: the dry run only returns the plan. A real run re-checks every copy on disk first: a copy that changed since the scan, or a group without another verified copy, is reported in refused and left alone. Returns {path, dry_run, groups, undated_groups, keep, trash, removed, refused: [{path, reason}], failed: [{path, reason}], trash_root}.",
       "group": "duplicates",
       "input_schema": {
@@ -1422,6 +1996,10 @@
             "minLength": 1,
             "type": "string"
           },
+          "path_b64": {
+            "description": "Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).",
+            "type": "string"
+          },
           "scan_id": {
             "description": "Only groups with at least one copy from this scan (duplicates_scans); 0 = rows from before scans were recorded.",
             "maximum": 2147483647,
@@ -1440,12 +2018,20 @@
       ],
       "timeout_class": "long",
       "timeout_seconds": 1800.0,
+      "title": "Move duplicates to trash",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "List archive formats"
+      },
       "description": "The archive formats pack can write and whether each is usable here: {formats: [{format, label, suffix, single (exactly one file in), encrypts (takes a password), available, reason}], levels}.",
       "group": "packer",
       "input_schema": {
@@ -1460,12 +2046,20 @@
       ],
       "timeout_class": "quick",
       "timeout_seconds": 15.0,
+      "title": "List archive formats",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Pack archive"
+      },
       "description": "Pack entries of folder into a new archive folder/archive_name + suffix. Folders are packed recursively; symbolic links are skipped and listed in skipped, never followed, and so are secret files (private keys, tokens) and folders that read_file refuses. The archive is written to a temporary file first and an existing archive is never overwritten: 'bundle.zip' becomes 'bundle (2).zip'. Only 7z takes a password (AES-256; encrypt_names also hides the file list); ZIP and tar refuse one. Single-file formats (gz, bz2, xz, zst) take exactly one file. Returns {path, format, files, folders, bytes_in, bytes_out, skipped, encrypted}. One progress notification per file; cancellable (nothing is left behind).",
       "group": "packer",
       "input_schema": {
@@ -1488,6 +2082,10 @@
           "folder": {
             "description": "Folder holding the entries; the archive is created here.",
             "minLength": 1,
+            "type": "string"
+          },
+          "folder_b64": {
+            "description": "Instead of folder: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a folder_b64 / name_b64 field).",
             "type": "string"
           },
           "format": {
@@ -1528,6 +2126,13 @@
             "type": "array",
             "uniqueItems": true
           },
+          "names_b64": {
+            "description": "Instead of names: base64 of each name's raw bytes.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "password": {
             "description": "7z only: encrypt with AES-256. Never logged or returned.",
             "minLength": 1,
@@ -1551,12 +2156,20 @@
       ],
       "timeout_class": "long",
       "timeout_seconds": 1800.0,
+      "title": "Pack archive",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "List archive members"
+      },
       "description": "List an archive's members without extracting anything: {path, total, truncated, entries: [{name, size (uncompressed), compressed, mtime, is_dir}]}. Local backend only.",
       "group": "archive",
       "input_schema": {
@@ -1577,6 +2190,10 @@
             "description": "Archive file (zip family, tar.*, 7z, rar, gz/bz2/xz/zst) on the local backend.",
             "minLength": 1,
             "type": "string"
+          },
+          "path_b64": {
+            "description": "Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).",
+            "type": "string"
           }
         },
         "required": [
@@ -1591,13 +2208,21 @@
       ],
       "timeout_class": "walk",
       "timeout_seconds": 60.0,
+      "title": "List archive members",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
-      "description": "Extract an archive into a new folder named after it inside dest_dir (default: the archive's folder): 'x.zip' -> 'x', then 'x-1', … - an existing folder is never written into. Zip-slip, absolute paths, more than 10,000 entries, more than 1 GiB or a compression ratio above 100 are refused and nothing is left behind. Returns {path (the new folder), files}, plus {skipped_links, note} when symbolic links were left out (they are never extracted). Progress per file; cancellable (the partial folder is removed). Local backend only.",
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Extract archive"
+      },
+      "description": "Extract an archive into a new folder named after it inside dest_dir (default: the archive's folder): 'x.zip' -> 'x', then 'x-1', … - an existing folder is never written into. Zip-slip, absolute paths, more than 10,000 entries, more than 1 GiB or a member of 64 MiB or more compressed above 100:1 are refused and nothing is left behind. Returns {path (the new folder), files}, plus {skipped_links, note} when symbolic links were left out (they are never extracted). Progress per file; cancellable (the partial folder is removed). Local backend only.",
       "group": "archive",
       "input_schema": {
         "additionalProperties": false,
@@ -1611,9 +2236,17 @@
             "minLength": 1,
             "type": "string"
           },
+          "dest_dir_b64": {
+            "description": "Instead of dest_dir: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a dest_dir_b64 / name_b64 field).",
+            "type": "string"
+          },
           "path": {
             "description": "Archive file (zip family, tar.*, 7z, rar, gz/bz2/xz/zst) on the local backend.",
             "minLength": 1,
+            "type": "string"
+          },
+          "path_b64": {
+            "description": "Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).",
             "type": "string"
           }
         },
@@ -1631,12 +2264,20 @@
       ],
       "timeout_class": "long",
       "timeout_seconds": 1800.0,
+      "title": "Extract archive",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Encrypt file"
+      },
       "description": "Encrypt a file (at most 1 GiB) into the axross encrypted-overlay format next to it: 'a.txt' -> 'a.txt.axenc', then 'a.txt (2).axenc' - nothing is overwritten. The plaintext stays in place, as in the GUI. Returns {path (the .axenc file), size, plaintext_size}.",
       "group": "crypto",
       "input_schema": {
@@ -1656,6 +2297,10 @@
             "description": "File to encrypt.",
             "minLength": 1,
             "type": "string"
+          },
+          "path_b64": {
+            "description": "Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).",
+            "type": "string"
           }
         },
         "required": [
@@ -1673,12 +2318,20 @@
       ],
       "timeout_class": "stream",
       "timeout_seconds": 300.0,
+      "title": "Encrypt file",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Decrypt file"
+      },
       "description": "Decrypt an .axenc file into a new file next to it: 'a.txt.axenc' -> 'a.txt', or 'a (2).txt' when that exists (a name without .axenc gets '.decrypted'); mode 0600, nothing is overwritten. A wrong passphrase or a tampered file fails with nothing written. Returns {path (the plaintext file), size}.",
       "group": "crypto",
       "input_schema": {
@@ -1698,6 +2351,10 @@
             "description": "The .axenc file.",
             "minLength": 1,
             "type": "string"
+          },
+          "path_b64": {
+            "description": "Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).",
+            "type": "string"
           }
         },
         "required": [
@@ -1715,12 +2372,20 @@
       ],
       "timeout_class": "stream",
       "timeout_seconds": 300.0,
+      "title": "Decrypt file",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Build the file index"
+      },
       "description": "Walk a folder and record every entry (name, size, type, mtime) in the offline metadata index that the search tool reads - the same index as the GUI's metadata search. Additive; prune=true also drops index rows under the folder whose file no longer exists. Returns {path, backend_id, recursive, indexed, pruned}. One progress notification per entry; cancellable (what was indexed is kept).",
       "group": "index",
       "input_schema": {
@@ -1730,9 +2395,19 @@
             "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
             "type": "string"
           },
+          "max_files": {
+            "description": "Visit at most this many entries (truncated=true); default 100,000 on a remote, 1,000,000 locally.",
+            "maximum": 1000000,
+            "minimum": 1,
+            "type": "integer"
+          },
           "path": {
             "description": "Folder; default: the MCP root (local backend).",
             "minLength": 1,
+            "type": "string"
+          },
+          "path_b64": {
+            "description": "Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).",
             "type": "string"
           },
           "prune": {
@@ -1755,12 +2430,20 @@
       ],
       "timeout_class": "long",
       "timeout_seconds": 1800.0,
+      "title": "Build the file index",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Identify file type"
+      },
       "description": "Identify one file by its content (magic bytes), not its name, and say whether the extension matches. Returns {path, name, kind (file|directory|special|error|timeout|cancelled), description, mime (from the content), extension, extension_mime (what the name claims), verdict (match|mismatch|unknown), mismatch (bool), size, encoding, line_endings, engine, file_command, bytes_read, error}. Never fails for an unreadable file: kind is then error or timeout with error set.",
       "group": "filetype",
       "input_schema": {
@@ -1782,6 +2465,10 @@
             "minLength": 1,
             "type": "string"
           },
+          "path_b64": {
+            "description": "Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).",
+            "type": "string"
+          },
           "use_file_command": {
             "default": true,
             "description": "Also ask file(1) for its description (local files only).",
@@ -1800,12 +2487,20 @@
       ],
       "timeout_class": "quick",
       "timeout_seconds": 15.0,
+      "title": "Identify file type",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Identify file types in a folder"
+      },
       "description": "Identify every file under a folder (breadth-first, symlinks skipped). Returns {path, files_scanned, truncated, entries: [{path, name, kind (file|directory|special|error|timeout|cancelled), description, mime (from the content), extension, extension_mime (what the name claims), verdict (match|mismatch|unknown), mismatch (bool), size, encoding, line_endings, engine, file_command, bytes_read, error}]}; with mismatches_only only files whose content contradicts their extension are listed. One progress notification per file; honours cancellation.",
       "group": "filetype",
       "input_schema": {
@@ -1846,6 +2541,10 @@
             "minLength": 1,
             "type": "string"
           },
+          "path_b64": {
+            "description": "Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).",
+            "type": "string"
+          },
           "use_file_command": {
             "default": true,
             "description": "Also ask file(1) for its description (local files only).",
@@ -1864,13 +2563,21 @@
       ],
       "timeout_class": "stream",
       "timeout_seconds": 300.0,
+      "title": "Identify file types in a folder",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
-      "description": "Copy a file or a folder tree from one backend to another (or within one). Local paths are confined to the MCP root, remote ones are not. Existing destination files are skipped unless overwrite; symlinks are skipped; missing destination folders are created. resumable=true copies each file in 4 MiB segments with a local manifest: a cancelled or failed run continues where it stopped when called again with the same arguments. Returns {src, dst, copied, truncated, complete, entries: [{src, dst, size, action (copied|skipped|error), reason, bytes, resumed_segments, error, folder}]}. Every part left out has a record: reason exists, too-large, symlink, unsafe-name, outside-root or max-depth (also sets truncated); a folder that could not be listed is an error with folder=true. complete is true only when every file was copied or already existed. Progress per file; cancellable.",
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Copy between backends"
+      },
+      "description": "Copy a file or a folder tree from one backend to another (or within one). Local paths are confined to the MCP root, remote ones are not. Existing destination files are skipped unless overwrite; symlinks are skipped; missing destination folders are created. resumable=true copies each file in 4 MiB segments with a local manifest: a cancelled or failed run continues where it stopped when called again with the same arguments. Returns {src, dst, copied, truncated, complete, entries: [{src, dst, size, action (copied|skipped|error), reason, bytes, resumed_segments, error, folder}]}. Every part left out has a record: reason exists, too-large (also when a source sends more than max_file_bytes, whatever size it gave), symlink, special-file (device, FIFO), protected (a protected destination), unsafe-name (control characters too), outside-root or max-depth (also sets truncated); a folder that could not be listed is an error with folder=true. complete is true only when every file was copied or already existed. Local files it creates are mode 0600. Progress per file; cancellable mid-file (the partial file is removed).",
       "group": "transfer",
       "input_schema": {
         "additionalProperties": false,
@@ -1878,6 +2585,10 @@
           "dst": {
             "description": "Destination path on dst_backend (the file, or the folder that becomes the copy of a source folder).",
             "minLength": 1,
+            "type": "string"
+          },
+          "dst_b64": {
+            "description": "Instead of dst: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a dst_b64 / name_b64 field).",
             "type": "string"
           },
           "dst_backend": {
@@ -1922,6 +2633,10 @@
             "minLength": 1,
             "type": "string"
           },
+          "src_b64": {
+            "description": "Instead of src: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a src_b64 / name_b64 field).",
+            "type": "string"
+          },
           "src_backend": {
             "default": "local",
             "description": "Backend id of the source (list_backends); 'local' is the local file system under the MCP root.",
@@ -1944,12 +2659,20 @@
       ],
       "timeout_class": "long",
       "timeout_seconds": 1800.0,
+      "title": "Copy between backends",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Move between backends"
+      },
       "description": "Move one file to another backend (copy, then delete the source; the copy is removed again if the source cannot be deleted) or within one backend (rename). An existing destination is refused. Returns {src, dst, bytes}.",
       "group": "transfer",
       "input_schema": {
@@ -1958,6 +2681,10 @@
           "dst": {
             "description": "Destination path on dst_backend (the file, or the folder that becomes the copy of a source folder).",
             "minLength": 1,
+            "type": "string"
+          },
+          "dst_b64": {
+            "description": "Instead of dst: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a dst_b64 / name_b64 field).",
             "type": "string"
           },
           "dst_backend": {
@@ -1969,6 +2696,10 @@
           "src": {
             "description": "Source path on src_backend.",
             "minLength": 1,
+            "type": "string"
+          },
+          "src_b64": {
+            "description": "Instead of src: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a src_b64 / name_b64 field).",
             "type": "string"
           },
           "src_backend": {
@@ -1993,12 +2724,20 @@
       ],
       "timeout_class": "long",
       "timeout_seconds": 1800.0,
+      "title": "Move between backends",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "List connection profiles"
+      },
       "description": "The saved connection profiles, without any secret: {profiles: [{name, protocol, host, port, username, auth_type, store_password, production, open_as (backend id when opened in this session, else null), openable, reason (why remote_open would refuse, else empty)}]}.",
       "group": "remote",
       "input_schema": {
@@ -2013,12 +2752,20 @@
       ],
       "timeout_class": "quick",
       "timeout_seconds": 15.0,
+      "title": "List connection profiles",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Open connection profile"
+      },
       "description": "Connect a saved profile and register it as backend 'profile:<name>' for this session; every other tool then reaches it with backend='profile:<name>'. Credentials come from the keyring when the profile stores them; a profile that would need a prompt (password not stored, SSH host key not yet trusted, browser sign-in) fails with an error instead. --mcp-root does not apply to remote paths. Writing needs --mcp-write, and a production-flagged profile stays read-only. Returns {backend, profile, protocol, class, production, writable, reused}.",
       "group": "remote",
       "input_schema": {
@@ -2042,12 +2789,20 @@
       ],
       "timeout_class": "walk",
       "timeout_seconds": 60.0,
+      "title": "Open connection profile",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Close connection"
+      },
       "description": "Disconnect a profile opened with remote_open in this session. Returns {backend, closed}.",
       "group": "remote",
       "input_schema": {
@@ -2071,12 +2826,20 @@
       ],
       "timeout_class": "quick",
       "timeout_seconds": 15.0,
+      "title": "Close connection",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Run remote command"
+      },
       "description": "Run one command on a remote host (backend = an id from exec_backends) and return {returncode, stdout, stderr, truncated_stdout, truncated_stderr}. A non-zero exit is a result, not an error. Telnet and ADB deliver stderr inside stdout. Cisco: show commands only. WinRM: PowerShell.",
       "group": "exec",
       "input_schema": {
@@ -2130,12 +2893,20 @@
       ],
       "timeout_class": "long",
       "timeout_seconds": 1800.0,
+      "title": "Run remote command",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Run remote script"
+      },
       "description": "Run a script on a remote host: POSIX hosts get it on stdin of sh, bash, python3 or perl with args after it; WinRM hosts run it as PowerShell. Same result as remote_exec.",
       "group": "exec",
       "input_schema": {
@@ -2203,12 +2974,20 @@
       ],
       "timeout_class": "long",
       "timeout_seconds": 1800.0,
+      "title": "Run remote script",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "List command-capable backends"
+      },
       "description": "List the backends that can run commands: {backend, class, kind} with kind posix-shell, powershell or ios-show. Open more with remote_open.",
       "group": "exec",
       "input_schema": {
@@ -2224,12 +3003,20 @@
       ],
       "timeout_class": "quick",
       "timeout_seconds": 15.0,
+      "title": "List command-capable backends",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Ask the user's LLM"
+      },
       "description": "Hand a task to the user's own LLM (the active LLM profile of the axross GUI, or 'profile'). It works with axross' read-only tools inside the MCP root - plus the read-only tools of 'groups' - and returns {answer, stopped, calls, profile, model}. It cannot change files or run commands. Use it to keep file content on the user's machine, e.g. to summarise documents with a local model.",
       "group": "agent",
       "input_schema": {
@@ -2282,12 +3069,20 @@
       ],
       "timeout_class": "long",
       "timeout_seconds": 1800.0,
+      "title": "Ask the user's LLM",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "List extensions"
+      },
       "description": "The installed extensions (user and bundled) and their state, read without importing any of them: {allowed (false in the paranoid security mode), runnable_over_mcp (always false), why_not_runnable, extensions: [{id ('user:<name>' or 'bundled:<name>'), name, version, description, author, source, enabled (switched on in Extensions > Manage Extensions), loadable, error, active (loaded by the GUI: enabled, loadable and allowed)}]}. Extensions are GUI plugins with no headless actions, so none can be run here.",
       "group": "extensions",
       "input_schema": {
@@ -2302,12 +3097,20 @@
       ],
       "timeout_class": "quick",
       "timeout_seconds": 15.0,
+      "title": "List extensions",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Extension details"
+      },
       "description": "One extension by id: {id ('user:<name>' or 'bundled:<name>'), name, version, description, author, source, enabled (switched on in Extensions > Manage Extensions), loadable, error, active (loaded by the GUI: enabled, loadable and allowed)} plus runnable_over_mcp and why_not_runnable.",
       "group": "extensions",
       "input_schema": {
@@ -2331,12 +3134,20 @@
       ],
       "timeout_class": "quick",
       "timeout_seconds": 15.0,
+      "title": "Extension details",
       "transports": [
         "stdio",
         "http"
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "List backends"
+      },
       "description": "List the backend ids: {id, class, name, is_default, remote} per backend; a profile opened with remote_open adds profile, protocol and production. Pass the id via the ``backend`` argument on any other tool to route that call to that backend.",
       "group": "remote",
       "input_schema": {
@@ -2350,6 +3161,7 @@
       ],
       "timeout_class": "quick",
       "timeout_seconds": 15.0,
+      "title": "List backends",
       "transports": [
         "stdio",
         "http"

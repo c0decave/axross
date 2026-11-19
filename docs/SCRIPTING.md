@@ -97,7 +97,9 @@ How a run behaves:
   line shows the exit status and the duration, or *stopped*.
 - A traceback line that points into the script is a link: click it to
   jump to that line in the editor.
-- Closing the window stops a running script. Switching to another
+- Closing the window stops a running script; if axross is killed or
+  crashes, the run ends with it, together with what it started (Linux,
+  macOS). Switching to another
   script, or closing the window, with unsaved edits asks to save,
   discard or cancel.
 - There is no terminal in a separate run: `axross.confirm()` raises
@@ -196,7 +198,7 @@ axross.is_archive("/tmp/x.zip")
 ```python
 axross.list_bookmarks()
 axross.add_bookmark(name="logs", path="/var/log", backend_name="Local")
-axross.remove_bookmark(index)
+axross.remove_bookmark(index)              # as list_bookmarks() lists them; IndexError outside it
 ```
 
 ### Script directory

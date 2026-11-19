@@ -645,13 +645,47 @@ def _recreate_parent(backend, path: str) -> None:
     recreate_parent_folders(backend, path)
 
 
+def _metadata_item_state(item, backend, trash_module=None) -> tuple[str, str]:
+    """``(state, reason)`` of one item of a metadata removal's undo:
+    ``("", "")`` while it can go back, ``("done", why)`` when there is
+    nothing left to do (its original went back, the cleaned copy is gone),
+    ``("changed", why)`` when its file was edited since. ``("", "")`` too
+    when the backend cannot tell (the undo reports the real error)."""
+    from core import trash as real_trash
+
+    trash_module = trash_module or real_trash
+    entry_exists = getattr(trash_module, "entry_exists", None)
+    try:
+        if item.mode == "in_place":
+            if entry_exists is not None and not entry_exists(backend, item.trash_id):
+                return "done", _tr("the kept original of {path} is no longer in the trash "
+                                   "(put back or deleted since)").format(path=item.path)
+            if backend.exists(item.path) and \
+                    real_trash._sha256_of(backend, item.path) != item.sha256:
+                return "changed", _tr("{path} was changed after its metadata was "
+                                      "removed").format(path=item.path)
+            return "", ""
+        if not backend.exists(item.output):
+            return "done", _tr("the cleaned copy {path} is gone").format(path=item.output)
+        if real_trash._sha256_of(backend, item.output) != item.sha256:
+            return "changed", _tr("{path} was changed after it was written").format(
+                path=item.output)
+    except Exception as exc:  # noqa: BLE001 - cannot tell
+        log.debug("undo: cannot check %s: %s", item.path, exc)
+    return "", ""
+
+
 def _restore_metadata(plan: UndoPlan, backend, trash_module) -> str:
     """Every item of a metadata removal back; failures are collected and
     raised together after the rest was done, so one edited file does not
-    keep the others from coming back."""
+    keep the others from coming back. An item with nothing left to do
+    (put back by an earlier, partly failed undo) is passed over."""
     done = 0
     failures: list[str] = []
     for item in plan.items:
+        if _metadata_item_state(item, backend, trash_module)[0] == "done":
+            done += 1
+            continue
         try:
             if item.mode == "in_place":
                 trash_module.restore_over(
@@ -983,6 +1017,14 @@ def gone_reason(plan: UndoPlan, backend, refused: list | None = None) -> str:
         return ""
     if plan.action in _MOVED_ACTIONS:
         return refuse(_moved_gone_reason(plan, backend))
+    if plan.action == "restore_metadata":
+        # Refused every time - an edited file, an emptied trash, all of it
+        # put back already - it hid every older operation from Ctrl+Z.
+        reasons = [_metadata_item_state(item, backend)[1] for item in plan.items]
+        if plan.items and all(reasons):
+            return refuse(reasons[0] if len(reasons) == 1 else _tr(
+                "none of the files can go back: {reason}").format(reason=reasons[0]))
+        return ""
     if plan.action != "restore_from_trash" or not plan.trash_id:
         return ""
     from core import trash as trash_module

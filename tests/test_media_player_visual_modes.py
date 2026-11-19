@@ -184,10 +184,12 @@ def near(a: QColor, b: QColor, tolerance: int = 40) -> bool:
 
 
 def shows_scheme(widget, scheme) -> tuple[bool, bool]:
-    """(the background is there, a bar or peak colour of *scheme* is there)."""
+    """(the background is there, a bar or peak colour of *scheme* is there -
+    as it is, or as flash_safe_colour shows a saturated red)."""
     seen = colours_of(widget)
     background = QColor(scheme.background)
-    anchors = [QColor(c) for c in (scheme.low, scheme.mid, scheme.high, scheme.peak)]
+    anchors = [QColor(f(c)) for c in (scheme.low, scheme.mid, scheme.high, scheme.peak)
+               for f in (str, MP.flash_safe_colour)]
     return (any(c == background for c in seen),
             any(near(c, a) for c in seen if c != background for a in anchors))
 
@@ -357,6 +359,9 @@ class TestOptions:
                 vis.set_option("fps", fps)
                 vis.levels = [1.0] * len(vis.levels)
                 for _ in range(max(1, int(frames))):
+                    # the flash guard's frames of turns a second apart here:
+                    # what is measured is the smoothing alone
+                    vis._flash_seconds += 1.0
                     vis.tick()
                 kept[fps] = vis.levels[0]
             assert abs(kept[30] - 0.85) < 1e-6 and abs(kept[60] - 0.85) < 1e-6

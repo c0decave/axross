@@ -14,6 +14,35 @@ import html
 import re
 
 
+#: line breaks a one-line status folds into a space
+_LINE_BREAKS = re.compile("\r\n|[\r\n\x0b\x0c\x85]")
+
+
+def defused(text: str) -> str:
+    """*text* with what a name may hide shown as the file pane shows it:
+    a control, bidi override or invisible character as U+FFFD
+    (core.remote_name.sanitize_for_display). Line breaks and tabs - the
+    message's own - stay. For messages that quote a name."""
+    from core.remote_name import sanitize_for_display
+
+    if not text:
+        return ""
+    return "\n".join("\t".join(sanitize_for_display(part) for part in line.split("\t"))
+                     for line in text.split("\n"))
+
+
+def one_line(text: str) -> str:
+    """*text* for a one-line status: line breaks are spaces, the rest is
+    :func:`defused` - a name with a bidi override in a status line read
+    reversed ("inv<RLO>fdp.exe" as "invexe.pdf"), one with a line break
+    broke the line."""
+    from core.remote_name import sanitize_for_display
+
+    if not text:
+        return ""
+    return sanitize_for_display(_LINE_BREAKS.sub(" ", text))
+
+
 def plain_tooltip(text: str) -> str:
     """*text* as a tooltip that shows exactly *text*.
 
@@ -22,7 +51,7 @@ def plain_tooltip(text: str) -> str:
     two spaces in a row still reads as that path)."""
     if not text:
         return ""
-    return f"<qt style='white-space:pre-wrap'>{html.escape(text)}</qt>"
+    return f"<qt style='white-space:pre-wrap'>{html.escape(defused(text))}</qt>"
 
 
 def as_written(text: str) -> str:
@@ -32,17 +61,24 @@ def as_written(text: str) -> str:
     which guess the format and cannot be told PlainText: a remote file name
     interpolated into their text was rendered - line breaks, styled fake
     notices and live links (the Checksum and Overwrite questions)."""
-    return f"<qt style='white-space:pre-wrap'>{html.escape(text or '', quote=False)}</qt>"
+    return f"<qt style='white-space:pre-wrap'>{html.escape(defused(text or ''), quote=False)}</qt>"
 
 
 def set_plain(label, text: str | None = None):
     """Make *label* (a QLabel) show its text as plain text - optionally
-    setting *text* - and return it."""
+    setting *text* - and return it. The text is shown as the pane shows a
+    name (:func:`defused`): such labels show what a machine or a server
+    reports (a USB device's product string read reversed with a bidi
+    override in it)."""
     from PyQt6.QtCore import Qt
 
     label.setTextFormat(Qt.TextFormat.PlainText)
-    if text is not None:
-        label.setText(text)
+    if text is None:
+        text = label.text()
+        if defused(text) != text:
+            label.setText(defused(text))
+    else:
+        label.setText(defused(text))
     return label
 
 
@@ -52,7 +88,7 @@ def plain_message(parent, icon, title: str, text: str, buttons=None):
     from PyQt6.QtCore import Qt
     from PyQt6.QtWidgets import QMessageBox
 
-    box = QMessageBox(icon, title, text,
+    box = QMessageBox(icon, title, defused(text),
                       QMessageBox.StandardButton.Ok if buttons is None else buttons, parent)
     box.setTextFormat(Qt.TextFormat.PlainText)
     return box

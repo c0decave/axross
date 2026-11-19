@@ -573,7 +573,13 @@ class Nfs3:
     def readdirplus(self, dir_fh: bytes, dircount: int = 8192, maxcount: int = 65536) -> list[DirEntry]:
         out: list[DirEntry] = []
         cookie, verf = 0, b"\0" * 8
+        asked: set[int] = set()
         for _round in range(MAX_LIST):
+            # A cookie asked for before: the server answers the same page
+            # again (or pages of "." and ".." alone) and never ends.
+            if cookie in asked:
+                raise RpcError(errno.EPROTO, "READDIRPLUS made no progress (a cookie came back)")
+            asked.add(cookie)
             u = self.rpc.call(NFSPROC_READDIRPLUS, Packer().opaque(dir_fh).hyper(cookie).fixed(verf).uint(dircount).uint(maxcount).bytes())
             status = u.uint()
             read_post_op_attr(u)

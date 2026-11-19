@@ -232,8 +232,9 @@ def open_url(url: str, **kwargs: Any) -> FileBackend:
     and S3 over HTTP CONNECT), the proxy is wired into the backend's
     transport. Backends without clean SOCKS/HTTP support log a warning
     instead of silently ignoring the proxy fields. Per-protocol caveats
-    still apply: S3 is HTTP-CONNECT only, and rsync's OpenBSD-nc path
-    cannot carry ``proxy_password``. Requests-based SDK sessions
+    still apply: S3 is HTTP-CONNECT only, and an *address_family* of
+    ``ipv4`` / ``ipv6`` through a proxy needs an IP address as host (the
+    proxy resolves names). Requests-based SDK sessions
     controlled by Axross ignore process-level ``HTTP_PROXY`` /
     ``HTTPS_PROXY`` so the profile/script proxy is the route source of
     truth. OAuth browser consent pages are external and may follow
@@ -274,6 +275,10 @@ def open_url(url: str, **kwargs: Any) -> FileBackend:
     ``gophers://`` opens TLS Gopher, ``nntps://`` opens TLS NNTP,
     ``git+local://`` opens a local Git repository path, and
     ``sftp+key://`` / ``sftp+agent://`` select SSH auth mode.
+    ``imap://``, ``pop3://`` and ``ldap://`` upgrade with STARTTLS before
+    the login and refuse a server without it; ``imaps://``, ``pop3s://``
+    and ``ldaps://`` are implicit TLS; ``imap+plain://``, ``pop3+plain://``
+    and ``ldap+plain://`` the explicit choice of no encryption.
     """
     if not isinstance(url, str) or not url:
         raise TypeError(
@@ -381,6 +386,13 @@ def open_url(url: str, **kwargs: Any) -> FileBackend:
     elif raw_scheme in {"nntps", "nntp+ssl"}:
         init_kwargs.setdefault("use_tls", True)
         init_kwargs.setdefault("port", parts.port or 563)
+    elif proto_id == "ldap" and "use_tls" not in init_kwargs:
+        # ldap:// binds after StartTLS (refused without it), ldaps:// is
+        # implicit TLS on 636, ldap+plain:// the explicit choice of plain.
+        mode = {"ldaps": "tls", "ldap+ssl": "tls", "ldap+plain": "plain"}.get(raw_scheme, "starttls")
+        init_kwargs.setdefault("tls_mode", mode)
+        if mode == "tls" and not parts.port and "port" not in kwargs:
+            init_kwargs["port"] = 636
     suppress_url = False
     if proto_id == "git" and raw_scheme == "git+local":
         init_kwargs.setdefault("path", _unquote(parts.path or ""))
@@ -465,10 +477,12 @@ def _scheme_to_protocol(raw_scheme: str) -> str:
         return "gopher"
     if scheme.startswith("git+"):
         return "git"
-    if scheme in {"imaps", "imap+ssl"}:
+    if scheme in {"imaps", "imap+ssl", "imap+starttls", "imap+plain"}:
         return "imap"
-    if scheme in {"pop3s", "pop3+ssl"}:
+    if scheme in {"pop3s", "pop3+ssl", "pop3+starttls", "pop3+plain"}:
         return "pop3"
+    if scheme in {"ldaps", "ldap+ssl", "ldap+starttls", "ldap+plain"}:
+        return "ldap"
     if scheme in {"nntps", "nntp+ssl"}:
         return "nntp"
     if scheme in {"sftp+key", "sftp+agent"}:
@@ -527,6 +541,17 @@ def _cm_protocols() -> frozenset[str]:
         "pjl",
         "cisco-telnet",
         "winrm",
+        # Opened from a profile since they are in Connect to Server; a URL
+        # (postgres://, rediss://, git+local://, a SQLite path, ...) and
+        # their keyword arguments go to the constructor as before.
+        "sqlite",
+        "postgres",
+        "redis",
+        "mongodb",
+        "git",
+        "ldap",
+        "slp",
+        "exchange",
     }
     return frozenset(set(VALID_PROTOCOLS) - direct_is_better)
 
@@ -556,9 +581,9 @@ def _open_url_via_cm(
         port = explicit_port
     elif parts.port:
         port = parts.port
-    elif proto_id == "imap" and raw_scheme in {"imap", "imap+plain"}:
+    elif proto_id == "imap" and raw_scheme in {"imap", "imap+plain", "imap+starttls"}:
         port = 143
-    elif proto_id == "pop3" and raw_scheme in {"pop3", "pop3+plain"}:
+    elif proto_id == "pop3" and raw_scheme in {"pop3", "pop3+plain", "pop3+starttls"}:
         port = 110
     else:
         port = default_port or 0
@@ -630,16 +655,14 @@ def _open_url_via_cm(
             version = str(kwargs.pop("nfs_version"))   # 3, 4, "4.0" or "4.1"
             profile.nfs_version = 4 if version.startswith("4") else int(version)
             profile.nfs_minor = 1 if version == "4.1" else 0
-    elif proto_id == "imap":
-        if raw_scheme in {"imap", "imap+plain"}:
-            profile.imap_ssl = bool(kwargs.pop("imap_ssl", False))
-        else:
-            profile.imap_ssl = bool(kwargs.pop("imap_ssl", True))
-    elif proto_id == "pop3":
-        if raw_scheme in {"pop3", "pop3+plain"}:
-            profile.pop3_ssl = bool(kwargs.pop("pop3_ssl", False))
-        else:
-            profile.pop3_ssl = bool(kwargs.pop("pop3_ssl", True))
+    elif proto_id in ("imap", "pop3"):
+        # imap:// pop3:// ldap:// upgrade with STARTTLS before the login
+        # (refused without it); +plain is the explicit choice of plain
+        # text; imaps:// pop3s:// ldaps:// (or +ssl) are implicit TLS.
+        implicit = raw_scheme in {f"{proto_id}s", f"{proto_id}+ssl"}
+        setattr(profile, f"{proto_id}_ssl", bool(kwargs.pop(f"{proto_id}_ssl", implicit)))
+        setattr(profile, f"{proto_id}_starttls",
+                bool(kwargs.pop(f"{proto_id}_starttls", raw_scheme != f"{proto_id}+plain")))
     elif proto_id == "adb":
         profile.adb_mode = kwargs.pop("adb_mode", "tcp")
         profile.adb_usb_serial = kwargs.pop("adb_usb_serial", "")
@@ -942,7 +965,13 @@ def move(
     log.info("axross.move cross-backend: %s:%s -> %s:%s", src_label, src_path, dst_label, dst_path)
     from contextlib import ExitStack
 
-    from core.server_ops import refuse_changed_source, refuse_short_copy, source_size
+    from core.server_ops import (
+        local_source_state,
+        refuse_changed_local_source,
+        refuse_changed_source,
+        refuse_short_copy,
+        source_size,
+    )
 
     with ExitStack() as gates:
         gates.enter_context(
@@ -960,6 +989,7 @@ def move(
         # Compared after the copy: data written to the source meanwhile
         # would otherwise be deleted with it and be in neither place.
         size_before = source_size(src_backend, src_path)
+        local_before = local_source_state(src_backend, src_path)
         transferred = copy(
             src_backend,
             src_path,
@@ -970,6 +1000,7 @@ def move(
         try:
             refuse_short_copy(src_path, size_before, transferred, dst_path)
             refuse_changed_source(src_backend, src_path, size_before, dst_path)
+            refuse_changed_local_source(src_backend, src_path, local_before, dst_path)
             src_backend.remove(src_path)
         except OSError as exc:
             log.warning(
@@ -1391,10 +1422,12 @@ def add_bookmark(
     profile_name: str = "",
     icon_name: str = "bookmark",
 ) -> None:
-    """Create a new bookmark. Idempotent on (path, backend_name)."""
+    """Create a new bookmark. Idempotent on (path, backend_name). Raises
+    OSError when the bookmarks file could not be written."""
     from core.bookmarks import Bookmark, BookmarkManager
 
     mgr = BookmarkManager()
+    mgr.raise_save_errors = True
     mgr.add(
         Bookmark(
             name=name,
@@ -1415,17 +1448,20 @@ def add_bookmark(
 
 @_api(mutates=True)
 def remove_bookmark(index: int) -> None:
-    """Remove the bookmark at ``index`` (zero-based)."""
+    """Remove the bookmark at ``index`` (zero-based, as
+    :func:`list_bookmarks` lists them). Raises IndexError for an index
+    outside that list (also a negative one) and OSError when the bookmarks
+    file could not be written."""
     from core.bookmarks import BookmarkManager
 
     mgr = BookmarkManager()
-    # Capture name BEFORE the remove for the audit log.
-    try:
-        target_name = mgr._bookmarks[index].name  # noqa: SLF001
-    except (IndexError, AttributeError):
-        target_name = "?"
+    mgr.raise_save_errors = True
+    flat = mgr.all()
+    if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(flat):
+        # remove() ignores it: -1 returned as if the last one was removed.
+        raise IndexError(f"bookmark index {index!r} out of range (have {len(flat)})")
+    target_name = flat[index].name  # for the audit log, before the remove
     mgr.remove(index)
-    mgr.save()
     log.info("axross.remove_bookmark idx=%d (was %r)", index, target_name)
 
 
@@ -2792,6 +2828,21 @@ def _validate_script_name(name: str) -> str:
     return name
 
 
+def _write_all(fd: int, data: bytes) -> None:
+    """Write every byte of *data* to *fd*: ``os.write`` may take only part
+    of it (a disk filling up, RLIMIT_FSIZE). A write that takes nothing is
+    an error (ENOSPC), never a loop without end."""
+    import errno
+    import os
+
+    view = memoryview(data)
+    while view:
+        written = os.write(fd, view)
+        if written <= 0:
+            raise OSError(errno.ENOSPC, "No space left on device (nothing written)")
+        view = view[written:]
+
+
 @_api(mutates=True)
 def save_script(name: str, source: str) -> str:
     """Write ``source`` to ``script_dir()/<name>.py`` (mode 0o600).
@@ -2819,12 +2870,12 @@ def save_script(name: str, source: str) -> str:
         text=False,
     )
     try:
-        posix_compat.fchmod_private(fd, 0o600)
-        os.write(fd, encoded)
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-    try:
+        try:
+            posix_compat.fchmod_private(fd, 0o600)
+            _write_all(fd, encoded)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
         os.replace(tmp_path, target)
         os.chmod(target, 0o600)
     except BaseException:
@@ -4852,7 +4903,8 @@ from core.ui_helpers import NonInteractiveError  # noqa: E402 — part of the AP
 def toast(text: str, *, level: str = "info", timeout: float = 4.0) -> None:
     """Non-modal toast in the bottom-right corner of the main window.
 
-    Auto-dismisses after ``timeout`` seconds. Multiple toasts stack.
+    Auto-dismisses after ``timeout`` seconds (held to 0.5 s .. 1 hour; a
+    timeout that is no number raises TypeError). Multiple toasts stack.
     Levels: same colour palette as :func:`message`.
 
     Example::

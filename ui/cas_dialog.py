@@ -80,6 +80,7 @@ from ui.plain_text import plain_tooltip
 from ui.scan_job import BusyStrip, ScanJob
 from ui.handbook import install_help_key
 from ui.icon_provider import set_window_icon
+from ui.screen_fit import fit_size
 
 log = logging.getLogger("ui.cas_dialog")
 
@@ -216,6 +217,14 @@ def _group_size(group) -> int:
     return max((int(e.size or 0) for e in group), default=0)
 
 
+def _shares_note(backends) -> str:
+    """"\n\n" and what ui.shared_trash says of a trash at the top of a share,
+    or "" (this machine's disk, SFTP)."""
+    from ui.shared_trash import shares_note
+
+    note = shares_note(backends)
+    return f"\n\n{note}" if note else ""
+
 class _Group(list):
     """The rows of one duplicate group (survivor order) and its figures,
     worked out once - off the GUI thread - instead of per sort and filter."""
@@ -304,7 +313,7 @@ class CasDuplicatesDialog(QDialog):
         self._rebuild_bid = ""
         self._delete_total = 0
         self.setWindowTitle(tr("Duplicate Finder"))
-        self.resize(1100, 650)
+        self.resize(fit_size((1100, 650), parent))
         # Background work: the rebuild walk + hashing and the verified delete
         # can take minutes, so they run in a thread while the dialog stays
         # live (progress, Cancel, Esc). One job at a time, told apart by kind.
@@ -338,7 +347,11 @@ class CasDuplicatesDialog(QDialog):
             tr("All scans; one scan (every group with a copy from it, all copies "
             "shown); or only the copies inside a folder")
         )
-        self._scope_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        # Not as wide as the longest entry: a scan of a deep folder made
+        # the window as wide as its path (3000 px), past every screen.
+        self._scope_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self._scope_combo.setMinimumContentsLength(30)
         self._scope_combo.currentIndexChanged.connect(self._on_scope_chosen)
         scope_row.addWidget(self._scope_combo, stretch=1)
         self._folders_check = QCheckBox(tr("Identical folders"), self)
@@ -419,6 +432,21 @@ class CasDuplicatesDialog(QDialog):
         self._refresh_btn.clicked.connect(self._refresh)
         btn_row.addWidget(self._refresh_btn)
 
+        self._copy_btn = QPushButton(tr("Copy ax-cas URL"), self)
+        self._copy_btn.clicked.connect(self._copy_url)
+        btn_row.addWidget(self._copy_btn)
+
+        self._export_btn = QPushButton(tr("Copy list"), self)
+        self._export_btn.setToolTip(tr("Copy every duplicate group shown to the clipboard"))
+        self._export_btn.clicked.connect(self._export)
+        btn_row.addWidget(self._export_btn)
+        btn_row.addStretch(1)
+        root.addLayout(btn_row)
+        # The marking and removing buttons in a row of their own: the seven
+        # side by side made the window at least 1007 px wide (1322 px in
+        # German), wider than a 1024 px screen.
+        btn_row = QHBoxLayout()
+
         self._mark_all_btn = QPushButton(tr(MARK_ALL_TEXT), self)
         self._mark_all_btn.setToolTip(
             tr("Select every copy except the first of each group – the oldest by "
@@ -437,10 +465,6 @@ class CasDuplicatesDialog(QDialog):
         self._keep_btn.setMenu(self._keep_menu)
         btn_row.addWidget(self._keep_btn)
 
-        self._copy_btn = QPushButton(tr("Copy ax-cas URL"), self)
-        self._copy_btn.clicked.connect(self._copy_url)
-        btn_row.addWidget(self._copy_btn)
-
         self._delete_btn = QPushButton(tr("Move Selected to Trash…"), self)
         self._delete_btn.setToolTip(
             tr("Move the selected copies to the axross trash (restorable via Show Trash). "
@@ -451,10 +475,6 @@ class CasDuplicatesDialog(QDialog):
         self._delete_btn.clicked.connect(self._delete_selected)
         btn_row.addWidget(self._delete_btn)
 
-        self._export_btn = QPushButton(tr("Copy list"), self)
-        self._export_btn.setToolTip(tr("Copy every duplicate group shown to the clipboard"))
-        self._export_btn.clicked.connect(self._export)
-        btn_row.addWidget(self._export_btn)
         btn_row.addStretch(1)
         root.addLayout(btn_row)
 
@@ -517,12 +537,15 @@ class CasDuplicatesDialog(QDialog):
         root.addWidget(self._tree, stretch=1)
 
         # The current row in full: path, exact size, identity, hash.
-        self._details = QLabel("", self)
-        # A path is the file's own name, from any server: never markup.
-        self._details.setTextFormat(Qt.TextFormat.PlainText)
+        # A path is the file's own name, from any server: never markup
+        # (plain text). Within the window, whole: a path has no blank to
+        # wrap at - a QLabel made the window as wide as the path (1,800 px)
+        # or, held to the window, cut it at the edge; this one wraps
+        # inside it. Its context menu copies the line.
+        from ui.elided_label import WrapAnywhereLabel
+
+        self._details = WrapAnywhereLabel("", self)
         self._details.setProperty("role", "muted")
-        self._details.setWordWrap(True)
-        self._details.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         root.addWidget(self._details)
 
         self._status = QLabel("", self)
@@ -793,9 +816,11 @@ class CasDuplicatesDialog(QDialog):
             self._tree.setColumnWidth(COL_NAME, cap)
         undated = self._summary[2]
         self._undated_label.setText(
-            tr("{undated} group(s) contain copies without a modification time: those "
-                "sort after dated copies, then by path, so “first” there means the "
-                "shortest path. Rebuild the index to record the times.").format(undated=undated)
+            tr_n(
+                undated,
+                "{n} group contains copies without a modification time: those sort after dated copies, then by path, so “first” there means the shortest path. Rebuild the index to record the times.",
+                "{n} groups contain copies without a modification time: those sort after dated copies, then by path, so “first” there means the shortest path. Rebuild the index to record the times.",
+            )
         )
         self._undated_label.setVisible(undated > 0)
         self._update_status()
@@ -932,7 +957,13 @@ class CasDuplicatesDialog(QDialog):
                 )
         elif data[0] == "folder":
             copy = data[1][0]
-            self._details.setText(tr("{path} · {files} file(s) · {size:,} bytes").format(path=copy.path, files=copy.files, size=copy.size))
+            self._details.setText(tr_n(
+                copy.files,
+                "{path} · {n} file · {size:,} bytes",
+                "{path} · {n} files · {size:,} bytes",
+                path=copy.path,
+                size=copy.size,
+            ))
         else:
             self._details.setText("")
 
@@ -1117,22 +1148,33 @@ class CasDuplicatesDialog(QDialog):
         kept = tr_n(plan.survivors, "{n} copy is kept", "{n} copies are kept")
         if plan.auto_kept:
             kept += (
-                tr(" — in {n} group(s) every copy was selected, so the first (oldest) "
-                    "copy of each stays").format(n=len(plan.auto_kept))
+                tr_n(
+                    len(plan.auto_kept),
+                    " — in {n} group every copy was selected, so its first (oldest) copy stays",
+                    " — in {n} groups every copy was selected, so the first (oldest) copy of each stays",
+                )
             )
         confirm = QMessageBox.question(
             self,
             tr("Move to Trash"),
-            tr("Move {n} file(s) ({size}) on {hosts} to the axross "
-                "trash?\n{kept}.\n\nEach file is re-checked first: it is only moved if it "
-                "still holds the indexed content and another verified copy remains. "
-                "Trashed files can be restored via Show Trash.").format(n=len(mine), size=_format_size(size), hosts=', '.join(hosts), kept=kept)
+            tr_n(
+                len(mine),
+                "Move {n} file ({size}) on {hosts} to the axross trash?\n{kept}.\n\nIt is re-checked first: it is only moved if it still holds the indexed content and another verified copy remains. Trashed files can be restored via Show Trash.",
+                "Move {n} files ({size}) on {hosts} to the axross trash?\n{kept}.\n\nEach file is re-checked first: it is only moved if it still holds the indexed content and another verified copy remains. Trashed files can be restored via Show Trash.",
+                size=_format_size(size),
+                hosts=', '.join(hosts),
+                kept=kept,
+            )
             + (
-                tr("\n\n{others} selected copy/copies live on backends that are not open "
-                    "and are skipped.").format(others=others)
+                "\n\n" + tr_n(
+                    others,
+                    "{n} selected copy lives on a backend that is not open and is skipped.",
+                    "{n} selected copies live on backends that are not open and are skipped.",
+                )
                 if others
                 else ""
-            ),
+            )
+            + _shares_note([self._backends[h] for h in hosts]),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -1161,15 +1203,23 @@ class CasDuplicatesDialog(QDialog):
             return
         outcome = value
         freed = sum(int(e.size or 0) for e in outcome.removed)
-        lines = [tr("{n} file(s) moved to the axross trash ({freed}).").format(n=len(outcome.removed), freed=_format_size(freed))]
+        lines = [tr_n(
+            len(outcome.removed),
+            "{n} file moved to the axross trash ({freed}).",
+            "{n} files moved to the axross trash ({freed}).",
+            freed=_format_size(freed),
+        )]
         if cancelled:
             lines.append(tr("Cancelled before every file was handled."))
         aliases = [e for e, why in outcome.refused if why == CAS.ALIAS_REASON]
         refused = [(e, why) for e, why in outcome.refused if why != CAS.ALIAS_REASON]
         if aliases:
             lines.append(
-                tr("{n} selected name(s) are hard links of the copy that stays and were "
-                    "left alone: removing them frees nothing.").format(n=len(aliases))
+                tr_n(
+                    len(aliases),
+                    "{n} selected name is a hard link of the copy that stays and was left alone: removing it frees nothing.",
+                    "{n} selected names are hard links of the copy that stays and were left alone: removing them frees nothing.",
+                )
             )
         if refused or outcome.failed:
             lines.append("")
@@ -1183,7 +1233,12 @@ class CasDuplicatesDialog(QDialog):
             QMessageBox.information(self, tr("Move to Trash"), "\n".join(lines))
         self._refresh()
         self._status.setText(
-            tr("Moved {n} duplicate(s) to trash, {freed} freed").format(n=len(outcome.removed), freed=_format_size(freed))
+            tr_n(
+                len(outcome.removed),
+                "Moved {n} duplicate to trash, {freed} freed",
+                "Moved {n} duplicates to trash, {freed} freed",
+                freed=_format_size(freed),
+            )
         )
 
     # ------------------------------------------------------------------
@@ -1220,10 +1275,13 @@ class CasDuplicatesDialog(QDialog):
             return
         confirm = QMessageBox.question(
             self, tr("Move to Trash"),
-            tr("Move {n} folder(s) to the axross trash?\n\nEach is checked first: it "
-                "must still hold exactly the indexed files with their indexed content, "
-                "and the folder kept must hold a separate, intact copy of every one. "
-                "Trashed folders can be restored via Show Trash.").format(n=len(pairs)),
+            tr_n(
+                len(pairs),
+                "Move {n} folder to the axross trash?\n\nIt is checked first: it must still hold exactly the indexed files with their indexed content, and the folder kept must hold a separate, intact copy of every one. Trashed folders can be restored via Show Trash.",
+                "Move {n} folders to the axross trash?\n\nEach is checked first: it must still hold exactly the indexed files with their indexed content, and the folder kept must hold a separate, intact copy of every one. Trashed folders can be restored via Show Trash.",
+            )
+            + _shares_note([self._backends[r[0].backend_id] for r, _k in pairs
+                            if r[0].backend_id in self._backends]),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No)
         if confirm != QMessageBox.StandardButton.Yes:
@@ -1252,7 +1310,11 @@ class CasDuplicatesDialog(QDialog):
         else:
             moved = [c for c, o in value if o.removed]
             kept = [(c, o.reason) for c, o in value if not o.removed]
-            lines = [tr("{n} folder(s) moved to the axross trash.").format(n=len(moved))]
+            lines = [tr_n(
+                len(moved),
+                "{n} folder moved to the axross trash.",
+                "{n} folders moved to the axross trash.",
+            )]
             if cancelled:
                 lines.append(tr("Cancelled before every folder was handled."))
             lines += [tr("Kept {path}: {why}").format(path=c.path, why=why) for c, why in kept[:10]]
@@ -1542,9 +1604,19 @@ def rebuild_report(count, root: str, stats, cancelled: bool, backend_id: str = "
     every file or folder left out and why. *trouble* is true when something
     could not be read or listed."""
     if cancelled:
-        lines = [tr("Cancelled – {count} file(s) indexed so far under {root}.").format(count=count, root=root)]
+        lines = [tr_n(
+            count,
+            "Cancelled – {n} file indexed so far under {root}.",
+            "Cancelled – {n} files indexed so far under {root}.",
+            root=root,
+        )]
     else:
-        lines = [tr("Indexed {count} file(s) under {root}.").format(count=count, root=root)]
+        lines = [tr_n(
+            count,
+            "Indexed {n} file under {root}.",
+            "Indexed {n} files under {root}.",
+            root=root,
+        )]
     if stats is None:
         return lines[0], False
     where = f"[{backend_id}]" if backend_id else tr("this backend")
@@ -1553,16 +1625,31 @@ def rebuild_report(count, root: str, stats, cancelled: bool, backend_id: str = "
         done.append(tr("{unchanged} unchanged since the last scan").format(unchanged=stats.unchanged))
     lines.append(", ".join(done) + ".")
     if stats.read:
-        lines.append(tr("{read} file(s) were read and hashed here: {where} has no checksum of "
-            "its own.").format(read=stats.read, where=where))
+        lines.append(tr_n(
+            stats.read,
+            "{n} file was read and hashed here: {where} has no checksum of its own.",
+            "{n} files were read and hashed here: {where} has no checksum of its own.",
+            where=where,
+        ))
     if stats.unique_size:
-        lines.append(tr("{unique_size} file(s) without a checksum were not read: no other file "
-            "has their size (or their first bytes), so they have no duplicate.").format(unique_size=stats.unique_size))
+        lines.append(tr_n(
+            stats.unique_size,
+            "{n} file without a checksum was not read: no other file has its size (or its first bytes), so it has no duplicate.",
+            "{n} files without a checksum were not read: no other file has their size (or their first bytes), so they have no duplicate.",
+        ))
     if stats.no_checksum:
-        lines.append(tr("{no_checksum} file(s) skipped: {where} has no content checksum for "
-            "them.").format(no_checksum=stats.no_checksum, where=where))
+        lines.append(tr_n(
+            stats.no_checksum,
+            "{n} file skipped: {where} has no content checksum for it.",
+            "{n} files skipped: {where} has no content checksum for them.",
+            where=where,
+        ))
     if stats.special:
-        lines.append(tr("{special} special file(s) (FIFOs, sockets, devices) skipped.").format(special=stats.special))
+        lines.append(tr_n(
+            stats.special,
+            "{n} special file (a FIFO, socket or device) skipped.",
+            "{n} special files (FIFOs, sockets, devices) skipped.",
+        ))
     if stats.pruned:
         lines.append(tr_n(stats.pruned, "{n} index entry of files no longer there removed.",
                           "{n} index entries of files no longer there removed."))
@@ -1572,14 +1659,21 @@ def rebuild_report(count, root: str, stats, cancelled: bool, backend_id: str = "
     trouble = bool(stats.unreadable_count or stats.unlisted_count)
     if stats.unreadable_count:
         lines.append("")
-        lines.append(tr("{unreadable_count} file(s) could not be read:").format(unreadable_count=stats.unreadable_count))
+        lines.append(tr_n(
+            stats.unreadable_count,
+            "{n} file could not be read:",
+            "{n} files could not be read:",
+        ))
         lines += [f"  {p}: {why}" for p, why in stats.unreadable[:5]]
         if stats.unreadable_count > 5:
             lines.append(tr("  … and {count} more").format(count=stats.unreadable_count - 5))
     if stats.unlisted_count:
         lines.append("")
-        lines.append(tr("{unlisted_count} folder(s) could not be listed (their files were not "
-            "scanned; their index entries are kept):").format(unlisted_count=stats.unlisted_count))
+        lines.append(tr_n(
+            stats.unlisted_count,
+            "{n} folder could not be listed (its files were not scanned; its index entries are kept):",
+            "{n} folders could not be listed (their files were not scanned; their index entries are kept):",
+        ))
         lines += [f"  {p}: {why}" for p, why in stats.unlisted[:5]]
         if stats.unlisted_count > 5:
             lines.append(tr("  … and {count} more").format(count=stats.unlisted_count - 5))

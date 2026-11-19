@@ -212,6 +212,10 @@ class _ContentMatcher:
         self.case_sensitive = query.case_sensitive
         self.pattern = query.contains_regex() if query.contains_is_regex else None
         self.needle = query.contains if query.case_sensitive else query.contains.lower()
+        #: A literal with letters beyond ASCII that Windows-1252 (Latin-1's
+        #: superset) can write: also looked for in a file's bytes read as
+        #: Windows-1252, where "für" is f\xfcr (see scan_stream, _rg_patterns).
+        self.legacy = legacy_needle(query)
 
     def find(self, text: str) -> str | None:
         """A snippet of the first line of *text* that matches, or None."""
@@ -239,12 +243,66 @@ class _ContentMatcher:
         return found if found is not None else line.strip()[:200]
 
 
+#: Byte order marks: the file is read in that encoding.
+_BOMS = ((codecs.BOM_UTF8, "utf-8"), (codecs.BOM_UTF16_LE, "utf-16-le"),
+         (codecs.BOM_UTF16_BE, "utf-16-be"))
+#: The 8-bit encoding a file that is not UTF-8 is read in as well.
+LEGACY_ENCODING = "cp1252"
+
+
+def legacy_needle(query: SearchQuery) -> bool:
+    """*query* looks for a literal that also has a Windows-1252 form
+    worth searching for: one with letters beyond ASCII, all of them
+    writable in Windows-1252 (umlauts, accents, ß, €)."""
+    text = query.contains
+    if not text or query.contains_is_regex or text.isascii():
+        return False
+    try:
+        text.encode(LEGACY_ENCODING)
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+class _Lane:
+    """One decoding of a byte stream, searched block by block."""
+
+    def __init__(self, encoding: str) -> None:
+        self.decoder = codecs.getincrementaldecoder(encoding)("replace")
+        self.carry = ""
+
+    def feed(self, chunk: bytes, matcher: _ContentMatcher) -> str | None:
+        text = self.carry + self.decoder.decode(chunk)
+        cut = text.rfind("\n")
+        if cut < 0:
+            if len(text) > _MAX_LINE:
+                found = matcher.find(text)
+                if found is not None:
+                    return found
+                self.carry = text[-_LINE_OVERLAP:]
+            else:
+                self.carry = text
+            return None
+        block, self.carry = text[:cut], text[cut + 1 :]
+        return matcher.find(block)
+
+    def end(self, matcher: _ContentMatcher) -> str | None:
+        text = self.carry + self.decoder.decode(b"", final=True)
+        return matcher.find(text) if text else None
+
+
 def scan_stream(read: Callable[[int], bytes], matcher: _ContentMatcher, cap: int,
                 cancel: Callable[[], bool]) -> str | None:
     """Search the first *cap* bytes that *read* yields, line by line.
-    A snippet on a match, else None. Raises :class:`_Stop` on cancel."""
-    decoder = codecs.getincrementaldecoder("utf-8")("replace")
-    carry = ""
+    A snippet on a match, else None. Raises :class:`_Stop` on cancel.
+
+    A file with a byte order mark is read in its encoding (UTF-8, UTF-16
+    LE / BE), any other one as UTF-8 - and, for a literal with letters
+    beyond ASCII (:func:`legacy_needle`), also as Windows-1252, so "für"
+    is found in a Latin-1 file too. ripgrep is asked the same (its BOM
+    sniffing, :func:`_rg_patterns`)."""
+    lanes: list[_Lane] | None = None
+    head = b""
     remaining = cap
     while remaining > 0:
         if cancel():
@@ -253,23 +311,40 @@ def scan_stream(read: Callable[[int], bytes], matcher: _ContentMatcher, cap: int
         if not chunk:
             break
         remaining -= len(chunk)
-        text = carry + decoder.decode(chunk)
-        cut = text.rfind("\n")
-        if cut < 0:
-            if len(text) > _MAX_LINE:
-                found = matcher.find(text)
-                if found is not None:
-                    return found
-                carry = text[-_LINE_OVERLAP:]
-            else:
-                carry = text
-            continue
-        block, carry = text[:cut], text[cut + 1 :]
-        found = matcher.find(block)
+        if lanes is None:
+            head += chunk
+            if len(head) < 3 and remaining > 0:
+                continue  # a short read: not enough to see a byte order mark
+            lanes, chunk = _lanes_for(head, matcher)
+            head = b""
+        for lane in lanes:
+            found = lane.feed(chunk, matcher)
+            if found is not None:
+                return found
+    if lanes is None:
+        if not head:
+            return None
+        lanes, head = _lanes_for(head, matcher)
+        for lane in lanes:
+            found = lane.feed(head, matcher)
+            if found is not None:
+                return found
+    for lane in lanes:
+        found = lane.end(matcher)
         if found is not None:
             return found
-    text = carry + decoder.decode(b"", final=True)
-    return matcher.find(text) if text else None
+    return None
+
+
+def _lanes_for(head: bytes, matcher: _ContentMatcher) -> tuple[list[_Lane], bytes]:
+    """The decodings of a stream that starts with *head*, and *head*
+    without its byte order mark."""
+    for bom, encoding in _BOMS:
+        if head.startswith(bom):
+            return [_Lane(encoding)], head[len(bom):]
+    if matcher.legacy:
+        return [_Lane("utf-8"), _Lane(LEGACY_ENCODING)], head
+    return [_Lane("utf-8")], head
 
 
 # ---------------------------------------------------------------------------
@@ -381,8 +456,54 @@ def _parse_rg(chunks: Iterator[bytes]) -> Iterator[tuple[str, str]]:
             newline = buf.find(b"\n", nul + 1)
             if newline < 0:
                 break
-            yield os.fsdecode(buf[:nul]), buf[nul + 1 : newline].decode("utf-8", "replace")
+            yield os.fsdecode(buf[:nul]), _decode_line(buf[nul + 1 : newline])
             buf = buf[newline + 1 :]
+
+
+def _decode_line(raw: bytes) -> str:
+    """A line rg reported: UTF-8 (rg hands on UTF-16 as UTF-8), else the
+    Windows-1252 of a Latin-1 file (see _rg_patterns)."""
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode(LEGACY_ENCODING, "replace")
+
+
+#: What rust's regex syntax needs escaped to read a character literally.
+_RG_META = frozenset("\\.+*?()|[]{}^$#&-~")
+
+
+def _rg_literal(text: str) -> str:
+    return "".join("\\" + c if c in _RG_META else c for c in text)
+
+
+def _rg_patterns(query: SearchQuery) -> list[str]:
+    """rg's arguments for ``query.contains``: the pattern as given, and
+    for a literal with letters beyond ASCII (:func:`legacy_needle`) also
+    its Windows-1252 bytes, as scan_stream reads a file that is not
+    UTF-8. Without ``--encoding none`` rg reads a file with a byte order
+    mark in its encoding (UTF-16), as scan_stream does."""
+    if query.contains_is_regex:
+        return ["--regexp", query.contains]
+    if not legacy_needle(query):
+        return ["--fixed-strings", "--regexp", query.contains]
+    parts = []
+    for c in query.contains:
+        if c.isascii():
+            parts.append(_rg_literal(c))
+            continue
+        codes = set(c.encode(LEGACY_ENCODING))
+        if not query.case_sensitive:
+            # The other case of a letter, when it is one character that
+            # Windows-1252 has ("ü" / "Ü"; not "ß" / "SS").
+            for form in (c.lower(), c.upper()):
+                if len(form) == 1:
+                    try:
+                        codes.update(form.encode(LEGACY_ENCODING))
+                    except UnicodeEncodeError:
+                        pass
+        parts.append("(?-u:[" + "".join(f"\\x{b:02X}" for b in sorted(codes)) + "])")
+    return ["--regexp", _rg_literal(query.contains), "--regexp", "".join(parts)]
 
 
 # ---------------------------------------------------------------------------
@@ -472,7 +593,7 @@ class _RgWalk:
         q = run.q
         argv = [run.rg, "--no-config", "--text", "--no-messages", "--max-count", "1",
                 "--with-filename", "--null", "--no-heading", "--no-line-number",
-                "--color", "never", "--encoding", "none", "--max-columns", "4096",
+                "--color", "never", "--max-columns", "4096",
                 "--max-columns-preview", "--no-ignore",
                 "--max-filesize", str(run.limits.max_content_bytes)]
         if q.include_hidden or os.name == "nt":
@@ -485,9 +606,8 @@ class _RgWalk:
         for pattern in plain:
             argv += ["--glob", "!" + pattern]
         argv.append("--case-sensitive" if q.case_sensitive else "--ignore-case")
-        if not q.contains_is_regex:
-            argv.append("--fixed-strings")
-        argv += ["--regexp", q.contains, "--", root]
+        argv += _rg_patterns(q)
+        argv += ["--", root]
         self.tool = _ToolProcess(argv, run.cancel)
         self.found: dict[str, str] = {}
         #: Paths reported since the last :meth:`fresh` call.
@@ -556,7 +676,7 @@ def _compile_ignore(patterns) -> re.Pattern[str] | bool:
 class _Run:
     def __init__(self, query: SearchQuery, limits: SearchLimits, on_hit: HitCallback,
                  cancel: Callable[[], bool], progress, use_tools: bool, use_sift: bool,
-                 accept: HitFilter | None = None) -> None:
+                 accept: HitFilter | None = None, include_dirs: bool = False) -> None:
         self.q = query
         self.accept = accept
         self.limits = limits
@@ -566,10 +686,17 @@ class _Run:
         self.use_sift = use_sift
         self.wanted = set(query.categories)
         self.matcher = _ContentMatcher(query) if query.contains else None
+        #: Folders are hits too: a search by name (or regex) and nothing
+        #: only files have - content, size, type (see run_search).
+        self.want_dirs = bool(include_dirs and (query.name or query.regex)
+                              and self.matcher is None and query.min_size < 0
+                              and query.max_size < 0 and not self.wanted)
         self.summary = SearchSummary()
         self.fd = find_tool("fd") if use_tools else None
         self.rg = find_tool("rg") if use_tools and query.contains else None
         self._visited = 0
+        #: The hits handed on so far (see emit) - at most max_hits.
+        self._emitted: set[tuple] = set()
         self._index_scopes: dict[str, SearchScope] = {}
         #: ignored(): the compiled ignore_dirs (False: none) and the tuple it is of.
         self._ignore_rx = None
@@ -611,9 +738,15 @@ class _Run:
         # uses up max_hits.
         if self.accept is not None and not self.accept(scope, hit):
             return
+        # A file below two ticked folders (one inside the other) is one hit.
+        key = ("local" if _is_local(scope.backend) else id(scope.backend), scope.kind,
+               scope.label if scope.kind == "index" else "", hit.path)
+        if key in self._emitted:
+            return
         if self.summary.found >= self.limits.max_hits:
             self.summary.truncated = True
             raise _Stop
+        self._emitted.add(key)
         self.summary.found += 1
         self.on_hit(scope, hit)
 
@@ -662,6 +795,9 @@ class _Run:
         try:
             for path, name, st in entries:
                 self.check()
+                if stat_module.S_ISDIR(st.st_mode):  # only when want_dirs
+                    self._dir_hit(scope, path, name, st.st_mtime)
+                    continue
                 self.seen(path)
                 searched_inside = False
                 if self.q.search_archives and stat_module.S_ISREG(st.st_mode):
@@ -728,6 +864,14 @@ class _Run:
                 if content != label:
                     label = f"{label}+{content}"
             self.summary.engines[scope.label] = label
+
+    def _dir_hit(self, scope: SearchScope, path: str, name: str, mtime: float) -> None:
+        """A folder whose name the query matches is a hit (want_dirs)."""
+        if self.q.matches_name(name) and self.q.matches_mtime(mtime):
+            label = (f"Index: {scope.label}" if scope.kind == "index"
+                     else _backend_name(scope.backend))
+            self.emit(scope, SearchHit(backend_label=label, path=path, mtime=mtime,
+                                       is_dir=True))
 
     def _local_hit(self, scope: SearchScope, path: str, name: str, st) -> SearchHit | None:
         """The hit of a local file, with its category - None when the
@@ -806,6 +950,8 @@ class _Run:
         threads = str(max(1, min(8, os.cpu_count() or 1)))
         argv = [self.fd, "--type", "f", "--type", "l", "--no-ignore", "--print0",
                 "--absolute-path", "--color", "never", "--threads", threads]
+        if self.want_dirs:
+            argv += ["--type", "d"]
         if self.q.include_hidden:
             argv.append("--hidden")
         if self.q.max_depth >= 0:
@@ -838,7 +984,8 @@ class _Run:
                     st = os.lstat(full)
                 except OSError:
                     continue
-                if stat_module.S_ISREG(st.st_mode) or stat_module.S_ISLNK(st.st_mode):
+                if stat_module.S_ISREG(st.st_mode) or stat_module.S_ISLNK(st.st_mode) or (
+                        self.want_dirs and stat_module.S_ISDIR(st.st_mode)):
                     yield full, parts[-1], st
         self.check()
         if tool.returncode not in (0, None, -9) and tool.stderr.strip():
@@ -872,6 +1019,8 @@ class _Run:
                     if entry.is_dir(follow_symlinks=False):
                         if self.q.max_depth < 0 or depth < self.q.max_depth:
                             subdirs.append(entry.path)
+                        if self.want_dirs:
+                            yield entry.path, name, entry.stat(follow_symlinks=False)
                         continue
                     est = entry.stat(follow_symlinks=False)
                 except OSError:
@@ -909,12 +1058,11 @@ class _Run:
         by_path = dict(batch)
         argv = [self.rg, "--no-config", "--text", "--no-messages", "--max-count", "1",
                 "--with-filename", "--null", "--no-heading", "--no-line-number",
-                "--color", "never", "--encoding", "none", "--max-columns", "4096",
+                "--color", "never", "--max-columns", "4096",
                 "--max-columns-preview", "--no-ignore", "--hidden"]
         argv.append("--case-sensitive" if self.q.case_sensitive else "--ignore-case")
-        if not self.q.contains_is_regex:
-            argv.append("--fixed-strings")
-        argv += ["--regexp", self.q.contains, "--"]
+        argv += _rg_patterns(self.q)
+        argv.append("--")
         argv += [path for path, _hit in batch]
         try:
             tool = _ToolProcess(argv, self.cancel)
@@ -974,6 +1122,8 @@ class _Run:
                     return
                 full = _join(backend, path, name)
                 if getattr(item, "is_dir", False):
+                    if self.want_dirs:
+                        self._dir_hit(scope, full, name, _to_epoch(getattr(item, "modified", None)))
                     if getattr(item, "is_link", False):
                         continue  # never followed: no loops
                     if self.q.max_depth < 0 or depth < self.q.max_depth:
@@ -1120,7 +1270,7 @@ class _Run:
             self.skip("archive_members")
             self.error(f"{ctx.display}: zip directory with {declared[0]} entries not opened")
             return
-        with zipfile.ZipFile(fh) as zf:
+        with AR.open_zip(fh) as zf:
             for info in zf.infolist():
                 if info.is_dir():
                     continue
@@ -1276,6 +1426,13 @@ class _Run:
         ))
 
     # -- metadata index ---------------------------------------------------
+    def _index_scope(self, backend_id: str) -> SearchScope:
+        scope = self._index_scopes.get(backend_id)
+        if scope is None:
+            scope = SearchScope(None, "", label=backend_id, kind="index")
+            self._index_scopes[backend_id] = scope
+        return scope
+
     def run_index(self, db_path) -> None:
         from core import metadata_index as MX
 
@@ -1285,24 +1442,25 @@ class _Run:
             return
         for entry in MX.iter_entries(db_path=db_path, cancel=self.cancel):
             self.check()
-            if entry.is_dir:
+            if entry.is_dir and not self.want_dirs:
                 continue
-            self.seen(entry.path)
+            if not entry.is_dir:
+                self.seen(entry.path)
             parts = [p for p in entry.path.replace("\\", "/").split("/") if p]
             if any(self.ignored(p) for p in parts) or (
                 not self.q.include_hidden and any(p.startswith(".") for p in parts)
             ):
                 continue
             mtime = entry.modified.timestamp() if entry.modified is not None else 0.0
+            if entry.is_dir:
+                self._dir_hit(self._index_scope(entry.backend_id), entry.path, entry.name, mtime)
+                continue
             if not self.passes(entry.name, entry.size, mtime):
                 continue
             shown = self.categories(classify_name(entry.name, entry.path))
             if shown is None:
                 continue
-            scope = self._index_scopes.get(entry.backend_id)
-            if scope is None:
-                scope = SearchScope(None, "", label=entry.backend_id, kind="index")
-                self._index_scopes[entry.backend_id] = scope
+            scope = self._index_scope(entry.backend_id)
             self.emit(scope, SearchHit(backend_label=f"Index: {entry.backend_id}",
                                        path=entry.path, size=entry.size, mtime=mtime,
                                        category=shown))
@@ -1364,6 +1522,7 @@ def run_search(
     index_db=None,
     use_sift: bool = True,
     accept: HitFilter | None = None,
+    include_dirs: bool = False,
 ) -> SearchSummary:
     """Search every scope in turn (then the metadata index when
     *use_index*), handing each hit to ``on_hit(scope, hit)`` at once.
@@ -1374,12 +1533,15 @@ def run_search(
     goes on. ``progress(scanned, found, current_path)`` reports headway.
     ``accept(scope, hit)``, when given, decides before a hit is counted:
     a hit it refuses is neither handed on nor counted against ``max_hits``.
+    *include_dirs*: a search by name or regex that asks nothing only a
+    file has (content, size, type) also finds folders (``is_dir`` hits),
+    as Find Files does; a folder is never entered through a link.
     """
     query.validate()
     limits = limits or SearchLimits()
     limits.validate()
     run = _Run(query, limits, on_hit, cancel or (lambda: False), progress, use_tools, use_sift,
-               accept)
+               accept, include_dirs)
     started = time.monotonic()
     try:
         for scope in scopes:

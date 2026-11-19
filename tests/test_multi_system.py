@@ -1170,10 +1170,15 @@ class CopyResumeTests(unittest.TestCase):
                 manifest_path=self.manifest,
             )
 
+    def _partial(self) -> str:
+        # An unfinished copy is in its partial file beside the destination
+        # (.<name>.axross-resume.part); the destination appears only whole.
+        return copy_resume._partial_path(self.dst, "/big.bin")
+
     def test_partial_segment_destination_restarts_without_corruption(self) -> None:
         seg_size = copy_resume.MIN_SEGMENT_SIZE
         first = self.payload[:seg_size]
-        fh = self.dst.open_write("/big.bin")
+        fh = self.dst.open_write(self._partial())
         fh.write(first + b"partial-next-segment")
         fh.close()
         manifest = {
@@ -1210,13 +1215,14 @@ class CopyResumeTests(unittest.TestCase):
             manifest_path=self.manifest,
         )
         self.assertTrue(rep.completed)
+        self.assertFalse(self.dst.exists(self._partial()))
         with self.dst.open_read("/big.bin") as fh:
             self.assertEqual(fh.read(), self.payload)
 
     def test_corrupt_manifested_prefix_is_reverified_before_append(self) -> None:
         seg_size = copy_resume.MIN_SEGMENT_SIZE
         first = self.payload[:seg_size]
-        fh = self.dst.open_write("/big.bin")
+        fh = self.dst.open_write(self._partial())
         fh.write(b"X" * seg_size)
         fh.close()
         manifest = {
@@ -1252,6 +1258,7 @@ class CopyResumeTests(unittest.TestCase):
             manifest_path=self.manifest,
         )
         self.assertTrue(rep.completed)
+        self.assertFalse(self.dst.exists(self._partial()))
         with self.dst.open_read("/big.bin") as fh:
             self.assertEqual(fh.read(), self.payload)
 
@@ -1262,7 +1269,7 @@ class CopyResumeTests(unittest.TestCase):
 
         with self.src.open_write("/big.bin") as fh:
             fh.write(old_payload)
-        with self.dst.open_write("/big.bin") as fh:
+        with self.dst.open_write(self._partial()) as fh:
             fh.write(old_payload[:seg_size])
 
         manifest = {
@@ -1305,6 +1312,7 @@ class CopyResumeTests(unittest.TestCase):
             manifest_path=self.manifest,
         )
         self.assertTrue(rep.completed)
+        self.assertFalse(self.dst.exists(self._partial()))
         with self.dst.open_read("/big.bin") as fh:
             self.assertEqual(fh.read(), new_payload)
 

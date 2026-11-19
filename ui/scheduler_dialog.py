@@ -238,7 +238,12 @@ class SchedulerDialog(QDialog):
         job = next((j for j in self._jobs if j.job_id == job_id), None)
         if job is None:
             return
-        if ok is None:  # stopped because the application closed: not a failure
+        if ok is None and detail and not detail.startswith("cancelled"):
+            # Not started, no failure either: the job runs in another
+            # axross, or the security mode refuses scripts.
+            self._status.setText(tr("{name} did not run: {detail}").format(
+                name=job.name, detail=detail))
+        elif ok is None:  # stopped because the application closed: not a failure
             self._status.setText(tr("{name} was stopped: the application closed").format(
                 name=job.name))
         elif ok:
@@ -319,9 +324,17 @@ class SchedulerDialog(QDialog):
     def _change(self, change) -> None:
         """Apply *change* to the jobs as the store holds them now, not to
         this dialog's copy: a run that finished while the dialog was open
-        recorded its result in the store, and saving the copy would erase it."""
+        recorded its result in the store, and saving the copy would erase it.
+        OSError when the store cannot be read or written."""
         self._jobs = self._flagged(self.store.update(change))
         self._populate()
+
+    def _not_saved(self, title: str, exc: OSError) -> None:
+        """The schedule could not be saved: said here, the table as stored
+        (it went to the application's error dialog before)."""
+        QMessageBox.warning(self, title, tr("The schedule could not be saved: {error}").format(
+            error=exc))
+        self.reload()
 
     # -- handlers --------------------------------------------------------
 
@@ -365,6 +378,9 @@ class SchedulerDialog(QDialog):
         except ValueError as exc:
             QMessageBox.warning(self, tr("Add job"), str(exc))
             return
+        except OSError as exc:
+            self._not_saved(tr("Add job"), exc)
+            return
         self._name_edit.clear()
         self._target_edit.clear()
 
@@ -379,7 +395,10 @@ class SchedulerDialog(QDialog):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         ) == QMessageBox.StandardButton.Yes:
-            self.remove_job(job.job_id)
+            try:
+                self.remove_job(job.job_id)
+            except OSError as exc:
+                self._not_saved(tr("Remove job"), exc)
 
     def _on_run_now(self) -> None:
         job = self._selected_job()
@@ -396,7 +415,10 @@ class SchedulerDialog(QDialog):
     def _on_toggle(self) -> None:
         job = self._selected_job()
         if job is not None:
-            self.set_enabled(job.job_id, not job.enabled)
+            try:
+                self.set_enabled(job.job_id, not job.enabled)
+            except OSError as exc:
+                self._not_saved(tr("Scheduled Jobs"), exc)
 
 
 __all__ = ["COLUMNS", "INTERVAL_CHOICES", "SchedulerDialog", "format_interval", "job_row"]

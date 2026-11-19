@@ -134,7 +134,9 @@ def test_sad_a_missing_member_is_a_key_error(chain, tmp_path):
 
 
 def test_sad_a_bomb_member_is_refused_by_the_ratio_guard(tmp_path):
-    bomb = b"\0" * (8 * 1024 * 1024)  # a "zip" of zeros: deflates far over 100:1
+    # A "zip" of zeros: deflates far over 100:1, and it is at least
+    # RATIO_CHECK_FLOOR big (a smaller member is not ratio-checked).
+    bomb = b"\0" * (ARCH.RATIO_CHECK_FLOOR + 1024 * 1024)
     outer = tmp_path / "outer.zip"
     with zipfile.ZipFile(outer, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("bomb.zip", bomb)
@@ -168,7 +170,7 @@ def test_edge_the_deepest_allowed_level_opens(chain, tmp_path):
 def test_edge_a_member_whose_extracted_size_lies_is_removed(chain, tmp_path, monkeypatch):
     real = ARCH.list_archive
 
-    def lying(path):  # the listing claims 1 byte; the bytes are more
+    def lying(path, **_kwargs):  # the listing claims 1 byte; the bytes are more
         return [
             ARCH.ArchiveEntry(e.name, 1, e.compressed, e.mtime, e.is_dir) for e in real(path)
         ]

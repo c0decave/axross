@@ -43,6 +43,9 @@ class FakeTelnetShell:
                 0,
             ),
             "base64 <": ("aGVsbG8=", 0),
+            # Downloads go in pieces: the size first, then dd | base64.
+            "wc -c <": ("5", 0),
+            "dd if=": ("aGVsbG8=", 0),
             "test -d": ("", 1),
             "test -e": ("", 0),
             "df": ("Filesystem 1B-blocks Used Available Use% Mounted\n/dev/x 100 40 60 40% /", 0),

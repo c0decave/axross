@@ -10,6 +10,8 @@ write into the MCP root. The Host/Origin check only stops browsers.
 from __future__ import annotations
 
 import base64
+import contextlib
+import io
 import http.client
 import json
 import os
@@ -18,6 +20,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from core import mcp_http
 from core.local_fs import LocalFS
@@ -165,11 +168,28 @@ class CommandLineTokenTest(unittest.TestCase):
         self.assertEqual(code, 0, err)
         return err, serve_http.call_args.args[0]
 
-    def test_happy_plain_http_gets_a_fresh_token_shown_once(self) -> None:
-        err, config = self.run_main("--mcp-http", "127.0.0.1:7331")
+    def test_happy_plain_http_gets_a_fresh_token_shown_once_bound(self) -> None:
+        from tests.test_mcp_write_root import _main_in_process
+
+        code, err, _serve, serve_http = _main_in_process("--mcp-server", "--mcp-http",
+                                                         "127.0.0.1:7331")
+        self.assertEqual(code, 0, err)
+        config = serve_http.call_args.args[0]
         self.assertGreaterEqual(len(config.auth_token or ""), 32)
-        self.assertIn(config.auth_token, err)
-        self.assertIn("Authorization: Bearer", err)
+        # Handed out only once the socket is bound: serve_http calls it.
+        self.assertNotIn(config.auth_token, err)
+        announce = serve_http.call_args.kwargs["announce"]
+        folder = Path(tempfile.mkdtemp())
+        shown = io.StringIO()
+        with mock.patch.object(mcp_http, "_token_directory", return_value=folder), \
+                contextlib.redirect_stderr(shown):
+            undo = announce(object())
+        path = folder / "mcp-http-127.0.0.1-7331.token"
+        self.assertEqual(path.read_text(), config.auth_token + "\n")
+        self.assertIn(config.auth_token, shown.getvalue())
+        self.assertIn("Authorization: Bearer", shown.getvalue())
+        undo()
+        self.assertFalse(path.exists())  # the server stopped: the file goes
 
     def test_sad_mtls_without_the_variable_needs_no_token(self) -> None:
         _err, config = self.run_main(

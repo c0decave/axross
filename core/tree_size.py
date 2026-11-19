@@ -11,11 +11,14 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from core.path_policy import MAX_RECURSIVE_DELETE_DEPTH, safe_join
 
 log = logging.getLogger(__name__)
+
+#: How many unreadable folders a result names.
+UNREADABLE_SAMPLE = 10
 
 
 @dataclass
@@ -24,6 +27,11 @@ class TreeSize:
     files: int = 0  # everything that is not a followed folder, links included
     folders: int = 0  # folders listed, the root included
     unreadable: int = 0
+    #: The first folders that could not be listed (UNREADABLE_SAMPLE of them).
+    unreadable_paths: list = field(default_factory=list)
+    #: Entries listed but not stat'ed (a folder without search permission
+    #: lists its names, not their sizes): their size is not in ``bytes``.
+    unstattable: int = 0
     depth_capped: bool = False
     cancelled: bool = False
 
@@ -50,6 +58,8 @@ def tree_size(
         except OSError as exc:
             log.warning("Size: cannot list %s: %s", path, exc)
             result.unreadable += 1
+            if len(result.unreadable_paths) < UNREADABLE_SAMPLE:
+                result.unreadable_paths.append(path)
             continue
         result.folders += 1
         for item in items:
@@ -65,6 +75,8 @@ def tree_size(
                 except ValueError as exc:
                     log.warning("Size: skipping unsafe name %r in %s: %s", name, path, exc)
                 continue
+            if getattr(item, "stat_error", ""):
+                result.unstattable += 1  # size unknown: not an exact 0
             result.bytes += int(getattr(item, "size", 0) or 0)
             result.files += 1
         if progress is not None:

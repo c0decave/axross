@@ -19,7 +19,23 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import pytest  # noqa: E402
+from PyQt6.QtWidgets import QApplication  # noqa: E402
+
 from ui.main_window import MainWindow  # noqa: E402
+
+_APP = None
+
+
+@pytest.fixture(autouse=True)
+def _qt_app():
+    """A sync with folders makes them on a ScanJob, whose timer and
+    hand-back to the GUI thread need the application's event loop: run
+    alone (no earlier test of the worker made one) the nested sync never
+    reported and queued nothing."""
+    global _APP
+    _APP = QApplication.instance() or QApplication([])  # kept: a dropped one aborts Qt
+    yield
 
 
 class _Backend:

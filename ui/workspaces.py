@@ -86,7 +86,9 @@ def clean_name(name: object) -> str:
 def tab_label(name: str) -> str:
     """*name* for a tab or a menu entry, where "&" marks a mnemonic: shown
     as typed ("R&D" showed as "RD" with an underlined D)."""
-    return name.replace("&", "&&")
+    from ui.plain_text import defused
+
+    return defused(name).replace("&", "&&")
 
 
 def session_problem(workspaces) -> tuple[str, list]:

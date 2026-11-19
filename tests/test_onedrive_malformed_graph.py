@@ -54,7 +54,7 @@ def _answer(obj):
 
 def test_happy_listing_follows_distinct_pages():
     pages = {
-        "children": {"value": [{"name": "a", "size": 1}], "@odata.nextLink": "https://g/x?p=2"},
+        "children": {"value": [{"name": "a", "size": 1}], "@odata.nextLink": "https://graph.microsoft.com/v1.0/x?p=2"},
         "p=2": {"value": [{"name": "b", "size": 2, "folder": {}}]},
     }
 
@@ -103,7 +103,7 @@ def test_edge_wrong_typed_fields_get_safe_defaults():
 
 
 def test_edge_repeating_next_link_fails_instead_of_paging_forever():
-    s = _session(_answer({"value": [{"name": "a"}], "@odata.nextLink": "https://g/x?p=1"}))
+    s = _session(_answer({"value": [{"name": "a"}], "@odata.nextLink": "https://graph.microsoft.com/v1.0/x?p=1"}))
     with pytest.raises(OSError, match="repeats"):
         s.list_dir("/")
 

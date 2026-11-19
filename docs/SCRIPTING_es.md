@@ -100,7 +100,9 @@ Cómo se comporta una ejecución:
   duración, o *stopped*.
 - Una línea de traceback que apunta al script es un enlace: un clic
   salta a esa línea en el editor.
-- Cerrar la ventana termina un script en ejecución. Cambiar a otro
+- Cerrar la ventana termina un script en ejecución; si axross se
+  mata o falla, la ejecución termina con él, junto con lo que inició
+  (Linux, macOS). Cambiar a otro
   script, o cerrar la ventana, con cambios sin guardar pregunta Save,
   Discard o Cancel.
 - Una ejecución aparte no tiene terminal: `axross.confirm()` lanza

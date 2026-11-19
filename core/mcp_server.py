@@ -136,8 +136,11 @@ from __future__ import annotations
 
 import base64
 import contextvars
+import errno
+import io
 import json
 import logging
+import sqlite3
 import sys
 import threading
 import time
@@ -222,13 +225,37 @@ def _argument_refusal(args, schema: dict) -> tuple[str, list] | None:
 audit_log = logging.getLogger("core.mcp_server.audit")
 
 
-PROTOCOL_VERSION = "2024-11-05"
-# Versions we know how to speak. If a client asks for something older
-# we still answer with our current version and hope for the best; if
-# they ask for something we explicitly recognise, we echo it. The
-# list is ordered newest-first.
-SUPPORTED_PROTOCOL_VERSIONS = ("2024-11-05",)
+# The MCP revisions this server speaks, newest first. initialize echoes
+# the client's version when it is one of them and answers the newest
+# otherwise (the client then decides whether it can live with that).
+# 2025-03-26 is left out on purpose: it is the one revision that demands
+# JSON-RPC batches, which 2025-06-18 removed again; a client asking for it
+# is offered the newest. What each revision changes here:
+#   2025-06-18: tool ``title``, ``outputSchema`` and ``structuredContent``,
+#               ``serverInfo.title``, the MCP-Protocol-Version header on
+#               HTTP (core.mcp_http), no batches;
+#   2025-11-25: arguments a tool refuses come back as a tool error
+#               (isError) the model can read and correct, not as a
+#               JSON-RPC error; ``serverInfo.description`` / ``websiteUrl``.
+# Tool annotations (readOnlyHint, destructiveHint, idempotentHint,
+# openWorldHint) go out from 2025-03-26 on, so with both newer revisions.
+SUPPORTED_PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2024-11-05")
+PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[0]
+#: The revision a session that never sent initialize is answered in (a
+#: direct caller of _handle_request, a test): the oldest, as before.
+LEGACY_PROTOCOL_VERSION = "2024-11-05"
+#: Every released revision up to the newest supported one, oldest first:
+#: what "at least revision X" is measured against.
+_KNOWN_PROTOCOL_VERSIONS = ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25")
 SERVER_NAME = "axross-mcp"
+#: serverInfo's display name (2025-06-18) and its description and website
+#: (2025-11-25).
+SERVER_TITLE = "axross"
+SERVER_DESCRIPTION = (
+    "axross's file tools over MCP: list, read, search, hash and (opt-in) write files "
+    "on the local disk and on remote connections (SFTP, SMB, WebDAV, S3 and more)"
+)
+SERVER_WEBSITE = "https://github.com/c0decave/axross-headless-mcp"
 # The package version, so serverInfo and /health name the axross that runs.
 from axross._version import __version__ as SERVER_VERSION  # noqa: E402
 
@@ -262,6 +289,8 @@ DEFAULT_TIMEOUT_PREVIEW = 30.0  # preview renders a thumbnail
 # backend. Tools that poll ctx.check_cancel() can still be stopped by
 # the client at any point before this deadline.
 DEFAULT_TIMEOUT_STREAM_HASH = 300.0
+#: Bytes past its reported size a remote file's hash stream may bring.
+STREAM_HASH_SLACK_BYTES = 16 << 20
 # Whole-tree jobs of the capability groups (duplicate scan, index build,
 # pack, extract, transfer): half an hour bounds a wedged backend while a
 # real job on a large tree still finishes. They poll ctx.check_cancel(),
@@ -323,6 +352,199 @@ def _utf8_tail(data: bytes) -> int:
             need = 2 if byte < 0xE0 else 3 if byte < 0xF0 else 4
             return back if back < need else 0
     return 0
+
+
+#: Tool arguments that name a file: each also has a ``<name>_b64`` twin
+#: (base64 of the name's raw bytes) for a name that is not UTF-8.
+PATH_ARGUMENTS = ("path", "src", "dst", "dest_dir", "folder", "link_path", "out", "target")
+#: ... and lists of names.
+PATH_LIST_ARGUMENTS = ("names",)
+#: Result fields that name a file: a name that is not UTF-8 gets a
+#: ``<field>_b64`` twin there (error texts are only made readable).
+_TWIN_KEYS = frozenset(PATH_ARGUMENTS) | {"name", "output", "file", "dest", "link_target"}
+
+
+def _raw_bytes(text: str) -> bytes | None:
+    """The bytes a surrogate-escaped name stands for (os.fsdecode made it),
+    or None when *text* holds other lone surrogates."""
+    try:
+        return text.encode("utf-8", "surrogateescape")
+    except UnicodeEncodeError:
+        return None
+
+
+def _wire_text(text: str) -> str:
+    """*text* as it can go over the wire: a lone surrogate - a byte of a
+    file name that is not UTF-8 (``os.fsdecode``) - becomes U+FFFD. JSON
+    may escape such a surrogate, but a client's UTF-8 decoder refuses it:
+    the official SDK dropped the whole response and waited forever."""
+    try:
+        text.encode("utf-8")
+        return text
+    except UnicodeEncodeError:
+        pass
+    raw = _raw_bytes(text)
+    if raw is not None:
+        return raw.decode("utf-8", "replace")
+    return "".join("\ufffd" if "\ud800" <= ch <= "\udfff" else ch for ch in text)
+
+
+def _wire_safe(value):
+    """*value* (a tool result, an error) with every string fit for the wire
+    (:func:`_wire_text`). A dict value that changed gets a sibling
+    ``<key>_b64`` - base64 of its raw bytes - so the file can still be
+    named: every tool takes ``path_b64`` (and the other ``*_b64`` twins of
+    :data:`PATH_ARGUMENTS`) instead of ``path``."""
+    if isinstance(value, str):
+        return _wire_text(value)
+    if isinstance(value, dict):
+        out = {}
+        for key, item in value.items():
+            name = _wire_text(key) if isinstance(key, str) else key
+            if isinstance(item, str):
+                clean = _wire_text(item)
+                out[name] = clean
+                if clean is not item and isinstance(name, str) and (
+                        name in _TWIN_KEYS or name.endswith("path")):
+                    raw = _raw_bytes(item)
+                    twin = f"{name}_b64"
+                    if raw is not None and twin not in value:
+                        out[twin] = base64.b64encode(raw).decode("ascii")
+            else:
+                out[name] = _wire_safe(item)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [_wire_safe(item) for item in value]
+    return value
+
+
+def _dumps_wire(message) -> str:
+    """One JSON-RPC frame as a line of JSON, without lone surrogates."""
+    line = json.dumps(message, default=str)
+    if "\\ud" in line or "\\uD" in line:
+        line = json.dumps(_wire_safe(message), default=str)
+    return line
+
+
+def _decode_path_args(args: dict) -> dict:
+    """``path_b64`` (and the other twins) into ``path``: the raw bytes of
+    a name that is not UTF-8, as :func:`_wire_safe` handed them out. A
+    twin wins over the plain argument; malformed base64 is refused."""
+    if not isinstance(args, dict) or not any(
+            isinstance(key, str) and key.endswith("_b64") for key in args):
+        return args
+    import os as _os
+
+    out = dict(args)
+    for name in PATH_ARGUMENTS:
+        twin = out.pop(f"{name}_b64", None)
+        if twin is None:
+            continue
+        out[name] = _os.fsdecode(_strict_b64(twin, f"{name}_b64"))
+    for name in PATH_LIST_ARGUMENTS:
+        twins = out.pop(f"{name}_b64", None)
+        if twins is None:
+            continue
+        if not isinstance(twins, list):
+            raise ValueError(f"{name}_b64 must be a list of base64 strings")
+        if name in out and isinstance(out[name], list) and len(out[name]) != len(twins):
+            # Both given and of different lengths: one name would be lost.
+            raise ValueError(f"{name}_b64 has {len(twins)} entries but {name} has "
+                             f"{len(out[name])}; give one of them, or both alike")
+        out[name] = [_os.fsdecode(_strict_b64(t, f"{name}_b64")) for t in twins]
+    return out
+
+
+def _strict_b64(value, what: str) -> bytes:
+    """Standard base64, canonical only: ``YWJj=`` (excess padding) and the
+    like are refused, not read as "abc"."""
+    import binascii
+
+    if not isinstance(value, str):
+        raise ValueError(f"{what} must be a base64 string")
+    try:
+        raw = base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError(f"{what} is not base64: {exc}") from None
+    if base64.b64encode(raw).decode("ascii") != value:
+        raise ValueError(f"{what} is not canonical base64 (padding or trailing bits)")
+    return raw
+
+
+def _add_path_twins(tools: list) -> None:
+    """Give every path argument its ``*_b64`` twin in the tool's schema."""
+    for tool in tools:
+        props = tool.schema.get("properties")
+        if not isinstance(props, dict):
+            continue
+        for name in PATH_ARGUMENTS:
+            spec = props.get(name)
+            if isinstance(spec, dict) and spec.get("type") == "string":
+                props.setdefault(f"{name}_b64", {
+                    "type": "string",
+                    "description": f"Instead of {name}: base64 of the name's raw bytes, for a "
+                                   f"name that is not UTF-8 (listings give such a name as "
+                                   f"U+FFFD plus a {name}_b64 / name_b64 field).",
+                })
+        for name in PATH_LIST_ARGUMENTS:
+            spec = props.get(name)
+            if isinstance(spec, dict) and spec.get("type") == "array":
+                props.setdefault(f"{name}_b64", {
+                    "type": "array", "items": {"type": "string"},
+                    "description": f"Instead of {name}: base64 of each name's raw bytes.",
+                })
+
+
+def _secret_scan_limit() -> int:
+    from core import protected_places
+
+    return protected_places.SECRET_CONTENT_SCAN
+
+
+def _utf8_unit(data: bytes, i: int) -> int:
+    """Length of the UTF-8 unit at *data[i]*: a whole character, or 1 for a
+    byte that starts none (an invalid byte, a lone continuation byte, a
+    lead byte whose continuation is wrong). 0: a character cut by the end
+    of *data*."""
+    b = data[i]
+    if b < 0x80:
+        return 1
+    if 0xC2 <= b <= 0xDF:
+        need = 2
+    elif 0xE0 <= b <= 0xEF:
+        need = 3
+    elif 0xF0 <= b <= 0xF4:
+        need = 4
+    else:
+        return 1  # 80-C1, F5-FF: no character starts here
+    for k in range(1, need):
+        if i + k >= len(data):
+            return 0
+        if not 0x80 <= data[i + k] <= 0xBF:
+            return 1  # the lead byte alone is the bad unit
+    return need
+
+
+def _text_window(ahead: bytes, cap: int, more: bool) -> bytes:
+    """The bytes a text read hands out from *ahead* (the file from the read
+    position on, a few bytes past *cap*): whole units up to *cap* bytes,
+    at least one unit (max_bytes smaller than one character), and never a
+    character cut in two - an invalid byte is a unit of its own, so
+    ``ff fe 中`` read a byte at a time gives ff, fe, then 中 (it lost 中)."""
+    out = 0
+    while out < len(ahead):
+        unit = _utf8_unit(ahead, out)
+        if unit == 0:
+            if out == 0 and not more:
+                unit = len(ahead)  # the file ends inside it: what is there
+            else:
+                break
+        if out and out + unit > cap:
+            break
+        out += unit
+        if out >= cap:
+            break
+    return ahead[:out]
 
 
 def _skip_stream(fh, count: int) -> None:
@@ -467,6 +689,20 @@ def _bulk_copy_complete(entries: list[dict], truncated: bool) -> bool:
 # shouldn't silently stream over a WAN backend" without refusing
 # realistic payloads. Caller overrides per-call.
 BULK_COPY_MAX_FILE_BYTES = 10 * (1 << 30)  # 10 GiB
+
+# Upper caps of the counts a caller may ask for: what a tree tool keeps in
+# memory and sends back is bounded, whatever max_entries / max_files says
+# (10**9 kept a whole disk's listing in the server). The defaults stay far
+# below; a call above a cap is refused, not cut silently.
+MAX_WALK_ENTRIES = 100_000
+MAX_RECURSIVE_CHECKSUM_FILES = 50_000
+MAX_BULK_COPY_FILES = 100_000
+MAX_TREE_DEPTH = 64
+# search: at most this many results (default DEFAULT_SEARCH_LIMIT), and at
+# most MAX_SEARCH_SCAN rows of the index read for them.
+DEFAULT_SEARCH_LIMIT = 1000
+MAX_SEARCH_RESULTS = 10_000
+MAX_SEARCH_SCAN = 200_000
 # Allowed algorithm names for ``checksum``. Deliberately restricted to
 # the four hashlib.new-safe algorithms that a client can reproduce
 # locally — any request for a backend-specific hash (S3 ETag, Dropbox
@@ -498,17 +734,44 @@ class _CancelRegistry:
 
     def __init__(self) -> None:
         self._events: dict[Any, threading.Event] = {}
+        # Ids a notifications/cancelled reached while they ran: their
+        # response is not sent (MCP: a cancelled request gets none).
+        self._cancelled: set = set()
         self._lock = threading.Lock()
 
     def register(self, request_id) -> threading.Event:
-        event = threading.Event()
+        """The cancel event of *request_id* - the one already registered
+        when the stdio loop did that before handing the call to a worker
+        (so a cancel that comes first is not lost)."""
         with self._lock:
-            self._events[request_id] = event
+            event = self._events.get(request_id)
+            if event is None:
+                event = self._events[request_id] = threading.Event()
         return event
+
+    def pop_cancelled(self, request_id) -> bool:
+        """True (once) when *request_id* was cancelled while it ran."""
+        with self._lock:
+            if request_id in self._cancelled:
+                self._cancelled.discard(request_id)
+                return True
+            return False
 
     def unregister(self, request_id) -> None:
         with self._lock:
             self._events.pop(request_id, None)
+
+    def pending(self) -> int:
+        """Requests registered and not yet unregistered: calls running now."""
+        with self._lock:
+            return len(self._events)
+
+    def cancel_all(self) -> None:
+        """Flip every in-flight request's cancel event (the session ended)."""
+        with self._lock:
+            events = list(self._events.values())
+        for event in events:
+            event.set()
 
     def cancel(self, request_id) -> bool:
         """Mark request *request_id* as cancelled. Returns True when
@@ -517,6 +780,8 @@ class _CancelRegistry:
         we'd already finished" pattern."""
         with self._lock:
             event = self._events.get(request_id)
+            if event is not None:
+                self._cancelled.add(request_id)
         if event is None:
             return False
         event.set()
@@ -556,14 +821,109 @@ MAX_STDIN_LINE_CHARS = 16 * 1024 * 1024
 # forgets to call tasks/status on older tasks.
 MAX_TASKS_PER_SCOPE = 100
 
+#: axross's own background-task methods; on the wire ``axross/tasks/...``
+#: (sessions before MCP 2025-11-25 may also use the bare names).
+LEGACY_TASK_METHODS = ("tasks/start", "tasks/status", "tasks/cancel", "tasks/list")
+
 # Tasks of one scope that may run at the same time. Each running task
 # owns a worker thread and never gets evicted, so without this cap a
 # tasks/start loop spawns threads without bound.
 MAX_RUNNING_TASKS_PER_SCOPE = 8
+# ... and of the whole server: on HTTP every session is a scope of its
+# own, and a client opening sessions got 8 more workers with each.
+MAX_RUNNING_TASKS_TOTAL = 16
+# Bytes of finished task results the registry keeps, all scopes together.
+# Over it, the oldest finished tasks go first (their status then answers
+# "unknown task_id").
+MAX_TASK_RESULTS_TOTAL_BYTES = 64 * 1024 * 1024
+# How long a cancelled or timed-out task's worker gets to stop before the
+# task ends anyway ("abandoned"): its slot is free again, the thread - a
+# backend call that cannot be interrupted - runs out on its own.
+TASK_STOP_GRACE_SECONDS = 10.0
+
+
+#: Workers of calls that did not stop (a hard-stopped tools/call, an
+#: abandoned task) that may still run on one backend before new calls on
+#: that backend are refused: their slots were freed, but the threads - and
+#: what they hold - are not. Calls on other backends go on.
+MAX_ABANDONED_WORKERS = 8
+
+#: Argument names that address a backend (core.mcp_groups' transfer tools
+#: name two).
+_BACKEND_ARGS = ("backend", "src_backend", "dst_backend")
+
+#: Tools never refused for abandoned workers: the way out of a stuck
+#: connection (remote_close tears it down, which ends its waiting calls)
+#: and what only reads the server's own state.
+_ALWAYS_ALLOWED_TOOLS = frozenset({"remote_close", "remote_profiles", "list_backends"})
+
+
+def _backends_of(args) -> frozenset:
+    """The remote backends a call's arguments address, or ``{"local"}``."""
+    named = set()
+    if isinstance(args, dict):
+        for key in _BACKEND_ARGS:
+            value = args.get(key)
+            if isinstance(value, str) and value.strip() not in ("", "local"):
+                named.add(value.strip())
+    return frozenset(named or {"local"})
+
+
+class _AbandonedWorkers:
+    """Threads left to end on their own, counted per backend while they
+    live (a stalled profile holds its own calls, not the server's)."""
+
+    def __init__(self) -> None:
+        self._threads: list[tuple[threading.Thread, frozenset]] = []
+        self._lock = threading.Lock()
+
+    def add(self, thread: threading.Thread | None, args=None) -> None:
+        if thread is None:
+            return
+        with self._lock:
+            if all(t is not thread for t, _b in self._threads):
+                self._threads.append((thread, _backends_of(args)))
+
+    def _prune_locked(self) -> None:
+        self._threads = [(t, b) for t, b in self._threads if t.is_alive()]
+
+    def alive(self, backend: str | None = None) -> int:
+        with self._lock:
+            self._prune_locked()
+            if backend is None:
+                return len(self._threads)
+            return sum(1 for _t, b in self._threads if backend in b)
+
+    def refusal(self, name: str | None = None, args=None) -> str | None:
+        """Why a call of *name* with *args* is refused now, or None."""
+        if name in _ALWAYS_ALLOWED_TOOLS:
+            return None
+        for backend in sorted(_backends_of(args)):
+            count = self.alive(backend)
+            if count >= MAX_ABANDONED_WORKERS:
+                way_out = ("remote_close it (that ends them) and remote_open it again"
+                           if backend != "local" else "wait until some of them end")
+                return (f"{count} earlier calls on {backend} did not stop and still run "
+                        f"in the background (cap {MAX_ABANDONED_WORKERS}); new work on "
+                        f"{backend} is refused - a backend that does not answer holds "
+                        f"them: {way_out}")
+        return None
+
+
+_ABANDONED = _AbandonedWorkers()
+
+
+def _cancel_hooks(event):
+    """The call's cancel as core.transfer_hooks' current one: a backend's
+    long listing, a server-side command, a spooled upload stop on it."""
+    from core import transfer_hooks
+
+    return transfer_hooks.active(transfer_hooks.TransferHooks(cancel_event=event))
 
 
 class TaskLimitError(RuntimeError):
-    """The scope already runs ``MAX_RUNNING_TASKS_PER_SCOPE`` tasks."""
+    """The scope (or the server) already runs as many tasks as it may."""
+
 
 # How long a finished task is retained in the registry before it
 # becomes eligible for eviction. One hour is long enough for a
@@ -575,10 +935,10 @@ TASK_RETENTION_SECONDS = 3600
 @dataclass
 class _Task:
     """One server-side long-running task. Created by
-    ``tasks/start``, polled by ``tasks/status``, cancelled by
-    ``tasks/cancel``. The worker thread lives in ``thread``;
-    status transitions and result / error / last_progress are
-    set by the runner before the thread exits.
+    ``axross/tasks/start``, polled by ``axross/tasks/status``, cancelled
+    by ``axross/tasks/cancel``. The worker thread lives in ``thread``;
+    the terminal state is set once, through :meth:`finish` - by the
+    worker, or by the stop grace when the worker does not stop.
     """
 
     task_id: str
@@ -596,23 +956,44 @@ class _Task:
     # Set by the deadline timer before it flips cancel_event, so the
     # runner can tell a timeout from a tasks/cancel.
     timed_out: threading.Event = field(default_factory=threading.Event)
+    # Size of the serialised result (what the registry's byte cap counts).
+    result_bytes: int = 0
+    # True when the task ended without its worker (the stop grace ran out).
+    abandoned: bool = False
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+    def finish(self, status: str, *, result: Any = None, error: str | None = None,
+               result_bytes: int = 0, abandoned: bool = False) -> bool:
+        """Move a running task to its terminal *status*; False when it
+        had one already (the worker came back after it was abandoned)."""
+        with self._lock:
+            if self.status != "running":
+                return False
+            self.result, self.error, self.result_bytes = result, error, result_bytes
+            self.abandoned = abandoned
+            self.finished_at = time.time()
+            self.status = status
+            return True
 
 
 class _TaskRegistry:
     """Per-server store of long-running :class:`_Task` records.
 
     Tasks are scoped via the ``scope`` key — session_id on HTTP,
-    empty string on stdio. ``start`` / ``status`` / ``cancel`` /
+    empty string on stdio. ``start`` / ``get`` / ``cancel`` /
     ``list_scope`` filter by scope so client A can't observe or
     kill client B's tasks on a shared HTTP server.
 
-    Eviction: finished tasks retire after TASK_RETENTION_SECONDS
-    AND whenever the scope has more than MAX_TASKS_PER_SCOPE live
-    records (oldest finished first). Running tasks are never
-    evicted from underneath their own worker thread.
+    Limits: at most ``max_running_per_scope`` running tasks per scope and
+    ``max_running_total`` in the server. Eviction, of every scope on every
+    call: finished tasks retire after ``retention_seconds``, beyond
+    ``max_per_scope`` records of a scope (oldest finished first) and
+    beyond ``max_result_bytes`` of kept results in all. ``drop_scope``
+    (an HTTP session that ends) cancels the scope's tasks and forgets
+    them. A cancelled or timed-out task whose worker does not stop within
+    ``stop_grace`` seconds ends anyway (``abandoned``), freeing its slot.
 
-    Thread-safety: all mutations go through ``_lock``. Lookups
-    return a snapshot so callers don't hold the lock across IO.
+    Thread-safety: all mutations go through ``_lock``.
     """
 
     def __init__(
@@ -621,12 +1002,30 @@ class _TaskRegistry:
         max_per_scope: int = MAX_TASKS_PER_SCOPE,
         retention_seconds: float = TASK_RETENTION_SECONDS,
         max_running_per_scope: int | None = None,
+        max_running_total: int | None = None,
+        max_result_bytes: int | None = None,
+        stop_grace: float | None = None,
     ) -> None:
         self._tasks: dict[str, _Task] = {}
         self._lock = threading.Lock()
         self._max_per_scope = max_per_scope
         self._retention_seconds = retention_seconds
         self._max_running_per_scope = max_running_per_scope
+        self._max_running_total = max_running_total
+        self._max_result_bytes = max_result_bytes
+        self._stop_grace = stop_grace
+
+    def _caps(self) -> tuple[int, int, int, float]:
+        # Read late: tests and operators patch the module constants.
+        return (
+            MAX_RUNNING_TASKS_PER_SCOPE if self._max_running_per_scope is None
+            else self._max_running_per_scope,
+            MAX_RUNNING_TASKS_TOTAL if self._max_running_total is None
+            else self._max_running_total,
+            MAX_TASK_RESULTS_TOTAL_BYTES if self._max_result_bytes is None
+            else self._max_result_bytes,
+            TASK_STOP_GRACE_SECONDS if self._stop_grace is None else self._stop_grace,
+        )
 
     def start(self, scope: str, tool_name: str, arguments: dict) -> _Task:
         import secrets as _secrets
@@ -640,16 +1039,16 @@ class _TaskRegistry:
             status="running",
             started_at=time.time(),
         )
-        cap = self._max_running_per_scope
-        if cap is None:
-            cap = MAX_RUNNING_TASKS_PER_SCOPE
+        cap, total_cap, _bytes, _grace = self._caps()
         with self._lock:
-            running = sum(
-                1 for t in self._tasks.values() if t.scope == scope and t.status == "running"
-            )
-            if running >= cap:
-                raise TaskLimitError(f"{running} tasks already running in this session (cap {cap})")
-            self._evict_stale_locked(scope)
+            self._evict_locked()
+            running = [t for t in self._tasks.values() if t.status == "running"]
+            mine = sum(1 for t in running if t.scope == scope)
+            if mine >= cap:
+                raise TaskLimitError(f"{mine} tasks already running in this session (cap {cap})")
+            if len(running) >= total_cap:
+                raise TaskLimitError(
+                    f"{len(running)} tasks already running in this server (cap {total_cap})")
             self._tasks[task_id] = task
         return task
 
@@ -659,6 +1058,7 @@ class _TaskRegistry:
         found" to the caller, which is the point: never leak the
         existence of another client's tasks."""
         with self._lock:
+            self._evict_locked()
             task = self._tasks.get(task_id)
             if task is None or task.scope != scope:
                 return None
@@ -668,36 +1068,111 @@ class _TaskRegistry:
         task = self.get(task_id, scope)
         if task is None:
             return False
-        task.cancel_event.set()
+        self._stop(task, "cancelled", "cancelled by axross/tasks/cancel")
         return True
+
+    def _stop(self, task: _Task, status: str, error: str) -> None:
+        """Ask *task* to stop; end it without its worker after the grace."""
+        task.cancel_event.set()
+        if task.status != "running":
+            return
+        grace = self._caps()[3]
+
+        def _abandon() -> None:
+            worker = task.thread
+            if worker is not None and worker.is_alive():
+                _ABANDONED.add(worker, task.arguments)
+                if task.finish(status, error=f"{error}; the tool did not stop within "
+                               f"{grace:g}s and was left to end in the background",
+                               abandoned=True):
+                    log.warning("task %s (%s) abandoned: its worker did not stop",
+                                task.task_id, task.tool_name)
+
+        timer = threading.Timer(grace, _abandon)
+        timer.daemon = True
+        timer.start()
+
+    def stop_for_timeout(self, task: _Task, error: str) -> None:
+        task.timed_out.set()
+        self._stop(task, "error", error)
+
+    def drop_scope(self, scope: str) -> int:
+        """Cancel and forget every task of *scope* (its session ended).
+        Returns how many were still running."""
+        with self._lock:
+            mine = [t for t in self._tasks.values() if t.scope == scope]
+            for t in mine:
+                self._tasks.pop(t.task_id, None)
+        running = 0
+        for t in mine:
+            if t.status == "running":
+                running += 1
+                t.cancel_event.set()
+                t.finish("cancelled", error="the session ended")
+        return running
 
     def list_scope(self, scope: str) -> list[_Task]:
         with self._lock:
+            self._evict_locked()
             return [t for t in self._tasks.values() if t.scope == scope]
 
-    def _evict_stale_locked(self, scope: str) -> None:
-        """Drop finished tasks that either aged out of the retention
-        window OR pushed the per-scope count over the cap. Caller
-        must hold ``_lock``. Running tasks are never evicted."""
-        import time as _time
+    def list_all(self) -> list[_Task]:
+        with self._lock:
+            return list(self._tasks.values())
 
-        now = _time.time()
-        scope_tasks = [t for t in self._tasks.values() if t.scope == scope]
-        # Age-out first.
-        for t in scope_tasks:
-            if t.status == "running":
-                continue
-            if t.finished_at is not None and now - t.finished_at > self._retention_seconds:
+    def running_count(self) -> int:
+        with self._lock:
+            return sum(1 for t in self._tasks.values() if t.status == "running")
+
+    def _evict_locked(self) -> None:
+        """Drop finished tasks of every scope that aged out, that push a
+        scope over its record cap, or the server over its result bytes.
+        Caller holds ``_lock``. Running tasks are never evicted."""
+        now = time.time()
+        for t in list(self._tasks.values()):
+            if t.status != "running" and t.finished_at is not None \
+                    and now - t.finished_at > self._retention_seconds:
                 self._tasks.pop(t.task_id, None)
-        # Cap-out: oldest finished first.
-        scope_tasks = [t for t in self._tasks.values() if t.scope == scope]
-        if len(scope_tasks) <= self._max_per_scope:
-            return
-        finished = [t for t in scope_tasks if t.status != "running"]
-        finished.sort(key=lambda t: t.finished_at or t.started_at)
-        overflow = len(scope_tasks) - self._max_per_scope
-        for t in finished[:overflow]:
-            self._tasks.pop(t.task_id, None)
+        by_scope: dict[str, list[_Task]] = {}
+        for t in self._tasks.values():
+            by_scope.setdefault(t.scope, []).append(t)
+        for scope_tasks in by_scope.values():
+            overflow = len(scope_tasks) - self._max_per_scope
+            if overflow > 0:
+                finished = sorted((t for t in scope_tasks if t.status != "running"),
+                                  key=lambda t: t.finished_at or t.started_at)
+                for t in finished[:overflow]:
+                    self._tasks.pop(t.task_id, None)
+        # Over the byte cap the scope that keeps the most gives up its
+        # oldest result first: one session's many results no longer erase
+        # another's unread one.
+        limit = self._caps()[2]
+        kept_by_scope: dict[str, int] = {}
+        for t in self._tasks.values():
+            kept_by_scope[t.scope] = kept_by_scope.get(t.scope, 0) + t.result_bytes
+        kept = sum(kept_by_scope.values())
+        while kept > limit:
+            finished = [t for t in self._tasks.values() if t.status != "running"]
+            if not finished:
+                break
+            def age(t):
+                return t.finished_at or t.started_at
+
+            oldest = {}
+            for t in finished:
+                if t.scope not in oldest or age(t) < age(oldest[t.scope]):
+                    oldest[t.scope] = t
+            # The heaviest scope; of equally heavy ones, the oldest result.
+            victim = max(oldest.values(), key=lambda t: (kept_by_scope[t.scope], -age(t)))
+            heaviest = victim.scope
+            kept -= victim.result_bytes
+            kept_by_scope[heaviest] -= victim.result_bytes
+            self._tasks.pop(victim.task_id, None)
+
+    def note_finished(self) -> None:
+        """A task ended: apply the byte cap now, not at the next call."""
+        with self._lock:
+            self._evict_locked()
 
 
 class _RateLimiter:
@@ -735,6 +1210,11 @@ class _RateLimiter:
                 self._tokens -= cost
                 return True
             return False
+
+    def refund(self, cost: float = 1.0) -> None:
+        """Give back what a try_acquire took (a second limiter refused)."""
+        with self._lock:
+            self._tokens = min(float(self._burst), self._tokens + cost)
 
     @property
     def tokens(self) -> float:
@@ -775,17 +1255,12 @@ class _ToolContext:
     def progress(self, progress: float, total: float | None = None, message: str = "") -> None:
         if self.progress_token is None or self.stdout is None:
             return
-        notif = {
-            "jsonrpc": "2.0",
-            "method": "notifications/progress",
-            "params": {
-                "progressToken": self.progress_token,
-                "progress": progress,
-                "total": total,
-                "message": message,
-            },
-        }
-        self.stdout.write(json.dumps(notif) + "\n")
+        params = {"progressToken": self.progress_token, "progress": progress}
+        if total is not None:  # optional: left out when not known, never null
+            params["total"] = total
+        params["message"] = message
+        notif = {"jsonrpc": "2.0", "method": "notifications/progress", "params": params}
+        self.stdout.write(_dumps_wire(notif) + "\n")
         try:
             self.stdout.flush()
         except Exception:  # noqa: BLE001 — StringIO.flush is a no-op; real pipes may EPIPE
@@ -830,8 +1305,9 @@ class _SerializedWriter:
             self._stream.flush()
 
 
-def _run_task(task: _Task, tool: "_Tool", stdout: IO | None) -> None:
-    """Background worker body for a ``tasks/start`` invocation.
+def _run_task(task: _Task, tool: "_Tool", stdout: IO | None,
+              registry: "_TaskRegistry | None" = None) -> None:
+    """Background worker body for an ``axross/tasks/start`` invocation.
 
     Runs ``tool.handler`` with a ``_ToolContext`` wired so that:
 
@@ -840,20 +1316,14 @@ def _run_task(task: _Task, tool: "_Tool", stdout: IO | None) -> None:
       on HTTP, stdout on stdio) so clients that stayed subscribed
       continue to see live progress.
     * ``ctx.cancel_event`` is the task's own cancel event, so a
-      ``tasks/cancel`` flips it and the next
-      ``ctx.check_cancel()`` raises.
-    * The task_id doubles as the progressToken — a subscribed
-      client can correlate notifications/progress frames with the
-      task without an extra negotiation round-trip.
+      cancel flips it and the next ``ctx.check_cancel()`` raises.
+    * The task_id doubles as the progressToken.
 
-    Terminal status is set in ``finally`` so an unhandled exception
-    still lands on ``error`` rather than leaving the task forever
-    in ``running``. Result serialisation happens here so a tool
-    returning a giant blob fails on the task record rather than
-    wedging tasks/status later.
+    The terminal state goes through ``task.finish`` so a worker that comes
+    back after the registry abandoned it (cancel or timeout, then the stop
+    grace) changes nothing. The deadline is the tool's own timeout, then
+    the registry's stop grace ends the task with or without its worker.
     """
-    # Late import of json keeps the module-level surface minimal
-    # and mirrors the convention used by other helpers in this file.
     import json as _json
 
     def _on_progress(progress: float, total: float | None = None, message: str = "") -> None:
@@ -868,10 +1338,6 @@ def _run_task(task: _Task, tool: "_Tool", stdout: IO | None) -> None:
         stdout=stdout,
         cancel_event=task.cancel_event,
     )
-    # Wrap ctx.progress so the task's last_progress snapshot stays
-    # current AND the original SSE-bound ``stdout`` write still
-    # happens. Instance-shadow the method; the dataclass doesn't
-    # prevent attribute assignment.
     _orig_progress = ctx.progress
 
     def _progress(progress, total=None, message=""):
@@ -880,51 +1346,57 @@ def _run_task(task: _Task, tool: "_Tool", stdout: IO | None) -> None:
 
     ctx.progress = _progress  # type: ignore[method-assign]
 
-    # Same cooperative wall-clock limit as a synchronous tools/call.
+    timeout_text = f"tool {tool.name!r} exceeded its {tool.timeout_seconds}s timeout"
     timer = None
     if tool.timeout_seconds:
 
         def _on_deadline() -> None:
-            task.timed_out.set()
-            task.cancel_event.set()
+            if registry is not None:
+                registry.stop_for_timeout(task, timeout_text)
+            else:
+                task.timed_out.set()
+                task.cancel_event.set()
 
         timer = threading.Timer(tool.timeout_seconds, _on_deadline)
         timer.daemon = True
         timer.start()
 
     try:
-        result = tool.handler(task.arguments, ctx)
-        # Serialise eagerly so a too-big-to-return payload fails
-        # on the task record rather than making tasks/status choke.
+        with _cancel_hooks(task.cancel_event):
+            result = tool.handler(task.arguments, ctx)
+        if isinstance(result, _PreviewResult):
+            # An image block cannot be a task's JSON result: its fields can.
+            result = {"mimeType": result.mime, "data": result.data_b64,
+                      "width": result.width, "height": result.height}
+        result = _wire_safe(result)
         try:
             encoded = _json.dumps(result)
         except (TypeError, ValueError) as exc:
-            task.status = "error"
-            task.error = f"tool result not JSON-serialisable: {exc}"
+            task.finish("error", error=f"tool result not JSON-serialisable: {exc}")
             return
         if len(encoded) > MAX_TASK_RESULT_BYTES:
-            task.status = "error"
-            task.error = (
+            task.finish("error", error=(
                 f"tool result ({len(encoded)} bytes) exceeds "
                 f"{MAX_TASK_RESULT_BYTES}-byte cap — fetch via "
-                f"paginated / narrower tool args"
-            )
+                f"paginated / narrower tool args"))
             return
-        task.result = result
-        task.status = "done"
+        if task.cancel_event.is_set() and not task.timed_out.is_set():
+            # Finished although cancelled: a cancel is a cancel.
+            task.finish("cancelled", error="cancelled by axross/tasks/cancel")
+            return
+        task.finish("done", result=result, result_bytes=len(encoded))
     except CancelledError:
         if task.timed_out.is_set():
-            task.status = "error"
-            task.error = f"tool {tool.name!r} exceeded its {tool.timeout_seconds}s timeout"
+            task.finish("error", error=timeout_text)
         else:
-            task.status = "cancelled"
+            task.finish("cancelled", error="cancelled by axross/tasks/cancel")
     except Exception as exc:  # noqa: BLE001 — surface on task record
-        task.status = "error"
-        task.error = redact_text(str(exc))
+        task.finish("error", error=redact_text(_wire_text(str(exc))))
     finally:
         if timer is not None:
             timer.cancel()
-        task.finished_at = time.time()
+        if registry is not None:
+            registry.note_finished()
 
 
 @dataclass
@@ -964,6 +1436,16 @@ class _Tool:
     # touch none (profiles, extensions): the multi-backend wiring then
     # leaves their schema without the generic ``backend`` argument.
     accepts_backend: bool = True
+    # tools/list's display name (2025-06-18) and annotations (2025-03-26:
+    # title, readOnlyHint, destructiveHint, idempotentHint, openWorldHint).
+    # None: taken from _TOOL_HINTS when the catalogue is built.
+    title: str | None = None
+    annotations: dict | None = None
+    # JSON Schema of the object the tool returns (2025-06-18 outputSchema;
+    # the result also goes out as structuredContent). Only for tools whose
+    # result always has this shape - tests/test_mcp_protocol_revisions.py
+    # checks real results against it. None: from _OUTPUT_SCHEMAS.
+    output_schema: dict | None = None
 
 
 def _script_run_args(raw) -> list[str]:
@@ -1007,6 +1489,64 @@ def _backend_id_for(backend) -> str:
     return f"{cls}:{name}" if name else cls
 
 
+def _streams_its_checksum(backend) -> bool:
+    """True for a backend whose checksum() reads the whole file itself
+    (the local file systems): no cheaper than streaming it here, and not
+    cancellable."""
+    try:
+        from core.local_fs import LocalFS
+    except ImportError:  # pragma: no cover
+        return False
+    return isinstance(backend, LocalFS)
+
+
+#: Folders of kernel pseudo files: a "regular" file there (/proc/kmsg) has
+#: size 0 and blocks a reader for good.
+_PSEUDO_FILE_ROOTS = ("/proc/", "/sys/", "/dev/")
+
+
+def _refuse_remote_special(backend, path: str) -> bool:
+    """For an SFTP backend: OSError unless *path* - its link followed, as
+    the server's hash command or a read would - is a regular file outside
+    the kernel's pseudo file systems (``sha256sum`` of a link to /dev/zero
+    ran on the server for good, of /proc/kmsg it held the channel 300 s).
+    Returns whether the server's own hash command may run: not for a file
+    of size 0 (a pseudo file says 0; an empty file is hashed here at once).
+    Other backends have no devices to reach: True."""
+    import posixpath
+    import stat as _stat
+
+    if _streams_its_checksum(backend):
+        return True
+    sftp = getattr(backend, "sftp", None)
+    stat_of = getattr(sftp, "stat", None)
+    if not callable(stat_of):
+        return True
+    normalize = getattr(sftp, "normalize", None)
+    if callable(normalize):
+        try:
+            real = normalize(path)
+        except Exception:  # noqa: BLE001 - the hash itself says what is wrong
+            real = None
+        if isinstance(real, str):
+            real = posixpath.normpath(real) + "/"
+            if any(real.startswith(prefix) for prefix in _PSEUDO_FILE_ROOTS):
+                raise OSError(errno.EINVAL, f"checksum: {path} lies in a kernel pseudo file "
+                              f"system ({real.rstrip('/')}); not hashed", path)
+    try:
+        st = stat_of(path)
+    except Exception:  # noqa: BLE001 - the hash itself says what is wrong
+        return True
+    mode = getattr(st, "st_mode", None)
+    if not isinstance(mode, int):
+        return True  # no mode (a stand-in, a server that sends none): not known
+    if not _stat.S_ISREG(mode):
+        raise OSError(errno.EINVAL, f"checksum: {path} is not a regular file (a device, FIFO "
+                      "or socket, perhaps behind a symlink); not hashed", path)
+    size = getattr(st, "st_size", None)
+    return not (isinstance(size, int) and size == 0)
+
+
 def _hash_one_path(
     backend,
     path: str,
@@ -1048,7 +1588,12 @@ def _hash_one_path(
     """
     import hashlib as _hashlib
 
-    native = backend.checksum(path, algorithm=algo) or ""
+    command_ok = _refuse_remote_special(backend, path)
+    # A local file system's "native" checksum streams the whole file in one
+    # call that no cancel reaches (a 40 GiB file ran on after tasks/cancel
+    # and after the tool's timeout): hash it here, chunk by chunk.
+    native = "" if _streams_its_checksum(backend) or not command_ok else (
+        backend.checksum(path, algorithm=algo) or "")
     trusted_native = ""
     if ":" in native:
         prefix, _, tail = native.partition(":")
@@ -1059,14 +1604,20 @@ def _hash_one_path(
     if trusted_native:
         return {"value": trusted_native, "source": "native"}
     size_for_total = total_bytes
+    size_known = size_for_total is not None
     if size_for_total is None:
         try:
             size_for_total = int(getattr(backend.stat(path), "size", 0) or 0)
+            size_known = True
         except OSError:
             size_for_total = 0
     hasher = _hashlib.new(algo)
     bytes_done = 0
     chunks_since_progress = 0
+    # A remote's file is hashed up to the size it gave and some slack: one
+    # that sends without end (a link to /dev/zero, a lying server) stops.
+    limit = (None if _streams_its_checksum(backend) or not size_known
+             else size_for_total + STREAM_HASH_SLACK_BYTES)
     with backend.open_read(path) as fh:
         while True:
             ctx.check_cancel()
@@ -1075,6 +1626,10 @@ def _hash_one_path(
                 break
             hasher.update(chunk)
             bytes_done += len(chunk)
+            if limit is not None and bytes_done > limit:
+                raise OSError(errno.EFBIG,
+                              f"checksum: {path} sent more than {limit} bytes for a file "
+                              f"of {size_for_total}; not hashed", path)
             chunks_since_progress += 1
             if emit_byte_progress and chunks_since_progress >= STREAM_HASH_PROGRESS_EVERY:
                 chunks_since_progress = 0
@@ -1269,9 +1824,19 @@ def _confine_local(backend, backends: dict | None, roots: tuple, *,
         if reason is not None:
             raise PermissionError(reason)
 
+    def scanning(handle, path):
+        from core.protected_places import SecretScanningReader
+
+        return SecretScanningReader(handle, path)
+
     def confine(candidate):
         if confined_fs.confinable(candidate):
-            return confined_fs.ConfinedLocalFS(roots, follow_check=follow_check)
+            # Every local read is scanned for a key in the whole stream, not
+            # only in the first MiB read_refusal looks at: what a tool
+            # copies, packs, encrypts or sends to a remote is read here.
+            return confined_fs.ConfinedLocalFS(
+                roots, follow_check=follow_check,
+                read_wrap=None if allow_secret_reads else scanning)
         return candidate
 
     confined = confine(backend)
@@ -1287,29 +1852,138 @@ def _confine_local(backend, backends: dict | None, roots: tuple, *,
 #: tasks/start run them in threads - cannot interleave a rename + symlink
 #: with another call's check and write. Defence in depth beside
 #: core.confined_fs, and the only guard where there is no dir_fd (Windows).
-_MUTATION_LOCK = threading.RLock()
+#: One key per backend a call changes ("local" for this machine): a
+#: transfer whose remote CLOSE hangs for 30 minutes held one lock for the
+#: whole process, and every local write timed out meanwhile.
+#
 #: Mutating tools that do not touch this machine's files themselves, or run
 #: for minutes: commands on remote hosts, the user's own LLM, scripts.
 _UNSERIALIZED_GROUPS = frozenset({"exec", "agent"})
 _UNSERIALIZED_TOOLS = frozenset({"script_run"})
+#: Tools that change their source too (moved away).
+_MOVING_TOOLS = frozenset({"transfer_move"})
+#: The lock key of this machine's disk.
+LOCAL_LOCK_KEY = "local"
 
 
-def _serialized(handler):
+class _MutationTable:
+    """Which backends write calls hold, and who waits for them.
+
+    A call takes every key it needs at once or none (it never holds one
+    while waiting for another: a move from a remote whose upload hung held
+    the local disk meanwhile), and waiting is first come, first served: a
+    call goes ahead only when no call that came earlier and could go now
+    needs one of its keys (try-lock polling let a 30 ms write wait 20 s
+    behind busy writers). A key is held by one thread at a time, again by the same
+    thread (a tool inside a tool); a key nobody holds is not kept (no lock
+    objects to drop while a waiter still has one: two writes ran on one
+    backend at once past 64 backends)."""
+
+    def __init__(self) -> None:
+        self._cond = threading.Condition()
+        self._held: dict[str, list] = {}  # key -> [owner thread id, depth]
+        self._queue: list = []  # [ticket, keys, thread id] in arrival order
+        self._tickets = 0
+
+    def _free_for(self, keys, me) -> bool:
+        return all(key not in self._held or self._held[key][0] == me for key in keys)
+
+    def acquire(self, keys, ctx) -> None:
+        me = threading.get_ident()
+        keys = list(keys)
+        with self._cond:
+            self._tickets += 1
+            entry = [self._tickets, set(keys), me]
+            self._queue.append(entry)
+            try:
+                while True:
+                    # An earlier call that could go now (every key it needs
+                    # is free) comes first for the keys it shares with this
+                    # one; one still waiting for a held key reserves nothing
+                    # (it would hold the rest while it waits).
+                    earlier = self._queue[: self._queue.index(entry)]
+                    blocked = any(other[2] != me and other[1] & entry[1]
+                                  and self._free_for(other[1], other[2]) for other in earlier)
+                    if not blocked and self._free_for(keys, me):
+                        for key in keys:
+                            row = self._held.setdefault(key, [me, 0])
+                            row[1] += 1
+                        return
+                    if ctx is not None and ctx.is_cancelled:
+                        raise CancelledError("cancelled while waiting for another write to "
+                                             "finish")
+                    self._cond.wait(0.2)
+            finally:
+                self._queue.remove(entry)
+                self._cond.notify_all()
+
+    def release(self, keys) -> None:
+        with self._cond:
+            for key in keys:
+                row = self._held.get(key)
+                if row is None:
+                    continue
+                row[1] -= 1
+                if row[1] <= 0:
+                    del self._held[key]
+            self._cond.notify_all()
+
+
+_MUTATIONS = _MutationTable()
+
+
+def _lock_key_for(backend) -> str:
+    """One key per backend object; this machine's disk (the server's own
+    backend, a confined one, any LocalFS) is :data:`LOCAL_LOCK_KEY`."""
+    from core.local_fs import LocalFS
+
+    if backend is None or isinstance(backend, LocalFS):
+        return LOCAL_LOCK_KEY
+    return f"backend:{id(backend)}"
+
+
+def _changed_backends(name: str, args, resolve=None) -> list[str]:
+    """The lock keys of the backends a write call of *name* changes, sorted.
+    *resolve(kind, value)* turns a ``backend`` / ``src_backend`` /
+    ``dst_backend`` argument into its backend object (the call's own
+    lookup); one that does not resolve fails the call anyway - it takes
+    the local lock meanwhile, never one of its own."""
+    def key(kind: str, value) -> str:
+        if resolve is None:
+            return LOCAL_LOCK_KEY
+        try:
+            return _lock_key_for(resolve(kind, value))
+        except Exception:  # noqa: BLE001 - the call reports it
+            return LOCAL_LOCK_KEY
+
+    if not isinstance(args, dict):
+        return [LOCAL_LOCK_KEY]
+    if "dst_backend" in args or "src_backend" in args or name.startswith("transfer_"):
+        keys = {key("dst_backend", args.get("dst_backend"))}
+        if name in _MOVING_TOOLS:
+            keys.add(key("src_backend", args.get("src_backend")))
+    else:
+        keys = {key("backend", args.get("backend"))}
+    return sorted(keys)
+
+
+def _serialized(handler, name: str = "", resolve=None):
     def run(args, ctx):
-        while not _MUTATION_LOCK.acquire(timeout=0.2):
-            if ctx is not None and ctx.is_cancelled:
-                raise CancelledError("cancelled while waiting for another write to finish")
+        keys = _changed_backends(name, args, resolve)
+        _MUTATIONS.acquire(keys, ctx)
         try:
             return handler(args, ctx)
         finally:
-            _MUTATION_LOCK.release()
+            _MUTATIONS.release(keys)
 
     run.__wrapped__ = handler
     return run
 
 
-def _serialize_mutations(tools: list) -> None:
-    """Run every mutating file tool under :data:`_MUTATION_LOCK`."""
+def _serialize_mutations(tools: list, resolve=None) -> None:
+    """Run every mutating file tool under the locks of the backends it
+    changes (:class:`_MutationTable`, keys by :func:`_lock_key_for` of
+    what *resolve* makes of its backend arguments)."""
     for tool in tools:
         if (
             tool.write
@@ -1317,7 +1991,7 @@ def _serialize_mutations(tools: list) -> None:
             and tool.name not in _UNSERIALIZED_TOOLS
             and not getattr(tool.handler, "__wrapped__", None)
         ):
-            tool.handler = _serialized(tool.handler)
+            tool.handler = _serialized(tool.handler, tool.name, resolve)
 
 
 def _exec_allowed_by_policy() -> bool:
@@ -1593,6 +2267,36 @@ def _build_tools(
 
         return check
 
+    def _refuse_served_secret(active_backend, path: str, offset: int, length: int) -> None:
+        """A read that reaches past the first bytes read_refusal looked at
+        (protected_places.SECRET_CONTENT_SCAN): look at what it serves -
+        and a key's length around it, for a window that starts or ends
+        inside a key - before handing it out."""
+        if allow_secret_reads:
+            return
+        from core import protected_places
+
+        margin = 16 * 1024
+        start = max(0, offset - margin)
+        with active_backend.open_read(path) as fh:
+            _skip_stream(fh, start)
+            window, _ = _read_capped_stream(fh, (offset - start) + length + margin)
+        inside = protected_places.secret_in_content(window)
+        if not inside:
+            # The window may lie in the middle of a key block longer than
+            # the margin: walk back over its base64 lines to a BEGIN line.
+            try:
+                with active_backend.open_read(path) as fh:
+                    inside = protected_places.inside_key_block(fh, offset)
+            except PermissionError:
+                inside = True  # the scanning reader met the key on the way
+            except (OSError, ValueError, io.UnsupportedOperation):
+                inside = False
+        if inside:
+            raise PermissionError(
+                f"{path}: refused - this part of the file holds a private key "
+                "(--mcp-allow-secret-reads hands secrets out)")
+
     def _secret_check(active_backend):
         """``refuse(path, entry=False) -> path`` for the paths of ONE tool
         call: PermissionError when *path*'s contents are a secret
@@ -1600,10 +2304,21 @@ def _build_tools(
         private keys) and *allow_secret_reads* is off. *entry*: the path is
         copied or moved whole, so a folder holding a secret is refused too.
         Names stay listable."""
-        if allow_secret_reads or _is_remote(active_backend):
+        if allow_secret_reads:
             return lambda path, *, entry=False: path
         from core import protected_places
 
+        if _is_remote(active_backend):
+            # A remote's secrets by their names: ~/.ssh's private keys,
+            # .env, credentials files... (the local rules need this
+            # machine's home folder and the file's content).
+            def refuse_remote(path: str, *, entry: bool = False) -> str:
+                reason = protected_places.remote_secret_refusal(path, entry=entry)
+                if reason is not None:
+                    raise PermissionError(reason)
+                return path
+
+            return refuse_remote
         check = protected_places.secret_checker(granted=read_roots)
 
         def refuse(path: str, *, entry: bool = False) -> str:
@@ -1613,6 +2328,16 @@ def _build_tools(
             return path
 
         return refuse
+
+    def _refuse_special_remote(active_backend, path: str, tool: str) -> None:
+        """A remote's server-side copy (``cp -p``) follows a symlink and
+        reads a device without end (/zero -> /dev/zero ran until the disk
+        was full): its source must be a regular file or a folder."""
+        if not _is_remote(active_backend):
+            return
+        why = _groups._special_source(active_backend, path, None)
+        if why is not None:
+            raise ValueError(f"{tool} copies regular files and folders; {path} is a {why}")
 
     def _refuse_secret(path: str, active_backend, *, entry: bool = False) -> str:
         """:func:`_secret_check` for one path."""
@@ -1751,27 +2476,46 @@ def _build_tools(
         with backend.open_read(path) as fh:
             if offset:
                 _skip_stream(fh, offset)
-            data, truncated = _read_capped_stream(fh, cap)
-        if encoding == "text" and offset:
-            # Started inside a UTF-8 character: begin at the next one.
+            if encoding == "text":
+                # Three bytes of look-ahead: a character the cap cuts is
+                # finished when it is the only one (max_bytes smaller than
+                # one character returned "" with next_offset == offset, and
+                # a client paging on that looped forever) and left for the
+                # next read otherwise.
+                ahead, more = _read_capped_stream(fh, cap + 3)
+            else:
+                data, truncated = _read_capped_stream(fh, cap)
+        if encoding == "text":
             lead = 0
-            while lead < min(3, len(data)) and 0x80 <= data[lead] <= 0xBF:
-                lead += 1
-            data, offset = data[lead:], offset + lead
-        if encoding == "text" and truncated:
-            data = data[:len(data) - _utf8_tail(data)]  # the next read starts with that character
+            if offset:
+                # Started inside a UTF-8 character: begin at the next one.
+                while lead < min(3, len(ahead)) and 0x80 <= ahead[lead] <= 0xBF:
+                    lead += 1
+            offset += lead
+            data = _text_window(ahead[lead:], cap, more)
+            truncated = more or lead + len(data) < len(ahead)
+        # A remote file is not scanned at open (review B): every window is.
+        if offset + len(data) > _secret_scan_limit() or _is_remote(backend):
+            _refuse_served_secret(backend, path, offset, len(data))
+        if not allow_secret_reads and _is_remote(backend):
+            from core import protected_places
+
+            # A remote file is not scanned at open: what is served is.
+            if protected_places.secret_in_content(data):
+                raise PermissionError(f"{path}: refused - this part of the file holds a "
+                                      "private key (--mcp-allow-secret-reads hands secrets out)")
         extra = {"offset": offset, "next_offset": offset + len(data)} if offset or truncated else {}
         if encoding == "text":
             import codecs
 
             # A cut inside a multi-byte character is the cap, not a bad
             # byte: final=False keeps that tail out of the text.
-            text = codecs.getincrementaldecoder("utf-8")("replace").decode(
-                data, final=not truncated
-            )
+            # _text_window never cuts a character: what is left undecodable
+            # is a bad byte, shown as U+FFFD.
+            text = codecs.getincrementaldecoder("utf-8")("replace").decode(data, final=True)
             strict = codecs.getincrementaldecoder("utf-8")("strict")
             try:
-                strict.decode(data, final=not truncated)
+                strict.decode(data, final=True)
                 replaced = False
             except UnicodeDecodeError:
                 replaced = True
@@ -1825,7 +2569,20 @@ def _build_tools(
         }
         if args.get("max_size"):
             kwargs["max_size"] = int(args["max_size"])
-        entries = MX.search_all(**kwargs)
+        raw_limit = args.get("limit")
+        limit = DEFAULT_SEARCH_LIMIT if raw_limit is None else int(raw_limit)
+        if not 0 < limit <= MAX_SEARCH_RESULTS:
+            raise ValueError(f"search: limit must be 1 … {MAX_SEARCH_RESULTS}")
+        ctx.check_cancel()
+        # The index is read up to MAX_SEARCH_SCAN rows (the root is applied
+        # to them below), and a cancel interrupts the query.
+        try:
+            entries = MX.search_all(**kwargs, limit=MAX_SEARCH_SCAN,
+                                    cancel=lambda: ctx.is_cancelled)
+        except sqlite3.OperationalError:
+            ctx.check_cancel()
+            raise
+        ctx.check_cancel()
         scope = _call_scope(resolved)
 
         def _in_root(entry_path: str) -> bool:
@@ -1837,7 +2594,7 @@ def _build_tools(
                 return False
             return True
 
-        entries = [e for e in entries if _in_root(e.path)]
+        entries = [e for e in entries if _in_root(e.path)][:limit]
         return [
             {
                 "backend_id": e.backend_id,
@@ -1867,6 +2624,9 @@ def _build_tools(
         max_entries = int(args.get("max_entries") or 1000)
         if max_depth < 0 or max_entries <= 0:
             raise ValueError("walk: max_depth must be ≥0 and max_entries > 0")
+        if max_depth > MAX_TREE_DEPTH or max_entries > MAX_WALK_ENTRIES:
+            raise ValueError(f"walk: max_depth must be ≤ {MAX_TREE_DEPTH} and max_entries "
+                             f"≤ {MAX_WALK_ENTRIES}")
         entries: list[dict] = []
         unreadable: list[dict] = []
         queue: list[tuple[str, int]] = [(path, 0)]
@@ -1900,7 +2660,7 @@ def _build_tools(
                     ctx.check_cancel()
                     ctx.progress(
                         progress=float(len(entries)),
-                        total=float(max_entries),
+                        total=None,  # max_entries is a cap, not the count
                         message=f"walked {len(entries)} entries @ {cur}",
                     )
         truncated = len(entries) >= max_entries and bool(queue)
@@ -1921,7 +2681,7 @@ def _build_tools(
         * skipped    — ``{path, size, algorithm, skipped: "too-large"}``
         * errored    — ``{path, size, algorithm, error: "<msg>"}``
 
-        Progress is emitted once per file (``files_done/max_files``).
+        Progress is emitted once per file (files done, total unknown).
         The single-file byte-level progress inside
         :func:`_hash_one_path` is suppressed here so the value the
         client sees stays monotonic — mixing files and bytes under
@@ -1964,6 +2724,9 @@ def _build_tools(
             raise ValueError("recursive_checksum: max_files must be > 0")
         if max_depth < 0:
             raise ValueError("recursive_checksum: max_depth must be ≥ 0")
+        if max_files > MAX_RECURSIVE_CHECKSUM_FILES or max_depth > MAX_TREE_DEPTH:
+            raise ValueError(f"recursive_checksum: max_files must be ≤ {MAX_RECURSIVE_CHECKSUM_FILES} "
+                             f"and max_depth ≤ {MAX_TREE_DEPTH}")
         if max_file_bytes <= 0:
             raise ValueError(
                 "recursive_checksum: max_file_bytes must be > 0",
@@ -2019,10 +2782,12 @@ def _build_tools(
                 }
             )
             hashed = sum(1 for e in entries if "checksum" in e)
+            # The tree is walked while it is hashed: how many files there
+            # are is not known yet (max_files is a cap, not the count).
             ctx.progress(
                 progress=float(hashed),
-                total=float(max_files),
-                message=f"{hashed}/{max_files} — {full_path}",
+                total=None,
+                message=f"{hashed} hashed — {full_path}",
             )
 
         # Classify the root: file vs directory. The ``walk`` tool
@@ -2167,7 +2932,10 @@ def _build_tools(
             name="search",
             description=(
                 "Search the offline metadata index by name substring, "
-                "extension, and size range. Free of network round-trips."
+                "extension, and size range. Free of network round-trips. "
+                f"At most limit results (default {DEFAULT_SEARCH_LIMIT}, at most "
+                f"{MAX_SEARCH_RESULTS}): ask for one more than you need to learn "
+                "whether there are more. A notifications/cancelled stops it."
             ),
             schema={
                 "type": "object",
@@ -2176,6 +2944,7 @@ def _build_tools(
                     "ext": {"type": "string"},
                     "min_size": {"type": "integer", "minimum": 0},
                     "max_size": {"type": "integer", "minimum": 0},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": MAX_SEARCH_RESULTS},
                 },
             },
             handler=_search,
@@ -2184,7 +2953,8 @@ def _build_tools(
             name="walk",
             description=(
                 "Breadth-first recursive listing under path. Caps at "
-                "max_depth (default 4) and max_entries (default 1000). "
+                f"max_depth (default 4, at most {MAX_TREE_DEPTH}) and max_entries "
+                f"(default 1000, at most {MAX_WALK_ENTRIES}). "
                 "Returns {entries: [{path, name, is_dir, size}], truncated, "
                 "unreadable: [{path, error}], complete}: unreadable names "
                 "every folder below path that could not be listed; complete "
@@ -2197,8 +2967,8 @@ def _build_tools(
                 "type": "object",
                 "properties": {
                     "path": {"type": "string"},
-                    "max_depth": {"type": "integer", "minimum": 0},
-                    "max_entries": {"type": "integer", "minimum": 1},
+                    "max_depth": {"type": "integer", "minimum": 0, "maximum": MAX_TREE_DEPTH},
+                    "max_entries": {"type": "integer", "minimum": 1, "maximum": MAX_WALK_ENTRIES},
                 },
                 "required": ["path"],
             },
@@ -2220,7 +2990,8 @@ def _build_tools(
                 "notifications/cancelled lands within one chunk of the "
                 "current file. algorithm is one of sha256 / sha1 / md5 "
                 "/ sha512. Defaults: max_files=500, max_depth=10, "
-                "max_file_bytes=1 GiB. If path names a file instead of "
+                f"max_file_bytes=1 GiB (at most max_files={MAX_RECURSIVE_CHECKSUM_FILES}, "
+                f"max_depth={MAX_TREE_DEPTH}). If path names a file instead of "
                 "a directory the result contains exactly one record."
             ),
             schema={
@@ -2231,8 +3002,9 @@ def _build_tools(
                         "type": "string",
                         "enum": sorted(_HASHLIB_ALGOS),
                     },
-                    "max_files": {"type": "integer", "minimum": 1},
-                    "max_depth": {"type": "integer", "minimum": 0},
+                    "max_files": {"type": "integer", "minimum": 1,
+                                  "maximum": MAX_RECURSIVE_CHECKSUM_FILES},
+                    "max_depth": {"type": "integer", "minimum": 0, "maximum": MAX_TREE_DEPTH},
                     "max_file_bytes": {"type": "integer", "minimum": 1},
                 },
                 "required": ["path"],
@@ -2427,6 +3199,14 @@ def _build_tools(
                     safe_full = refuse_secret(scope(full))
                     with backend.open_read(safe_full) as fh:
                         raw = fh.read(MAX_GREP_FILE_BYTES + 1)
+                    if (not allow_secret_reads and isinstance(raw, bytes)
+                            and (_is_remote(backend) or len(raw) > _secret_scan_limit())):
+                        from core import protected_places
+
+                        # read_refusal looked at the first MiB only; at a
+                        # remote's file nothing did (review B).
+                        if protected_places.secret_in_content(raw):
+                            raise PermissionError(f"{full}: holds a private key (refused)")
                 except OSError as exc:
                     # "No match" in a file it could not read is no answer.
                     unreadable.append({"path": full, "error": redact_text(str(exc))})
@@ -2480,13 +3260,18 @@ def _build_tools(
         from core import previews as P
 
         # PreviewNotAvailable / PreviewTooLarge / PreviewDecodeFailed
-        # are all ValueError subclasses? No — they're PreviewError.
-        # Map them to ValueError (→ -32602) so the client knows the
-        # request was the problem, not the server crashing.
-        try:
+        # (PreviewError) are the tool's failure, not bad arguments: they
+        # come back as a tool error (isError), as any failed call does.
+        if getattr(backend, "confined_beneath", False):
+            # The decoder opens files by name: it gets the file the confined
+            # backend opened (a folder swapped for a symlink meanwhile led it
+            # outside the root otherwise). No cache: the name is per call.
+            from core.confined_fs import pinned_path
+
+            with pinned_path(backend, path) as pinned:
+                result = P.thumbnail(backend, pinned, edge=edge, use_cache=False)
+        else:
             result = P.thumbnail(backend, path, edge=edge, use_cache=True)
-        except P.PreviewError as exc:
-            raise ValueError(f"preview({path}): {exc}") from exc
         # Return MCP image content directly — the dispatcher's
         # default wrapper turns results into {"type":"text"} blocks;
         # the preview handler signals otherwise by returning a
@@ -2618,7 +3403,8 @@ def _build_tools(
                         raise ValueError("write_file: content must be a string")
                     data = content.encode("utf-8")
                 else:
-                    data = base64.b64decode(content_b64, validate=True)
+                    data = _strict_b64(content_b64, "content_b64")
+                new_file = not _is_remote(backend) and not backend.exists(safe)
                 confined_write = getattr(backend, "confined_atomic_write", None)
                 if confined_write is not None:
                     # Temp file + rename relative to the folder's descriptor.
@@ -2627,6 +3413,14 @@ def _build_tools(
                     from core.atomic_io import atomic_write
 
                     atomic_write(backend, safe, data)
+                if new_file:
+                    # A file the server creates is the user's alone (mode
+                    # 0600), as the group tools' files; an existing file
+                    # keeps its mode.
+                    try:
+                        backend.chmod(safe, 0o600)
+                    except (OSError, NotImplementedError):
+                        pass
             except BaseException as exc:
                 _audit("write_file", "refused", path=path, error=type(exc).__name__)
                 raise
@@ -2702,6 +3496,7 @@ def _build_tools(
             _audit("copy", "attempt", src=src, dst=dst)
             try:
                 safe_src = _refuse_secret(_write_path(src, backend), backend, entry=True)
+                _refuse_special_remote(backend, safe_src, "copy")
                 safe_dst = _write_path(dst, backend)
                 _refuse_root(safe_dst, backend, "copy destination")
                 if backend.exists(safe_dst):
@@ -2798,6 +3593,9 @@ def _build_tools(
                 raise ValueError("bulk_copy: max_files must be > 0")
             if max_depth < 0:
                 raise ValueError("bulk_copy: max_depth must be ≥ 0")
+            if max_files > MAX_BULK_COPY_FILES or max_depth > MAX_TREE_DEPTH:
+                raise ValueError(f"bulk_copy: max_files must be ≤ {MAX_BULK_COPY_FILES} and "
+                                 f"max_depth ≤ {MAX_TREE_DEPTH}")
             if max_file_bytes <= 0:
                 raise ValueError(
                     "bulk_copy: max_file_bytes must be > 0",
@@ -2867,6 +3665,7 @@ def _build_tools(
                     return
                 ctx.check_cancel()
                 try:
+                    _refuse_special_remote(backend, safe_src_file, "bulk_copy")
                     _ensure_dir(backend, backend.parent(safe_dst_file))
                     from core.server_ops import server_side_copy
 
@@ -2907,8 +3706,8 @@ def _build_tools(
                 copied_count = sum(1 for e in entries if e.get("action") == "copied")
                 ctx.progress(
                     progress=float(copied_count),
-                    total=float(max_files),
-                    message=f"{copied_count}/{max_files} — {src_file}",
+                    total=None,  # max_files is a cap, not the count
+                    message=f"copied {copied_count} — {src_file}",
                 )
 
             # File vs directory at the root.
@@ -3021,15 +3820,22 @@ def _build_tools(
                 what = "symbolic" if kind == "symlink" else "hard"
                 raise OSError(f"{type(backend).__name__} has no {what} links")
 
-        def _refuse_link_target(target, safe_link: str, active_backend) -> None:
+        def _refuse_link_target(target, safe_link: str, active_backend) -> str:
             """PermissionError unless *target* (relative to the link's
             folder) resolves inside a writable root, outside its read-only
             folders and outside the protected places - nor to a folder that
-            holds one (the home folder, ~/.config)."""
+            holds one (the home folder, ~/.config). Returns the target the
+            link is made with: as typed, or - when it has a ``..`` - the
+            checked place itself (absolute, every link resolved). ``b/..``
+            with ``b`` a link leads wherever ``b``'s parent is once ``b`` is
+            re-pointed, and ``../../x`` wherever its folder is moved to: what
+            was checked would not stay what the link leads to. A target
+            without ``..`` stays in the root whatever is re-pointed in it
+            (every link made here leads into it)."""
             import os.path as op
 
             if _is_remote(active_backend):
-                return
+                return target
             if not isinstance(target, str) or "\x00" in target:
                 raise ValueError("symlink target must be a string without NUL")
             where = target if op.isabs(target) else op.join(op.dirname(safe_link), target)
@@ -3039,6 +3845,9 @@ def _build_tools(
                 _refuse_protected(resolved, entry=True, granted=write_roots)
             except PermissionError as exc:
                 raise PermissionError(f"symlink target {target!r} is refused: {exc}") from exc
+            if ".." in target.replace("\\", "/").split("/"):
+                return resolved
+            return target
 
         def _symlink(args, ctx):
             backend = _resolve_backend(args)
@@ -3058,8 +3867,8 @@ def _build_tools(
                 # later write around ~/.config/autostart.
                 safe_link = _entry_path(link_path, backend)
                 _refuse_root(safe_link, backend, "symlink link_path")
-                _refuse_link_target(target, safe_link, backend)
-                backend.symlink(target, safe_link)
+                made = _refuse_link_target(target, safe_link, backend)
+                backend.symlink(made, safe_link)
             except BaseException as exc:
                 _audit(
                     "symlink",
@@ -3069,8 +3878,8 @@ def _build_tools(
                     error=type(exc).__name__,
                 )
                 raise
-            _audit("symlink", "ok", target=target, link_path=safe_link)
-            return {"ok": True}
+            _audit("symlink", "ok", target=made, link_path=safe_link)
+            return {"ok": True} if made == target else {"ok": True, "target": made}
 
         def _hardlink(args, ctx):
             backend = _resolve_backend(args)
@@ -3274,7 +4083,8 @@ def _build_tools(
                         "one progress notification per copied file; a "
                         "notifications/cancelled stops within one file. "
                         "Defaults: max_files=1000, max_depth=10, "
-                        "max_file_bytes=10 GiB, overwrite=false. Missing "
+                        "max_file_bytes=10 GiB, overwrite=false (at most "
+                        f"max_files={MAX_BULK_COPY_FILES}, max_depth={MAX_TREE_DEPTH}). Missing "
                         "dst parent directories are created automatically. "
                         "Same-backend only in V1 — cross-backend copy is "
                         "handled by the transfer manager, not the MCP "
@@ -3285,8 +4095,10 @@ def _build_tools(
                         "properties": {
                             "src": {"type": "string"},
                             "dst": {"type": "string"},
-                            "max_files": {"type": "integer", "minimum": 1},
-                            "max_depth": {"type": "integer", "minimum": 0},
+                            "max_files": {"type": "integer", "minimum": 1,
+                                          "maximum": MAX_BULK_COPY_FILES},
+                            "max_depth": {"type": "integer", "minimum": 0,
+                                          "maximum": MAX_TREE_DEPTH},
                             "max_file_bytes": {"type": "integer", "minimum": 1},
                             "overwrite": {"type": "boolean"},
                         },
@@ -3738,8 +4550,187 @@ def _build_tools(
     # here rather than at each _Tool() site so the table is easy to
     # reason about and tune in one place.
     _apply_default_timeouts(tools)
-    _serialize_mutations(tools)
+    _apply_tool_hints(tools)
+    _add_path_twins(tools)
+    from core.previews import preview_available
+
+    if not preview_available():
+        # Neither Qt's image classes nor Pillow: preview could only fail.
+        tools = [t for t in tools if t.name != "preview"]
+    def _lock_resolve(kind, value):
+        if kind == "backend":
+            return _resolve_backend({"backend": value})
+        return _backend_by_id(value)
+
+    _serialize_mutations(tools, _lock_resolve)
     return tools
+
+
+# Tool -> (title, readOnlyHint, destructiveHint, idempotentHint,
+# openWorldHint): the annotations tools/list sends (MCP 2025-03-26 on).
+# Hints, not guarantees - but true ones:
+#   readOnly     the tool changes nothing: no file, no index, no remote
+#                host (opening a connection for this session is not a
+#                change of the environment);
+#   destructive  it can overwrite, remove or change what exists (False:
+#                it only adds - a new file under a free name, an index
+#                row); meaningful only when not read-only;
+#   idempotent   the same call again changes nothing more (False where a
+#                second call writes 'x (2)' or where that is not certain);
+#   openWorld    it reaches beyond the configured backends: arbitrary
+#                hosts, a command's or a script's effects, an LLM service.
+# A tool missing here gets no annotations (the spec's defaults apply:
+# not read-only, destructive, not idempotent, open world);
+# tests/test_mcp_protocol_revisions.py demands an entry for every tool.
+_TOOL_HINTS: dict[str, tuple[str, bool, bool, bool, bool]] = {
+    # core: read-only file tools
+    "list_dir": ("List folder", True, False, True, False),
+    "stat": ("File details", True, False, True, False),
+    "read_file": ("Read file", True, False, True, False),
+    "checksum": ("File checksum", True, False, True, False),
+    "search": ("Search the file index", True, False, True, False),
+    "walk": ("Walk folder tree", True, False, True, False),
+    "recursive_checksum": ("Checksum folder tree", True, False, True, False),
+    "preview": ("Image thumbnail", True, False, True, False),
+    "grep": ("Search file contents", True, False, True, False),
+    "list_versions": ("List file versions", True, False, True, False),
+    "open_version_read": ("Read file version", True, False, True, False),
+    "list_backends": ("List backends", True, False, True, False),
+    # write (--mcp-write)
+    "write_file": ("Write file", False, True, True, False),
+    "mkdir": ("Create folder", False, False, True, False),
+    "remove": ("Delete file or folder", False, True, True, False),
+    "rename": ("Move or rename", False, True, False, False),
+    "copy": ("Copy (server-side)", False, True, True, False),
+    "bulk_copy": ("Copy folder tree", False, True, False, False),
+    "symlink": ("Create symbolic link", False, False, False, False),
+    "hardlink": ("Create hard link", False, False, False, False),
+    "chmod": ("Change permissions", False, True, True, False),
+    # scripts (--mcp-allow-scripts)
+    "script_list": ("List scripts", True, False, True, False),
+    "script_api_schema": ("Scripting API reference", True, False, True, False),
+    "script_read": ("Read script", True, False, True, False),
+    "script_write": ("Save script", False, True, True, False),
+    "script_delete": ("Delete script", False, True, True, False),
+    "script_run": ("Run script", False, True, False, True),
+    # groups
+    "metadata_read": ("Read file metadata", True, False, True, False),
+    "metadata_export": ("Export file metadata", True, False, True, False),
+    "metadata_export_file": ("Export metadata to a file", False, False, False, False),
+    "metadata_remove": ("Remove metadata (clean copy)", False, False, False, False),
+    "duplicates_scan": ("Scan for duplicates", False, False, True, False),
+    "duplicates_scans": ("List duplicate scans", True, False, True, False),
+    "duplicates_groups": ("List duplicate groups", True, False, True, False),
+    "duplicates_dedupe": ("Move duplicates to trash", False, True, False, False),
+    "pack_formats": ("List archive formats", True, False, True, False),
+    "pack": ("Pack archive", False, False, False, False),
+    "archive_list": ("List archive members", True, False, True, False),
+    "archive_extract": ("Extract archive", False, False, False, False),
+    "encrypt": ("Encrypt file", False, False, False, False),
+    "decrypt": ("Decrypt file", False, False, False, False),
+    "index_build": ("Build the file index", False, False, True, False),
+    "file_type": ("Identify file type", True, False, True, False),
+    "file_type_scan": ("Identify file types in a folder", True, False, True, False),
+    "transfer_copy": ("Copy between backends", False, True, False, False),
+    "transfer_move": ("Move between backends", False, True, False, False),
+    "remote_profiles": ("List connection profiles", True, False, True, False),
+    "remote_open": ("Open connection profile", True, False, True, True),
+    "remote_close": ("Close connection", True, False, True, False),
+    "remote_exec": ("Run remote command", False, True, False, True),
+    "remote_script": ("Run remote script", False, True, False, True),
+    "exec_backends": ("List command-capable backends", True, False, True, False),
+    "agent_run": ("Ask the user's LLM", True, False, False, True),
+    "extensions_list": ("List extensions", True, False, True, False),
+    "extensions_info": ("Extension details", True, False, True, False),
+}
+
+_BOOLEAN = {"type": "boolean"}
+# outputSchema per tool (MCP 2025-06-18): only tools whose every result
+# has this shape; the result then also goes out as structuredContent.
+_OUTPUT_SCHEMAS: dict[str, dict] = {
+    "stat": {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "is_dir": _BOOLEAN,
+            "size": {"type": "integer", "minimum": 0},
+            "modified": {"type": ["string", "null"], "description": "ISO 8601, or null"},
+        },
+        "required": ["name", "is_dir", "size", "modified"],
+    },
+    "read_file": {
+        "type": "object",
+        "properties": {
+            "content_b64": {"type": "string", "description": "the bytes (encoding=base64)"},
+            "text": {"type": "string", "description": "the text (encoding=text)"},
+            "size": {"type": "integer", "minimum": 0, "description": "bytes read"},
+            "truncated": {"type": "boolean"},
+            "replaced": {"type": "boolean", "description": "text: undecodable bytes replaced"},
+            "offset": {"type": "integer", "minimum": 0},
+            "next_offset": {"type": "integer", "minimum": 0},
+        },
+        "required": ["size", "truncated"],
+    },
+    "checksum": {
+        "type": "object",
+        "properties": {
+            "value": {"type": "string"},
+            "algorithm": {"type": "string"},
+            "source": {"type": "string", "enum": ["native", "stream"]},
+        },
+        "required": ["value", "algorithm", "source"],
+    },
+    "walk": {
+        "type": "object",
+        "properties": {
+            "entries": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "name": {"type": "string"},
+                        "is_dir": _BOOLEAN,
+                        "size": {"type": "integer", "minimum": 0},
+                    },
+                    "required": ["path", "name", "is_dir", "size"],
+                },
+            },
+            "truncated": {"type": "boolean"},
+            "unreadable": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}, "error": {"type": "string"}},
+                    "required": ["path", "error"],
+                },
+            },
+            "complete": {"type": "boolean"},
+        },
+        "required": ["entries", "truncated", "unreadable", "complete"],
+    },
+}
+
+
+def _apply_tool_hints(tools: list[_Tool]) -> None:
+    for tool in tools:
+        hint = _TOOL_HINTS.get(tool.name)
+        if hint is not None:
+            title, read_only, destructive, idempotent, open_world = hint
+            if tool.title is None:
+                tool.title = title
+            if tool.annotations is None:
+                tool.annotations = {
+                    "title": tool.title,
+                    "readOnlyHint": read_only,
+                    "destructiveHint": destructive,
+                    "idempotentHint": idempotent,
+                    "openWorldHint": open_world,
+                }
+        if tool.output_schema is None and tool.name in _OUTPUT_SCHEMAS:
+            import copy
+
+            tool.output_schema = copy.deepcopy(_OUTPUT_SCHEMAS[tool.name])
 
 
 # Tool → timeout class (a key of TIMEOUT_CLASSES). Anything missing lands
@@ -4077,6 +5068,8 @@ class _LogForwarder(logging.Handler):
         self._default_sink = default_sink
         # session_id → sink. HTTP transport populates this.
         self._routes: dict[str, IO] = {}
+        # session_id -> its own logging/setLevel (HTTP).
+        self._levels: dict[str, int] = {}
         self._lock = threading.Lock()
         self._min_level = min_level
 
@@ -4102,11 +5095,23 @@ class _LogForwarder(logging.Handler):
         session is gone, there's nobody to read them)."""
         with self._lock:
             self._routes.pop(session_id, None)
+            self._levels.pop(session_id, None)
 
-    def set_min_level(self, level: int) -> None:
-        """Update the minimum level to forward. Records below this
-        are dropped before the JSON round-trip."""
-        self._min_level = level
+    def set_min_level(self, level: int, session_id: str | None = None) -> None:
+        """Update the minimum level to forward - of one session (HTTP:
+        one client's logging/setLevel is not every client's), or the
+        default (stdio, and sessions that never set one)."""
+        if session_id is None:
+            self._min_level = level
+        else:
+            with self._lock:
+                self._levels[session_id] = level
+
+    def level_for(self, session_id: str | None) -> int:
+        if session_id is None:
+            return self._min_level
+        with self._lock:
+            return self._levels.get(session_id, self._min_level)
 
     @property
     def min_level(self) -> int:
@@ -4128,7 +5133,7 @@ class _LogForwarder(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            if record.levelno < self._min_level:
+            if record.levelno < self.level_for(_current_session_id.get()):
                 return
             sink = self._pick_sink()
             if sink is None:
@@ -4148,7 +5153,7 @@ class _LogForwarder(logging.Handler):
                 },
             }
             try:
-                line = json.dumps(frame, default=str) + "\n"
+                line = _dumps_wire(frame) + "\n"
             except Exception:  # noqa: BLE001
                 return
             # Lock per write so two records don't interleave bytes
@@ -4170,7 +5175,10 @@ class _LogForwarder(logging.Handler):
 # client to see MCP server activity and audit events, not every
 # unrelated chat from deeper ``core.*`` modules (SFTP reconnects,
 # metadata index chatter) which would drown the useful signal.
-_FORWARDED_LOGGER_NAMES = ("core.mcp_server", "core.mcp_server.audit")
+# The audit logger is a child of core.mcp_server: its records reach the
+# forwarder through the parent (attached to both, every audit line went
+# out twice).
+_FORWARDED_LOGGER_NAMES = ("core.mcp_server",)
 
 
 def _attach_log_forwarder(forwarder: _LogForwarder) -> None:
@@ -4195,7 +5203,7 @@ def _ok(req_id, result):
 def _err(req_id, code: int, message: str, data=None):
     # Messages embed backend exception text, which can carry a URL with
     # userinfo, a ``password=`` pair or an auth header.
-    err: dict[str, Any] = {"code": code, "message": redact_text(message)}
+    err: dict[str, Any] = {"code": code, "message": _wire_text(redact_text(message))}
     if data is not None:
         err["data"] = data
     return {"jsonrpc": "2.0", "id": req_id, "error": err}
@@ -4211,15 +5219,80 @@ def _negotiate_protocol_version(requested) -> str:
     """Pick the version string we'll echo back in the initialize
     response. Rule: if the client asked for one of our supported
     versions, echo it; otherwise answer with our newest. Per MCP
-    spec 2024-11-05 the client is allowed to close the connection
-    when it can't live with the server's chosen version — we don't
-    pretend to support a wire format we don't understand."""
+    spec the client is allowed to close the connection when it can't
+    live with the server's chosen version — we don't pretend to
+    support a wire format we don't understand."""
     if isinstance(requested, str) and requested in SUPPORTED_PROTOCOL_VERSIONS:
         return requested
     return PROTOCOL_VERSIONS_NEWEST
 
 
 PROTOCOL_VERSIONS_NEWEST = SUPPORTED_PROTOCOL_VERSIONS[0]
+
+
+def protocol_at_least(version: str | None, minimum: str) -> bool:
+    """Whether *version* is a known MCP revision no older than *minimum*.
+    An unknown or missing version is not (it is answered as the oldest)."""
+    if version not in _KNOWN_PROTOCOL_VERSIONS:
+        return False
+    return _KNOWN_PROTOCOL_VERSIONS.index(version) >= _KNOWN_PROTOCOL_VERSIONS.index(minimum)
+
+
+@dataclass
+class ProtocolState:
+    """The revision one session agreed on in initialize (stdio: the whole
+    connection; HTTP: one Mcp-Session-Id). None until then: the session is
+    answered as LEGACY_PROTOCOL_VERSION."""
+
+    version: str | None = None
+
+    @property
+    def effective(self) -> str:
+        return self.version or LEGACY_PROTOCOL_VERSION
+
+
+def _server_info(version: str) -> dict:
+    info: dict[str, Any] = {"name": SERVER_NAME, "version": SERVER_VERSION}
+    if protocol_at_least(version, "2025-06-18"):
+        info["title"] = SERVER_TITLE
+    if protocol_at_least(version, "2025-11-25"):
+        info["description"] = SERVER_DESCRIPTION
+        info["websiteUrl"] = SERVER_WEBSITE
+    return info
+
+
+def _tool_listing(tool: _Tool, version: str) -> dict:
+    """One tools/list entry in the shape of *version*: annotations from
+    2025-03-26 on, title and outputSchema from 2025-06-18 on."""
+    entry: dict[str, Any] = {
+        "name": tool.name,
+        "description": tool.description,
+        "inputSchema": tool.schema,
+    }
+    if protocol_at_least(version, "2025-06-18"):
+        if tool.title:
+            entry["title"] = tool.title
+        if tool.output_schema is not None:
+            entry["outputSchema"] = tool.output_schema
+    if protocol_at_least(version, "2025-03-26") and tool.annotations:
+        entry["annotations"] = dict(tool.annotations)
+    return entry
+
+
+def _is_tool_failure(exc: BaseException) -> bool:
+    """A ValueError that is the tool's failure, not the caller's bad
+    arguments: an archive refused as unsafe, an image with no preview."""
+    names = {cls.__name__ for cls in type(exc).__mro__}
+    return bool(names & {"UnsafeArchive", "PreviewError", "ArchiveError"})
+
+
+def _tool_error_result(message: str, exc_type: str) -> dict:
+    """A tools/call result that reports a failure to the model (isError)."""
+    return {
+        "content": [{"type": "text", "text": _wire_text(redact_text(message))}],
+        "isError": True,
+        "_meta": {"type": exc_type},
+    }
 
 
 def _handle_request(
@@ -4232,6 +5305,7 @@ def _handle_request(
     rate_limiter: _RateLimiter | None = None,
     session_id: str | None = None,
     tasks: _TaskRegistry | None = None,
+    protocol: ProtocolState | None = None,
 ) -> dict | None:
     """Dispatch one request. Returns the response dict, or None if the
     request was a notification (no id) and no response is expected.
@@ -4251,6 +5325,11 @@ def _handle_request(
     (start, status, cancel, list) so clients can fire-and-forget
     a tool call and poll for results. None disables the namespace
     and the server returns -32601 for those methods.
+
+    ``protocol`` is the session's :class:`ProtocolState`: initialize
+    records the agreed revision in it, every later request is answered
+    in that revision's shape. None (direct callers, tests) answers in
+    the revision of the initialize in the same call, else the oldest.
     """
     # Bind the current session id on the contextvar so the
     # log forwarder can demux records to the right per-session sink.
@@ -4260,7 +5339,8 @@ def _handle_request(
     token = _current_session_id.set(session_id)
     try:
         return _dispatch(
-            req, tools, stdout, cancels, resources, log_forwarder, rate_limiter, tasks, session_id
+            req, tools, stdout, cancels, resources, log_forwarder, rate_limiter, tasks, session_id,
+            protocol,
         )
     finally:
         _current_session_id.reset(token)
@@ -4276,29 +5356,68 @@ def _dispatch(
     rate_limiter: _RateLimiter | None,
     tasks: _TaskRegistry | None = None,
     session_id: str | None = None,
+    protocol: ProtocolState | None = None,
 ) -> dict | None:
     req_id = req.get("id")
+    version = protocol.effective if protocol is not None else LEGACY_PROTOCOL_VERSION
     method = req.get("method")
     params = req.get("params") or {}
-    if req_id is not None and not _is_request_id(req_id):
+    # JSON-RPC 2.0 and MCP: a request has an "id" (a string or an integer,
+    # never null in MCP), a notification has none and is never answered -
+    # whatever it names: a tools/call without an id runs nothing.
+    is_request = "id" in req
+    if "method" not in req and ("result" in req or "error" in req):
+        return None  # a response from the client: this server asks nothing
+    if is_request and not _is_request_id(req_id):
         return {
             "jsonrpc": "2.0",
             "id": None,
-            "error": {"code": -32600, "message": "id must be a string or integer"},
+            "error": {"code": ERR_INVALID_REQUEST,
+                      "message": "id must be a string or integer (MCP: never null)"},
         }
-    if not isinstance(params, dict):
-        if req_id is None:
+    if req.get("jsonrpc") != "2.0":
+        if not is_request:
+            return None
+        return _err(req_id, ERR_INVALID_REQUEST, 'Invalid Request: jsonrpc must be "2.0"')
+    if not isinstance(method, str) or not method:
+        if not is_request:
+            return None
+        return _err(req_id, ERR_INVALID_REQUEST, "Invalid Request: missing method")
+    if not is_request:
+        if not isinstance(params, dict):
             return None  # a malformed notification gets no reply
-        return {
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "error": {"code": -32602, "message": "params must be an object"},
-        }
+        if method == "notifications/cancelled":
+            # Deliver the cancel to the in-flight handler for that request
+            # id. Unknown / finished ids are tolerated (a race between
+            # cancel and completion is normal); a requestId that cannot be
+            # an id names no request.
+            target = params.get("requestId")
+            if cancels is not None and _is_request_id(target):
+                cancels.cancel(target)
+        # notifications/initialized and every other notification: nothing
+        # to do and nothing to answer.
+        return None
+    if not isinstance(params, dict):
+        return _err(req_id, ERR_INVALID_PARAMS, "params must be an object")
+    if (protocol is not None and protocol.version is None
+            and method not in ("initialize", "ping")):
+        # MCP lifecycle: initialize first. Direct callers without a
+        # session (protocol None) are not held to it.
+        return _err(req_id, ERR_INVALID_REQUEST,
+                    f"{method!r} before initialize: send initialize first")
     if method == "initialize":
         # Echo the client's requested protocolVersion if we recognise
         # it; fall back to our newest. Let the client decide whether
         # to hang up on a mismatch.
+        if protocol is not None and protocol.version is not None:
+            # One initialize per session: a second one switched the
+            # revision under the calls already made in it.
+            return _err(req_id, ERR_INVALID_REQUEST,
+                        f"this session is initialized already (revision {protocol.version}); "
+                        "start a new session to initialize again")
         agreed = _negotiate_protocol_version(params.get("protocolVersion"))
+        if protocol is not None:
+            protocol.version = agreed
         caps: dict[str, Any] = {"tools": {}}
         if resources is not None:
             # listChanged/subscribe both False — V1 doesn't emit
@@ -4313,7 +5432,7 @@ def _dispatch(
             req_id,
             {
                 "protocolVersion": agreed,
-                "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
+                "serverInfo": _server_info(agreed),
                 "capabilities": caps,
             },
         )
@@ -4322,35 +5441,8 @@ def _dispatch(
         # out. Exists so clients can probe the connection without the
         # cost of a tools/list round-trip.
         return _ok(req_id, {})
-    if method == "notifications/initialized":
-        # Client confirms it received our initialize response. No
-        # reply required; the flow is just "ack, we're live".
-        return None
-    if method == "notifications/cancelled":
-        # Deliver the cancel to the in-flight handler for that
-        # request id. No response — notifications never get one.
-        # Unknown / already-finished ids are silently tolerated per
-        # MCP spec (a race between cancel and completion is normal).
-        # A requestId that cannot be an id names no request: a list
-        # is not even a dict key, and ``true`` would hit request 1.
-        target = params.get("requestId")
-        if cancels is not None and _is_request_id(target):
-            cancels.cancel(target)
-        return None
     if method == "tools/list":
-        return _ok(
-            req_id,
-            {
-                "tools": [
-                    {
-                        "name": t.name,
-                        "description": t.description,
-                        "inputSchema": t.schema,
-                    }
-                    for t in tools
-                ],
-            },
-        )
+        return _ok(req_id, {"tools": [_tool_listing(t, version) for t in tools]})
     if method == "logging/setLevel":
         if log_forwarder is None:
             return _err(
@@ -4362,7 +5454,8 @@ def _dispatch(
         py_level = _MCP_LEVEL_TO_PY.get(level_str.lower())
         if py_level is None:
             return _err(req_id, ERR_INVALID_PARAMS, f"unknown log level: {level_str!r}")
-        log_forwarder.set_min_level(py_level)
+        # Per session: one HTTP client's setLevel is not every client's.
+        log_forwarder.set_min_level(py_level, session_id=session_id)
         # Empty result object per MCP convention — the client polls
         # its own log sink to see the new stream, no confirmation
         # payload is needed.
@@ -4420,11 +5513,19 @@ def _dispatch(
                 data={"type": type(exc).__name__},
             )
         return _ok(req_id, {"contents": [entry]})
-    if method in ("tasks/start", "tasks/status", "tasks/cancel", "tasks/list"):
+    # axross's background tasks are axross/tasks/*: MCP 2025-11-25 has a
+    # tasks/* of its own (taskId, other states), which this server does
+    # not offer. Sessions of older revisions keep the old names.
+    task_method = None
+    if method.startswith("axross/tasks/"):
+        task_method = method[len("axross/"):]
+    elif method in LEGACY_TASK_METHODS and not protocol_at_least(version, "2025-11-25"):
+        task_method = method
+    if task_method in LEGACY_TASK_METHODS:
         if tasks is None:
             return _err(req_id, ERR_METHOD_NOT_FOUND, "tasks namespace not enabled on this server")
         scope = session_id or ""
-        if method == "tasks/start":
+        if task_method == "tasks/start":
             name = params.get("name")
             args = params.get("arguments") or {}
             if not isinstance(name, str) or not name:
@@ -4433,7 +5534,11 @@ def _dispatch(
                 return _err(req_id, ERR_INVALID_PARAMS, "tasks/start 'arguments' must be an object")
             tool = next((t for t in tools if t.name == name), None)
             if tool is None:
-                return _err(req_id, ERR_METHOD_NOT_FOUND, f"Unknown tool: {name!r}")
+                return _err(req_id, ERR_INVALID_PARAMS, f"Unknown tool: {name!r}")
+            try:
+                args = _decode_path_args(args)
+            except ValueError as exc:
+                return _err(req_id, ERR_INVALID_PARAMS, str(exc))
             # Validate against the tool's schema — same guard as
             # synchronous tools/call. A malformed task that would
             # immediately fail in the worker is rejected upfront.
@@ -4445,6 +5550,9 @@ def _dispatch(
                     f"tool {name!r} arguments failed schema: {refusal[0]}",
                     data={"type": "ValidationError", "path": refusal[1]},
                 )
+            busy = _ABANDONED.refusal(name, args)
+            if busy is not None:
+                return _err(req_id, ERR_RATE_LIMITED, busy, data={"type": "AbandonedWorkers"})
             # A task is a tools/call that returns early: the same rate
             # limit applies, and the running ones are capped per session.
             if rate_limiter is not None and not rate_limiter.try_acquire():
@@ -4468,7 +5576,7 @@ def _dispatch(
             ctx_snapshot = contextvars.copy_context()
 
             def _worker():
-                ctx_snapshot.run(_run_task, task, tool, stdout)
+                ctx_snapshot.run(_run_task, task, tool, stdout, tasks)
 
             worker_thread = threading.Thread(
                 target=_worker,
@@ -4486,7 +5594,7 @@ def _dispatch(
                     "started_at": task.started_at,
                 },
             )
-        if method == "tasks/status":
+        if task_method == "tasks/status":
             task_id = params.get("task_id")
             if not isinstance(task_id, str) or not task_id:
                 return _err(
@@ -4494,7 +5602,7 @@ def _dispatch(
                 )
             task = tasks.get(task_id, scope)
             if task is None:
-                return _err(req_id, ERR_METHOD_NOT_FOUND, f"unknown task_id {task_id!r}")
+                return _err(req_id, ERR_INVALID_PARAMS, f"unknown task_id {task_id!r}")
             out = {
                 "task_id": task.task_id,
                 "status": task.status,
@@ -4510,17 +5618,25 @@ def _dispatch(
             elif task.status == "error":
                 out["error"] = task.error
             elif task.status == "cancelled":
-                out["error"] = "cancelled by tasks/cancel"
+                out["error"] = task.error or "cancelled"
+            if task.abandoned:
+                out["abandoned"] = True
             return _ok(req_id, out)
-        if method == "tasks/cancel":
+        if task_method == "tasks/cancel":
             task_id = params.get("task_id")
             if not isinstance(task_id, str) or not task_id:
                 return _err(
                     req_id, ERR_INVALID_PARAMS, "tasks/cancel requires a non-empty 'task_id'"
                 )
+            task = tasks.get(task_id, scope)
+            if task is None:
+                return _err(req_id, ERR_INVALID_PARAMS, f"unknown task_id {task_id!r}")
             ok = tasks.cancel(task_id, scope)
-            return _ok(req_id, {"ok": ok, "task_id": task_id})
-        if method == "tasks/list":
+            # ok: the stop was asked for; status: what the task is now
+            # ("running" until its tool stops - at the latest after
+            # TASK_STOP_GRACE_SECONDS, then "cancelled", abandoned).
+            return _ok(req_id, {"ok": ok, "task_id": task_id, "status": task.status})
+        if task_method == "tasks/list":
             # Short summary per task — no result / error, no last_progress.
             # Clients call tasks/status for details on a specific id.
             scope_tasks = tasks.list_scope(scope)
@@ -4545,6 +5661,9 @@ def _dispatch(
         meta = params.get("_meta") or {}
         if not isinstance(meta, dict):
             return _err(req_id, ERR_INVALID_PARAMS, "_meta must be an object")
+        busy = _ABANDONED.refusal(name, args)
+        if busy is not None:
+            return _err(req_id, ERR_RATE_LIMITED, busy, data={"type": "AbandonedWorkers"})
         # Rate-limit BEFORE we touch the cancel registry or allocate a
         # context — the cheap rejection path should stay cheap. A
         # tools/list probe isn't rate-limited because it doesn't
@@ -4571,7 +5690,16 @@ def _dispatch(
         if tool is None:
             if cancels is not None and req_id is not None:
                 cancels.unregister(req_id)
-            return _err(req_id, ERR_METHOD_NOT_FOUND, f"Unknown tool: {name!r}")
+            # MCP: an unknown tool is invalid params (-32602).
+            return _err(req_id, ERR_INVALID_PARAMS, f"Unknown tool: {name!r}")
+        try:
+            args = _decode_path_args(args)
+        except ValueError as exc:
+            if cancels is not None and req_id is not None:
+                cancels.unregister(req_id)
+            if protocol_at_least(version, "2025-11-25"):
+                return _ok(req_id, _tool_error_result(f"tool {name!r}: {exc}", "ValueError"))
+            return _err(req_id, ERR_INVALID_PARAMS, f"tool {name!r} rejected args: {exc}")
         # Validate the supplied arguments against the tool's declared
         # inputSchema before we call the handler. jsonschema is an
         # optional dep — when absent we fall back to the handler's
@@ -4580,6 +5708,13 @@ def _dispatch(
         if refusal is not None:
             if cancels is not None and req_id is not None:
                 cancels.unregister(req_id)
+            if protocol_at_least(version, "2025-11-25"):
+                # 2025-11-25: arguments the tool refuses are a tool error
+                # the model sees and can correct, not a protocol error.
+                return _ok(req_id, _tool_error_result(
+                    f"tool {name!r} arguments failed schema: {refusal[0]}"
+                    + (f" (at {'/'.join(map(str, refusal[1]))})" if refusal[1] else ""),
+                    "ValidationError"))
             return _err(
                 req_id,
                 ERR_INVALID_PARAMS,
@@ -4625,7 +5760,8 @@ def _dispatch(
 
         def _runner():
             try:
-                result_box[0] = tool.handler(args, ctx)
+                with _cancel_hooks(cancel_event):
+                    result_box[0] = tool.handler(args, ctx)
             except BaseException as exc:  # noqa: BLE001 — surface via error_box
                 error_box[0] = exc
 
@@ -4646,8 +5782,10 @@ def _dispatch(
                 # Hard stop: the handler ignored (or didn't poll)
                 # the cooperative cancel. Return timeout; leave the
                 # worker running as a zombie — it holds backend
-                # state we can't safely pull out from under it.
+                # state we can't safely pull out from under it - and
+                # count it: new work is refused while too many run on.
                 timed_out.set()
+                _ABANDONED.add(worker, args)
                 return _err(
                     req_id,
                     ERR_TIMEOUT,
@@ -4672,11 +5810,15 @@ def _dispatch(
                         f"tool {name!r} cancelled by client",
                         data={"type": "CancelledError"},
                     )
-                if isinstance(exc, (ValueError, TypeError)):
+                if isinstance(exc, (ValueError, TypeError)) and not _is_tool_failure(exc):
                     # TypeError from handler arg-coercion (``int(None)``,
                     # ``int([...])``) maps to -32602 alongside ValueError
                     # so clients can tell their payload was bad, not
-                    # the server.
+                    # the server - from 2025-11-25 on a tool error the
+                    # model can read instead.
+                    if protocol_at_least(version, "2025-11-25"):
+                        return _ok(req_id, _tool_error_result(
+                            f"tool {name!r} rejected args: {exc}", type(exc).__name__))
                     return _err(
                         req_id,
                         ERR_INVALID_PARAMS,
@@ -4688,15 +5830,8 @@ def _dispatch(
                 # isError, so the model sees it and can react - a JSON-RPC
                 # error is for the protocol (unknown tool, bad arguments).
                 # Redacted like _err: backend text can carry credentials.
-                return _ok(
-                    req_id,
-                    {
-                        "content": [{"type": "text",
-                                     "text": redact_text(f"tool {name!r} failed: {exc}")}],
-                        "isError": True,
-                        "_meta": {"type": type(exc).__name__},
-                    },
-                )
+                return _ok(req_id, _tool_error_result(f"tool {name!r} failed: {exc}",
+                                                      type(exc).__name__))
             result = result_box[0]
         finally:
             if timer is not None:
@@ -4722,6 +5857,7 @@ def _dispatch(
                     },
                 },
             )
+        result = _wire_safe(result)
         try:
             encoded_result = json.dumps(result, default=str)
         except (TypeError, ValueError) as exc:
@@ -4742,13 +5878,15 @@ def _dispatch(
                     "max_bytes": MAX_TOOL_RESULT_BYTES,
                 },
             )
-        return _ok(
-            req_id,
-            {
-                "content": [{"type": "text", "text": encoded_result}],
-                "isError": False,
-            },
-        )
+        reply: dict[str, Any] = {
+            "content": [{"type": "text", "text": encoded_result}],
+            "isError": False,
+        }
+        if isinstance(result, dict) and protocol_at_least(version, "2025-06-18"):
+            # The same object as the text, parsed back: what json.dumps made
+            # of a value that is not JSON (default=str) is in both alike.
+            reply["structuredContent"] = json.loads(encoded_result)
+        return _ok(req_id, reply)
     if method is None:
         return _err(req_id, ERR_INVALID_REQUEST, "Invalid Request: missing method")
     if req_id is None:
@@ -4821,6 +5959,8 @@ def serve(config: ServerConfig) -> int:
                                  allow_secret_reads=config.allow_secret_reads)
     cancels = _CancelRegistry()
     tasks = _TaskRegistry()
+    # One session per stdio connection: the revision initialize agreed on.
+    protocol = ProtocolState()
     rate_limiter = (
         _RateLimiter(
             burst=config.rate_burst,
@@ -4852,11 +5992,23 @@ def serve(config: ServerConfig) -> int:
     binary = getattr(config.stdin, "buffer", None)
     readline = binary.readline if binary is not None else config.stdin.readline
     newline = b"\n" if binary is not None else "\n"
+
+    def _dispatch_aside(req):
+        return _handle_request(req, tools, stdout=out, cancels=cancels, resources=resources,
+                               log_forwarder=log_forwarder, rate_limiter=rate_limiter,
+                               tasks=tasks, protocol=protocol)
+
+    calls = _StdioCalls(_dispatch_aside, cancels, out, config.stdout)
+    guard = sigterm_as_interrupt() if config.stdin is sys.stdin else None
+    if guard is not None:
+        guard.__enter__()
     try:
         while True:
             line = readline(MAX_STDIN_LINE_CHARS + 1)
             if not line:
                 log.info("MCP serve: stdin closed, exiting")
+                calls.stop()
+                _stop_tasks(tasks)
                 return 0
             if len(line) > MAX_STDIN_LINE_CHARS and not line.endswith(newline):
                 # Drain the rest of this overlong frame so the next
@@ -4871,8 +6023,10 @@ def serve(config: ServerConfig) -> int:
                     ERR_INVALID_REQUEST,
                     f"Request line exceeds {MAX_STDIN_LINE_CHARS} chars",
                 )
-                out.write(json.dumps(response) + "\n")
-                out.flush()
+                if not _write_frame(out, response, config.stdout):
+                    calls.stop()
+                    _stop_tasks(tasks)
+                    return 0
                 continue
             line = line.strip()
             if not line:
@@ -4885,8 +6039,20 @@ def serve(config: ServerConfig) -> int:
             except (ValueError, RecursionError) as exc:
                 response = _err(None, ERR_PARSE, f"Parse error: {exc}")
             else:
-                if not isinstance(req, dict):
+                if isinstance(req, list):
+                    # No revision this server speaks has batches (2025-06-18
+                    # removed them; 2025-03-26, which had them, is not offered).
+                    response = _err(None, ERR_INVALID_REQUEST,
+                                    "Invalid Request: JSON-RPC batches are not supported")
+                elif not isinstance(req, dict):
                     response = _err(None, ERR_INVALID_REQUEST, "Invalid Request: not an object")
+                elif _runs_aside(req, protocol):
+                    # A tool call runs on a worker: this loop keeps reading,
+                    # answers ping, delivers notifications/cancelled to it,
+                    # and notices the client going away.
+                    response = calls.start(req)
+                    if response is None:
+                        continue
                 else:
                     response = _handle_request(
                         req,
@@ -4897,12 +6063,172 @@ def serve(config: ServerConfig) -> int:
                         log_forwarder=log_forwarder,
                         rate_limiter=rate_limiter,
                         tasks=tasks,
+                        protocol=protocol,
                     )
-            if response is not None:
-                out.write(json.dumps(response) + "\n")
-                out.flush()
+            if response is not None and not _write_frame(out, response, config.stdout):
+                calls.stop()
+                _stop_tasks(tasks)
+                return 0
+    except KeyboardInterrupt:
+        # Ctrl+C, or SIGTERM (sigterm_as_interrupt): the tasks are stopped
+        # and clean up (a pack's staging folder) before the exit.
+        log.info("MCP serve: interrupted, exiting")
+        calls.stop()
+        _stop_tasks(tasks)
+        return 0
     finally:
+        if guard is not None:
+            guard.__exit__(None, None, None)
         _detach_log_forwarder(log_forwarder)
+
+
+#: How long the stdio server waits, when its client went away, for running
+#: tasks to stop and clean up (a pack's temporary archive, a partial copy).
+SHUTDOWN_TASK_WAIT_SECONDS = 5.0
+#: Methods the stdio loop runs on a worker thread instead of in the loop.
+STDIO_ASIDE_METHODS = frozenset({"tools/call", "resources/read"})
+#: Calls of one stdio client that may run at once.
+MAX_STDIO_CALLS = 16
+
+
+def _runs_aside(req: dict, protocol: ProtocolState) -> bool:
+    return (req.get("method") in STDIO_ASIDE_METHODS and "id" in req
+            and _is_request_id(req.get("id")) and req.get("jsonrpc") == "2.0"
+            and protocol.version is not None)
+
+
+class _StdioCalls:
+    """The stdio server's tool calls in flight, each on a worker thread.
+
+    The loop stays free: ping is answered while a 70 s pack runs, a
+    notifications/cancelled reaches the call (its response is then not
+    sent, as MCP has it), and the client closing stdin stops everything
+    instead of waiting for the slowest call."""
+
+    def __init__(self, dispatch, cancels: _CancelRegistry, out, stream) -> None:
+        self._dispatch = dispatch
+        self._cancels = cancels
+        self._out = out
+        self._stream = stream
+        self._lock = threading.Lock()
+        self._running: dict[Any, threading.Thread] = {}
+        self._closed = False
+
+    def start(self, req: dict) -> dict | None:
+        """Start *req* on a worker; an error response when it cannot run."""
+        req_id = req["id"]
+        with self._lock:
+            if req_id in self._running:
+                return _err(req_id, ERR_INVALID_REQUEST,
+                            f"request id {req_id!r} is already in use by a running call")
+            if len(self._running) >= MAX_STDIO_CALLS:
+                return _err(req_id, ERR_RATE_LIMITED,
+                            f"{MAX_STDIO_CALLS} calls are already running; retry when one "
+                            "has finished", data={"type": "RateLimitError"})
+            # Registered before the worker runs: a cancel that comes
+            # right after the call is not lost.
+            self._cancels.register(req_id)
+            ctx = contextvars.copy_context()
+            worker = threading.Thread(target=lambda: ctx.run(self._run, req), daemon=True,
+                                      name=f"mcp-stdio-{req.get('method')}-{req_id}")
+            self._running[req_id] = worker
+        worker.start()
+        return None
+
+    def _run(self, req: dict) -> None:
+        req_id = req["id"]
+        try:
+            response = self._dispatch(req)
+        except Exception:  # noqa: BLE001 - a crashed call still answers
+            log.exception("stdio call %r failed", req_id)
+            response = _err(req_id, ERR_INTERNAL, "internal error")
+        finally:
+            with self._lock:
+                self._running.pop(req_id, None)
+            self._cancels.unregister(req_id)
+        if self._cancels.pop_cancelled(req_id):
+            log.info("stdio call %r was cancelled: no response", req_id)
+            return
+        if response is not None and not self._closed:
+            _write_frame(self._out, response, self._stream)
+
+    def stop(self) -> None:
+        """stdin ended: the calls in flight get SHUTDOWN_TASK_WAIT_SECONDS
+        to finish and answer (a client that pipes its requests and then
+        closes stdin still reads them), then what still runs is cancelled
+        and the server exits without waiting for it."""
+        with self._lock:
+            workers = list(self._running.values())
+        deadline = time.monotonic() + SHUTDOWN_TASK_WAIT_SECONDS
+        for worker in workers:
+            worker.join(max(0.0, deadline - time.monotonic()))
+        self._closed = True
+        self._cancels.cancel_all()
+        for worker in workers:
+            worker.join(0.5)
+
+
+class sigterm_as_interrupt:
+    """While serving in the main thread: SIGTERM raises KeyboardInterrupt,
+    so the server's clean-up runs (stop the tasks, a pack's staging
+    folder, the HTTP token file) instead of the process just ending. The
+    previous handler comes back afterwards."""
+
+    def __enter__(self):
+        import signal
+
+        self._old = None
+        if threading.current_thread() is threading.main_thread():
+            def _interrupt(_signum, _frame):
+                raise KeyboardInterrupt
+
+            try:
+                self._old = signal.signal(signal.SIGTERM, _interrupt)
+            except (ValueError, OSError):
+                self._old = None
+        return self
+
+    def __exit__(self, *exc):
+        import signal
+
+        if self._old is not None:
+            try:
+                signal.signal(signal.SIGTERM, self._old)
+            except (ValueError, OSError):
+                pass
+        return False
+
+
+def _stop_tasks(tasks: _TaskRegistry) -> None:
+    """Cancel every task and give the workers a moment to clean up."""
+    workers = [t.thread for t in tasks.list_scope("") if t.status == "running"]
+    tasks.drop_scope("")
+    deadline = time.monotonic() + SHUTDOWN_TASK_WAIT_SECONDS
+    for worker in workers:
+        if worker is not None:
+            worker.join(max(0.0, deadline - time.monotonic()))
+
+
+def _write_frame(out, message, stream) -> bool:
+    """Write one frame; False when the client is gone (a broken pipe). The
+    stream is then pointed at /dev/null so the interpreter's exit flush
+    does not fail too (that printed a traceback and exited with 120)."""
+    try:
+        out.write(_dumps_wire(message) + "\n")
+        out.flush()
+        return True
+    except (BrokenPipeError, ConnectionResetError, ValueError):
+        log.info("MCP serve: the client closed its end, exiting")
+        try:
+            import os as _os
+
+            fd = stream.fileno()
+            devnull = _os.open(_os.devnull, _os.O_WRONLY)
+            _os.dup2(devnull, fd)
+            _os.close(devnull)
+        except (AttributeError, OSError, ValueError):
+            pass
+        return False
 
 
 def default_backend():
@@ -4926,12 +6252,15 @@ __all__ = [
     "ERR_TIMEOUT",
     "MAX_READ_BYTES",
     "MAX_RESOURCES_LISTED",
+    "LEGACY_PROTOCOL_VERSION",
     "PROTOCOL_VERSION",
+    "ProtocolState",
     "RESOURCE_SCHEME",
     "SERVER_NAME",
     "SERVER_VERSION",
     "SUPPORTED_PROTOCOL_VERSIONS",
     "ServerConfig",
+    "protocol_at_least",
     "default_backend",
     "serve",
 ]

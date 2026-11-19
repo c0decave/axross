@@ -695,7 +695,19 @@ def identify(
     if use_file_command and _is_local(backend):
         from dataclasses import replace
 
-        info = replace(info, file_command=file_command_description(path))
+        if getattr(backend, "confined_beneath", False):
+            # The MCP server's confined file system: file(1) gets the file
+            # the backend opened, not a name a swapped folder could redirect.
+            from core.confined_fs import pinned_path
+
+            try:
+                with pinned_path(backend, path) as pinned:
+                    described = file_command_description(pinned)
+            except (OSError, ValueError):
+                described = ""
+        else:
+            described = file_command_description(path)
+        info = replace(info, file_command=described)
     return info
 
 

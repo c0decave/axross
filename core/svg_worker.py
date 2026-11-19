@@ -45,7 +45,15 @@ if sys.platform.startswith("linux"):
     except (OSError, AttributeError):
         pass
     if os.getppid() != _parent:
-        sys.exit(1)
+        # (a one-file build: its own bootloader between the program and this child - the
+        # program is the parent of that; every SVG of a frozen Linux build was refused here)
+        try:
+            with open(f"/proc/{os.getppid()}/stat", "rb") as _stat:
+                _grand = int(_stat.read().rsplit(b")", 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            _grand = -1
+        if _grand != _parent:
+            sys.exit(1)
 try:
     import resource
     for _name, _value in (("RLIMIT_CORE", 0), ("RLIMIT_CPU", _cpu), ("RLIMIT_AS", _space)):
@@ -76,8 +84,13 @@ if _options >= 0:
 if not renderer.load(QByteArray(data)) or not renderer.isValid():
     sys.exit(3)
 size = renderer.defaultSize()
-w, h = (size.width(), size.height()) if not size.isEmpty() else (_edge, _edge)
-scale = _edge / max(w, h)
+if _edge > 0:
+    w, h = (size.width(), size.height()) if not size.isEmpty() else (_edge, _edge)
+    scale = _edge / max(w, h)
+else:
+    # its own size, the longer side at most -_edge
+    w, h = (size.width(), size.height()) if not size.isEmpty() else (512, 512)
+    scale = min(1.0, -_edge / max(w, h))
 out_w, out_h = max(1, round(w * scale)), max(1, round(h * scale))
 image = QImage(out_w, out_h, QImage.Format.Format_ARGB32_Premultiplied)
 if image.isNull():
@@ -131,8 +144,9 @@ def _child_main() -> int:
 
 
 def render_png(data: bytes, edge: int, options: int = -1, seconds: float | None = None) -> bytes:
-    """*data* (an SVG that passed core.previews.svg_refusal) drawn with its
-    longer side *edge* px, as PNG bytes. Raises :class:`SvgTooSlow` past
+    """*data* (an SVG that passed core.svg_gate) drawn with its longer side
+    *edge* px - a negative *edge*: at its own size, the longer side at most
+    ``-edge`` px (512 px without a size of its own) - as PNG bytes. Raises :class:`SvgTooSlow` past
     *seconds* (:data:`RENDER_SECONDS`), :class:`SvgFailed` when it cannot
     be drawn."""
     seconds = RENDER_SECONDS if seconds is None else seconds

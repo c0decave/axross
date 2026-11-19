@@ -3,8 +3,6 @@ Name column, a new tag, and View > Tagged Files… (core.tags)."""
 
 from __future__ import annotations
 
-import posixpath
-
 from PyQt6.QtCore import QRectF, Qt
 from PyQt6.QtGui import QColor, QIcon, QPainter
 from PyQt6.QtWidgets import (
@@ -30,7 +28,8 @@ from PyQt6.QtWidgets import (
 )
 
 from core import tags as T
-from core.i18n import tr
+from core.i18n import tr, tr_n
+from core.remote_name import sanitize_for_display
 from ui.close_corner import add_close_corner
 from ui.icon_provider import set_window_icon
 
@@ -74,7 +73,7 @@ def add_tags_menu(pane, menu: QMenu) -> None:
     store = T.store()
     sub = menu.addMenu(tr("T&ags"))
     for tag in store.tags():
-        action = sub.addAction(tag.name.replace("&", "&&"))  # a name's "&" is shown
+        action = sub.addAction(sanitize_for_display(tag.name).replace("&", "&&"))  # "&" is shown
         action.setCheckable(True)
         action.setChecked(all(tag.name in store.tags_of(pane.backend.name, p) for p in paths))
         action.setIcon(_dot_icon(tag.colour))
@@ -144,6 +143,21 @@ class TagDotsDelegate(QStyledItemDelegate):
         painter.restore()
 
 
+def split_tagged_path(path: str) -> tuple[str, str]:
+    """(folder, name) of a tagged file's *path*. A path with a "/" splits
+    at its last "/" only - a backslash is part of a POSIX name
+    ("a\\b.txt" was listed as "b.txt" in a folder "a" that is not
+    there); a path without one (a Windows-style ``C:\\x\\y``) at its
+    last backslash."""
+    sep = "/" if "/" in path else "\\"
+    head, found, name = path.rpartition(sep)
+    if not found:
+        return "/", path
+    if not head:
+        head = "/" if sep == "/" else path
+    return head, name
+
+
 class TaggedFilesDialog(QDialog):
     """Every tag and the files that carry it; double-click goes there."""
 
@@ -188,13 +202,13 @@ class TaggedFilesDialog(QDialog):
         self.reload()
 
     def reload(self) -> None:
-        current = self.tags.currentItem().text() if self.tags.currentItem() else None
+        current = self.tags.currentItem().data(Qt.ItemDataRole.UserRole) if self.tags.currentItem() else None
         self.tags.clear()
         store = T.store()
         for tag in store.tags():
-            item = QListWidgetItem(_dot_icon(tag.colour), tag.name)
+            item = QListWidgetItem(_dot_icon(tag.colour), sanitize_for_display(tag.name))
             item.setData(Qt.ItemDataRole.UserRole, tag.name)
-            item.setToolTip(tr("{n} files").format(n=len(store.items_with(tag.name))))
+            item.setToolTip(tr_n(len(store.items_with(tag.name)), "{n} file", "{n} files"))
             self.tags.addItem(item)
         if current:
             self.select_tag(current)
@@ -204,8 +218,13 @@ class TaggedFilesDialog(QDialog):
     def select_tag(self, name: str) -> None:
         for row in range(self.tags.count()):
             if self.tags.item(row).data(Qt.ItemDataRole.UserRole) == name:
-                self.tags.setCurrentRow(row)
-                self._show(self.tags.item(row))
+                # A change of row fills the table (currentItemChanged); only
+                # the row already current is filled here - it was filled
+                # twice, 4 s for a tag on 100 000 files.
+                if self.tags.currentRow() == row:
+                    self._show(self.tags.item(row))
+                else:
+                    self.tags.setCurrentRow(row)
                 return
 
     def _show(self, item) -> None:
@@ -213,15 +232,21 @@ class TaggedFilesDialog(QDialog):
         self._entries = T.store().items_with(item.data(Qt.ItemDataRole.UserRole)) if item else []
         self.files.setRowCount(len(self._entries))
         for row, entry in enumerate(self._entries):
-            name = QTableWidgetItem(posixpath.basename(entry.path.replace("\\", "/")))
+            # Shown as the file pane shows a name: a control or bidi
+            # override as U+FFFD. Go to File uses entry.path.
+            parent, base = split_tagged_path(entry.path)
+            name = QTableWidgetItem(sanitize_for_display(base))
             name.setData(Qt.ItemDataRole.UserRole, row)
-            folder = QTableWidgetItem(posixpath.dirname(entry.path.replace("\\", "/")) or "/")
-            where = QTableWidgetItem(entry.backend_name + (f" ({entry.profile_name})" if entry.profile_name else ""))
+            folder = QTableWidgetItem(sanitize_for_display(parent))
+            # The connection and its profile as the pane shows a name too: a
+            # profile named with a bidi override read reversed here.
+            where = QTableWidgetItem(sanitize_for_display(
+                entry.backend_name + (f" ({entry.profile_name})" if entry.profile_name else "")))
             for col, cell in enumerate((name, folder, where)):
                 self.files.setItem(row, col, cell)
         self.files.setSortingEnabled(True)
         self.files.resizeColumnsToContents()
-        self.note.setText(tr("{n} files").format(n=len(self._entries)))
+        self.note.setText(tr_n(len(self._entries), "{n} file", "{n} files"))
 
     def _selected(self) -> list[T.TaggedFile]:
         rows = sorted({i.row() for i in self.files.selectedIndexes()})

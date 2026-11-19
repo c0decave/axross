@@ -644,7 +644,8 @@ def effect_metadata_confirm(ctx, win, value) -> None:
                            return_value=QMessageBox.StandardButton.No) as asked:
         go = MD._ask_to_remove(None, 1)
     assert asked.called is value
-    assert go is (not value)
+    # the write mode to remove with, or None for the No asked
+    assert go == (None if value else MD.MT.write_mode())
 
 
 def effect_parallel(ctx, win, value) -> None:

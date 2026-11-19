@@ -78,6 +78,12 @@ DEADLINE_ENV = "AXROSS_SCRIPT_DEADLINE"
 #: Seconds the child's own deadline lies past the parent's soft stop and
 #: its grace, so the parent's SIGTERM normally comes first.
 CHILD_DEADLINE_MARGIN = 2.0
+#: Environment variable with the pid of the axross that started a Scripts
+#: dock run (:func:`child_env` with ``watched``): the child ends with its
+#: process group once that axross is gone (:func:`_watch_parent`).
+PARENT_ENV = "AXROSS_SCRIPT_PARENT"
+#: Seconds between the child's looks at whether its axross still runs.
+PARENT_POLL_SECONDS = 0.5
 #: First line of the section "Copy to My Scripts" appends: the example's
 #: Usage block, commented out (some name hosts to scan or profiles to open).
 TRY_IT_HEADER = "# --- Try it: remove the # in front of the lines below, adjust them, then Run ---"
@@ -250,8 +256,12 @@ def child_env(policy_name: str, *, watched: bool = False) -> dict:
         del env[name]
     if watched:
         env[ENV_WATCHED] = "1"
+        # An interactive run has no deadline: it ends with this axross,
+        # also when axross is killed (no atexit then).
+        env[PARENT_ENV] = str(os.getpid())
     else:
         env.pop(ENV_WATCHED, None)  # never inherited from the parent
+        env.pop(PARENT_ENV, None)
     return env
 
 
@@ -342,6 +352,71 @@ def _arm_own_deadline() -> float | None:
     return seconds
 
 
+def _process_state(pid: int) -> tuple[bytes, int] | None:
+    """``(state, start time)`` of *pid* from /proc (Linux), ``None`` when
+    there is no such process or no /proc."""
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as handle:
+            fields = handle.read().rsplit(b")", 1)[1].split()
+        return fields[0], int(fields[19])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _watch_parent() -> bool:
+    """In a Scripts dock child: end this process and its process group once
+    the axross named by :data:`PARENT_ENV` is gone - killed, crashed - and
+    nothing else would ever stop the run (the worker children end with
+    axross through PR_SET_PDEATHSIG; that signal reaches the child only,
+    never what the script started, so a watching thread does it). The
+    variable is removed, so what the script starts does not inherit it.
+    POSIX only (on Windows ``os.kill(pid, 0)`` ends the process). Returns
+    whether the watch was started."""
+    raw = os.environ.pop(PARENT_ENV, None)
+    if raw is None or os.name != "posix":
+        return False
+    try:
+        parent = int(raw)
+    except ValueError:
+        return False
+    if parent <= 1:
+        return False
+    first_ppid = os.getppid()
+    known = _process_state(parent)
+    started = known[1] if known is not None else None
+
+    def parent_gone() -> bool:
+        # Reparented: the direct parent (axross, or a one-file build's own
+        # loader in between) ended.
+        if os.getppid() != first_ppid:
+            return True
+        if started is not None:
+            now = _process_state(parent)
+            return now is None or now[1] != started or now[0] in (b"Z", b"X")
+        try:
+            os.kill(parent, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            return True  # the pid is another user's process now
+        except OSError:
+            return False
+        return False
+
+    def watch() -> None:
+        while not parent_gone():
+            time.sleep(PARENT_POLL_SECONDS)
+        try:
+            if os.getpgrp() == os.getpid():  # only a group of this run's own
+                os.killpg(os.getpid(), signal.SIGKILL)
+        except OSError:
+            pass
+        os.kill(os.getpid(), signal.SIGKILL)
+
+    threading.Thread(target=watch, name="axross-parent-watch", daemon=True).start()
+    return True
+
+
 #: Process groups of the bounded runs in flight (their leaders' pids).
 _LIVE_GROUPS: set[int] = set()
 _LIVE_LOCK = threading.Lock()
@@ -419,6 +494,7 @@ def child_main(argv: list[str], *, call: str | None = None) -> int:
     an uncaught exception, ``error_type``, ``error`` and ``traceback``.
     """
     _arm_own_deadline()
+    _watch_parent()
     result_fd = _take_result_fd()
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -640,6 +716,7 @@ def run_bounded(
     max_output_chars: int,
     cancel_event: threading.Event | None = None,
     env_overrides: dict[str, str] | None = None,
+    keep_fds: Sequence[int] = (),
 ) -> BoundedRun:
     """Run saved script ``name`` in a child and wait for it, within bounds.
 
@@ -651,6 +728,9 @@ def run_bounded(
     killed ``STOP_GRACE_SECONDS`` later. When the child ends by itself
     the rest of its group is killed too: nothing a run started outlives
     it (a process that left the group with ``setsid`` is out of reach).
+
+    *keep_fds* (POSIX) stay open in the child: a scheduled job's lease
+    (core.scheduler.take_job_lease), held as long as the child runs.
 
     Raises ``ValueError`` for a name the validator refuses or a bad
     ``timeout_s``, before anything starts.
@@ -671,7 +751,7 @@ def run_bounded(
     if posix:
         result_read, result_write = os.pipe()
         env[RESULT_FD_ENV] = str(result_write)
-        extra.update(pass_fds=(result_write,), start_new_session=True)
+        extra.update(pass_fds=(result_write, *keep_fds), start_new_session=True)
     else:
         extra["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     started = time.monotonic()
@@ -770,6 +850,11 @@ def run_bounded(
     )
 
 
+#: What the output pane would start a block for, besides "\n"
+#: (OutputLimiter._line_ends).
+_PANE_BREAKS = {0x0D: "\n", 0x2028: "\n", 0x2029: "\n", 0xFDD0: "\ufffd", 0xFDD1: "\ufffd"}
+
+
 class OutputLimiter:
     """Turns a child's output bytes into text the output pane can hold.
 
@@ -790,14 +875,32 @@ class OutputLimiter:
         #: Characters of the unfinished current line already passed on.
         self._line_len = 0
         self._line_cut = False
+        #: A CR at the end of the last piece: the LF of a CR LF may follow.
+        self._held_cr = False
         self.total_bytes = 0
 
     def feed(self, data: bytes) -> str:
         self.total_bytes += len(data)
-        return self._clip(self._decoder.decode(data))
+        return self._clip(self._line_ends(self._decoder.decode(data)))
 
     def flush(self) -> str:
-        return self._clip(self._decoder.decode(b"", final=True))
+        return self._clip(self._line_ends(self._decoder.decode(b"", final=True), final=True))
+
+    def _line_ends(self, text: str, *, final: bool = False) -> str:
+        """Every line break the output pane makes a block of as "\n": CR LF
+        (also split between two reads), a lone CR, U+2028 and U+2029 -
+        counted against the limits like "\n"; a progress bar of "\r"s
+        made a thousand blocks per counted line. Qt's own block marks
+        U+FDD0 / U+FDD1 become U+FFFD."""
+        if self._held_cr:
+            text = "\r" + text
+            self._held_cr = False
+        if text.endswith("\r") and not final:
+            text = text[:-1]
+            self._held_cr = True
+        if not text:
+            return ""
+        return text.replace("\r\n", "\n").translate(_PANE_BREAKS)
 
     def _clip(self, text: str) -> str:
         if not text:

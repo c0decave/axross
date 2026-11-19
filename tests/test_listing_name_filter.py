@@ -34,7 +34,9 @@ class DropUnsafeNamesTest(unittest.TestCase):
 
 
 class SftpListingTest(unittest.TestCase):
-    def test_list_dir_filters_hostile_names(self) -> None:
+    def test_list_dir_marks_hostile_names(self) -> None:
+        """A name no folder can hold is listed as an unusable row (NUL in
+        front), not left out: a folder copy or delete then sees it."""
         import paramiko
 
         def attr(name: str):
@@ -51,7 +53,9 @@ class SftpListingTest(unittest.TestCase):
         )
         with sftp:
             names = [i.name for i in session.list_dir("/srv")]
-        self.assertEqual(names, ["good"])
+        self.assertEqual(names, ["good", "\x00../../etc/passwd", "\x00x/y"])
+        with self.assertRaises(ValueError):
+            path_policy.safe_join(session, "/srv", names[1])
 
 
 if __name__ == "__main__":

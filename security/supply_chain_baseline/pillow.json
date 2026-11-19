@@ -3,79 +3,326 @@
  "versions": {
   "13.0.0": {
    "accepted_findings": [
+    "yara|capability_filesystem_delete|PIL/EpsImagePlugin.py|678faa7c7b712bfd",
     "yara|capability_filesystem_delete|PIL/EpsImagePlugin.py|a6f288068186c0a0",
     "yara|capability_filesystem_delete|PIL/Image.py|04050c2d4dd67931",
+    "yara|capability_filesystem_delete|PIL/Image.py|6646cf8a0aa91c44",
+    "yara|capability_filesystem_delete|PIL/ImageGrab.py|086bfd888d5a4d3a",
     "yara|capability_filesystem_delete|PIL/ImageGrab.py|54b1f0c2a04541f2",
     "yara|capability_filesystem_delete|PIL/ImageShow.py|aa6687ceef56beaf",
+    "yara|capability_filesystem_delete|PIL/ImageShow.py|f2029eb1dbd9eba0",
     "yara|capability_filesystem_delete|PIL/JpegImagePlugin.py|43ede4e4c76826e9",
+    "yara|capability_filesystem_delete|PIL/JpegImagePlugin.py|520455ec7590a737",
     "yara|capability_filesystem_read|PIL/AvifImagePlugin.py|7d5c9addebc40cdb",
+    "yara|capability_filesystem_read|PIL/AvifImagePlugin.py|d64fe66e4ff27d62",
+    "yara|capability_filesystem_read|PIL/BdfFontFile.py|68909057709d4a55",
     "yara|capability_filesystem_read|PIL/BdfFontFile.py|77ca2d9ac0cfd7fe",
     "yara|capability_filesystem_read|PIL/BlpImagePlugin.py|8f603c8fbe741c04",
+    "yara|capability_filesystem_read|PIL/BlpImagePlugin.py|ba361f6039637e11",
     "yara|capability_filesystem_read|PIL/BmpImagePlugin.py|778ffbc6dfb15b7c",
+    "yara|capability_filesystem_read|PIL/BmpImagePlugin.py|cd3d30275991e278",
     "yara|capability_filesystem_read|PIL/BufrStubImagePlugin.py|20cd04cee3c05601",
+    "yara|capability_filesystem_read|PIL/BufrStubImagePlugin.py|c8f042b828044ba7",
     "yara|capability_filesystem_read|PIL/ContainerIO.py|b90898580337cba2",
+    "yara|capability_filesystem_read|PIL/ContainerIO.py|bb8bb2fd765e650e",
+    "yara|capability_filesystem_read|PIL/CurImagePlugin.py|992c71d697e79637",
     "yara|capability_filesystem_read|PIL/CurImagePlugin.py|ac6d237f4fafcfa8",
+    "yara|capability_filesystem_read|PIL/DcxImagePlugin.py|0938ea04cb87adac",
     "yara|capability_filesystem_read|PIL/DcxImagePlugin.py|1b5cf45c25491a78",
     "yara|capability_filesystem_read|PIL/DdsImagePlugin.py|133b4bfe48e78e30",
+    "yara|capability_filesystem_read|PIL/DdsImagePlugin.py|a03adf884e427d56",
+    "yara|capability_filesystem_read|PIL/EpsImagePlugin.py|678faa7c7b712bfd",
     "yara|capability_filesystem_read|PIL/EpsImagePlugin.py|a6f288068186c0a0",
     "yara|capability_filesystem_read|PIL/FitsImagePlugin.py|0033984c0c8f97e8",
+    "yara|capability_filesystem_read|PIL/FitsImagePlugin.py|3b116af52aad5413",
+    "yara|capability_filesystem_read|PIL/FliImagePlugin.py|62ee542fd7c0c79c",
     "yara|capability_filesystem_read|PIL/FliImagePlugin.py|fdec8e67a3019152",
     "yara|capability_filesystem_read|PIL/FpxImagePlugin.py|40a859a4573cf5e9",
+    "yara|capability_filesystem_read|PIL/FpxImagePlugin.py|a85c06b977caa670",
+    "yara|capability_filesystem_read|PIL/FtexImagePlugin.py|0e8d7591b3a8b443",
     "yara|capability_filesystem_read|PIL/FtexImagePlugin.py|7f95e8baf6ad63c1",
     "yara|capability_filesystem_read|PIL/GbrImagePlugin.py|3545646e393680d5",
+    "yara|capability_filesystem_read|PIL/GbrImagePlugin.py|8de0ccf95823b05c",
     "yara|capability_filesystem_read|PIL/GdImageFile.py|5f73e93245a796a0",
+    "yara|capability_filesystem_read|PIL/GdImageFile.py|dd9031c22d100698",
+    "yara|capability_filesystem_read|PIL/GifImagePlugin.py|041d5e36d20d6312",
     "yara|capability_filesystem_read|PIL/GifImagePlugin.py|10de47f8b414ee9d",
+    "yara|capability_filesystem_read|PIL/GimpGradientFile.py|1e40e531e47d151f",
     "yara|capability_filesystem_read|PIL/GimpGradientFile.py|3456596b4ad84c94",
     "yara|capability_filesystem_read|PIL/GimpPaletteFile.py|0f5b7cebe76f5bc9",
+    "yara|capability_filesystem_read|PIL/GimpPaletteFile.py|11ed314ce1879a6d",
+    "yara|capability_filesystem_read|PIL/GribStubImagePlugin.py|ab11a4fb573e6407",
     "yara|capability_filesystem_read|PIL/GribStubImagePlugin.py|b192ff430da9a39c",
+    "yara|capability_filesystem_read|PIL/Hdf5StubImagePlugin.py|25535b5b9b989001",
     "yara|capability_filesystem_read|PIL/Hdf5StubImagePlugin.py|9f8a32aa127b0215",
     "yara|capability_filesystem_read|PIL/IcnsImagePlugin.py|c4d2de3c0cddbb84",
+    "yara|capability_filesystem_read|PIL/IcnsImagePlugin.py|e6ca44bcfd364581",
+    "yara|capability_filesystem_read|PIL/IcoImagePlugin.py|8e929e093d1f1c99",
     "yara|capability_filesystem_read|PIL/IcoImagePlugin.py|b771b2582490349e",
     "yara|capability_filesystem_read|PIL/ImImagePlugin.py|10e53c037685b09b",
+    "yara|capability_filesystem_read|PIL/ImImagePlugin.py|87ae476922b90329",
     "yara|capability_filesystem_read|PIL/Image.py|04050c2d4dd67931",
+    "yara|capability_filesystem_read|PIL/Image.py|6646cf8a0aa91c44",
+    "yara|capability_filesystem_read|PIL/ImageCms.py|7da688dee7037961",
     "yara|capability_filesystem_read|PIL/ImageCms.py|9e161faa0807179b",
+    "yara|capability_filesystem_read|PIL/ImageFile.py|3de270f194693480",
     "yara|capability_filesystem_read|PIL/ImageFile.py|55a48a69263e4b4d",
+    "yara|capability_filesystem_read|PIL/ImageFont.py|0b8494851d5cd921",
     "yara|capability_filesystem_read|PIL/ImageFont.py|9182befa0e4047e8",
     "yara|capability_filesystem_read|PIL/ImageMorph.py|4c5a1a35a50288d9",
+    "yara|capability_filesystem_read|PIL/ImageMorph.py|93b5d16d19caecb6",
+    "yara|capability_filesystem_read|PIL/ImtImagePlugin.py|43d604d4388ecd41",
     "yara|capability_filesystem_read|PIL/ImtImagePlugin.py|86d45657568be500",
+    "yara|capability_filesystem_read|PIL/IptcImagePlugin.py|5a07318590623d9e",
     "yara|capability_filesystem_read|PIL/IptcImagePlugin.py|6337bf6c2e584979",
+    "yara|capability_filesystem_read|PIL/Jpeg2KImagePlugin.py|2e1f0aab8c845a81",
     "yara|capability_filesystem_read|PIL/Jpeg2KImagePlugin.py|f50e79ef315d2fb9",
     "yara|capability_filesystem_read|PIL/JpegImagePlugin.py|43ede4e4c76826e9",
+    "yara|capability_filesystem_read|PIL/JpegImagePlugin.py|520455ec7590a737",
+    "yara|capability_filesystem_read|PIL/McIdasImagePlugin.py|77159cb1e3322e6a",
     "yara|capability_filesystem_read|PIL/McIdasImagePlugin.py|bdd9412edd3924ad",
     "yara|capability_filesystem_read|PIL/MpegImagePlugin.py|d5aec9c58619b3cb",
+    "yara|capability_filesystem_read|PIL/MpegImagePlugin.py|f7525282c71c1771",
     "yara|capability_filesystem_read|PIL/MpoImagePlugin.py|73480afd2311cc30",
+    "yara|capability_filesystem_read|PIL/MpoImagePlugin.py|a77a2d046108a1ad",
     "yara|capability_filesystem_read|PIL/MspImagePlugin.py|8e28773c59bae649",
+    "yara|capability_filesystem_read|PIL/MspImagePlugin.py|a5c3b0cfad52469b",
+    "yara|capability_filesystem_read|PIL/PaletteFile.py|6428748a8e9dedfa",
     "yara|capability_filesystem_read|PIL/PaletteFile.py|8954b01a8d43c1f2",
+    "yara|capability_filesystem_read|PIL/PcdImagePlugin.py|819b027170c8a845",
     "yara|capability_filesystem_read|PIL/PcdImagePlugin.py|fa09cc52a407d11f",
     "yara|capability_filesystem_read|PIL/PcfFontFile.py|062b00838e08338a",
+    "yara|capability_filesystem_read|PIL/PcfFontFile.py|566c39c442879ed9",
+    "yara|capability_filesystem_read|PIL/PcxImagePlugin.py|de3b85748748698e",
     "yara|capability_filesystem_read|PIL/PcxImagePlugin.py|f6c031982ad43a0c",
     "yara|capability_filesystem_read|PIL/PixarImagePlugin.py|2f60af2f631b1941",
+    "yara|capability_filesystem_read|PIL/PixarImagePlugin.py|a78958489e99b851",
     "yara|capability_filesystem_read|PIL/PngImagePlugin.py|67608f9c458e2d13",
+    "yara|capability_filesystem_read|PIL/PngImagePlugin.py|a2e0daf92e893125",
+    "yara|capability_filesystem_read|PIL/PpmImagePlugin.py|0e5d73b94cd0abf6",
     "yara|capability_filesystem_read|PIL/PpmImagePlugin.py|1a6b4dcb85493f97",
+    "yara|capability_filesystem_read|PIL/PsdImagePlugin.py|308f00e2cfb351e5",
     "yara|capability_filesystem_read|PIL/PsdImagePlugin.py|7154b3a26d27236e",
     "yara|capability_filesystem_read|PIL/QoiImagePlugin.py|40ce66160adbd3bc",
+    "yara|capability_filesystem_read|PIL/QoiImagePlugin.py|60fca52a0771bfbd",
+    "yara|capability_filesystem_read|PIL/SgiImagePlugin.py|1acf6d419b289ac8",
     "yara|capability_filesystem_read|PIL/SgiImagePlugin.py|b8d23659cfb6fd3c",
+    "yara|capability_filesystem_read|PIL/SpiderImagePlugin.py|7f8500ac64f2fbcf",
     "yara|capability_filesystem_read|PIL/SpiderImagePlugin.py|f3b2147519e8ab91",
+    "yara|capability_filesystem_read|PIL/SunImagePlugin.py|cddde6e2afdf7fc3",
     "yara|capability_filesystem_read|PIL/SunImagePlugin.py|f2151329b8c9deb2",
+    "yara|capability_filesystem_read|PIL/TarIO.py|6a28227e29b71a09",
     "yara|capability_filesystem_read|PIL/TarIO.py|f058a10a3fe047a3",
+    "yara|capability_filesystem_read|PIL/TgaImagePlugin.py|57fc21d319c1f23a",
     "yara|capability_filesystem_read|PIL/TgaImagePlugin.py|eeb961e08ffd2e8a",
+    "yara|capability_filesystem_read|PIL/TiffImagePlugin.py|760a92047f0ad103",
     "yara|capability_filesystem_read|PIL/TiffImagePlugin.py|e3322c6660610c41",
     "yara|capability_filesystem_read|PIL/WalImageFile.py|41bfdc25f89430ce",
+    "yara|capability_filesystem_read|PIL/WalImageFile.py|647699a10bc2cb53",
+    "yara|capability_filesystem_read|PIL/WebPImagePlugin.py|7dcc4c8cbb725266",
     "yara|capability_filesystem_read|PIL/WebPImagePlugin.py|99cf0cad0c42b71a",
     "yara|capability_filesystem_read|PIL/WmfImagePlugin.py|0e116aa192a249d9",
+    "yara|capability_filesystem_read|PIL/WmfImagePlugin.py|39f197555b7be302",
     "yara|capability_filesystem_read|PIL/XVThumbImagePlugin.py|3ef75a7f971b193d",
+    "yara|capability_filesystem_read|PIL/XVThumbImagePlugin.py|aee34d7d9b0b869d",
     "yara|capability_filesystem_read|PIL/XbmImagePlugin.py|208212c895882d4f",
+    "yara|capability_filesystem_read|PIL/XbmImagePlugin.py|7c136acba923d8a8",
+    "yara|capability_filesystem_read|PIL/XpmImagePlugin.py|1ae86981783d2a8c",
     "yara|capability_filesystem_read|PIL/XpmImagePlugin.py|b47dd3e03c01803b",
+    "yara|capability_network_outbound|PIL/TiffImagePlugin.py|760a92047f0ad103",
     "yara|capability_network_outbound|PIL/TiffImagePlugin.py|e3322c6660610c41",
+    "yara|capability_process_spawn|PIL/EpsImagePlugin.py|678faa7c7b712bfd",
     "yara|capability_process_spawn|PIL/EpsImagePlugin.py|a6f288068186c0a0",
     "yara|capability_process_spawn|PIL/Image.py|04050c2d4dd67931",
+    "yara|capability_process_spawn|PIL/Image.py|6646cf8a0aa91c44",
+    "yara|capability_process_spawn|PIL/ImageGrab.py|086bfd888d5a4d3a",
     "yara|capability_process_spawn|PIL/ImageGrab.py|54b1f0c2a04541f2",
     "yara|capability_process_spawn|PIL/ImageMath.py|5cfa1434c498968f",
+    "yara|capability_process_spawn|PIL/ImageMath.py|934bf61017576ce1",
     "yara|capability_process_spawn|PIL/ImageShow.py|aa6687ceef56beaf",
+    "yara|capability_process_spawn|PIL/ImageShow.py|f2029eb1dbd9eba0",
     "yara|capability_process_spawn|PIL/JpegImagePlugin.py|43ede4e4c76826e9",
-    "yara|threat_runtime_obfuscation_steganography|PIL/Image.py|04050c2d4dd67931"
+    "yara|capability_process_spawn|PIL/JpegImagePlugin.py|520455ec7590a737",
+    "yara|threat_runtime_obfuscation_steganography|PIL/Image.py|04050c2d4dd67931",
+    "yara|threat_runtime_obfuscation_steganography|PIL/Image.py|6646cf8a0aa91c44"
    ],
    "archives": {
+    "pillow-13.0.0-cp312-cp312-macosx_11_0_arm64.whl": {
+     "entry_points": [],
+     "files": {
+      "PIL/.dylibs/libXau.6.dylib": "c30323abc362ae0e5ff8b043e13a179a1bf6a9f76011ffc57195fd43020de535",
+      "PIL/.dylibs/libavif.16.4.2.dylib": "5e27779af8078c5586c045176db72779a09e5f87c6d516373913a6c092b76340",
+      "PIL/.dylibs/libbrotlicommon.1.2.0.dylib": "3f4843c17f3cccc986279a4c9ac8a11dc3077c412fd856d1bad8231bf027a25f",
+      "PIL/.dylibs/libbrotlidec.1.2.0.dylib": "351fa4a2f4faed4147dfead81a8b0f5500ada31db64f74c8368bc1ab894f0dd1",
+      "PIL/.dylibs/libfreetype.6.dylib": "b1e5b0bd6f696d9458bbd370c1417f8b1a6bb6953c26c4c0543750f96ec32c33",
+      "PIL/.dylibs/libharfbuzz.0.dylib": "2c88b14217bd5c823d615282dc79b860c79b7d066ddae72ad4d10e0ecca8bcb5",
+      "PIL/.dylibs/libjpeg.62.4.0.dylib": "172444d18ef193c128e3f9f4323e9d22b0d824b8172a1389ecd048b279280629",
+      "PIL/.dylibs/liblcms2.2.dylib": "188685d4468afb124af58f471fb2382f94b98ef560995bc910eefab50134e8fb",
+      "PIL/.dylibs/liblzma.5.dylib": "f08e18e2363a8e4fc8099de9c8b0b96b30a6a2e4a60e890f2cebb1a9e25a92fa",
+      "PIL/.dylibs/libopenjp2.2.5.4.dylib": "2af52733d40803561752e12d6e917a5e16932a1fb7426760a2e6d8c10989c47a",
+      "PIL/.dylibs/libpng16.16.dylib": "4777ff2529c03d4181470fb9afa10081d36153055c2989aa16bb15d6b513e772",
+      "PIL/.dylibs/libsharpyuv.0.dylib": "6b2d464413fc35783c79936f1e6be631585448a37765cf79c238be2ea5e5505b",
+      "PIL/.dylibs/libtiff.6.dylib": "d17ccc4d89a37c1db72aca63fdf26b2f07eaaeb737a5232a337585e3c920b3ed",
+      "PIL/.dylibs/libwebp.7.dylib": "0a2ba0179e6bcc1bccc1a88c38b7d8efd0302d45a1bfc1eb4cf1f1f03ede73f0",
+      "PIL/.dylibs/libwebpdemux.2.dylib": "f5ec6b6750ee91ff032ba62b18afc5f37c7bc842bfc9b2d325df41bc656ea066",
+      "PIL/.dylibs/libwebpmux.3.dylib": "f9c291035190c3af29494ce9fb62987c25ee78c4365c92c323ccc5ec8740143d",
+      "PIL/.dylibs/libxcb.1.1.0.dylib": "125bcffc8971652784b6a8b4061501f891aeafdf361aa4b777ba3bacc548bc84",
+      "PIL/.dylibs/libz.1.3.1.zlib-ng.dylib": "39ffbe6a87460a579cf414c3ee668e449b32c2cdc2cc0b64921d53fd59cb56ed",
+      "PIL/AvifImagePlugin.py": "7d5c9addebc40cdbb6d9d7643e303c388bb9fd302838a750319565f6090dddb9",
+      "PIL/BdfFontFile.py": "77ca2d9ac0cfd7fe08f70cb82298f743ccc546f478cd28feecbbe55056dc4556",
+      "PIL/BlpImagePlugin.py": "8f603c8fbe741c044577f8a5852c678ffe9c57a573b9db2b904e8094a3aa0e32",
+      "PIL/BmpImagePlugin.py": "778ffbc6dfb15b7cba970a5962dafaf721cf8784ff13a140dccab25436c0ac9c",
+      "PIL/BufrStubImagePlugin.py": "20cd04cee3c05601e94ff56ea735dc397269c504fa667dc68a6740d05cb9b618",
+      "PIL/ContainerIO.py": "b90898580337cba237436dacf897048e414d3d96e009a80877c441046b514d3c",
+      "PIL/CurImagePlugin.py": "ac6d237f4fafcfa8fe76e4b087cca78f2a42103ef99062ab8e755ad2de6b5ee0",
+      "PIL/DcxImagePlugin.py": "1b5cf45c25491a78e417ddf8c67b7e56de97885c2b5bfa69868790b226078e3d",
+      "PIL/DdsImagePlugin.py": "133b4bfe48e78e3096e065431cfe873d00b7abb4b5039833b297692e7fa38c9c",
+      "PIL/EpsImagePlugin.py": "a6f288068186c0a0cf3ca3709552df4e7c7b332069d8907fd7618c7a43a04460",
+      "PIL/ExifTags.py": "8bf09947c265a4cdadb0daaeeab597ec52820f79e1d3dc236e518e873dd0ec4f",
+      "PIL/FitsImagePlugin.py": "0033984c0c8f97e8d03a46f75cb421293b43fc7ed79e2031695e576d6213c464",
+      "PIL/FliImagePlugin.py": "fdec8e67a3019152ab5365234d60686524f4c3bebbafb946bf1cf72ced6cda19",
+      "PIL/FontFile.py": "f1ad4c036be09fce0a08765d42e0ccf65c784c1e238f41b5c3f7a85f8f04fe3f",
+      "PIL/FpxImagePlugin.py": "40a859a4573cf5e94ba4e9041b4485ebeed9f5dedd38054e3a99473c55d90864",
+      "PIL/FtexImagePlugin.py": "7f95e8baf6ad63c1569870d93beb4dd49b763d93430290654ec2ac3e5f942b63",
+      "PIL/GbrImagePlugin.py": "3545646e393680d5cc635aa3643d634131a9c6213b9cc3c4cc276fc269fb7044",
+      "PIL/GdImageFile.py": "5f73e93245a796a0cd8ee1ed1ae20dd7a3c2d7ebe7fa98c0b3e37f64a381a77c",
+      "PIL/GifImagePlugin.py": "10de47f8b414ee9d1478b469a0f7ed38fe5cf4da2a14313989ecc75469c798cb",
+      "PIL/GimpGradientFile.py": "3456596b4ad84c9492482deb3820573a15b817a1ce3b55eab0069f9e542021d7",
+      "PIL/GimpPaletteFile.py": "0f5b7cebe76f5bc92951c4eac9a6bc5875c2a7a683c42de438e6ecdbc176d98f",
+      "PIL/GribStubImagePlugin.py": "b192ff430da9a39cb25c51b4a401d443558634e4fc7b25d4b58097d89f0da1d8",
+      "PIL/Hdf5StubImagePlugin.py": "9f8a32aa127b0215c53f06f8a11dccc5aa807c0daf4e8ab14d531f1723c46b38",
+      "PIL/IcnsImagePlugin.py": "c4d2de3c0cddbb8458aaf6b872d1e8a3dbcefa39bac9a4aec71fdbe335e113a8",
+      "PIL/IcoImagePlugin.py": "b771b2582490349e83ad296df2727036bca5f4b8ea87e1b756193cc59f08741b",
+      "PIL/ImImagePlugin.py": "10e53c037685b09bdf0dfb546b0fe0f2f56a6162ee15b9c902327d552238a37e",
+      "PIL/Image.py": "04050c2d4dd67931ce8c3cfdbc49ac4a6944d379d037c8f1d5eeeb67fba29a10",
+      "PIL/ImageChops.py": "9443089e2ab9bba37caf454bb6509c8c05b947275b9895b891f8fab9fe8b476a",
+      "PIL/ImageCms.py": "9e161faa0807179b599d8fd7fa1de1078010ba34087201e092a77d7c9194b1fc",
+      "PIL/ImageColor.py": "a20b0d2eab7e6d2d095fd36e3da71446d874f408f296e2641875ddfc78295070",
+      "PIL/ImageDraw.py": "9f4f14b890236731df684c3c9334487af7704bf1b83434481aa8636c5892ffe1",
+      "PIL/ImageDraw2.py": "d4da845bca46ba0812fcc04b686616fb08e2d506f18551db6f0f065c4e8d3047",
+      "PIL/ImageEnhance.py": "cdd4a9458df340bce21680153f5b8065c091c1d79d9530974317ad5d1034caf5",
+      "PIL/ImageFile.py": "55a48a69263e4b4d52fc3b419103c92836cf259a4f6383f93d65e1f22aab0c04",
+      "PIL/ImageFilter.py": "d54985fcaec43ced7bfeb4eba4600dea4482559a2811ff0e7caad1a72f6b5f43",
+      "PIL/ImageFont.py": "9182befa0e4047e8df244ca9e8534fdb52312bcf10219629c608c91efe8a6821",
+      "PIL/ImageGrab.py": "54b1f0c2a04541f23503c8ec6dc0aeac3dde9df9063f6d3147c82af2232680ab",
+      "PIL/ImageMath.py": "5cfa1434c498968fbd4a7708760c5d2c7cfafbc334b68de87758549f3047b839",
+      "PIL/ImageMode.py": "b673e835526da9d855402d4c025d4eca56272d132e63b145d309d2ebe5476001",
+      "PIL/ImageMorph.py": "4c5a1a35a50288d9c356ede25d8d67a056407c1e107398db357e4496024dd1ed",
+      "PIL/ImageOps.py": "ab8f2f995bb77b95e71e69f985ba8d1087e138e8f362a1183fc7a252c457604d",
+      "PIL/ImagePalette.py": "62299569a0a3304fcbcbbed5bbe442cf5760e12ca7834a99aba4651e333a73ab",
+      "PIL/ImagePath.py": "e72506e570948a5d4a2934c0ffc3e01a172683e9a7b9ef862b41704c19618f0e",
+      "PIL/ImageQt.py": "47febee43f5d77222f464edce61e7eae03d627db558af78cb88410aff501745e",
+      "PIL/ImageSequence.py": "023ad8b469f345224cedec8e31655d72a5b8b30dfec1830bbe4284c12fd7055b",
+      "PIL/ImageShow.py": "aa6687ceef56beaf630785b7c14796b8ccb3b32d5321c89c29faef6d2505cf70",
+      "PIL/ImageStat.py": "e761e894621ed0b9460f85cf07c0289e931ab4abd70bd5e7367b4f97f1991a12",
+      "PIL/ImageText.py": "8d5880474c51cc437b8f3ef6c7920a5189aff77339db53a5b9f508de719e3590",
+      "PIL/ImageTk.py": "c04c6493e880620007f07bf3fcf30e190b805ec573e6e43c6b4fed70357947f5",
+      "PIL/ImageTransform.py": "51c71f789a92fa3909ef0dd375abe150159f6bf257f2e5d6d63512c69e6a48a0",
+      "PIL/ImageWin.py": "c451019b8890649af73ec1aeb07788724ce4331f188bcc3946b50f24a1a4d202",
+      "PIL/ImtImagePlugin.py": "86d45657568be5006a8432cc70a33535a592fffd3046341c2cc6b4dbb8b7d57d",
+      "PIL/IptcImagePlugin.py": "6337bf6c2e5849799dac3f30b3d6f4bdb9f7aa05084312136eddc669ceeef835",
+      "PIL/Jpeg2KImagePlugin.py": "f50e79ef315d2fb9b14a70225082373e5a3905e15646aa8c4c781a943a1360df",
+      "PIL/JpegImagePlugin.py": "43ede4e4c76826e9c4ce9b7dbcfbae61abb09b9955816a88a0d775de28220bba",
+      "PIL/JpegPresets.py": "c4a931b287992b806da20472a6fd53beae5b43d6bf8d914ae33b469b99a1b018",
+      "PIL/McIdasImagePlugin.py": "bdd9412edd3924ad3696d87463eadef11ce9a2faec7b7c0f3e439880bf0bab44",
+      "PIL/MicImagePlugin.py": "63a00f44c8a639fe4a937f851d59e6618db4c0cf70c867a3a255e804b40e4c65",
+      "PIL/MpegImagePlugin.py": "d5aec9c58619b3cb4f1784c3fd7cc12c83b874ef8ac5e6604ebcffe455d4883a",
+      "PIL/MpoImagePlugin.py": "73480afd2311cc30d20fce9ee0d6eba750de90876d4b1f4520ed0f0b5c7c6dfa",
+      "PIL/MspImagePlugin.py": "8e28773c59bae649f034c22b68d64ae4cdc9c26605947e34114e254dd458f8e6",
+      "PIL/PSDraw.py": "9a107fec78589c500caed175d40e7ce03cf65cb6cded1e360e2b06280ace4026",
+      "PIL/PaletteFile.py": "8954b01a8d43c1f232131d3d285636f3cd34986b5f429e3c9aa0246de74a658b",
+      "PIL/PalmImagePlugin.py": "d2dded0bdcbff2961cbcea04c260463484ce9db40a21fb13c5693a0fd234e698",
+      "PIL/PcdImagePlugin.py": "fa09cc52a407d11f9a963b1dde7652f5e048d63ef98a3583fc765f69d13746c4",
+      "PIL/PcfFontFile.py": "062b00838e08338a8757943a9292a89b37eeabba76304a38bf04f555ac8561b3",
+      "PIL/PcxImagePlugin.py": "f6c031982ad43a0c28d39ca5dc03a96a33a8b32b9e669355bba4dc43ef5e0c34",
+      "PIL/PdfImagePlugin.py": "7de6837a2807fe1326ec521650ac869d2cce410973cf6bdda8319f0a1275ecce",
+      "PIL/PdfParser.py": "1931bff76826dcbeb0702383a35c0fbf85310d7c49a7d92401fe3fc60fa3fff1",
+      "PIL/PixarImagePlugin.py": "2f60af2f631b194149cbbc95efad2045e2b96d04992741c396fe4c746bf320cd",
+      "PIL/PngImagePlugin.py": "67608f9c458e2d1350997580bb6604a3ca4f351b3103f78430393b3c23d5e50d",
+      "PIL/PpmImagePlugin.py": "1a6b4dcb85493f97b2dca8ec4069cd66cb4947e6e1b30905404604e7be14e3e9",
+      "PIL/PsdImagePlugin.py": "7154b3a26d27236e33d318e68663c6dd763ae4a00b143c4f63bcab2108e12969",
+      "PIL/QoiImagePlugin.py": "40ce66160adbd3bc0f5abf5c831de81b23b2851e4fbeb28e9e88bf97e40972ee",
+      "PIL/SgiImagePlugin.py": "b8d23659cfb6fd3cc7eb5c4174141a5e6931cb64f15b10f22c4fd0ba8a0c13b9",
+      "PIL/SpiderImagePlugin.py": "f3b2147519e8ab919f528358e1386473432a2f7173e2b667a49b0a96934a8ebb",
+      "PIL/SunImagePlugin.py": "f2151329b8c9deb24d753fc46eadce72fc8f0c5037e1181ec80785cd5ca12d59",
+      "PIL/TarIO.py": "f058a10a3fe047a39d80b7d8b10494005cf9520dca78b39dd7d7827ade66f2c8",
+      "PIL/TgaImagePlugin.py": "eeb961e08ffd2e8a5e5d31a66fef4404a498e7874942e5b7f1c6e698880e8296",
+      "PIL/TiffImagePlugin.py": "e3322c6660610c41196adddb6b2d46f303dd0d0034d76544f9364fb32a13f709",
+      "PIL/TiffTags.py": "1aedff2bce1102bd7857bb5f894986bc788bc6c811c5b2753c38d493d25be964",
+      "PIL/WalImageFile.py": "41bfdc25f89430ce348362c9256a7c2ace8629a0bf44bff342b356ec9940ce07",
+      "PIL/WebPImagePlugin.py": "99cf0cad0c42b71a91ed83122c8c1aac20d60db32e3c897d3abd995e75dd6ec7",
+      "PIL/WmfImagePlugin.py": "0e116aa192a249d9d7469f4aad4d141afcd8295bb15c6da24c016d4d278bd7ab",
+      "PIL/XVThumbImagePlugin.py": "3ef75a7f971b193da344dc8b4c918e0368629ecfbc04b5e5ad3ae80b1b69d69a",
+      "PIL/XbmImagePlugin.py": "208212c895882d4f86f6611359ef471070db41f6b956c96e90336fb7aa056395",
+      "PIL/XpmImagePlugin.py": "b47dd3e03c01803b10acd2dc0e69e96405579dd2b9b7d287233e69cf5ac763fd",
+      "PIL/__init__.py": "7361b6ad3878589affe5956e4a4da24d71398b0891fd3a8c15e9362217b4ca01",
+      "PIL/__main__.py": "2e98f8bde7fc988ee3035b1109402855869e78f0ff51cf3df3117973b5cbc750",
+      "PIL/_avif.cpython-312-darwin.so": "e8a87d29c9ea3e81527efb1818ab7b6ead5bed54e4c2664c73e47f67746fd5f8",
+      "PIL/_avif.pyi": "ddf071712a6926be84384714a23bdf946dc47a083b96fd90a7474d41020bacfe",
+      "PIL/_binary.py": "7590dd4a52c7379e18107f2e434478ff5c2876e22f461748e44cddc947fcdbaa",
+      "PIL/_deprecate.py": "6a0bbb052f12bd49c2194391e9be9e9b38c9abcf9ce6be7a0d0df8179e3943f5",
+      "PIL/_imaging.cpython-312-darwin.so": "058a696be42c06bf77d5efd929c13f734a5e1a0c0a9e4b3e684ee5af13b4aa8f",
+      "PIL/_imaging.pyi": "7d3f934c6412d24ca6d60bfbee05d3290b49ac098ed4dca74b92ca06d1b71ba3",
+      "PIL/_imagingcms.cpython-312-darwin.so": "c940dbd46ca213366037fd958d11678497a5cd41971fc54126ac37baad396a81",
+      "PIL/_imagingcms.pyi": "659f222288ba10758bbe001d7e6d613c3e42426c62ef92e2265e71f321b16285",
+      "PIL/_imagingft.cpython-312-darwin.so": "bbd5e4c25140c7c3b476e14ee613457c55da2694029e9a4b0805ed6711fdfd2c",
+      "PIL/_imagingft.pyi": "718c92cef70a0428873c1b2fb6d3227bd01d7d4704b2a651fb7db9e9842dcf64",
+      "PIL/_imagingmath.cpython-312-darwin.so": "3209a70da6bb99bc9f2dc4d98d168baae82440a5062e91a19acccf6c2b653ff6",
+      "PIL/_imagingmath.pyi": "ddf071712a6926be84384714a23bdf946dc47a083b96fd90a7474d41020bacfe",
+      "PIL/_imagingmorph.cpython-312-darwin.so": "0237c1c8ca6ab8ad087d8c6cc929d8cfbd49396491b990503e47963f616a021d",
+      "PIL/_imagingmorph.pyi": "ddf071712a6926be84384714a23bdf946dc47a083b96fd90a7474d41020bacfe",
+      "PIL/_imagingtk.cpython-312-darwin.so": "1e11150b6f16eae297ea7da2193fa66ff4597d85db9e5d60c7238f190c5dd745",
+      "PIL/_imagingtk.pyi": "ddf071712a6926be84384714a23bdf946dc47a083b96fd90a7474d41020bacfe",
+      "PIL/_tkinter_finder.py": "188678b2d985854a2c987292addc5c8d2b62a1c0cd7f2267ed10627b6496c54d",
+      "PIL/_typing.py": "3c65612aa24fbc54c76dc23d000e41168b05453063922dd39be6ee69ca577bdb",
+      "PIL/_util.py": "7f185676b2c04727363ec3203779bdfd4d5d637a1429b57b9a4a0771782879e0",
+      "PIL/_version.py": "10a1ea208d5c54ec96416511a6a6811a1da3d97ce2bad18c4f2fe9d73e71dbad",
+      "PIL/_webp.cpython-312-darwin.so": "3c4c8cb49c955900e361ca1bcaf44f8863ffa9edb9f7b3372e15e8938a053320",
+      "PIL/_webp.pyi": "ddf071712a6926be84384714a23bdf946dc47a083b96fd90a7474d41020bacfe",
+      "PIL/features.py": "28a2482eb1e320ab6ffff78bf3f04057f9fe42cb6a1b87d2b492a2e51b28c627",
+      "PIL/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "PIL/report.py": "e0963af8853bb07d512ae45b3afcb57d4b74740a22efd157e2d609377a750d3d",
+      "pillow-13.0.0.dist-info/METADATA": "dba7fdfe24e302f46bae562f55d66cc367c0618abae9894a1ebec93dc8f0e511",
+      "pillow-13.0.0.dist-info/RECORD": "ce43fa709f2b1e2c11a02ca1f2f89a00f1c0ad5e16a525a9785344deaa414fe6",
+      "pillow-13.0.0.dist-info/WHEEL": "7156dcce88ca058d4e5118bde8900f7f0cacc719d55b67b78cb6de2362e7dbdb",
+      "pillow-13.0.0.dist-info/licenses/LICENSE": "dda12a98c1979cf3d94df1cff45d27a4cb3f04a60c76f76902ac54cac03ec0ce",
+      "pillow-13.0.0.dist-info/sboms/pillow-13.0.0.cdx.json": "fe1ca6e3a4f73e7018a3805a75a19377453f342d203712f37387ad6ee853fd44",
+      "pillow-13.0.0.dist-info/top_level.txt": "ae266aae4fa1c99aa1e5fd59d19c228b774a7f112c07286ef5c53d20e0c5f8d6"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "ae5cbe2244be524c5e215717f861c9e44558828853aa9e58466322987f67d8ce",
+     "native": {
+      "PIL/.dylibs/libXau.6.dylib": "macho",
+      "PIL/.dylibs/libavif.16.4.2.dylib": "macho",
+      "PIL/.dylibs/libbrotlicommon.1.2.0.dylib": "macho",
+      "PIL/.dylibs/libbrotlidec.1.2.0.dylib": "macho",
+      "PIL/.dylibs/libfreetype.6.dylib": "macho",
+      "PIL/.dylibs/libharfbuzz.0.dylib": "macho",
+      "PIL/.dylibs/libjpeg.62.4.0.dylib": "macho",
+      "PIL/.dylibs/liblcms2.2.dylib": "macho",
+      "PIL/.dylibs/liblzma.5.dylib": "macho",
+      "PIL/.dylibs/libopenjp2.2.5.4.dylib": "macho",
+      "PIL/.dylibs/libpng16.16.dylib": "macho",
+      "PIL/.dylibs/libsharpyuv.0.dylib": "macho",
+      "PIL/.dylibs/libtiff.6.dylib": "macho",
+      "PIL/.dylibs/libwebp.7.dylib": "macho",
+      "PIL/.dylibs/libwebpdemux.2.dylib": "macho",
+      "PIL/.dylibs/libwebpmux.3.dylib": "macho",
+      "PIL/.dylibs/libxcb.1.1.0.dylib": "macho",
+      "PIL/.dylibs/libz.1.3.1.zlib-ng.dylib": "macho",
+      "PIL/_avif.cpython-312-darwin.so": "macho",
+      "PIL/_imaging.cpython-312-darwin.so": "macho",
+      "PIL/_imagingcms.cpython-312-darwin.so": "macho",
+      "PIL/_imagingft.cpython-312-darwin.so": "macho",
+      "PIL/_imagingmath.cpython-312-darwin.so": "macho",
+      "PIL/_imagingmorph.cpython-312-darwin.so": "macho",
+      "PIL/_imagingtk.cpython-312-darwin.so": "macho",
+      "PIL/_webp.cpython-312-darwin.so": "macho"
+     },
+     "pth": {},
+     "sha256": "fc481f742ccda20e9ed760b8f978dff50f2a4e9bc253ac167fb0a05b0783ef52"
+    },
     "pillow-13.0.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl": {
      "entry_points": [],
      "files": {
@@ -252,11 +499,163 @@
      },
      "pth": {},
      "sha256": "42d63be3af4f9b951b199b0a9d23365d37ab14687e6d77b74940432c8515c4ca"
+    },
+    "pillow-13.0.0-cp312-cp312-win_amd64.whl": {
+     "entry_points": [],
+     "files": {
+      "PIL/AvifImagePlugin.py": "d64fe66e4ff27d628780faadd129f664d0e713d65a6bdcf4f946bd422d87d6ad",
+      "PIL/BdfFontFile.py": "68909057709d4a55dfbffed11595a4a3dfd074c24361b388a686d40c1867ba82",
+      "PIL/BlpImagePlugin.py": "ba361f6039637e1136020155f042002882835ad3402084c9e027d6c063de1af8",
+      "PIL/BmpImagePlugin.py": "cd3d30275991e278244b490db80c751342c5e555131204fb428b3875e54bc118",
+      "PIL/BufrStubImagePlugin.py": "c8f042b828044ba702b1840d0093ed746b4f4db8d481e2576cba22a30fa18f1f",
+      "PIL/ContainerIO.py": "bb8bb2fd765e650e4363c66a90c69ba10e92a4f44318ec075dad7bd222db8479",
+      "PIL/CurImagePlugin.py": "992c71d697e796375883d1a0261b3438f88844f54bea5e5c8d6167bbf8726590",
+      "PIL/DcxImagePlugin.py": "0938ea04cb87adaced56786ee2239e5a4c875376838140a0c146d0790a777636",
+      "PIL/DdsImagePlugin.py": "a03adf884e427d56e0f05638c11fa29cc84fe8ba72e6e3eee3de1b47d6e716ae",
+      "PIL/EpsImagePlugin.py": "678faa7c7b712bfdf9c7b6536906ced6c66ab8c7a30374d85ca33030cd9730cc",
+      "PIL/ExifTags.py": "8a2248027fbdd9877ee789de6bf8b15e6df5eecc13b30f0f0637a46894ca0794",
+      "PIL/FitsImagePlugin.py": "3b116af52aad541376f2125ef93785832dc7bb36fb67e815a85cc917d6abf317",
+      "PIL/FliImagePlugin.py": "62ee542fd7c0c79c567b933299c316676bdbd059697a84c004f88debc65f6c17",
+      "PIL/FontFile.py": "58bf3a4021a8667f50c6cbc7974f7a14794b5bb4c26ba9a91a6e1855a00a8b63",
+      "PIL/FpxImagePlugin.py": "a85c06b977caa670404b998193d75c7bfbcecec266e9a634095fdc1350289a09",
+      "PIL/FtexImagePlugin.py": "0e8d7591b3a8b44352652b0f1e0d0aa49a6b21618a87345ef29450055e26ef7e",
+      "PIL/GbrImagePlugin.py": "8de0ccf95823b05c8e8b04ecb84539938de70f61a85c30f58323af5710367981",
+      "PIL/GdImageFile.py": "dd9031c22d100698bd9e9a0be41d86f0720eb512241c83c70ee6be3c77315c2c",
+      "PIL/GifImagePlugin.py": "041d5e36d20d6312f93e0a1c37ede1b23b253a0d68b0931df8b68a708596068c",
+      "PIL/GimpGradientFile.py": "1e40e531e47d151f2f894dbd73f5b77a70803a6833e6bcc614e82cc6ef0dfe2f",
+      "PIL/GimpPaletteFile.py": "11ed314ce1879a6d15375338a7c175cd3b44292d6e5819987c4b1ca6392b01dd",
+      "PIL/GribStubImagePlugin.py": "ab11a4fb573e6407003cd220b03728c181ff8e94ee35adaa3b0194b170953a4d",
+      "PIL/Hdf5StubImagePlugin.py": "25535b5b9b989001957216e4483096ca67ac0b646e65457f586d79d001db49b9",
+      "PIL/IcnsImagePlugin.py": "e6ca44bcfd36458185869db3941a79e96f64f79a16f2bbdd4612a92ed3bbe0bb",
+      "PIL/IcoImagePlugin.py": "8e929e093d1f1c9925bdf0cf7bed986a94565ccf8bc14577315d4fb6284c973b",
+      "PIL/ImImagePlugin.py": "87ae476922b90329669da7a8f754e3d57480d69e0beb24641fa56a18a40395a2",
+      "PIL/Image.py": "6646cf8a0aa91c440293112934d0e0802cd90c207a07137281a1926c3465e23f",
+      "PIL/ImageChops.py": "aa3f9d10bf3fa3323cbb36658e5553123da84dc7352821af075ba058c6f4ce72",
+      "PIL/ImageCms.py": "7da688dee7037961d3c346ef55a8dfec3a6d787b2c9093e9e6d34a2553a1f702",
+      "PIL/ImageColor.py": "96100944dee28c2b8b69ef70a26fe056e58550bb4f664d0d466e2382ed2b3a19",
+      "PIL/ImageDraw.py": "01294915e47335edd158415c45c492d54bcef767b4dd51a21d576d9404461000",
+      "PIL/ImageDraw2.py": "9ecda8290d6bd903d610a1cfab92d73b549665e8bb19e93cf226fdff76a79f56",
+      "PIL/ImageEnhance.py": "9c6ec5314220bc03833fb234df6143d728431daf9b79e77ea0336850000d3e7b",
+      "PIL/ImageFile.py": "3de270f19469348052ec2f4937fd6f4cdd487ee998c15590a13fbb2b2032399c",
+      "PIL/ImageFilter.py": "36c87a7656c2324b6b675eb82b0718e85d0a983abf35d713b8c1913d2489e0af",
+      "PIL/ImageFont.py": "0b8494851d5cd92126e88903fafdd505f163f4f454d72a1dacba0d141a4b123a",
+      "PIL/ImageGrab.py": "086bfd888d5a4d3a64d4d9a21cea42ee1e408cb115cfbef0d79c03ddd2fbd70b",
+      "PIL/ImageMath.py": "934bf61017576ce1f7f5ff914314a9951a831c3590b683a0f8e17354ea79ff4e",
+      "PIL/ImageMode.py": "d6298e37f99ea7fdb5ed1996741d2bbc55c1c9b8c5e2e06da6aabaac90bd7049",
+      "PIL/ImageMorph.py": "93b5d16d19caecb69e8124ba690c40e829e6ffcf8acee9bc09464469b00bbe7e",
+      "PIL/ImageOps.py": "cafa9bfb486530860c624c9399889a581b2e34b78927eb479a2fe359dd8e5819",
+      "PIL/ImagePalette.py": "45c408096fb30600b27d3b9b1de85f9d1d645907102188a79e930d88d5bb8814",
+      "PIL/ImagePath.py": "6679c9baf40db5b2918429abeb54c4984875bd5579ffdd163043cbf0ea72e65f",
+      "PIL/ImageQt.py": "6f270bf0f2411e2c5f4312b7e08009d93a50d4767e6e80f07f062f493bb34369",
+      "PIL/ImageSequence.py": "fbe8d8911099d785df6f2c3ba7909ce60c814b0ca80e7ab26dae766ee9108f95",
+      "PIL/ImageShow.py": "f2029eb1dbd9eba059ce3443b8b12b7568332aeab9e33b3ecc74c4fb703ea99e",
+      "PIL/ImageStat.py": "cbafd84437cb1ce3717ff7c000bc83ef3f91dae63adbcd850ed1e2d2d288a4c4",
+      "PIL/ImageText.py": "cbbdbc984427708ed8afe21c53141502b57dd6838eca813816d7f8faa594aa3b",
+      "PIL/ImageTk.py": "576f31c02699504d32328522ecc1f39ae00fdff5694e59492d57c27c940e95c9",
+      "PIL/ImageTransform.py": "8d69d1d3ea19c71365ca94bcaba4641391d35203c263abac3dfcbcf189c422fa",
+      "PIL/ImageWin.py": "27fddec11b775f810e8c390093a916031f4a0a0766d037ecbb0d86b1baa8e530",
+      "PIL/ImtImagePlugin.py": "43d604d4388ecd41dd06336d9575fee504bf1d5e0d12954f50c861da96159d2f",
+      "PIL/IptcImagePlugin.py": "5a07318590623d9e2c26c1193960e56a2f5518e2f0f2767aa706c805d3505c43",
+      "PIL/Jpeg2KImagePlugin.py": "2e1f0aab8c845a8110ae0a71fa70ab59bc4dece7fa63bf29765f105a5220091d",
+      "PIL/JpegImagePlugin.py": "520455ec7590a7372ad0fe52d082f590adf598ef2ac3ffb3457d9c4a081769ad",
+      "PIL/JpegPresets.py": "38bacfb90e0ca8ca81ecedcd00ced6feb2d200417cd0f45c468dc96e10b58a73",
+      "PIL/McIdasImagePlugin.py": "77159cb1e3322e6aaa8ab6c9c8b2965f694a551c6bead3ef5362ff73d698a14c",
+      "PIL/MicImagePlugin.py": "85490810328a3769d2185b43f6161cba8631b08002f1add5d6946f6cbcd9178c",
+      "PIL/MpegImagePlugin.py": "f7525282c71c17714b05673bd4353a3f2330299064ae1f173b4bd3772d51b4a9",
+      "PIL/MpoImagePlugin.py": "a77a2d046108a1adc47a4399d26cdb08f6808957f8ae5cbee56c046b2f0079bb",
+      "PIL/MspImagePlugin.py": "a5c3b0cfad52469b0ff1756398871d329d9e147e4474ccd50a102a63dd9cb2b8",
+      "PIL/PSDraw.py": "8303a61dfc2b1ce4a312385f267b877826400444ba31e7930db9c784404746f5",
+      "PIL/PaletteFile.py": "6428748a8e9dedfa1a275f9c46baf20e19317aaa372b1dfba8db4e4f2ff4c66c",
+      "PIL/PalmImagePlugin.py": "c1cf7ce4a8cc6318334f9dd0e4b8346e72f405f56787a727a60786394b208fe8",
+      "PIL/PcdImagePlugin.py": "819b027170c8a845532b6cfe1962a9b53db9a455350143a0a6bdc9d3a7233c28",
+      "PIL/PcfFontFile.py": "566c39c442879ed989e35c4b04b04b170868ccf8ece9b73a3e175c32b34a5c9f",
+      "PIL/PcxImagePlugin.py": "de3b85748748698e4e728738e1de606268a45c9f7d39442f5b395a94ddff5136",
+      "PIL/PdfImagePlugin.py": "62c0eb2e3f64fcb2caf0fccedc58fb44b0054c00b8923ef9a64b3bfc4e5d37a1",
+      "PIL/PdfParser.py": "ea722a6d82bee2783fb8c8e73b83189ce4af553dbe0ac8e04138d85b77845a12",
+      "PIL/PixarImagePlugin.py": "a78958489e99b851e177ae03b450e093509f549c25608105e463bdcf4c33df4b",
+      "PIL/PngImagePlugin.py": "a2e0daf92e893125153d8a012d30b9a6259e82fe36841ecda6ff1d2a809539de",
+      "PIL/PpmImagePlugin.py": "0e5d73b94cd0abf6e1d88f241a86453b358bace042dfa68ce35214925c2a7c87",
+      "PIL/PsdImagePlugin.py": "308f00e2cfb351e59d96a64e34e4be5a0aaa641365c7b52d83dfede1239c162b",
+      "PIL/QoiImagePlugin.py": "60fca52a0771bfbd3d5c3bf46e7e3c0db787f80006154e180f68ceb019711399",
+      "PIL/SgiImagePlugin.py": "1acf6d419b289ac80db952c8bf01bc3c13b7bfa93e6db968aa1cb0c5e6fefe81",
+      "PIL/SpiderImagePlugin.py": "7f8500ac64f2fbcf9cd884202262dfca77325cf3a354ed88bcdd7ffd9a033d6a",
+      "PIL/SunImagePlugin.py": "cddde6e2afdf7fc37808eac728b4206924e8776dc135fca6f7ee3a841f7fb1ed",
+      "PIL/TarIO.py": "6a28227e29b71a09b083299061f98bb9b031b830f26e4aef027ac000dbcf259d",
+      "PIL/TgaImagePlugin.py": "57fc21d319c1f23a5e36e2be04d049849b8cf9890b3f956dcd59acdf91a58235",
+      "PIL/TiffImagePlugin.py": "760a92047f0ad1037e0c85b242b4486bdc1c46304615d748686177c3541826f7",
+      "PIL/TiffTags.py": "b0fff0431110dae372f9960305f689997dc60e50c8bae5dfb1fc236f0585a202",
+      "PIL/WalImageFile.py": "647699a10bc2cb53f1c39ec2bce2a2706591afe08081b6000417be880ddbaab1",
+      "PIL/WebPImagePlugin.py": "7dcc4c8cbb725266615082da2f060be254db4ff81527b01c05e29746b3ea4d72",
+      "PIL/WmfImagePlugin.py": "39f197555b7be30242332561afff5f9aecd9b8d67dd61247ba4d9bb07d2c692a",
+      "PIL/XVThumbImagePlugin.py": "aee34d7d9b0b869d2222b841026937876e78fd710aa4e39022aba9d2abd473b8",
+      "PIL/XbmImagePlugin.py": "7c136acba923d8a8a193e3b7d8626e0bc1d23d576a651edc6ebe8e39105038d6",
+      "PIL/XpmImagePlugin.py": "1ae86981783d2a8c6234fe1aca13346129846b127c7099e59e5ed2b4caeebf40",
+      "PIL/__init__.py": "3fffff8502f4b59ca61d39cce713d55ffef046954262fce1abac3e97f3803734",
+      "PIL/__main__.py": "5fc788a469661df9e9ef36b3a7999d6afdb6f08b5c7f696488c3f4b4b53a5fd7",
+      "PIL/_avif.cp312-win_amd64.pyd": "3c31d65c8b3b4c91ac2838d5c843a6b2479d775b6904fe654d60b56d41772411",
+      "PIL/_avif.pyi": "cc3f2f0283c2f1a1085637dc90bb45b24456e6c6a255e977fac254036a476867",
+      "PIL/_binary.py": "b95d3f4e5dde3d80029f4b27aa5b93139803ab2487989971054db7543d710e56",
+      "PIL/_deprecate.py": "dcede15593dee08f34af4e5cc29f286959faca1280e6dbbfea6901698924a680",
+      "PIL/_imaging.cp312-win_amd64.pyd": "7140f56d38dd6cd51512f8122386bcb914c5df2a82eb5f719c973527d9213cee",
+      "PIL/_imaging.pyi": "8d2446dead5dc2204ca8ec0884bb5305edcb30ac2c8b76244dc0dfb0a577d84d",
+      "PIL/_imagingcms.cp312-win_amd64.pyd": "2640857cace64d69735bdcaa3987e9ad70f85168abc1a8662079c77ac44b5301",
+      "PIL/_imagingcms.pyi": "e7f48329eecac13f5a6f911e1bec27e85e6cbff7ecd28db5db1a0f066dc7f88a",
+      "PIL/_imagingft.cp312-win_amd64.pyd": "985228f6086171978abb5d04f2f625c489fdc9d7f0a92f2077a621ff184a599e",
+      "PIL/_imagingft.pyi": "535ae9c2a417d6150bbd3028f1f634fc8ad79e0f953ee09755a581523da9d73d",
+      "PIL/_imagingmath.cp312-win_amd64.pyd": "01c6f9de6f0d6ed46d1df1d4a9cdf47e399306870453f26a5326368f7db0b3ad",
+      "PIL/_imagingmath.pyi": "cc3f2f0283c2f1a1085637dc90bb45b24456e6c6a255e977fac254036a476867",
+      "PIL/_imagingmorph.cp312-win_amd64.pyd": "e74547cf128ee13d81d7c4ef6d5be079f230062b5a8e9ec648afdc9ce228af39",
+      "PIL/_imagingmorph.pyi": "cc3f2f0283c2f1a1085637dc90bb45b24456e6c6a255e977fac254036a476867",
+      "PIL/_imagingtk.cp312-win_amd64.pyd": "e1c87f73e96d2269395624d03b3808300f4b0f795f5fad1ecc3d1492e5dcc7c2",
+      "PIL/_imagingtk.pyi": "cc3f2f0283c2f1a1085637dc90bb45b24456e6c6a255e977fac254036a476867",
+      "PIL/_tkinter_finder.py": "1f5530ddd57b8161c88ffa2c527245c56875691b10d8c74aa4d3f7bd0c10716d",
+      "PIL/_typing.py": "b2658d157a9fced3fe7deb919155779a9dfe96b6242951db1d7f39a399f555ea",
+      "PIL/_util.py": "78ff087e658999b13f3ea6d425be2a4ea18d2e2e334f44d369daebaa6ca483b6",
+      "PIL/_version.py": "ef8061e8a3ed8b658ee877f5693d4d2f6fae25b4a44a4e83c654cd528b55e68c",
+      "PIL/_webp.cp312-win_amd64.pyd": "bb9c64d38a6e4857bd3358e14dbe6cf3a4593b1efcd1185fdba1ef8931550896",
+      "PIL/_webp.pyi": "cc3f2f0283c2f1a1085637dc90bb45b24456e6c6a255e977fac254036a476867",
+      "PIL/features.py": "377f0ed5a0d19df432fc38dc04160c8565863c48dfef72f676b269d44563d454",
+      "PIL/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "PIL/report.py": "ea6ecd3afd5adb8e7bed9889a315fcf62a7925e3a07f63b517de5febed4ae5a3",
+      "pillow-13.0.0.dist-info/METADATA": "140f39cb31ec9b46109828a6286f034a4848621263d6aab38d2f142083dd06c5",
+      "pillow-13.0.0.dist-info/RECORD": "8de8a68f4121ae55a3ca459a3305dd8aca90bb311a4d56deceb8edd804924640",
+      "pillow-13.0.0.dist-info/WHEEL": "547199cfb31450578b25778938b82f94e190e69e750e6c850e3b6d657fa1a30f",
+      "pillow-13.0.0.dist-info/licenses/LICENSE": "988ffe8ab3480b0f4e9a0ab2702bffd73d9fb6b47198043fb3ba101a62fac236",
+      "pillow-13.0.0.dist-info/sboms/pillow-13.0.0.cdx.json": "fe1ca6e3a4f73e7018a3805a75a19377453f342d203712f37387ad6ee853fd44",
+      "pillow-13.0.0.dist-info/top_level.txt": "ae266aae4fa1c99aa1e5fd59d19c228b774a7f112c07286ef5c53d20e0c5f8d6"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "1010a6fb41a0f92c86fbf0edb3ebb8eb65c428554944646fb535ca3ab801eb73",
+     "native": {
+      "PIL/_avif.cp312-win_amd64.pyd": "pe",
+      "PIL/_imaging.cp312-win_amd64.pyd": "pe",
+      "PIL/_imagingcms.cp312-win_amd64.pyd": "pe",
+      "PIL/_imagingft.cp312-win_amd64.pyd": "pe",
+      "PIL/_imagingmath.cp312-win_amd64.pyd": "pe",
+      "PIL/_imagingmorph.cp312-win_amd64.pyd": "pe",
+      "PIL/_imagingtk.cp312-win_amd64.pyd": "pe",
+      "PIL/_webp.cp312-win_amd64.pyd": "pe"
+     },
+     "pth": {},
+     "sha256": "ff3fe9eb621fbb9db4c4be33ab946f6bac5f98ab50ca8d3260503653656c961b"
     }
    },
    "name": "pillow",
    "provenance": {
+    "pillow-13.0.0-cp312-cp312-macosx_11_0_arm64.whl": {
+     "environment": "release-pypi",
+     "kind": "GitHub",
+     "repository": "python-pillow/Pillow",
+     "workflow": "wheels.yml"
+    },
     "pillow-13.0.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl": {
+     "environment": "release-pypi",
+     "kind": "GitHub",
+     "repository": "python-pillow/Pillow",
+     "workflow": "wheels.yml"
+    },
+    "pillow-13.0.0-cp312-cp312-win_amd64.whl": {
      "environment": "release-pypi",
      "kind": "GitHub",
      "repository": "python-pillow/Pillow",
@@ -280,11 +679,81 @@
    },
    "reviewed": {
     "by": "claude",
-    "date": "2026-11-05",
-    "note": "One hit: Image.eval() is Pillow's public per-pixel function API (no Python eval). Native libs: libxcb's socket imports are the X11 connection, libavif's prctl names threads. Attestation verifies."
+    "date": "2026-11-20",
+    "earlier": [
+     {
+      "by": "claude",
+      "date": "2026-11-05",
+      "note": "One hit: Image.eval() is Pillow's public per-pixel function API (no Python eval). Native libs: libxcb's socket imports are the X11 connection, libavif's prctl names threads. Attestation verifies."
+     }
+    ],
+    "note": "macOS arm64 and Windows amd64 wheels of the reviewed version. macOS: the delocated .dylibs (libjpeg, libtiff, libwebp, freetype, harfbuzz, avif, xcb ...) instead of pillow.libs; Windows links them statically (8 .pyd, no extra DLLs); LICENSE lists the bundled libraries per platform. Python identical (Windows CRLF only); the 71 'new' keys are the reviewed hits (Image.eval is the per-pixel API) on CRLF-changed files. libxcb's socket imports are the X11 connection; libjpeg's rpath is the CI build dir and resolves nothing. Attestations verify, same publisher (python-pillow/Pillow wheels.yml)."
    },
    "scans": {
     "capa": {
+     "01c6f9de6f0d6ed46d1df1d4a9cdf47e399306870453f26a5326368f7db0b3ad": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "PIL/_imagingmath.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-math-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "0237c1c8ca6ab8ad087d8c6cc929d8cfbd49396491b990503e47963f616a021d": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "PIL/_imagingmorph.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "058a696be42c06bf77d5efd929c13f734a5e1a0c0a9e4b3e684ee5af13b4aa8f": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "PIL/_imaging.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "0a2ba0179e6bcc1bccc1a88c38b7d8efd0302d45a1bfc1eb4cf1f1f03ede73f0": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "PIL/.dylibs/libwebp.7.dylib",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "101c37ad4308d511d1fb4fe9220d68a910ec64ec299f05739ed7aeca63fa4c02": {
       "capabilities": [
        "contain loop"
@@ -308,6 +777,45 @@
        "urls": []
       }
      },
+     "125bcffc8971652784b6a8b4061501f891aeafdf361aa4b777ba3bacc548bc84": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "PIL/.dylibs/libxcb.1.1.0.dylib",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "172444d18ef193c128e3f9f4323e9d22b0d824b8172a1389ecd048b279280629": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "PIL/.dylibs/libjpeg.62.4.0.dylib",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "188685d4468afb124af58f471fb2382f94b98ef560995bc910eefab50134e8fb": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "PIL/.dylibs/liblcms2.2.dylib",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "1b497acc3d8d8e1fc286088f0c288be7c0c54bf5a8fa94b12b23e54de205d48c": {
       "capabilities": [
        "contain loop"
@@ -326,6 +834,112 @@
        "rpath": [
         "$ORIGIN"
        ],
+       "urls": []
+      }
+     },
+     "1e11150b6f16eae297ea7da2193fa66ff4597d85db9e5d60c7238f190c5dd745": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "PIL/_imagingtk.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "2640857cace64d69735bdcaa3987e9ad70f85168abc1a8662079c77ac44b5301": {
+      "capabilities": [
+       "check mutex on Windows",
+       "contain loop",
+       "contain obfuscated stackstrings",
+       "create or open file",
+       "create or open mutex on Windows",
+       "delay execution",
+       "delete file",
+       "encode data using XOR",
+       "encrypt data using RC4 PRGA",
+       "enumerate PE sections",
+       "parse PE header",
+       "read file on Windows",
+       "resolve function by parsing PE exports",
+       "write file on Windows"
+      ],
+      "note": "",
+      "path": "PIL/_imagingcms.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "GDI32.dll",
+        "KERNEL32.dll",
+        "USER32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-filesystem-l1-1-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-math-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "api-ms-win-crt-time-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "2af52733d40803561752e12d6e917a5e16932a1fb7426760a2e6d8c10989c47a": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "PIL/.dylibs/libopenjp2.2.5.4.dylib",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "2c88b14217bd5c823d615282dc79b860c79b7d066ddae72ad4d10e0ecca8bcb5": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "PIL/.dylibs/libharfbuzz.0.dylib",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "3209a70da6bb99bc9f2dc4d98d168baae82440a5062e91a19acccf6c2b653ff6": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "PIL/_imagingmath.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "351fa4a2f4faed4147dfead81a8b0f5500ada31db64f74c8368bc1ab894f0dd1": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "PIL/.dylibs/libbrotlidec.1.2.0.dylib",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
        "urls": []
       }
      },
@@ -352,6 +966,133 @@
         "libm.so.6",
         "libz.so.1"
        ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "39ffbe6a87460a579cf414c3ee668e449b32c2cdc2cc0b64921d53fd59cb56ed": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "PIL/.dylibs/libz.1.3.1.zlib-ng.dylib",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "3c31d65c8b3b4c91ac2838d5c843a6b2479d775b6904fe654d60b56d41772411": {
+      "capabilities": [],
+      "note": "larger than 2 MiB",
+      "path": "PIL/_avif.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {
+        "dynamic-code": [
+         "GetProcAddress"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-convert-l1-1-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-math-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "api-ms-win-crt-time-l1-1-0.dll",
+        "api-ms-win-crt-utility-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "3c4c8cb49c955900e361ca1bcaf44f8863ffa9edb9f7b3372e15e8938a053320": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "PIL/_webp.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "3f4843c17f3cccc986279a4c9ac8a11dc3077c412fd856d1bad8231bf027a25f": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "PIL/.dylibs/libbrotlicommon.1.2.0.dylib",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": [
+        "http://.css",
+        "http://.jpg",
+        "http://Descriptionrelatively",
+        "http://UA-Compatible",
+        "http://according",
+        "http://addEventListenerresponsible",
+        "http://applicationslink",
+        "http://ator",
+        "http://cript",
+        "http://dictionaryperceptionrevolutionfoundationpx",
+        "http://encoding",
+        "http://familiar",
+        "http://html4/loose.dtd\">",
+        "http://imEnglish",
+        "http://interested",
+        "http://interpreted",
+        "http://iparticipation",
+        "http://link",
+        "http://mathematicsmargin-top",
+        "http://navigation",
+        "http://option",
+        "http://site",
+        "http://staticsuggested",
+        "http://style",
+        "http://whether",
+        "http://www",
+        "http://www-//W3C//DTD",
+        "http://www.",
+        "http://www./div></div><div",
+        "http://www.C//DTD",
+        "http://www.a",
+        "http://www.css",
+        "http://www.hortcut",
+        "http://www.icon",
+        "http://www.interpretation",
+        "http://www.language",
+        "http://www.style",
+        "http://www.text-decoration",
+        "http://www.w3.org/shortcut",
+        "http://www.wencodeURIComponent",
+        "http://www.years",
+        "https://aIn",
+        "https://was",
+        "https://www.World",
+        "https://www.recent"
+       ]
+      }
+     },
+     "4777ff2529c03d4181470fb9afa10081d36153055c2989aa16bb15d6b513e772": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "PIL/.dylibs/libpng16.16.dylib",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
        "rpath": [],
        "urls": []
       }
@@ -491,6 +1232,19 @@
        "urls": []
       }
      },
+     "5e27779af8078c5586c045176db72779a09e5f87c6d516373913a6c092b76340": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "PIL/.dylibs/libavif.16.4.2.dylib",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "642ebac0cc9ac2e53a6abfb815f392832da737cac2b1f91ebcff7732081c1b65": {
       "capabilities": [
        "contain loop"
@@ -562,6 +1316,19 @@
        "urls": []
       }
      },
+     "6b2d464413fc35783c79936f1e6be631585448a37765cf79c238be2ea5e5505b": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "PIL/.dylibs/libsharpyuv.0.dylib",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "6bdb41f738f088e7420374d67a4a6523cc4786f340d355d2bf4f124dcf3d5820": {
       "capabilities": [
        "contain loop",
@@ -582,6 +1349,39 @@
        "rpath": [
         "$ORIGIN"
        ],
+       "urls": []
+      }
+     },
+     "7140f56d38dd6cd51512f8122386bcb914c5df2a82eb5f719c973527d9213cee": {
+      "capabilities": [],
+      "note": "larger than 2 MiB",
+      "path": "PIL/_imaging.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {
+        "dynamic-code": [
+         "GetProcAddress",
+         "LoadLibraryA"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "GDI32.dll",
+        "KERNEL32.dll",
+        "USER32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-convert-l1-1-0.dll",
+        "api-ms-win-crt-environment-l1-1-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-math-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "api-ms-win-crt-time-l1-1-0.dll",
+        "api-ms-win-crt-utility-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
        "urls": []
       }
      },
@@ -759,6 +1559,82 @@
        "urls": []
       }
      },
+     "985228f6086171978abb5d04f2f625c489fdc9d7f0a92f2077a621ff184a599e": {
+      "capabilities": [],
+      "note": "larger than 2 MiB",
+      "path": "PIL/_imagingft.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {
+        "dynamic-code": [
+         "GetProcAddress",
+         "LoadLibraryA"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-convert-l1-1-0.dll",
+        "api-ms-win-crt-environment-l1-1-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-math-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "api-ms-win-crt-utility-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": [
+        "http://.css",
+        "http://.jpg",
+        "http://Descriptionrelatively",
+        "http://UA-Compatible",
+        "http://according",
+        "http://addEventListenerresponsible",
+        "http://applicationslink",
+        "http://ator",
+        "http://cript",
+        "http://dictionaryperceptionrevolutionfoundationpx",
+        "http://encoding",
+        "http://familiar",
+        "http://html4/loose.dtd\">",
+        "http://imEnglish",
+        "http://interested",
+        "http://interpreted",
+        "http://iparticipation",
+        "http://link",
+        "http://mathematicsmargin-top",
+        "http://navigation",
+        "http://option",
+        "http://site",
+        "http://staticsuggested",
+        "http://style",
+        "http://whether",
+        "http://www",
+        "http://www-//W3C//DTD",
+        "http://www.",
+        "http://www./div></div><div",
+        "http://www.C//DTD",
+        "http://www.a",
+        "http://www.css",
+        "http://www.hortcut",
+        "http://www.icon",
+        "http://www.interpretation",
+        "http://www.language",
+        "http://www.style",
+        "http://www.text-decoration",
+        "http://www.w3.org/shortcut",
+        "http://www.wencodeURIComponent",
+        "http://www.years",
+        "https://aIn",
+        "https://was",
+        "https://www.World",
+        "https://www.recent"
+       ]
+      }
+     },
      "ab4d2f260d6777088cc4bd96ce4997a5199d20b94e146a764b02c37d42477ce9": {
       "capabilities": [
        "contain loop",
@@ -780,6 +1656,91 @@
         "libc.so.6",
         "libpthread.so.0"
        ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "b1e5b0bd6f696d9458bbd370c1417f8b1a6bb6953c26c4c0543750f96ec32c33": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "PIL/.dylibs/libfreetype.6.dylib",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "bb9c64d38a6e4857bd3358e14dbe6cf3a4593b1efcd1185fdba1ef8931550896": {
+      "capabilities": [
+       "calculate modulo 256 via x86 assembly",
+       "contain loop",
+       "contain obfuscated stackstrings",
+       "create thread",
+       "delay execution",
+       "encode data using XOR",
+       "encrypt data using RC4 PRGA",
+       "enumerate PE sections",
+       "parse PE header",
+       "resolve function by parsing PE exports"
+      ],
+      "note": "",
+      "path": "PIL/_webp.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-math-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-utility-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "bbd5e4c25140c7c3b476e14ee613457c55da2694029e9a4b0805ed6711fdfd2c": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "PIL/_imagingft.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "c30323abc362ae0e5ff8b043e13a179a1bf6a9f76011ffc57195fd43020de535": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "PIL/.dylibs/libXau.6.dylib",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "c940dbd46ca213366037fd958d11678497a5cd41971fc54126ac37baad396a81": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "PIL/_imagingcms.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
        "rpath": [],
        "urls": []
       }
@@ -837,6 +1798,19 @@
        "urls": []
       }
      },
+     "d17ccc4d89a37c1db72aca63fdf26b2f07eaaeb737a5232a337585e3c920b3ed": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "PIL/.dylibs/libtiff.6.dylib",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "d898ef14b7c4455374dd640484f463ecc7f4e88b8fb41503cd8d19edcd200bf6": {
       "capabilities": [],
       "note": "larger than 2 MiB",
@@ -878,6 +1852,76 @@
        "rpath": [
         "$ORIGIN/../pillow.libs"
        ],
+       "urls": []
+      }
+     },
+     "e1c87f73e96d2269395624d03b3808300f4b0f795f5fad1ecc3d1492e5dcc7c2": {
+      "capabilities": [
+       "contain loop",
+       "encrypt data using RC4 PRGA",
+       "enumerate PE sections",
+       "enumerate process modules",
+       "link function at runtime on Windows",
+       "link many functions at runtime",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "PIL/_imagingtk.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {
+        "dynamic-code": [
+         "GetProcAddress"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "PSAPI.DLL",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-convert-l1-1-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "e74547cf128ee13d81d7c4ef6d5be079f230062b5a8e9ec648afdc9ce228af39": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "enumerate PE sections",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "PIL/_imagingmorph.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "e8a87d29c9ea3e81527efb1818ab7b6ead5bed54e4c2664c73e47f67746fd5f8": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "PIL/_avif.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
        "urls": []
       }
      },
@@ -937,6 +1981,19 @@
        "urls": []
       }
      },
+     "f08e18e2363a8e4fc8099de9c8b0b96b30a6a2e4a60e890f2cebb1a9e25a92fa": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "PIL/.dylibs/liblzma.5.dylib",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "f3707868b0b2e78dbdac0994d2977b0ec4303c9c6250f03576b1bd93c42cad63": {
       "capabilities": [
        "connect socket",
@@ -972,80 +2029,177 @@
        ],
        "urls": []
       }
+     },
+     "f5ec6b6750ee91ff032ba62b18afc5f37c7bc842bfc9b2d325df41bc656ea066": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "PIL/.dylibs/libwebpdemux.2.dylib",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "f9c291035190c3af29494ce9fb62987c25ee78c4365c92c323ccc5ec8740143d": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "PIL/.dylibs/libwebpmux.3.dylib",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
      }
     },
     "keys": [
+     "yara|capability_filesystem_delete|PIL/EpsImagePlugin.py|678faa7c7b712bfd",
      "yara|capability_filesystem_delete|PIL/EpsImagePlugin.py|a6f288068186c0a0",
      "yara|capability_filesystem_delete|PIL/Image.py|04050c2d4dd67931",
+     "yara|capability_filesystem_delete|PIL/Image.py|6646cf8a0aa91c44",
+     "yara|capability_filesystem_delete|PIL/ImageGrab.py|086bfd888d5a4d3a",
      "yara|capability_filesystem_delete|PIL/ImageGrab.py|54b1f0c2a04541f2",
      "yara|capability_filesystem_delete|PIL/ImageShow.py|aa6687ceef56beaf",
+     "yara|capability_filesystem_delete|PIL/ImageShow.py|f2029eb1dbd9eba0",
      "yara|capability_filesystem_delete|PIL/JpegImagePlugin.py|43ede4e4c76826e9",
+     "yara|capability_filesystem_delete|PIL/JpegImagePlugin.py|520455ec7590a737",
      "yara|capability_filesystem_read|PIL/AvifImagePlugin.py|7d5c9addebc40cdb",
+     "yara|capability_filesystem_read|PIL/AvifImagePlugin.py|d64fe66e4ff27d62",
+     "yara|capability_filesystem_read|PIL/BdfFontFile.py|68909057709d4a55",
      "yara|capability_filesystem_read|PIL/BdfFontFile.py|77ca2d9ac0cfd7fe",
      "yara|capability_filesystem_read|PIL/BlpImagePlugin.py|8f603c8fbe741c04",
+     "yara|capability_filesystem_read|PIL/BlpImagePlugin.py|ba361f6039637e11",
      "yara|capability_filesystem_read|PIL/BmpImagePlugin.py|778ffbc6dfb15b7c",
+     "yara|capability_filesystem_read|PIL/BmpImagePlugin.py|cd3d30275991e278",
      "yara|capability_filesystem_read|PIL/BufrStubImagePlugin.py|20cd04cee3c05601",
+     "yara|capability_filesystem_read|PIL/BufrStubImagePlugin.py|c8f042b828044ba7",
      "yara|capability_filesystem_read|PIL/ContainerIO.py|b90898580337cba2",
+     "yara|capability_filesystem_read|PIL/ContainerIO.py|bb8bb2fd765e650e",
+     "yara|capability_filesystem_read|PIL/CurImagePlugin.py|992c71d697e79637",
      "yara|capability_filesystem_read|PIL/CurImagePlugin.py|ac6d237f4fafcfa8",
+     "yara|capability_filesystem_read|PIL/DcxImagePlugin.py|0938ea04cb87adac",
      "yara|capability_filesystem_read|PIL/DcxImagePlugin.py|1b5cf45c25491a78",
      "yara|capability_filesystem_read|PIL/DdsImagePlugin.py|133b4bfe48e78e30",
+     "yara|capability_filesystem_read|PIL/DdsImagePlugin.py|a03adf884e427d56",
+     "yara|capability_filesystem_read|PIL/EpsImagePlugin.py|678faa7c7b712bfd",
      "yara|capability_filesystem_read|PIL/EpsImagePlugin.py|a6f288068186c0a0",
      "yara|capability_filesystem_read|PIL/FitsImagePlugin.py|0033984c0c8f97e8",
+     "yara|capability_filesystem_read|PIL/FitsImagePlugin.py|3b116af52aad5413",
+     "yara|capability_filesystem_read|PIL/FliImagePlugin.py|62ee542fd7c0c79c",
      "yara|capability_filesystem_read|PIL/FliImagePlugin.py|fdec8e67a3019152",
      "yara|capability_filesystem_read|PIL/FpxImagePlugin.py|40a859a4573cf5e9",
+     "yara|capability_filesystem_read|PIL/FpxImagePlugin.py|a85c06b977caa670",
+     "yara|capability_filesystem_read|PIL/FtexImagePlugin.py|0e8d7591b3a8b443",
      "yara|capability_filesystem_read|PIL/FtexImagePlugin.py|7f95e8baf6ad63c1",
      "yara|capability_filesystem_read|PIL/GbrImagePlugin.py|3545646e393680d5",
+     "yara|capability_filesystem_read|PIL/GbrImagePlugin.py|8de0ccf95823b05c",
      "yara|capability_filesystem_read|PIL/GdImageFile.py|5f73e93245a796a0",
+     "yara|capability_filesystem_read|PIL/GdImageFile.py|dd9031c22d100698",
+     "yara|capability_filesystem_read|PIL/GifImagePlugin.py|041d5e36d20d6312",
      "yara|capability_filesystem_read|PIL/GifImagePlugin.py|10de47f8b414ee9d",
+     "yara|capability_filesystem_read|PIL/GimpGradientFile.py|1e40e531e47d151f",
      "yara|capability_filesystem_read|PIL/GimpGradientFile.py|3456596b4ad84c94",
      "yara|capability_filesystem_read|PIL/GimpPaletteFile.py|0f5b7cebe76f5bc9",
+     "yara|capability_filesystem_read|PIL/GimpPaletteFile.py|11ed314ce1879a6d",
+     "yara|capability_filesystem_read|PIL/GribStubImagePlugin.py|ab11a4fb573e6407",
      "yara|capability_filesystem_read|PIL/GribStubImagePlugin.py|b192ff430da9a39c",
+     "yara|capability_filesystem_read|PIL/Hdf5StubImagePlugin.py|25535b5b9b989001",
      "yara|capability_filesystem_read|PIL/Hdf5StubImagePlugin.py|9f8a32aa127b0215",
      "yara|capability_filesystem_read|PIL/IcnsImagePlugin.py|c4d2de3c0cddbb84",
+     "yara|capability_filesystem_read|PIL/IcnsImagePlugin.py|e6ca44bcfd364581",
+     "yara|capability_filesystem_read|PIL/IcoImagePlugin.py|8e929e093d1f1c99",
      "yara|capability_filesystem_read|PIL/IcoImagePlugin.py|b771b2582490349e",
      "yara|capability_filesystem_read|PIL/ImImagePlugin.py|10e53c037685b09b",
+     "yara|capability_filesystem_read|PIL/ImImagePlugin.py|87ae476922b90329",
      "yara|capability_filesystem_read|PIL/Image.py|04050c2d4dd67931",
+     "yara|capability_filesystem_read|PIL/Image.py|6646cf8a0aa91c44",
+     "yara|capability_filesystem_read|PIL/ImageCms.py|7da688dee7037961",
      "yara|capability_filesystem_read|PIL/ImageCms.py|9e161faa0807179b",
+     "yara|capability_filesystem_read|PIL/ImageFile.py|3de270f194693480",
      "yara|capability_filesystem_read|PIL/ImageFile.py|55a48a69263e4b4d",
+     "yara|capability_filesystem_read|PIL/ImageFont.py|0b8494851d5cd921",
      "yara|capability_filesystem_read|PIL/ImageFont.py|9182befa0e4047e8",
      "yara|capability_filesystem_read|PIL/ImageMorph.py|4c5a1a35a50288d9",
+     "yara|capability_filesystem_read|PIL/ImageMorph.py|93b5d16d19caecb6",
+     "yara|capability_filesystem_read|PIL/ImtImagePlugin.py|43d604d4388ecd41",
      "yara|capability_filesystem_read|PIL/ImtImagePlugin.py|86d45657568be500",
+     "yara|capability_filesystem_read|PIL/IptcImagePlugin.py|5a07318590623d9e",
      "yara|capability_filesystem_read|PIL/IptcImagePlugin.py|6337bf6c2e584979",
+     "yara|capability_filesystem_read|PIL/Jpeg2KImagePlugin.py|2e1f0aab8c845a81",
      "yara|capability_filesystem_read|PIL/Jpeg2KImagePlugin.py|f50e79ef315d2fb9",
      "yara|capability_filesystem_read|PIL/JpegImagePlugin.py|43ede4e4c76826e9",
+     "yara|capability_filesystem_read|PIL/JpegImagePlugin.py|520455ec7590a737",
+     "yara|capability_filesystem_read|PIL/McIdasImagePlugin.py|77159cb1e3322e6a",
      "yara|capability_filesystem_read|PIL/McIdasImagePlugin.py|bdd9412edd3924ad",
      "yara|capability_filesystem_read|PIL/MpegImagePlugin.py|d5aec9c58619b3cb",
+     "yara|capability_filesystem_read|PIL/MpegImagePlugin.py|f7525282c71c1771",
      "yara|capability_filesystem_read|PIL/MpoImagePlugin.py|73480afd2311cc30",
+     "yara|capability_filesystem_read|PIL/MpoImagePlugin.py|a77a2d046108a1ad",
      "yara|capability_filesystem_read|PIL/MspImagePlugin.py|8e28773c59bae649",
+     "yara|capability_filesystem_read|PIL/MspImagePlugin.py|a5c3b0cfad52469b",
+     "yara|capability_filesystem_read|PIL/PaletteFile.py|6428748a8e9dedfa",
      "yara|capability_filesystem_read|PIL/PaletteFile.py|8954b01a8d43c1f2",
+     "yara|capability_filesystem_read|PIL/PcdImagePlugin.py|819b027170c8a845",
      "yara|capability_filesystem_read|PIL/PcdImagePlugin.py|fa09cc52a407d11f",
      "yara|capability_filesystem_read|PIL/PcfFontFile.py|062b00838e08338a",
+     "yara|capability_filesystem_read|PIL/PcfFontFile.py|566c39c442879ed9",
+     "yara|capability_filesystem_read|PIL/PcxImagePlugin.py|de3b85748748698e",
      "yara|capability_filesystem_read|PIL/PcxImagePlugin.py|f6c031982ad43a0c",
      "yara|capability_filesystem_read|PIL/PixarImagePlugin.py|2f60af2f631b1941",
+     "yara|capability_filesystem_read|PIL/PixarImagePlugin.py|a78958489e99b851",
      "yara|capability_filesystem_read|PIL/PngImagePlugin.py|67608f9c458e2d13",
+     "yara|capability_filesystem_read|PIL/PngImagePlugin.py|a2e0daf92e893125",
+     "yara|capability_filesystem_read|PIL/PpmImagePlugin.py|0e5d73b94cd0abf6",
      "yara|capability_filesystem_read|PIL/PpmImagePlugin.py|1a6b4dcb85493f97",
+     "yara|capability_filesystem_read|PIL/PsdImagePlugin.py|308f00e2cfb351e5",
      "yara|capability_filesystem_read|PIL/PsdImagePlugin.py|7154b3a26d27236e",
      "yara|capability_filesystem_read|PIL/QoiImagePlugin.py|40ce66160adbd3bc",
+     "yara|capability_filesystem_read|PIL/QoiImagePlugin.py|60fca52a0771bfbd",
+     "yara|capability_filesystem_read|PIL/SgiImagePlugin.py|1acf6d419b289ac8",
      "yara|capability_filesystem_read|PIL/SgiImagePlugin.py|b8d23659cfb6fd3c",
+     "yara|capability_filesystem_read|PIL/SpiderImagePlugin.py|7f8500ac64f2fbcf",
      "yara|capability_filesystem_read|PIL/SpiderImagePlugin.py|f3b2147519e8ab91",
+     "yara|capability_filesystem_read|PIL/SunImagePlugin.py|cddde6e2afdf7fc3",
      "yara|capability_filesystem_read|PIL/SunImagePlugin.py|f2151329b8c9deb2",
+     "yara|capability_filesystem_read|PIL/TarIO.py|6a28227e29b71a09",
      "yara|capability_filesystem_read|PIL/TarIO.py|f058a10a3fe047a3",
+     "yara|capability_filesystem_read|PIL/TgaImagePlugin.py|57fc21d319c1f23a",
      "yara|capability_filesystem_read|PIL/TgaImagePlugin.py|eeb961e08ffd2e8a",
+     "yara|capability_filesystem_read|PIL/TiffImagePlugin.py|760a92047f0ad103",
      "yara|capability_filesystem_read|PIL/TiffImagePlugin.py|e3322c6660610c41",
      "yara|capability_filesystem_read|PIL/WalImageFile.py|41bfdc25f89430ce",
+     "yara|capability_filesystem_read|PIL/WalImageFile.py|647699a10bc2cb53",
+     "yara|capability_filesystem_read|PIL/WebPImagePlugin.py|7dcc4c8cbb725266",
      "yara|capability_filesystem_read|PIL/WebPImagePlugin.py|99cf0cad0c42b71a",
      "yara|capability_filesystem_read|PIL/WmfImagePlugin.py|0e116aa192a249d9",
+     "yara|capability_filesystem_read|PIL/WmfImagePlugin.py|39f197555b7be302",
      "yara|capability_filesystem_read|PIL/XVThumbImagePlugin.py|3ef75a7f971b193d",
+     "yara|capability_filesystem_read|PIL/XVThumbImagePlugin.py|aee34d7d9b0b869d",
      "yara|capability_filesystem_read|PIL/XbmImagePlugin.py|208212c895882d4f",
+     "yara|capability_filesystem_read|PIL/XbmImagePlugin.py|7c136acba923d8a8",
+     "yara|capability_filesystem_read|PIL/XpmImagePlugin.py|1ae86981783d2a8c",
      "yara|capability_filesystem_read|PIL/XpmImagePlugin.py|b47dd3e03c01803b",
+     "yara|capability_network_outbound|PIL/TiffImagePlugin.py|760a92047f0ad103",
      "yara|capability_network_outbound|PIL/TiffImagePlugin.py|e3322c6660610c41",
+     "yara|capability_process_spawn|PIL/EpsImagePlugin.py|678faa7c7b712bfd",
      "yara|capability_process_spawn|PIL/EpsImagePlugin.py|a6f288068186c0a0",
      "yara|capability_process_spawn|PIL/Image.py|04050c2d4dd67931",
+     "yara|capability_process_spawn|PIL/Image.py|6646cf8a0aa91c44",
+     "yara|capability_process_spawn|PIL/ImageGrab.py|086bfd888d5a4d3a",
      "yara|capability_process_spawn|PIL/ImageGrab.py|54b1f0c2a04541f2",
      "yara|capability_process_spawn|PIL/ImageMath.py|5cfa1434c498968f",
+     "yara|capability_process_spawn|PIL/ImageMath.py|934bf61017576ce1",
      "yara|capability_process_spawn|PIL/ImageShow.py|aa6687ceef56beaf",
+     "yara|capability_process_spawn|PIL/ImageShow.py|f2029eb1dbd9eba0",
      "yara|capability_process_spawn|PIL/JpegImagePlugin.py|43ede4e4c76826e9",
-     "yara|threat_runtime_obfuscation_steganography|PIL/Image.py|04050c2d4dd67931"
+     "yara|capability_process_spawn|PIL/JpegImagePlugin.py|520455ec7590a737",
+     "yara|threat_runtime_obfuscation_steganography|PIL/Image.py|04050c2d4dd67931",
+     "yara|threat_runtime_obfuscation_steganography|PIL/Image.py|6646cf8a0aa91c44"
     ],
     "yara": [
      "capability_filesystem_delete:capability_filesystem_delete PIL/EpsImagePlugin.py",

@@ -364,7 +364,7 @@ def test_happy_the_rebuild_reports_counts_and_bytes(finder, app, boxes):
     finder._do_rebuild_active()
     assert _drain_scan_job(finder._job)
     text = boxes["information"][-1]
-    assert text.startswith("Indexed 11 file(s)")
+    assert text.startswith("Indexed 11 files")
     assert "unchanged since the last scan" in text
 
 
@@ -377,11 +377,11 @@ def test_sad_unreadable_files_and_unlisted_folders_are_reported_as_a_warning():
     stats.special, stats.no_checksum, stats.unique_size, stats.pruned = 1, 2, 3, 4
     text, trouble = rebuild_report(2, "/x", stats, False, "SMB:nas")
     assert trouble
-    for part in ("Indexed 2 file(s) under /x.", "2 hashed (2.0 KiB)",
-                 "/x/secret: Permission denied", "1 folder(s) could not be listed",
-                 "/x/locked: Permission denied", "1 special file(s)",
-                 "2 file(s) skipped: [SMB:nas] has no content checksum",
-                 "3 file(s) without a checksum were not read", "4 index entries"):
+    for part in ("Indexed 2 files under /x.", "2 hashed (2.0 KiB)",
+                 "/x/secret: Permission denied", "1 folder could not be listed",
+                 "/x/locked: Permission denied", "1 special file",
+                 "2 files skipped: [SMB:nas] has no content checksum",
+                 "3 files without a checksum were not read", "4 index entries"):
         assert part in text, part
 
 
@@ -390,7 +390,7 @@ def test_edge_a_clean_rebuild_report_is_no_warning():
 
     text, trouble = rebuild_report(3, "/x", CAS.RebuildStats(hashed=3), True)
     # UX round 7 (L3): one separator convention - "→" in menu paths, "–" as dash.
-    assert not trouble and text.startswith("Cancelled – 3 file(s) indexed so far")
+    assert not trouble and text.startswith("Cancelled – 3 files indexed so far")
 
 
 def test_happy_progress_shows_bytes_and_the_delete_counts_n_of_m(finder):
@@ -415,7 +415,7 @@ def test_happy_delete_says_how_much_it_moves_and_frees(finder, app, tree, boxes)
     finder._delete_selected()
     assert "(4.9 KiB)" in boxes["question"][-1]
     assert _drain_scan_job(finder._job)
-    assert "4 file(s) moved to the axross trash (4.9 KiB)" in boxes["information"][-1]
+    assert "4 files moved to the axross trash (4.9 KiB)" in boxes["information"][-1]
     assert not tree["big_new"].exists() and tree["big_old"].exists()
 
 

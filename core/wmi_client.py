@@ -36,11 +36,13 @@ from __future__ import annotations
 import errno
 import logging
 import re
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import IO
 
 from core.answer_fields import as_size, as_str
 from core.backend import SessionLifecycle
+from core.i18n import tr
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
@@ -74,6 +76,34 @@ class WmiValueError(OSError, ValueError):
     """A path or WQL value WMI cannot take. An OSError - what every
     caller of a backend handles (a ValueError escaped the pane) - and
     still a ValueError for callers that caught that."""
+
+
+class WmiLoginRefused(PermissionError):
+    """The host refused the DCOM / WMI login. Its text is written for the
+    user (core.user_errors shows a ``*Refused`` text unchanged): impacket's
+    "rpc_s_access_denied" or "STATUS_LOGON_FAILURE" said nothing about
+    what to check."""
+
+
+#: impacket's words for a refused login (DCE/RPC bind, NTLM, DCOM
+#: activation); lower case.
+_LOGIN_REFUSED_TEXTS = (
+    "rpc_s_access_denied",
+    "access_denied",
+    "accessdenied",
+    "logon_failure",
+    "status_account_",
+    "password_expired",
+    "password_must_change",
+)
+
+
+def _is_wbem_error(exc: BaseException) -> bool:
+    """A WMI answer (WBEM_E_*, 0x8004xxxx: an invalid query, a denied
+    class) - the connection itself is fine. Anything else (a reset socket,
+    RPC_E_DISCONNECTED, a timeout) means the DCOM connection is gone."""
+    code = getattr(exc, "error_code", None)
+    return isinstance(code, int) and (code & 0xFFFF0000) == 0x80040000
 
 
 def _parse_dmtf(value: str) -> datetime:
@@ -170,6 +200,23 @@ def _wql_escape(value: str) -> str:
     return value.replace("'", "''")
 
 
+def _wql_literal(value: str) -> str:
+    """*value* as a WQL string literal: in double quotes, backslashes
+    doubled.
+
+    WQL escapes with a backslash (``\\``, ``\'``); a doubled single
+    quote is SQL, not WQL, so ``'C:\\O''Brien'`` was an invalid query and
+    a folder with an apostrophe in its name (``Bob's files``) could not be
+    listed or opened. A Windows name can never hold a double quote, so a
+    double-quoted literal needs no quote escape at all; a value that holds
+    one is refused (no such file can exist).
+    """
+    if '"' in value:
+        raise WmiValueError(f"WQL value contains a double quote: {value!r}")
+    _wql_escape(value)  # NUL and control characters are refused
+    return '"' + value.replace("\\", "\\\\") + '"'
+
+
 def _compose(drive: str, path: str, name: str, ext: str) -> str:
     """Reverse of :func:`_split_wmi`. Useful for translating WMI
     enumeration rows back into single-string paths."""
@@ -202,8 +249,23 @@ class WMISession(SessionLifecycle):
 
     Construct one per (host, credentials). Lazy-connects on first
     query so unit tests can build a session and patch around the
-    DCOM call without standing up a real connection.
+    DCOM call without standing up a real connection; :meth:`home`
+    connects, so Test Connection and a new pane find a refused login.
+
+    One DCOM connection is not safe for two threads at once (a pane's
+    listing and a transfer's stat): every connect and query holds the
+    session's lock. A connection that broke (not a WMI error answer) is
+    torn down, and the next call connects again - a dropped connection
+    used to stay cached and fail every call until axross restarted.
     """
+
+    #: Windows keeps "README.txt" and "Readme.txt" as one name
+    #: (core.transfer_conflicts.case_insensitive_names).
+    case_insensitive_names = True
+
+    _closed = False
+    _wbem = None
+    _dcom = None
 
     def __init__(
         self,
@@ -233,10 +295,14 @@ class WMISession(SessionLifecycle):
             raise ImportError(
                 "WMI support requires impacket. Install with: pip install axross[wmi]"
             )
+        if not domain and "\\" in username:
+            # "DOMAIN\\user" typed into the one user name field.
+            domain, username = username.split("\\", 1)
         self._host = host
         self._username = username
         self._password = password
         self._domain = domain
+        self._lock = threading.RLock()
         self._lmhash = lmhash
         self._nthash = nthash
         self._dcom = None
@@ -249,6 +315,16 @@ class WMISession(SessionLifecycle):
     @property
     def name(self) -> str:
         return f"{self._username}@{self._host} (WMI)"
+
+    @property
+    def connected(self) -> bool:
+        """False once closed; a broken DCOM connection reconnects on the
+        next call by itself."""
+        return not self._closed
+
+    def _session_lock(self) -> threading.RLock:
+        # Sessions made with __new__ (tests) have no lock from __init__.
+        return self.__dict__.setdefault("_lock", threading.RLock())
 
     def separator(self) -> str:
         return "\\"
@@ -281,9 +357,13 @@ class WMISession(SessionLifecycle):
         return norm.rsplit("\\", 1)[0] or "\\"
 
     def home(self) -> str:
-        # WMI doesn't expose $HOME without a query — make a best
-        # guess matching the convention WinRM uses.
-        return f"C:\\Users\\{self._username}" if self._username else "C:\\"
+        """A best guess matching the convention WinRM uses (WMI has no
+        $HOME without a query) - after connecting: the guess alone made
+        Test Connection succeed with a wrong password or an unreachable
+        host, and the pane failed only at its first listing."""
+        self._connect()
+        user = self._username.split("@", 1)[0] if self._username else ""
+        return f"C:\\Users\\{user}" if user else "C:\\"
 
     # ------------------------------------------------------------------
     # Enumeration
@@ -310,14 +390,14 @@ class WMISession(SessionLifecycle):
         # doubling is the canonical defence. Doing this server-side
         # would defeat the purpose; doing it here keeps a hostile
         # directory name from pivoting the WHERE clause.
-        drive_q = _wql_escape(drive)
+        drive_q = _wql_literal(drive)
         # Backslashes doubled as in stat: WQL string literals escape them.
-        dir_q = _wql_escape(dir_path.replace("\\", "\\\\"))
+        dir_q = _wql_literal(dir_path)
         for cls, is_dir in (("Win32_Directory", True), ("CIM_DataFile", False)):
             query = (
                 f"SELECT Name, FileName, Extension, FileSize, "
                 f"LastModified, Drive, Path FROM {cls} "
-                f"WHERE Drive = '{drive_q}' AND Path = '{dir_q}'"
+                f"WHERE Drive = {drive_q} AND Path = {dir_q}"
             )
             for row in self._exec_query(wbem, query):
                 results.append(self._row_to_item(row, is_dir=is_dir))
@@ -331,12 +411,12 @@ class WMISession(SessionLifecycle):
         # WMI Name property uses doubled backslashes in WQL string
         # literals. Escape single quotes too — same WQL-injection
         # mitigation as in list_dir.
-        full_name = _wql_escape(norm.replace("\\", "\\\\"))
+        full_name = _wql_literal(norm)
         for cls, is_dir in (("CIM_DataFile", False), ("Win32_Directory", True)):
             query = (
                 f"SELECT Name, FileName, Extension, FileSize, "
                 f"LastModified, Drive, Path FROM {cls} "
-                f"WHERE Name = '{full_name}'"
+                f"WHERE Name = {full_name}"
             )
             # A row that cannot be read is not "no row": strict.
             rows = list(self._exec_query(wbem, query, strict=True))
@@ -402,7 +482,10 @@ class WMISession(SessionLifecycle):
         drive = norm[:2].upper()
         try:
             wbem = self._connect()
-            query = f"SELECT FreeSpace, Size FROM Win32_LogicalDisk WHERE DeviceID = '{drive}'"
+            query = (
+                "SELECT FreeSpace, Size FROM Win32_LogicalDisk "
+                f"WHERE DeviceID = {_wql_literal(drive)}"
+            )
             rows = list(self._exec_query(wbem, query))
         except OSError:
             return (0, 0, 0)
@@ -430,8 +513,13 @@ class WMISession(SessionLifecycle):
     # DCOM plumbing
     # ------------------------------------------------------------------
     def _connect(self):
+        with self._session_lock():
+            return self._connect_locked()
+
+    def _connect_locked(self):
         if self._wbem is not None:
             return self._wbem
+        self._closed = False
         try:
             self._dcom = DCOMConnection(  # type: ignore[misc]
                 self._host,
@@ -451,6 +539,12 @@ class WMISession(SessionLifecycle):
             login.RemRelease()
         except Exception as exc:  # noqa: BLE001 — surface to user
             self._teardown()
+            if any(t in str(exc).lower() for t in _LOGIN_REFUSED_TEXTS):
+                raise WmiLoginRefused(
+                    tr("{host} refused the WMI login. Check the user name (DOMAIN\\user), "
+                       "the password, and that the account may use WMI remotely (members "
+                       "of Administrators can).").format(host=self._host),
+                ) from exc
             raise OSError(f"WMI DCOM connect to {self._host}: {exc}") from exc
         return self._wbem
 
@@ -488,12 +582,8 @@ class WMISession(SessionLifecycle):
             # _connect caches a single namespace; for an off-cimv2
             # namespace we open a fresh login and remember to release.
             wbem = self._connect_namespace(namespace)
-        out: list[dict] = []
         try:
-            for row in self._exec_query(wbem, wql):
-                out.append(row)
-                if len(out) >= int(limit):
-                    break
+            out = list(self._exec_query(wbem, wql, limit=int(limit)))
         finally:
             if namespace is not None and wbem is not None:
                 try:
@@ -519,9 +609,13 @@ class WMISession(SessionLifecycle):
         except Exception as exc:  # noqa: BLE001
             raise OSError(f"WMI namespace switch to {namespace}: {exc}") from exc
 
-    def _exec_query(self, wbem, query: str, *, strict: bool = False):
-        """Yield row dicts {prop_name: value} until the enumerator
-        signals end. Wraps the impacket Next() pattern.
+    def _exec_query(
+        self, wbem, query: str, *, strict: bool = False, limit: int | None = None
+    ) -> list[dict]:
+        """The row dicts {prop_name: value} until the enumerator signals
+        end (at most *limit*). Wraps the impacket Next() pattern; read
+        whole under the session's lock, so no other thread's call runs on
+        the connection in between.
 
         The end is an empty batch or WBEM_S_FALSE, which impacket raises
         as an error with code 0x1 once fewer objects than asked for are
@@ -529,13 +623,30 @@ class WMISession(SessionLifecycle):
         denied - is an OSError: it used to end the rows silently, so a
         cut query read as "no such file". A row whose properties cannot
         be read is skipped, or with *strict* an OSError.
+
+        A failure that is no WMI answer (the connection broke) tears the
+        connection down: the next call connects again.
         """
+        with self._session_lock():
+            try:
+                return self._read_rows(wbem, query, strict, limit)
+            except OSError as exc:
+                cause = exc.__cause__
+                if cause is not None and not _is_wbem_error(cause) and wbem is self._wbem:
+                    log.info("WMI connection to %s broke (%s); reconnecting on the next call",
+                             self._host, cause)
+                    self._teardown()
+                raise
+
+    @staticmethod
+    def _read_rows(wbem, query: str, strict: bool, limit: int | None) -> list[dict]:
+        rows: list[dict] = []
         try:
             enumer = wbem.ExecQuery(query)
         except Exception as exc:  # noqa: BLE001
             raise OSError(f"WMI query failed: {exc}") from exc
         try:
-            while True:
+            while limit is None or len(rows) < limit:
                 try:
                     pairs = enumer.Next(0xFFFFFFFF, 1)
                 except Exception as exc:  # noqa: BLE001
@@ -553,12 +664,15 @@ class WMISession(SessionLifecycle):
                     continue
                 # impacket's getProperties returns
                 # {prop_name: {'value': ..., ...}}
-                yield {k: v.get("value") if isinstance(v, dict) else v for k, v in props.items()}
+                rows.append(
+                    {k: v.get("value") if isinstance(v, dict) else v for k, v in props.items()}
+                )
         finally:
             try:
                 enumer.RemRelease()
             except Exception:
                 pass
+        return rows
 
     def _teardown(self) -> None:
         try:
@@ -575,7 +689,9 @@ class WMISession(SessionLifecycle):
         self._dcom = None
 
     def close(self) -> None:
-        self._teardown()
+        with self._session_lock():
+            self._teardown()
+            self._closed = True
 
     # ------------------------------------------------------------------
     # Row → FileItem

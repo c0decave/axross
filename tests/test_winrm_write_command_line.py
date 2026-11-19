@@ -7,10 +7,11 @@ base64 in that script, so the command grew by ~3.6 characters per payload
 byte: past the 8,190-character command line of the WinRM cmd shell at
 ~2 KB, past CreateProcess's 32,767 at ~9 KB. Any larger upload failed.
 
-Driven through the real pywinrm ``Session.run_ps``; ``run_cmd`` - the
-call that would go on the wire - is replaced by a recorder that checks
-the command length and applies the decoded script to an in-memory file
-table.
+Driven through the session's own command runner (core.winrm_client.
+_run_ps_bounded, which starts powershell -NonInteractive); the protocol's
+``run_command`` - the call that would go on the wire - is replaced by a
+recorder that checks the command length and applies the decoded script
+to an in-memory file table.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ from core import winrm_client as WC  # noqa: E402
 
 #: The WinRM cmd shell's command line limit (CreateProcess allows 32,767).
 LIMIT = 8190
-PREFIX = "powershell -encodedcommand "
+PREFIX = WC._PS_COMMAND_PREFIX
 
 
 class _FakeHost:
@@ -70,9 +71,34 @@ class _FakeHost:
         return winrm.Response((b"", b"", 0))
 
 
+class _Protocol:
+    """The wire calls of winrm.Protocol, answered by *host*."""
+
+    def __init__(self, host: _FakeHost) -> None:
+        self.host = host
+        self.answer = None
+
+    def open_shell(self, *_a, **_k):
+        return "shell"
+
+    def run_command(self, shell_id, command, args=()):
+        self.answer = self.host.run_cmd(command, args)
+        return "command"
+
+    def get_command_output_raw(self, shell_id, command_id):
+        a = self.answer
+        return a.std_out, a.std_err, a.status_code, True
+
+    def cleanup_command(self, shell_id, command_id):
+        pass
+
+    def close_shell(self, shell_id):
+        pass
+
+
 def _session(host: _FakeHost) -> WC.WinRMSession:
     s = WC.WinRMSession("127.0.0.1", "u", "p", port=5985, use_https=False)
-    s._session.run_cmd = host.run_cmd
+    s._session.protocol = _Protocol(host)
     return s
 
 

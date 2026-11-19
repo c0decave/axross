@@ -98,6 +98,14 @@ class _StubRarFile:
     def infolist(self) -> list[_StubRarInfo]:
         return list(self._members)
 
+    opened: list = []
+
+    def open(self, info, pwd=None):
+        import io
+
+        type(self).opened.append(info.filename)
+        return io.BytesIO(b"x" * info.file_size)
+
     def extractall(self, *args, **kwargs) -> None:  # pragma: no cover
         type(self).last_extractall_members = kwargs.get("members", args)
         raise AssertionError(
@@ -128,6 +136,7 @@ def _install_stub_rarfile(monkeypatch, members: list[_StubRarInfo]) -> None:
     monkeypatch.setattr(A, "RAR_AVAILABLE", True)
     # Make sure the prior run's extractall trace can't leak across tests.
     _StubRarFile.last_extractall_members = None
+    _StubRarFile.opened = []
 
 
 def _assert_target_clean(target) -> None:
@@ -266,12 +275,13 @@ def test_rar_clean_archive_passes_only_validated_names_to_extractall(
     src.write_bytes(b"stub")
     target = tmp_path / "rar_clean_out"
 
-    # extractall raises AssertionError by design once preflight passes;
-    # catch it and verify it was handed ONLY the validated file names
-    # (dirs are makedirs'd during preflight, not passed to extractall).
-    with pytest.raises(AssertionError):
-        A.extract(str(src), str(target))
-    assert _StubRarFile.last_extractall_members == ["d/a.txt", "b.txt"]
+    # Only the validated file members are read (folders are made during
+    # the preflight); rarfile's extractall, which writes by path, is never
+    # called.
+    assert A.extract(str(src), str(target)) == 2
+    assert _StubRarFile.opened == ["d/a.txt", "b.txt"]
+    assert _StubRarFile.last_extractall_members is None
+    assert (target / "d" / "a.txt").read_bytes() == b"xxxxx"
 
 
 # --------------------------------------------------------------------------

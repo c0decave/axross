@@ -92,6 +92,10 @@ def _ready(proto: str) -> dict:
     fields = {"protocol": proto}
     if proto in ("azure_blob", "azure_files"):
         fields["azure_account_name"] = "acct"
+    if proto == "redis":
+        # Redis has no user: a password is asked for when one is kept
+        # (core.profiles.password_needed); its keyring entry is empty here.
+        fields["store_password"] = True
     return fields
 
 

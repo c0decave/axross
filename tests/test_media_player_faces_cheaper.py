@@ -122,9 +122,7 @@ def test_happy_the_radial_peaks_are_one_call_and_the_rays_take_their_colour_from
         vis.close()
 
 
-@pytest.mark.parametrize("mode, polylines", [("scope", 1),
-                                             ("lissajous", MP.Visualizer.LISSAJOUS_FADE),
-                                             ("line", 2), ("polar", 2)])
+@pytest.mark.parametrize("mode, polylines", [("scope", 1), ("line", 2), ("polar", 2)])
 def test_happy_traces_are_polylines_not_a_line_a_segment(mode, polylines):
     vis = _face(mode)
     try:
@@ -135,15 +133,33 @@ def test_happy_traces_are_polylines_not_a_line_a_segment(mode, polylines):
         vis.close()
 
 
+def test_happy_the_stereo_scope_draws_its_samples_as_dots_in_one_call_a_part():
+    """(Its samples are dots since the flash review - tests/test_media_player_
+    flash_safe.py: lines through white noise filled the circle anew every
+    frame.)"""
+    vis = _face("lissajous")
+    try:
+        recorder = _record(vis)
+        assert recorder.count("drawLines", "drawPolyline", "drawPoint") == 0
+        assert recorder.count("drawPoints") == MP.Visualizer.LISSAJOUS_FADE
+    finally:
+        vis.close()
+
+
 def test_happy_the_table_colour_is_the_mixed_one_within_a_channel_step():
     vis = _face("radial", size=(320, 160))
     try:
         for i in range(0, 1001):
             level = i / 1000
-            exact = QColor(vis._level_hex(level))
+            # (never a saturated red - tests/test_media_player_flash_safe.py: where
+            # it was one, the white mixed in moves a few steps a level step)
+            raw = vis._level_hex(level)
+            exact = QColor(MP.flash_safe_colour(raw))
             table = vis._level_colour(level)
+            near = [vis._level_hex(min(1.0, max(0.0, level + d / 255))) for d in range(-3, 4)]
+            tolerance = 1 if all(MP.flash_safe_colour(c) == c for c in near) else 6
             assert max(abs(exact.red() - table.red()), abs(exact.green() - table.green()),
-                       abs(exact.blue() - table.blue())) <= 1, level
+                       abs(exact.blue() - table.blue())) <= tolerance, level
     finally:
         vis.close()
 

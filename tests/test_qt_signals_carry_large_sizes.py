@@ -42,6 +42,7 @@ REVIEWED_INT_SIGNALS = {
     "ui/media_viewer.py:index_changed",
     "core/chat.py:room_list_batch",  # the room list request's id: a counter
     "core/chat.py:room_list_done",  # the room list request's id: a counter
+    "ui/markdown_view.py:zoom_changed",  # the zoom level in per cent, clamped to the zoom range
 }
 
 

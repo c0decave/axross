@@ -28,12 +28,11 @@ import logging
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
-    QLabel,
     QMessageBox,
     QPushButton,
     QTabWidget,
@@ -51,7 +50,9 @@ if TYPE_CHECKING:
     from models.file_item import FileItem
 
 from ui.close_corner import add_close_corner
+from ui.elided_label import WrapAnywhereLabel
 from ui.icon_provider import set_window_icon
+from ui.plain_text import defused, plain_tooltip
 
 log = logging.getLogger(__name__)
 
@@ -117,6 +118,8 @@ class _SizeWorker(QObject):
             if item.is_dir and not item.is_link:
                 total += self._walk(child, depth + 1)
             else:
+                if getattr(item, "stat_error", ""):
+                    self.complete = False  # listed, size unknown: a floor
                 total += item.size
         return total
 
@@ -186,7 +189,7 @@ class PropertiesDialog(QDialog):
         if self._multi:
             self.setWindowTitle(tr_n(len(self._items), "Properties: {n} item", "Properties: {n} items"))
         else:
-            self.setWindowTitle(tr("Properties: {name}").format(name=self._item.name))
+            self.setWindowTitle(tr("Properties: {name}").format(name=defused(self._item.name)))
         self.setMinimumWidth(420)
         self._build()
 
@@ -236,14 +239,20 @@ class PropertiesDialog(QDialog):
     def _build_general(self) -> QWidget:
         page = QWidget(self)
         form = QFormLayout(page)
-        self._value_labels: dict[str, QLabel] = {}
+        self._value_labels: dict[str, WrapAnywhereLabel] = {}
 
         for key in self._field_order():
-            label = QLabel(self._compute_field(key), page)
-            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
-            label.setWordWrap(True)
+            # A path, link target, owner or group is the server's text:
+            # plain (a target "<img width=4000 ...>" was drawn), shown as
+            # the pane shows a name (a bidi override is U+FFFD), and inside
+            # the window - a path has no blank to wrap at and made the
+            # dialog 1,964 px wide; the whole value is the tooltip.
+            # Wrapped anywhere a word is wider than the window: a QLabel
+            # wraps at blanks only and cut a long name off at the edge.
+            label = WrapAnywhereLabel("", page)
             form.addRow(tr(key) + ":", label)
             self._value_labels[key] = label
+            self._set_value(key, self._compute_field(key))
 
         # Only meaningful for directories on an expensive backend; for
         # anything else it stays hidden so the row does not suggest an
@@ -255,6 +264,12 @@ class PropertiesDialog(QDialog):
         self._calc_btn.setVisible((self._multi or self._item.is_dir) and not cheap)
         form.addRow("", self._calc_btn)
         return page
+
+    def _set_value(self, key: str, text: str) -> None:
+        label = self._value_labels[key]
+        shown = defused(text)
+        label.setText(shown)
+        label.setToolTip(plain_tooltip(shown) if len(shown) > 60 else "")
 
     def _field_order(self) -> list[str]:
         if self._multi:
@@ -299,7 +314,8 @@ class PropertiesDialog(QDialog):
             # rights for anyone" — rendering --------- would be a lie.
             if not item.permissions:
                 return DASH
-            return f"{item.permissions_str}  ({item.permissions & 0o7777:04o})"
+            # As Permissions shows it: type, rwx with s/S/t/T, four digits.
+            return f"{item.mode_str}  ({item.permissions & 0o7777:04o})"
         if key == "Modified":
             return _format_time(item.modified)
         if key == "Accessed":
@@ -343,7 +359,7 @@ class PropertiesDialog(QDialog):
         if self._thread is not None:  # already running
             return
         self._calc_btn.setEnabled(False)
-        self._value_labels["Size"].setText(tr("calculating…"))
+        self._set_value("Size", tr("calculating…"))
 
         self._thread = QThread(self)
         if self._multi:
@@ -360,8 +376,8 @@ class PropertiesDialog(QDialog):
 
     def _on_summary_ready(self, summary: object) -> None:
         self._summary = summary
-        self._value_labels["Size"].setText(self._summary_size_text())
-        self._value_labels["Selection"].setText(self._selection_text())
+        self._set_value("Size", self._summary_size_text())
+        self._set_value("Selection", self._selection_text())
         self._calc_btn.setEnabled(True)
         self._stop_thread(done=True)
 
@@ -375,7 +391,7 @@ class PropertiesDialog(QDialog):
         total, complete = result if isinstance(result, tuple) else (result, True)
         self._size_override = total
         self._size_complete = bool(complete)
-        self._value_labels["Size"].setText(self._override_size_text())
+        self._set_value("Size", self._override_size_text())
         self._calc_btn.setEnabled(True)
         self._stop_thread(done=True)
 

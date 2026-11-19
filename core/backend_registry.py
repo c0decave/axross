@@ -712,7 +712,9 @@ def init_registry() -> None:
             display_name="FTPS",
             module="core.ftp_client",
             class_name="FtpSession",
-            default_port=990,
+            # Explicit FTPS (AUTH TLS), the kind FtpSession speaks: the
+            # implicit-TLS port 990 never answered its plain banner read.
+            default_port=21,
             capabilities=FTP_CAPS,
             credential_kind=CredentialKind.PASSWORD,
         )

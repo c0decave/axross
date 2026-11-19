@@ -14,6 +14,50 @@
     "yara|capability_filesystem_write_executable|backports/zstd/zipfile/__init__.pyi|31755bc602397020"
    ],
    "archives": {
+    "backports_zstd-1.8.0-cp312-cp312-macosx_11_0_arm64.whl": {
+     "entry_points": [],
+     "files": {
+      "backports/zstd/__init__.py": "47cdd7c51b1c95138c51b308df07e85c4ba1d34e7ca3f42b2a96b35539330755",
+      "backports/zstd/__init__.pyi": "d61133bf39b75bf2e3df34ca43ab61cfcfd77123c70dc5c9c017d1452cdb1387",
+      "backports/zstd/_cffi/__init__.py": "29f071e7f109e2312afbd06992fa449698ce7e15d448466cedc6767d72b4f427",
+      "backports/zstd/_cffi/_blocks_output_buffer.py": "4669fbd2f3d383618d11dbe2d902983d2b0509d853fcec8da79bbcea636979ba",
+      "backports/zstd/_cffi/_common.py": "5953dde675fafe0d670669659b5c22de5be76c3e0d745cd61e7902be0016e780",
+      "backports/zstd/_cffi/buffer.py": "114f447abc4ed6a61c44ead4e82721cb87427d1b5d6242d646f36166a539552c",
+      "backports/zstd/_cffi/compressor.py": "96ba6d71a48a41b9888630bd56a948ea6c92f012f346b5da310679eb515b4474",
+      "backports/zstd/_cffi/decompressor.py": "2f2f861f1b49b8a362d4e9d5f648ded80c78d73b8080e3b135830e9d011697eb",
+      "backports/zstd/_cffi/zstddict.py": "030f36aa509be2d61de6d1eeecd931754aca7d4ab08e8ee7cdf7c38fb4142def",
+      "backports/zstd/_compat.py": "353bc2e5dc2231f2d9245f038b435e27beb99c4aac044df5bcd4f305d03c71b3",
+      "backports/zstd/_shutil.py": "ae514e668125d77ff51fb68fd8cb5b420e7e0e06783851651e825dc45cc76576",
+      "backports/zstd/_streams.py": "8b8e943815c748d030e540a023400cb87fb13f75c2f0615a63ec42ef9f156c92",
+      "backports/zstd/_zstd.cpython-312-darwin.so": "8c81e33e3870d81b722b65af473d0680b5c14e37d767ff6769c73faad32c95d6",
+      "backports/zstd/_zstd.py": "a01fae6f16979b0d3e8957e00a62141818e511b9c5e1ba5de79f101cad92a455",
+      "backports/zstd/_zstdfile.py": "563cff2a6b4f1b58b8de6428335cb9e77214a717e2fe5519d53504dea8ed1ebb",
+      "backports/zstd/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "backports/zstd/tarfile.py": "bc53d904b1a3961858556b1f76622ddd7ba7e9b43d4dec56f8022d5ed4735d7e",
+      "backports/zstd/tarfile.pyi": "91f6f1770050d1f82f28e09e9d141dd4e5628a024023cfa9ac90fca691637b62",
+      "backports/zstd/zipfile/__init__.py": "2dbfdbfa5365a600ef134fd85bb9df3d016643d79eb406b372a574fcd923a869",
+      "backports/zstd/zipfile/__init__.pyi": "31755bc6023970204326e42f8670179177592988cebcd8f6d0e64d89ce00baf2",
+      "backports/zstd/zipfile/__main__.py": "e418cdbb27adf0063e3cec28179ac6b7bdb6ac743bb49d157f450551fcf38be2",
+      "backports/zstd/zipfile/_path/__init__.py": "0a50ad8096d7db5b2798909331d56d37992bcc7adaf5462243b37bb1dfc7b0b0",
+      "backports/zstd/zipfile/_path/__init__.pyi": "bccdf0f6da7c226dc9ba2b717cde26f0950df68c795b37c58cc4ec88a46f92f3",
+      "backports/zstd/zipfile/_path/glob.py": "edefea638f250b9e011526141d83b222a06466a68e357b6d780a8b4173d802f7",
+      "backports/zstd/zipfile/_path/glob.pyi": "e8f5c0eee1f9df4edeeec58f387cb9d26d55a8603cdb25736a80c92648071f8d",
+      "backports_zstd-1.8.0.dist-info/METADATA": "d02ccc90813a6040032afed9efe22172b0995bd998d8a06b2f24dfb357d9cde8",
+      "backports_zstd-1.8.0.dist-info/RECORD": "a9bc2a30f31163ab859a33720cc492b74cb8c7d43e703c36e0cb5430c3fc0392",
+      "backports_zstd-1.8.0.dist-info/WHEEL": "7156dcce88ca058d4e5118bde8900f7f0cacc719d55b67b78cb6de2362e7dbdb",
+      "backports_zstd-1.8.0.dist-info/licenses/LICENSE.txt": "b0e25a78cffb43f4d92de8b61ccfa1f1f98ecbc22330b54b5251e7b6ba010231",
+      "backports_zstd-1.8.0.dist-info/licenses/LICENSE_zstd.txt": "f89ef2b03b52ad7c3342aeb2e1c961737f9de4892d41b1d083b0060c6191e1bf",
+      "backports_zstd-1.8.0.dist-info/top_level.txt": "7068da2cc3a8051d452b4029a23b73595995893b49ec91882bf1f05e212cbed5"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "e13e408391b56d7ff8f40f4932f4d47ce98121d1c060595d4bec31f609d06bcb",
+     "native": {
+      "backports/zstd/_zstd.cpython-312-darwin.so": "macho"
+     },
+     "pth": {},
+     "sha256": "d810d83c8a703f424ed2a49aa271078c91b530da2d8c104bd88207e68d116de8"
+    },
     "backports_zstd-1.8.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
      "entry_points": [],
      "files": {
@@ -57,11 +101,67 @@
      },
      "pth": {},
      "sha256": "f9e9aa28a44db1897fb637f037175566f3b75890d4bae6cae7ba34f1df1e0804"
+    },
+    "backports_zstd-1.8.0-cp312-cp312-win_amd64.whl": {
+     "entry_points": [],
+     "files": {
+      "backports/zstd/__init__.py": "47cdd7c51b1c95138c51b308df07e85c4ba1d34e7ca3f42b2a96b35539330755",
+      "backports/zstd/__init__.pyi": "d61133bf39b75bf2e3df34ca43ab61cfcfd77123c70dc5c9c017d1452cdb1387",
+      "backports/zstd/_cffi/__init__.py": "29f071e7f109e2312afbd06992fa449698ce7e15d448466cedc6767d72b4f427",
+      "backports/zstd/_cffi/_blocks_output_buffer.py": "4669fbd2f3d383618d11dbe2d902983d2b0509d853fcec8da79bbcea636979ba",
+      "backports/zstd/_cffi/_common.py": "5953dde675fafe0d670669659b5c22de5be76c3e0d745cd61e7902be0016e780",
+      "backports/zstd/_cffi/buffer.py": "114f447abc4ed6a61c44ead4e82721cb87427d1b5d6242d646f36166a539552c",
+      "backports/zstd/_cffi/compressor.py": "96ba6d71a48a41b9888630bd56a948ea6c92f012f346b5da310679eb515b4474",
+      "backports/zstd/_cffi/decompressor.py": "2f2f861f1b49b8a362d4e9d5f648ded80c78d73b8080e3b135830e9d011697eb",
+      "backports/zstd/_cffi/zstddict.py": "030f36aa509be2d61de6d1eeecd931754aca7d4ab08e8ee7cdf7c38fb4142def",
+      "backports/zstd/_compat.py": "353bc2e5dc2231f2d9245f038b435e27beb99c4aac044df5bcd4f305d03c71b3",
+      "backports/zstd/_shutil.py": "ae514e668125d77ff51fb68fd8cb5b420e7e0e06783851651e825dc45cc76576",
+      "backports/zstd/_streams.py": "8b8e943815c748d030e540a023400cb87fb13f75c2f0615a63ec42ef9f156c92",
+      "backports/zstd/_zstd.cp312-win_amd64.pyd": "55f10cc1e1d9fea98ba29cd83334201a39c8fe852739adac756888e7fbc2b623",
+      "backports/zstd/_zstd.py": "a01fae6f16979b0d3e8957e00a62141818e511b9c5e1ba5de79f101cad92a455",
+      "backports/zstd/_zstdfile.py": "563cff2a6b4f1b58b8de6428335cb9e77214a717e2fe5519d53504dea8ed1ebb",
+      "backports/zstd/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "backports/zstd/tarfile.py": "bc53d904b1a3961858556b1f76622ddd7ba7e9b43d4dec56f8022d5ed4735d7e",
+      "backports/zstd/tarfile.pyi": "91f6f1770050d1f82f28e09e9d141dd4e5628a024023cfa9ac90fca691637b62",
+      "backports/zstd/zipfile/__init__.py": "2dbfdbfa5365a600ef134fd85bb9df3d016643d79eb406b372a574fcd923a869",
+      "backports/zstd/zipfile/__init__.pyi": "31755bc6023970204326e42f8670179177592988cebcd8f6d0e64d89ce00baf2",
+      "backports/zstd/zipfile/__main__.py": "e418cdbb27adf0063e3cec28179ac6b7bdb6ac743bb49d157f450551fcf38be2",
+      "backports/zstd/zipfile/_path/__init__.py": "0a50ad8096d7db5b2798909331d56d37992bcc7adaf5462243b37bb1dfc7b0b0",
+      "backports/zstd/zipfile/_path/__init__.pyi": "bccdf0f6da7c226dc9ba2b717cde26f0950df68c795b37c58cc4ec88a46f92f3",
+      "backports/zstd/zipfile/_path/glob.py": "edefea638f250b9e011526141d83b222a06466a68e357b6d780a8b4173d802f7",
+      "backports/zstd/zipfile/_path/glob.pyi": "e8f5c0eee1f9df4edeeec58f387cb9d26d55a8603cdb25736a80c92648071f8d",
+      "backports_zstd-1.8.0.dist-info/METADATA": "4d2dd162c25985e67acac2e1dc39e4e60edb236114c66edab7c4d028632f8657",
+      "backports_zstd-1.8.0.dist-info/RECORD": "c981ff583dcd1a40ad632029b60453a50e6913927fb377bf1e5efb49a0182c6a",
+      "backports_zstd-1.8.0.dist-info/WHEEL": "547199cfb31450578b25778938b82f94e190e69e750e6c850e3b6d657fa1a30f",
+      "backports_zstd-1.8.0.dist-info/licenses/LICENSE.txt": "b0e25a78cffb43f4d92de8b61ccfa1f1f98ecbc22330b54b5251e7b6ba010231",
+      "backports_zstd-1.8.0.dist-info/licenses/LICENSE_zstd.txt": "836cbda972f74261a12b706adaa7c73daea536ea9640c9a0dcb77b68105be051",
+      "backports_zstd-1.8.0.dist-info/top_level.txt": "7068da2cc3a8051d452b4029a23b73595995893b49ec91882bf1f05e212cbed5"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "8fb65a527d9870e1931dcb4ef28933791fbbc9dfe537e1cc52b4ae3869e6c8f0",
+     "native": {
+      "backports/zstd/_zstd.cp312-win_amd64.pyd": "pe"
+     },
+     "pth": {},
+     "sha256": "1eddf59fedaf19dd3a8e9c597add7eb6f0d51d4467a0924b2dcd2c118ed18ff5"
     }
    },
    "name": "backports-zstd",
    "provenance": {
+    "backports_zstd-1.8.0-cp312-cp312-macosx_11_0_arm64.whl": {
+     "environment": "publish",
+     "kind": "GitHub",
+     "repository": "Rogdham/backports.zstd",
+     "workflow": "build.yml"
+    },
     "backports_zstd-1.8.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "environment": "publish",
+     "kind": "GitHub",
+     "repository": "Rogdham/backports.zstd",
+     "workflow": "build.yml"
+    },
+    "backports_zstd-1.8.0-cp312-cp312-win_amd64.whl": {
      "environment": "publish",
      "kind": "GitHub",
      "repository": "Rogdham/backports.zstd",
@@ -79,11 +179,62 @@
    },
    "reviewed": {
     "by": "claude",
-    "date": "2026-11-05",
-    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_delete, filesystem_read, filesystem_write_executable; 1 native binaries profiled, none with network/process imports or addresses; attestation verifies (Rogdham/backports.zstd)."
+    "date": "2026-11-20",
+    "earlier": [
+     {
+      "by": "claude",
+      "date": "2026-11-05",
+      "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_delete, filesystem_read, filesystem_write_executable; 1 native binaries profiled, none with network/process imports or addresses; attestation verifies (Rogdham/backports.zstd)."
+     }
+    ],
+    "note": "macOS arm64 and Windows amd64 wheels of the reviewed version: same 31 members as the Linux wheel, Python identical (Windows: CRLF only in METADATA and a license), only the _zstd extension differs (Mach-O / PE). No new finding or YARA hit, no .pth, no hook; neither the PE nor the Mach-O (read with a load-command parser: the gate has no Mach-O import profile and capa no Mach-O support) imports anything in a flagged category or links a non-system library. Attestations verify, same publisher (Rogdham/backports.zstd build.yml)."
    },
    "scans": {
     "capa": {
+     "55f10cc1e1d9fea98ba29cd83334201a39c8fe852739adac756888e7fbc2b623": {
+      "capabilities": [
+       "calculate modulo 256 via x86 assembly",
+       "contain loop",
+       "create thread",
+       "delay execution",
+       "encode data using XOR",
+       "encrypt data using RC4 PRGA",
+       "enumerate PE sections",
+       "parse PE header",
+       "resolve function by parsing PE exports"
+      ],
+      "note": "",
+      "path": "backports/zstd/_zstd.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-time-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "8c81e33e3870d81b722b65af473d0680b5c14e37d767ff6769c73faad32c95d6": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "backports/zstd/_zstd.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "dafddc5ce29d0f891c4f0c7605bb8e0c6c2fc529fd9d10e13a31537e3c1c6698": {
       "capabilities": [
        "contain loop",

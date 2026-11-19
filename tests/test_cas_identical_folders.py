@@ -215,6 +215,6 @@ def test_happy_trash_from_the_dialog_keeps_the_unselected_folder(dialog, monkeyp
     top.child(0).setSelected(True)  # backup/photos-2024
     d._trash_selected_folders()
     assert _wait(d._app, lambda: shown)
-    assert "1 folder(s) moved" in shown[0]
+    assert "1 folder moved" in shown[0]
     assert not (data / "backup" / "photos-2024").exists()
     assert (data / "photos").exists()

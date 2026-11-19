@@ -1,5 +1,5 @@
 """Numbers the guides state that the code decides: the third-party projects
-of Help > Third-Party Software… (README and its translations), the
+of Help > Third-Party Software… (the extended READMEs, docs/README-extended*.md), the
 protocols of the at-a-glance line (docs/USAGE*.md), the timeout classes of
 the MCP manifest example (docs/MCP*.md §9.7).
 
@@ -22,9 +22,9 @@ sys.path.insert(0, str(ROOT))
 
 from core import third_party as T  # noqa: E402
 
-PROJECTS = {"README.md": r"lists the (\d+) projects axross uses or ships",
-            "README_de.md": r"listet die (\d+) Projekte, die axross nutzt",
-            "README_es.md": r"lista los (\d+) proyectos que axross usa"}
+PROJECTS = {"docs/README-extended.md": r"lists the (\d+) projects axross uses or ships",
+            "docs/README-extended_de.md": r"listet die (\d+) Projekte, die axross nutzt",
+            "docs/README-extended_es.md": r"lista los (\d+) proyectos que axross usa"}
 GLANCE = {"USAGE.md": r"file manager for more than (\d+)\s+protocols",
           "USAGE_de.md": r"Dateimanager für mehr als (\d+)\s+Protokolle",
           "USAGE_es.md": r"Total Commander para más de (\d+)\s+protocolos"}

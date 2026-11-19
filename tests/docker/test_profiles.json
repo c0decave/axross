@@ -105,6 +105,7 @@
     "auth_type": "password",
     "store_password": true,
     "imap_ssl": false,
+    "imap_starttls": false,
     "_password": "imap123"
   }
 }

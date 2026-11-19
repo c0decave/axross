@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from PyQt6 import sip
 from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import QDockWidget, QMenu, QWidget
@@ -38,6 +39,37 @@ from core import extensions as EX
 from core.thread_relay import GuiCall
 
 log = logging.getLogger(__name__)
+
+#: What extension code may raise and axross takes as the extension's error:
+#: every exception - ``sys.exit()`` (SystemExit) in an extension would end
+#: axross, at every start when it runs in activate(), and so did any other
+#: BaseException (asyncio's CancelledError). Ctrl+C (KeyboardInterrupt)
+#: stays the user's: the guards re-raise it (_user_interrupt).
+_EXTENSION_ERRORS = BaseException
+
+
+def _user_interrupt(exc: BaseException) -> None:
+    """Re-raise *exc* when it is the user's Ctrl+C, no error of the extension."""
+    if isinstance(exc, KeyboardInterrupt):
+        raise exc
+
+
+def _exc_text(exc: BaseException) -> str:
+    """``Type: message`` of *exc* - also when its ``__str__`` raises (a
+    message set in an ``__init__`` that never ran): the report of the
+    failure must not fail in turn."""
+    try:
+        message = str(exc)
+    except Exception:  # noqa: BLE001 - the extension's own __str__
+        message = "<the exception's message cannot be shown>"
+    return f"{type(exc).__name__}: {message}"
+
+
+def _exc_traceback(exc: BaseException) -> str:
+    try:
+        return "".join(traceback.format_exception(exc)).rstrip()
+    except Exception:  # noqa: BLE001 - a broken __str__ or __repr__ in it
+        return _exc_text(exc)
 
 #: A failure of extension code repeated (the same handler, the same
 #: exception type) updates the status bar and the manager at most this often.
@@ -172,6 +204,10 @@ class ExtensionAPI:
         """
         if applies_to not in APPLIES_TO:
             raise ValueError(f"applies_to must be one of {APPLIES_TO}, not {applies_to!r}")
+        if isinstance(extensions, str):
+            # One suffix (".md"), not its characters: those matched every
+            # name ending in "m" or "d".
+            extensions = (extensions,)
         suffixes = tuple(str(e).lower() for e in extensions)
         self._reg.context.append((str(label), callback, applies_to, suffixes,
                                   str(icon) if icon else None))
@@ -195,6 +231,10 @@ class ExtensionAPI:
             ExtensionPanelTitleBar,
         )
 
+        if not isinstance(widget, QWidget):
+            # Before the dock is made: a dock left without its widget stayed
+            # in the window after the extension was switched off.
+            raise TypeError(f"add_dock() needs a QWidget, not {type(widget).__name__}")
         window = self._host.window
         ext_id = self.info.ext_id
         title = _tr(str(title))
@@ -393,27 +433,45 @@ class ExtensionAPI:
     # -- host side ------------------------------------------------------------
     def _remove_all(self) -> None:
         had_agent = bool(self._reg.agent_tools or self._reg.agent_topics)
-        own_toggles = {id(dock.toggleViewAction()) for dock in self._reg.docks}
+        # A dock or action the extension deleted itself (a dock with
+        # WA_DeleteOnClose closed by its [x]) is gone already: touching it
+        # raised RuntimeError, and the rest stayed - a menu entry that still
+        # ran the extension's code, the extensions after it never unloaded.
+        docks = [d for d in self._reg.docks if not sip.isdeleted(d)]
+        own_toggles = set()
+        for dock in docks:
+            try:
+                own_toggles.add(id(dock.toggleViewAction()))
+            except RuntimeError:
+                pass
         for action in self._reg.actions:
-            for widget in action.associatedObjects():
-                if isinstance(widget, QMenu):
-                    widget.removeAction(action)
-            if id(action) not in own_toggles:
-                # A menu or Pause action is a child of the window: only
-                # taken out of the menu, it stayed alive with its lambda,
-                # which holds the API and the extension's whole module.
-                # (A dock's toggle action goes with its dock.)
-                try:
-                    action.triggered.disconnect()
-                except TypeError:  # nothing connected (any more)
-                    pass
-                action.deleteLater()
+            if sip.isdeleted(action):
+                continue
+            try:
+                for widget in action.associatedObjects():
+                    if isinstance(widget, QMenu) and not sip.isdeleted(widget):
+                        widget.removeAction(action)
+                if id(action) not in own_toggles:
+                    # A menu or Pause action is a child of the window: only
+                    # taken out of the menu, it stayed alive with its lambda,
+                    # which holds the API and the extension's whole module.
+                    # (A dock's toggle action goes with its dock.)
+                    try:
+                        action.triggered.disconnect()
+                    except TypeError:  # nothing connected (any more)
+                        pass
+                    action.deleteLater()
+            except RuntimeError:  # deleted meanwhile
+                log.debug("extension action already gone", exc_info=True)
         removed = getattr(self._host.window, "extension_panel_removed", None)
-        for dock in self._reg.docks:
-            if callable(removed):
-                removed(dock)  # out of its workspace, its place kept
-            self._host.window.removeDockWidget(dock)
-            dock.deleteLater()
+        for dock in docks:
+            try:
+                if callable(removed):
+                    removed(dock)  # out of its workspace, its place kept
+                self._host.window.removeDockWidget(dock)
+                dock.deleteLater()
+            except RuntimeError:  # deleted meanwhile
+                log.debug("extension dock already gone", exc_info=True)
         self._reg = _Registered()
         self._pause_action = None
         if had_agent:
@@ -686,7 +744,7 @@ class ExtensionHost(QObject):
                 if button is retry:
                     self.retry(ext_id)
                 elif button is keep_off:
-                    self.set_enabled(ext_id, False)
+                    self.switch_off(ext_id)
 
             box.buttonClicked.connect(answered)
             box.show()
@@ -709,6 +767,23 @@ class ExtensionHost(QObject):
         _SPARE.clear()
         self._errors.clear()
         self.load_enabled(user_request=True)
+
+    def switch_off(self, ext_id: str) -> bool:
+        """Keep Off: :meth:`set_enabled` off, a settings file that cannot be
+        written told in the window instead of the error dialog. Returns
+        whether it was stored."""
+        try:
+            self.set_enabled(ext_id, False)
+        except OSError as exc:
+            text = _tr("not switched off: {error}").format(error=exc)
+            self._errors[ext_id] = text
+            log.warning("Extension %s %s", ext_id, text)
+            bar = getattr(self.window, "statusBar", None)
+            if callable(bar):
+                bar().showMessage(_tr("{ext} could not be switched off: {error}").format(
+                    ext=ext_id, error=exc), 8000)
+            return False
+        return True
 
     def set_enabled(self, ext_id: str, on: bool) -> None:
         EX.set_enabled(ext_id, on)  # clears a suspension too
@@ -741,7 +816,8 @@ class ExtensionHost(QObject):
         try:
             module = _exec_source(module_name, info.path)
             module.activate(api)
-        except Exception as exc:  # noqa: BLE001 - extension code
+        except _EXTENSION_ERRORS as exc:  # noqa: BLE001 - extension code
+            _user_interrupt(exc)
             _forget_modules(module_name)
             api._remove_all()
             self._record(api, exc)
@@ -777,13 +853,17 @@ class ExtensionHost(QObject):
 
     def unload_all(self) -> None:
         for ext_id in list(self._loaded):
-            self.unload(ext_id)
+            try:
+                self.unload(ext_id)
+            except Exception:  # noqa: BLE001 - the others are unloaded anyway
+                log.exception("Unloading extension %s failed", ext_id)
 
     # -- calling extension code ------------------------------------------------
     def call(self, api: ExtensionAPI, fn: Callable, *args) -> Any:
         try:
             return fn(*args)
-        except Exception as exc:  # noqa: BLE001 - extension code
+        except _EXTENSION_ERRORS as exc:  # noqa: BLE001 - extension code
+            _user_interrupt(exc)
             self._record(api, exc, fn)
             return None
 
@@ -793,7 +873,7 @@ class ExtensionHost(QObject):
         that raises on every click - is counted at DEBUG, and the status bar
         and the manager's error text follow at most every
         :data:`ERROR_REPEAT_SECONDS` (50 clicks logged 101 tracebacks)."""
-        text = f"{type(exc).__name__}: {exc}"
+        text = _exc_text(exc)
         key = (_handler_key(fn), type(exc))
         seen = api.__dict__.setdefault("_error_repeats", {})
         now = time.monotonic()
@@ -814,7 +894,7 @@ class ExtensionHost(QObject):
             "Extension %s failed: %s\n%s",
             api.info.ext_id,
             text,
-            "".join(traceback.format_exception(exc)).rstrip(),
+            _exc_traceback(exc),
         )
         self._show_failure(api, text, 1)
 
@@ -878,7 +958,8 @@ class ExtensionHost(QObject):
         def runner():
             try:
                 value, failed = work(), False
-            except Exception as exc:  # noqa: BLE001 - extension code
+            except _EXTENSION_ERRORS as exc:  # noqa: BLE001 - extension code
+                # Ctrl+C belongs to the main thread: here it is the work's end too.
                 value, failed = exc, True
             self._result(api, (on_done, on_error), value, failed)
 

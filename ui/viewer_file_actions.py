@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from html import escape
 
 from PyQt6 import sip
 from PyQt6.QtCore import QEvent, QMimeData, QObject, QPoint, Qt, QUrl
@@ -84,36 +83,77 @@ def start_file_drag(source: QWidget, backend, path: str, pane) -> Qt.DropAction:
     return result
 
 
-def delete_file(parent: QWidget, backend, path: str, pane) -> bool:
-    """Ask, then remove *path*. True when it is gone; the pane is refreshed."""
+def delete_file(parent: QWidget, backend, path: str, pane, *, permanent: bool = False) -> bool:
+    """Ask, then move *path* to the trash - as Del in the pane does - or,
+    with *permanent* (Shift+Del) or where the connection has no trash,
+    delete it for good after a question that says so. True when it is
+    gone; the pane is refreshed."""
+    from core import trash as T
+    from ui.file_pane import _shown_name
+    from ui.plain_text import as_written
+
+    to_trash = not permanent and T.supports_trash(backend)
     name = _name(backend, path)
-    reply = QMessageBox.question(
-        parent,
-        tr("Delete"),
-        tr("Delete {name}?\n{path}").format(name=escape(name), path=escape(path)),
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        QMessageBox.StandardButton.No,
-    )
-    if reply != QMessageBox.StandardButton.Yes:
-        return False
+    shown, shown_path = _shown_name(name), _shown_name(path)
+    shared = T.shared_trash_folder(backend) if to_trash else None
+    if shared is not None:
+        # A share's trash keeps its own permissions, not the folder's the
+        # file was in: said as in the pane, with Delete Permanently as the
+        # other way (after its own question).
+        from ui import shared_trash as ST
+
+        title = tr("Move to Trash")
+        answer = ST.ask_move_to_shared_trash(
+            parent, title, tr("Move {name} to the trash?\n{path}").format(name=shown, path=shown_path),
+            shared)
+        if answer is None or (parent is not None and sip.isdeleted(parent)):
+            return False
+        if answer == ST.DELETE:
+            return delete_file(parent, backend, path, pane, permanent=True)
+    else:
+        if to_trash:
+            title = tr("Move to Trash")
+            text = tr("Move {name} to the trash?\n{path}").format(name=shown, path=shown_path)
+            default = QMessageBox.StandardButton.Yes
+        else:
+            title = tr("Delete Permanently")
+            text = tr("Delete {name} permanently? This cannot be undone.\n{path}").format(
+                name=shown, path=shown_path)
+            default = QMessageBox.StandardButton.No
+        reply = QMessageBox.question(
+            parent,
+            title,
+            as_written(text),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            default,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return False
     from ui.production_gate import confirm_production
 
     # The pane's Delete asks a production connection's countdown; the
     # viewer's Delete removes the same file and asks it too.
-    if not confirm_production(parent, backend, tr("delete {path}").format(path=path)):
+    what = (tr("move {path} to the trash") if to_trash else tr("delete {path}")).format(path=path)
+    if not confirm_production(parent, backend, what):
         return False
     from ui.off_gui import run_off_gui
 
     try:
-        run_off_gui(lambda: backend.remove(path))  # a server round trip: off the GUI thread
+        # A server round trip: off the GUI thread.
+        if to_trash:
+            run_off_gui(lambda: T.trash(backend, path))
+        else:
+            run_off_gui(lambda: backend.remove(path))
     except OSError as exc:
-        log.error("Delete failed for %s: %s", path, exc)
+        log.error("%s failed for %s: %s", "Trash" if to_trash else "Delete", path, exc)
+        failed = (tr("Could not move {name} to the trash:\n{error}") if to_trash
+                  else tr("Could not delete {name}:\n{error}"))
         QMessageBox.warning(
-            None if sip.isdeleted(parent) else parent, tr("Delete"),
-            tr("Could not delete {name}:\n{error}").format(name=escape(name), error=escape(str(exc)))
+            None if sip.isdeleted(parent) else parent, title,
+            as_written(failed.format(name=shown, error=str(exc))),
         )
         return False
-    log.info("Deleted: %s", path)
+    log.info("%s: %s", "Trashed" if to_trash else "Deleted", path)
     pane = live_pane(pane)
     if pane is not None:
         pane.refresh_after_change()

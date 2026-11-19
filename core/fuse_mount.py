@@ -71,7 +71,10 @@ try:  # pragma: no cover — optional dep
     from fuse import FUSE, FuseOSError, Operations  # type: ignore
 
     FUSE_AVAILABLE = True
-except ImportError:  # pragma: no cover — optional dep
+except (ImportError, OSError):  # pragma: no cover — optional dep
+    # OSError: fusepy is installed but libfuse is not ("Unable to find
+    # libfuse") - this module, and every test of the adapter, then failed
+    # to import.
     FUSE = None  # type: ignore[assignment]
 
     class FuseOSError(OSError):  # type: ignore[no-redef]
@@ -215,6 +218,16 @@ class _WriteSession:
     #: A flush() / fsync() already returned this session's commit failure
     #: to the writer: release() then cleans up without repeating it.
     failure_reported: bool = False
+    #: The mode the program created the file with (``create``, a ``chmod``
+    #: before its first commit): the new file has it from its first byte.
+    new_mode: int | None = None
+    #: The backend has a file under ``path`` (it was opened there, or a
+    #: commit wrote it). A created file is in the buffer only until its
+    #: first commit: a rename then renames the session, not the backend.
+    on_backend: bool = True
+    #: Unlinked (or renamed over) while open: the holder may still write
+    #: and read, but nothing is committed - the file is gone.
+    orphaned: bool = False
 
 
 @dataclass
@@ -225,6 +238,8 @@ class _SessionItem:
     size: int
     is_dir: bool = False
     modified: object = None
+    #: The mode the file was created or chmod-ed with (0: not known).
+    permissions: int = 0
 
 
 @dataclass
@@ -316,9 +331,20 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
                 return session
         newest = None
         for key, session in list(self._writes.items()):
-            if session.path == path and (newest is None or key > newest[0]):
+            if session.path == path and not session.orphaned and (
+                    newest is None or key > newest[0]):
                 newest = (key, session)
         return newest[1] if newest is not None else None
+
+    def _open_sessions(self, path: str, *, below: bool = False) -> list[_WriteSession]:
+        """The write sessions open on *path* (with *below*: also on the
+        files under it), orphaned ones left out."""
+        prefix = path.rstrip("/") + "/"
+        return [
+            session for session in list(self._writes.values())
+            if not session.orphaned
+            and (session.path == path or (below and session.path.startswith(prefix)))
+        ]
 
     def _session_stat(self, session: _WriteSession) -> dict:
         if session.mode == "stream":
@@ -326,7 +352,7 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
         else:
             session.tmp.flush()
             size = os.fstat(session.tmp.fileno()).st_size
-        item = _SessionItem(size=size)
+        item = _SessionItem(size=size, permissions=session.new_mode or 0)
         return _stat_dict(item, writeable=self.writeable)
 
     # ---- directory ----------------------------------------------------
@@ -576,6 +602,7 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
             mode="stream",
             stream_handle=handle,
             expected_offset=0,
+            on_backend=False,
         )
 
     def create(self, path, mode, fi=None):
@@ -585,7 +612,16 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
             session = self._open_stream_session(path)
         else:
             tmp = self._new_tempfile()
-            session = _WriteSession(path=path, tmp=tmp, dirty=True)
+            session = _WriteSession(path=path, tmp=tmp, dirty=True, on_backend=False)
+        # The mode the program asked for (the kernel took its umask off):
+        # ssh-keygen's 0600 key was the server's default, often 0644.
+        session.new_mode = int(mode) & 0o777 if isinstance(mode, int) else None
+        if session.mode == "stream" and session.new_mode is not None:
+            # Its handle made the file already: the mode before any byte.
+            try:
+                self.backend.chmod(_to_backend_path(path, self.root), session.new_mode)
+            except (OSError, NotImplementedError, AttributeError) as exc:
+                log.info("FUSE create(%s): the mode was not set: %s", path, exc)
         self._stat.invalidate_all()
         self._listing.invalidate_all()
         return self._alloc_write_fh(session)
@@ -644,6 +680,9 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
             path=path,
             tmp=tmp,
             dirty=bool(flags & os.O_TRUNC) or not pre_fetched,
+            # O_TRUNC opens a file that is there; a failed pre-fetch of
+            # one that is not leaves a new file.
+            on_backend=pre_fetched or bool(flags & os.O_TRUNC),
         )
         return self._alloc_write_fh(session)
 
@@ -806,6 +845,9 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
         fsync() report the failure to the writing program. A buffer
         session stays dirty after a failure: the next flush retries.
         """
+        if session.orphaned:
+            self._drop_orphan(session)
+            return
         if session.mode == "stream":
             self._commit_stream(session, caller)
             return
@@ -823,11 +865,13 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
                 full,
                 tmp,
                 chunk_size=IO_CHUNK,
+                new_mode=None if session.on_backend else session.new_mode,
             )
         except OSError as exc:
             log.warning("FUSE %s(%s) commit failed: %s", caller, full, exc)
             raise FuseOSError(errno.EIO)
         session.dirty = False
+        session.on_backend = True
         self._stat.invalidate_all()
         self._listing.invalidate_all()
         self._refresh_readers(session.path)
@@ -874,9 +918,32 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
                 exc,
             )
             raise FuseOSError(errno.EIO)
+        session.on_backend = True
         self._stat.invalidate_all()
         self._listing.invalidate_all()
         self._refresh_readers(session.path)
+
+    def _drop_orphan(self, session: _WriteSession) -> None:
+        """An unlinked open file is not committed. A stream's handle is
+        discarded where it can be; one that can only be closed (= commit)
+        has the file it made removed again."""
+        session.dirty = False
+        handle, session.stream_handle = session.stream_handle, None
+        if handle is None:
+            return
+        discard = getattr(handle, "discard", None)
+        try:
+            if callable(discard):
+                discard()
+                return
+            handle.close()
+        except Exception as exc:  # noqa: BLE001 - the file is gone either way
+            log.debug("FUSE dropping unlinked stream %s: %s", session.path, exc)
+            return
+        try:
+            self.backend.remove(_to_backend_path(session.path, self.root), recursive=False)
+        except OSError as exc:
+            log.debug("FUSE removing unlinked stream %s again: %s", session.path, exc)
 
     def _reopen_stream(self, session: _WriteSession) -> None:
         """A write after a flush committed the stream: open the backend
@@ -926,14 +993,52 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
         if not self.writeable:
             raise FuseOSError(errno.EROFS)
         full = _to_backend_path(path, self.root)
-        try:
-            self.backend.remove(full, recursive=False)
-        except OSError as exc:
-            log.debug("unlink(%s) failed: %s", full, exc)
-            raise FuseOSError(_mutation_errno(exc))
+        sessions = self._open_sessions(path)
+        # A stream may have made the file on the backend before its commit.
+        on_backend = not sessions or any(
+            s.on_backend or s.mode == "stream" for s in sessions)
+        if on_backend:
+            try:
+                self.backend.remove(full, recursive=False)
+            except FileNotFoundError as exc:
+                if not sessions:
+                    log.debug("unlink(%s) failed: %s", full, exc)
+                    raise FuseOSError(_mutation_errno(exc))
+            except OSError as exc:
+                log.debug("unlink(%s) failed: %s", full, exc)
+                raise FuseOSError(_mutation_errno(exc))
+        # Its holders keep writing to a file that is gone: never committed
+        # (the temp-file idiom: open, unlink, use, close).
+        for session in sessions:
+            session.orphaned = True
         self._stat.invalidate_all()
         self._listing.invalidate_all()
         self._refresh_readers(path)
+
+    def chmod(self, path, mode):
+        """The mode of *path* on the backend - for a file still only in a
+        write buffer (created, not yet committed) the mode its commit
+        creates it with. fusepy's default refused every chmod as
+        "read-only file system" on a writable mount: ``chmod 600`` of a key
+        written there failed and left it as the server made it."""
+        if not self.writeable:
+            raise FuseOSError(errno.EROFS)
+        bits = int(mode) & 0o7777
+        sessions = self._open_sessions(path)
+        for session in sessions:
+            session.new_mode = bits & 0o777
+        if sessions and not any(s.on_backend or s.mode == "stream" for s in sessions):
+            return 0  # the commit makes the file with it
+        full = _to_backend_path(path, self.root)
+        try:
+            self.backend.chmod(full, bits)
+        except (OSError, NotImplementedError, AttributeError) as exc:
+            log.debug("chmod(%s) failed: %s", full, exc)
+            if isinstance(exc, OSError):
+                raise FuseOSError(_mutation_errno(exc))
+            raise FuseOSError(errno.ENOTSUP)
+        self._stat.invalidate_all()
+        return 0
 
     def mkdir(self, path, mode):
         if not self.writeable:
@@ -962,6 +1067,31 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
             raise FuseOSError(errno.EROFS)
         old_full = _to_backend_path(old, self.root)
         new_full = _to_backend_path(new, self.root)
+        moving = self._open_sessions(old, below=True)
+        replaced = [s for s in self._open_sessions(new, below=True) if s not in moving]
+        for session in moving:
+            if session.mode == "stream" and session.stream_handle is not None:
+                # Its handle writes to the old name: committed there
+                # first, the rest of it is appended under the new one.
+                self._commit_reported(session, "rename")
+        exact = [s for s in moving if s.path == old]
+        if exact and len(exact) == len(moving) and not any(s.on_backend for s in exact):
+            # Created and not committed yet: the file is in the session
+            # only, and the backend has nothing to rename.
+            pass
+        else:
+            self._backend_rename(old_full, new_full)
+        for session in moving:
+            # Its next commit writes the file where it is now.
+            session.path = new + session.path[len(old):]
+        for session in replaced:
+            session.orphaned = True  # renamed over: that file is gone
+        self._stat.invalidate_all()
+        self._listing.invalidate_all()
+        self._refresh_readers(old)
+        self._refresh_readers(new)
+
+    def _backend_rename(self, old_full: str, new_full: str) -> None:
         try:
             self.backend.rename(old_full, new_full)
         except OSError as rename_exc:
@@ -986,10 +1116,6 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
                     move_exc,
                 )
                 raise FuseOSError(_mutation_errno(move_exc))
-        self._stat.invalidate_all()
-        self._listing.invalidate_all()
-        self._refresh_readers(old)
-        self._refresh_readers(new)
 
 
 # --------------------------------------------------------------------------
@@ -1006,8 +1132,11 @@ def _join(parent: str, child: str) -> str:
 
 def _stat_dict(item, *, writeable: bool = False) -> dict:
     """Translate a backend FileItem into the dict that fusepy's
-    ``getattr`` callback wants. Mode bits reflect the mount flavour:
-    0o444/0o555 for read-only, 0o664/0o775 for writeable."""
+    ``getattr`` callback wants. The mode is the item's own where the
+    backend knows it (``permissions``; set-id bits left out, a read-only
+    mount without write bits) - every file showed 0664, and ssh refused a
+    0600 key through the mount as unprotected. Unknown (0): 0o444/0o555
+    for read-only, 0o664/0o775 for writeable."""
     is_dir = bool(getattr(item, "is_dir", False))
     size = int(getattr(item, "size", 0) or 0)
     modified = getattr(item, "modified", None)
@@ -1018,7 +1147,13 @@ def _stat_dict(item, *, writeable: bool = False) -> dict:
             mtime = time.time()
     else:
         mtime = time.time()
-    if is_dir:
+    perms = getattr(item, "permissions", 0)
+    if isinstance(perms, int) and not isinstance(perms, bool) and perms & 0o7777:
+        bits = perms & 0o1777  # no setuid / setgid through the mount
+        if not writeable:
+            bits &= ~0o222
+        mode = (stat_mod.S_IFDIR if is_dir else stat_mod.S_IFREG) | bits
+    elif is_dir:
         mode = stat_mod.S_IFDIR | (0o775 if writeable else 0o555)
     else:
         mode = stat_mod.S_IFREG | (0o664 if writeable else 0o444)

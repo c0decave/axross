@@ -165,6 +165,7 @@ class BusyStrip(QWidget):
         self.cancel_button.setToolTip(tr("Stop what is running"))
         self.cancel_button.clicked.connect(job.cancel)
         layout.addWidget(self.cancel_button)
+        self._job = job
         job.started.connect(self._on_started)
         job.progress.connect(self.label.setText)
         job.progress.connect(self._on_progress)
@@ -180,8 +181,10 @@ class BusyStrip(QWidget):
         self.cancel_button.setEnabled(True)
         self._set_busy(True)
 
-    def _on_progress(self, text: str) -> None:
-        if text.startswith("Cancelling"):
+    def _on_progress(self, _text: str) -> None:
+        # The job's state, not its text: "Cancelling…" is translated (in
+        # German the button stayed enabled while cancelling).
+        if self._job.cancelling:
             self.cancel_button.setEnabled(False)
 
     def _on_finished(self, *_args) -> None:

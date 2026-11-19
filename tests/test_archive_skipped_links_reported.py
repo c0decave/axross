@@ -110,10 +110,13 @@ class _Window(QMainWindow):
     _run_archive_extraction = _MW._run_archive_extraction
     _extract_member_into = _MW._extract_member_into
     _extract_off_the_gui_thread = _MW._extract_off_the_gui_thread
+    _with_archive_password = _MW._with_archive_password
+    _archive_password = _MW._archive_password
 
     def __init__(self):
         super().__init__()
         self._archive_member_tempdirs = []
+        self._archive_views = []
 
     def _refresh_panes_for_dir(self, directory):
         pass

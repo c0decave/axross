@@ -182,7 +182,8 @@ def serve(reader, writer) -> int:
 
     def confirm(name: str, args: dict) -> bool:
         tool = agent._tools.get(name) if agent is not None else None
-        shown = A._shown(args, tool.schema if tool is not None else {})
+        # Uncut: the user allows what runs, all of it.
+        shown = A._shown(args, tool.schema if tool is not None else {}, cut=False)
         try:
             reply = channel.request({"type": "confirm", "name": name, "args": shown})
         except _Closed:

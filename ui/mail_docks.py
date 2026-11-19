@@ -131,6 +131,10 @@ class MailDockPanel(QWidget):
         row.addStretch(1)
         layout.addLayout(row)
         self.approvals = QListWidget()
+        # The mail as it is sent, all of it: wrapped, never off to the side.
+        self.approvals.setWordWrap(True)
+        self.approvals.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.approvals.setResizeMode(QListWidget.ResizeMode.Adjust)
         self.approvals.setVisible(False)
         layout.addWidget(self.approvals)
         approve_row = QHBoxLayout()
@@ -604,9 +608,11 @@ class MailDocks(QObject):
         set_window_icon(dialog, "mail")
         install_help_key(dialog, "mail")
         layout = QVBoxLayout(dialog)
-        layout.addWidget(QLabel(tr("Each mail dock is an agent that watches one mailbox and follows its "
-                                   "instructions: read, analyse, draft, send as its policy allows, "
-                                   "report to other docks.")))
+        intro = QLabel(tr("Each mail dock is an agent that watches one mailbox and follows its "
+                          "instructions: read, analyse, draft, send as its policy allows, "
+                          "report to other docks."))
+        intro.setWordWrap(True)  # (one line: 1218 px in German, past a 1024 px screen)
+        layout.addWidget(intro)
         listing = QListWidget()
         layout.addWidget(listing)
 

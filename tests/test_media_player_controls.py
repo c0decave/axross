@@ -1663,7 +1663,7 @@ def test_sad_every_control_icon_is_valid_svg_and_renders_pixels():
     from PyQt6.QtCore import QByteArray
     from PyQt6.QtSvg import QSvgRenderer
 
-    assert set(MP.CONTROL_ICONS) == {"previous", "play", "pause", "stop", "next", "shuffle",
+    assert set(MP.CONTROL_ICONS) == {"previous", "play", "pause", "stop", "next", "back15", "forward15", "shuffle",
                                      "repeat", "repeat-one", "volume", "volume-x"}
     for name in MP.CONTROL_ICONS:
         assert QSvgRenderer(QByteArray(MP.control_svg(name, "#123456").encode())).isValid(), name

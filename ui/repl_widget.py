@@ -27,9 +27,11 @@ A ``jedi``-powered upgrade is a clean follow-up.
 
 from __future__ import annotations
 
+import ast
 import code
 import contextlib
 import io
+import json
 import logging
 import os
 import sys
@@ -70,16 +72,48 @@ HISTORY_LIMIT = 1000
 # appends so it can't grow without bound between sessions.
 COMPACT_EVERY_N = 200
 MAX_HISTORY_BYTES = 1024 * 1024
+#: An entry of several lines (a pasted block, a loop with its body) is one
+#: line of the history file: this mark, then the entry JSON-quoted (ASCII,
+#: so no line break of any kind is left in it). Plain lines stay as typed.
+HISTORY_BLOCK_MARK = "#axross-block: "
 MAX_STARTUP_SCRIPT_BYTES = 1024 * 1024
 
 # Maximum console buffer size before we trim the head. A loop like
 # ``for _ in range(10**8): print('x')`` would otherwise lock the Qt
-# widget while we keep appending. Mirrors the terminal widget's
-# TERMINAL_BUFFER_CAP_BYTES so the two docks behave consistently.
+# widget while we keep appending (the terminal's screen bounds its
+# scrollback the same way, core.vt_screen.DEFAULT_SCROLLBACK).
 CONSOLE_BUFFER_CAP_CHARS = 4 * 1024 * 1024
 # When trimming, keep this much of the tail (= the recent stuff a
 # user actually cares about).
 CONSOLE_BUFFER_TAIL_CHARS = 2 * 1024 * 1024
+
+
+def _history_line(entry: str) -> str:
+    """*entry* as one line of the history file (HISTORY_BLOCK_MARK)."""
+    if "".join(entry.splitlines()) == entry and not entry.startswith(HISTORY_BLOCK_MARK):
+        return entry
+    return HISTORY_BLOCK_MARK + json.dumps(entry, ensure_ascii=True)
+
+
+def _history_entry(line: str) -> str:
+    """The entry a line of the history file stands for; a marked line that
+    is no JSON string (hand-edited, cut short) is kept as text."""
+    if line.startswith(HISTORY_BLOCK_MARK):
+        try:
+            entry = json.loads(line[len(HISTORY_BLOCK_MARK):])
+        except (ValueError, RecursionError):
+            return line
+        if isinstance(entry, str):
+            return entry
+    return line
+
+
+def _write_all(fd: int, data: bytes) -> None:
+    """Every byte of *data* to *fd* (core.scripting's, imported when used:
+    the console module itself loads without the scripting surface)."""
+    from core.scripting import _write_all as write_all
+
+    write_all(fd, data)
 
 
 def _nofollow_flag() -> int:
@@ -124,6 +158,24 @@ def _build_globals() -> dict:
         "__doc__": "axross embedded REPL — see axross.help()",
         "axross": _scripting,
     }
+
+
+def _separate_statements(source: str) -> list | None:
+    """The top-level statements of *source* compiled one by one as at the
+    prompt (an expression shows its value), when *source* is complete and
+    holds more than one - a paste of several lines. None otherwise: one
+    statement, an open block or a syntax error go to ``runsource``, which
+    compiles ONE interactive statement ("multiple statements found while
+    compiling a single statement" for a paste of two)."""
+    if "\n" not in source.strip():
+        return None
+    try:
+        tree = ast.parse(source, "<repl>", "exec")
+        if len(tree.body) < 2:
+            return None
+        return [compile(ast.Interactive(body=[node]), "<repl>", "single") for node in tree.body]
+    except (SyntaxError, ValueError, OverflowError, MemoryError, RecursionError):
+        return None
 
 
 class _InlineConsole(code.InteractiveConsole):
@@ -411,7 +463,11 @@ class ReplWidget(QPlainTextEdit):
         saved_file = self._globals.get("__file__", missing)
         try:
             with contextlib.redirect_stdout(out_buf), contextlib.redirect_stderr(err_buf):
-                if filename is None:
+                statements = None if filename is not None else _separate_statements(source)
+                if statements is not None:
+                    more = False
+                    self._run_statements(statements)
+                elif filename is None:
                     more = self._console.runsource(source, "<repl>")
                 else:
                     more = False
@@ -450,6 +506,20 @@ class ReplWidget(QPlainTextEdit):
             if not err_text.endswith("\n"):
                 self._append("\n")
         return bool(more)
+
+    def _run_statements(self, statements: list) -> None:
+        """Run the interactive code objects of a pasted input one after the
+        other, as if each had been typed; the first error stops the rest
+        (they may depend on it, as in a script). Inside the caller's
+        redirection of stdout / stderr."""
+        for compiled in statements:
+            try:
+                exec(compiled, self._globals)  # noqa: S102 - the console runs the user's code
+            except SystemExit:
+                raise
+            except BaseException:  # noqa: BLE001 - shown inline, like runcode
+                self._console.showtraceback()
+                return
 
     def _submit_current(self) -> None:
         line = self._current_input()
@@ -627,7 +697,9 @@ REPL slash commands (typed at the prompt; not Python):
             from core import scripting as _s
 
             try:
-                if arg in _s.list_scripts():
+                # Casefolded, as the Scripts dock compares: on macOS and
+                # Windows "Backup" is the file of "backup".
+                if arg.casefold() in {n.casefold() for n in _s.list_scripts()}:
                     # save_script replaces; a script of that name - maybe
                     # written in the Scripts dock - is never overwritten here.
                     self._append(
@@ -699,7 +771,9 @@ REPL slash commands (typed at the prompt; not Python):
         except OSError as exc:
             log.debug("cannot read REPL history: %s", exc)
             return
-        self._history = [line for line in text.splitlines() if line.strip()][-HISTORY_LIMIT:]
+        self._history = [
+            _history_entry(line) for line in text.splitlines() if line.strip()
+        ][-HISTORY_LIMIT:]
 
     def _append_history(self, line: str) -> None:
         """Append-only single-line write. Cheap (one O_APPEND write per
@@ -708,14 +782,15 @@ REPL slash commands (typed at the prompt; not Python):
         disk file from growing past HISTORY_LIMIT × line-length."""
         try:
             _ensure_private_history_dir()
-            payload = (line.replace("\n", " ") + "\n").encode("utf-8")
+            # Several lines stay one entry (HISTORY_BLOCK_MARK).
+            payload = (_history_line(line) + "\n").encode("utf-8")
             fd = os.open(
                 HISTORY_PATH,
                 os.O_WRONLY | os.O_CREAT | os.O_APPEND | _nofollow_flag(),
                 0o600,
             )
             try:
-                os.write(fd, payload)
+                _write_all(fd, payload)
             finally:
                 os.close(fd)
             self._history_appends_since_compact += 1
@@ -732,19 +807,32 @@ REPL slash commands (typed at the prompt; not Python):
         re-applied on the rename target)."""
         try:
             tail = self._history[-HISTORY_LIMIT:]
-            payload = ("\n".join(tail) + "\n").encode("utf-8") if tail else b""
-            tmp_path = HISTORY_PATH.with_suffix(HISTORY_PATH.suffix + ".tmp")
+            payload = (
+                ("\n".join(map(_history_line, tail)) + "\n").encode("utf-8") if tail else b""
+            )
+            # A temp file of this compaction's own: a second axross
+            # compacting at the same time must not write into it.
+            from core.json_store import temp_sibling
+
+            tmp_path = temp_sibling(HISTORY_PATH)
             _ensure_private_history_dir()
             fd = os.open(
                 tmp_path,
-                os.O_WRONLY | os.O_CREAT | os.O_TRUNC | _nofollow_flag(),
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | _nofollow_flag(),
                 0o600,
             )
             try:
-                os.write(fd, payload)
-            finally:
-                os.close(fd)
-            os.replace(tmp_path, HISTORY_PATH)
+                try:
+                    _write_all(fd, payload)
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+                os.replace(tmp_path, HISTORY_PATH)
+            except BaseException:
+                # Half written: the old history stays, the temp file goes.
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp_path)
+                raise
             try:
                 os.chmod(HISTORY_PATH, 0o600)
             except OSError:

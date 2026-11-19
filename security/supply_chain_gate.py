@@ -47,6 +47,15 @@ Commands:
     accept  NAME==VERSION --by WHO --note TEXT [--young REASON]
                                     record a reviewed pin as the baseline
     status                          which pins are not (or no longer) reviewed
+    survey  OUT --scan-python PY [--platform P,...] [--lock L] [--incomplete]
+                                    candidate baselines to review; --incomplete adds the
+                                    reviewed pins lacking an archive of the platforms
+    accept-survey OUT VERDICTS.json --by WHO   record the reviewed candidates
+
+``check --platform macos-arm64 --lock build/requirements-bundle.txt`` checks
+only that lock, for that platform: a pin whose environment marker leaves it
+out there is not checked (and not in the reduced lock), the wheels pip would
+take there are. The release CI's macOS and Windows bundles run it.
 
 Exit codes: 0 clean, 1 a problem, 2 the gate could not run.
 """
@@ -86,12 +95,21 @@ BASELINE_DIR = ROOT / "security" / "supply_chain_baseline"
 CACHE_DIR = Path(os.environ.get("AXROSS_SUPPLY_CHAIN_CACHE") or (ROOT / "build" / "supply-chain-cache"))
 TOP_PACKAGES = HERE / "top_pypi_packages.txt"
 SCANNER = HERE / "supply_chain_scan.py"
-#: The locks the release build installs from.
+#: The locks the release build installs from, and the locks of the tools
+#: axross exports as programs of their own (scripts/lock_standalone_deps.sh;
+#: the exporter ships them, their CI installs from them).
 LOCKS = ("build/requirements-bootstrap.txt", "build/requirements-dist-tools.txt",
-         "build/requirements-bundle.txt", "build/requirements-scan-tools.txt")
+         "build/requirements-bundle.txt", "build/requirements-standalone-markdown.txt",
+         "build/requirements-scan-tools.txt")
 #: Files that configure where pip and uv fetch from.
 INDEX_CONFIG = ("scripts/build_dist.sh", "scripts/build_bundle.sh", "scripts/lock_bundle_deps.sh",
-                "Dockerfile.build", "build/requirements-bundle.in")
+                "Dockerfile.build", "build/requirements-bundle.in", "build/requirements-dist-tools.in",
+                "build/requirements-scan-tools.in", "pyproject.toml",
+                ".github/workflows/cross-platform.yml", ".github/workflows/python-app.yml")
+#: pip's and uv's own config files in the project (index_problems reads them
+#: wherever INDEX_CONFIG points: a pip.conf or uv.toml next to the build
+#: changes every pip / uv it starts).
+PROJECT_INDEX_FILES = ("pip.conf", "pip.ini", "uv.toml", ".pip/pip.conf")
 MIN_AGE_DAYS = 14
 #: Reviewed security fixes the lock scripts may take before MIN_AGE_DAYS.
 YOUNG_FILE = ROOT / "build" / "young-release-exceptions.txt"
@@ -113,10 +131,153 @@ OSV_BATCH = "https://api.osv.dev/v1/querybatch"
 USER_AGENT = "axross-supply-chain-gate/1"
 #: The target the Linux bundles are built for.
 PLATFORMS = {
-    "linux-x86_64": {"python": "cp312", "platform_re": r"^(?:manylinux\w*_x86_64|linux_x86_64)$"},
-    "macos-arm64": {"python": "cp312", "platform_re": r"^macosx_\d+_\d+_(?:arm64|universal2)$"},
-    "windows-amd64": {"python": "cp312", "platform_re": r"^win_amd64$"},
+    "linux-x86_64": {"python": "cp312", "platform_re": r"^(?:manylinux\w*_x86_64|linux_x86_64)$",
+                     "env": {"sys_platform": "linux", "platform_system": "Linux", "os_name": "posix",
+                             "platform_machine": "x86_64"}},
+    "macos-arm64": {"python": "cp312", "platform_re": r"^macosx_\d+_\d+_(?:arm64|universal2)$",
+                    "env": {"sys_platform": "darwin", "platform_system": "Darwin", "os_name": "posix",
+                            "platform_machine": "arm64"}},
+    "windows-amd64": {"python": "cp312", "platform_re": r"^win_amd64$",
+                      "env": {"sys_platform": "win32", "platform_system": "Windows", "os_name": "nt",
+                              "platform_machine": "AMD64"}},
 }
+#: The marker variables every target shares (CPython 3.12).
+_MARKER_COMMON = {"implementation_name": "cpython", "platform_python_implementation": "CPython",
+                  "python_version": "3.12", "python_full_version": "3.12.12"}
+_VERSION_VARS = {"python_version", "python_full_version", "implementation_version"}
+_MARKER_TOKEN = re.compile(r"\s*(?:(?P<str>'[^']*'|\"[^\"]*\")|(?P<op>===|==|!=|<=|>=|~=|<|>|\(|\))"
+                           r"|(?P<word>[A-Za-z_][A-Za-z0-9_.]*))")
+
+
+class _MarkerUnknown(Exception):
+    """A marker the gate cannot evaluate: the pin counts as applying."""
+
+
+def _marker_tokens(marker: str) -> list[tuple[str, str]]:
+    out, pos = [], 0
+    marker = marker.strip()
+    while pos < len(marker):
+        m = _MARKER_TOKEN.match(marker, pos)
+        if not m or m.end() == pos:
+            raise _MarkerUnknown(marker)
+        kind = m.lastgroup
+        out.append((kind, m.group(kind)))
+        pos = m.end()
+        while pos < len(marker) and marker[pos].isspace():
+            pos += 1
+    return out
+
+
+def _marker_version(text: str) -> tuple:
+    parts = []
+    for p in text.strip().split("."):
+        if not p.isdigit():
+            raise _MarkerUnknown(text)
+        parts.append(int(p))
+    return tuple(parts)
+
+
+def _marker_compare(left: str, op: str, right: str, versions: bool) -> bool:
+    if op == "in":
+        return left in right
+    if op == "not in":
+        return left not in right
+    if versions and op not in ("===",):
+        a, b = _marker_version(left), _marker_version(right)
+        n = max(len(a), len(b))
+        a, b = a + (0,) * (n - len(a)), b + (0,) * (n - len(b))
+    else:
+        a, b = left, right
+    if op in ("==", "==="):
+        return a == b
+    if op == "!=":
+        return a != b
+    if op not in ("<", "<=", ">", ">=") or not versions:
+        raise _MarkerUnknown(op)
+    return {"<": a < b, "<=": a <= b, ">": a > b, ">=": a >= b}[op]
+
+
+def _marker_eval(tokens: list[tuple[str, str]], env: dict[str, str]) -> bool:
+    pos = 0
+
+    def peek(k=0):
+        return tokens[pos + k] if pos + k < len(tokens) else ("", "")
+
+    def value() -> tuple[str, bool]:
+        nonlocal pos
+        kind, text = peek()
+        pos += 1
+        if kind == "str":
+            return text[1:-1], False
+        if kind == "word" and text in env:
+            return env[text], text in _VERSION_VARS
+        raise _MarkerUnknown(text)
+
+    def atom() -> bool:
+        nonlocal pos
+        if peek() == ("op", "("):
+            pos += 1
+            result = disjunction()
+            if peek() != ("op", ")"):
+                raise _MarkerUnknown("(")
+            pos += 1
+            return result
+        left, lv = value()
+        kind, text = peek()
+        if kind == "op" and text not in "()":
+            op = text
+            pos += 1
+        elif (kind, text) == ("word", "in"):
+            op = "in"
+            pos += 1
+        elif (kind, text) == ("word", "not") and peek(1) == ("word", "in"):
+            op = "not in"
+            pos += 2
+        else:
+            raise _MarkerUnknown(text)
+        right, rv = value()
+        return _marker_compare(left, op, right, (lv or rv) and op not in ("in", "not in"))
+
+    def conjunction() -> bool:
+        nonlocal pos
+        result = atom()
+        while peek() == ("word", "and"):
+            pos += 1
+            result = atom() and result
+        return result
+
+    def disjunction() -> bool:
+        nonlocal pos
+        result = conjunction()
+        while peek() == ("word", "or"):
+            pos += 1
+            result = conjunction() or result
+        return result
+
+    result = disjunction()
+    if pos != len(tokens):
+        raise _MarkerUnknown("trailing")
+    return result
+
+
+def marker_applies(marker: str, platform: str) -> bool:
+    """Whether a pin with *marker* is installed on *platform* (PLATFORMS).
+    A marker the gate cannot read - an unknown variable, ``extra``, a
+    syntax it does not know - counts as applying: the pin is checked, never
+    skipped on a guess."""
+    if not (marker or "").strip():
+        return True
+    env = dict(_MARKER_COMMON)
+    env.update(PLATFORMS.get(platform, {}).get("env") or {})
+    try:
+        return bool(_marker_eval(_marker_tokens(marker), env))
+    except (_MarkerUnknown, IndexError, ValueError):
+        return True
+
+
+def applying_platforms(pin: LockedPin, platforms: list[str]) -> list[str]:
+    """The *platforms* on which pip installs *pin* (its marker)."""
+    return [p for p in platforms if marker_applies(pin.marker, p)]
 
 
 # --- results ------------------------------------------------------------------------------
@@ -521,9 +682,11 @@ def _prepare(known: list[str]) -> list[tuple[str, str, str]]:
     return prepared
 
 
-def typosquat_of(name: str, known: list[str]) -> str | None:
+def typosquat_of(name: str, known: list[str], affixes: tuple[str, ...] = _AFFIXES) -> str | None:
     """The popular package *name* could be a typo of, or None. *known* is in
-    popularity order; a name that is itself popular is no squat."""
+    popularity order; a name that is itself popular is no squat. *affixes*:
+    the prefixes and suffixes squatters add (PyPI's by default; the Cargo
+    gate passes Rust's)."""
     c = canonical(name)
     if not c.isascii() or any(unicodedata.category(ch).startswith("C") for ch in name):
         return f"(non-ASCII or control characters in {name!r})"
@@ -533,13 +696,13 @@ def typosquat_of(name: str, known: list[str]) -> str | None:
     flat = c.replace("-", "")
     look = flat.translate(_LOOKALIKE)
     candidates: set[str] = set()
-    for affix in _AFFIXES:
+    for affix in affixes:
         if c.startswith(affix) and len(c) > len(affix) + 2:
             candidates.add(c[len(affix):].strip("-"))
         if c.endswith(affix) and len(c) > len(affix) + 2:
             candidates.add(c[: -len(affix)].strip("-"))
     for one in list(candidates):
-        for affix in _AFFIXES:
+        for affix in affixes:
             if one.startswith(affix) and len(one) > len(affix) + 2:
                 candidates.add(one[len(affix):].strip("-"))
             if one.endswith(affix) and len(one) > len(affix) + 2:
@@ -580,29 +743,160 @@ def load_top_packages() -> list[str]:
             if line.strip() and not line.startswith("#")]
 
 
+_PYPI = ("https://pypi.org/simple", "https://pypi.org/simple/")
+#: On a pip or uv command line (and every line of a requirements file).
+_INDEX_OPTION = re.compile(
+    r"--(?:extra-)?index-url(?:=|\s+)(?P<url>\S+)|--default-index(?:=|\s+)(?P<durl>\S+)"
+    r"|--index(?![\w-])(?:=|\s+)?(?P<iurl>\S*)|--find-links\b|--index-strategy(?:=|\s+)(?P<strategy>\S+)"
+    r"|(?<![\w-])-[A-Za-z]*[if](?![\w-]*=)(?:\s*)(?P<surl>\S*)"
+    r"|extra-index-url", re.I)
+#: pip's and uv's variables, set anywhere on a line (``PIP_INDEX_URL=... pip``, ``export``, ``env:``).
+_INDEX_VARS = re.compile(r"\b(?:PIP_(?:EXTRA_)?INDEX_URL|PIP_FIND_LINKS|PIP_INDEX|PIP_NO_INDEX|PIP_CONFIG_FILE"
+                         r"|UV_(?:EXTRA_)?INDEX_URL|UV_INDEX|UV_DEFAULT_INDEX|UV_FIND_LINKS|UV_INDEX_STRATEGY"
+                         r"|UV_NO_INDEX|UV_CONFIG_FILE)\b[\"']?\s*[=:]\s*(?P<value>\S*)")
+#: pip or uv as the program of a command (``pip``, ``"$dir/bin/pip"``, ``python -m pip``, ``uv``).
+_PIP_OR_UV = re.compile(r"(?:^|[\s/\"'])(?:pip3?(?:\.\d+)?|uv)[\"']?(?=\s|$)")
+#: Keys of pip.conf / pip.ini / uv.toml / pyproject's [tool.uv] that name where to fetch from.
+_CONFIG_INDEX_KEY = re.compile(r"^\s*(?:index-url|extra-index-url|find-links|index|default-index|url"
+                               r"|index-strategy|no-index)\s*=\s*(?P<value>.*)$", re.I)
+_SHELL_SPLIT = re.compile(r"&&|\|\||;|\||\$\(|`")
+
+
+def _not_pypi(value: str) -> bool:
+    return value.strip().strip("'\"[],").rstrip("/") + "/" not in [u.rstrip("/") + "/" for u in _PYPI]
+
+
+def _option_problem(m: re.Match) -> bool:
+    if m.group("strategy") is not None:
+        return m.group("strategy").strip("'\"") != "first-index"
+    for key in ("url", "durl"):
+        if m.group(key) is not None:
+            return _not_pypi(m.group(key))
+    return True
+
+
+def _index_lines(text: str, every_line: bool) -> list[tuple[int, str]]:
+    out = []
+    for number, line in enumerate(text.splitlines(), 1):
+        if line.lstrip().startswith("#"):
+            continue
+        if any(_not_pypi(m.group("value")) for m in _INDEX_VARS.finditer(line)):
+            out.append((number, line))
+            continue
+        segments = [line] if every_line else _SHELL_SPLIT.split(line)
+        for segment in segments:
+            if not every_line:
+                # the options after pip / uv (``grep -i``, ``rm -rf`` are no index)
+                program = _PIP_OR_UV.search(segment)
+                if program:
+                    segment = segment[program.end():]
+                elif "extra-index-url" not in segment.lower():
+                    continue
+            if any(_option_problem(m) for m in _INDEX_OPTION.finditer(segment)):
+                out.append((number, line))
+                break
+    return out
+
+
+def _config_lines(text: str, toml_section: str | None) -> list[tuple[int, str]]:
+    """Lines of a pip / uv config naming another index. *toml_section*: only
+    keys under sections starting with it (pyproject's ``tool.uv``)."""
+    out, section = [], ""
+    for number, line in enumerate(text.splitlines(), 1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("#", ";")):
+            continue
+        head = re.match(r"^\[\[?\s*([^\]]+?)\s*\]\]?$", stripped)
+        if head:
+            section = head.group(1).strip().lower()
+            if section.endswith("index") and (toml_section is None or section.startswith(toml_section)):
+                out.append((number, line))   # [[index]] / [[tool.uv.index]]: another index
+            continue
+        if toml_section is not None and not section.startswith(toml_section):
+            continue
+        m = _CONFIG_INDEX_KEY.match(stripped)
+        if m:
+            key = stripped.split("=", 1)[0].strip().lower()
+            value = m.group("value")
+            if key in ("index-url", "default-index", "url") and not _not_pypi(value):
+                continue
+            if key == "index-strategy" and value.strip().strip("'\"") == "first-index":
+                continue
+            if key == "no-index" and value.strip().lower() in ("false", "0", "no", "off"):
+                continue
+            out.append((number, line))
+    return out
+
+
+def user_index_files() -> list[Path]:
+    """pip's and uv's user and system config files (they change every pip and
+    uv the build starts)."""
+    home = Path(os.environ.get("HOME") or os.path.expanduser("~"))
+    xdg = Path(os.environ["XDG_CONFIG_HOME"]) if os.environ.get("XDG_CONFIG_HOME") else home / ".config"
+    paths = [home / ".pip" / "pip.conf", xdg / "pip" / "pip.conf", xdg / "uv" / "uv.toml",
+             home / "Library" / "Application Support" / "pip" / "pip.conf",
+             Path("/etc/pip.conf"), Path("/etc/xdg/pip/pip.conf"), Path("/etc/uv/uv.toml"),
+             Path("/etc/xdg/uv/uv.toml")]
+    for var in ("APPDATA", "PROGRAMDATA"):
+        if os.environ.get(var):
+            paths += [Path(os.environ[var]) / "pip" / "pip.ini", Path(os.environ[var]) / "uv" / "uv.toml"]
+    if os.environ.get("VIRTUAL_ENV"):
+        paths += [Path(os.environ["VIRTUAL_ENV"]) / "pip.conf", Path(os.environ["VIRTUAL_ENV"]) / "pip.ini"]
+    for var in ("PIP_CONFIG_FILE", "UV_CONFIG_FILE"):
+        if os.environ.get(var) and os.environ[var] != os.devnull:
+            paths.append(Path(os.environ[var]))
+    return list(dict.fromkeys(paths))
+
+
+def _read(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace") if path.is_file() else None
+    except OSError:
+        return None
+
+
 def index_problems(root: Path | None = None) -> list[str]:
-    """Places that would let pip or uv fetch from another index than PyPI."""
+    """Places that would let pip or uv fetch from another index than PyPI:
+    an index option on a pip or uv line of the build's files (--index-url,
+    --extra-index-url, -i, -f, --find-links, uv's --index, --default-index,
+    --index-strategy), a requirements input naming one, pip's and uv's
+    config files of the project, of the user and of the system, and the
+    environment."""
     root = root or ROOT
     out = []
-    pattern = re.compile(r"--(?:extra-)?index-url(?:=|\s+)(\S+)|--find-links|PIP_EXTRA_INDEX_URL|"
-                         r"UV_EXTRA_INDEX_URL|extra-index-url", re.I)
     for rel in INDEX_CONFIG:
-        path = root / rel
-        if not path.exists():
+        text = _read(root / rel)
+        if text is None:
             continue
-        for number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
-            if line.lstrip().startswith("#"):
-                continue
-            for m in pattern.finditer(line):
-                url = m.group(1)
-                if url and url.rstrip("/").strip("'\"") in ("https://pypi.org/simple", "https://pypi.org/simple/"):
-                    continue
-                out.append(f"{rel}:{number}: {line.strip()[:160]}")
-    for var in ("PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "PIP_FIND_LINKS", "UV_INDEX_URL",
-                "UV_EXTRA_INDEX_URL", "UV_INDEX", "PIP_CONFIG_FILE", "UV_CONFIG_FILE"):
+        if Path(rel).name == "pyproject.toml":
+            found = _config_lines(text, "tool.uv")
+        elif rel.endswith((".in", ".txt")):
+            found = _index_lines(text, every_line=True)
+        else:
+            found = _index_lines(text, every_line=False)
+        out += [f"{rel}:{number}: {line.strip()[:160]}" for number, line in found]
+    for rel in PROJECT_INDEX_FILES:
+        text = _read(root / rel)
+        if text is not None:
+            out += [f"{rel}:{number}: {line.strip()[:160]}" for number, line in _config_lines(text, None)]
+    for path in user_index_files():
+        text = _read(path)
+        if text is not None:
+            out += [f"environment: {path}:{number}: {line.strip()[:160]}"
+                    for number, line in _config_lines(text, None)]
+    for var in ("PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "PIP_FIND_LINKS", "PIP_INDEX", "PIP_NO_INDEX",
+                "UV_INDEX_URL", "UV_EXTRA_INDEX_URL", "UV_INDEX", "UV_DEFAULT_INDEX", "UV_FIND_LINKS",
+                "UV_INDEX_STRATEGY", "UV_NO_INDEX", "PIP_CONFIG_FILE", "UV_CONFIG_FILE"):
         value = os.environ.get(var)
-        if value and value.rstrip("/") != "https://pypi.org/simple":
-            out.append(f"environment: {var}={value[:160]}")
+        if not value:
+            continue
+        if var in ("PIP_INDEX_URL", "UV_INDEX_URL", "UV_DEFAULT_INDEX") and not _not_pypi(value):
+            continue
+        if var == "UV_INDEX_STRATEGY" and value == "first-index":
+            continue
+        if var in ("PIP_CONFIG_FILE", "UV_CONFIG_FILE") and value == os.devnull:
+            continue
+        out.append(f"environment: {var}={value[:160]}")
     return out
 
 
@@ -943,15 +1237,19 @@ def check_pin(rel: str, pin: LockedPin, platforms: list[str], *, now: float | No
     return result
 
 
-def reduce_lock(text: str, keep: dict[tuple[str, str], set[str]]) -> str:
+def reduce_lock(text: str, keep: dict[tuple[str, str], set[str]], platforms: list[str] | None = None) -> str:
     """*text* (a hashed lock) with each pin's hashes cut down to *keep*
     [(name, version)]: the archives the gate inspected. pip with
     --require-hashes then installs exactly those - not a sibling wheel of
     the same release with a more specific tag that nobody looked at. A pin
-    with none left is a GateError (it would be installed unchecked)."""
+    with none left is a GateError (it would be installed unchecked). With
+    *platforms*, a pin whose marker leaves it out on every one of them is
+    left out (pip would not install it there; the gate did not check it)."""
     out = ["# Reduced by security/supply_chain_gate.py check --reduced-locks: only the",
            "# archives the gate inspected."]
     for pin in parse_lock(text):
+        if platforms is not None and not applying_platforms(pin, platforms):
+            continue
         hashes = [h for h in pin.hashes if h in keep.get((pin.name, pin.version), set())]
         if not hashes:
             raise GateError(f"{pin.name}=={pin.version}: no inspected archive left in the reduced lock")
@@ -963,7 +1261,7 @@ def reduce_lock(text: str, keep: dict[tuple[str, str], set[str]]) -> str:
 
 
 def write_reduced_locks(results: list[PinResult], out_dir: Path, root: Path | None = None,
-                        locks=None) -> list[Path]:
+                        locks=None, platforms: list[str] | None = None) -> list[Path]:
     """One reduced copy (reduce_lock) of every lock, named as the lock, in
     *out_dir*. A pin two locks share was checked once: its inspected
     archives count for both."""
@@ -978,7 +1276,7 @@ def write_reduced_locks(results: list[PinResult], out_dir: Path, root: Path | No
         if not source.exists():
             continue
         target = out_dir / Path(rel).name
-        target.write_text(reduce_lock(source.read_text(encoding="utf-8"), keep), encoding="utf-8")
+        target.write_text(reduce_lock(source.read_text(encoding="utf-8"), keep, platforms), encoding="utf-8")
         written.append(target)
     return written
 
@@ -1009,9 +1307,15 @@ def run_check(platforms: list[str], *, root: Path | None = None, locks=None, top
     for rel, pin in pins:
         if (pin.name, pin.version) in seen:
             continue
+        # a pin's marker can leave it out on the target platforms (pip does
+        # not install it there): not checked, and left out of the reduced
+        # lock; the same pin of another lock with another marker still is
+        targets = applying_platforms(pin, platforms)
+        if not targets:
+            continue
         seen.add((pin.name, pin.version))
         try:
-            results.append(checker(rel, pin, platforms))
+            results.append(checker(rel, pin, targets))
         except GateError as exc:
             r = PinResult(pin=pin, lock=rel)
             r.problems.append(Problem(pin.name, str(exc), "pypi"))
@@ -1204,6 +1508,10 @@ def accept(spec: str, by: str, note: str, platforms: list[str], young: str = "",
         for sha, entry in ((old.get("scans") or {}).get("capa") or {}).items():
             scans["capa"].setdefault(sha, entry)
     entry = baseline_entry(result, by.strip(), note.strip(), young.strip(), scans)
+    old = load_baseline(pin.name, pin.version)
+    if old is not None:
+        # another platform's archives of a reviewed version: added, the reviewed ones kept
+        entry = merge_entries(old, entry)
     locked = {(p.name, p.version) for _, p in read_locks()}
     return save_baseline(entry, locked)
 
@@ -1363,32 +1671,45 @@ def accept_deep(spec: str, member: str, note: str, by: str) -> None:
 
 # --- survey: the first review of many pins at once -----------------------------------------------
 
+def _unreviewed_archives(result: PinResult) -> bool:
+    return any(p.check == "baseline" and p.message.endswith("was not part of the review") for p in result.problems)
+
+
 def survey(out_dir: Path, platforms: list[str], scan_python: str, only: set[str] | None = None,
-           batch: int = 20) -> int:
+           batch: int = 20, locks=None, incomplete: bool = False) -> int:
     """Everything the review of each pin needs, written to *out_dir*: a
     candidate baseline entry (``<name>.json``) and what to read
     (``<name>.todo.json``: threat hits, high findings, .pth, hooks, capa,
-    attestation). Pins already reviewed in their locked version are skipped."""
+    attestation). Pins already reviewed in their locked version are skipped
+    - with *incomplete*, unless an archive *platforms* use (a macOS or
+    Windows wheel) was not part of their review. *locks*: only these."""
     out_dir.mkdir(parents=True, exist_ok=True)
     pending = []
     seen = set()
-    for rel, pin in read_locks():
+    for rel, pin in read_locks(locks=locks):
         if (pin.name, pin.version) in seen or (only and pin.name not in only):
             continue
+        targets = applying_platforms(pin, platforms)
+        if not targets:
+            continue
         seen.add((pin.name, pin.version))
-        if load_baseline(pin.name, pin.version) is not None:
+        if load_baseline(pin.name, pin.version) is not None and not incomplete:
             continue
         if (out_dir / f"{canonical(pin.name)}=={pin.version}.json").exists():
             continue
-        pending.append((rel, pin))
+        pending.append((rel, pin, targets))
     done = 0
     for start in range(0, len(pending), batch):
         results = []
-        for rel, pin in pending[start:start + batch]:
+        for rel, pin, targets in pending[start:start + batch]:
             try:
-                results.append(check_pin(rel, pin, platforms))
+                result = check_pin(rel, pin, targets)
             except GateError as exc:
                 (out_dir / f"{canonical(pin.name)}=={pin.version}.error").write_text(str(exc), encoding="utf-8")
+                continue
+            if load_baseline(pin.name, pin.version) is not None and not _unreviewed_archives(result):
+                continue   # --incomplete: every archive was reviewed already
+            results.append(result)
         run_scanners(results, scan_python, capa=True, strict=False)
         for r in results:
             scans = {"keys": sorted(scan_keys(r.scans)),
@@ -1437,6 +1758,36 @@ def survey(out_dir: Path, platforms: list[str], scan_python: str, only: set[str]
     return done
 
 
+def merge_entries(old: dict, new: dict) -> dict:
+    """A reviewed entry and a new review of more archives of the same
+    version (another platform's wheels): the archives, attestations,
+    accepted findings and scans of both; an archive both have must be the
+    same file, else the new review replaces nothing (GateError)."""
+    merged = json.loads(json.dumps(old))
+    for archive, data in (new.get("archives") or {}).items():
+        known = (old.get("archives") or {}).get(archive)
+        if known is not None and (known.get("sha256") != data.get("sha256")
+                                  or known.get("manifest") != data.get("manifest")):
+            raise GateError(f"{new.get('name')}=={new.get('version')}: {archive} differs from the reviewed one")
+        merged.setdefault("archives", {})[archive] = data
+    merged.setdefault("provenance", {}).update(new.get("provenance") or {})
+    merged["accepted_findings"] = sorted(set(old.get("accepted_findings", [])) | set(new.get("accepted_findings", [])))
+    scans_old, scans_new = old.get("scans") or {}, new.get("scans") or {}
+    if scans_old or scans_new:
+        merged["scans"] = {
+            "keys": sorted(set(scans_old.get("keys", [])) | set(scans_new.get("keys", []))),
+            "capa": {**(scans_old.get("capa") or {}), **(scans_new.get("capa") or {})},
+            "yara": sorted(set(scans_old.get("yara", [])) | set(scans_new.get("yara", []))),
+        }
+    before = old.get("reviewed") or {}
+    merged["reviewed"] = dict(new.get("reviewed") or {})
+    merged["reviewed"]["earlier"] = (before.get("earlier") or []) + [
+        {k: before[k] for k in ("date", "by", "note") if k in before}]
+    if old.get("young_release") or new.get("young_release"):
+        merged["young_release"] = old.get("young_release") or new.get("young_release")
+    return merged
+
+
 def accept_survey(out_dir: Path, verdicts: dict[str, str], by: str) -> list[str]:
     """Baselines from a survey for the pins of *verdicts* (``name==version`` ->
     what the review found); refused for a pin the locks no longer have in
@@ -1469,6 +1820,9 @@ def accept_survey(out_dir: Path, verdicts: dict[str, str], by: str) -> list[str]
             if not cached or _sha256(cached[0]) != data["sha256"]:
                 raise GateError(f"{spec}: {archive} is not the surveyed file")
         entry["reviewed"] = {"date": dt.date.today().isoformat(), "by": by.strip(), "note": note.strip()}
+        old = load_baseline(name, version)
+        if old is not None:
+            entry = merge_entries(old, entry)
         save_baseline(entry, locked)
         written.append(spec)
     return written
@@ -1564,6 +1918,8 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--scan-python", default="", help="python of the scanner venv (the full gate)")
     c.add_argument("--reduced-locks", type=Path, default=None,
                    help="when it passes: write each lock cut down to the inspected archives here")
+    c.add_argument("--lock", action="append", default=[],
+                   help="check only this lock (one of the gate's locks; repeatable) - what one build installs")
     r = sub.add_parser("review")
     r.add_argument("specs", nargs="+")
     r.add_argument("--platform", default="linux-x86_64")
@@ -1590,6 +1946,9 @@ def main(argv: list[str] | None = None) -> int:
     sv.add_argument("--scan-python", required=True)
     sv.add_argument("--only", default="")
     sv.add_argument("--platform", default="linux-x86_64")
+    sv.add_argument("--lock", action="append", default=[], help="survey only this lock (repeatable)")
+    sv.add_argument("--incomplete", action="store_true",
+                    help="also reviewed pins whose review lacks an archive of --platform (a macOS or Windows wheel)")
     asv = sub.add_parser("accept-survey")
     asv.add_argument("out", type=Path)
     asv.add_argument("verdicts", type=Path, help="JSON: name==version -> what the review found")
@@ -1619,12 +1978,20 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(f"unknown platform {p}")
     try:
         if args.command == "check":
-            results, general = run_check(platforms, scan_python=args.scan_python or None)
+            only = None
+            if args.lock:
+                unknown = [rel for rel in args.lock if rel not in LOCKS]
+                if unknown:
+                    print(f"supply-chain gate could not run: {', '.join(unknown)} is none of its locks "
+                          f"({', '.join(LOCKS)})", file=sys.stderr)
+                    return 2
+                only = tuple(dict.fromkeys(args.lock))
+            results, general = run_check(platforms, locks=only, scan_python=args.scan_python or None)
             problems = general + [p for res in results for p in res.problems]
             if args.report:
                 write_report(results, general, args.report, platforms)
             if args.reduced_locks is not None and not problems:
-                for path in write_reduced_locks(results, args.reduced_locks):
+                for path in write_reduced_locks(results, args.reduced_locks, locks=only, platforms=platforms):
                     print(f"reduced lock: {_shown(path)}")
             for p in problems:
                 print("FAIL", p.line())
@@ -1648,7 +2015,13 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "survey":
             only = {canonical(n) for n in args.only.split(",") if n.strip()} or None
-            print(f"surveyed {survey(args.out, platforms, args.scan_python, only)} pins into {args.out}")
+            bad = [rel for rel in args.lock if rel not in LOCKS]
+            if bad:
+                print(f"supply-chain gate could not run: {', '.join(bad)} is none of its locks", file=sys.stderr)
+                return 2
+            count = survey(args.out, platforms, args.scan_python, only, locks=tuple(args.lock) or None,
+                           incomplete=args.incomplete)
+            print(f"surveyed {count} pins into {args.out}")
             return 0
         if args.command == "accept-survey":
             verdicts = json.loads(args.verdicts.read_text(encoding="utf-8"))

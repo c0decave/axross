@@ -9,12 +9,13 @@ import select
 import signal
 import struct
 import sys
+import threading
 import time
 from itertools import chain, islice
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QEvent, QSocketNotifier, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QDragLeaveEvent, QFont, QFontMetricsF, QKeyEvent, QKeySequence, QTextCursor
 from PyQt6.QtWidgets import (
     QComboBox,
@@ -43,14 +44,6 @@ log = logging.getLogger(__name__)
 MIN_GRID_COLS = 20
 MIN_GRID_ROWS = 5
 
-# Per-tab buffer cap. A malicious remote (compromised SSH server,
-# local process producing infinite stdout) could otherwise saturate
-# RAM by flooding output. 32 MiB is deep enough that interactive
-# shell scrollback stays intact during realistic sessions, and tight
-# enough that any absurd flood gets truncated within a second of
-# arrival. Half-cap tail preservation keeps the RECENT output that a
-# user actually cares about when the flood arrives.
-TERMINAL_BUFFER_CAP_BYTES = 32 * 1024 * 1024
 
 #: A terminal's output poll: every POLL_INTERVAL_MS while the shell is
 #: quiet, at once again (POLL_BUSY_INTERVAL_MS) while it has more output
@@ -61,6 +54,13 @@ POLL_INTERVAL_MS = 50
 POLL_BUSY_INTERVAL_MS = 0
 OUTPUT_READ_BYTES = 16 * 1024
 OUTPUT_POLL_BUDGET_S = 0.025
+
+#: Input for a local shell that the pty does not take at once (a paste
+#: while the shell is busy) waits in a queue of at most this many bytes;
+#: it goes out whenever the pty takes more, PTY_WRITE_CHUNK at a time.
+#: The window never waits for the shell to read.
+PTY_WRITE_QUEUE_CAP = 16 * 1024 * 1024
+PTY_WRITE_CHUNK = 64 * 1024
 
 
 def drain_output(session, feed, *, budget_s: float | None = None) -> tuple[int, bool]:
@@ -172,11 +172,21 @@ _EDIT_KEYS: dict[int, bytes] = {
     Qt.Key.Key_Delete: b"\x1b[3~",
     Qt.Key.Key_PageUp: b"\x1b[5~",
     Qt.Key.Key_PageDown: b"\x1b[6~",
-    Qt.Key.Key_Return: b"\n",
-    Qt.Key.Key_Enter: b"\n",
+    # CR, as a terminal's Enter key sends it: the pty turns it into a
+    # line end for a cooked read (ICRNL), a raw read (fzf, nano, a curses
+    # menu) takes it as Enter - LF would be Ctrl+J there.
+    Qt.Key.Key_Return: b"\r",
+    Qt.Key.Key_Enter: b"\r",
     Qt.Key.Key_Backspace: b"\x7f",
     Qt.Key.Key_Tab: b"\t",
     Qt.Key.Key_Escape: b"\x1b",
+}
+#: The editing keys xterm sends as CSI <n> ~, by <n>: with a modifier
+#: they become CSI <n> ; <modifier> ~.
+_TILDE_KEYS: dict[int, int] = {
+    Qt.Key.Key_Delete: 3,
+    Qt.Key.Key_PageUp: 5,
+    Qt.Key.Key_PageDown: 6,
 }
 _FUNCTION_KEYS: dict[int, bytes] = {
     Qt.Key.Key_F1: b"\x1bOP",
@@ -441,7 +451,19 @@ class TerminalEmulator(QPlainTextEdit):
         if self._has_plain_text(source):
             text = source.text()
             if text:
-                self.data_ready.emit(text.encode("utf-8"))
+                self.data_ready.emit(self._paste_bytes(text))
+
+    def _paste_bytes(self, text: str) -> bytes:
+        """*text* as a paste goes to the host: between ESC[200~ and
+        ESC[201~ while it asked for bracketed paste (the shell then inserts
+        it as one edit instead of running each line). The markers inside
+        the text are dropped: a pasted ESC[201~ would end the paste early
+        and the rest would run as typed."""
+        if not self._screen.bracketed_paste:
+            return text.encode("utf-8")
+        while "\x1b[200~" in text or "\x1b[201~" in text:
+            text = text.replace("\x1b[200~", "").replace("\x1b[201~", "")
+        return b"\x1b[200~" + text.encode("utf-8") + b"\x1b[201~"
 
     def dropEvent(self, event) -> None:  # noqa: N802 - Qt override
         # Not QPlainTextEdit's drop: it moves the caret to the drop point
@@ -570,6 +592,12 @@ class TerminalEmulator(QPlainTextEdit):
             return False
         if self._is_own_key(key, mods):
             return False
+        if key == Qt.Key.Key_Backtab:
+            return True  # Shift+Tab: the shell's (completion menus, back tab)
+        if (key in _CURSOR_KEYS or key in _TILDE_KEYS) and not mods & ~(ctrl | shift):
+            return True  # Ctrl / Shift + cursor and editing keys: word moves, selections
+        if mods == ctrl and key in (Qt.Key.Key_Space, Qt.Key.Key_At):
+            return True  # NUL (set-mark)
         if mods == ctrl | shift:
             return key == Qt.Key.Key_V
         if mods == ctrl:
@@ -626,36 +654,70 @@ class TerminalEmulator(QPlainTextEdit):
                 self._toggle_search_bar()
                 return
 
-        # Ctrl+<letter> → send as terminal control character
         if on_macos() and mods & Qt.KeyboardModifier.ControlModifier:
             return  # any other Command key is no input for the host
-        if mods == _shell_ctrl() and Qt.Key.Key_A <= key <= Qt.Key.Key_Z:
-            ctrl_byte = bytes([key - Qt.Key.Key_A + 1])  # Ctrl+A=0x01 .. Ctrl+Z=0x1a
-            self.data_ready.emit(ctrl_byte)
-            return
+        data = self._key_bytes(key, mods & ~Qt.KeyboardModifier.KeypadModifier, text)
+        if data:
+            self.data_ready.emit(data)
+
+    def _key_bytes(self, key: int, mods: Qt.KeyboardModifier, text: str) -> bytes:
+        """What xterm sends for *key* with *mods* (and Qt's *text* for it)."""
+        ctrl = bool(mods & _shell_ctrl())
+        alt = bool(mods & Qt.KeyboardModifier.AltModifier)
+        shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
+        esc = b"\x1b" if alt else b""
+        # xterm's modifier parameter: 1 + Shift 1 + Alt 2 + Ctrl 4.
+        modifier = 1 + shift + 2 * alt + 4 * ctrl
+
+        if ctrl and alt and text and text.isprintable():
+            # Windows reports AltGr as Ctrl+Alt: AltGr+Q is "@" on a German
+            # keyboard - the character typed, not a control key.
+            return text.encode("utf-8")
+        # Ctrl+<letter> (with Alt: ESC first) → the control character
+        if ctrl and not shift and Qt.Key.Key_A <= key <= Qt.Key.Key_Z:
+            return esc + bytes([key - Qt.Key.Key_A + 1])  # Ctrl+A=0x01 .. Ctrl+Z=0x1a
+        if ctrl and key in (Qt.Key.Key_Space, Qt.Key.Key_At):
+            return esc + b"\x00"
 
         # Cursor and editing keys
         if key in _CURSOR_KEYS:
+            if modifier > 1:  # CSI 1 ; m X in either cursor key mode
+                return b"\x1b[1;%d%s" % (modifier, _CURSOR_KEYS[key][-1:])
             table = (
                 _CURSOR_KEYS_APPLICATION
                 if self._screen.application_cursor_keys
                 else _CURSOR_KEYS
             )
-            self.data_ready.emit(table[key])
-            return
+            return table[key]
+        if key in _TILDE_KEYS and modifier > 1:
+            return b"\x1b[%d;%d~" % (_TILDE_KEYS[key], modifier)
+        if key == Qt.Key.Key_Backtab:
+            return b"\x1b[Z"
         if key in _EDIT_KEYS:
-            self.data_ready.emit(_EDIT_KEYS[key])
-            return
+            return (b"" if key in _TILDE_KEYS else esc) + _EDIT_KEYS[key]
 
         # Function keys, unmodified: a modified one is the application's.
         if key in _FUNCTION_KEYS:
-            if not mods & ~Qt.KeyboardModifier.KeypadModifier:
-                self.data_ready.emit(_FUNCTION_KEYS[key])
-            return
+            return b"" if mods else _FUNCTION_KEYS[key]
 
-        # Regular text
-        if text:
-            self.data_ready.emit(text.encode("utf-8"))
+        # Regular text; Alt+key as ESC + key (the shell's Meta: Alt+B a
+        # word back, Alt+. the last argument). Not on macOS, where Option
+        # types characters ("@", "|" on a German keyboard).
+        if not text:
+            return b""
+        if alt and not ctrl and not on_macos():
+            return b"\x1b" + text.encode("utf-8")
+        return text.encode("utf-8")
+
+
+def local_shell() -> str:
+    """The shell a local terminal starts: $SHELL when it names a program
+    that can be run, /bin/sh otherwise (unset, gone, not executable, a
+    folder)."""
+    shell = os.environ.get("SHELL") or ""
+    if os.path.isabs(shell) and os.path.isfile(shell) and os.access(shell, os.X_OK):
+        return shell
+    return "/bin/sh"
 
 
 class LocalTerminalSession:
@@ -675,6 +737,15 @@ class LocalTerminalSession:
         self._running = False
         # Windows: a winpty.PtyProcess (ConPTY) in place of the pty pair.
         self._winpty = None
+        # Its writer: pywinpty's write waits while the console's input pipe
+        # is full, so the queue goes out on a thread of its own; the lock
+        # guards _pending between it and the GUI thread.
+        self._winpty_cond = threading.Condition()
+        self._winpty_writer: threading.Thread | None = None
+        # Input the pty has not taken yet, and the notifier that says when
+        # it takes more (made on the GUI thread when first needed).
+        self._pending = bytearray()
+        self._write_notifier: QSocketNotifier | None = None
 
     @property
     def is_active(self) -> bool:
@@ -687,39 +758,60 @@ class LocalTerminalSession:
         except ImportError:  # Windows has no pty module
             self._start_winpty()
             return
+        from core.subprocess_env import clean_child_env
+
+        # Everything the child needs is worked out here, in the parent: a
+        # fork must not look anything up.
+        shell = local_shell()
+        # A frozen bundle points LD_LIBRARY_PATH at its own
+        # extraction directory, and the shell would resolve
+        # libreadline against ours — "symbol lookup error:
+        # undefined symbol: rl_trim_arg_from_keyseq".
+        env = clean_child_env(TERM="xterm")
+        folders = (self._cwd, self._fallback_cwd) if self._cwd else ()
         pid, master_fd = pty.fork()
         if pid == 0:
-            from core.subprocess_env import clean_child_env
+            # The child must never come back into the parent's Python code:
+            # that would run a second, hidden copy of the application.
+            # Whatever fails here - execve included - ends it.
+            try:
+                self._exec_shell(shell, env, folders)
+            except BaseException:
+                pass
+            os._exit(127)
+        # Non-blocking: a write the pty cannot take now is queued, never
+        # waited for (write()).
+        os.set_blocking(master_fd, False)
+        self._pid = pid
+        self._master_fd = master_fd
+        self._running = True
+        log.info("Local terminal started (PID %d, %s)", pid, shell)
 
-            shell = os.environ.get("SHELL", "/bin/sh")
-            # A frozen bundle points LD_LIBRARY_PATH at its own
-            # extraction directory, and the shell would resolve
-            # libreadline against ours — "symbol lookup error:
-            # undefined symbol: rl_trim_arg_from_keyseq".
-            env = clean_child_env(TERM="xterm")
-            # The child must reach execve whatever happens: falling back
-            # into the parent's Python code from a fork would run a second
-            # copy of the application - hence every step guarded.
-            # Without a folder the shell starts where axross runs, as always.
-            for index, folder in enumerate((self._cwd, self._fallback_cwd) if self._cwd
-                                           else ()):
+    @staticmethod
+    def _exec_shell(shell: str, env: dict, folders: tuple) -> None:
+        """In the forked child: enter the first folder of *folders* that
+        works and replace the process with *shell*. Returns only by raising."""
+        # Without a folder the shell starts where axross runs, as always.
+        for index, folder in enumerate(folders):
+            try:
+                os.chdir(folder)
+                env["PWD"] = folder
+                break
+            except OSError as exc:
                 try:
-                    os.chdir(folder)
-                    env["PWD"] = folder
+                    os.write(2, f"axross: cannot enter {folder}: {exc}\r\n".encode())
+                except OSError:
+                    pass
+                if index:
                     break
-                except OSError as exc:
-                    try:
-                        os.write(2, f"axross: cannot enter {folder}: {exc}\r\n".encode())
-                    except OSError:
-                        pass
-                    if index:
-                        break
+        try:
             os.execve(shell, [shell], env)
-        else:
-            self._pid = pid
-            self._master_fd = master_fd
-            self._running = True
-            log.info("Local terminal started (PID %d)", pid)
+        except OSError as exc:
+            try:
+                os.write(2, f"axross: cannot start {shell}: {exc}\r\n".encode())
+            except OSError:
+                pass
+            raise
 
     def _start_winpty(self) -> None:
         """Start ``COMSPEC`` in a ConPTY through pywinpty (Windows)."""
@@ -743,10 +835,111 @@ class LocalTerminalSession:
 
     def write(self, data: bytes) -> None:
         if self._winpty is not None:
-            self._winpty.write(data.decode("utf-8", "replace"))
+            self._write_winpty(data)
             return
-        if self._master_fd is not None:
-            os.write(self._master_fd, data)
+        if self._master_fd is None:
+            return
+        room = max(0, PTY_WRITE_QUEUE_CAP - len(self._pending))
+        if len(data) > room:
+            log.warning(
+                "Local terminal: the shell is not reading; %d bytes of input dropped",
+                len(data) - room,
+            )
+            data = data[:room]
+        self._pending += data
+        self._flush_pending()
+
+    def _write_winpty(self, data: bytes) -> None:
+        """Queue *data* for the ConPTY and return at once: the writer
+        thread hands it to pywinpty, whose write waits while the shell
+        does not read (a paste into a busy ``cmd``). Bounded like the
+        pty's queue (PTY_WRITE_QUEUE_CAP)."""
+        with self._winpty_cond:
+            proc = self._winpty
+            if proc is None:
+                return
+            room = max(0, PTY_WRITE_QUEUE_CAP - len(self._pending))
+            if len(data) > room:
+                log.warning(
+                    "Local terminal: the shell is not reading; %d bytes of input dropped",
+                    len(data) - room,
+                )
+                data = data[:room]
+            if not data:
+                return
+            self._pending += data
+            if self._winpty_writer is None:
+                self._winpty_writer = threading.Thread(
+                    target=self._winpty_write_loop,
+                    args=(proc,),
+                    name="axross-conpty-writer",
+                    daemon=True,
+                )
+                self._winpty_writer.start()
+            self._winpty_cond.notify()
+
+    def _winpty_write_loop(self, proc) -> None:
+        """The ConPTY's writer thread: the queue in order, PTY_WRITE_CHUNK
+        at a time, as text (a UTF-8 character split between two writes is
+        decoded whole). Ends when the session closes or the shell is gone."""
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        cond = self._winpty_cond
+        while True:
+            with cond:
+                while not self._pending and self._winpty is proc:
+                    cond.wait()
+                if self._winpty is not proc:
+                    return
+                chunk = bytes(self._pending[:PTY_WRITE_CHUNK])
+                del self._pending[:len(chunk)]
+            text = decoder.decode(chunk)
+            if not text:
+                continue
+            try:
+                proc.write(text)
+            except Exception as exc:  # noqa: BLE001 - the shell is gone
+                log.debug("Local terminal write ended: %s", exc)
+                with cond:
+                    if self._winpty is proc:
+                        self._pending.clear()
+                        self._winpty_writer = None
+                return
+
+    def pending_input(self) -> int:
+        """Bytes of input still waiting for the pty."""
+        return len(self._pending)
+
+    def _flush_pending(self) -> None:
+        """Hand the pty as much of the queued input as it takes now."""
+        fd = self._master_fd
+        while self._pending and fd is not None:
+            try:
+                written = os.write(fd, bytes(self._pending[:PTY_WRITE_CHUNK]))
+            except BlockingIOError:
+                break
+            except OSError as exc:  # the shell is gone
+                log.debug("Local terminal write ended: %s", exc)
+                self._pending.clear()
+                break
+            if not written:
+                break
+            del self._pending[:written]
+        self._watch_writable(bool(self._pending) and fd is not None)
+
+    def _watch_writable(self, on: bool) -> None:
+        notifier = self._write_notifier
+        if notifier is None:
+            if not on:
+                return
+            # Only where an event loop runs it: the GUI thread. Elsewhere
+            # the next write or output poll drains the queue.
+            app = QCoreApplication.instance()
+            if app is None or QThread.currentThread() != app.thread():
+                return
+            notifier = QSocketNotifier(self._master_fd, QSocketNotifier.Type.Write)
+            notifier.activated.connect(lambda *_args: self._flush_pending())
+            self._write_notifier = notifier
+        notifier.setEnabled(on)
 
     def read(self, size: int = 4096) -> bytes:
         """The shell's output, waiting up to 50 ms for some; b"" if none."""
@@ -761,10 +954,14 @@ class LocalTerminalSession:
             return self._read_winpty(size, timeout)
         if self._master_fd is None:
             return b""
+        if self._pending:
+            self._flush_pending()
         try:
             r, _, _ = select.select([self._master_fd], [], [], timeout)
             if r:
                 return os.read(self._master_fd, size)
+        except BlockingIOError:
+            pass  # select said ready, the read found nothing after all
         except OSError as e:
             self._running = False
             log.debug("Local terminal read ended: %s", e)
@@ -807,8 +1004,21 @@ class LocalTerminalSession:
         # — the shell exits in ms — and escalate to SIGKILL if it does
         # not.
         self._running = False
+        self._pending.clear()
+        if self._write_notifier is not None:
+            # Before the fd closes: a notifier on a closed fd fires on
+            # whatever gets that number next.
+            self._write_notifier.setEnabled(False)
+            self._write_notifier.deleteLater()
+            self._write_notifier = None
         if self._winpty is not None:
-            proc, self._winpty, self._pid = self._winpty, None, None
+            with self._winpty_cond:
+                # The writer sees the session gone and ends; one waiting in
+                # pywinpty's write is freed by the close below.
+                proc, self._winpty, self._pid = self._winpty, None, None
+                self._pending.clear()
+                self._winpty_writer = None
+                self._winpty_cond.notify_all()
             try:
                 proc.close(force=True)
             except (OSError, EOFError):
@@ -891,6 +1101,9 @@ class SSHTerminalSession:
         # bash_history kept normally. The safe default is True (red-
         # team / forensic engagements).
         self._suppress_history = bool(suppress_history)
+        # Input the channel has not taken yet (its send window is shut: the
+        # remote does not read); it goes out on the next write or poll.
+        self._pending = bytearray()
 
     @property
     def is_active(self) -> bool:
@@ -955,13 +1168,53 @@ class SSHTerminalSession:
         log.info("SSH terminal session started")
 
     def write(self, data: bytes) -> None:
-        if self._channel is not None and not self._channel.closed:
-            self._channel.sendall(data)
+        """Send *data* without waiting: ``sendall`` waits for the channel's
+        send window, which a remote that does not read (or a dead link)
+        keeps shut - the window froze on a paste. What the channel does not
+        take now waits in a bounded queue (PTY_WRITE_QUEUE_CAP)."""
+        if self._channel is None or self._channel.closed:
+            return
+        room = max(0, PTY_WRITE_QUEUE_CAP - len(self._pending))
+        if len(data) > room:
+            log.warning(
+                "SSH terminal: the remote is not reading; %d bytes of input dropped",
+                len(data) - room,
+            )
+            data = data[:room]
+        self._pending += data
+        self._flush_pending()
+
+    def pending_input(self) -> int:
+        """Bytes of input still waiting for the channel."""
+        return len(self._pending)
+
+    def _flush_pending(self) -> None:
+        """Hand the channel as much of the queued input as its send window
+        takes now; ``send`` waits only while the window is shut, and
+        ``send_ready`` says it is not."""
+        channel = self._channel
+        while self._pending:
+            if channel is None or channel.closed:
+                self._pending.clear()
+                return
+            try:
+                if not channel.send_ready():
+                    return
+                sent = channel.send(bytes(self._pending[:PTY_WRITE_CHUNK]))
+            except Exception as exc:  # noqa: BLE001 - the channel is gone
+                log.debug("SSH terminal write ended: %s", exc)
+                self._pending.clear()
+                return
+            if not sent:
+                return
+            del self._pending[:sent]
 
     def read(self, size: int = 4096) -> bytes:
         if self._channel is None or self._channel.closed:
             self._running = False
             return b""
+        if self._pending:
+            self._flush_pending()
         try:
             if self._channel.recv_ready():
                 return self._channel.recv(size)
@@ -983,6 +1236,7 @@ class SSHTerminalSession:
 
     def close(self) -> None:
         self._running = False
+        self._pending.clear()
         if self._starting:
             # Stop or a closed tab while the shell is being opened: start()
             # closes the channel when it arrives.
@@ -1103,13 +1357,13 @@ def _transport_alive(transport) -> bool:
 
 
 class _TerminalTab:
-    """Holds state for one terminal session: session object + output buffer."""
+    """Holds state for one terminal session: the session and its screen."""
 
     def __init__(self, cwd: str | None = None, remote_dir: str | None = None):
         self.session: LocalTerminalSession | SSHTerminalSession | None = None
-        self.buffer: str = ""  # accumulated output text
-        # What the tab shows; output of a tab in the background goes here
-        # too, so switching back shows the screen as the host left it.
+        # What the tab shows, its output's only copy (the scrollback is
+        # bounded); output of a tab in the background goes here too, so
+        # switching back shows the screen as the host left it.
         self.screen = VTScreen(80, 24)
         self.decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         # Folder a (re)started session begins in: local, or remote via cd.
@@ -1361,9 +1615,22 @@ class TerminalDock(QDockWidget):
                 return
         else:
             # Local shell
-            tab.session = LocalTerminalSession(cwd=tab.cwd)
-            tab.session.start()
-            tab.session.resize(*self._terminal.grid_size())
+            session = LocalTerminalSession(cwd=tab.cwd)
+            try:
+                session.start()
+                session.resize(*self._terminal.grid_size())
+            except Exception as e:  # noqa: BLE001 - no pty, no shell: said here
+                # It went to the application's error dialog, and the entry
+                # kept a session that never ran.
+                log.error("Failed to start local terminal: %s", e)
+                try:
+                    session.close()
+                except Exception:  # noqa: BLE001 - half-made: best effort
+                    log.debug("closing a local terminal that did not start", exc_info=True)
+                tab.session = None
+                self._terminal.message("\n--- " + tr("Error: {error}").format(error=e) + " ---\n")
+                return
+            tab.session = session
             self._status_label.setText(tr("Local Shell"))
 
         self._active_key = key
@@ -1398,7 +1665,6 @@ class TerminalDock(QDockWidget):
             if not tab.session.is_active:
                 tab.session.close()
                 tab.session = None
-                tab.buffer += "\n--- Session ended ---\n"
                 if key == self._current_key():
                     self._btn_start.setEnabled(True)
                     self._btn_stop.setEnabled(False)
@@ -1430,18 +1696,10 @@ class TerminalDock(QDockWidget):
             self._read_timer.setInterval(POLL_BUSY_INTERVAL_MS if more else POLL_INTERVAL_MS)
 
     def _take_output(self, tab: "_TerminalTab", data: bytes, shown: bool) -> None:
-        """One piece of *tab*'s output: into its buffer and its screen."""
+        """One piece of *tab*'s output: onto its screen. The screen keeps a
+        bounded scrollback (core.vt_screen.DEFAULT_SCROLLBACK lines), so a
+        flooding host cannot fill the memory."""
         text = tab.decoder.decode(data)
-        # Cap the buffer so a flooding remote can't saturate RAM.
-        # Keep the trailing half of the cap when we overflow —
-        # the recent output is what the user cares about if the
-        # flood just arrived.
-        if len(tab.buffer) + len(text) > TERMINAL_BUFFER_CAP_BYTES:
-            keep = TERMINAL_BUFFER_CAP_BYTES // 2
-            combined = tab.buffer + text
-            tab.buffer = combined[-keep:]
-        else:
-            tab.buffer += text
         if shown:
             self._terminal.append_output(text, render=False)
         else:
@@ -1452,10 +1710,6 @@ class TerminalDock(QDockWidget):
 
     def _clear_output(self) -> None:
         self._terminal.clear()
-        key = self._current_key()
-        tab = self._tabs.get(key)
-        if tab:
-            tab.buffer = ""
 
     def shutdown(self) -> None:
         self._read_timer.stop()

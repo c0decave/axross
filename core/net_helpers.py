@@ -902,9 +902,11 @@ def archive_inspect(path: str, *, max_entries: int = 100_000) -> list[ArchiveEnt
 def _archive_inspect_zip(path: str, max_entries: int) -> list[ArchiveEntry]:
     import zipfile as _zip
 
+    from core.archive import open_zip
+
     out: list[ArchiveEntry] = []
     try:
-        with _zip.ZipFile(path) as zf:
+        with open_zip(path) as zf:
             for info in zf.infolist():
                 modified: datetime | None = None
                 try:

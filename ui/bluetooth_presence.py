@@ -37,7 +37,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import bluetooth_presence as BP
-from core.i18n import tr
+from core.i18n import tr, tr_n
 from ui.off_gui import run_off_gui
 from ui.close_corner import add_close_corner
 from ui.icon_provider import set_window_icon
@@ -357,7 +357,12 @@ class PresenceDialog(QDialog):
         except OSError as exc:
             self.info.setText(tr("Export failed: {error}").format(error=exc))
             return False
-        self.info.setText(tr("{n} sessions written to {path}.").format(n=count, path=path))
+        self.info.setText(tr_n(
+            count,
+            "{n} session written to {path}.",
+            "{n} sessions written to {path}.",
+            path=path,
+        ))
         return True
 
     def _clear_clicked(self) -> None:

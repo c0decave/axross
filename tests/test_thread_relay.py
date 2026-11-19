@@ -171,3 +171,23 @@ def test_edge_scan_job_wakes_through_the_relay():
     job.start(lambda cancel, progress: 42)
     assert _pump_until(lambda: done, 5)
     assert done == [("done", 42)]
+
+
+def test_edge_a_relay_first_made_on_a_worker_still_calls_in_the_gui_thread(monkeypatch):
+    """Reproduced 2026-11-19: the first GuiCall of the process made on a
+    worker (axross.toast() from an extension's background work) built the
+    relay there; moveToThread moved the relay but not the slot PyQt had
+    connected for it on that worker, so every call ran on the worker."""
+    monkeypatch.setattr(TR, "_RELAY", None)
+    r = Receiver()
+    calls: list = []
+
+    def work():
+        calls.append(TR.GuiCall(r.on_result))
+        calls[0]("from a worker")
+
+    worker = threading.Thread(target=work)
+    worker.start()
+    worker.join()
+    assert _pump_until(lambda: r.calls)
+    assert r.calls == [(("from a worker",), threading.main_thread())]

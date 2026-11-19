@@ -147,7 +147,7 @@ az storage blob upload -c testcontainer -f myfile.txt -n myfile.txt
   "IMAP Test": {
     "name": "IMAP Test", "protocol": "imap",
     "host": "10.99.0.36", "port": 143,
-    "username": "imapuser", "imap_ssl": false
+    "username": "imapuser", "imap_ssl": false, "imap_starttls": false
   },
   "Telnet Test": {
     "name": "Telnet Test", "protocol": "telnet",

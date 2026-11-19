@@ -1,9 +1,14 @@
 """What the READMEs promise on their first screen, and the screenshots.
 
-- Every README opens with the same twenty benefits, one line each, right
-  under the tagline - the same count in every language.
+- Every README opens with ten punchlines, one line each, right under the
+  tagline - the same count in every language - and then its contents,
+  whose first entry is the extended README of its language
+  (docs/README-extended*.md: everything the short README leaves out).
+- A README stays short: no wall of text; the long parts are in the extended
+  README and the docs it links.
 - The three language READMEs show the same screenshots; each one exists,
-  and docs/screenshots holds no image that none of them shows.
+  the slideshow of each language shows every screenshot with a text, and
+  docs/screenshots holds no image that the slideshow does not show.
 - A screenshot carries no metadata chunk (text, EXIF, time, ICC profile):
   only the pixels and their density.
 - pyproject names no operating system that no CI job runs on, and names
@@ -28,15 +33,22 @@ except ModuleNotFoundError:  # Python 3.10
 ROOT = Path(__file__).resolve().parents[1]
 LANGUAGE_READMES = ("README.md", "README_de.md", "README_es.md")
 ALL_READMES = (*LANGUAGE_READMES, "README_PYPI.md")
+#: The full READMEs the short ones link first.
+EXTENDED = {"README.md": "docs/README-extended.md", "README_de.md": "docs/README-extended_de.md",
+            "README_es.md": "docs/README-extended_es.md"}
+#: At most this many lines: a front page, not a manual.
+MAX_LINES = 120
 SHOTS = ROOT / "docs" / "screenshots"
-#: The README shows these three - the two with four panes and one with the
-#: LLM agent; every other screenshot is in the slideshow of the same
-#: language, which the README links to.
-README_SHOTS = ["docs/screenshots/remote-panes.png", "docs/screenshots/quad-files-shells.png",
-                "docs/screenshots/agent-dock.png"]
+#: The README shows these five - the main window with four panes, then the
+#: LLM agent, the MCP catalog, the Markdown viewer and the Media Player; the
+#: slideshow of the same language, which the README links to, shows every
+#: screenshot with a text.
+README_SHOTS = ["docs/screenshots/remote-panes.png", "docs/screenshots/agent-dock.png",
+                "docs/screenshots/mcp-catalog.png", "docs/screenshots/markdown-viewer.png",
+                "docs/screenshots/media-player.png"]
 SLIDESHOWS = {"README.md": "slideshow.md", "README_de.md": "slideshow_de.md",
               "README_es.md": "slideshow_es.md"}
-BENEFITS = 20
+BENEFITS = 10
 _IMAGE = re.compile(r"!\[[^\]]*\]\((docs/screenshots/[^)\s]+)\)")
 _PNG_CHUNKS_ALLOWED = {b"IHDR", b"IDAT", b"IEND", b"pHYs"}
 
@@ -62,7 +74,7 @@ _HIGHLIGHTS = re.compile(r"^## (\d+) (?:highlights|Highlights|puntos fuertes)$",
 #: READMEs and the scripting section of docs/USAGE*.md.
 _PUBLIC_NAMES = re.compile(r"\b(\d+) (?:public (?:scripting )?names|öffentlichen (?:Scripting-)?"
                            r"Namen|nombres públicos(?: de scripting)?)")
-NAME_COUNT_DOCS = (*LANGUAGE_READMES, "docs/USAGE.md", "docs/USAGE_de.md", "docs/USAGE_es.md")
+NAME_COUNT_DOCS = (*EXTENDED.values(), "docs/USAGE.md", "docs/USAGE_de.md", "docs/USAGE_es.md")
 
 
 def highlight_count(text: str) -> tuple[int, int]:
@@ -110,7 +122,7 @@ def ci_operating_systems() -> set[str]:
 
 
 @pytest.mark.parametrize("name", ALL_READMES)
-def test_happy_each_readme_opens_with_twenty_one_line_benefits(name):
+def test_happy_each_readme_opens_with_ten_one_line_punchlines(name):
     block = benefit_block((ROOT / name).read_text(encoding="utf-8"))
     assert len(block) == BENEFITS, block
     for line in block:
@@ -128,7 +140,27 @@ def test_happy_the_language_readmes_show_the_same_existing_screenshots():
         assert (ROOT / rel).is_file(), rel
 
 
-def test_happy_the_readmes_show_three_shots_and_link_their_slideshow():
+@pytest.mark.parametrize("name", LANGUAGE_READMES)
+def test_happy_the_punchlines_are_followed_by_the_contents_with_the_extended_readme_first(name):
+    text = (ROOT / name).read_text(encoding="utf-8")
+    after = text.split(benefit_block(text)[-1], 1)[1].lstrip("\n")
+    heading, rest = after.split("\n", 1)
+    assert heading in ("## Contents", "## Inhalt", "## Contenido"), heading
+    first = rest.strip().splitlines()[0]
+    assert first.startswith("- **[") and f"]({EXTENDED[name]})" in first, first
+    extended = (ROOT / EXTENDED[name]).read_text(encoding="utf-8")
+    assert f"](../{name})" in extended  # and the way back
+    shot = text.index("](docs/screenshots/")
+    assert text.index(heading) < shot and text[:shot].count("\n") < 50  # a screenshot near the top
+
+
+@pytest.mark.parametrize("name", ALL_READMES)
+def test_happy_each_readme_stays_short(name):
+    lines = (ROOT / name).read_text(encoding="utf-8").splitlines()
+    assert len(lines) <= MAX_LINES, len(lines)
+
+
+def test_happy_the_readmes_show_their_gallery_and_link_their_slideshow():
     for name, slideshow in SLIDESHOWS.items():
         text = (ROOT / name).read_text(encoding="utf-8")
         assert _IMAGE.findall(text) == README_SHOTS, name
@@ -146,7 +178,7 @@ def test_happy_the_slideshows_show_the_same_screenshots_with_a_text_each():
             assert len(explanation) >= 40, (slideshow, block[:60])
     assert shown["slideshow.md"]
     assert shown["slideshow_de.md"] == shown["slideshow.md"] == shown["slideshow_es.md"]
-    assert not set(shown["slideshow.md"]) & set(README_SHOTS)
+    assert set(README_SHOTS) <= set(shown["slideshow.md"])
     for rel in shown["slideshow.md"]:
         assert (ROOT / rel).is_file(), rel
 
@@ -170,7 +202,7 @@ def test_happy_pyproject_names_every_os_a_release_is_built_for():
         assert name in meta["project"]["description"], name
 
 
-@pytest.mark.parametrize("name", LANGUAGE_READMES)
+@pytest.mark.parametrize("name", EXTENDED.values())
 def test_happy_the_binaries_item_names_every_release_os(name):
     text = (ROOT / name).read_text(encoding="utf-8")
     item = next(p for p in text.split("\n\n") if "`axross-slim`" in p and "22." in p)
@@ -182,8 +214,7 @@ def test_happy_the_binaries_item_names_every_release_os(name):
 
 
 def test_sad_no_screenshot_lies_unused():
-    shown = set(_IMAGE.findall((ROOT / "README.md").read_text(encoding="utf-8")))
-    shown |= set(_IMAGE.findall((ROOT / "slideshow.md").read_text(encoding="utf-8")))
+    shown = set(_IMAGE.findall((ROOT / "slideshow.md").read_text(encoding="utf-8")))
     on_disk = {f"docs/screenshots/{p.name}" for p in SHOTS.iterdir()}
     assert on_disk == shown
 
@@ -198,7 +229,7 @@ def test_sad_pyproject_claims_no_os_without_a_ci_job():
     assert claimed <= ci_operating_systems(), claimed
 
 
-@pytest.mark.parametrize("name", LANGUAGE_READMES)
+@pytest.mark.parametrize("name", EXTENDED.values())
 def test_happy_the_highlights_heading_counts_its_items(name):
     """It said 44 over 48 items in all three languages."""
     claimed, items = highlight_count((ROOT / name).read_text(encoding="utf-8"))

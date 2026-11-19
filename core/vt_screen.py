@@ -17,10 +17,17 @@ editors and ``top`` actually send:
 * CSI: cursor moves A B C D E F G H f d, erase J K X, insert / delete
   @ P L M, scroll S T, region r, save / restore s u, modes h l
   (?1049 / ?1047 / ?47 alternate screen, ?1 cursor keys mode, ?7
-  autowrap), device status n
+  autowrap, ?2004 bracketed paste), device status n
   (the cursor report goes to ``take_replies``); SGR m is accepted and
   ignored - the widget shows text, not colours.
-* OSC, DCS, PM and APC strings are consumed and dropped.
+* OSC, DCS, PM and APC strings are consumed and dropped, however long
+  (an ``imgcat`` picture, a sixel), up to BEL, ESC \\ or a CAN / SUB.
+* A C0 control inside a CSI sequence is executed and the sequence goes
+  on; ESC inside a sequence or a string starts a new one (xterm).
+* A character written over one half of a wide character erases the
+  other half as well; so do an erase, an insert or a delete that starts
+  or ends inside one, and a resize that cuts through one. A wide
+  character does not fit a screen one column wide and is not printed.
 
 Pure Python, no Qt: the widget renders ``scrollback`` + ``screen_lines()``
 and puts its caret on ``cursor``. Every count and size is clamped, so a
@@ -39,8 +46,6 @@ DEFAULT_SCROLLBACK = 5000
 #: Largest grid accepted by resize() - a stray huge size must not allocate.
 MAX_COLS = 1000
 MAX_ROWS = 500
-#: An OSC / DCS string longer than this is cut off (a title is short).
-_MAX_STRING = 4096
 #: More CSI parameters than this are ignored.
 _MAX_PARAMS = 32
 
@@ -58,8 +63,9 @@ _ASCII_RUN = re.compile(r"[\x20-\x7e]+")
 _ASCII_LINES = re.compile(r"(?:[\x20-\x7e]*\r\n)+")
 #: What follows CSI up to its final byte: parameters and intermediates.
 _CSI_PARAMS = re.compile(r"[\x20-\x3f]*")
-#: The end of an OSC / DCS / PM / APC string: BEL, or the ESC of ESC \.
-_STRING_END = re.compile(r"[\x07\x1b]")
+#: The end of an OSC / DCS / PM / APC string: BEL, the ESC of ESC \, or
+#: CAN / SUB, which abort it.
+_STRING_END = re.compile(r"[\x07\x18\x1a\x1b]")
 #: CSI parameters made of decimal numbers and ";" only - the usual kind.
 _PLAIN_PARAMS = re.compile(r"[0-9;]*")
 
@@ -70,6 +76,34 @@ def _width(ch: str) -> int:
     if unicodedata.combining(ch):
         return 0
     return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+
+
+def _erase_split_wide(line: list[str], start: int, stop: int) -> None:
+    """Cells *start* to *stop* (exclusive) of *line* are about to be written:
+    a wide character only one half of which is among them goes as a whole -
+    its other half becomes a blank, as xterm does. (Its right half is the
+    empty cell after it.)"""
+    if 0 < start < len(line) and line[start] == "" and _width(line[start - 1]) == 2:
+        line[start - 1] = " "
+    if stop < len(line) and line[stop] == "":
+        line[stop] = " "
+
+
+def _blank_cells(line: list[str], start: int, stop: int) -> None:
+    """Cells *start* to *stop* (exclusive) of *line* become blanks; a wide
+    character with one half among them goes whole (erase, CSI K / X)."""
+    stop = min(stop, len(line))
+    if start >= stop:
+        return
+    _erase_split_wide(line, start, stop)
+    line[start:stop] = [" "] * (stop - start)
+
+
+def _close_right_edge(line: list[str]) -> None:
+    """A wide character in the last cell of *line* lost its right half
+    (a resize, CSI @ pushed it over the edge): it goes as a whole."""
+    if line and line[-1] and _width(line[-1]) == 2:
+        line[-1] = " "
 
 
 class VTScreen:
@@ -103,6 +137,8 @@ class VTScreen:
         self._saved = (0, 0)
         # DECCKM (?1h): cursor keys send ESC O A instead of ESC [ A.
         self._app_cursor_keys = False
+        # ?2004h: the host wants a paste wrapped in ESC[200~ ... ESC[201~.
+        self._bracketed_paste = False
 
     def _blank_line(self) -> list[str]:
         return [" "] * self.cols
@@ -132,6 +168,13 @@ class VTScreen:
         must go out as ``ESC O A`` instead of ``ESC [ A``."""
         return self._app_cursor_keys
 
+    @property
+    def bracketed_paste(self) -> bool:
+        """True while the host asked for bracketed paste (``CSI ? 2004 h``,
+        what bash 5.1+, zsh and fish send with their prompt): a paste must
+        go out between ``ESC [ 200 ~`` and ``ESC [ 201 ~``."""
+        return self._bracketed_paste
+
     def take_replies(self) -> bytes:
         """Answers the host asked for (cursor reports); empty when none."""
         out = bytes(self._replies)
@@ -156,6 +199,8 @@ class VTScreen:
             """*grid* at the new size and how many rows left it at the top;
             blank rows below the cursor *row* go first."""
             grid = [(line + [" "] * cols)[:cols] for line in grid]
+            for line in grid:
+                _close_right_edge(line)
             while len(grid) > rows and not "".join(grid[-1]).strip() and len(grid) - 1 > row:
                 grid.pop()
             dropped = max(0, len(grid) - rows)
@@ -213,7 +258,10 @@ class VTScreen:
                     col = self._col
                     if col + (j - i) < self.cols and not self._wrap_pending:
                         # Fits on the row: no wrap, no scroll, just the cells.
-                        self._grid[self._row][col:col + j - i] = text[i:j]
+                        line = self._grid[self._row]
+                        if line[col] == "" or line[col + j - i] == "":
+                            _erase_split_wide(line, col, col + j - i)
+                        line[col:col + j - i] = text[i:j]
                         self._col = col + j - i
                     else:
                         self._print_run(text[i:j])
@@ -245,9 +293,20 @@ class VTScreen:
                         break
                 ch = text[i]
                 i += 1
-                self._state = _GROUND
                 if "@" <= ch <= "~":
+                    self._state = _GROUND
                     self._csi(ch, self._params)
+                elif ch < " ":
+                    # A control inside: ESC starts a new sequence, CAN / SUB
+                    # abort this one, the others run and it goes on.
+                    if ch == "\x1b":
+                        self._state = _ESC
+                    elif ch in "\x18\x1a":
+                        self._state = _GROUND
+                    else:
+                        self._control(ch)
+                else:  # anything else ends it
+                    self._state = _GROUND
             elif state == _ESC:
                 self._escape(text[i])
                 i += 1
@@ -257,26 +316,20 @@ class VTScreen:
                     self._state = _GROUND
                 i += 1
             elif state == _STRING:
-                # Dropped up to BEL or ESC; the character past _MAX_STRING
-                # ends it as well.
+                # Dropped up to BEL, ESC or CAN / SUB, however long: nothing
+                # of it is kept (a picture is megabytes of base64).
                 found = _STRING_END.search(text, i)
                 stop = found.start() if found else end
-                room = _MAX_STRING - self._string_len
-                if stop - i > room:
-                    self._string_len += room + 1
-                    self._state = _GROUND
-                    i += room + 1
-                    continue
                 self._string_len += stop - i
                 i = stop
                 if i < end:
-                    self._state = _GROUND if text[i] == "\x07" else _STRING_ESC
+                    self._state = _STRING_ESC if text[i] == "\x1b" else _GROUND
                     i += 1
-            else:  # _STRING_ESC: ESC \ ends the string, anything else too
+            elif text[i] == "\\":  # _STRING_ESC: ESC \ ends the string
                 self._state = _GROUND
-                if text[i] == "\\":
-                    i += 1
-                # Else that character is read again, on the ground.
+                i += 1
+            else:  # any other character: the ESC began a new sequence
+                self._state = _ESC
 
     def _control(self, ch: str) -> None:
         if ch == "\r":
@@ -323,8 +376,8 @@ class VTScreen:
 
     def _print(self, ch: str) -> None:
         width = _width(ch)
-        if width == 0:
-            return
+        if width == 0 or width > self.cols:
+            return  # a wide character does not fit a screen one column wide
         if self._wrap_pending:
             self._col = 0
             self._linefeed()
@@ -332,10 +385,13 @@ class VTScreen:
         if width == 2 and self._col == self.cols - 1:
             if not self._autowrap:
                 return
-            self._grid[self._row][self._col] = " "
+            line = self._grid[self._row]
+            _erase_split_wide(line, self._col, self._col + 1)
+            line[self._col] = " "
             self._col = 0
             self._linefeed()
         line = self._grid[self._row]
+        _erase_split_wide(line, self._col, self._col + width)
         line[self._col] = ch
         if width == 2:
             line[self._col + 1] = ""
@@ -358,6 +414,7 @@ class VTScreen:
             line = self._grid[self._row]
             col = self._col
             take = min(cols - col, end - i)
+            _erase_split_wide(line, col, col + take)
             line[col:col + take] = run[i:i + take]
             i += take
             if col + take < cols:
@@ -388,6 +445,7 @@ class VTScreen:
                          for line in lines]
         count = len(lines)
         first = lines[0]
+        _erase_split_wide(grid[-1], 0, len(first))
         grid[-1][:len(first)] = first  # over what the bottom row holds
         # What leaves the screen: its own rows, then the rows after the first.
         passing = max(1, count - rows + 1)  # lines[1:passing] leave as well
@@ -500,19 +558,20 @@ class VTScreen:
         elif final == "K":
             self._erase_line(arg(0, 0))
         elif final == "X":
-            line = self._grid[self._row]
-            for c in range(self._col, min(cols, self._col + arg())):
-                line[c] = " "
+            _blank_cells(self._grid[self._row], self._col, self._col + arg())
         elif final == "P":
             line = self._grid[self._row]
             n = min(arg(), cols - self._col)
+            _erase_split_wide(line, self._col, self._col + n)
             del line[self._col:self._col + n]
             line.extend([" "] * n)
         elif final == "@":
             line = self._grid[self._row]
             n = min(arg(), cols - self._col)
+            _erase_split_wide(line, self._col, self._col)
             line[self._col:self._col] = [" "] * n
             del line[cols:]
+            _close_right_edge(line)
         elif final == "L":
             if self._top <= self._row <= self._bottom:
                 for _ in range(min(arg(), self._bottom - self._row + 1)):
@@ -560,6 +619,8 @@ class VTScreen:
             self._wrap_pending = False
         elif mode == 1:
             self._app_cursor_keys = on
+        elif mode == 2004:
+            self._bracketed_paste = on
         elif mode == 7:
             self._autowrap = on
             if not on:
@@ -573,8 +634,7 @@ class VTScreen:
             start, end = 0, self._col + 1
         else:
             start, end = 0, self.cols
-        for c in range(start, min(end, self.cols)):
-            line[c] = " "
+        _blank_cells(line, start, end)
 
     def _erase_display(self, how: int) -> None:
         if how == 0:

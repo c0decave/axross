@@ -57,11 +57,66 @@
      },
      "pth": {},
      "sha256": "737adc3b14c2079480bcd10139fbab0b2ad683a24a6046ef69d9c769f4672c0a"
+    },
+    "sspilib-0.6.0-cp311-abi3-win_amd64.whl": {
+     "entry_points": [],
+     "files": {
+      "sspilib-0.6.0.dist-info/METADATA": "f89587704d23305a37b50c298e1a3d924676b318f90dc63f47e471e4e84b97a9",
+      "sspilib-0.6.0.dist-info/RECORD": "42a9b4ea9c6219b3aa2b5358abcd6bd03a2e8c26f4388cffb5c03c62b7817fca",
+      "sspilib-0.6.0.dist-info/WHEEL": "c1a6b54e329c129c415007d388e7d09bb530e8e9f7b95bde5d07387b1bb89ede",
+      "sspilib-0.6.0.dist-info/licenses/LICENSE": "4519a99726d7527fa1cefcbdf7d05b85606c4b59fb60a8b29e0a8da1d6a96e0c",
+      "sspilib-0.6.0.dist-info/top_level.txt": "aa885dba905cb3356d467303b0aea7d85f83f82c3ecfb34b352edeea6207e363",
+      "sspilib/__init__.py": "5ae08f92ba2fa161c826e89287421ae9d292c952fa54d0ee5b0e38276cdfe94a",
+      "sspilib/_credential.py": "a34cae7223b97ffd617c3a96d0b2fada2e22ede1d130fda88402ef33daf09cc9",
+      "sspilib/_filetime.py": "af72a3c101b4952ae716a792ae15358f403ecffef1358c37f5f13890c6e27884",
+      "sspilib/_sec_context.py": "1bdde0cd02313ca39498636a6733b64eb3953e8d8e8236ad2da2284a61e0c8af",
+      "sspilib/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sspilib/raw/__init__.py": "1b955d58c1227b110c78e98841b6c79f6598f7b0f5cbbe7de2f721f47030d753",
+      "sspilib/raw/_context_attributes.pyd": "3ae75a8e46fac4a005ca3424d831dc21686fff96f3513ad68385762ef0c9f151",
+      "sspilib/raw/_context_attributes.pyi": "dabe1c1d2924769717bce3de118d20e8957bea1399f0acb43bceae5c08c7f68a",
+      "sspilib/raw/_credential.pyd": "466c2d0045203deef71e94f3caf92fdd60a1a1b5e7917b875688c738406019d7",
+      "sspilib/raw/_credential.pyi": "b19109249f093ad64a31eeaa071954536a7f02aea51fe2cc5d6f678201938925",
+      "sspilib/raw/_credential_attributes.pyd": "c7f11afedfddf63072f914a23b95b54ad9b678bdfca3b6a5d657cffbc904e51e",
+      "sspilib/raw/_credential_attributes.pyi": "ee9724bff8fc1f94eb3afc96dcdca0c4413867f2d0d35809d7f6865f710d556a",
+      "sspilib/raw/_message.pyd": "6220a195aa56a0ab847bd1b91fcaf78bb57d63291aec2b0d131f3f736c13eaff",
+      "sspilib/raw/_message.pyi": "792836e8bfb5f018012d0b6780b6ed4575cecd54f3aa2eefe27c5caedf2ebd69",
+      "sspilib/raw/_ntstatus.pyd": "3d38e03303b7961788cfb80780ecdcd369d0970b393c6e1bf4821433cf43dfa0",
+      "sspilib/raw/_ntstatus.pyi": "d4fa9a5f63653959da0c4301d81462c2364c8ee40c81066e6517d8be8e209e67",
+      "sspilib/raw/_security_buffer.pyd": "667da0def0359fe29dd754f59409121e75a654a4e6d7b14f0e4d8aaf17505c60",
+      "sspilib/raw/_security_buffer.pyi": "348bf0ec3d5e01ad07d379f29d9c00ec7b35e72c603baceaa2ae7e664e65ee1d",
+      "sspilib/raw/_security_context.pyd": "3240c4201f47514a7ea888b0119fdcb26936e91ae019062bbbe7b093e4a05961",
+      "sspilib/raw/_security_context.pyi": "c984691a78eabde66fdf51b986f59d581d0b875fb93999b66743bef07885c9f5",
+      "sspilib/raw/_security_package.pyd": "b2f1506308f6d82805d3545f285f37649a40a7ef4bb7b7d68e98a3edc9784985",
+      "sspilib/raw/_security_package.pyi": "e6abdba7fdc02a7d6df62a9c5ac274b82d57741a6be670f9349423adad55d1a7",
+      "sspilib/raw/_text.pyd": "e24be7657f78d189e51b579c8b0edfd0b9a973009f650c66442a66f2913bb34c",
+      "sspilib/raw/_winerror.py": "38d2a93ccd3d83bd71ebc47eca55ee71cb8e4934df138e91dfb238e061b74d6e"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "e0b4e3f387a1fbc6e345d5f7a247ec1c069e65fb81eb1d6090537681b3bf74dd",
+     "native": {
+      "sspilib/raw/_context_attributes.pyd": "pe",
+      "sspilib/raw/_credential.pyd": "pe",
+      "sspilib/raw/_credential_attributes.pyd": "pe",
+      "sspilib/raw/_message.pyd": "pe",
+      "sspilib/raw/_ntstatus.pyd": "pe",
+      "sspilib/raw/_security_buffer.pyd": "pe",
+      "sspilib/raw/_security_context.pyd": "pe",
+      "sspilib/raw/_security_package.pyd": "pe",
+      "sspilib/raw/_text.pyd": "pe"
+     },
+     "pth": {},
+     "sha256": "b841fabe630101d9e2be6ba56407a2a539087ee85d6ca1477748c21135c9f636"
     }
    },
    "name": "sspilib",
    "provenance": {
     "sspilib-0.6.0-cp311-abi3-manylinux_2_28_x86_64.whl": {
+     "kind": "GitHub",
+     "repository": "jborean93/sspilib",
+     "workflow": "ci.yml"
+    },
+    "sspilib-0.6.0-cp311-abi3-win_amd64.whl": {
      "kind": "GitHub",
      "repository": "jborean93/sspilib",
      "workflow": "ci.yml"
@@ -77,8 +132,15 @@
    },
    "reviewed": {
     "by": "claude",
-    "date": "2026-11-05",
-    "note": "libsspi bundles MIT Kerberos / GSSAPI (SSPI on Linux): its network imports are Kerberos's; '4.3.2.26' is an OID fragment. Full capa (22 MB): the night scan. Content review only."
+    "date": "2026-11-20",
+    "earlier": [
+     {
+      "by": "claude",
+      "date": "2026-11-05",
+      "note": "libsspi bundles MIT Kerberos / GSSAPI (SSPI on Linux): its network imports are Kerberos's; '4.3.2.26' is an OID fragment. Full capa (22 MB): the night scan. Content review only."
+     }
+    ],
+    "note": "Windows amd64 wheel of the reviewed version: the Linux wheel's members, without sspilib.libs/libsspi (the bundled Kerberos/GSSAPI shim): on Windows the 9 Cython .pyd call the system's SSPI (Secur32.dll; capa: encrypt/decrypt via SSPI, plus CRT start-up code), no other library. Python identical, METADATA CRLF only. No new finding or YARA hit, no .pth, no hook, no network/process imports. Attestation verifies, same publisher (jborean93/sspilib ci.yml)."
    },
    "scans": {
     "capa": {
@@ -146,6 +208,34 @@
        "urls": []
       }
      },
+     "3240c4201f47514a7ea888b0119fdcb26936e91ae019062bbbe7b093e4a05961": {
+      "capabilities": [
+       "contain loop",
+       "inspect section memory permissions"
+      ],
+      "note": "",
+      "path": "sspilib/raw/_security_context.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "Secur32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "python3.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
      "37ea19312de59c8e6f8c7ddfc76cd0b257d054b83ed7dd20b9fc4ddd6d9c6399": {
       "capabilities": [
        "contain loop"
@@ -164,6 +254,57 @@
        "rpath": [
         "$ORIGIN/../../sspilib.libs"
        ],
+       "urls": []
+      }
+     },
+     "3ae75a8e46fac4a005ca3424d831dc21686fff96f3513ad68385762ef0c9f151": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "sspilib/raw/_context_attributes.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "Secur32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "python3.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "3d38e03303b7961788cfb80780ecdcd369d0970b393c6e1bf4821433cf43dfa0": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "sspilib/raw/_ntstatus.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "python3.dll"
+       ],
+       "rpath": [],
        "urls": []
       }
      },
@@ -187,6 +328,33 @@
        "rpath": [
         "$ORIGIN/../../sspilib.libs"
        ],
+       "urls": []
+      }
+     },
+     "466c2d0045203deef71e94f3caf92fdd60a1a1b5e7917b875688c738406019d7": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "sspilib/raw/_credential.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "Secur32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "python3.dll"
+       ],
+       "rpath": [],
        "urls": []
       }
      },
@@ -230,6 +398,63 @@
        "rpath": [
         "$ORIGIN/../../sspilib.libs"
        ],
+       "urls": []
+      }
+     },
+     "6220a195aa56a0ab847bd1b91fcaf78bb57d63291aec2b0d131f3f736c13eaff": {
+      "capabilities": [
+       "contain loop",
+       "decrypt data via SSPI",
+       "encrypt data via SSPI"
+      ],
+      "note": "",
+      "path": "sspilib/raw/_message.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "Secur32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "python3.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "667da0def0359fe29dd754f59409121e75a654a4e6d7b14f0e4d8aaf17505c60": {
+      "capabilities": [
+       "contain loop",
+       "parse PE header"
+      ],
+      "note": "",
+      "path": "sspilib/raw/_security_buffer.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "Secur32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "python3.dll"
+       ],
+       "rpath": [],
        "urls": []
       }
      },
@@ -295,6 +520,85 @@
        "rpath": [
         "$ORIGIN/../../sspilib.libs"
        ],
+       "urls": []
+      }
+     },
+     "b2f1506308f6d82805d3545f285f37649a40a7ef4bb7b7d68e98a3edc9784985": {
+      "capabilities": [
+       "contain loop",
+       "encode data using Base64"
+      ],
+      "note": "",
+      "path": "sspilib/raw/_security_package.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "Secur32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "python3.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "c7f11afedfddf63072f914a23b95b54ad9b678bdfca3b6a5d657cffbc904e51e": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "sspilib/raw/_credential_attributes.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "Secur32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "python3.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "e24be7657f78d189e51b579c8b0edfd0b9a973009f650c66442a66f2913bb34c": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "sspilib/raw/_text.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "python3.dll"
+       ],
+       "rpath": [],
        "urls": []
       }
      },

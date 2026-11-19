@@ -91,7 +91,7 @@ from core import mcp_client as MC
 from core.agent_net import parse_host
 from core.agent_sandbox import ENGINES, LEVELS, RULES, SandboxProfile, available
 from ui.format_utils import sandbox_label, ui_locale
-from core.i18n import tr
+from core.i18n import tr, tr_n
 from core.thread_relay import GuiCall
 from ui.close_corner import add_close_corner
 from ui.icon_provider import set_window_icon
@@ -2084,8 +2084,11 @@ class _AgentSettingsForm:
                                              "on this machine"))
             return
         self._server.pin = PIN.compute(self._server.command)
-        self.server_pin_label.setText(tr("Confirmed: {n} files").format(
-            n=len(self._server.pin.get("files", {}))))
+        self.server_pin_label.setText(tr_n(
+            len(self._server.pin.get("files", {})),
+            "Confirmed: {n} file",
+            "Confirmed: {n} files",
+        ))
 
     def test_server(self) -> None:
         """Connect the shown server in the background and list its tools."""
@@ -2414,10 +2417,14 @@ class _AgentSettingsForm:
             if result.error:
                 text = tr("Refused: {why}").format(why=result.error)
             else:
-                text = tr("{n} servers").format(n=len(result.entries))
+                text = tr_n(len(result.entries), "{n} server", "{n} servers")
                 if result.warnings:
-                    text += tr(", {n} entries skipped: {first}").format(
-                        n=len(result.warnings), first="; ".join(result.warnings[:3]))
+                    text += tr_n(
+                        len(result.warnings),
+                        ", {n} entry skipped: {first}",
+                        ", {n} entries skipped: {first}",
+                        first="; ".join(result.warnings[:3]),
+                    )
             inbox.put(("_show_source_check", location, text))
 
         threading.Thread(target=run, name="mcp-source-check", daemon=True).start()

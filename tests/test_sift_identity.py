@@ -314,7 +314,7 @@ def test_happy_e2e_several_files_are_offered_as_one_batch(win, fake) -> None:
     pump(PAST_DEBOUNCE)
     assert dock.isVisible()
     assert dock.batch_button.isVisible()
-    assert dock.batch_button.text() == "Analyse 2 file(s) with LLM"
+    assert dock.batch_button.text() == "Analyse 2 files with LLM"
     assert fake.asked == []  # a batch waits for the click: it goes to the model
 
 

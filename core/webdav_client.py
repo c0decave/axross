@@ -27,7 +27,7 @@ import weakref
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import IO, Any
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import quote, unquote, urljoin, urlsplit
 
 from core import transfer_hooks
 from core.append_helpers import read_existing_for_append
@@ -96,6 +96,15 @@ _RETRY_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "PROPFIND", "PUT", "DELETE
 _RETRY_ON_429_ONLY = frozenset({"MOVE", "COPY"})
 
 
+#: Requests the server may work on for long after the body arrived before
+#: it answers: a PUT that Nextcloud / ownCloud assemble, virus-scan or
+#: encrypt, a MOVE / COPY / DELETE of a large folder. Their answer gets
+#: _SLOW_ANSWER_TIMEOUT; the connection and every other answer the
+#: client's own time-out (30 s), so a dead server is still noticed soon.
+_SLOW_METHODS = frozenset({"PUT", "MOVE", "COPY", "DELETE"})
+_SLOW_ANSWER_TIMEOUT = 600.0
+
+
 def _may_retry(method: str, status) -> bool:
     method = method.upper()
     if method in _RETRY_ON_429_ONLY:
@@ -118,6 +127,30 @@ def _body_rewinder(data):
     except (OSError, ValueError):
         return None
     return lambda: seek(start)
+
+
+#: Redirect answers; only GET / HEAD let requests follow them.
+_REDIRECTS = frozenset({301, 302, 303, 307, 308})
+_MAX_REDIRECTS = 5
+
+
+def _same_resource(url: str, target: str) -> bool:
+    """True when *target* (a redirect's Location, absolute) names the same
+    path as *url* on the same host and port - a trailing slash added or
+    taken off, http upgraded to https. Anything else (a login page,
+    another host, https down to http) is not followed by a write."""
+    a, b = urlsplit(url), urlsplit(target)
+    if (a.hostname or "").lower() != (b.hostname or "").lower():
+        return False
+    if a.scheme == "https" and b.scheme != "https":
+        return False
+    if a.scheme not in ("http", "https") or b.scheme not in ("http", "https"):
+        return False
+    if a.scheme == b.scheme and a.port != b.port:
+        return False
+    if a.scheme != b.scheme and b.port not in (None, 443):
+        return False
+    return unquote(a.path).rstrip("/") == unquote(b.path).rstrip("/") and not b.query
 
 
 class WebDavRequestError(OSError):
@@ -310,7 +343,12 @@ class _WebDavClient:
         # decoded: hrefs are unquoted before the comparison, and a base
         # such as .../files/John%20Doe would otherwise never match.
         self._url_path = unquote(parts.path or "")
-        self._auth = (username, password) if username else None
+        # As UTF-8 bytes: requests encodes text credentials as latin-1, so
+        # "€" failed before any request and "café" was not the password
+        # Nextcloud / sabre check (RFC 7617: UTF-8).
+        self._auth = (
+            (username.encode("utf-8"), (password or "").encode("utf-8")) if username else None
+        )
         self._timeout = timeout
         self._proxies = dict(proxies) if proxies else None
         # The constructing thread's Session now: a proxy that cannot be
@@ -384,13 +422,48 @@ class _WebDavClient:
         from core import cloud_http
 
         url = self._full_url(path)
+        if method.upper() in _SLOW_METHODS:
+            kwargs.setdefault("timeout", (self._timeout, max(self._timeout, _SLOW_ANSWER_TIMEOUT)))
         kwargs.setdefault("timeout", self._timeout)
         kwargs.setdefault("auth", self._auth)
         rewind = _body_rewinder(kwargs.get("data"))
+        # requests turns PUT / DELETE / MOVE / MKCOL / PROPFIND into a GET
+        # on a 302 (an SSO login page, then taken for success) and sends
+        # the body on to another host on a 307: a write follows only a
+        # redirect to the same resource (_same_resource), sent again as
+        # it was.
+        follow_self = method.upper() not in ("GET", "HEAD")
+        if follow_self:
+            kwargs["allow_redirects"] = False
         attempt = 1
+        hops = 0
         while True:
             resp = self.session.request(method, url, **kwargs)
             status = getattr(resp, "status_code", None)
+            if follow_self and status in _REDIRECTS:
+                headers = getattr(resp, "headers", None) or {}
+                location = headers.get("Location") or ""
+                target = urljoin(url, location) if location else ""
+                close = getattr(resp, "close", None)
+                if close is not None:
+                    close()
+                if (
+                    target and hops < _MAX_REDIRECTS and rewind is not None
+                    and status != 303 and _same_resource(url, target)
+                ):
+                    log.info("WebDAV %s %s: HTTP %s to %s, sending it there",
+                             method, redact_url(url), status, redact_url(target))
+                    rewind()
+                    url = target
+                    hops += 1
+                    continue
+                raise WebDavRequestError(
+                    f"WebDAV {method} {redact_url(url)}: the server redirected it "
+                    f"(HTTP {status}) to {redact_url(target) or 'nowhere'}; nothing was done "
+                    "there. A login page or another address: check the profile's URL "
+                    "and sign-in.",
+                    status,
+                )
             if (
                 attempt >= cloud_http.ATTEMPTS
                 or rewind is None
@@ -926,10 +999,34 @@ class WebDavSession(SessionLifecycle):
             # but still serve the actual mount path. That's fine —
             # connection is alive, we'll find out on the first list.
             pass
+        except WebDavRequestError as e:
+            raise self._connect_refused(e) from e
         except Exception as e:
             raise OSError(f"Cannot connect to WebDAV server: {e}") from e
 
         log.info("WebDAV connected: %s@%s", username, self._display_url)
+
+    def _connect_refused(self, exc: "WebDavRequestError") -> OSError:
+        """The connect probe's error answer as a sentence that says what
+        to check (no errno: core.user_errors shows it as it is) - not
+        "WebDAV PROPFIND http://...: HTTP 401"."""
+        from core.i18n import tr
+
+        if exc.status == 401:
+            return PermissionError(tr(
+                "The WebDAV server refused the login. Check the user name and the password; "
+                "with two-factor login (Nextcloud, ownCloud) use an app password."))
+        if exc.status == 403:
+            return PermissionError(tr(
+                "The WebDAV server denied access to {url}. Check the URL: it must end at a "
+                "folder your account may open (Nextcloud: .../remote.php/dav/files/USER)."
+            ).format(url=self._display_url))
+        if exc.status in (405, 501):
+            return OSError(tr(
+                "{url} does not answer as a WebDAV server (HTTP {status}). Check the URL: "
+                "Nextcloud's is .../remote.php/dav/files/USER."
+            ).format(url=self._display_url, status=exc.status))
+        return OSError(f"Cannot connect to WebDAV server: {exc}")
 
     # ------------------------------------------------------------------
     # Identity / lifecycle
@@ -1156,7 +1253,7 @@ class WebDavSession(SessionLifecycle):
     # ------------------------------------------------------------------
 
     def normalize(self, path: str) -> str:
-        return posixpath.normpath(path) or "/"
+        return posixpath.normpath(path) if path else "/"  # normpath("") is "."
 
     def separator(self) -> str:
         return "/"

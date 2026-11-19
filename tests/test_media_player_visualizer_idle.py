@@ -270,10 +270,10 @@ def test_edge_the_bar_count_and_a_new_size_change_the_scope_trace() -> None:
     vis = make(noise(), "scope", size=(120, 100))
     try:
         ticks(vis, 3)
-        assert len(vis.trace) == 120
+        assert len(vis.trace) == 120 // vis.SCOPE_SPACING
         vis.resize(300, 100)
         APP.processEvents()
         ticks(vis, 1)
-        assert len(vis.trace) == min(vis.SCOPE_POINTS, 300)
+        assert len(vis.trace) == min(vis.SCOPE_POINTS, 300 // vis.SCOPE_SPACING)
     finally:
         vis.close()

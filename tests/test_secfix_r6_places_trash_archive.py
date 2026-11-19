@@ -29,6 +29,7 @@ import json
 import os
 import stat
 import sys
+import time
 import zipfile
 from pathlib import Path
 
@@ -393,8 +394,13 @@ def test_happy_restore_of_ordinary_and_older_entries_still_works(home):
     meta = json.loads((home / T.TRASH_DIRNAME / f"{tid}{T.META_SUFFIX}").read_text())
     assert "mac" in meta and meta["fingerprint"]["kind"] == "file"
     assert T.restore(LocalFS(), tid) == str(doc)
-    # An entry from before authenticated sidecars: restored outside protected places.
+    # An entry from before authenticated sidecars (older than the key: second
+    # security review): restored outside protected places.
     old = _plant(home, str(home / "proj" / "old.txt"), "old\n")
+    from core import extension_code_cache as ECC
+
+    later = time.time() + 60
+    os.utime(ECC.secret_path(), (later, later))
     assert T.restore(LocalFS(), old) == str(home / "proj" / "old.txt")
 
 

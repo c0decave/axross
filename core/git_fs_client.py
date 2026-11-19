@@ -74,6 +74,7 @@ import os
 import posixpath
 import re
 import shlex
+import socket
 import stat as st_mod
 import threading
 import time
@@ -288,6 +289,60 @@ def _checked_out_in(repo) -> set[str]:
 # ---------------------------------------------------------------------------
 
 
+def _without_credentials(url: str) -> str:
+    """*url* without its password - and for http(s) without any user
+    part (a token is often the user name: https://TOKEN@host/repo)."""
+    if "://" not in url:
+        return url
+    parts = urlsplit(url)
+    if "@" not in parts.netloc:
+        return url
+    userinfo, _, hostport = parts.netloc.rpartition("@")
+    user = userinfo.split(":", 1)[0]
+    keep_user = parts.scheme.lower() not in ("http", "https") and user
+    netloc = f"{user}@{hostport}" if keep_user else hostport
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+def _make_cache_private(cache_dir: Path, repo=None) -> None:
+    """The cache folders 0700, and no credentials in the cache's config.
+
+    dulwich's clone wrote the remote URL - with its token - into the
+    config, 0644 in folders 0755: any local user read the token and the
+    whole repository. Every fetch and push uses the URL in memory
+    (GitFsSession._connect_url), so the config keeps it without."""
+    for folder in (CACHE_ROOT, cache_dir):
+        try:
+            if folder.is_dir():
+                folder.chmod(0o700)
+        except OSError as exc:
+            log.warning("Git-FS: could not make %s private: %s", folder, exc)
+    if repo is None:
+        return
+    try:
+        config = repo.get_config()
+        changed = False
+        for section in list(config.sections()):
+            if not section or section[0] != b"remote":
+                continue
+            try:
+                url = config.get(section, b"url").decode("utf-8", "surrogateescape")
+            except KeyError:
+                continue
+            clean = _without_credentials(url)
+            if clean != url:
+                config.set(section, b"url", clean.encode("utf-8", "surrogateescape"))
+                changed = True
+        if changed:
+            config.write_to_path()
+            log.info("Git-FS: removed the credentials of a remote URL from %s", cache_dir)
+        config_file = cache_dir / "config"
+        if config_file.exists():
+            config_file.chmod(0o600)
+    except Exception as exc:  # noqa: BLE001 - a config dulwich cannot read stays as it is
+        log.warning("Git-FS: could not check %s/config for credentials: %s", cache_dir, exc)
+
+
 def _cache_dir_for(url: str) -> Path:
     """Deterministic per-URL cache dir under CACHE_ROOT. The hash
     salts on the full URL so http://x/repo and ssh://x/repo don't
@@ -342,8 +397,89 @@ def _proxied_transport(url: str, proxy_cfg) -> tuple[str, dict, list]:
     connect_url = urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
     kwargs: dict = {}
     if scheme != "git":
-        kwargs["ssh_command"] = f"ssh -o HostKeyAlias={shlex.quote(host)}"
+        # The real host's key - of its port: a bare alias is looked up and
+        # saved as port 22's entry.
+        alias = host if port == 22 else f"[{host}]:{port}"
+        kwargs["ssh_command"] = f"ssh -o HostKeyAlias={shlex.quote(alias)}"
     return connect_url, kwargs, [tunnel]
+
+
+#: Seconds a remote may take to accept a connection, and to send the next
+#: bytes of an answer. dulwich waits without a limit: a remote that took
+#: the connection and never answered held the session (and, during a
+#: write, every pane on it) for ever.
+GIT_CONNECT_TIMEOUT = 15
+GIT_READ_TIMEOUT = 60
+
+
+class _GitDaemonSocket(socket.socket):
+    """The socket of a git:// connection: :data:`GIT_CONNECT_TIMEOUT` to
+    connect, then :data:`GIT_READ_TIMEOUT` for each answer. dulwich's
+    TCPGitClient makes a socket without a timeout and takes no argument
+    for one: a git daemon (or a proxy tunnel) that took the connection
+    and never answered held the session for ever."""
+
+    def connect(self, address):
+        self.settimeout(GIT_CONNECT_TIMEOUT)
+        super().connect(address)
+        self.settimeout(GIT_READ_TIMEOUT)
+
+
+class _DulwichSocketModule:
+    """``socket`` as dulwich.client sees it: the module itself, but sockets
+    are :class:`_GitDaemonSocket`. Only TCPGitClient (git://) makes sockets
+    there; porcelain's clone, fetch and push reach it through its own
+    get_transport_and_path, so the module name is the one hook for all."""
+
+    socket = _GitDaemonSocket
+
+    def __getattr__(self, name):
+        return getattr(socket, name)
+
+
+def _install_git_daemon_timeouts() -> None:
+    try:
+        import dulwich.client as dulwich_client
+    except ImportError:
+        return
+    if not isinstance(getattr(dulwich_client, "socket", None), _DulwichSocketModule):
+        dulwich_client.socket = _DulwichSocketModule()
+
+
+def _with_network_timeouts(url: str, kwargs: dict) -> dict:
+    """*kwargs* for dulwich's transport of *url*, with time-outs: the HTTP
+    client's (or the proxy pool's), ssh's ConnectTimeout and keep-alive.
+    git:// has no hook in dulwich: its sockets get theirs from
+    :class:`_GitDaemonSocket` (installed on import)."""
+    kwargs = dict(kwargs)
+    if "://" in url:
+        scheme = urlsplit(url).scheme.lower()
+    elif _SCP_LIKE_RE.match(url) and not url.startswith(("/", ".")):
+        scheme = "ssh"
+    else:
+        return kwargs  # a local path
+    if scheme in ("http", "https"):
+        import urllib3
+
+        # A pool of our own: porcelain drops a "timeout" argument.
+        pool = kwargs.get("pool_manager")
+        if pool is None:
+            from dulwich.client import default_urllib3_manager
+
+            pool = kwargs["pool_manager"] = default_urllib3_manager(None, base_url=url)
+        pool.connection_pool_kw.setdefault(
+            "timeout", urllib3.Timeout(connect=GIT_CONNECT_TIMEOUT, read=GIT_READ_TIMEOUT))
+    elif scheme in ("ssh", "git+ssh", "ssh+git"):
+        base = kwargs.get("ssh_command") or os.environ.get("GIT_SSH_COMMAND") or "ssh"
+        alive = max(1, GIT_READ_TIMEOUT // 4)
+        kwargs["ssh_command"] = (
+            f"{base} -o ConnectTimeout={GIT_CONNECT_TIMEOUT} "
+            f"-o ServerAliveInterval={alive} -o ServerAliveCountMax=4"
+        )
+    return kwargs
+
+
+_install_git_daemon_timeouts()
 
 
 def _dulwich_url(url: str) -> str:
@@ -358,6 +494,47 @@ def _dulwich_url(url: str) -> str:
         return f"{scheme[4:].lower()}://{rest}"
     return url
 
+
+
+#: Code points git ignores in a path on HFS+ (core.protectHFS): ".g\u200cit"
+#: is ".git" there.
+_HFS_IGNORABLE = dict.fromkeys(
+    [*range(0x200C, 0x2010), *range(0x202A, 0x202F), *range(0x206A, 0x2070), 0xFEFF]
+)
+
+
+def _refuse_dotgit_path(sub: str) -> None:
+    """OSError(EINVAL) when a component of *sub* is ``.git`` as git's
+    verify_path sees it - any case, trailing dots or spaces (NTFS), an
+    NTFS stream or short name (``.git::$INDEX_ALLOCATION``, ``git~1``),
+    HFS-ignorable characters. git refuses to check out such a tree: one
+    commit of it made the branch unclonable for everyone."""
+    for part in sub.split("/"):
+        name = part.translate(_HFS_IGNORABLE).lower().rstrip(". ")
+        if name in (".git", "git~1", ".", "..") or name.startswith(".git:"):
+            raise OSError(
+                errno.EINVAL,
+                f"Git: {sub!r} cannot be committed: {part!r} is a name git keeps for its "
+                "own .git folder, and no clone could check it out",
+            )
+
+
+def _refuse_bad_branch_name(branch: str) -> None:
+    """OSError(EINVAL) when *branch* (a new branch, named by a path's first
+    part) is no valid branch name (git check-ref-format), or starts with
+    '-' (an option for every git command line)."""
+    from dulwich.refs import check_ref_format
+
+    try:
+        valid = check_ref_format(b"refs/heads/" + branch.encode("utf-8"))
+    except Exception:  # noqa: BLE001 - not even bytes git could take
+        valid = False
+    if not valid or branch.startswith("-"):
+        raise OSError(
+            errno.EINVAL,
+            f"Git: {branch!r} is no valid branch name (no '..', spaces, ~ ^ : ? * [ \\, "
+            "no '.lock' or '.' at the end, no '-' at the start)",
+        )
 
 class GitFsSession(SessionLifecycle):
     """Git-backed FileBackend."""
@@ -422,7 +599,7 @@ class GitFsSession(SessionLifecycle):
             log.info("Git-FS opened local repo: %s", self._workdir)
         else:
             cache_dir = _cache_dir_for(url)
-            cache_dir.parent.mkdir(parents=True, exist_ok=True)
+            cache_dir.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             from core.proxy import proxy_config_from_kwargs
 
             proxy_cfg = proxy_config_from_kwargs(_ignored)
@@ -430,10 +607,13 @@ class GitFsSession(SessionLifecycle):
                 self._connect_url, self._transport_kwargs, self._tunnels = _proxied_transport(
                     url, proxy_cfg
                 )
+            self._transport_kwargs = _with_network_timeouts(
+                self._connect_url, self._transport_kwargs)
             try:
                 if (cache_dir / ".git").exists() or (cache_dir / "HEAD").exists():
                     self._repo = Repo(str(cache_dir))
                     _guard_loose_objects(self._repo)
+                    _make_cache_private(cache_dir, self._repo)
                     self._workdir = str(cache_dir)
                     # Refresh from origin so we operate on current refs.
                     try:
@@ -467,6 +647,7 @@ class GitFsSession(SessionLifecycle):
                         errstream=io.BytesIO(),
                         **self._transport_kwargs,
                     )
+                    _make_cache_private(cache_dir, self._repo)
                     _guard_loose_objects(self._repo)
                     self._workdir = str(cache_dir)
             except BaseException:
@@ -970,7 +1151,7 @@ class GitFsSession(SessionLifecycle):
             return  # the session's view was stale already: GitBranchMoved
         changed = self._changed_paths(self._repo[before].tree, self._repo[after].tree)
         if not self._overlapping(set(changed), {sub.encode("utf-8") for sub in subs}):
-            self._branch_tips[branch] = after
+            self._set_branch_tip(branch, after)
             log.info(
                 "Git-FS: %s moved on origin (%s -> %s) by other files; committing on it",
                 branch, _short_sha(before), _short_sha(after),
@@ -1063,22 +1244,31 @@ class GitFsSession(SessionLifecycle):
     # ------------------------------------------------------------------
 
     def _refresh_branch_tips(self) -> None:
+        # Built aside and put in place at once: readers use the map without
+        # the lock, and while it was emptied and refilled a listing in
+        # another thread found "No such branch: main".
         with self._lock:
-            self._branch_tips = {}
+            tips: dict[str, bytes] = {}
+            remote: dict[str, bytes] = {}
             refs = self._repo.get_refs()
             for ref, sha in refs.items():
                 ref_str = ref.decode("utf-8", "replace") if isinstance(ref, bytes) else ref
                 if ref_str.startswith("refs/heads/"):
-                    self._branch_tips[ref_str[len("refs/heads/") :]] = sha
+                    tips[ref_str[len("refs/heads/") :]] = sha
                 elif (
                     ref_str.startswith("refs/remotes/origin/")
                     and ref_str != "refs/remotes/origin/HEAD"
                 ):
-                    name = ref_str[len("refs/remotes/origin/") :]
-                    # Only expose remote branches that don't already
-                    # have a local counterpart.
-                    if name not in self._branch_tips:
-                        self._branch_tips[name] = sha
+                    remote[ref_str[len("refs/remotes/origin/") :]] = sha
+            # Only expose remote branches that don't already have a local
+            # counterpart.
+            for name, sha in remote.items():
+                tips.setdefault(name, sha)
+            self._branch_tips = tips
+
+    def _set_branch_tip(self, branch: str, sha: bytes) -> None:
+        """One tip changed: a new map, never the one a reader iterates."""
+        self._branch_tips = {**self._branch_tips, branch: sha}
 
     def _list_branches(self, prefix: str = "") -> list[FileItem]:
         return [
@@ -1323,6 +1513,10 @@ class GitFsSession(SessionLifecycle):
         branch, sub = self._split_branch(path)
         if not branch or not sub:
             raise OSError("Git write: path must be /<branch>/<file>")
+        # Refused before any data is taken, as the commit refuses it.
+        _refuse_dotgit_path(sub)
+        if branch not in self._branch_tips:
+            _refuse_bad_branch_name(branch)
         prelude = b""
         if append:
             cap = self._MAX_APPEND_EXISTING_SIZE
@@ -1397,6 +1591,7 @@ class GitFsSession(SessionLifecycle):
             raise OSError(errno.EINVAL, f"Git rename: source and destination are the same: {src}")
         if dst_sub.startswith(src_sub + "/"):
             raise OSError(errno.EINVAL, f"Git rename: cannot move {src} into itself: {dst}")
+        _refuse_dotgit_path(dst_sub)
         if self.exists(dst):
             raise FileExistsError(errno.EEXIST, f"Git rename: destination already exists: {dst}")
         self.stat(src)  # FileNotFoundError when it is not there
@@ -1430,8 +1625,16 @@ class GitFsSession(SessionLifecycle):
 
     @_object_errors_as_oserror
     def copy(self, src: str, dst: str) -> None:
+        if dst.endswith("/"):
+            raise IsADirectoryError(errno.EISDIR, "A file name cannot end in '/'", dst)
         src = self.normalize(src)
         dst = self.normalize(dst)
+        if not all(self._split_branch(dst)):
+            # "/main" (a drop onto the branch folder) or "/": the copy
+            # committed a tree entry without a name - a tree git itself
+            # calls corrupt ("empty filename in tree entry"), pushed too.
+            raise IsADirectoryError(
+                errno.EISDIR, "Git copy: the target must be /<branch>/<file>", dst)
         with self.open_read(src) as fh:
             data = fh.read()
         src_branch, src_sub = self._split_branch(src)
@@ -1827,6 +2030,8 @@ class GitFsSession(SessionLifecycle):
         (100644 for a new file). In a URL session with ``auto_push``
         the commit is pushed to origin unless *push* is False (the
         first half of a two-commit change)."""
+        if blob_data is not None:
+            _refuse_dotgit_path(sub)
         self._commit_changes(
             branch,
             [sub],
@@ -1837,6 +2042,16 @@ class GitFsSession(SessionLifecycle):
 
     def _commit_changes(self, branch: str, subs: list[str], build, message: str,
                         push: bool = True) -> None:
+        for sub in subs:
+            if not branch or not sub or "" in sub.split("/"):
+                # Never a tree entry without a name.
+                raise OSError(errno.EINVAL, f"Git: no file name in /{branch}/{sub}")
+        if branch not in self._branch_tips:
+            _refuse_bad_branch_name(branch)
+        self._commit_changes_checked(branch, subs, build, message, push=push)
+
+    def _commit_changes_checked(self, branch: str, subs: list[str], build, message: str,
+                                push: bool = True) -> None:
         """One commit on ``branch``: the tree ``build(root)`` makes of the
         tip's root tree (an empty Tree on a new branch), *subs* the paths
         it changes (the sync with origin refuses when someone else changed
@@ -1957,7 +2172,7 @@ class GitFsSession(SessionLifecycle):
                     f"branch, so that work is kept; refresh the folder and repeat the "
                     f"change.",
                 )
-            self._branch_tips[branch] = commit.id
+            self._set_branch_tip(branch, commit.id)
             log.info("Git-FS commit %s on %s: %s", commit.id.decode()[:8], branch, message)
         if push and self._pushes():
             try:

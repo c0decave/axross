@@ -7,8 +7,8 @@ its licence (an SPDX expression), its upstream link and how it reaches the
 user (``ships``). From it come
 
 * Help > Third-Party Software… (``ui/third_party_dialog.py``),
-* the "Third-party software and thanks" section at the end of README.md,
-  README_de.md and README_es.md,
+* the "Third-party software and thanks" section at the end of the extended
+  READMEs (docs/README-extended.md, _de, _es), which README.md links,
 * the tables of THIRD_PARTY_LICENSES.md.
 
 ``python -m core.third_party --write`` regenerates the README sections and the
@@ -54,8 +54,12 @@ OPTIONAL_LISTS = ("pypi", "extras")
 MATCH_KEYS = ("modules", "libraries", "paths")
 MAX_PURPOSE = 200
 
-README_FILES = ("README.md", "README_de.md", "README_es.md")
-README_LANGUAGES = {"README.md": "en", "README_de.md": "de", "README_es.md": "es"}
+#: The extended READMEs (the short README.md links them): their thanks
+#: section is generated; links in it are relative to docs/.
+README_FILES = ("docs/README-extended.md", "docs/README-extended_de.md",
+                "docs/README-extended_es.md")
+README_LANGUAGES = {"docs/README-extended.md": "en", "docs/README-extended_de.md": "de",
+                    "docs/README-extended_es.md": "es"}
 LICENSES_FILE = "THIRD_PARTY_LICENSES.md"
 
 #: Top-level names of axross itself inside a bundle.
@@ -361,10 +365,10 @@ _README_TEXT = {
         "thanks": ("axross stands on the work of many people. Thank you to everyone who builds "
                    "and maintains the projects below - axross would not exist without them."),
         "source": ("The list is generated from "
-                   "[`resources/credits/third_party.json`](resources/credits/third_party.json), "
+                   "[`resources/credits/third_party.json`](../resources/credits/third_party.json), "
                    "the same data the app shows in **Help > Third-Party Software…**. Licence "
                    "texts and notes for redistributors are in "
-                   "[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)."),
+                   "[THIRD_PARTY_LICENSES.md](../THIRD_PARTY_LICENSES.md)."),
         "direct": ("Project", "Used for", "License", "Comes with"),
         "more": "{n} more libraries that come with the projects above",
         "indirect": ("Project", "Used by", "License", "Comes with"),
@@ -374,10 +378,10 @@ _README_TEXT = {
         "thanks": ("axross baut auf der Arbeit vieler Menschen auf. Danke an alle, die die "
                    "Projekte unten bauen und pflegen - ohne sie gäbe es axross nicht."),
         "source": ("Die Liste wird aus "
-                   "[`resources/credits/third_party.json`](resources/credits/third_party.json) "
+                   "[`resources/credits/third_party.json`](../resources/credits/third_party.json) "
                    "erzeugt, denselben Daten, die die App unter **Help > Third-Party "
                    "Software…** zeigt. Lizenztexte und Hinweise für Weiterverteiler stehen in "
-                   "[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)."),
+                   "[THIRD_PARTY_LICENSES.md](../THIRD_PARTY_LICENSES.md)."),
         "direct": ("Projekt", "Wofür", "Lizenz", "Kommt mit"),
         "more": "{n} weitere Libraries, die mit den Projekten oben kommen",
         "indirect": ("Projekt", "Benutzt von", "Lizenz", "Kommt mit"),
@@ -387,10 +391,10 @@ _README_TEXT = {
         "thanks": ("axross se apoya en el trabajo de muchas personas. Gracias a todos los que "
                    "crean y mantienen los proyectos de abajo: sin ellos axross no existiría."),
         "source": ("La lista se genera a partir de "
-                   "[`resources/credits/third_party.json`](resources/credits/third_party.json), "
+                   "[`resources/credits/third_party.json`](../resources/credits/third_party.json), "
                    "los mismos datos que la aplicación muestra en **Help > Third-Party "
                    "Software…**. Los textos de las licencias y las notas para quien redistribuye "
-                   "están en [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)."),
+                   "están en [THIRD_PARTY_LICENSES.md](../THIRD_PARTY_LICENSES.md)."),
         "direct": ("Proyecto", "Para qué", "Licencia", "Viene con"),
         "more": "{n} bibliotecas más que llegan con los proyectos de arriba",
         "indirect": ("Proyecto", "Usado por", "Licencia", "Viene con"),

@@ -68,9 +68,11 @@ def test_sad_sftp_lists_names_another_backend_cannot_take():
     assert names == ["ok.txt", *UNUSABLE]
 
 
-def test_edge_sftp_still_drops_names_no_posix_folder_holds():
+def test_edge_sftp_marks_names_no_posix_folder_holds():
+    """Such a name is listed as an unusable row (a NUL in front), not left
+    out; "." and ".." still go."""
     names = [i.name for i in _sftp(["ok.txt", *IMPOSSIBLE, ".", ".."]).list_dir("/r")]
-    assert names == ["ok.txt"]
+    assert names == ["ok.txt", *("\x00" + n for n in IMPOSSIBLE)]
 
 
 def _scp(output: str) -> SCPSession:
@@ -125,4 +127,4 @@ def test_edge_the_pane_shows_such_names_escaped():
 def test_happy_drop_impossible_names_keeps_dots_on_request():
     items = [FileItem(name=n) for n in (".", "..", "x", "a/b")]
     kept = path_policy.drop_impossible_names(items, keep_dots=True)
-    assert [i.name for i in kept] == [".", "..", "x"]
+    assert [i.name for i in kept] == [".", "..", "x", "\x00a/b"]

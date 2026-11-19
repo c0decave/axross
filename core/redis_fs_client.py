@@ -23,6 +23,7 @@ Requires: ``pip install axross[redis]`` — redis-py>=5.
 
 from __future__ import annotations
 
+import errno
 import logging
 import threading
 from datetime import datetime
@@ -64,6 +65,16 @@ def _proxied_connection_class(proxy_cfg, use_tls: bool):
 
     return ProxiedConnection
 
+
+#: redis-py waits for ever without these: a silent server (a TLS-only port
+#: opened without TLS, a black hole) held the connect and every command.
+_REDIS_TIMEOUTS = {
+    "socket_connect_timeout": 10,
+    "socket_timeout": 30,
+}
+#: Tries after a time-out or a lost connection: redis-py 8 makes three,
+#: with back-off - a silent server cost minutes before an error.
+_REDIS_RETRIES = 1
 
 _NS_META = "axross:meta:"
 _NS_DATA = "axross:data:"
@@ -118,6 +129,7 @@ class RedisFsSession(DbFsBackend):
                 db=int(database),
                 decode_responses=False,
                 protocol=2,
+                **_REDIS_TIMEOUTS,
             )
         else:
             client_kwargs.update(
@@ -128,9 +140,28 @@ class RedisFsSession(DbFsBackend):
                 ssl=bool(use_tls),
                 decode_responses=False,
                 protocol=2,
+                **_REDIS_TIMEOUTS,
             )
+        from redis.backoff import ExponentialBackoff
+        from redis.retry import Retry
+
+        client_kwargs["retry"] = Retry(ExponentialBackoff(cap=1.0), _REDIS_RETRIES)
         self._client = redis.Redis(**client_kwargs)
-        self._client.ping()
+        try:
+            self._client.ping()
+        except redis.exceptions.AuthenticationError as exc:
+            self._client.close()
+            raise PermissionError(
+                errno.EACCES, f"Redis {host}:{port}: the password was refused ({exc})"
+            ) from exc
+        except redis.exceptions.RedisError as exc:
+            # A silent server held ping() for ever (no time-out set); a
+            # refused one raised redis' own ConnectionError, no OSError.
+            self._client.close()
+            raise ConnectionError(
+                errno.ECONNREFUSED if "refused" in str(exc).lower() else errno.EIO,
+                f"Cannot connect to Redis {host}:{port}: {exc}",
+            ) from exc
         self._lock = threading.RLock()
         self._display = f"{'rediss' if use_tls else 'redis'}://{host}:{port}/{database}"
         log.info("Redis-FS connected: %s", self._display)

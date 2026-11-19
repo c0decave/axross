@@ -214,9 +214,17 @@ def test_sad_no_answers_no_and_a_failing_remove_keep_the_file(pics, pane):
         mock.patch.object(LocalFS, "remove", side_effect=PermissionError("read-only")),
         mock.patch.object(QMessageBox, "warning") as warned,
     ):
-        dlg.delete_current()
+        dlg.delete_current(permanent=True)
     assert pics[0].exists() and dlg.current_path() == str(pics[0])
     assert "read-only" in str(warned.call_args)
+    with (
+        mock.patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes),
+        mock.patch("core.trash.trash", side_effect=PermissionError("no trash here")),
+        mock.patch.object(QMessageBox, "warning") as warned,
+    ):
+        dlg.delete_current()
+    assert pics[0].exists() and dlg.current_path() == str(pics[0])
+    assert "no trash here" in str(warned.call_args)
     dlg.reject()
 
 

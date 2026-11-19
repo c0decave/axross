@@ -729,6 +729,9 @@ QToolTip {{
 QLabel[role="muted"] {{
     color: {text_muted};
 }}
+WrapAnywhereLabel[role="muted"] {{
+    color: {text_muted};
+}}
 QAbstractScrollArea::corner {{
     background: transparent;
     border: none;
@@ -755,8 +758,11 @@ def build_modern_qss(tokens: dict[str, str]) -> str:
 # Secondary text. Classic themes get the same ``role="muted"`` hook so
 # widgets can say "this is secondary" without hard-coding a grey that
 # is unreadable on one of the backgrounds.
-_CLASSIC_MUTED_DARK = '\nQLabel[role="muted"] {\n    color: #a6adc8;\n}\n'
-_CLASSIC_MUTED_LIGHT = '\nQLabel[role="muted"] {\n    color: #666666;\n}\n'
+# (ui.elided_label.WrapAnywhereLabel shows a long value muted too)
+_CLASSIC_MUTED_DARK = ('\nQLabel[role="muted"] {\n    color: #a6adc8;\n}\n'
+                       'WrapAnywhereLabel[role="muted"] {\n    color: #a6adc8;\n}\n')
+_CLASSIC_MUTED_LIGHT = ('\nQLabel[role="muted"] {\n    color: #666666;\n}\n'
+                        'WrapAnywhereLabel[role="muted"] {\n    color: #666666;\n}\n')
 
 
 def _muted_css(resolved: str) -> str:

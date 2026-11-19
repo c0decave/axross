@@ -213,7 +213,7 @@ class CompareDialog(QDialog):
         self._thread: QThread | None = None
         self._worker: _CompareWorker | None = None
 
-        self.setWindowTitle(tr("Compare panes"))
+        self.setWindowTitle(tr("Compare Panes"))
         self.resize(900, 520)
         self._build()
         self.refresh()
@@ -469,10 +469,14 @@ class CompareDialog(QDialog):
         by_side: dict[str, list[str]] = {"left": [], "right": []}
         for entry in entries:
             # Delete removes the copy that exists; for a two-sided entry
-            # the user must disambiguate in a pane.
-            if entry.left is not None and entry.right is None:
+            # the user must disambiguate in a pane. Only a row KNOWN to be
+            # on one side: one whose other side could not be listed (a
+            # folder refused or timed out, "unknown") has no other side
+            # seen, not none - deleting it removed what may well be the
+            # only copy that was compared.
+            if entry.status == Status.LEFT_ONLY and entry.left is not None:
                 by_side["left"].append(self.absolute_path("left", entry.rel_path))
-            elif entry.right is not None and entry.left is None:
+            elif entry.status == Status.RIGHT_ONLY and entry.right is not None:
                 by_side["right"].append(self.absolute_path("right", entry.rel_path))
 
         total = len(by_side["left"]) + len(by_side["right"])
@@ -531,7 +535,7 @@ class CompareDialog(QDialog):
             return
 
         overwrites = sum(1 for a in plan.actions if a.overwrites)
-        question = tr("Apply {n} change(s)?").format(n=len(plan.actions)) + f"\n\n{detail}"
+        question = tr_n(len(plan.actions), "Apply {n} change?", "Apply {n} changes?") + f"\n\n{detail}"
         if overwrites:
             question += "\n\n" + tr("This cannot be undone for the replaced files.")
         if QMessageBox.question(

@@ -16,7 +16,7 @@ from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
 
 from core import backend_registry
 from core.capability_contracts import contract_for_backend
-from core.path_policy import safe_join, safe_leaf, transfer_leaf
+from core.path_policy import MAX_RECURSIVE_DELETE_DEPTH, safe_join, safe_leaf, transfer_leaf
 from core.thread_relay import GuiCall
 from core.transfer_conflicts import IF_EXISTS_FAIL, IF_EXISTS_OVERWRITE, prefetch_stats
 from core.transfer_pool import MAX_PARALLEL, JobScheduler, parallel_transfers, valid_parallel
@@ -85,15 +85,41 @@ class _DestListings:
         self._backend = backend
         self._listings: dict[str, list] = {}
         self._created: set[str] = set()
+        #: Created folders no second source tree was merged into yet: what a
+        #: job may count as holding nothing but its own batch's new files.
+        self._fresh: set[str] = set()
+        #: folder_key of each created folder, worked out when first asked.
+        self._created_keys: dict[str, str] = {}
 
     def created(self, folder: str) -> None:
         self._listings[folder] = []
         self._created.add(folder)
+        self._fresh.add(folder)
+
+    def merged(self, folder: str) -> None:
+        """Another source tree goes into *folder*, which may be one this
+        batch made: its files are no longer known to be absent - an earlier
+        walk's job may have written the same name there."""
+        self._fresh.discard(folder)
+
+    def made_by_batch(self, source_backend: FileBackend, folder: str) -> bool:
+        """True when the source folder *folder* is one this batch made at
+        the destination: a copy into a link to the source itself lists
+        its own copy. The walk must not descend into it."""
+        from core.storage_identity import folder_key, same_namespace
+
+        if not self._created:
+            return False
+        if not same_namespace(source_backend, folder, self._backend, next(iter(self._created))):
+            return False
+        for made in self._created - self._created_keys.keys():
+            self._created_keys[made] = folder_key(self._backend, made)
+        return folder_key(source_backend, folder) in self._created_keys.values()
 
     def was_created(self, folder: str) -> bool:
         """True for a folder this batch made (its mkdir succeeded, so it
-        was not there and held nothing)."""
-        return folder in self._created
+        was not there and held nothing) that only one source tree fills."""
+        return folder in self._fresh
 
     def entries(self, folder: str) -> list:
         if folder not in self._listings:
@@ -295,6 +321,47 @@ def _source_metadata(item) -> tuple[int | None, float | None]:
     return mode, (mtime if mtime and mtime > 0 else None)
 
 
+#: Group and other read / search rights of a folder: a source folder that
+#: lacks one of them keeps others out of what is inside.
+_FOLDER_SHARED_BITS = 0o055
+
+
+def _stat_or_none(backend, path: str):
+    """``backend.stat(path)``, None when it fails (the caller goes on)."""
+    try:
+        return backend.stat(path)
+    except Exception as exc:  # noqa: BLE001 - only the folder's mode is at stake
+        log.debug("stat of %s for its mode failed: %s", path, exc)
+        return None
+
+
+def _keep_folder_private(backend, folder: str, source_item) -> None:
+    """Give a folder a copy just made no group/other right its source
+    folder lacks. Files keep their own mode (copy_mode), but a folder got
+    the server's default: a 0700 folder arrived as 0755, and the 0644
+    files in it - private through their folder before - were readable to
+    everyone there. The owner keeps full rights (the copy writes into it).
+    Only a folder more private than the usual 0755 costs a request; one
+    the listing gives no mode for, or a backend without chmod, stays as
+    made. Best effort: a refused chmod is logged, the copy goes on."""
+    if source_item is None or getattr(source_item, "is_link", False):
+        return
+    mode = int(getattr(source_item, "permissions", 0) or 0) & 0o777
+    if not mode or mode & _FOLDER_SHARED_BITS == _FOLDER_SHARED_BITS:
+        return
+    chmod = getattr(backend, "chmod", None)
+    if not callable(chmod):
+        return
+    from core.process_umask import process_umask
+
+    wanted = 0o700 | (mode & 0o077 & ~process_umask())
+    try:
+        chmod(folder, wanted)
+    except Exception as exc:  # noqa: BLE001 - a backend that cannot: the default stays
+        log.warning("Could not make the copied folder %s as private as its source (%o): %s",
+                    folder, wanted, exc)
+
+
 def _self_target_refusal(
     source_backend: FileBackend,
     source_path: str,
@@ -309,13 +376,13 @@ def _self_target_refusal(
     a folder copied into itself lists its own copy while making it and
     recurses until the stack or the path length gives out.
     """
-    from core.storage_identity import is_within, same_entry
+    from core.storage_identity import is_within, same_entry, same_target_message
 
     if is_dir:
         if is_within(source_backend, source_path, dest_backend, dest_path):
             return f"cannot copy or move a folder into itself: {dest_path}"
     elif same_entry(source_backend, source_path, dest_backend, dest_path):
-        return f"source and destination are the same: {dest_path}"
+        return same_target_message(source_backend, source_path, dest_backend, dest_path)
     return ""
 
 
@@ -741,6 +808,8 @@ class TransferManager(QObject):
                         move=move,
                         dest_listing=dest_listing,
                         conflict_plan=conflict_plan,
+                        source_item=(source_item if source_item is not None
+                                     and not isinstance(source_item, OSError) else None),
                     )
                     jobs.extend(sub_jobs)
                     continue
@@ -1144,20 +1213,68 @@ class TransferManager(QObject):
         move: bool = False,
         dest_listing: _DestListings | None = None,
         conflict_plan: ConflictPlan | None = None,
+        source_item=None,
+        depth: int = 0,
     ) -> list[TransferJob]:
-        """Recursively transfer a directory."""
+        """Recursively transfer a directory. *source_item* is the listing
+        entry (or stat) of *source_dir* when the caller has it: a folder
+        this makes keeps the privacy of its source (_keep_folder_private).
+
+        The source is listed before its copy is made, a folder this batch
+        made is not descended into, and the walk stops *depth*
+        MAX_RECURSIVE_DELETE_DEPTH levels down: a copy into a symlink to
+        the source itself (on a server, where the up-front guard may not
+        see the link) nested a new level for every one it made."""
         jobs = []
         if dest_listing is None:
             dest_listing = _DestListings(dest_backend)
+
+        if depth > MAX_RECURSIVE_DELETE_DEPTH:
+            reason = (f"folder nested deeper than {MAX_RECURSIVE_DELETE_DEPTH} levels, "
+                      f"its contents were not copied")
+            self._directory_error(source_dir, reason)
+            jobs.append(
+                self._refused_job(
+                    source_backend, dest_backend, source_dir, dest_dir, direction, move,
+                    reason, retryable=False,
+                )
+            )
+            return jobs
+
+        # List the source first: listed after its copy was made, a folder
+        # copied into a link to itself holds that copy, and the walk
+        # descends into it, and into the copy made there, and ...
+        try:
+            items = list(source_backend.list_dir(source_dir))
+        except Exception as e:  # noqa: BLE001 - a library error too: a refused row, not a stopped walk
+            log.error("Failed to list %s: %s", source_dir, e)
+            self._directory_error(source_dir, f"list failed: {e}")
+            jobs.append(
+                self._refused_job(
+                    source_backend, dest_backend, source_dir, dest_dir, direction, move,
+                    f"cannot read the folder, its contents were not copied: {e}",
+                    retryable=False,
+                    error=e,
+                    context="list",
+                )
+            )
+            return jobs
 
         # Create destination directory
         try:
             if dest_backend.exists(dest_dir):
                 if not dest_backend.is_dir(dest_dir):
                     raise OSError(f"destination exists and is not a directory: {dest_dir}")
+                # Merged into: maybe a folder an earlier walk of this batch
+                # made and filled - a rollback must not take its files for
+                # this job's own (TransferJob.dest_folder_new).
+                dest_listing.merged(dest_dir)
             else:
                 dest_backend.mkdir(dest_dir)
                 dest_listing.created(dest_dir)
+                _keep_folder_private(dest_backend, dest_dir,
+                                     source_item if source_item is not None
+                                     else _stat_or_none(source_backend, source_dir))
                 if move:
                     self._journal_move_folder(source_backend, dest_backend, source_dir,
                                               dest_dir, direction)
@@ -1172,23 +1289,6 @@ class TransferManager(QObject):
                     retryable=False,
                     error=e,
                     context="mkdir",
-                )
-            )
-            return jobs
-
-        # List source directory
-        try:
-            items = source_backend.list_dir(source_dir)
-        except Exception as e:  # noqa: BLE001 - a library error too: a refused row, not a stopped walk
-            log.error("Failed to list %s: %s", source_dir, e)
-            self._directory_error(source_dir, f"list failed: {e}")
-            jobs.append(
-                self._refused_job(
-                    source_backend, dest_backend, source_dir, dest_dir, direction, move,
-                    f"cannot read the folder, its contents were not copied: {e}",
-                    retryable=False,
-                    error=e,
-                    context="list",
                 )
             )
             return jobs
@@ -1239,6 +1339,11 @@ class TransferManager(QObject):
                     )
                     continue
             if item.is_dir:
+                if dest_listing.made_by_batch(source_backend, src_path):
+                    # This copy's own folder, seen through a link to the
+                    # source: copying it into itself never ends.
+                    log.warning("Transfer skipped %s: a folder this copy made", src_path)
+                    continue
                 sub_jobs = self._transfer_directory(
                     source_backend,
                     dest_backend,
@@ -1248,6 +1353,8 @@ class TransferManager(QObject):
                     move=move,
                     dest_listing=dest_listing,
                     conflict_plan=conflict_plan,
+                    source_item=item,
+                    depth=depth + 1,
                 )
                 jobs.extend(sub_jobs)
             else:
@@ -1532,6 +1639,15 @@ class TransferManager(QObject):
         if not (job.use_temp_file and job.temp_path and job.dest_backend is not None):
             return ""
         if job.transferred_bytes <= 0 and not job.resume:
+            return ""
+        from core.transfer_worker import _source_reads_at_offset, is_out_of_space
+
+        # What the worker removed is not kept: a full destination (the
+        # partial is what filled it) and a source a resume cannot read from
+        # an offset. The status line said "kept for Retry Failed" for them.
+        if job.error is not None and is_out_of_space(job.error):
+            return ""
+        if not _source_reads_at_offset(job.source_backend):
             return ""
         from core.server_ops import write_traits
 

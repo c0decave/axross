@@ -8,6 +8,11 @@ message is ``Command '[..., '-v', '<secret>']' returned non-zero exit
 status N`` - out of ``connect()`` into the "Connection Failed" dialog and
 the log. ``_redact_command`` masked only the debug line and the timeout
 error.
+
+Review round 2: there is no such fallback any more - a password on a
+command line is readable by every local user (/proc/<pid>/cmdline) and
+lands in sudo's log. The connect is refused instead, and nothing carries
+the secret.
 """
 
 from __future__ import annotations
@@ -53,18 +58,13 @@ class ChapErrorTest(unittest.TestCase):
             client._set_chap_if_needed()
         return calls
 
-    def test_sad_the_password_update_error_hides_the_secret(self) -> None:
-        with self.assertRaises(subprocess.CalledProcessError) as ctx:
-            self._run("node.session.auth.password")
-        exc = ctx.exception
-        self.assertNotIn(SECRET, str(exc))
-        self.assertNotIn(SECRET, repr(exc.cmd))
-        self.assertIn("node.session.auth.password", str(exc))  # still says what failed
-        self.assertEqual(exc.returncode, 1)
-
-    def test_happy_a_successful_update_is_unchanged(self) -> None:
-        calls = self._run(None)
-        self.assertIn(SECRET, calls[-1])  # the fallback still sends it (documented)
+    def test_sad_no_command_line_carries_the_secret(self) -> None:
+        calls: list[list[str]] = []
+        with self.assertRaises(PermissionError) as ctx:
+            calls = self._run(None)
+        self.assertNotIn(SECRET, str(ctx.exception))
+        for cmd in calls:
+            self.assertNotIn(SECRET, " ".join(cmd))
 
     def test_edge_a_failure_without_a_secret_keeps_its_command_and_code(self) -> None:
         with self.assertRaises(subprocess.CalledProcessError) as ctx:

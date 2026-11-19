@@ -13,7 +13,7 @@ Commander: you work with servers, cloud storage and mailboxes (SFTP, SMB,
 WebDAV, S3, IMAP, …) just as with the files on your computer - in the same
 window, with the same keys.
 
-- **As many panes as you like.** Split the window side by side or one
+- **As many panes as the window holds.** Split the window side by side or one
   above the other; every pane has its own connection - your computer on
   the left, a server on the right, a cloud bucket below. F5 copies from
   one pane to the other, F6 moves.
@@ -66,7 +66,11 @@ secrets, Azure connection strings) go to the OS keyring; profile
 JSON itself never carries plaintext credentials. A right click on a
 profile in Quick Connect (or on the profile list of the Connection
 Manager) offers *Delete Connection Config…*: after a question the
-profile goes, with its stored password.
+profile goes, with its stored password. Saving a profile under a new
+name moves its bookmarks, terminal bookmarks, Smart Folders and saved
+panes to the new name. A profile renamed in one axross stays renamed when
+another axross quits. A new profile cannot be named `local` - that is the
+local shell's name in terminal bookmarks and saved layouts.
 
 - **Where a connection opens.** While the target pane is unused - a local
   pane still at your home folder, not navigated, nothing selected, no
@@ -85,7 +89,9 @@ profile goes, with its stored password.
   encrypted or end-to-end; its tooltip says exactly what, and whether that
   was negotiated on the live connection or only configured (FTP cleartext,
   FTPS TLS 1.3 with a verified certificate, SMB 3.1.1 encrypted or signing
-  only, WebDAV http vs https, NFS AUTH_SYS cleartext ...).
+  only, WebDAV http vs https, NFS AUTH_SYS cleartext, IMAP, POP3 and LDAP
+  with STARTTLS ...); WinRM over HTTP (5985) or with an unchecked
+  certificate shows TLS with a weakness.
 
 - **Missing features.** *Help → Features…* lists every optional
   feature - connections, file analysis and archives, external tools
@@ -110,13 +116,18 @@ profile goes, with its stored password.
   Profile proxies cover axross-owned API/token traffic; the external
   browser consent page may use browser or system proxy settings.
   See [OAUTH_SETUP.md](../OAUTH_SETUP.md) for the per-provider app
-  registration recipe.
+  registration recipe. An expired or revoked sign-in says "Your sign-in to …
+  expired or was revoked. Reconnect to sign in again." - only Connect or
+  Reconnect opens the browser, and its sign-in must be done within 5 minutes.
 - **Proxy support.** SOCKS4/4a, SOCKS5, HTTP CONNECT and HTTPS proxies
   (TLS to the proxy), with Basic, NTLM and Negotiate authentication,
   per profile or as one global default (*Edit → Settings… → Network &
   Proxy*, also *Tools → Network & Proxy…*) with
   a bypass list and a PAC script. SOCKS5 resolves hostnames at the proxy
-  (no DNS leak); SOCKS4 sends host names as SOCKS4a. A "Test proxy"
+  (no DNS leak); SOCKS4 sends host names as SOCKS4a, rsync's too. With a
+  proxy, *IP Version* IPv4 or IPv6 needs the server's IP address: with a
+  host name SFTP and SCP refuse to connect, because the proxy resolves
+  names; an rsync host with shell characters is refused. A "Test proxy"
   button reports which stage fails, and each pane shows its route.
   Backends that cannot be proxied fail closed instead of going direct.
   See [PROXY_SUPPORT.md](PROXY_SUPPORT.md).
@@ -157,7 +168,11 @@ profile goes, with its stored password.
   A Form or a Site has no file form and says so on reading. Items of a shared drive that are reachable from My Drive
   (shared with you, a shortcut's folder) work as any other; the shared
   drives themselves are not listed (there is no `/Shared drives/<name>`
-  folder yet) - open them in the browser or add a shortcut to My Drive.
+  folder yet) - open them in the browser or add a shortcut to My Drive;
+  uploads, new folders and shares work on such items too. A cancelled
+  OneDrive or Google Drive overwrite whose last part may already have
+  reached the server is rolled back like any interrupted write, so the
+  old file is restored.
 - **Mail as files (IMAP, POP3, Exchange).** A message is
   `<id>_<subject>.eml`, the whole name at most 200 UTF-8 bytes (the id
   and `.eml` whole, a long subject cut at a character), so it can be
@@ -188,7 +203,9 @@ profile goes, with its stored password.
   your files back. That branch is pushed to origin under the same name,
   so it survives a deleted cache; when origin refuses it the message says
   it lives only in the local cache (`~/.cache/axross/git/...`) - copy the
-  files out soon. Nothing is lost either way. A rename (a file or a
+  files out soon. Nothing is lost either way. Files under a folder named
+  `.git` (any case) cannot be saved or moved into a repository, and a new
+  branch needs a valid git branch name. A rename (a file or a
   whole folder) is one commit and one push: it lands completely or not at
   all. Saves in quick succession (within 2 s of the last fetch or push)
   skip asking origin first; their push still refuses to overwrite
@@ -196,10 +213,140 @@ profile goes, with its stored password.
   the cached copy opens read-only and the status line says "offline".
   Scripts can pass `auto_push=False` and push with `axross.git_push()`.
 
+- **Databases, directories and more in Connect to Server.** SQLite
+  (*Database file*), Git (*Repository*: a URL, `user@host:path` or a local
+  path), PostgreSQL and MongoDB (*Database*: a name), Redis (*Database*: a
+  number, *Use TLS*), LDAP (Bind DN, *LDAPS*), SLP (*Scope*) and Exchange
+  (*Server* - empty autodiscovers from the *E-mail address*, which cannot
+  be combined with a proxy) connect from a saved profile; SVN takes a
+  *Repository URL* with optional user name and password. The TLS boxes of
+  IMAP, POP3, NNTP and LDAP move the port between 993/143, 995/110,
+  563/119 and 636/389; an imported profile without a port gets its
+  protocol's own; *IP Version* is shown only where the protocol honours it.
+  Without SSL/TLS, IMAP, POP3 and LDAP encrypt with STARTTLS (STLS,
+  StartTLS) before the login and check the certificate; a server that does
+  not offer it, or a network that removes it, is refused before the
+  password goes out, and what the server sent before the upgrade is not
+  believed after it. Untick *STARTTLS before the login* only for a server
+  with no TLS at all: the password then travels in clear text. Profiles
+  saved earlier use STARTTLS too. In scripts `imap://`, `pop3://` and
+  `ldap://` upgrade, `imap+plain://`, `pop3+plain://` and `ldap+plain://`
+  are plain, `ldaps://` is TLS on 636.
+  Waits: Git 15 s to connect and 60 s per answer (HTTP(S), SSH, git://),
+  PostgreSQL 10 s to connect, Redis 10 s / 30 s per command, MongoDB 10 s
+  / 60 s per answer - a URL's own options win. An NNTP connection the
+  server dropped while idle is opened again by itself. Exchange gives up a
+  busy server after 60 s in total, a wrong password fails at once (it is
+  not retried towards an account lockout), its autodiscover cache is in
+  `~/.cache/axross/exchangelib`, and a forwarded mail attached as an item
+  downloads as its `.eml` source. LDAP never follows a referral (it would
+  carry the password to another host).
+
+- **SSH, FTP and shell connections.** *IP Version* is honoured by SFTP,
+  SCP, FTP, FTPS, rsync, Telnet, Cisco Telnet and rsh (TFTP is IPv4 only).
+  FTPS on port 21 is explicit (AUTH TLS), on 990 implicit; *Verify the
+  server's TLS certificate* (FTPS, WinRM) is on by default. WinRM: port 5985
+  is HTTP, 5986 HTTPS (*Use HTTPS*); reads of any size, uploads up to
+  32 MiB. rsh needs no user name, and rsh and WMI work as profiles (WMI takes
+  `DOMAIN\user`, an account with remote WMI rights; *Test Connection*
+  really logs in). TFTP lists only the files named in *Files* that the
+  server has, up to *Largest file*. SCP transfers run beside browsing, list
+  folders of about 300 000 entries and take names that are no UTF-8; SCP
+  gives up a stalled handshake after 10 s. An unanswered keepalive shows an
+  SSH connection as disconnected; host keys are matched in lower case;
+  agent login needs a running ssh-agent with keys; a ProxyCommand's `%h` /
+  `%r` refuse shell characters and a leading `-`. Importing an SSH config
+  reads `Match` blocks no longer as part of the host above them, turns
+  `ProxyJump` into the matching ProxyCommand (`ssh -J … -W %h:%p`), which
+  is asked for on Connect like any imported ProxyCommand, and skips
+  negated patterns (`!host`); *Deploy SSH Key* asks before running an
+  imported ProxyCommand. The import also reads the files a config
+  `Include`s (relative to `~/.ssh`, at most 16 deep), takes the first
+  value of a setting as ssh does, and expands `%h` in HostName; *Deploy
+  SSH Key* reads a remote `authorized_keys` of up to 4 MiB. rsync over SSH needs a
+  key or the agent (no password can be typed) and a host key trusted once
+  through an SFTP profile; port 873 or empty means 22 in SSH mode and the
+  other way round; downloads stream and can be cancelled, uploads finish
+  as one block. rsh and Telnet stream transfers with progress and Cancel
+  (Telnet in pieces when the server has `dd` and `wc`). An rsh upload goes
+  to a temporary file beside the target and is moved onto it only once
+  all the data has arrived, so a cancelled or failed upload leaves the
+  file on the server unchanged, with its permissions. A Telnet command
+  times out after 30 s without output, not 30 s in total, and ends the
+  connection (the next action logs in again). Cisco Telnet
+  reports a wrong password at once; show commands may take up to 300 s.
+  An FTP listing stops at 300 000 entries. Cisco Telnet answers the
+  `[confirm]` of clear counters. Without base64, uuencode or xxd on the
+  server a Telnet upload takes only text without control characters (tabs
+  included). An NFSv3 kernel mount finds mountd through rpcbind, as mount
+  does. On S3 and Azure an object whose key holds an empty, `.` or `..`
+  part (such as `a//x`) is listed under a name with a replacement
+  character; it cannot be opened, copied or changed in axross, and a
+  folder copy lists it as not usable instead of leaving it out. WinRM: a
+  folder copy copies a junction or symbolic link inside it as the link,
+  with the same target, never what it points to; a folder delete removes a junction or symbolic link inside it as the link,
+  never what it points to; a folder with entries is deleted only
+  recursively; a name ending in a dot or a blank is refused; a command
+  stops at its time-out (exec) or after an hour. ADB: a command's answer
+  is at most 64 MiB, and exec stops at its time-out. Exchange sends every
+  request through the profile's proxy. The Git cache under
+  `~/.cache/axross/git` is private (0700) and keeps no password or token
+  of the remote URL. iSCSI with CHAP needs root, or sudo allowed to run
+  `cat` and `tee` on `/etc/iscsi/nodes`; the secret is never passed on a
+  command line. SNMP: `snmp_get` of a missing object raises
+  `FileNotFoundError`; SNMPv3 knows SHA-224 to SHA-512 and AES-192/256,
+  and an unknown protocol name is an error.
+
+- **Shares, devices and object stores.** SMB and DFS-N have a
+  *Workstation* row (the NTLM workstation name; WORKSTATION by default,
+  never the real host name); a missing or refused share says so. MTP has
+  no host or port but *Device* (the number the mounter lists, 1 is the
+  first) and *Mounter* (Automatic, jmtpfs, simple-mtpfs or go-mtpfs).
+  Azure has one *Account* row; a SAS token for one container or share
+  connects (it needs the List permission). WebDAV waits up to 10 minutes
+  for the server's work after a PUT, MOVE, COPY or DELETE (a Nextcloud
+  assembling a big upload); with two-factor login use an app password.
+  For an upload, delete, rename or new folder WebDAV follows a redirect
+  only to the same address (a trailing slash, http to https); any other
+  redirect - a login page, another host - is an error naming where it
+  pointed, and nothing is done there. User names and passwords go as
+  UTF-8, so passwords with €, umlauts or Cyrillic letters work. Deleting
+  or renaming an Azure blob that has snapshots deletes its snapshots too.
+  NFS without root or password-less sudo: set a machine name or UID in the
+  profile to use the built-in client, which needs no mount; a kernel mount
+  whose server is gone shows as disconnected after about 10 s. Wrong
+  passwords, missing buckets or containers and closed ports are named as
+  such, and a phone unplugged, an NFS server or iSCSI session gone is
+  noticed, so Reconnect opens a new session.
+
+- **Android phones (ADB).** Two modes in the profile. *TCP / Wi-Fi*:
+  connect the phone by USB once, enable USB debugging, run
+  `adb tcpip 5555`, then use the phone's IP and port 5555 (a SOCKS or HTTP
+  proxy can be used). *USB*: the phone on the cable; the USB serial (as
+  `adb devices` shows it) is optional - empty means the first phone found.
+  There is no login: axross uses the adb tool's key `~/.android/adbkey`
+  and creates it when missing; the phone learns no user or host name of
+  this computer. On the first connection the phone asks "Allow USB
+  debugging?" - unlock it and tap Allow within a minute (axross says
+  "Check the phone" while it waits) and tick "Always allow from this
+  computer"; without that tick every new connection asks again, and a
+  transfer then shares the one connection, so browsing waits for it.
+  Android 11's *Wireless debugging* (pairing code, random port, TLS) is
+  not supported - use `adb tcpip 5555`. USB on Linux needs libusb-1.0
+  from the system (`pip install 'axross[adb]'` brings the Python side);
+  a running adb server holds the phone (`adb kill-server` first), and
+  without permission to the device add a udev rule for Android devices,
+  your user to the `plugdev` group and replug the phone. After a dropped
+  connection the next action reconnects by itself; long actions on the
+  phone (a checksum, a copy or move there, deleting a big folder, an APK
+  install) are waited for up to an hour; uploads get `rw-r--r--` and keep
+  the source's modification time.
+
 ## Multi-pane layout
 
 - Add panes by splitting with **Ctrl+Shift+H** /
-  **Ctrl+Shift+V**, close with **Ctrl+W**.
+  **Ctrl+Shift+V**, close with **Ctrl+W**; the keyboard stays in the file
+  list (after closing, in the active pane's list).
 - Active pane gets a blue border; the **target** pane (where copies
   land) gets a green border. Last-focused pane becomes target.
 - A pane becomes the active one when the mouse rests in it for 0.5 s.
@@ -216,6 +363,14 @@ profile goes, with its stored password.
 - Drag-and-drop between panes initiates a transfer (works for
   local↔remote, remote↔remote, cross-protocol). **Ctrl+X** / **Ctrl+V**
   cut and paste entries between any two folders (see Transfers).
+- **Names.** A name no folder can hold that an SFTP, SCP or SVN server
+  lists (`../x`, `a/b`) is an unusable row - shown, never acted on,
+  listed as not usable by a folder copy. *Rename*, *New Folder*, *New
+  File…* and *Batch Rename…* take a backslash in a local name on
+  Linux/macOS, as copies do.
+- **Compare Panes** (*View → Compare Panes…*): *Delete…* removes only
+  entries known to exist on one side; a row whose other side could not
+  be read is left alone.
 
 ### Workspaces — several layouts, on several screens
 
@@ -227,7 +382,9 @@ PgUp** switch them, and each one keeps its own source and target pane.
 
 - **Several shells:** **Workspace → Add Terminal Pane** (also in the
   tab's right-click menu) puts another local shell into the workspace,
-  side by side with the panes already there.
+  side by side with the panes already there. A pinned terminal pane
+  (**Ctrl+Shift+P**) takes every key typed in its window, whatever has the
+  focus; dialogs, menus and the terminal's own search bar keep their keys.
 - **Rename:** double-click the tab, its right-click menu, or **Workspace
   → Rename Workspace…**.
 - **Detach to Window** (Workspace menu or the tab's right-click menu)
@@ -235,7 +392,7 @@ PgUp** switch them, and each one keeps its own source and target pane.
   screen. Closing that window brings the workspace back as a tab.
 - **Send a pane to another workspace:** right-click the pane and choose
   **Send to Workspace** - in a file pane's list (on a file or on the
-  empty area, at the end of the menu), on a pane's header, or in a
+  empty area, at the end of *More ▸*), on a pane's header, or in a
   terminal - and
   pick a workspace or **New Workspace**. The workspaces are numbered as
   their tabs stand (**1: Workspace 1**, **2: Logs**; a detached one says
@@ -314,7 +471,15 @@ General**, on by default) switches this off; the choice is stored in
 `session.json` at once and a start then shows
 the default single pane. A missing, unreadable or invalid
 `session.json` also starts with the default layout; the reason is in
-the log. **File → Restore Last Session** (**Ctrl+Shift+R**) still
+the log. A `session.json` that reads but cannot be restored is kept as
+`session.json.unrestorable-<time>-<id>` next to it before the default
+layout replaces it; one that cannot be read at all (not JSON, not UTF-8)
+is set aside as `session.json.unreadable-<time>-<id>`, and one over 1 MB is
+never written again. A layout of more than 256 entries comes back as far
+as it fits: the first workspaces in order. Preferences
+stored in one axross are kept when another one quits, and a terminal of a
+profile that no longer exists comes back as a placeholder that says so,
+never as a local shell. **File → Restore Last Session** (**Ctrl+Shift+R**) still
 rebuilds the saved layout on demand, and there remote file panes do
 connect.
 
@@ -350,11 +515,16 @@ the destination in the background and asks about every name that is
 already there: Overwrite, Overwrite if Newer, Skip, Rename
 (`name (1).ext`), each optionally for all remaining conflicts, or
 Cancel (nothing is copied). Folders merge; the names inside them are
-asked about. A skipped move keeps its source, and a file that appears
+asked about. On a destination that does not tell names apart by case
+(SMB, Windows, macOS, a FAT or exFAT disk) a name that differs only in
+case is asked about too. A skipped move keeps its source, and a file that appears
 at the destination after the prompt fails its job instead of being
 overwritten. A move removes its source only when the source still has
 the size it had before it was copied; one that changed meanwhile (a log
-still being written) fails its job and is kept.
+still being written) fails its job and is kept. A copy or move onto a
+hard link of its source does nothing and says so; both names stay. A
+move keeps a local source that was written to or replaced while it was
+copied, even at the same size.
 
 **Cut and Paste.** *Cut* (Ctrl+X, or right-click → Cut) only remembers
 the selected entries - nothing is removed, they are drawn dimmed while
@@ -385,11 +555,15 @@ list, and a walk that stops part-way says how much was queued.
 - **Resume.** Failed transfers can be resumed; partial bytes on the
   destination are picked up where they left off. A transfer that
   failed because the destination is full removes its partial file.
-  On the local disk the partial is continued only while it is a regular
+  Before a partial is continued, its first and last 64 KiB and windows
+  spread through it (one per 256 MiB, at least one) are compared with
+  the source. On the local disk the partial is continued only while it is a regular
   file of yours with one name (never through a link someone put in its
   place in a shared folder), and every temp file is written through the
   one descriptor it was opened with, created with the source's mode
-  (a 0600 key is never readable by others, not for a moment).
+  (a 0600 key is never readable by others, not for a moment) - also
+  over SFTP, SCP and on an NFS mount, where the temp file is created
+  with that mode.
 - **Retry.** "Retry Failed" replays every error-state transfer in
   the queue, each failed transfer once.
 - **Cancel All** also stops a copy or move whose folder walk is
@@ -446,7 +620,7 @@ native protocol doesn't support them.
 
 | Module | What it gives you |
 |---|---|
-| `core.atomic_io` | `atomic_write(backend, path, data)` — native-atomic on S3 / Azure / Dropbox / GDrive / OneDrive / IMAP / Rsync; tmp-then-rename elsewhere. |
+| `core.atomic_io` | `atomic_write(backend, path, data)` — native-atomic on S3 / Azure / Dropbox / GDrive / OneDrive / IMAP / Rsync; tmp-then-rename elsewhere. A file saved over SFTP keeps its owner and group; the temp file gets them before the first byte (a local file its group). |
 | `core.atomic_recovery` | Crash-recovery sweep for orphaned `.tmp-*.tmp` files. Per-pane navigate hook removes >1 h-old leftovers. Legacy `.axross-atomic-*.tmp` prefix still recognised. |
 | `core.server_ops` | `server_side_copy` / `server_side_move` with automatic fallback to `open_read` + `open_write` when the backend has no native copy. |
 | `core.watch` | File-watching API. Native inotify on LocalFS (with watchdog); polling everywhere else. Toggle in the path bar. |
@@ -459,22 +633,22 @@ native protocol doesn't support them.
 | `core.file_search` | The Find Files engine: name / type / content / size / date over folders of any backend, inside archives, streaming and cancellable; `fd` / `rg` locally when installed. |
 | `core.file_categories` | The type presets of Find Files (Images, Disk & VM images, Crypto wallets, Keys & certificates, …) by name, folder and content markers. |
 | `core.previews` | Local image thumbnailer with strict MIME allow-list, size caps, and a Qt-allocation gate. F3 / double-click. |
-| `core.archive` | Safe extraction of zip / tar / 7z and single compressed files (`.zip .xpi .jar .war .apk .epub .docx .xlsx .odt .tar .tar.gz .tgz .tar.bz2 .tbz2 .tar.xz .txz .tar.zst .tzst .7z .gz .bz2 .xz .zst`). Zip-slip / bomb / lying-metadata guards; symlink and hardlink members (tar, and ZIP symlinks) are left out - never created or followed - and the result names them; `.7z` needs the `[archive]` extra, zstd Python 3.14 or that extra. |
-| `core.packer` | Right-click → **Pack**: zip, tar.gz / .zst / .xz / .bz2, 7z (optionally AES-256 with encrypted file names), or one file as .gz / .zst / .xz / .bz2 — from any backend, never overwriting (`name (2).zip`), never leaving a half-written archive. |
+| `core.archive` | Safe extraction of zip / tar / 7z and single compressed files (`.zip .xpi .jar .war .apk .epub .docx .xlsx .odt .tar .tar.gz .tgz .tar.bz2 .tbz2 .tar.xz .txz .tar.zst .tzst .7z .gz .bz2 .xz .zst`). Zip-slip / bomb / lying-metadata guards; symlink and hardlink members (tar, and ZIP symlinks) are left out - never created or followed - and the result names them; `.7z` needs the `[archive]` extra, zstd Python 3.14 or that extra. An archive whose member names hold control characters or direction overrides (a name that would show as `invoiceexe.jpg` while it ends in `.exe`) is refused. An encrypted 7z and ZIP members encrypted with ZipCrypto open with their password: the pane and the archive view ask for it and keep it in memory only while the archive is open; a wrong one is said and asked again; an AES-encrypted ZIP member is named - open it with 7-Zip. ZIP names stored without the UTF-8 flag are read as unzip and 7-Zip read them: UTF-8 when valid, else the code page found across all names, else cp437. A 7z whose folders are stored read-only or closed (0000) is extracted whole; one with more members than the cap is refused before it is listed. Cancel stops a 7z, a RAR or a single compressed file while its data is written. With a password given, a 7z that needs none or is damaged before its encrypted part says so instead of "wrong password". A ZIP folder entry ending in a backslash is a folder; a tar that holds a file more than once extracts the last copy, as tar does. Names Windows does not allow (CON, NUL, COM1.txt, a:b, a trailing dot or space) are refused on Windows and when the target is on a Windows share, an NTFS or a FAT disk. |
+| `core.packer` | Right-click → **Pack**: zip, tar.gz / .zst / .xz / .bz2, 7z (optionally AES-256 with encrypted file names), or one file as .gz / .zst / .xz / .bz2 — from any backend, never overwriting (`name (2).zip`), never leaving a half-written archive. While it is written the archive is a hidden `.tmp-….tmp` file in the folder; one a killed pack leaves behind is removed by the folder's cleanup once it is an hour old. The archive gets a new file's usual mode (0666 less the umask); when it holds a file or folder the group or others cannot read, it is kept from them too. A name inside a packed folder that cannot be an archive member (a server's `../x`) is left out and counted. A local source is read as it was listed: one replaced by a link or by another file meanwhile fails the pack. A pack takes at most 200 000 files and folders together. A 7z keeps a file's permission bits without setuid, setgid or sticky, as ZIP and tar do. |
 | `core.elevated_io` | `pkexec`-gated local read for `/etc/shadow` etc. — axross never holds the privilege itself. "Open as root…" context-menu entry. |
-| `core.fuse_mount` | FUSE mount any FileBackend. Read-only by default; `writeable=True` enables create / write / unlink / mkdir / rename. Optional `[fuse]` extra. |
+| `core.fuse_mount` | FUSE mount any FileBackend. Read-only by default; `writeable=True` enables create / write / unlink / mkdir / rename. Files and folders show the permission bits the connection reports (without setuid and setgid; without write bits on a read-only mount). On a read-write mount a new file has the mode it was created with from its first byte, and chmod works. Optional `[fuse]` extra. |
 | `core.mcp_server` | Stdio-framed JSON-RPC MCP server exposing the configured backend as tools. `--mcp-write` adds mutating tools, capped to a path-traversal-safe root. |
 
 ## Right-click actions
 
-The right-click menu is one column. **Open** comes first (a folder opens in the pane, a file in its viewer, as `Enter` does), then *Open With ▸* (as text, as hex, as root, View Selected Media…, Preview Archive) and, for an archive, *Extract…*; then *Copy* (`Ctrl+C`), *Cut*, *Paste*, *Rename*; *Copy to Target Pane*, *Move to Target Pane*, *Pack ▸*; *Move to Trash* (`Del`) and *Delete Permanently* (`Shift+Del`); *New Folder*, *New File…*; *Properties…*, *Analyse ▸* (file type, disk image, checksum, versions, size, sift, Duplicate Finder, Find in This Folder) and *More ▸*: *Refresh*, view mode, View Media…, bookmark, Show Trash…, *Copy Path*, *Links ▸* (link target, new symlink / hardlink / XLink), *Metadata ▸*, *Tags ▸*, terminals, FUSE, Permissions…, encrypt / decrypt, the agent, and at the end *Send to Workspace ▸* for the pane itself. The top level stays one column even on a 1024x600 screen. More than three extension entries go into *Extensions ▸*. The table names each entry by its label.
+The right-click menu is one column; **F10**, **Shift+F10** and the Menu key open it from the keyboard, at the current row. **Open** comes first (a folder opens in the pane, a file in its viewer, as `Enter` does), then *Open With ▸* (as text, as hex, as root, View Selected Media…, Preview Archive) and, for an archive, *Extract…*; then *Copy* (`Ctrl+C`), *Cut*, *Paste*, *Rename*; *Copy to Target Pane*, *Move to Target Pane*, *Pack ▸*; *Move to Trash* (`Del`) and *Delete Permanently* (`Shift+Del`); *New Folder*, *New File…*; *Properties…*, *Analyse ▸* (file type, disk image, checksum, versions, size, sift, Duplicate Finder, Find in This Folder) and *More ▸*: *Refresh*, view mode, View Media…, bookmark, Show Trash…, *Copy Path*, *Links ▸* (link target, new symlink / hardlink / XLink), *Metadata ▸*, *Tags ▸*, terminals, FUSE, Permissions…, encrypt / decrypt, the agent, and at the end *Send to Workspace ▸* for the pane itself. The top level stays one column even on a 1024x600 screen. More than three extension entries go into *Extensions ▸*. The table names each entry by its label.
 
 | Action | Trigger | What it does |
 |---|---|---|
 | Disk Image… | Right-click (one `.img .raw .dd .iso .qcow2 .vdi .vmdk .vhd(x) .e01 …` file) | The container (qcow2, VDI, VMDK, VHD/VHDX, E01), the partition table (MBR with logical partitions, GPT) and each volume's file system and label, read in plain Python through any backend. A local image mounts one volume through a loop device over exactly its bytes: `udisksctl` without a prompt first (where polkit allows it), then `sudo`, then `pkexec`, then `udisksctl` letting polkit ask. The sudo password is asked once and kept in memory while axross runs (never on disk, never on a command line); *Remember the sudo password* (*Edit → Settings… → Security*) switches that off, which restores the order `udisksctl` (polkit asks), `pkexec`, `sudo` asked every time. Paranoid Security Mode never remembers it. sudo, pkexec and udisksctl are run only from root-owned system folders, never from `$PATH`. **Read-only** unless *Allow writing* is ticked and confirmed. The mounted folder opens in a new pane; *Unmount* gives the loop device back. Mounts made by axross are remembered across restarts (`~/.config/axross/mounts.json`, only those still mounted come back). *Identify File Type…* recognises disk images by content too (GPT, MBR, virtual disks) and offers *Disk Image…* for such a row, whatever its name. qcow2 / dynamic VDI / VMDK need converting (`qemu-img convert -O raw`) first; a fixed VDI mounts directly. |
 | New Folder | Right-click | `backend.mkdir(path)` on every writeable backend. |
-| Tags ▸ | Right-click a selection | Tick a coloured tag (Important and Review later exist; New Tag… adds one) for every selected file on any backend; dots in the Name column, the tags in its tooltip; `tag:<name>` in the filter field shows only those files; *View → Tagged Files…* lists every tag's files and goes there. Stored in `~/.config/axross/tags.json`. |
-| New File… | Right-click | Zero-byte file via `backend.open_write(path).write(b"")`. |
+| Tags ▸ | Right-click a selection | Tick a coloured tag (Important and Review later exist; New Tag… adds one) for every selected file on any backend; dots in the Name column, the tags in its tooltip; `tag:<name>` in the filter field shows only those files; *View → Tagged Files…* lists every tag's files; *Go to File* shows the file selected in a pane (a closed connection is opened like a bookmark, on the file's folder). Stored in `~/.config/axross/tags.json`. |
+| New File… | Right-click | Zero-byte file via `backend.open_write(path).write(b"")`; it never replaces a file of that name (also one saved meanwhile). |
 | New Symlink… | Right-click | Two prompts. Visible only on `supports_symlinks=True` backends. |
 | New Hardlink… | Right-click | Same shape; cross-device hardlinks surface as `OSError(EXDEV)`. |
 | Find in Index | `Ctrl+Shift+F` | Search the offline metadata index by name / ext / size. |
@@ -482,25 +656,27 @@ The right-click menu is one column. **Open** comes first (a folder opens in the 
 | Duplicate Finder | View menu, `Ctrl+Shift+D` | Groups indexed files by content hash and moves extra copies to the trash — see *Duplicate Finder* under *Tools*. |
 | View Media… / View Selected Media… | Right-click, View menu | Images, PDFs and videos of the folder (optionally recursive) or the selection as overview grid, click-through viewer or slideshow — see *Editors and viewers*. |
 | Show / Remove / Export Metadata… | Right-click | EXIF / GPS / XMP / IPTC, Office properties, PDF info, audio / video tags of the selection — or of the whole folder when nothing is selected (subfolders optional) — see *File metadata*. |
-| Calculate Size (N dirs) | Right-click on folders | Total size, file and folder count of each selected folder, walked in the background through the connection (*Cancel* in the status line); the result table sorts, and the sizes show in the pane's Size column until the folder is reloaded. **Hidden files count**: dotfiles, hidden folders and entries a backend flags hidden are summed like every other entry — as `du` does — whether or not the pane shows them. A link counts with its own size and is never followed; a folder that cannot be read is named in the result and skipped. |
+| Calculate Size (N folders) | Right-click on folders | Total size, file and folder count of each selected folder, walked in the background through the connection (*Cancel* in the status line); the result table sorts, and the sizes show in the pane's Size column until the folder is reloaded. **Hidden files count**: dotfiles, hidden folders and entries a backend flags hidden are summed like every other entry — as `du` does — whether or not the pane shows them. A link counts with its own size and is never followed; a folder that cannot be read is named in the result and skipped, and an entry whose size cannot be read makes the total a lower bound (the note says how many). |
 | Identify Files in This Folder… | Right-click (also on empty space); the button of the *Identify File Type* window | Every file directly in the folder (a selected folder, else the folder shown; subfolders are counted, not entered; hidden files included) identified like *Identify File Type…*, in the background and through the connection, so remote panes work too. Bounded: at most 2000 files, 64 KiB read per file, a 15 s timeout per read, *Cancel*; `file(1)` is not asked. The columns sort: name, detected type, MIME type, the *mismatch* verdict, size, a note — for a disk image its container, partition table and partition count (`Raw disk image, MBR, 2 partitions, 4.0 MiB`; at most 4 MiB read for it) — and, for local files when the `sift` extra is installed, sift's kind. A row opens *Disk Image…* (disk images) or *Properties…*; a double-click picks the one that fits. |
 | Analyse with sift / Analyse Folder with sift | Right-click (the folder entry also on empty space), the Actions menu, *Tools → Analyse with sift* | Opens the *Analysis (sift)* dock (sift's sieve icon, `Ctrl+Shift+I`) and explains the file there without a model. Several selected files, or a folder (the selected one, else the folder shown), are offered as one batch for the active LLM profile; *Tools → Analyse with sift* takes the selection, or the folder shown when nothing is selected. sift's own directory summary (`sift --dir-summary`, sift 0.1.96 and later) is not part of the dock: a folder is analysed file by file. Without sift (axross-slim, or a source install without the `sift` extra) every entry says that sift comes with axross-full or the `axross[sift]` extra and links *Help → Features…*. |
 | Identify File Type… | Right-click (selection) | One row per entry: the real type from the content (magic bytes via Qt's MIME database, puremagic, a built-in signature table), the MIME type, what the extension claims and a highlighted *mismatch* when they disagree, size, and for text the encoding and line endings. Reads at most 64 KiB per file through the backend, off the GUI thread, with a 15 s timeout per file — a dead remote gives a "timed out" row. Local files also show `file(1)`'s description when it is installed. Scripting: `axross.file_type(b, path)`. |
 | Open Terminal Here | Right-click (also on empty space) | Opens a shell in the terminal dock in the folder: a selected folder, otherwise the folder shown. Local panes get a local shell started in that folder; SFTP / SCP panes get a shell on the same SSH connection followed by `cd -- '<folder>'` (quoted with `shlex.quote`). Disabled, with the reason as tooltip, on protocols without a shell. |
 | Open External Terminal Here | Right-click (local panes) | Starts `$TERMINAL`, else the first installed of x-terminal-emulator, gnome-terminal, konsole, xfce4-terminal, alacritty, kitty, foot, wezterm, xterm — with the folder as working directory, detached, no shell involved. |
 | Copy / Cut / Paste | Right-click (Paste also on empty space), `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy remembers the selection for Paste and puts its paths on the clipboard as text for other programs; Cut remembers the selection and removes nothing (the entries are dimmed); Paste in any pane copies the copied entries, or moves the cut ones, into its folder through the transfer queue - see *Transfers*. A cut never pasted leaves everything in place. *More ▸ Copy Path* puts only the paths on the clipboard. |
-| Move to Trash | Right-click, `Del` | Universal recycle bin (a folder `.axross-trash` in the connection's home, so it works wherever the connection can rename; read-only protocols and ones without rename - Gopher, LDAP, NNTP, PJL, POP3, SLP, SVN, TFTP, WMI - have none, and there `Del` asks for a permanent delete instead). Runs like Delete Permanently: in the background, with the same second question for hidden entries. |
+| Move to Trash | Right-click, `Del` | Universal recycle bin (a folder `.axross-trash` in the connection's home, so it works wherever the connection can rename; read-only protocols and ones without rename - Gopher, LDAP, NNTP, PJL, POP3, SLP, SVN, TFTP, WMI - have none, and there `Del` asks for a permanent delete instead). Runs like Delete Permanently: in the background, with the same second question for hidden entries. A file on a RAM disk (`/run/user`, `/dev/shm`) is not moved into a trash on another disk; delete it permanently. On this machine's disk and over SFTP the trash is a folder only you can open (0700); on S3, SMB, WebDAV, FTP and the cloud backends it is the folder `.axross-trash` at the top of the share, where what you trash has that folder's permissions - Move to Trash, Remove Metadata and the Duplicate Finder say so before they put anything there, and offer *Delete Permanently* or cleaned copies instead. |
 | Delete Permanently | Right-click, `Shift+Del` | First counts what will go (folders, files, size, hidden entries) off the GUI thread, then asks - with **No** as the default button, so `Enter` keeps the files. A selected folder that holds hidden entries (dotfiles, or a backend's hidden flag) - or one the check could not fully read - needs a second OK whose default is No. The removal runs in the background: the status line shows the progress, Cancel stops at the next entry - also inside a folder being deleted on a local path, SMB, SFTP or FTP (SFTP removes a folder's files in batches of 16 requests at once and stops after the running batch), and the status line then says how much of that folder went (removed entries stay removed; a server that deletes a whole folder in one request, such as WebDAV or S3, finishes that folder first) - failures are listed per entry, and the folder is reloaded at the end. A path that is already being deleted is refused, also from the other pane. Three deletes ask once more, each with its own explanation and **No** as the default: INBOX on an IMAP server whose folders all live below it (Courier, Cyrus, Dovecot with the `INBOX.` prefix) - Yes deletes those folders, INBOX and its messages stay, because no IMAP server deletes INBOX; a DFS link on SMB - Yes deletes the contents of the share it leads to (named in the question), the link itself stays; and on WinRM/WMI a name made only of dots and spaces, which Windows reads as the folder above it. No deletes nothing. A script says yes with `keep_namespace_root=True`, `follow_dfs_link=True` or `confirm_alias=True`; the agent and MCP clients cannot, they get the explanation and tell you. |
 | Show Trash… | Right-click | Restore / permanently-delete dialog. |
 | Show Versions… | Right-click | Snapshot browser — Save Version As, Restore as Current. |
-| Show Checksum… | Right-click | Native checksum (S3 ETag, Drive md5, ssh sha256sum…) with stream-hash fallback. |
-| Extract to folder… | Right-click on a supported archive | Same-named sibling folder, cancellable, with the `core.archive` safety guards. Local backends only. |
-| Encrypt / Decrypt with passphrase | Right-click | AES-256-GCM. |
+| Show Checksum… | Right-click | Native checksum (S3 ETag, Drive md5, ssh sha256sum…) with stream-hash fallback; a local file is hashed with progress and *Cancel*, and where the server's own checksum fails, SHA-256 by reading the file is offered. |
+| Extract… | Right-click on a supported archive | Same-named sibling folder, cancellable, with the `core.archive` safety guards. Local backends only. |
+| Open a member | `Enter` / double-click in the archive view | A member whose content is an Office / OpenDocument file, PDF, e-book, picture, sound or video opens in the system application; anything else in the hex view. *Open with the System Application…* asks first; launchers and scripts are never handed over. |
+| Extract Selected | Button in the archive view | On a folder it takes the folder with everything in it - its stored permissions and empty subfolders too. |
+| Encrypt / Decrypt with passphrase | Right-click | AES-256-GCM. Decrypt writes a new plain-text file only you can read (0600). |
 | Open as root… | Right-click | Local-only; routes through `pkexec`. Hidden when polkit/pkexec are missing. |
 | Create XLink… | Right-click | Cross-protocol pointer file. |
-| Mount as FUSE (read-only / read-write)… | Right-click | Two menu entries so the mount mode is upfront. Toggles to "Unmount FUSE" while mounted. |
+| Mount as FUSE (read-only / read-write)… | Right-click | Two menu entries so the mount mode is upfront. Toggles to "Unmount FUSE" while mounted. Files and folders show the permission bits the connection reports (without setuid and setgid; without write bits on a read-only mount). On a read-write mount a new file has the mode it was created with from its first byte, and chmod works. |
 | Batch Rename… | Right-click (multi-select) | Find/Replace or regex with live preview + atomic rename. |
-| Permissions… | Right-click | chmod dialog with checkbox grid + octal input. |
+| Permissions… | Right-click | chmod dialog with checkbox grid + octal input. setuid, setgid and sticky show as `ls -l` does (`-rwsr-xr-x  (4755)`) in the Permissions column, *Properties…* and *Permissions…*. |
 
 ## Find Files
 
@@ -511,16 +687,17 @@ stays the pane's live filter.
 
 | Field | What it does |
 |---|---|
-| Name | Text without `* ? [ ]` matches anywhere in the name (`report` finds `Q3-report.pdf`); a pattern (`*.jpg`, `IMG_????.*`) the whole name. Case is ignored. *Regex* takes a regular expression instead. |
-| Contains | Text inside the file, line by line, in the first 32 MiB of each file; *Regex* and *Case-sensitive* as usual. |
+| Name | Text without `*` or `?` matches anywhere in the name, brackets included (`report` finds `Q3-report.pdf`, `Song [Remix]` finds itself); a pattern (`*.jpg`, `IMG_????.*`, `IMG_[0-9]*`) the whole name, where `[0-9]` is a set. Case and the Unicode form are ignored (`strasse` finds `Straße`, a Mac-written `Ärger` is found). A name search also lists matching folders (category *Folder*), unless Contains, Size or Types is set. *Regex* takes a regular expression instead. |
+| Contains | Text inside the file, line by line, in the first 32 MiB of each file - UTF-8, UTF-16 with a byte order mark, and for plain text (not *Regex*) also Latin-1 / Windows-1252; *Regex* and *Case-sensitive* as usual. |
 | Types | Any of the ticked presets: Images, Videos, Audio, Documents, Archives, Disk & VM images (dd / raw / img, ISO, qcow2, VDI, VMDK, VHD(X), E01 / AFF, DMG, LUKS…), Crypto wallets (Bitcoin Core / Litecoin `wallet.dat`, Electrum, Ethereum `UTC--…` keystores, Exodus, Monero, MultiBit / Armory, Wasabi, Atomic, Ledger Live, MetaMask / Phantom / … browser wallets), Keys & certificates (PEM / DER, `.p12` / `.pfx`, Java key stores, SSH and PuTTY keys, KeePass), Source code, Email, Databases. Decided by name and folder; for local files whose extension says nothing (`blob`, `wallet.dat`, `UTC--…`) also by the first bytes, and by `sift` when the `sift` extra is installed (`axross[sift]`). Types name file *kinds* — nothing looks for passwords or keys inside files. |
-| Size / Modified | `10K`, `1.5M`, `2G`; a date range. |
-| Inside archives | Also look into zip, tar, tar.gz / .bz2 / .xz / .zst, single .gz / .bz2 / .xz / .zst files and archives nested in them (3 levels); 7z and rar by member name. A hit reads `archive.zip!/folder/file.txt`. Bounded: 10 000 members and 1 GiB decompressed per archive, 64 MiB per nested archive, the extraction's 100:1 zip-bomb ratio; a remote archive is copied (at most 256 MiB) to a private temporary file first. |
+| Size / Modified | `10K`, `1.5M` (or `1,5M`), `2G`; a date range, both days included. |
+| Inside archives | Also look into zip, tar, tar.gz / .bz2 / .xz / .zst, single .gz / .bz2 / .xz / .zst files and archives nested in them (3 levels); 7z and rar by member name. A hit reads `archive.zip!/folder/file.txt`. Bounded: 10 000 members and 1 GiB decompressed per archive, 64 MiB per nested archive, the extraction's 100:1 zip-bomb ratio for members of 64 MiB or more (smaller members are not ratio-checked, so a ZIP of a disk image full of zeros extracts); a remote archive is copied (at most 256 MiB) to a private temporary file first. |
 | Tag | Only files that carry the chosen tag (right-click → *Tags*); a tagged archive counts for its members. A Smart Folder keeps the tag. Offline-index hits are filtered too. |
-| Hidden files, Skip .git / node_modules / caches, depth | What the walk includes. Symlinked folders are never followed. |
+| *Hidden files*, *Skip .git, node_modules, caches*, depth | What the walk includes. Symlinked folders are never followed. |
 | Look in | Every open pane's folder (the active one ticked), *Add Folder…*, and *Also search the offline index* (names, sizes, dates; no content). |
 
-Results stream in while the search runs; *Stop* or closing the window
+Results stream in while the search runs (at most 5000; a file below two
+ticked folders is listed once); *Stop* or closing the window
 cancels it. The columns sort; double-click or `Enter` shows the file
 selected in a pane (an archive member opens the archive view), and the
 right-click menu has *Open*, *Reveal in Pane*, *Copy Path* and *Send to
@@ -543,7 +720,8 @@ the other bookmarks.
 
 **Edit → Index Active Folder…** records names, sizes and dates below the
 active pane's folder in the offline index — the only way it is filled.
-*View → Find in Index…* (`Ctrl+Shift+F`) searches it; the window shows the
+*View → Find in Index…* (`Ctrl+Shift+F`) searches it in a window that stays
+open beside the main window (Ctrl+Shift+F again brings it to the front); the window shows the
 index file.
 
 ### The offline index
@@ -630,6 +808,12 @@ archives, is axross' own Find Files (`core.file_search`,
 - **Ctrl+L** jumps to the path field - from the filter field too, and
   Ctrl+F from there back to the filter; **Esc** in the path field drops
   what was typed, shows the current folder again and goes back to the list.
+  In a local pane `~` is the home folder and a relative path is below the
+  folder shown; a folder that cannot be opened leaves the bar on the folder
+  shown (a typed path stays while the bar has the focus). A path holding a
+  bidi override or an invisible character stays as it is in the bar, with
+  an orange flag at its end; its tooltip names the path as the list shows
+  it (such a character as �).
 - **Bookmarks** (left dock, or the toolbar's bookmark button) for
   one-click navigation; F8 bookmarks the current path (name, icon,
   colour and group are chosen in the dialog), F12 toggles the dock.
@@ -654,6 +838,11 @@ archives, is axross' own Find Files (`core.file_search`,
   Edit…, Rename… (F2), New Group…, New Terminal Bookmark…, Move Up /
   Down / to Top, Move to Group, Sort, Delete… (Del, for a selection).
   It works on the same store, so the sidebar and the menu change at once.
+  Bookmark groups nest up to 16 levels; a group any deeper is refused.
+  A bookmark made by a newer axross whose kind this version does not know
+  opens as a folder and is saved as it is, with every field this version
+  does not know. Entries that cannot be read are kept in
+  `bookmarks.json.unreadable-<time>-<id>` before the next save.
 - **Terminal bookmarks** open a shell instead of a folder: a local
   shell, one on an SSH (SFTP/SCP) profile, or one on a bare host —
   *SSH Host (no profile)*: host or IP address, port (22), user, an
@@ -676,7 +865,11 @@ archives, is axross' own Find Files (`core.file_search`,
   button (Esc works too), and a new click replaces a load that is
   still running. A failed or cancelled load leaves you where you
   were. Auto-refresh updates quietly and never interrupts you.
-- **File list**: hovering a name shows it in full; dragging from
+- **File list**: **Backspace**, the Up button and `..` open the parent
+  folder with the folder just left selected, so Return goes back into it;
+  invisible characters in names (zero width space, line separators, tag
+  characters) are shown as �, right-to-left marks stay; hovering a name
+  shows it in full; dragging from
   empty space draws a selection box (Ctrl adds); the divider right of
   *Name* moves space between *Name* and the next column, double-click
   on a divider fits the column; the back / forward mouse buttons walk
@@ -702,7 +895,7 @@ window manager to move it. A double-click on a floating panel's title
 bar docks it again.
 
 - **Text editor** (built-in) — every file opened for editing is a tab
-  of one editor window (*Edit* / F4 in a pane, local or remote): syntax
+  of one editor window (F4 or *Open With ▸ Open as Text* in a pane, local or remote): syntax
   highlighting (Pygments; the language by name or `#!` line, changeable
   in the status bar), line numbers, find and replace with regex, case
   and whole word (Ctrl+F / Ctrl+H, F3), go to line (Ctrl+G), wrap, zoom,
@@ -714,12 +907,19 @@ bar docks it again.
   before it replaces a file; Save All is Ctrl+L. Enter keeps the line's
   indentation, one level more after `:` (Python, YAML) or `{` (brace
   languages). *Tools → Text Editor* opens the window without a file.
+  Highlighting runs in a separate process: a file that cannot be
+  coloured within 60 seconds stays plain text until another language or
+  file is chosen, and the window never waits for it more than a second.
   A save keeps every untouched
   line's own ending, a BOM and no-break spaces, writes atomically and
   asks first when the file changed since it was opened; the pane showing
   the folder refreshes. Closing a tab or the window with unsaved
   changes asks Save / Discard / Cancel; closing the last tab closes the
-  window, and its menu bar carries the maximize and [x] buttons.
+  window, and its menu bar carries the maximize and [x] buttons. A line
+  longer than 200 000 characters opens wrapped; past 1 000 000 the file
+  also opens read-only, with a note and *Edit Anyway*. A line with no
+  place to break is wrapped anywhere; opened without the main window, the
+  file is read in the background ("Loading…").
 - **Hex editor** — useful for triage on remote files.
 - **Open size limit** — the text / hex viewers read the whole file,
   so there is a cap: 32 MB by default, changeable under
@@ -727,25 +927,135 @@ bar docks it again.
 - **Markdown viewer** — F3 / double-click on a `.md` / `.markdown` /
   `.mdown` / `.mkd` file, local or remote (F4 still edits it): GitHub's
   Markdown (tables, task lists, strike-through, autolinks, footnotes)
-  with the headings in an outline beside it, highlighted code, zoom
-  (Ctrl +/-/0), find (Ctrl+F, Enter or F3 for the next), Reload (F5) and
-  Edit (F4). What the file holds is shown, never run: raw HTML is shown
-  as text, nothing is loaded from the network (a remote image is a box
-  naming its address), images are read only relative to the file (no
-  absolute path, no `file:`), only regular files, never a secret file,
-  at most 8 MiB and 40 million pixels each and 200 per file. A link to
-  another Markdown file opens it in a viewer of its own; a web link opens
-  in the browser only after a question that shows its real address (and
-  not at all in the `paranoid` security mode). In the editor, *View →
-  Markdown Preview* (Ctrl+Shift+M) shows the text rendered beside it,
-  following the typing.
+  with the headings in an outline beside it that follows the place you
+  read, highlighted code, zoom (Ctrl +/-/0), find (Ctrl+F marks every
+  match and says which of how many; Enter or F3 the next, Shift+Enter or
+  Shift+F3 the one before), Reload (F5) and Edit (F4). The zoom button
+  between − and + shows the text's size in per cent; click it (or press
+  Ctrl+0) for the original size. A local file is
+  shown anew when it changes on disk, where you were stays. *Export*
+  saves the page as HTML (its images inside it, nothing it could load
+  from elsewhere) or PDF, or prints it (Ctrl+P) - the whole page, with
+  progress and *Cancel*, while the window stays usable. In a PDF (and on
+  paper) a box that crosses a page break (an alert, a code block) is
+  drawn between the page margins on both pages. A long file shows its start at
+  once and is laid out in parts while you read ("Rendering… 40 %"). A
+  long text with inline footnotes (`^[...]`) is shown a part at a time,
+  like other long texts (unless a note runs over a line end or holds
+  code). A
+  jump goes straight to its place - dropping the scroll bar, Find (from the
+  top of what you see, also after scrolling away from the last match; its count reads "12+" until the page is complete),
+  a link to a heading, Ctrl+End, a reload - and the parts in between
+  appear as you scroll to them, without moving what you read. Select All,
+  Export and Print take the whole page. A match or a `#…` link inside a
+  folded `<details>` opens it; Find counts and reaches those matches in
+  page order. A table too wide for the text grows past it and the page
+  scrolls sideways instead of breaking its words. Reload (also when the file changes),
+  folding, zoom and resizing keep the place you read, and a reload shows
+  the old page until the new one is there; Find goes in page order and
+  wraps round; Select All and Copy work at once, also on a long page, and copy exactly
+  what the page shows (formulas as their TeX: `$$…$$` on a line of its own,
+  `$…$` inline, a list item with its number or bullet, a table row with its
+  cells tab-separated - dragging and the selection
+  clipboard give the same); the outline lists
+  every heading from the start. Below 700 px the outline hides itself
+  (*Outline* brings it back); the window goes down to 440 px. Right-click a heading in the
+  outline for *Copy Link to Heading*, a code block for *Copy Code Block*.
+  Links open in the same window - another Markdown file at the heading
+  its `#…` names, a folder's README, a text file as text, an image at
+  its own size - and Back / Forward (Alt+Left / Alt+Right, the mouse's
+  buttons) go through them. A link above the document's folder opens
+  only after a question (No is the default), a secret file never. A web link opens in the browser (a `mailto:`
+  link in the mail program) only after a question that shows its real
+  address (and not at all in the `paranoid`
+  security mode) - a look-alike host (Cyrillic, mixed or Latin look-alike letters) is shown
+  and linked in punycode (`xn--…`), also as the text of a `www.…` or e-mail link
+  and in the mail question; anything else (`file:`, an absolute path, a secret
+  file) is named in the status line, not opened.
+  What the file holds is shown, never run: of raw HTML only a short list
+  of harmless tags is kept (`<p align>`, `<img>`, `<br>`,
+  `<details>`/`<summary>` (folded unless it says `open`; a click on the
+  summary opens or folds it), `<kbd>`, `<sub>`/`<sup>` and the like; scripts,
+  styles and frames go with their contents, other tags go and their text
+  stays), nothing is loaded from the network (a remote image or badge is a
+  small "▣ alt text" chip (in the terminal "🖼 alt text"), its address in
+  the tooltip; an image
+  embedded as `data:` is shown), images are read only from the file's folder and
+  the folders below it (no parent folder, no absolute path, no `file:`),
+  only regular files, never a secret file, at most 8 MiB and 40 million
+  pixels each and 200 per file. In the editor, *View → Markdown Preview*
+  (Ctrl+Shift+M) shows the text rendered beside it and follows the
+  typing: after a pause it shows the place of the line typed at.
   With markdown-it-py installed (axross-markdown brings it), the viewer
-  shows the full set - footnotes, definition lists, front matter, aligned
-  tables, code coloured by Pygments - in colours for light and dark themes;
-  without it Qt's own Markdown is used. In a terminal, `axross-mdcat
-  FILE.md` (axross-markdown) shows the same in colour.
+  shows the full set - footnotes (numbered as on GitHub: a reference to a
+  note that doesn't exist stays as written, each citation has its own way
+  back), definition lists, front matter (simple `key: value` as a
+  table, as on GitHub; other YAML in a labelled box), aligned
+  tables, GitHub's alerts (`> [!NOTE]` …), math set like KaTeX (`$x^2$`:
+  italic variables, upright function names, large sums and integrals with
+  their limits, stacked fractions and binomials, stretching brackets,
+  matrices and cases as grids, `\tag` numbers at the right (in `align` rows too),
+  `\overset`, `\cfrac`, `\substack`, `\not`, `\boxed`, `\color`; without a maths font installed a serif
+  face, and a formula nested too deeply or too long is shown in its line
+  as text), emoji
+  shortcodes (`:tada:`), bare `https://…`, `www.…` and e-mail addresses as
+  links, code in GitHub's colours - for light and dark themes; without it
+  Qt's own Markdown is used, with the same allowed HTML, alerts, emoji,
+  reference links and math (also in code blocks of the language `math`), but `<details>` always shown open.
+  Huge blocks (a log of 100 000 lines in a fence, thousands of formulas) never
+  freeze the window, also inside a list item, quote, alert, definition or
+  note, and raw HTML tables and lists: such a block stays where it is and is
+  laid out in pieces as you scroll. A heading, table row or term with more
+  than 100 formulas shows the rest as TeX, with a note. Code longer than
+  500 lines or 40 000 characters is shown on its grey ground without a box.
+  Code blocks are coloured in a separate process; one that takes longer
+  than 5 seconds is shown without colours.
+  Lists nested deeper than 16 levels and quotes deeper than 8 are shown
+  flatter ("Laid out flatter"), in every view. A long Copy runs in pieces
+  ("Copying… 40 %"); a reload during it cancels it and says so. `<a id>` / `<a name>` anchors may hold digits and dots
+  (`#26.8.0`), footnote labels match regardless of case, and GitHub's
+  `` $`…`$ `` is a formula too, as is `$$ … $$` with spaces inside. Math
+  covers KaTeX's common symbols, single-token arguments (`\frac12`,
+  `\sqrt5`), `\choose`, `\bigcup`, `\lbrace`, `\ket`, `\mathscr`,
+  `\operatorname*` and nested scripts; `\cfrac`, `\overset`, `\underset` and `\stackrel` are stacked
+  in display formulas only (inline and in the terminal they are written
+  beside), and a command it does not know is shown as written. A file that
+  is not UTF-8 is read as Windows-1252 / Latin-1. A text the parser cannot
+  read (or that takes it too long) is shown as written, with a notice
+  saying why - never a blank page or a hang. A formula nested more than 64
+  groups deep is shown as its TeX with the note "(nested more than 64 deep:
+  shown as written)". An image whose address is not allowed (`file:`, or
+  a `data:` address that is no image) is a box naming it, a file that is
+  not text is said to be one, and an emoji shortcode no installed font can
+  draw stays as written; Export HTML keeps relative links such as
+  `notes.md`. In a terminal, `axross-mdcat FILE.md` (axross-markdown)
+  shows the same in colour, with links and pictures where the terminal
+  can show them; `--watch` shows the file anew when it changes (if the
+  file does not exist, it says so and waits until it appears), `--toc`
+  lists its headings; a long file is written as it is rendered; an
+  ordered list of task items keeps its numbers (`1. ☐ a`). The
+  standalone `axross-markdown [FILE…]` opens the viewer; `--term` (the
+  terminal output, with mdcat's options), `--html FILE|-` (an HTML page),
+  `--help` and `--version` start no Qt, and an unknown option is an error.
+  On Windows, `axross-markdown.exe` opens no console window; for the
+  terminal view use `axross-mdcat.exe` (or `axross-markdown --term` from
+  a console).
+  When a system library the window needs is missing (libEGL on a minimal
+  Linux), it names the library and the package that provides it and
+  points to `--term` / `--html`. axross-markdown follows the desktop's
+  light or dark scheme; *View → Theme* (Alt+V) chooses another, kept in
+  `~/.config/axross-markdown/settings.json`. In the terminal a link longer
+  than 2083 characters is shown as its text, a table of more than 500 rows
+  is drawn as it goes, and one of more than 64 columns is shown as written
+  (the end of the output says so). axross-mdcat stops as soon as the
+  program it writes into has ended (`… | head`); if its output cannot be
+  written (a full disk), it says so and exits with status 1. It draws at
+  most 200 pictures of a text, like the window; after that it says the
+  rest are not drawn.
 - **Image viewer** — F3 / double-click, MIME-allow-listed, size-
-  capped to keep Qt's allocator happy.
+  capped to keep Qt's allocator happy. Ctrl + / Ctrl - (or `+` / `-`,
+  Ctrl + wheel) zoom. Every picture opens fitted to the window and stays fitted when
+  the window is resized, until you zoom; Ctrl+0 (or `0`) shows 100 %, `F` fits again.
 - **PDF** — F3 / double-click opens the PDF on its own in the media
   viewer below (needs QtPdf; without it, or in the `paranoid` security
   mode, the hex editor opens instead and the log says why).
@@ -760,15 +1070,30 @@ bar docks it again.
   item), **Start slideshow** or **Click through**. In the viewer:
   Left / Right / PageUp / PageDown / Space go to the previous / next
   file (stopping at the first and last item; also inside a PDF, and
-  the slideshow only turns pages of a PDF opened on its own). A PDF with more than one
+  the slideshow only turns pages of a PDF opened on its own; holding an
+  arrow key turns at most three pictures or pages a second). A PDF is
+  opened and drawn in a separate process: a page that takes longer than
+  15 seconds, or makes it crash, is shown as the reason, and the other
+  pages are still drawn; a page that could not be drawn is tried once
+  more when you turn back to it. Pictures are decoded in a separate
+  process too (a few kept running for the next ones): a picture that
+  takes longer than 30 seconds, or makes the decoder crash, is shown as
+  the reason. The image viewer and the pane's Thumbnail View decode the
+  same way. Before a video plays, ffprobe (when installed) opens it in a
+  separate process: a video whose check crashes or does not finish in
+  10 seconds is not played, and the reason is shown. A PDF with more than one
   page gets a page control `← n / m →` in the button bar; Up / Down
   turn its pages. Home / End, F11 fullscreen, Ctrl+M
   maximize / restore (the window remembers its last size, position
-  and maximized state for the next open), wheel or
-  `+` / `-` zoom, `F` fit, `1` 100 %, `R` rotate, `S` slideshow
+  and maximized state for the next open), wheel (on a PDF Ctrl + wheel),
+  Ctrl + / Ctrl - or `+` / `-` zoom (on a fitted PDF from the size it is
+  shown at), Ctrl+0 100 %, `F` fit, `1` 100 %, `R` rotate, `S` slideshow
   (interval in seconds; the slideshow loops, a video plays to its
   end), Esc back to the overview, Esc again closes. **Delete**
-  deletes the shown file (or the selected tile) after a question;
+  moves the shown file (or the selected tile) to the trash after a
+  question where its connection has one (on a share whose trash sits at
+  its top it says so, as the pane does); **Shift+Delete** deletes it
+  permanently after its own question (default *No*);
   dragging the image or a tile onto a pane moves it there, Ctrl
   copies - the same as a drag out of the pane the viewer came from
   (a zoomed-in image pans instead). The image viewer does both too.
@@ -779,9 +1104,13 @@ bar docks it again.
   rendered only when it has no DOCTYPE/entities, scripts or
   references outside the file, and in a separate process that is
   stopped after 10 seconds - also an SVG named like a picture
-  (`x.png`); thumbnails in the pane never draw one, nor a PDF named
-  like a picture (the viewer shows such a PDF's first page as it draws
-  a PDF). `paranoid` mode blocks the viewer.
+  (`x.png`); the pane's Thumbnail View draws SVGs the same way, and the
+  first page of a PDF; its thumbnails are cached in
+  `~/.cache/axross/thumbnails`, readable by you alone, at most 20 000 of
+  them (the least recently used go first). In a Markdown file
+  an SVG picture goes through the same checks and process (30 seconds for
+  all of a document's SVGs together), and a "picture" that is really a PDF
+  or PostScript is not shown, in the terminal either. `paranoid` mode blocks the viewer.
   `I` (or the *Info* button) shows the current item's metadata in a
   side panel, with *Remove metadata* — in the image viewer too.
 - **Media Player** (bundled extension; its toolbar button or
@@ -800,7 +1129,9 @@ bar docks it again.
   title) keeps playing. Seek with the position slider (click or drag,
   `1:23 / 4:56`). ⏮ restarts the track after 3 s, else goes back;
   shuffle plays every track once per round, repeat is off / all /
-  one. An unplayable track is marked and skipped. *M3U* → *Load Playlist…* /
+  one. An unplayable track is marked and skipped - also one that makes
+  ffprobe (when installed) crash or hang when it checks the track first;
+  such a track is not loaded when the player starts again. *M3U* → *Load Playlist…* /
   *Save Playlist…* read and write M3U / M3U8 playlists (UTF-8, relative paths for
   tracks under the playlist's folder, `#EXTINF` titles and lengths;
   http / https streams are kept, other URLs, missing or non-audio entries are skipped, files over 1 MiB
@@ -816,7 +1147,9 @@ bar docks it again.
   (another backend or device). Keys while the player has
   the focus: Space play/pause, Enter play the selected row, Delete
   remove the selected rows, Left / Right seek 5 s (with Shift 30 s),
-  Ctrl+Left / Ctrl+Right previous / next, M mute, + / - volume. With
+  Ctrl+Left / Ctrl+Right previous / next, M mute, + / - volume; the
+  buttons beside Play skip 15 s back and forth (past the end the track
+  ends as usual). With
   numpy: 10-band equalizer with presets (the arrow left of *Equalizer*
   folds the band sliders away and gives the playlist the room; it is
   axross's one equalizer - the Agent's voice goes through it too, it is
@@ -837,6 +1170,15 @@ bar docks it again.
   spectrum terrain (the history as a wireframe landscape), a 3D ring of
   bars, a kaleidoscope (mirrored petals from bass, middle and treble) or
   bell curves (a bump per band) - a click on it switches to the next.
+  Every visualization is photosensitivity-safe: whatever the sound does (a
+  gated synth, radio static), no area of the picture flashes more than
+  three times a second and none flashes in saturated red (WCAG 2.3.1 /
+  2.3.2). This holds at any size and frame rate and with any music - a
+  gated synth, noise that differs left and right, short bursts: the bars
+  turn together at most five times a second and otherwise hold where they
+  turned, the oscilloscope keeps its points 3 px apart, the stereo scope
+  draws dots, and a small window shows fewer, wider bell curves and fewer
+  terrain rows.
   Its right-click menu lists every visualization
   and colour scheme (Classic, Fire, Ice, Neon, Mono, *Follow the theme*,
   *Custom*), the bar count and the frame rate cap; *Visualizer
@@ -983,17 +1325,36 @@ selected files. It has a filter, *Copy* (the fields of the selected
 files as text), *Export…* (JSON or CSV) and *Remove Metadata* for every
 file listed. Folders are read flat;
 tick *Include subfolders* to go deeper (at most 5000 files, depth 8,
-symlinked folders not followed). Reading and removing run in the
-background with progress and *Cancel*. In the image and media viewers
+symlinked folders not followed). Hidden files and folders are included.
+Whatever a run leaves out is named in the status line, with the paths in
+its tooltip: folders that could not be read, folders deeper than 8
+levels, subfolders while *Include subfolders* is off, the 5000-file
+limit, folder links, and files of types that carry metadata axross
+cannot clean (HEIC, AVIF, RAW such as DNG / CR2 / NEF, SVG, PSD, `.doc` /
+`.xls` / `.ppt`, EPUB …) - those are left as they are. Reading and
+removing run in the background with progress and *Cancel*. In the image and media viewers
 `I` opens the same information as a side panel.
 
 | Kind | Read | Removed | Kept |
 |---|---|---|---|
 | JPEG, PNG, WebP, GIF | built in | EXIF (GPS, camera, serial numbers, times, author, software), embedded thumbnails, XMP, IPTC, comments, PNG text chunks, data after the image | EXIF orientation, ICC colour profile; the pixels are never re-encoded and are checked to be identical |
 | TIFF | built in | the same, through a lossless re-save | orientation, ICC profile; JPEG-compressed TIFF is refused |
-| docx / xlsx / pptx, odt / ods / odp | built in | `docProps/core.xml`, `app.xml`, `custom.xml`, ODF `meta.xml`, the zip comment | every other part, decompressing to the same bytes |
-| PDF | pypdf, else QtPdf | Info dictionary, XMP streams, PieceInfo, earlier revisions (full rewrite) | — needs the `[metadata]` extra (`pip install 'axross[metadata]'`) |
+| docx / xlsx / pptx, odt / ods / odp | built in | `docProps/core.xml`, `app.xml`, `custom.xml` (found by their relationships, in any letter case, Strict OOXML too), every ODF `meta.xml` including an embedded object's `Object N/meta.xml`, the zip comment, entry comments and extra fields (user ids, times) | every other part, decompressing to the same bytes; the entries' dates |
+| PDF | pypdf, else QtPdf | Info dictionary, XMP and PieceInfo wherever they are (catalog, pages, images, forms), earlier revisions and objects nothing uses (full rewrite) | — needs the `[metadata]` extra (`pip install 'axross[metadata]'`) |
 | Audio / video | `ffprobe` | all tags and chapters, data streams (camera GPS tracks), the cover picture of audio files (`ffmpeg -c copy`, no re-encoding) | the streams |
+
+**Not removed** (they are content, not metadata, or cannot be taken out
+without changing it): in Office files comments and their authors,
+tracked changes, `people.xml`, the template path, custom XML parts,
+`absPath`, pictures inside with their own EXIF / GPS, the thumbnail,
+embedded documents' properties, ODF printer and host names, and the zip
+entries' dates; in PDFs annotations and their authors, attachments, the
+trailer `/ID` and EXIF / GPS inside embedded JPEGs; in pictures the ICC
+profile (with a PNG profile's name); in videos the cover and MKV
+attachments. A local file with other hard links is cleaned in the file
+itself, so every name holds the cleaned content; the trash keeps a copy
+of its own of the original. The cleaned copy is made in a private folder
+beside the file, not in the system temp folder.
 
 **How removal writes** — *Edit → Settings… → Metadata* (*Tools →
 Metadata Settings…* opens it):
@@ -1002,7 +1363,12 @@ Metadata Settings…* opens it):
   original is kept in the axross trash. One run — a single file or a
   whole folder — is one entry for *Edit → Undo Last Operation*
   (`Ctrl+Z`), which puts every original back byte for byte, but only
-  while the file still holds what the removal wrote.
+  while the file still holds what the removal wrote; `Ctrl+Z` passes
+  over a Remove Metadata it can no longer reverse (the file edited since,
+  the trash emptied) and says why. The original stays
+  in the axross trash - on local and SFTP connections a folder only you
+  can open (0700), the copy with the original's permissions - until the trash is emptied; delete it
+  there (*Show Trash…*) when the original must not be kept at all.
 - **Cleaned copy**: `name.clean.ext` next to the original
   (`name.clean (1).ext` if that exists); nothing is overwritten.
 
@@ -1026,7 +1392,7 @@ of them opens its part of this section.
 *View → Duplicate Finder…* (`Ctrl+Shift+D`; right-click → *Analyse →
 Duplicate Finder…* in a pane) works on the duplicate index (`cas.sqlite`,
 see *The offline index*).
-It groups indexed files by content hash, largest waste first: each group shows the space it would free, the status line the total. Empty files and groups that are only hard links of one file are hidden unless *Empty files* / *Hard links* is ticked. *Filter* (text, or patterns like `*.jpg *.png`; `Ctrl+F`), *At least* (a size) and *Sort* (space to reclaim, size, copies, name, folder) narrow the list; the copies of a group stay in survivor order (the first is kept). *Rebuild from Active Pane…* hashes the folder in the background with counts, bytes and *Cancel*: unchanged files are not hashed again, files gone since the last scan leave the index, and the report names files that could not be read, folders that could not be listed and FIFOs, sockets or devices that were skipped (never read: that could hang). A backend without a content checksum (SMB, plain FTP, WebDAV with ETags only) has its files read instead — only those that share their size with another file, and only as far as their first 64 KiB match; an ETag never counts as a hash. *Mark All Duplicates (keep first)* keeps the oldest copy; *Mark, Keeping…* (also in the right-click menu) keeps the newest copy, the shortest path or a copy inside a folder, or marks the copies inside a folder; a hard link of a kept copy is never marked, and hard links do not count as space to reclaim. *Move Selected to Trash…* (`Del`) moves the marked copies to the axross trash after a live re-check that a genuine other copy survives. `Enter` opens the containing folder, the line under the list shows the current row in full (exact size, hash, hard links), and `ax-cas://…` URLs can be copied. Thousands of groups appear a chunk at a time while the window stays usable.
+It groups indexed files by content hash, largest waste first: each group shows the space it would free, the status line the total. Empty files and groups that are only hard links of one file are hidden unless *Empty files* / *Hard links* is ticked. *Filter* (text, or patterns like `*.jpg *.png`; `Ctrl+F`), *At least* (a size) and *Sort* (space to reclaim, size, copies, name, folder) narrow the list; the copies of a group stay in survivor order (the first is kept). *Rebuild from Active Pane…* hashes the folder in the background with counts, bytes and *Cancel*: unchanged files are not hashed again, files gone since the last scan leave the index, and the report names files that could not be read, folders that could not be listed and FIFOs, sockets or devices that were skipped (never read: that could hang). A backend without a content checksum (SMB, plain FTP, WebDAV with ETags only) has its files read instead — only those that share their size with another file, and only as far as their first 64 KiB match; an ETag never counts as a hash. *Mark All Duplicates (keep first)* keeps the oldest copy; *Mark, Keeping…* (also in the right-click menu) keeps the newest copy, the shortest path or a copy inside a folder, or marks the copies inside a folder; a hard link of a kept copy is never marked, and hard links do not count as space to reclaim. *Move Selected to Trash…* (`Del`) moves the marked copies to the axross trash after a live re-check that a genuine other copy survives. `Enter` opens the containing folder, the line under the list shows the current row in full (exact size, hash, hard links; a long path wraps, right-click copies the line), and `ax-cas://…` URLs can be copied. Thousands of groups appear a chunk at a time while the window stays usable.
 
 *View → Duplicate Index & History…* shows the index on its own: every
 rebuild is recorded as a scan, listed with its folder, backend, start and
@@ -1056,16 +1422,24 @@ interval: give the job a name, the script's name and an interval (5
 minutes, 15 minutes, 1 hour, 6 hours, 1 day, or a custom one of at least
 300 s) and *Add*. The table shows each job's script, interval, last run,
 status, next run and the detail of its last run; *Enable / disable* and
-*Remove* act on the selected job. Jobs run only while axross runs (it
+*Remove* act on the selected job. *Run Now* records the start of the run
+as the job's last run. Jobs run only while axross runs (it
 checks once a minute), each in a child process like a run from the
 Scripts dock, not interactive (a question is refused instead of waiting),
-at most 24 hours and 1 000 000 characters of output per run. A job still
-running is not started again; slots missed while axross was closed give
+at most 24 hours and 1 000 000 characters on stdout and as many on stderr
+per run. A job still running is not started again - also not by a second
+axross, or after a crash while its script still runs (a lease in
+`~/.local/state/axross/jobs.leases/`); slots missed while axross was closed give
 one run, not a backlog; after 10 failures in a row a job disables itself
-and says why (*Enable / disable* switches it on again). The paranoid
-security mode refuses the runs. Scripts that a job runs are marked
+and says why (*Enable / disable* switches it on again); the detail of a
+failure is the end of the script's last error line, at most 500
+characters. A last run recorded more than an interval ahead (the clock was
+set back) makes the job due at once. The paranoid security mode starts no
+job and counts none as failed. Scripts that a job runs are marked
 `[scheduled]` in the Scripts dock. The jobs are kept in
-`~/.local/state/axross/jobs.json`.
+`~/.local/state/axross/jobs.json`, beside the operation journal
+(`AXROSS_OPERATION_JOURNAL` moves both). A job row that cannot be read is
+kept in `jobs.json.unreadable-<time>-<id>` before the next save.
 
 ### Diagnostics and Recovery Scan
 
@@ -1095,7 +1469,8 @@ Overview and Markdown Preview are panels, Checksum Manifest (*Create
 SHA256SUMS*), Forensic Tools (disk images: hashes, qemu-img, The Sleuth
 Kit, TestDisk, PhotoRec) and VirtualBox add right-click entries. How
 extensions are trusted, paused and written - and the `api` they get - is
-in [EXTENSIONS.md](EXTENSIONS.md).
+in [EXTENSIONS.md](EXTENSIONS.md). An extension that calls `sys.exit()` is
+shown as failed; it never ends axross.
 
 ### Arcade
 
@@ -1106,7 +1481,8 @@ worlds on an isometric board, Space jumps over the daemons and pits),
 **Rockfall** (40 caves in 5 worlds: dig for crystals under falling rocks,
 then reach the exit in time) and **Trail Runner** (riders leave walls
 behind them; 1-3 computer riders or two players on one keyboard, Space
-boosts). In the picker the arrows or W A S D choose and Enter or a click
+boosts). The games never flash red: when Byte is caught the screen dims,
+and nothing blinks more than three times a second. In the picker the arrows or W A S D choose and Enter or a click
 starts; a game offers *Start at level 1*, *Continue at level n* and a
 *world code* that opens a world reached before. In a game: arrows or
 W A S D steer, `P` pauses, `M` mutes, `R` starts again once the game is
@@ -1226,12 +1602,22 @@ gathers everything again. The window keeps its size.
   alternate screen work, so zsh prompts, line editing, `less`, `top`
   and editors draw where they should. The shell's terminal size is the
   size of the terminal area and follows every resize (`stty size`
-  shows it). Colours are not shown.
+  shows it). Colours are not shown. Programs' pictures and other long
+  control strings (imgcat, sixel, a large OSC 52 copy) are dropped and
+  never appear as text; writing over half of a wide character erases all
+  of it, as in xterm.
 - Keys typed in the terminal go to the shell: Ctrl+letter (on macOS
   the Control key), function keys, arrows and editing keys — so Ctrl+W,
-  Ctrl+Q or F6 there never close a pane, quit or move files. Paste with
+  Ctrl+Q or F6 there never close a pane, quit or move files. Alt+key
+  acts as Meta (Alt+B, Alt+F, Alt+. reach the shell, except where axross
+  has an Alt shortcut such as Alt+Left / Right), and Shift+Tab and
+  Ctrl / Shift with the cursor keys reach it too. Paste with
   Ctrl+Shift+V (macOS: Command+V), a middle click or the context menu;
-  the text goes to the shell. Command shortcuts on macOS and the zoom
+  the text goes to the shell; a shell that asks for bracketed paste
+  (bash 5.1+, zsh, fish) gets it as one edit instead of running it line
+  by line. A large paste into a busy shell - local, SSH, or on Windows -
+  waits in a queue (up to 16 MiB) and goes out as the shell reads; the
+  window never freezes. Command shortcuts on macOS and the zoom
   keys stay with axross.
 - While a file drag is over a pane, the row the drop goes into gets a
   frame and a note beside the cursor names the folder: *Move to …* or,
@@ -1248,7 +1634,10 @@ source of truth across all three entry points:
 - **Console dock** (View menu) — embedded REPL with multi-line
   input, history, tab completion, and a side panel listing every
   function with its docstring. Tab completes there, so **Esc** takes
-  the focus back to the file pane.
+  the focus back to the file pane. A pasted block of several statements
+  runs one statement after the other, as at the prompt; the first error
+  stops the rest. The history keeps such a block as one entry, and Up
+  brings it back whole after a restart.
 - **Headless** — ``axross --script myscript.py`` runs your Python
   in the same namespace; ideal for cron / CI / one-shot batching.
   Words after the file are the script's ``sys.argv[1:]``
@@ -1293,7 +1682,7 @@ ips = axross.dns_resolve("example.com")
 |---|---|
 | ``.help`` | List slash-commands |
 | ``.scripts`` | Saved scripts in ``~/.config/axross/scripts/`` |
-| ``.save <name>`` | Save THIS session's submitted source; an existing script of that name is never replaced (``.delete`` it first) |
+| ``.save <name>`` | Save THIS session's submitted source; an existing script of that name is never replaced (``.delete`` it first), nor one whose name differs only in case |
 | ``.load <name>`` | Print the source of a saved script |
 | ``.run <name>`` | Execute a saved script in the live namespace |
 | ``.delete <name>`` | Remove a saved script |
@@ -1331,6 +1720,9 @@ Without a human — cron, a pipe, the Scripts dock's child process, an
 MCP ``script_run``, or ``AXROSS_NONINTERACTIVE=1`` — it raises
 ``axross.NonInteractiveError`` instead of answering its default; pass
 ``assume_yes=True`` to answer yes without asking there.
+
+A Scripts dock run ends with axross also when axross is killed or crashes,
+together with what it started (Linux, macOS).
 
 ### Proxy support in scripts
 
@@ -1660,6 +2052,13 @@ is secret and read-only for every tool as well: a trashed key is still a
 key, and what is restored from the trash is put back with axross's rights.
 A link to a secret (`~/.ssh/id_ed25519 -> ~/keys/id_ed25519`) makes its
 target secret, and a hard link to a secret file is not read either.
+The agent does not change the code of the axross that runs (its packages,
+resources and scripts from a source folder, and no Python code - `.py`,
+`.pyc` or a compiled module - anywhere below that folder; in the sandbox
+nothing new is made at its top level; a one-file build's binary, the venv's
+settings and programs), and a symlink it makes with `..` in its
+target points at the checked place itself, so nothing re-pointed later
+makes it lead elsewhere.
 Anywhere - also in a project folder - the agent does not read a private key
 or password database found by its contents (`-----BEGIN … PRIVATE KEY-----`
 in the first MiB, also after the certificates of a bundle, an OpenSSH or
@@ -1670,15 +2069,23 @@ credentials (`.env`, `.env.*` but not `.env.example`/`.sample`/
 `id_rsa`/`id_ed25519`/`id_ecdsa` and their copies (`id_rsa.bak`),
 `*.ppk`, `*.p12`, `*.pfx`, `kubeconfig`, `credentials.json`,
 `client_secret*.json`, `secrets.yaml`, `secrets.json`, `.aws/credentials`,
-`.docker/config.json`, `.kube/config`).
+`.docker/config.json`, `.kube/config`). A folder whose name makes its files
+secret (`.aws`, `.docker`, `.kube`; on a remote also `.ssh` and `.gnupg`)
+is not renamed or moved whole, and backup copies such as
+`.aws/credentials.bak` or `config~` are secret too.
 With a root that holds `/proc` (`--mcp-root /`) a process's environment,
 command line, memory, maps and open files (`/proc/<pid>/environ`, …,
 `/proc/self`) and `/run/secrets` are not read either. The sandbox hides
 only the home's secrets; project files stay visible to commands there.
 The trash records each entry with a signature: an entry whose record or
-data was changed is not restored, and one that goes back into a protected
+data was changed is not restored - except a file trashed with other names
+(hard links) and edited through one of them: the same file, it goes back
+(into a protected place only after you confirm). The message says whether
+the record or the data changed. An entry that goes back into a protected
 place (a start file, an autostart entry) is restored from the Trash window
-only after you confirm it.
+only after you confirm it. Once axross has its key, a record without a
+signature counts as changed and is not restored; only records older than
+the key count as older ones.
 
 **Hidden folders are not read without a grant.** The agent's and the MCP
 server's tools do not hand out the contents of a hidden entry of your home
@@ -1880,9 +2287,19 @@ this machine starts in its own empty folder
 axross was started from, and `python -m` with `PYTHONSAFEPATH=1`; of its
 stderr the last 20 lines, each cut at 4 KiB, are kept. **Its files are
 pinned:** saving a program server that runs a file of yours on this
-machine (its script; for a Python script also the module files beside it,
-which Python imports first) records their SHA-256 in the settings
-(`"pin"`), and the agent may not change them or add a module beside them.
+machine records the SHA-256 of every file in the script's folder
+(`"pin"`): sub-packages, data files, `node_modules` and folders linked
+from it included. A folder of more than 10 000 entries, 256 MB or 32
+levels is not pinned: the server does not start, and the message says to
+move the script into a folder of its own. The agent may not write
+anything below that folder, and for a Node server nothing in a
+`node_modules` folder above it, where Node looks up a module the server's
+own folder lacks; in a sandbox the folders of host-run servers are
+mounted read-only; the refusal, and in *Ask* mode the question,
+names the MCP server that runs it on this machine. Python servers keep
+their byte code in a private folder of axross's state, never beside the
+script. A server that writes its own logs or database into its folder is
+asked about again at its next start.
 When they changed anyway - you edited the script, or something else did -
 the server does not start and axross asks *Run the MCP server with changed
 files?*, listing them: *Run with these files* confirms them, *Not now*
@@ -2114,7 +2531,24 @@ mailbox's credentials never do), the **send policy** and the SMTP server.
 - *Answer the sender without asking*: a reply to the sender of the mail answered (and
   to the *allowed recipients*, addresses or `@domain`) goes out at once; anyone else
   still waits for your yes. The sender is the mail's *From* address: a *Reply-To*
-  the mail names is someone else and waits for your yes too.
+  the mail names is someone else and waits for your yes too. Only the
+  sender of a mail listed as new in that run counts, and a reply that
+  holds another mail's text (its codes, links, addresses, a run of 8 or
+  more of its words, or quotes beyond the answered mail) waits for your
+  yes even then. The subject and the recipients' names are checked like
+  the text. Everything a tool showed of another mail counts as its text:
+  its subject in the listing, its file name, the links of its HTML part. A
+  code counts by its digits however it is written - spaced, grouped, in
+  other digits, as number words, backwards or encoded - and across the
+  mails sent without asking in this run and in the dock's runs of the last
+  7 days; an alphanumeric code or a link's token counts with or without
+  its separators. What the dock itself sent without asking to several
+  people - its signature quoted back in a thread - and its own address do
+  not count as another mail's text, and in the check over several mails
+  only what the new mail adds counts. Each mail listed as new gets at most one reply without asking.
+  Notes from other docks count as another mail's text, and a dock does not
+  report to itself. A mail waiting for *Send* wraps; a long run of spaces
+  is shown as *[N spaces]*.
 
 A dock's agent has only the mail tools - `mail_list_new`, `mail_list`, `mail_read`,
 `mail_analyse`, `mail_draft`, `mail_send`, `dock_report` - and no file writes. Mail
@@ -2200,6 +2634,12 @@ effect at once. Cancel, Esc and the [x] discard what was not applied.
 
 ### Logging
 
+Control characters, escape sequences and bidi marks in what is logged
+(remote file names, server answers) are written escaped, in the log file,
+the terminal, the Log dock and the MCP audit log, so a name cannot fake
+log lines or colours; remote names with CR, LF or C1 characters are
+refused.
+
 The **Logging** page decides what goes into the log - without filling it.
 Every part of axross belongs to one area: Application, Protocols (one
 entry per family: SFTP / SSH / SCP / rsync, SMB / DFS, FTP / TFTP, WebDAV,
@@ -2272,7 +2712,8 @@ may write is refused too (unless the group is your own private group).
   is a line in the log and the status on *Settings → Updates*, never a
   dialog. Releases marked draft or prerelease are ignored.
 - **Help → Check for Updates…** checks now and shows the answer, also
-  when axross is up to date.
+  when axross is up to date. When `settings.json` cannot be written, the
+  check still shows its result and the failed write goes to the log.
 - **The update window** shows this and the new version, the release notes
   (rendered as Markdown; images and other resources in them are never
   loaded, HTML in them is shown as text, and only http and https links
@@ -2309,7 +2750,7 @@ updates automatically** (off: the notice offers the download; on: a new
 version found at start is downloaded, verified and installed in the
 background and waits for the next start), **Check Now** and the time and
 result of the last check. Only `github.com`, `api.github.com` and
-`release-assets.githubusercontent.com` are contacted, over https; every
+`release-assets.githubusercontent.com` and `objects.githubusercontent.com` are contacted, over https; every
 redirect is checked against that list. The default proxy (*Network &
 Proxy*) is used; without one, `https_proxy` from the environment. The
 check at start does not run with `AXROSS_NO_UPDATE_CHECK=1` in the

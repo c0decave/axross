@@ -106,7 +106,7 @@ def run() -> dict:
         _skip(results, "webdav", "webdav-server not reachable")
 
     if _tcp_open(*IMAP):
-        imap = axross.open_url("imap://imapuser:imap123@10.99.0.36/", imap_ssl=False)
+        imap = axross.open_url("imap+plain://imapuser@10.99.0.36/", password="imap123")
         try:
             uids = axross.imap_search(imap, "ALL", mailbox="INBOX")
             if uids:
@@ -130,7 +130,7 @@ def run() -> dict:
     if _tcp_open(*LDAP):
         try:
             ldap = axross.open_url(
-                "ldap://10.99.0.45/",
+                "ldap+plain://10.99.0.45/",  # the lab's slapd has no TLS
                 username="cn=admin,dc=axross,dc=test",
                 password="ldapadmin123",
             )

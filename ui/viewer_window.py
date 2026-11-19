@@ -242,6 +242,12 @@ def _read_settings():
     return _read_json_file(_settings_path())
 
 
+#: A stored position or size beyond this many px is no window's (a hand
+#: edit): QRect takes no more than a C int and raised OverflowError in the
+#: viewer's constructor - the viewer never opened again.
+MAX_STORED_PX = 1_000_000
+
+
 def _valid_entry(entry) -> dict | None:
     if not isinstance(entry, dict):
         return None
@@ -249,6 +255,8 @@ def _valid_entry(entry) -> dict | None:
     for key in ("x", "y", "width", "height"):
         value = entry.get(key)
         if isinstance(value, bool) or not isinstance(value, int):
+            return None
+        if not -MAX_STORED_PX <= value <= MAX_STORED_PX:
             return None
         values[key] = value
     if values["width"] <= 0 or values["height"] <= 0:
@@ -271,10 +279,28 @@ def load_state(name: str) -> dict | None:
     return _valid_entry(viewers.get(name))
 
 
+#: The window manager's frame around a window not shown yet (left, title
+#: bar, right, bottom), px - ui.screen_fit.FRAME_MARGIN_PX in all.
+FRAME_ESTIMATE = (5, 30, 5, 5)
+
+
+def frame_margins(window: QWidget | None) -> tuple[int, int, int, int]:
+    """(left, top, right, bottom) the frame adds around *window*'s inside:
+    its own once the window manager framed it, else :data:`FRAME_ESTIMATE`."""
+    if window is not None:
+        inside, frame = window.geometry(), window.frameGeometry()
+        margins = (inside.left() - frame.left(), inside.top() - frame.top(),
+                   frame.right() - inside.right(), frame.bottom() - inside.bottom())
+        if any(margins) and all(0 <= m <= 200 for m in margins):
+            return margins
+    return FRAME_ESTIMATE
+
+
 def clamp_to_screen(rect: QRect, window: QWidget | None = None) -> QRect:
-    """*rect* shrunk to fit the available area of the screen it is on and
-    moved fully inside it. A rect on no screen goes to the window's screen,
-    else the primary one."""
+    """*rect* - a window's inside, as setGeometry takes it - shrunk to fit
+    the available area of the screen it is on and moved fully inside it,
+    with room for the frame: the title bar stays on the screen. A rect on
+    no screen goes to the window's screen, else the primary one."""
     screen = QGuiApplication.screenAt(rect.center())
     if screen is None and window is not None:
         screen = window.screen()
@@ -282,7 +308,8 @@ def clamp_to_screen(rect: QRect, window: QWidget | None = None) -> QRect:
         screen = QGuiApplication.primaryScreen()
     if screen is None:
         return QRect(rect)
-    avail = screen.availableGeometry()
+    left, top, right, bottom = frame_margins(window)
+    avail = screen.availableGeometry().adjusted(left, top, -right, -bottom)
     width = max(1, min(rect.width(), avail.width()))
     height = max(1, min(rect.height(), avail.height()))
     x = min(max(rect.x(), avail.left()), avail.left() + avail.width() - width)
@@ -357,25 +384,29 @@ def save_window_state(window: QWidget, name: str) -> None:
     # Same merge as MainWindow._save_session and i18n.store_language: keep
     # whatever this function does not write itself.
     from core.json_store import read_for_merge
+    from core.secure_storage import locked_store_update
     from ui.state_files import MAX_UI_STATE_BYTES
 
+    path = _settings_path()
     try:
-        data = read_for_merge(_settings_path(), max_bytes=MAX_UI_STATE_BYTES)
-    except OSError as exc:
-        # Unreadable: writing would replace the layout, panes and settings.
-        log.warning("viewer window state not saved: %s", exc)
-        return
-    win = data.get("window")
-    if not isinstance(win, dict):
-        win = {}
-    viewers = win.get(VIEWERS_KEY)
-    if not isinstance(viewers, dict):
-        viewers = {}
-    viewers[name] = entry
-    win[VIEWERS_KEY] = viewers
-    data["window"] = win
-    try:
-        _write_private_text(_settings_path(), json.dumps(data, indent=2))
+        # The file lock of every session.json writer (the window, another axross).
+        with locked_store_update(path):
+            try:
+                data = read_for_merge(path, max_bytes=MAX_UI_STATE_BYTES)
+            except OSError as exc:
+                # Unreadable: writing would replace the layout, panes and settings.
+                log.warning("viewer window state not saved: %s", exc)
+                return
+            win = data.get("window")
+            if not isinstance(win, dict):
+                win = {}
+            viewers = win.get(VIEWERS_KEY)
+            if not isinstance(viewers, dict):
+                viewers = {}
+            viewers[name] = entry
+            win[VIEWERS_KEY] = viewers
+            data["window"] = win
+            _write_private_text(path, json.dumps(data, indent=2))
     except OSError as exc:
         log.warning("Could not save the %s viewer window state: %s", name, exc)
 
@@ -401,6 +432,54 @@ def _forget(window: QWidget) -> None:
         if other is window:
             del _INDEPENDENT[index]
             return
+
+
+#: A held key turns pictures or pages at most this often. A change from a
+#: dark picture to a light one is a flash, and the hard rule for every
+#: visual of axross is three flashes a second at most; the keyboard's
+#: repeat rate (25-33 a second) stepped through a folder far faster.
+HELD_STEP_SECONDS = 0.34
+
+
+class HeldStepPacer(QObject):
+    """Steps asked for by a held key (auto-repeat), at most one every
+    :data:`HELD_STEP_SECONDS`: a repeat that comes too soon is kept (the
+    newest only) and done when its time comes. A single press steps at
+    once (:meth:`note` it, so the first repeat keeps its distance)."""
+
+    def __init__(self, parent: QObject) -> None:
+        super().__init__(parent)
+        import time
+
+        self._clock = time.monotonic
+        self._last = float("-inf")
+        self._pending = None
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self._fire)
+
+    def note(self) -> None:
+        """A step was just done by a single press."""
+        self._last = self._clock()
+        self._pending = None
+        self._timer.stop()
+
+    def request(self, step) -> None:
+        """Do *step()* now if the last step is long enough ago, else later."""
+        wait = self._last + HELD_STEP_SECONDS - self._clock()
+        if wait <= 0 and not self._timer.isActive():
+            self._last = self._clock()
+            step()
+            return
+        self._pending = step
+        if not self._timer.isActive():
+            self._timer.start(max(1, int(wait * 1000) + 1))
+
+    def _fire(self) -> None:
+        step, self._pending = self._pending, None
+        if step is not None:
+            self._last = self._clock()
+            step()
 
 
 def show_independent(window: QWidget) -> QWidget:
@@ -458,7 +537,11 @@ __all__ = [
     "MAXIMIZE_KEY",
     "VIEWERS_KEY",
     "allow_maximize",
+    "FRAME_ESTIMATE",
+    "HELD_STEP_SECONDS",
+    "HeldStepPacer",
     "clamp_to_screen",
+    "frame_margins",
     "close_independent_windows",
     "independent_windows",
     "install_window_keys",

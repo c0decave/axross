@@ -16,6 +16,7 @@ conflict; the names inside it are.
 from __future__ import annotations
 
 import logging
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -73,6 +74,41 @@ class ConflictScan:
     # names this transfer itself creates there; renames pick a name free
     # in here, so a renamed item never lands on another item of the batch.
     taken: dict[str, set[str]] = field(default_factory=dict)
+    #: Destination folders whose names are compared without case
+    #: (:func:`case_insensitive_names`).
+    folded: set[str] = field(default_factory=set)
+
+
+#: Local file systems whose names are one name in any case (FAT, exFAT, a
+#: share of a Windows server). NTFS mounted on Linux keeps case apart.
+_CASE_INSENSITIVE_FS = frozenset({"vfat", "msdos", "fat", "exfat", "cifs", "smb3", "smbfs"})
+
+
+def case_insensitive_names(backend, folder: str) -> bool:
+    """Whether *folder* of *backend* holds names case-insensitively: a
+    backend that says so (``case_insensitive_names``: SMB, WinRM, WMI),
+    a local folder on Windows or macOS, or on a FAT / exFAT disk or a
+    Windows share (core.tmpfs_detect.fs_type)."""
+    flag = getattr(backend, "case_insensitive_names", None)
+    if callable(flag):
+        try:
+            flag = flag(folder)
+        except Exception:  # noqa: BLE001 - a backend that cannot say: case kept
+            flag = None
+    if isinstance(flag, bool):
+        return flag
+    from core.local_fs import LocalFS
+
+    if not isinstance(backend, LocalFS):
+        return False
+    if sys.platform in ("win32", "darwin"):
+        return True
+    from core import tmpfs_detect
+
+    try:
+        return tmpfs_detect.fs_type(folder) in _CASE_INSENSITIVE_FS
+    except (OSError, ValueError):
+        return False
 
 
 def _mtime(item) -> float | None:
@@ -92,14 +128,24 @@ def _leaf(backend: FileBackend, path: str) -> str:
     return path.rsplit(sep, 1)[-1] if sep in path else path
 
 
-def unique_name(name: str, taken: set[str], *, is_dir: bool = False) -> str:
+def unique_name(name: str, taken: set[str], *, is_dir: bool = False,
+                fold: bool = False) -> str:
     """*name*, or ``stem (N).ext`` with the first N not in *taken*.
 
     The number goes before the last extension of a file (``a (1).txt``);
     a folder, a dotfile without another dot and a name without an
-    extension get it at the end.
+    extension get it at the end. *fold*: names are compared without case
+    (a case-insensitive destination: "A (1).txt" takes "a (1).txt").
     """
-    if name not in taken:
+    if fold:
+        folded = {n.casefold() for n in taken}
+
+        def free(candidate: str) -> bool:
+            return candidate.casefold() not in folded
+    else:
+        def free(candidate: str) -> bool:
+            return candidate not in taken
+    if free(name):
         return name
     dot = -1 if is_dir else name.rfind(".")
     if dot <= 0:
@@ -109,7 +155,7 @@ def unique_name(name: str, taken: set[str], *, is_dir: bool = False) -> str:
     n = 1
     while True:
         candidate = f"{stem} ({n}){ext}"
-        if candidate not in taken:
+        if free(candidate):
             return candidate
         n += 1
 
@@ -157,13 +203,22 @@ def scan_conflicts(
         scan.taken[folder] = set(entries)
         return entries
 
+    fold = case_insensitive_names(dest_backend, dest_dir)
+
     def visit(items: list[tuple[str, str, object]], folder: str) -> None:
         existing = listing(folder)
         scan.taken[folder].update(name for name, _path, _item in items)
+        folded = {}
+        if fold:
+            # "Readme.txt" lands on "README.txt" there: the same entry.
+            scan.folded.add(folder)
+            folded = {key.casefold(): item for key, item in existing.items()}
         for name, src_path, src_item in sorted(items, key=lambda t: t[0]):
             if cancel():
                 raise ScanCancelled()
             dest_item = existing.get(name)
+            if dest_item is None and fold:
+                dest_item = folded.get(name.casefold())
             if dest_item is None:
                 continue
             src_is_dir = bool(getattr(src_item, "is_dir", False))
@@ -236,6 +291,7 @@ class ConflictPlan:
     def __init__(self, dest_backend: FileBackend, scan: ConflictScan) -> None:
         self._backend = dest_backend
         self._taken = {folder: set(names) for folder, names in scan.taken.items()}
+        self._folded = set(scan.folded)
         #: (source path, destination path) -> (target or None, if_exists)
         self._decisions: dict[tuple[str, str], tuple[str | None, str]] = {}
         #: destination path -> the last answer for it, for a caller that
@@ -249,6 +305,31 @@ class ConflictPlan:
         copies whose caller established the destination was free (the
         compare window's one-sided rows, a sync's "missing" files)."""
         return cls(dest_backend, ConflictScan())
+
+    @classmethod
+    def duplicates(cls, source_backend: FileBackend, dest_backend: FileBackend, dest_dir: str,
+                   sources, taken, folders=()) -> ConflictPlan:
+        """A plan that copies each of *sources* into *dest_dir* - the folder
+        they are in - under a name of its own: ``a (1).txt``, ``a (2).txt``
+        (:func:`unique_name`, as Rename at the conflict prompt). *taken*:
+        the names in *dest_dir* now; *folders*: the sources that are
+        folders (the number goes at the end of their name). Each job
+        refuses to replace anything (IF_EXISTS_FAIL): a name taken in the
+        meantime fails that job instead of being overwritten."""
+        plan = cls(dest_backend, ConflictScan())
+        names = set(taken)
+        folders = set(folders)
+        for source in sources:
+            sep = source_backend.separator() or "/"
+            leaf = source.rstrip(sep).rsplit(sep, 1)[-1]
+            name = transfer_leaf(source_backend, dest_backend, leaf)
+            names.add(name)  # (it is there: a copy never takes its own name)
+            new_name = unique_name(name, names, is_dir=source in folders)
+            names.add(new_name)
+            target = safe_join(dest_backend, dest_dir, new_name)
+            dest = safe_join(dest_backend, dest_dir, name)
+            plan._decisions[(source, dest)] = (target, IF_EXISTS_FAIL)
+        return plan
 
     @classmethod
     def only_newer(cls, dest_backend: FileBackend, pairs) -> ConflictPlan:
@@ -268,7 +349,8 @@ class ConflictPlan:
             answer: tuple[str | None, str] = (None, "")
         elif action is ConflictAction.RENAME:
             taken = self._taken.setdefault(conflict.dest_dir, set())
-            new_name = unique_name(conflict.name, taken, is_dir=conflict.source_is_dir)
+            new_name = unique_name(conflict.name, taken, is_dir=conflict.source_is_dir,
+                                   fold=conflict.dest_dir in self._folded)
             taken.add(new_name)
             answer = (safe_join(self._backend, conflict.dest_dir, new_name), IF_EXISTS_FAIL)
         elif conflict.type_mismatch:

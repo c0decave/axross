@@ -24,7 +24,11 @@ what every caller (pane, viewers, scripting) needs around it:
   A file that changed while it was being cleaned is not overwritten.
 * **Directories.** :func:`scan_metadata` / :func:`remove_folder` walk with
   :func:`core.media_collect.collect_media` (item, depth and folder caps,
-  symlinked folders not followed, cancellable, progress).
+  symlinked folders not followed, cancellable, progress), hidden files
+  included; :func:`skip_notes` says what a walk left out (unreadable
+  folders, the depth or item cap, subfolders not asked for, files of a type
+  that carries metadata axross cannot clean), so no result reads as a whole
+  folder done when it was not.
 * **Export** as JSON or CSV (spreadsheet formulas neutralised).
 
 Security mode: reading and removing are explicit user actions and work in
@@ -152,6 +156,65 @@ class BatchResult:
     cancelled: bool = False
     #: The journal entry of a removal ("" when nothing was written).
     operation_id: str = ""
+    #: Files of a type that carries metadata axross cannot read or remove
+    #: (HEIC, RAW, SVG, .doc ...) met by the walk; left as they are.
+    unsupported: list[str] = field(default_factory=list)
+    #: Whether the walk was asked to go into subfolders.
+    recursive: bool = False
+
+
+#: File types that carry metadata (camera, GPS, author) which axross can
+#: neither read nor remove: a folder walk names them instead of passing
+#: them by. Other unsupported files (text, code, archives) carry none to
+#: speak of and are not counted.
+UNSUPPORTED_CARRIERS = frozenset({
+    ".heic", ".heif", ".hif", ".avif", ".jxl", ".jp2", ".j2k", ".jpx", ".psd", ".psb",
+    ".dng", ".cr2", ".cr3", ".crw", ".nef", ".nrw", ".arw", ".srf", ".sr2", ".orf",
+    ".rw2", ".raf", ".pef", ".srw", ".x3f", ".3fr", ".iiq", ".erf", ".mrw", ".kdc",
+    ".svg", ".svgz", ".ai", ".eps", ".xcf", ".kra",
+    ".doc", ".dot", ".xls", ".xlt", ".ppt", ".pot", ".rtf", ".odf", ".vsd", ".vsdx",
+    ".pages", ".numbers", ".key", ".epub", ".mobi", ".azw3", ".djvu", ".xps", ".oxps",
+    ".insv", ".lrv", ".dv", ".mts", ".m2ts", ".ts", ".flv", ".amr", ".caf", ".dsf", ".ape",
+})
+
+#: Most unsupported (and unreadable) paths a walk keeps to name.
+SKIP_PATHS_KEPT = 20
+
+
+@dataclass
+class SkipNote:
+    """Something a folder walk left out, for the result to say: ``kind`` is
+    ``unreadable`` (folders it could not list), ``too_deep`` (folders below
+    the depth limit), ``subfolders`` (not asked to go into them),
+    ``truncated`` (the file cap ended the walk), ``links`` (folder links,
+    not followed) or ``unsupported`` (files of a type it cannot clean)."""
+
+    kind: str
+    count: int
+    paths: list[str] = field(default_factory=list)
+
+
+def skip_notes(batch: BatchResult) -> list[SkipNote]:
+    """What *batch*'s folder walk did not look at or could not clean - [] for
+    a walk that saw everything. A result without these said "removed from N
+    files" while hidden files, unreadable folders and HEIC photos kept
+    their metadata."""
+    scan = batch.scan
+    notes: list[SkipNote] = []
+    if scan is not None:
+        if getattr(scan, "unreadable", 0):
+            notes.append(SkipNote("unreadable", int(scan.unreadable),
+                                  list(getattr(scan, "unreadable_paths", []))))
+        if getattr(scan, "depth_capped", False):
+            notes.append(SkipNote("too_deep" if batch.recursive else "subfolders", 1))
+        if getattr(scan, "truncated", False):
+            notes.append(SkipNote("truncated", len(getattr(scan, "items", []))))
+        if getattr(scan, "links_skipped", 0):
+            notes.append(SkipNote("links", int(scan.links_skipped)))
+    if batch.unsupported:
+        notes.append(SkipNote("unsupported", len(batch.unsupported),
+                              batch.unsupported[:SKIP_PATHS_KEPT]))
+    return notes
 
 
 @dataclass(frozen=True)
@@ -264,9 +327,13 @@ class _CancelView:
 
 
 def _is_local(backend) -> bool:
+    """A local file system used by path. The MCP server's confined one is
+    not: a path checked there and then opened by name here could meanwhile
+    lead through a folder swapped for a symlink - its files are read and
+    written through the backend, like a remote's."""
     from core.local_fs import LocalFS
 
-    return isinstance(backend, LocalFS)
+    return isinstance(backend, LocalFS) and not getattr(backend, "confined_beneath", False)
 
 
 def _name(backend, path: str) -> str:
@@ -504,6 +571,86 @@ def _clean(kind: str, src: str, dst: str, cancel: _CancelView) -> None:
         MF.av_clean(src, dst, kind, cancel)  # type: ignore[arg-type]
 
 
+def _work_folder(backend, path: str) -> tuple[str, str | None]:
+    """``(folder, partials record)``: a private folder (0700) for the cleaned
+    copy - beside a local file, on its file system: the system temp folder,
+    often a RAM disk, took a whole video and then copied it across. A
+    folder that cannot be written there, and a remote file, use the
+    system temp folder."""
+    from core import partials
+
+    if _is_local(backend):
+        try:
+            folder = tempfile.mkdtemp(prefix=f".axross-clean-{os.getpid()}-",
+                                      dir=os.path.dirname(os.path.abspath(path)))
+        except OSError as exc:
+            log.debug("metadata: no work folder beside %s (%s); the temp folder is used",
+                      path, exc)
+        else:
+            return folder, partials.track(folder)
+    return tempfile.mkdtemp(prefix="axross-metadata-clean-"), None
+
+
+def _open_same_file(path: str, ino: int, flags: int) -> int:
+    """A descriptor of the local file *path* - never through a link put in
+    its place, only while it is the file that was cleaned (*ino*)."""
+    fd = os.open(path, flags | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+                 | getattr(os, "O_NONBLOCK", 0))
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_ino != ino:
+            raise OSError(f"{path} was replaced while it was cleaned; left as it is")
+        os.set_blocking(fd, True)
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _keep_original(path: str, ino: int, keep: str) -> None:
+    """A private copy (0600) of the local file *path* at *keep*."""
+    fd = _open_same_file(path, ino, os.O_RDONLY)
+    with os.fdopen(fd, "rb") as old, \
+            os.fdopen(os.open(keep, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as out:
+        shutil.copyfileobj(old, out, 1024 * 1024)
+
+
+def _write_into_inode(path: str, cleaned: str, ino: int, original: str) -> None:
+    """Write *cleaned* into the local file *path* itself (same inode: every
+    hard link of it gets the clean content). *original*, its old content
+    (:func:`_keep_original`), is written back when the write fails half way."""
+    fd = _open_same_file(path, ino, os.O_WRONLY)
+    try:
+        def put(source: str) -> None:
+            os.lseek(fd, 0, os.SEEK_SET)
+            with open(source, "rb") as src:
+                for chunk in iter(lambda: src.read(1024 * 1024), b""):
+                    view = memoryview(chunk)
+                    while view:
+                        view = view[os.write(fd, view):]
+            os.ftruncate(fd, os.lseek(fd, 0, os.SEEK_CUR))
+            os.fsync(fd)
+
+        try:
+            put(cleaned)
+        except BaseException as exc:
+            try:
+                put(original)
+            except BaseException as undo_exc:
+                raise _OriginalNotBack(
+                    f"cleaning {path} failed half way ({exc}) and its old content could not "
+                    f"be written back ({undo_exc}); the original is kept in the trash"
+                ) from exc
+            raise
+    finally:
+        os.close(fd)
+
+
+class _OriginalNotBack(OSError):
+    """A write into a file failed and its old content is not back: the
+    trash copy is the original now, and is kept."""
+
+
 def _remove_one(backend, path: str, mode: str, view: _CancelView) -> RemoveResult:
     name = _name(backend, path)
     kind = kind_of(name)
@@ -516,7 +663,7 @@ def _remove_one(backend, path: str, mode: str, view: _CancelView) -> RemoveResul
         result.status, result.error = UNSUPPORTED, cap.reason
         return result
     source = None
-    workdir = tempfile.mkdtemp(prefix="axross-metadata-clean-")
+    workdir, workdir_record = _work_folder(backend, path)
     try:
         source = _open_source(backend, path, kind, view, for_remove=True)
         fields, read_error, _ = _read_fields(kind, source.local_path, view)
@@ -536,13 +683,22 @@ def _remove_one(backend, path: str, mode: str, view: _CancelView) -> RemoveResul
         mode_bits = None
         if _is_local(backend):
             mode_bits = os.stat(path).st_mode & 0o777
+        # The file's other names (hard links), counted before the trash
+        # copy (a hard link itself where it can be) adds one.
+        links = os.lstat(path).st_nlink if _is_local(backend) else 1
+        kept_original = ""
         if mode == MODE_IN_PLACE:
             from core import trash as _trash
 
+            local_source = None if _is_local(backend) else source.local_path
+            if links > 1:
+                # The trash gets a copy of its own: its usual hard link is
+                # the very file whose content is replaced below.
+                kept_original = os.path.join(workdir, "original")
+                _keep_original(path, source.signature[2], kept_original)
+                local_source = kept_original
             try:
-                result.trash_id = _trash.trash_copy(
-                    backend, path, local_source=None if _is_local(backend) else source.local_path
-                )
+                result.trash_id = _trash.trash_copy(backend, path, local_source=local_source)
             except OSError as exc:
                 if _is_local(backend):
                     result.error = f"cannot keep the original in the trash: {exc}"
@@ -556,8 +712,22 @@ def _remove_one(backend, path: str, mode: str, view: _CancelView) -> RemoveResul
                 from core.atomic_io import atomic_write_stream
 
                 try:
-                    with open(cleaned, "rb") as fh:
-                        atomic_write_stream(backend, path, fh)
+                    if links > 1:
+                        # Renamed over the one name, the cleaned copy left
+                        # the metadata in the file's other names (a hard
+                        # link in a backup, a photo library): the content
+                        # goes into the file itself, the original is in
+                        # the trash.
+                        _write_into_inode(path, cleaned, source.signature[2], kept_original)
+                        result.note = (
+                            f"the file has {links} names (hard links); all of them "
+                            "were cleaned"
+                        )
+                    else:
+                        with open(cleaned, "rb") as fh:
+                            atomic_write_stream(backend, path, fh)
+                except _OriginalNotBack:
+                    raise  # the trash keeps the original
                 except BaseException:
                     _trash.discard(backend, result.trash_id)
                     result.trash_id = ""
@@ -580,6 +750,9 @@ def _remove_one(backend, path: str, mode: str, view: _CancelView) -> RemoveResul
         if source is not None:
             source.cleanup()
         shutil.rmtree(workdir, ignore_errors=True)
+        from core import partials
+
+        partials.done(workdir_record)
     return result
 
 
@@ -706,27 +879,44 @@ def collect_targets(
     recursive: bool = False,
     max_depth: int | None = None,
     max_items: int | None = None,
-    include_hidden: bool = False,
+    include_hidden: bool = True,
     only_names: Collection[str] | None = None,
     cancel=None,
     progress: Callable[[int, int, str], None] | None = None,
+    unsupported: list[str] | None = None,
 ):
-    """The supported files under *root* (a :class:`core.media_collect.MediaScan`)."""
+    """The supported files under *root* (a :class:`core.media_collect.MediaScan`).
+
+    Hidden files are included: their metadata is no less there (".photo.jpg"
+    kept its GPS). Without *recursive* the walk still notes that there were
+    subfolders (``depth_capped``). Files of a type in
+    :data:`UNSUPPORTED_CARRIERS` go to *unsupported* (their names)."""
     from core import media_collect as MC
 
     view = _CancelView(cancel)
+
+    def classify(name: str):
+        kind = kind_of(name)
+        if kind is None and unsupported is not None \
+                and os.path.splitext(name)[1].lower() in UNSUPPORTED_CARRIERS:
+            unsupported.append(name)
+        return kind
+
     return MC.collect_media(
         backend,
         root,
         kinds=KINDS,
-        recursive=recursive,
-        max_depth=MC.DEFAULT_MAX_DEPTH if max_depth is None else max_depth,
+        # Not recursive is depth 0 of a recursive walk: the same files, and
+        # depth_capped says that subfolders were left out.
+        recursive=True,
+        max_depth=0 if not recursive else (MC.DEFAULT_MAX_DEPTH if max_depth is None
+                                          else max_depth),
         max_items=MC.DEFAULT_MAX_ITEMS if max_items is None else max_items,
         include_hidden=include_hidden,
         only_names=only_names,
         cancel=view.is_set,
         progress=progress,
-        classify=kind_of,
+        classify=classify,
     )
 
 
@@ -735,7 +925,7 @@ def scan_metadata(
     root: str,
     *,
     recursive: bool = False,
-    include_hidden: bool = False,
+    include_hidden: bool = True,
     only_names: Collection[str] | None = None,
     cancel=None,
     progress: Callable[[int, int, str], None] | None = None,
@@ -746,6 +936,7 @@ def scan_metadata(
     ``progress(done, total, path)`` per file read (and per folder listed
     while walking, with total 0)."""
     view = _CancelView(cancel)
+    unsupported: list[str] = []
     scan = collect_targets(
         backend,
         root,
@@ -754,9 +945,11 @@ def scan_metadata(
         only_names=only_names,
         cancel=view,
         progress=(lambda f, i, p: progress(0, 0, p)) if progress is not None else None,
+        unsupported=unsupported,
         **caps,
     )
-    batch = BatchResult(scan=scan, cancelled=scan.cancelled)
+    batch = BatchResult(scan=scan, cancelled=scan.cancelled, unsupported=unsupported,
+                        recursive=recursive)
     for n, item in enumerate(scan.items):
         if view.is_set():
             batch.cancelled = True
@@ -776,14 +969,15 @@ def remove_folder(
     *,
     recursive: bool = False,
     mode: str | None = None,
-    include_hidden: bool = False,
+    include_hidden: bool = True,
     only_names: Collection[str] | None = None,
     cancel=None,
     progress: Callable[[int, int, str], None] | None = None,
 ) -> BatchResult:
     """Remove the metadata of every supported file under *root*, as one
-    undoable run."""
+    undoable run. :func:`skip_notes` of the result says what was left out."""
     view = _CancelView(cancel)
+    unsupported: list[str] = []
     scan = collect_targets(
         backend,
         root,
@@ -791,9 +985,11 @@ def remove_folder(
         include_hidden=include_hidden,
         only_names=only_names,
         cancel=view,
+        unsupported=unsupported,
     )
     if scan.cancelled:
-        return BatchResult(scan=scan, cancelled=True)
+        return BatchResult(scan=scan, cancelled=True, unsupported=unsupported,
+                           recursive=recursive)
     batch = remove_many(
         backend,
         [item.path for item in scan.items],
@@ -803,6 +999,8 @@ def remove_folder(
         source=root,
     )
     batch.scan = scan
+    batch.unsupported = unsupported
+    batch.recursive = recursive
     return batch
 
 
@@ -861,8 +1059,10 @@ __all__ = [
     "MODE_IN_PLACE",
     "MetadataReport",
     "RemoveResult",
+    "SkipNote",
     "UNCHANGED",
     "UNSUPPORTED",
+    "UNSUPPORTED_CARRIERS",
     "capabilities",
     "clean_copy_name",
     "collect_targets",
@@ -875,5 +1075,6 @@ __all__ = [
     "scan_metadata",
     "set_confirm_before_remove",
     "set_write_mode",
+    "skip_notes",
     "write_mode",
 ]

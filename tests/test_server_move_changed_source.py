@@ -51,7 +51,7 @@ class _Base(unittest.TestCase):
     def write_during(self, name: str, target: Path, data: bytes = LATE):
         """Patch ``server_ops.shutil.<name>`` so a writer adds *data* to
         *target* once, right after the outermost real call copied it
-        (``copytree`` calls itself for each subfolder)."""
+        (the copy writes each file's data with ``copyfileobj``)."""
         real = getattr(shutil, name)
         depth = [0]
 
@@ -81,7 +81,7 @@ class AcrossDevicesTest(_Base):
         src = self.stick / "app.log"
         src.write_bytes(b"line\n")
         dst = self.home / "app.log"
-        with self.write_during("copy2", src), self.assertRaisesRegex(
+        with self.write_during("copyfileobj", src), self.assertRaisesRegex(
             OSError, "changed while it was copied"
         ):
             server_side_move(_TwoMountsFS(self.stick), str(src), str(dst))
@@ -93,7 +93,7 @@ class AcrossDevicesTest(_Base):
         (folder / "sub").mkdir(parents=True)
         (folder / "sub" / "a.txt").write_bytes(b"a")
         dst = self.home / "project"
-        with self.write_during("copytree", folder / "sub" / "new.txt"), self.assertRaisesRegex(
+        with self.write_during("copyfileobj", folder / "sub" / "new.txt"), self.assertRaisesRegex(
             OSError, "changed while it was copied"
         ):
             server_side_move(_TwoMountsFS(self.stick), str(folder), str(dst))

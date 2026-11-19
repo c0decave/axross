@@ -182,6 +182,23 @@ def write_encrypted(backend, path: str, data: bytes, passphrase: str) -> str:
     return final
 
 
+def read_capped(handle, limit: int) -> bytes:
+    """Up to *limit* bytes of *handle*, to its end across short reads (a
+    network reader's read(n) may return less than n before the end: one
+    read took the first part only)."""
+    parts: list[bytes] = []
+    size = 0
+    while size < limit:
+        chunk = handle.read(min(4 * 1024 * 1024, limit - size))
+        if not chunk:
+            break
+        if isinstance(chunk, str):
+            chunk = chunk.encode("utf-8", errors="replace")
+        parts.append(chunk)
+        size += len(chunk)
+    return b"".join(parts)
+
+
 def read_encrypted(backend, path: str, passphrase: str) -> bytes:
     """Read and decrypt *path*. Raises :class:`InvalidCiphertext` on
     bad passphrase / corruption, :class:`OSError` on IO failure."""
@@ -193,7 +210,7 @@ def read_encrypted(backend, path: str, passphrase: str) -> bytes:
         # 50-GiB "encrypted" blob and OOM the client before we've even
         # had a chance to verify the GCM tag. Read one byte past the
         # cap so we can distinguish "exactly MAX" from "too big".
-        raw = handle.read(MAX_ENCRYPTED_SIZE + 1)
+        raw = read_capped(handle, MAX_ENCRYPTED_SIZE + 1)
     finally:
         try:
             handle.close()
@@ -205,7 +222,60 @@ def read_encrypted(backend, path: str, passphrase: str) -> bytes:
         raise InvalidCiphertext(
             f"encrypted blob at {path} exceeds {MAX_ENCRYPTED_SIZE // (1024 * 1024)} MiB cap"
         )
+    if is_streaming_blob(raw):
+        # The chunked format (the MCP server's encrypt writes it).
+        out = io.BytesIO()
+        decrypt_stream(io.BytesIO(raw), out, passphrase)
+        return out.getvalue()
     return decrypt_bytes(raw, passphrase)
+
+
+def decrypt_v1_stream(reader: IO[bytes], size: int, writer: IO[bytes], passphrase: str, *,
+                      chunk_size: int = DEFAULT_STREAM_CHUNK_SIZE) -> int:
+    """Decrypt a single-shot (``AXXE1``) file of *size* bytes from the
+    seekable *reader* into *writer* a chunk at a time; returns the
+    plaintext bytes. GCM's tag is the file's last 16 bytes: it is read
+    first and checked when the last chunk is through - the plaintext
+    written before that is unverified, so the caller writes to a
+    temporary file and removes it when this raises
+    :class:`InvalidCiphertext`. (The whole file in memory, as
+    :func:`decrypt_bytes` needs, cost three times its size.)"""
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+    if size < HEADER_LEN + 16:
+        raise InvalidCiphertext("blob too short to be axross-encrypted")
+    header = _read_exact(reader, HEADER_LEN)
+    if header is None or header[:MAGIC_LEN] != MAGIC:
+        raise InvalidCiphertext("missing axross magic header")
+    salt = header[MAGIC_LEN: MAGIC_LEN + SALT_LEN]
+    nonce = header[MAGIC_LEN + SALT_LEN: HEADER_LEN]
+    reader.seek(size - 16)
+    tag = _read_exact(reader, 16)
+    if tag is None:
+        raise InvalidCiphertext("blob truncated")
+    reader.seek(HEADER_LEN)
+    try:
+        key = _derive_key(passphrase, salt)
+    except Exception as exc:
+        raise InvalidCiphertext(f"key derivation failed: {exc}") from exc
+    decryptor = Cipher(algorithms.AES(key), modes.GCM(nonce, tag)).decryptor()
+    decryptor.authenticate_additional_data(MAGIC)
+    left = size - HEADER_LEN - 16
+    written = 0
+    while left > 0:
+        chunk = _read_exact(reader, min(chunk_size, left))
+        if chunk is None:
+            raise InvalidCiphertext("blob truncated")
+        left -= len(chunk)
+        plain = decryptor.update(chunk)
+        writer.write(plain)
+        written += len(plain)
+    try:
+        writer.write(decryptor.finalize())
+    except InvalidTag as exc:
+        raise InvalidCiphertext(
+            "authentication failed — wrong passphrase or tampered blob") from exc
+    return written
 
 
 def is_encrypted_blob(raw: bytes) -> bool:
@@ -423,6 +493,7 @@ __all__ = [
     "is_encrypted_path",
     "is_streaming_blob",
     "open_encrypted_read",
+    "read_capped",
     "read_encrypted",
     "write_encrypted",
 ]

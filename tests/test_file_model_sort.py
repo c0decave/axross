@@ -7,7 +7,9 @@ thread, because QSortFilterProxyModel called the Python ``lessThan`` about
 sorts its own list with a key in ``sorted()``; the proxy only filters.
 
 The reference below is the previous proxy, verbatim: Qt sorts with it, so
-every comparison of orders is old-Qt-behaviour vs new.
+every comparison of orders is old-Qt-behaviour vs new - with one
+change on purpose: a descending sort keeps ".." on top and the folders
+before the files (see _order).
 """
 
 from __future__ import annotations
@@ -103,10 +105,18 @@ def _items(n: int = 400, seed: int = 4) -> list[FileItem]:
 
 def _order(proxy) -> list[int]:
     src = proxy.sourceModel()
-    return [
-        id(src.get_item(proxy.mapToSource(proxy.index(r, 0)).row()))
-        for r in range(proxy.rowCount())
-    ]
+    items = [src.get_item(proxy.mapToSource(proxy.index(r, 0)).row())
+             for r in range(proxy.rowCount())]
+    if isinstance(proxy, _OldProxy) and 0 <= proxy.sortColumn() < proxy.columnCount():
+        # One change on purpose (round 2 of the 2026-11 reviews): in a
+        # descending sort the old proxy put the files first and ".." last.
+        # As in Total Commander, ".." stays on top and the folders stay
+        # before the files; only the order inside each group is reversed.
+        # So the reference's order is regrouped, groups ascending (stable:
+        # inside a group it is the old order, ties included). No valid sort
+        # column is the listing order (reversed for descending), as before.
+        items.sort(key=lambda it: (it.name != "..", not it.is_dir))
+    return [id(it) for it in items]
 
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")
@@ -189,7 +199,9 @@ class SortEquivalenceTest(unittest.TestCase):
         new.sort(COL_NAME, Qt.SortOrder.AscendingOrder)
         self.assertEqual(names(new), ["..", "Adir", "zdir", "a.txt", "b.txt"])
         new.sort(COL_NAME, Qt.SortOrder.DescendingOrder)
-        self.assertEqual(names(new), ["b.txt", "a.txt", "zdir", "Adir", ".."])
+        # ".." on top and the folders before the files, as in Total
+        # Commander; each group reversed (see _order)
+        self.assertEqual(names(new), ["..", "zdir", "Adir", "b.txt", "a.txt"])
 
     def test_edge_empty_and_single(self) -> None:
         for items in ([], [FileItem(name="..", is_dir=True)], [FileItem(name="x")]):

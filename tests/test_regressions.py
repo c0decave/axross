@@ -665,7 +665,9 @@ class ConnectionManagerRegressionTests(unittest.TestCase):
         from core.profiles import VALID_PROTOCOLS
 
         backend_registry.init_registry()
-        src = inspect.getsource(ConnectionManager._create_session)
+        src = inspect.getsource(ConnectionManager._create_session) + inspect.getsource(
+            ConnectionManager._create_store_session
+        )
         dispatched = set(re.findall(r'proto == "([^"]+)"', src))
         for tuple_expr in re.findall(r"proto in \(([^\)]*)\)", src):
             dispatched.update(re.findall(r'"([^"]+)"', tuple_expr))

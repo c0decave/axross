@@ -97,8 +97,12 @@ class EnqueueCostTest(_Base):
         with mock.patch.object(LocalFS, "stat", wraps=self.fs.stat) as st:
             jobs = self.enqueue()
         self.assertEqual(len(jobs), 36)
-        # only the empty file (size 0 in the listing) is stat'ed, as a fallback
-        self.assertEqual(st.call_count, 1)
+        # only the empty file (size 0 in the listing) is stat'ed, as a fallback,
+        # and the selected folder itself once: the folder made for it keeps its
+        # privacy (transfer_manager._keep_folder_private; its subfolders' modes
+        # come from the listing)
+        self.assertEqual(sorted(str(c.args[-1]) for c in st.call_args_list),
+                         sorted([str(self.src), str(self.src / "empty.bin")]))
 
     def test_happy_one_destination_listing_per_folder(self) -> None:
         # dst/src and dst/src/sub are created fresh: nothing to list there.

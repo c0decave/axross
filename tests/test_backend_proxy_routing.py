@@ -373,6 +373,9 @@ class GitProxyTest(_ProxyCase):
         socks = self.route("git.internal", 2222)
         session, call = self._clone_kwargs("ssh://git.internal:2222/r.git", socks_kwargs(socks))
         self.assertEqual(session._tunnels[0]._target, ("git.internal", 2222))
+        # The host key of port 2222, not port 22's (review round 2): a bare
+        # HostKeyAlias looked up and saved the key as "git.internal".
+        self.assertIn("HostKeyAlias='[git.internal]:2222'", call.kwargs["ssh_command"])
 
     def test_scp_style_remote_goes_through_a_tunnel(self) -> None:
         socks = self.route("git.internal", 22)
@@ -428,9 +431,13 @@ class GitProxyTest(_ProxyCase):
             self.gf.GitFsSession(url="https://git.internal/r.git", **socks_kwargs(socks))
         self.assertEqual(socks.connects[0], ("git.internal", 443))
 
-    def test_no_proxy_passes_no_transport_kwargs(self) -> None:
+    def test_no_proxy_passes_no_proxy_transport(self) -> None:
+        # Without a proxy the HTTP(S) remote still gets a pool of its own
+        # (for the connect / read time-outs), but a plain one: no proxy.
         _s, call = self._clone_kwargs("https://git.example/r.git", {})
-        self.assertNotIn("pool_manager", call.kwargs)
+        pool = call.kwargs["pool_manager"]
+        self.assertEqual(type(pool).__name__, "PoolManager")
+        self.assertIsNone(getattr(pool, "proxy", None))
         self.assertNotIn("ssh_command", call.kwargs)
 
 
@@ -508,6 +515,12 @@ class SvnProxyTest(_ProxyCase):
         argv, env = calls[0]
         self.assertIn(f"svn+ssh://127.0.0.1:{session._tunnel.port}/repo", argv)
         self.assertIn("HostKeyAlias=svn.internal", env["SVN_SSH"])
+
+    def test_svn_ssh_custom_port_keeps_its_own_host_key(self) -> None:
+        socks = self.route("svn.internal", 2222)
+        _session, calls = self._make("svn+ssh://svn.internal:2222/repo", socks_kwargs(socks))
+        _argv, env = calls[0]
+        self.assertIn("HostKeyAlias='[svn.internal]:2222'", env["SVN_SSH"])
 
     def test_file_remote_is_not_proxied(self) -> None:
         socks = self.route("x", 1)

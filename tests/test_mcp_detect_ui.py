@@ -46,7 +46,10 @@ def _wait(predicate, seconds=20.0):
 def home(tmp_path):
     """A home whose Cursor knows the fake MCP server (with a secret)."""
     home = tmp_path / "home"
-    script = tmp_path / "fake_mcp.py"
+    # In a folder of its own: every file of a host-run server's folder is
+    # pinned (core.mcp_script_pin), and the test's settings change beside it.
+    (tmp_path / "srv").mkdir()
+    script = tmp_path / "srv" / "fake_mcp.py"
     script.write_text(FAKE)
     (home / ".cursor").mkdir(parents=True)
     (home / ".cursor" / "mcp.json").write_text(json.dumps({"mcpServers": {

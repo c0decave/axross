@@ -205,7 +205,15 @@ def call_box(parent, name: str, args: dict) -> QMessageBox:
     box.setIcon(QMessageBox.Icon.Question)
     box.setWindowTitle(tr("Allow this action?"))
     box.setTextFormat(Qt.TextFormat.PlainText)  # the arguments come from the model
-    box.setText(tr("The model wants to run {tool}.").format(tool=name))
+    text = tr("The model wants to run {tool}.").format(tool=name)
+    args = dict(args)
+    note = args.pop(A.APPROVAL_NOTE, None)
+    if isinstance(note, str) and note:
+        # What the call really changes (a symlink's target, a file an MCP
+        # server runs on this machine): axross's words, not the model's.
+        box.setIcon(QMessageBox.Icon.Warning)
+        text += "\n\n" + _visible(note)
+    box.setText(text)
     box.setDetailedText(_visible(json.dumps(args, indent=2, ensure_ascii=False)))
     preview = _visible(json.dumps(args, ensure_ascii=False))
     if len(preview) > CALL_PREVIEW_CHARS:
@@ -2030,9 +2038,14 @@ class AgentTab(QWidget):
                 finished(result, "")
             except A.AgentError as exc:
                 finished(None, str(exc))
-            except Exception as exc:  # noqa: BLE001 - the dock must survive anything
+            except BaseException as exc:  # noqa: BLE001 - the dock must survive anything
+                # BaseException: a SystemExit ended the thread unreported and
+                # the tab stayed busy for good.
                 log.exception("agent run failed")
-                finished(None, f"{type(exc).__name__}: {exc}")
+                try:
+                    finished(None, f"{type(exc).__name__}: {exc}")
+                except Exception:  # noqa: BLE001 - its own __str__ failed
+                    finished(None, type(exc).__name__)
 
         self._thread = threading.Thread(target=work, name="axross-agent", daemon=True)
         self._thread.start()

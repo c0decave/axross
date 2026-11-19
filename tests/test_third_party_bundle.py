@@ -340,3 +340,23 @@ def test_release_the_binary_carries_the_licence_texts(flavor, path):
         if flavor == "axross-full" and required not in names:
             missing.append(required)
     assert missing == [], "\n".join(missing)
+
+
+def test_happy_the_data_claims_the_gnutls_stack_of_the_0_15_179_ci_binaries():
+    """0.15.179's CI inventory (AlmaLinux 9.9 packages): the system GnuTLS and
+    the libraries it links, in axross-full and axross-slim, had no entry
+    (an empty Component column in THIRD_PARTY_LICENSES.md)."""
+    toc = [("b", name) for name in (
+        "libgnutls.so.30", "libnettle.so.8", "libhogweed.so.6", "libp11-kit.so.0",
+        "libtasn1.so.6", "libidn2.so.0", "libunistring.so.2",
+        "PyQt6/Qt6/lib/libQt6PrintSupport.so.6")]
+    expected = {"libgnutls.so.30": "gnutls", "libnettle.so.8": "nettle",
+                "libhogweed.so.6": "nettle", "libp11-kit.so.0": "p11-kit",
+                "libtasn1.so.6": "libtasn1", "libidn2.so.0": "libidn2",
+                "libunistring.so.2": "libunistring"}
+    for flavor in ("axross-full", "axross-slim"):
+        report = T.classify_bundle(T.load(), flavor, toc, ["PyQt6"], STDLIB)
+        assert report.unclaimed == [] and report.unlisted == [], (flavor, report)
+        owners = {what: owner for owner, parts in report.claimed.items() for what in parts}
+        for name, owner in expected.items():
+            assert owners[name] == owner, (flavor, name)

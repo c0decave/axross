@@ -28,18 +28,28 @@ def local_time(seconds, default=None):
         return datetime.fromtimestamp(0) if default is None else default
 
 
-def _permission_string(mode: int) -> str:
+def permission_string(mode: int) -> str:
+    """``rwxrwxrwx`` of *mode*, with setuid, setgid and sticky on the
+    execute places as ``ls -l`` shows them (``s``/``t``, upper case when the
+    execute bit is not set): the file pane, Properties and Permissions all
+    show a mode this way."""
     bits = (
         stat_module.S_IRUSR, stat_module.S_IWUSR, stat_module.S_IXUSR,
         stat_module.S_IRGRP, stat_module.S_IWGRP, stat_module.S_IXGRP,
         stat_module.S_IROTH, stat_module.S_IWOTH, stat_module.S_IXOTH,
     )
-    return "".join(c if mode & bit else "-" for c, bit in zip("rwxrwxrwx", bits))
+    chars = [c if mode & bit else "-" for c, bit in zip("rwxrwxrwx", bits)]
+    for special, exec_bit, pos, mark in ((0o4000, 0o100, 2, "s"), (0o2000, 0o010, 5, "s"),
+                                         (0o1000, 0o001, 8, "t")):
+        if mode & special:
+            chars[pos] = mark if mode & exec_bit else mark.upper()
+    return "".join(chars)
 
 
-#: ``rwxrwxrwx`` of every mode's low nine bits: the Permissions column
+#: ``rwxrwxrwx`` of every mode's low twelve bits: the Permissions column
 #: draws one per row, and building it bit by bit cost 3 us each.
-_PERMISSION_STRINGS = tuple(_permission_string(mode) for mode in range(0o1000))
+_PERMISSION_STRINGS = tuple(permission_string(mode) for mode in range(0o10000))
+
 
 #: The rows a file pane puts in front of a listing (FilePaneWidget._fetch_listing).
 NAV_NAMES = frozenset({".", ".."})
@@ -124,8 +134,10 @@ class FileItem:
 
     @property
     def permissions_str(self) -> str:
-        """Return rwxrwxrwx style permission string."""
-        return _PERMISSION_STRINGS[self.permissions & 0o777]
+        """Return rwxrwxrwx style permission string (setuid, setgid and
+        sticky as ``ls -l`` shows them)."""
+        mode = self.permissions
+        return _PERMISSION_STRINGS[mode & 0o7777 if mode >= 0 else mode & 0o777]
 
     @property
     def type_char(self) -> str:

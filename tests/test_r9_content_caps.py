@@ -269,7 +269,7 @@ def test_sad_two_thousand_hebrew_nbsp_fields_are_capped() -> None:
     page = MD._details_html(report)
     shown = page.count("<tr") - page.count('colspan="2"')
     assert 0 < shown < 2000
-    assert "more field(s) are not shown here" in page
+    assert "more fields are not shown here" in page
     started = time.perf_counter()
     dialog = MD.MetadataDetailsDialog(report)
     dialog.resize(700, 600)

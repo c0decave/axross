@@ -25,6 +25,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from core import storage_identity as SI  # noqa: E402
 from core.local_fs import LocalFS  # noqa: E402
+from core import process_umask as PU  # noqa: E402
 from core.transfer_worker import copy_mode, process_umask  # noqa: E402
 
 
@@ -104,7 +105,7 @@ def test_sad_without_proc_the_umask_comes_from_the_fallback(monkeypatch):
         return real_open(path, *a, **k)
 
     monkeypatch.setattr(os, "open", no_proc)
-    monkeypatch.setattr(TW, "_FALLBACK_UMASK", None)
+    monkeypatch.setattr(PU, "_FALLBACK_UMASK", None)
     old = os.umask(0o022)
     try:
         assert process_umask() == 0o022

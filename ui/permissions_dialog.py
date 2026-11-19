@@ -29,8 +29,10 @@ from PyQt6.QtWidgets import (
 )
 
 from ui.close_corner import add_close_corner
+from ui.elided_label import WrapAnywhereLabel
 from ui.icon_provider import set_window_icon
 from core.i18n import tr
+from ui.plain_text import defused, plain_tooltip
 
 if TYPE_CHECKING:
     from core.backend import FileBackend
@@ -41,10 +43,6 @@ log = logging.getLogger(__name__)
 # Owner r/w/x, group r/w/x, others r/w/x — the order the checkbox grid
 # is built in, so index i in ``_checks`` maps to ``_MODE_BITS[i]``.
 _MODE_BITS = (0o400, 0o200, 0o100, 0o040, 0o020, 0o010, 0o004, 0o002, 0o001)
-
-# setuid, setgid and sticky, shown on the owner/group/others execute
-# position like ``ls -l`` does: lower case when the execute bit is set too.
-_SPECIAL_MARKS = ((0o4000, 0o100, "s", "S"), (0o2000, 0o010, "s", "S"), (0o1000, 0o001, "t", "T"))
 
 _OCTAL_DIGITS = frozenset("01234567")
 
@@ -59,6 +57,15 @@ LINK_NOTE = (
 def _format_octal(mode: int) -> str:
     """Three digits, or four when a setuid/setgid/sticky bit is set."""
     return f"{mode:04o}" if mode & 0o7000 else f"{mode:03o}"
+
+
+def _value_label(text: str) -> WrapAnywhereLabel:
+    """A label for a value from outside: plain text, defused, wrapped at
+    any width (a long name has no blank to wrap at), whole as tooltip."""
+    shown = defused(text or "")
+    label = WrapAnywhereLabel(shown)
+    label.setToolTip(plain_tooltip(shown) if len(shown) > 60 else "")
+    return label
 
 
 class PermissionsWidget(QWidget):
@@ -108,10 +115,15 @@ class PermissionsWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         info = QFormLayout()
-        info.addRow(tr("File:"), QLabel(self._item.name))
+        # The name, owner and group are the server's text: plain, shown as
+        # the pane shows a name (a bidi override is U+FFFD) and wrapped
+        # inside the window - a 140-character name made it 1050 px wide,
+        # past a 1024x600 screen; the whole value is the tooltip.
+        info.addRow(tr("File:"), _value_label(self._item.name))
         info.addRow(tr("Type:"), QLabel(self._item.type_char))
-        info.addRow(tr("Owner:"), QLabel(f"{self._item.owner}:{self._item.group}"))
-        info.addRow(tr("Current:"), QLabel(self._item.mode_str))
+        info.addRow(tr("Owner:"), _value_label(f"{self._item.owner}:{self._item.group}"))
+        info.addRow(tr("Current:"), QLabel(
+            f"{self._item.mode_str}  ({self._original_mode & 0o7777:04o})"))
         layout.addLayout(info)
 
         self._link_note = QLabel(tr(LINK_NOTE))
@@ -230,12 +242,10 @@ class PermissionsWidget(QWidget):
         self.mode_changed.emit(self.full_mode())
 
     def _update_preview(self) -> None:
+        from models.file_item import permission_string
+
         mode = self.full_mode()
-        chars = [c if mode & b else "-" for c, b in zip("rwxrwxrwx", _MODE_BITS)]
-        for (special, exec_bit, with_x, without_x), pos in zip(_SPECIAL_MARKS, (2, 5, 8)):
-            if mode & special:
-                chars[pos] = with_x if mode & exec_bit else without_x
-        perm_str = "".join(chars)
+        perm_str = permission_string(mode)
         self._preview.setText(tr("Preview: {mode}").format(
             mode=f"{self._item.type_char}{perm_str}  ({mode:04o})"))
 
@@ -289,7 +299,7 @@ class PermissionsDialog(QDialog):
     ):
         super().__init__(parent)
         set_window_icon(self, "lock")
-        self.setWindowTitle(tr("Permissions: {name}").format(name=item.name))
+        self.setWindowTitle(tr("Permissions: {name}").format(name=defused(item.name)))
         self.setMinimumWidth(350)
 
         layout = QVBoxLayout(self)

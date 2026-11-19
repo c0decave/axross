@@ -26,7 +26,10 @@ SLEEPER = "import os, sys, time\nopen(sys.argv[1], 'w').write(str(os.getpid()))\
 
 @pytest.fixture
 def sleeper(tmp_path):
-    script = tmp_path / "sleeper.py"
+    # In a folder of its own: every file of a host-run server's folder is
+    # pinned (core.mcp_script_pin), and the test's other files change.
+    (tmp_path / "srv").mkdir()
+    script = tmp_path / "srv" / "sleeper.py"
     script.write_text(SLEEPER)
     pid_file = tmp_path / "pid"
 
@@ -97,6 +100,12 @@ def test_happy_the_tab_names_the_server_and_stop_ends_the_wait(tmp_path, sleeper
         end = time.monotonic() + 10
         while "Starting MCP server sleepy" not in tab.transcript.toPlainText():
             assert time.monotonic() < end, tab.transcript.toPlainText()
+            APP.processEvents()
+            time.sleep(0.02)
+        # Running, not answering (its first start compiles its modules into
+        # a private byte-code folder, core.mcp_client).
+        while not sleeper.pid_file.exists():
+            assert time.monotonic() < end, "the server did not start"
             APP.processEvents()
             time.sleep(0.02)
         tab.stop()

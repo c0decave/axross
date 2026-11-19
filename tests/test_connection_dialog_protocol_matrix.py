@@ -57,6 +57,11 @@ ASKS = (
     ("S3 bucket name or URL", "_s3_bucket", "my-bucket"),
     ("SMB share name", "_smb_share", "share"),
     ("DFS namespace", "_smb_share", "namespace"),
+    ("Database file is required", "_host", "/data/files.sqlite"),
+    ("Repository is required", "_host", "/src/repo"),
+    ("Repository URL is required", "_host", "https://svn.example/repo"),
+    # a name PostgreSQL takes and a Redis database number
+    ("Database is required", "_db_name", "2"),
 )
 
 

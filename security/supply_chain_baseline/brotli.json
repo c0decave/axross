@@ -4,6 +4,26 @@
   "1.2.1": {
    "accepted_findings": [],
    "archives": {
+    "brotli-1.2.1-cp312-cp312-macosx_10_13_universal2.whl": {
+     "entry_points": [],
+     "files": {
+      "_brotli.cpython-312-darwin.so": "f31bc9791cc119037d6bc4d2328d59070656d49291d62d095866a107aec48500",
+      "brotli-1.2.1.dist-info/METADATA": "9d45cb1ed6b59c80fedb4aa893fa11c1bc8e9127e6b0bebe58e0adf5a330e6aa",
+      "brotli-1.2.1.dist-info/RECORD": "170f432f4f6be19e19b26d747deda3d28635751346a1c9487093c5f8834cdcb1",
+      "brotli-1.2.1.dist-info/WHEEL": "0251b8b0b4cbef241bfa5ebe960d332fa796c54b0b2a83d881c1b850e1367e64",
+      "brotli-1.2.1.dist-info/licenses/LICENSE": "3d180008e36922a4e8daec11c34c7af264fed5962d07924aea928c38e8663c94",
+      "brotli-1.2.1.dist-info/top_level.txt": "82c4b9e07ae13b766f785c5e32b2a8ffba87e129b84db43b8c62d5044a89e0d2",
+      "brotli.py": "813610bf0d74a6998d7b47d912e8892c3896e6eac19cb7b22575e04fc294b63f"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "7b043c7357d532f42184c2262b304319cf5b6d7653fdd56eef91dfb2d73456cb",
+     "native": {
+      "_brotli.cpython-312-darwin.so": "macho-fat"
+     },
+     "pth": {},
+     "sha256": "3975fb11f63e212b87a087e4a910187b522c6969a4989ca362d6f85f9dc36acd"
+    },
     "brotli-1.2.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": {
      "entry_points": [],
      "files": {
@@ -23,11 +43,33 @@
      },
      "pth": {},
      "sha256": "4b9dd0173ca5e01d1eb307d3c184fe8c09bdc168ede560889b1018d216d38c61"
+    },
+    "brotli-1.2.1-cp312-cp312-win_amd64.whl": {
+     "entry_points": [],
+     "files": {
+      "_brotli.cp312-win_amd64.pyd": "3338d63b7f281fa5a745def98e460807d2b3935e9133be71aeb043d6db556dd7",
+      "brotli-1.2.1.dist-info/METADATA": "dd37f7b084bbf2787aa6423e7cf9d268f43c50e0b7397a59317508df83711fa6",
+      "brotli-1.2.1.dist-info/RECORD": "c69b802e57d6b962dd12be2bc2b02d0efcb25917662cbbc05681b2bb6d294d7c",
+      "brotli-1.2.1.dist-info/WHEEL": "b2601f60075ce318a1cf4b08f2b52cc397e708f776ca360504cd2ea7a3a21031",
+      "brotli-1.2.1.dist-info/licenses/LICENSE": "60ae0f13e76cc2eaaa108677eefa4ce16b647f6bbe8cf0a1ac9429d82eca7248",
+      "brotli-1.2.1.dist-info/top_level.txt": "82c4b9e07ae13b766f785c5e32b2a8ffba87e129b84db43b8c62d5044a89e0d2",
+      "brotli.py": "fe2f0cb9bc07f80fa83b47f36bce316a167f3b1b6e8cc2e9dc0117cb4a4cc535"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "d7a557d655f80b9e195542517186904703f7eeb6bd7f407e3d9d7201939b4176",
+     "native": {
+      "_brotli.cp312-win_amd64.pyd": "pe"
+     },
+     "pth": {},
+     "sha256": "f5342b8256476554b4045db8b7bf4dc4044d0405485f220f0cd80764bc0d7faf"
     }
    },
    "name": "brotli",
    "provenance": {
-    "brotli-1.2.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": null
+    "brotli-1.2.1-cp312-cp312-macosx_10_13_universal2.whl": null,
+    "brotli-1.2.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": null,
+    "brotli-1.2.1-cp312-cp312-win_amd64.whl": null
    },
    "pypi": {
     "author": "The Brotli Authors",
@@ -40,11 +82,96 @@
    },
    "reviewed": {
     "by": "claude",
-    "date": "2026-11-05",
-    "note": "A reviewed young release: 1.2.1 fixes GHSA-9v8h-qqgm-4m35 (build/young-release-exceptions.txt). Nothing flagged in the code. No attestation: content review only."
+    "date": "2026-11-20",
+    "earlier": [
+     {
+      "by": "claude",
+      "date": "2026-11-05",
+      "note": "A reviewed young release: 1.2.1 fixes GHSA-9v8h-qqgm-4m35 (build/young-release-exceptions.txt). Nothing flagged in the code. No attestation: content review only."
+     }
+    ],
+    "note": "macOS universal2 and Windows amd64 wheels of the reviewed version: same 7 members, only _brotli differs (brotli.py, METADATA and LICENSE CRLF-only on Windows). The 'http://' strings in the extensions are brotli's static dictionary, as in the Linux build. No new finding, no .pth, no hook, no network/process imports (capa's 'terminate process' on the .pyd is the CRT's abort path: no TerminateProcess import). No attestation, as for the Linux wheel: content review only."
    },
    "scans": {
     "capa": {
+     "3338d63b7f281fa5a745def98e460807d2b3935e9133be71aeb043d6db556dd7": {
+      "capabilities": [
+       "contain loop",
+       "encode data using Base64",
+       "encode data using XOR",
+       "encrypt data using RC4 KSA",
+       "encrypt data using RC4 PRGA",
+       "enumerate PE sections",
+       "parse PE header",
+       "reference analysis tools strings",
+       "resolve function by parsing PE exports",
+       "terminate process"
+      ],
+      "note": "",
+      "path": "_brotli.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-math-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "python312.dll"
+       ],
+       "rpath": [],
+       "urls": [
+        "http://.css",
+        "http://.jpg",
+        "http://Descriptionrelatively",
+        "http://UA-Compatible",
+        "http://according",
+        "http://addEventListenerresponsible",
+        "http://applicationslink",
+        "http://ator",
+        "http://cript",
+        "http://dictionaryperceptionrevolutionfoundationpx",
+        "http://encoding",
+        "http://familiar",
+        "http://html4/loose.dtd\">",
+        "http://imEnglish",
+        "http://interested",
+        "http://interpreted",
+        "http://iparticipation",
+        "http://link",
+        "http://mathematicsmargin-top",
+        "http://navigation",
+        "http://option",
+        "http://site",
+        "http://staticsuggested",
+        "http://style",
+        "http://whether",
+        "http://www",
+        "http://www-//W3C//DTD",
+        "http://www.",
+        "http://www./div></div><div",
+        "http://www.C//DTD",
+        "http://www.a",
+        "http://www.css",
+        "http://www.hortcut",
+        "http://www.icon",
+        "http://www.interpretation",
+        "http://www.language",
+        "http://www.style",
+        "http://www.text-decoration",
+        "http://www.w3.org/shortcut",
+        "http://www.wencodeURIComponent",
+        "http://www.years",
+        "https://aIn",
+        "https://was",
+        "https://www.World",
+        "https://www.recent"
+       ]
+      }
+     },
      "37bb23d800e63d8f7ac8f58351678338c96e8aa695241bae3de75c86ef6da88a": {
       "capabilities": [],
       "note": "larger than 2 MiB",
@@ -57,6 +184,65 @@
         "libc.so.6",
         "libpthread.so.0"
        ],
+       "rpath": [],
+       "urls": [
+        "http://.css",
+        "http://.jpg",
+        "http://Descriptionrelatively",
+        "http://UA-Compatible",
+        "http://according",
+        "http://addEventListenerresponsible",
+        "http://applicationslink",
+        "http://ator",
+        "http://cript",
+        "http://dictionaryperceptionrevolutionfoundationpx",
+        "http://encoding",
+        "http://familiar",
+        "http://html4/loose.dtd\">",
+        "http://imEnglish",
+        "http://interested",
+        "http://interpreted",
+        "http://iparticipation",
+        "http://link",
+        "http://mathematicsmargin-top",
+        "http://navigation",
+        "http://option",
+        "http://site",
+        "http://staticsuggested",
+        "http://style",
+        "http://whether",
+        "http://www",
+        "http://www-//W3C//DTD",
+        "http://www.",
+        "http://www./div></div><div",
+        "http://www.C//DTD",
+        "http://www.a",
+        "http://www.css",
+        "http://www.hortcut",
+        "http://www.icon",
+        "http://www.interpretation",
+        "http://www.language",
+        "http://www.style",
+        "http://www.text-decoration",
+        "http://www.w3.org/shortcut",
+        "http://www.wencodeURIComponent",
+        "http://www.years",
+        "https://aIn",
+        "https://was",
+        "https://www.World",
+        "https://www.recent"
+       ]
+      }
+     },
+     "f31bc9791cc119037d6bc4d2328d59070656d49291d62d095866a107aec48500": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "_brotli.cpython-312-darwin.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
        "rpath": [],
        "urls": [
         "http://.css",

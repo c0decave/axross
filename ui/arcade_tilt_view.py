@@ -437,7 +437,8 @@ class TiltView(AC.ArcadeView):
         bob = math.sin(now * 6 + len(d.name)) * th * 0.12
         fleeing = g.scared > 0
         colour = QColor("#3b82f6") if fleeing else QColor(DAEMON_COLOURS.get(d.name, "#ffffff"))
-        if fleeing and g.scared < 15 and int(now * 8) % 2:
+        # 2 blinks a second, as Chase's: flash-safe (at most 3 flashes a second)
+        if fleeing and g.scared < 15 and int(now * 4) % 2:
             colour = QColor("#f8fafc")
         r = tw * 0.22
         p.setBrush(QColor(0, 0, 0, 80))

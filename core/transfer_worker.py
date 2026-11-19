@@ -24,6 +24,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from core import read_spool, transfer_hooks
 from core.local_fs import create_private_file, open_own_partial, same_entry
 from core.posix_compat import fchmod_private
+from core.process_umask import process_umask  # noqa: F401 (also imported from here)
 from core.path_policy import hidden_sibling_name, safe_join
 
 if TYPE_CHECKING:
@@ -44,6 +45,10 @@ _RENAME_FALLBACK_ERRNOS = frozenset(
 )
 # Bytes compared at each end of a partial before a resume appends to it.
 RESUME_VERIFY_WINDOW = 64 * 1024
+#: Windows compared inside a long partial besides its two ends: one per
+#: this many bytes, at least one, at most RESUME_MAX_SAMPLES.
+RESUME_SAMPLE_SPACING = 256 * 1024 * 1024
+RESUME_MAX_SAMPLES = 8
 
 
 # A partial is named ``.<name>.part-<job id>-<source fingerprint>``. The
@@ -148,36 +153,6 @@ def _release_live_partials(paths) -> None:
             _LIVE_PARTIALS.discard(path)
 
 
-_FALLBACK_UMASK: int | None = None
-
-
-def process_umask() -> int:
-    """This process's umask, read without changing it where possible.
-
-    os.umask() can only be read by setting it, which for a moment lets
-    another thread create a file with the wrong mode; /proc avoids that.
-
-    Read anew on every call - the umask can change while axross runs (a
-    bracket such as adb's key generation, a script) - but as raw bytes:
-    a text-mode read of the ~60 lines cost ~80 µs, twice per copied file.
-    """
-    global _FALLBACK_UMASK
-    try:
-        fd = os.open("/proc/self/status", os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
-        try:
-            data = os.read(fd, 16384)
-        finally:
-            os.close(fd)
-        at = data.find(b"\nUmask:")
-        if at >= 0:
-            return int(data[at + 7 : data.index(b"\n", at + 7)].strip(), 8)
-    except (OSError, ValueError, IndexError):
-        pass
-    if _FALLBACK_UMASK is None:
-        current = os.umask(0o022)
-        os.umask(current)
-        _FALLBACK_UMASK = current
-    return _FALLBACK_UMASK
 
 
 def copy_mode(source_mode: int | None) -> int | None:
@@ -979,6 +954,12 @@ class TransferWorker(QObject):
             # it never deletes data written to the source meanwhile.
             size_before = self._move_source_size(job)
             job.move_source_size, job.integrity_compared = size_before, False
+            if job.move and job.source_backend is not None:
+                from core.server_ops import local_source_state
+
+                local_before = local_source_state(job.source_backend, job.source_path)
+            else:
+                local_before = None
             written = self._do_transfer(job, progress_callback)
             if written is not None:
                 # What was written, not what the listing said when the job
@@ -998,11 +979,18 @@ class TransferWorker(QObject):
 
             # Move mode: delete source after successful transfer
             if job.move and job.source_backend:
-                from core.server_ops import refuse_changed_source, refuse_short_copy
+                from core.server_ops import (
+                    refuse_changed_local_source,
+                    refuse_changed_source,
+                    refuse_short_copy,
+                )
 
                 refuse_short_copy(job.source_path, size_before, written, job.dest_path)
                 refuse_changed_source(
                     job.source_backend, job.source_path, size_before, job.dest_path
+                )
+                refuse_changed_local_source(
+                    job.source_backend, job.source_path, local_before, job.dest_path
                 )
                 self._refuse_wrong_destination_size(job, size_before, written)
                 try:
@@ -1084,10 +1072,10 @@ class TransferWorker(QObject):
             return None
         if job.cancel_event.is_set():
             raise InterruptedError("Transfer cancelled")
-        from core.storage_identity import same_entry
+        from core.storage_identity import same_entry, same_target_message
 
         if same_entry(src, job.source_path, dst, job.dest_path):
-            raise OSError(f"source and destination are the same: {job.dest_path}")
+            raise OSError(same_target_message(src, job.source_path, dst, job.dest_path))
         try:
             st = os.lstat(job.source_path)
             if os.stat(os.path.dirname(job.dest_path) or ".").st_dev != st.st_dev:
@@ -1436,12 +1424,13 @@ class TransferWorker(QObject):
             # after opening (and on a direct writer truncating) the
             # destination, then write it back from a snapshot.
             raise InterruptedError("Transfer cancelled")
-        from core.storage_identity import same_entry
+        from core.storage_identity import same_entry, same_target_message
 
         if same_entry(source_backend, job.source_path, dest_backend, job.dest_path):
             # Copying a file over itself, and for a move then deleting
             # "the source", would remove the only copy.
-            raise OSError(f"source and destination are the same: {job.dest_path}")
+            raise OSError(same_target_message(source_backend, job.source_path, dest_backend,
+                                              job.dest_path))
 
         present = None
         if not (job.use_temp_file and job.if_exists == "fail" and not job.resume):
@@ -2054,6 +2043,13 @@ class TransferWorker(QObject):
                         log.warning("Not resuming %s: %s; restarting transfer",
                                     temp_path, problem)
                         resume_offset = 0
+                        # The comparison left the source at the partial's
+                        # end: from there only the tail was copied, into a
+                        # new file - committed when the source's size was
+                        # not known. Back to the start, under a fresh name
+                        # (this one is kept for no later resume).
+                        src.seek(0)
+                        temp_path = self._restart_under_fresh_partial(job, temp_path, live)
                 # Decide the offset BEFORE seeking: a source left seeked to a
                 # discarded partial's size copies only the tail.
                 if job.total_bytes > 0 and resume_offset == job.total_bytes:
@@ -2100,10 +2096,17 @@ class TransferWorker(QObject):
                     written = os.fstat(dst.fileno())
                     mode_set = mode is not None
                 else:
+                    dst = None
                     if resume_offset == 0:
-                        mode_set = self._precreate_private_temp(job, temp_path, mode)
-                    with transfer_hooks.active(hooks):
-                        dst = dest_backend.open_write(temp_path, append=resume_offset > 0)
+                        # Private from its first byte where the backend can
+                        # create a file with a mode (SFTP); else precreated.
+                        with transfer_hooks.active(hooks):
+                            dst = self._open_new_private_temp(job, temp_path, mode)
+                        if dst is None:
+                            mode_set = self._precreate_private_temp(job, temp_path, mode)
+                    if dst is None:
+                        with transfer_hooks.active(hooks):
+                            dst = dest_backend.open_write(temp_path, append=resume_offset > 0)
                 _copy_starts(progress_callback)
 
                 streamed = _StreamedHash(job, resume_offset)
@@ -2367,6 +2370,20 @@ class TransferWorker(QObject):
         return bool(mode & _OWNER_WRITE)
 
     @staticmethod
+    def _open_new_private_temp(job: TransferJob, temp_path: str, mode):
+        """The fresh temp file created with the source's narrow mode at its
+        OPEN where the backend can (``open_write_new``: SFTP sends it with
+        the request) - not created empty in the server's default mode
+        (0644) and chmod-ed after: whoever opened it in that moment could
+        read the data through that handle later. None: precreate instead.
+        The exact mode is set after the data, as for every other temp."""
+        if mode is None or mode & 0o044 == 0o044:
+            return None
+        from core.atomic_io import _OWNER_WRITE, _open_new_with_mode
+
+        return _open_new_with_mode(job.dest_backend, temp_path, mode | _OWNER_WRITE)
+
+    @staticmethod
     def _apply_source_mode(job: TransferJob, temp_path: str, mode=-1) -> None:
         """Best effort: a backend without chmod keeps its own default."""
         if mode == -1:
@@ -2536,16 +2553,26 @@ class TransferWorker(QObject):
         """True when the partial's bytes agree with the source's.
 
         A partial of up to two windows is compared whole; a longer one by
-        its first and its last window, so a resume reads at most
-        ``2 * RESUME_VERIFY_WINDOW`` extra source bytes. Anything that
-        prevents the comparison (no seek, no read-back) counts as a
-        mismatch: restarting costs time, a wrong splice costs the file.
+        its first and its last window and windows spread between them (one
+        per RESUME_SAMPLE_SPACING, at least one, at most
+        RESUME_MAX_SAMPLES): the name's fingerprint (size and time) and the
+        two ends alone took a same-sized version that differs inside for
+        this one, and the copy became a splice of both. A resume reads at
+        most ``(RESUME_MAX_SAMPLES + 2) * RESUME_VERIFY_WINDOW`` extra
+        source bytes. Anything that prevents the comparison (no seek, no
+        read-back) counts as a mismatch: restarting costs time, a wrong
+        splice costs the file.
         """
         window = RESUME_VERIFY_WINDOW
         if offset <= 2 * window:
             spans = [(0, offset)]
         else:
-            spans = [(0, window), (offset - window, window)]
+            inner = offset - 2 * window
+            count = max(1, min(RESUME_MAX_SAMPLES, inner // RESUME_SAMPLE_SPACING))
+            step = inner // (count + 1)
+            spans = [(0, window)]
+            spans += [(window + step * (n + 1) - window // 2, window) for n in range(count)]
+            spans.append((offset - window, window))
         read_source = False
         try:
             with dest_backend.open_read(temp_path) as partial:

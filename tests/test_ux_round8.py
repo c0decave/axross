@@ -287,7 +287,12 @@ class _Dialog:
     class DialogCode:
         Accepted = 1
 
+    class _Signal:
+        def connect(self, _slot):
+            pass
+
     def __init__(self, *_a, **_k):
+        self.profile_renamed = _Dialog._Signal()  # Save under a new name: not here
         self.result_profile = _Dialog.profile
         self.result_password = "secret"
         self.result_key_passphrase = ""

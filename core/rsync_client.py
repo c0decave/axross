@@ -25,18 +25,87 @@ import shutil
 import stat as stat_module
 import subprocess
 import tempfile
+import time
 import weakref
 from datetime import datetime
 from typing import IO, Callable
 
 from core.append_helpers import read_existing_for_append
 from core.backend import SessionLifecycle
+from core.i18n import tr
 from core.subprocess_env import clean_child_env
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
 
 #: Seconds a data transfer may move nothing before rsync gives up (--timeout).
 STALL_TIMEOUT = 300
+
+#: Seconds to reach the daemon (--contimeout) or the SSH server
+#: (ssh -o ConnectTimeout): connecting has its own limit, so no call needs
+#: a wall clock that also ends a transfer still moving data.
+CONNECT_TIMEOUT = 30
+
+#: Seconds a listing may receive nothing (--timeout).
+LIST_STALL_TIMEOUT = 60
+
+
+class RsyncLoginRefused(PermissionError):
+    """The rsync daemon or the SSH server refused the login. Its text is
+    written for the user (core.user_errors shows ``*Refused`` texts as
+    they are)."""
+
+
+class RsyncTransportRefused(OSError):
+    """rsync could not use the connection for a reason its text explains
+    (an unknown SSH host key, a module the daemon does not have)."""
+
+
+def _rsync_failure(rc: int, stderr: str, host: str, module: str, ssh_mode: bool) -> OSError:
+    """An OSError for a failed rsync run that says what happened.
+
+    rsync's own text ("rsync exited with code 5: @ERROR: auth failed on
+    module m", ssh's "Host key verification failed.") was the message;
+    core.user_errors could explain none of it. The common failures become
+    the errno / exception it knows, or a sentence with the next step."""
+    message = f"rsync exited with code {rc}: {stderr}"
+    low = stderr.lower()
+    if rc == 23 and _NOT_THERE_RE.search(stderr):
+        return FileNotFoundError(errno.ENOENT, message)
+    if "@error: auth failed" in low:
+        return RsyncLoginRefused(
+            tr("{host} refused the rsync login for the module {module}. Check the user name "
+               "and the password (the module's secrets file).").format(host=host, module=module)
+        )
+    if "@error: unknown module" in low:
+        return RsyncTransportRefused(
+            tr("The rsync server {host} has no module named {module}. Check the module name; "
+               "an empty module lists the modules of the server.").format(
+                host=host, module=module)
+        )
+    if ssh_mode and "host key verification failed" in low:
+        return RsyncTransportRefused(
+            tr("The SSH host key of {host} is not known yet or has changed, and rsync cannot "
+               "ask about it. Connect once with an SFTP profile to the same host and port to "
+               "check and trust the key, then try again.").format(host=host)
+        )
+    if ssh_mode and rc == 255 and "permission denied (" in low:
+        return RsyncLoginRefused(
+            tr("{host} refused the SSH login. rsync over SSH cannot ask for a password: use "
+               "an SSH key (the profile's key or one in ssh-agent).").format(host=host)
+        )
+    if "connection refused" in low:
+        return ConnectionRefusedError(errno.ECONNREFUSED, message)
+    if any(t in low for t in ("name or service not known", "could not resolve hostname",
+                              "nodename nor servname", "temporary failure in name resolution",
+                              "no address associated with hostname")):
+        return ConnectionError(f"Cannot resolve host {host!r}: {stderr}")
+    if any(t in low for t in ("no route to host", "network is unreachable")):
+        return OSError(errno.EHOSTUNREACH, message)
+    if rc in (30, 35) or "connection timed out" in low or "timed out" in low:
+        return TimeoutError(errno.ETIMEDOUT, message)
+    if "permission denied (13)" in low:
+        return PermissionError(errno.EACCES, message)
+    return OSError(message)
 
 # Env vars we actually want to forward to rsync / ssh. Everything
 # else (AWS_*, *_TOKEN, *_KEY, GITHUB_*, editor/shell personalisation)
@@ -138,13 +207,18 @@ def _nc_effective_proxy(proxy):
     a password. A password, TLS to the proxy, or NTLM / Negotiate are
     handled by the loopback shim instead; nc then dials the shim without
     credentials and the shim authenticates upstream.
+
+    SOCKS4 too: OpenBSD nc has no SOCKS4a, so ``-X 4`` resolved the
+    rsync host on this computer (a DNS query around the proxy, and an
+    internal name the proxy could reach did not resolve). The shim dials
+    SOCKS4a, as every other backend does: the proxy resolves the name.
     """
     from core.proxy import ProxyConfig
     from core.proxy_http import shim_for
 
     needs_shim = (
         bool(proxy.password)
-        or proxy.transport == "https"
+        or proxy.transport in ("https", "socks4")
         or proxy.auth_scheme not in ("", "basic")
     )
     if not needs_shim:
@@ -336,7 +410,8 @@ _LIST_RE = re.compile(
     r"^(?P<perms>[dlcbps-][rwxstSTlL-]{9})\s+"
     rf"(?P<size>{_GROUPED_NUMBER})\s+"
     r"(?P<date>\d{4}/\d{2}/\d{2})\s+"
-    r"(?P<time>\d{2}:\d{2}:\d{2})\s+"
+    # ONE blank before the name: a name may start with blanks of its own.
+    r"(?P<time>\d{2}:\d{2}:\d{2}) "
     r"(?P<name>.+)$"
 )
 
@@ -470,7 +545,13 @@ def _escape_rsync_pattern(name: str) -> str:
     ``--include '*'`` with ``--exclude '*'`` and ``--delete`` removes every
     sibling the glob matches, so a file called ``*`` or ``[ab]`` used to
     delete its neighbours.
+
+    rsync reads a backslash as an escape only in a pattern that holds a
+    wildcard: a name without one is returned as it is (``back\\slash``
+    escaped named no file, and the delete removed nothing).
     """
+    if not any(c in name for c in "*?["):
+        return name
     return "".join("\\" + c if c in "\\*?[" else c for c in name)
 
 
@@ -513,9 +594,24 @@ class RsyncSession(SessionLifecycle):
         proxy_port: int = 0,
         proxy_username: str = "",
         proxy_password: str = "",
+        address_family: str = "auto",
     ):
+        # The [user@]host argument comes first on rsync's command line: a
+        # name starting with "-" (an imported profile) became an option.
+        for label, value in (("host", host), ("user name", username)):
+            if value.startswith("-"):
+                raise OSError(f"rsync: a {label} cannot start with '-': {value!r}")
+        port = int(port or 0)
+        if ssh_mode and port in (0, 873):
+            # The daemon's port left over from the dialog: SSH listens on 22.
+            port = 22
+        elif not ssh_mode and port in (0, 22):
+            # The profiles' default port (22) of an imported daemon profile:
+            # an SSH server never speaks the rsync daemon protocol.
+            port = 873
         self._host = host
         self._port = port
+        self._address_family = address_family if address_family in ("ipv4", "ipv6") else "auto"
         self._module = module.strip("/")
         self._username = username
         self._password = password
@@ -531,6 +627,18 @@ class RsyncSession(SessionLifecycle):
             username=proxy_username,
             password=proxy_password,
         )
+        if self._proxy.enabled:
+            # Through a proxy the host goes into a shell command line:
+            # rsync runs RSYNC_CONNECT_PROG with "sh -c" after putting the
+            # host in for %H, ssh its ProxyCommand with %h - unquoted. A
+            # host such as "x;touch /tmp/p" (an imported profile, a URL)
+            # ran a command on this computer.
+            from core.ssh_config import _refuse_shell_syntax
+
+            try:
+                _refuse_shell_syntax(host, "host name")
+            except ValueError as exc:
+                raise OSError(errno.EINVAL, str(exc)) from None
         self._connected = False
 
         self._rsync_bin = shutil.which("rsync")
@@ -576,6 +684,9 @@ class RsyncSession(SessionLifecycle):
             )
         except OSError as exc:
             self._connected = False
+            if type(exc) is not OSError:
+                # Already says what happened (refused, login, host key).
+                raise
             raise OSError(f"Cannot connect to rsync server {self._host}: {exc}") from exc
 
     def close(self) -> None:
@@ -642,9 +753,14 @@ class RsyncSession(SessionLifecycle):
         # prints every non-ASCII byte of a name as "\#ooo". rsync 3.5.1
         # still escapes 0x80-0x9f; _run_rsync undoes what is left.
         args: list[str] = [self._rsync_bin, "-8"]
+        family = getattr(self, "_address_family", "auto")
+        family_flag = {"ipv4": "-4", "ipv6": "-6"}.get(family, "")
 
         if self._ssh_mode:
             ssh_cmd = "ssh"
+            if family_flag:
+                ssh_cmd += f" {family_flag}"
+            ssh_cmd += f" -o ConnectTimeout={CONNECT_TIMEOUT}"
             if self._port != 22:
                 ssh_cmd += f" -p {self._port}"
             if self._ssh_key:
@@ -663,7 +779,14 @@ class RsyncSession(SessionLifecycle):
                 pc = _build_ssh_proxy_command(proxy)
                 ssh_cmd += f" -o ProxyCommand={shlex.quote(pc)}"
             args += ["-e", ssh_cmd]
+            # Remote paths go to the remote rsync as they are: before rsync
+            # 3.2.4 (RHEL 8 / 9) the remote shell split "a b" and expanded
+            # "$x" in them.
+            args.append("--protect-args")
         else:
+            args.append(f"--contimeout={CONNECT_TIMEOUT}")
+            if family_flag:
+                args.append(family_flag)
             if self._port != 873:
                 args += ["--port", str(self._port)]
 
@@ -701,6 +824,7 @@ class RsyncSession(SessionLifecycle):
         *,
         capture: bool = True,
         timeout: int | None = 60,
+        unescape: bool = True,
     ) -> str:
         """Execute rsync with the given extra arguments (*timeout* None: no
         limit on the whole run - pass rsync's --timeout then).
@@ -730,12 +854,13 @@ class RsyncSession(SessionLifecycle):
 
         if result.returncode != 0:
             stderr = _unescape_rsync_output((result.stderr or "").strip())
-            message = f"rsync exited with code {result.returncode}: {stderr}"
-            if result.returncode == 23 and _NOT_THERE_RE.search(stderr):
-                raise FileNotFoundError(errno.ENOENT, message)
-            raise OSError(message)
+            raise _rsync_failure(
+                result.returncode, stderr, self._host, self._module, self._ssh_mode
+            )
 
-        return _unescape_rsync_output(result.stdout or "")
+        # unescape=False: the caller undoes the escapes after it has cut the
+        # output into lines - an escaped line feed in a name is no line end.
+        return _unescape_rsync_output(result.stdout or "") if unescape else (result.stdout or "")
 
     # --------------------------------------------------------------------- #
     #  FileBackend — listing / stat                                          #
@@ -755,7 +880,14 @@ class RsyncSession(SessionLifecycle):
         # --no-motd keeps it out. Not at the root: there it would also
         # suppress the module list (an rsync protocol limitation).
         motd = ["--no-motd"] if not self._ssh_mode and not lists_modules else []
-        output = self._run_rsync([*motd, "--list-only", url])
+        # A stall limit, not a wall clock: a huge folder over a slow link
+        # may take longer than a minute and still be arriving.
+        output = self._run_rsync(
+            [*motd, f"--timeout={LIST_STALL_TIMEOUT}", "--list-only", url], timeout=None,
+            unescape=False,
+        )
+        from core.telnet_client import split_link_field
+
         items: list[FileItem] = []
 
         for line in split_lf_only_stream(output):
@@ -765,12 +897,11 @@ class RsyncSession(SessionLifecycle):
 
             m = _LIST_RE.match(line)
             if m:
-                entry_name = m.group("name")
-                # rsync may include a relative path prefix — take basename
-                entry_name = posixpath.basename(entry_name.rstrip("/"))
-                if entry_name in (".", ".."):
-                    continue
-
+                # rsync's \#ooo escapes undone in the name alone, after the
+                # cut into lines: undone in the whole output first, a name
+                # holding a line feed became a line of its own - an entry
+                # that is not there.
+                field = _unescape_rsync_output(m.group("name"))
                 perm_str = m.group("perms")
                 size_str = m.group("size")
                 date_str = m.group("date")
@@ -778,15 +909,25 @@ class RsyncSession(SessionLifecycle):
 
                 is_dir = perm_str.startswith("d")
                 is_link = perm_str.startswith("l")
-                link_target = ""
-                if is_link and " -> " in m.group("name"):
-                    entry_name, _, link_target = m.group("name").rpartition(" -> ")
-                    entry_name = posixpath.basename(entry_name.rstrip("/"))
-
                 try:
                     size = _size_from_listing(size_str)
                 except ValueError:
                     size = 0
+                link_target = ""
+                entry_name = field
+                if is_link and " -> " in field:
+                    # The link's size (its target's length) tells where a
+                    # name holding " -> " ends.
+                    entry_name, link_target = split_link_field(field, size)
+                if entry_name in (".", ".."):
+                    continue
+                if not entry_name or "/" in entry_name or "\x00" in entry_name:
+                    # A listing of "dir/" names its entries alone: a name
+                    # with a "/" is no entry (a hostile server's, or an
+                    # escaped line feed followed by a forged line).
+                    log.warning("rsync list_dir(%s): dropping impossible name %r",
+                                path, entry_name[-200:])
+                    continue
 
                 try:
                     modified = datetime.strptime(f"{date_str} {time_str}", "%Y/%m/%d %H:%M:%S")
@@ -914,8 +1055,8 @@ class RsyncSession(SessionLifecycle):
                 if not url.endswith("/"):
                     url += "/"
                 self._run_rsync(
-                    ["-r", "--delete", tmpdir + "/", url],
-                    timeout=120,
+                    [f"--timeout={STALL_TIMEOUT}", "-r", "--delete", tmpdir + "/", url],
+                    timeout=None,
                 )
                 # Then the folder itself, now empty: deleted from its
                 # parent like a file, by an include of just its name.
@@ -927,16 +1068,20 @@ class RsyncSession(SessionLifecycle):
                     return
                 self._run_rsync(
                     [
+                        f"--timeout={STALL_TIMEOUT}",
                         "-r",
                         "--delete",
+                        # Anchored: --include reads a leading "- " / "+ "
+                        # as a rule prefix, so the folder "- old" became
+                        # "exclude old/" and was not deleted.
                         "--include",
-                        _escape_rsync_pattern(name) + "/",
+                        "/" + _escape_rsync_pattern(name) + "/",
                         "--exclude",
                         "*",
                         tmpdir + "/",
                         parent_url,
                     ],
-                    timeout=60,
+                    timeout=None,
                 )
             finally:
                 shutil.rmtree(tmpdir, ignore_errors=True)
@@ -957,6 +1102,7 @@ class RsyncSession(SessionLifecycle):
                 pattern = "/" + _escape_rsync_pattern(name)
                 self._run_rsync(
                     [
+                        f"--timeout={STALL_TIMEOUT}",
                         "-r",
                         "--delete",
                         # A folder of that name stays: a trailing "/" only
@@ -970,7 +1116,7 @@ class RsyncSession(SessionLifecycle):
                         tmpdir + "/",
                         url,
                     ],
-                    timeout=60,
+                    timeout=None,
                 )
             finally:
                 shutil.rmtree(tmpdir, ignore_errors=True)
@@ -1021,25 +1167,27 @@ class RsyncSession(SessionLifecycle):
             src_url = self._build_url(_literal_source(src))
             dst_url = self._build_url(dst)
 
-            flags = self._archive_flags()
+            # A stall limit, not a wall clock: a 300 s cap failed the copy of
+            # a large folder half done while it was still moving data.
+            flags = [f"--timeout={STALL_TIMEOUT}", *self._archive_flags()]
             if src_is_dir:
                 # Copy entire directory tree
                 self._run_rsync(
                     [*flags, src_url + "/", local_path + "/"],
-                    timeout=300,
+                    timeout=None,
                 )
                 self._run_rsync(
                     [*flags, local_path + "/", dst_url + "/"],
-                    timeout=300,
+                    timeout=None,
                 )
             else:
                 self._run_rsync(
                     [*flags, src_url, local_path],
-                    timeout=300,
+                    timeout=None,
                 )
                 self._run_rsync(
                     [*flags, local_path, dst_url],
-                    timeout=300,
+                    timeout=None,
                 )
 
             # Remove original
@@ -1053,17 +1201,21 @@ class RsyncSession(SessionLifecycle):
     # --------------------------------------------------------------------- #
 
     def open_read(self, path: str) -> IO[bytes]:
-        """Download a remote file to a temp file and return a file handle.
+        """A reader that hands out the file while rsync is still writing it.
+
+        rsync writes the download in place (``--inplace``) into a private,
+        empty temp folder; open_read returns as soon as the file is there,
+        and close() before the end stops rsync and removes it. It used to
+        run rsync to the end first: a large download showed no progress
+        and could not be cancelled until it was complete.
 
         ``-L`` follows a symlink to its target. rsync exits 0 after
-        "skipping non-regular file" or "skipping directory", so the
-        download goes into an empty temp directory and only a regular
-        file that actually arrived there counts as read."""
+        "skipping non-regular file" or "skipping directory", so only a
+        regular file that actually arrives in the folder counts as read."""
         from core.read_spool import (
             named_spool_dir,
             others_may_replace_in,
             private_spool_folder,
-            remove_quietly,
             spool_name_prefix,
         )
 
@@ -1082,29 +1234,43 @@ class RsyncSession(SessionLifecycle):
             # A stall limit, not a wall clock: rsync's own --timeout ends a
             # transfer that moved nothing for that long; a cap on the whole
             # run failed every file that takes longer than 5 minutes.
-            self._run_rsync([f"--timeout={STALL_TIMEOUT}", "-L", url, tmpdir + os.sep], timeout=None)
-            if not os.path.samestat(os.lstat(tmpdir), made):
-                raise OSError(f"rsync read {path}: its download folder {tmpdir} was replaced")
-            arrived = [os.path.join(tmpdir, n) for n in os.listdir(tmpdir)]
-            if len(arrived) != 1 or not os.path.isfile(arrived[0]):
-                raise OSError(f"rsync read {path}: not a regular file")
-            fd, tmp_name = tempfile.mkstemp(prefix=spool_name_prefix("rsync"), dir=folder)
-            os.close(fd)
-            try:
-                os.replace(arrived[0], tmp_name)
-            except BaseException:
-                remove_quietly(tmp_name)
-                raise
-        finally:
-            shutil.rmtree(tmpdir, ignore_errors=True)
-
-        try:
-            fh = open(tmp_name, "rb")
+            proc = self._spawn_rsync(
+                [f"--timeout={STALL_TIMEOUT}", "-L", "--inplace", url, tmpdir + os.sep]
+            )
         except BaseException:
-            remove_quietly(tmp_name)
+            shutil.rmtree(tmpdir, ignore_errors=True)
             raise
-        # Wrap so the temp file is cleaned up when the handle is closed
-        return _TempFileReader(fh, tmp_name)
+        reader = _StreamingRsyncReader(
+            proc,
+            tmpdir,
+            made,
+            path,
+            lambda rc, err: _rsync_failure(
+                rc, _unescape_rsync_output(err.strip()), self._host, self._module,
+                self._ssh_mode,
+            ),
+        )
+        try:
+            reader._wait_for_file()
+        except BaseException:
+            reader.close()
+            raise
+        return reader
+
+    def _spawn_rsync(self, extra_args: list[str]) -> subprocess.Popen:
+        """rsync with *extra_args*, running: stdout discarded, stderr a pipe."""
+        cmd = self._base_args() + extra_args
+        log.debug("rsync command: %s", _redact_rsync_cmd(cmd))
+        try:
+            return subprocess.Popen(
+                cmd,
+                env=self._build_env(),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+        except FileNotFoundError as exc:
+            raise OSError("rsync binary not found") from exc
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
         """Return a writable handle; data is uploaded on close()."""
@@ -1137,7 +1303,7 @@ class RsyncSession(SessionLifecycle):
     # --------------------------------------------------------------------- #
 
     def normalize(self, path: str) -> str:
-        return posixpath.normpath(path) or "/"
+        return posixpath.normpath(path) if path else "/"  # normpath("") is "."
 
     def separator(self) -> str:
         return "/"
@@ -1469,6 +1635,176 @@ def _parse_rsync_itemized(out: str) -> dict:
         if proc.returncode != 0:
             stderr = "".join(errors).strip()[-4000:]
             raise OSError(f"rsync transfer failed (exit {proc.returncode}): {stderr}")
+
+
+def _end_download(proc, tmpdir: str, fds: list[int]) -> None:
+    """Stop a download's rsync (if it still runs), close the file, remove
+    the folder. Run once: by close() or when the reader is collected."""
+    if proc.poll() is None:
+        proc.kill()
+    try:
+        proc.wait(10)
+    except subprocess.TimeoutExpired:
+        log.warning("rsync download (pid %s) did not end after kill", proc.pid)
+    for fd in fds:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+    fds.clear()
+    shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+class _StreamingRsyncReader:
+    """The file an rsync download writes, read while it grows.
+
+    Bytes are handed out as they arrive; at the end of the file the reader
+    waits for more until rsync exits. A non-zero exit is an OSError (never
+    a short file read as complete). close() stops rsync and removes the
+    download folder."""
+
+    _POLL = 0.05
+
+    def __init__(self, proc, tmpdir: str, made, path: str, failure) -> None:
+        import threading
+
+        self._proc = proc
+        self._tmpdir = tmpdir
+        self._made = made
+        self._path = path
+        self._failure = failure
+        self._fds: list[int] = []
+        self._name = ""
+        self._pos = 0
+        self._closed = False
+        self._stderr: list[bytes] = []
+        # stderr drained alongside: a pipe full of messages blocked rsync.
+        self._drain = threading.Thread(
+            target=self._drain_stderr, name="axross-rsync-stderr", daemon=True
+        )
+        self._drain.start()
+        self._finalizer = weakref.finalize(self, _end_download, proc, tmpdir, self._fds)
+
+    def _drain_stderr(self) -> None:
+        stream = self._proc.stderr
+        if stream is None:
+            return
+        try:
+            while True:
+                chunk = stream.read(65536)
+                if not chunk:
+                    break
+                self._stderr.append(chunk)
+                if sum(map(len, self._stderr)) > 256 * 1024:
+                    del self._stderr[0]
+        except (OSError, ValueError):
+            pass
+
+    def _error(self) -> OSError:
+        self._drain.join(5)
+        text = b"".join(self._stderr).decode("utf-8", "surrogateescape")
+        return self._failure(self._proc.returncode, text)
+
+    def _wait_for_file(self) -> None:
+        """Until the download file is there (open it) or rsync ended."""
+        while not self._fds:
+            done = self._proc.poll() is not None
+            if done and self._proc.returncode != 0:
+                raise self._error()
+            if not os.path.samestat(os.lstat(self._tmpdir), self._made):
+                raise OSError(
+                    f"rsync read {self._path}: its download folder {self._tmpdir} was replaced"
+                )
+            names = os.listdir(self._tmpdir)
+            if len(names) > 1:
+                raise OSError(f"rsync read {self._path}: not a regular file")
+            if names:
+                full = os.path.join(self._tmpdir, names[0])
+                try:
+                    fd = os.open(full, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                except OSError as exc:
+                    raise OSError(f"rsync read {self._path}: not a regular file") from exc
+                self._fds.append(fd)
+                if not stat_module.S_ISREG(os.fstat(fd).st_mode):
+                    raise OSError(f"rsync read {self._path}: not a regular file")
+                self._name = full
+                return
+            if done:
+                raise OSError(f"rsync read {self._path}: not a regular file")
+            time.sleep(self._POLL)
+
+    def read(self, n: int = -1) -> bytes:
+        if self._closed:
+            raise ValueError("read of a closed file")
+        if n is None or n < 0:
+            parts = []
+            while True:
+                piece = self.read(1024 * 1024)
+                if not piece:
+                    return b"".join(parts)
+                parts.append(piece)
+        if n == 0:
+            return b""
+        fd = self._fds[0]
+        while True:
+            data = os.pread(fd, n, self._pos)
+            if data:
+                self._pos += len(data)
+                return data
+            if self._proc.poll() is None:
+                time.sleep(self._POLL)
+                continue
+            data = os.pread(fd, n, self._pos)  # written just before the exit
+            if data:
+                self._pos += len(data)
+                return data
+            if self._proc.returncode != 0:
+                raise self._error()
+            return b""
+
+    def seek(self, pos: int, whence: int = 0) -> int:
+        if whence == os.SEEK_SET:
+            new = pos
+        elif whence == os.SEEK_CUR:
+            new = self._pos + pos
+        else:
+            self._proc.wait()
+            if self._proc.returncode != 0:
+                raise self._error()
+            new = os.fstat(self._fds[0]).st_size + pos
+        if new < 0:
+            raise OSError(errno.EINVAL, "negative seek position")
+        self._pos = new
+        return new
+
+    def tell(self) -> int:
+        return self._pos
+
+    def readable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return True
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._finalizer()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
 
 
 class _TempFileReader:

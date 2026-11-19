@@ -26,9 +26,12 @@ How it is decoded
 -----------------
 * Images and SVG: :func:`core.previews.decode_image` / ``thumbnail`` with
   ``allow_svg=True``.
-* PDF: QtPdf (pdfium), page count checked up front so an encrypted or broken
-  document is refused before the viewer shows it.
-* Video: not decoded here; the viewer's QMediaPlayer streams the file.
+* PDF: QtPdf (pdfium) in a killable child process (core.pdf_worker), page
+  count checked up front so an encrypted or broken document is refused
+  before the viewer shows it; the viewer keeps that child for turning pages.
+* Video: not decoded here; the viewer's QMediaPlayer streams the file -
+  after ffprobe, when installed, opened it in a child first
+  (core.media_gate: a file whose probe crashes or hangs is refused).
   Its thumbnail is one frame taken by an external ffmpeg, for local files
   only (a remote video would have to be downloaded whole for a tile), with
   the same hardened invocation as the metadata cleaner: no shell, only the
@@ -44,11 +47,14 @@ from dataclasses import dataclass
 
 from core import file_analysis as FA
 from core import open_limits
+from core import pdf_worker as PW
 from core import previews as P
 from core.media_collect import IMAGE, PDF, VIDEO, MediaItem
 
 THUMB_EDGE = P.DEFAULT_THUMBNAIL_EDGE
 VIEWER_EDGE = P.VIEWER_MAX_EDGE
+#: Longer side of a PDF's first page drawn ahead for the viewer.
+PDF_FIRST_EDGE = 1600
 #: Longest a remote copy may take before the viewer gives up on it.
 COPY_TIMEOUT = 120.0
 #: Longest ffmpeg may take for one video thumbnail frame.
@@ -81,8 +87,14 @@ class Prepared:
     local_path: str = ""  # PDF / video file to open
     page_count: int = 0  # PDF
     file: LocalFile | None = None
+    #: PDF: the drawing child with the document open (core.pdf_worker).
+    pdf: object = None
+    #: PDF: the first page's size in points (``image`` is that page drawn).
+    first_page_points: tuple | None = None
 
     def release(self) -> None:
+        if self.pdf is not None:
+            self.pdf.close()
         if self.file is not None:
             self.file.release()
             self.file = None
@@ -175,16 +187,8 @@ def _preview_reason(exc: Exception) -> str:
 
 
 def _pdf_error_text(error) -> str:
-    from PyQt6.QtPdf import QPdfDocument
-
-    e = QPdfDocument.Error
-    return {
-        e.IncorrectPassword: "PDF is password-protected",
-        e.UnsupportedSecurityScheme: "PDF uses an unsupported encryption",
-        e.InvalidFileFormat: "not a valid PDF",
-        e.FileNotFound: "PDF file not found",
-        e.DataNotYetAvailable: "PDF data not available",
-    }.get(error, f"cannot open PDF ({getattr(error, 'name', error)})")
+    """The user's text for a QPdfDocument.Error (or its name)."""
+    return PW.error_text(getattr(error, "name", str(error)))
 
 
 def qtpdf_install_hint() -> str:
@@ -201,9 +205,11 @@ def qtpdf_install_hint() -> str:
     return "with PyQt6 6.12 or newer it is the separate package PyQt6-Pdf"
 
 
-def _open_pdf(path: str):
+def _require_qtpdf() -> None:
+    """QtPdf must load here: the drawing child uses this Python's (its
+    module is only imported, no PDF is read in this process)."""
     try:
-        from PyQt6.QtPdf import QPdfDocument
+        from PyQt6.QtPdf import QPdfDocument  # noqa: F401
     except ImportError as exc:  # QtPdf needs libatomic from the host
         hint = qtpdf_install_hint()
         raise MediaUnavailable(
@@ -211,50 +217,70 @@ def _open_pdf(path: str):
             + (f"; {hint}" if hint else "")
         ) from exc
 
-    doc = QPdfDocument(None)
-    error = doc.load(path)
-    if error != QPdfDocument.Error.None_:
-        doc.close()
-        raise MediaUnavailable(_pdf_error_text(error))
-    if doc.pageCount() < 1:
-        doc.close()
-        raise MediaUnavailable("PDF has no pages")
-    return doc
+
+def open_pdf(path: str) -> PW.PdfRenderer:
+    """A drawing child (core.pdf_worker) with the PDF at *path* open; the
+    caller closes it."""
+    _require_qtpdf()
+    renderer = PW.PdfRenderer(PW.RENDER_SECONDS)
+    try:
+        renderer.open(path)
+    except PW.PdfError as exc:
+        renderer.close()
+        raise MediaUnavailable(str(exc)) from exc
+    except BaseException:
+        renderer.close()
+        raise
+    return renderer
 
 
 def pdf_page_count(path: str) -> int:
-    doc = _open_pdf(path)
+    renderer = open_pdf(path)
     try:
-        return doc.pageCount()
+        return renderer.page_count
     finally:
-        doc.close()
+        renderer.close()
+
+
+def _image_of(drawn) -> object:
+    from PyQt6.QtGui import QImage
+
+    width, height, stride, data = drawn
+    image = QImage(data, width, height, stride, QImage.Format.Format_RGB32).copy()
+    if image.isNull():
+        raise MediaUnavailable("cannot render PDF page")
+    return image
+
+
+def render_page(renderer: PW.PdfRenderer, page: int, width: int, height: int):
+    """Page *page* of an open PDF as a QImage of about *width* x *height*
+    px on white (clamped to core.pdf_worker.MAX_PIXELS)."""
+    try:
+        return _image_of(renderer.render(page, width, height))
+    except PW.PdfError as exc:
+        raise MediaUnavailable(str(exc)) from exc
+
+
+def render_page_edge(renderer: PW.PdfRenderer, page: int, edge: int):
+    """Page *page* of an open PDF as a QImage, longer side *edge*."""
+    try:
+        return _image_of(renderer.render_edge(page, edge))
+    except PW.PdfError as exc:
+        raise MediaUnavailable(str(exc)) from exc
 
 
 def render_pdf_page(path: str, page: int, edge: int):
-    """Page *page* of the PDF at *path* as a QImage on white, longer side *edge*."""
-    from PyQt6.QtCore import QSize, Qt
-    from PyQt6.QtGui import QImage, QPainter
-
-    doc = _open_pdf(path)
+    """Page *page* of the PDF at *path* as a QImage on white, longer side
+    *edge* - drawn by a pooled child (core.pdf_worker.borrowed)."""
+    _require_qtpdf()
     try:
-        if not 0 <= page < doc.pageCount():
-            raise MediaUnavailable(f"PDF has no page {page + 1}")
-        size = doc.pagePointSize(page)
-        w, h = max(1.0, size.width()), max(1.0, size.height())
-        scale = edge / max(w, h)
-        out = QSize(max(1, round(w * scale)), max(1, round(h * scale)))
-        rendered = doc.render(page, out)
-    finally:
-        doc.close()
-    if rendered.isNull():
-        raise MediaUnavailable("cannot render PDF page")
-    # pdfium leaves the page transparent where nothing is drawn.
-    image = QImage(rendered.size(), QImage.Format.Format_RGB32)
-    image.fill(Qt.GlobalColor.white)
-    painter = QPainter(image)
-    painter.drawImage(0, 0, rendered)
-    painter.end()
-    return image
+        with PW.borrowed(PW.RENDER_SECONDS) as renderer:
+            renderer.open(path)
+            if not 0 <= page < renderer.page_count:
+                raise MediaUnavailable(f"PDF has no page {page + 1}")
+            return _image_of(renderer.render_edge(page, edge))
+    except PW.PdfError as exc:
+        raise MediaUnavailable(str(exc)) from exc
 
 
 # -- entry points ----------------------------------------------------------------
@@ -380,16 +406,40 @@ def prepare(
     if item.kind == PDF:
         f = fetch(backend, item, cancel=cancel, limit=open_limits.max_open_bytes())
         try:
-            pages = pdf_page_count(f.path)
+            renderer = open_pdf(f.path)
         except BaseException:
             f.release()
             raise
-        return Prepared(item, local_path=f.path, page_count=pages, file=f)
+        entry = Prepared(item, local_path=f.path, page_count=renderer.page_count, file=f,
+                         pdf=renderer)
+        try:
+            # the first page now, so the viewer shows it at once (it draws
+            # a sharper one for its window when that one differs much)
+            entry.image = render_page_edge(renderer, 0, PDF_FIRST_EDGE)
+            entry.first_page_points = renderer.page_size(0)
+        except MediaUnavailable as exc:
+            entry.image = exc
+        except BaseException:
+            entry.release()
+            raise
+        return entry
     if item.kind == VIDEO:
         # A local video is streamed by the player, never read whole.
         local = FA.is_local_backend(backend)
         limit = None if local else open_limits.max_open_bytes()
         f = fetch(backend, item, cancel=cancel, limit=limit)
+        # Qt Multimedia's FFmpeg opens the file inside axross: a file that
+        # crashes or hangs a probe in a child first is not handed to it.
+        from core import media_gate
+
+        try:
+            refusal = media_gate.probe_refusal(f.path, cancel=cancel)
+        except BaseException:
+            f.release()
+            raise
+        if refusal is not None:
+            f.release()
+            raise MediaUnavailable(refusal)
         return Prepared(item, local_path=f.path, file=f)
     raise MediaUnavailable(f"unknown media type {item.kind!r}")
 
@@ -402,8 +452,11 @@ __all__ = [
     "THUMB_EDGE",
     "VIEWER_EDGE",
     "fetch",
+    "open_pdf",
     "pdf_page_count",
     "prepare",
+    "render_page",
+    "render_page_edge",
     "render_pdf_page",
     "thumbnail",
     "too_large_text",

@@ -39,6 +39,7 @@ from ui.close_corner import add_close_corner
 from ui.scan_job import BusyStrip, ScanJob
 from ui.handbook import install_help_key
 from ui.icon_provider import set_window_icon
+from ui.screen_fit import fit_size
 from core.i18n import tr, tr_n
 
 log = logging.getLogger("ui.cas_history_dialog")
@@ -90,7 +91,7 @@ class CasHistoryDialog(QDialog):
         else:
             self._backends = {CAS.backend_id_for(b): b for b in (backends or [])}
         self.setWindowTitle(tr("Duplicate Index & History"))
-        self.resize(1000, 420)
+        self.resize(fit_size((1000, 420), parent))
         self._job = ScanJob(self)
         self._job.finished.connect(self._on_rescan_finished)
         self._rescan_root = ""
@@ -258,16 +259,30 @@ class CasHistoryDialog(QDialog):
         if kind == "error":
             QMessageBox.warning(self, tr("Re-scan"), tr("Re-scan failed:\n{value}").format(value=value))
         elif cancelled:
-            self._status.setText(tr("Cancelled – {value} file(s) indexed under {rescan_root}").format(value=value, rescan_root=self._rescan_root))
+            self._status.setText(tr_n(
+                value,
+                "Cancelled – {n} file indexed under {rescan_root}",
+                "Cancelled – {n} files indexed under {rescan_root}",
+                rescan_root=self._rescan_root,
+            ))
         else:
-            self._status.setText(tr("Indexed {value} file(s) under {rescan_root}").format(value=value, rescan_root=self._rescan_root))
+            self._status.setText(tr_n(
+                value,
+                "Indexed {n} file under {rescan_root}",
+                "Indexed {n} files under {rescan_root}",
+                rescan_root=self._rescan_root,
+            ))
         stats = getattr(self, "_rescan_stats", None)
         if kind != "error" and stats is not None:
             left_out = []
             if stats.unreadable_count:
                 left_out.append(tr("{unreadable_count} could not be read").format(unreadable_count=stats.unreadable_count))
             if stats.unlisted_count:
-                left_out.append(tr("{unlisted_count} folder(s) could not be listed").format(unlisted_count=stats.unlisted_count))
+                left_out.append(tr_n(
+                    stats.unlisted_count,
+                    "{n} folder could not be listed",
+                    "{n} folders could not be listed",
+                ))
             if stats.no_checksum:
                 left_out.append(tr("{no_checksum} without a checksum").format(no_checksum=stats.no_checksum))
             if left_out:
@@ -290,8 +305,12 @@ class CasHistoryDialog(QDialog):
         reply = QMessageBox.question(
             self,
             tr("Remove from Index"),
-            tr("Forget {what} ({files_in_index} indexed file(s))?\n\nOnly the index "
-                "rows go; the files are not touched.").format(what=what, files_in_index=scan.files_in_index),
+            tr_n(
+                scan.files_in_index,
+                "Forget {what} ({n} indexed file)?\n\nOnly the index rows go; the files are not touched.",
+                "Forget {what} ({n} indexed files)?\n\nOnly the index rows go; the files are not touched.",
+                what=what,
+            ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -303,7 +322,11 @@ class CasHistoryDialog(QDialog):
         finally:
             QApplication.restoreOverrideCursor()
         self.reload()
-        self._status.setText(tr("Removed {removed} row(s) from the index").format(removed=removed))
+        self._status.setText(tr_n(
+            removed,
+            "Removed {n} row from the index",
+            "Removed {n} rows from the index",
+        ))
         self.index_changed.emit()
 
     def _clear_index(self) -> None:
@@ -325,7 +348,11 @@ class CasHistoryDialog(QDialog):
         finally:
             QApplication.restoreOverrideCursor()
         self.reload()
-        self._status.setText(tr("Index cleared – {removed} row(s) removed").format(removed=removed))
+        self._status.setText(tr_n(
+            removed,
+            "Index cleared – {n} row removed",
+            "Index cleared – {n} rows removed",
+        ))
         self.index_changed.emit()
 
     # A running re-scan must not outlive the dialog.

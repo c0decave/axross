@@ -55,13 +55,22 @@ def equal_split_sizes(
     return [size] * pane_count
 
 
+#: The largest splitter size kept from a saved session. QSplitter takes
+#: 32-bit sizes: one above 2**31-1 (a hand edit, a bit flip) raised
+#: OverflowError in setSizes and lost the whole restored layout. The sizes
+#: are proportions, so a clamp to this keeps the layout.
+MAX_SPLITTER_SIZE = 1 << 24
+
+
 def sanitize_splitter_sizes(
     raw_sizes: object,
     child_count: int,
     *,
     min_size: int = 100,
 ) -> list[int] | None:
-    """Validate persisted splitter sizes and clamp zero-width entries."""
+    """Validate persisted splitter sizes and clamp each into
+    [*min_size*, MAX_SPLITTER_SIZE]. None when they are no list of integers
+    (true / false are no sizes) or do not match *child_count*."""
     if child_count < 0:
         return None
     if child_count == 0:
@@ -73,7 +82,7 @@ def sanitize_splitter_sizes(
 
     sizes: list[int] = []
     for raw in raw_sizes:
-        if not isinstance(raw, int):
+        if not isinstance(raw, int) or isinstance(raw, bool):
             return None
-        sizes.append(max(raw, min_size))
+        sizes.append(min(max(raw, min_size), MAX_SPLITTER_SIZE))
     return sizes

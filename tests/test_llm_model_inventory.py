@@ -340,7 +340,7 @@ class FetchModelsDialogTest(unittest.TestCase):
         self.assertIn("loaded", first)
         self.assertNotIn("loaded", combo.itemData(1, MODEL_LABEL_ROLE))
         status = d.status_label.text()
-        self.assertIn("2 model(s)", status)
+        self.assertIn("2 models", status)
         self.assertIn("qwen2.5:7b", status.split("Loaded now:")[1])
         # A click in the list picks the model id, not the label.
         view = combo.view()
@@ -389,7 +389,7 @@ class FetchModelsDialogTest(unittest.TestCase):
         with _Routes({"/v1/models": (200, {"data": []})}) as srv:
             d = self._dialog("openai", srv.url + "/v1")
             d.fetch_models()
-            self._wait(lambda: "0 model(s)" in d.status_label.text())
+            self._wait(lambda: "0 models" in d.status_label.text())
         self.assertFalse(d.model_combo.view().isVisible())
 
     def test_edge_the_typed_model_stays_after_the_fetch(self) -> None:

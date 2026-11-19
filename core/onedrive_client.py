@@ -25,6 +25,7 @@ from core.backend import SessionLifecycle
 from core.desktop_open import install_clean_webbrowser
 from core.path_policy import refuse_folder_path
 from core.read_spool import new_spool, spool_response
+from core.redaction import redact_url
 from core.secure_storage import adopt_legacy_secret_file, write_secret_file
 from models.file_item import FileItem
 
@@ -41,7 +42,29 @@ except ImportError:
     requests = None  # type: ignore[assignment]
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
+
+
+class _CancelledAfterUncertainFinal(InterruptedError):
+    """Cancel after the last fragment of an upload session was sent and
+    its answer lost (a connection error, a 5xx): the item may be
+    committed, so the destination is not reported untouched."""
+
+
+def _on_graph(url: str) -> bool:
+    """True when *url* is https on Graph's own host (GRAPH_BASE)."""
+    from urllib.parse import urlsplit
+
+    try:
+        want, got = urlsplit(GRAPH_BASE), urlsplit(url)
+        return (got.scheme == "https" and got.hostname == want.hostname
+                and got.port in (None, 443))
+    except ValueError:
+        return False
 GRAPH_TIMEOUT = 30
+#: How long the browser sign-in at connect may take (seconds).
+INTERACTIVE_LOGIN_TIMEOUT = 300
+#: Characters OneDrive and SharePoint refuse in a file or folder name.
+_FORBIDDEN_NAME_CHARS = frozenset('"*:<>?\\|')
 
 
 def _graph_json(resp, what: str, *, empty_ok: bool = False) -> dict:
@@ -247,6 +270,9 @@ class OneDriveSession(SessionLifecycle):
             authority=authority,
             token_cache=self._cache,
             proxies=self._proxies or None,
+            # MSAL's own token requests waited without a limit: a stalled
+            # login.microsoftonline.com hung every Graph call behind it.
+            timeout=GRAPH_TIMEOUT,
         )
 
         # Acquire initial token
@@ -289,6 +315,8 @@ class OneDriveSession(SessionLifecycle):
             result = self._app.acquire_token_interactive(
                 scopes=self._scopes,
                 redirect_uri="http://localhost",
+                # A login nobody finishes ends instead of waiting forever.
+                timeout=INTERACTIVE_LOGIN_TIMEOUT,
             )
 
         if not isinstance(result, dict) or "access_token" not in result:
@@ -327,15 +355,29 @@ class OneDriveSession(SessionLifecycle):
 
     def _ensure_token(self) -> None:
         """Re-acquire token if expired."""
+        self._access_token = self._refresh_token()
+
+    def _refresh_token(self, force: bool = False) -> str:
+        """An access token from the cache or the refresh token - never the
+        browser login. Once connected, a request runs on any thread (the
+        health check, a transfer, the MCP server): the login opened a
+        browser tab from there, once per request, and waited for it
+        without a limit. A sign-in that expired or was revoked is
+        :class:`CloudSignInExpired`; Reconnect signs in again. *force*
+        skips the cached access token (Graph refused it)."""
         accounts = self._app.get_accounts()
+        result = None
         if accounts:
-            result = self._app.acquire_token_silent(self._scopes, account=accounts[0])
-            if result and "access_token" in result:
-                self._access_token = result["access_token"]
-                self._save_cache()
-                return
-        # Need interactive re-auth
-        self._access_token = self._acquire_token()
+            result = self._app.acquire_token_silent(
+                self._scopes, account=accounts[0], force_refresh=force)
+        if not isinstance(result, dict) or "access_token" not in result:
+            detail = result.get("error_description", "") if isinstance(result, dict) else ""
+            raise cloud_http.CloudSignInExpired(self._service_name(), str(detail)[:200])
+        self._save_cache()
+        return result["access_token"]
+
+    def _service_name(self) -> str:
+        return "SharePoint" if getattr(self, "_drive_type", "") == "sharepoint" else "OneDrive"
 
     def _headers(self) -> dict[str, str]:
         """Return authorization headers for Graph API requests."""
@@ -444,12 +486,17 @@ class OneDriveSession(SessionLifecycle):
                 raise cloud_http.oserror(err, f"Graph API {method} {url} failed: {exc}") from exc
             status = resp.status_code
             if status == 401 and auth and not refreshed:
-                # The token may have expired between _ensure_token and now.
+                # The token may have expired between _ensure_token and now,
+                # or Graph no longer takes it: a fresh one, not the cached
+                # one Graph has just refused.
                 refreshed = True
                 resp.close()
-                self._access_token = self._acquire_token()
+                self._access_token = self._refresh_token(force=True)
                 attempt -= 1
                 continue
+            if status == 401 and auth:
+                resp.close()
+                raise cloud_http.CloudSignInExpired(self._service_name(), "Graph refused the token")
             if status in cloud_http.RETRYABLE_STATUSES and attempt < cloud_http.ATTEMPTS and (
                     idempotent or status == 429):
                 retry_after = cloud_http.retry_after_seconds(_header(resp, "Retry-After"))
@@ -571,6 +618,13 @@ class OneDriveSession(SessionLifecycle):
             url = as_str(data.get("@odata.nextLink"))
             if url in seen:
                 raise OSError(errno.EPROTO, f"Graph API GET: paging link repeats ({url})")
+            if url and not _on_graph(url):
+                # _graph_get adds the bearer token: never to another host,
+                # never over plain http.
+                raise OSError(
+                    errno.EPROTO,
+                    f"Graph API GET: paging link leaves Graph ({redact_url(url)}); not followed",
+                )
 
     # ------------------------------------------------------------------
     # Upload helper (used by _SpooledWriter)
@@ -606,23 +660,40 @@ class OneDriveSession(SessionLifecycle):
         prefix = self._drive_prefix()
         before = self._content_tag(path)
         url = f"{GRAPH_BASE}{prefix}/root:{self._escape_path(path)}:/createUploadSession"
+        # Idempotent: a second createUploadSession is only another session,
+        # and one 503 here failed the whole large upload.
         answer = self._graph_post(
-            url, {"item": {"@microsoft.graph.conflictBehavior": "replace"}}
+            url, {"item": {"@microsoft.graph.conflictBehavior": "replace"}}, idempotent=True
         )
         upload_url = as_str(answer.get("uploadUrl"))
         if not upload_url.lower().startswith("https://"):
             raise OSError(errno.EPROTO, f"OneDrive upload of {path}: the upload URL is not https")
         try:
             self._send_session_chunks(path, fh, size, upload_url, before, hooks)
-        except InterruptedError:
+        except InterruptedError as exc:
             self._cancel_upload_session(upload_url, path)
+            if isinstance(exc, _CancelledAfterUncertainFinal):
+                # The last fragment went out and its answer was lost: Graph
+                # may have committed the item. The engine rolls back.
+                raise InterruptedError(transfer_hooks.CANCELLED) from None
             raise transfer_hooks.UploadCancelled(transfer_hooks.CANCELLED) from None
 
     def _send_session_chunks(self, path: str, fh: IO[bytes], size: int, upload_url: str,
                              before: str | None, hooks) -> None:
+        state = {"uncertain_final": False}
+        try:
+            self._send_session_chunks_in(path, fh, size, upload_url, before, hooks, state)
+        except InterruptedError as exc:
+            if state["uncertain_final"] and not isinstance(exc, _CancelledAfterUncertainFinal):
+                raise _CancelledAfterUncertainFinal(*exc.args) from None
+            raise
+
+    def _send_session_chunks_in(self, path: str, fh: IO[bytes], size: int, upload_url: str,
+                                before: str | None, hooks, state: dict) -> None:
         offset = 0
         failures = 0
         final_sent = False
+        unfinished = 0  # answers to the last fragment that did not commit the item
         while offset < size:
             if hooks is not None:
                 hooks.check()
@@ -635,7 +706,8 @@ class OneDriveSession(SessionLifecycle):
                 "Content-Length": str(len(chunk)),
                 "Content-Range": f"bytes {offset}-{offset + len(chunk) - 1}/{size}",
             }
-            final_sent = final_sent or offset + len(chunk) >= size
+            is_final = offset + len(chunk) >= size
+            final_sent = final_sent or is_final
             retry_after = None
             try:
                 resp = self._http.put(upload_url, headers=headers, data=chunk,
@@ -644,6 +716,18 @@ class OneDriveSession(SessionLifecycle):
                 status, detail = None, str(exc)
             else:
                 status = resp.status_code
+                if is_final and status < 400 and status not in (200, 201):
+                    # Only 200 / 201 with the item commit it; a 202 to the
+                    # last fragment ("nextExpectedRanges") made nothing.
+                    unfinished += 1
+                    if unfinished >= cloud_http.ATTEMPTS:
+                        raise OSError(
+                            errno.EIO,
+                            f"OneDrive upload of {path}: the server did not complete the "
+                            f"file after its last part (HTTP {status})",
+                        )
+                    offset = self._session_offset(upload_url, offset, size)
+                    continue
                 if status < 400:
                     offset += len(chunk)
                     failures = 0
@@ -660,6 +744,9 @@ class OneDriveSession(SessionLifecycle):
                 if hooks is not None:
                     hooks.sent(size, size, check=False)
                 return
+            if is_final and (status is None or status >= 500):
+                # Graph may have committed with this fragment.
+                state["uncertain_final"] = True
             failures += 1
             if (status is not None and status not in cloud_http.RETRYABLE_STATUSES) or \
                     failures >= cloud_http.ATTEMPTS:
@@ -670,7 +757,7 @@ class OneDriveSession(SessionLifecycle):
             log.debug("OneDrive upload of %s: chunk at %d answered %s; resuming", path,
                       offset, status)
             cloud_http.pause(failures, retry_after)
-            offset = self._session_offset(upload_url, offset)
+            offset = self._session_offset(upload_url, offset, size)
 
     #: _content_tag of a path with no item.
     _NO_ITEM = ""
@@ -715,7 +802,7 @@ class OneDriveSession(SessionLifecycle):
                       path, exc)
         log.info("OneDrive upload of %s cancelled; its upload session was deleted", path)
 
-    def _session_offset(self, upload_url: str, fallback: int) -> int:
+    def _session_offset(self, upload_url: str, fallback: int, size: int | None = None) -> int:
         """Where an upload session wants the next byte: the start of its
         first ``nextExpectedRanges`` entry. *fallback* (the chunk that
         failed) when the session cannot tell."""
@@ -733,7 +820,10 @@ class OneDriveSession(SessionLifecycle):
             return fallback
         # Bytes the session has are never sent again; bytes it lacks
         # before the failed chunk would be a hole - start where it says.
-        return start if 0 <= start <= fallback + _UPLOAD_CHUNK else fallback
+        # Never at or past the end: the loop would end there as "done".
+        limit = fallback + _UPLOAD_CHUNK if size is None else min(fallback + _UPLOAD_CHUNK,
+                                                                  size - 1)
+        return start if 0 <= start <= limit else fallback
 
     # ------------------------------------------------------------------
     # FileBackend protocol
@@ -815,10 +905,25 @@ class OneDriveSession(SessionLifecycle):
         except FileNotFoundError:
             return False
 
+    @staticmethod
+    def _check_name(path: str) -> None:
+        """EINVAL, with a sentence, for a name OneDrive and SharePoint
+        refuse - the user saw Graph's raw "invalidRequest" JSON."""
+        name = posixpath.basename(path.rstrip("/"))
+        bad = sorted({c for c in name if c in _FORBIDDEN_NAME_CHARS})
+        if bad:
+            raise OSError(
+                errno.EINVAL,
+                "OneDrive and SharePoint do not allow these characters in a name: "
+                + " ".join(bad),
+                path,
+            )
+
     def mkdir(self, path: str) -> None:
         normed = path.strip("/")
         if not normed:
             raise OSError(errno.EEXIST, "Cannot create root directory", "/")
+        self._check_name(path)
 
         parent_path = posixpath.dirname(normed)
         folder_name = posixpath.basename(normed)
@@ -854,6 +959,7 @@ class OneDriveSession(SessionLifecycle):
 
     def rename(self, src: str, dst: str) -> None:
         refuse_folder_path(dst, "rename to", source_is_file=lambda: not self.stat(src).is_dir)
+        self._check_name(dst)
         item_id = self._get_item_id(src)
         prefix = self._drive_prefix()
         url = f"{GRAPH_BASE}{prefix}/items/{item_id}"
@@ -890,6 +996,7 @@ class OneDriveSession(SessionLifecycle):
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
         # The Graph path drops the slash: "x/" was written as the FILE x.
         refuse_folder_path(path)
+        self._check_name(path)
         if append:
             cap = self._MAX_APPEND_EXISTING_SIZE
             existing = read_existing_for_append(
@@ -1023,6 +1130,7 @@ class OneDriveSession(SessionLifecycle):
         """
         what = f"OneDrive copy {src} -> {dst}"
         refuse_folder_path(dst, "copy to", source_is_file=lambda: not self.stat(src).is_dir)
+        self._check_name(dst)
         try:
             parent = self._graph_get(self._item_path_url(self.parent(dst)))
             parent_id = as_str(parent.get("id"))
@@ -1278,10 +1386,10 @@ class OneDriveSession(SessionLifecycle):
                 "resolved — was the session connected?"
             )
 
-    def _graph_post(self, url: str, body: dict) -> dict:
+    def _graph_post(self, url: str, body: dict, *, idempotent: bool = False) -> dict:
         """POST a JSON body to the Graph API. Mirrors _graph_get's
         auth + error-mapping pattern."""
-        resp = self._graph_post_response(url, body)
+        resp = self._graph_post_response(url, body, idempotent=idempotent)
         return _graph_json(resp, f"POST {url}", empty_ok=True)
 
     def _graph_post_response(self, url: str, body: dict, *, idempotent: bool = False):

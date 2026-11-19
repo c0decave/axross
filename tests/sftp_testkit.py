@@ -40,13 +40,32 @@ class _Handle(SFTPHandle):
 
 
 class _Sftp(SFTPServerInterface):
-    def __init__(self, server, *args, root: str = "/", stats=None, **kw) -> None:
+    def __init__(self, server, *args, root: str = "/", stats=None,
+                 resolve_links: bool = False, **kw) -> None:
         super().__init__(server, *args, **kw)
         self.root = root
         self.stats = stats if stats is not None else {}
+        self.resolve_links = resolve_links
+
+    def canonicalize(self, path):
+        """REALPATH. paramiko's answer is the path as text; with
+        *resolve_links* it resolves symlinks below the root as OpenSSH's
+        sftp-server does (realpath(3); a missing last part is kept)."""
+        text = super().canonicalize(path)
+        if not self.resolve_links:
+            return text
+        root = os.path.realpath(self.root)
+        real = os.path.realpath(os.path.join(root, text.lstrip("/")))
+        if real == root:
+            return "/"
+        if real.startswith(root.rstrip(os.sep) + os.sep):
+            return "/" + os.path.relpath(real, root)
+        return text
 
     def _real(self, path: str) -> str:
-        real = os.path.join(self.root, self.canonicalize(path).lstrip("/"))
+        # The path as text: the system resolves links as it opens it.
+        text = SFTPServerInterface.canonicalize(self, path)
+        real = os.path.join(self.root, text.lstrip("/"))
         # OpenSSH hands the path to the system as sent: "file/" is
         # ENOTDIR, not the file (canonicalize drops the slash).
         if path.endswith("/") and path.strip("/"):
@@ -90,7 +109,12 @@ class _Sftp(SFTPServerInterface):
     def open(self, path, flags, attr):
         real = self._real(path)
         try:
-            fd = os.open(real, flags | getattr(os, "O_BINARY", 0), 0o644)
+            # The OPEN request's permissions make a new file's mode, as
+            # OpenSSH's sftp-server does (less the umask); else 0644.
+            perm = getattr(attr, "st_mode", None)
+            perm = perm & 0o7777 if isinstance(perm, int) and (
+                attr._flags & SFTPAttributes.FLAG_PERMISSIONS) else 0o644
+            fd = os.open(real, flags | getattr(os, "O_BINARY", 0), perm)
             mode = "r+b" if flags & os.O_RDWR else ("wb" if flags & os.O_WRONLY else "rb")
             if flags & os.O_APPEND:
                 mode = "ab"
@@ -232,8 +256,11 @@ class _Auth(paramiko.ServerInterface):
 class SftpServer:
     """``SftpServer(root)`` listens on 127.0.0.1:<port>; any password works."""
 
-    def __init__(self, root: str, extra_host_keys: tuple = ()) -> None:
+    def __init__(self, root: str, extra_host_keys: tuple = (), *,
+                 resolve_links: bool = False) -> None:
         self.root = root
+        #: REALPATH resolves symlinks as OpenSSH's does (paramiko: text).
+        self.resolve_links = resolve_links
         self.stats: dict = {}
         #: Host keys offered beside the RSA one (another key type each).
         self.extra_host_keys = tuple(extra_host_keys)
@@ -261,7 +288,8 @@ class SftpServer:
             for key in self.extra_host_keys:
                 t.add_server_key(key)
             root, stats = self.root, self.stats
-            t.set_subsystem_handler("sftp", _BytesPathSftpServer, _Sftp, root=root, stats=stats)
+            t.set_subsystem_handler("sftp", _BytesPathSftpServer, _Sftp, root=root, stats=stats,
+                                    resolve_links=self.resolve_links)
             try:
                 t.start_server(server=_Auth())
             except (paramiko.SSHException, OSError, EOFError):

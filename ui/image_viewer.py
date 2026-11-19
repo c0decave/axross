@@ -19,19 +19,23 @@ import logging
 
 from PyQt6 import sip
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QImage, QKeySequence, QPixmap, QShortcut
+from PyQt6.QtGui import QImage, QKeySequence, QPainter, QPixmap, QShortcut, QTransform
 from PyQt6.QtWidgets import (
     QDialog,
+    QGraphicsPixmapItem,
+    QGraphicsScene,
+    QGraphicsView,
     QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
-    QScrollArea,
+    QStackedWidget,
     QVBoxLayout,
 )
 
 from core import previews as P
 from core.i18n import format_percent, tr
+from core.remote_name import sanitize_for_display as _shown
 from ui import viewer_file_actions as VFA
 from ui import viewer_window as VW
 from ui.close_corner import add_close_corner
@@ -69,12 +73,19 @@ class ImageViewerDialog(QDialog):
         source_pane=None,
     ) -> None:
         super().__init__(parent)
+        # The decoding child (core.image_worker) starts while the window is built.
+        from core import image_worker
+
+        image_worker.warm()
         set_window_icon(self, "image")
         self._backend = backend
         self._pane = source_pane if source_pane is not None else VFA.owning_pane(parent)
         self._siblings = siblings or [path]
         self._idx = self._siblings.index(path) if path in self._siblings else 0
         self._zoom = 1.0
+        #: Fit the picture to the window (each new picture, resizes) until
+        #: the user zooms or asks for 100 %.
+        self._fit_mode = True
         self._rotation = 0
         self._original: QImage | None = None
         #: A picture was shown: a later one that fails is said in place.
@@ -83,6 +94,9 @@ class ImageViewerDialog(QDialog):
         # meanwhile follows it.
         self._loading = False
         self._reload_pending = False
+        #: The file whose picture (or reason) is on screen: Del and a drag
+        #: take it, not the next one still being decoded.
+        self._shown_path = ""
 
         self.setWindowTitle(tr("Image Viewer"))
         VW.allow_maximize(self)
@@ -103,21 +117,29 @@ class ImageViewerDialog(QDialog):
         root = QVBoxLayout(self)
         add_close_corner(self)
 
-        self._label = QLabel("", alignment=Qt.AlignmentFlag.AlignCenter)
-        self._label.setBackgroundRole(self._label.backgroundRole())
-        self._label.setSizePolicy(
-            self._label.sizePolicy().horizontalPolicy(),
-            self._label.sizePolicy().verticalPolicy(),
-        )
-        self._scroll = QScrollArea(self)
-        self._scroll.setWidgetResizable(False)
-        self._scroll.setWidget(self._label)
+        # The picture is shown at its own size and zoomed / rotated by the
+        # view's transform: scaling it into a new pixmap for every zoom step
+        # made pixmaps of zoom^2 times its size (a big photo at 14x crashed
+        # the process).
+        self._scroll = QGraphicsView(self)
+        self._scroll.setScene(QGraphicsScene(self._scroll))
+        self._item = QGraphicsPixmapItem()
+        self._item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
+        self._scroll.scene().addItem(self._item)
+        self._scroll.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         self._scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._scroll.setBackgroundBrush(self.palette().window())
+        # A picture that cannot be shown is said in its place.
+        self._label = QLabel("", alignment=Qt.AlignmentFlag.AlignCenter)
+        self._label.setWordWrap(True)
+        self._stack = QStackedWidget(self)
+        self._stack.addWidget(self._scroll)
+        self._stack.addWidget(self._label)
         # Metadata side panel, hidden until I (or the Info button) shows it.
         from ui.metadata_dialog import MetadataPanel
 
         body = QHBoxLayout()
-        body.addWidget(self._scroll, stretch=1)
+        body.addWidget(self._stack, stretch=1)
         self.metadata_panel = MetadataPanel(self)
         self.metadata_panel.setVisible(False)
         self.metadata_panel.removed.connect(self._on_metadata_removed)
@@ -179,19 +201,35 @@ class ImageViewerDialog(QDialog):
         root.addWidget(self._info)
 
         # Keyboard shortcuts
+        # A held arrow turns at most three pictures a second
+        # (viewer_window.HeldStepPacer): the step keys' shortcuts take single
+        # presses, their repeats reach keyPressEvent.
+        self._pacer = VW.HeldStepPacer(self)
         for seq, slot in (
             (QKeySequence("Right"), self._next),
             (QKeySequence("Left"), self._prev),
             (QKeySequence("Space"), self._next),
+        ):
+            sh = QShortcut(seq, self)
+            sh.setAutoRepeat(False)
+            sh.activated.connect(lambda slot=slot: (self._pacer.note(), slot()))
+        for seq, slot in (
             (QKeySequence("+"), lambda: self._zoom_by(1.25)),
             (QKeySequence("="), lambda: self._zoom_by(1.25)),
             (QKeySequence("-"), lambda: self._zoom_by(0.8)),
             (QKeySequence("0"), self._reset_zoom),
+            # Ctrl + / - / 0 as in browsers and the other viewers
+            (QKeySequence("Ctrl++"), lambda: self._zoom_by(1.25)),
+            (QKeySequence("Ctrl+="), lambda: self._zoom_by(1.25)),
+            (QKeySequence("Ctrl+-"), lambda: self._zoom_by(0.8)),
+            (QKeySequence("Ctrl+0"), self._reset_zoom),
             (QKeySequence("f"), self._fit_window),
             (QKeySequence("r"), self._rotate_cw),
             (QKeySequence("i"), self.toggle_metadata),
             (QKeySequence("Escape"), self._escape),
             (QKeySequence(QKeySequence.StandardKey.Delete), self.delete_current),
+            # Del moves to the trash (as in the pane), Shift+Del deletes for good
+            (QKeySequence("Shift+Del"), lambda: self.delete_current(permanent=True)),
         ):
             sh = QShortcut(seq, self)
             sh.activated.connect(slot)
@@ -205,6 +243,50 @@ class ImageViewerDialog(QDialog):
             done=self._after_drag,
         )
         self._move_watch = VFA.MoveWatch(self, self._backend, self._pane, self._moved_away)
+        # Ctrl + wheel zooms (the wheel alone still scrolls a large image)
+        self._scroll.viewport().installEventFilter(self)
+        self._scroll.installEventFilter(self)
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 - Qt override
+        from PyQt6.QtCore import QEvent
+
+        if event.type() == QEvent.Type.KeyPress and obj is self._scroll \
+                and self._held_step(event):
+            return True  # (the view would scroll with it)
+        if (
+            event.type() == QEvent.Type.Resize
+            and obj is self._scroll.viewport()
+            and self._fit_mode
+            and self._original is not None
+        ):
+            # The view area changed without the window (a scroll bar went)
+            self._fit_window()
+        if (
+            event.type() == QEvent.Type.Wheel
+            and obj is self._scroll.viewport()
+            and event.modifiers() & Qt.KeyboardModifier.ControlModifier
+        ):
+            steps = event.angleDelta().y() / 120.0
+            if steps:
+                self._zoom_by(1.25**steps)
+            event.accept()
+            return True
+        return super().eventFilter(obj, event)
+
+    def _held_step(self, event) -> bool:
+        """A held step key's repeat, paced; True when *event* was one."""
+        steps = {Qt.Key.Key_Right: self._next, Qt.Key.Key_Space: self._next,
+                 Qt.Key.Key_Left: self._prev}
+        if event.isAutoRepeat() and event.key() in steps and \
+                event.modifiers() == Qt.KeyboardModifier.NoModifier:
+            self._pacer.request(steps[event.key()])
+            event.accept()
+            return True
+        return False
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if not self._held_step(event):
+            super().keyPressEvent(event)
 
     # ------------------------------------------------------------------
     # Window
@@ -279,11 +361,14 @@ class ImageViewerDialog(QDialog):
             self._failed(tr("Decode Failed"),
                          f"{path}\n\n" + tr("The picture could not be decoded."))
             return
+        self._shown_path = path
         self._shown_any = True
         self._original = img
         self._rotation = 0
-        self._zoom = 1.0
-        self._render()
+        self._item.setPixmap(QPixmap.fromImage(img))
+        self._scroll.scene().setSceneRect(self._item.boundingRect())
+        self._stack.setCurrentWidget(self._scroll)
+        self._fit_window()  # every picture starts fitted to the window
 
     def _failed(self, title: str, text: str) -> None:
         """The current picture cannot be shown. The first one: said in a
@@ -294,40 +379,24 @@ class ImageViewerDialog(QDialog):
             QMessageBox.warning(self, title, text)
             self.reject()
             return
+        self._shown_path = self._siblings[self._idx]
         self._original = None
-        self._label.setPixmap(QPixmap())
+        self._item.setPixmap(QPixmap())
         self._label.setTextFormat(Qt.TextFormat.PlainText)  # the path is not ours
         self._label.setText(f"{title}\n\n{text}")
-        self._label.adjustSize()
-        name = self._siblings[self._idx].rsplit("/", 1)[-1]
+        self._stack.setCurrentWidget(self._label)
+        name = _shown(self._siblings[self._idx].rsplit("/", 1)[-1])
         self._info.setText(tr("{name} – cannot be shown [{n}/{count}]").format(
             name=name, n=self._idx + 1, count=len(self._siblings)))
 
     def _render(self) -> None:
         if self._original is None:
             return
-        img = self._original
-        if self._rotation:
-            from PyQt6.QtGui import QTransform
-
-            img = img.transformed(
-                QTransform().rotate(self._rotation),
-                Qt.TransformationMode.SmoothTransformation,
-            )
-        target_w = int(img.width() * self._zoom)
-        target_h = int(img.height() * self._zoom)
-        if target_w > 0 and target_h > 0:
-            img = img.scaled(
-                target_w,
-                target_h,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-        self._label.setPixmap(QPixmap.fromImage(img))
-        self._label.resize(img.width(), img.height())
+        self._scroll.setTransform(
+            QTransform().rotate(self._rotation).scale(self._zoom, self._zoom))
         self._zoom_label.setText(format_percent(int(self._zoom * 100)))
         path = self._siblings[self._idx]
-        name = path.rsplit("/", 1)[-1]
+        name = _shown(path.rsplit("/", 1)[-1])
         self._info.setText(
             f"{name} — {self._original.width()}×{self._original.height()} "
             f"[{self._idx + 1}/{len(self._siblings)}]"
@@ -338,21 +407,49 @@ class ImageViewerDialog(QDialog):
     # ------------------------------------------------------------------
     def _zoom_by(self, factor: float) -> None:
         new_zoom = max(0.05, min(20.0, self._zoom * factor))
+        self._set_fit_mode(False)
         self._zoom = new_zoom
         self._render()
 
     def _reset_zoom(self) -> None:
+        self._set_fit_mode(False)
         self._zoom = 1.0
         self._render()
 
+    def _set_fit_mode(self, fit: bool) -> None:
+        """A fitted picture needs no scroll bars: shown while it was still
+        zoomed, one took its room from the fit, and went once it fitted."""
+        self._fit_mode = fit
+        policy = (Qt.ScrollBarPolicy.ScrollBarAlwaysOff if fit
+                  else Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._scroll.setHorizontalScrollBarPolicy(policy)
+        self._scroll.setVerticalScrollBarPolicy(policy)
+
     def _fit_window(self) -> None:
+        """Fit the picture (as rotated) into the visible area; it stays
+        fitted through resizes and the next pictures until the user zooms."""
+        self._set_fit_mode(True)
         if self._original is None:
             return
+        width, height = self._original.width(), self._original.height()
+        if self._rotation % 180:
+            width, height = height, width
         viewport = self._scroll.viewport().size()
-        w_ratio = viewport.width() / max(1, self._original.width())
-        h_ratio = viewport.height() / max(1, self._original.height())
-        self._zoom = max(0.05, min(w_ratio, h_ratio))
+        w_ratio = viewport.width() / max(1, width)
+        h_ratio = viewport.height() / max(1, height)
+        self._zoom = max(0.05, min(20.0, w_ratio, h_ratio))
         self._render()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().resizeEvent(event)
+        if getattr(self, "_fit_mode", False) and getattr(self, "_original", None) is not None:
+            self._fit_window()
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().showEvent(event)
+        # the first fit ran before the window had its final size
+        if getattr(self, "_fit_mode", False) and getattr(self, "_original", None) is not None:
+            self._fit_window()
 
     def toggle_metadata(self) -> None:
         self.metadata_panel.setVisible(not self.metadata_panel.isVisible())
@@ -364,25 +461,35 @@ class ImageViewerDialog(QDialog):
 
     def _rotate_cw(self) -> None:
         self._rotation = (self._rotation + 90) % 360
-        self._render()
+        if self._fit_mode:
+            self._fit_window()
+        else:
+            self._render()
 
     # ------------------------------------------------------------------
     # The file itself: delete, drag out
     # ------------------------------------------------------------------
     def current_path(self) -> str:
+        """The file on screen - while the next one is decoded still the
+        one shown before."""
+        if self._shown_path in self._siblings:
+            return self._shown_path
         return self._siblings[self._idx]
 
     def drag_surface(self):
         """The widget a drag out of the viewer starts on."""
         return self._scroll.viewport()
 
-    def delete_current(self) -> None:
-        """Delete (after a question) the shown image and go on with the next."""
+    def delete_current(self, permanent: bool = False) -> None:
+        """Move the shown image to the trash (*permanent*: delete it), after
+        a question, and go on with the next."""
         # The delete waits for the server (run_off_gui): the viewer may be
         # gone once it is through.
-        if VFA.delete_file(self, self._backend, self.current_path(), self._pane) \
+        path = self.current_path()
+        if VFA.delete_file(self, self._backend, path, self._pane,
+                           permanent=permanent) \
                 and not sip.isdeleted(self):
-            self._drop_current()
+            self._moved_away(path)
 
     def _after_drag(self, path: str, action) -> None:
         # A drop accepted as a move has not moved anything yet: the file

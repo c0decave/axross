@@ -58,7 +58,7 @@ class _Device:
         self.sent: list[str] = []
         self.answer: str | None = None
 
-    def shell(self, cmd, transport_timeout_s=None):
+    def shell(self, cmd, transport_timeout_s=None, **_kwargs):
         self.sent.append(cmd)
         if self.fail is not None and (cmd.startswith("ls ") or not self.fail_ls_only):
             raise self.fail

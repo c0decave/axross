@@ -162,7 +162,19 @@ class NfsUserSession(SessionLifecycle):
 
     @property
     def connected(self) -> bool:
-        return self._nfs is not None
+        """Whether the server answers: an RPC NULL call (the connection is
+        opened again when it broke). ``self._nfs is not None`` alone kept a
+        server that went away "connected" for ever, and a reconnect got the
+        dead session back."""
+        nfs = self._nfs
+        if nfs is None:
+            return False
+        try:
+            nfs.rpc.call(0)
+            return True
+        except OSError as exc:
+            log.debug("NFS liveness check of %s:%s failed: %s", self._host, self._export, exc)
+            return False
 
     def close(self) -> None:
         self.disconnect()

@@ -52,7 +52,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import metadata_tools as MT
-from core.i18n import tr
+from core.i18n import tr, tr_n
 from ui.close_corner import add_close_corner
 from ui.scan_job import BusyStrip, ScanJob, shorten
 from ui.icon_provider import set_window_icon
@@ -86,12 +86,28 @@ _SEP = " · "
 SHOW, REMOVE, EXPORT = "show", "remove", "export"
 
 
-def _ask_to_remove(parent, count: int) -> bool:
-    """True when removal may go ahead: always, unless the setting asks for
-    a confirmation and the user declines it."""
-    if not MT.confirm_before_remove():
-        return True
+def _ask_to_remove(parent, count: int, backend=None) -> str | None:
+    """The write mode to remove with, or None when the user declines: the
+    configured one without a question, unless the setting asks for a
+    confirmation - or the originals would go to a trash at the top of a
+    share (core.trash.shared_trash_folder), which is said, with cleaned
+    copies as the other way."""
+    from core.trash import shared_trash_folder
+
     mode = MT.write_mode()
+    shared = shared_trash_folder(backend) if (
+        backend is not None and mode == MT.MODE_IN_PLACE) else None
+    if shared is not None:
+        from ui import shared_trash as ST
+
+        return ST.ask_metadata_in_place(
+            parent, tr_n(
+                count,
+                "Remove the metadata of {n} file?",
+                "Remove the metadata of {n} files?",
+            ), shared)
+    if not MT.confirm_before_remove():
+        return mode
     how = (
         tr("The originals are kept in the trash; Edit → Undo puts them back.")
         if mode == MT.MODE_IN_PLACE
@@ -100,18 +116,22 @@ def _ask_to_remove(parent, count: int) -> bool:
     answer = QMessageBox.question(
         parent,
         tr("Remove Metadata"),
-        tr("Remove the metadata of {n} file(s)?").format(n=count) + "\n\n" + how,
+        tr_n(count, "Remove the metadata of {n} file?", "Remove the metadata of {n} files?") + "\n\n" + how,
         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         QMessageBox.StandardButton.No,
     )
-    return answer == QMessageBox.StandardButton.Yes
+    return mode if answer == QMessageBox.StandardButton.Yes else None
 
 
 def _summary(batch: MT.BatchResult) -> str:
     counts: dict[str, int] = {}
     for r in batch.results:
         counts[r.status] = counts.get(r.status, 0) + 1
-    parts = [tr("Metadata removed from {n} file(s)").format(n=counts.get(MT.CLEANED, 0))]
+    parts = [tr_n(
+        counts.get(MT.CLEANED, 0),
+        "Metadata removed from {n} file",
+        "Metadata removed from {n} files",
+    )]
     if counts.get(MT.UNCHANGED):
         parts.append(tr("{n} had none").format(n=counts[MT.UNCHANGED]))
     if counts.get(MT.UNSUPPORTED):
@@ -122,8 +142,43 @@ def _summary(batch: MT.BatchResult) -> str:
         parts.append(tr("cancelled"))
     copies = [r.output for r in batch.results if r.status == MT.CLEANED and r.mode == MT.MODE_COPY]
     if copies:
-        parts.append(tr("{n} cleaned copies written").format(n=len(copies)))
+        parts.append(tr_n(len(copies), "{n} cleaned copy written", "{n} cleaned copies written"))
     return ", ".join(parts)
+
+
+def skip_text(notes: list[MT.SkipNote]) -> str:
+    """What a folder walk left out (core.metadata_tools.skip_notes), as one
+    line of the status: "Metadata removed from 1 file(s)" alone was read as
+    the whole folder done."""
+    from core.media_collect import DEFAULT_MAX_DEPTH
+
+    parts = []
+    for note in notes:
+        if note.kind == "unreadable":
+            parts.append(tr("1 folder could not be read") if note.count == 1 else
+                         tr("{n} folders could not be read").format(n=note.count))
+        elif note.kind == "too_deep":
+            parts.append(tr("folders deeper than {n} levels were not looked at").format(
+                n=DEFAULT_MAX_DEPTH))
+        elif note.kind == "subfolders":
+            parts.append(tr("subfolders not included (tick Include subfolders)"))
+        elif note.kind == "truncated":
+            parts.append(tr("stopped after {n} files").format(n=note.count))
+        elif note.kind == "links":
+            parts.append(tr_n(note.count, "{n} folder link not followed",
+                              "{n} folder links not followed"))
+        elif note.kind == "unsupported":
+            names = ", ".join(note.paths[:3]) + (", …" if note.count > 3 else "")
+            parts.append(tr_n(note.count,
+                              "{n} file of a type that is not supported left as it is "
+                              "({names})",
+                              "{n} files of types that are not supported left as they are "
+                              "({names})", names=names))
+    return ", ".join(parts)
+
+
+def _skip_details(notes: list[MT.SkipNote]) -> str:
+    return "\n".join(path for note in notes for path in note.paths)
 
 
 def _problems(batch: MT.BatchResult) -> str:
@@ -229,7 +284,11 @@ def _row_tooltip(report: MT.MetadataReport) -> str:
         lines.append(tr("… {n} more").format(n=len(report.fields) - TOOLTIP_FIELDS))
     kept = len(report.fields) - report.removable
     if kept:
-        lines.append(tr("{n} field(s) kept when metadata is removed").format(n=kept))
+        lines.append(tr_n(
+            kept,
+            "{n} field kept when metadata is removed",
+            "{n} fields kept when metadata is removed",
+        ))
     lines.append(tr("Double-click for Properties"))
     return "\n".join(lines)
 
@@ -303,6 +362,8 @@ class MetadataDialog(QDialog):
         self._phase = ""
         self._first_scan_done = False
         self._prefix = ""
+        #: What the folder walks left out (core.metadata_tools.SkipNote).
+        self._skips: list = []
         self._closed = False
         self._search: list[str] = []
         #: Open Properties windows; they follow a rescan of their file.
@@ -344,7 +405,7 @@ class MetadataDialog(QDialog):
 
         self.job = ScanJob(
             self,
-            formatter=lambda s: tr("Working… {done} file(s)").format(done=s["scanned"])
+            formatter=lambda s: tr_n(s["scanned"], "Working… {n} file", "Working… {n} files")
             + f" — {shorten(s['path'])}",
         )
         self.job.finished.connect(self._on_finished)
@@ -411,6 +472,7 @@ class MetadataDialog(QDialog):
 
         def work(cancel, progress):
             reports: list[MT.MetadataReport] = []
+            notes: list[MT.SkipNote] = []
             for path, is_dir in targets:
                 if cancel():
                     break
@@ -424,10 +486,11 @@ class MetadataDialog(QDialog):
                         progress=lambda d, _t, p: progress(base + d, 0, p),
                     )
                     reports.extend(batch.reports)
+                    notes.extend(MT.skip_notes(batch))
                 else:
                     reports.append(MT.read_metadata(backend, path, cancel=cancel))
                     progress(len(reports), 0, path)
-            return reports
+            return reports, notes
 
         self._phase = "scan"
         self.job.start(work, replace=True)
@@ -456,25 +519,38 @@ class MetadataDialog(QDialog):
             self._scan()
             return
         first = not self._first_scan_done
-        self._reports = list(value)
+        reports, notes = value if isinstance(value, tuple) else (value, [])
+        self._reports = list(reports)
+        self._skips = list(notes)
         self._first_scan_done = True
         dropped = _fill_files(self.table, self._reports)
         self._search = [_search_text(r) for r in self._reports[: self.table.rowCount()]]
         self._apply_filter(self.filter_edit.text())
         self._refresh_details()
         parts = [
-            tr("{files} file(s), {fields} field(s), {removable} removable").format(
-                files=len(self._reports),
-                fields=sum(len(r.fields) for r in self._reports),
+            tr_n(len(self._reports), "{n} file", "{n} files"),
+            tr_n(
+                sum(len(r.fields) for r in self._reports),
+                "{n} field, {removable} removable",
+                "{n} fields, {removable} removable",
                 removable=self.removable_count(),
-            )
+            ),
         ]
         if dropped:
-            parts.append(tr("{n} more files not shown; Export has them all").format(n=dropped))
+            parts.append(tr_n(dropped, "{n} more file not shown; Export has them all",
+                              "{n} more files not shown; Export has them all"))
+        skipped = skip_text(self._skips)
+        if skipped:
+            # Said with every scan, so also after a removal (it scans again).
+            parts.append(skipped)
         if cancelled:
             parts.append(tr("cancelled"))
         text = ", ".join(parts)
         self.status_label.setText(f"{self._prefix} — {text}" if self._prefix else text)
+        details = _skip_details(self._skips)
+        if details:
+            tip = self.status_label.toolTip()
+            self.status_label.setToolTip(f"{tip}\n{details}" if tip else details)
         if first and not cancelled:
             if self._action == EXPORT:
                 self.export()
@@ -506,7 +582,7 @@ class MetadataDialog(QDialog):
         needle = self.filter_edit.text().strip().lower()
         lines = [line for r in reports for line in _field_lines(r, needle)]
         QApplication.clipboard().setText("\n".join(lines))
-        self.status_label.setText(tr("{n} field(s) copied").format(n=len(lines)))
+        self.status_label.setText(tr_n(len(lines), "{n} field copied", "{n} fields copied"))
 
     # -- Properties and the context menu ------------------------------------------
     def open_details(self, row: int) -> None:
@@ -585,7 +661,12 @@ class MetadataDialog(QDialog):
             QMessageBox.warning(self, tr("Export Metadata"), f"{path}\n\n{exc}")
             return
         self.status_label.setText(
-            tr("Exported {n} file(s) to {path}").format(n=len(self._reports), path=path)
+            tr_n(
+                len(self._reports),
+                "Exported {n} file to {path}",
+                "Exported {n} files to {path}",
+                path=path,
+            )
         )
 
     # -- removing ---------------------------------------------------------------
@@ -595,22 +676,25 @@ class MetadataDialog(QDialog):
         if self.job.running:
             return
         wanted = set(only) if only is not None else None
+        # A selected file of a type axross cannot clean is in the run too, so
+        # the result says "not supported" instead of leaving it out unnamed.
         paths = [
             r.path
             for r in self._reports
-            if r.kind and (r.removable or r.error) and (wanted is None or r.path in wanted)
+            if (r.removable or r.error) and (wanted is None or r.path in wanted)
         ]
         if not paths:
             self.status_label.setText(tr("Nothing to remove"))
             return
-        if not _ask_to_remove(self, len(paths)):
+        mode = _ask_to_remove(self, len(paths), self._backend)
+        if mode is None:
             return
         backend = self._backend
         source = self._targets[0][0] if len(self._targets) == 1 else ""
 
         def work(cancel, progress):
             return MT.remove_many(
-                backend, paths, cancel=cancel, progress=progress, source=source
+                backend, paths, mode=mode, cancel=cancel, progress=progress, source=source
             )
 
         self._phase = "remove"
@@ -683,8 +767,11 @@ def _details_html(report: MT.MetadataReport) -> str:
     if left_out:
         rows.append(
             '<tr><td colspan="2" style="padding-top:10px"><i>'
-            + esc(tr("{n} more field(s) are not shown here; Copy copies every field.").format(
-                n=left_out))
+            + esc(tr_n(
+                left_out,
+                "{n} more field is not shown here; Copy copies every field.",
+                "{n} more fields are not shown here; Copy copies every field.",
+            ))
             + "</i></td></tr>"
         )
     if not report.fields and not report.error:
@@ -752,8 +839,11 @@ class MetadataDetailsDialog(QDialog):
         self.title.setText(report.name)
         self.path_label.setText(report.path)
         self.counts_label.setText(
-            tr("{n} field(s), {removable} removable").format(
-                n=len(report.fields), removable=report.removable
+            tr_n(
+                len(report.fields),
+                "{n} field, {removable} removable",
+                "{n} fields, {removable} removable",
+                removable=report.removable,
             )
         )
         scroll = self.view.verticalScrollBar().value()
@@ -933,13 +1023,15 @@ class MetadataPanel(QWidget):
     def remove(self) -> None:
         if self._backend is None or not self.path or self.job.running:
             return
-        if not _ask_to_remove(self, 1):
-            return
         backend, path = self._backend, self.path
+        mode = _ask_to_remove(self, 1, backend)
+        if mode is None:
+            return
         self._phase = "remove"
         self.remove_button.setEnabled(False)
         self.status_label.setText(tr("Removing…"))
-        self.job.start(lambda cancel, _p: (path, MT.remove_metadata(backend, path, cancel=cancel)))
+        self.job.start(lambda cancel, _p: (
+            path, MT.remove_metadata(backend, path, mode=mode, cancel=cancel)))
 
     def _on_finished(self, kind: str, value, cancelled: bool) -> None:
         phase, self._phase = self._phase, ""
@@ -974,8 +1066,11 @@ class MetadataPanel(QWidget):
             self.status_label.setText(result.error)
         else:
             self.status_label.setText(
-                tr("{n} field(s), {removable} removable").format(
-                    n=len(result.fields), removable=result.removable
+                tr_n(
+                    len(result.fields),
+                    "{n} field, {removable} removable",
+                    "{n} fields, {removable} removable",
+                    removable=result.removable,
                 )
             )
         self.remove_button.setEnabled(bool(result.removable or (result.error and result.kind)))

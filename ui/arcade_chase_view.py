@@ -9,7 +9,7 @@ player, is a little chip with LED eyes and pins; the daemons are hovering
 hexagonal drones, blue and wobbling while a root key turns them, blinking
 before they turn back. Byte and the daemons glide between cells (the
 painting interpolates between two ticks of the rules), sparks fly when a
-bit, a key or a daemon is taken, the screen flashes when Byte is caught.
+bit, a key or a daemon is taken, the screen dims for a moment when Byte is caught (never a red flash).
 The title intro assembles BYTE CHASE out of flying bits. Sounds and the
 level's tune: ui/arcade_audio.py.
 """
@@ -266,8 +266,9 @@ class ChaseView(AC.ArcadeView):
         self.particles.draw(p, at, s, dpr)
         self._paint_popups(p, at, s, dt)
         if self.flash > 0:
-            AC.fill_fast(p, QRectF(self.rect()), QColor(255, 60, 90, int(110 * self.flash)))
-            self.flash = max(0.0, self.flash - dt * 2.5)
+            # a calm dark veil, never a red flash (photosensitivity)
+            AC.fill_fast(p, QRectF(self.rect()), QColor(16, 20, 36, int(90 * self.flash)))
+            self.flash = max(0.0, self.flash - dt * 1.5)
         self._paint_hud(p, pal)
         since = now - self.banner_t
         title, hint = self.end_message()
@@ -459,7 +460,8 @@ def paint_daemon(p: QPainter, c: QPointF, s: float, name: str, facing, scared: i
     colour = QColor(DAEMON_COLOURS.get(name, "#ffffff"))
     if scared:
         colour = QColor("#3b82f6")
-        if scared < 15 and int(now * 8) % 2:
+        # 2 blinks a second: flash-safe (at most 3 flashes a second)
+        if scared < 15 and int(now * 4) % 2:
             colour = QColor("#f8fafc")
     AC.blit_centred(p, AC.glow(colour.name(), s * 0.75, dpr, 130), c.x(), c.y())
     r = s * 0.4

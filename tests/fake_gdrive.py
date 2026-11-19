@@ -107,9 +107,11 @@ class _Files:
         return _MediaRequest(self.d, fileId, export=mimeType)
 
     def create(self, body, media_body=None, fields="", **kw):
+        self.d.kwargs.append(("create", kw))
         return _Req(lambda: self.d._create(body, media_body))
 
     def update(self, fileId, body=None, media_body=None, addParents=None, removeParents=None, **kw):
+        self.d.kwargs.append(("update", kw))
         return _Req(lambda: self.d._update(fileId, body or {}, media_body, addParents, removeParents))
 
     def delete(self, fileId, **kw):

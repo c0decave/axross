@@ -188,10 +188,11 @@ def test_happy_an_adb_download_spool_is_hidden_next_to_the_destination(adb, tmp_
     seen = {}
     pull = adb.backend._device.pull
 
-    def watching(src, dst):
-        seen["spool"] = dst
+    def watching(src, dst, *args, **kwargs):
+        # the pull writes into a sink over the spool file (progress, Cancel)
+        seen["spool"] = getattr(getattr(dst, "_fh", None), "name", dst)
         seen["listing"] = sorted(os.listdir(dest))
-        pull(src, dst)
+        pull(src, dst, *args, **kwargs)
 
     adb.backend._device.pull = watching
     job = _job(adb.backend, adb.J("photo.jpg"), str(dest / "photo.jpg"), 200_000)
@@ -237,13 +238,21 @@ def test_happy_rsync_read_folders_and_spools_are_hidden(spool_env, monkeypatch):
     s = object.__new__(RsyncSession)
     seen = {}
 
-    def run(args, timeout=None):
+    def spawn(args):
+        # open_read streams from a running rsync (test_rsync_read_streams):
+        # this one has written the file and ends at once.
+        import subprocess
+        import sys
+
         folder = args[-1].rstrip(os.sep)
         seen["folder"] = folder
         Path(folder, "f.bin").write_bytes(b"rs")
+        return subprocess.Popen([sys.executable, "-c", ""], stderr=subprocess.PIPE)
 
     monkeypatch.setattr(s, "_build_url", lambda path: "rsync://h/m" + path, raising=False)
-    monkeypatch.setattr(s, "_run_rsync", run, raising=False)
+    monkeypatch.setattr(s, "_spawn_rsync", spawn, raising=False)
+    for attr, value in (("_host", "h"), ("_module", "m"), ("_ssh_mode", False)):
+        setattr(s, attr, value)
     fh = s.open_read("/f.bin")
     try:
         assert fh.read() == b"rs"

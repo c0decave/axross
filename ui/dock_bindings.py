@@ -294,9 +294,12 @@ class DockBindingMixin:
         self._dock_bindings.clear()
         self._dock_wanted.clear()
         self._dock_hidden_by_binding.clear()
+        # The workspaces as the file listed them (MainWindow._restore_workspaces):
+        # one not restored keeps its place, the later ones theirs.
+        slots = self.__dict__.pop("_restored_workspace_slots", None)
         if not isinstance(data, dict):
             return
-        order = self._session_order()
+        order = slots if slots is not None else self._session_order()
         for name, entry in list(data.items())[:256]:
             if not isinstance(name, str) or not isinstance(entry, dict):
                 continue
@@ -304,6 +307,8 @@ class DockBindingMixin:
             if isinstance(index, bool) or not isinstance(index, int) or \
                     not 0 <= index < len(order):
                 continue
+            if order[index] is None or order[index] not in self._workspaces:
+                continue  # its workspace did not come back
             self._dock_bindings[name] = order[index]
             self._dock_wanted[name] = bool(entry.get("open", True))
             if not self._shown_workspace(order[index]):

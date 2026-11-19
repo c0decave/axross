@@ -35,6 +35,10 @@ MAX_PROFILES_FILE_BYTES = 4 * 1024 * 1024
 
 import re as _re  # noqa: E402 — local alias kept near regex constants below
 
+#: The local shell's name in terminal bookmarks and saved layouts
+#: (core.bookmarks.LOCAL_SHELL): no new profile may take it.
+LOCAL_SHELL_NAME = "local"
+
 from core.proxy import is_valid_proxy_type  # noqa: E402
 
 # Allowlisted character set for USB serials. Real-world Android
@@ -109,6 +113,19 @@ VALID_PROTOCOLS = {
     "dfsn",
     "adb",
     "mtp",
+    # Databases, version control and directories as file systems, and
+    # Exchange: in the protocol list of Connect to Server, so a saved
+    # profile of theirs must load as itself (it came back as SFTP).
+    "sqlite",
+    "postgres",
+    "redis",
+    "mongodb",
+    "git",
+    "ldap",
+    "slp",
+    "exchange",
+    "rsh",
+    "wmi",
 }
 
 #: Protocols with the one plain secret field - password, S3 secret key or
@@ -133,6 +150,13 @@ SIMPLE_PASSWORD_PROTOCOLS = frozenset(
         "telnet",
         "cisco-telnet",
         "winrm",
+        "svn",
+        "postgres",
+        "redis",
+        "mongodb",
+        "ldap",
+        "exchange",
+        "wmi",
     }
 )
 
@@ -155,12 +179,54 @@ def password_needed(profile) -> bool:
         return bool(getattr(profile, "username", ""))
     if proto == "rsync":
         return not getattr(profile, "rsync_ssh", False)
+    if proto == "iscsi":
+        # CHAP needs a user name: without one no secret is sent.
+        return bool(getattr(profile, "username", ""))
     if proto in ("azure_blob", "azure_files"):
         return not (
             getattr(profile, "azure_connection_string", "")
             or getattr(profile, "azure_sas_token", "")
         )
+    if proto in ("svn", "postgres", "mongodb", "ldap"):
+        # An anonymous checkout, a trusted local database or an anonymous
+        # LDAP bind: no login name, no password.
+        return bool(getattr(profile, "username", ""))
+    if proto == "redis":
+        # Redis has no user name to tell; a server with AUTH has the
+        # password kept in the keyring (or typed into the dialog).
+        return bool(getattr(profile, "store_password", False))
     return True
+
+
+#: IMAP, POP3 and LDAP: implicit TLS, STARTTLS before the login, or plain.
+TLS_MODES = ("tls", "starttls", "plain")
+
+
+def tls_mode_of(implicit_tls, starttls=True) -> str:
+    """The TLS mode of the two profile switches: implicit TLS wins; without
+    it STARTTLS unless *starttls* is explicitly off (then plain)."""
+    if implicit_tls:
+        return "tls"
+    return "starttls" if starttls else "plain"
+
+
+def default_port(protocol: str, *, tls: bool = True) -> int:
+    """The port a profile of *protocol* uses when none is given: the
+    registry's, or the plain variant's for IMAP, POP3, NNTP and LDAP
+    without TLS. 22 (SFTP) when the protocol has no port of its own."""
+    plain = {"imap": 143, "pop3": 110, "nntp": 119}
+    if not tls and protocol in plain:
+        return plain[protocol]
+    if tls and protocol == "ldap":
+        return 636
+    try:
+        from core.backend_registry import get as get_backend
+
+        info = get_backend(protocol)
+    except Exception:  # noqa: BLE001 - a profile loads without the registry too
+        info = None
+    port = getattr(info, "default_port", 0) or 0
+    return port if 1 <= port <= 65535 else 22
 
 
 SENSITIVE_PROFILE_FIELDS = (
@@ -173,6 +239,7 @@ SENSITIVE_PROFILE_FIELDS = (
 
 #: The largest SFTP time-out a profile may set (seconds).
 SFTP_TIMEOUT_MAX = 3600
+
 
 
 @dataclass
@@ -283,11 +350,15 @@ class ConnectionProfile:
     iscsi_initiator_name: str = ""
     iscsi_initiator_interface: str = ""
 
-    # IMAP
+    # IMAP: implicit TLS (IMAPS, 993); without it STARTTLS on 143 unless
+    # ``imap_starttls`` is switched off - then plain text, the password too.
+    # A profile saved before STARTTLS existed reads as STARTTLS.
     imap_ssl: bool = True
+    imap_starttls: bool = True
 
-    # POP3 (read-only)
+    # POP3 (read-only): as IMAP - POP3S (995), STLS (110) or plain.
     pop3_ssl: bool = True
+    pop3_starttls: bool = True
 
     # NNTP: implicit TLS (NNTPS, 563) or plain (119)
     nntp_ssl: bool = True
@@ -299,6 +370,24 @@ class ConnectionProfile:
     tftp_filelist: str = ""
     tftp_filelist_enabled: bool = False
     tftp_max_size_bytes: int = 16 * 1024 * 1024
+
+    # Databases as file systems. SQLite keeps its file in ``host``, as
+    # Git keeps its repository (URL or local path) and SVN its URL there.
+    # ``db_name``: the PostgreSQL / MongoDB database, the Redis database
+    # number. ``db_tls``: Redis over TLS (rediss://).
+    db_name: str = ""
+    db_tls: bool = False
+
+    # LDAP: LDAPS (636), StartTLS on 389 (the default) or plain.
+    ldap_ssl: bool = False
+    ldap_starttls: bool = True
+
+    # SLP: the scope the directory is asked in
+    slp_scope: str = "DEFAULT"
+
+    # Exchange (EWS): the mailbox; empty = the username. ``host`` is the
+    # EWS server; empty = autodiscover.
+    exchange_email: str = ""
 
     # ADB (Android Debug Bridge)
     adb_mode: str = "tcp"  # "tcp" or "usb"
@@ -342,6 +431,12 @@ class ConnectionProfile:
     # UID scheme. Set True on a per-profile basis when doing a true
     # archive/backup flow where metadata preservation matters.
     rsync_preserve_metadata: bool = False
+
+    # WinRM: HTTPS (the 5986 listener) or HTTP (5985, Windows' default
+    # listener; NTLM still encrypts the messages), and whether the HTTPS
+    # certificate is checked (quickconfig's listener is self-signed).
+    winrm_https: bool = True
+    winrm_verify_tls: bool = True
 
     # Shell-history suppression: when True (the safe default), the
     # SSH/Telnet terminal flow silently disables HISTFILE / HISTSIZE /
@@ -387,6 +482,17 @@ class ConnectionProfile:
         """Store proxy password in keyring."""
         if self.store_proxy_password:
             store_proxy_password(self.name, password)
+
+    def tls_mode(self) -> str:
+        """IMAP, POP3 and LDAP: ``"tls"`` (implicit TLS), ``"starttls"``
+        (upgraded before the login, refused without it) or ``"plain"``
+        (chosen: no encryption); ``""`` for any other protocol."""
+        flags = {"imap": (self.imap_ssl, self.imap_starttls),
+                 "pop3": (self.pop3_ssl, self.pop3_starttls),
+                 "ldap": (self.ldap_ssl, self.ldap_starttls)}.get(self.protocol)
+        if flags is None:
+            return ""
+        return tls_mode_of(*flags)
 
     def nfs_sender_chosen(self) -> bool:
         """True when the profile says what the NFS client sends about
@@ -512,12 +618,32 @@ class ConnectionProfile:
 
         elif proto == "imap":
             d["imap_ssl"] = self.imap_ssl
+            d["imap_starttls"] = self.imap_starttls
 
         elif proto == "pop3":
             d["pop3_ssl"] = self.pop3_ssl
+            d["pop3_starttls"] = self.pop3_starttls
 
         elif proto == "nntp":
             d["nntp_ssl"] = self.nntp_ssl
+
+        elif proto in ("postgres", "mongodb", "redis"):
+            if self.db_name:
+                d["db_name"] = self.db_name
+            if proto == "redis" and self.db_tls:
+                d["db_tls"] = True
+
+        elif proto == "ldap":
+            d["ldap_ssl"] = self.ldap_ssl
+            d["ldap_starttls"] = self.ldap_starttls
+
+        elif proto == "slp":
+            if self.slp_scope != "DEFAULT":
+                d["slp_scope"] = self.slp_scope
+
+        elif proto == "exchange":
+            if self.exchange_email:
+                d["exchange_email"] = self.exchange_email
 
         elif proto == "tftp":
             if self.tftp_filelist:
@@ -526,6 +652,11 @@ class ConnectionProfile:
                 d["tftp_filelist_enabled"] = True
             if self.tftp_max_size_bytes != 16 * 1024 * 1024:
                 d["tftp_max_size_bytes"] = self.tftp_max_size_bytes
+
+        elif proto == "winrm":
+            d["winrm_https"] = self.winrm_https
+            if not self.winrm_verify_tls:
+                d["winrm_verify_tls"] = False
 
         elif proto == "adb":
             d["adb_mode"] = self.adb_mode
@@ -610,7 +741,13 @@ class ConnectionProfile:
             name=_string("name"),
             protocol=protocol,
             host=_string("host"),
-            port=_int_in_range("port", 22, 1, 65535),
+            # An imported profile without a port: its protocol's (22 is SFTP's).
+            port=_int_in_range(
+                "port",
+                default_port(protocol, tls=_boolean(f"{protocol}_ssl", protocol != "ldap")),
+                1,
+                65535,
+            ),
             username=_string("username"),
             auth_type=auth_type,
             key_file=_string("key_file"),
@@ -669,10 +806,19 @@ class ConnectionProfile:
             iscsi_initiator_interface=_string("iscsi_initiator_interface"),
             # IMAP
             imap_ssl=_boolean("imap_ssl", True),
+            imap_starttls=_boolean("imap_starttls", True),
             # POP3 (read-only)
             pop3_ssl=_boolean("pop3_ssl", True),
+            pop3_starttls=_boolean("pop3_starttls", True),
             # NNTP
             nntp_ssl=_boolean("nntp_ssl", True),
+            # Databases, LDAP, SLP, Exchange
+            db_name=_string("db_name"),
+            db_tls=_boolean("db_tls"),
+            ldap_ssl=_boolean("ldap_ssl"),
+            ldap_starttls=_boolean("ldap_starttls", True),
+            slp_scope=_string("slp_scope", "DEFAULT") or "DEFAULT",
+            exchange_email=_string("exchange_email"),
             # TFTP
             tftp_filelist=_string("tftp_filelist"),
             tftp_filelist_enabled=_boolean("tftp_filelist_enabled"),
@@ -732,6 +878,9 @@ class ConnectionProfile:
                 500,
             ),
             rsync_preserve_metadata=_boolean("rsync_preserve_metadata"),
+            # Saved before the field existed: port 5985 is the HTTP listener.
+            winrm_https=_boolean("winrm_https", d.get("port") != 5985),
+            winrm_verify_tls=_boolean("winrm_verify_tls", True),
             # The safe default is True; only honour an explicit False.
             suppress_shell_history=_boolean(
                 "suppress_shell_history",
@@ -1015,6 +1164,12 @@ class ProfileManager:
         Raises ValueError for a name that cannot be used and RuntimeError
         when the keyring refused a secret; returns the save's result."""
         problem = profile_name_problem(profile.name)
+        if not problem and profile.name == LOCAL_SHELL_NAME and profile.name not in self._profiles:
+            # "local" is the local shell in terminal bookmarks and saved
+            # layouts: a profile of that name was taken for it (and a
+            # rename to it made remote terminals local shells). One stored
+            # by an older version stays usable.
+            problem = "is the name of the local shell in terminal bookmarks and saved layouts"
         if problem:
             from core.i18n import tr
 

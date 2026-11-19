@@ -68,6 +68,8 @@ def _short_timeouts(monkeypatch):
         return orig(self, host, port, 0.3, source_address)
 
     monkeypatch.setattr(ftplib.FTP, "connect", connect)
+    # A server-side checksum reply is waited for longer than any other.
+    monkeypatch.setattr(FC, "CHECKSUM_TIMEOUT", 0.3)
 
 
 def _session(srv: FakeFtpServer) -> FC.FtpSession:

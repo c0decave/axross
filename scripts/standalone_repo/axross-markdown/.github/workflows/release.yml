@@ -1,0 +1,206 @@
+# A tag vX.Y.Z makes the GitHub release: sdist and wheel, one-file programs
+# for Linux (also as an AppImage), macOS arm64 (also as a disk image with an
+# app) and Windows x64, SHA256SUMS, and notes from CHANGELOG.md. Every action
+# is pinned by its commit; the dependencies come from the hashed locks
+# (requirements.lock.txt, packaging/requirements-pyinstaller.txt). Only the
+# release job may write (contents: write), with the workflow's own token.
+# The heavy steps write their output to $RUNNER_TEMP/job.log as well; a
+# failed job shows the log's last lines as annotations
+# (packaging/ci_log_tail.py), readable through the API without the logs.
+name: release
+
+on:
+  push:
+    tags: [ "v*.*.*" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: "3.12"
+    - name: The tag names this version
+      if: startsWith(github.ref, 'refs/tags/v')
+      run: |
+        version=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')
+        [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "::error::tag $GITHUB_REF_NAME, pyproject.toml $version"; exit 1; }
+        grep -q "^## $version " CHANGELOG.md || { echo "::error::CHANGELOG.md has no section for $version"; exit 1; }
+    - name: Qt's system libraries
+      run: |
+        sudo apt-get update -q
+        sudo apt-get install -y -q --no-install-recommends libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 \
+            libfontconfig1 libdbus-1-3 libxcb-cursor0 libpulse0
+    - name: Tests against the locked dependencies
+      env:
+        QT_QPA_PLATFORM: offscreen
+      run: |
+        set -o pipefail
+        {
+          python -m pip install --require-hashes -r requirements.lock.txt
+          python -m pip install --no-deps .
+          python -m pip install pytest
+          python -m pytest -q -rfE tests
+        } 2>&1 | tee -a "$RUNNER_TEMP/job.log"
+    - name: sdist and wheel
+      run: |
+        set -o pipefail
+        {
+          python -m pip install build twine
+          python -m build --outdir release/
+          python -m twine check --strict release/*
+        } 2>&1 | tee -a "$RUNNER_TEMP/job.log"
+    - name: The end of the job's log as annotations
+      if: failure()
+      run: python packaging/ci_log_tail.py "$RUNNER_TEMP/job.log" "python job"
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: python
+        path: release/
+        if-no-files-found: error
+
+  binaries:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - os: ubuntu-22.04      # glibc 2.35: runs on Ubuntu 22.04, Debian 12 and newer
+          suffix: linux-x86_64
+        - os: macos-latest
+          suffix: macos-arm64
+        - os: windows-latest
+          suffix: windows-x64.exe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: "3.12"
+    - name: Qt's system libraries (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update -q
+        sudo apt-get install -y -q --no-install-recommends libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 \
+            libfontconfig1 libdbus-1-3 libxcb-cursor0 libpulse0 file
+    - name: The locked dependencies and PyInstaller
+      run: |
+        set -o pipefail
+        {
+          python -m pip install --require-hashes -r requirements.lock.txt -r packaging/requirements-pyinstaller.txt
+          python -m pip install --no-deps .
+        } 2>&1 | tee -a "$RUNNER_TEMP/job.log"
+    - name: One-file binary (PyInstaller)
+      run: |
+        set -o pipefail
+        {
+          python -m PyInstaller --clean --noconfirm --distpath build/dist --workpath build/work packaging/axross-markdown.spec
+          mkdir -p release
+          case "${{ runner.os }}" in
+            Windows) cp build/dist/axross-markdown.exe "release/axross-markdown-${{ matrix.suffix }}"
+                     cp build/dist/axross-mdcat.exe "release/axross-mdcat-${{ matrix.suffix }}" ;;
+            *) cp build/dist/axross-markdown "release/axross-markdown-${{ matrix.suffix }}" ;;
+          esac
+        } 2>&1 | tee -a "$RUNNER_TEMP/job.log"
+    - name: Smoke tests (--version, --html, an SVG drawn by --svg-worker; on Linux --term and the window)
+      env:
+        QT_QPA_PLATFORM: offscreen
+        AXROSS_SMOKE_MS: "2000"
+      run: |
+        set -o pipefail
+        {
+          bin="release/axross-markdown-${{ matrix.suffix }}"
+          version=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')
+          got=$("$bin" --version | tail -n 1 | tr -d '\r')
+          [ "$got" = "axross-markdown $version" ] || { echo "::error::--version says '$got'"; exit 1; }
+          printf '# Smoke\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```python\nprint(1)\n```\n' > smoke.md
+          "$bin" --html smoke.md > smoke.html
+          grep -q '<table' smoke.html || { echo "::error::--html wrote no table"; exit 1; }
+          # An SVG drawn as the window draws one: in a child the binary starts as itself with
+          # --svg-worker (core.svg_worker) - the frozen path, its bootloader in between.
+          AXROSS_BUNDLE_SMOKE=1 "$bin" --script packaging/svg_check.py > svg.txt
+          grep -q 'svg drawn' svg.txt || { echo "::error::no SVG drawn through --svg-worker"; exit 1; }
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            # (the window program opens no console there: the terminal view is axross-mdcat.exe)
+            "release/axross-mdcat-${{ matrix.suffix }}" --no-pager --color never smoke.md > mdcat.txt
+            grep -q 'Smoke' mdcat.txt || { echo "::error::axross-mdcat.exe wrote no heading"; exit 1; }
+          fi
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            "$bin" --term --no-pager --color never smoke.md > smoke.txt
+            grep -q 'Smoke' smoke.txt || { echo "::error::--term wrote no heading"; exit 1; }
+            HOME="$RUNNER_TEMP/home" "$bin" smoke.md
+          fi
+        } 2>&1 | tee -a "$RUNNER_TEMP/job.log"
+    - name: AppImage (Linux)
+      if: runner.os == 'Linux'
+      env:
+        QT_QPA_PLATFORM: offscreen
+      run: |
+        set -o pipefail
+        {
+          bash packaging/build_appimage.sh release/axross-markdown-linux-x86_64 release/axross-markdown-x86_64.AppImage
+          APPIMAGE_EXTRACT_AND_RUN=1 ./release/axross-markdown-x86_64.AppImage --version
+        } 2>&1 | tee -a "$RUNNER_TEMP/job.log"
+    - name: Disk image with the app (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        set -o pipefail
+        bash packaging/build_macos_dmg.sh release/axross-markdown-macos-arm64 release/axross-markdown-macos-arm64.dmg \
+            2>&1 | tee -a "$RUNNER_TEMP/job.log"
+    - name: The end of the job's log as annotations
+      if: failure()
+      run: python packaging/ci_log_tail.py "$RUNNER_TEMP/job.log" "binaries ${{ matrix.suffix }}"
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: binaries-${{ matrix.suffix }}
+        path: release/
+        if-no-files-found: error
+
+  release:
+    needs: [ python, binaries ]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        path: artifacts
+    - name: SHA256SUMS and the notes
+      run: |
+        set -o pipefail
+        {
+          mkdir assets
+          find artifacts -type f -exec cp {} assets/ \;
+          (cd assets && sha256sum -- * > ../SHA256SUMS) && mv SHA256SUMS assets/
+          cat assets/SHA256SUMS
+          python3 packaging/release_notes.py "$GITHUB_REF_NAME" assets > notes.md
+        } 2>&1 | tee -a "$RUNNER_TEMP/job.log"
+    - name: The GitHub release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -o pipefail
+        gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "axross-markdown ${GITHUB_REF_NAME#v}" --notes-file notes.md assets/* \
+            2>&1 | tee -a "$RUNNER_TEMP/job.log"
+    - name: The end of the job's log as annotations
+      if: failure()
+      run: python3 packaging/ci_log_tail.py "$RUNNER_TEMP/job.log" "release job"

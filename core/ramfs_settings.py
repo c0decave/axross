@@ -92,13 +92,11 @@ class RamFsSettings:
             os.chmod(CONFIG_DIR, 0o700)
         except OSError:
             pass
-        tmp = SETTINGS_FILE.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
-        try:
-            os.chmod(tmp, 0o600)
-        except OSError:
-            pass
-        tmp.replace(SETTINGS_FILE)
+        from core.json_store import write_private
+
+        # A temp file of this save's own: another axross saving at the same
+        # time must not write into it.
+        write_private(SETTINGS_FILE, json.dumps(asdict(self), indent=2))
 
 
 _CACHED: RamFsSettings | None = None

@@ -65,6 +65,9 @@
     "yara|capability_filesystem_read|pywinpty-3.1.0/winpty/ptyprocess.py|52a9ab4b0e8de72d",
     "yara|capability_filesystem_read|pywinpty-3.1.0/winpty/tests/test_pty.py|017ba34326d784aa",
     "yara|capability_filesystem_read|pywinpty-3.1.0/winpty/tests/test_ptyprocess.py|31e1a9fcffb392c7",
+    "yara|capability_filesystem_read|winpty/ptyprocess.py|52a9ab4b0e8de72d",
+    "yara|capability_filesystem_read|winpty/tests/test_pty.py|017ba34326d784aa",
+    "yara|capability_filesystem_read|winpty/tests/test_ptyprocess.py|31e1a9fcffb392c7",
     "yara|capability_filesystem_write_executable|pywinpty-3.1.0/pythonarm64/tools/Tools/scripts/fixcid.py|8523604115b767a6",
     "yara|capability_filesystem_write_executable|pywinpty-3.1.0/pythonarm64/tools/Tools/scripts/linktree.py|b25b1ac9f2a516b5",
     "yara|capability_filesystem_write_executable|pywinpty-3.1.0/pythonarm64/tools/Tools/scripts/mkreal.py|e2e661d54ff87822",
@@ -73,6 +76,7 @@
     "yara|capability_network_outbound|pywinpty-3.1.0/pythonarm64/tools/Tools/demo/mcast.py|c35d3b1e84ccd406",
     "yara|capability_network_outbound|pywinpty-3.1.0/pythonarm64/tools/Tools/scripts/checkpip.py|a208a514e64294d8",
     "yara|capability_network_outbound|pywinpty-3.1.0/winpty/ptyprocess.py|52a9ab4b0e8de72d",
+    "yara|capability_network_outbound|winpty/ptyprocess.py|52a9ab4b0e8de72d",
     "yara|capability_process_spawn|pywinpty-3.1.0/build.rs|158477097fff07df",
     "yara|capability_process_spawn|pywinpty-3.1.0/pythonarm64/tools/Tools/demo/rpythond.py|c10a7048e84bb865",
     "yara|capability_process_spawn|pywinpty-3.1.0/pythonarm64/tools/Tools/demo/spreadsheet.py|84524a691cd2b47a",
@@ -96,9 +100,47 @@
     "yara|capability_process_spawn|pywinpty-3.1.0/winpty/_winpty.pyi|f957a7a300afcbcb",
     "yara|capability_process_spawn|pywinpty-3.1.0/winpty/ptyprocess.py|52a9ab4b0e8de72d",
     "yara|capability_process_spawn|pywinpty-3.1.0/winpty/tests/test_pty.py|017ba34326d784aa",
-    "yara|capability_process_spawn|pywinpty-3.1.0/winpty/tests/test_ptyprocess.py|31e1a9fcffb392c7"
+    "yara|capability_process_spawn|pywinpty-3.1.0/winpty/tests/test_ptyprocess.py|31e1a9fcffb392c7",
+    "yara|capability_process_spawn|winpty/_winpty.pyi|f957a7a300afcbcb",
+    "yara|capability_process_spawn|winpty/ptyprocess.py|52a9ab4b0e8de72d",
+    "yara|capability_process_spawn|winpty/tests/test_pty.py|017ba34326d784aa",
+    "yara|capability_process_spawn|winpty/tests/test_ptyprocess.py|31e1a9fcffb392c7"
    ],
    "archives": {
+    "pywinpty-3.1.0-cp312-cp312-win_amd64.whl": {
+     "entry_points": [],
+     "files": {
+      "pywinpty-3.1.0.dist-info/METADATA": "e5ba8cd4047f309076ddce8e541e44d58ddde906cf008bcdde521ed58016ba79",
+      "pywinpty-3.1.0.dist-info/RECORD": "aaf949ff80b7320dfe4aa47a667d7fbe39a415d299c0dda8e5c453bacfa6b0be",
+      "pywinpty-3.1.0.dist-info/WHEEL": "51fe37f21183f8d51fb47d3c77149a89847171f899a9e60af60dc3349faf3d8d",
+      "pywinpty-3.1.0.dist-info/licenses/LICENSE.txt": "f878d4767f9ad2e43d3083efa00201b000ce937d9ee8626e00ba5c72aac951e2",
+      "pywinpty-3.1.0.dist-info/sboms/pywinpty.cyclonedx.json": "2abe306a7c95abce5189fa822b49a3369c8305e399048315bd17aec4f396721f",
+      "winpty/OpenConsole.exe": "3d66b23d0a71bb8eed2b77edc8b9df9bf54ce6c8fb74c863a30e760997f80586",
+      "winpty/__init__.py": "0a7e8f1e0c9c867049153c277c766d3e1394ef5bac7f4aeec46bd735ade0a3d0",
+      "winpty/_winpty.cp312-win_amd64.pyd": "84aee04839db43afba1866584744012d0df771e1c457e82029460cdd96a1b42b",
+      "winpty/_winpty.pyi": "f957a7a300afcbcb63219502bef6f9559c3947573a0135c451fb22132219c231",
+      "winpty/conpty.dll": "feeef341d891643c62d30b6b07800bc70f0bc148f44cb8c3bee84aa557ae805a",
+      "winpty/enums.py": "2809bb5c914f93b9cc5b0509c6f60796a97dd9cafacbe636e081caddf7342435",
+      "winpty/ptyprocess.py": "52a9ab4b0e8de72d775a96587982530f9e70e009ab89d11faf703093eb1c8988",
+      "winpty/tests/__init__.py": "7f36fd7039cfb764776ffad687ab2a0e021b890399b4195fb15d5aabe50b4f64",
+      "winpty/tests/test_pty.py": "017ba34326d784aaf4b7450aa4d052a9e01fb26e1f1e853fa209db8a87011792",
+      "winpty/tests/test_ptyprocess.py": "31e1a9fcffb392c784a748977225a1f456b9e3c85819dbe571a1f2fd6344c17a",
+      "winpty/winpty-agent.exe": "fd439fcf0d8b5ff4fd96dae4b68eb4cb064886a26c6b9e791a2ca0a4546d4aee",
+      "winpty/winpty.dll": "589cc64ecfb80840c3df9e43396d37881998e87b0d7e8e873bc0fd83284eace0"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "f2f94e8265a822876fc0c96fb13daed434e66e4b4858ae92386a88ef185f9256",
+     "native": {
+      "winpty/OpenConsole.exe": "pe",
+      "winpty/_winpty.cp312-win_amd64.pyd": "pe",
+      "winpty/conpty.dll": "pe",
+      "winpty/winpty-agent.exe": "pe",
+      "winpty/winpty.dll": "pe"
+     },
+     "pth": {},
+     "sha256": "df249a2d942cbeef71f736119e96d246ea968fe9723dd25e8e439ba81814f85e"
+    },
     "pywinpty-3.1.0.tar.gz": {
      "entry_points": [],
      "files": {
@@ -430,6 +472,7 @@
    },
    "name": "pywinpty",
    "provenance": {
+    "pywinpty-3.1.0-cp312-cp312-win_amd64.whl": null,
     "pywinpty-3.1.0.tar.gz": null
    },
    "pypi": {
@@ -444,11 +487,374 @@
    },
    "reviewed": {
     "by": "claude",
-    "date": "2026-11-05",
-    "note": "The sdist carries a complete, PSF-signed Windows ARM64 Python swept in by its build (pythonarm64/, incl. Tools/scripts/umarshal.py - CPython's pure-Python marshal reader); the bundles install the wheel. pyproject.toml is the maturin build. No attestation: content review."
+    "date": "2026-11-20",
+    "earlier": [
+     {
+      "by": "claude",
+      "date": "2026-11-05",
+      "note": "The sdist carries a complete, PSF-signed Windows ARM64 Python swept in by its build (pythonarm64/, incl. Tools/scripts/umarshal.py - CPython's pure-Python marshal reader); the bundles install the wheel. pyproject.toml is the maturin build. No attestation: content review."
+     }
+    ],
+    "note": "Windows amd64 wheel of the reviewed version (only the sdist was reviewed; Windows-only pin). Every Python, stub, METADATA and license member is identical to the reviewed sdist's (CRLF-normalised); the 8 'new' YARA keys are the sdist's hits on the same files under the wheel's paths. New: _winpty.pyd (the maturin/Rust module, CreateProcessW starts the pty's program), OpenConsole.exe + conpty.dll (Windows Terminal 1.25.2609.30003 ConPTY from NuGet, version resource and Authenticode block naming Microsoft Corporation - the signature was not cryptographically verified here), winpty.dll + winpty-agent.exe (winpty 0.4.3 from conda-forge, MSYS2 GCC 5.3.0 - as the sdist's windows_release.yml and copy_winpty.sh fetch them). Their CreateProcessW/hook imports are a console host's. No .pth, no hook. No attestation: content review only."
    },
    "scans": {
-    "capa": {},
+    "capa": {
+     "3d66b23d0a71bb8eed2b77edc8b9df9bf54ce6c8fb74c863a30e760997f80586": {
+      "capabilities": [
+       "accept command line arguments",
+       "allocate memory",
+       "allocate or change RW memory",
+       "capture screenshot",
+       "change memory protection",
+       "check if file exists",
+       "contain loop",
+       "contain obfuscated stackstrings",
+       "contains PDB path",
+       "create or open mutex on Windows",
+       "create or open registry key",
+       "create pipe",
+       "create process on Windows",
+       "create thread",
+       "delay execution",
+       "encode data using XOR",
+       "encrypt data using RC4 PRGA",
+       "enumerate PE sections",
+       "extract resource via kernel32 functions",
+       "get common file path",
+       "get file attributes",
+       "get geographical location",
+       "get keyboard layout",
+       "hash data using fnv",
+       "hide graphical window",
+       "interact with driver via IOCTL",
+       "link function at runtime on Windows",
+       "log keystrokes",
+       "log keystrokes via polling",
+       "open clipboard",
+       "open process",
+       "parse PE header",
+       "print debug messages",
+       "query environment variable",
+       "query or enumerate registry value",
+       "read clipboard data",
+       "read file on Windows",
+       "resolve function by parsing PE exports",
+       "search for file via WinAPI",
+       "set application hook",
+       "set environment variable",
+       "terminate process",
+       "write clipboard data",
+       "write file on Windows"
+      ],
+      "note": "",
+      "path": "winpty/OpenConsole.exe",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ],
+        "dynamic-code": [
+         "GetProcAddress",
+         "LoadLibraryExW",
+         "VirtualProtect"
+        ],
+        "injection": [
+         "SetWindowsHookExW"
+        ],
+        "process": [
+         "CreateProcessW"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "D3DCOMPILER_47.dll",
+        "DWrite.dll",
+        "GDI32.dll",
+        "IMM32.dll",
+        "OLEAUT32.dll",
+        "PROPSYS.dll",
+        "SHELL32.dll",
+        "USER32.dll",
+        "USP10.dll",
+        "WINMM.dll",
+        "api-ms-win-core-com-l1-1-0.dll",
+        "api-ms-win-core-debug-l1-1-0.dll",
+        "api-ms-win-core-errorhandling-l1-1-0.dll",
+        "api-ms-win-core-fibers-l1-1-0.dll",
+        "api-ms-win-core-file-l1-1-0.dll",
+        "api-ms-win-core-file-l1-2-0.dll",
+        "api-ms-win-core-file-l1-2-2.dll",
+        "api-ms-win-core-file-l2-1-0.dll",
+        "api-ms-win-core-handle-l1-1-0.dll",
+        "api-ms-win-core-heap-l1-1-0.dll",
+        "api-ms-win-core-heap-l2-1-0.dll",
+        "api-ms-win-core-heap-obsolete-l1-1-0.dll",
+        "api-ms-win-core-interlocked-l1-1-0.dll",
+        "api-ms-win-core-io-l1-1-0.dll",
+        "api-ms-win-core-largeinteger-l1-1-0.dll",
+        "api-ms-win-core-libraryloader-l1-2-0.dll",
+        "api-ms-win-core-libraryloader-l1-2-1.dll",
+        "api-ms-win-core-localization-l1-2-0.dll",
+        "api-ms-win-core-memory-l1-1-0.dll",
+        "api-ms-win-core-namedpipe-l1-1-0.dll",
+        "api-ms-win-core-path-l1-1-0.dll",
+        "api-ms-win-core-processenvironment-l1-1-0.dll",
+        "api-ms-win-core-processthreads-l1-1-0.dll",
+        "api-ms-win-core-processthreads-l1-1-1.dll",
+        "api-ms-win-core-profile-l1-1-0.dll",
+        "api-ms-win-core-psapi-l1-1-0.dll",
+        "api-ms-win-core-realtime-l1-1-0.dll",
+        "api-ms-win-core-registry-l1-1-0.dll",
+        "api-ms-win-core-registry-l2-1-0.dll",
+        "api-ms-win-core-rtlsupport-l1-1-0.dll",
+        "api-ms-win-core-shlwapi-legacy-l1-1-0.dll",
+        "api-ms-win-core-sidebyside-l1-1-0.dll",
+        "api-ms-win-core-string-l1-1-0.dll",
+        "api-ms-win-core-synch-l1-1-0.dll",
+        "api-ms-win-core-synch-l1-2-0.dll",
+        "api-ms-win-core-synch-l1-2-1.dll",
+        "api-ms-win-core-sysinfo-l1-1-0.dll",
+        "api-ms-win-core-threadpool-l1-2-0.dll",
+        "api-ms-win-core-util-l1-1-0.dll",
+        "api-ms-win-core-version-l1-1-0.dll",
+        "api-ms-win-core-winrt-error-l1-1-0.dll",
+        "api-ms-win-core-winrt-l1-1-0.dll",
+        "api-ms-win-core-winrt-string-l1-1-0.dll",
+        "api-ms-win-crt-convert-l1-1-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-locale-l1-1-0.dll",
+        "api-ms-win-crt-math-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "api-ms-win-eventing-provider-l1-1-0.dll",
+        "api-ms-win-ntuser-sysparams-l1-1-0.dll",
+        "api-ms-win-shcore-obsolete-l1-1-0.dll",
+        "api-ms-win-shcore-scaling-l1-1-1.dll",
+        "api-ms-win-shell-namespace-l1-1-0.dll",
+        "d2d1.dll",
+        "d3d11.dll",
+        "dxgi.dll",
+        "ext-ms-win-uiacore-l1-1-0.dll",
+        "ext-ms-win-uiacore-l1-1-1.dll",
+        "ntdll.dll"
+       ],
+       "rpath": [],
+       "urls": [
+        "http://crl.microsoft.com/pki/crl/products/MicRooCerAut2011_2011_03_22.crl0^",
+        "http://crl.microsoft.com/pki/crl/products/MicRooCerAut_2010-06-23.crl0Z",
+        "http://schemas.microsoft.com/SMI/2016/WindowsSettings\">true</longPathAware><heapType",
+        "http://schemas.microsoft.com/SMI/2020/WindowsSettings\">SegmentHeap</heapType></windowsSettings></application><ms_compatibility:compatibility",
+        "http://www.microsoft.com/pki/certs/MicRooCerAut2011_2011_03_22.crt0",
+        "http://www.microsoft.com/pki/certs/MicRooCerAut_2010-06-23.crt0",
+        "http://www.microsoft.com/pkiops/Docs/Repository.htm0",
+        "http://www.microsoft.com/pkiops/certs/Microsoft%20Code%20Signing%20PCA%202024.crt0",
+        "http://www.microsoft.com/pkiops/certs/Microsoft%20Time-Stamp%20PCA%202010(1).crt0",
+        "http://www.microsoft.com/pkiops/crl/Microsoft%20Code%20Signing%20PCA%202024.crl0m",
+        "http://www.microsoft.com/pkiops/crl/Microsoft%20Time-Stamp%20PCA%202010(1).crl0l",
+        "http://www.microsoft.com0"
+       ]
+      }
+     },
+     "589cc64ecfb80840c3df9e43396d37881998e87b0d7e8e873bc0fd83284eace0": {
+      "capabilities": [],
+      "note": "larger than 2 MiB",
+      "path": "winpty/winpty.dll",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ],
+        "dynamic-code": [
+         "GetProcAddress",
+         "LoadLibraryW",
+         "VirtualProtect"
+        ],
+        "process": [
+         "CreateProcessW"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "ADVAPI32.dll",
+        "KERNEL32.dll",
+        "USER32.dll",
+        "msvcrt.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "84aee04839db43afba1866584744012d0df771e1c457e82029460cdd96a1b42b": {
+      "capabilities": [
+       "PEB access",
+       "compiled with rust",
+       "contain loop",
+       "create or open file",
+       "create or open mutex on Windows",
+       "create process on Windows",
+       "create thread",
+       "delay execution",
+       "encode data using Base64",
+       "encode data using XOR",
+       "encrypt data using RC4 PRGA",
+       "enumerate PE sections",
+       "get common file path",
+       "get file size",
+       "link function at runtime on Windows",
+       "link many functions at runtime",
+       "parse PE header",
+       "query environment variable",
+       "read file on Windows",
+       "read pipe",
+       "write file on Windows"
+      ],
+      "note": "",
+      "path": "winpty/_winpty.cp312-win_amd64.pyd",
+      "profile": {
+       "categories": {
+        "dynamic-code": [
+         "GetProcAddress",
+         "LoadLibraryA"
+        ],
+        "process": [
+         "CreateProcessW"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-core-synch-l1-2-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "bcryptprimitives.dll",
+        "conpty.dll",
+        "kernel32.dll",
+        "ntdll.dll",
+        "oleaut32.dll",
+        "python312.dll",
+        "user32.dll",
+        "winpty.dll"
+       ],
+       "rpath": [],
+       "urls": [
+        "https://docs.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw"
+       ]
+      }
+     },
+     "fd439fcf0d8b5ff4fd96dae4b68eb4cb064886a26c6b9e791a2ca0a4546d4aee": {
+      "capabilities": [],
+      "note": "larger than 2 MiB",
+      "path": "winpty/winpty-agent.exe",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ],
+        "dynamic-code": [
+         "GetProcAddress",
+         "LoadLibraryW",
+         "VirtualProtect"
+        ],
+        "process": [
+         "CreateProcessW"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "ADVAPI32.dll",
+        "KERNEL32.dll",
+        "SHELL32.dll",
+        "USER32.dll",
+        "msvcrt.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "feeef341d891643c62d30b6b07800bc70f0bc148f44cb8c3bee84aa557ae805a": {
+      "capabilities": [
+       "check if file exists",
+       "contain loop",
+       "contains PDB path",
+       "create or open mutex on Windows",
+       "delay execution",
+       "encrypt data using RC4 PRGA",
+       "enumerate PE sections",
+       "get common file path",
+       "get geographical location",
+       "link function at runtime on Windows",
+       "parse PE header",
+       "print debug messages",
+       "write file on Windows"
+      ],
+      "note": "",
+      "path": "winpty/conpty.dll",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ],
+        "dynamic-code": [
+         "GetProcAddress",
+         "LoadLibraryExW"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "api-ms-win-core-debug-l1-1-0.dll",
+        "api-ms-win-core-errorhandling-l1-1-0.dll",
+        "api-ms-win-core-fibers-l1-1-0.dll",
+        "api-ms-win-core-file-l1-1-0.dll",
+        "api-ms-win-core-file-l1-2-0.dll",
+        "api-ms-win-core-file-l1-2-2.dll",
+        "api-ms-win-core-file-l2-1-0.dll",
+        "api-ms-win-core-handle-l1-1-0.dll",
+        "api-ms-win-core-heap-l1-1-0.dll",
+        "api-ms-win-core-heap-l2-1-0.dll",
+        "api-ms-win-core-interlocked-l1-1-0.dll",
+        "api-ms-win-core-libraryloader-l1-2-0.dll",
+        "api-ms-win-core-localization-l1-2-0.dll",
+        "api-ms-win-core-namedpipe-l1-1-0.dll",
+        "api-ms-win-core-processthreads-l1-1-0.dll",
+        "api-ms-win-core-profile-l1-1-0.dll",
+        "api-ms-win-core-psapi-l1-1-0.dll",
+        "api-ms-win-core-rtlsupport-l1-1-0.dll",
+        "api-ms-win-core-string-l1-1-0.dll",
+        "api-ms-win-core-synch-l1-1-0.dll",
+        "api-ms-win-core-synch-l1-2-0.dll",
+        "api-ms-win-core-sysinfo-l1-1-0.dll",
+        "api-ms-win-core-util-l1-1-0.dll",
+        "api-ms-win-core-wow64-l1-1-1.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-locale-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll"
+       ],
+       "rpath": [],
+       "urls": [
+        "http://crl.microsoft.com/pki/crl/products/MicRooCerAut2011_2011_03_22.crl0^",
+        "http://crl.microsoft.com/pki/crl/products/MicRooCerAut_2010-06-23.crl0Z",
+        "http://www.microsoft.com/pki/certs/MicRooCerAut2011_2011_03_22.crt0",
+        "http://www.microsoft.com/pki/certs/MicRooCerAut_2010-06-23.crt0",
+        "http://www.microsoft.com/pkiops/Docs/Repository.htm0",
+        "http://www.microsoft.com/pkiops/certs/Microsoft%20Code%20Signing%20PCA%202024.crt0",
+        "http://www.microsoft.com/pkiops/certs/Microsoft%20Time-Stamp%20PCA%202010(1).crt0",
+        "http://www.microsoft.com/pkiops/crl/Microsoft%20Code%20Signing%20PCA%202024.crl0m",
+        "http://www.microsoft.com/pkiops/crl/Microsoft%20Time-Stamp%20PCA%202010(1).crl0l",
+        "http://www.microsoft.com0"
+       ]
+      }
+     }
+    },
     "keys": [
      "yara|capability_filesystem_delete|pywinpty-3.1.0/pythonarm64/tools/Tools/scripts/cleanfuture.py|1cc188c0676e3136",
      "yara|capability_filesystem_delete|pywinpty-3.1.0/pythonarm64/tools/Tools/scripts/get-remote-certificate.py|269c99848a8f4312",
@@ -511,6 +917,9 @@
      "yara|capability_filesystem_read|pywinpty-3.1.0/winpty/ptyprocess.py|52a9ab4b0e8de72d",
      "yara|capability_filesystem_read|pywinpty-3.1.0/winpty/tests/test_pty.py|017ba34326d784aa",
      "yara|capability_filesystem_read|pywinpty-3.1.0/winpty/tests/test_ptyprocess.py|31e1a9fcffb392c7",
+     "yara|capability_filesystem_read|winpty/ptyprocess.py|52a9ab4b0e8de72d",
+     "yara|capability_filesystem_read|winpty/tests/test_pty.py|017ba34326d784aa",
+     "yara|capability_filesystem_read|winpty/tests/test_ptyprocess.py|31e1a9fcffb392c7",
      "yara|capability_filesystem_write_executable|pywinpty-3.1.0/pythonarm64/tools/Tools/scripts/fixcid.py|8523604115b767a6",
      "yara|capability_filesystem_write_executable|pywinpty-3.1.0/pythonarm64/tools/Tools/scripts/linktree.py|b25b1ac9f2a516b5",
      "yara|capability_filesystem_write_executable|pywinpty-3.1.0/pythonarm64/tools/Tools/scripts/mkreal.py|e2e661d54ff87822",
@@ -519,6 +928,7 @@
      "yara|capability_network_outbound|pywinpty-3.1.0/pythonarm64/tools/Tools/demo/mcast.py|c35d3b1e84ccd406",
      "yara|capability_network_outbound|pywinpty-3.1.0/pythonarm64/tools/Tools/scripts/checkpip.py|a208a514e64294d8",
      "yara|capability_network_outbound|pywinpty-3.1.0/winpty/ptyprocess.py|52a9ab4b0e8de72d",
+     "yara|capability_network_outbound|winpty/ptyprocess.py|52a9ab4b0e8de72d",
      "yara|capability_process_spawn|pywinpty-3.1.0/build.rs|158477097fff07df",
      "yara|capability_process_spawn|pywinpty-3.1.0/pythonarm64/tools/Tools/demo/rpythond.py|c10a7048e84bb865",
      "yara|capability_process_spawn|pywinpty-3.1.0/pythonarm64/tools/Tools/demo/spreadsheet.py|84524a691cd2b47a",
@@ -542,7 +952,11 @@
      "yara|capability_process_spawn|pywinpty-3.1.0/winpty/_winpty.pyi|f957a7a300afcbcb",
      "yara|capability_process_spawn|pywinpty-3.1.0/winpty/ptyprocess.py|52a9ab4b0e8de72d",
      "yara|capability_process_spawn|pywinpty-3.1.0/winpty/tests/test_pty.py|017ba34326d784aa",
-     "yara|capability_process_spawn|pywinpty-3.1.0/winpty/tests/test_ptyprocess.py|31e1a9fcffb392c7"
+     "yara|capability_process_spawn|pywinpty-3.1.0/winpty/tests/test_ptyprocess.py|31e1a9fcffb392c7",
+     "yara|capability_process_spawn|winpty/_winpty.pyi|f957a7a300afcbcb",
+     "yara|capability_process_spawn|winpty/ptyprocess.py|52a9ab4b0e8de72d",
+     "yara|capability_process_spawn|winpty/tests/test_pty.py|017ba34326d784aa",
+     "yara|capability_process_spawn|winpty/tests/test_ptyprocess.py|31e1a9fcffb392c7"
     ],
     "yara": [
      "capability_filesystem_delete:capability_filesystem_delete pywinpty-3.1.0/pythonarm64/tools/Tools/scripts/cleanfuture.py",
@@ -606,6 +1020,9 @@
      "capability_filesystem_read:capability_filesystem_read pywinpty-3.1.0/winpty/ptyprocess.py",
      "capability_filesystem_read:capability_filesystem_read pywinpty-3.1.0/winpty/tests/test_pty.py",
      "capability_filesystem_read:capability_filesystem_read pywinpty-3.1.0/winpty/tests/test_ptyprocess.py",
+     "capability_filesystem_read:capability_filesystem_read winpty/ptyprocess.py",
+     "capability_filesystem_read:capability_filesystem_read winpty/tests/test_pty.py",
+     "capability_filesystem_read:capability_filesystem_read winpty/tests/test_ptyprocess.py",
      "capability_filesystem_write_executable:capability_filesystem_write_executable pywinpty-3.1.0/pythonarm64/tools/Tools/scripts/fixcid.py",
      "capability_filesystem_write_executable:capability_filesystem_write_executable pywinpty-3.1.0/pythonarm64/tools/Tools/scripts/linktree.py",
      "capability_filesystem_write_executable:capability_filesystem_write_executable pywinpty-3.1.0/pythonarm64/tools/Tools/scripts/mkreal.py",
@@ -614,6 +1031,7 @@
      "capability_network_outbound:capability_network_outbound pywinpty-3.1.0/pythonarm64/tools/Tools/demo/mcast.py",
      "capability_network_outbound:capability_network_outbound pywinpty-3.1.0/pythonarm64/tools/Tools/scripts/checkpip.py",
      "capability_network_outbound:capability_network_outbound pywinpty-3.1.0/winpty/ptyprocess.py",
+     "capability_network_outbound:capability_network_outbound winpty/ptyprocess.py",
      "capability_process_spawn:capability_process_spawn pywinpty-3.1.0/build.rs",
      "capability_process_spawn:capability_process_spawn pywinpty-3.1.0/pythonarm64/tools/Tools/demo/rpythond.py",
      "capability_process_spawn:capability_process_spawn pywinpty-3.1.0/pythonarm64/tools/Tools/demo/spreadsheet.py",
@@ -637,7 +1055,11 @@
      "capability_process_spawn:capability_process_spawn pywinpty-3.1.0/winpty/_winpty.pyi",
      "capability_process_spawn:capability_process_spawn pywinpty-3.1.0/winpty/ptyprocess.py",
      "capability_process_spawn:capability_process_spawn pywinpty-3.1.0/winpty/tests/test_pty.py",
-     "capability_process_spawn:capability_process_spawn pywinpty-3.1.0/winpty/tests/test_ptyprocess.py"
+     "capability_process_spawn:capability_process_spawn pywinpty-3.1.0/winpty/tests/test_ptyprocess.py",
+     "capability_process_spawn:capability_process_spawn winpty/_winpty.pyi",
+     "capability_process_spawn:capability_process_spawn winpty/ptyprocess.py",
+     "capability_process_spawn:capability_process_spawn winpty/tests/test_pty.py",
+     "capability_process_spawn:capability_process_spawn winpty/tests/test_ptyprocess.py"
     ]
    },
    "version": "3.1.0"

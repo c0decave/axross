@@ -59,7 +59,7 @@ from PyQt6.QtWidgets import (
 from core import analysis_settings as AS
 from core import llm_profiles as LP
 from core.file_analysis import AnalysisResult, FileAnalyzer, Target
-from core.i18n import tr
+from core.i18n import tr, tr_n
 from core.thread_relay import GuiCall
 from ui.dock_frame import framed
 from ui.icon_provider import set_window_icon
@@ -112,7 +112,7 @@ def _stats(calls: list) -> str:
         c["completion_tokens"] for c in calls if isinstance(c.get("completion_tokens"), int)
     )
     bits = [
-        tr("{n} model call(s)").format(n=len(calls)),
+        tr_n(len(calls), "{n} model call", "{n} model calls"),
         tr("{p} prompt / {c} answer tokens").format(p=_number(prompt), c=_number(completion)),
     ]
     last = calls[-1]
@@ -593,7 +593,11 @@ class AnalysisDock(QDockWidget):
             return
         self.show_message(label)
         self._offer, self._offer_label = list(targets), label
-        self.batch_button.setText(tr("Analyse {n} file(s) with LLM").format(n=len(targets)))
+        self.batch_button.setText(tr_n(
+            len(targets),
+            "Analyse {n} file with LLM",
+            "Analyse {n} files with LLM",
+        ))
         self._show_offer()
 
     def offer_folder(self, backend, path: str, name: str) -> None:
@@ -669,9 +673,8 @@ class AnalysisDock(QDockWidget):
         self.queue_list.show()
         self.stop_button.show()
         self.batch_button.hide()
-        self.body.setHtml(
-            f"<p>{_esc(tr('{n} file(s) queued for the LLM.').format(n=len(targets)))}</p>"
-        )
+        queued = tr_n(len(targets), "{n} file queued for the LLM.", "{n} files queued for the LLM.")
+        self.body.setHtml(f"<p>{_esc(queued)}</p>")
 
     def stop_queue(self) -> None:
         waiting = {t for t, row in self._rows.items() if row.text().startswith("⏳")}
@@ -886,7 +889,10 @@ class _Lister(QObject):
     def list(self, backend, path: str, token: int) -> None:
         # Not an emit on the lister from the thread: the exit clean-up
         # deletes it while a listing may still run (core/thread_relay.py).
-        listed = GuiCall(self._emit_listed)
+        # One for the lister's life: each new one stayed in the relay.
+        listed = self.__dict__.get("_listed_call")
+        if listed is None:
+            listed = self._listed_call = GuiCall(self._emit_listed)
 
         def work() -> None:
             try:

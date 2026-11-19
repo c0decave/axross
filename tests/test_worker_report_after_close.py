@@ -123,8 +123,13 @@ def test_sad_an_mcp_server_test_ending_after_settings_closed_is_dropped(tmp_path
     dlg = _dialog(tmp_path / "settings.json")
     dlg.add_server()
     dlg.server_name_edit.setText("slow")
-    dlg.server_command_edit.setText(f"{sys.executable} -c pass")
+    # A script file: "python -c ..." is a command that runs code it was
+    # handed, which only a container may start - the test would never begin.
+    script = tmp_path / "server.py"
+    script.write_text("pass\n", encoding="utf-8")
+    dlg.server_command_edit.setText(f"{sys.executable} {script}")
     dlg.test_server()
+    assert dlg.server_test_label.text() == "Connecting…"
     sip.delete(dlg)
     gate.set()
     assert ended.wait(5)

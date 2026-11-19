@@ -86,7 +86,9 @@ class SelectionEquivalenceTest(unittest.TestCase):
     def test_edge_nested_and_root_like_requests(self) -> None:
         self.assertTrue(A._is_selected("a/b/c/d.txt", {"a/b"}))
         self.assertTrue(A._is_selected("a\\b\\c", {"a"}))
-        self.assertTrue(A._is_selected("/abs/x", {""}))  # "/" normalises to ""
+        # Empty and "." segments are dropped: "./d/" is the folder row "d".
+        self.assertTrue(A._is_selected("/abs/x", {"abs"}))
+        self.assertTrue(A._is_selected("./d/x", {"d"}))
         self.assertFalse(A._is_selected("rel/x", {""}))
         self.assertEqual(A._resolve_selection(["a/b/c.txt"], ["a/", "a/b"]), {"a", "a/b"})
 

@@ -217,7 +217,11 @@ def test_sad_closing_mid_walk_cancels_instead_of_only_waiting():
     """QThread.quit() ends an event loop; it cannot interrupt a slot
     that is already running. Without a cancel path, closing the window
     during a large remote walk either blocks the GUI for the full wait
-    or drops a live QThread — which Qt answers with an abort."""
+    or drops a live QThread — which Qt answers with an abort.
+
+    Closing does not wait for the walk (a wait froze the window): the
+    running thread is handed over with a cancelled worker, so the walk
+    sees the stop request at its next check, after reject() returned."""
     import threading
     import time
 
@@ -240,9 +244,15 @@ def test_sad_closing_mid_walk_cancels_instead_of_only_waiting():
     dlg.show()
     APP.processEvents()
     assert started.wait(5), "worker never started"
+    t0 = time.monotonic()
     dlg.reject()
+    assert time.monotonic() - t0 < 1.0, "closing waited for the walk"
     dlg.wait_for_compare(timeout_ms=5000)
 
+    deadline = time.monotonic() + 5
+    while not observed and time.monotonic() < deadline:
+        APP.processEvents()
+        time.sleep(0.01)
     assert observed == [True], "the walk was never told to stop"
     dlg.deleteLater()
     APP.processEvents()
@@ -388,6 +398,31 @@ def test_edge_sync_actions_carry_absolute_paths_for_both_ends():
         first = seen[0][0]
         assert first["source"] == "/l/sub/a.txt"
         assert first["dest"] == "/r/sub/a.txt"
+    finally:
+        dlg.close()
+        dlg.deleteLater()
+        APP.processEvents()
+
+
+def test_sad_delete_leaves_a_row_whose_other_side_was_not_listed(monkeypatch):
+    """A right folder that could not be listed (refused, timed out) makes
+    its left files "unknown" with no right side: Delete took them for
+    left-only files and removed them for good, though they may well be
+    on the right. Only rows known to be on one side are deleted."""
+    from PyQt6.QtWidgets import QMessageBox
+
+    dlg = _dialog_with([
+        _e("photos/a.jpg", Status.UNKNOWN, right=False),
+        _e("only.txt", Status.LEFT_ONLY, right=False),
+    ])
+    seen: list = []
+    dlg.delete_requested.connect(lambda side, paths: seen.append((side, list(paths))))
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Yes)
+    try:
+        _select_all(dlg)
+        dlg._delete_selected()
+        assert seen == [("left", ["/l/only.txt"])]
     finally:
         dlg.close()
         dlg.deleteLater()

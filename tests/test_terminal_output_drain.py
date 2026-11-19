@@ -194,7 +194,7 @@ def test_happy_the_dock_drains_its_tabs_and_draws_the_shown_one_once(app, monkey
     assert len(activity) == 2  # one per tab with output, not one per piece
     assert "a29" in dock._terminal.toPlainText()
     assert "b0" not in dock._terminal.toPlainText()
-    assert dock._tabs["two"].buffer.startswith("b0\r\nb1")
+    assert "b29" in "\n".join(dock._tabs["two"].screen.screen_lines())
     dock._session_combo.setCurrentText("two")
     _pump(app)
     assert "b29" in dock._terminal.toPlainText()

@@ -18,10 +18,15 @@ Transport shape
         during the initialize handshake and returns it in the
         response header; the client stamps subsequent requests
         with it.
-    Response: ``application/json`` with one JSON-RPC response, or
-    HTTP 400 if the body isn't valid JSON, 401 if the session id
-    is missing on a non-initialize request, 404 if the session id
-    is unknown or expired.
+      * ``MCP-Protocol-Version`` (MCP 2025-06-18 and later): the
+        revision initialize agreed on, on every request after it
+        (POST, GET, DELETE). A revision the server does not speak,
+        or another than the session's, is answered with 400.
+    Response: ``application/json`` with one JSON-RPC response; 202
+    without a body for a notification; HTTP 400 if the body isn't
+    valid JSON or is a batch (an array: no supported revision has
+    batches), 400 if the session id is missing on a non-initialize
+    request, 404 if the session id is unknown or expired.
 
 ``GET /messages``
     ``Accept: text/event-stream`` opens an SSE notification stream
@@ -105,6 +110,11 @@ from core import mcp_server as _mcp
 
 log = logging.getLogger(__name__)
 
+#: The header a client of MCP 2025-06-18 and later sends on every request
+#: after initialize, naming the revision it speaks (HTTP headers are
+#: case-insensitive: ``Mcp-Protocol-Version`` is the same header).
+PROTOCOL_VERSION_HEADER = "MCP-Protocol-Version"
+
 # Cap on the POST /messages body size. A hostile client can set a
 # huge Content-Length header and send nothing; rfile.read() would
 # block the server thread waiting. 16 MiB is generous for a JSON-RPC
@@ -115,13 +125,51 @@ MAX_REQUEST_BYTES = 16 * 1024 * 1024
 # Idle timeout for a session. An initialize without follow-up
 # activity shouldn't hold resources forever. Tunable via server
 # config for long-running batch workflows.
-DEFAULT_SESSION_IDLE_SECONDS = 30 * 60  # 30 minutes
+DEFAULT_SESSION_IDLE_SECONDS = 10 * 60  # 10 minutes
+#: With the session cap reached, an initialize evicts the session that has
+#: been idle longest - if it has been idle at least this long and runs
+#: nothing (no task, no SSE stream) - instead of answering 503: sessions
+#: left behind without a DELETE no longer lock everyone out.
+SESSION_EVICTABLE_AFTER_SECONDS = 30.0
+#: Sessions one client (address + credential) may hold at a time.
+MAX_SESSIONS_PER_CLIENT = 32
+#: Rate-limit buckets kept for clients (oldest unused dropped beyond it).
+MAX_CLIENT_BUCKETS = 1024
 #: Hard cap on live sessions. Each session owns a 10k-entry queue, a
 #: replay ring and a log route, so an unauthenticated ``initialize``
 #: loop must not be able to mint them without bound.
 MAX_SESSIONS = 256
 #: Socket timeout per connection, which also bounds the TLS handshake.
 CONNECTION_TIMEOUT_SECONDS = 30.0
+#: The whole request line, headers and body must arrive within this: a
+#: client trickling one header byte every 20 s kept its connection - and a
+#: thread - for good (3000 of them exhausted the threads).
+REQUEST_READ_DEADLINE_SECONDS = 15.0
+#: Connections served at once (each is a thread). A new one past it takes
+#: the place of the oldest connection still sending its request (headers,
+#: body or TLS handshake); when every connection is past that, it is closed.
+MAX_CONNECTIONS = 1024
+#: Connections one address may hold off loopback (on loopback every local
+#: client is one address).
+MAX_CONNECTIONS_PER_IP = 32
+#: Bodies one client may have arriving at once (on loopback every local
+#: client is one), and the slowest a body may arrive past its first
+#: seconds: token holders trickling bodies held every connection.
+MAX_SLOW_BODIES_PER_CLIENT = 16
+#: The most of a refused request's body read past before closing.
+DISCARD_BODY_BYTES = 1 << 20
+#: Default of :func:`min_body_rate` (AXROSS_MCP_MIN_BODY_RATE, bytes/s).
+MIN_BODY_RATE = 1024
+BODY_RATE_GRACE_SECONDS = 10.0
+#: File descriptors kept free besides the connections (log files, the
+#: backends' sockets, temp files): the connection cap is sized to leave them.
+FD_HEADROOM = 256
+#: Once the token or client certificate is checked, the rest of the
+#: request (its body) may take this long, and the connection is never
+#: taken for a trickling attacker's.
+AUTHENTICATED_BODY_DEADLINE_SECONDS = 300.0
+#: tools/call requests one session may have running at once.
+MAX_CALLS_PER_SESSION = 16
 
 # Maximum number of queued notifications per session. A client that
 # never consumes its SSE stream shouldn't be able to grow the queue
@@ -167,8 +215,28 @@ DEFAULT_HTTP_IP_REFILL_PER_SEC = 60.0
 # the loopback port - must not use up the budget of the token holder on
 # the same address (the bearer check is a constant-time compare, cheaper
 # than anything the cap protects).
+#: How many sessions of one client (or one address) may use their full
+#: rate at once: each session has a bucket of its own, the client one of
+#: this many times its size. One flooding session no longer starves the
+#: client's - on loopback: every local client's - other sessions, and new
+#: sessions bring no fresh budget past it.
+FAIR_SHARE_SESSIONS = 4
+#: What each session keeps whatever its client's other sessions do: this
+#: part of its own rate (and a burst of FAIR_RESERVE_BURST) comes from a
+#: reserve of its own when the shared bucket is empty - with 8 flooding
+#: sessions a quiet one got none of its calls.
+FAIR_RESERVE_SHARE = 0.5
+FAIR_RESERVE_BURST = 2
+
+
+def _now() -> float:
+    return time.monotonic()
 DEFAULT_HTTP_UNAUTH_BURST = 20
 DEFAULT_HTTP_UNAUTH_REFILL_PER_SEC = 5.0
+
+
+#: Most buckets the HTTP edge cap keeps (addresses, sessions, reserves).
+MAX_EDGE_BUCKETS = 4096
 
 
 class _PerIPRateLimiter:
@@ -198,21 +266,58 @@ class _PerIPRateLimiter:
         self._lock = threading.Lock()
         self._calls = 0
 
-    def try_acquire(self, ip: str) -> bool:
-        now = time.monotonic()
+    def _take_locked(self, key: str, burst: float, refill: float, now: float,
+                     take: bool) -> bool:
+        if key not in self._buckets and len(self._buckets) >= MAX_EDGE_BUCKETS:
+            self._gc(now)
+        tokens, last = self._buckets.get(key, (burst, now))
+        tokens = min(burst, tokens + max(0.0, now - last) * refill)
+        ok = tokens >= 1.0
+        if ok and take:
+            tokens -= 1.0
+        self._buckets[key] = (tokens, now)
+        return ok
+
+    def try_acquire(self, ip: str, member: str | None = None) -> bool:
+        """A token for *ip*; with *member* (the session) from that
+        session's bucket and the address's shared one, FAIR_SHARE_SESSIONS
+        times its size - or, that one empty, from the session's own reserve
+        (FAIR_RESERVE_SHARE of its rate): one session's flood, or many,
+        leave each other session its minimum."""
+        now = _now()
         with self._lock:
             self._calls += 1
             if self._calls % self._GC_EVERY_N_CALLS == 0:
                 self._gc(now)
-            tokens, last = self._buckets.get(ip, (float(self._burst), now))
-            elapsed = max(0.0, now - last)
-            tokens = min(float(self._burst), tokens + elapsed * self._refill)
-            if tokens >= 1.0:
-                tokens -= 1.0
-                self._buckets[ip] = (tokens, now)
-                return True
-            self._buckets[ip] = (tokens, now)
-            return False
+            if member is None:
+                return self._take_locked(ip, float(self._burst), self._refill, now, True)
+            share = FAIR_SHARE_SESSIONS
+            # Every attempt, refused ones too: a session asking within its
+            # own rate is a quiet one (it may use its reserve below).
+            quiet = self._take_locked(f"{ip}#{member}#attempts", float(self._burst),
+                                      self._refill, now, True) and \
+                self._buckets[f"{ip}#{member}#attempts"][0] >= self._burst / 2
+            if not self._take_locked(f"{ip}#{member}", float(self._burst), self._refill, now,
+                                     False):
+                return False
+            if not self._take_locked(ip, float(self._burst) * share, self._refill * share,
+                                     now, True):
+                # The session's reserve: only for a quiet one (its own
+                # bucket at least half full), and from the address's pool
+                # of reserves (twice the shared rate) - more sessions add
+                # no rate past it.
+                if not quiet:
+                    return False
+                if not self._take_locked(f"{ip}#{member}#reserve", float(FAIR_RESERVE_BURST),
+                                         self._refill * FAIR_RESERVE_SHARE, now, False):
+                    return False
+                if not self._take_locked(f"{ip}#reserves", float(self._burst) * share * 2,
+                                         self._refill * share * 2, now, True):
+                    return False
+                self._take_locked(f"{ip}#{member}#reserve", float(FAIR_RESERVE_BURST),
+                                  self._refill * FAIR_RESERVE_SHARE, now, True)
+            return self._take_locked(f"{ip}#{member}", float(self._burst), self._refill, now,
+                                     True)
 
     def _gc(self, now: float) -> None:
         stale = [
@@ -220,6 +325,13 @@ class _PerIPRateLimiter:
         ]
         for ip in stale:
             self._buckets.pop(ip, None)
+        if len(self._buckets) >= MAX_EDGE_BUCKETS:
+            # At the bound the quarter touched longest ago goes (in one go,
+            # not one sort per new key).
+            keep = MAX_EDGE_BUCKETS * 3 // 4
+            for key, _ in sorted(self._buckets.items(), key=lambda kv: kv[1][1])[
+                    : len(self._buckets) - keep]:
+                self._buckets.pop(key, None)
 
 
 def _is_loopback(host: str) -> bool:
@@ -347,9 +459,52 @@ class _HttpSession:
     # session never holds more than one streaming thread.
     sse_stream: "tuple[threading.Event, threading.Event] | None" = None
     sse_lock: threading.Lock = field(default_factory=threading.Lock)
+    # The MCP revision this session's initialize agreed on.
+    protocol: _mcp.ProtocolState = field(default_factory=_mcp.ProtocolState)
+    # Who opened it (address + credential): its rate bucket and session
+    # count are the client's, not the session's.
+    client_key: str = ""
+    # The newest event id an SSE stream has written: a new stream without
+    # Last-Event-ID starts after it instead of re-sending the ring.
+    delivered_event_id: int = 0
 
     def touch(self) -> None:
         self.last_seen = time.monotonic()
+
+
+class _FairLimiter:
+    """A session's tools/call limiter: a token from its own bucket and
+    from its client's shared one."""
+
+    def __init__(self, own, shared, reserve=None, pool=None, attempts=None) -> None:
+        self._own = own
+        self._shared = shared
+        # The session's minimum, used when the shared bucket is empty - by
+        # a quiet session only (its attempts, refused ones too, within its
+        # own rate: a flooding one asks far more often), and drawn from its
+        # client's pool of reserves, so more sessions add no rate past it.
+        self._reserve = reserve
+        self._pool = pool
+        self._attempts = attempts
+
+    def try_acquire(self, cost: float = 1.0) -> bool:
+        quiet = self._attempts is None or (
+            self._attempts.try_acquire(cost)
+            and self._attempts.tokens >= self._attempts._burst / 2)
+        if not self._own.try_acquire(cost):
+            return False
+        if self._shared.try_acquire(cost):
+            return True
+        if quiet and self._reserve is not None and self._reserve.try_acquire(cost):
+            if self._pool is None or self._pool.try_acquire(cost):
+                return True
+            self._reserve.refund(cost)
+        self._own.refund(cost)
+        return False
+
+    @property
+    def tokens(self) -> float:
+        return min(self._own.tokens, self._shared.tokens)
 
 
 class _SessionRegistry:
@@ -369,8 +524,12 @@ class _SessionRegistry:
         rate_burst: int | None = None,
         rate_refill_per_sec: float | None = None,
         max_sessions: int = MAX_SESSIONS,
+        per_client_cap: bool = True,
     ):
         self._max_sessions = max_sessions
+        # False on a loopback server: every local client is one address
+        # and one token there, so a per-client cap was everyone's cap.
+        self._per_client_cap = per_client_cap
         self._sessions: dict[str, _HttpSession] = {}
         self._lock = threading.Lock()
         self._idle_seconds = idle_seconds
@@ -380,30 +539,146 @@ class _SessionRegistry:
         # without a rate gate (tests, or rate_limit_enabled=False).
         self._rate_burst = rate_burst
         self._rate_refill_per_sec = rate_refill_per_sec
+        # client key -> its rate bucket (shared by all its sessions: a new
+        # session no longer brings a full bucket).
+        self._buckets: dict[str, _mcp._RateLimiter] = {}
+        # Set by build_server: the task registry, so a session that ends
+        # takes its tasks with it.
+        self.tasks: "_mcp._TaskRegistry | None" = None
 
-    def create(self) -> _HttpSession:
+    def _bucket(self, client_key: str) -> "_FairLimiter | None":
+        """The new session's limiter: its own bucket, and its client's
+        shared one (FAIR_SHARE_SESSIONS times the size)."""
+        if self._rate_burst is None or self._rate_refill_per_sec is None:
+            return None
+        with self._lock:
+            pair = self._buckets.pop(client_key, None)
+            if pair is None:
+                shared = _mcp._RateLimiter(
+                    burst=self._rate_burst * FAIR_SHARE_SESSIONS,
+                    refill_per_sec=self._rate_refill_per_sec * FAIR_SHARE_SESSIONS)
+                # Every reserve of the client together: twice the shared
+                # bucket's rate and size.
+                pool = _mcp._RateLimiter(
+                    burst=self._rate_burst * FAIR_SHARE_SESSIONS * 2,
+                    refill_per_sec=self._rate_refill_per_sec * FAIR_SHARE_SESSIONS * 2)
+                pair = (shared, pool)
+            self._buckets[client_key] = pair  # most recently used last
+            while len(self._buckets) > MAX_CLIENT_BUCKETS:
+                self._buckets.pop(next(iter(self._buckets)))
+        shared, pool = pair
+        own = _mcp._RateLimiter(burst=self._rate_burst, refill_per_sec=self._rate_refill_per_sec)
+        reserve = _mcp._RateLimiter(
+            burst=FAIR_RESERVE_BURST,
+            refill_per_sec=self._rate_refill_per_sec * FAIR_RESERVE_SHARE)
+        attempts = _mcp._RateLimiter(burst=self._rate_burst,
+                                     refill_per_sec=self._rate_refill_per_sec)
+        return _FairLimiter(own, shared, reserve, pool, attempts)
+
+    def _running_task_scopes(self) -> set:
+        if self.tasks is None:
+            return set()
+        return {t.scope for t in self.tasks.list_all() if t.status == "running"}
+
+    @staticmethod
+    def _busy(sess: _HttpSession, task_scopes: set) -> bool:
+        """A session at work is never evicted, however long ago its last
+        request began: a tools/call still running, a running task, an open
+        SSE stream (a client waiting for a long task's result)."""
+        return (sess.cancels.pending() > 0 or sess.session_id in task_scopes
+                or sess.sse_stream is not None)
+
+    def _evictable_locked(self, client_key: str | None = None) -> "_HttpSession | None":
+        """The session that makes room for a new one (of *client_key*,
+        when given): idle SESSION_EVICTABLE_AFTER_SECONDS (no request in
+        that time), no running call or task. A session that only holds an
+        SSE stream may go too - after every session without one, and first
+        from the client holding the most sessions: one local client held
+        all 256 sessions with a stream each and locked everyone else out.
+        (The idle sweep keeps such a session: it waits on its stream.)"""
+        now = time.monotonic()
+        task_scopes = self._running_task_scopes()
+        per_client: dict[str, int] = {}
+        for s in self._sessions.values():
+            per_client[s.client_key] = per_client.get(s.client_key, 0) + 1
+        candidates = [s for s in self._sessions.values()
+                      if (client_key is None or s.client_key == client_key)
+                      and now - s.last_seen >= SESSION_EVICTABLE_AFTER_SECONDS
+                      and s.cancels.pending() == 0 and s.session_id not in task_scopes]
+        return min(candidates,
+                   key=lambda s: (s.sse_stream is not None, -per_client[s.client_key],
+                                  s.last_seen),
+                   default=None)
+
+    def _hog_victim_locked(self) -> "_HttpSession | None":
+        """At the server's cap with no idle session: the least recently used
+        session without a running call or task of the client holding more
+        than half the cap (on loopback every local client is that one
+        client). One local client kept all 256 sessions busy with pings;
+        its oldest makes room now - the client of a dropped session gets
+        404 and starts a new one, as MCP has it."""
+        per_client: dict[str, int] = {}
+        for s in self._sessions.values():
+            per_client[s.client_key] = per_client.get(s.client_key, 0) + 1
+        if not per_client:
+            return None
+        hog, count = max(per_client.items(), key=lambda pair: pair[1])
+        if count * 2 <= self._max_sessions:
+            return None
+        task_scopes = self._running_task_scopes()
+        candidates = [s for s in self._sessions.values()
+                      if s.client_key == hog and s.cancels.pending() == 0
+                      and s.session_id not in task_scopes]
+        return min(candidates, key=lambda s: (s.sse_stream is not None, s.last_seen),
+                   default=None)
+
+    def create(self, client_key: str = "") -> _HttpSession:
         # Idle eviction runs here so it needs no timer thread; the cap
         # is checked after it, so a quiet server never refuses.
         self.evict_idle()
+        evicted = None
         with self._lock:
-            if len(self._sessions) >= self._max_sessions:
-                raise SessionLimitError(f"more than {self._max_sessions} live sessions")
+            mine = sum(1 for s in self._sessions.values() if s.client_key == client_key)
+            if self._per_client_cap and mine >= MAX_SESSIONS_PER_CLIENT:
+                # The client's own session idle longest makes room: on
+                # loopback every local client is one "client" (one address,
+                # one token), so refusing would lock the others out.
+                evicted = self._evictable_locked(client_key)
+                if evicted is None:
+                    raise SessionLimitError(
+                        f"this client holds {mine} live sessions (cap "
+                        f"{MAX_SESSIONS_PER_CLIENT}), none idle for "
+                        f"{SESSION_EVICTABLE_AFTER_SECONDS:g}s; end one with DELETE /messages")
+                self._sessions.pop(evicted.session_id, None)
+            elif len(self._sessions) >= self._max_sessions:
+                evicted = self._evictable_locked() or self._hog_victim_locked()
+                if evicted is None:
+                    raise SessionLimitError(f"more than {self._max_sessions} live sessions")
+                self._sessions.pop(evicted.session_id, None)
+        if evicted is not None:
+            log.info("mcp-http: session %s evicted to make room (idle %.0fs)",
+                     evicted.session_id[:8], time.monotonic() - evicted.last_seen)
+            self._retire(evicted)
         sid = uuid.uuid4().hex
-        limiter = None
-        if self._rate_burst is not None and self._rate_refill_per_sec is not None:
-            limiter = _mcp._RateLimiter(
-                burst=self._rate_burst,
-                refill_per_sec=self._rate_refill_per_sec,
-            )
         sess = _HttpSession(
             session_id=sid,
             queue=queue.Queue(maxsize=MAX_QUEUED_NOTIFICATIONS),
             cancels=_mcp._CancelRegistry(),
-            rate_limiter=limiter,
+            rate_limiter=self._bucket(client_key),
+            client_key=client_key,
         )
         with self._lock:
             self._sessions[sid] = sess
         return sess
+
+    def _retire(self, sess: _HttpSession) -> None:
+        """What every way a session ends does: stop its stream, cancel its
+        tool calls and tasks, close its profiles, unroute its log."""
+        sess.closed.set()
+        sess.cancels.cancel_all()
+        if self.tasks is not None:
+            self.tasks.drop_scope(sess.session_id)
+        self._unregister_forwarder(sess)
 
     def get(self, session_id: str) -> _HttpSession | None:
         with self._lock:
@@ -411,6 +686,11 @@ class _SessionRegistry:
         if sess is not None:
             sess.touch()
         return sess
+
+    def knows(self, session_id: str) -> bool:
+        """Whether *session_id* is a live session (without touching it)."""
+        with self._lock:
+            return session_id in self._sessions
 
     def _unregister_forwarder(self, sess: _HttpSession) -> None:
         if self._log_forwarder is not None and sess.log_forwarder_registered:
@@ -427,8 +707,7 @@ class _SessionRegistry:
             sess = self._sessions.pop(session_id, None)
         if sess is None:
             return False
-        sess.closed.set()
-        self._unregister_forwarder(sess)
+        self._retire(sess)
         return True
 
     def evict_idle(self) -> list[str]:
@@ -436,16 +715,16 @@ class _SessionRegistry:
         window. Returns the list of dropped ids so callers can log."""
         now = time.monotonic()
         dropped_sessions: list[_HttpSession] = []
+        task_scopes = self._running_task_scopes()
         with self._lock:
             for sid, sess in list(self._sessions.items()):
-                if now - sess.last_seen > self._idle_seconds:
+                if now - sess.last_seen > self._idle_seconds and not self._busy(sess, task_scopes):
                     self._sessions.pop(sid, None)
                     dropped_sessions.append(sess)
         # Unregister OUTSIDE the registry lock to keep lock ordering
         # consistent with the forwarder's own lock.
         for sess in dropped_sessions:
-            sess.closed.set()
-            self._unregister_forwarder(sess)
+            self._retire(sess)
         return [s.session_id for s in dropped_sessions]
 
 
@@ -571,11 +850,21 @@ def _make_ssl_context(config: HTTPServerConfig) -> ssl.SSLContext:
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(certfile=config.cert_file, keyfile=config.key_file)
     ctx.load_verify_locations(cafile=config.ca_file)
-    ctx.verify_mode = ssl.CERT_REQUIRED
+    # CERT_OPTIONAL: a certificate that is presented must verify against
+    # the CA (else the handshake fails), and the handler refuses every
+    # request without one except GET /health - a health probe needs no
+    # client certificate.
+    ctx.verify_mode = ssl.CERT_OPTIONAL
     # TLS 1.2+ only — MCP is a 2024 spec and the clients that matter
     # all support 1.2. No reason to tolerate legacy.
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.options |= _TLS_SERVER_OPTIONS
     return ctx
+
+
+#: No TLS 1.2 renegotiation (a client could make the server redo the
+#: handshake's work at will).
+_TLS_SERVER_OPTIONS = getattr(ssl, "OP_NO_RENEGOTIATION", 0)
 
 
 class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
@@ -583,9 +872,98 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
     # client that connects and never speaks (or never finishes the TLS
     # handshake) is dropped instead of pinning a thread forever.
     timeout = CONNECTION_TIMEOUT_SECONDS
+
+    def _discard_body(self, length: int) -> None:
+        """Read past up to DISCARD_BODY_BYTES of a refused request's body
+        (within 2 s) before closing, so the client finishes sending and
+        reads its answer instead of a broken pipe."""
+        table = getattr(self.server, "connections", None)
+        if table is not None:
+            table.distrust(self.connection)
+        read1 = getattr(self.rfile, "read1", None)
+        left = min(length, DISCARD_BODY_BYTES)
+        until = time.monotonic() + 2.0
+        try:
+            self.connection.settimeout(2.0)
+            while left > 0 and time.monotonic() < until:
+                chunk = (read1(min(65536, left)) if read1 is not None
+                         else self.rfile.read(min(65536, left)))
+                if not chunk:
+                    break
+                left -= len(chunk)
+        except (OSError, ValueError):
+            pass
+
+    def _read_body(self, length: int) -> bytes | None:
+        """*length* bytes of body (fewer when the client stops), or None
+        when it arrives slower than MIN_BODY_RATE past the first
+        BODY_RATE_GRACE_SECONDS (a trickle that holds its connection)."""
+        parts = []
+        got = 0
+        started = time.monotonic()
+        read1 = getattr(self.rfile, "read1", None)
+        while got < length:
+            chunk = (read1(min(65536, length - got)) if read1 is not None
+                     else self.rfile.read(min(65536, length - got)))
+            if not chunk:
+                break
+            parts.append(chunk)
+            got += len(chunk)
+            self._body_got = got
+            elapsed = time.monotonic() - started
+            if got < length and elapsed > BODY_RATE_GRACE_SECONDS \
+                    and got / elapsed < min_body_rate():
+                return None
+        return b"".join(parts)
+
+    def _authenticated(self) -> None:
+        """The token or certificate is checked: the request's body may take
+        AUTHENTICATED_BODY_DEADLINE_SECONDS and the connection is no longer
+        one a newcomer may push out."""
+        table = getattr(self.server, "connections", None)
+        if table is not None:
+            table.authenticated(self.connection)
+        watch = getattr(self.server, "read_deadlines", None)
+        if watch is not None:
+            watch.extend(self, AUTHENTICATED_BODY_DEADLINE_SECONDS)
+
+    def handle_one_request(self) -> None:
+        """One request, read within REQUEST_READ_DEADLINE_SECONDS: past it
+        the connection is shut (the per-read socket time-out alone let a
+        trickle of one byte every 20 s hold it)."""
+        watch = getattr(self.server, "read_deadlines", None)
+        if watch is not None:
+            watch.add(self)
+        table = getattr(self.server, "connections", None)
+        if table is not None:
+            table.reading(self.connection, True)
+        try:
+            super().handle_one_request()
+        finally:
+            self._request_read()
+
+    def _request_read(self) -> None:
+        """The request is in: what follows (a tool call, an SSE stream)
+        may take as long as it takes - and the connection is no longer
+        one a newcomer may push out."""
+        watch = getattr(self.server, "read_deadlines", None)
+        if watch is not None:
+            watch.discard(self)
+        table = getattr(self.server, "connections", None)
+        if table is not None:
+            table.reading(self.connection, False)
+
+    def parse_request(self) -> bool:
+        ok = super().parse_request()
+        if ok and self.command != "POST":
+            self._request_read()  # no body to wait for
+        return ok
+
     # True for plain-HTTP loopback servers: enables the Host/Origin
     # check in :meth:`_check_local_origin`. Set by the factory.
     _local_only: bool = False
+    # mTLS: every path but /health needs a verified client certificate.
+    _require_client_cert: bool = False
     # Set by the factory below.
     _tools: list = []
     _server_name: str = "axross-mcp"
@@ -665,6 +1043,12 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
             return None
         return hashlib.sha256(der).hexdigest()
 
+    def _client_key(self) -> str:
+        """Who is asking: the address and the client certificate (the
+        bearer token is the same for every client of a plain server)."""
+        ip = self.client_address[0] if self.client_address else "?"
+        return f"{ip}|{self._peer_cert_fingerprint() or ''}"
+
     def _check_ip_cap(self, authenticated: bool = True) -> bool:
         """Return True when the per-IP rate cap lets the request
         through. On reject, already sent a 429; caller should just
@@ -676,7 +1060,17 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
         if limiter is None or self.path == "/health":
             return True
         ip = self.client_address[0] if self.client_address else "?"
-        if limiter.try_acquire(ip):
+        # The token holder's budget is shared fairly by its sessions (on
+        # loopback every local client shares the address). Only a session
+        # the server knows gets a bucket and reserve of its own; any other
+        # id shares one "-" member (a fresh random id per request passed
+        # the cap at 2693 req/s and grew the bucket map without end).
+        member = None
+        if authenticated:
+            sid = (self.headers.get("Mcp-Session-Id") or "").strip()
+            known = self._sessions is not None and sid and self._sessions.knows(sid)
+            member = sid if known else "-"
+        if limiter.try_acquire(ip, member=member):
             return True
         self._send_error(429, "too many requests from this IP — slow down")
         return False
@@ -693,15 +1087,29 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
         )
 
     def _check_access(self) -> bool:
-        """The token first, then the rate cap of what it says: the
-        token holder's per-IP budget for an authenticated request, the
-        separate unauthenticated budget (then a 401) for any other. On
-        refusal an answer was already sent."""
+        """The client certificate (mTLS, every path but /health), the
+        token, then the rate cap of what it says: the token holder's
+        per-IP budget for an authenticated request, the separate
+        unauthenticated budget (then a 401) for any other. On refusal an
+        answer was already sent."""
+        if self._require_client_cert and self.path != "/health" \
+                and self._peer_cert_fingerprint() is None:
+            # The TLS layer asks for a certificate but lets a client
+            # without one in (so a health probe works); nothing else does.
+            self._send_error(401, "a client certificate is required")
+            return False
         if self._token_ok():
-            return self._check_ip_cap(True)
+            if not self._check_ip_cap(True):
+                return False
+            if self.path != "/health":  # passes without a token: not trusted
+                self._authenticated()
+            return True
         if not self._check_ip_cap(False):
             return False
-        return self._check_auth()
+        if not self._check_auth():
+            return False
+        self._authenticated()
+        return True
 
     def _check_local_origin(self) -> bool:
         """Refuse DNS-rebinding on the unauthenticated loopback listener.
@@ -713,14 +1121,24 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
         literal loopback name. mTLS servers authenticate the peer and
         are served under whatever name their certificate carries.
         """
-        if not self._local_only:
-            return True
         host = self.headers.get("Host")
         origin = self.headers.get("Origin")
         if len(self.headers.get_all("Host") or ()) > 1 or len(
                 self.headers.get_all("Origin") or ()) > 1:
             self._send_error(400, "more than one Host or Origin header")
             return False
+        if not self._local_only:
+            # mTLS: a browser may hold the client certificate. A page of
+            # another origin is refused (MCP: validate Origin, 403); a
+            # non-browser client sends no Origin at all.
+            if origin is not None:
+                from urllib.parse import urlsplit
+
+                parts = urlsplit(origin)
+                if parts.scheme != "https" or (host or "").lower() != parts.netloc.lower():
+                    self._send_error(403, "cross-origin request refused")
+                    return False
+            return True
         if host is not None and not _loopback_host_header(host):
             self._send_error(403, "Host header is not a loopback name")
             return False
@@ -745,6 +1163,36 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
         return False
+
+    def _check_protocol_header(self, sess: "_HttpSession | None") -> bool:
+        """The MCP-Protocol-Version header of a request after initialize
+        (MCP 2025-06-18): a revision this server does not speak, or one
+        other than the session agreed on, is answered with 400. Without
+        the header the session's revision applies (a 2024-11-05 client
+        never sends it). On refusal the answer was already sent."""
+        values = self.headers.get_all(PROTOCOL_VERSION_HEADER) or []
+        if not values:
+            return True
+        if len(values) > 1:
+            self._send_error(400, f"more than one {PROTOCOL_VERSION_HEADER} header")
+            return False
+        claimed = values[0].strip()
+        if claimed not in _mcp.SUPPORTED_PROTOCOL_VERSIONS:
+            self._send_error(
+                400,
+                f"unsupported {PROTOCOL_VERSION_HEADER} {claimed[:40]!r}; this server speaks "
+                + ", ".join(_mcp.SUPPORTED_PROTOCOL_VERSIONS),
+            )
+            return False
+        agreed = sess.protocol.version if sess is not None else None
+        if agreed is not None and claimed != agreed:
+            self._send_error(
+                400,
+                f"{PROTOCOL_VERSION_HEADER} {claimed!r} is not the version this session "
+                f"agreed on ({agreed})",
+            )
+            return False
+        return True
 
     def do_GET(self) -> None:  # noqa: N802 — stdlib naming
         if not self._check_local_origin():
@@ -796,6 +1244,8 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
                     "session id does not match presented client certificate",
                 )
                 return
+        if not self._check_protocol_header(sess):
+            return
         dropped = self._sessions.drop(sid)
         status = 204 if dropped else 404
         self.send_response(status)
@@ -825,7 +1275,33 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
         if length > MAX_REQUEST_BYTES:
             self._send_error(413, f"request body > {MAX_REQUEST_BYTES} bytes")
             return
-        body = self.rfile.read(length)
+        ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+        if ctype != "application/json":
+            # A web form posts text/plain without a preflight: only JSON
+            # is a JSON-RPC message here.
+            self._send_error(415, "Content-Type must be application/json")
+            return
+        bodies = getattr(self.server, "bodies", None)
+        client = self._client_key()
+        if bodies is not None and not bodies.enter(client, self):
+            # One client (on loopback: every local one) may have only so
+            # many bodies still arriving: 300 token holders trickling 300 s
+            # bodies held every connection.
+            self._send_error(503, "too many requests of this client are still sending their "
+                                  "body; try again")
+            self._discard_body(length)
+            self.close_connection = True
+            return
+        try:
+            body = self._read_body(length)
+        finally:
+            if bodies is not None:
+                bodies.leave(client, self)
+        self._request_read()
+        if body is None:
+            self._send_error(408, f"request body slower than {min_body_rate()} bytes/s")
+            self.close_connection = True
+            return
         if len(body) != length:
             # Peer claimed more than they sent — truncated body is a
             # client bug at best and an attack at worst. Don't try to
@@ -840,8 +1316,20 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
         except (ValueError, RecursionError) as exc:
             self._send_error(400, f"invalid JSON: {exc}")
             return
+        if isinstance(req, list):
+            # No revision this server speaks has batches (2025-06-18
+            # removed them; 2025-03-26, which had them, is not offered).
+            self._send_error(400, "JSON-RPC batches are not supported: send one request per POST")
+            return
         if not isinstance(req, dict):
             self._send_error(400, "request must be a JSON object")
+            return
+        if "method" not in req and ("result" in req or "error" in req):
+            # A client's response (this server sends no requests): 202,
+            # no body, as streamable HTTP has it.
+            self.send_response(202)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
             return
 
         # --- session resolution -------------------------------------
@@ -886,12 +1374,14 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
                     )
                     return
                 try:
-                    sess = self._sessions.create()
-                except SessionLimitError:
-                    self._send_error(503, "too many sessions — retry later")
+                    sess = self._sessions.create(self._client_key())
+                except SessionLimitError as exc:
+                    self._send_error(503, f"too many sessions: {exc}")
                     return
                 sess.cert_fingerprint = peer_fp
                 created_now = True
+        if not created_now and method != "initialize" and not self._check_protocol_header(sess):
+            return
 
         sink = _QueueSink(sess) if sess is not None else None
         # Register this session's sink on the SERVER-WIDE forwarder.
@@ -909,20 +1399,44 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
         # no gate. A global bucket was scrapped because one hostile
         # client could starve every other session.
         rate_limiter = sess.rate_limiter if sess is not None else None
-        resp = _mcp._handle_request(
-            req,
-            self._tools,
-            stdout=sink,
-            cancels=cancels,
-            resources=self._resources,
-            log_forwarder=self._log_forwarder,
-            rate_limiter=rate_limiter,
-            session_id=(sess.session_id if sess is not None else None),
-            tasks=self._tasks,
-        )
+        is_call = (isinstance(req, dict) and req.get("method") == "tools/call"
+                   and req.get("id") is not None)
+        if is_call and cancels is not None and cancels.pending() >= MAX_CALLS_PER_SESSION:
+            self._send_json(_mcp._err(
+                req.get("id"), _mcp.ERR_RATE_LIMITED,
+                f"this session already runs {MAX_CALLS_PER_SESSION} calls at once; "
+                "wait for one to end", data={"type": "CallLimitError"}),
+                session_id=sess.session_id if sess is not None else None)
+            return
+        watched = None
+        hangups = getattr(self.server, "hangups", None)
+        if is_call and cancels is not None and hangups is not None \
+                and not isinstance(self.connection, ssl.SSLSocket):
+            watched = hangups.add(self.connection, cancels, req.get("id"),
+                                  http11=self.request_version == "HTTP/1.1")
+        try:
+            resp = _mcp._handle_request(
+                req,
+                self._tools,
+                stdout=sink,
+                cancels=cancels,
+                resources=self._resources,
+                log_forwarder=self._log_forwarder,
+                rate_limiter=rate_limiter,
+                session_id=(sess.session_id if sess is not None else None),
+                tasks=self._tasks,
+                protocol=(sess.protocol if sess is not None else None),
+            )
+        finally:
+            if watched is not None:
+                hangups.discard(watched)
+        if sess is not None:
+            sess.touch()  # idle from the end of its last request, not the start
         if resp is None:
-            # Notification with no id — nothing to send back.
-            self.send_response(204)
+            # Notification with no id — nothing to send back: 202
+            # Accepted without a body (streamable HTTP).
+            self.send_response(202)
+            self.send_header("Content-Length", "0")
             if sess is not None and created_now:
                 self.send_header("Mcp-Session-Id", sess.session_id)
             self.end_headers()
@@ -953,6 +1467,8 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
                     "session id does not match presented client certificate",
                 )
                 return
+        if not self._check_protocol_header(sess):
+            return
         # Last-Event-ID header lets a client resume a dropped stream.
         # Malformed / missing values coerce to 0 which replays the
         # whole ring (that's the right behaviour for first-connect
@@ -960,13 +1476,16 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
         # have an empty ring, so "replay from 0" does nothing).
         raw_last = self.headers.get("Last-Event-ID")
         try:
-            last_event_id = int(raw_last) if raw_last else 0
+            # Without the header (a first stream, or a client that does
+            # not resume): what no stream has delivered yet, never the
+            # events an earlier stream already sent.
+            last_event_id = int(raw_last) if raw_last else sess.delivered_event_id
         except ValueError:
             log.debug(
                 "mcp-http SSE: ignoring malformed Last-Event-ID %r",
                 raw_last,
             )
-            last_event_id = 0
+            last_event_id = sess.delivered_event_id
 
         # Take the session's stream slot. The previous stream (a
         # reconnect after a blip, or a client opening streams in a
@@ -1035,7 +1554,7 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
             # ``id: N`` on its own line so the client's EventSource
             # updates ``lastEventId`` as the stream progresses.
             for ev in replay_events:
-                self._write_sse_event(ev)
+                self._write_sse_event(ev, sess)
             keepalive_at = time.monotonic() + SSE_KEEPALIVE_SECONDS
             while not (stop.is_set() or sess.closed.is_set()):
                 try:
@@ -1050,29 +1569,31 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
                     # Superseded while waiting: the event stays in the
                     # replay ring for the stream that took over.
                     break
-                self._write_sse_event(event)
+                self._write_sse_event(event, sess)
             log.info("mcp-http SSE stream ended by the server (session=%s)", sid[:8])
         except (BrokenPipeError, ConnectionResetError):
             log.info("mcp-http SSE client disconnected (session=%s)", sid[:8])
         except Exception:  # noqa: BLE001
             log.exception("mcp-http SSE loop error (session=%s)", sid[:8])
 
-    def _write_sse_event(self, event: _SseEvent) -> None:
+    def _write_sse_event(self, event: _SseEvent, sess: "_HttpSession | None" = None) -> None:
         """Write one SSE frame in the ``id: N\\ndata: {...}\\n\\n`` form.
 
         Bundled so the replay pass and the live pull loop share a
         single formatter — any future tweak (event types, multi-line
         data) lands in one place."""
-        data = json.dumps(event.frame).encode("utf-8")
+        data = _mcp._dumps_wire(event.frame).encode("utf-8")
         line = f"id: {event.event_id}\n".encode("ascii") + b"data: " + data + b"\n\n"
         self.wfile.write(line)
         self.wfile.flush()
+        if sess is not None and event.event_id > sess.delivered_event_id:
+            sess.delivered_event_id = event.event_id
 
     # ------------------------------------------------------------------
     # Small helpers
     # ------------------------------------------------------------------
     def _send_json(self, payload: dict, status: int = 200, session_id: str | None = None) -> None:
-        body = json.dumps(payload).encode("utf-8")
+        body = _mcp._dumps_wire(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -1090,6 +1611,523 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+class _ReadDeadlines:
+    """Requests still being read and when each must be in; one watchdog
+    thread shuts the connections that are late."""
+
+    def __init__(self) -> None:
+        self._due: dict = {}
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+
+    def add(self, handler) -> None:
+        with self._lock:
+            self._due[handler] = time.monotonic() + REQUEST_READ_DEADLINE_SECONDS
+            if self._thread is None or not self._thread.is_alive():
+                self._thread = threading.Thread(target=self._watch, name="mcp-http-deadlines",
+                                                daemon=True)
+                self._thread.start()
+
+    def discard(self, handler) -> None:
+        with self._lock:
+            self._due.pop(handler, None)
+
+    def extend(self, handler, seconds: float) -> None:
+        """*handler*'s request may take *seconds* from now (authenticated)."""
+        with self._lock:
+            if handler in self._due:
+                self._due[handler] = time.monotonic() + seconds
+
+    def _watch(self) -> None:
+        while True:
+            time.sleep(min(0.25, REQUEST_READ_DEADLINE_SECONDS / 4))
+            now = time.monotonic()
+            with self._lock:
+                late = [h for h, due in self._due.items() if due <= now]
+                for handler in late:
+                    self._due.pop(handler, None)
+                if not self._due:
+                    self._thread = None
+                    idle = True
+                else:
+                    idle = False
+            for handler in late:
+                log.info("mcp-http %s: request not read within %gs; connection closed",
+                         handler.client_address[0] if handler.client_address else "?",
+                         REQUEST_READ_DEADLINE_SECONDS)
+                try:
+                    handler.connection.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+            if idle:
+                return
+
+
+class _HangupWatch:
+    """tools/call requests whose client may hang up: one thread looks at
+    their plain sockets and cancels a call whose client is gone (it ran on
+    until the tool's time-out). An end of input alone is no hang-up - a
+    client may shut only its sending side and wait for the answer (``nc
+    -N``) - so an HTTP/1.1 client is probed: an interim ``100 Continue``
+    (which it skips) is written; a reset in reply is a client that closed,
+    anything else a half-close whose call runs on - and whose client is
+    probed again every REPROBE_SECONDS, so closing fully later is noticed
+    too. A TLS socket is not watched (its bytes cannot be peeked at)."""
+
+    PROBE = b"HTTP/1.1 100 Continue\r\n\r\n"
+    PROBE_WAIT = 0.3
+    REPROBE_SECONDS = 5.0
+
+    def __init__(self) -> None:
+        self._calls: dict = {}
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+
+    def add(self, sock, cancels, request_id, http11: bool = True) -> object:
+        key = object()
+        with self._lock:
+            # socket, cancels, id, may probe, last probe (None: input open)
+            self._calls[key] = [sock, cancels, request_id, http11, None]
+            if self._thread is None or not self._thread.is_alive():
+                self._thread = threading.Thread(target=self._watch, name="mcp-http-hangups",
+                                                daemon=True)
+                self._thread.start()
+        return key
+
+    def discard(self, key) -> None:
+        # Under the lock: the answer is written only after this, never
+        # between the bytes of a probe.
+        with self._lock:
+            self._calls.pop(key, None)
+
+    def _probe(self, key, sock) -> bool:
+        """Write the probe while *key* is still watched; False when the
+        write fails (the client is gone)."""
+        with self._lock:
+            entry = self._calls.get(key)
+            if entry is None:
+                return True
+            if entry[3]:
+                try:
+                    sock.send(self.PROBE, getattr(socket, "MSG_DONTWAIT", 0))
+                except (BlockingIOError, InterruptedError):
+                    pass  # full send buffer: a client that does not read, not gone
+                except OSError:
+                    return False
+            entry[4] = time.monotonic()
+            return True
+
+    @staticmethod
+    def _reset(sock) -> bool:
+        """Whether the connection was reset (a write answered by RST)."""
+        if sock.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR):
+            return True
+        try:
+            sock.recv(1, socket.MSG_PEEK | getattr(socket, "MSG_DONTWAIT", 0))
+        except (BlockingIOError, InterruptedError):
+            return False
+        return False
+
+    def _watch(self) -> None:
+        from core.posix_compat import wait_io
+
+        while True:
+            time.sleep(0.1)
+            with self._lock:
+                calls = [(key, list(entry)) for key, entry in self._calls.items()]
+                if not calls:
+                    self._thread = None
+                    return
+            now = time.monotonic()
+            for key, (sock, cancels, request_id, http11, probed) in calls:
+                gone = False
+                try:
+                    if probed is None:
+                        readable, _ = wait_io([sock], timeout=0)
+                        if readable and sock.recv(1, socket.MSG_PEEK) == b"":
+                            gone = not self._probe(key, sock)
+                    elif now - probed >= self.PROBE_WAIT:
+                        if self._reset(sock):
+                            gone = True
+                        elif http11 and now - probed >= self.REPROBE_SECONDS:
+                            gone = not self._probe(key, sock)  # half-closed: ask again
+                except (BlockingIOError, InterruptedError):
+                    pass
+                except (OSError, ValueError):
+                    gone = True  # a reset: the client closed
+                if gone:
+                    log.info("mcp-http: the client of call %r hung up; cancelling it",
+                             request_id)
+                    cancels.cancel(request_id)
+                    self.discard(key)
+
+
+def min_body_rate() -> int:
+    """The slowest a request body may arrive past its first seconds:
+    AXROSS_MCP_MIN_BODY_RATE (bytes/s, 0 switches the check off) or
+    MIN_BODY_RATE."""
+    raw = os.environ.get("AXROSS_MCP_MIN_BODY_RATE", "").strip()
+    if not raw:
+        return MIN_BODY_RATE
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return MIN_BODY_RATE
+
+
+#: A body arriving faster than this many times the minimum rate is never
+#: the one a fresh request replaces (a healthy upload is not cut).
+HEALTHY_BODY_RATE_FACTOR = 4
+
+
+def _thread_room() -> int | None:
+    """How many more threads this process can start, where a limit says:
+    RLIMIT_NPROC (counted per user - a rough bound), the cgroup's
+    pids.max, the address space (RLIMIT_AS) over the stack each thread
+    reserves. None where nothing says."""
+    room = []
+    try:
+        import resource
+
+        nproc = resource.getrlimit(resource.RLIMIT_NPROC)[0]
+        if nproc not in (-1, resource.RLIM_INFINITY) and nproc > 0:
+            room.append(int(nproc) - threading.active_count())
+        space = resource.getrlimit(resource.RLIMIT_AS)[0]
+        if space not in (-1, resource.RLIM_INFINITY) and space > 0:
+            stack = threading.stack_size() or 8 << 20
+            # Each thread reserves its stack and, with glibc, a malloc
+            # arena of up to 64 MiB; three quarters of the address space
+            # for them (an `ulimit -v` of 36 GB let ~490 start).
+            room.append(int(space) * 3 // 4 // (stack + (64 << 20)))
+    except (ImportError, OSError, ValueError, AttributeError):
+        pass
+    try:
+        raw = Path("/sys/fs/cgroup/pids.max").read_text(encoding="ascii").strip()
+        current = Path("/sys/fs/cgroup/pids.current").read_text(encoding="ascii").strip()
+        if raw.isdigit() and current.isdigit():
+            room.append(int(raw) - int(current))
+    except OSError:
+        pass
+    return min(room) if room else None
+
+
+def connection_cap() -> int:
+    """MAX_CONNECTIONS, or less when the process's file-descriptor limit
+    leaves no room for it: half of what remains after FD_HEADROOM (a
+    connection's socket, and what its call opens). 2048 connections at a
+    soft limit of 1024 made /health time out and tools fail with EMFILE."""
+    try:
+        import resource
+
+        soft, _hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    except (ImportError, OSError, ValueError):
+        return MAX_CONNECTIONS
+    cap = MAX_CONNECTIONS
+    if soft not in (-1, getattr(__import__("resource"), "RLIM_INFINITY", -1)) and soft > 0:
+        cap = min(cap, max(8, (int(soft) - FD_HEADROOM) // 2))
+    # Threads too: where fewer can start than the fd limit allows, the
+    # table never filled and nobody was pushed out (ulimit -v: ~490).
+    room = _thread_room()
+    if room is not None:
+        cap = min(cap, max(8, room * 3 // 4))
+    return cap
+
+
+class _BodySlots:
+    """Bodies being read, per client (see MAX_SLOW_BODIES_PER_CLIENT).
+    Full, a new body takes the place of the client's slowest one that has
+    been arriving for a second or more (its connection is shut): a fresh
+    request is not refused because trickling bodies hold every slot."""
+
+    def __init__(self) -> None:
+        self._active: dict[str, dict] = {}  # client -> {handler: started}
+        self._lock = threading.Lock()
+
+    def enter(self, client: str, handler) -> bool:
+        with self._lock:
+            mine = self._active.setdefault(client, {})
+            if len(mine) >= MAX_SLOW_BODIES_PER_CLIENT:
+                now = time.monotonic()
+                floor = min_body_rate() * HEALTHY_BODY_RATE_FACTOR
+                old = [(rate, h) for rate, h in
+                       ((getattr(h, "_body_got", 0) / max(now - t, 1e-3), h)
+                        for h, t in mine.items() if now - t >= 1.0)
+                       if rate < floor]
+                if not old:
+                    return False
+                _rate, victim = min(old, key=lambda pair: pair[0])
+                mine.pop(victim, None)
+                try:
+                    victim.connection.shutdown(socket.SHUT_RDWR)
+                except (OSError, ValueError, AttributeError):
+                    pass
+            mine[handler] = time.monotonic()
+            return True
+
+    def leave(self, client: str, handler) -> None:
+        with self._lock:
+            mine = self._active.get(client)
+            if mine is not None:
+                mine.pop(handler, None)
+                if not mine:
+                    self._active.pop(client, None)
+
+
+#: How far below the open connections the cap drops when a thread fails to
+#: start (see _ConnectionTable.thread_failed), the least it drops to, and
+#: after how many thread starts in a row it rises by that step again.
+THREAD_FAILURE_HEADROOM = 16
+CAP_FLOOR = 8
+CAP_RECOVERY_STARTS = 32
+#: An address is preferred for the victim only with at least this many
+#: connections still sending (and twice the median), each at least
+#: BUSY_MIN_AGE_SECONDS old.
+BUSY_GROUP_MIN = 3
+BUSY_MIN_AGE_SECONDS = 1.0
+
+
+def _address_group(ip: str) -> str:
+    """The address a connection counts against: an IPv6 address's /64 (one
+    host holds a whole /64), an IPv4 address itself."""
+    try:
+        address = ipaddress.ip_address(ip)
+    except ValueError:
+        return ip
+    if address.version == 6:
+        if address.ipv4_mapped is not None:
+            return str(address.ipv4_mapped)
+        return str(ipaddress.ip_network(f"{address}/64", strict=False))
+    return str(address)
+
+
+#: How many of the oldest connections still sending a newcomer looks at.
+VICTIM_SAMPLE = 32
+#: A connection still sending its request is judged by what it has sent
+#: once it is this old (see _ConnectionTable._oldest_reading_locked).
+VICTIM_MIN_AGE_SECONDS = 0.2
+
+
+def _tcp_info(sock) -> bytes | None:
+    option = getattr(socket, "TCP_INFO", None)
+    if option is None:
+        return None
+    try:
+        info = sock.getsockopt(socket.IPPROTO_TCP, option, 256)
+    except (OSError, ValueError, AttributeError):
+        return None
+    return info if len(info) >= 136 else None
+
+
+def _progress(sock) -> tuple[int | None, int | None]:
+    """(:func:`_silence_ms`, :func:`_bytes_received`) from one TCP_INFO."""
+    import struct
+
+    info = _tcp_info(sock)
+    if info is None:
+        return _silence_ms(sock), _bytes_received(sock)
+    return struct.unpack_from("I", info, 52)[0], struct.unpack_from("Q", info, 128)[0]
+
+
+def _silence_ms(sock) -> int | None:
+    """Milliseconds since the kernel last received data on *sock* (Linux
+    TCP_INFO's tcpi_last_data_recv), None where it cannot tell."""
+    import struct
+
+    info = _tcp_info(sock)
+    return struct.unpack_from("I", info, 52)[0] if info is not None else None
+
+
+def _bytes_received(sock) -> int | None:
+    """Bytes the kernel received on *sock* so far (Linux TCP_INFO's
+    tcpi_bytes_received), None where it cannot tell."""
+    option = getattr(socket, "TCP_INFO", None)
+    if option is None:
+        return None
+    try:
+        import struct
+
+        info = sock.getsockopt(socket.IPPROTO_TCP, option, 256)
+        if len(info) < 136:
+            return None
+        return struct.unpack_from("Q", info, 128)[0]
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+class _ConnectionTable:
+    """The connections being served, and since when each is still sending
+    its request. Full, a new connection makes room by closing the oldest one
+    still sending (an attacker that reconnects without end held every slot
+    and locked the token holder out); off loopback one address holds at
+    most *per_ip* of them the same way."""
+
+    def __init__(self, max_connections: int | None = None, per_ip: int | None = None) -> None:
+        self._max = max_connections if max_connections is not None else MAX_CONNECTIONS
+        self._per_ip = per_ip if per_ip is not None else MAX_CONNECTIONS_PER_IP
+        self._base = self._max
+        self._open: dict = {}  # socket -> [address group, reading since (monotonic) or None]
+        # Connections that have shown the token or certificate (not a
+        # GET /health): never pushed out. HTTP/1.0: one request each.
+        self._trusted: set = set()
+        self._started = 0
+        self._lock = threading.Lock()
+
+    def _oldest_reading_locked(self, ip: str | None = None):
+        """The connection a newcomer replaces, of those still sending their
+        request (of *ip*, when given) and not authenticated: of the oldest
+        ones at least VICTIM_MIN_AGE_SECONDS old, the one silent longest,
+        then with the fewest bytes (a trickler's one byte - not a TLS
+        handshake that takes a few round trips behind a slow link). None
+        that old (the table turns over faster than that): not simply the
+        oldest - a slow handshake - but the oldest of the address holding
+        the most."""
+        reading = [(since, sock) for sock, (owner, since) in self._open.items()
+                   if since is not None and sock not in self._trusted
+                   and (ip is None or owner == ip)]
+        if not reading:
+            return None
+        now = time.monotonic()
+        pool = reading
+        if ip is None:
+            # From an address (an IPv6 /64) that clearly holds more of them
+            # first - three or more and twice the median of the other
+            # addresses: attackers sending more bytes than a slow handshake
+            # made that handshake the one replaced every time. Only
+            # connections at least BUSY_MIN_AGE_SECONDS old count: one
+            # client's parallel calls (one connection each) do not make
+            # its address the busy one. Equally busy addresses go in
+            # together (none loses for holding the oldest connection).
+            counts: dict = {}
+            for since, sock in reading:
+                if now - since >= BUSY_MIN_AGE_SECONDS:
+                    owner = self._open[sock][0]
+                    counts[owner] = counts.get(owner, 0) + 1
+            if counts:
+                ordered = sorted(counts.values())
+                top = ordered[-1]
+                others = ordered[:-1]
+                median = others[len(others) // 2] if others else 0
+                if top >= BUSY_GROUP_MIN and top >= 2 * median:
+                    busiest = {owner for owner, n in counts.items() if n == top}
+                    pool = [(since, sock) for since, sock in reading
+                            if self._open[sock][0] in busiest]
+        settled = []
+        # The oldest few only: the kernel is asked about each, and the
+        # accept loop must keep up with a flood. (A busy address's pool
+        # always holds some old enough.)
+        import heapq
+
+        for since, sock in heapq.nsmallest(VICTIM_SAMPLE, pool, key=lambda pair: pair[0]):
+            if now - since < VICTIM_MIN_AGE_SECONDS:
+                continue  # too young to judge: its first round trip may be on the way
+            # Silent longest first (a burst, then a stall - not a handshake
+            # that keeps receiving its next record), then fewest bytes.
+            silence, got = _progress(sock)
+            settled.append((-(silence if silence is not None else 0),
+                            got if got is not None else 0, since, sock))
+        if settled:
+            return min(settled, key=lambda row: row[:3])[3]
+        # None old enough to judge (round 7's rule): the address holding the
+        # most - of equally many, the one with the newest connection, not
+        # the one holding the oldest (a slow handshake's) - and its oldest.
+        held: dict = {}
+        for since, sock in reading:
+            owner = self._open[sock][0]
+            count, newest = held.get(owner, (0, since))
+            held[owner] = (count + 1, max(newest, since))
+        group = max(held, key=held.get)
+        return min((pair for pair in reading if self._open[pair[1]][0] == group),
+                   key=lambda pair: pair[0])[1]
+
+    def _evict_locked(self, sock) -> None:
+        self._open.pop(sock, None)
+        self._trusted.discard(sock)
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except (OSError, ValueError):
+            pass
+
+    def admit(self, sock, ip: str) -> bool:
+        """Room for *sock* from *ip* (True), or not (False: close it)."""
+        with self._lock:
+            if not _is_loopback(ip):
+                group = _address_group(ip)
+                mine = sum(1 for owner, _since in self._open.values() if owner == group)
+                if mine >= self._per_ip:
+                    victim = self._oldest_reading_locked(group)
+                    if victim is None:
+                        return False
+                    self._evict_locked(victim)
+            if len(self._open) >= self._max:
+                victim = self._oldest_reading_locked()
+                if victim is None:
+                    return False
+                self._evict_locked(victim)
+            # The address group (an IPv6 /64), worked out once.
+            self._open[sock] = [_address_group(ip), time.monotonic()]
+            return True
+
+    def thread_failed(self, sock) -> None:
+        """*sock*'s thread could not start (a thread limit below the cap):
+        the table counts as full from now on - the cap drops to what is
+        open - and one connection still sending makes room for the next."""
+        with self._lock:
+            self._open.pop(sock, None)
+            # Some headroom below what is open (the threads of the
+            # connections pushed out take a moment to end), never below
+            # CAP_FLOOR; it comes back as threads start again.
+            self._max = max(CAP_FLOOR, min(self._max, len(self._open) - THREAD_FAILURE_HEADROOM))
+            self._started = 0
+            while len(self._open) > self._max:
+                victim = self._oldest_reading_locked()
+                if victim is None:
+                    break
+                self._evict_locked(victim)
+            log.warning("mcp-http: no thread could start; the connection cap is now %d",
+                        self._max)
+
+    def thread_started(self) -> None:
+        """A connection's thread started: after CAP_RECOVERY_STARTS of them
+        in a row a lowered cap rises by THREAD_FAILURE_HEADROOM again."""
+        with self._lock:
+            if self._max >= self._base:
+                return
+            self._started += 1
+            if self._started >= CAP_RECOVERY_STARTS:
+                self._started = 0
+                self._max = min(self._base, self._max + THREAD_FAILURE_HEADROOM)
+
+    def distrust(self, sock) -> None:
+        """*sock*'s request was refused and it is closing: it may be pushed
+        out again (a refused trickler must not keep a slot)."""
+        with self._lock:
+            self._trusted.discard(sock)
+            entry = self._open.get(sock)
+            if entry is not None:
+                entry[1] = time.monotonic()
+
+    def authenticated(self, sock) -> None:
+        """*sock* showed the token or certificate: it has its request, and is
+        never pushed out from now on (also while its body arrives)."""
+        with self._lock:
+            entry = self._open.get(sock)
+            if entry is not None:
+                entry[1] = None
+                self._trusted.add(sock)
+
+    def reading(self, sock, still: bool) -> None:
+        """*sock* is still sending its request, or has it."""
+        with self._lock:
+            entry = self._open.get(sock)
+            if entry is not None:
+                entry[1] = time.monotonic() if still else None
+
+    def release(self, sock) -> None:
+        with self._lock:
+            self._open.pop(sock, None)
+            self._trusted.discard(sock)
+
+
 class _ThreadingServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     """One thread per request. MCP tool calls may block on backend IO
     (read_file on a 4 MiB blob over SFTP, walk on a slow S3 prefix);
@@ -1097,6 +2135,59 @@ class _ThreadingServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
     daemon_threads = True
     allow_reuse_address = True
+    # listen() backlog: the stdlib's 5 refused connections under a burst.
+    request_queue_size = 128
+
+    def _parts(self) -> None:
+        if self.__dict__.get("read_deadlines") is None:
+            self.read_deadlines = _ReadDeadlines()
+            self.hangups = _HangupWatch()
+            self.connections = _ConnectionTable(max_connections=connection_cap())
+            self.bodies = _BodySlots()
+
+    def process_request(self, request, client_address) -> None:
+        """A thread per connection - each reads its own request, so one
+        that blocks holds itself only - as _ConnectionTable admits it;
+        turned away, the connection is closed unanswered (no thread)."""
+        self._parts()
+        ip = client_address[0] if client_address else "?"
+        if not self.connections.admit(request, ip):
+            log.warning("mcp-http: no room for a connection from %s (each one has shown "
+                        "its token)", ip)
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+            self.connections.thread_started()
+        except RuntimeError as exc:
+            # "can't start new thread": fewer threads than the cap allows.
+            log.warning("mcp-http: a connection from %s got no thread: %s", ip, exc)
+            self.connections.thread_failed(request)
+            self.shutdown_request(request)
+        except BaseException:
+            self.connections.release(request)
+            raise
+
+    def process_request_thread(self, request, client_address) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            table = self.__dict__.get("connections")
+            if table is not None:
+                table.release(request)
+
+    def handle_error(self, request, client_address) -> None:
+        """A client that went away (reset, broken pipe, a TLS handshake
+        that failed) is one log line, not a traceback on stderr."""
+        import sys as _sys
+
+        exc = _sys.exc_info()[1]
+        if isinstance(exc, (ConnectionError, ssl.SSLError, TimeoutError, socket.timeout)):
+            log.info("mcp-http %s: connection ended: %s", client_address[0] if
+                     client_address else "?", exc)
+            return
+        log.exception("mcp-http %s: request failed", client_address[0] if
+                      client_address else "?")
 
 
 def _build_handler_class(
@@ -1129,6 +2220,7 @@ def _build_handler_class(
     _Bound._http_unauth_limiter = http_unauth_limiter
     _Bound._tasks = tasks
     _Bound._local_only = local_only
+    _Bound._require_client_cert = not local_only
     _Bound._auth_token = auth_token
     return _Bound
 
@@ -1186,6 +2278,8 @@ def build_server(config: HTTPServerConfig) -> _ThreadingServer:
         log_forwarder=log_forwarder,
         rate_burst=rate_burst,
         rate_refill_per_sec=rate_refill,
+        # Plain HTTP is served on loopback only (check_config).
+        per_client_cap=config.tls_enabled(),
     )
     http_ip_limiter = (
         _PerIPRateLimiter(
@@ -1206,6 +2300,7 @@ def build_server(config: HTTPServerConfig) -> _ThreadingServer:
     # Shared task registry: tasks/start + tasks/status + tasks/cancel +
     # tasks/list. The dispatcher scopes tasks by session id internally.
     tasks = _mcp._TaskRegistry()
+    sessions.tasks = tasks
     handler_cls = _build_handler_class(
         tools,
         resources=resources,
@@ -1258,18 +2353,40 @@ def _token_directory() -> Path:
     return Path.home() / ".config" / "axross"
 
 
-def publish_token(token: str, port: int, directory: Path | None = None) -> Path:
-    """Write *token* to ``mcp-http-<port>.token`` (mode 0600) in a 0700
+def token_file_name(port: int, host: str | None = None) -> str:
+    """``mcp-http-<host>-<port>.token`` (``mcp-http-<port>.token`` without a
+    host): two servers on one port number but different addresses do not
+    share - and overwrite - one file."""
+    if not host:
+        return f"mcp-http-{int(port)}.token"
+    safe = re.sub(r"[^A-Za-z0-9.-]", "_", host.strip("[]"))
+    return f"mcp-http-{safe}-{int(port)}.token"
+
+
+def withdraw_token(path: Path) -> None:
+    """Remove a token file publish_token wrote (the server stopped)."""
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def publish_token(token: str, port: int, directory: Path | None = None,
+                  host: str | None = None) -> Path:
+    """Write *token* to :func:`token_file_name` (mode 0600) in a 0700
     folder for the client to read; returns the file. An existing file or
-    a symlink in its place is replaced, never written through."""
+    a symlink in its place is replaced, never written through. Call it
+    only once the server is bound: a second server on a busy port
+    overwrote the running one's token before its bind failed."""
     folder = Path(directory) if directory is not None else _token_directory()
     folder.mkdir(mode=0o700, parents=True, exist_ok=True)
     try:
         os.chmod(folder, 0o700)
     except OSError as exc:  # not ours to change: the file itself stays 0600
         log.warning("MCP token folder %s keeps its mode: %s", folder, exc)
-    path = folder / f"mcp-http-{int(port)}.token"
-    tmp = folder / f".mcp-http-{int(port)}.token.{secrets.token_hex(6)}"
+    name = token_file_name(port, host)
+    path = folder / name
+    tmp = folder / f".{name}.{secrets.token_hex(6)}"
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(tmp, flags, 0o600)
     try:
@@ -1285,14 +2402,47 @@ def publish_token(token: str, port: int, directory: Path | None = None) -> Path:
     return path
 
 
-def serve_http(config: HTTPServerConfig) -> None:
-    """Blocking HTTP serve loop. Ctrl+C exits cleanly."""
+def shutdown_sessions(srv) -> None:
+    """End every session of *srv* as DELETE would - their calls and tasks
+    are cancelled, their profiles closed - and give the task workers
+    SHUTDOWN_TASK_WAIT_SECONDS to stop (as stdio does at its end)."""
+    handler = getattr(srv, "RequestHandlerClass", None)
+    sessions = getattr(handler, "_sessions", None)
+    if sessions is None:
+        return
+    tasks = sessions.tasks
+    workers = [t.thread for t in tasks.list_all() if t.status == "running"] if tasks else []
+    with sessions._lock:
+        everyone = list(sessions._sessions.values())
+        sessions._sessions.clear()
+    for sess in everyone:
+        sessions._retire(sess)
+    deadline = time.monotonic() + _mcp.SHUTDOWN_TASK_WAIT_SECONDS
+    for worker in workers:
+        if worker is not None:
+            worker.join(max(0.0, deadline - time.monotonic()))
+
+
+def serve_http(config: HTTPServerConfig, *, announce=None) -> None:
+    """Blocking HTTP serve loop. Ctrl+C (and SIGTERM, which is turned
+    into the same exit) ends it cleanly. *announce(server)* runs once the
+    socket is bound - publish the token there, never before - and may
+    return a callable that undoes it when the server stops."""
     srv = build_server(config)
+    undo = None
+    guard = _mcp.sigterm_as_interrupt().__enter__()
     try:
+        if announce is not None:
+            undo = announce(srv)
         srv.serve_forever()
     except KeyboardInterrupt:  # pragma: no cover — interactive path
-        log.info("MCP HTTP: SIGINT, shutting down")
+        log.info("MCP HTTP: SIGINT / SIGTERM, shutting down")
     finally:
+        guard.__exit__(None, None, None)
+        # Tasks and running calls end with the server, as on stdio.
+        shutdown_sessions(srv)
+        if callable(undo):
+            undo()
         # Detach the server-wide forwarder so repeated build_server()
         # calls in tests don't pile up handlers on the module logger.
         fwd = getattr(srv, "_mcp_log_forwarder", None)

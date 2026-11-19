@@ -46,7 +46,7 @@ SHORTCUTS: list[tuple[str, tuple[str, ...], str]] = [
     ("File operations", ("Shift+Del",), "Delete permanently (asks first; No is the default)"),
     ("File operations", ("Return",), "Open file / enter folder"),
     ("File operations", ("Alt+Return",), "Properties (size, owner, permissions)"),
-    ("File operations", ("F10",), "Context menu"),
+    ("File operations", ("F10", "Shift+F10", "Menu"), "Context menu (at the current row)"),
     ("File operations", ("Ctrl+Z",), "Undo the last operation"),
     ("Navigation", ("Ctrl+R",), "Refresh"),
     ("Navigation", ("Backspace",), "Parent folder"),

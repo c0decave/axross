@@ -81,8 +81,11 @@ _BIDI_OVERRIDES = frozenset(
 # ASCII control chars we reject. TAB (0x09), LF (0x0a), CR (0x0d) are
 # tolerated because some backends put them in fake metadata; we can
 # deal with them elsewhere. DEL (0x7f) rejected.
-_BAD_CONTROLS = frozenset(chr(c) for c in range(32) if c not in (9, 10, 13))
-_BAD_CONTROLS = _BAD_CONTROLS | {chr(0x7F)}
+# A tab passes; CR and LF do not (review B: a name with a CR wrote a line of
+# its own into the log, and no transfer destination wants one), nor the C1
+# controls (U+0085 is a line break too, U+009B a CSI).
+_BAD_CONTROLS = frozenset(chr(c) for c in range(32) if c != 9)
+_BAD_CONTROLS = _BAD_CONTROLS | {chr(0x7F)} | {chr(c) for c in range(0x80, 0xA0)}
 
 
 class RemoteNameError(ValueError):
@@ -158,18 +161,36 @@ def is_safe_remote_name(
     return True
 
 
+# Characters that show nothing (or break the line) - shown as *replacement*
+# by sanitize_for_display: a zero width space makes two names look the same,
+# a line or paragraph separator starts a new line in a label, tag characters
+# carry hidden ASCII. Not here, on purpose: the directional marks LRM, RLM
+# and ALM (U+200E, U+200F, U+061C) - right-to-left names use them to place
+# digits and punctuation, and unlike the overrides they cannot reverse a
+# name -, ZWNJ and ZWJ (U+200C, U+200D: Persian, Indic scripts, emoji) and
+# the variation selectors (emoji).
+_INVISIBLE = frozenset(
+    [chr(c) for c in (0x00AD, 0x180E, 0x200B, 0x2028, 0x2029, 0x3164, 0xFEFF, 0xFFA0)]
+    + [chr(c) for c in range(0x2060, 0x2065)]
+    + [chr(c) for c in range(0x206A, 0x2070)]
+    + [chr(c) for c in range(0xE0000, 0xE0080)]
+)
+_DISPLAY_BAD = _BAD_CONTROLS | _BIDI_OVERRIDES | _INVISIBLE | {"\x00"}
+
+
 def sanitize_for_display(name: str, *, replacement: str = "\ufffd") -> str:
     """Return a version safe to render in the UI.
 
-    NUL bytes, ASCII controls and bidi overrides are replaced with
-    *replacement* (U+FFFD by default). The result is STILL NOT safe
-    to pass to a filesystem op — that needs :func:`validate_remote_name`.
-    This is strictly a display filter.
+    NUL bytes, ASCII controls, bidi overrides and the invisible characters
+    of :data:`_INVISIBLE` are replaced with *replacement* (U+FFFD by
+    default). The result is STILL NOT safe to pass to a filesystem op —
+    that needs :func:`validate_remote_name`. This is strictly a display
+    filter.
     """
     if not isinstance(name, str):
         return ""
-    bad = _BAD_CONTROLS | _BIDI_OVERRIDES | {"\x00"}
-    if not (set(name) & bad):
+    bad = _DISPLAY_BAD
+    if bad.isdisjoint(name):
         return name
     return "".join(replacement if c in bad else c for c in name)
 

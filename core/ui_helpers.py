@@ -27,6 +27,7 @@ Examples (REPL or --script)::
 from __future__ import annotations
 
 import logging
+import math
 import os
 import sys
 import threading
@@ -221,6 +222,22 @@ def message(text: str, *, title: str = "axross", level: Level = "info") -> None:
     if not _qt_is_running():
         print(f"[axross] {level.upper()}: {title} — {text}", flush=True)
         return
+    if _on_gui_thread():
+        _show_message(text, title, level)
+        return
+    # A worker (an extension's background work, an agent tool handler, a
+    # thread a REPL user started): widgets only on the GUI thread. The
+    # worker waits there until the box is answered, as the call does on
+    # the GUI thread - never posting and waiting from the GUI thread
+    # itself, which would wait for itself.
+    answered = threading.Event()
+    _gui_helper().post_message(text, title, level, answered)
+    while not answered.wait(0.1):
+        if not _gui_still_answers():
+            break
+
+
+def _show_message(text: str, title: str, level: str) -> None:
     from PyQt6.QtWidgets import QMessageBox
 
     box = QMessageBox()
@@ -231,6 +248,73 @@ def message(text: str, *, title: str = "axross", level: Level = "info") -> None:
         box.setIconPixmap(pm)
     _apply_app_glyph(box)
     box.exec()
+
+
+def _on_gui_thread() -> bool:
+    """True on the thread of the running Q(Core)Application."""
+    from PyQt6.QtCore import QCoreApplication, QThread
+
+    app = QCoreApplication.instance()
+    return app is None or QThread.currentThread() == app.thread()
+
+
+def _gui_still_answers() -> bool:
+    """False once the application is gone or quitting: a worker waiting
+    for a box stops waiting then."""
+    from PyQt6.QtCore import QCoreApplication
+
+    return QCoreApplication.instance() is not None and not QCoreApplication.closingDown()
+
+
+_GUI_HELPER = None
+_GUI_HELPER_LOCK = threading.Lock()
+
+
+def _gui_helper():
+    """The object living on the GUI thread that shows what a worker asked
+    for (toast, message), through :class:`core.thread_relay.GuiCall`."""
+    global _GUI_HELPER
+    with _GUI_HELPER_LOCK:
+        if _GUI_HELPER is None:
+            _GUI_HELPER = _make_gui_helper()
+        return _GUI_HELPER
+
+
+def _make_gui_helper():
+    from PyQt6.QtCore import QCoreApplication, QObject
+
+    try:
+        from core.thread_relay import GuiCall
+    except ImportError:  # the headless exports carry no relay (and no Qt)
+        GuiCall = None
+    if GuiCall is None:
+        raise RuntimeError("this build has no GUI relay: toast() / message() need axross's GUI")
+
+    class _GuiHelper(QObject):
+        def __init__(self) -> None:
+            super().__init__()
+            self.post_toast = GuiCall(self._toast)
+            self.post_message = GuiCall(self._message)
+
+        def _toast(self, text: str, level: str, timeout: float) -> None:
+            try:
+                _show_toast(text, level=level, timeout=timeout)
+            except Exception:  # noqa: BLE001 - a toast must not take the GUI down
+                log.exception("Could not show a toast")
+
+        def _message(self, text: str, title: str, level: str, answered) -> None:
+            try:
+                _show_message(text, title, level)
+            except Exception:  # noqa: BLE001 - the worker must not wait for ever
+                log.exception("Could not show a message")
+            finally:
+                answered.set()
+
+    helper = _GuiHelper()
+    app = QCoreApplication.instance()
+    if app is not None and helper.thread() != app.thread():
+        helper.moveToThread(app.thread())
+    return helper
 
 
 def confirm(
@@ -297,10 +381,32 @@ def toast(text: str, *, level: Level = "info", timeout: float = 4.0) -> None:
     """
     if level not in LEVELS:
         level = "info"
+    timeout = _toast_timeout(timeout)
     if not _qt_is_running():
         print(f"[axross] {level.upper()}: {text}", flush=True)
         return
-    _show_toast(text, level=level, timeout=timeout)
+    if _on_gui_thread():
+        _show_toast(text, level=level, timeout=timeout)
+    else:  # a worker: the widget is built on the GUI thread, later
+        _gui_helper().post_toast(text, level, timeout)
+
+
+#: A toast stays at least this long and at most this long (seconds).
+TOAST_MIN_SECONDS = 0.5
+TOAST_MAX_SECONDS = 3600.0
+TOAST_DEFAULT_SECONDS = 4.0
+
+
+def _toast_timeout(timeout) -> float:
+    """*timeout* in seconds, checked before a toast is shown: QTimer takes
+    no more than 2**31 ms and no string - a toast already on the screen
+    then stayed there for good. TypeError for no number; NaN is the
+    default; held to TOAST_MIN_SECONDS .. TOAST_MAX_SECONDS."""
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+        raise TypeError(f"toast timeout must be a number of seconds, got {timeout!r}")
+    if math.isnan(timeout):
+        return TOAST_DEFAULT_SECONDS
+    return min(TOAST_MAX_SECONDS, max(TOAST_MIN_SECONDS, float(timeout)))
 
 
 def _apply_app_glyph(box) -> None:
@@ -333,6 +439,7 @@ _TOAST_MAX_STACK = 6
 
 
 def _show_toast(text: str, *, level: str, timeout: float) -> None:
+    from PyQt6 import sip
     from PyQt6.QtCore import Qt, QTimer
     from PyQt6.QtGui import QFont
     from PyQt6.QtWidgets import (
@@ -389,6 +496,8 @@ def _show_toast(text: str, *, level: str, timeout: float) -> None:
 
     toast_widget.adjustSize()
     with _toasts_lock:
+        # A toast whose window was closed first went with it.
+        _active_toasts[:] = [t for t in _active_toasts if not sip.isdeleted(t)]
         # Refuse to grow the stack past _TOAST_MAX_STACK — drop the
         # oldest so a runaway loop can't blanket the screen.
         while len(_active_toasts) >= _TOAST_MAX_STACK:
@@ -404,19 +513,23 @@ def _show_toast(text: str, *, level: str, timeout: float) -> None:
     toast_widget.show()
 
     def _dismiss() -> None:
+        # The window the toast sits on may have been closed (and deleted)
+        # before the timeout, the toast with it: nothing left to close.
         with _toasts_lock:
             try:
                 _active_toasts.remove(toast_widget)
             except ValueError:
                 pass
+            _active_toasts[:] = [t for t in _active_toasts if not sip.isdeleted(t)]
             survivors = list(_active_toasts)
-        toast_widget.close()
-        toast_widget.deleteLater()
+        if not sip.isdeleted(toast_widget):
+            toast_widget.close()
+            toast_widget.deleteLater()
         # Re-layout the remaining toasts so the gaps close up.
         for i, w in enumerate(survivors):
             _position_toast(w, parent, slot=i)
 
-    QTimer.singleShot(int(max(0.5, timeout) * 1000), _dismiss)
+    QTimer.singleShot(int(_toast_timeout(timeout) * 1000), _dismiss)
 
 
 def _position_toast(widget, parent, slot: int | None = None) -> None:
@@ -424,8 +537,13 @@ def _position_toast(widget, parent, slot: int | None = None) -> None:
     parent). Stacks vertically with 8 px gaps. Y is clamped to the
     visible region so a deep stack can't push toasts above the
     parent window."""
+    from PyQt6 import sip
     from PyQt6.QtWidgets import QApplication
 
+    if sip.isdeleted(widget):
+        return
+    if parent is not None and sip.isdeleted(parent):
+        parent = None
     if slot is None:
         with _toasts_lock:
             slot = len(_active_toasts)

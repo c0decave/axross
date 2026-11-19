@@ -21,7 +21,7 @@ from PyQt6.QtCore import (
     QUrl,
     pyqtSignal,
 )
-from PyQt6.QtGui import QDrag, QKeySequence, QPainter, QPixmap
+from PyQt6.QtGui import QContextMenuEvent, QDrag, QKeySequence, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -55,12 +55,13 @@ from models.file_table_model import (
 )
 from ui.column_fit import detach_header_selection
 from ui.format_utils import backend_label
+from core.remote_name import sanitize_for_display
 from ui.plain_text import as_written
 from ui.pane_drag import PANE_MIME_TYPE, DraggableHeader, PaneDropZones
 from ui.scan_job import ScanJob
 
 
-def _is_safe_leaf_name(name: str) -> bool:
+def _is_safe_leaf_name(name: str, backend=None) -> bool:
     """Reject filenames / link names that carry a path-traversal
     component, a NUL byte, or empty strings. Used by the
     Create-Symlink / Create-Hardlink / Rename dialogs to stop a
@@ -71,11 +72,19 @@ def _is_safe_leaf_name(name: str) -> bool:
     to refuse anything its own permissions check would reject anyway.
     But refusing ``..`` upfront means the user sees a clean dialog
     error instead of an OSError after a partial create.
+
+    With *backend*, its own name rules apply as for a transfer
+    (core.path_policy.BackendPathPolicy): a backslash is an ordinary
+    character in a local name on POSIX - a copy kept "a\\b", Rename and
+    New refused it.
     """
     try:
-        from core.path_policy import safe_leaf
+        from core.path_policy import BackendPathPolicy, safe_leaf
 
-        safe_leaf(name)
+        if backend is None:
+            safe_leaf(name)
+        else:
+            BackendPathPolicy.for_backend(backend).validate_leaf(name)
     except ValueError:
         return False
     return True
@@ -258,13 +267,83 @@ def skipped_links_note(result, limit: int = 10) -> str:
     )
 
 
-#: Never handed to the desktop's default application from an archive: a
-#: launcher or script there may run instead of being shown.
+#: Never handed to the desktop's default application from an archive, not
+#: even when the user asks (Open with the System Application…): a launcher
+#: or script there may run instead of being shown.
 _NO_SYSTEM_APP_EXTENSIONS = frozenset({
     ".desktop", ".sh", ".bash", ".zsh", ".run", ".bin", ".appimage", ".exe", ".msi",
     ".bat", ".cmd", ".com", ".ps1", ".vbs", ".jar", ".py", ".pl", ".rb", ".command",
     ".app", ".deb", ".rpm", ".flatpakref",
 })
+
+
+#: What Open hands to the desktop's default application from an archive -
+#: by the content's type (core.file_type), never the name alone (review B:
+#: a PE without an extension, a .scr or a .lnk went to xdg-open): documents,
+#: pictures, sound and video. Office files with macros are not among them.
+_SYSTEM_APP_PREFIXES = ("image/", "audio/", "video/")
+_SYSTEM_APP_TYPES = frozenset({
+    "application/pdf", "application/epub+zip", "application/rtf",
+    "application/msword", "application/vnd.ms-excel", "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.oasis.opendocument.text", "application/vnd.oasis.opendocument.spreadsheet",
+    "application/vnd.oasis.opendocument.presentation",
+    "application/vnd.oasis.opendocument.graphics",
+})
+#: Never by their content alone: scripts a viewer may run (SVG), and the
+#: containers whose type only the name tells (ZIP, OLE).
+_SYSTEM_APP_NEVER = frozenset({"image/svg+xml", "image/svg+xml-compressed"})
+_SYSTEM_APP_CONTAINERS = frozenset({"application/zip", "application/x-ole-storage"})
+
+
+def _system_app_document(mime: str) -> bool:
+    return bool(mime) and mime not in _SYSTEM_APP_NEVER and (
+        mime in _SYSTEM_APP_TYPES or mime.startswith(_SYSTEM_APP_PREFIXES))
+
+
+def _system_app_type(path: str, name: str) -> tuple[bool, str]:
+    """(whether *path* is a document Open may hand to the desktop's default
+    application, what its content is) - by its first bytes: a recognised
+    type, or a ZIP / OLE container whose name says such a document."""
+    from core import file_type as FT
+
+    try:
+        with open(path, "rb") as handle:
+            data = handle.read(64 * 1024)
+    except OSError:
+        return False, ""
+    info = FT.identify_bytes(data, name)
+    what = info.description or info.mime or tr("unknown data")
+    if _system_app_document(info.mime) and not info.mismatch:
+        return True, what
+    if info.mime in _SYSTEM_APP_CONTAINERS and info.verdict == FT.MATCH \
+            and _system_app_document(info.extension_mime):
+        return True, what
+    return False, what
+
+
+def _ask_system_app(parent, name: str, what: str) -> bool:
+    """Whether the user wants *name* - no document axross recognises
+    (*what*) - opened by the desktop's default application anyway."""
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setWindowTitle(tr("Open with the System Application?"))
+    box.setTextFormat(Qt.TextFormat.PlainText)  # the name comes from the archive
+    from core.mcp_catalog import clean_text
+
+    box.setText(tr("{name} is no document axross recognises: {what}.").format(
+        name=clean_text(name, 120), what=clean_text(what, 120)))
+    box.setInformativeText(tr(
+        "The desktop's default application for it may run it as a program. Open it "
+        "anyway?"))
+    box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+    box.setDefaultButton(QMessageBox.StandardButton.No)
+    try:
+        return box.exec() == QMessageBox.StandardButton.Yes
+    finally:
+        box.deleteLater()
 
 
 def open_local_file_in_viewer(
@@ -282,10 +361,13 @@ def open_local_file_in_viewer(
     * text -> a tab of the window's editor (highlighting, read-only),
     * any other binary -> the desktop's default application (xdg-open on
       the extracted copy) when the security mode allows external viewers
-      and it is no launcher or script, else the hex editor.
+      and its content is a document of :data:`_SYSTEM_APP_TYPES`, else the
+      hex editor.
 
     *view* ``"hex"`` or ``"text"`` skips the choice (the archive's
-    Hex View / Text View). Returns what was opened (``"markdown"``, ``"image"``,
+    Hex View / Text View); ``"system"`` is Open with the System
+    Application… (anything but such a document only after a question).
+    Returns what was opened (``"markdown"``, ``"image"``,
     ``"media"``, ``"text"``, ``"hex"``, ``"system"``) or ``""`` when nothing
     was. A broken preview never crashes the caller.
     """
@@ -315,18 +397,17 @@ def open_local_file_in_viewer(
             return "text"
         from ui.text_editor import TextEditorDialog
 
-        dlg = TextEditorDialog(backend, path, parent=owner, read_only=read_only)
-        if dlg.loaded:
-            VW.show_independent(dlg)
-            return "text"
-        dlg.deleteLater()
-        return ""
+        dlg = TextEditorDialog(backend, path, parent=owner, read_only=read_only, background=True)
+        VW.show_independent(dlg)  # read off the GUI thread: a failed read says why and closes
+        return "text"
 
     try:
         if view == "hex":
             return hex_view()
         if view == "text":
             return text_view()
+        if view == "system":
+            return "system" if _open_with_system_app(path, name, parent=owner, ask=True) else ""
         from ui import markdown_view as MDV
 
         if MDV.is_markdown(name):
@@ -382,9 +463,12 @@ def _open_local_media(owner, path: str, name: str) -> bool:
     return True
 
 
-def _open_with_system_app(path: str, name: str) -> bool:
-    """Hand *path* to the desktop's default application (xdg-open). Not for
-    launchers and scripts, not with the execute bit (cleared first: an
+def _open_with_system_app(path: str, name: str, *, parent=None, ask: bool = False) -> bool:
+    """Hand *path* to the desktop's default application (xdg-open): a
+    document whose content is of a type on the allow-list
+    (:func:`_system_app_type`); anything else only with *ask* (Open with
+    the System Application…) and the user's yes. Never launchers and
+    scripts by name, never with the execute bit (cleared first: an
     extracted member keeps its archive mode), not when the security mode
     forbids external viewers."""
     import os as _os
@@ -399,6 +483,9 @@ def _open_with_system_app(path: str, name: str) -> bool:
         return False
     if _sys.platform.startswith("win") or _sys.platform == "darwin":
         return False  # xdg-open only; elsewhere the hex editor as before
+    document, what = _system_app_type(path, name)
+    if not document and not (ask and _ask_system_app(parent, name, what)):
+        return False
     try:
         mode = _os.lstat(path).st_mode
         if not _stat.S_ISREG(mode):
@@ -758,6 +845,16 @@ class _DragTableView(QTableView):
                 return
         super().mousePressEvent(event)
 
+    def keyboardSearch(self, search: str) -> None:  # noqa: N802 - Qt override
+        """Type-to-find looks in the names. Qt searches the current cell's
+        column: after a click in Size or Modified the letters typed were
+        compared with sizes and dates and found nothing (search review)."""
+        current = self.currentIndex()
+        if current.isValid() and current.column() != 0:
+            self.selectionModel().setCurrentIndex(
+                current.siblingAtColumn(0), QItemSelectionModel.SelectionFlag.NoUpdate)
+        super().keyboardSearch(search)
+
     def mouseMoveEvent(self, event) -> None:
         if self._band_origin is not None and event.buttons() & Qt.MouseButton.LeftButton:
             pos = event.position().toPoint()
@@ -1010,6 +1107,26 @@ _MIN_COLUMN_WIDTH = 60
 CHECKSUM_CHUNK = 1024 * 1024
 #: Seconds Mount as FUSE waits for the kernel to show the mount.
 FUSE_MOUNT_WAIT_S = 5
+
+
+def _creates_exclusively(backend) -> bool:
+    """Whether a new file on *backend* can be made with O_EXCL here: a
+    plain local folder (LocalFS's own writes, not a confined or mapped one)."""
+    private = getattr(backend, "private_writes", None)
+    try:
+        return callable(private) and bool(private())
+    except Exception:  # noqa: BLE001 - unknown: the backend's own write
+        return False
+
+
+def _streams_locally(backend) -> bool:
+    """Whether *backend*'s checksum is nothing but reading the file here
+    (LocalFS's own): then the cancellable stream hash is the checksum. A
+    backend with a checksum of its own keeps it."""
+    from core.local_fs import LocalFS
+
+    method = getattr(backend, "checksum", None)
+    return getattr(method, "__func__", None) is LocalFS.checksum
 
 
 def _stream_sha256(backend, path: str, total: int, cancelled, report) -> str | None:
@@ -1327,6 +1444,16 @@ class FilePaneWidget(QWidget):
         self._path_edit.setObjectName("axPathEdit")
         self._path_edit.setProperty("axHelpTopic", "path-bar")  # F1: ui.handbook
         self._path_edit.returnPressed.connect(self._on_path_entered)
+        # The bar keeps a path as it is (it is edited and entered as typed);
+        # one holding a bidi override or an invisible character - read
+        # "invexe.pdf" for "inv<RLO>fdp.exe" - gets a mark at its end and a
+        # tooltip naming it as the list shows it.
+        from ui.icon_provider import icon as _icon
+
+        self._path_hidden_mark = self._path_edit.addAction(
+            _icon("flag", 16, "#e67e22"), QLineEdit.ActionPosition.TrailingPosition)
+        self._path_hidden_mark.setVisible(False)
+        self._path_edit.textChanged.connect(self._mark_hidden_path_characters)
         path_bar.addWidget(self._path_edit)
 
         self._btn_refresh = QPushButton("\u21bb")
@@ -1376,7 +1503,13 @@ class FilePaneWidget(QWidget):
         self._filter_edit.setObjectName("axPaneFilter")
         self._filter_edit.setProperty("axHelpTopic", "path-bar")
         self._filter_edit.setPlaceholderText(tr("Type to filter files…"))
+        self._filter_edit.setToolTip(tr(
+            "Part of a name, or patterns like *.jpg *.png; tag:<name> shows tagged files. "
+            "Esc clears the filter; another folder starts unfiltered."))
         self._filter_edit.setClearButtonEnabled(True)
+        #: Edits of the filter text so far: a navigation clears the filter
+        #: only when nobody typed one for the folder on its way (_apply_listing).
+        self._filter_edits = 0
         self._filter_edit.textChanged.connect(self._on_filter_changed)
         filter_bar.addWidget(self._filter_edit)
 
@@ -1624,12 +1757,14 @@ class FilePaneWidget(QWidget):
             return None
 
     def _apply_listing(self, path: str, items: list, history="push", usage=_UNSET,
-                       listed_after: int = -1, keep_sizes: bool = False) -> None:
+                       listed_after: int = -1, keep_sizes: bool = False,
+                       filter_edits: int | None = None) -> None:
         """UI part of a navigation. *history* is ``"push"`` (record the path),
         ``"keep"`` (refresh: leave the history alone) or an int (back / forward:
         move to that position). *listed_after* is the watcher's last report
         when the listing was asked for (-1: unknown) - a change reported up
-        to then is in it (_on_debounce_fired)."""
+        to then is in it (_on_debounce_fired). *filter_edits*: the count of
+        filter edits when the navigation began (see _clear_filter_for)."""
         self._shown_listing_after = listed_after
         # The same folder again (F5, an operation, the watcher): the model
         # reset drops the selection, so it is taken by name and given back -
@@ -1637,6 +1772,8 @@ class FilePaneWidget(QWidget):
         same_folder = path == self._current_path
         keep = self._selection_by_name() if same_folder else None
         places = self._scroll_places() if same_folder else None
+        if not same_folder:
+            self._clear_filter_for(filter_edits)
         # Calculated folder sizes go with a reload the user asked for (F5)
         # and with another folder; a refresh of its own keeps them.
         self._model.set_items(items, keep_sizes=keep_sizes and same_folder)
@@ -1707,15 +1844,41 @@ class FilePaneWidget(QWidget):
 
         try:
             listed_after = self._watch_report
+            filter_edits = self._filter_edits
             path, items = self._fetch_listing(path)
             # Track history (skip during back/forward and refresh)
             self._apply_listing(path, items, "keep" if self._history_navigating else "push",
-                                listed_after=listed_after)
+                                listed_after=listed_after, filter_edits=filter_edits)
         except OSError as e:
             log.error("Navigation failed: %s", e)
             self._feedback(tr("Error: {error}").format(error=describe(e, path)))
+            self._path_bar_after_error()
         finally:
             self._progress_bar.hide()
+
+    def _mark_hidden_path_characters(self, text: str) -> None:
+        """Show the path bar's mark and tooltip while its text holds what
+        the list shows as U+FFFD (a control, bidi override, invisible)."""
+        hidden = sanitize_for_display(text) != text
+        tip = ""
+        if hidden:
+            from ui.plain_text import plain_tooltip
+
+            tip = plain_tooltip(tr(
+                "This path holds hidden or direction-changing characters, "
+                "shown here as \ufffd:\n{path}").format(path=text))
+        self._path_hidden_mark.setVisible(hidden)
+        self._path_hidden_mark.setToolTip(tip)
+        self._path_edit.setToolTip(tip)
+
+    def _path_bar_after_error(self) -> None:
+        """After a folder could not be opened the path bar shows the folder
+        the pane still shows - unless the path was typed there and the bar
+        still has the focus, to be corrected. Before, a path typed earlier
+        stayed in the bar through later failures: the pane listed one folder
+        and the bar named another (that may not exist)."""
+        if not self._path_edit.hasFocus():
+            self._path_edit.setText(self._current_path)
 
     # --- background loading -------------------------------------------------
     @property
@@ -1736,7 +1899,8 @@ class FilePaneWidget(QWidget):
         comes back as home, decided off the GUI thread)."""
         self._status_before = self._status.text()
         self._nav_ctx = {"path": path, "history": history, "quiet": quiet,
-                         "fallback": fallback, "keep_sizes": keep_sizes}
+                         "fallback": fallback, "keep_sizes": keep_sizes,
+                         "filter_edits": self._filter_edits}
         if not quiet:
             self._progress_bar.show()
             self._cancel_nav_btn.show()
@@ -1774,6 +1938,33 @@ class FilePaneWidget(QWidget):
             return
         self.refresh_async(quiet=quiet, keep_sizes=True)
 
+    def _refresh_selecting(self, name: str) -> None:
+        """:meth:`refresh_after_change`, then the entry *name* of this folder
+        selected and current: a renamed entry (the selection was kept by
+        its old name, gone, and the next key started at the top) or a new
+        one. Nothing is selected when the pane has gone elsewhere."""
+        folder, backend = self._current_path, self._backend
+
+        def arrived(loaded: str, ok: bool) -> None:
+            try:
+                self.navigation_finished.disconnect(arrived)
+            except (TypeError, RuntimeError):
+                pass
+            if (ok and loaded == folder and backend is self._backend
+                    and not self._shutting_down):
+                self._restore_selection({name}, name)
+                index = self._table.currentIndex()
+                if index.isValid():
+                    self._table.scrollTo(index)
+
+        self.navigation_finished.connect(arrived)
+        self.refresh_after_change()
+        if not self._nav_ctx:  # no load started (the pane is leaving): no wait
+            try:
+                self.navigation_finished.disconnect(arrived)
+            except (TypeError, RuntimeError):
+                pass
+
     def cancel_navigation(self) -> None:
         """Stop a running background load (the pane stays where it was)."""
         if not self._nav_ctx:
@@ -1807,6 +1998,7 @@ class FilePaneWidget(QWidget):
             if not ctx["quiet"]:
                 self._feedback(tr("Error: {error}").format(
                     error=describe(value, ctx["path"])))
+            self._path_bar_after_error()
             self.navigation_finished.emit(ctx["path"], False)
             return
         if value is None:  # the worker saw the cancel flag first
@@ -1814,7 +2006,8 @@ class FilePaneWidget(QWidget):
             return
         path, items, usage, listed_after = value
         self._apply_listing(path, items, ctx["history"], usage, listed_after=listed_after,
-                            keep_sizes=ctx.get("keep_sizes", False))
+                            keep_sizes=ctx.get("keep_sizes", False),
+                            filter_edits=ctx.get("filter_edits"))
         self.navigation_finished.emit(path, True)
 
     def refresh(self) -> None:
@@ -2371,8 +2564,8 @@ class FilePaneWidget(QWidget):
             return False
         cut_clipboard().cut(self, self._backend, self._current_path, paths)
         self._feedback(
-            tr("Cut {count} item(s): Paste (Ctrl+V) in a folder moves them there").format(
-                count=len(paths))
+            tr_n(len(paths), "Cut {n} item: Paste (Ctrl+V) in a folder moves it there",
+                 "Cut {n} items: Paste (Ctrl+V) in a folder moves them there")
         )
         return True
 
@@ -2621,10 +2814,9 @@ class FilePaneWidget(QWidget):
                     left_out.append(item.name)
         if left_out:
             self._feedback(
-                tr("{count} selected item(s) left out: name not usable here ({names})").format(
-                    count=len(left_out),
-                    names=", ".join(repr(n) for n in left_out[:3]),
-                )
+                tr_n(len(left_out), "{n} selected item left out: name not usable here ({names})",
+                     "{n} selected items left out: name not usable here ({names})",
+                     names=", ".join(repr(n) for n in left_out[:3]))
             )
         return entries
 
@@ -2713,8 +2905,8 @@ class FilePaneWidget(QWidget):
                 text = tr("Hidden entries shown in this folder to show {name}")
             else:
                 return ""
-            return text.format(name=name)
-        return tr("{name} is not in this folder").format(name=name)
+            return text.format(name=sanitize_for_display(name))
+        return tr("{name} is not in this folder").format(name=sanitize_for_display(name))
 
     def _wait(self, fn, text: str):
         """*fn()* - backend calls an action needs the answer of before it
@@ -3054,7 +3246,33 @@ class FilePaneWidget(QWidget):
 
     # --- Filter ---
 
+    def _clear_filter_for(self, filter_edits: int | None) -> None:
+        """Another folder is about to be shown: its listing starts
+        unfiltered. The filter text of the folder left went along before -
+        "proj" typed to find a folder showed that folder filtered by "proj",
+        often empty (search review). A filter typed while the folder was
+        loading (*filter_edits* no longer the current count) was typed for
+        it and stays. Only the proxy's state is dropped here: the model
+        reset that follows works the rows out once, unfiltered."""
+        if not self._filter_edit.text():
+            return
+        if filter_edits is not None and filter_edits != self._filter_edits:
+            return
+        self._proxy.forget_filter()
+        # Not blockSignals: the line's clear button would stay shown.
+        self._filter_cleared_quietly = True
+        try:
+            self._filter_edit.clear()
+        finally:
+            self._filter_cleared_quietly = False
+
+    #: True while _clear_filter_for empties the line (the proxy knows already).
+    _filter_cleared_quietly = False
+
     def _on_filter_changed(self, text: str) -> None:
+        if self._filter_cleared_quietly:
+            return
+        self._filter_edits += 1
         # Key column and case sensitivity are set once in _setup_ui:
         # setting them here re-filtered every row a second time per key.
         # "tag:<name>" shows the files that carry that tag (core.tags).
@@ -3069,7 +3287,7 @@ class FilePaneWidget(QWidget):
             return
         if self._proxy._tag_filter is not None:
             self._proxy.set_tag_filter(None)
-        self._proxy.setFilterFixedString(text)
+        self._proxy.set_filter_text(text)
 
     # --- Tags ---
 
@@ -3389,9 +3607,32 @@ class FilePaneWidget(QWidget):
         super().mousePressEvent(event)
 
     def _go_up(self) -> None:
-        parent = self._backend.parent(self._current_path)
-        if parent != self._current_path:
-            self.navigate_async(parent)
+        """The parent folder - Backspace, the Up button, "..": with the
+        folder just left selected and current, as in Total Commander, so
+        Return goes back into it. It opened with no row selected, and
+        Return opened nothing. A hidden folder left stays hidden."""
+        here = self._current_path
+        backend = self._backend
+        parent = backend.parent(here)
+        if parent == here:
+            return
+        name = here[len(parent):].strip("/\\") if here.startswith(parent) else ""
+        if name:
+            def arrived(loaded: str, ok: bool) -> None:
+                try:
+                    self.navigation_finished.disconnect(arrived)
+                except (TypeError, RuntimeError):
+                    pass
+                if (ok and loaded == parent and backend is self._backend
+                        and not self._shutting_down
+                        and not self._table.selectionModel().hasSelection()):
+                    self._restore_selection({name}, name)
+                    index = self._table.currentIndex()
+                    if index.isValid():
+                        self._table.scrollTo(index)
+
+            self.navigation_finished.connect(arrived)
+        self.navigate_async(parent)
 
     def _go_home(self) -> None:
         self.navigate_async(self._backend.home())
@@ -3399,7 +3640,28 @@ class FilePaneWidget(QWidget):
     def _on_path_entered(self) -> None:
         path = self._path_edit.text().strip()
         if path:
-            self.navigate_async(path)
+            self.navigate_async(self._typed_path(path))
+
+    def _typed_path(self, path: str) -> str:
+        """*path* as typed into the path bar, made a path of this pane: in a
+        local pane ``~`` and ``~/...`` (``~user``) are the home folder and a
+        relative path is below the folder shown - before, both were taken
+        as written and resolved against axross's own working folder
+        ("~/Documents" was "<cwd>/~/Documents"). A remote pane keeps what
+        was typed: its paths are the server's."""
+        import os
+
+        from core.local_fs import LocalFS
+
+        if not isinstance(self._backend, LocalFS):
+            return path
+        if path == "~" or path.startswith(("~/", "~" + os.sep)):
+            path = self._backend.home() + path[1:]
+        elif path.startswith("~"):
+            path = os.path.expanduser(path)
+        if not os.path.isabs(path) and self._current_path:
+            path = os.path.join(self._current_path, path)
+        return path
 
     def _on_double_click(self, index: QModelIndex) -> None:
         source_idx = self._proxy.mapToSource(index)
@@ -3412,7 +3674,7 @@ class FilePaneWidget(QWidget):
         """Open *item* as a double-click or Enter does: a folder in this
         pane, a file in the viewer or editor it calls for."""
         if item.name == "..":
-            self.navigate_async(self._backend.parent(self._current_path))
+            self._go_up()
             return
         if item.name == "." and item.is_dir:
             return  # this folder: nothing to open
@@ -3765,11 +4027,9 @@ class FilePaneWidget(QWidget):
         from ui.text_editor import TextEditorDialog
 
         dialog = TextEditorDialog(
-            self._backend, path, parent=VW.owner_window(self), read_only=read_only
+            self._backend, path, parent=VW.owner_window(self), read_only=read_only,
+            background=True,  # a failed read says why and closes the window
         )
-        if not dialog.loaded:  # it said why
-            dialog.deleteLater()
-            return
         dialog.saved.connect(self.refresh_after_change)
         VW.show_independent(dialog)
 
@@ -4065,7 +4325,9 @@ class FilePaneWidget(QWidget):
         group(more)
         self._add_terminal_actions(more)
         self._add_fuse_actions(more, more_entry)
-        if selected and not hostile:
+        if len(selected) == 1 and not hostile:
+            # One entry: the editor shows and sets one entry's mode (with
+            # several selected, OK changed the first one alone).
             group(more)
             more_entry("permissions", tr("Per&missions…"), self._show_permissions)
         # -- protect (single file: passphrase prompt flow)
@@ -4303,7 +4565,7 @@ class FilePaneWidget(QWidget):
         QMessageBox.warning(
             self,
             tr("Open Terminal Here"),
-            tr("{path} is no longer a folder (deleted or unmounted?).").format(path=directory),
+            as_written(tr("{path} is no longer a folder (deleted or unmounted?).").format(path=directory)),
         )
         return None
 
@@ -4343,7 +4605,24 @@ class FilePaneWidget(QWidget):
             return
         log.info("Started external terminal %s in %s", argv[0], directory)
 
-    def _show_context_menu(self, pos) -> None:
+    def _menu_at_current_row(self) -> None:
+        """The context menu from the keyboard (F10, Shift+F10, the Menu
+        key): at the current row - scrolled into view - or in the middle of
+        the list when there is none. Before, it opened where the mouse
+        pointer happened to be, perhaps far from the pane or on another
+        screen."""
+        view = self._thumbs if self.view_mode == "thumbnails" else self._table
+        port = view.viewport()
+        index = view.currentIndex()
+        if index.isValid():
+            view.scrollTo(index)
+            rect = view.visualRect(index).intersected(port.rect())
+            pos = rect.bottomLeft() if not rect.isEmpty() else port.rect().center()
+        else:
+            pos = port.rect().center()
+        self._show_context_menu(pos, at=port.mapToGlobal(pos))
+
+    def _show_context_menu(self, pos, at=None) -> None:
         # ``pos`` arrives in viewport-local coordinates per Qt's
         # QAbstractScrollArea contract, but user reports show the
         # menu landing in the wrong place on some window-manager /
@@ -4360,7 +4639,7 @@ class FilePaneWidget(QWidget):
         # entries run inside exec(), so the menu is no longer needed after.
         menu = self._build_context_menu()
         try:
-            menu.exec(QCursor.pos())
+            menu.exec(QCursor.pos() if at is None else at)
         finally:
             menu.deleteLater()
 
@@ -4484,6 +4763,14 @@ class FilePaneWidget(QWidget):
             if value.skipped:
                 text += " " + tr_n(len(value.skipped), "({n} link skipped)",
                                    "({n} links skipped)")
+            special = getattr(value, "special", None) or ()
+            if special:
+                text += " " + tr_n(len(special), "({n} socket, pipe or device skipped)",
+                                   "({n} sockets, pipes or devices skipped)")
+            unusable = getattr(value, "unusable", None) or ()
+            if unusable:
+                text += " " + tr_n(len(unusable), "({n} name not usable in an archive skipped)",
+                                   "({n} names not usable in an archive skipped)")
             self.status_message(text)
             self.refresh_after_change(quiet=True)
             return
@@ -4501,7 +4788,7 @@ class FilePaneWidget(QWidget):
         name, ok = QInputDialog.getText(self, tr("New Folder"), tr("Folder name:"))
         if not ok or not name:
             return
-        if not _is_safe_leaf_name(name):
+        if not _is_safe_leaf_name(name, self._backend):
             QMessageBox.warning(
                 self,
                 tr("New Folder"),
@@ -4519,7 +4806,7 @@ class FilePaneWidget(QWidget):
 
         def done(_value):
             log.info("Created folder: %s", path)
-            self.refresh_after_change()
+            self._refresh_selecting(name)
 
         self._run_op(tr("Creating {name}…").format(name=name), work, done, tr("New Folder"),
                      exists=tr("Path already exists:\n{name}").format(name=name),
@@ -4541,7 +4828,7 @@ class FilePaneWidget(QWidget):
         name, ok = QInputDialog.getText(self, tr("New File"), tr("File name:"))
         if not ok or not name:
             return
-        if not _is_safe_leaf_name(name):
+        if not _is_safe_leaf_name(name, self._backend):
             QMessageBox.warning(
                 self,
                 tr("New File"),
@@ -4554,12 +4841,21 @@ class FilePaneWidget(QWidget):
         def work(_cancelled, _report):
             if backend.exists(path):
                 raise FileExistsError(path)
+            if _creates_exclusively(backend):
+                # Exclusive: a file saved under the name since the check is
+                # refused, never emptied ("wb" truncated it).
+                import os
+
+                os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                                 | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
+                                 0o666))
+                return
             with backend.open_write(path) as fh:
                 fh.write(b"")
 
         def done(_value):
             log.info("Created empty file: %s", path)
-            self.refresh_after_change()
+            self._refresh_selecting(name)
 
         self._run_op(tr("Creating {name}…").format(name=name), work, done, tr("New File"),
                      exists=tr("Path already exists:\n{name}").format(name=name),
@@ -4593,7 +4889,7 @@ class FilePaneWidget(QWidget):
         )
         if not ok or not link_name:
             return
-        if not _is_safe_leaf_name(link_name):
+        if not _is_safe_leaf_name(link_name, self._backend):
             QMessageBox.warning(
                 self,
                 tr("New Symlink"),
@@ -4612,7 +4908,7 @@ class FilePaneWidget(QWidget):
             QMessageBox.warning(
                 self,
                 tr("New Symlink"),
-                tr("Could not create symlink:\n{error}").format(error=describe(e)),
+                as_written(tr("Could not create symlink:\n{error}").format(error=describe(e))),
             )
 
     def _create_hardlink(self) -> None:
@@ -4641,7 +4937,7 @@ class FilePaneWidget(QWidget):
         )
         if not ok or not link_name:
             return
-        if not _is_safe_leaf_name(link_name):
+        if not _is_safe_leaf_name(link_name, self._backend):
             QMessageBox.warning(
                 self,
                 tr("New Hardlink"),
@@ -4660,7 +4956,7 @@ class FilePaneWidget(QWidget):
             QMessageBox.warning(
                 self,
                 tr("New Hardlink"),
-                tr("Could not create hardlink:\n{error}").format(error=describe(e)),
+                as_written(tr("Could not create hardlink:\n{error}").format(error=describe(e))),
             )
 
     def _rename_selected(self) -> None:
@@ -4683,7 +4979,7 @@ class FilePaneWidget(QWidget):
         new_name, ok = QInputDialog.getText(self, tr("Rename"), tr("New name:"), text=item.name)
         if not ok or not new_name or new_name == item.name:
             return
-        if not _is_safe_leaf_name(new_name):
+        if not _is_safe_leaf_name(new_name, self._backend):
             QMessageBox.warning(
                 self,
                 tr("Rename"),
@@ -4695,7 +4991,9 @@ class FilePaneWidget(QWidget):
 
         backend = self._backend
         new_path = backend.join(folder, new_name)
-        failed = f"Could not rename {item.name} to {new_name}:\n{{error}}"
+        # {error} stays for _run_op; the names are values, never re-parsed.
+        failed = tr("Could not rename {old} to {new}:\n{error}").format(
+            old=item.name, new=new_name, error="{error}")
         busy = tr("Renaming {name}…").format(name=item.name)
 
         def check(_cancelled, _report):
@@ -4710,7 +5008,7 @@ class FilePaneWidget(QWidget):
         def moved(_value):
             log.info("Renamed %s -> %s", old_path, new_path)
             self._tags_follow_rename(old_path, new_path)
-            self.refresh_after_change()
+            self._refresh_selecting(new_name)
 
         def checked(_value):
             # The production question between the check and the move: on
@@ -4918,8 +5216,9 @@ class FilePaneWidget(QWidget):
                     else tr("Deleting… {done} of {total}"))
             return text.format(done=state["scanned"], total=state["indexed"]) + f" — {where}"
         return (
-            tr("Checking before the delete… {folders} folders, {files} files").format(
-                folders=state["scanned"], files=state["indexed"]
+            tr("Checking before the delete… {folders}, {files}").format(
+                folders=tr_n(state["scanned"], "{n} folder", "{n} folders"),
+                files=tr_n(state["indexed"], "{n} file", "{n} files"),
             )
             + f" — {where}"
         )
@@ -5002,14 +5301,33 @@ class FilePaneWidget(QWidget):
             question += " " + tr("This cannot be undone.")
         from ui.plain_text import as_written
 
-        # A permanent delete defaults to No: Enter on a reflex keeps the files.
-        reply = QMessageBox.question(
-            self,
-            title,
-            as_written(f"{question}\n{ctx['names']}{preview_text}"),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes if trash else QMessageBox.StandardButton.No,
-        )
+        from core.trash import shared_trash_folder
+
+        shared = shared_trash_folder(ctx["backend"]) if trash else None
+        if shared is not None:
+            # A share's trash keeps its own permissions, not the folder's the
+            # file was in: said, with Delete Permanently as the other way.
+            from ui import shared_trash as ST
+
+            answer = ST.ask_move_to_shared_trash(
+                self, title, f"{question}\n{ctx['names']}{preview_text}", shared)
+            if self._removal_dropped(ctx):
+                return
+            if answer == ST.DELETE:
+                ctx["trash"], ctx["title"] = False, tr("Delete Permanently")
+                self._on_removal_checked(ctx, kind, value, cancelled)  # its own question
+                return
+            reply = (QMessageBox.StandardButton.Yes if answer == ST.TRASH
+                     else QMessageBox.StandardButton.No)
+        else:
+            # A permanent delete defaults to No: Enter on a reflex keeps the files.
+            reply = QMessageBox.question(
+                self,
+                title,
+                as_written(f"{question}\n{ctx['names']}{preview_text}"),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes if trash else QMessageBox.StandardButton.No,
+            )
         if self._removal_dropped(ctx):
             return
         if reply != QMessageBox.StandardButton.Yes:
@@ -5274,8 +5592,8 @@ class FilePaneWidget(QWidget):
         from ui.permissions_dialog import PermissionsDialog
 
         items = self.selected_file_items()
-        if not items:
-            return
+        if len(items) != 1:
+            return  # one entry's mode; several would change only the first
         item = items[0]
         path = self._safe_item_path(item)
         if path is None or not self._production_ok(
@@ -5359,8 +5677,9 @@ class FilePaneWidget(QWidget):
         if self._size_job is None:
             self._size_job = ScanJob(
                 self,
-                formatter=lambda st: tr("Calculating size… {folders} folders, {files} files")
-                .format(folders=st["scanned"], files=st["indexed"])
+                formatter=lambda st: tr("Calculating size… {folders}, {files}")
+                .format(folders=tr_n(st["scanned"], "{n} folder", "{n} folders"),
+                        files=tr_n(st["indexed"], "{n} file", "{n} files"))
                 + f" — {_shorten_path(st['path'])}",
             )
             self._size_job.progress.connect(self._status.setText)
@@ -5386,7 +5705,7 @@ class FilePaneWidget(QWidget):
             return
         self._status.setText(self._items_text())
         if kind == "error":
-            QMessageBox.warning(self, tr("Folder Size"), tr("Could not calculate the size:\n{error}").format(error=value))
+            QMessageBox.warning(self, tr("Folder Size"), as_written(tr("Could not calculate the size:\n{error}").format(error=value)))
             return
         from ui.dir_size_dialog import DirSizeDialog, rows_from_results
 
@@ -5459,6 +5778,12 @@ class FilePaneWidget(QWidget):
         # through this one, not the one the pane shows by then.
         self._checksum_target = (item, full_path)
         self._checksum_backend = backend
+        if _streams_locally(backend):
+            # A local "native" checksum is the same read, but one Cancel
+            # could not stop and without progress (on a named pipe it
+            # blocked in open() for good): the stream reader does both.
+            self._start_stream_checksum(item, full_path)
+            return
         self._checksum_phase = "native"
         self._begin_checksum(tr("Checksum of {name}…").format(name=item.name))
         job.start(lambda _cancelled, _report: backend.checksum(full_path))
@@ -5512,10 +5837,24 @@ class FilePaneWidget(QWidget):
             return
         item, full_path = self._checksum_target
         stream = self._checksum_phase == "stream"
+        if kind == "error" and not stream:
+            # The server's checksum failed (an SFTP server that runs no
+            # commands: "Channel closed"): reading the file still works.
+            # It ended in "Failed to compute checksum" with no way on.
+            reply = QMessageBox.question(
+                self,
+                tr("Checksum"),
+                as_written(tr("{name}: the server could not compute the checksum:\n{error}\n\n"
+                              "Compute SHA-256 by reading the entire file?").format(
+                    name=item.name, error=value)),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self._start_stream_checksum(item, full_path)
+            return
         if kind == "error":
-            text = (tr("Failed to read file for hashing:\n{error}") if stream
-                    else tr("Failed to compute checksum:\n{error}"))
-            QMessageBox.warning(self, tr("Checksum"), text.format(error=value))
+            QMessageBox.warning(self, tr("Checksum"),
+                                as_written(tr("Failed to read file for hashing:\n{error}").format(error=value)))
             return
         if stream:
             self._present_checksum(full_path, "sha256", value, "stream-read")
@@ -5527,8 +5866,6 @@ class FilePaneWidget(QWidget):
         if digest:
             self._present_checksum(full_path, algo, digest, "native")
             return
-        from ui.plain_text import as_written
-
         # The name is the backend's: shown as written, never as markup.
         reply = QMessageBox.question(
             self,
@@ -5936,8 +6273,8 @@ class FilePaneWidget(QWidget):
             QMessageBox.information(
                 self,
                 "FUSE",
-                tr("This pane already has a FUSE mount at {path}.").format(
-                    path=existing.mount_point),
+                as_written(tr("This pane already has a FUSE mount at {path}.").format(
+                    path=existing.mount_point)),
             )
             return
         # A handle whose loop has ended serves nothing: no reason to refuse.
@@ -5963,8 +6300,8 @@ class FilePaneWidget(QWidget):
             QMessageBox.critical(
                 self,
                 "FUSE",
-                tr("Could not mount at {path}:\n{reason}").format(
-                    path=mount_point, reason=describe(exc, mount_point)),
+                as_written(tr("Could not mount at {path}:\n{reason}").format(
+                    path=mount_point, reason=describe(exc, mount_point))),
             )
             return
         if not mounted:
@@ -5988,8 +6325,8 @@ class FilePaneWidget(QWidget):
             QMessageBox.critical(
                 self,
                 "FUSE",
-                tr("Could not mount at {path}:\n{reason}").format(
-                    path=mount_point, reason=reason),
+                as_written(tr("Could not mount at {path}:\n{reason}").format(
+                    path=mount_point, reason=reason)),
             )
             return
         self._fuse_handle = handle
@@ -5997,8 +6334,8 @@ class FilePaneWidget(QWidget):
         QMessageBox.information(
             self,
             "FUSE",
-            tr("Mounted {path} ({mode}) at {mount_point}.").format(
-                path=self._current_path, mode=mode, mount_point=mount_point),
+            as_written(tr("Mounted {path} ({mode}) at {mount_point}.").format(
+                path=self._current_path, mode=mode, mount_point=mount_point)),
         )
 
     def _unmount_fuse(self) -> None:
@@ -6017,15 +6354,15 @@ class FilePaneWidget(QWidget):
             QMessageBox.warning(
                 self,
                 "FUSE",
-                tr("{path} is still mounted:\n{reason}").format(
-                    path=handle.mount_point, reason=describe(exc, handle.mount_point)),
+                as_written(tr("{path} is still mounted:\n{reason}").format(
+                    path=handle.mount_point, reason=describe(exc, handle.mount_point))),
             )
             return
         self._fuse_handle = None
         QMessageBox.information(
             self,
             "FUSE",
-            tr("Unmounted {path}.").format(path=handle.mount_point),
+            as_written(tr("Unmounted {path}.").format(path=handle.mount_point)),
         )
 
     def _create_xlink(self) -> None:
@@ -6041,7 +6378,7 @@ class FilePaneWidget(QWidget):
         name = dlg.name()
         url = dlg.target_url()
         display = dlg.display_name()
-        if not _is_safe_leaf_name(name):
+        if not _is_safe_leaf_name(name, self._backend):
             QMessageBox.warning(
                 self,
                 tr("Create XLink"),
@@ -6072,7 +6409,7 @@ class FilePaneWidget(QWidget):
             QMessageBox.critical(
                 self,
                 tr("Create XLink"),
-                tr("Could not create xlink:\n{error}").format(error=describe(exc)),
+                as_written(tr("Could not create xlink:\n{error}").format(error=describe(exc))),
             )
             return
         self.refresh_after_change()
@@ -6128,21 +6465,21 @@ class FilePaneWidget(QWidget):
             QMessageBox.information(
                 self,
                 tr("Open as root"),
-                tr("Cannot elevate access:\n{error}").format(error=exc),
+                as_written(tr("Cannot elevate access:\n{error}").format(error=exc)),
             )
             return
         except E.ElevatedOutputTooLarge as exc:
             QMessageBox.warning(
                 self,
                 tr("Open as root"),
-                tr("File is too large to read into memory:\n{error}").format(error=exc),
+                as_written(tr("File is too large to read into memory:\n{error}").format(error=exc)),
             )
             return
         except (E.ElevatedIOError, ValueError) as exc:
             QMessageBox.critical(
                 self,
                 tr("Open as root"),
-                tr("Elevated read failed:\n{error}").format(error=exc),
+                as_written(tr("Elevated read failed:\n{error}").format(error=exc)),
             )
             return
         from ui import viewer_window as VW
@@ -6187,7 +6524,7 @@ class FilePaneWidget(QWidget):
             return
         opener(path)
 
-    def _extract_archive(self, item) -> None:
+    def _extract_archive(self, item, password: str | None = None) -> None:
         """Extract the archive at *item* into a same-named sibling
         folder (extension stripped). On collision (``foo/`` already
         exists) the target auto-suffixes to ``foo-1/``, ``foo-2/``, …
@@ -6212,6 +6549,14 @@ class FilePaneWidget(QWidget):
         src_path = self._safe_item_path(item)
         if src_path is None:
             return
+        if password is None and ARCH.archive_needs_password(src_path):
+            # An encrypted archive: the password is asked for first, held
+            # for this extraction only (ui.archive_password).
+            from ui.archive_password import ask_archive_password
+
+            password = ask_archive_password(self, item.name)
+            if password is None:
+                return
         parent_dir = self._backend.parent(src_path)
         base = ARCH.strip_archive_extension(item.name)
         try:
@@ -6220,11 +6565,9 @@ class FilePaneWidget(QWidget):
             QMessageBox.warning(
                 self,
                 tr("Extract Archive"),
-                tr("Cannot pick a target folder:\n{error}").format(error=exc),
+                as_written(tr("Cannot pick a target folder:\n{error}").format(error=exc)),
             )
             return
-
-        from ui.plain_text import as_written
 
         progress = QProgressDialog(
             as_written(tr("Extracting {name} → {target}…").format(
@@ -6263,10 +6606,14 @@ class FilePaneWidget(QWidget):
                     src_path,
                     target_dir,
                     progress=_progress_cb,
+                    password=password,
                 )
                 state["ok"] = True
             except ARCH.ExtractCancelled:
                 state["error"] = "cancelled"
+            except ARCH.ArchivePasswordRequired as exc:
+                state["error"] = "password"
+                state["wrong"] = exc.wrong or password is not None
             except ARCH.UnsafeArchive as exc:
                 state["error"] = f"refused as unsafe: {exc}"
             except Exception as exc:  # noqa: BLE001
@@ -6318,6 +6665,13 @@ class FilePaneWidget(QWidget):
             return
         if state["error"] == "cancelled":
             log.info("Extraction cancelled: %s", src_path)
+            return
+        if state["error"] == "password":
+            from ui.archive_password import ask_archive_password
+
+            again = ask_archive_password(self, item.name, wrong=state["wrong"])
+            if again is not None:
+                self._extract_archive(item, password=again)
             return
         QMessageBox.warning(
             self,
@@ -6391,7 +6745,11 @@ class FilePaneWidget(QWidget):
             def encrypt() -> str:
                 # Read, key derivation (scrypt: deliberately slow) and write.
                 with backend.open_read(src_path) as fh:
-                    data = fh.read(E.MAX_ENCRYPTED_SIZE + 1)  # more is refused anyway
+                    # To its end, across short reads (a network reader's
+                    # read(n) may return less): one read encrypted the first
+                    # part only, and it decrypted "cleanly". More than the
+                    # cap is refused anyway.
+                    data = E.read_capped(fh, E.MAX_ENCRYPTED_SIZE + 1)
                 return E.write_encrypted(backend, src_path, data, pw)
 
             dst_path = self._wait(encrypt, tr("Encrypting {name}…").format(name=item.name))
@@ -6400,7 +6758,7 @@ class FilePaneWidget(QWidget):
             QMessageBox.critical(
                 self,
                 tr("Encrypt Failed"),
-                tr("Could not encrypt file:\n{error}").format(error=describe(exc)),
+                as_written(tr("Could not encrypt file:\n{error}").format(error=describe(exc))),
             )
             return
         from ui.plain_text import as_written
@@ -6445,14 +6803,14 @@ class FilePaneWidget(QWidget):
             QMessageBox.warning(
                 self,
                 tr("Decrypt Failed"),
-                tr("Wrong passphrase or corrupted file:\n{error}").format(error=exc),
+                as_written(tr("Wrong passphrase or corrupted file:\n{error}").format(error=exc)),
             )
             return
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(
                 self,
                 tr("Decrypt Failed"),
-                tr("Could not decrypt file:\n{error}").format(error=describe(exc)),
+                as_written(tr("Could not decrypt file:\n{error}").format(error=describe(exc))),
             )
             return
 
@@ -6472,13 +6830,14 @@ class FilePaneWidget(QWidget):
                     return
             from core.atomic_io import atomic_write
 
-            self._wait(lambda: atomic_write(backend, dst_path, plain),
+            # The clear text is the user's alone (as the MCP decrypt writes it).
+            self._wait(lambda: atomic_write(backend, dst_path, plain, new_mode=0o600),
                        tr("Writing {name}…").format(name=dst_name))
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(
                 self,
                 tr("Decrypt Failed"),
-                tr("Could not write plaintext:\n{error}").format(error=describe(exc)),
+                as_written(tr("Could not write plaintext:\n{error}").format(error=describe(exc))),
             )
             return
         log.info("Decrypted %s -> %s", src_path, dst_path)
@@ -6511,6 +6870,13 @@ class FilePaneWidget(QWidget):
 
     def focusInEvent(self, event) -> None:
         super().focusInEvent(event)
+        # The pane's frame is no place to type in: Qt hands it the focus
+        # when the focused widget beside it goes (a pane closed, a new
+        # workspace), and the arrow keys then moved nothing. Its list takes
+        # it - the thumbnails in thumbnail view.
+        view = self._thumbs if self.view_mode == "thumbnails" else self._table
+        if view is not None and view.isVisible() and view.isEnabled():
+            view.setFocus(event.reason())
         self.pane_focused.emit()
 
     def enterEvent(self, event) -> None:
@@ -6668,6 +7034,13 @@ class FilePaneWidget(QWidget):
                 self._filter_edit.selectAll()
                 return True
 
+        if event.type() == QEvent.Type.ContextMenu and watched in self._key_views() \
+                and event.reason() == QContextMenuEvent.Reason.Keyboard:
+            # The Menu key or Shift+F10 as the platform sends them: at the
+            # current row, not at the mouse pointer.
+            self._menu_at_current_row()
+            return True
+
         # Keyboard shortcuts when the table (or its viewport) has focus
         if event.type() == QEvent.Type.KeyPress and watched in self._key_views():
             key = event.key()
@@ -6724,14 +7097,10 @@ class FilePaneWidget(QWidget):
             if key == Qt.Key.Key_F9 and no_mods:
                 self._rename_selected()
                 return True
-            if key == Qt.Key.Key_F10 and no_mods:
-                idx = self._table.currentIndex()
-                if idx.isValid():
-                    pos = self._table.visualRect(idx).bottomLeft()
-                else:
-                    vp = self._table.viewport()
-                    pos = QPoint(vp.width() // 2, vp.height() // 2)
-                self._show_context_menu(pos)
+            if (key == Qt.Key.Key_F10 and mods in (Qt.KeyboardModifier.NoModifier,
+                                                    Qt.KeyboardModifier.ShiftModifier)) \
+                    or (key == Qt.Key.Key_Menu and no_mods):
+                self._menu_at_current_row()
                 return True
 
             # --- Navigation ---

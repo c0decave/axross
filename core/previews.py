@@ -32,6 +32,10 @@ Security model
     and is drawn by QtSvg's static Tiny-1.2 renderer.
 * :func:`decode_image` is the full-window variant of :func:`thumbnail`:
   same gates, no cache, up to :data:`VIEWER_MAX_EDGE` px.
+* The decoders never run in this process: the checks above run here, the
+  decode itself (Qt's plugins, Pillow) in a pooled child that is killed
+  past its time and capped in memory (:mod:`core.image_worker`). A crafted
+  picture that keeps a decoder busy or crashes it ends only that child.
 * External open:
   - Rejects NUL bytes, absolute paths outside the given root, and
     non-existent paths.
@@ -49,14 +53,18 @@ directories.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
 import logging
 import os
 import re
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from core import svg_gate
 
 if TYPE_CHECKING:  # pragma: no cover
     pass
@@ -129,12 +137,8 @@ SVG_MIME = "image/svg+xml"
 # drawing anyone hand-made, and the XML parser should never see it.
 MAX_SVG_INPUT_SIZE = 8 * 1024 * 1024
 
-# The most elements ``<use>`` (and ``url(#id)``) references may add to an
-# SVG's drawing: each one draws its target again, the target's own
-# references included, so ten levels of ten references in a 2.4 KB file
-# drew a billion paths and pinned a thumbnail worker for minutes (10^6
-# took 12.6 s). The elements written in the file are bounded by its size.
-MAX_SVG_USE_EXPANSION = 20_000
+# The most elements an SVG's references may draw: core.svg_gate.
+MAX_SVG_USE_EXPANSION = svg_gate.MAX_SVG_USE_EXPANSION
 
 # MIME types we're willing to decode for previews. Anything else is
 # refused — even if Qt claims it can read it. Keep this small on
@@ -149,7 +153,13 @@ ALLOWED_THUMBNAIL_MIMES: frozenset[str] = frozenset(
         "image/bmp",
         "image/webp",
         "image/tiff",
+        # Netpbm: .ppm, and .pgm / .pbm / .pnm - the same decoders (Qt's
+        # ppm plugin reads all three, Pillow's PPM plugin P1-P6) under the
+        # same caps. F3 sent them to the image viewer, which refused them.
         "image/x-portable-pixmap",
+        "image/x-portable-graymap",
+        "image/x-portable-bitmap",
+        "image/x-portable-anymap",
     }
 )
 
@@ -251,14 +261,99 @@ def guess_mime(backend, path: str) -> str:
         raise PreviewNotAvailable(f"not a regular file: {abs_path}")
     try:
         from PyQt6.QtCore import QMimeDatabase
-    except ImportError as exc:  # pragma: no cover
-        raise PreviewNotAvailable(f"PyQt6.QtCore.QMimeDatabase unavailable: {exc}") from exc
+    except ImportError:
+        # Headless (axross-headless-mcp has no Qt): the content as Pillow
+        # reads it, from its own format list only.
+        return _pillow_mime(abs_path)
     db = QMimeDatabase()
     mt = db.mimeTypeForFile(abs_path)
     name = mt.name() or "application/octet-stream"
     # QMimeDatabase returns "application/octet-stream" for unknown —
     # pass through without further classification.
     return name
+
+
+#: Header bytes -> (Pillow format, MIME) of the formats a headless preview
+#: reads: told from the first bytes, nothing decoded.
+_SIGNATURES = (
+    (b"\x89PNG\r\n\x1a\n", "PNG", "image/png"),
+    (b"\xff\xd8\xff", "JPEG", "image/jpeg"),
+    (b"GIF87a", "GIF", "image/gif"),
+    (b"GIF89a", "GIF", "image/gif"),
+    (b"BM", "BMP", "image/bmp"),
+    (b"II*\x00", "TIFF", "image/tiff"),
+    (b"MM\x00*", "TIFF", "image/tiff"),
+)
+
+
+def _sniff(abs_path: str) -> tuple[str, str] | None:
+    try:
+        with open(abs_path, "rb") as fh:
+            head = fh.read(16)
+    except OSError:
+        return None
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "WEBP", "image/webp"
+    # Netpbm: the magic, then whitespace (a text that starts "P1:" is none)
+    netpbm = head[2:3] in (b" ", b"\t", b"\r", b"\n")
+    if netpbm and head[:2] in (b"P3", b"P6"):
+        return "PPM", "image/x-portable-pixmap"
+    if netpbm and head[:2] in (b"P2", b"P5"):
+        return "PPM", "image/x-portable-graymap"
+    if netpbm and head[:2] in (b"P1", b"P4"):
+        return "PPM", "image/x-portable-bitmap"
+    for magic, fmt, mime in _SIGNATURES:
+        if head.startswith(magic):
+            return fmt, mime
+    return None
+
+
+def _sniff_format(abs_path: str) -> str | None:
+    found = _sniff(abs_path)
+    return found[0] if found is not None else None
+
+
+def _pillow_mime(abs_path: str) -> str:
+    """The MIME type of *abs_path* from its first bytes (no decoding: an
+    ICO's embedded PNG was decoded in full just to name its type),
+    ``application/octet-stream`` for anything else."""
+    if _PILImage is None:
+        raise PreviewNotAvailable("no image decoder here: neither Qt nor Pillow is installed "
+                                  "(pip install Pillow, or axross-headless-mcp[images])")
+    found = _sniff(abs_path)
+    return found[1] if found is not None else "application/octet-stream"
+
+
+_QT_GUI: bool | None = None
+
+
+def _qt_gui() -> bool:
+    """Whether Qt's image classes load here (PyQt6 installed and its GUI
+    libraries present: a headless host may lack libEGL)."""
+    global _QT_GUI
+    if _QT_GUI is None:
+        try:
+            from PyQt6.QtGui import QImageReader  # noqa: F401
+        except ImportError:
+            _QT_GUI = False
+        else:
+            _QT_GUI = True
+    return _QT_GUI
+
+
+def preview_available() -> bool:
+    """Whether :func:`thumbnail` can decode anything here: Pillow (the
+    headless server's ``images`` extra), or PyQt6 being installed. Nothing
+    of Qt is imported to answer (the MCP server asks while it starts, and
+    its start never touches Qt): PyQt6 is looked up on the path only."""
+    if _PILImage is not None:
+        return True
+    from importlib.machinery import PathFinder
+
+    try:
+        return PathFinder.find_spec("PyQt6") is not None
+    except (ImportError, ValueError):
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +376,15 @@ def _cache_root() -> Path:
     from core.xdg_dirs import base_dir
 
     root = base_dir("XDG_CACHE_HOME") / "axross" / "thumbnails"  # a relative one is ignored
-    root.mkdir(parents=True, exist_ok=True)
+    # Private, as the freedesktop thumbnail rules ask (0700, each file 0600):
+    # with the umask's 0755 anyone on a shared machine saw small copies of
+    # the user's pictures, also of folders the user keeps closed.
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        if os.name == "posix" and (root.stat().st_mode & 0o077):
+            os.chmod(root, 0o700)
+    except OSError as exc:
+        log.debug("thumbnail cache: cannot make %s private: %s", root, exc)
     return root
 
 
@@ -302,13 +405,50 @@ def _cache_key(abs_path: str, mtime: float, size: int, edge: int) -> str:
     return h.hexdigest()
 
 
+#: Thumbnails kept on disk: past CACHE_MAX_FILES the least recently used go
+#: until CACHE_KEEP_FILES are left (a thumbnail is 5-60 KB; every one ever
+#: made stayed - gigabytes after a large photo library). Looked at every
+#: CACHE_PRUNE_EVERY stores.
+CACHE_MAX_FILES = 20_000
+CACHE_KEEP_FILES = 16_000
+CACHE_PRUNE_EVERY = 200
+_stores = 0
+_prune_lock = threading.Lock()
+
+
 def _load_cached(cache_file: Path) -> bytes | None:
     try:
         if cache_file.is_file():
-            return cache_file.read_bytes()
+            data = cache_file.read_bytes()
+            with contextlib.suppress(OSError):
+                os.utime(cache_file)  # used: the last to go when the cache is pruned
+            return data
     except OSError as exc:
         log.debug("thumbnail cache read failed: %s", exc)
     return None
+
+
+def _prune_cache(root: Path) -> None:
+    """Remove the least recently used thumbnails past CACHE_MAX_FILES."""
+    if not _prune_lock.acquire(blocking=False):
+        return  # another thread prunes
+    try:
+        entries = []
+        with os.scandir(root) as it:
+            for entry in it:
+                if entry.name.endswith(".png") and entry.is_file(follow_symlinks=False):
+                    with contextlib.suppress(OSError):
+                        entries.append((entry.stat(follow_symlinks=False).st_mtime, entry.path))
+        if len(entries) <= CACHE_MAX_FILES:
+            return
+        entries.sort()
+        for _mtime, path in entries[:len(entries) - CACHE_KEEP_FILES]:
+            with contextlib.suppress(OSError):
+                os.unlink(path)
+    except OSError as exc:
+        log.debug("thumbnail cache prune failed: %s", exc)
+    finally:
+        _prune_lock.release()
 
 
 def _store_cached(cache_file: Path, data: bytes) -> None:
@@ -319,7 +459,9 @@ def _store_cached(cache_file: Path, data: bytes) -> None:
 
     tmp = cache_file.parent / f"{cache_file.name}.{_secrets.token_hex(6)}.tmp"
     try:
-        tmp.write_bytes(data)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
         os.replace(tmp, cache_file)
     except OSError as exc:
         log.debug("thumbnail cache write failed: %s", exc)
@@ -327,6 +469,11 @@ def _store_cached(cache_file: Path, data: bytes) -> None:
             tmp.unlink(missing_ok=True)
         except OSError:
             pass
+        return
+    global _stores
+    _stores += 1
+    if _stores % max(1, CACHE_PRUNE_EVERY) == 0:
+        _prune_cache(cache_file.parent)
 
 
 def _decode_with_pillow(abs_path: str, edge: int | None, *, encode: bool = True):
@@ -359,11 +506,32 @@ def _decode_with_pillow(abs_path: str, edge: int | None, *, encode: bool = True)
             f"installed (pip install Pillow for TIFF/extra formats)"
         )
 
+    with _PILLOW_SLOTS:
+        return _decode_with_pillow_slot(abs_path, edge, encode=encode)
+
+
+#: Pillow decodes at once (each may hold up to PILLOW_ALLOC_LIMIT_MIB):
+#: three parallel previews of a big picture reached 1.9 GB.
+_PILLOW_SLOTS = threading.BoundedSemaphore(2)
+#: Pixel copies a decode makes on top of the image itself (the mode
+#: conversion, EXIF transpose, the thumbnail): the budget counts them.
+PILLOW_COPIES = 3
+
+
+def _decode_with_pillow_slot(abs_path: str, edge: int | None, *, encode: bool = True):
+    # The format from the file's first bytes, and Pillow told to open that
+    # one only: its own probing decoded an .ico's embedded PNG in full
+    # (13000x13000, 700 MB) before any check ran.
+    sniffed = _sniff_format(abs_path)
+    # Not one of those (the viewer's TGA, PCX, DDS): Pillow's list without
+    # the containers that embed a PNG (ICO, ICNS) - Qt reads those itself.
+    formats = [sniffed] if sniffed is not None else [
+        f for f in PILLOW_FALLBACK_FORMATS if f not in ("ICO", "ICNS")]
     try:
         # An explicit format list: Pillow's default opens EPS, which
         # spawns Ghostscript on load(), and sniffs content rather than
         # the extension, so "x.png" can be a PostScript program.
-        img = _PILImage.open(abs_path, formats=list(PILLOW_FALLBACK_FORMATS))
+        img = _PILImage.open(abs_path, formats=formats)
     except _PILImage.DecompressionBombError as exc:
         raise PreviewTooLarge(
             f"{abs_path}: Pillow decompression-bomb guard tripped: {exc}"
@@ -384,7 +552,14 @@ def _decode_with_pillow(abs_path: str, edge: int | None, *, encode: bool = True)
             f"{abs_path}: dimensions {w}x{h} exceed MAX_DIMENSION {MAX_DIMENSION}"
         )
 
-    if w * h * 4 > PILLOW_ALLOC_LIMIT_MIB * 1024 * 1024:
+    if edge is not None and img.format == "JPEG":
+        # JPEG decodes scaled down by 1/2, 1/4, 1/8 for a thumbnail.
+        try:
+            img.draft("RGB", (edge, edge))
+            w, h = img.size
+        except Exception:  # noqa: BLE001 - a full decode then
+            pass
+    if w * h * 4 * PILLOW_COPIES > PILLOW_ALLOC_LIMIT_MIB * 1024 * 1024:
         raise PreviewTooLarge(
             f"{abs_path}: {w}x{h} would need more than {PILLOW_ALLOC_LIMIT_MIB} MiB to decode"
         )
@@ -543,7 +718,10 @@ def _raster_route(abs_path: str, *, allow_svg: bool) -> str:
     """``"svg"`` when the content is an SVG the caller may draw (through
     :func:`_render_svg`, its gate and its killable worker), else the Qt
     raster format to decode it with (``""``: Pillow). Vector content under
-    a raster name is never drawn in this process."""
+    a raster name is never drawn in this process. Without Qt's image
+    classes everything goes to Pillow, which opens only raster formats."""
+    if not _qt_gui():
+        return ""
     fmt = _content_format(abs_path)
     if fmt in _QT_SVG_FORMATS:
         if allow_svg:
@@ -632,160 +810,11 @@ def _read_raster(abs_path: str, edge: int, fmt: str | None = None):
 # SVG (media viewer only, behind allow_svg=True)
 # ---------------------------------------------------------------------------
 
-# Anything that makes the XML parser expand, include or fetch, or that
-# would run in a browser. QtSvg runs no scripts and fetches nothing from
-# the network, but the gate does not rely on that: it refuses first.
-_SVG_FORBIDDEN = (
-    b"<!doctype",
-    b"<!entity",
-    b"<?xml-stylesheet",
-    b"<script",
-    b"<foreignobject",
-    b"<iframe",
-    b"<object",
-    b"<embed",
-    b"@import",
-)
-_SVG_HREF = re.compile(rb"""href\s*=\s*(["'])\s*(.*?)\1""", re.S)
-_SVG_URL = re.compile(rb"""url\(\s*["']?\s*([^)"'\s]*)""")
-_SVG_DATA_IMAGE = (b"data:image/png", b"data:image/jpeg", b"data:image/gif", b"data:image/webp")
-
-
-_SVG_LOCAL_URL = re.compile(r"url\(\s*[\"']?\s*#([^)\"'\s]*)")
-
-
-class _DuplicateId(Exception):
-    """Two elements of an SVG carry the same id."""
-
-
-def _svg_expansion(data: bytes) -> str | None:
-    """Why the references of *data* draw too much (see
-    :data:`MAX_SVG_USE_EXPANSION`), or ``None``. A streaming parse that
-    keeps a few numbers per element, no tree; each element's sizes are
-    worked out once, so the time grows with the file, not the drawing."""
-    from xml.parsers import expat
-
-    ids: dict[str, int] = {}
-    refs: list = []                     # per element: the ids it references
-    children: dict[int, list[int]] = {}  # elements that have any
-    open_: list[int] = []
-    parser = expat.ParserCreate()
-
-    def start(_name, attrs):
-        index = len(refs)
-        if open_:
-            children.setdefault(open_[-1], []).append(index)
-        own = ()
-        for key, value in attrs.items():
-            local = key.rsplit(":", 1)[-1].lower()
-            if local == "id":
-                # Counted is the element an id names first; QtSvg draws
-                # the last one: an empty <g id=a/> before the real fan-out
-                # group drew 10^6 elements past a cap of 20000 (9.4 s).
-                # Ids name one element each - two with one id is refused.
-                if ids.setdefault(value, index) != index:
-                    raise _DuplicateId(value)
-            elif local == "href" and value.strip().startswith("#"):
-                own += (value.strip()[1:],)
-            elif "url(" in value:
-                own += tuple(_SVG_LOCAL_URL.findall(value))
-        refs.append(own)
-        open_.append(index)
-
-    def end(_name):
-        open_.pop()
-
-    def refuse_declarations(*_args):
-        raise ValueError("declarations are not allowed")
-
-    parser.StartElementHandler = start
-    parser.EndElementHandler = end
-    parser.EntityDeclHandler = refuse_declarations
-    parser.StartDoctypeDeclHandler = refuse_declarations
-    try:
-        parser.Parse(data, True)
-    except _DuplicateId as exc:
-        return f"SVG gives two elements the same id ({str(exc)[:64]!r})"
-    except (expat.ExpatError, ValueError) as exc:
-        return f"SVG is not well-formed XML ({exc})"
-    if not refs:
-        return None
-    limit = MAX_SVG_USE_EXPANSION
-    # Per element, worked out once (post-order over its children and its
-    # references' targets, a target still being worked out is a cycle):
-    # size[i] the elements of its subtree, extra[i] what the references in
-    # its subtree draw. Both are capped past the limit.
-    size: list[int] = [0] * len(refs)
-    extra: list[int] = [0] * len(refs)
-    state = bytearray(len(refs))        # 0 new, 1 being worked out, 2 done
-    stack = [0]
-    while stack:
-        node = stack[-1]
-        if state[node] == 2:
-            stack.pop()
-            continue
-        targets = [t for t in (ids.get(r) for r in refs[node]) if t is not None]
-        kids = children.get(node, ())
-        if state[node] == 0:
-            state[node] = 1
-            for dep in (*kids, *targets):
-                if state[dep] == 1:
-                    return "SVG references itself"
-                if state[dep] == 0:
-                    stack.append(dep)
-            continue
-        if any(state[dep] != 2 for dep in (*kids, *targets)):
-            return "SVG references itself"
-        size[node] = min(1 + sum(size[c] for c in kids), limit + 1)
-        extra[node] = min(sum(extra[c] for c in kids)
-                          + sum(size[t] + extra[t] for t in targets), limit + 1)
-        state[node] = 2
-        stack.pop()
-    if extra[0] > limit:
-        return f"SVG references draw more than {limit} elements"
-    return None
-
-
-def svg_refusal(data: bytes) -> str | None:
-    """Why *data* must not reach the SVG renderer, or ``None`` when it may.
-
-    Allowed: a UTF-8 document whose references all stay inside it
-    (``#id``) or embed a common raster as a ``data:`` URI, and whose
-    references draw at most :data:`MAX_SVG_USE_EXPANSION` elements."""
-    if b"\x00" in data:
-        return "SVG is not UTF-8 text"
-    lowered = data.lower()
-    for token in _SVG_FORBIDDEN:
-        if token in lowered:
-            return f"SVG contains {token.decode()!r}"
-    for match in _SVG_HREF.finditer(lowered):
-        ref = match.group(2).strip()
-        if not (ref.startswith(b"#") or ref.startswith(_SVG_DATA_IMAGE)):
-            return "SVG references something outside the file"
-    for match in _SVG_URL.finditer(lowered):
-        if not match.group(1).startswith(b"#"):
-            return "SVG references something outside the file"
-    return _svg_expansion(data)
-
-
-def _svg_options(qtsvg):
-    """The QSvgRenderer options: Tiny 1.2 features only, every animation
-    kind off - or ``None`` on a Qt without options (before 6.7).
-
-    The animation kinds are named one by one, never as the combined
-    DisableAnimations value: Qt 6.10.0 segfaults in QSvgRenderer.load()
-    for every document when the options carry that value (0xF0), while
-    the same kinds named singly load (measured on the 0.10.24 bundle).
-    PyQt6 exposes the QFlags as a plain Enum: combine by value."""
-    option = getattr(qtsvg, "Option", None)
-    if option is None:
-        return None
-    value = 0
-    for name in ("Tiny12FeaturesOnly", "DisableSMILAnimations", "DisableCSSAnimations"):
-        member = getattr(option, name, None)
-        if member is not None:
-            value |= member.value
-    return option(value)
+# The gate in front of QtSvg lives in core.svg_gate (the Markdown reader
+# draws its SVGs through it too); its names stay here for the callers.
+svg_refusal = svg_gate.svg_refusal
+_svg_expansion = svg_gate.svg_expansion
+_svg_options = svg_gate.svg_options
 
 
 def _render_svg(abs_path: str, edge: int):
@@ -835,6 +864,208 @@ def _render_svg(abs_path: str, edge: int):
     return image
 
 
+# ---------------------------------------------------------------------------
+# Decoding in a child process (core.image_worker)
+# ---------------------------------------------------------------------------
+
+#: Decode in a killable child (core.image_worker). False decodes in this
+#: process - only for tests that change this module's decoders.
+ISOLATED = True
+
+_REFUSALS: dict[str, type[PreviewError]] = {
+    cls.__name__: cls
+    for cls in (PreviewNotAvailable, PreviewTooLarge, PreviewIsPdf, PreviewDecodeFailed)
+}
+
+#: QImage formats whose pixels travel from the child as they are; any
+#: other (a palette, one bit per pixel) is converted to (A)RGB32 first.
+_PLAIN_FORMATS = (
+    "Format_RGB32", "Format_ARGB32", "Format_ARGB32_Premultiplied", "Format_Grayscale8",
+    "Format_Grayscale16", "Format_RGB888", "Format_RGBA8888", "Format_RGBX8888",
+    "Format_RGBA64", "Format_RGBX64",
+)
+
+
+#: The most bytes of pixels a decode may hand back: Qt's own cap is
+#: QIMAGE_ALLOC_LIMIT_MIB, Pillow's PILLOW_ALLOC_LIMIT_MIB over its copies.
+_MAX_DECODED_BYTES = 256 * 1024 * 1024
+
+
+def _plain_format_values() -> frozenset[int]:
+    from PyQt6.QtGui import QImage
+
+    return frozenset(getattr(QImage.Format, name).value for name in _PLAIN_FORMATS
+                     if hasattr(QImage.Format, name))
+
+
+def _pack_qimage(image) -> tuple[dict, _Pixels]:
+    """*image* as a header and its pixels (then its ICC profile) for the parent."""
+    from PyQt6.QtGui import QImage
+
+    if image.format().value not in _plain_format_values():
+        image = image.convertToFormat(QImage.Format.Format_ARGB32 if image.hasAlphaChannel()
+                                      else QImage.Format.Format_RGB32)
+        if image.isNull():
+            raise PreviewDecodeFailed("the decoded picture could not be converted")
+    icc = b""
+    with contextlib.suppress(Exception):  # a profile Qt cannot write: none
+        if image.colorSpace().isValid():
+            icc = bytes(image.colorSpace().iccProfile())
+    head = {"w": image.width(), "h": image.height(), "stride": image.bytesPerLine(),
+            "format": image.format().value, "icc": len(icc)}
+    return head, _Pixels(image, icc)
+
+
+class _Pixels:
+    """A decoded picture's pixels, then its ICC profile: written to the
+    parent as they lie in memory (a copy of 45 MB per photo cost 0.1 s)."""
+
+    def __init__(self, image, icc: bytes) -> None:
+        self._image = image  # holds the memory the view points into
+        ptr = image.constBits()
+        ptr.setsize(image.sizeInBytes())
+        self._view = memoryview(ptr)
+        self._icc = icc
+
+    def parts(self) -> tuple:
+        return (self._view, self._icc)
+
+    def __len__(self) -> int:
+        return self._view.nbytes + len(self._icc)
+
+    def __bytes__(self) -> bytes:
+        return bytes(self._view) + self._icc
+
+
+def _unpack_qimage(head: dict, body, abs_path: str):
+    """The QImage the child sent (see :func:`_pack_qimage`). *body*: bytes,
+    or a core.image_worker.SharedBody read straight into the QImage."""
+    from PyQt6.QtGui import QImage
+
+    try:
+        w, h, stride = int(head["w"]), int(head["h"]), int(head["stride"])
+        fmt, icc = int(head["format"]), int(head.get("icc", 0))
+    except (KeyError, TypeError, ValueError):
+        raise PreviewDecodeFailed(f"{abs_path}: the decoder answered nonsense") from None
+    if (fmt not in _plain_format_values() or not 1 <= w <= MAX_DIMENSION
+            or not 1 <= h <= MAX_DIMENSION or icc < 0 or stride < w
+            or stride * h > _MAX_DECODED_BYTES or stride * h + icc != len(body)):
+        raise PreviewDecodeFailed(f"{abs_path}: the decoder answered nonsense")
+    image = QImage(w, h, QImage.Format(fmt))
+    if image.isNull():
+        raise PreviewTooLarge(f"{abs_path}: not enough memory for a {w}x{h} picture")
+    if stride * 8 < w * image.depth():
+        raise PreviewDecodeFailed(f"{abs_path}: the decoder answered nonsense")
+    if hasattr(body, "read_into") and image.bytesPerLine() == stride:
+        # The pixels go straight into the picture's own memory.
+        ptr = image.bits()
+        ptr.setsize(image.sizeInBytes())
+        body.read_into(memoryview(ptr), 0)
+        profile = body.tail(stride * h) if icc else b""
+    else:
+        data = bytes(body) if hasattr(body, "read_into") else body
+        view = QImage(data, w, h, stride, QImage.Format(fmt))
+        if view.isNull() or view.bytesPerLine() != stride:
+            raise PreviewDecodeFailed(f"{abs_path}: the decoder answered nonsense")
+        image = view.copy()  # owns its pixels: *data* goes when this returns
+        del view
+        if image.isNull():
+            raise PreviewTooLarge(f"{abs_path}: not enough memory for a {w}x{h} picture")
+        profile = bytes(data[stride * h:]) if icc else b""
+    if profile:
+        from PyQt6.QtCore import QByteArray
+        from PyQt6.QtGui import QColorSpace
+
+        space = QColorSpace.fromIccProfile(QByteArray(profile))
+        if space.isValid():
+            image.setColorSpace(space)
+    return image
+
+
+def _decode_here(op: str, abs_path: str, edge: int, allow_svg: bool) -> tuple[dict, bytes]:
+    """Decode *abs_path* in this process - the child's side of
+    :func:`_decoded`. *op* ``"thumb"``: a PNG (header ``w``, ``h``);
+    ``"decode"``: the picture's pixels (:func:`_pack_qimage`). An SVG the
+    caller may draw is answered ``{"route": "svg"}``: the parent draws it
+    through core.svg_worker."""
+    route = _raster_route(abs_path, allow_svg=allow_svg)
+    if route == "svg":
+        return {"route": "svg"}, b""
+    image, pillow = _read_raster(abs_path, edge, route)
+    if op == "thumb":
+        if pillow is not None:
+            return {"w": pillow.size[0], "h": pillow.size[1]}, _pillow_png(pillow, abs_path)
+        return {"w": image.width(), "h": image.height()}, _png_bytes(image)
+    if image is None:
+        image = _qimage_from_pillow(pillow)
+    return _pack_qimage(image)
+
+
+def _decode_request(request: dict) -> tuple[dict, bytes]:
+    """One request of :func:`_decoded` answered (in the child): a refusal
+    is a header ``{"error": its class name, "text": why}``."""
+    global MAX_DIMENSION, QIMAGE_ALLOC_LIMIT_MIB, PILLOW_ALLOC_LIMIT_MIB
+    path = str(request.get("path", ""))
+    caps = request.get("caps") or {}
+    try:
+        MAX_DIMENSION = int(caps.get("max_dimension", MAX_DIMENSION))
+        QIMAGE_ALLOC_LIMIT_MIB = int(caps.get("qt_alloc_mib", QIMAGE_ALLOC_LIMIT_MIB))
+        PILLOW_ALLOC_LIMIT_MIB = int(caps.get("pillow_alloc_mib", PILLOW_ALLOC_LIMIT_MIB))
+        return _decode_here(str(request.get("op")), path, int(request.get("edge", 0)),
+                            bool(request.get("allow_svg")))
+    except MemoryError:
+        raise
+    except PreviewError as exc:
+        name = next((c.__name__ for c in type(exc).__mro__ if c.__name__ in _REFUSALS),
+                    "PreviewDecodeFailed")
+        return {"error": name, "text": str(exc)}, b""
+    except PermissionError as exc:
+        return {"error": "PermissionError", "text": str(exc)}, b""
+    except Exception as exc:  # noqa: BLE001 - a decoder's failure is the answer
+        return {"error": "PreviewDecodeFailed", "text": f"{path}: {exc}"}, b""
+
+
+def _decoded(op: str, abs_path: str, edge: int, allow_svg: bool, consume=None):
+    """*abs_path* decoded by a child process (core.image_worker): a crafted
+    picture that keeps a decoder busy or crashes it ends only that child.
+    Raises the PreviewError the decoder raised, PreviewTooLarge past the
+    child's time or memory, PreviewDecodeFailed when the child died."""
+    request = {
+        "op": op, "path": abs_path, "edge": int(edge), "allow_svg": bool(allow_svg),
+        "caps": {"max_dimension": MAX_DIMENSION, "qt_alloc_mib": QIMAGE_ALLOC_LIMIT_MIB,
+                 "pillow_alloc_mib": PILLOW_ALLOC_LIMIT_MIB},
+    }
+
+    def checked(head: dict, body):
+        error = head.get("error")
+        if error is None:
+            return consume(head, body) if consume is not None else (head, body)
+        _raise_refusal(head, abs_path)
+
+    if not ISOLATED:
+        head, body = _decode_request(request)
+        return checked(head, bytes(body))
+    from core import image_worker
+
+    try:
+        return image_worker.ask(request, checked)
+    except image_worker.ImageTooSlow as exc:
+        raise PreviewTooLarge(f"{abs_path}: {exc}") from None
+    except image_worker.ImageWorkerError as exc:
+        raise PreviewDecodeFailed(f"{abs_path}: {exc}") from None
+
+
+def _raise_refusal(head: dict, abs_path: str):
+    """Raise the refusal a child's answer *head* names."""
+    error = head.get("error")
+    text = str(head.get("text", ""))
+    if error == "memory":
+        raise PreviewTooLarge(f"{abs_path}: not enough memory to decode the picture")
+    if error == "PermissionError":
+        raise PermissionError(text)
+    raise _REFUSALS.get(str(error), PreviewDecodeFailed)(text or f"{abs_path}: cannot decode")
+
+
 def thumbnail(
     backend,
     path: str,
@@ -876,17 +1107,15 @@ def thumbnail(
                 from_cache=True,
             )
 
-    route = "svg" if mime == SVG_MIME else _raster_route(abs_path, allow_svg=allow_svg)
-    if route == "svg":
-        image, pillow = _render_svg(abs_path, edge), None
-    else:
-        image, pillow = _read_raster(abs_path, edge, route)
-    if pillow is not None:
-        data = _pillow_png(pillow, abs_path)
-        out_w, out_h = pillow.size
-    else:
+    head, data = ({"route": "svg"}, b"") if mime == SVG_MIME else \
+        _decoded("thumb", abs_path, edge, allow_svg)
+    if head.get("route") == "svg":
+        image = _render_svg(abs_path, edge)
         data = _png_bytes(image)
         out_w, out_h = image.width(), image.height()
+    else:
+        data = bytes(data)
+        out_w, out_h = int(head["w"]), int(head["h"])
 
     if cache_file is not None:
         _store_cached(cache_file, data)
@@ -914,13 +1143,15 @@ def decode_image(
     """
     abs_path, _st, mime = _checked_source(backend, path, allow_svg=allow_svg)
     edge = max(16, min(int(max_edge), MAX_DIMENSION))
-    route = "svg" if mime == SVG_MIME else _raster_route(abs_path, allow_svg=allow_svg)
-    if route == "svg":
+    if mime == SVG_MIME:
         return _render_svg(abs_path, edge)
-    image, pillow = _read_raster(abs_path, edge, route)
-    if image is not None:
-        return image
-    return _qimage_from_pillow(pillow)
+    def unpack(head: dict, body):
+        if head.get("route") == "svg":
+            return None
+        return _unpack_qimage(head, body, abs_path)
+
+    image = _decoded("decode", abs_path, edge, allow_svg, unpack)
+    return _render_svg(abs_path, edge) if image is None else image
 
 
 # ---------------------------------------------------------------------------

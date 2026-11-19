@@ -41,9 +41,9 @@ from typing import Any
 from PyQt6 import sip
 from PyQt6.QtCore import (
     QAbstractListModel,
+    QEvent,
     QModelIndex,
     QObject,
-    QPointF,
     QSize,
     QSortFilterProxyModel,
     Qt,
@@ -63,6 +63,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QButtonGroup,
     QCheckBox,
     QComboBox,
@@ -91,8 +92,10 @@ from core import audio_route as AR
 from core import media_collect as MC
 from core import media_load as ML
 from core import multimedia_probe as MPROBE
-from core.i18n import format_count, format_percent, tr
+from core import pdf_worker as PW
+from core.i18n import format_count, format_percent, tr, tr_n
 from core.multimedia_env import prime_notify_lookups
+from core.remote_name import sanitize_for_display as _shown
 from core.thread_relay import GuiCall
 from ui import viewer_file_actions as VFA
 from ui import viewer_window as VW
@@ -123,13 +126,13 @@ _pdf_ok: bool | None = None
 
 
 def pdf_supported() -> bool:
-    """True when QtPdf and its widgets import. They need libatomic from the
-    host, which the one-file binary does not bundle."""
+    """True when QtPdf imports (the drawing child, core.pdf_worker, uses
+    this Python's). It needs libatomic from the host, which the one-file
+    binary does not bundle."""
     global _pdf_ok
     if _pdf_ok is None:
         try:
             from PyQt6.QtPdf import QPdfDocument  # noqa: F401
-            from PyQt6.QtPdfWidgets import QPdfView  # noqa: F401
 
             _pdf_ok = True
         except Exception as exc:  # noqa: BLE001 - any import failure means "no PDF"
@@ -580,7 +583,8 @@ class MediaListModel(QAbstractListModel):
             return None
         item = self._items[index.row()]
         if role == Qt.ItemDataRole.DisplayRole:
-            return f"{item.name}\n{item.folder or '.'}"
+            # (as the pane shows names: a bidi override or a line break is U+FFFD)
+            return f"{_shown(item.name)}\n{_shown(item.folder or '.')}"
         if role == Qt.ItemDataRole.DecorationRole:
             icon = self._thumbs.get(item.path)
             if icon is not None:
@@ -800,6 +804,65 @@ class _ImageView(QGraphicsView):
             self.fit()
 
 
+#: Pages of the current PDF kept drawn (back and forth without a new drawing),
+#: and the most bytes they take together (a zoomed page is up to 96 MB; the
+#: newest page is kept whatever its size).
+PDF_PAGES_KEPT = 6
+PDF_PAGES_BYTES = 256 * 1024 * 1024
+#: A drawn page this much smaller than the window needs is drawn again.
+PDF_SHARPEN_BELOW = 0.85
+
+
+class _PdfView(_ImageView):
+    """One PDF page, drawn by the document's child process (core.pdf_worker)
+    as a picture: fit / 100 % / zoom like a picture, where the zoom counts
+    the page's own size at the screen's resolution (100 %: a point is
+    1/72 inch). The wheel scrolls; Ctrl + wheel zooms (the viewer's filter)."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        #: The page's size in px at 100 %, and how many image px are one of those.
+        self.page_px = (0.0, 0.0)
+        self.scale = 1.0
+        self.page = -1
+        self.pdf_zoom = 1.0
+
+    def show_page(self, page: int, image: QImage, page_px: tuple[float, float]) -> None:
+        fit_mode = self.fit_mode
+        self._pixmap.setPixmap(QPixmap.fromImage(image))
+        self.scene().setSceneRect(self._pixmap.boundingRect())
+        self.page, self.page_px = page, page_px
+        self.scale = image.width() / max(1.0, page_px[0])
+        if fit_mode:
+            self.fit()
+        else:
+            self.set_pdf_zoom(self.pdf_zoom)
+
+    def image_width(self) -> int:
+        return self._pixmap.pixmap().width()
+
+    def shown_zoom(self) -> float:
+        return self.zoom * self.scale
+
+    def set_pdf_zoom(self, zoom: float) -> None:
+        self.fit_mode = False
+        self.pdf_zoom = max(0.05, min(20.0, zoom))
+        self.zoom = self.pdf_zoom / max(1e-6, self.scale)
+        self._apply()
+
+    def fit(self) -> None:
+        super().fit()
+        self.pdf_zoom = self.shown_zoom()
+
+    def wheelEvent(self, event) -> None:  # noqa: N802 - Qt override
+        QGraphicsView.wheelEvent(self, event)  # scrolls; Ctrl zooms (MediaViewer.eventFilter)
+
+
+def _image_bytes(image) -> int:
+    """The memory a drawn page takes (0 for anything but a QImage)."""
+    return image.sizeInBytes() if isinstance(image, QImage) else 0
+
+
 class MediaViewer(QWidget):
     """One item at a time, with keyboard navigation and a slideshow."""
 
@@ -808,6 +871,10 @@ class MediaViewer(QWidget):
 
     def __init__(self, backend, parent: QWidget | None = None, *, workers: int = 1) -> None:
         super().__init__(parent)
+        # The decoding child (core.image_worker) starts while the viewer is built.
+        from core import image_worker
+
+        image_worker.warm()
         self._backend = backend
         self._items: list[MC.MediaItem] = []
         self.current_index = -1
@@ -818,14 +885,29 @@ class MediaViewer(QWidget):
         self._prepared: OrderedDict[int, Any] = OrderedDict()
         self._runner = TaskRunner(workers=workers, max_pending=8, parent=self)
         self._runner.finished.connect(self._on_prepared)
-        self._pdf_doc = None
-        self._pdf_view = None
+        self._pdf_view: _PdfView | None = None
+        self._pdf_runner: TaskRunner | None = None
+        #: Drawn pages of the shown PDFs: (path, page) -> (QImage, page px at 100 %).
+        self._pdf_pages: OrderedDict = OrderedDict()
+        #: Pages that could not be drawn: (path, page) -> (why, the visit
+        #: it failed in). The next visit tries such a page once more
+        #: (_pdf_retried): a passing failure - a child killed while the
+        #: machine was busy - stayed for as long as the viewer was open.
+        self._pdf_failed: dict = {}
+        self._pdf_retried: set = set()
+        #: Page visits so far (each page turned to, each document shown).
+        self._pdf_visit = 0
+        self._pdf_sharpen = QTimer(self)
+        self._pdf_sharpen.setSingleShot(True)
+        self._pdf_sharpen.setInterval(120)
+        self._pdf_sharpen.timeout.connect(self._request_pdf_page)
         self._player = None
         self._audio = None
         self._video_widget = None
         #: (index, entry) of the video waiting for core.multimedia_probe.
         self._probe_wait = None
         self._slideshow = False
+        self._pacer = VW.HeldStepPacer(self)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._build_ui()
 
@@ -917,19 +999,149 @@ class MediaViewer(QWidget):
         self.slideshow_timer.setSingleShot(True)
         self.slideshow_timer.timeout.connect(self._slideshow_tick)
 
-    def _ensure_pdf_view(self):
+    def _ensure_pdf_view(self) -> _PdfView:
         if self._pdf_view is None:
-            from PyQt6.QtPdf import QPdfDocument
-            from PyQt6.QtPdfWidgets import QPdfView
-
-            self._pdf_doc = QPdfDocument(self)
-            self._pdf_view = QPdfView(None)
-            self._pdf_view.setDocument(self._pdf_doc)
-            self._pdf_view.setPageMode(QPdfView.PageMode.SinglePage)
-            self._pdf_view.setZoomMode(QPdfView.ZoomMode.FitInView)
-            self._pdf_view.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            self._pdf_view = _PdfView(None)
+            # Ctrl + wheel zooms the page (the wheel alone still scrolls it)
+            self._pdf_view.viewport().installEventFilter(self)
+            self._pdf_view.zoom_changed.connect(self._pdf_zoom_changed)
             self.pages.addWidget(self._pdf_view)
+            self._pdf_runner = TaskRunner(workers=1, max_pending=4, parent=self)
+            self._pdf_runner.finished.connect(self._on_pdf_page)
         return self._pdf_view
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 - Qt override
+        if (
+            event.type() == QEvent.Type.Wheel
+            and self._pdf_view is not None
+            and obj is self._pdf_view.viewport()
+            and event.modifiers() & Qt.KeyboardModifier.ControlModifier
+        ):
+            steps = event.angleDelta().y() / 120.0
+            if steps:
+                self.zoom_by(1.25**steps)
+            event.accept()
+            return True
+        return super().eventFilter(obj, event)
+
+    def _pdf_shown_zoom(self) -> float:
+        """The zoom the PDF page is shown at, its fit included (100 %: the
+        page's own size at the screen's resolution)."""
+        view = self._pdf_view
+        if view is None or view.page < 0:
+            return 1.0
+        return view.shown_zoom() if view.fit_mode else view.pdf_zoom
+
+    def _pdf_entry(self):
+        entry = self._prepared.get(self.current_index)
+        return entry if self.mode == "pdf" and getattr(entry, "pdf", None) else None
+
+    def _pdf_dpi_scale(self) -> float:
+        screen = self.screen() or QApplication.primaryScreen()
+        return (screen.logicalDotsPerInch() if screen is not None else 96.0) / 72.0
+
+    def _pdf_wanted(self, page_px: tuple[float, float] | None) -> tuple[str, tuple]:
+        """What the next drawing of the page is to fill: ("fit", viewport
+        px) or ("zoom", factor), both in device px."""
+        view = self._pdf_view
+        ratio = self.devicePixelRatioF() or 1.0
+        if view.fit_mode:
+            vp = view.viewport().size()
+            return "fit", (max(1.0, vp.width() * ratio), max(1.0, vp.height() * ratio))
+        return "zoom", (view.pdf_zoom * ratio,)
+
+    def page_shown(self) -> int:
+        """The PDF page the view shows now (-1: none)."""
+        if self._pdf_view is None or self.pages.currentWidget() is not self._pdf_view:
+            return -1
+        return self._pdf_view.page
+
+    def _show_pdf_page(self) -> None:
+        """Show the current page from what is drawn already, or ask for it."""
+        entry = self._pdf_entry()
+        if entry is None:
+            return
+        key = (entry.local_path, self.current_page)
+        failed = self._pdf_failed.get(key)
+        if failed is not None:
+            self._show_placeholder(
+                tr("Cannot show page {n} of {name}").format(n=self.current_page + 1,
+                                                          name=_shown(entry.item.name))
+                + f"\n\n{failed[0]}")
+            return
+        drawn = self._pdf_pages.get(key)
+        if drawn is not None:
+            self._pdf_pages.move_to_end(key)
+            self._pdf_view.show_page(self.current_page, drawn[0], drawn[1])
+            self.pages.setCurrentWidget(self._pdf_view)
+        elif self.pages.currentWidget() is not self._pdf_view:
+            # The page before stays until this one is drawn (no flash of
+            # an empty view on every page turned).
+            self.pages.setCurrentWidget(self.loading_label)
+        self._request_pdf_page()
+
+    def _pdf_zoom_changed(self) -> None:
+        if self._pdf_entry() is not None:
+            self._pdf_sharpen.start()
+
+    def _request_pdf_page(self) -> None:
+        """Have the current page drawn for the view's zoom, unless what is
+        shown is sharp enough."""
+        entry = self._pdf_entry()
+        if entry is None or self._pdf_view is None:
+            return
+        page = self.current_page
+        key = (entry.local_path, page)
+        if key in self._pdf_failed:
+            return
+        drawn = self._pdf_pages.get(key)
+        mode, size = self._pdf_wanted(drawn[1] if drawn else None)
+        if drawn is not None:
+            image, page_px = drawn
+            if mode == "fit":
+                need = min(size[0] / page_px[0], size[1] / page_px[1])
+            else:
+                need = size[0]
+            have = image.width() / max(1.0, page_px[0])
+            limit_w, _h = PW.clamp_size(page_px[0] * need, page_px[1] * need)
+            if image.width() >= PDF_SHARPEN_BELOW * limit_w or have >= need * PDF_SHARPEN_BELOW:
+                return
+        renderer, dpi = entry.pdf, self._pdf_dpi_scale()
+        bucket = tuple(round(v, 1) for v in size)
+
+        def draw(_cancel, renderer=renderer, page=page, mode=mode, size=size, dpi=dpi):
+            w_pt, h_pt = renderer.page_size(page)
+            page_px = (max(1.0, w_pt * dpi), max(1.0, h_pt * dpi))
+            if mode == "fit":
+                scale = min(size[0] / page_px[0], size[1] / page_px[1])
+            else:
+                scale = size[0]
+            image = ML.render_page(renderer, page, round(page_px[0] * scale),
+                                   round(page_px[1] * scale))
+            return image, page_px
+
+        self._pdf_runner.submit(("page", entry.local_path, page, mode, bucket), draw)
+
+    def _on_pdf_page(self, key, value, error) -> None:
+        _kind, path, page, _mode, _bucket = key
+        if error is not None:
+            if not isinstance(error, (ML.MediaUnavailable, PW.PdfError)):
+                log.warning("Media viewer: page %d of %s failed: %r", page + 1, path, error)
+            entry = self._prepared.get(self.current_index)
+            if getattr(entry, "local_path", None) == path and getattr(entry, "pdf", None):
+                self._pdf_failed[(path, page)] = (str(error) or type(error).__name__,
+                                                  self._pdf_visit)
+        else:
+            self._pdf_pages[(path, page)] = value
+            self._pdf_pages.move_to_end((path, page))
+            while len(self._pdf_pages) > PDF_PAGES_KEPT or (
+                    len(self._pdf_pages) > 1
+                    and sum(_image_bytes(v[0]) for v in self._pdf_pages.values())
+                    > PDF_PAGES_BYTES):
+                self._pdf_pages.popitem(last=False)
+        entry = self._pdf_entry()
+        if entry is not None and entry.local_path == path and page == self.current_page:
+            self._show_pdf_page()
 
     def _ensure_player(self):
         if self._player is None:
@@ -992,15 +1204,13 @@ class MediaViewer(QWidget):
     @property
     def fit_mode(self) -> bool:
         if self.mode == "pdf" and self._pdf_view is not None:
-            from PyQt6.QtPdfWidgets import QPdfView
-
-            return self._pdf_view.zoomMode() != QPdfView.ZoomMode.Custom
+            return self._pdf_view.fit_mode
         return self.image_view.fit_mode
 
     @property
     def zoom_factor(self) -> float:
         if self.mode == "pdf" and self._pdf_view is not None:
-            return self._pdf_view.zoomFactor()
+            return self._pdf_shown_zoom()
         return self.image_view.zoom
 
     @property
@@ -1118,8 +1328,11 @@ class MediaViewer(QWidget):
 
     def _release_all(self) -> None:
         self._stop_media()
-        if self._pdf_doc is not None:
-            self._pdf_doc.close()
+        self._pdf_pages.clear()
+        self._pdf_failed.clear()
+        self._pdf_retried.clear()
+        if self._pdf_runner is not None:
+            self._pdf_runner.reset()
         for entry in self._prepared.values():
             _release(entry)
         self._prepared.clear()
@@ -1128,6 +1341,8 @@ class MediaViewer(QWidget):
         """Stop everything and remove temp copies (the window closes)."""
         self.stop_slideshow()
         self._runner.shutdown()
+        if self._pdf_runner is not None:
+            self._pdf_runner.shutdown()
         self.metadata_panel.job.abandon()
         self._release_all()
         if self._player is not None:
@@ -1143,7 +1358,7 @@ class MediaViewer(QWidget):
         if isinstance(entry, ML.MediaUnavailable):
             self.mode = "placeholder"
             self._show_placeholder(
-                tr("Cannot show {name}").format(name=item.name) + f"\n\n{entry}"
+                tr("Cannot show {name}").format(name=_shown(item.name)) + f"\n\n{entry}"
             )
             self._arm_slideshow()
             return
@@ -1158,30 +1373,43 @@ class MediaViewer(QWidget):
             self._display_video(entry)
 
     def _display_pdf(self, entry) -> None:
-        from PyQt6.QtPdf import QPdfDocument
-
         view = self._ensure_pdf_view()
-        self._pdf_doc.close()
-        error = self._pdf_doc.load(entry.local_path)
-        if error != QPdfDocument.Error.None_:
-            self.mode = "placeholder"
-            self._show_placeholder(
-                tr("Cannot show {name}").format(name=entry.item.name)
-                + f"\n\n{ML._pdf_error_text(error)}"
-            )
-            self._arm_slideshow()
-            return
+        if self._pdf_pages and next(iter(self._pdf_pages))[0] != entry.local_path:
+            # pages of another document are not shown again soon
+            self._pdf_pages = OrderedDict(
+                (k, v) for k, v in self._pdf_pages.items() if k[0] == entry.local_path)
         self.mode = "pdf"
-        self.page_count = self._pdf_doc.pageCount()
+        self.page_count = entry.page_count
         self.current_page = max(0, min(self.current_page, self.page_count - 1))
-        self.pages.setCurrentWidget(view)
+        first = (entry.local_path, 0)
+        if (isinstance(entry.image, QImage) and entry.first_page_points
+                and first not in self._pdf_pages):
+            # the first page, drawn when the document was opened
+            dpi = self._pdf_dpi_scale()
+            w_pt, h_pt = entry.first_page_points
+            self._pdf_pages[first] = (entry.image, (max(1.0, w_pt * dpi), max(1.0, h_pt * dpi)))
+        elif isinstance(entry.image, Exception):
+            # failed while the document was opened: in the visit to come
+            self._pdf_failed.setdefault(first, (str(entry.image), self._pdf_visit + 1))
+        view.fit_mode = True
         self._jump_page(self.current_page)
         self._arm_slideshow()
 
     def _jump_page(self, page: int) -> None:
         self.current_page = page
-        if self._pdf_view is not None:
-            self._pdf_view.pageNavigator().jump(page, QPointF(), 0)
+        self._pdf_visit += 1
+        entry = self._pdf_entry()
+        if entry is not None:
+            key = (entry.local_path, page)
+            failed = self._pdf_failed.get(key)
+            if failed is not None and failed[1] < self._pdf_visit and key not in self._pdf_retried:
+                # Failed in an earlier visit: drawn once more (a fresh child
+                # opens the document again, core.pdf_worker). Loading meanwhile:
+                # the page turned from does not stand for this one.
+                del self._pdf_failed[key]
+                self._pdf_retried.add(key)
+                self.pages.setCurrentWidget(self.loading_label)
+        self._show_pdf_page()
         self._update_status()
 
     def _display_video(self, entry) -> None:
@@ -1209,7 +1437,7 @@ class MediaViewer(QWidget):
                 item = self.current_item()
                 self.mode = "placeholder"
                 self._show_placeholder(
-                    tr("Cannot play {name}").format(name=item.name if item else "")
+                    tr("Cannot play {name}").format(name=_shown(item.name) if item else "")
                     + "\n\n" + (MPROBE.unavailable_text(result) if not result.ok
                                   else tr(NO_VIDEO_BACKEND))
                 )
@@ -1256,7 +1484,7 @@ class MediaViewer(QWidget):
         item = self.current_item()
         self.mode = "placeholder"
         self._show_placeholder(
-            tr("Cannot show {name}").format(name=item.name if item else "") + f"\n\n{text}"
+            tr("Cannot show {name}").format(name=_shown(item.name) if item else "") + f"\n\n{text}"
         )
         self._arm_slideshow()
 
@@ -1311,30 +1539,21 @@ class MediaViewer(QWidget):
     # -- zoom ---------------------------------------------------------------
     def fit(self) -> None:
         if self.mode == "pdf" and self._pdf_view is not None:
-            from PyQt6.QtPdfWidgets import QPdfView
-
-            self._pdf_view.setZoomMode(QPdfView.ZoomMode.FitInView)
+            self._pdf_view.fit()
         else:
             self.image_view.fit()
         self._update_status()
 
     def actual_size(self) -> None:
         if self.mode == "pdf" and self._pdf_view is not None:
-            from PyQt6.QtPdfWidgets import QPdfView
-
-            self._pdf_view.setZoomMode(QPdfView.ZoomMode.Custom)
-            self._pdf_view.setZoomFactor(1.0)
+            self._pdf_view.set_pdf_zoom(1.0)
         else:
             self.image_view.actual_size()
         self._update_status()
 
     def zoom_by(self, factor: float) -> None:
         if self.mode == "pdf" and self._pdf_view is not None:
-            from PyQt6.QtPdfWidgets import QPdfView
-
-            current = self._pdf_view.zoomFactor()
-            self._pdf_view.setZoomMode(QPdfView.ZoomMode.Custom)
-            self._pdf_view.setZoomFactor(max(0.05, min(20.0, current * factor)))
+            self._pdf_view.set_pdf_zoom(self._pdf_shown_zoom() * factor)
         else:
             self.image_view.zoom_by(factor)
         self._update_status()
@@ -1409,13 +1628,13 @@ class MediaViewer(QWidget):
         # PageUp / PageDown move files with and without Ctrl (Ctrl was the
         # "skip the rest of this PDF" key while they also turned pages).
         if key in (K.Key_Right, K.Key_Space, K.Key_PageDown):
-            self.step(+1)
+            self._paced(event, lambda: self.step(+1))
         elif key in (K.Key_Left, K.Key_Backspace, K.Key_PageUp):
-            self.step(-1)
+            self._paced(event, lambda: self.step(-1))
         elif key == K.Key_Down and not ctrl and self._has_pages():
-            self.next_page()
+            self._paced(event, self.next_page)
         elif key == K.Key_Up and not ctrl and self._has_pages():
-            self.prev_page()
+            self._paced(event, self.prev_page)
         elif key == K.Key_Home:
             self.first()
         elif key == K.Key_End:
@@ -1446,6 +1665,15 @@ class MediaViewer(QWidget):
             return
         event.accept()
 
+    def _paced(self, event: QKeyEvent, step) -> None:
+        """*step* for a key press: at once, or - a held key's repeat - at
+        most three a second (viewer_window.HeldStepPacer)."""
+        if event.isAutoRepeat():
+            self._pacer.request(step)
+        else:
+            self._pacer.note()
+            step()
+
     def _has_pages(self) -> bool:
         """Whether the current item has pages to turn (Up / Down are page
         keys only then; elsewhere they stay with the view)."""
@@ -1467,9 +1695,9 @@ class MediaViewer(QWidget):
             self.status_label.setText(self._status)
             return
         self.counter_label.setText(f"{self.current_index + 1} / {len(self._items)}")
-        parts = [item.name]
+        parts = [_shown(item.name)]
         if item.folder:
-            parts.append(item.folder)
+            parts.append(_shown(item.folder))
         if self.mode == "pdf":
             parts.append(
                 tr("page {n} of {total}").format(n=self.current_page + 1, total=self.page_count)
@@ -1532,8 +1760,9 @@ class MediaViewerDialog(QDialog):
         self.scan_job = ScanJob(
             self,
             formatter=lambda s: (
-                tr("Scanning… {folders} folders, {items} media files").format(
-                    folders=s["scanned"], items=s["indexed"]
+                tr("Scanning… {folders}, {items}").format(
+                    folders=tr_n(s["scanned"], "{n} folder", "{n} folders"),
+                    items=tr_n(s["indexed"], "{n} media file", "{n} media files"),
                 )
                 + f" — {shorten(s['path'])}"
             ),
@@ -1564,6 +1793,10 @@ class MediaViewerDialog(QDialog):
         # pane - move, or copy with Ctrl. A zoomed-in image pans instead.
         QShortcut(QKeySequence(QKeySequence.StandardKey.Delete), self).activated.connect(
             self.delete_current
+        )
+        # Del moves to the trash (as in the pane), Shift+Del deletes for good.
+        QShortcut(QKeySequence("Shift+Del"), self).activated.connect(
+            lambda: self.delete_current(permanent=True)
         )
         image_view = self.viewer.image_view
         VFA.DragOut(
@@ -1650,7 +1883,11 @@ class MediaViewerDialog(QDialog):
         if scan.depth_capped:
             parts.append(tr("depth limit reached"))
         if scan.links_skipped:
-            parts.append(tr("{n} linked folders not followed").format(n=scan.links_skipped))
+            parts.append(tr_n(
+                scan.links_skipped,
+                "{n} linked folder not followed",
+                "{n} linked folders not followed",
+            ))
         text = ", ".join(parts)
         if cancelled:
             text += " " + tr("(cancelled)")
@@ -1724,11 +1961,12 @@ class MediaViewerDialog(QDialog):
             return self.viewer.image_view.viewport()
         return self.overview.view.viewport()
 
-    def delete_current(self) -> None:
+    def delete_current(self, permanent: bool = False) -> None:
         path = self.current_path()
         # The delete waits for the server (run_off_gui): the viewer may be
         # gone once it is through.
-        if path and VFA.delete_file(self, self._backend, path, self._pane) \
+        if path and VFA.delete_file(self, self._backend, path, self._pane,
+                                    permanent=permanent) \
                 and not sip.isdeleted(self):
             self.remove_path(path)
 

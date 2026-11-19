@@ -25,13 +25,17 @@ source tree:
 | Output | How to build | Where |
 |---|---|---|
 | `axross-<version>.tar.gz`, `axross-<version>-py3-none-any.whl` | `python -m build` | anywhere |
-| Linux `axross-base`, `axross-slim`, `axross-full` (+ `axross-media-player`, `axross-system-info`) for glibc 2.34 and 2.36, the packs, wheel and sdist - everything a release carries for Linux | `scripts/build_dist.sh` -> `dist/<version>/`; in CI the `linux` job of `cross-platform.yml` runs it (artifact `axross-linux-dist`) | CI, or a builder (see [Release flow](#release-flow)) |
+| Linux `axross-base`, `axross-slim`, `axross-full` (+ `axross-media-player`, `axross-system-info`) for glibc 2.34 and 2.36, the AppImages `axross-{base,slim,full}-x86_64.AppImage` (from the glibc-2.34 binaries), the packs, wheel and sdist - everything a release carries for Linux | `scripts/build_dist.sh` -> `dist/<version>/`; in CI the `linux` job of `cross-platform.yml` runs it (artifact `axross-linux-dist`) | CI, or a builder (see [Release flow](#release-flow)) |
 | One Linux binary on this machine | `scripts/build_bundle.sh slim\|full\|base [--appimage]` | any Linux |
+| An AppImage of a built binary | `scripts/build_appimage.sh ELF OUT.AppImage` (pinned appimagetool and runtime) | any Linux x86-64 with `file` |
 | One portable Linux binary (glibc 2.34) | `scripts/build_bundle_docker.sh slim\|full` | Linux with Docker or podman |
-| macOS and Windows `axross-slim`, `axross-full` | the `bundle` job of `cross-platform.yml`, started by a tag push | CI |
+| macOS and Windows `axross-slim`, `axross-full`; the macOS disk images `axross-{slim,full}-macos-arm64.dmg` (axross.app) | the `bundle` job of `cross-platform.yml` (`scripts/build_macos_dmg.sh` for the images), started by a tag push | CI |
 | Optional packs (extras as wheels) | `scripts/build_packs.py` (part of `build_dist.sh`) | builder |
 | Release folder in the updater's asset names, `SHA256SUMS` signed | `scripts/assemble_release.py`, then `scripts/sign_release.py` | maintainer |
-| `axross-mcp:latest` (Docker) | `docker build -f Dockerfile.mcp -t axross-mcp:latest .` | Docker host |
+| `axross-headless-mcp:latest` (Docker) | `docker build -f Dockerfile.mcp -t axross-headless-mcp:latest .` | Docker host |
+| `ghcr.io/c0decave/axross-headless-mcp:<version>` and `:latest` (every release) | `.github/workflows/mcp-release.yml`, started by the tag push | CI |
+| `axross-headless-mcp` on PyPI: the headless MCP server without Qt (every release) | `scripts/export_standalone.py mcp OUT`, then `python -m build OUT` | maintainer |
+| The entry `io.github.c0decave/axross-headless-mcp` in the official MCP registry (every release) | `server.json`, published by the `registry` job of `mcp-release.yml` (GitHub OIDC) | CI |
 | `localhost/axross-gui:latest` (podman) | `scripts/axross-podman.sh build` (`Dockerfile.gui`) | podman host |
 
 Sizes depend on the flavour and the platform: slim is about 90-115 MB,
@@ -53,8 +57,9 @@ runtime resources:
 * `resources/wordlists/` — default TFTP discovery wordlist.
 
 PyPI renders `README_PYPI.md` as the project start page. Keep it
-short, install-focused, and based on absolute GitHub links; the
-top-level `README.md` remains the full repository overview.
+short, install-focused, and based on absolute GitHub links (images
+too: raw.githubusercontent.com). The top-level `README.md` is the short
+repository front page; `docs/README-extended.md` is the full overview.
 
 ### Build locally
 
@@ -261,8 +266,10 @@ entries with an "install the matching system package" hint.
 
 ### AppImage wrap
 
-`scripts/build_bundle.sh <flavor> --appimage` runs the ELF
-through [`appimagetool`](https://appimage.github.io/appimagetool/),
+`scripts/build_appimage.sh ELF OUT.AppImage` (also `scripts/build_bundle.sh
+<flavor> --appimage`, and `scripts/build_dist.sh` for every release: the
+glibc-2.34 binaries become `appimage/axross-{base,slim,full}-x86_64.AppImage`)
+runs the ELF through [`appimagetool`](https://appimage.github.io/appimagetool/),
 which:
 
 1. Creates an `AppDir` layout (`usr/bin/axross`,
@@ -271,22 +278,40 @@ which:
 2. Adds the standard AppRun entry point.
 3. Packages everything into a single self-mounting ELF.
 
-Fresh hosts without `appimagetool` in PATH (or `APPIMAGETOOL=<path>`)
-get a pinned release of the tool - 1.9.1, not the `continuous` build,
-whose file changes under the same URL - downloaded to
-`build/appimagetool-x86_64.AppImage` by `scripts/fetch_appimagetool.sh`.
+The binary inside is the very file it was given (the script reads it back
+through the image's runtime and compares): it keeps its flavour and glibc
+variant, and `core.self_update` recognises it inside the image (`$APPIMAGE`
+names the image file, the binary lies inside `$APPDIR`) and updates the
+**image** with the release's AppImage of its flavour - never with the plain
+binary, and a plain binary started from some other AppImage (which inherits
+both variables) stays a plain binary.
+
+`scripts/build_appimage.sh` takes a pinned release of the tool - 1.9.1, not
+the `continuous` build, whose file changes under the same URL - downloaded
+to `build/appimagetool-x86_64.AppImage` by `scripts/fetch_appimagetool.sh`
+(`APPIMAGETOOL=<path>` overrides it; `build_bundle.sh --appimage` takes an
+`appimagetool` in PATH first). The **runtime** - the ELF at the start of
+every AppImage, so part of what is shipped - is pinned the same way
+(type2-runtime `20251108`, `fetch_appimagetool.sh DEST --runtime`) and
+handed over with `--runtime-file`: without it appimagetool fetches the
+runtime's `continuous` build itself. appimagetool is itself an AppImage; the
+script unpacks it (`--appimage-extract`) and runs it from there, so the
+build needs no FUSE (CI runners have none), only the program `file`.
 Its SHA-256 is checked after the download and again on every later
 build for the cached copy; a mismatch deletes the download and stops
 the build, and there is no switch to skip the check. To move to a
-newer release, set `APPIMAGETOOL_VERSION` and `APPIMAGETOOL_SHA256` at
+newer release, set `APPIMAGETOOL_VERSION` and `APPIMAGETOOL_SHA256` (or
+`APPIMAGE_RUNTIME_VERSION` and `APPIMAGE_RUNTIME_SHA256`) at
 the top of that script (the comment there says where GitHub shows an
 asset's digest) and cross-check the digest with `sha256sum` on the
 downloaded file.
 
 ### macOS binary: the first start
 
-The macOS binary (`axross-slim-macos-arm64`) is ad-hoc signed, not
-notarized: there is no Apple Developer ID behind it. A browser marks
+The macOS binaries (`axross-slim-macos-arm64`, `axross-full-macos-arm64`,
+and axross.app in the disk images `axross-{slim,full}-macos-arm64.dmg`) are
+ad-hoc signed, not notarized (for axross.app the commands below take
+`xattr -dr com.apple.quarantine /Applications/axross.app`): there is no Apple Developer ID behind it. A browser marks
 the download with `com.apple.quarantine`, and Gatekeeper refuses its
 first start ("Apple could not verify … is free of malware") before any
 axross code runs. Measured on macOS 27.0.1: syspolicyd logs "Prompt
@@ -311,19 +336,22 @@ anywhere.
 
 ### Docker image (`Dockerfile.mcp`)
 
-Pure-headless. No PyQt6. Installs only the subset of third-party
-deps the MCP surface needs:
+Pure-headless. No PyQt6. Installs what the PyPI package axross-headless-mcp
+requires - paramiko, cryptography, jsonschema, keyring, PySocks - and its
+extras smb (`smbprotocol`), webdav (`requests`, `defusedxml`), s3 (`boto3`),
+adb (`adb-shell`), archive's 7z (`py7zr`) and images (`Pillow`);
+`tests/test_docker_images.py` holds the two sets together.
 
-* `paramiko` — SFTP/SCP
-* `cryptography` — encrypted overlay + TLS
-* `jsonschema` — argument validation
-* `smbprotocol` — SMB / DFS-N
-* `boto3` — S3
-* `requests` + `defusedxml` — WebDAV (pure-Python, no SDK)
-* `adb-shell` — ADB
-* `py7zr` — 7z extract
-
-Each with pyproject.toml's floor. Of the source tree it carries
+Each with pyproject.toml's floor. The base image is `python:3.12-slim`; the
+release workflow resolves that tag to its digest once
+(`docker buildx imagetools inspect`), builds with
+`--build-arg PYTHON_IMAGE=python:3.12-slim@sha256:...` and records the digest
+in the label `org.opencontainers.image.base.digest`. To check an image:
+`docker inspect -f '{{index .Config.Labels "org.opencontainers.image.base.digest"}}'
+ghcr.io/c0decave/axross-headless-mcp:<version>` and compare with
+`docker buildx imagetools inspect python:3.12-slim` at that time (or the
+Docker Hub page's digest). The sandbox the package was prepared in cannot
+reach Docker Hub, so no digest is committed by hand. Of the source tree it carries
 `main.py` and what its MCP path imports or reads: `axross/`, `core/`,
 `models/`, `security/` and `resources/` (no `ui/`).
 `tests/test_docker_images.py` follows the imports of the entry point
@@ -333,11 +361,36 @@ pyproject's.
 The resulting image is ~180 MB — much smaller than the GUI
 bundle because Qt is the dominant dep in both. Default
 `ENTRYPOINT` runs `main.py --mcp-server` on stdio; operators
-override with `--mcp-http 0.0.0.0:7331` + cert args for a
-network-facing deploy.
+override with `--mcp-http 0.0.0.0:7331` and the three mTLS flags
+(`--mcp-cert`, `--mcp-key`, `--mcp-ca`) for a network-facing deploy -
+plain HTTP is loopback-only and refuses `0.0.0.0`.
 
 See the in-file comments for mTLS-protected example
 `docker run` invocations.
+
+Every release tag builds it in CI (`.github/workflows/mcp-release.yml`)
+and pushes `ghcr.io/c0decave/axross-headless-mcp:<version>` and `:latest`. It
+carries the label `io.modelcontextprotocol.server.name =
+io.github.c0decave/axross-headless-mcp` - the official MCP registry accepts the image as
+a package of `server.json`'s server only with it - and the OCI labels
+`org.opencontainers.image.*` (source, licence, the version from the
+build argument `VERSION`).
+
+### Headless MCP package (`axross-headless-mcp`)
+
+`scripts/export_standalone.py mcp OUT` writes the PyPI project
+axross-headless-mcp: the MCP server without PyQt6, its command `axross-headless-mcp` taking
+the flags of `axross --mcp-server` (stdio by default). Unlike the other
+exported tools it keeps axross's module names (`core`, `models`,
+`security`, `axross` under `axross_headless_mcp/_ax/`, put first on `sys.path` by
+the command), because the server names modules in strings (the backend
+registry, `python -m core.agent_worker`, the script child). It follows
+every import of `core/mcp_cli.py`, carries nothing of `ui/`, and stops
+when a module it takes imports PyQt6 at import time. Its dependencies are
+paramiko, cryptography, jsonschema, keyring and PySocks; axross's backend
+extras are its extras (`all` as axross's `all`, plus `images` for Pillow).
+The CI job `mcp-headless` of `python-app.yml` installs it where PyQt6
+does not exist and runs its tests and `tests/test_mcp_without_qt.py`.
 
 ### GUI image for podman (`Dockerfile.gui`, `scripts/axross-podman.sh`)
 
@@ -614,13 +667,17 @@ it).
 
 ```bash
 export GH_HOST=github.com   # gh must talk to github.com, whatever its default host is
-VERSION=0.15.178
+VERSION=0.15.180
 ```
 
 1. **maintainer** - prepare the commit. `axross/_version.py` says
    `$VERSION`; `CHANGELOG.md` turns "Unreleased" into `## $VERSION -
    <date>` (the release notes start from it: `assemble_release.py
-   --require-all` refuses a section still called "Unreleased"). Run the
+   --require-all` refuses a section still called "Unreleased"). When the
+   `CHANGELOG.md` entry is the short one and the full notes are a file of
+   their own (from 0.15.180: `docs/releases/RELEASE-NOTES-$VERSION.md`,
+   its section headed `## $VERSION - <date>` as well), step 8 passes that
+   file with `--changelog`; it is listed in `MANIFEST.in`. Run the
    **full** test suite locally - the "Python application" workflow
    (`python-app.yml`) runs only five test files, not the suite:
 
@@ -631,6 +688,17 @@ VERSION=0.15.178
 
    (`-n auto` needs pytest-xdist; single-process the run takes about half an
    hour.) Merge to `main`; `python-app.yml` must be green on that commit.
+
+   **The MCP server's version, in the same commit.** `server.json` (the
+   entry in the official MCP registry) says `$VERSION` three times: its
+   own `version`, the `pypi` package's `version` and the tag of the `oci`
+   image (`ghcr.io/c0decave/axross-headless-mcp:$VERSION`). The release workflow
+   refuses a tag that disagrees, and `tests/test_mcp_release.py` refuses
+   the commit already:
+
+   ```bash
+   python scripts/check_mcp_release.py "$VERSION"
+   ```
 
    **Tour videos, in the same commit.** The app pins each video's SHA-256
    in `resources/tours/tour_videos.json` and plays only those files, so the
@@ -667,7 +735,8 @@ VERSION=0.15.178
 
    Every job must say `success`: `smoke` (three), `bundle` (four: slim
    and full on macOS and Windows), `linux` (the whole Linux dist, a few
-   hours) and `linux-host-check` (three: full, slim, base). Fix and push
+   hours) and `linux-host-check` (three: full, slim, base - each also
+   starts its AppImage and compares the binary inside). Fix and push
    again until it is; tag only a commit with a green run.
 
 3. **maintainer** - tag that commit and push the tag:
@@ -683,8 +752,21 @@ VERSION=0.15.178
    `axross-<flavor>-<runner.os>-<runner.arch>` - `axross-slim-macOS-ARM64`,
    `axross-full-macOS-ARM64`, `axross-slim-Windows-X64`,
    `axross-full-Windows-X64` - each with `axross-<flavor>[.exe]` and its
-   `.sha256`; the `linux` artifact is `axross-linux-dist`. Fetch them all
-   once the run is green:
+   `.sha256`, the macOS ones also with `axross-<flavor>-macos-arm64.dmg` and
+   its `.sha256`; the `linux` artifact is `axross-linux-dist`.
+
+   The same tag starts `mcp-release.yml`: it checks the version (step
+   1), builds `Dockerfile.mcp`, checks that the image carries the
+   registry's label and answers `initialize` and `tools/list` with every
+   group and without PyQt6, and pushes
+   `ghcr.io/c0decave/axross-headless-mcp:$VERSION` and `:latest` with the
+   workflow's own `GITHUB_TOKEN` (`packages: write`; no stored secret).
+   Its `registry` job then waits for axross-headless-mcp on PyPI (step 12). Once,
+   for the first release: the package `axross-headless-mcp` on ghcr.io is private
+   when the workflow creates it - make it public (the package's settings
+   on GitHub), or the registry cannot read its label.
+
+   Fetch the bundle artifacts once the run is green:
 
    ```bash
    RUN=$(gh run list --workflow cross-platform.yml --branch "v$VERSION" --limit 1 \
@@ -707,12 +789,14 @@ VERSION=0.15.178
 
    ```bash
    gh run download "$RUN" -n axross-linux-dist -D "dist/$VERSION"
-   chmod +x dist/$VERSION/glibc-2.3*/axross-*
+   chmod +x dist/$VERSION/glibc-2.3*/axross-* dist/$VERSION/appimage/*.AppImage
    ```
 
    The folder holds `glibc-2.34/` and `glibc-2.36/` (each with
    `axross-base`, `axross-slim`, `axross-full` and the tools
-   `axross-media-player`, `axross-system-info`), `packs/` (the wheels and
+   `axross-media-player`, `axross-system-info`), `appimage/` (the three
+   glibc-2.34 binaries as `axross-<flavor>-x86_64.AppImage`, with its
+   `SHA256SUMS`), `packs/` (the wheels and
    `packs-$VERSION.json`), `standalone/`, the wheel
    `axross-$VERSION-py3-none-any.whl`, the sdist `axross-$VERSION.tar.gz`,
    `SUPPLY-CHAIN.md`, `BUILD-INFO.md` and `NATIVE-COMPONENTS.md`. When
@@ -773,16 +857,20 @@ VERSION=0.15.178
 
 8. **maintainer** - assemble, sign and check the release, with the
    **field key**: a key of `FIELD_KEYS` in `scripts/sign_release.py`, the
-   key the binaries in use pin (for 0.15.178 that is the first key,
+   key the binaries in use pin (for 0.15.180 that is still the first key,
    `rJX0yymA5/...`; see "Key rotation" below):
 
    ```bash
    .venv/bin/python scripts/assemble_release.py --version "$VERSION" \
        --ci "dist/$VERSION-ci" --out "dist/release-$VERSION" \
-       --key /path/to/release-key.pem --require-all
+       --key /path/to/release-key.pem --require-all \
+       --changelog "docs/releases/RELEASE-NOTES-$VERSION.md"
    ```
 
-   `--ci` alone takes the Linux dist from its `axross-linux-dist` (a
+   `--changelog` names the file the notes start from (its `## $VERSION -
+   <date>` section); without it they start from `CHANGELOG.md` - for a
+   release whose full notes stand in the CHANGELOG entry (0.15.179 and
+   earlier), leave it out. `--ci` alone takes the Linux dist from its `axross-linux-dist` (a
    folder, or the `.zip` the web page hands out); with a builder's
    folder add `--dist "dist/$VERSION"` - it is used instead, and the
    summary says so.
@@ -791,13 +879,15 @@ VERSION=0.15.178
    the contract below, checks every input against the checksum its build
    wrote and drops those files (the per-folder `SHA256SUMS`, the CI's
    `.sha256`), writes one `SHA256SUMS` (first line `# axross-release
-   $VERSION`, a line for every binary, attached pack wheel, the manifest,
-   wheel and sdist), signs it through `scripts/sign_release.py`, writes
-   `dist/release-$VERSION/notes.md` (the `CHANGELOG.md` section,
-   `NATIVE-COMPONENTS.md`, the assets, how to verify them with their
-   checksums) and then checks the result through `core.self_update` and
+   $VERSION`, a line for every binary, AppImage, disk image, attached pack
+   wheel, the manifest, wheel, sdist and the notes), signs it through
+   `scripts/sign_release.py`, writes `dist/release-$VERSION/notes.md` (the
+   `CHANGELOG.md` section, `NATIVE-COMPONENTS.md`, the assets, how to verify
+   them with their checksums and the key that signed) - the same text is the
+   asset `RELEASE-NOTES-$VERSION.md`, as releases 0.10.31 to 0.13.157
+   carried it, so it is written before `SHA256SUMS` is signed - and then checks the result through `core.self_update` and
    `core.packs` themselves: every kind of installed binary (platform,
-   machine, flavour, glibc variant, with and without the marker files of
+   machine, flavour, glibc variant, inside an AppImage or not, with and without the marker files of
    older bundles) finds its asset and its line, the signature verifies with
    the field keys alone, the pack manifest is what a base accepts, the
    API's answer stays within the updater's 1 MiB, and everything an
@@ -862,6 +952,30 @@ VERSION=0.15.178
    /tmp/axross-testpypi/bin/axross --version
    ```
 
+   The headless MCP server, **axross-headless-mcp**, from the same tag: the
+   package `scripts/export_standalone.py mcp` writes (no PyQt6; its README
+   carries the line `mcp-name: io.github.c0decave/axross-headless-mcp` that the MCP
+   registry looks for on PyPI), built, checked, its own tests run against
+   the installed command, then TestPyPI:
+
+   ```bash
+   rm -rf "dist/axross-headless-mcp-$VERSION"
+   .venv/bin/python scripts/export_standalone.py mcp "dist/axross-headless-mcp-$VERSION/src-tree"
+   .venv/bin/python -m build --outdir "dist/axross-headless-mcp-$VERSION" "dist/axross-headless-mcp-$VERSION/src-tree"
+   M="dist/axross-headless-mcp-$VERSION"
+   .venv/bin/twine check --strict "$M/axross_headless_mcp-$VERSION.tar.gz" "$M/axross_headless_mcp-$VERSION-py3-none-any.whl"
+   python3 -m venv /tmp/axross-headless-mcp-check
+   /tmp/axross-headless-mcp-check/bin/pip install "$M/axross_headless_mcp-$VERSION-py3-none-any.whl" pytest
+   /tmp/axross-headless-mcp-check/bin/python -c 'import importlib.util as u, sys; sys.exit(u.find_spec("PyQt6") is not None)'
+   (cd "$M/src-tree" && /tmp/axross-headless-mcp-check/bin/python -m pytest -q tests)
+   .venv/bin/twine upload --repository testpypi \
+       "$M/axross_headless_mcp-$VERSION.tar.gz" "$M/axross_headless_mcp-$VERSION-py3-none-any.whl"
+   ```
+
+   The exported tree is also the content of the repository
+   `c0decave/axross-headless-mcp` (a commit "axross-headless-mcp $VERSION" there, as for
+   axross-markdown and axross-amp).
+
 11. **maintainer** - publish the GitHub release
    (`gh release edit "v$VERSION" --draft=false --latest`), then check
    that an **installed 0.14.136 binary updates**: on a machine that is not
@@ -882,15 +996,41 @@ VERSION=0.15.178
    ```
 
 12. **maintainer** - PyPI, last: an upload there cannot be replaced.
+    axross, then axross-headless-mcp (step 10's files):
 
     ```bash
     .venv/bin/twine upload "$A/axross-$VERSION.tar.gz" "$A/axross-$VERSION-py3-none-any.whl"
+    .venv/bin/twine upload "$M/axross_headless_mcp-$VERSION.tar.gz" "$M/axross_headless_mcp-$VERSION-py3-none-any.whl"
     ```
 
     Then open a new "Unreleased" section in `CHANGELOG.md`.
 
-Optional, **maintainer**: the MCP Docker image (`docker build -f
-Dockerfile.mcp -t axross-mcp:$VERSION .`), and the source tarball
+13. **CI** - the **MCP registry** entry. The `registry` job of the tag's
+    `mcp-release.yml` run polls PyPI for `axross-headless-mcp $VERSION` (40
+    minutes) and checks that its description carries the `mcp-name:`
+    line; then it installs `mcp-publisher` (a pinned release, its SHA-256
+    checked), validates `server.json`, logs in with **GitHub OIDC**
+    (`mcp-publisher login github-oidc`: the workflow's `id-token: write`
+    proves it runs in `c0decave/axross`, which owns the namespace
+    `io.github.c0decave/*` - no token is stored anywhere) and publishes.
+    The registry checks both packages itself: the PyPI description's
+    `mcp-name:` line and the image's `io.modelcontextprotocol.server.name`
+    label. PyPI usually comes later than 40 minutes after the tag; then
+    the job has failed by now - run it again:
+
+    ```bash
+    MCP_RUN=$(gh run list --workflow mcp-release.yml --branch "v$VERSION" --limit 1 \
+              --json databaseId --jq '.[0].databaseId')
+    gh run rerun "$MCP_RUN" --failed
+    gh run watch "$MCP_RUN" --exit-status
+    # or, the registry entry alone: gh workflow run mcp-release.yml -f tag="v$VERSION"
+    ```
+
+    Every release has all three - axross-headless-mcp on PyPI, the image, the
+    registry entry; a step that cannot run (a missing login) is named in
+    the release notes, never skipped silently.
+
+Optional, **maintainer**: the source tarball
 (`axross-<version>.tar.gz` + `.sha256` + `.sha512`) from
 `scripts/build_release.sh --tarball`: the committed files of `HEAD`, never
 untracked ones, and in a private tree the scrubbed mirror that
@@ -901,6 +1041,20 @@ identity-terms file. `--write` instead of `--check` of
 binaries" table of THIRD_PARTY_LICENSES.md when the lock or the builder
 image changed. Without `SHA256SUMS.sig` no installed binary updates (see
 below).
+
+### What the releases carried
+
+Checked against the GitHub API (2026-11-19), so that a release leaves nothing
+out that an earlier one had:
+
+| Releases | Assets |
+|---|---|
+| 0.10.10 | wheel, sdist, `axross-full`, `axross-slim`, `SHA256SUMS` |
+| 0.10.31 - 0.13.157 | the same and `axross-slim-macos-arm64`, `axross-slim-windows-x64.exe`, `RELEASE-NOTES-<version>.md` |
+| 0.14.16, 0.14.50 | wheel, sdist, `axross-full`, `axross-slim`, the macOS and Windows slim, `SHA256SUMS` |
+| 0.14.102, 0.14.136 | the same and `SHA256SUMS.sig` |
+| 0.15.176 | wheel and sdist only (no binaries: see CHANGELOG.md) |
+| 0.15.179 | wheel, sdist; `axross-{full,slim,base}` for glibc 2.34 and `-glibc2.36`; `axross-{full,slim,base}-x86_64.AppImage`; `axross-{slim,full}-macos-arm64` and their `.dmg`; `axross-{slim,full}-windows-x64.exe`; the tools `axross-{media-player,system-info}[-glibc2.36]` and their wheels and sdists; `packs-0.15.179.json` (and the pack wheels PyPI does not host); `RELEASE-NOTES-0.15.179.md`; `SHA256SUMS`, `SHA256SUMS.sig` |
 
 ## Self-update: what a release must carry
 
@@ -919,14 +1073,36 @@ it is refused by every installed binary, nothing is replaced:
 * **Asset names**, exactly: `axross-full`, `axross-slim`, `axross-base`
   (Linux x86-64, glibc 2.34 - the AlmaLinux 9 build), `axross-full-glibc2.36`,
   `axross-slim-glibc2.36`, `axross-base-glibc2.36` (the Debian 12 build),
-  `axross-slim-macos-arm64`, `axross-slim-windows-x64.exe`. A binary picks
-  its own: `build/axross.spec` writes the flavour into the bundle as
+  `axross-slim-macos-arm64`, `axross-slim-windows-x64.exe`, and from
+  0.15.179 `axross-full-macos-arm64`, `axross-full-windows-x64.exe` and the
+  AppImages `axross-full-x86_64.AppImage`, `axross-slim-x86_64.AppImage`,
+  `axross-base-x86_64.AppImage` (the glibc-2.34 binaries, wrapped). A binary
+  picks its own: `build/axross.spec` writes the flavour into the bundle as
   `axross/axross-bundle-flavor.txt` (`full` / `slim` / `base`) and the
   variant as `axross/axross-bundle-variant.txt` (`glibc-2.34` / `glibc-2.36`;
   in the first-party folder, so the bundle gate claims them); a bundle
   without the variant file is a glibc-2.34 one (every binary before
   0.15.166), one without the flavour file is recognised by a file name
-  starting with `axross-full` / `axross-slim`.
+  starting with `axross-full` / `axross-slim`. A binary running inside an
+  AppImage (`$APPIMAGE` set and the binary inside `$APPDIR`) takes
+  `axross-<flavor>-x86_64.AppImage` and replaces the image file; the plain
+  binaries' names never match an AppImage (the updaters in the field compare
+  exact names), and an AppImage made from a glibc-2.36 binary gets none.
+  No macOS x86-64 build: the bundle job builds on `macos-latest` (arm64)
+  only - an Intel Mac gets the notice with the release page.
+  The disk images `axross-slim-macos-arm64.dmg` and
+  `axross-full-macos-arm64.dmg` (from 0.15.179; `scripts/build_macos_dmg.sh`:
+  axross.app around the same one-file binary, Info.plist with
+  `io.github.c0decave.axross`, ad-hoc signed, a link to /Applications) are
+  assets with a line in `SHA256SUMS` but no updater's: inside axross.app the
+  binary does not replace itself (that would break the app's seal) and points
+  to the release page. They are optional - the step may fail without failing
+  the bundle job, and `assemble_release.py --require-all` names a missing
+  one instead of refusing.
+* **Release notes** `RELEASE-NOTES-<version>.md` (from 0.15.179 again; the
+  releases 0.10.31 to 0.13.157 had it too): `notes.md` as an asset, with a
+  line in `SHA256SUMS`. No updater reads it (the update window shows the
+  release's body); it sorts before `SHA256SUMS`, among the first 100.
 * **Packs** (`core/packs.py`, docs/PACKS.md): `packs-<version>.json`
   from `dist/<version>/packs/` as an asset of the same release, with a
   line in the release's `SHA256SUMS`. The manifest names every unit (a pip
@@ -939,8 +1115,8 @@ it is refused by every installed binary, nothing is replaced:
   against the manifest (and an attached one against `SHA256SUMS` too)
   before it unpacks anything; an update of a binary brings its installed
   units along (the new release's) before the new binary is fetched.
-  Platforms without an asset (Linux aarch64, an axross-full on macOS) only
-  get the notice with the release page.
+  Platforms without an asset (Linux aarch64, an Intel Mac, an axross-base
+  on macOS or Windows) only get the notice with the release page.
 * **At most 100 assets that matter**: GitHub lists the assets sorted by
   name, ignoring case; the updater of 0.14.136 reads only the first 100 of
   the answer, so `SHA256SUMS`, `SHA256SUMS.sig` and every binary asset
@@ -1016,11 +1192,11 @@ it is refused by every installed binary, nothing is replaced:
   the keys of the newest release with binaries).
   **Rotation under way:** 0.15.176 pins both keys and is signed with the
   first one, but it shipped no binaries; every installed binary (0.14.136
-  and older) pins only the first key. So **0.15.178 is signed with the
+  and older) pins only the first key. So **0.15.179 is signed with the
   first key** (`rJX0yymA5/...`, the only entry of `FIELD_KEYS`), pins both
   and carries every binary: it is the release of step (2). The second key
-  signs at the earliest the release after it, once the 0.15.178 binaries
-  are in use; a later release then drops the first key.
+  signs at the earliest the release after it, once the 0.15.179 binaries
+  are in use (0.15.177 and 0.15.178 were never published); a later release then drops the first key.
   **Migration:** binaries of 0.14.50 and older do not check signatures;
   they pick their assets by exact name (`axross-full`, `SHA256SUMS`, ...)
   and ignore `SHA256SUMS.sig`, so they keep updating - into a binary

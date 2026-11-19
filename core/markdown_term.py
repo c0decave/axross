@@ -4,6 +4,8 @@ with colours, for ``axross-mdcat`` / ``axross-markdown --term``.
 Headings in colour with rules under the first two levels, bold, italics,
 underline and strike-through, inline code on a background, fenced code
 coloured by Pygments with its language named, block quotes with a bar,
+GitHub's alerts with a bar and a title in their colour, math as text
+(core.markdown_doc.math_text),
 nested lists with bullets, numbers and ☑ / ☐ task boxes, tables drawn with
 box characters (aligned as written, wrapped to fit), definition lists,
 footnotes, front matter, rules; links as terminal hyperlinks (OSC 8) with
@@ -23,6 +25,7 @@ bytes and pixels; nothing is ever loaded from the network.
 from __future__ import annotations
 
 import base64
+import functools
 import io
 import os
 import posixpath
@@ -30,7 +33,7 @@ import re
 import stat as _stat
 import sys
 from dataclasses import dataclass, field
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 from core import markdown_doc as MD
 
@@ -38,6 +41,15 @@ ESC = "\x1b"
 #: The most bytes / pixels of one image read for the terminal (as the viewer).
 IMAGE_LIMIT = 8 << 20
 IMAGE_PIXELS = 40_000_000
+#: The formats Pillow may open a picture as: rasters, never EPS (Ghostscript),
+#: PDF or a container that holds another picture.
+PICTURE_FORMATS = ("PNG", "JPEG", "GIF", "BMP", "WEBP", "TIFF", "PPM", "TGA")
+#: Images of one document that are drawn, and the pixels all of them may
+#: take together (as the viewer: a small PNG of 36 million pixels named
+#: 10,000 times was decoded 10,000 times; a page of 10,000 images wrote
+#: 30 MB of half-blocks).
+IMAGES = 200
+IMAGES_PIXELS = 100_000_000
 #: The widest and tallest an image is drawn (columns; rows of text).
 IMAGE_COLUMNS = 80
 IMAGE_ROWS = 40
@@ -47,19 +59,31 @@ DARK = {
     "h1": "#79c0ff", "h2": "#d2a8ff", "h3": "#7ee787", "h4": "#e3b341", "h5": "#ffa657", "h6": "#8b949e",
     "code_fg": "#ff7b72", "code_bg": "#2d333b", "pre_bg": "#161b22", "quote": "#8b949e",
     "rule": "#3d444d", "mark": "#3fb950", "open": "#8b949e", "image": "#d2a8ff", "border": "#545d68",
+    "math": "#ffa657", "note": "#4493f8", "tip": "#3fb950", "important": "#ab7df8", "warning": "#d29922",
+    "caution": "#f85149",
 }
 LIGHT = {
     "text": "#1f2328", "muted": "#59636e", "link": "#0969da",
     "h1": "#0550ae", "h2": "#8250df", "h3": "#1a7f37", "h4": "#9a6700", "h5": "#bc4c00", "h6": "#59636e",
     "code_fg": "#b31d28", "code_bg": "#eff1f3", "pre_bg": "#f6f8fa", "quote": "#59636e",
     "rule": "#d1d9e0", "mark": "#1a7f37", "open": "#59636e", "image": "#8250df", "border": "#afb8c1",
+    "math": "#953800", "note": "#0969da", "tip": "#1a7f37", "important": "#8250df", "warning": "#9a6700",
+    "caution": "#d1242f",
 }
 #: The 16-colour fallback of each role (SGR foreground numbers).
 BASIC = {"text": 39, "muted": 90, "link": 94, "h1": 96, "h2": 95, "h3": 92, "h4": 93, "h5": 33,
          "h6": 90, "code_fg": 91, "quote": 90, "rule": 90, "mark": 92, "open": 90, "image": 95,
-         "border": 90}
+         "border": 90, "math": 33, "note": 94, "tip": 92, "important": 95, "warning": 93, "caution": 91}
+
+#: GitHub's alerts: the sign and title of each kind (as ui.markdown_html's).
+ALERT_TITLES = {"note": ("ℹ", "Note"), "tip": ("✓", "Tip"), "important": ("❖", "Important"),
+                "warning": ("⚠", "Warning"), "caution": ("✖", "Caution")}
 
 BULLETS = ("•", "◦", "▪", "‣")
+#: Fenced languages that are drawings (as ui.markdown_html.DIAGRAMS).
+DIAGRAMS = ("mermaid", "geojson", "topojson", "stl", "plantuml")
+#: Columns of a tab in a code block or front matter (as GitHub shows them).
+TAB = 8
 
 
 # -- terminal capabilities ----------------------------------------------------------------------
@@ -190,10 +214,18 @@ class Painter:
         return f"{ESC}]8;;{url}{ESC}\\{text}{ESC}]8;;{ESC}\\"
 
 
+#: The longest link made a hyperlink (OSC 8): VTE's limit, and a terminal's
+#: others drop longer ones. Each line of a link carries its URL: a link of
+#: 1 MB, wrapped, wrote gigabytes and took an hour - longer ones are its text.
+HYPERLINK_CHARS = 2083
+_URL_BAD = re.compile("[\x00-\x20\x7f-\x9f]")
+
+
+@functools.lru_cache(maxsize=256)  # (once a link: each of its wrapped pieces asked again)
 def safe_url(url: str) -> bool:
     """Whether *url* may go into an escape sequence: http(s), mailto or file,
-    no control character or space."""
-    if not url or any(ord(c) < 0x21 or ord(c) == 0x7f or 0x80 <= ord(c) <= 0x9f for c in url):
+    no control character or space, at most HYPERLINK_CHARS long."""
+    if not url or len(url) > HYPERLINK_CHARS or _URL_BAD.search(url):
         return False
     return urlsplit(url).scheme.lower() in ("http", "https", "mailto", "file")
 
@@ -207,78 +239,244 @@ class Span:
 
 def wrap(spans: list[Span], width: int) -> list[list[Span]]:
     """*spans* as lines of at most *width* columns (a word longer than a line
-    is cut); "\\n" spans are hard breaks."""
-    width = max(width, 8)
-    lines: list[list[Span]] = [[]]
-    used = 0
-    tokens = _tokens(spans)
-    for kind, piece in tokens:
-        if kind == "break":
-            lines.append([])
-            used = 0
-            continue
-        if kind == "space":
-            if used and used < width:
-                lines[-1].append(Span(" ", piece.style, piece.url))
-                used += 1
-            continue
-        size = MD.cell_width(piece.text)
-        if used and used + size > width:
-            while lines[-1] and lines[-1][-1].text == " ":
-                lines[-1].pop()
-            lines.append([])
-            used = 0
-        text = piece.text
-        while MD.cell_width(text) > width:  # a word longer than a line
-            cut = _cut(text, width - used)
-            lines[-1].append(Span(cut, piece.style, piece.url))
-            lines.append([])
-            used = 0
-            text = text[len(cut):]
-        lines[-1].append(Span(text, piece.style, piece.url))
-        used += MD.cell_width(text)
-    while lines and not lines[-1]:
-        lines.pop()
-    for line in lines:
+    is cut); "\\n" spans are hard breaks. A word is what stands between
+    spaces, whatever its styles: "(`LC_ALL`)" and "**bold**," are broken
+    nowhere (a change of style was a place to break: "locale (⏎LC_ALL")."""
+    return list(wrapped(spans, width)) or [[]]
+
+
+def wrapped(spans: list[Span], width: int):
+    """The lines of :func:`wrap`, each as soon as it is full - a paragraph
+    of a line of 10 MB held all of its 2,000,000 words' spans before its
+    first line was written (566 MB, 21 s)."""
+    width = max(width, 1)  # (a table's column may be narrower than a paragraph: para keeps 8)
+    line: list[Span] = []
+    used, empty = 0, 0  # (empty: lines of nothing held back - none at the end)
+
+    def done(line: list[Span]):
+        nonlocal empty
         while line and line[-1].text == " ":
             line.pop()
-    return lines or [[]]
+        if not line:
+            empty += 1
+            return
+        while empty:
+            empty -= 1
+            yield []
+        yield line
+
+    for kind, piece in _tokens(spans):
+        if kind == "break":
+            yield from done(line)
+            line, used = [], 0
+            continue
+        if kind == "run":  # (whole words of plain ASCII text, one space apart: as many as fit a line in one go)
+            text, style, url, at = piece.text, piece.style, piece.url, 0
+            while at < len(text):
+                room = width - used
+                if room <= 0:
+                    yield from done(line)
+                    line, used, room = [], 0, width
+                if at + room >= len(text):
+                    take = len(text)
+                elif text[at + room] == " ":
+                    take = at + room
+                else:
+                    take = text.rfind(" ", at, at + room)
+                if take > at:  # (words that fit)
+                    line.append(Span(text[at:take], style, url))
+                    used += take - at
+                elif used:  # (the next word does not fit: on the next line)
+                    yield from done(line)
+                    line, used = [], 0
+                    continue
+                else:  # (a word longer than a line: cut, ASCII - a column a letter)
+                    take = text.find(" ", at)
+                    take = len(text) if take < 0 else take
+                    while take - at > width:
+                        line.append(Span(text[at:at + width], style, url))
+                        yield from done(line)
+                        line, at = [], at + width
+                    line.append(Span(text[at:take], style, url))
+                    used = take - at
+                at = take
+                if at < len(text):  # (the space after it)
+                    if used < width:
+                        line.append(Span(" ", style, url))
+                        used += 1
+                    at += 1
+            continue
+        if kind == "space":
+            # (one space between words, as the viewer shows them: a tag
+            # dropped between two spaces left both)
+            if used and used < width and (line[-1].text != " " or piece.style.bg == "code_bg"):
+                line.append(piece)
+                used += 1
+            continue
+        size = MD.cell_width(piece[0].text) if len(piece) == 1 else sum(MD.cell_width(part.text) for part in piece)
+        if used and used + size > width:
+            yield from done(line)
+            line, used = [], 0
+        if used + size <= width:
+            line.extend(piece)
+            used += size
+            continue
+        # A word longer than a line, cut from an index with its width kept
+        # count of: measured and sliced anew for every line, a word of 1 MB
+        # took minutes (each cut went over all of the rest).
+        for part in piece:
+            text, start = part.text, 0
+            while start < len(text):
+                if used >= width:
+                    yield from done(line)
+                    line, used = [], 0
+                end = _cut_end(text, start, width - used)
+                chunk = text[start:end]
+                chunk_width = MD.cell_width(chunk)
+                if used and used + chunk_width > width:  # (a wide character at a line's end)
+                    yield from done(line)
+                    line, used = [], 0
+                    continue
+                line.append(Span(chunk, part.style, part.url))
+                used += chunk_width
+                start = end
+    yield from done(line)
 
 
 def _cut(text: str, width: int) -> str:
-    out, used = [], 0
-    for ch in text:
-        size = MD.cell_width(ch)
+    """The start of *text* that fits *width* columns (one character at least)."""
+    return text[:_cut_end(text, 0, width)]
+
+
+def _cut_end(text: str, start: int, width: int) -> int:
+    """Where the part of *text* from *start* that fits *width* columns ends
+    (one character at least - as a reader sees one: an emoji sequence or a
+    letter with its marks is never cut, core.markdown_doc.cluster_end)."""
+    if start < len(text) and text[start:start + max(width, 1) + 1].isascii():  # (a column a letter - the one
+        return min(len(text), start + max(width, 1))  # after it too: no mark of it - a link of 1 MB took 1 s)
+    used, index = 0, start
+    while index < len(text):
+        end = MD.cluster_end(text, index)
+        size = MD.cell_width(text[index:end])
         if used + size > max(width, 1):
             break
-        out.append(ch)
         used += size
-    return "".join(out) or text[:1]
+        index = end
+    return index if index > start else MD.cluster_end(text, start) if start < len(text) else start + 1
+
+
+def _chop(text: str, width: int) -> list[str]:
+    """*text* in pieces of at most *width* columns, nothing dropped, spaces
+    kept (front matter: its indentation means something)."""
+    pieces, start = [], 0
+    while start < len(text):
+        end = _cut_end(text, start, width)
+        pieces.append(text[start:end])
+        start = end
+    return pieces or [""]
+
+
+def _note_number(token) -> str:
+    """The number a footnote (its reference or its note) is shown with: its
+    place in the list of notes, as GitHub and the Qt viewer number them. (The
+    label was shown: "[None]" and "[0]" for an inline note ``^[...]``, which
+    has none, and a long label as it was written.)"""
+    meta = token.meta or {}
+    try:
+        return str(int(meta.get("id", 0)) + 1)
+    except (TypeError, ValueError):
+        return "?"
+
+
+def _math_spans(tex: str, style: Style, url: str = "") -> list:
+    """An inline formula as spans: its text in the formula's colour, bold
+    and italic as they are, what is not understood as code (that part only)."""
+    looks = {"": {"fg": "math"}, "sub": {"fg": "math"}, "sup": {"fg": "math"},
+             "bold": {"fg": "math", "bold": True}, "italic": {"fg": "math", "italic": True},
+             "unknown": {"fg": "code_fg", "bg": "code_bg"}}
+    spans = []
+    for text, kind in MD.math_runs(tex):
+        shown = MD._written_run(text, kind).replace("\n", " ")
+        spans.append(Span(shown, style.but(**looks.get(kind, looks[""])), url))
+    return spans
+
+
+def _plain_text(text: str) -> str:
+    """Text of the file for a line of the terminal: no control character
+    (core.markdown_doc.clean), a tab as a space (a tab moves the cursor to the
+    next stop of the terminal, as wide as no one counted)."""
+    return MD.clean(text).replace("\t", " ")
 
 
 def _tokens(spans: list[Span]):
-    """("word" | "space" | "break", Span) in order."""
+    """("word", [Span, ...]) - the pieces of one word, in whatever styles -
+    ("space", Span) and ("break", Span), in order."""
+    word: list[Span] = []
     for span in spans:
         if span.text == "\n":
+            if word:
+                yield "word", word
+                word = []
             yield "break", span
             continue
-        for part in re.split(r"( +)", span.text):
-            if not part:
-                continue
-            if part.startswith(" "):
-                yield "space", Span(" ", span.style, span.url)
-            else:
-                yield "word", Span(part, span.style, span.url)
+        style, url = span.style, span.url
+        code = style.bg == "code_bg"
+        text, start, end = span.text, 0, len(span.text)
+        if not code and end > RUN_CHARS and text.isascii():  # (its words between its first and last space: a
+            begin, stop = text.find(" "), text.rfind(" ")  # run wrapped lays out a line at a time - a word at a
+            after = _NOT_SPACE.search(text, begin) if begin >= 0 else None  # time, a line of 10 MB took 4 s)
+            begin = after.start() if after else -1
+            while stop > 0 and text[stop - 1] == " ":
+                stop -= 1
+            if 0 <= begin < stop:
+                yield from _words(text, 0, begin, word, style, url, code)
+                word = []
+                run = text[begin:stop]
+                yield "run", Span(_SPACE_RUNS.sub(" ", run) if "  " in run else run, style, url)
+                start = stop
+        word = yield from _words(text, start, end, word, style, url, code)
+    if word:
+        yield "word", word
+
+
+def _words(text: str, start: int, end: int, word: list, style, url: str, code: bool):
+    """_tokens' pieces of text[start:end] - *word* the pieces of a word before it - returning the pieces
+    of its last word (it may go on in the next span)."""
+    for found in _WORDS.finditer(text, start, end):  # (one at a time: a span of 10 MB was 4,000,000 at once)
+        part = found.group()
+        if part[0] == " ":
+            if word:
+                yield "word", word
+                word = []
+            # (code keeps its spaces, each of them: "a  b" is not "a b")
+            for _space in range(len(part) if code else 1):
+                yield "space", Span(" ", style, url)
+        else:
+            word.append(Span(part, style, url))
+    return word
+
+
+_WORDS = re.compile(r" +|[^ ]+")
+_NOT_SPACE = re.compile(r"[^ ]")
+_SPACE_RUNS = re.compile(r" {2,}")
+#: A span of plain ASCII text longer than this is laid out a line at a time (_tokens' "run").
+RUN_CHARS = 4096
 
 
 def _glue_words(line: list[Span]) -> list[Span]:
     """Neighbouring spans of the same style and link joined (fewer escapes)."""
     out: list[Span] = []
+    texts: list[str] = []
+    style, url = None, None
     for span in line:
-        if out and out[-1].style == span.style and out[-1].url == span.url:
-            out[-1] = Span(out[-1].text + span.text, span.style, span.url)
-        else:
-            out.append(Span(span.text, span.style, span.url))
+        if texts and (span.style is style or span.style == style) and span.url == url:
+            texts.append(span.text)
+            continue
+        if texts:
+            out.append(Span("".join(texts), style, url))
+        texts, style, url = [span.text], span.style, span.url
+    if texts:
+        out.append(Span("".join(texts), style, url))
     return out
 
 
@@ -293,32 +491,68 @@ class Picture:
     alt: str
     path: str = ""
     why: str = ""
+    data: bytes | None = None  # (an image held in the document: data:image/…;base64,…)
+
+
+#: The images a ``data:`` address may hold (as markdown-it's validateLink).
+DATA_IMAGE = re.compile(r"data:image/(png|gif|jpeg|webp);base64,", re.IGNORECASE)
+
+
+def data_image(src: str) -> tuple[bytes | None, str]:
+    """(the bytes of the ``data:`` image *src*, "") or (None, why not): PNG,
+    GIF, JPEG or WebP in base64, at most IMAGE_LIMIT bytes."""
+    found = DATA_IMAGE.match(src)
+    if not found:
+        return None, "not an image this shows"
+    payload = src[found.end():]
+    if len(payload) > IMAGE_LIMIT * 4 // 3 + 4:
+        return None, "too big"
+    try:
+        return base64.b64decode(re.sub(r"\s+", "", payload), validate=True), ""
+    except ValueError:
+        return None, "not an image"
 
 
 def locate(src: str, folder: str) -> tuple[str, str]:
     """(local path, "") for an image *src* beside a document in *folder*, or
     ("", why not) - as ui.markdown_view.ImageSource.kind: no scheme, no
-    absolute path; remote images are never fetched."""
+    absolute path, nothing above *folder* (its subfolders are beside it,
+    "../" is not); remote images are never fetched."""
     parts = urlsplit(src)
     if parts.scheme.lower() in ("http", "https", "ftp", "ftps") or src.startswith("//"):
         return "", "remote, not loaded"
     if parts.scheme or src.startswith(("/", "\\")) or "\0" in src or not folder:
         return "", "not beside the file"
     path = unquote(parts.path)
-    if not path:
+    if not path or "\0" in path:
         return "", "not beside the file"
-    return os.path.normpath(os.path.join(folder, path)), ""
+    full = os.path.normpath(os.path.join(folder, path))
+    if not _inside(full, folder):  # ("../x.png": its folder or one below it only)
+        return "", "not beside the file"
+    return full, ""
 
 
-def read_picture(path: str):
+#: Files a file:// link never names (programs a desktop would run).
+_PROGRAMS = (".desktop", ".exe", ".bat", ".cmd", ".com", ".msi", ".ps1", ".sh", ".app", ".jar",
+             ".appimage", ".run", ".command", ".vbs", ".scr", ".lnk")
+
+
+def _inside(path: str, folder: str) -> bool:
+    """Whether *path* is *folder* or lies below it (both normalised)."""
+    folder = os.path.normpath(folder)
+    return path == folder or path.startswith(folder.rstrip(os.sep) + os.sep)
+
+
+def read_picture(path: str, pixels: int = IMAGE_PIXELS, folder: str = ""):
     """A Pillow image of the local file *path* (RGBA), or a str why not:
-    regular files only, never a secret one, bounded in bytes and pixels."""
-    try:
-        from PIL import Image
-    except ImportError:
-        return "Pillow is not installed"
+    regular files only, never a secret one, bounded in bytes and pixels (at
+    most *pixels*: what the document's images may still take) - and, given
+    the document's *folder*, only when what *path* resolves to (through
+    symlinks) lies in it too."""
     from core.protected_places import read_refusal
 
+    if folder and not _inside(os.path.realpath(path), os.path.realpath(folder)):
+        return "not beside the file (a link to elsewhere)"
     if read_refusal(path):
         return "a secret file"
     try:
@@ -331,12 +565,29 @@ def read_picture(path: str):
         return "too big"
     with open(path, "rb") as fh:
         data = fh.read(IMAGE_LIMIT + 1)
-    if data.lstrip()[:5].lower() in (b"<?xml", b"<svg ") or path.lower().endswith((".svg", ".svgz")):
+    if path.lower().endswith((".svg", ".svgz")):
+        return "SVG is not drawn in the terminal"
+    return decode_picture(data, pixels)
+
+
+def decode_picture(data: bytes, pixels: int = IMAGE_PIXELS):
+    """A Pillow image (RGBA) of the image *data*, or a str why not: at most
+    IMAGE_LIMIT bytes and *pixels* pixels (IMAGE_PIXELS at most), no SVG."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return "Pillow is not installed"
+    if len(data) > IMAGE_LIMIT:
+        return "too big"
+    if data.lstrip()[:5].lower() in (b"<?xml", b"<svg "):
         return "SVG is not drawn in the terminal"
     Image.MAX_IMAGE_PIXELS = IMAGE_PIXELS
     try:
-        image = Image.open(io.BytesIO(data))
-        if image.width * image.height > IMAGE_PIXELS:
+        # Raster formats only, told by the content: Pillow's own probing
+        # opened PostScript (a file named pic.png) as EPS, which runs
+        # Ghostscript on it, and decoded an .ico's embedded PNG in full.
+        image = Image.open(io.BytesIO(data), formats=PICTURE_FORMATS)
+        if image.width * image.height > min(IMAGE_PIXELS, pixels):
             return "too big"
         image.seek(0)
         return image.convert("RGBA")
@@ -376,16 +627,30 @@ def draw_blocks(image, painter: Painter, columns: int, rows: int) -> list[str]:
     return lines
 
 
-def _png(image) -> bytes:
+#: Pixels of one character cell an image is sent with (kitty, iTerm2): a
+#: cell is about 10 x 20 pixels, twice that on a HiDPI screen.
+CELL_PIXELS = (20, 40)
+
+
+def _png(image, cols: int = 0, cells: int = 0) -> bytes:
+    """*image* as PNG, re-encoded (no metadata of the file goes to the
+    terminal) - at most as big as *cols* x *cells* cells show it: a photo of
+    40 million pixels went to the terminal whole, 100 MB of base64 for a
+    picture 80 columns wide."""
+    if cols and cells:
+        limit = (cols * CELL_PIXELS[0], cells * CELL_PIXELS[1])
+        if image.width > limit[0] or image.height > limit[1]:
+            image = image.copy()
+            image.thumbnail(limit)
     out = io.BytesIO()
-    image.save(out, format="PNG")  # re-encoded: no metadata of the file goes to the terminal
+    image.save(out, format="PNG")
     return out.getvalue()
 
 
 def draw_kitty(image, columns: int, rows: int) -> list[str]:
     """kitty's graphics protocol: the PNG in chunks of 4096, one escape each."""
     cols, cells = _fit(image, columns, rows)
-    data = base64.b64encode(_png(image)).decode("ascii")
+    data = base64.b64encode(_png(image, cols, cells)).decode("ascii")
     chunks = [data[i:i + 4096] for i in range(0, len(data), 4096)] or [""]
     out = []
     for index, chunk in enumerate(chunks):
@@ -398,12 +663,53 @@ def draw_kitty(image, columns: int, rows: int) -> list[str]:
 def draw_iterm(image, columns: int, rows: int) -> list[str]:
     """iTerm2's inline image (also WezTerm): one OSC 1337 with the PNG."""
     cols, cells = _fit(image, columns, rows)
-    data = base64.b64encode(_png(image)).decode("ascii")
+    data = base64.b64encode(_png(image, cols, cells)).decode("ascii")
     return [f"{ESC}]1337;File=inline=1;width={cols};height={cells};preserveAspectRatio=1:{data}\a"] \
         + [""] * (cells - 1)
 
 
 # -- the renderer -------------------------------------------------------------------------------
+
+#: Without colour (NO_COLOR, a pipe), emphasis is written with marks as in
+#: Markdown: else it reads as the prose around it.
+_PLAIN_MARKS = {"strong_open": "**", "em_open": "*", "s_open": "~~"}  # (bold italic "***x***", not "_**x**_")
+#: The styles of raw HTML's tags (core.markdown_doc's allowed subset).
+_HTML_STYLES = {
+    "b": {"bold": True}, "strong": {"bold": True}, "i": {"italic": True}, "em": {"italic": True},
+    "u": {"underline": True}, "ins": {"underline": True}, "s": {"strike": True, "fg": "muted"},
+    "strike": {"strike": True, "fg": "muted"}, "del": {"strike": True, "fg": "muted"},
+    "mark": {"fg": "h4", "bold": True}, "small": {"dim": True},
+    "kbd": {"fg": "code_fg", "bg": "code_bg", "bold": True}, "code": {"fg": "code_fg", "bg": "code_bg"},
+    "summary": {"bold": True}, **{f"h{n}": {"fg": f"h{n}", "bold": True} for n in range(1, 7)},
+}
+#: Tags of raw HTML that end a paragraph in the terminal.
+_HTML_BLOCKS = frozenset("p div details summary h1 h2 h3 h4 h5 h6 blockquote pre hr ul ol li".split())
+
+
+@dataclass
+class _Inline:
+    """What a line of text is made of while it is read: its spans and
+    pictures, the styles, links and raw HTML tags open."""
+
+    base: Style = PLAIN
+    spans: list = field(default_factory=list)
+    pictures: list = field(default_factory=list)
+    stack: list = field(default_factory=list)
+    url_stack: list = field(default_factory=list)
+    links: list = field(default_factory=list)  # (where a link's text begins, its address)
+    scripts: list = field(default_factory=list)  # ("sup" / "sub" open)
+    html: list = field(default_factory=list)  # (a raw HTML tag open, what it changed)
+
+    def __post_init__(self) -> None:
+        self.stack = [self.base]
+
+    @property
+    def style(self) -> Style:
+        return self.stack[-1]
+
+    @property
+    def url(self) -> str:
+        return self.url_stack[-1] if self.url_stack else ""
 
 @dataclass
 class Options:
@@ -420,73 +726,186 @@ class Options:
 class Renderer:
     """A parsed document as lines for the terminal (see the module docstring)."""
 
-    def __init__(self, options: Options) -> None:
+    def __init__(self, options: Options, tables: dict | None = None) -> None:
         self.o = options
+        #: a table drawn in parts (render_parts): the columns its first part was drawn with
+        self.tables = {} if tables is None else tables
+        self._goes_on = False
         self.p = Painter(options.depth, DARK if options.dark else LIGHT, options.hyperlinks)
         self.lines: list[str] = []
         self.notes: dict[str, list[str]] = {}
+        #: the images drawn (IMAGES at most), the pixels they may still take
+        #: (IMAGES_PIXELS) and what each one drew ({(path, columns): lines or why}) - of the whole text,
+        #: its parts' Renderers sharing them (render_parts: each part drew 200, 6,000 images 193 MB)
+        self._images = self.tables.setdefault("images", {"drawn": 0, "left": IMAGES_PIXELS, "cache": {}})
+        self.picture_cache: dict[tuple[str, int], list[str] | str] = self._images["cache"]
+
+    @property
+    def drawn(self) -> int:
+        return self._images["drawn"]
+
+    @drawn.setter
+    def drawn(self, value: int) -> None:
+        self._images["drawn"] = value
+
+    @property
+    def pixels_left(self) -> int:
+        return self._images["left"]
+
+    @pixels_left.setter
+    def pixels_left(self, value: int) -> None:
+        self._images["left"] = value
 
     # -- inline --
 
     def inline(self, token, base: Style = PLAIN) -> tuple[list[Span], list[Picture]]:
-        spans: list[Span] = []
-        pictures: list[Picture] = []
-        stack = [base]
-        url_stack: list[str] = []
-        links: list[tuple[int, str]] = []  # (where a link's text begins, its address)
+        at = _Inline(base)
         for child in token.children or ():
-            style = stack[-1]
-            url = url_stack[-1] if url_stack else ""
+            style, url = at.style, at.url
             kind = child.type
             if kind == "text":
-                spans.append(Span(MD.clean(child.content), style, url))
+                text = _plain_text(child.content)
+                if at.scripts:  # (inside <sup> / <sub>: small letters where Unicode has them)
+                    text = MD.raised(text, at.scripts[-1], plain=True)
+                at.spans.append(Span(text, style, url))
             elif kind == "softbreak":
-                spans.append(Span(" ", style, url))
+                at.spans.append(Span(" ", style, url))
             elif kind == "hardbreak":
-                spans.append(Span("\n", style))
+                at.spans.append(Span("\n", style))
             elif kind == "code_inline":
-                spans.append(Span(MD.clean(child.content), style.but(fg="code_fg", bg="code_bg"), url))
+                code = _plain_text(child.content)
+                if self.p.depth == "none":  # (no colour: code is told from prose by its marks)
+                    # (a fence longer than any run of backticks in it: "`a ` b`" was ambiguous)
+                    ticks = "`" * (max((len(run) for run in re.findall("`+", code)), default=0) + 1)
+                    pad = " " if code.startswith("`") or code.endswith("`") or len(ticks) > 1 else ""
+                    code = f"{ticks}{pad}{code}{pad}{ticks}"
+                at.spans.append(Span(code, style.but(fg="code_fg", bg="code_bg"), url))
             elif kind in ("strong_open", "em_open", "s_open"):
                 change = {"strong_open": {"bold": True}, "em_open": {"italic": True},
                           "s_open": {"strike": True, "fg": "muted"}}[kind]
-                stack.append(style.but(**change))
+                at.stack.append(style.but(**change))
+                if self.p.depth == "none":
+                    at.spans.append(Span(_PLAIN_MARKS[kind], style, url))
             elif kind in ("strong_close", "em_close", "s_close"):
-                if len(stack) > 1:
-                    stack.pop()
+                if len(at.stack) > 1:
+                    at.stack.pop()
+                if self.p.depth == "none":
+                    at.spans.append(Span(_PLAIN_MARKS[kind.replace("_close", "_open")], at.style, url))
             elif kind == "link_open":
-                href = MD.clean(str(child.attrGet("href") or ""))
-                url_stack.append(self._link_target(href))
-                stack.append(style.but(fg="link", underline=True))
-                links.append((len(spans), href))
+                self._open_link(at, MD.clean(str(child.attrGet("href") or "")))
             elif kind == "link_close":
-                start, href = links.pop() if links else (len(spans), "")
-                text = "".join(s.text for s in spans[start:])
-                if len(stack) > 1:
-                    stack.pop()
-                if url_stack:
-                    url_stack.pop()
-                if href and text.strip() != href and not href.startswith("#"):
-                    spans.append(Span(f" ‹{href}›", stack[-1].but(fg="muted", dim=True)))
-            elif kind == "image":
-                src = MD.clean(str(child.attrGet("src") or ""))
-                alt = MD.clean(child.content or "")
-                path, why = locate(src, self.o.folder)
-                pictures.append(Picture(src, alt, path, why))
-                label = f"🖼 {alt or posixpath.basename(src) or 'image'}"
-                target = self._link_target(src) if path else ""
-                spans.append(Span(label, style.but(fg="image", bold=True), target))
-                if why:
-                    spans.append(Span(f" ‹{src} – {why}›", style.but(fg="muted", dim=True)))
+                self._close_link(at)
+            elif kind == "image":  # (its alt text as text: "*emph*", "`code`" were shown as written)
+                alt = "".join(" " if part.type in ("softbreak", "hardbreak") else part.content
+                              for part in (child.children or ()) if part.type in
+                              ("text", "code_inline", "softbreak", "hardbreak")) if child.children else child.content
+                if (child.meta or {}).get("refused"):  # (file:, a data: of no image: named, never read)
+                    at.spans.append(Span(f"🖼 {MD.clean(alt or '') or 'image'}", at.style.but(fg="image", bold=True)))
+                    at.spans.append(Span(" ‹address not allowed›", at.style.but(fg="muted", dim=True)))
+                    continue
+                self._image(at, MD.clean(str(child.attrGet("src") or "")), MD.clean(alt or ""))
             elif kind == "footnote_ref":
-                label = str((child.meta or {}).get("label", (child.meta or {}).get("id", "")))
-                spans.append(Span(f"[{MD.clean(label)}]", style.but(fg="link")))
+                at.spans.append(Span(f"[{_note_number(child)}]", style.but(fg="link")))
+            elif kind in ("math_inline", "math_inline_double"):
+                at.spans += _math_spans(_plain_text(child.content), style, url)
+            elif kind == "safe_html_inline":
+                for event in MD.html_events(child):
+                    self._html_event(at, event)
             elif kind == "html_inline":
-                # html=False: only the task list's box makes one - the list
-                # shows it in place of the bullet (Renderer.listing)
+                # only the task list's box makes one (raw HTML is safe_html_inline):
+                # the list shows it in place of the bullet (Renderer.listing)
                 continue
             else:
-                spans.append(Span(MD.clean(child.content or ""), style, url))
-        return [s for s in spans if s.text], pictures
+                at.spans.append(Span(_plain_text(child.content or ""), style, url))
+        return [s for s in at.spans if s.text], at.pictures
+
+    def _open_link(self, at: _Inline, href: str) -> None:
+        at.url_stack.append(self._link_target(href))
+        at.stack.append(at.style.but(fg="link", underline=True))
+        at.links.append((len(at.spans), href))
+
+    def _close_link(self, at: _Inline) -> None:
+        start, href = at.links.pop() if at.links else (len(at.spans), "")
+        text = "".join(s.text for s in at.spans[start:])
+        if len(at.stack) > 1:
+            at.stack.pop()
+        url = at.url_stack.pop() if at.url_stack else ""
+        if href and text.strip() != href and not href.startswith("#") and href[:5].lower() != "data:":
+            notes = getattr(self, "_cell_notes", None)
+            if notes is not None:  # (in a table's cell: the address under the table, not in the cell -
+                # it made the column as wide as it and was broken mid-word; a hyperlink needs none)
+                if not (url and self.p.hyperlinks and self.p.depth != "none"):
+                    notes.append(href)
+                    at.spans.append(Span(f"[{len(notes)}]", at.style.but(fg="muted", dim=True)))
+                return
+            at.spans.append(Span(f" ‹{href}›", at.style.but(fg="muted", dim=True)))
+
+    def _table_notes(self, prefix: str) -> None:
+        """The addresses of a table's links (_close_link), under it."""
+        notes, self._cell_notes = getattr(self, "_cell_notes", None) or [], None
+        for number, href in enumerate(notes, 1):
+            self.emit(prefix + self.p.paint(f"[{number}] {href}", Style(fg="muted", dim=True)))
+
+    def _image(self, at: _Inline, src: str, alt: str) -> None:
+        if src[:5].lower() == "data:":  # (held in the document: drawn, its payload never printed)
+            data, why = data_image(src)
+            at.pictures.append(Picture("data:", alt, "", why, data))
+            at.spans.append(Span(f"🖼 {alt or 'image'}", at.style.but(fg="image", bold=True)))
+            if why:
+                at.spans.append(Span(f" ‹data: image – {why}›", at.style.but(fg="muted", dim=True)))
+            return
+        path, why = locate(src, self.o.folder)
+        at.pictures.append(Picture(src, alt, path, why))
+        label = f"🖼 {alt or posixpath.basename(urlsplit(src).path) or 'image'}"
+        remote = why == "remote, not loaded"
+        # A remote picture is named by its alt text and links to its address
+        # (a badge row printed two addresses a badge); inside a link the
+        # link's own address is the one that counts.
+        target = self._link_target(src) if path else src if remote and safe_url(src) else ""
+        at.spans.append(Span(label, at.style.but(fg="image", bold=True), at.url or target))
+        if why and not remote:
+            at.spans.append(Span(f" ‹{src} – {why}›", at.style.but(fg="muted", dim=True)))
+
+    def _html_event(self, at: _Inline, event: tuple) -> None:
+        """An event of raw HTML's allowed subset (core.markdown_doc) in a
+        line of text: a style, a link, a picture, a line break."""
+        kind, tag = event[0], event[1] if len(event) > 1 else ""
+        if kind == "text":
+            text = _plain_text(event[1])
+            if at.scripts:
+                text = MD.raised(text, at.scripts[-1], plain=True)
+            at.spans.append(Span(text, at.style, at.url))
+            return
+        if kind == "start":
+            attrs = event[2]
+            if tag == "br":
+                at.spans.append(Span("\n", at.style))
+            elif tag == "img":
+                self._image(at, attrs.get("src", ""), attrs.get("alt", ""))
+            elif tag == "a":
+                self._open_link(at, attrs.get("href", ""))
+                at.html.append((tag, "link"))
+            elif tag in ("sup", "sub"):
+                at.scripts.append(tag)
+                at.html.append((tag, "script"))
+            elif tag in _HTML_STYLES:
+                at.stack.append(at.style.but(**_HTML_STYLES[tag]))
+                at.html.append((tag, "style"))
+            elif tag not in ("hr",):
+                at.html.append((tag, ""))
+            return
+        if not any(open_tag == tag for open_tag, _effect in at.html):
+            return
+        while at.html:  # (what opened inside it ends with it)
+            open_tag, effect = at.html.pop()
+            if effect == "link":
+                self._close_link(at)
+            elif effect == "script" and at.scripts:
+                at.scripts.pop()
+            elif effect == "style" and len(at.stack) > 1:
+                at.stack.pop()
+            if open_tag == tag:
+                break
 
     def _link_target(self, href: str) -> str:
         """The address a link opens in the terminal: http(s) / mailto as
@@ -497,7 +916,16 @@ class Renderer:
         if parts.scheme or not self.o.folder or href.startswith(("#", "/", "\\")):
             return ""
         path = os.path.normpath(os.path.join(self.o.folder, unquote(parts.path)))
-        return "file://" + path.replace(" ", "%20")
+        # As the images: the document's folder or one below it (through
+        # symlinks too), and never a program - the terminal opens what a
+        # file:// link names with what the desktop runs it with.
+        real = os.path.realpath(path)
+        if not _inside(path, self.o.folder) or not _inside(real, os.path.realpath(self.o.folder)):
+            return ""
+        if os.path.isfile(real) and (os.access(real, os.X_OK) or real.lower().endswith(_PROGRAMS)):
+            return ""
+        # (percent-encoded as a URL must be: a "\\", a "~", a "#" were raw)
+        return "file://" + quote(path, safe="/")
 
     # -- output --
 
@@ -518,31 +946,56 @@ class Renderer:
     def para(self, spans: list[Span], first: str, rest: str, width: int) -> None:
         """*spans* wrapped to *width* minus the prefix; *first* before the
         first line, *rest* before the others (both already painted)."""
-        room = max(8, width - MD.cell_width(_strip_ansi(first)))
-        for index, line in enumerate(wrap(spans, room)):
+        # (the wider prefix: a table's record indents the lines after its first)
+        room = max(8, width - max(MD.cell_width(_strip_ansi(first)), MD.cell_width(_strip_ansi(rest))))
+        index = -1
+        for index, line in enumerate(wrapped(spans, room)):  # (each line written as it is full)
             self.emit((first if index == 0 else rest) + self.paint_line(line))
+        if index < 0:  # (nothing to wrap: its prefix still - as wrap's one empty line)
+            self.emit(first)
 
     def pictures(self, pictures: list[Picture], prefix: str, width: int) -> None:
         if self.o.images == "none":
             return
+        if self.o.images not in ("kitty", "iterm") and self.p.depth not in ("truecolor", "256"):
+            return  # (half-blocks need more than 16 colours: nothing is read)
+        columns = max(4, min(self.o.image_columns, width - MD.cell_width(_strip_ansi(prefix))))
         for picture in pictures:
-            if not picture.path:
+            if not picture.path and picture.data is None:
                 continue
-            image = read_picture(picture.path)
-            if isinstance(image, str):
-                self.emit(prefix + self.p.paint(f"  ({picture.src}: {image})", Style(fg="muted", dim=True)))
+            if self.drawn >= IMAGES:  # (each drawing counts: one image named 10,000 times wrote 30 MB)
+                if self.drawn == IMAGES:
+                    self.emit(prefix + self.p.paint(f"  (more than {IMAGES} images: the rest are not drawn)",
+                                                    Style(fg="muted", dim=True)))
+                    self.drawn += 1
                 continue
-            columns = max(4, min(self.o.image_columns, width - MD.cell_width(_strip_ansi(prefix))))
-            if self.o.images == "kitty":
-                drawn = draw_kitty(image, columns, self.o.image_rows)
-            elif self.o.images == "iterm":
-                drawn = draw_iterm(image, columns, self.o.image_rows)
-            elif self.p.depth in ("truecolor", "256"):
-                drawn = draw_blocks(image, self.p, columns, self.o.image_rows)
-            else:
+            self.drawn += 1
+            key = (picture.path or hash(picture.data), columns)
+            drawn = self.picture_cache.get(key)
+            if drawn is None:  # (decoded once however often it is named)
+                drawn = self._draw(picture.path, columns, picture.data)
+                self.picture_cache[key] = drawn
+            if isinstance(drawn, str):  # (wrapped: a long name went past the width)
+                self.para([Span(f"({picture.src}: {drawn})", Style(fg="muted", dim=True))],
+                          prefix + "  ", prefix + "  ", width)
                 continue
             for line in drawn:
                 self.emit(prefix + line)
+
+    def _draw(self, path: str, columns: int, data: bytes | None = None) -> list[str] | str:
+        """The lines that draw the image at *path* - or of *data*, held in the
+        document - (or why not), its pixels taken from what the document's
+        images may still take."""
+        image = decode_picture(data, self.pixels_left) if data is not None \
+            else read_picture(path, self.pixels_left, self.o.folder)
+        if isinstance(image, str):
+            return image
+        self.pixels_left -= image.width * image.height
+        if self.o.images == "kitty":
+            return draw_kitty(image, columns, self.o.image_rows)
+        if self.o.images == "iterm":
+            return draw_iterm(image, columns, self.o.image_rows)
+        return draw_blocks(image, self.p, columns, self.o.image_rows)
 
     # -- blocks --
 
@@ -558,8 +1011,9 @@ class Renderer:
     def front_matter(self, text: str) -> None:
         style = Style(fg="muted", dim=True)
         self.emit(self.p.paint("┄┄┄ front matter ┄┄┄", style))
-        for line in MD.clean(text).splitlines():
-            self.emit(self.p.paint(line, style))
+        for line in MD.clean(text).expandtabs(TAB).splitlines():
+            for piece in _chop(line, self.o.width):  # (a long YAML value went past the width)
+                self.emit(self.p.paint(piece, style))
         self.emit(self.p.paint("┄" * 19, style))
         self.blank()
 
@@ -591,8 +1045,14 @@ class Renderer:
                 if not tight:
                     self.blank()
                 index += 3
+            elif kind in ("math_block", "math_block_label") or (
+                    kind == "fence" and (token.info or "").strip().lower().split()[:1] == ["math"]):
+                self.math(token, prefix, rest, width)
+                index += 1
             elif kind in ("fence", "code_block"):
                 self.code(token, prefix, rest, width)
+                if tight and self.lines and self.lines[-1] == "":
+                    self.lines.pop()  # (in a tight list's item: no line after it)
                 index += 1
             elif kind == "hr":
                 self.emit(prefix + self.p.paint("─" * max(4, width - MD.cell_width(_strip_ansi(prefix))),
@@ -601,9 +1061,17 @@ class Renderer:
                 index += 1
             elif kind == "blockquote_open":
                 close = self._close(tokens, index, end)
-                bar = self.p.paint("│ ", Style(fg="quote"))
+                alert = MD.alert_of(token)
+                bar = self.p.paint("┃ " if alert else "│ ", Style(fg=alert or "quote"))
+                if MD.cell_width(_strip_ansi(rest)) + 2 + 8 > width:
+                    bar = ""  # (no room for another bar and 8 columns of text: deeper quotes behind the last)
+                if alert:  # (its title, then its blocks behind a bar in its colour)
+                    sign, title = ALERT_TITLES[alert]
+                    self.emit(prefix + bar + self.p.paint(f"{sign} {title}", Style(fg=alert, bold=True)))
+                    prefix = rest
                 self.quote(tokens, index + 1, close, prefix + bar, rest + bar, width)
-                self.blank()
+                if not tight:  # (in a tight list's item: no line after it either)
+                    self.blank()
                 index = close + 1
             elif kind in ("bullet_list_open", "ordered_list_open"):
                 close = self._close(tokens, index, end)
@@ -613,7 +1081,8 @@ class Renderer:
             elif kind == "table_open":
                 close = self._close(tokens, index, end)
                 self.table(tokens, index, close, prefix, width)
-                self.blank()
+                if not self._goes_on:  # (its next part right under it)
+                    self.blank()
                 index = close + 1
             elif kind == "dl_open":
                 close = self._close(tokens, index, end)
@@ -624,11 +1093,132 @@ class Renderer:
                 close = self._close(tokens, index, end)
                 self.footnotes(tokens, index + 1, close, width)
                 index = close + 1
-            elif kind == "html_block":  # (html=False: never made; kept as text should a plugin make one)
-                self.para([Span(MD.clean(token.content))], prefix, rest, width)
+            elif kind == "safe_html_block":
+                self.html_block(token, prefix, rest, width)
                 index += 1
             else:
                 index += 1
+
+    def html_block(self, token, first: str, rest: str, width: int) -> None:
+        """A block of raw HTML's allowed subset: its text in paragraphs (one
+        ends where a <p>, <div>, heading, <summary> ... does), its styles,
+        links, line breaks and pictures; a <summary> marked ▾ (shown open), an <hr> a rule."""
+        at = _Inline()
+        pre = 0
+        drawn = len(self.lines)
+
+        centred: list[bool] = []  # (each open block: whether it says align="center")
+
+        def flush(gap: bool = True) -> None:
+            nonlocal first, drawn
+            spans = [span for span in at.spans if span.text]
+            if any(span.text.strip() for span in spans):
+                while spans and spans[0].text in (" ", "\n"):
+                    spans.pop(0)
+                before = len(self.lines)
+                self.para(spans, first, rest, width)
+                if any(centred):  # (raw HTML's align="center": in the middle of the width, as on a page)
+                    for index in range(before, len(self.lines)):
+                        used = MD.cell_width(_strip_ansi(self.lines[index]))
+                        self.lines[index] = " " * max(0, (width - used) // 2) + self.lines[index]
+                first = rest
+            self.pictures(at.pictures, rest, width)
+            if len(self.lines) > drawn and gap:
+                self.blank()
+            drawn = len(self.lines)
+            at.spans, at.pictures = [], []
+
+        heading = 0
+        table: list | None = None  # (a raw-HTML table's rows of (spans, alignment), while in one)
+        cell: _Inline | None = None
+        header_rows, align, head_row = 0, "left", False
+        for event in MD.html_events(token):
+            kind, tag = event[0], event[1]
+            if tag == "table":
+                if kind == "start" and table is None:
+                    flush()
+                    table, header_rows, self._cell_notes = [], 0, []
+                elif kind == "end" and table is not None:
+                    # (spans: every cell under its own column - a row under a
+                    # cell of two rows slid one column to the left)
+                    grid, spans = MD.span_grid(table)
+                    table = [[([], "left") if cell is None else cell for cell in row] for row in grid]
+                    self.draw_table(table, header_rows, first, width, spans)
+                    self._table_notes(first)
+                    self.blank()
+                    first, table, cell, drawn = rest, None, None, len(self.lines)
+                continue
+            if table is not None:
+                if tag == "tr" and kind == "start":
+                    table.append([])
+                    head_row = True
+                elif tag in ("th", "td") and kind == "start":
+                    if not table:
+                        table.append([])
+                    head_row = head_row and tag == "th"
+                    align = event[2].get("align", "left")
+                    span = (int(event[2].get("colspan", 1)), int(event[2].get("rowspan", 1)))
+                    cell = _Inline(Style(bold=True, fg="h1") if tag == "th" else PLAIN)
+                elif tag in ("th", "td") and kind == "end" and cell is not None:
+                    spans = [span for span in cell.spans if span.text.strip() or span.text == " "]
+                    while spans and spans[0].text == " ":
+                        spans.pop(0)
+                    table[-1].append(((spans, align if align in ("left", "center", "right") else "left"), *span))
+                    cell = None
+                elif tag == "tr" and kind == "end":
+                    if head_row and table[-1] and len(table) == header_rows + 1:
+                        header_rows += 1
+                elif cell is not None:
+                    if kind == "text":
+                        self._html_event(cell, ("text", re.sub(r"\s+", " ", event[1])))
+                    else:
+                        self._html_event(cell, event)
+                continue
+            if tag in ("h1", "h2", "h3", "h4", "h5", "h6") and kind == "start":
+                flush()
+                heading = int(tag[1])
+                at.stack.append(self.heading_style(heading))
+                at.html.append((tag, "style"))
+                continue
+            if heading and kind == "end" and tag == f"h{heading}":
+                self._html_event(at, event)
+                spans = [span for span in at.spans if span.text]
+                while spans and spans[0].text in (" ", "\n"):
+                    spans.pop(0)
+                self.heading_lines(heading, spans, at.pictures, first, width)
+                first, heading, drawn = rest, 0, len(self.lines)
+                at.spans, at.pictures = [], []
+                continue
+            if kind == "text":
+                text = event[1] if pre else re.sub(r"\s+", " ", event[1])
+                if pre:
+                    for number, line in enumerate(text.split("\n")):
+                        if number:
+                            at.spans.append(Span("\n", at.style))
+                        self._html_event(at, ("text", line))
+                else:
+                    self._html_event(at, ("text", text))
+                continue
+            if tag in _HTML_BLOCKS:
+                flush(gap=tag not in ("li", "ul", "ol") or kind == "end" and tag != "li")
+                if kind == "start" and tag not in ("hr", "br", "img"):
+                    centred.append(event[2].get("align") == "center")
+                elif kind == "end" and centred:
+                    centred.pop()
+            if kind == "start" and tag == "hr":
+                self.emit(first + self.p.paint("─" * max(4, width - MD.cell_width(_strip_ansi(first))),
+                                               Style(fg="rule")))
+                first = rest
+                continue
+            if tag == "pre":
+                pre += 1 if kind == "start" else -1 if pre else 0
+            self._html_event(at, event)
+            if kind == "start" and tag == "summary":  # (shown open)
+                at.spans.append(Span("▾ ", at.style.but(fg="muted")))
+            elif kind == "start" and tag == "li":  # (an item of a raw-HTML list)
+                at.spans.append(Span("• ", at.style.but(fg="muted")))
+        flush()
+        self.blank()
 
     def quote(self, tokens, start, end, first, rest, width) -> None:
         """A block quote: its blocks, each line behind the bar, in its colour."""
@@ -642,32 +1232,78 @@ class Renderer:
                 self.lines[index] = bar
 
     def heading(self, level: int, inline, prefix: str, width: int) -> None:
+        spans, pictures = self.inline(inline, self.heading_style(level))
+        self.heading_lines(level, spans, pictures, prefix, width)
+
+    @staticmethod
+    def heading_style(level: int) -> Style:
+        return Style(fg=f"h{level}", bold=True, underline=level >= 4)
+
+    def heading_lines(self, level: int, spans, pictures, prefix: str, width: int) -> None:
+        """A heading of *level* (Markdown's or raw HTML's): its mark, its
+        text, a rule under the first two levels, its pictures."""
         self.blank()
         role = f"h{level}"
         marks = {1: "█ ", 2: "▌ ", 3: "▸ "}.get(level, "· ")
-        spans, pictures = self.inline(inline, Style(fg=role, bold=True, underline=level >= 4))
         lead = prefix + self.p.paint(marks, Style(fg=role, bold=True))
         self.para(spans, lead, prefix + "  ", width)
-        if level <= 2:
-            used = min(width, MD.cell_width("".join(s.text for s in spans)) + 2)
+        if level <= 2:  # (the rule fits beside the prefix: in a quote it went past the width)
+            used = min(width - MD.cell_width(_strip_ansi(prefix)),
+                       MD.cell_width("".join(s.text for s in spans)) + 2)
             self.emit(prefix + self.p.paint(("━" if level == 1 else "─") * max(used, 4), Style(fg=role)))
         self.pictures(pictures, prefix, width)
         self.blank()
 
     def code(self, token, first: str, rest: str, width: int) -> None:
-        lang = (token.info or "").strip().split(maxsplit=1)[0] if token.info else ""
-        text = MD.clean(token.content).rstrip("\n")
+        # The info string is the file's too: an ESC in it went to the terminal.
+        lang = _plain_text(token.info or "").strip().split(maxsplit=1)
+        lang = lang[0] if lang else ""
+        # Tabs expanded here (as GitHub, 8): the terminal's own stops, counted
+        # from its first column, took a line past the width and the gutter.
+        text = MD.clean(token.content).expandtabs(TAB).rstrip("\n")
         gutter = self.p.paint("▏", Style(fg="border"))
-        if lang:
-            self.emit(first + self.p.paint(f" {lang} ", Style(fg="muted", bg="pre_bg", italic=True)))
-            first = rest
         room = max(8, width - MD.cell_width(_strip_ansi(rest)) - 2)
+        if lang:
+            if lang.lower() in DIAGRAMS:  # (drawn by GitHub; here its source, said so)
+                lang = f"{lang} – diagram, shown as its source"
+            label = _cut(lang, room) if MD.cell_width(lang) > room else lang
+            self.emit(first + self.p.paint(f" {label} ", Style(fg="muted", bg="pre_bg", italic=True)))
+            first = rest
         for index, line in enumerate(self._highlight(text, lang)):
             lead = first if index == 0 else rest
             plain = _strip_ansi(line)
-            if MD.cell_width(plain) > room:  # cut, marked; the colours of a cut line are dropped
-                line = self.p.paint(_cut(plain, room - 1), PLAIN) + self.p.paint("↩", Style(fg="muted"))
+            if MD.cell_width(plain) > room:
+                # wrapped, each break marked (nothing of a line is lost); the
+                # colours of a wrapped line are dropped
+                pieces = _chop(plain, room - 1)
+                for number, piece in enumerate(pieces):
+                    mark = self.p.paint("↩", Style(fg="muted")) if number < len(pieces) - 1 else ""
+                    self.emit((lead if number == 0 else rest) + gutter + " "
+                              + self.p.paint(piece, PLAIN) + mark)
+                continue
             self.emit(lead + gutter + " " + line)
+        self.blank()
+
+    def math(self, token, first: str, rest: str, width: int) -> None:
+        """A math block: its text (core.markdown_doc.math_text) in the middle
+        of the width (wrapped when longer); as written, as code, when it is
+        not understood."""
+        text, understood = MD.math_display(_plain_text(token.content))
+        label = _plain_text(token.info or "") if token.type == "math_block_label" else ""
+        room = max(8, width - MD.cell_width(_strip_ansi(rest)))
+        style = Style(fg="math") if understood else Style(fg="code_fg")  # (a part not understood: as code)
+        lines = text.split("\n") or [""]
+        if label:
+            lines[-1] += f"   ({label})"
+        # (the block in the middle as a whole: its lines one under the other,
+        # as a matrix's rows - each in the middle on its own went out of line)
+        widest = max(MD.cell_width(line) for line in lines)
+        gap = max(0, (room - widest) // 2)
+        for number, line in enumerate(lines):
+            for piece in _chop(line, room - gap if widest <= room else room):
+                self.emit((first if number == 0 else rest) + " " * (gap if widest <= room else 0)
+                          + self.p.paint(piece, style))
+                first = rest
         self.blank()
 
     def _highlight(self, text: str, lang: str) -> list[str]:
@@ -675,25 +1311,27 @@ class Renderer:
         it and colours are on)."""
         if self.p.depth != "none" and lang and len(text) < 200_000:
             try:
-                from pygments import highlight
+                from pygments import format as formatted
                 from pygments.formatters import (
                     Terminal256Formatter,
                     TerminalFormatter,
                     TerminalTrueColorFormatter,
                 )
-                from pygments.lexers import get_lexer_by_name
-                from pygments.util import ClassNotFound
 
-                lexer = get_lexer_by_name(lang.lower(), stripnl=False)
                 style = "github-dark" if self.o.dark else "default"
-                if self.p.depth == "truecolor":
-                    formatter = TerminalTrueColorFormatter(style=style)
-                elif self.p.depth == "256":
-                    formatter = Terminal256Formatter(style=style)
-                else:
-                    formatter = TerminalFormatter(bg="dark" if self.o.dark else "light")
-                return highlight(text, lexer, formatter).rstrip("\n").split("\n")
-            except (ImportError, ClassNotFound):
+                # (lexed in a child: a lexer's pattern stuck in backtracking held the terminal for ever -
+                # too slow, the block plain: core.markdown_doc.code_tokens)
+                tokens = MD.code_tokens(text if text.endswith("\n") else text + "\n", lang,
+                                        style if self.p.depth in ("truecolor", "256") else "default")
+                if tokens is not None:
+                    if self.p.depth == "truecolor":
+                        formatter = TerminalTrueColorFormatter(style=style)
+                    elif self.p.depth == "256":
+                        formatter = Terminal256Formatter(style=style)
+                    else:
+                        formatter = TerminalFormatter(bg="dark" if self.o.dark else "light")
+                    return formatted(tokens, formatter).rstrip("\n").split("\n")
+            except ImportError:
                 pass
             except Exception:  # noqa: BLE001 - a style missing in an old Pygments: plain
                 pass
@@ -702,9 +1340,13 @@ class Renderer:
     def listing(self, tokens, start: int, end: int, first: str, rest: str, width: int,
                 depth: int = 0) -> None:
         ordered = tokens[start].type == "ordered_list_open"
-        number = int(tokens[start].attrGet("start") or 1) if ordered else 0
+        given = tokens[start].attrGet("start")  # (a list from 0: "0." - "or 1" made it 1)
+        number = (int(given) if given is not None and str(given) != "" else 1) if ordered else 0
+        # (the list's own paragraphs only - a quote's in an item is never hidden:
+        # a tight list with one was spaced out)
+        level = tokens[start].level + 2
         tight = bool((tokens[start].meta or {}).get("tight")) or all(
-            t.hidden for t in tokens[start:end] if t.type == "paragraph_open")
+            t.hidden for t in tokens[start:end] if t.type == "paragraph_open" and t.level == level)
         index = start + 1
         leading = first
         while index < end:
@@ -713,19 +1355,23 @@ class Renderer:
                 continue
             close = self._close(tokens, index, end)
             task = self._task(tokens, index, close)
-            if task is not None:
-                mark = self.p.paint("☑" if task else "☐", Style(fg="mark" if task else "open", bold=True))
-                bullet_width = 2
-            elif ordered:
+            if ordered:  # (every item counts - a task's too, its box after its number: "1. ☐ a", as GitHub)
                 label = f"{number}."
                 mark = self.p.paint(label, Style(fg="muted", bold=True))
                 bullet_width = len(label) + 1
                 number += 1
+                if task is not None:
+                    mark += " " + self.p.paint("☑" if task else "☐", Style(fg="mark" if task else "open", bold=True))
+                    bullet_width += 2
+            elif task is not None:
+                mark = self.p.paint("☑" if task else "☐", Style(fg="mark" if task else "open", bold=True))
+                bullet_width = 2
             else:
                 mark = self.p.paint(BULLETS[depth % len(BULLETS)], Style(fg="muted"))
                 bullet_width = 2
             item_first = leading + mark + " "
-            item_rest = rest + " " * bullet_width
+            # (no deeper than half the width: a deep list pushed its text off the line)
+            item_rest = rest + " " * bullet_width if MD.cell_width(_strip_ansi(rest)) < width // 2 else rest
             self._item(tokens, index + 1, close, item_first, item_rest, width, depth, tight)
             leading = rest
             index = close + 1
@@ -775,20 +1421,22 @@ class Renderer:
 
     def footnotes(self, tokens, start, end, width) -> None:
         self.blank()
-        self.emit(self.p.paint("─" * min(24, width), Style(fg="rule")))
+        if not (start >= 2 and tokens[start - 2].type == "hr"):  # (a text ending in a rule: that one, not two)
+            self.emit(self.p.paint("─" * min(24, width), Style(fg="rule")))
         index = start
         while index < end:
             if tokens[index].type == "footnote_open":
                 close = self._close(tokens, index, end)
-                label = str((tokens[index].meta or {}).get("label", (tokens[index].meta or {}).get("id", "")))
-                mark = self.p.paint(f"[{MD.clean(label)}] ", Style(fg="link"))
+                number = _note_number(tokens[index])
+                mark = self.p.paint(f"[{number}] ", Style(fg="link"))
                 body = [t for t in tokens[index + 1:close] if t.type != "footnote_anchor"]
-                self.blocks(body, 0, len(body), mark, " " * (len(label) + 3), width, tight=True)
+                self.blocks(body, 0, len(body), mark, " " * (len(number) + 3), width, tight=True)
                 index = close + 1
             else:
                 index += 1
 
     def table(self, tokens, start, end, prefix, width) -> None:
+        self._cell_notes = []
         rows: list[list[tuple[list[Span], str]]] = []
         header_rows = 0
         aligns: list[str] = []
@@ -813,40 +1461,147 @@ class Renderer:
                     aligns.append(align)
                 spans, _pictures = self.inline(tokens[index + 1], Style(bold=in_head, fg="h1" if in_head else ""))
                 row.append((spans, align))
+        marks = rows[0][0][0][0].text[:2] if rows and rows[0] and rows[0][0][0] else ""
+        continued, later = GOES_ON in marks, GOES_ON_LATER in marks
+        if continued or later:  # (a part of a table drawn in parts: _stream_tables)
+            first = rows[0][0][0][0]
+            rows[0][0][0][0] = Span(first.text.lstrip(GOES_ON + GOES_ON_LATER).lstrip(), first.style, first.url)
+        self.draw_table(rows, header_rows, prefix, width, continued=continued, later=later)
+        self._goes_on = later
+        self._table_notes(prefix)
+
+    def draw_table(self, rows: list, header_rows: int, prefix: str, width: int, spans=(), continued: bool = False,
+                   later: bool = False) -> None:
+        """Rows of cells - (spans, alignment) - as a table drawn with box
+        characters (a Markdown table's, a raw-HTML one's). *spans*: raw
+        HTML's cells spanning columns (core.markdown_doc.span_grid) - each as
+        wide as its columns and the lines between them, no line through it
+        (its width was charged to its first column, lines drawn across it)."""
         if not rows:
             return
         columns = max(len(r) for r in rows)
         rows = [r + [([], "left")] * (columns - len(r)) for r in rows]
-        natural = [max(MD.cell_width("".join(s.text for s in r[c][0])) for r in rows) for c in range(columns)]
-        room = max(columns * 4, width - MD.cell_width(_strip_ansi(prefix)) - (3 * columns + 1))
-        widths = [max(1, w) for w in natural]
-        while sum(widths) > room:  # the widest column gives way first
-            widest = widths.index(max(widths))
-            if widths[widest] <= 4:
-                break
-            widths[widest] -= 1
+        across = {(row, column): count for row, column, _down, count in spans if count > 1}
+        inside = {(row, column + n) for (row, column), count in across.items() for n in range(1, count)}
+
+        def length(cell) -> int:
+            return MD.cell_width("".join(s.text for s in cell[0]))
+
+        natural = [max((length(r[c]) for n, r in enumerate(rows) if (n, c) not in across and (n, c) not in inside),
+                       default=0) for c in range(columns)]
+        for (row, column), count in across.items():  # (what a spanning cell needs beyond its columns: shared)
+            extra = max(0, length(rows[row][column]) - sum(natural[column:column + count]) - 3 * (count - 1))
+            for n in range(count):
+                natural[column + n] += extra // count + (1 if n < extra % count else 0)
+        if later and not continued and self.tables.get("natural"):  # (a table's first part: all of its rows'
+            whole = self.tables["natural"].pop(0)  # columns - _stream_tables)
+            if len(whole) == columns:
+                natural = [max(a, b) for a, b in zip(natural, whole)]
+        widths = fit_columns(natural, width - MD.cell_width(_strip_ansi(prefix)) - (3 * columns + 1))
+        if continued and "widths" in self.tables:  # (a table's next part: its first part's columns)
+            widths = self.tables["widths"] if self.tables["widths"] is None \
+                or len(self.tables["widths"]) == columns else widths
+        if later and not continued:
+            self.tables["widths"] = widths
+        if widths is None:
+            self.records(rows, header_rows, prefix, width, continued)
+            return
         border = Style(fg="border")
 
-        def rule(left, mid, right):
-            return prefix + self.p.paint(left + mid.join("─" * (w + 2) for w in widths) + right, border)
+        def ends(row: int | None) -> set[int]:
+            """The columns a line ends after in *row* (None: every one)."""
+            return {c for c in range(columns - 1) if row is None or (row, c + 1) not in inside}
 
-        self.emit(rule("┌", "┬", "┐"))
+        def rule(left, right, above, below, line="─", both="┼", up="┴", down="┬"):
+            top, under = ends(above), ends(below)
+            out = left
+            for c, w in enumerate(widths):
+                out += line * (w + 2)
+                if c < columns - 1:
+                    out += both if c in top and c in under else up if c in top else down if c in under else line
+            return prefix + self.p.paint(out + right, border)
+
+        if not continued:
+            self.emit(rule("┌", "┐", None, 0, both="┬", up="─"))
         for number, cells in enumerate(rows):
-            wrapped = [wrap(spans, widths[c]) for c, (spans, _a) in enumerate(cells)]
+            if continued and number < header_rows:  # (its heading: over its first part only)
+                continue
+            pieces = []  # (start column, width, spans, alignment) of each cell drawn
+            for c, (cell_spans, align) in enumerate(cells):
+                if (number, c) in inside:
+                    continue
+                count = across.get((number, c), 1)
+                pieces.append((sum(widths[c:c + count]) + 3 * (count - 1), cell_spans, align))
+            wrapped = [wrap(cell_spans, w) for w, cell_spans, _a in pieces]
             height = max(len(w) for w in wrapped)
             for line_no in range(height):
                 out = [self.p.paint("│", border)]
-                for c, (_spans, align) in enumerate(cells):
-                    line = wrapped[c][line_no] if line_no < len(wrapped[c]) else []
+                for index, (w, _cell_spans, align) in enumerate(pieces):
+                    line = wrapped[index][line_no] if line_no < len(wrapped[index]) else []
                     used = MD.cell_width("".join(s.text for s in line))
-                    gap = widths[c] - used
+                    gap = w - used
                     left = gap // 2 if align == "center" else gap if align == "right" else 0
                     out.append(" " + " " * left + self.paint_line(line) + " " * (gap - left) + " ")
                     out.append(self.p.paint("│", border))
                 self.emit(prefix + "".join(out))
             if number == header_rows - 1 and number < len(rows) - 1:
-                self.emit(rule("╞", "╪", "╡").replace("─", "═"))
-        self.emit(rule("└", "┴", "┘"))
+                self.emit(rule("╞", "╡", number, number + 1, line="═", both="╪", up="╧", down="╤"))
+        if not later:
+            self.emit(rule("└", "┘", len(rows) - 1, None, both="┴", down="─"))
+
+    def records(self, rows, header_rows: int, prefix: str, width: int, continued: bool = False) -> None:
+        """A table whose columns do not fit the width (each at least
+        :data:`MIN_COLUMN`): a row after the other, each cell behind its
+        column's heading. (Drawn wider, the terminal broke every line of it
+        and its borders ran through the text.)"""
+        heads = ["".join(s.text for s in cell[0]) for cell in rows[0]] if header_rows else []
+        rule = prefix + self.p.paint("─" * max(4, min(24, width - MD.cell_width(_strip_ansi(prefix)))),
+                                     Style(fg="border"))
+        body = rows[header_rows:]
+        if not body:  # (a table of headings only: the headings, not each behind itself)
+            body, heads = rows[:header_rows], []
+        for number, cells in enumerate(body):
+            if number or continued:  # (a table's next part: a line between it and the part before too)
+                self.emit(rule)
+            for column, (spans, _align) in enumerate(cells):
+                head = heads[column] if column < len(heads) else ""
+                label = [Span(f"{head}: ", Style(fg="h1", bold=True))] if head.strip() else []
+                self.para(label + spans, prefix, prefix + "  ", width)
+
+
+#: The narrowest a table's column is made to fit the width (one narrower
+#: by nature stays so); a table that does not fit with these is shown a row
+#: after the other (Renderer.records).
+MIN_COLUMN = 4
+
+
+def fit_columns(natural: list[int], room: int) -> list[int] | None:
+    """The widths of columns whose text takes *natural* columns, together at
+    most *room*: the widest give way first, none below :data:`MIN_COLUMN`
+    (but those narrower by nature) - None when even that is too wide. One
+    cap for all, found by halving (a column a step, a table of thousands of
+    columns took minutes)."""
+    widths = [max(1, w) for w in natural]
+    if sum(widths) <= room:
+        return widths
+    if sum(min(w, MIN_COLUMN) for w in widths) > room:
+        return None
+    low, high = MIN_COLUMN, max(widths)  # sum(min(w, low)) fits, sum(min(w, high)) does not
+    while high - low > 1:
+        middle = (low + high) // 2
+        if sum(min(w, middle) for w in widths) <= room:
+            low = middle
+        else:
+            high = middle
+    widths = [min(w, low) for w in widths]
+    left = room - sum(widths)
+    for index, w in enumerate(natural):  # what is left goes to the first ones still cut
+        if left <= 0:
+            break
+        if w > widths[index]:
+            widths[index] += 1
+            left -= 1
+    return widths
 
 
 _ANSI = re.compile(r"\x1b(\[[0-9;]*m|\]8;;[^\x1b]*\x1b\\)")
@@ -856,12 +1611,351 @@ def _strip_ansi(text: str) -> str:
     return _ANSI.sub("", text)
 
 
-def render(text: str, options: Options | None = None) -> str:
-    """*text* (Markdown) for the terminal."""
+#: List levels nested in the terminal; deeper items are shown at this depth
+#: (as in every view: core.markdown_doc.LIST_DEPTH).
+LIST_DEPTH = MD.LIST_DEPTH
+#: A text longer than this is rendered in parts of about STREAM_LINES lines
+#: or STREAM_PART_CHARS characters, whichever comes first (render_parts:
+#: markdown-it parses 100,000 list items in 7 s - the terminal showed
+#: nothing meanwhile; 200 display formulas of 200 fractions each, 560 KB in
+#: 800 lines, were one part: 1.5 s before the window showed any).
+STREAM_CHARS = 200_000
+STREAM_LINES = 2000
+STREAM_PART_CHARS = 100_000
+#: ... and a text of more lines than this, however short (50,000 task items
+#: of 400 KB were one part: 5 s before the window showed any).
+STREAM_ROWS = 4 * STREAM_LINES
+#: A line of a paragraph's text and nothing else (no block begins with it,
+#: no code, formula, table cell or tag goes on past it): a paragraph of more
+#: than LONG_PARAGRAPH of them in a row may be cut there - into two
+#: paragraphs (one of 100,000 lines was one part: 15 s before the window
+#: showed any).
+LONG_PARAGRAPH = 2000
+_PLAIN_ROW = re.compile(r"(?![#>=`$<\[]|[-+*_](?:[ \t]|[-+*_ \t]*\Z)|\d{1,9}[.)](?:[ \t]|\Z)|[:~][ \t])"
+                        r"[^\s|$`<][^|$`<]*\Z")
+#: The labels a part refers to ("[label]": a link's, a reference's, an image's).
+_LABEL = re.compile(r"\[([^\[\]]{1,999})\]")
+_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+_REFERENCE = re.compile(r"^ {0,3}\[[^\]]+\]:\s*\S")
+_TOP_ITEM = re.compile(r"^(?:[-+*]|\d{1,9}[.)])(?:[ \t]|$)")
+#: A line of "---" (or "+++"): no part may begin with one - markdown-it read
+#: a part beginning so as front matter, a section turned into a box.
+#: An item of a top-level ordered list: its number.
+_NUMBERED_ITEM = re.compile(r"^(\d{1,9})[.)](?:[ \t]|$)")
+_FRONT_LINE = re.compile(r"^ {0,3}(?:-{3,}|\+{3,})[ \t]*\Z")
+
+
+#: The label an inline note (^[...]) gets when a long text is parted (labeled_inline_notes).
+INLINE_NOTE_LABEL = "axross-inline-"
+_BLOCK_START = re.compile(r"[#>\-+*=|~:<]|\d{1,9}[.)](?:\s|$)")
+_NOTE_STOPS = re.compile(r"\\.|`|\^\[|\[|\]")
+
+
+def labeled_inline_notes(text: str) -> str:
+    """*text* - long enough to be parsed in parts - with each inline note
+    (``^[...]``) a footnote of its own: a reference where it stands, its
+    definition at the end. markdown-it numbers both as they come, so the
+    page is the same; a text with inline notes was one part (3.8 MB with
+    1,500: nothing in the window for 10 s, in the terminal for a minute).
+    Only where it is sure: a note on one line, outside code, without code
+    or a line end in it - else *text* as it is (one part, as before)."""
+    if "^[" not in text or INLINE_NOTE_LABEL in text \
+            or (len(text) <= STREAM_CHARS and text.count("\n") <= STREAM_ROWS):
+        return text
+    lines, out, notes, fence, code = text.split("\n"), [], [], None, 0
+    for line in lines:
+        opened = _FENCE.match(line)
+        if fence is not None:
+            if opened and opened.group(1)[0] == fence[0] and len(opened.group(1)) >= len(fence):
+                fence = None
+            out.append(line)
+            continue
+        if opened:
+            fence = opened.group(1)
+            out.append(line)
+            continue
+        if not line.strip():
+            code = 0  # (a code span never goes past an empty line)
+        if "^[" not in line:
+            out.append(line)
+            code = (code + line.count("`")) % 2 if "`" in line else code
+            continue
+        if line[:1] in "\t<" or line.startswith("    ") or code:  # (indented code, raw HTML, a code span open)
+            return text
+        made, at, opened, depth, outer = [], 0, -1, 0, 0
+        for found in _NOTE_STOPS.finditer(line):  # (its marks only: a line of 3 KB was read a letter at a time)
+            mark = found.group(0)
+            if mark[0] == "\\":
+                continue
+            if mark == "`":
+                return text  # (code on a line with a note: not sure where it ends)
+            if opened < 0:
+                if mark == "^[":
+                    if outer:  # (in a link's text: a reference there is no note - "[x [^a]](u)" no link)
+                        return text
+                    opened, depth = found.start(), 0
+                elif mark == "[":
+                    outer += 1
+                elif outer:
+                    outer -= 1
+                continue
+            if mark in ("[", "^["):
+                depth += 1
+            elif mark == "]" and depth:
+                depth -= 1
+            elif mark == "]":
+                content = line[opened + 2:found.start()].strip()
+                if not content:
+                    return text
+                block = _BLOCK_START.match(content)
+                if block:  # (its first mark no block's in the definition: "- a" was a list)
+                    if content[0].isdigit():
+                        digits = len(re.match(r"\d+", content).group(0))
+                        content = content[:digits] + "\\" + content[digits:]
+                    else:
+                        content = "\\" + content
+                notes.append(content)
+                made.append(line[at:opened] + f"[^{INLINE_NOTE_LABEL}{len(notes)}]")
+                at, opened = found.end(), -1
+        if opened >= 0:
+            return text  # (a note going on past its line)
+        out.append("".join(made) + line[at:])
+    if not notes or fence is not None:
+        return text
+    return "\n".join(out).rstrip("\n") + "\n\n" + "".join(
+        f"[^{INLINE_NOTE_LABEL}{number}]: {content}\n" for number, content in enumerate(notes, 1))
+
+
+def text_parts(text: str, lines: int | None = None) -> list[str]:
+    """*text* in parts of about *lines* lines (see _text_parts)."""
+    return [part for part, _apart, _first in _text_parts(text, lines)]
+
+
+def text_parts_at(text: str, lines: int | None = None) -> list[tuple[str, int | None]]:
+    """(part, the line of *text* it begins at - None: the notes' part) of each part (see _text_parts)."""
+    return [(part, first) for part, _apart, first in _text_parts(text, lines)]
+
+
+def notes_of(text: str) -> list[str] | None:
+    """The labels of *text*'s footnotes in the order they are numbered - a
+    part of it is parsed with them (MD.parse's *notes*) - or None: none."""
+    return (MD.note_labels(text) or None) if "[^" in text else None
+
+
+#: A table of more rows than this is drawn in parts of so many (render_parts:
+#: the terminal wrote nothing of a table of 100,000 rows for 46 s, and held
+#: all of it - 795 MB): one table to see, the first part's columns for all.
+TABLE_PART_ROWS = 500
+#: Columns of a table drawn at most - wider, it is shown as written, as the
+#: window shows it (ui.markdown_view.TABLE_COLUMNS).
+TABLE_COLUMNS = 64
+#: Mark a table's part (at its first heading): it goes on from the part before
+#: - no heading, no top line - and another part of it comes after - no line
+#: under it. Private-use characters, never a text's own.
+GOES_ON, GOES_ON_LATER = "\ue066", "\ue067"
+_TABLE_DELIMITER = re.compile(r"^ {0,3}\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$")
+
+
+_CELL_APART = re.compile(r"(?<!\\)\|")
+_CELL_LINK = re.compile(r"!?\[([^\[\]]*)\]\([^()\s]*\)")
+
+
+def _column_widths(rows: list[str], columns: int) -> list[int]:
+    """How wide each column of a table's *rows* (as written) is at most - a
+    link as its text and its note's number ("[12]"), the rest as written:
+    the columns of a table drawn in parts (its first part's alone were too
+    narrow for the rows after it)."""
+    widths = [0] * columns
+    for row in rows:
+        cells = _CELL_APART.split(row.strip().strip("|") if not row.strip().endswith("\\|")
+                                  else row.strip().lstrip("|"))
+        for column, cell in enumerate(cells[:columns]):
+            cell = cell.strip()
+            size = MD.cell_width(_CELL_LINK.sub(lambda m: m.group(1) + "[000]", cell)) if cell else 0
+            if size > widths[column]:
+                widths[column] = size
+    return widths
+
+
+def _stream_tables(text: str, widths: list | None = None) -> tuple[str, bool]:
+    """(*text* with each table of the top level longer than TABLE_PART_ROWS
+    rows in parts of so many - its heading again over each, marked GOES_ON
+    and GOES_ON_LATER -, each wider than TABLE_COLUMNS columns in a fenced
+    block as written; whether one was). *widths*: each table in parts' the
+    columns of all of its rows are appended to (_column_widths)."""
+    if "|" not in text or "-" not in text:
+        return text, False
+    lines = text.split("\n")
+    out, fence, wide, index, changed = [], None, False, 0, False
+    while index < len(lines):
+        line = lines[index]
+        opened = _FENCE.match(line)
+        if fence is not None:  # (code: as it is)
+            if opened and opened.group(1)[0] == fence[0] and len(opened.group(1)) >= len(fence):
+                fence = None
+            out.append(line)
+            index += 1
+            continue
+        if opened:
+            fence = opened.group(1)
+            out.append(line)
+            index += 1
+            continue
+        if "|" in line and line[:1] not in " \t>" and index + 1 < len(lines) \
+                and _TABLE_DELIMITER.match(lines[index + 1]) and "|" in lines[index + 1] + line:
+            end = index + 2
+            while end < len(lines) and lines[end].strip():
+                end += 1
+            columns = max(1, lines[index + 1].strip().strip("|").count("|") + 1)
+            body = lines[index + 2:end]
+            if columns > TABLE_COLUMNS:
+                longest = max((len(run) for row in lines[index:end] for run in re.findall(r"`{3,}", row)), default=2)
+                out += ["`" * (longest + 1) + "text", *lines[index:end], "`" * (longest + 1)]
+                wide = changed = True
+            elif len(body) > TABLE_PART_ROWS:
+                changed = True
+                if widths is not None:
+                    widths.append(_column_widths([lines[index], *body], columns))
+                for first in range(0, len(body), TABLE_PART_ROWS):
+                    marks = (GOES_ON if first else "") + (GOES_ON_LATER if first + TABLE_PART_ROWS < len(body)
+                                                          else "")
+                    head = lines[index]
+                    lead = len(head) - len(head.lstrip())
+                    head = (head[:lead + 1] + marks + head[lead + 1:] if head.lstrip().startswith("|")
+                            else head[:lead] + marks + head[lead:])
+                    if first:
+                        out.append("")
+                    out += [head, lines[index + 1], *body[first:first + TABLE_PART_ROWS]]
+            else:
+                out += lines[index:end]
+            index = end
+            continue
+        out.append(line)
+        index += 1
+    return ("\n".join(out) if changed else text), wide
+
+
+def _text_parts(text: str, lines: int | None = None) -> list[tuple[str, bool, int | None]]:
+    """*text* in parts of about *lines* lines that read as the whole does:
+    cut only before a list item or a block of the top level (after an empty
+    line), never in code; every link reference definition in each part.
+    Footnotes: their definitions moved to the end (the last part shows them
+    all; each part is parsed with them numbered across the text: notes_of)
+    - a text with them was one part, 5 s before the page or the terminal
+    showed anything of 1 MB. (An inline note, ^[...]: one part still.)"""
+    lines = STREAM_LINES if lines is None else lines  # (read now: a test may make the parts small)
+    if len(text) <= STREAM_CHARS and text.count("\n") <= STREAM_ROWS:
+        return [(text, False, 0)]
+    plan = MD.note_plan(text) if "[^" in text else None
+    if plan is None and "^[" in text:
+        return [(text, False, 0)]  # (an inline note: numbered where it stands)
+    notes, noted = "", frozenset()
+    if plan is not None:  # (the notes' definitions: a part of their own, the last - never cut)
+        text, notes, _labels, noted = plan
+    rows = text.split("\n")
+    cuts, fence, since, ordinal, plain, size = [0], None, 0, None, 0, 0
+    # (a footnote's definition no link's: all again in the last part - note_plan)
+    definitions = [row for row in rows if _REFERENCE.match(row) and not row.lstrip().startswith("[^")]
+    for number, row in enumerate(rows):
+        opened = _FENCE.match(row)
+        if fence is not None:
+            if opened and opened.group(1)[0] == fence[0] and len(opened.group(1)) >= len(fence):
+                fence = None
+            continue
+        if opened:
+            fence = opened.group(1)
+            plain = 0
+            continue
+        since += 1
+        size += len(row) + 1
+        plain = plain + 1 if _PLAIN_ROW.match(row) else 0
+        numbered = _NUMBERED_ITEM.match(row)
+        if numbered:  # (a top-level ordered list's item: the number it is shown with)
+            ordinal = int(numbered.group(1)) if ordinal is None else ordinal + 1
+        elif row.strip() and row[:1] not in " \t":
+            ordinal = None  # (the list has ended)
+        if (since >= lines or size >= STREAM_PART_CHARS) and number and row.strip() \
+                and (row[:1] not in " \t>|" or GOES_ON in row[:2]) \
+                and not _FRONT_LINE.match(row) \
+                and (_TOP_ITEM.match(row) or not rows[number - 1].strip()
+                     or plain > LONG_PARAGRAPH  # (a paragraph of thousands of lines: cut in it)
+                     or (_REFERENCE.match(row) and _REFERENCE.match(rows[number - 1]))) \
+                and number not in noted:  # (... and between definitions)
+            cuts.append(number)
+            since = size = 0
+            if numbered and ordinal is not None:  # (a part beginning in a list: numbered on - "1997." then "1.")
+                rows[number] = f"{ordinal}{row[numbered.end(1):]}"
+    cuts.append(len(rows))
+    # (each part with the definitions it refers to - all of them in each, 50,000 were parsed again with
+    # every part: the first one came after 19 s)
+    defined: dict[str, list[str]] = {}
+    for row in definitions:
+        defined.setdefault(_label_key(row[row.index("[") + 1:row.index("]:")]), []).append(row)
+    escaped = [label for label in defined if "\\" in label]  # (a label of "\\]": in every part, as before)
+
+    def tail(part: list[str]) -> str:  # (the labels of what is not a definition itself)
+        if not defined:
+            return ""
+        found = _LABEL.findall("\n".join(row for row in part if not _REFERENCE.match(row)))
+        wanted = [row for label in dict.fromkeys([*map(_label_key, found), *escaped])
+                  for row in defined.get(label, ())]
+        return ("\n\n" + "\n".join(wanted) + "\n") if wanted else ""
+
+    # (each with whether an empty line was before it: the blank line between
+    # two blocks the parts are cut between - lost at every cut - or none,
+    # between two items of a list)
+    parts = []
+    for a, b in zip(cuts, cuts[1:]):
+        if a < b:
+            parts.append(("\n".join(rows[a:b]) + tail(rows[a:b]), bool(a) and not rows[a - 1].strip(), a))
+    if notes:
+        parts.append((notes + tail(notes.split("\n")), True, None))
+    return parts
+
+
+def _label_key(label: str) -> str:
+    """A reference's label as markdown-it matches it (normalizeReference): its spaces one, its case none."""
+    return " ".join(label.split()).lower().upper()
+
+
+def render_parts(text: str, options: Options | None = None):
+    """*text* for the terminal in parts, as they are rendered (see
+    text_parts): the first is there at once."""
     options = options or Options()
-    doc = MD.parse(text)
-    return Renderer(options).render(doc)
+    text, flattened = MD.flatter(text, LIST_DEPTH)
+    text, shallower = MD.quote_flatter(text)
+    tables: dict = {"natural": []}  # (a table drawn in parts: its columns - Renderer.draw_table)
+    text, wide = _stream_tables(text, tables["natural"])
+    text = labeled_inline_notes(text)  # (a text with inline notes in parts too)
+    parts = _text_parts(text)
+    labels = notes_of(text) if len(parts) > 1 else None
+    for number, (part, apart, first) in enumerate(parts):
+        doc = MD.parse(part, notes=(labels, number == len(parts) - 1, first) if labels else None)
+        try:
+            shown = Renderer(options, tables).render(doc)
+        except (Exception, RecursionError) as exc:  # noqa: BLE001 - a block's fault: the part as written,
+            shown = Renderer(options).render(MD.as_written(doc.source or part, exc))  # never a traceback
+        if shown.strip():  # (a part of nothing to show - definitions, a comment: no empty lines either)
+            yield ("\n" + shown) if apart and GOES_ON not in part[:2] else shown  # (a table's next part: on)
+    if flattened or shallower or wide:
+        note = " ".join(([f"(lists nested more than {LIST_DEPTH} deep are shown flatter)"] if flattened else [])
+                        + ([f"(quotes nested more than {MD.QUOTE_DEPTH} deep are shown flatter)"] if shallower
+                           else [])
+                        + ([f"(tables of more than {TABLE_COLUMNS} columns are shown as written)"] if wide
+                           else []))
+        painter = Painter(options.depth, DARK if options.dark else LIGHT)
+        import textwrap
+
+        yield "\n" + "\n".join(painter.paint(line, Style(fg="muted", italic=True))
+                                for line in textwrap.wrap(note, max(20, options.width))) + "\n"
 
 
-__all__ = ["DARK", "LIGHT", "Options", "Painter", "Renderer", "colour_depth", "dark_background",
-           "image_protocol", "locate", "read_picture", "render", "safe_url", "wrap"]
+def render(text: str, options: Options | None = None) -> str:
+    """*text* (Markdown) for the terminal. Lists nested deeper than
+    LIST_DEPTH are shown flatter, said under the text (a list 3,000 deep was
+    22 MB of indentation and wrapped lines, 7 s)."""
+    return "".join(render_parts(text, options))
+
+
+__all__ = ["ALERT_TITLES", "DARK", "LIGHT", "Options", "Painter", "Renderer", "colour_depth", "dark_background",
+           "fit_columns", "image_protocol", "locate", "read_picture", "render", "render_parts", "safe_url", "wrap"]

@@ -24,16 +24,16 @@ Three rules earn their place:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
-import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from core.secure_storage import locked_store_update, write_secret_file
+from core.secure_storage import keep_unreadable_copy, locked_store_update, write_secret_file
 
 log = logging.getLogger(__name__)
 
@@ -53,6 +53,22 @@ SCRIPT_TIMEOUT_S = 24 * 3600
 #: it is stopped. Nobody watches the output; only its tail reaches the
 #: job's detail on failure.
 SCRIPT_OUTPUT_CHARS = 1_000_000
+
+#: A run's detail (a failure's message: the script's last stderr line) is
+#: kept to its last this many characters - in jobs.json, the log, the
+#: status bar and the Scheduled Jobs window.
+DETAIL_MAX_CHARS = 500
+
+#: The folder of the job leases, beside the store (:func:`take_job_lease`).
+LEASE_FOLDER = "jobs.leases"
+
+
+def short_detail(detail: str) -> str:
+    """*detail* held to its last :data:`DETAIL_MAX_CHARS` characters."""
+    detail = str(detail)
+    if len(detail) <= DETAIL_MAX_CHARS:
+        return detail
+    return "…" + detail[-(DETAIL_MAX_CHARS - 1):]
 
 
 @dataclass(frozen=True)
@@ -92,6 +108,15 @@ def next_run_at(job: Job, *, now: datetime) -> datetime | None:
         return None
     if job.last_run_at is None:
         return now
+    try:
+        if job.last_run_at - now > timedelta(seconds=job.interval_s):
+            # Stamped more than an interval ahead: the clock was set back
+            # since (the end of daylight saving time for a short job, an
+            # NTP correction). Waiting for the clock to catch up held a
+            # 5-minute job an hour, or a month.
+            return now
+    except OverflowError:
+        pass
     try:
         return job.last_run_at + timedelta(seconds=job.interval_s)
     except OverflowError:
@@ -156,9 +181,15 @@ def record_result(job: Job, *, ok: bool, at: datetime, detail: str = "") -> Job:
     """
     failures = 0 if ok else job.consecutive_failures + 1
     enabled = job.enabled
+    # A failure's detail is the script's last stderr line - up to the whole
+    # output limit: only its end is kept (jobs.json, the log, the window).
+    detail = short_detail(detail)
     if not ok and failures >= MAX_CONSECUTIVE_FAILURES:
         enabled = False
-        detail = f"{detail} — disabled after {failures} consecutive failures".strip(" —")
+        note = f" — disabled after {failures} consecutive failures"
+        detail = short_detail(detail[: max(0, DETAIL_MAX_CHARS - len(note))] + note
+                              if len(detail) + len(note) > DETAIL_MAX_CHARS
+                              else detail + note).strip(" —")
         log.warning("scheduler: disabling %s after %d failures", job.name, failures)
 
     return replace(
@@ -188,27 +219,39 @@ class JobStore:
         read. *strict* (before a save): a file that exists but cannot be
         read (permissions, I/O) is an OSError - saving over it would
         replace every job with the few the caller knows."""
+        return self._load(strict)[0]
+
+    def _load(self, strict: bool, _attempts: int = 3) -> tuple[list[Job], bool]:
+        """The stored jobs, and whether rows were dropped (malformed): a
+        save then keeps a copy of the file first (:meth:`update`)."""
         try:
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
+            data = self.path.read_bytes()
         except FileNotFoundError:
-            return []
-        except (ValueError, RecursionError) as exc:
-            log.warning("scheduler: ignoring unreadable job store %s: %s", self.path, exc)
-            self._set_aside()
-            return []
+            return [], False
         except OSError as exc:
             if strict:
                 raise
             log.warning("scheduler: ignoring unreadable job store %s: %s", self.path, exc)
-            return []
+            return [], False
+        try:
+            raw = json.loads(data.decode("utf-8"))
+        except (ValueError, RecursionError) as exc:
+            log.warning("scheduler: ignoring unreadable job store %s: %s", self.path, exc)
+            raw = None
         if not isinstance(raw, list):
-            log.warning("scheduler: job store %s is not a list; ignoring", self.path)
-            self._set_aside()
-            return []
+            if raw is not None:
+                log.warning("scheduler: job store %s is not a list; ignoring", self.path)
+            if not self._set_aside(data) and _attempts > 1:
+                # Replaced since the read (another axross set the broken
+                # file aside and saved): read what is there now.
+                return self._load(strict, _attempts - 1)
+            return [], False
 
         jobs: list[Job] = []
+        dropped = False
         for row in raw:
             if not isinstance(row, dict):
+                dropped = True
                 continue
             try:
                 jobs.append(
@@ -224,7 +267,7 @@ class JobStore:
                         enabled=row.get("enabled", True) is True,
                         last_run_at=_parse_dt(row.get("last_run_at")),
                         last_ok=row.get("last_ok"),
-                        last_detail=str(row.get("last_detail", "")),
+                        last_detail=short_detail(row.get("last_detail", "")),
                         consecutive_failures=int(row.get("consecutive_failures", 0)),
                         # `running` describes THIS process. Persisting it
                         # would leave a job permanently "running" after a
@@ -236,23 +279,25 @@ class JobStore:
             except (KeyError, TypeError, ValueError, OverflowError) as exc:
                 # OverflowError: int() of a hand-edited Infinity.
                 log.warning("scheduler: dropping malformed job row: %s", exc)
-        return jobs
+                dropped = True
+        return jobs, dropped
 
-    def _set_aside(self) -> None:
-        """Move an unparseable store out of the way of the next save.
+    def _set_aside(self, data: bytes) -> bool:
+        """Move an unparseable store (holding *data*) out of the way of the
+        next save. Returns False when the file was replaced since it was
+        read - another process's good store is never renamed away.
 
         Loading degrades to "no jobs" so the app still starts; without
         this, the next save would replace every configured job with
         whatever the user added after the failed load.
         """
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        aside = self.path.with_name(f"{self.path.name}.unreadable-{stamp}-{uuid.uuid4().hex[:8]}")
+        from core.json_store import set_aside_if_unchanged
+
         try:
-            os.rename(self.path, aside)
+            return set_aside_if_unchanged(self.path, data) is not None
         except OSError as exc:
             log.error("scheduler: could not set %s aside: %s", self.path, exc)
-            return
-        log.warning("scheduler: unreadable job store kept as %s", aside)
+            return True
 
     def update(self, change: Callable[[list[Job]], list[Job]]) -> list[Job]:
         """Load, apply ``change`` and save, under a file lock, and return
@@ -260,7 +305,11 @@ class JobStore:
         recording a run, the Scheduler dialog) goes through here, so none
         writes back a list that is older than the file."""
         with locked_store_update(self.path):
-            jobs = change(self.load(strict=True))
+            jobs, dropped = self._load(True)
+            if dropped and not keep_unreadable_copy(self.path):
+                raise OSError(f"{self.path} holds job rows that cannot be read and no copy "
+                              "of it could be made")
+            jobs = change(jobs)
             self.save(jobs)
             return jobs
 
@@ -290,6 +339,41 @@ class RunCancelled(RuntimeError):
     """A run stopped because the application closed during it: no failure
     of the job (it counted towards disabling it, and "failed" stood in
     the Scheduler)."""
+
+
+class RunNotStarted(RunCancelled):
+    """A run that did not start, and is no failure of the job either: the
+    job runs in another axross process (its lease is taken), or the
+    security mode refuses scripts - ten such slots disabled every job of
+    the paranoid mode for good."""
+
+
+def take_job_lease(folder: Path | str, job_id: str):
+    """Take the lease of *job_id*: an exclusive, non-blocking ``flock`` on
+    ``<folder>/jobs.leases/<hash of the id>.lock``. Returns the open
+    descriptor (the run holds it, its script child inherits it, so an
+    orphan of a crashed axross still holds it), ``None`` when another
+    process holds it, ``-1`` where there is no flock (Windows) - the run
+    goes ahead then, as before."""
+    try:
+        import fcntl
+    except ImportError:
+        return -1
+    leases = Path(folder) / LEASE_FOLDER
+    os.makedirs(leases, mode=0o700, exist_ok=True)
+    # The id is the store's (hand-editable): hashed, it never names a path.
+    name = hashlib.sha256(str(job_id).encode("utf-8", "surrogatepass")).hexdigest()[:32]
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    fd = os.open(leases / f"{name}.lock", flags, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        return None
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
 
 
 def run_job(job: Job, *, runner, on_finished) -> None:
@@ -341,6 +425,7 @@ def run_script_job(
     *,
     cancel_event=None,
     timeout_s: float = SCRIPT_TIMEOUT_S,
+    lease_dir: Path | str | None = None,
 ) -> str:
     """Run a job: a script job runs its saved script in a child process,
     as the Scripts dock and the MCP ``script_run`` tool do
@@ -350,14 +435,37 @@ def run_script_job(
 
     The child is not interactive: a prompt or a production-profile
     countdown refuses instead of waiting for someone who is not there.
+
+    With *lease_dir* (the store's folder) the run takes the job's lease
+    first (:func:`take_job_lease`): a job running in another axross - or
+    in the orphaned child of one that crashed - is not started again
+    (:class:`RunNotStarted`). A refusal of the security mode is
+    :class:`RunNotStarted` too.
     """
     if job.kind != "script":
         raise ValueError(f"unknown job kind {job.kind!r}")
-    from core import script_runner, scripting
     from core.security_mode import current_policy, require
+
+    try:
+        require("saved script execution", current_policy().allow_scripts)
+    except PermissionError as exc:
+        raise RunNotStarted(str(exc)) from None
+    lease = -1
+    if lease_dir is not None:
+        lease = take_job_lease(lease_dir, job.job_id)
+        if lease is None:
+            raise RunNotStarted("not started: the job is running in another axross process")
+    try:
+        return _run_script_job(job, cancel_event, timeout_s, lease)
+    finally:
+        if lease >= 0:
+            os.close(lease)
+
+
+def _run_script_job(job: Job, cancel_event, timeout_s: float, lease: int) -> str:
+    from core import script_runner, scripting
     from core.ui_helpers import ENV_NONINTERACTIVE
 
-    require("saved script execution", current_policy().allow_scripts)
     name = script_target(job.target)
     try:
         scripting.load_script(name)  # a missing script fails here, before a child starts
@@ -372,6 +480,7 @@ def run_script_job(
         max_output_chars=SCRIPT_OUTPUT_CHARS,
         cancel_event=cancel_event,
         env_overrides={ENV_NONINTERACTIVE: "1"},
+        keep_fds=(lease,) if lease >= 0 else (),
     )
     if run.cancelled:
         raise RunCancelled("cancelled: the application closed during the run")
@@ -413,6 +522,7 @@ __all__ = [
     "Job",
     "JobStore",
     "RunCancelled",
+    "RunNotStarted",
     "due_jobs",
     "next_run_at",
     "planned_start",

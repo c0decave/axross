@@ -77,8 +77,10 @@ def tls_pair(tmp_path, *, maximum=None):
     ("nfs", {}, CS.LEVEL_CLEARTEXT, "AUTH_SYS"),
     ("iscsi", {}, CS.LEVEL_CLEARTEXT, "CHAP"),
     ("imap", {}, CS.LEVEL_TLS, "IMAP over TLS"),
-    ("imap", {"imap_ssl": False}, CS.LEVEL_CLEARTEXT, "IMAP without TLS"),
-    ("pop3", {"pop3_ssl": False}, CS.LEVEL_CLEARTEXT, "POP3"),
+    ("imap", {"imap_ssl": False, "imap_starttls": False}, CS.LEVEL_CLEARTEXT, "IMAP without TLS"),
+    ("pop3", {"pop3_ssl": False, "pop3_starttls": False}, CS.LEVEL_CLEARTEXT, "POP3"),
+    ("imap", {"imap_ssl": False}, CS.LEVEL_TLS, "IMAP with STARTTLS"),
+    ("pop3", {"pop3_ssl": False}, CS.LEVEL_TLS, "POP3 with STLS"),
     ("azure_blob", {"azure_connection_string": "DefaultEndpointsProtocol=http;AccountName=a"},
      CS.LEVEL_CLEARTEXT, "http://"),
     ("azure_blob", {}, CS.LEVEL_TLS, "Azure"),
@@ -88,6 +90,11 @@ def tls_pair(tmp_path, *, maximum=None):
     ("adb", {"adb_mode": "usb"}, CS.LEVEL_LOCAL, "USB"),
     ("adb", {}, CS.LEVEL_CLEARTEXT, "TCP"),
     ("ramfs", {}, CS.LEVEL_LOCAL, "memory"),
+    # WinRM: HTTPS verified, HTTPS unchecked, HTTP (5985) - it said "HTTPS
+    # (TLS)" for all three.
+    ("winrm", {}, CS.LEVEL_TLS, "HTTPS (TLS), certificate verified"),
+    ("winrm", {"winrm_verify_tls": False}, CS.LEVEL_TLS_WEAK, "NOT verified"),
+    ("winrm", {"winrm_https": False}, CS.LEVEL_TLS_WEAK, "WinRM over HTTP"),
 ])
 def test_happy_every_protocol_says_what_it_is_configured_for(protocol, fields, level, words):
     info = CS.from_profile(_profile(protocol, **fields))

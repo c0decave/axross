@@ -17,7 +17,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QToolButton, QVBoxLayout, QWidget
 
 from core import chat_servers as S
-from core.i18n import tr
+from core.i18n import tr, tr_n
 from core.thread_relay import GuiCall
 from ui.icon_provider import icon
 
@@ -122,7 +122,11 @@ class ServerBox(QWidget):
         if self.entries:
             template = ORIGIN_TEXT.get(server_list.origin, ORIGIN_TEXT["bundled"])
             self.info.setText(tr(template).format(date=server_list.date or "?") + " - "
-                              + tr("{n} servers; or type your own.").format(n=len(self.entries)))
+                              + tr_n(
+                                  len(self.entries),
+                                  "{n} server; or type your own.",
+                                  "{n} servers; or type your own.",
+                              ))
         else:
             self.info.setText(tr("No list of public servers – type the server."))
 

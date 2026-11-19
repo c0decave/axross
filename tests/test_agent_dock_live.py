@@ -356,7 +356,7 @@ def _fetch(dialog, endpoint: str) -> list[str]:
     QTest.keyClicks(dialog.endpoint_edit, endpoint)
     button = next(b for b in dialog.findChildren(QPushButton) if b.text() == "Fetch models")
     QTest.mouseClick(button, Qt.MouseButton.LeftButton)
-    assert wait_until(lambda: "model(s) on the server" in dialog.status_label.text()
+    assert wait_until(lambda: "on the server" in dialog.status_label.text()
                       or "failed" in dialog.status_label.text(), 30), dialog.status_label.text()
     assert "failed" not in dialog.status_label.text(), dialog.status_label.text()
     return [dialog.model_combo.itemText(i) for i in range(dialog.model_combo.count())]

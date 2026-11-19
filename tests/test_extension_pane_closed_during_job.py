@@ -83,18 +83,31 @@ def _closed_pane() -> Pane:
     return pane
 
 
-def _accept_dialogs() -> None:
-    """Answer every modal dialog the action opens with its default (Yes)."""
+@pytest.fixture
+def accept_dialogs():
+    """Answer every modal dialog the action opens with its default (Yes) -
+    during this test only. (It re-armed itself for ever before: every later
+    test of the worker had its dialogs answered - a QInputDialog accepted
+    before the test saw it, a countdown cut short, a click on the Yes of a
+    box without one.)"""
 
     def answer():
         box = QApplication.activeModalWidget()
         if isinstance(box, QMessageBox):
-            box.button(QMessageBox.StandardButton.Yes).click()
+            yes = box.button(QMessageBox.StandardButton.Yes)
+            if yes is not None:
+                yes.click()
         elif isinstance(box, QDialog):
             box.accept()
-        QTimer.singleShot(20, answer)
 
-    QTimer.singleShot(0, answer)
+    timer = QTimer()
+    timer.setInterval(20)
+    timer.timeout.connect(answer)
+    timer.start()
+    yield
+    timer.stop()
+    timer.timeout.disconnect(answer)
+    timer.deleteLater()
 
 
 def test_sad_checksum_manifest_with_its_pane_closed(tmp_path):
@@ -108,7 +121,7 @@ def test_sad_checksum_manifest_with_its_pane_closed(tmp_path):
     assert api.errors == []
 
 
-def test_sad_image_batch_with_its_pane_closed(tmp_path):
+def test_sad_image_batch_with_its_pane_closed(tmp_path, accept_dialogs):
     IB = _load("image_batch")
     api = Api()
     IB.activate(api)
@@ -117,13 +130,12 @@ def test_sad_image_batch_with_its_pane_closed(tmp_path):
     assert image.save(str(tmp_path / "a.png"))
     ctx = SimpleNamespace(backend=FS, folder=str(tmp_path), pane=_closed_pane(),
                           items=[SimpleNamespace(name="a.png", is_dir=False)])
-    _accept_dialogs()
     api.actions["Resize / Convert Images…"](ctx)
     assert os.listdir(tmp_path / IB.OUT_FOLDER)
     assert api.errors == []
 
 
-def test_sad_forensic_convert_with_its_pane_closed(tmp_path, monkeypatch):
+def test_sad_forensic_convert_with_its_pane_closed(tmp_path, monkeypatch, accept_dialogs):
     FT = _load("forensic_tools")
     image = tmp_path / "disk.qcow2"
     image.write_bytes(b"QFI\xfb")
@@ -132,6 +144,5 @@ def test_sad_forensic_convert_with_its_pane_closed(tmp_path, monkeypatch):
     FT.activate(api)
     ctx = SimpleNamespace(backend=FS, folder=str(tmp_path), paths=[str(image)], items=[],
                           pane=_closed_pane(), is_local=True)
-    _accept_dialogs()
     api.actions["Convert to Raw Image (qemu-img)…"](ctx)
     assert api.errors == []

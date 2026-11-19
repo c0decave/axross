@@ -162,6 +162,11 @@ MAX_REMOTE_BYTES = 512 * 1024 * 1024
 #: The arrow keys seek by this much, with Shift by the big step (ms).
 SEEK_STEP_MS = 5_000
 SEEK_BIG_STEP_MS = 30_000
+#: The -15 s / +15 s buttons.
+SKIP_BUTTON_MS = 15_000
+#: A skip past the end lands this far before it, so the track ends as it
+#: always does (next track, repeat, sleep timer) on every engine.
+SKIP_END_MARGIN_MS = 250
 #: Seconds of decoded audio the equalizer engine keeps behind the queue, so
 #: a seek back into them needs no decoder: QAudioDecoder cannot seek, and
 #: decoding from the top again took up to 0.8 s for a seek back to 40 s of
@@ -192,6 +197,13 @@ CONTROL_ICONS = {
     "pause": '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>',
     "stop": '<rect x="5" y="5" width="14" height="14" rx="1"/>',
     "next": '<polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/>',
+    # a turning arrow round a "15" drawn in strokes (a <text> needs a font)
+    "back15": '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>'
+              '<path stroke-width="1.4" d="M8.6 10.6l1.2-.9v5.6M15.6 9.7h-2.9l-.3 2.6'
+              'c.4-.3.9-.4 1.4-.4a1.6 1.6 0 0 1 0 3.2c-.6 0-1.1-.2-1.5-.6"/>',
+    "forward15": '<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>'
+                 '<path stroke-width="1.4" d="M8.6 10.6l1.2-.9v5.6M15.6 9.7h-2.9l-.3 2.6'
+                 'c.4-.3.9-.4 1.4-.4a1.6 1.6 0 0 1 0 3.2c-.6 0-1.1-.2-1.5-.6"/>',
     "shuffle": '<polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/>'
                '<polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/>'
                '<line x1="4" y1="4" x2="9" y2="9"/>',
@@ -206,6 +218,8 @@ CONTROL_ICONS = {
                 '<line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>',
 }
 CONTROL_ICON_SIZE = 18
+#: The narrowest a control button gets (a narrow dock): its icon and a frame.
+CONTROL_BUTTON_MIN_WIDTH = CONTROL_ICON_SIZE + 6
 
 
 def control_svg(name: str, colour: str) -> str:
@@ -416,6 +430,16 @@ def is_stream(path: object) -> bool:
     scheme, sep, rest = path.partition("://")
     return bool(sep) and scheme.lower() in STREAM_SCHEMES and bool(rest.strip("/")) \
         and path.isprintable() and not any(c.isspace() for c in path)
+
+
+def _media_gate():
+    """core.media_gate (a track probed in a child before Qt opens it), or
+    None: a player exported on its own comes without it, and plays unprobed."""
+    try:
+        from core import media_gate
+    except ImportError:
+        return None
+    return media_gate
 
 
 def media_url(path: str) -> QUrl:
@@ -1087,6 +1111,132 @@ def waveform(samples, n_points: int):
         return np.zeros(n_points, np.float32)
     index = np.linspace(0, len(mono) - 1, n_points).astype(np.intp)
     return np.clip(mono[index], -1.0, 1.0)
+
+
+class FlashLimiter:
+    """Keeps what the faces show from flashing faster than WCAG 2.3.1
+    allows (three flashes - six transitions - in any second; 2.3.2's red
+    flashes are such transitions of a red area too).
+
+    Every face draws from a few values 0..1 (the bars' levels, the VU
+    meter's, a trace's size): an area of the picture changes as they rise
+    and fall. Each value may turn - rise by STEP or more after it fell, or
+    the other way round - at most BUDGET times in any second (of frames:
+    *seconds* is counted by the caller, a frame at a time). A turn past the
+    budget is held off: the value stays within STEP of where it turned,
+    and turns once the second has room again. Small moves (under STEP)
+    stay free; what they change of the picture is a band too thin for a
+    quarter of WCAG's field (a third of the screen each way). A sound
+    gated at 6 or 10 Hz flashed the spectrum 12 and 20 times a second; it
+    now stands, held, and moves on with the next beat the budget allows.
+
+    *together*: the values turn in the same frames - one every 1 / BUDGET
+    of a second at most, every value that turns in one of them turns, the
+    others stay where they turned till the next. Each bar on its own budget
+    took its turns in other frames than its neighbours: together they
+    turned the picture more often (a synth gated at 6 Hz flashed the
+    kaleidoscope 8 times a second at 60 fps)."""
+
+    #: The least change that counts as a turn (of the value's 0..1 range).
+    STEP = 0.06
+    #: Turns a second at most (WCAG: six transitions; one spare for the
+    #: values a face mixes).
+    BUDGET = 5
+
+    def __init__(self, *, together: bool = False, budget: int | None = None) -> None:
+        if budget is not None:
+            self.BUDGET = budget
+        self.extreme = None
+        self.direction = None
+        self.turns = None
+        #: All values turn in the same frames (at most BUDGET a second):
+        #: see the class doc. The last of them (seconds).
+        self.together = together
+        self._moment = None
+
+    def step(self, values, seconds: float):
+        """*values* as they may be shown at *seconds* (a numpy array)."""
+        shown = np.clip(np.nan_to_num(np.asarray(values, np.float64), nan=0.0), 0.0, 1.0)
+        if self.extreme is None or self.extreme.shape != shown.shape:
+            self.extreme = shown.copy()
+            self.direction = np.zeros(shown.shape, np.int8)
+            self.turns = np.full(shown.shape + (self.BUDGET,), -np.inf)
+            return shown
+        extreme, direction = self.extreme, self.direction
+        further = ((direction == 1) & (shown >= extreme)) | ((direction == -1) & (shown <= extreme))
+        extreme[further] = shown[further]
+        falls = ~further & (direction >= 0) & (extreme - shown >= self.STEP)
+        rises = ~further & (direction <= 0) & (shown - extreme >= self.STEP) & ~falls
+        turning = falls | rises
+        if not turning.any():
+            return shown
+        if self.together:
+            # a frame of turns every 1 / BUDGET s at most, evenly: the first
+            # value turning opens it, the others turning then turn with it
+            # (five in the first frames of a second, then none till the
+            # next, held the bars still for most of it)
+            full = (self._moment is not None
+                    and seconds - self._moment < 1.0 / self.BUDGET - 1e-9)
+            if not full:
+                self._moment = seconds
+            full = np.full(shown.shape, full)
+        else:
+            full = self.turns.min(axis=-1) > seconds - 1.0
+        held = turning & full
+        if held.any():
+            # Short of a turn: within STEP of where the value turned - or,
+            # turning together, where it turned: a whole face going up and
+            # down by just under STEP with each beat flashed it too.
+            margin = 0.0 if self.together else self.STEP * 0.98
+            shown[held & falls] = extreme[held & falls] - margin
+            shown[held & rises] = extreme[held & rises] + margin
+        taken = turning & ~full
+        if taken.any() and not self.together:
+            slots = self.turns[taken]
+            slots[np.arange(len(slots)), slots.argmin(axis=-1)] = seconds
+            self.turns[taken] = slots
+        if taken.any():
+            direction[taken & falls] = -1
+            direction[taken & rises] = 1
+            extreme[taken] = shown[taken]
+        return shown
+
+
+#: The red share (red over red, green and blue, in linear light) a colour
+#: of the faces stays under: WCAG 2.3.2 counts 0.8 and over as saturated red.
+FLASH_SAFE_RED = 0.79
+
+
+def flash_safe_colour(colour: str) -> str:
+    """*colour* (``#rrggbb``) unless it is a saturated red (WCAG 2.3.2: red
+    over red, green and blue at least 0.8, in linear light), else that red
+    mixed with white until it is none: a dense trace (the stereo scope in
+    white noise) is new every frame, and in saturated red it flashed red
+    18 times a second whatever the sound's dynamics.
+
+    Whatever is mixed lands just under :data:`FLASH_SAFE_RED`, where the
+    colours kept as they are end: a colour just over it and one just under
+    it stay neighbours (a level's gradient crossing it - again and again
+    as its channels round - changed the bar's colour back and forth)."""
+    def ratio(hex_colour: str) -> float:
+        value = QColor(hex_colour)
+        linear = [(c / 12.92) if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+                  for c in (value.redF(), value.greenF(), value.blueF())]
+        total = sum(linear)
+        return linear[0] / total if total > 0 else 0.0
+
+    if ratio(colour) < FLASH_SAFE_RED:
+        return colour
+    # the least white that does it (found by halving): close colours stay
+    # close, so a gradient through red stays a gradient
+    low, high = 0.0, 1.0
+    for _ in range(16):
+        middle = (low + high) / 2
+        if ratio(_mix(colour, "#ffffff", middle)) < FLASH_SAFE_RED:
+            high = middle
+        else:
+            low = middle
+    return _mix(colour, "#ffffff", high)
 
 
 #: The VU meter shows -VU_RANGE_DB..0 dBFS.
@@ -3145,11 +3295,18 @@ class Visualizer(QWidget):
     #: The default bar count (VISUAL_OPTIONS["bars"]).
     BARS = 32
     MODES = tuple(VISUALIZER_NAMES)
-    #: Points of the oscilloscope's trace at most.
+    #: Points of the oscilloscope's trace at most, and the pixels at least
+    #: between two: a point every pixel or so (any face up to 320 px wide)
+    #: drew noise as a zigzag that filled most of the face and emptied it,
+    #: new every frame - 14 to 24 flashes a second of white noise, stereo
+    #: or not, in a dock-sized player (tests/test_media_player_flash_safe.py).
     SCOPE_POINTS = 256
+    SCOPE_SPACING = 3
     #: Points of the stereo scope, and the steps its older part fades in.
     LISSAJOUS_POINTS = 512
     LISSAJOUS_FADE = 4
+    #: The stereo scope's dots (pixels across).
+    LISSAJOUS_DOT = 2.0
     #: Rows of the waterfall's history (over 4 s at 30 fps).
     WATERFALL_ROWS = 128
     #: Stars of the starfield; what they travel a second (of their depth)
@@ -3190,11 +3347,15 @@ class Visualizer(QWidget):
     #: flux - the mean rise of the bars from one frame to the next: the beat
     #: turns the ribbon and the kaleidoscope on, a still sound holds them.
     FLUX_TURN = 3.0
+    #: The most the onset phase turns a second (radians): calm, also with
+    #: a beat in every frame.
+    MAX_TURN = 2.0
     #: Rows of the spectrum's history the ridgelines show; the terrain shows
     #: the last TERRAIN_ROWS of them, the farthest TERRAIN_FAR times as far
     #: away as the nearest.
     HISTORY_ROWS = 28
     TERRAIN_ROWS = 22
+    TERRAIN_ROW_PX = 8
     TERRAIN_FAR = 6.0
     #: The ring's height against its width (a circle seen at a tilt), and
     #: the size of its far side against its near side.
@@ -3204,6 +3365,12 @@ class Visualizer(QWidget):
     KALEIDO_FOLD = 6
     #: The bell curves: bumps at most (more bars are grouped), points a bump.
     BELLS_MAX = 32
+    #: The pixels across a bell takes at least: narrower, a bell's flanks
+    #: stood so steep and close that a level's least move (under
+    #: FlashLimiter.STEP) shifted the outline of every flank in the face -
+    #: the bells of a 120 x 90 face flashed 18 times a second with a sound
+    #: gated at 10 Hz, at 200 x 150 9 times (480 px: 32 bells of 15 px).
+    BELL_WIDTH = 15
     BELL_POINTS = 25
     #: How long the face's name shows after a switch.
     LABEL_SECONDS = 1.5
@@ -3268,6 +3435,23 @@ class Visualizer(QWidget):
         self._autohide = False
         #: (mode, values) of the last picture a tick asked to paint.
         self._shown = None
+        #: The flash guards (FlashLimiter) of what the faces show - the
+        #: bars' levels, the waterfall's rows, the VU meter, the traces'
+        #: size - and the seconds they count (a frame at a time).
+        self._flash_seconds = 0.0
+        self._level_guard = FlashLimiter(together=True)
+        self._raw_guard = FlashLimiter(together=True)
+        self._vu_guard = FlashLimiter(together=True, budget=3)
+        self._trace_guard = FlashLimiter()
+        #: The kaleidoscope's own guard over the seven values it draws from
+        #: (six group means of the bars and the peak): together they turned
+        #: more often than any one bar - 9 flashes a second in a 200 x 150
+        #: face at 60 fps. Its values (kaleido_values) are worked out each tick.
+        self._kaleido_guard = FlashLimiter(together=True, budget=3)
+        self._kaleido_shown = None
+        #: The last trace shown (scope or stereo scope): held while the
+        #: guard holds its size up.
+        self._held_trace = None
         self._resize_bars(self.options["bars"])
         self._apply_scheme()
         self.setMinimumHeight(90)
@@ -3393,10 +3577,18 @@ class Visualizer(QWidget):
             "track": QColor(_mix(background, colours.peak, 0.08)),
             "text": QColor(_mix(background, colours.peak, 0.6)),
             # the oscilloscope's trace: the first bar colour that stands out
+            # (and never a saturated red: noise scribbles it anew every frame)
             "trace": QColor(next((c for c in (colours.low, colours.mid, colours.high)
-                                  if contrast_ratio(c, background) >= MIN_PEAK_CONTRAST),
-                                 colours.peak)),
+                                  if contrast_ratio(c, background) >= MIN_PEAK_CONTRAST
+                                  and flash_safe_colour(c) == c),
+                                 flash_safe_colour(colours.peak))),
         }
+        #: The stereo scope's newest dots: the loud colour - or, where that
+        #: is a saturated red, the scheme's next one that is none (a dense
+        #: trace is new every frame: flash_safe_colour).
+        self._dense_colour = next(
+            (c for c in (colours.high, colours.mid, colours.low, colours.peak)
+             if flash_safe_colour(c) == c), flash_safe_colour(colours.high))
         self._lut = None
         self._sprites = None
         self._ring_cache = None
@@ -3427,7 +3619,11 @@ class Visualizer(QWidget):
         table = self._pen_cache.get("levels")
         if table is None:
             last = self.LEVEL_STEPS - 1
-            table = [QColor(self._level_hex(i / last)) for i in range(self.LEVEL_STEPS)]
+            # (never a saturated red: the faces coloured by the level - the
+            # radial bars, the bells - turned a whole bar red and back at a
+            # level's least move about where the colour turns red)
+            table = [QColor(flash_safe_colour(self._level_hex(i / last)))
+                     for i in range(self.LEVEL_STEPS)]
             self._pen_cache["levels"] = table
         return table
 
@@ -3639,23 +3835,50 @@ class Visualizer(QWidget):
         self._shown = (self.mode, values)
         self.update()
 
+    def _guarded_trace(self, trace, kind: str):
+        """*trace* (the scope's values, or the stereo scope's x and y rows)
+        at the size the flash guard allows: a gated sound made the trace
+        appear and vanish with every beat. Held up, the last trace shown
+        stays, at the size allowed."""
+        size = float(np.max(np.abs(trace))) if trace.size else 0.0
+        allowed = float(self._trace_guard.step([size], self._flash_seconds)[0])
+        if abs(allowed - size) > 1e-6:
+            held = self._held_trace
+            if allowed > size and held is not None and held[0] == kind \
+                    and held[1].shape == trace.shape and held[2] > 0:
+                trace, size = held[1], held[2]
+            if size > 0:
+                trace = trace * (allowed / size)
+                size = allowed
+        self._held_trace = (kind, trace, size)
+        return trace
+
     def tick(self) -> None:
+        self._flash_seconds += 1.0 / self.options["fps"]
         if self.mode in _SAMPLE_MODES:
             samples = self._samples()
             if samples is None:
                 return
             if self.mode == "scope":
-                self.trace = waveform(samples, max(2, min(self.SCOPE_POINTS, self.width())))
+                trace = waveform(samples, max(2, min(self.SCOPE_POINTS,
+                                                         self.width() // self.SCOPE_SPACING)))
+                self.trace = self._guarded_trace(np.asarray(trace, np.float64), "scope")
                 self._paint_if_moved(self.trace)
             elif self.mode == "lissajous":
-                self.lissajous = stereo_points(samples, self.LISSAJOUS_POINTS)
+                points = np.asarray(stereo_points(samples, self.LISSAJOUS_POINTS), np.float64)
+                self.lissajous = tuple(self._guarded_trace(points, "lissajous"))
                 self._paint_if_moved(np.concatenate(self.lissajous))
             else:
                 levels = vu_levels(samples)
+                # the peak caps fall a hundredth a frame at 30 fps, at any rate
+                fall = 0.3 / self.options["fps"]
                 for i in (0, 1):
                     value = levels[i]
                     self.vu[i] = value if value > self.vu[i] else self.vu[i] * 0.85 + value * 0.15
-                    self.vu_peaks[i] = max(levels[2 + i], self.vu_peaks[i] - 0.01)
+                    self.vu_peaks[i] = max(levels[2 + i], self.vu_peaks[i] - fall)
+                shown = self._vu_guard.step([*self.vu, *self.vu_peaks], self._flash_seconds)
+                self.vu = [float(shown[0]), float(shown[1])]
+                self.vu_peaks = [max(float(shown[2]), self.vu[0]), max(float(shown[3]), self.vu[1])]
                 self._paint_if_moved([*self.vu, *self.vu_peaks])
             return
         n = self.options["bars"]
@@ -3671,7 +3894,11 @@ class Visualizer(QWidget):
         rise = None
         if previous is not None and previous.shape == values.shape:
             rise = np.maximum(values - previous, 0.0)
-            self.phase = (self.phase + self.FLUX_TURN * float(rise.mean())) % (4 * math.pi)
+            # (at most MAX_TURN a second: one onset turned the kaleidoscope's
+            # petals by up to 86 degrees at once, a flash of the whole face
+            # with every beat of a gated sound)
+            turn = min(self.FLUX_TURN * float(rise.mean()), self.MAX_TURN / self.options["fps"])
+            self.phase = (self.phase + turn) % (4 * math.pi)
         fps = self.options["fps"]
         keep = (self.options["smoothing"] / 100.0) ** (VISUAL_OPTIONS["fps"][2] / fps)
         fall = self.options["peak_fall"] / 100.0 / fps
@@ -3679,11 +3906,18 @@ class Visualizer(QWidget):
         for i in range(n):
             value = float(values[i])
             levels[i] = value if value > levels[i] else levels[i] * keep + value * (1.0 - keep)
+        # (no faster flashing than WCAG allows, whatever the sound: FlashLimiter)
+        levels = self._level_guard.step(levels, self._flash_seconds).tolist()
+        for i in range(n):
             peaks[i] = max(levels[i], peaks[i] - fall)
         self.levels, self.peaks = levels, peaks
+        if self.mode == "kaleidoscope":
+            self._kaleido_shown = self._kaleido_guard.step(self._kaleido_raw(),
+                                                           self._flash_seconds)
         if self.mode == "waterfall":  # scrolls on: it always moves
+            row = self._raw_guard.step(values, self._flash_seconds)
             self.waterfall[:-1] = self.waterfall[1:]
-            self.waterfall[-1] = np.round(np.clip(values, 0.0, 1.0) * 255).astype(np.uint8)
+            self.waterfall[-1] = np.round(np.clip(row, 0.0, 1.0) * 255).astype(np.uint8)
         elif self.mode == "starfield":  # the stars drift on in silence too
             self._move_stars(values)
         elif self.mode in _HISTORY_MODES:
@@ -3876,6 +4110,14 @@ class Visualizer(QWidget):
                 values = [(int(colour[1:], 16) >> shift) & 0xFF for _pos, colour in stops]
                 channels.append(np.interp(at, [pos for pos, _c in stops], values))
             red, green, blue = (np.round(c).astype(np.uint32) for c in channels)
+            # never a saturated red (flash_safe_colour): a red quiet colour
+            # made most of the face one, and that flashes red at the least
+            # change - 10 red transitions a second with a synth gated at 8 Hz
+            for i in range(len(at)):
+                colour = f"#{int(red[i]):02x}{int(green[i]):02x}{int(blue[i]):02x}"
+                safe = flash_safe_colour(colour)
+                if safe != colour:
+                    red[i], green[i], blue[i] = (int(safe[k:k + 2], 16) for k in (1, 3, 5))
             self._lut = (0xFF000000 | (red << 16) | (green << 8) | blue).astype(np.uint32)
         pixels = np.ascontiguousarray(self._lut[self.waterfall])
         rows, cols = pixels.shape
@@ -3941,19 +4183,22 @@ class Visualizer(QWidget):
         xs = cx + np.asarray(points[0], np.float64) * reach
         ys = cy - np.asarray(points[1], np.float64) * reach
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        # Like a phosphor screen: the older part of the trace fades into the
-        # background, the newest is in the loud colour. Each part a polyline
-        # TRACE_WIDTH wide that starts where the last ended.
+        # Like a phosphor screen: the older samples fade into the background,
+        # the newest are in the loud colour - each a dot LISSAJOUS_DOT wide,
+        # as on a goniometer's screen. (Lines from each sample to the next
+        # filled the whole circle with white noise, a new scribble every
+        # frame: that flickered as fast as the frames.)
         parts = self.LISSAJOUS_FADE
-        size = math.ceil((len(xs) - 1) / parts)
+        size = math.ceil(len(xs) / parts)
         for part in range(parts):
-            pen = QPen(QColor(_mix(self.colours.background, self.colours.high,
+            pen = QPen(QColor(_mix(self.colours.background, self._dense_colour,
                                    (part + 1) / parts)))
-            pen.setWidthF(TRACE_WIDTH)
+            pen.setWidthF(self.LISSAJOUS_DOT)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
             painter.setPen(pen)
-            start, stop = part * size, min(len(xs), (part + 1) * size + 1)
-            if stop - start >= 2:
-                painter.drawPolyline(qpolygon(xs[start:stop], ys[start:stop]))
+            start, stop = part * size, min(len(xs), (part + 1) * size)
+            if stop > start:
+                painter.drawPoints(qpolygon(xs[start:stop], ys[start:stop]))
 
     def _paint_starfield(self, painter: QPainter) -> None:
         """Stars flying at the viewer, faster with the bass: near ones big
@@ -4178,6 +4423,19 @@ class Visualizer(QWidget):
         painter.setPen(pen)
         painter.drawPolyline(qpolygon(xs, ys[middle]))
 
+    def _kaleido_raw(self) -> list[float]:
+        groups = [float(part.mean()) if len(part) else 0.0
+                  for part in np.array_split(np.asarray(self.levels, np.float64), 6)]
+        return [*groups, max(self.peaks) if self.peaks else 0.0]
+
+    def kaleido_values(self) -> list[float]:
+        """The six group means (bass to treble) and the peak the
+        kaleidoscope draws, as its flash guard lets them show."""
+        shown = self._kaleido_shown
+        if shown is None or len(shown) != 7:
+            return self._kaleido_raw()
+        return [float(v) for v in shown]
+
     def kaleido_rotation(self) -> float:
         """The kaleidoscope's turn (radians): one of its mirror axes."""
         return self.phase * 0.5
@@ -4192,9 +4450,7 @@ class Visualizer(QWidget):
         radius = max(1.0, min(cx, cy) - 2)
         fold = self.KALEIDO_FOLD
         alpha = math.pi / fold
-        groups = [float(part.mean()) if len(part) else 0.0
-                  for part in np.array_split(np.asarray(self.levels, np.float64), 6)]
-        peak = max(self.peaks) if self.peaks else 0.0
+        *groups, peak = self.kaleido_values()
 
         def at(r: float, angle: float) -> QPointF:
             return QPointF(r * math.cos(angle), r * math.sin(angle))
@@ -4352,12 +4608,20 @@ class Visualizer(QWidget):
     def terrain_horizon(self, height: float) -> float:
         return height * 0.3
 
+    def terrain_rows(self, height: float) -> int:
+        """The terrain's rows in a face *height* px high: TERRAIN_ROWS, or
+        one every TERRAIN_ROW_PX at most. 22 rows in a face 90 px high drew
+        its lines a few pixels apart; a level's least move (under the flash
+        guard's step) shifted all of them - 8 to 10 flashes a second with a
+        synth gated at 10 Hz."""
+        return max(4, min(self.TERRAIN_ROWS, int(height // self.TERRAIN_ROW_PX)))
+
     def terrain_points(self, width: float, height: float):
         """The last TERRAIN_ROWS of the history as a landscape in
         perspective, back to front: x, y and the ground under each point
         (rows x bars). A row TERRAIN_FAR times as far away is that much
         narrower, lower and nearer the horizon."""
-        history = self.history[-self.TERRAIN_ROWS:]
+        history = self.history[-self.terrain_rows(height):]
         rows, n = history.shape
         horizon = self.terrain_horizon(height)
         depth = np.linspace(self.TERRAIN_FAR, 1.0, rows)[:, None]
@@ -4470,7 +4734,7 @@ class Visualizer(QWidget):
         standard deviation in pixels, the baseline y, the height a full
         group rises to)."""
         n = len(self.levels)
-        groups = min(n, self.BELLS_MAX)
+        groups = max(1, min(n, self.BELLS_MAX, int(width // self.BELL_WIDTH)))
         return ((np.arange(groups) * n) // groups, (np.arange(groups) + 0.5) / groups * width,
                 width / groups * 0.5, height - 3, max(1.0, height - 8))
 
@@ -4880,6 +5144,9 @@ class PlayerPanel(QWidget):
         self._round: set[int] = set()
         self._rng = random.Random()
         self._fail_streak = 0
+        #: A track probed before it is played (play_item): its answer is
+        #: taken only while this is still the token it was given.
+        self._probe_token = None
         self._track_ms = 0
         self._title = ""
         #: run_in_background(work, on_done, on_error) - the extension API's;
@@ -4950,18 +5217,26 @@ class PlayerPanel(QWidget):
         self.play_button = QPushButton()
         self.stop_button = QPushButton()
         self.next_button = QPushButton()
+        self.back15_button = QPushButton()
+        self.forward15_button = QPushButton()
         self.shuffle_button = QPushButton()
         self.repeat_button = QPushButton()
         self.prev_button.setToolTip(tr("Previous (Ctrl+←); after 3 s: start of the track"))
         self.play_button.setToolTip(tr("Play / pause (Space)"))
         self.stop_button.setToolTip(tr("Stop"))
         self.next_button.setToolTip(tr("Next (Ctrl+→)"))
+        self.back15_button.setToolTip(tr("Back 15 seconds (← 5 s, Shift+← 30 s)"))
+        self.forward15_button.setToolTip(tr("Forward 15 seconds (→ 5 s, Shift+→ 30 s)"))
+        self.back15_button.setAccessibleName(tr("Back 15 seconds"))
+        self.forward15_button.setAccessibleName(tr("Forward 15 seconds"))
+        self.back15_button.clicked.connect(lambda: self.skip(-SKIP_BUTTON_MS))
+        self.forward15_button.clicked.connect(lambda: self.skip(SKIP_BUTTON_MS))
         self.shuffle_button.setCheckable(True)
         self.shuffle_button.setToolTip(tr("Shuffle"))
         self.repeat_button.setCheckable(True)
         self.prev_button.clicked.connect(self.previous_track)
         self.play_button.clicked.connect(self.toggle_play)
-        self.stop_button.clicked.connect(lambda: self.engine.stop())
+        self.stop_button.clicked.connect(self.stop_playing)
         self.next_button.clicked.connect(self.next_track)
         self.shuffle_button.toggled.connect(self.set_shuffle)
         self.repeat_button.clicked.connect(self._cycle_repeat)
@@ -4977,13 +5252,16 @@ class PlayerPanel(QWidget):
         # Room for a narrow dock (~340 px): the buttons and the volume give
         # way down to these widths; wider they keep their own. The row was
         # 343 px at least and the playlist's 424, so the panel was cut off
-        # on the right in a 366 px dock - its error text with it.
+        # on the right in a 366 px dock - its error text with it. With the
+        # -15 s / +15 s buttons nine buttons share the row: at 30 px each it
+        # was 366 px again; 24 px still holds an 18 px icon.
         controls.setSpacing(2)
-        for widget in (self.prev_button, self.play_button, self.stop_button, self.next_button,
+        for widget in (self.prev_button, self.back15_button, self.play_button, self.stop_button,
+                       self.forward15_button, self.next_button,
                        self.shuffle_button, self.repeat_button):
-            widget.setMinimumWidth(30)
+            widget.setMinimumWidth(CONTROL_BUTTON_MIN_WIDTH)
             controls.addWidget(widget)
-        self.mute_button.setMinimumWidth(30)
+        self.mute_button.setMinimumWidth(CONTROL_BUTTON_MIN_WIDTH)
         self.volume.setMinimumWidth(48)
         controls.addStretch(1)
         self.sleep_label = QLabel("")
@@ -5636,6 +5914,78 @@ class PlayerPanel(QWidget):
         self.play_item(item)
 
     def play_item(self, item: QListWidgetItem, *, record: bool = True) -> None:
+        """Play *item*. A local track is probed in a child first, the first
+        time (core.media_gate): Qt Multimedia's FFmpeg opens it inside
+        axross, and one that crashes the probe would have ended it."""
+        self._probe_token = None
+        path = item.data(_PATH_ROLE)
+        media_gate = _media_gate()
+        if media_gate is not None and not is_stream(path):
+            known, refusal = media_gate.known(path)
+            if not known and self.run_in_background is not None and media_gate.available():
+                self._probe_then_play(item, path, record)
+                return
+            if not known:
+                refusal = media_gate.probe_refusal(path)
+            if refusal is not None:
+                self._set_current(item)
+                self._probe_refused(item, refusal)
+                return
+        self._play_now(item, record=record)
+
+    def _probe_then_play(self, item, path: str, record: bool) -> None:
+        media_gate = _media_gate()
+        self._set_current(item)
+        self.note.setText(tr("Checking {name}…").format(name=item.text()))
+        token = self._probe_token = object()
+
+        def done(refusal) -> None:
+            if (sip.isdeleted(self) or token is not self._probe_token
+                    or self._current is not item or self._row_of(item) < 0):
+                return  # stopped, another track, or the row went meanwhile
+            self._probe_token = None
+            if refusal is not None:
+                self._probe_refused(item, refusal)
+            else:
+                self.note.setText("")
+                self._play_now(item, record=record)
+
+        self.run_in_background(lambda: media_gate.probe_refusal(path), done,
+                               lambda _exc: done(None))
+
+    def _probe_refused(self, item, reason: str) -> None:
+        """A track the probe refused: marked, said and skipped as a track
+        Qt cannot play (_track_failed)."""
+        name = item.text()
+        item.setToolTip(plain_tooltip(f"{item.data(_PATH_ROLE)}\n{tr('Cannot play')}: {reason}"))
+        item.setForeground(QColor("#c0392b"))
+        self._fail_streak += 1
+        if self._fail_streak >= max(1, self.playlist.count()):
+            self.note.setText(tr("Cannot play {name}: {reason}. No track in the list could be "
+                                 "played.").format(name=name, reason=reason))
+            self.visualizer.timer.stop()
+            return
+        self.note.setText(tr("Cannot play {name}: {reason} – skipped.").format(name=name,
+                                                                               reason=reason))
+
+        def skip() -> None:
+            if sip.isdeleted(self) or self._current is not item or self._probe_token is not None:
+                return  # the user started something else meanwhile
+            following = self._next_item()
+            note = self.note.text()
+            if following is not None:
+                self.play_item(following)
+                if self.note.text() in ("", tr("Checking {name}…").format(name=following.text())):
+                    self.note.setText(note)
+
+        QTimer.singleShot(0, skip)
+
+    def stop_playing(self) -> None:
+        """The Stop button: also a track still being probed is not started."""
+        self._probe_token = None
+        self.engine.stop()
+
+    def _play_now(self, item: QListWidgetItem, *, record: bool = True) -> None:
         self._set_current(item)
         path = item.data(_PATH_ROLE)
         if record:
@@ -5840,6 +6190,18 @@ class PlayerPanel(QWidget):
     def seek_relative(self, delta_ms: int) -> None:
         if self.engine.loaded:
             self.seek_to(max(0, self.engine.position_ms() + int(delta_ms)))
+
+    def skip(self, delta_ms: int) -> None:
+        """The -15 s / +15 s buttons: from where the track is, never before its
+        start; past its end it ends as usual (a moment before the end, so
+        repeat, the next track and the sleep timer do what they always do)."""
+        if not self.engine.loaded:
+            return
+        target = max(0, self.engine.position_ms() + int(delta_ms))
+        duration = self._duration()
+        if delta_ms > 0 and duration > 0:
+            target = min(target, max(0, duration - SKIP_END_MARGIN_MS))
+        self.seek_to(target)
 
     def _slider_action(self, action: int) -> None:
         # Keyboard steps on the slider (Page Up/Down, Home, End); a drag
@@ -6624,14 +6986,29 @@ class PlayerPanel(QWidget):
             "position_ms": position if isinstance(position, int) and position > 0 else 0,
         }
 
+        #: The track to load, when its probe refused it (work fills it).
+        refused: set = set()
+
         def work():
-            return [entry for entry in wanted if is_stream(entry[1]) or _is_track(entry[1])]
+            found = [entry for entry in wanted if is_stream(entry[1]) or _is_track(entry[1])]
+            # The track to load probed first (core.media_gate): one that
+            # crashed Qt's FFmpeg would have ended axross at every start.
+            media_gate = _media_gate()
+            if media_gate is None:
+                return found
+            refused.update(entry[0] for entry in found if entry[0] == current
+                           and not is_stream(entry[1])
+                           and media_gate.probe_refusal(entry[1]) is not None)
+            return found
 
         def done(found) -> None:
             try:
                 items = {index: self._append(path, title, duration)
                          for index, path, title, duration in found}
                 item = items.get(current) if isinstance(current, int) else None
+                if item is not None and current in refused:
+                    item.setForeground(QColor("#c0392b"))
+                    item = None
                 if item is not None and self._current is None:
                     self._set_current(item)
                     self._history = [item]
@@ -6706,6 +7083,8 @@ class PlayerPanel(QWidget):
                           "pause" if getattr(self.engine, "state", "") == "playing" else "play")
         self._set_control(self.stop_button, "stop")
         self._set_control(self.next_button, "next")
+        self._set_control(self.back15_button, "back15")
+        self._set_control(self.forward15_button, "forward15")
         self._set_control(self.shuffle_button, "shuffle")
         self._set_control(self.repeat_button,
                           "repeat-one" if self.repeat == "one" else "repeat")

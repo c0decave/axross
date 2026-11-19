@@ -66,6 +66,8 @@ MAX_MESSAGE_BYTES = 32 * 1024 * 1024
 MAX_LISTING_BYTES = 16 * 1024 * 1024
 #: TOP n 0 (the headers the listing shows the subject from).
 MAX_HEADER_BYTES = 1024 * 1024
+#: The CAPA answer read before STLS: a few lines on any real server.
+MAX_CAPA_BYTES = 64 * 1024
 #: TOP with body lines (the scripting API): as much as a whole message.
 MAX_TOP_BYTES = MAX_MESSAGE_BYTES
 
@@ -306,12 +308,19 @@ class Pop3Session(SessionLifecycle):
         proxy_username: str = "",
         proxy_password: str = "",
         verify_tls: bool = True,
+        tls_mode: str | None = None,
     ):
         self._host = host
         self._port = port
         self._username = username
         self._password = password
-        self._use_ssl = use_ssl
+        # "tls" (POP3S), "starttls" (STLS before USER/PASS, refused without
+        # it) or "plain". Without tls_mode, use_ssl=False is the caller's
+        # explicit choice of plain text; profiles pass the mode.
+        from core.tls_context import session_tls_mode
+
+        self._tls_mode = session_tls_mode(tls_mode, use_ssl)
+        self._use_ssl = self._tls_mode == "tls"
         self._verify_tls = bool(verify_tls)
         from core.proxy import ProxyConfig
 
@@ -348,14 +357,16 @@ class Pop3Session(SessionLifecycle):
                         self._host, self._port, timeout=30.0, context=tls_ctx
                     )
             else:
-                # Plaintext POP3 — credentials traverse the wire in
-                # the clear via USER/PASS. Loud warning so a misconfig
-                # doesn't slip past silently.
-                log.warning(
-                    "POP3 connecting to %s:%d WITHOUT TLS — credentials will be sent in plaintext",
-                    self._host,
-                    self._port,
-                )
+                starttls = getattr(self, "_tls_mode", "plain") == "starttls"
+                if not starttls:
+                    # Plaintext POP3 - credentials traverse the wire in
+                    # the clear via USER/PASS. Loud warning so a misconfig
+                    # doesn't slip past silently.
+                    log.warning(
+                        "POP3 connecting to %s:%d WITHOUT TLS — credentials will be sent in plaintext",
+                        self._host,
+                        self._port,
+                    )
                 if self._proxy.enabled:
                     self._pop = _ProxyPOP3(
                         self._host,
@@ -365,6 +376,8 @@ class Pop3Session(SessionLifecycle):
                     )
                 else:
                     self._pop = poplib.POP3(self._host, self._port, timeout=30.0)
+                if starttls:
+                    self._stls()
 
             self._pop.user(self._username)
             self._pop.pass_(self._password)
@@ -374,7 +387,7 @@ class Pop3Session(SessionLifecycle):
             self._pending_deletes = 0
             log.info(
                 "POP3%s connected: %s@%s:%d",
-                "S" if self._use_ssl else "",
+                {"tls": "S", "starttls": " (STLS)"}.get(getattr(self, "_tls_mode", ""), ""),
                 self._username,
                 self._host,
                 self._port,
@@ -385,6 +398,55 @@ class Pop3Session(SessionLifecycle):
         except Exception:
             self._pop = None
             raise
+
+    def _stls(self) -> None:
+        """STLS (RFC 2595) before USER/PASS. A server that does not list it
+        in CAPA (or a man in the middle that took it out), refuses it or
+        fails the certificate check gets no password: the connection is
+        closed and ConnectionError says why."""
+        import ssl
+
+        from core.tls_context import client_tls_context
+
+        pop = self._pop
+        why = ""
+        try:
+            # Not poplib's capa() / stls(): their CAPA answer has no limit
+            # (a server that never ends it grows memory without bound).
+            _resp, lines, _octets = self._long_capped(pop, "capa", (), "CAPA", MAX_CAPA_BYTES)
+            caps = {line.decode("ascii", "replace").split(" ", 1)[0].upper() for line in lines}
+        except poplib.error_proto:
+            caps = set()
+        if "STLS" not in caps:
+            why = "it does not offer STLS"
+        else:
+            ctx = client_tls_context(getattr(self, "_verify_tls", True), label="POP3")
+            try:
+                pop._shortcmd("STLS")
+                pop.sock = ctx.wrap_socket(pop.sock, server_hostname=pop.host)
+                # A new reader: what the server sent after "+OK" in clear
+                # text must not be read as if it came over TLS.
+                pop.file = pop.sock.makefile("rb")
+                pop._tls_established = True
+            except ssl.SSLError as exc:
+                why = f"the TLS handshake failed ({exc})"
+            except poplib.error_proto as exc:
+                why = f"it refused STLS ({str(exc)[:200]})"
+            else:
+                if not isinstance(pop.sock, ssl.SSLSocket):
+                    why = "the connection is not encrypted after STLS"
+        if why:
+            try:
+                pop.sock.close()
+            except Exception:  # noqa: BLE001 - already gone
+                pass
+            raise ConnectionError(
+                errno.EPROTO,
+                f"POP3 {self._host}: {why} - the password is not sent in clear text. "
+                "Use POP3S (port 995), or choose 'no encryption' in the profile "
+                "if this server really has no TLS",
+            )
+        log.info("POP3 STLS done with %s:%d", self._host, self._port)
 
     #: Set by disconnect(): a later call through this object (a queued or
     #: retried transfer, a scheduled job) raises instead of logging in
@@ -414,10 +476,13 @@ class Pop3Session(SessionLifecycle):
         sock = getattr(self._pop, "sock", None) if self._pop is not None else None
         if sock is None:
             return None
-        if not self._use_ssl:
+        import ssl
+
+        if not isinstance(sock, ssl.SSLSocket):
             return CS.SecurityInfo(CS.LEVEL_CLEARTEXT, "POP3 without TLS - cleartext - anyone on the "
                                    "network can read it, the password too", True)
-        return CS.tls_socket(sock, verified=self._verify_tls, what="POP3")
+        what = "POP3 (STLS)" if getattr(self, "_tls_mode", "") == "starttls" else "POP3"
+        return CS.tls_socket(sock, verified=self._verify_tls, what=what)
 
     @property
     @liveness_check

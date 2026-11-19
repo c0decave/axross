@@ -64,7 +64,7 @@ def _session(exec_raw):
     s = scp_client.SCPSession.__new__(scp_client.SCPSession)
     s.sent = []
 
-    def raw(cmd, timeout=None, stdin_data=None):
+    def raw(cmd, timeout=None, stdin_data=None, **_kw):
         s.sent.append(cmd)
         return exec_raw(cmd)
 

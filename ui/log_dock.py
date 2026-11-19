@@ -257,8 +257,11 @@ class LogDock(QDockWidget):
         self._bridge.wake.connect(self._drain_inbox)
 
         self._handler = _QtLogHandler(self._bridge)
+        from core.log_config import EscapingFormatter
+
+        # A server's names and texts arrive with escapes, never raw controls.
         self._handler.setFormatter(
-            logging.Formatter(
+            EscapingFormatter(
                 "%(asctime)s [%(levelname)-7s] %(name)s: %(message)s",
                 datefmt="%H:%M:%S",
             )

@@ -107,11 +107,21 @@ def _modal_texts(run) -> list[tuple[str, Qt.TextFormat]]:
                      else box.findChild(QLabel))
             seen.append((label.text(), label.textFormat()))
             box.reject()
-        QTimer.singleShot(20, answer)
 
-    QTimer.singleShot(0, answer)
-    run()
-    APP.processEvents()
+    # Only while run() runs: it re-armed itself for ever before, and every
+    # later test of the worker had its dialogs rejected (a countdown, an
+    # input dialog, the sign-in window ended as soon as they were shown).
+    timer = QTimer()
+    timer.setInterval(20)
+    timer.timeout.connect(answer)
+    timer.start()
+    try:
+        run()
+        APP.processEvents()
+    finally:
+        timer.stop()
+        timer.timeout.disconnect(answer)
+        timer.deleteLater()
     return seen
 
 

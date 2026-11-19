@@ -42,8 +42,9 @@ azure_blob/files, onedrive, sharepoint, gdrive, dropbox, winrm,
 and S3 over HTTP CONNECT), the proxy is wired into the backend's
 transport. Backends without clean SOCKS/HTTP support log a warning
 instead of silently ignoring the proxy fields. Per-protocol caveats
-still apply: S3 is HTTP-CONNECT only, and rsync's OpenBSD-nc path
-cannot carry ``proxy_password``. Requests-based SDK sessions
+still apply: S3 is HTTP-CONNECT only, and an *address_family* of
+``ipv4`` / ``ipv6`` through a proxy needs an IP address as host (the
+proxy resolves names). Requests-based SDK sessions
 controlled by Axross ignore process-level ``HTTP_PROXY`` /
 ``HTTPS_PROXY`` so the profile/script proxy is the route source of
 truth. OAuth browser consent pages are external and may follow
@@ -84,6 +85,10 @@ a few ergonomic aliases: ``http://`` / ``https://`` open WebDAV,
 ``gophers://`` opens TLS Gopher, ``nntps://`` opens TLS NNTP,
 ``git+local://`` opens a local Git repository path, and
 ``sftp+key://`` / ``sftp+agent://`` select SSH auth mode.
+``imap://``, ``pop3://`` and ``ldap://`` upgrade with STARTTLS before
+the login and refuse a server without it; ``imaps://``, ``pop3s://``
+and ``ldaps://`` are implicit TLS; ``imap+plain://``, ``pop3+plain://``
+and ``ldap+plain://`` the explicit choice of no encryption.
 
 ### `axross.localfs() -> 'LocalFS'`
 
@@ -272,11 +277,15 @@ Return all saved bookmarks (list of :class:`Bookmark`).
 
 ### `axross.add_bookmark(name: 'str', path: 'str', backend_name: 'str' = 'Local', profile_name: 'str' = '', icon_name: 'str' = 'bookmark') -> 'None'`
 
-Create a new bookmark. Idempotent on (path, backend_name).
+Create a new bookmark. Idempotent on (path, backend_name). Raises
+OSError when the bookmarks file could not be written.
 
 ### `axross.remove_bookmark(index: 'int') -> 'None'`
 
-Remove the bookmark at ``index`` (zero-based).
+Remove the bookmark at ``index`` (zero-based, as
+:func:`list_bookmarks` lists them). Raises IndexError for an index
+outside that list (also a negative one) and OSError when the bookmarks
+file could not be written.
 
 ### `axross.script_dir() -> 'str'`
 
@@ -1293,7 +1302,8 @@ Example::
 
 Non-modal toast in the bottom-right corner of the main window.
 
-Auto-dismisses after ``timeout`` seconds. Multiple toasts stack.
+Auto-dismisses after ``timeout`` seconds (held to 0.5 s .. 1 hour; a
+timeout that is no number raises TypeError). Multiple toasts stack.
 Levels: same colour palette as :func:`message`.
 
 Example::

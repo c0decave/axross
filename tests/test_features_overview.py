@@ -20,6 +20,7 @@ separate container check.
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -114,9 +115,29 @@ def test_sad_a_frozen_build_cannot_pip_install(monkeypatch):
 
 
 def test_sad_no_pip_module_cannot_install(monkeypatch):
-    monkeypatch.setattr(F.importlib.util, "find_spec", lambda name: None if name == "pip" else mock.DEFAULT)
+    monkeypatch.setattr(F.importlib.machinery.PathFinder, "find_spec",
+                        lambda name, *a: None if name == "pip" else mock.DEFAULT)
     ok, reason = F.can_pip_install()
     assert not ok and "pip" in reason
+
+
+def test_happy_a_pip_module_can_install(monkeypatch):
+    monkeypatch.setattr(F.importlib.machinery.PathFinder, "find_spec",
+                        lambda name, *a: object() if name == "pip" else None)
+    assert F.can_pip_install() == (True, "")
+
+
+def test_edge_asking_for_pip_leaves_setuptools_importable():
+    """importlib.util.find_spec("pip") went through setuptools' distutils
+    hack, which switches itself off for the process on a lookup of "pip":
+    a later "import setuptools" there failed on the standard library's
+    distutils (in the suite: the sdist test of another module)."""
+    pytest.importorskip("setuptools")
+    code = ("from core import features as F; F.can_pip_install(); import setuptools; "
+            "from setuptools._distutils.filelist import FileList")
+    done = subprocess.run([sys.executable, "-c", code], cwd=str(ROOT), capture_output=True,
+                          text=True, timeout=120)
+    assert done.returncode == 0, done.stderr[-2000:]
 
 
 def test_edge_the_download_link_is_this_release():

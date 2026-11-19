@@ -30,7 +30,6 @@ Agent dock's voice.
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
@@ -145,12 +144,9 @@ class AudioSettings:
     def save(self, path: Path | None = None) -> None:
         path = Path(path or settings_file())
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(path.name + ".tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(self.to_dict(), handle, indent=2)
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, path)
+        from core.json_store import write_private
+
+        write_private(path, json.dumps(self.to_dict(), indent=2))
 
 
 def apply_saved_backend(environ: dict | None = None) -> str | None:

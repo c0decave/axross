@@ -3,10 +3,81 @@
  "versions": {
   "0.9.3": {
    "accepted_findings": [
+    "yara|capability_process_schedule|wcwidth/table_overrides.py|00ef12a9eeaf2d6e",
     "yara|capability_process_schedule|wcwidth/table_overrides.py|4c8182ab694bc2fa",
-    "yara|capability_process_schedule|wcwidth/table_vs16.py|16371e2db996fd6e"
+    "yara|capability_process_schedule|wcwidth/table_vs16.py|16371e2db996fd6e",
+    "yara|capability_process_schedule|wcwidth/table_vs16.py|9a8772fe9bc2508d"
    ],
    "archives": {
+    "wcwidth-0.9.3-cp310-abi3-macosx_11_0_arm64.whl": {
+     "entry_points": [],
+     "files": {
+      "wcwidth-0.9.3.dist-info/METADATA": "4875c44a7b8b92e9fc3c1ab58f9eeedfe82609af04c3c2a41b1601cfe830bf23",
+      "wcwidth-0.9.3.dist-info/RECORD": "f004c563473cc123a891bb9a88f2663d097eba982d7e51049817ac742fc55dea",
+      "wcwidth-0.9.3.dist-info/WHEEL": "d20c2f074aa93a5764820e0d494c4edcdf560c674914b46db68d4d70b9c6b04a",
+      "wcwidth-0.9.3.dist-info/licenses/LICENSE": "70b98a95a2144eb70af8017fa8c6d95ce247e40867436e8bc649e137fe13d21a",
+      "wcwidth-0.9.3.dist-info/top_level.txt": "2cb8d2f121625d7b8b11c0f604d7457468692967b9a291edbe7eca363f402112",
+      "wcwidth/__init__.py": "b9ec8f5922a86eed22f5f96eae7fcb0abd8f4ec5673e9fa84f78586d782166d3",
+      "wcwidth/_clip.py": "c554e607f766cade102982ff753e8036236922712992f6d6a4fb0c74d4a7ed27",
+      "wcwidth/_constants.py": "04425f05bce4197bac837bbb40c07e10e070da21fc1dd39c28be0f6052425a68",
+      "wcwidth/_wcswidth.py": "674f1420fce6114b02b7e371fc574c4553776efa5b7b0982df5fcaef93e40b4e",
+      "wcwidth/_wcwidth.py": "d90e01620d4bacb231cc15584cd20c36f36bd1084894d93c5e26eec06fc0e688",
+      "wcwidth/_wcwidth_c.abi3.so": "e28ca17d1dd0cb53c0ce2bd4683bd7a0e8fad8d87fb31d689b34b80498d3bcc4",
+      "wcwidth/_wcwidth_c.pyi": "863e5d3a16998856ae038fa752c21d261a3c2f4414465f90478e998d8e97a85b",
+      "wcwidth/_width.py": "4772af44d9bc0a83dd9a260ccbb9641449737bb240acaf799c3a0672e7efcca2",
+      "wcwidth/align.py": "a563b14f9a297ca71d11d5202f0a49618384d86aac9e76211c8d833b95f99a57",
+      "wcwidth/bisearch.py": "63f15dbd84f31570f6a5ae5ca6951e803e525dfcbe07c1c2e00f6bac939d6f8d",
+      "wcwidth/control_codes.py": "34690fb17340fcc48d1ff1b5c508ef0e05f89928fe929d532df2cff86214cf4f",
+      "wcwidth/escape_sequences.py": "ba4b74a7fb1466621686c7071863f8f29a9c58347cbb654d8397b6853c958871",
+      "wcwidth/grapheme.py": "d05c1dc8b13f302ab456ded777ac5bf37f61e1a46aacad859e0d3569a25c8208",
+      "wcwidth/hyperlink.py": "733b5a01643ff3e3c20d4802144353a35dbd9e84315b5bbfd3b48d746f733a7b",
+      "wcwidth/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "wcwidth/sgr_state.py": "99e142df163a8c13e2703ff8de4a2eb2c1cb6c8860de5fe0a6695bc9ca2762c2",
+      "wcwidth/table_ambiguous.py": "762d8dfbdd8ad6a71bf50015e89d4dd4dbc5b3d270560e1c3c90130fda98657d",
+      "wcwidth/table_grapheme.py": "3176cee3c7c78311592287cd5a44509d48199d98bdf46731058c66974df0ed6d",
+      "wcwidth/table_grapheme_overrides/__init__.py": "f011706d35210242e89cc7d1f80ad6c37a1a168f8c7eed102fa8a6ba9aec90d6",
+      "wcwidth/table_grapheme_overrides/_known_058c7585.py": "f64dfb0e26ca9dd84dea2a905976d1ec839afd2889d3928355986b5b7981ccea",
+      "wcwidth/table_grapheme_overrides/_known_2148ff29.py": "41ac7973a19d28de6eefc106974252400de4830e2667c8db6a273dbfead87a42",
+      "wcwidth/table_grapheme_overrides/_known_244dc88b.py": "2c4f6b92663672edf6ec4fa18a467dabaa27de432578e227d4d6427501b4eeac",
+      "wcwidth/table_grapheme_overrides/_known_336a71a1.py": "96ac284d9954679b9c08e5fff960cf310c8e79f013f18a016f801312270e7df0",
+      "wcwidth/table_grapheme_overrides/_known_33ac73f2.py": "2c610dbb97770586ae889b4a8dc6878f92b2fcf84343c611d79b90a301214ac3",
+      "wcwidth/table_grapheme_overrides/_known_3a1895d5.py": "4dbd37b21db0bf8032a8967b002b00486ae9c581aac8ebea79b3fd72c8f558be",
+      "wcwidth/table_grapheme_overrides/_known_59180a0d.py": "b21883121b6481ad076949f927170f2fd10ff7c26a36707cd3cc0951691de522",
+      "wcwidth/table_grapheme_overrides/_known_65c6beb5.py": "f019abaef06b32aa9660a160a951727de6b852d1d28b13fc1ec3aaf1f01a2265",
+      "wcwidth/table_grapheme_overrides/_known_78f828e8.py": "dea2fb04295dd5bca549c0b8eff8d130c7ea70b91e5e58d15d0c30009abe6c3b",
+      "wcwidth/table_grapheme_overrides/_known_8c2ae14d.py": "1ad3578a4208995d2e03645868b31a458027b65984191c20dde07adfc8d37703",
+      "wcwidth/table_grapheme_overrides/_known_900356bf.py": "1d6fdc64300569255e558d4dc138e1b7d046e7738e2fc59dad00660110e2341b",
+      "wcwidth/table_grapheme_overrides/_known_97904ece.py": "a088789c30bf07ad7fda064db7d5630481d3ab23e128fb0634cba295ad8180c1",
+      "wcwidth/table_grapheme_overrides/_known_a5880eeb.py": "104858312315bd685de023304f8e84e379993312d8f30c667392f97c9a94c801",
+      "wcwidth/table_grapheme_overrides/_known_b6d33cf4.py": "2074de0df9b5879ce8e3e579a039b36a6e6c9510c0a0e459f6f753c56f913f70",
+      "wcwidth/table_grapheme_overrides/_known_c57c295b.py": "9fe3ad344629f8bd7a3c8370c1f066ce6d32018b2608662efced9b79d207e8d7",
+      "wcwidth/table_grapheme_overrides/_known_cf02297d.py": "8947a214a2b5092c67829e14886aa1df4aafdd53d97f3d7b40fc2b1906a909e1",
+      "wcwidth/table_grapheme_overrides/_known_e18ac6a7.py": "d02aabe197388e2edb39c5017705cd329109476bb39d164411753a965b8fb228",
+      "wcwidth/table_grapheme_overrides/_known_e2b75ee3.py": "13e59e3a9dba314b215b75b0bb60203605cfe3a866086fbb12ddde4673ba7eb8",
+      "wcwidth/table_grapheme_overrides/_known_fb5fd79b.py": "51352006310a78333493fb22a31c822423db8ef88abd4263c33456bd4fb665b5",
+      "wcwidth/table_grapheme_overrides/_known_fdc99132.py": "d833e364b2ac8fcbf7df71ae319fb25f52ede91b05ae323c84fab01097e39472",
+      "wcwidth/table_grapheme_overrides/_registry.py": "edca3118e4fc865056653ac7af7c8dd5311a941d2d533ac56544b414b8370182",
+      "wcwidth/table_mc.py": "f084236a9b43821968521672ec34c79c336f224c352c17b0eb82afbfcdb1fa61",
+      "wcwidth/table_overrides.py": "4c8182ab694bc2fa5618a72ba7d7aefe0b8e8a8eab0bbe540a398a5e75a7b6b4",
+      "wcwidth/table_term_programs.py": "89fb81aa4ed85258219d643be4ffba379e26ae2603f0e55932f35d6e4477d56e",
+      "wcwidth/table_vs15.py": "9af55c5c6801b678a4c110126f8032309ac8610640b1ca74be4ea0a3585e478b",
+      "wcwidth/table_vs16.py": "16371e2db996fd6e60ac63905f9d9e8323429b71742c765b83a4a5d7519ab0c6",
+      "wcwidth/table_wide.py": "a167dfa17738fb939b8157193fc9d11f70b1e1ed0385e1a6faee07c8d5ad5085",
+      "wcwidth/table_zero.py": "03d61051c69f286fe77acca5583be371fa674f86cff61a6abdc57fa1a5156cc6",
+      "wcwidth/text_sizing.py": "a04343ae0a0eedd6ab470d421c3ea039f9aeaaae325551b1be40033db8c5b8d5",
+      "wcwidth/textwrap.py": "ec1119edb22d4767962e54745ee27507d98f01689805a90bb1f9774c576978a4",
+      "wcwidth/unicode_versions.py": "0504f550c0e77dd1b3c81c408a0d7c1888cfae2ee319aac5c45e755040439bb0",
+      "wcwidth/wcwidth.py": "597eba94e3ed8a01ff6b1a9cbd4d0931315df79d23c55e0c1ab644047a06904b"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "cef4dbd8814ef33b900c85a7bcecda3c27af15193721464a4f8e918b3183e87a",
+     "native": {
+      "wcwidth/_wcwidth_c.abi3.so": "macho"
+     },
+     "pth": {},
+     "sha256": "aab90ab489850f87633922c3064f6d0442d8f6ae5407a62f82bdb1f424179c05"
+    },
     "wcwidth-0.9.3-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": {
      "entry_points": [],
      "files": {
@@ -75,11 +146,82 @@
      },
      "pth": {},
      "sha256": "9ab8bfee107e08de09e15f9f6afb9fe0f64c8d64fd296d0d8557bafe71ea3f93"
+    },
+    "wcwidth-0.9.3-cp310-abi3-win_amd64.whl": {
+     "entry_points": [],
+     "files": {
+      "wcwidth-0.9.3.dist-info/METADATA": "f766839b63acfedb962851af86f3e86b25b9fcc34b30377b73c735997f68e76d",
+      "wcwidth-0.9.3.dist-info/RECORD": "a47b7d34fc456c403fc18c8d464dd2c27432340de2f7373b82cdaff859bce467",
+      "wcwidth-0.9.3.dist-info/WHEEL": "907426243f87a41775556b901aae3d1d109e32aa86c744dee5b8af0ea5f7178d",
+      "wcwidth-0.9.3.dist-info/licenses/LICENSE": "dff08668b8cfca00ec90011eb318e450c3719fcd40893bf375781a6beef7143a",
+      "wcwidth-0.9.3.dist-info/top_level.txt": "2cb8d2f121625d7b8b11c0f604d7457468692967b9a291edbe7eca363f402112",
+      "wcwidth/__init__.py": "82a50e42b404c92a5b28c99c65863923e7e2c4da9a65c3110fef72177e2427cb",
+      "wcwidth/_clip.py": "4b451d6b498dcb91ae3c6f3d713e39f6ecdf63fcdc6fe43e871901449e5e8fb1",
+      "wcwidth/_constants.py": "a1902b49a7c1aacd961d0e4f257f6e527c59b53902444f5760a63e485b80aa1c",
+      "wcwidth/_wcswidth.py": "aa674bc07c38cbfff904f3c6e526cc210c9e3bf553f3f3e204b412d1adea1a51",
+      "wcwidth/_wcwidth.py": "05f8c45b3f6a27fa80c6c98b45f973b54a2457529cf2110e73f6af72b58604ae",
+      "wcwidth/_wcwidth_c.pyd": "8fccbb2da9df3d9ee6dc66f773a3306523a5d8ea0ef8c895c8118c2c0de8e195",
+      "wcwidth/_wcwidth_c.pyi": "521b24f5d6db6d7b99a33c609a1884b1fdb83f59d1715639e3f42f22cd1b36d7",
+      "wcwidth/_width.py": "af20d8545df24c1832c1936939b37dc0247c6b9cf5a6a405f1f1cbf68a94f00d",
+      "wcwidth/align.py": "6010a548927ad4cdb4b6120c74a4e3ecb302d904353c053cb0eb83e7185c582b",
+      "wcwidth/bisearch.py": "9453b5b14b0db4d7a7b6c2ac4a4afdb2d2c385f94670055b1d8ad2cf15c0397e",
+      "wcwidth/control_codes.py": "809ea464dd3c18834198dead5fd59d682b6eeb50a3cf5cebd9ac0ee406f0bb9d",
+      "wcwidth/escape_sequences.py": "76df60f2d5eb20d07fc58e70b63c20af66e3d5915ab3f72b1f1107b63bdc5ef5",
+      "wcwidth/grapheme.py": "b2ccd6c1cd0053392636dc3ce85b7966bb7fdd3a9ce5946f6a1c367191d4edd3",
+      "wcwidth/hyperlink.py": "af8e41cf32b806f9b4a7904fcdc30edfb011b044ce8913aa84fd55b4d98e7724",
+      "wcwidth/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "wcwidth/sgr_state.py": "7812e0dcd5ef0c4709974c33c75591598f4199f77b6ba89ea4ffbc4a46013f66",
+      "wcwidth/table_ambiguous.py": "2f570c1138a7ff2036fb696c0e49c54d201a1b816f53b226ec350f45a07c9618",
+      "wcwidth/table_grapheme.py": "d0c42c35570e592aab156566451fc01940d47fd67cb98026c8e7b25e46b2aa03",
+      "wcwidth/table_grapheme_overrides/__init__.py": "822cd2979c1eb88390b789508e6ca931b797173c70db56b6ebf8cca2ed64a52e",
+      "wcwidth/table_grapheme_overrides/_known_058c7585.py": "d4be0193e678221cd0024d23ba96c69ead297f318a2ce70be09653e8b27dbc56",
+      "wcwidth/table_grapheme_overrides/_known_2148ff29.py": "cd5346629928a83a66285831303955a001db183a96a780ed0dc50358a8c097c9",
+      "wcwidth/table_grapheme_overrides/_known_244dc88b.py": "1025ec0135520d406fd4d60aaab1bda4d0b784ed6e7dc5f6c8ce8f8ec86adf9a",
+      "wcwidth/table_grapheme_overrides/_known_336a71a1.py": "a36e3d49f62fd4f7bd095f38870666cfbcd12ca0a62583e9a777b099f0ab2260",
+      "wcwidth/table_grapheme_overrides/_known_33ac73f2.py": "c21a851d97e96a4c06a1f73df32af2badb67c15cb8c57eccb61900aff562a6ae",
+      "wcwidth/table_grapheme_overrides/_known_3a1895d5.py": "1a40dd95e1fc900cde74d641d13f3a2233f9a3e747284f7239915917f80ed2cd",
+      "wcwidth/table_grapheme_overrides/_known_59180a0d.py": "f78209829a587591a0bbfc43d19493307b36cc66bffab77f975bae02fd012258",
+      "wcwidth/table_grapheme_overrides/_known_65c6beb5.py": "1d03a8f818a483bcc57016edc3b6e5c09b6672015aecce18b4b770e10ad49d27",
+      "wcwidth/table_grapheme_overrides/_known_78f828e8.py": "b10b7361f321ca9a5b543344121a76a121e5c943b1c45645897b51c2345860d8",
+      "wcwidth/table_grapheme_overrides/_known_8c2ae14d.py": "03ced60fcfb1162e9d35cc80874e79596eee223068104ad5a3e6e964d6bd4c11",
+      "wcwidth/table_grapheme_overrides/_known_900356bf.py": "d546a5dea0847620fedeab5514bce7d5e11ccd396fec25cc789060cb82569b14",
+      "wcwidth/table_grapheme_overrides/_known_97904ece.py": "8dd57aa99e7ff163665519b1b6c9fcf4eb10232b2fb4536ff204a290a12a6c5e",
+      "wcwidth/table_grapheme_overrides/_known_a5880eeb.py": "53809fdf827421f4c97fcc38f30821630f1707fe703bd6374412b2ce19114b43",
+      "wcwidth/table_grapheme_overrides/_known_b6d33cf4.py": "967607017f9c9f0ace9653b7193552ff73be1095f2df836b3746a5501d3c92b1",
+      "wcwidth/table_grapheme_overrides/_known_c57c295b.py": "2e9e9e6dd83ec3d20c4a565972fbd19cc79008d7484935b18c04fea08d051275",
+      "wcwidth/table_grapheme_overrides/_known_cf02297d.py": "dc41cc7479919dccd8631e3ccb129bda5b08cd1b5db140c725bc44bbab3149e4",
+      "wcwidth/table_grapheme_overrides/_known_e18ac6a7.py": "00fa720d91ea41266d5c55b7a804e8cca70c703790ef53807003121576a9f0f3",
+      "wcwidth/table_grapheme_overrides/_known_e2b75ee3.py": "d30da692eb626c6e84639d5bf6d2688c3aa6cfb75cb86a9bf27fd67ed5816f4a",
+      "wcwidth/table_grapheme_overrides/_known_fb5fd79b.py": "261da3a26e65686e2dde2d3cd60dd898091937192a6a9c72c05ef8453ea2725b",
+      "wcwidth/table_grapheme_overrides/_known_fdc99132.py": "bbd541292e7fccc8e9b42c279c6d440b1414cacfe78ab375844677fe50c1979f",
+      "wcwidth/table_grapheme_overrides/_registry.py": "2bfb14c1b8090e78ca5e6ab2b9560980ce296ea3864b900f89ff746a9f47b08d",
+      "wcwidth/table_mc.py": "20cebd7bfa045b1340da10ec749cc49bb92f18f8a66a4e04af76b5f265636d32",
+      "wcwidth/table_overrides.py": "00ef12a9eeaf2d6e3954ebf61c99589dfe084795fd57e78c7cf75a519831679a",
+      "wcwidth/table_term_programs.py": "b93b79d75b16ef7e630a425c542ee54bb1d63508dd1c4e780bbfa924b5c0f9bd",
+      "wcwidth/table_vs15.py": "b64a495083a25090ae24a8282e913dfed215904fecc95d9434b703969862ca26",
+      "wcwidth/table_vs16.py": "9a8772fe9bc2508df74f12022b3ec17877b4c07ea9feceed2fe0cbdef897a302",
+      "wcwidth/table_wide.py": "3d30d3d61a980452d724abee5543bbfdafee4d0c3093f2ea1de6cce977bae9ca",
+      "wcwidth/table_zero.py": "0a3c9941e9907c9641bf82dccfc5609f54c23fdb247e28960dbb4b6228f5b205",
+      "wcwidth/text_sizing.py": "53312a5cd4c2c116155c9b11dfc1ee3db2b7aa95f7dad59508b1a6bed64266d9",
+      "wcwidth/textwrap.py": "0c7cd7239388e75f77591d4308ae4b5e38d9cba151d414b944b7ae6f1cc55014",
+      "wcwidth/unicode_versions.py": "562a6545cc7efbda9865ee62096796476792a344df0380a8553ddf7b419623bc",
+      "wcwidth/wcwidth.py": "e728aad3ab2f6635740e82f67e3fc182f6571f9a6cb4d604055de810bd5b25f6"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "0f0cc658c87edc8e7138ad332e9bdb59e6990e04b81d7d7e242cfdb824f71d97",
+     "native": {
+      "wcwidth/_wcwidth_c.pyd": "pe"
+     },
+     "pth": {},
+     "sha256": "569a0cdb826d3097b6dbacfaa45aa0002d72a2ba6fa8a63251ea43ac4dd7b6a4"
     }
    },
    "name": "wcwidth",
    "provenance": {
-    "wcwidth-0.9.3-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": null
+    "wcwidth-0.9.3-cp310-abi3-macosx_11_0_arm64.whl": null,
+    "wcwidth-0.9.3-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": null,
+    "wcwidth-0.9.3-cp310-abi3-win_amd64.whl": null
    },
    "pypi": {
     "author_email": "Jeff Quast <contact@jeffquast.com>",
@@ -90,8 +232,15 @@
    },
    "reviewed": {
     "by": "claude",
-    "date": "2026-11-05",
-    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: process_schedule; 1 native binaries profiled, none with network/process imports or addresses; no attestation: content review only."
+    "date": "2026-11-20",
+    "earlier": [
+     {
+      "by": "claude",
+      "date": "2026-11-05",
+      "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: process_schedule; 1 native binaries profiled, none with network/process imports or addresses; no attestation: content review only."
+     }
+    ],
+    "note": "macOS arm64 and Windows amd64 wheels of the reviewed version: same 56 members, only _wcwidth_c differs; Windows Python CRLF only (the 2 'new' keys are the reviewed hits on the same files). No .pth, no hook, no network/process imports. No attestation, as for the Linux wheel: content review only."
    },
    "scans": {
     "capa": {
@@ -113,11 +262,57 @@
        "rpath": [],
        "urls": []
       }
+     },
+     "8fccbb2da9df3d9ee6dc66f773a3306523a5d8ea0ef8c895c8118c2c0de8e195": {
+      "capabilities": [
+       "contain loop",
+       "encrypt data using RC4 PRGA",
+       "enumerate PE sections",
+       "parse PE header",
+       "parse credit card information",
+       "query environment variable",
+       "validate payment card number using luhn algorithm",
+       "validate payment card number using luhn algorithm with no lookup table"
+      ],
+      "note": "",
+      "path": "wcwidth/_wcwidth_c.pyd",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-crt-environment-l1-1-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "python3.dll"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "e28ca17d1dd0cb53c0ce2bd4683bd7a0e8fad8d87fb31d689b34b80498d3bcc4": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "wcwidth/_wcwidth_c.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": []
+      }
      }
     },
     "keys": [
+     "yara|capability_process_schedule|wcwidth/table_overrides.py|00ef12a9eeaf2d6e",
      "yara|capability_process_schedule|wcwidth/table_overrides.py|4c8182ab694bc2fa",
-     "yara|capability_process_schedule|wcwidth/table_vs16.py|16371e2db996fd6e"
+     "yara|capability_process_schedule|wcwidth/table_vs16.py|16371e2db996fd6e",
+     "yara|capability_process_schedule|wcwidth/table_vs16.py|9a8772fe9bc2508d"
     ],
     "yara": [
      "capability_process_schedule:capability_process_schedule wcwidth/table_overrides.py",

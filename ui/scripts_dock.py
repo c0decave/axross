@@ -49,7 +49,7 @@ from PyQt6.QtWidgets import (
 
 from core import script_runner as SR
 from core import scripting, security_mode
-from core.i18n import tr
+from core.i18n import tr, tr_n
 from ui.dock_frame import BOTTOM_DOCK_HINT_PX, framed
 from ui.script_editor import CodeEditor
 from ui.icon_provider import set_window_icon
@@ -82,6 +82,42 @@ def _new_session(proc: QProcess) -> bool:
         return False
     proc.setUnixProcessParameters(flag)
     return True
+
+
+def _rename_script_file(old: str, new: str) -> str:
+    """Move the saved script *old* to *new*; returns its source.
+
+    On a case-insensitive file system (macOS' APFS, Windows' NTFS)
+    "Backup.py" and "backup.py" are one file: a case-only rename goes
+    through a temp name (so the new spelling sticks), and the source is
+    never deleted when it is the same file as the target - deleting it
+    would delete the script."""
+    import uuid
+
+    source = scripting.load_script(old)
+    folder = scripting.script_dir()
+    old_path = os.path.join(folder, f"{old}.py")
+    new_path = os.path.join(folder, f"{new}.py")
+    if old.casefold() == new.casefold():
+        temp = os.path.join(folder, f".{old}.{uuid.uuid4().hex[:8]}.rename")
+        os.rename(old_path, temp)
+        try:
+            os.rename(temp, new_path)
+        except BaseException:
+            try:
+                os.rename(temp, old_path)
+            except OSError:
+                log.error("Script %s left as %s", old, temp)
+            raise
+        return source
+    scripting.save_script(new, source)
+    try:
+        same = os.path.samefile(old_path, new_path)
+    except OSError:
+        same = False
+    if not same:
+        scripting.delete_script(old)
+    return source
 
 
 class ScriptRun(QObject):
@@ -471,8 +507,14 @@ class ScriptsDock(QDockWidget):
     def _warn(self, title: str, text: str) -> None:
         QMessageBox.warning(self, title, text)
 
-    def _ask_new_name(self, title: str, label: str, default: str = "") -> str | None:
-        """Ask until the name is valid and free, or the user cancels."""
+    def _ask_new_name(
+        self, title: str, label: str, default: str = "", *, renaming: str | None = None
+    ) -> str | None:
+        """Ask until the name is valid and free, or the user cancels.
+
+        Names are compared casefolded: on a case-insensitive file system
+        "Report" is the file "report". Only the script being renamed
+        (*renaming*) may take another spelling of its own name."""
         value = default
         while True:
             name = self._ask_name(title, label, value)
@@ -484,8 +526,10 @@ class ScriptsDock(QDockWidget):
             except ValueError as exc:
                 self._warn(title, str(exc))
                 continue
-            if name in scripting.list_scripts():
-                self._warn(title, tr("A script named {name} already exists.").format(name=name))
+            taken = {n.casefold(): n for n in scripting.list_scripts()}
+            clash = taken.get(name.casefold())
+            if clash is not None and not (clash == renaming and name != renaming):
+                self._warn(title, tr("A script named {name} already exists.").format(name=clash))
                 continue
             return name
 
@@ -638,7 +682,12 @@ class ScriptsDock(QDockWidget):
                 jobs = self._jobs_by_script.get(name)
                 if jobs:
                     item.setToolTip(
-                        tr("Run by scheduled job(s): {jobs}").format(jobs=", ".join(jobs))
+                        tr_n(
+                            len(jobs),
+                            "Run by the scheduled job: {jobs}",
+                            "Run by the scheduled jobs: {jobs}",
+                            jobs=", ".join(jobs),
+                        )
                     )
                 self.list.addItem(item)
             if not saved:
@@ -797,8 +846,12 @@ class ScriptsDock(QDockWidget):
         jobs = self._jobs_by_script.get(name)
         if not jobs:
             return ""
-        return tr("Scheduled job(s) {jobs} run {name} by name and will fail without it.").format(
-            jobs=", ".join(jobs), name=name
+        return tr_n(
+            len(jobs),
+            "Scheduled job {jobs} runs {name} by name and will fail without it.",
+            "Scheduled jobs {jobs} run {name} by name and will fail without it.",
+            jobs=", ".join(jobs),
+            name=name,
         )
 
     def rename(self) -> None:
@@ -807,16 +860,16 @@ class ScriptsDock(QDockWidget):
             return
         old = self._current[1]
         title = tr("Rename Script")
-        new = self._ask_new_name(title, tr("New name for {name}:").format(name=old), old)
+        new = self._ask_new_name(
+            title, tr("New name for {name}:").format(name=old), old, renaming=old
+        )
         if not new:
             return
         note = self._jobs_note(old)
         if note and not self._confirm(title, note + "\n\n" + tr("Rename anyway?")):
             return
         try:
-            source = scripting.load_script(old)
-            scripting.save_script(new, source)
-            scripting.delete_script(old)
+            source = _rename_script_file(old, new)
         except (OSError, ValueError) as exc:
             self._warn(title, str(exc))
             return

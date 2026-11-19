@@ -1,12 +1,16 @@
 """Smoke-test a built axross one-file binary.
 
-Usage: python scripts/bundle_smoke.py [--native | --libs | --system-libs] DIST_DIR
+Usage: python scripts/bundle_smoke.py [--native | --libs | --system-libs] DIST_DIR|BINARY
 
-Finds ``axross-slim`` / ``axross-full`` (``.exe`` on Windows) in DIST_DIR,
+Finds ``axross-slim`` / ``axross-full`` (``.exe`` on Windows) in DIST_DIR
+(or takes BINARY itself),
 then checks that it answers ``--version`` and that ``--script`` runs a
 script which lists a folder through the axross API, renders an SVG
-thumbnail (the 0.10.24 bundle's Qt 6.10.0 crashed on the first one) and
-writes a marker file. The binary runs with its own HOME (and USERPROFILE / APPDATA), so a
+thumbnail (the 0.10.24 bundle's Qt 6.10.0 crashed on the first one),
+decodes a PNG, draws a PDF page and highlights a line of Python - each
+through the binary's own child (``--image-worker``, ``--pdf-worker``,
+``--lex-worker``: a build whose child cannot start shows no picture, no
+PDF, no colours) - and writes a marker file. The binary runs with its own HOME (and USERPROFILE / APPDATA), so a
 smoke run never touches a real configuration. Exit status 0 means both
 checks passed.
 
@@ -50,17 +54,99 @@ _SVG = (
     '<rect width="200" height="100" fill="#00ff00"/></svg>'
 )
 _SCRIPT = """\
+import sys
 from pathlib import Path
-from core import previews
+from core import image_worker, lex_worker, media_load, pdf_worker, previews
 fs = axross.localfs()
-names = sorted(i.name for i in fs.list_dir({folder!r}) if i.name.endswith(".txt"))
-thumb = previews.thumbnail(fs, {svg!r}, edge=64, use_cache=False, allow_svg=True)
+parts = {{"listed": ",".join(sorted(i.name for i in fs.list_dir({folder!r})
+                                    if i.name.endswith(".txt")))}}
+def tried(name, work):
+    try:
+        parts[name] = work()
+    except Exception as exc:
+        parts[name] = "none (" + (type(exc).__name__ + ": " + str(exc))[:300] + ")"
+def size(image):
+    return "%dx%d" % (image.width, image.height) if isinstance(image.width, int) \\
+        else "%dx%d" % (image.width(), image.height())
+tried("svg", lambda: size(previews.thumbnail(fs, {svg!r}, edge=64, use_cache=False,
+                                             allow_svg=True)))
+tried("png", lambda: size(previews.thumbnail(fs, {png!r}, edge=40, use_cache=False)))
+tried("pdf", lambda: size(media_load.render_pdf_page({pdf!r}, 0, 100)))
+tried("lex", lambda: str(sum(1 for t in lex_worker.lex("Python", "def f(): pass\\n")
+                             if str(t[1]).startswith("Token.Keyword"))))
+parts["frozen"] = "1" if getattr(sys, "frozen", False) else "0"
+parts["image_via"] = image_worker.worker_argv()[1]
+parts["pdf_via"] = pdf_worker.worker_argv()[1]
+parts["lex_via"] = lex_worker.worker_argv()[1]
 Path({marker!r}).write_text(
-    "listed " + ",".join(names) + "; svg %dx%d" % (thumb.width, thumb.height),
-    encoding="utf-8",
-)
+    "; ".join(k + " " + str(v).replace(";", ",") for k, v in parts.items()), encoding="utf-8")
 """
-EXPECTED_MARKER = "listed a.txt; svg 64x32"
+#: What the smoke script writes when everything worked in a frozen build:
+#: the folder listed, an SVG thumbnail (the 0.10.24 bundle's Qt 6.10.0 crashed
+#: on the first), a PNG decoded by the --image-worker child, a PDF page drawn
+#: by the --pdf-worker child, Python lexed by the --lex-worker child.
+EXPECTED_PARTS = (
+    ("listed", "a.txt"),
+    ("svg", "64x32"),
+    ("png", "40x20"),
+    ("pdf", "100x50"),
+    ("lex", "2"),
+    ("frozen", "1"),
+    ("image_via", "--image-worker"),
+    ("pdf_via", "--pdf-worker"),
+    ("lex_via", "--lex-worker"),
+)
+#: The children of a frozen build, by the marker's key.
+_CHILDREN = {"image_via": "--image-worker", "pdf_via": "--pdf-worker", "lex_via": "--lex-worker"}
+#: The smoke PDF's page drawn with its longer side 100 px.
+PDF_SIZE = (100, 50)
+
+
+def format_marker(parts) -> str:
+    """*parts* (key -> value) as the smoke script writes them."""
+    return "; ".join(f"{k} {v}" for k, v in dict(parts).items())
+
+
+EXPECTED_MARKER = format_marker(EXPECTED_PARTS)
+
+
+def minimal_pdf() -> bytes:
+    """A one-page PDF (200 x 100 pt, filled blue) with a correct cross
+    reference table - written here, so the smoke needs nothing to make it."""
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R "
+        b"/Resources << >> >>",
+    ]
+    content = b"0 0 1 rg 0 0 200 100 re f"
+    objects.append(b"<< /Length %d >>\nstream\n" % len(content) + content + b"\nendstream")
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for number, body in enumerate(objects, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % number + body + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    out += b"".join(b"%010d 00000 n \n" % offset for offset in offsets)
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (
+        len(objects) + 1, xref)
+    return bytes(out)
+
+
+def minimal_png(width: int = 80, height: int = 40) -> bytes:
+    """A PNG of one colour, written here (zlib and struct only)."""
+    import struct
+    import zlib
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return (struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
+
+    rows = b"".join(b"\x00" + b"\x20\x80\xc0" * width for _ in range(height))
+    return (b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
 
 
 def bundled_host_libraries(folder: str) -> list[str]:
@@ -128,16 +214,42 @@ def native_libs(dist: Path, modules: tuple = FULL_NATIVE) -> list[str]:
     return [f"does not load in {exe.name}: {line}" for line in text.splitlines()]
 
 
+def _parse_marker(text: str) -> dict:
+    parts = {}
+    for item in text.split("; "):
+        key, _, value = item.partition(" ")
+        parts[key] = value
+    return parts
+
+
 def marker_problem(text: str) -> str | None:
     """What is wrong with the marker the smoke script wrote, or ``None``."""
     if text == EXPECTED_MARKER:
         return None
     if text.startswith("listed ") and "svg" not in text:
         return f"script marker is {text!r}: no SVG thumbnail rendered"
-    return f"script marker is {text!r}, expected {EXPECTED_MARKER!r}"
+    parts = _parse_marker(text)
+    expected = dict(EXPECTED_PARTS)
+    what = {"listed": "the folder was not listed", "svg": "no SVG thumbnail rendered",
+            "png": "no PNG decoded", "pdf": "no PDF page drawn",
+            "lex": "no text highlighted"}
+    for key, problem in what.items():
+        if parts.get(key) != expected[key]:
+            return f"script marker is {text!r}: {problem} ({key} {parts.get(key)!r})"
+    if parts.get("frozen") == "1":
+        for key, flag in _CHILDREN.items():
+            if parts.get(key) != flag:
+                return (f"script marker is {text!r}: a frozen build does not start its "
+                        f"{flag} child ({key} {parts.get(key)!r})")
+    elif parts.get("frozen") != "0":
+        return f"script marker is {text!r}, expected {EXPECTED_MARKER!r}"
+    return None
 
 
 def find_binary(dist: Path) -> Path:
+    """The binary *dist* names, or axross-slim / axross-full in the folder *dist*."""
+    if dist.is_file():
+        return dist
     for name in ("axross-slim", "axross-full"):
         for candidate in (dist / name, dist / f"{name}.exe"):
             if candidate.is_file():
@@ -218,10 +330,15 @@ def smoke(dist: Path) -> list[str]:
         (folder / "a.txt").write_text("a", encoding="utf-8")
         svg = folder / "a.svg"
         svg.write_text(_SVG, encoding="utf-8")
+        png = folder / "a.png"
+        png.write_bytes(minimal_png())
+        pdf = folder / "a.pdf"
+        pdf.write_bytes(minimal_pdf())
         marker = work / "marker.txt"
         script = work / "smoke_script.py"
         script.write_text(
-            _SCRIPT.format(folder=str(folder), svg=str(svg), marker=str(marker)), encoding="utf-8"
+            _SCRIPT.format(folder=str(folder), svg=str(svg), png=str(png), pdf=str(pdf),
+                           marker=str(marker)), encoding="utf-8"
         )
         env = _env(home)
         problems = []

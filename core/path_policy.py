@@ -165,44 +165,90 @@ def drop_unsafe_names(items, *, keep_dots: bool = False, origin: str = "", backe
 
 
 def drop_impossible_names(items, *, keep_dots: bool = False, origin: str = ""):
-    """Drop listing entries no POSIX directory can hold; keep the rest.
+    """Mark listing entries no POSIX directory can hold; keep the rest.
 
-    For a POSIX server's listing (SFTP, SCP): an empty name, one with a
-    ``/`` or a NUL byte, ``.`` or ``..`` (unless the caller's parser emits
-    them on purpose) names no entry - a hostile or broken server made it
-    up, and joined onto a destination it would land elsewhere. Those go.
+    For a POSIX server's listing (SFTP, SCP, SVN): an empty name, one with
+    a ``/`` or a NUL byte names no entry - a hostile or broken server made
+    it up, and joined onto a destination it would land elsewhere. Such an
+    entry is listed under its name with a NUL in front
+    (:data:`UNADDRESSABLE_MARK`), as S3 and Azure list a key under an empty
+    segment: a row the pane shows (escaped) and refuses to act on, the
+    transfer walk lists as "name not usable here", and every backend call
+    through it refuses (core.backend_guard) - dropped, a folder copy or
+    delete looked complete. ``.`` and ``..`` (the folder and the one
+    above, which a server lists) still go, unless the caller's parser
+    emits them on purpose (*keep_dots*).
 
-    Everything else STAYS, including names with a backslash (an ordinary
-    character on POSIX), control characters or bidi overrides: the entry
-    is there, and an entry left out of a listing is one a recursive copy,
-    move or delete never sees - the folder copy reports success while it
-    is incomplete. The consumers check such names where they use them
+    Everything else STAYS as it is, including names with a backslash (an
+    ordinary character on POSIX), control characters or bidi overrides:
+    the consumers check such names where they use them
     (:func:`transfer_leaf` / :func:`safe_join` refuse them visibly, the
     transfer list shows "name not usable here"), and the file pane shows
     them escaped (``sanitize_for_display``).
     """
+    import dataclasses
     import logging
 
     kept = []
     for item in items:
         name = getattr(item, "name", "")
-        if keep_dots and name in (".", ".."):
-            kept.append(item)
+        if name in (".", ".."):
+            if keep_dots:
+                kept.append(item)
             continue
         impossible = (
             not isinstance(name, str)
             or not name
-            or "/" in name
-            or "\x00" in name
-            or name in (".", "..")
+            or (("/" in name or "\x00" in name) and not name.startswith(UNADDRESSABLE_MARK))
         )
         if impossible:
+            shown = name if isinstance(name, str) else repr(name)
             logging.getLogger(__name__).warning(
-                "dropping impossible remote name %r%s", name, f" from {origin}" if origin else ""
+                "impossible remote name %r%s: listed as unusable", name,
+                f" from {origin}" if origin else ""
             )
-            continue
+            try:
+                item = dataclasses.replace(item, name=UNADDRESSABLE_MARK + shown)
+            except (TypeError, ValueError):
+                continue  # not a dataclass: it cannot be marked, so it goes
         kept.append(item)
     return kept
+
+
+#: Marks the listing name of an object-store key segment no path can name
+#: (see :func:`unaddressable_segment_name`).
+UNADDRESSABLE_MARK = "\x00"
+
+
+def unaddressable_segment_name(segment: str) -> str | None:
+    """The name an object store's listing (S3, Azure Blob) shows for a key
+    segment that no path can name, or None for an ordinary segment.
+
+    The key ``a//x`` lists as the folder ``""`` under ``a``, ``a/../x`` as
+    ``".."``: left out, a folder copy of ``a`` was silently incomplete;
+    named as they are, a path through them is another one once normalized
+    (``/a//x`` is ``/a/x``, ``/a/..`` is ``/``). Such a segment is listed
+    with a NUL character in front: shown, refused by the transfer walk as
+    an unsafe name (a visible row), and refused by every operation
+    (:func:`refuse_unaddressable`).
+    """
+    if segment in ("", ".", ".."):
+        return UNADDRESSABLE_MARK + segment
+    return None
+
+
+def refuse_unaddressable(path: str, where: str = "") -> str:
+    """*path* unchanged; :class:`OSError` (EINVAL) when it goes through an
+    entry :func:`unaddressable_segment_name` made up."""
+    if UNADDRESSABLE_MARK in path:
+        label = f"{where}: " if where else ""
+        raise OSError(
+            errno.EINVAL,
+            f"{label}the keys under an empty, '.' or '..' name (such as 'a//x') "
+            f"cannot be opened, copied or changed here: {path!r}",
+            path,
+        )
+    return path
 
 
 def refuse_control_chars(path: str, where: str = "") -> str:

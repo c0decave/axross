@@ -3,8 +3,9 @@ Player (ui.media_player_app) and System Information (ui.system_info_app).
 
 Both also live inside axross; scripts/export_standalone.py writes each as an
 installable project and a binary. This module is the part of axross's
-main.py they share: the interface language and the theme the user chose in
-axross (~/.config/axross/session.json), the excepthook that keeps PyQt6 from
+main.py they share: the interface language, the theme (the program's own
+choice - View > Theme, ~/.config/NAME/settings.json -, else the one chosen in
+axross, else the desktop's light or dark scheme), the excepthook that keeps PyQt6 from
 aborting the process on an exception in a slot, the multimedia probe's child
 mode for a frozen build, and an orderly exit.
 """
@@ -88,8 +89,53 @@ def prepare_process(*, multimedia: bool = False) -> None:
     install(detect_language(configured=stored_language()))
 
 
-def apply_theme(app) -> str:
-    """The theme (and compact mode) chosen in axross; its name."""
+def settings_file(name: str):
+    """The program's own settings (its theme): ~/.config/NAME/settings.json
+    (XDG_CONFIG_HOME's when set) - not axross's session.json."""
+    import os
+    from pathlib import Path
+
+    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(base) / name / "settings.json"
+
+
+def _settings(name: str) -> dict:
+    from ui.state_files import _read_json_file
+
+    try:
+        data = _read_json_file(settings_file(name))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def stored_theme(name: str) -> str | None:
+    """The theme chosen in the program (View > Theme), or None."""
+    from ui import themes
+
+    theme = _settings(name).get("theme")
+    return themes.normalize(theme) if isinstance(theme, str) else None
+
+
+def store_theme(name: str, theme: str) -> None:
+    """Keep *theme* in the program's own settings."""
+    import json
+
+    from ui.state_files import _write_private_text
+
+    data = _settings(name)
+    data["theme"] = theme
+    try:
+        _write_private_text(settings_file(name), json.dumps(data, indent=2, sort_keys=True) + "\n")
+    except OSError:
+        log.warning("Could not keep the theme in %s", settings_file(name), exc_info=True)
+
+
+def apply_theme(app, theme: str | None = None, name: str | None = None) -> str:
+    """The theme *theme* - else the one chosen in the program (*name*'s own
+    settings), else the one chosen in axross, else "modern": the desktop's
+    light or dark scheme, light when it cannot tell (a fresh home was dark
+    always: "classic"). Its name."""
     from core import i18n
     from ui import themes, window_prefs
     from ui.state_files import _read_json_file
@@ -99,19 +145,65 @@ def apply_theme(app) -> str:
     except (OSError, ValueError):
         data = None
     prefs = window_prefs.parse(data.get("window") if isinstance(data, dict) else None)
-    theme = prefs.theme or "classic"
-    scheme = themes.system_scheme()
+    theme = themes.normalize(theme or (stored_theme(name) if name else None) or prefs.theme or "modern")
+    scheme = themes.system_scheme() or "light"
     tokens = themes.palette_tokens_for(themes.resolve(theme, scheme))
+    if getattr(app, "_ax_desktop_palette", None) is None:  # (the desktop's: Light Mode's, chosen later too)
+        from PyQt6.QtGui import QPalette
+
+        app._ax_desktop_palette = QPalette(app.palette())  # noqa: SLF001 - kept with the application
     if tokens is not None:
         app.setStyle("Fusion")
         app.setPalette(themes.qpalette_for(tokens))
     else:  # Light Mode keeps the desktop's palette, with a readable selection
-        app.setPalette(themes.readable_palette(app.palette()))
+        app.setPalette(themes.readable_palette(app._ax_desktop_palette))  # noqa: SLF001
     app.setStyleSheet(themes.stylesheet_for(theme, scheme, compact=prefs.compact))
     from ui import title_bar
 
     title_bar.set_own_title_bars(prefs.own_title_bars)
+    app.setProperty("axross_theme", theme)
     return theme
+
+
+def follow_system_scheme(app, name: str | None = None) -> None:
+    """The theme made anew when the desktop turns light or dark (for
+    "modern": it follows the scheme while the program runs)."""
+    hints = app.styleHints()
+    signal = getattr(hints, "colorSchemeChanged", None)
+    if signal is None:  # (Qt before 6.5)
+        return
+
+    def changed(_scheme) -> None:
+        if app.property("axross_theme") == "modern":
+            apply_theme(app, "modern", name)
+
+    signal.connect(changed)
+
+
+def fill_theme_menu(menu, app, name: str) -> None:
+    """*menu* (View > Theme): axross's themes, the one in use checked - a
+    choice applied at once and kept in the program's own settings."""
+    from PyQt6.QtGui import QActionGroup
+
+    from core.i18n import tr
+    from ui import themes
+
+    group = QActionGroup(menu)
+    group.setExclusive(True)
+    current = app.property("axross_theme") or "modern"
+    for theme_id, label in themes.THEME_CHOICES:
+        action = menu.addAction(tr(label))
+        action.setCheckable(True)
+        action.setChecked(theme_id == current)
+        action.setData(theme_id)
+        group.addAction(action)
+
+    def chosen(action) -> None:
+        theme_id = action.data()
+        store_theme(name, theme_id)
+        apply_theme(app, theme_id, name)
+
+    group.triggered.connect(chosen)
 
 
 def run(name: str, title: str, icon_name: str, build: Callable, argv: list[str] | None = None,
@@ -152,7 +244,8 @@ def run(name: str, title: str, icon_name: str, build: Callable, argv: list[str] 
 
     install_qt_translator(app)
     app.setWindowIcon(icon(icon_name, 64))
-    apply_theme(app)
+    apply_theme(app, name=name)
+    follow_system_scheme(app, name)
     before_exit = build(app, argv[1:])
     if before_exit is not None:
         app.aboutToQuit.connect(before_exit)
@@ -173,5 +266,6 @@ def smoke_ms_from_env() -> int | None:
     return int(raw) if raw.isdigit() else None
 
 
-__all__ = ["BUNDLE_CHECK_ENV", "PROBE_ARG", "apply_theme", "bundle_check", "install_excepthook", "prepare_process", "run",
-           "smoke_ms_from_env"]
+__all__ = ["BUNDLE_CHECK_ENV", "PROBE_ARG", "apply_theme", "bundle_check", "fill_theme_menu", "follow_system_scheme",
+           "install_excepthook", "prepare_process", "run", "settings_file", "smoke_ms_from_env", "store_theme",
+           "stored_theme"]

@@ -104,6 +104,13 @@ class DisconnectedPanePlaceholder(QWidget):
     def title_text(self) -> str:
         return self._title.text()
 
+    def rename_profile(self, name: str) -> None:
+        """The profile was renamed (Connection dialog): show and keep *name*."""
+        self.profile_name = name
+        self._title.setText(tr("Not connected – {name}").format(name=name))
+        self.reconnect_button.setToolTip(
+            tr("Connect '{name}' and open it here").format(name=name))
+
     def set_note(self, text: str) -> None:
         self._note.setText(text)
 

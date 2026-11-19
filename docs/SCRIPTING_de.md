@@ -99,7 +99,9 @@ So verhält sich ein Lauf:
   Statuszeile zeigt Exit-Status und Dauer, oder *stopped*.
 - Eine Traceback-Zeile, die ins Skript zeigt, ist ein Link: ein Klick
   springt im Editor zu dieser Zeile.
-- Schließen des Fensters beendet ein laufendes Skript. Wechseln zu
+- Schließen des Fensters beendet ein laufendes Skript; wird axross
+  beendet oder stürzt es ab, endet der Lauf mit ihm, samt dem, was er
+  gestartet hat (Linux, macOS). Wechseln zu
   einem anderen Skript oder Schließen des Fensters mit ungespeicherten
   Änderungen fragt Save / Discard / Cancel.
 - Ein eigener Lauf hat kein Terminal: `axross.confirm()` wirft

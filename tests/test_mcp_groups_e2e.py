@@ -255,7 +255,7 @@ def _drive(client, root: Path) -> None:
     assert status["status"] == "cancelled", status
     assert not list((root / "big").glob("slow*")) and not list(
         (root / "big").glob(".axross-pack-*")
-    )
+    ) and not list((root / "big").glob(".tmp-*.tmp"))
 
 
 def test_happy_stdio_server_serves_every_group(world):
@@ -282,11 +282,12 @@ def test_sad_stdio_without_write_offers_no_mutating_group_tool(world):
     proc = subprocess.run(
         [sys.executable, str(REPO / "main.py"), "--mcp-server", "--mcp-tools", "all",
          "--mcp-root", str(root)],
-        input=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}) + "\n",
+        input=json.dumps({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {}})
+        + "\n" + json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}) + "\n",
         capture_output=True, text=True, timeout=TIMEOUT, env=_child_env(home), cwd=REPO,
     )
     assert proc.returncode == 0, proc.stderr
-    tools = json.loads(proc.stdout.splitlines()[0])["result"]["tools"]
+    tools = json.loads(proc.stdout.splitlines()[1])["result"]["tools"]
     names = {t["name"] for t in tools}
     assert "metadata_read" in names and "pack" not in names and "transfer_copy" not in names
 

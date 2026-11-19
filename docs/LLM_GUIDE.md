@@ -91,8 +91,8 @@ those flags would serve.
 - Calls have a wall-clock limit by class (`quick` 15 s … `long`
   1800 s; the catalog lists each tool's). A call over it fails with
   `-32002`.
-- For whole trees and big files use `tasks/start` (same arguments as
-  `tools/call`), then poll `tasks/status` and stop with `tasks/cancel`.
+- For whole trees and big files use `axross/tasks/start` (same arguments as
+  `tools/call`), then poll `axross/tasks/status` and stop with `axross/tasks/cancel`.
   On stdio this is the only way to cancel a running job.
 - Calls are rate-limited (`-32001`): back off and retry later, do not
   loop.
@@ -105,7 +105,7 @@ those flags would serve.
 | `-32603` | The operation failed: the backend raised (`data.type` names the exception: `FileNotFoundError`, `PermissionError`, `OSError`, …), a root escape, a refused profile, a cancelled call. The message starts with `tool '<name>' failed:`. | Read the message. A `PermissionError` is a decision — do not try to route around it. |
 | `-32601` | Unknown method or tool, or a capability that is switched off. | Check `tools/list`. |
 | `-32001` | Rate limit or too many running tasks. | Wait, then retry. |
-| `-32002` | The tool ran out of time. | Narrow the request or use `tasks/start`. |
+| `-32002` | The tool ran out of time. | Narrow the request or use `axross/tasks/start`. |
 
 ## 7. Commands on remote hosts (`exec`)
 
@@ -291,12 +291,14 @@ File tools of the configured backend; always on, read-only.
 List entries in a directory on the configured backend.
 
 - `path` (string, required): Absolute path on the backend.
+- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
 
 #### `stat` — read-only · quick (15 s) · stdio + http · *backend*
 
 Return name, type, size, and mtime for one path.
 
 - `path` (string, required)
+- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
 
 #### `read_file` — read-only · quick (15 s) · stdio + http · *backend*
 
@@ -306,6 +308,7 @@ Read up to max_bytes (default 4 MiB) from a file, from byte offset on (default 0
 - `encoding` (string, one of `base64`, `text`, default `"base64"`): base64 (exact bytes) or text (UTF-8, for text files).
 - `max_bytes` (integer, >= 0)
 - `offset` (integer, default `0`, >= 0)
+- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
 
 #### `checksum` — read-only · stream (300 s) · stdio + http · *backend*
 
@@ -313,33 +316,37 @@ Content hash of a file. Tries the backend's native fingerprint first (S3 ETag, D
 
 - `path` (string, required)
 - `algorithm` (string, one of `md5`, `sha1`, `sha256`, `sha512`)
+- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
 
 #### `search` — read-only · quick (15 s) · stdio + http · *backend*
 
-Search the offline metadata index by name substring, extension, and size range. Free of network round-trips.
+Search the offline metadata index by name substring, extension, and size range. Free of network round-trips. At most limit results (default 1000, at most 10000): ask for one more than you need to learn whether there are more. A notifications/cancelled stops it.
 
 - `ext` (string)
+- `limit` (integer, 1..10000)
 - `max_size` (integer, >= 0)
 - `min_size` (integer, >= 0)
 - `needle` (string)
 
 #### `walk` — read-only · walk (60 s) · stdio + http · *backend*
 
-Breadth-first recursive listing under path. Caps at max_depth (default 4) and max_entries (default 1000). Returns {entries: [{path, name, is_dir, size}], truncated, unreadable: [{path, error}], complete}: unreadable names every folder below path that could not be listed; complete is true only when nothing was cut or left out. An unreadable path itself is an error. Emits MCP progress notifications when the caller supplied _meta.progressToken.
+Breadth-first recursive listing under path. Caps at max_depth (default 4, at most 64) and max_entries (default 1000, at most 100000). Returns {entries: [{path, name, is_dir, size}], truncated, unreadable: [{path, error}], complete}: unreadable names every folder below path that could not be listed; complete is true only when nothing was cut or left out. An unreadable path itself is an error. Emits MCP progress notifications when the caller supplied _meta.progressToken.
 
 - `path` (string, required)
-- `max_depth` (integer, >= 0)
-- `max_entries` (integer, >= 1)
+- `max_depth` (integer, 0..64)
+- `max_entries` (integer, 1..100000)
+- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
 
 #### `recursive_checksum` — read-only · stream (300 s) · stdio + http · *backend*
 
-Hash every file under path breadth-first. Each record is either {path, size, algorithm, checksum, source} (hashed), {path, size, algorithm, skipped: "too-large"} (file above max_file_bytes), or {path, size, algorithm, error: "<msg>"} (backend refused that one file), or {path, folder: true, algorithm, error} (a folder that could not be listed: the files below it are missing). complete is true only when every file was hashed and nothing was cut; an unreadable path itself is an error. Emits one progress notification per hashed file; a notifications/cancelled lands within one chunk of the current file. algorithm is one of sha256 / sha1 / md5 / sha512. Defaults: max_files=500, max_depth=10, max_file_bytes=1 GiB. If path names a file instead of a directory the result contains exactly one record.
+Hash every file under path breadth-first. Each record is either {path, size, algorithm, checksum, source} (hashed), {path, size, algorithm, skipped: "too-large"} (file above max_file_bytes), or {path, size, algorithm, error: "<msg>"} (backend refused that one file), or {path, folder: true, algorithm, error} (a folder that could not be listed: the files below it are missing). complete is true only when every file was hashed and nothing was cut; an unreadable path itself is an error. Emits one progress notification per hashed file; a notifications/cancelled lands within one chunk of the current file. algorithm is one of sha256 / sha1 / md5 / sha512. Defaults: max_files=500, max_depth=10, max_file_bytes=1 GiB (at most max_files=50000, max_depth=64). If path names a file instead of a directory the result contains exactly one record.
 
 - `path` (string, required)
 - `algorithm` (string, one of `md5`, `sha1`, `sha256`, `sha512`)
-- `max_depth` (integer, >= 0)
+- `max_depth` (integer, 0..64)
 - `max_file_bytes` (integer, >= 1)
-- `max_files` (integer, >= 1)
+- `max_files` (integer, 1..50000)
+- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
 
 #### `preview` — read-only · preview (30 s) · stdio + http · *backend*
 
@@ -347,6 +354,7 @@ Render a thumbnail of an image file. Returns MCP image content (base64 + mimeTyp
 
 - `path` (string, required)
 - `edge` (integer, 16..2048)
+- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
 
 #### `grep` — read-only · walk (60 s) · stdio + http · *backend*
 
@@ -356,12 +364,14 @@ Regex search inside file contents under a root path. Recurses up to max_depth (d
 - `max_depth` (integer, >= 0)
 - `max_matches` (integer, >= 1)
 - `path` (string)
+- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
 
 #### `list_versions` — read-only · quick (15 s) · stdio + http · *backend*
 
 List historical versions of a file (S3 ObjectVersions, Dropbox revisions, GDrive revision-history, Azure blob snapshots, WebDAV DeltaV, Git: one per commit that changed the file). Empty list on backends with no native versioning.
 
 - `path` (string, required)
+- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
 
 #### `open_version_read` — read-only · quick (15 s) · stdio + http · *backend*
 
@@ -370,6 +380,7 @@ Read a specific historical version of a file. Same max_bytes cap (default 4 MiB)
 - `path` (string, required)
 - `version_id` (string, required)
 - `max_bytes` (integer, >= 0)
+- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
 
 ### `write`
 
@@ -384,6 +395,7 @@ Needs: `--mcp-write` `--mcp-root DIR`.
 - `path` (string, required)
 - `content` (string): The new content as UTF-8 text.
 - `content_b64` (string): The new content as base64 bytes.
+- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
 
 #### `mkdir` — mutating · write (30 s) · stdio + http · *backend*
 
@@ -392,6 +404,7 @@ Create a directory on the backend.
 Needs: `--mcp-write` `--mcp-root DIR`.
 
 - `path` (string, required)
+- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
 
 #### `remove` — mutating · write (30 s) · stdio + http · *backend*
 
@@ -400,6 +413,7 @@ Delete a file or directory.
 Needs: `--mcp-write` `--mcp-root DIR`.
 
 - `path` (string, required)
+- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
 - `recursive` (boolean)
 
 #### `rename` — mutating · write (30 s) · stdio + http · *backend*
@@ -410,6 +424,8 @@ Needs: `--mcp-write` `--mcp-root DIR`.
 
 - `dst` (string, required)
 - `src` (string, required)
+- `dst_b64` (string): Instead of dst: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a dst_b64 / name_b64 field).
+- `src_b64` (string): Instead of src: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a src_b64 / name_b64 field).
 
 #### `copy` — mutating · write (30 s) · stdio + http · *backend*
 
@@ -419,19 +435,23 @@ Needs: `--mcp-write` `--mcp-root DIR`.
 
 - `dst` (string, required)
 - `src` (string, required)
+- `dst_b64` (string): Instead of dst: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a dst_b64 / name_b64 field).
+- `src_b64` (string): Instead of src: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a src_b64 / name_b64 field).
 
 #### `bulk_copy` — mutating · stream (300 s) · stdio + http · *backend*
 
-Copy a file OR directory tree from src into dst. Per-file records: {src, dst, size, action} where action is "copied", "skipped" (reason: "too-large", "exists", "unsafe-name", or "max-depth" for a folder below max_depth), or "error" (folder: true for a folder that could not be listed). "truncated" is true when max_files or max_depth cut the walk; "complete" is true only when every file was copied or already existed. Emits one progress notification per copied file; a notifications/cancelled stops within one file. Defaults: max_files=1000, max_depth=10, max_file_bytes=10 GiB, overwrite=false. Missing dst parent directories are created automatically. Same-backend only in V1 — cross-backend copy is handled by the transfer manager, not the MCP surface.
+Copy a file OR directory tree from src into dst. Per-file records: {src, dst, size, action} where action is "copied", "skipped" (reason: "too-large", "exists", "unsafe-name", or "max-depth" for a folder below max_depth), or "error" (folder: true for a folder that could not be listed). "truncated" is true when max_files or max_depth cut the walk; "complete" is true only when every file was copied or already existed. Emits one progress notification per copied file; a notifications/cancelled stops within one file. Defaults: max_files=1000, max_depth=10, max_file_bytes=10 GiB, overwrite=false (at most max_files=100000, max_depth=64). Missing dst parent directories are created automatically. Same-backend only in V1 — cross-backend copy is handled by the transfer manager, not the MCP surface.
 
 Needs: `--mcp-write` `--mcp-root DIR`.
 
 - `dst` (string, required)
 - `src` (string, required)
-- `max_depth` (integer, >= 0)
+- `dst_b64` (string): Instead of dst: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a dst_b64 / name_b64 field).
+- `max_depth` (integer, 0..64)
 - `max_file_bytes` (integer, >= 1)
-- `max_files` (integer, >= 1)
+- `max_files` (integer, 1..100000)
 - `overwrite` (boolean)
+- `src_b64` (string): Instead of src: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a src_b64 / name_b64 field).
 
 #### `symlink` — mutating · write (30 s) · stdio + http · *backend*
 
@@ -441,6 +461,8 @@ Needs: `--mcp-write` `--mcp-root DIR`.
 
 - `link_path` (string, required)
 - `target` (string, required)
+- `link_path_b64` (string): Instead of link_path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a link_path_b64 / name_b64 field).
+- `target_b64` (string): Instead of target: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a target_b64 / name_b64 field).
 
 #### `hardlink` — mutating · write (30 s) · stdio + http · *backend*
 
@@ -450,6 +472,8 @@ Needs: `--mcp-write` `--mcp-root DIR`.
 
 - `link_path` (string, required)
 - `target` (string, required)
+- `link_path_b64` (string): Instead of link_path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a link_path_b64 / name_b64 field).
+- `target_b64` (string): Instead of target: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a target_b64 / name_b64 field).
 
 #### `chmod` — mutating · write (30 s) · stdio + http · *backend*
 
@@ -459,6 +483,7 @@ Needs: `--mcp-write` `--mcp-root DIR`.
 
 - `mode` (any, required)
 - `path` (string, required)
+- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
 
 ### `scripts`
 
@@ -477,6 +502,7 @@ Describe the ``axross`` scripting API that script_run gives a script, as JSON bu
 Needs: `--mcp-allow-scripts`.
 
 - `names` (array of string): Only these functions, classes and types, plus the types they use; [] gives the index alone. Default: everything.
+- `names_b64` (array of string): Instead of names: base64 of each name's raw bytes.
 
 #### `script_read` — read-only · quick (15 s) · stdio
 
@@ -540,15 +566,18 @@ Needs: `--mcp-tools archive`.
 
 - `path` (string, required): Archive file (zip family, tar.*, 7z, rar, gz/bz2/xz/zst) on the local backend.
 - `max_entries` (integer, default `1000`, 1..10000): Return at most this many entries.
+- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
 
 #### `archive_extract` — mutating · long (1800 s) · stdio + http · *backend*
 
-Extract an archive into a new folder named after it inside dest_dir (default: the archive's folder): 'x.zip' -> 'x', then 'x-1', … - an existing folder is never written into. Zip-slip, absolute paths, more than 10,000 entries, more than 1 GiB or a compression ratio above 100 are refused and nothing is left behind. Returns {path (the new folder), files}, plus {skipped_links, note} when symbolic links were left out (they are never extracted). Progress per file; cancellable (the partial folder is removed). Local backend only.
+Extract an archive into a new folder named after it inside dest_dir (default: the archive's folder): 'x.zip' -> 'x', then 'x-1', … - an existing folder is never written into. Zip-slip, absolute paths, more than 10,000 entries, more than 1 GiB or a member of 64 MiB or more compressed above 100:1 are refused and nothing is left behind. Returns {path (the new folder), files}, plus {skipped_links, note} when symbolic links were left out (they are never extracted). Progress per file; cancellable (the partial folder is removed). Local backend only.
 
 Needs: `--mcp-tools archive` `--mcp-write` `--mcp-root DIR`.
 
 - `path` (string, required): Archive file (zip family, tar.*, 7z, rar, gz/bz2/xz/zst) on the local backend.
 - `dest_dir` (string): Existing folder under the MCP root to extract into.
+- `dest_dir_b64` (string): Instead of dest_dir: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a dest_dir_b64 / name_b64 field).
+- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
 
 ### `crypto`
 
@@ -562,6 +591,7 @@ Needs: `--mcp-tools crypto` `--mcp-write` `--mcp-root DIR`.
 
 - `passphrase` (string, required, secret, never echoed): Passphrase (PBKDF2-SHA256, 200,000 iterations, AES-256-GCM). Never logged or returned.
 - `path` (string, required): File to encrypt.
+- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
 
 #### `decrypt` — mutating · stream (300 s) · stdio + http · *backend*
 
@@ -571,6 +601,7 @@ Needs: `--mcp-tools crypto` `--mcp-write` `--mcp-root DIR`.
 
 - `passphrase` (string, required, secret, never echoed): Passphrase (PBKDF2-SHA256, 200,000 iterations, AES-256-GCM). Never logged or returned.
 - `path` (string, required): The .axenc file.
+- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
 
 ### `duplicates`
 
@@ -583,7 +614,9 @@ Hash every file under a folder into the Duplicate Finder's index (the same index
 Needs: `--mcp-tools duplicates`.
 
 - `algorithm` (string, one of `md5`, `sha1`, `sha256`, `sha512`, default `"sha256"`): Hash algorithm.
+- `max_files` (integer, 1..1000000): Visit at most this many entries (truncated=true); default 100,000 on a remote, 1,000,000 locally.
 - `path` (string): Folder; default: the MCP root (local backend).
+- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
 - `rehash` (boolean, default `false`): Hash every file even when unchanged.
 
 #### `duplicates_scans` — read-only · quick (15 s) · stdio + http · *backend*
@@ -601,6 +634,7 @@ Needs: `--mcp-tools duplicates`.
 - `algorithm` (string, one of `md5`, `sha1`, `sha256`, `sha512`): Only groups hashed with this algorithm; omit for all.
 - `max_groups` (integer, default `100`, 1..1000): Return at most this many groups.
 - `path` (string): Folder; default: the MCP root (local backend).
+- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
 - `scan_id` (integer, 0..2147483647): Only groups with at least one copy from this scan (duplicates_scans); 0 = rows from before scans were recorded.
 
 #### `duplicates_dedupe` — mutating · long (1800 s) · stdio + http · *backend*
@@ -612,6 +646,7 @@ Needs: `--mcp-tools duplicates` `--mcp-write` `--mcp-root DIR`.
 - `algorithm` (string, one of `md5`, `sha1`, `sha256`, `sha512`): Only groups hashed with this algorithm; omit for all.
 - `dry_run` (boolean, default `true`): true: only plan; false: move the planned copies to the trash.
 - `path` (string): Folder; default: the MCP root (local backend).
+- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
 - `scan_id` (integer, 0..2147483647): Only groups with at least one copy from this scan (duplicates_scans); 0 = rows from before scans were recorded.
 
 ### `exec`
@@ -679,6 +714,7 @@ Needs: `--mcp-tools filetype`.
 
 - `path` (string, required): File to identify.
 - `max_bytes` (integer, default `65536`, 1..1048576): Read at most this many bytes per file.
+- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
 - `use_file_command` (boolean, default `true`): Also ask file(1) for its description (local files only).
 
 #### `file_type_scan` — read-only · stream (300 s) · stdio + http · *backend*
@@ -692,6 +728,7 @@ Needs: `--mcp-tools filetype`.
 - `max_depth` (integer, default `2`, 0..50): Subfolder levels to descend (0: the folder itself only).
 - `max_files` (integer, default `500`, 1..5000): Stop after this many files (truncated=true).
 - `mismatches_only` (boolean, default `false`): List only files whose content does not match the extension.
+- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
 - `use_file_command` (boolean, default `true`): Also ask file(1) for its description (local files only).
 
 ### `index`
@@ -704,7 +741,9 @@ Walk a folder and record every entry (name, size, type, mtime) in the offline me
 
 Needs: `--mcp-tools index`.
 
+- `max_files` (integer, 1..1000000): Visit at most this many entries (truncated=true); default 100,000 on a remote, 1,000,000 locally.
 - `path` (string): Folder; default: the MCP root (local backend).
+- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
 - `prune` (boolean, default `false`): Also drop rows of files under the folder that are gone.
 - `recursive` (boolean, default `true`): Descend into subfolders.
 
@@ -720,6 +759,7 @@ Needs: `--mcp-tools metadata`.
 
 - `path` (string, required): A file, or a folder whose supported files are used.
 - `max_files` (integer, default `200`, 1..2000): For a folder: at most this many files (truncated=true when cut).
+- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
 - `recursive` (boolean, default `false`): For a folder: descend into subfolders.
 
 #### `metadata_export` — read-only · stream (300 s) · stdio + http · *backend*
@@ -731,6 +771,7 @@ Needs: `--mcp-tools metadata`.
 - `path` (string, required): A file, or a folder whose supported files are used.
 - `format` (string, one of `json`, `csv`, default `"json"`): json: {"files": [...]}; csv: one row per field, formula-safe.
 - `max_files` (integer, default `200`, 1..2000): For a folder: at most this many files (truncated=true when cut).
+- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
 - `recursive` (boolean, default `false`): For a folder: descend into subfolders.
 
 #### `metadata_export_file` — mutating · stream (300 s) · stdio + http · *backend*
@@ -743,6 +784,8 @@ Needs: `--mcp-tools metadata` `--mcp-write` `--mcp-root DIR`.
 - `path` (string, required): A file, or a folder whose supported files are used.
 - `format` (string, one of `json`, `csv`, default `"json"`): json: {"files": [...]}; csv: one row per field, formula-safe.
 - `max_files` (integer, default `200`, 1..2000): For a folder: at most this many files (truncated=true when cut).
+- `out_b64` (string): Instead of out: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a out_b64 / name_b64 field).
+- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
 - `recursive` (boolean, default `false`): For a folder: descend into subfolders.
 
 #### `metadata_remove` — mutating · long (1800 s) · stdio + http · *backend*
@@ -753,6 +796,7 @@ Needs: `--mcp-tools metadata` `--mcp-write` `--mcp-root DIR`.
 
 - `path` (string, required): A file, or a folder whose supported files are used.
 - `max_files` (integer, default `200`, 1..2000): For a folder: at most this many files (truncated=true when cut).
+- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
 - `recursive` (boolean, default `false`): For a folder: descend into subfolders.
 
 ### `packer`
@@ -775,8 +819,10 @@ Needs: `--mcp-tools packer` `--mcp-write` `--mcp-root DIR`.
 - `folder` (string, required): Folder holding the entries; the archive is created here.
 - `names` (array of string, required): Names of files or folders directly inside folder (no path separators, no repeats).
 - `encrypt_names` (boolean, default `true`): 7z with password: also encrypt the file list.
+- `folder_b64` (string): Instead of folder: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a folder_b64 / name_b64 field).
 - `format` (string, one of `zip`, `tar.gz`, `tar.zst`, `tar.xz`, `tar.bz2`, `7z`, `gz`, `zst`, `xz`, `bz2`, default `"zip"`): Archive format (see pack_formats).
 - `level` (string, one of `fast`, `normal`, `best`, default `"normal"`): Compression level.
+- `names_b64` (array of string): Instead of names: base64 of each name's raw bytes.
 - `password` (string, secret, never echoed): 7z only: encrypt with AES-256. Never logged or returned.
 
 ### `remote`
@@ -815,18 +861,20 @@ Copy or move files and folders between backends, optionally resumable (mutating)
 
 #### `transfer_copy` — mutating · long (1800 s) · stdio + http
 
-Copy a file or a folder tree from one backend to another (or within one). Local paths are confined to the MCP root, remote ones are not. Existing destination files are skipped unless overwrite; symlinks are skipped; missing destination folders are created. resumable=true copies each file in 4 MiB segments with a local manifest: a cancelled or failed run continues where it stopped when called again with the same arguments. Returns {src, dst, copied, truncated, complete, entries: [{src, dst, size, action (copied|skipped|error), reason, bytes, resumed_segments, error, folder}]}. Every part left out has a record: reason exists, too-large, symlink, unsafe-name, outside-root or max-depth (also sets truncated); a folder that could not be listed is an error with folder=true. complete is true only when every file was copied or already existed. Progress per file; cancellable.
+Copy a file or a folder tree from one backend to another (or within one). Local paths are confined to the MCP root, remote ones are not. Existing destination files are skipped unless overwrite; symlinks are skipped; missing destination folders are created. resumable=true copies each file in 4 MiB segments with a local manifest: a cancelled or failed run continues where it stopped when called again with the same arguments. Returns {src, dst, copied, truncated, complete, entries: [{src, dst, size, action (copied|skipped|error), reason, bytes, resumed_segments, error, folder}]}. Every part left out has a record: reason exists, too-large (also when a source sends more than max_file_bytes, whatever size it gave), symlink, special-file (device, FIFO), protected (a protected destination), unsafe-name (control characters too), outside-root or max-depth (also sets truncated); a folder that could not be listed is an error with folder=true. complete is true only when every file was copied or already existed. Local files it creates are mode 0600. Progress per file; cancellable mid-file (the partial file is removed).
 
 Needs: `--mcp-tools transfer` `--mcp-write` `--mcp-root DIR`.
 
 - `dst` (string, required): Destination path on dst_backend (the file, or the folder that becomes the copy of a source folder).
 - `src` (string, required): Source path on src_backend.
+- `dst_b64` (string): Instead of dst: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a dst_b64 / name_b64 field).
 - `dst_backend` (string, default `"local"`): Backend id of the destination.
 - `max_depth` (integer, default `10`, 0..50): Subfolder levels to descend.
 - `max_file_bytes` (integer, default `10737418240`, 1..1125899906842624): Skip files above this size (reason too-large).
 - `max_files` (integer, default `1000`, 1..10000): Copy at most this many files (truncated=true).
 - `overwrite` (boolean, default `false`): Replace existing destination files.
 - `resumable` (boolean, default `false`): Segmented copy that can continue after an interruption.
+- `src_b64` (string): Instead of src: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a src_b64 / name_b64 field).
 - `src_backend` (string, default `"local"`): Backend id of the source (list_backends); 'local' is the local file system under the MCP root.
 
 #### `transfer_move` — mutating · long (1800 s) · stdio + http
@@ -837,7 +885,9 @@ Needs: `--mcp-tools transfer` `--mcp-write` `--mcp-root DIR`.
 
 - `dst` (string, required): Destination path on dst_backend (the file, or the folder that becomes the copy of a source folder).
 - `src` (string, required): Source path on src_backend.
+- `dst_b64` (string): Instead of dst: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a dst_b64 / name_b64 field).
 - `dst_backend` (string, default `"local"`): Backend id of the destination.
+- `src_b64` (string): Instead of src: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a src_b64 / name_b64 field).
 - `src_backend` (string, default `"local"`): Backend id of the source (list_backends); 'local' is the local file system under the MCP root.
 
 <!-- END GENERATED TOOL CATALOG -->
@@ -916,8 +966,8 @@ Needs: `--mcp-tools transfer` `--mcp-write` `--mcp-root DIR`.
 ### Bookmarks + scripts
 
 - `axross.list_bookmarks() -> list` — read-only. Return all saved bookmarks (list of :class:`Bookmark`).
-- `axross.add_bookmark(name: str, path: str, backend_name: str = 'Local', profile_name: str = '', icon_name: str = 'bookmark') -> None` — mutates. Create a new bookmark. Idempotent on (path, backend_name).
-- `axross.remove_bookmark(index: int) -> None` — mutates. Remove the bookmark at ``index`` (zero-based).
+- `axross.add_bookmark(name: str, path: str, backend_name: str = 'Local', profile_name: str = '', icon_name: str = 'bookmark') -> None` — mutates. Create a new bookmark. Idempotent on (path, backend_name). Raises OSError when the bookmarks file could not be written.
+- `axross.remove_bookmark(index: int) -> None` — mutates · raises IndexError. Remove the bookmark at ``index`` (zero-based, as :func:`list_bookmarks` lists them). Raises IndexError for an index outside that list (also a negative one) and OSError when the bookmarks file could not be written.
 - `axross.script_dir() -> str` — read-only · raises OSError. Return the script-storage directory path. Created on first access. Mode 0700 so other local users can't read scripts that might contain credentials.
 - `axross.list_scripts() -> list[str]` — read-only · raises OSError. Names of every saved script in :func:`script_dir`.
 - `axross.save_script(name: str, source: str) -> str` — mutates · raises OSError, ValueError. Write ``source`` to ``script_dir()/<name>.py`` (mode 0o600). Overwrites any existing file with the same name. Returns the final on-disk path.
@@ -953,8 +1003,8 @@ Needs: `--mcp-tools transfer` `--mcp-write` `--mcp-root DIR`.
 - `axross.tls_cert(host: str, port: int = 443, *, timeout: float = 5.0, sni: str | None = None, verify: bool = False) -> TlsCert` — read-only · raises OSError. TLS handshake against ``host:port`` and return the parsed leaf certificate.
 - `axross.ssh_hostkey(host: str, port: int = 22, *, timeout: float = 5.0) -> SshHostKey` — read-only. Connect, complete the SSH KEX, fetch the server's host key and return its fingerprints. NO authentication is attempted.
 - `axross.http_probe(url: str, *, method: str = 'GET', headers: dict[str, str] | None = None, body: bytes | str | None = None, timeout: float = 10.0, allow_redirects: bool = True, body_cap: int = 1048576, raw_cap: int | None = None, verify: bool = True) -> HttpProbe` — read-only · raises OSError, ValueError. Lightweight HTTP/HTTPS probe via ``requests``. Returns the response status, headers, body (up to ``body_cap``), redirect chain, and the TLS leaf cert when applicable.
-- `axross.snmp_get(host: str, oid: str, *, community: str = 'public', port: int = 161, timeout: float = 3.0, retries: int = 1, user: str | None = None, auth_key: str | None = None, priv_key: str | None = None, auth_proto: str | None = None, priv_proto: str | None = None) -> SnmpVar` — read-only · raises OSError. Issue a single SNMP GET request. Returns one ``SnmpVar`` for the OID. Raises ``OSError`` on transport failure.
-- `axross.snmp_walk(host: str, base_oid: str, *, community: str = 'public', port: int = 161, timeout: float = 3.0, retries: int = 1, max_vars: int = 10000, user: str | None = None, auth_key: str | None = None, priv_key: str | None = None, auth_proto: str | None = None, priv_proto: str | None = None) -> list[SnmpVar]` — read-only · raises OSError. Walk an OID subtree, returning every leaf as an ``SnmpVar``. ``max_vars`` caps the result at a sane number — a walk of ``1.3`` on a packed device returns thousands of varbinds.
+- `axross.snmp_get(host: str, oid: str, *, community: str = 'public', port: int = 161, timeout: float = 3.0, retries: int = 1, user: str | None = None, auth_key: str | None = None, priv_key: str | None = None, auth_proto: str | None = None, priv_proto: str | None = None) -> SnmpVar` — read-only · raises FileNotFoundError, OSError, ValueError. Issue a single SNMP GET request. Returns one ``SnmpVar`` for the OID. Raises ``OSError`` on transport failure.
+- `axross.snmp_walk(host: str, base_oid: str, *, community: str = 'public', port: int = 161, timeout: float = 3.0, retries: int = 1, max_vars: int = 10000, user: str | None = None, auth_key: str | None = None, priv_key: str | None = None, auth_proto: str | None = None, priv_proto: str | None = None) -> list[SnmpVar]` — read-only · raises OSError, ValueError. Walk an OID subtree, returning every leaf as an ``SnmpVar``. ``max_vars`` caps the result at a sane number — a walk of ``1.3`` on a packed device returns thousands of varbinds.
 - `axross.snmp_set(host: str, oid: str, value: Any, *, value_type: str = 'OctetString', community: str = 'private', port: int = 161, timeout: float = 3.0, retries: int = 1) -> SnmpVar` — mutates · raises OSError, ValueError. Issue an SNMP SET. ``value_type`` is the pysnmp type-class name (``OctetString`` / ``Integer`` / ``Counter32`` / …).
 - `axross.ping(host: str, *, port: int = 80, timeout: float = 3.0, count: int = 1) -> list[PingResult]` — read-only. TCP-based reachability probe — connect to ``host:port`` and measure RTT. Returns one ``PingResult`` per ``count`` attempt.
 - `axross.mac_lookup(mac: str) -> OuiInfo` — read-only · raises OSError, ValueError. Look up the IEEE OUI vendor for a MAC address.
@@ -1105,7 +1155,7 @@ Needs: `--mcp-tools transfer` `--mcp-write` `--mcp-root DIR`.
 - `AttemptResult` (enum, `core.cred_attack`): SUCCESS, FAILED, LOCKOUT, ERROR, SKIPPED — Outcome of a single credential attempt.
 - `CasEntry` (class, `core.cas`): backend_id, path, algorithm, value, size, indexed_at, mtime, scan_id, file_id — One row from the CAS index.
 - `CompareReport` (class, `core.multi_view`): path, probes, content_diff, all_equal() — Result of comparing the SAME path across N backends.
-- `ConnectionProfile` (class, `core.profiles`): name, protocol, host, port, username, auth_type, key_file, store_password, proxy_mode, proxy_type, proxy_host, proxy_port, proxy_username, store_proxy_password, proxy_command, proxy_command_confirmed, _proxy_password_override, address_family, ftp_passive, ftps_verify_tls, smb_share, webdav_url, s3_bucket, s3_region, s3_endpoint, rsync_module, rsync_ssh, rsync_ssh_key, nfs_export, nfs_version, nfs_minor, nfs_machine_name, nfs_uid, nfs_gid, nfs_gids, nfs_privileged_port, nfs_client_id, azure_container, azure_connection_string, azure_account_name, azure_sas_token, azure_share, onedrive_client_id, onedrive_tenant_id, sharepoint_site_url, gdrive_client_id, gdrive_client_secret, dropbox_app_key, dropbox_app_secret, iscsi_target_iqn, iscsi_mount_point, iscsi_initiator_name, iscsi_initiator_interface, imap_ssl, pop3_ssl, nntp_ssl, tftp_filelist, tftp_filelist_enabled, tftp_max_size_bytes, adb_mode, adb_usb_serial, mtp_device_id, mtp_mounter, ssh_keepalive_interval, sftp_timeout, smb_client_name, telnet_naws_width, telnet_naws_height, rsync_preserve_metadata, suppress_shell_history, terminal_theme, production, get_password(), get_proxy_password(), nfs_sender_chosen(), set_password(), set_proxy_password(), to_dict() — A saved connection profile (multi-protocol).
+- `ConnectionProfile` (class, `core.profiles`): name, protocol, host, port, username, auth_type, key_file, store_password, proxy_mode, proxy_type, proxy_host, proxy_port, proxy_username, store_proxy_password, proxy_command, proxy_command_confirmed, _proxy_password_override, address_family, ftp_passive, ftps_verify_tls, smb_share, webdav_url, s3_bucket, s3_region, s3_endpoint, rsync_module, rsync_ssh, rsync_ssh_key, nfs_export, nfs_version, nfs_minor, nfs_machine_name, nfs_uid, nfs_gid, nfs_gids, nfs_privileged_port, nfs_client_id, azure_container, azure_connection_string, azure_account_name, azure_sas_token, azure_share, onedrive_client_id, onedrive_tenant_id, sharepoint_site_url, gdrive_client_id, gdrive_client_secret, dropbox_app_key, dropbox_app_secret, iscsi_target_iqn, iscsi_mount_point, iscsi_initiator_name, iscsi_initiator_interface, imap_ssl, imap_starttls, pop3_ssl, pop3_starttls, nntp_ssl, tftp_filelist, tftp_filelist_enabled, tftp_max_size_bytes, db_name, db_tls, ldap_ssl, ldap_starttls, slp_scope, exchange_email, adb_mode, adb_usb_serial, mtp_device_id, mtp_mounter, ssh_keepalive_interval, sftp_timeout, smb_client_name, telnet_naws_width, telnet_naws_height, rsync_preserve_metadata, winrm_https, winrm_verify_tls, suppress_shell_history, terminal_theme, production, get_password(), get_proxy_password(), nfs_sender_chosen(), set_password(), set_proxy_password(), tls_mode(), to_dict() — A saved connection profile (multi-protocol).
 - `Credential` (class, `core.cred_attack`): username, password — A pair of (username, password) the loop discovered as valid.
 - `DedupeResult` (class, `core.cas`): dry_run, groups, keep, trash, undated_groups, removed, refused, failed, render() — What :func:`dedupe` planned and, unless a dry run, did.
 - `EnumReport` (class, `core.cred_attack`): target_protocol, target_host, started_at, finished_at, results, hits(), summary() — EnumReport(target_protocol: 'str', target_host: 'str', started_at: 'float', finished_at: 'float', results: 'list[EnumResult]' = <factory>)
@@ -1128,7 +1178,7 @@ Needs: `--mcp-tools transfer` `--mcp-write` `--mcp-root DIR`.
 - `ReverseServer` (class, `core.reverse_serve`): flavour, bind, port, backend_label, httpd, thread, auth_token, tls, base_url, shutdown() — Live handle on a running reverse-server.
 - `ScanRecord` (class, `core.cas`): scan_id, backend_id, root, algorithm, started_at, finished_at, files_indexed, status, files_in_index, duplicate_groups, error — One rebuild of the index, as the history shows it.
 - `SearchHit` (class, `core.search_federation`): backend_label, path, size, mtime, is_dir, snippet, score, warning, category, archive_path, member — One result row.
-- `SearchQuery` (class, `core.search_federation`): name, regex, contains, contains_is_regex, min_size, max_size, modified_after, modified_before, roots, max_depth, ignore_dirs, categories, search_archives, include_hidden, case_sensitive, _compiled_regex, _compiled_contains, contains_regex(), matches_mtime(), matches_name(), matches_size(), validate() — What to search for.
+- `SearchQuery` (class, `core.search_federation`): name, regex, contains, contains_is_regex, min_size, max_size, modified_after, modified_before, roots, max_depth, ignore_dirs, categories, search_archives, include_hidden, case_sensitive, _compiled_regex, _compiled_contains, _folded_name, _folded_name_for, contains_regex(), matches_mtime(), matches_name(), matches_size(), validate() — What to search for.
 - `SearchResult` (class, `core.search_federation`): hits, per_backend, errors, elapsed_s, truncated — Aggregated federation result.
 - `Snapshot` (class, `core.trail`): snapshot_id, trail_name, ts, file_count, total_bytes, tree_hash, truncated — Snapshot(snapshot_id: 'int', trail_name: 'str', ts: 'float', file_count: 'int', total_bytes: 'int', tree_hash: 'str', truncated: 'bool' = False)
 - `Summary` (class, `core.inspect`): backend_label, path, file_count, dir_count, link_count, total_bytes, extensions, age_buckets, largest, newest, oldest, truncated, error, render() — Structured directory snapshot.

@@ -22,9 +22,10 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QDate, QEvent, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
+    QDateEdit,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -34,7 +35,6 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
-    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -54,19 +54,39 @@ log = logging.getLogger("ui.metadata_search_dialog")
 #: large index and filled the table one insertRow at a time).
 RESULT_LIMIT = 5000
 
+#: What a column sorts by (bytes, the time), where its text would sort wrong.
+_SORT_ROLE = Qt.ItemDataRole.UserRole + 1
+
+
+class _SortItem(QTableWidgetItem):
+    """A cell that sorts by its _SORT_ROLE value (size in bytes, time)."""
+
+    def __lt__(self, other) -> bool:
+        mine, theirs = self.data(_SORT_ROLE), other.data(_SORT_ROLE)
+        if mine is None or theirs is None:
+            return super().__lt__(other)
+        return mine < theirs
+
 
 def _format_size(n: int) -> str:
-    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
-        if n < 1024:
-            return f"{n:.0f} {unit}"
-        n //= 1024
-    return f"{n:.0f} PiB"
+    """As the pane's Size column: rounded, not cut (1.99 GiB was "1 GiB")."""
+    from ui.format_utils import human_bytes
+
+    return human_bytes(n)
 
 
 def _format_when(when) -> str:
     if isinstance(when, datetime):
         return when.strftime("%Y-%m-%d %H:%M")
     return str(when) if when else ""
+
+
+def _when_key(when) -> float:
+    """A row's time as a number to sort by; no time sorts first."""
+    try:
+        return when.timestamp() if isinstance(when, datetime) else float("-inf")
+    except (OverflowError, OSError, ValueError):
+        return float("-inf")
 
 
 def _backend_id_for(backend) -> str:
@@ -87,10 +107,13 @@ class MetadataSearchDialog(QDialog):
     open_requested = pyqtSignal(str, str, bool)
 
     def __init__(self, active_pane=None, parent=None) -> None:
+        """*active_pane* is a pane, or a callable giving the pane active
+        now: the window is modeless and outlives a pane switch (and the
+        pane it was opened from)."""
         super().__init__(parent)
         set_window_icon(self, "find-index")
         install_help_key(self, "index")  # F1: its handbook section (a window of its own)
-        self._active_pane = active_pane
+        self._pane_source = active_pane if callable(active_pane) else (lambda: active_pane)
         self.setWindowTitle(tr("Find in Index"))
         self.resize(880, 560)
         # The walk can take minutes: it runs in a thread (progress, Cancel, Esc).
@@ -121,20 +144,35 @@ class MetadataSearchDialog(QDialog):
         self._ext_edit.setPlaceholderText(tr("e.g. pdf  (no dot)"))
         form.addRow(tr("Suffix:"), self._ext_edit)
 
+        # Sizes as in Find Files (10K, 1.5M, 2G; empty: no bound). Byte spin
+        # boxes ended at 2,000,000,000: nothing above ~1.86 GiB could be
+        # searched for, and "max 0" meant no limit, not empty files.
         size_row = QHBoxLayout()
-        self._min_size = QSpinBox()
-        self._min_size.setRange(0, 2_000_000_000)
-        self._min_size.setSuffix(" B")
-        self._max_size = QSpinBox()
-        self._max_size.setRange(0, 2_000_000_000)
-        self._max_size.setSpecialValueText(tr("(no limit)"))
-        self._max_size.setSuffix(" B")
-        size_row.addWidget(QLabel(tr("min")))
-        size_row.addWidget(self._min_size)
-        size_row.addWidget(QLabel(tr("max")))
-        size_row.addWidget(self._max_size)
-        size_row.addStretch(1)
+        self._min_size_edit = QLineEdit(self)
+        self._min_size_edit.setPlaceholderText(tr("min, e.g. 10K"))
+        self._max_size_edit = QLineEdit(self)
+        self._max_size_edit.setPlaceholderText(tr("max, e.g. 2G"))
+        size_row.addWidget(self._min_size_edit)
+        size_row.addWidget(QLabel("–", self))
+        size_row.addWidget(self._max_size_edit)
         form.addRow(tr("Size:"), size_row)
+
+        # Both days included, as in Find Files.
+        date_row = QHBoxLayout()
+        today = QDate.currentDate()
+        self._after_box = QCheckBox(tr("after"), self)
+        self._after_edit = QDateEdit(today.addYears(-1), self)
+        self._before_box = QCheckBox(tr("before"), self)
+        self._before_edit = QDateEdit(today, self)
+        for edit in (self._after_edit, self._before_edit):
+            edit.setCalendarPopup(True)
+            edit.setDisplayFormat("yyyy-MM-dd")
+        date_row.addWidget(self._after_box)
+        date_row.addWidget(self._after_edit)
+        date_row.addWidget(self._before_box)
+        date_row.addWidget(self._before_edit)
+        date_row.addStretch(1)
+        form.addRow(tr("Modified:"), date_row)
 
         scope_row = QHBoxLayout()
         self._only_active = QCheckBox(tr("Only active pane's backend"))
@@ -184,6 +222,12 @@ class MetadataSearchDialog(QDialog):
         # stays draggable.
         self._columns = ColumnFitter(self._table, fill=1, keep=(0,))
         self._table.doubleClicked.connect(self._on_row_activated)
+        # The columns sort; the search's own order (newest first) to start.
+        self._table.setSortingEnabled(True)
+        self._table.horizontalHeader().setSortIndicator(3, Qt.SortOrder.DescendingOrder)
+        # Enter on a result opens it; it reached the default button (Search)
+        # and searched again.
+        self._table.installEventFilter(self)
         root.addWidget(self._table, stretch=1)
 
         # One status line at the bottom while an index run is going.
@@ -205,12 +249,46 @@ class MetadataSearchDialog(QDialog):
     # ------------------------------------------------------------------
     # Index / search actions
     # ------------------------------------------------------------------
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt
+        super().showEvent(event)
+        # Typing goes into the name field (it went to the close corner).
+        if not getattr(self, "_shown_once", False):
+            self._shown_once = True
+            self._needle_edit.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt
+        if (
+            watched is self._table
+            and event.type() == QEvent.Type.KeyPress
+            and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+            and event.modifiers() == Qt.KeyboardModifier.NoModifier
+        ):
+            self._on_row_activated()
+            return True
+        return super().eventFilter(watched, event)
+
     def _do_search(self) -> None:
+        from ui.find_files_dialog import parse_size
+
+        try:
+            min_size = parse_size(self._min_size_edit.text())
+            max_size = parse_size(self._max_size_edit.text())
+        except ValueError as exc:
+            QMessageBox.warning(self, tr("Search"), tr("Size: {error}").format(error=exc))
+            return
+        since = until = None
+        if self._after_box.isChecked():
+            since = datetime.combine(self._after_edit.date().toPyDate(), datetime.min.time())
+        if self._before_box.isChecked():
+            until = datetime.combine(self._before_edit.date().toPyDate(),
+                                     datetime.max.time()).replace(microsecond=0)
         kwargs = {
             "needle": self._needle_edit.text().strip() or None,
             "ext": self._ext_edit.text().strip() or None,
-            "min_size": int(self._min_size.value()),
-            "max_size": int(self._max_size.value()) if self._max_size.value() > 0 else None,
+            "min_size": max(min_size, 0),
+            "max_size": max_size if max_size >= 0 else None,
+            "since": since,
+            "until": until,
         }
         if self._only_active.isChecked() and self._active_pane is not None:
             kwargs["backend_id"] = _backend_id_for(self._active_pane.backend)
@@ -246,13 +324,22 @@ class MetadataSearchDialog(QDialog):
                 name_item.setData(Qt.ItemDataRole.UserRole, e)
                 table.setItem(row, 0, name_item)
                 table.setItem(row, 1, QTableWidgetItem(e.path))
-                table.setItem(row, 2, QTableWidgetItem(_format_size(e.size)))
-                table.setItem(row, 3, QTableWidgetItem(_format_when(e.modified)))
+                # A folder's size is no content size: left empty, as in the pane.
+                size_item = _SortItem("" if e.is_dir else _format_size(e.size))
+                size_item.setData(_SORT_ROLE, -1 if e.is_dir else int(e.size))
+                table.setItem(row, 2, size_item)
+                when_item = _SortItem(_format_when(e.modified))
+                when_item.setData(_SORT_ROLE, _when_key(e.modified))
+                table.setItem(row, 3, when_item)
                 table.setItem(row, 4, QTableWidgetItem(e.backend_id))
         finally:
             table.setUpdatesEnabled(True)
             table.setSortingEnabled(sorting)
         self._update_status(found=len(entries), more=more)
+
+    @property
+    def _active_pane(self):
+        return self._pane_source()
 
     def start_index_active(self) -> None:
         """Index the active pane's folder (Edit > Index Active Folder…)."""
@@ -280,9 +367,13 @@ class MetadataSearchDialog(QDialog):
         if reply != QMessageBox.StandardButton.Yes:
             return
         self._index_root = path
+        # Folders whose listing failed: reported, not passed over in silence
+        # (an unreadable folder read "Indexed 0 entries", as if empty).
+        errors: list = []
+        self._index_errors = errors
         self._job.start(
             lambda cancel, progress: MX.reindex_dir(
-                backend, path, backend_id=bid, cancel=cancel, progress=progress
+                backend, path, backend_id=bid, cancel=cancel, progress=progress, errors=errors
             )
         )
 
@@ -294,6 +385,14 @@ class MetadataSearchDialog(QDialog):
                                 tr("Indexing failed:\n{error}").format(error=value))
             return
         indexed, removed = value if isinstance(value, tuple) else (value, 0)
+        errors = list(getattr(self, "_index_errors", ()))
+        if errors and errors[0][0] == path and not indexed:
+            from core.user_errors import describe
+
+            QMessageBox.warning(self, tr("Index Folder"), tr("Indexing failed:\n{error}").format(
+                error=describe(errors[0][1], path)))
+            self._update_status()
+            return
         if cancelled:
             text = tr_n(indexed, "Cancelled – {n} entry indexed so far under {path}.",
                         "Cancelled – {n} entries indexed so far under {path}.", path=path)
@@ -303,6 +402,13 @@ class MetadataSearchDialog(QDialog):
             if removed:
                 text += "\n" + tr_n(removed, "Removed {n} entry that no longer exists.",
                                      "Removed {n} entries that no longer exist.")
+        if errors:
+            text += "\n" + tr_n(
+                len(errors),
+                "{n} folder could not be read; what the index held under it was kept: {path}",
+                "{n} folders could not be read; what the index held under them was kept, "
+                "e.g. {path}",
+                path=errors[0][0])
         QMessageBox.information(self, tr("Index Folder"), text)
         self._update_status()
 

@@ -87,6 +87,54 @@ def _is_tmpfs(path: str) -> bool:
     return False
 
 
+def _unescape_mount(text: str) -> str:
+    """A mount point as mountinfo writes it (``\\040`` for a space) as a path."""
+    import re
+
+    return re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), text)
+
+
+def fs_type(path: str) -> str:
+    """The file system type (``ext4``, ``cifs``, ``tmpfs`` …) of the mount
+    of mountinfo with the longest mount point that holds *path* (existing
+    or not); ``""`` where there is no mountinfo (not Linux)."""
+    real = os.path.realpath(path)
+    best, kind = "", ""
+    try:
+        with open("/proc/self/mountinfo", encoding="utf-8") as f:
+            for line in f:
+                fields = line.split()
+                if len(fields) < 5 or "-" not in fields:
+                    continue
+                point = _unescape_mount(fields[4])
+                inside = real == point or real.startswith(point.rstrip("/") + "/")
+                if inside and len(point) >= len(best):
+                    sep = fields.index("-")
+                    best, kind = point, fields[sep + 1] if len(fields) > sep + 1 else ""
+    except OSError:
+        return ""
+    return kind
+
+
+def memory_fs(path: str) -> bool:
+    """``True`` iff *path* (existing or not) lies on a tmpfs/ramfs mount
+    (:func:`fs_type`). ``False`` where there is no mountinfo (not Linux)."""
+    return fs_type(path) in ("tmpfs", "ramfs")
+
+
+#: File systems that keep Windows' name rules on any OS: a share of a
+#: Windows server, an NTFS or FAT disk. A name such as "NUL" or "a:b" is a
+#: device or a hidden stream there, not a file of that name.
+WINDOWS_NAME_FS = frozenset({
+    "cifs", "smb3", "smbfs", "ntfs", "ntfs3", "fuseblk", "vfat", "msdos", "exfat", "fat",
+})
+
+
+def windows_names_fs(path: str) -> bool:
+    """*path* lies on a file system of :data:`WINDOWS_NAME_FS`."""
+    return fs_type(path) in WINDOWS_NAME_FS
+
+
 def _writable(path: str) -> bool:
     """Best-effort: try to ``open`` a probe file in *path*. Cleans
     up immediately. Returns False on permission denied / read-only

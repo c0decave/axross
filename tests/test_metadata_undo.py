@@ -315,3 +315,72 @@ def test_sad_collect_media_without_classifier_still_rejects_unknown_kinds(tmp_pa
 
     with pytest.raises(ValueError):
         collect_media(LocalFS(), str(tmp_path), kinds={"office"})
+
+
+# ---------------------------------------------------------------------------
+# an undo that can never be carried out does not block Ctrl+Z
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def home(tmp_path, monkeypatch):
+    from core import extension_code_cache as ECC
+
+    real = tmp_path / "home"
+    (real / ".config").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(real))
+    monkeypatch.setattr(ECC, "_SECRET", [], raising=False)
+    return real
+
+
+def _in_place(path: Path, clean: bytes) -> dict:
+    trash_id = T.trash_copy(LocalFS(), str(path))
+    _replace(path, clean)
+    return {"path": str(path), "trash_id": trash_id, "sha256": _sha(clean), "mode": "in_place"}
+
+
+def test_sad_an_edited_file_makes_the_undo_refused_not_offered_again(home):
+    """Measured before: gone_reason said "" for every metadata plan, the
+    undo failed on the edited file each time, and no older operation could
+    be undone with Ctrl+Z any more."""
+    f = home / "photo.jpg"
+    f.write_bytes(b"original")
+    plan = U.plan_undo(_event([_in_place(f, b"clean")]))
+    f.write_bytes(b"edited afterwards")
+    refused: list = []
+    reason = U.gone_reason(plan, LocalFS(), refused)
+    assert "changed after its metadata was removed" in reason and refused == [reason]
+
+
+def test_sad_an_emptied_trash_makes_the_undo_refused(home):
+    f = home / "photo.jpg"
+    f.write_bytes(b"original")
+    plan = U.plan_undo(_event([_in_place(f, b"clean")]))
+    T.empty_trash(LocalFS())
+    assert "no longer in the trash" in U.gone_reason(plan, LocalFS(), [])
+
+
+def test_edge_a_partly_failed_undo_puts_back_the_rest_next_time(home):
+    a, b = home / "a.jpg", home / "b.jpg"
+    a.write_bytes(b"A original")
+    b.write_bytes(b"B original")
+    plan = U.plan_undo(_event([_in_place(a, b"A clean"), _in_place(b, b"B clean")]))
+    real = T.restore_over
+    calls = {"n": 0}
+
+    def flaky(backend, tid, **kw):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError("disk briefly unavailable")
+        return real(backend, tid, **kw)
+
+    T.restore_over = flaky
+    try:
+        with pytest.raises(OSError, match="1 of 2"):
+            U.apply_undo(plan, LocalFS())
+    finally:
+        T.restore_over = real
+    assert U.gone_reason(plan, LocalFS(), []) == ""  # b can still go back
+    U.apply_undo(plan, LocalFS())  # a is passed over, b put back
+    assert a.read_bytes() == b"A original" and b.read_bytes() == b"B original"
+    assert "no longer in the trash" in U.gone_reason(plan, LocalFS(), [])

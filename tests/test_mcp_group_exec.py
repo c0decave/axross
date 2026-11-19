@@ -262,7 +262,10 @@ def test_happy_the_flag_reaches_both_transports():
 
 def test_sad_paranoid_mode_refuses_the_flag(monkeypatch):
     monkeypatch.setattr(security_mode, "_CURRENT", security_mode.PARANOID)
-    code, err, serve, serve_http = _cli("--mcp-server", "--mcp-tools", "exec", "--mcp-allow-exec")
+    # main() takes the mode stored in Settings at its start (another test of
+    # the worker may have stored "normal"); AXROSS_SECURITY_MODE always wins.
+    code, err, serve, serve_http = _cli("--mcp-server", "--mcp-tools", "exec", "--mcp-allow-exec",
+                                        env={security_mode.ENV: "paranoid"})
     assert code == 2 and "remote command execution" in err
     assert not serve.called and not serve_http.called
 

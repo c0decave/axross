@@ -28,7 +28,7 @@ class _Device:
     def __init__(self, files: dict[str, bytes]) -> None:
         self.files = files
 
-    def shell(self, cmd: str, transport_timeout_s=None) -> str:
+    def shell(self, cmd: str, transport_timeout_s=None, **_kwargs) -> str:
         tool, path = cmd.split(" ", 1)
         path = path.strip("'")
         if path not in self.files:

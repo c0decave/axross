@@ -380,7 +380,9 @@ def test_sad_storing_a_language_keeps_the_settings_file_private(tmp_path):
         assert stat.S_IMODE((tmp_path / "fresh.json").stat().st_mode) == 0o600
     finally:
         os.umask(old)
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["fresh.json", "session.json"]
+    # The .lock files are the file locks of the session.json writers.
+    assert sorted(p.name for p in tmp_path.iterdir()
+                  if not p.name.endswith(".lock")) == ["fresh.json", "session.json"]
 
 
 def test_sad_a_missing_settings_file_yields_no_preference(tmp_path):

@@ -34,7 +34,7 @@ def _scp(sent):
     s = object.__new__(SCPSession)
     s._caps = _Capabilities(has_env_prefix=False)
 
-    def run(cmd, timeout=30, stdin_data=None):
+    def run(cmd, timeout=30, stdin_data=None, **_kw):
         sent.append(cmd)
         p = _sh(cmd)
         if p.returncode != 0:
@@ -48,7 +48,7 @@ def _scp(sent):
 def _telnet(sent):
     s = object.__new__(TelnetSession)
 
-    def run(cmd, timeout=30):
+    def run(cmd, timeout=30, **_kw):
         sent.append(cmd)
         p = _sh(cmd)
         if p.returncode != 0:

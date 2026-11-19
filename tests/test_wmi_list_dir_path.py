@@ -5,7 +5,9 @@ recording WMI fake: it sent ``Drive = 'C:' AND Path = '\\'`` - the
 listing of C:\\, the parent - because join(path, "") dropped the empty
 part and the code then took the folder for a file and listed its parent.
 The Path literal also carried single backslashes, while stat doubles
-them as WQL string literals need ("Path = '\\\\Windows\\\\'").
+them as WQL string literals need ("Path = '\\\\Windows\\\\'"). Values are
+double-quoted literals now (test_wmi_connection_lifecycle: WQL does not
+escape a quote by doubling it).
 """
 
 from __future__ import annotations
@@ -44,7 +46,7 @@ class _Wbem:
     def ExecQuery(self, query):  # noqa: N802
         self.queries.append(query)
         for literal, (cls, row) in self.objects.items():
-            if f"FROM {cls} WHERE Name = '{literal}'" in query:
+            if f'FROM {cls} WHERE Name = "{literal}"' in query:
                 return _Enum([row])
         return _Enum([])
 
@@ -64,14 +66,14 @@ def _listing_paths(wbem):
 def test_happy_a_folder_lists_itself_with_doubled_backslashes():
     s, wbem = _session({"C:\\\\Windows": ("Win32_Directory", {"Name": "c:\\windows"})})
     s.list_dir("C:\\Windows")
-    assert _listing_paths(wbem) == ["'\\\\Windows\\\\'", "'\\\\Windows\\\\'"]
-    assert all("Drive = 'C:'" in q for q in wbem.queries if "AND Path" in q)
+    assert _listing_paths(wbem) == ['"\\\\Windows\\\\"', '"\\\\Windows\\\\"']
+    assert all('Drive = "C:"' in q for q in wbem.queries if "AND Path" in q)
 
 
 def test_happy_a_nested_folder_and_forward_slashes():
     s, wbem = _session({"C:\\\\Users\\\\alex": ("Win32_Directory", {"Name": "c:\\users\\alex"})})
     s.list_dir("C:/Users/alex/")
-    assert _listing_paths(wbem)[0] == "'\\\\Users\\\\alex\\\\'"
+    assert _listing_paths(wbem)[0] == '"\\\\Users\\\\alex\\\\"'
 
 
 def test_sad_a_file_is_not_a_folder():
@@ -91,9 +93,9 @@ def test_sad_a_missing_folder_is_an_oserror_not_an_empty_listing():
 
 
 def test_edge_the_drive_root_and_a_quote_in_a_name():
-    s, wbem = _session({"C:\\\\O''Brien": ("Win32_Directory", {"Name": "c:\\o'brien"})})
+    s, wbem = _session({"C:\\\\O'Brien": ("Win32_Directory", {"Name": "c:\\o'brien"})})
     s.list_dir("C:\\")
-    assert _listing_paths(wbem)[0] == "'\\\\'"
+    assert _listing_paths(wbem)[0] == '"\\\\"'
     wbem.queries.clear()
     s.list_dir("C:\\O'Brien")
-    assert _listing_paths(wbem)[0] == "'\\\\O''Brien\\\\'"
+    assert _listing_paths(wbem)[0] == '"\\\\O\'Brien\\\\"'

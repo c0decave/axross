@@ -56,7 +56,6 @@ import hmac
 import json
 import logging
 import os
-import shutil
 import stat
 import uuid
 from datetime import datetime
@@ -150,14 +149,81 @@ class TrashFolderRefused(OSError):
     Its text is written for the user (core.user_errors keeps it)."""
 
 
+#: The trash folder's mode: what is in it is the user's alone (a photo kept
+#: with its GPS, a 0600 key moved there) - it was 0755 and its kept copies
+#: 0644 on a server, readable by every account there.
+TRASH_DIR_MODE = 0o700
+#: The mode of a sidecar (it names the original's path) and of a kept copy
+#: whose own mode is not known.
+PRIVATE_FILE_MODE = 0o600
+
+
+def trash_is_private(backend) -> bool:
+    """Whether this connection's trash keeps what goes into it private: on
+    this machine's disk and over SFTP the trash folder is 0700 and a kept
+    copy keeps its mode; in memory nobody else can look. Elsewhere (S3,
+    SMB, WebDAV, FTP, the cloud backends) the trash is a folder at the top
+    of the share, and what is moved there has that folder's permissions,
+    not those of the folder it came from. A backend may say so itself
+    (``trash_is_private``)."""
+    own = getattr(type(backend), "trash_is_private", None)
+    if isinstance(own, bool):
+        return own
+    from core.local_fs import LocalFS
+    from core.ram_fs import RamFsSession
+
+    if isinstance(backend, (LocalFS, RamFsSession)):
+        return True
+    names = {getattr(cls, "__qualname__", "") for cls in type(backend).__mro__}
+    return "SSHSession" in names
+
+
+def shared_trash_folder(backend, root: str | None = None) -> str | None:
+    """The trash folder of *backend* when it is not private
+    (:func:`trash_is_private`), for a question to name; None otherwise."""
+    if trash_is_private(backend):
+        return None
+    try:
+        return _resolve_root(backend, root)
+    except Exception:  # noqa: BLE001 - unknown: the question names the trash only
+        return TRASH_DIRNAME
+
+
+def _make_private(backend, path: str, mode: int) -> None:
+    """chmod *path* to *mode* where the backend has modes; best effort (a
+    backend without them, or a folder that is not the user's, stays)."""
+    chmod = getattr(backend, "chmod", None)
+    if not callable(chmod):
+        return
+    try:
+        chmod(path, mode)
+    except Exception as exc:  # noqa: BLE001 - no modes there: nothing to keep private
+        log.debug("trash: cannot set mode %o on %s: %s", mode, path, exc)
+
+
+def _open_to_others(backend, path: str) -> bool:
+    """Whether the folder *path* (not a link) lets group or others in."""
+    try:
+        item = backend.stat(path)
+    except Exception:  # noqa: BLE001 - unknown: left as it is
+        return False
+    if getattr(item, "is_link", False):
+        return False  # a trash folder on another disk: its owner's choice
+    mode = getattr(item, "permissions", 0)
+    return isinstance(mode, int) and bool(mode & 0o077)
+
+
 def _ensure_trash_dir(backend, trash_root: str) -> None:
     try:
         if not backend.exists(trash_root):
             backend.mkdir(trash_root)
+            _make_private(backend, trash_root, TRASH_DIR_MODE)
             return
         is_folder = backend.is_dir(trash_root) or _links_to_a_folder(backend, trash_root)
     except OSError as exc:
         raise OSError(f"Cannot create trash directory {trash_root}: {exc}") from exc
+    if is_folder and _open_to_others(backend, trash_root):
+        _make_private(backend, trash_root, TRASH_DIR_MODE)
     if not is_folder:
         # Not "x.txt is not a folder" for the file being trashed (review
         # round 8): the trash folder is what is wrong.
@@ -199,6 +265,7 @@ def _write_meta(backend, meta_file: str, payload: dict) -> None:
     from core.atomic_io import atomic_write
 
     atomic_write(backend, meta_file, data)
+    _make_private(backend, meta_file, PRIVATE_FILE_MODE)  # it names the original's path
 
 
 def _mac_key() -> bytes | None:
@@ -248,8 +315,15 @@ def _fingerprint(backend, path: str) -> dict | None:
             return {"kind": "link", "target": os.readlink(path)}
         if stat.S_ISREG(st.st_mode):
             if st.st_size <= MAX_HASH_BYTES:
-                return {"kind": "file", "size": st.st_size, "sha256": _file_digest(path)}
-            return {"kind": "file", "size": st.st_size, "mtime_ns": st.st_mtime_ns}
+                found = {"kind": "file", "size": st.st_size, "sha256": _file_digest(path)}
+            else:
+                found = {"kind": "file", "size": st.st_size, "mtime_ns": st.st_mtime_ns}
+            if st.st_nlink > 1:
+                # A file with other names (hard links): it can be edited
+                # through one of them while it is in the trash. Which file
+                # it is lets restore tell that from data put in its place.
+                found["inode"] = [st.st_dev, st.st_ino]
+            return found
         if not stat.S_ISDIR(st.st_mode):
             return {"kind": "other", "mode": stat.S_IFMT(st.st_mode)}
         tree = hashlib.sha256()
@@ -297,10 +371,32 @@ def _signed(backend, payload: dict, data_file: str) -> dict:
     return payload
 
 
-def _verify(backend, meta: dict | None, trash_id: str, data_file: str) -> str:
+def _older_than_the_key(meta_file: str) -> bool:
+    """Whether the local sidecar *meta_file* was last changed before this
+    user's sidecar key was made (its ctime - which no one sets back - before
+    the secret file's time). True when either cannot be read."""
+    try:
+        from core import extension_code_cache
+
+        made = os.stat(extension_code_cache.secret_path()).st_mtime_ns
+        changed = os.lstat(meta_file).st_ctime_ns
+    except (OSError, ValueError, AttributeError):
+        return True
+    return changed < made
+
+
+def _verify(backend, meta: dict | None, trash_id: str, data_file: str,
+            meta_file: str | None = None) -> str:
     """"ok" (axross wrote this sidecar and the data is unchanged), "unsigned"
-    (no HMAC: older than authenticated sidecars, or no key) or "bad"."""
+    (no HMAC: older than authenticated sidecars, or no key) or "bad". A
+    local sidecar without an HMAC written (or changed) after this user's
+    key was made is "bad": axross signs every sidecar once there is a key,
+    so its mac was removed - with it the fingerprint of the data, which
+    could be anything then."""
     if not isinstance(meta, dict) or "mac" not in meta:
+        if isinstance(meta, dict) and meta_file and _is_local(backend) \
+                and _mac_key() is not None and not _older_than_the_key(meta_file):
+            return "bad"
         return "unsigned"
     key = _mac_key()
     mac = meta.get("mac")
@@ -310,20 +406,57 @@ def _verify(backend, meta: dict | None, trash_id: str, data_file: str) -> str:
         return "bad"
     expected = meta.get("fingerprint")
     if expected is not None and _is_local(backend):
-        if _fingerprint(backend, data_file) != expected:
-            return "bad"
+        current = _fingerprint(backend, data_file)
+        if _without_inode(current) != _without_inode(expected):
+            return "edited" if _same_linked_file(expected, data_file) else "bad-data"
     return "ok"
 
 
-def _refuse_unverified(backend, meta, trash_id: str, data_file: str) -> str:
-    """:func:`_verify`; TamperedTrashEntry for "bad" on a local backend (a
-    remote trash may hold another user's entries, signed with their key)."""
-    status = _verify(backend, meta, trash_id, data_file)
-    if status == "bad":
+def _without_inode(fingerprint):
+    if isinstance(fingerprint, dict) and "inode" in fingerprint:
+        return {k: v for k, v in fingerprint.items() if k != "inode"}
+    return fingerprint
+
+
+def _same_linked_file(expected: dict, data_file: str) -> bool:
+    """Whether *data_file* is still the very file that was trashed with
+    other names (hard links) - its data changed through one of them, not
+    put there in its place."""
+    inode = expected.get("inode") if isinstance(expected, dict) else None
+    if not isinstance(inode, list) or len(inode) != 2:
+        return False
+    try:
+        st = os.lstat(data_file)
+    except OSError:
+        return False
+    return stat.S_ISREG(st.st_mode) and [st.st_dev, st.st_ino] == inode
+
+
+def _refuse_unverified(backend, meta, trash_id: str, data_file: str,
+                       meta_file: str | None = None) -> str:
+    """:func:`_verify`; TamperedTrashEntry for "bad" or "bad-data" on a local
+    backend (a remote trash may hold another user's entries, signed with
+    their key). "edited" - a file trashed with other names (hard links)
+    whose data changed through one of them - is that same file: it goes
+    back, as an entry whose content axross did not sign (no protected
+    place without the user's yes)."""
+    status = _verify(backend, meta, trash_id, data_file, meta_file)
+    if status == "edited":
+        log.info("trash: entry %s was edited through another name of the same file (a hard "
+                 "link) since it was trashed", trash_id)
+        return "unsigned"
+    if status in ("bad", "bad-data"):
         if _is_local(backend):
+            if status == "bad-data":
+                raise TamperedTrashEntry(
+                    f"restore: the data of trash entry {trash_id} is not what was trashed "
+                    "(its record is axross's own): it changed after it was trashed - edited "
+                    "through a hard link to it, or replaced by someone who can write the "
+                    "trash - and is not restored"
+                )
             raise TamperedTrashEntry(
-                f"restore: trash entry {trash_id} was changed after it was trashed (its "
-                "record or data is not what axross wrote) - it is not restored"
+                f"restore: the record of trash entry {trash_id} is not what axross wrote "
+                "- it is not restored"
             )
         log.info("trash: entry %s is not signed with this user's key", trash_id)
         return "unsigned"
@@ -418,6 +551,25 @@ def _finish_journal(op_id: str, operation: str, **fields) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _memory_to_disk(backend, path: str, trash_root: str) -> bool:
+    """A local *path* on a memory file system (a tmpfs: /run/user, /dev/shm)
+    whose move into *trash_root* would be a copy onto a disk."""
+    if type(backend).__name__ != "LocalFS":
+        return False
+    try:
+        source_dev = os.lstat(path).st_dev
+        here = trash_root
+        while not os.path.lexists(here) and os.path.dirname(here) != here:
+            here = os.path.dirname(here)
+        if os.stat(here).st_dev == source_dev:
+            return False
+    except (OSError, ValueError):
+        return False
+    from core import tmpfs_detect
+
+    return tmpfs_detect.memory_fs(path) and not tmpfs_detect.memory_fs(trash_root)
+
+
 def trash(backend, path: str, root: str | None = None, *, journal: bool = True) -> str:
     """Move *path* into the trash and return its ``trash_id``.
 
@@ -468,6 +620,14 @@ def trash(backend, path: str, root: str | None = None, *, journal: bool = True) 
         err = f"trash: source does not exist: {path}"
         _finish_journal(op_id, "trash", backend=label, status="error", source=path, error=err)
         raise OSError(err)
+    if _memory_to_disk(backend, path, trash_root):
+        from core.i18n import tr
+
+        err = tr("{path} lies on a RAM disk (in memory only): Move to Trash would copy it onto "
+                 "the disk of the trash – delete it permanently instead (Shift+Del)").format(
+            path=path)
+        _finish_journal(op_id, "trash", backend=label, status="error", source=path, error=err)
+        raise OSError(errno.EXDEV, err)
 
     trash_id = uuid.uuid4().hex
     dst = _data_path(backend, trash_root, trash_id)
@@ -484,7 +644,9 @@ def trash(backend, path: str, root: str | None = None, *, journal: bool = True) 
             # gets its sidecar, or the Trash window would not list it and
             # Empty Trash would delete it unseen.
             try:
-                _write_meta(backend, meta, {
+                # signed like every other sidecar: one without a mac written
+                # after the key counts as tampered (_verify)
+                _write_meta(backend, meta, _signed(backend, {
                     "trash_id": trash_id,
                     "original_path": path,
                     "trashed_at": datetime.now().isoformat(timespec="seconds"),
@@ -492,7 +654,7 @@ def trash(backend, path: str, root: str | None = None, *, journal: bool = True) 
                     "is_dir": bool(getattr(info, "is_dir", False)),
                     "label": getattr(info, "name", "") or "",
                     "incomplete": str(exc),
-                })
+                }, dst))
             except OSError as meta_exc:
                 log.error("trash: %s is at %s with no metadata: %s", path, dst, meta_exc)
         _finish_journal(
@@ -679,18 +841,24 @@ def trash_copy(
                 os.link(path, dst, follow_symlinks=False)
             except OSError:
                 # Another file system: a copy with the mode and times, which
-                # restore_over puts back (copyfile alone left the umask's).
-                shutil.copyfile(path, dst, follow_symlinks=False)
-                try:
-                    shutil.copystat(path, dst, follow_symlinks=False)
-                except OSError:  # a file system without modes keeps the data
-                    log.debug("trash_copy: no mode or times for %s", dst, exc_info=True)
-        elif local_source is not None:
-            with open(local_source, "rb") as src:
-                atomic_write_stream(backend, dst, src)
+                # restore_over puts back (copyfile alone left the umask's),
+                # 0600 while the data goes in (core.server_ops).
+                from core.server_ops import _copy_private_then_stat
+
+                # A file system without modes keeps the data (strict=False).
+                _copy_private_then_stat(path, dst, strict=False)
         else:
-            with backend.open_read(path) as src:
-                atomic_write_stream(backend, dst, src)
+            if local_source is not None:
+                with open(local_source, "rb") as src:
+                    atomic_write_stream(backend, dst, src)
+            else:
+                with backend.open_read(path) as src:
+                    atomic_write_stream(backend, dst, src)
+            # The upload got the server's default mode: a 0600 original
+            # was kept 0644. The original's own mode, private when unknown.
+            mode = getattr(info, "permissions", 0)
+            _make_private(backend, dst, (mode & 0o777) if isinstance(mode, int) and mode
+                          else PRIVATE_FILE_MODE)
     except OSError as exc:
         _remove_quietly(backend, dst)
         raise OSError(f"trash_copy: cannot keep a copy of {path}: {exc}") from exc
@@ -744,9 +912,13 @@ def _replace_across_devices(backend, data_file: str, target: str) -> None:
     reason on the way in (a USB stick, a data disk)."""
     from core.atomic_io import _temp_sibling
 
+    from core.server_ops import _copy_private_then_stat
+
     tmp = _temp_sibling(backend, target)
     try:
-        shutil.copy2(data_file, tmp, follow_symlinks=False)
+        # 0600 while the data goes in, then the kept copy's mode: copy2
+        # made the temp with the umask's 0644 first.
+        _copy_private_then_stat(data_file, tmp)
         os.replace(tmp, target)
     except BaseException:
         _remove_quietly(backend, tmp)
@@ -784,7 +956,7 @@ def restore_over(
         raise OSError(f"restore: trash entry not found: {trash_id}")
     # The kept copy must still be what was kept (the target comes from the
     # caller's own record, not from the sidecar).
-    _refuse_unverified(backend, _read_meta(backend, meta_file), trash_id, data_file)
+    _refuse_unverified(backend, _read_meta(backend, meta_file), trash_id, data_file, meta_file)
     from core.remote_name import MAX_REMOTE_PATH_BYTES, RemoteNameError, validate_remote_name
 
     try:
@@ -960,7 +1132,7 @@ def restore(backend, trash_id: str, root: str | None = None, target: str | None 
     except RemoteNameError as exc:
         raise OSError(f"restore: sidecar {trash_id} has an unsafe original_path: {exc}") from exc
 
-    status = _refuse_unverified(backend, meta, trash_id, data_file)
+    status = _refuse_unverified(backend, meta, trash_id, data_file, meta_file)
     _refuse_protected(backend, dst, status, allow_protected)
     if status == "unsigned":
         log.info("restore: trash entry %s has no authenticated record (an older one)", trash_id)
@@ -1046,8 +1218,12 @@ class EmptyTrashIncomplete(OSError):
         )
 
 
-def empty_trash(backend, root: str | None = None) -> int:
+def empty_trash(backend, root: str | None = None, *, should_continue=None) -> int:
     """Permanently remove every trash entry. Returns count removed.
+
+    *should_continue* (no arguments) is asked before each entry: False
+    stops there, the entries not reached stay in the trash (the Trash
+    window's Cancel).
 
     Per entry the data goes first and its sidecar only once the data is
     gone. In listing order the sidecar could go first: a data folder whose
@@ -1081,6 +1257,9 @@ def empty_trash(backend, root: str | None = None) -> int:
         log.warning("empty_trash: keeping %r in %s - it has no sidecar, the Trash "
                     "window does not show it", name, trash_root)
     for trash_id in sidecar_ids:
+        if should_continue is not None and not should_continue():
+            log.info("empty_trash: stopped after %d entries", removed)
+            break
         try:
             meta_file = _meta_path(backend, trash_root, trash_id)
             data_file = _data_path(backend, trash_root, trash_id)

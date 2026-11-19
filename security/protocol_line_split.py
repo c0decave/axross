@@ -71,8 +71,8 @@ SPLITLINES_BOUNDARIES: tuple[str, ...] = (
     "\x1d",     # GS (group separator)
     "\x1e",     # RS (record separator)
     "\x85",     # NEL (next line)
-    " ",   # LS (line separator)
-    " ",   # PS (paragraph separator)
+    "\u2028",   # LS (line separator)
+    "\u2029",   # PS (paragraph separator)
 )
 
 # Subset that an attacker can plausibly embed in payload bytes
@@ -197,7 +197,7 @@ def has_only_safe_line_boundaries(text: str) -> bool:
     # framing and the caller can decide separately whether bare CR
     # is acceptable (see docstring).
     return not any(b in text for b in (
-        "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", " ", " ",
+        "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029",
     ))
 
 

@@ -31,7 +31,7 @@ from collections.abc import Callable
 from typing import Any
 
 from PyQt6 import sip
-from PyQt6.QtCore import QCoreApplication, QObject, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QObject, pyqtSignal, pyqtSlot
 
 #: A sweep of the entries of deleted receivers after this many new ones.
 SWEEP_EVERY = 256
@@ -46,6 +46,11 @@ class _Relay(QObject):
         super().__init__()
         self.post.connect(self._dispatch)  # queued when emitted from a worker
 
+    # A Qt slot of the relay itself, not a Python callable: PyQt connects a
+    # plain method through a proxy object made on the connecting thread, and
+    # a relay first made on a worker (moved to the GUI thread below) then
+    # ran every call on that worker.
+    @pyqtSlot(object, object)
     def _dispatch(self, key, args: tuple) -> None:
         entry = _TARGETS.get(key)
         if entry is None:

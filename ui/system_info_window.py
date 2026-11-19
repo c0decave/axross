@@ -78,6 +78,7 @@ from PyQt6.QtWidgets import (
 from core import system_info as SI
 from core.i18n import format_percent, tr
 from core.thread_relay import GuiCall
+from core.remote_name import sanitize_for_display
 from ui.plain_text import plain_tooltip, set_plain
 from ui.icon_provider import set_window_icon
 
@@ -824,7 +825,9 @@ class FitTree(QTreeWidget):
         self.items: list[QTreeWidgetItem] = []
         hidden = muted(self)
         for i, row in enumerate(spec["rows"]):
-            item = QTreeWidgetItem([str(c) for c in row])
+            # what a device reports about itself, shown as the pane shows a
+            # name (a product string with a bidi override read reversed)
+            item = QTreeWidgetItem([sanitize_for_display(str(c)) for c in row])
             item.setData(0, Qt.ItemDataRole.UserRole, " ".join(row).lower())
             for c, cell in enumerate(row):
                 if cell == SI.HIDDEN:
@@ -2022,7 +2025,9 @@ class SystemInfoWindow(QDialog):
         self.search = QLineEdit()
         self.search.setPlaceholderText(tr("Search everything  ( / )"))
         self.search.setClearButtonEnabled(True)
-        self.search.setMinimumWidth(240)
+        # 150, not 240: with the German buttons beside it the window was
+        # 1021 px wide, past a 1024x600 screen.
+        self.search.setMinimumWidth(150)
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
         self._search_timer.setInterval(120)
@@ -2084,6 +2089,11 @@ class SystemInfoWindow(QDialog):
         layout.addWidget(split, 1)
         self.status = set_plain(QLabel(""))  # names errors and paths
         self.status.setStyleSheet(f"color: {muted(self).name()};")
+        # Wrapped within the window: in one line, "not available: …" on a
+        # VM (or an error naming a long path) made the window at least as
+        # wide as the line - 1144 px, past a 1024 px screen.
+        self.status.setWordWrap(True)
+        self.status.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         layout.addWidget(self.status)
         self._placeholder = QLabel(tr("Gathering system information…"))
         self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)

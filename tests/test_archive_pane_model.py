@@ -158,10 +158,9 @@ def test_selected_member_names_folder_returns_descendant_files():
     )
 
     got = selected_member_names(view)
-    # Folder d -> all descendant FILES, de-duped, order-insensitive.
-    assert set(got) == {"d/a.txt", "d/sub/b.txt"}
-    # The folder prefix itself must NOT appear.
-    assert "d/" not in got
+    # Folder d -> its prefix: core.archive takes everything below it
+    # (files, folder entries with their modes, empty subfolders).
+    assert got == ["d/"]
 
 
 def test_selected_member_names_file_returns_itself():
@@ -189,9 +188,8 @@ def test_selected_member_names_dedup_folder_plus_descendant():
     sel.select(a.index(), sel.SelectionFlag.Select | sel.SelectionFlag.Rows)
 
     got = selected_member_names(view)
-    # a.txt selected both directly and via folder d -> appears once.
-    assert set(got) == {"d/a.txt", "d/sub/b.txt"}
-    assert got.count("d/a.txt") == 1
+    # a.txt selected both directly and via folder d -> the folder brings it.
+    assert got == ["d/"]
 
 
 # --------------------------------------------------------------------------
@@ -219,15 +217,16 @@ def test_widget_populates_real_zip(tmp_path):
     assert model.rowCount() >= 2
     assert model.columnCount() == 5
 
-    # Selecting everything via the public accessor yields the 3 files.
+    # Selecting everything: the top file and the folder (which brings
+    # everything below it).
     w._tree.selectAll()
-    assert set(w.selected_members()) == {"top.txt", "d/a.txt", "d/sub/b.txt"}
+    assert set(w.selected_members()) == {"top.txt", "d/"}
 
 
 def test_widget_graceful_rar_unavailable(tmp_path, monkeypatch):
     # Monkeypatch the symbol the widget actually calls (imported into the
     # ui.archive_pane namespace) so list_archive raises RarUnavailable.
-    def _boom(_path):
+    def _boom(_path, **_kwargs):
         raise RarUnavailable("no unrar")
 
     monkeypatch.setattr("ui.archive_pane.list_archive", _boom)
@@ -280,7 +279,7 @@ def test_extract_selected_signal_emits_member_list(tmp_path):
     w._btn_selected.click()
 
     assert len(received) == 1
-    assert set(received[0]) == {"d/a.txt", "d/sub/b.txt"}
+    assert received[0] == ["d/"]
 
 
 def test_extract_all_and_extract_to_signals(tmp_path):

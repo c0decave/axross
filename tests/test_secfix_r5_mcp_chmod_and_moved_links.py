@@ -108,7 +108,13 @@ def test_sad_a_link_renamed_upward_is_checked_at_its_new_place(proj):
     assert _call(tools, "symlink", {"target": "../../.ssh", "link_path": str(proj / "a" / "l")}) \
         .startswith("error")
     assert _call(tools, "symlink",
-                 {"target": "../../.ssh", "link_path": str(proj / "a" / "b" / "l")}) == "ok"
+                 {"target": "../../.ssh", "link_path": str(proj / "a" / "b" / "l")}).startswith("ok")
+    # the tool makes a target with .. as the place it checked (second
+    # security review): moved, it leads there still
+    assert os.readlink(proj / "a" / "b" / "l") == str(proj / ".ssh")
+    # a relative link made by someone else is checked when it is moved
+    os.remove(proj / "a" / "b" / "l")
+    os.symlink("../../.ssh", proj / "a" / "b" / "l")
     out = _call(tools, "rename", {"src": str(proj / "a" / "b" / "l"), "dst": str(proj / "a" / "l")})
     assert out.startswith("error") and "symlink would point" in out
     assert not os.path.lexists(proj / "a" / "l")
@@ -119,7 +125,10 @@ def test_sad_a_folder_moved_upward_rechecks_the_links_in_it(proj):
     (proj / "a" / "b" / "c").mkdir()
     tools = _tools(proj)
     assert _call(tools, "symlink", {"target": "../../../.ssh",
-                                    "link_path": str(proj / "a" / "b" / "c" / "l")}) == "ok"
+                                    "link_path": str(proj / "a" / "b" / "c" / "l")}).startswith("ok")
+    assert os.readlink(proj / "a" / "b" / "c" / "l") == str(proj / ".ssh")
+    os.remove(proj / "a" / "b" / "c" / "l")
+    os.symlink("../../../.ssh", proj / "a" / "b" / "c" / "l")   # made by someone else
     out = _call(tools, "rename", {"src": str(proj / "a" / "b"), "dst": str(proj / "b")})
     assert out.startswith("error") and "symlink would point" in out
     assert (proj / "a" / "b" / "c").is_dir() and not (proj / "b").exists()

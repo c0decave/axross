@@ -19,7 +19,7 @@ import re
 
 from PyQt6 import sip
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QAction, QKeySequence, QTextCursor
+from PyQt6.QtGui import QAction, QKeySequence, QTextCursor, QTextOption
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -38,7 +38,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.i18n import tr
+from core.i18n import format_count, tr
+from core.remote_name import sanitize_for_display as _shown
 from core.text_document import TextDocument
 from ui.code_editor import TEXT_ONLY, CodeEditor, language_for
 from ui.scan_job import ScanJob
@@ -52,6 +53,33 @@ LANGUAGES = (TEXT_ONLY, "Python", "Bash", "JavaScript", "TypeScript", "JSON", "Y
              "XML", "HTML", "CSS", "Markdown", "C", "C++", "Go", "Rust", "Java", "SQL", "PHP",
              "Perl", "Ruby", "Lua", "PowerShell", "Dockerfile", "Makefile", "Nginx configuration file",
              "Diff")
+#: A line longer than this opens wrapped: not wrapped, Qt lays the whole
+#: line out again and again (a 6 MB one held the window 30 s).
+WRAP_LINE_CHARS = 200_000
+#: A line longer than this opens read-only as well (Edit Anyway makes it
+#: writable): each keypress in it costs most of a second, a 6 MB one 4 s.
+READ_ONLY_LINE_CHARS = 1_000_000
+
+
+#: What ends a block of the text widget (core.text_document._LINE_BREAK,
+#: not captured).
+_BLOCK_BREAKS = re.compile("\r\n|\r|\n|\u2029|\ufdd0|\ufdd1")
+
+
+def _longest_line(text: str) -> tuple[int, int]:
+    """(length, 1-based number) of the longest line of *text*; (0, 0)
+    without looking when no line can be WRAP_LINE_CHARS long."""
+    if len(text) <= WRAP_LINE_CHARS:
+        return 0, 0
+    best, number = 0, 0
+    # (every line end the widget breaks a block at: a CR-only file split at
+    # LF only was one line of all its characters, and opened read-only)
+    for index, line in enumerate(_BLOCK_BREAKS.split(text)):
+        if len(line) > best:
+            best, number = len(line), index + 1
+    return best, number
+
+
 ENCODINGS = (("UTF-8", "utf-8", False), ("UTF-8 BOM", "utf-8", True), ("Latin-1", "latin-1", False),
              ("UTF-16", "utf-16", True))
 
@@ -91,6 +119,9 @@ class EditorTab(QWidget):
     tab (New) that has no file until its first save."""
 
     modified_changed = pyqtSignal(bool)
+    #: Edit Anyway on the note of a very long line: the window makes the
+    #: tab writable.
+    edit_anyway = pyqtSignal()
 
     def __init__(self, backend, path: str, text: str, document: TextDocument, read_only: bool,
                  untitled_name: str = "") -> None:
@@ -98,18 +129,44 @@ class EditorTab(QWidget):
         self.backend = backend
         self.path = path
         self.document = document
-        self.read_only = read_only
         self.untitled_name = untitled_name
+        longest, line = _longest_line(text)
+        #: A line too long to show unwrapped: the tab stays wrapped.
+        self.long_line = longest > WRAP_LINE_CHARS
+        if longest > READ_ONLY_LINE_CHARS:
+            read_only = True
+        self.read_only = read_only
         self.editor = CodeEditor(self)
-        self.editor.setPlainText(text)
         if path:
+            # The language before the text: set after it, the whole text
+            # was painted once more.
             name = posixpath.basename(path.replace("\\", "/"))
             self.editor.set_language(language_for(name, text))
+        if self.long_line:  # before the text: laid out unwrapped first, then again
+            self.editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+            # Anywhere, not at a word boundary first: a line with no place
+            # to break (a hex dump, a long token) was searched for one from
+            # every character on - 1 MB held the window 145 s.
+            self.editor.setWordWrapMode(QTextOption.WrapMode.WrapAnywhere)
+        self.editor.setPlainText(text)
         self.editor.setReadOnly(read_only)
         self.editor.document().setModified(False)
         self.editor.document().modificationChanged.connect(self.modified_changed.emit)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        self.long_line_note = QWidget(self)
+        note = QHBoxLayout(self.long_line_note)
+        note.setContentsMargins(6, 2, 6, 2)
+        self.long_line_label = QLabel(tr(
+            "Line {line} is {chars} characters long: shown wrapped and read-only – "
+            "typing in it is slow.").format(line=line, chars=format_count(longest)))
+        self.long_line_label.setWordWrap(True)
+        self.edit_anyway_button = QPushButton(tr("Edit Anyway"))
+        self.edit_anyway_button.clicked.connect(self.edit_anyway.emit)
+        note.addWidget(self.long_line_label, stretch=1)
+        note.addWidget(self.edit_anyway_button)
+        self.long_line_note.setHidden(not (longest > READ_ONLY_LINE_CHARS))
+        layout.addWidget(self.long_line_note)
         # The text and, beside it on request, its Markdown rendering
         # (set_preview): made only when first shown.
         self.split = QSplitter(Qt.Orientation.Horizontal)
@@ -133,6 +190,7 @@ class EditorTab(QWidget):
             self.preview = MDV.MarkdownView(source, outline=False, parent=self)
             self.preview.link.connect(lambda _url: self.preview.status.setText(
                 tr("Links open in the Markdown viewer (F3 in the pane).")))
+            self.preview.shown.connect(self._follow_typing)
             self.split.addWidget(self.preview)
             self.split.setSizes([1, 1])
         if self.preview is None:
@@ -143,7 +201,16 @@ class EditorTab(QWidget):
 
     def _text_changed(self) -> None:
         if self.previewing:
+            self._typed = True
             self.preview.show_later(self.editor.toPlainText())
+
+    def _follow_typing(self) -> None:
+        """The preview at the place typed (once it shows the text as it is now) - it stayed where it was:
+        typed at line 170, the preview showed the top."""
+        if not getattr(self, "_typed", False) or not self.previewing:
+            return
+        self._typed = False
+        self.preview.show_source_line(self.preview.markdown, self.editor.textCursor().blockNumber())
 
     @property
     def untitled(self) -> bool:
@@ -161,6 +228,8 @@ class EditorTab(QWidget):
     def set_read_only(self, read_only: bool) -> None:
         self.read_only = read_only
         self.editor.setReadOnly(read_only)
+        if not read_only:
+            self.long_line_note.hide()
 
     def mark_modified(self) -> None:
         self.editor.document().setModified(True)
@@ -291,6 +360,17 @@ class FindBar(QWidget):
         return count
 
 
+def program_name() -> str:
+    """The program the editor is a window of: axross - or a program of its
+    own made of axross's tools (axross-markdown: its editor was "Editor —
+    axross")."""
+    from PyQt6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    name = app.applicationName() if app is not None else ""
+    return name if name.startswith("axross-") else "axross"
+
+
 class EditorWindow(QMainWindow):
     #: (backend, path) after a save: the panes showing its folder refresh.
     saved = pyqtSignal(object, str)
@@ -304,7 +384,7 @@ class EditorWindow(QMainWindow):
         self._loads: list[tuple[object, str, ScanJob]] = []
         #: Loads started read-only (View) that an Edit asked for meanwhile.
         self._edit_wanted: list[tuple[object, str, ScanJob]] = []
-        self.setWindowTitle(tr("Editor") + " — axross")
+        self.setWindowTitle(tr("Editor") + " — " + program_name())
         self.resize(1000, 720)
         self.tabs = QTabWidget()
         self.tabs.setTabsClosable(True)
@@ -549,8 +629,9 @@ class EditorWindow(QMainWindow):
         tab.modified_changed.connect(lambda _m, t=tab: self._update_title(t))
         tab.editor.cursorPositionChanged.connect(self._update_status)
         tab.editor.setLineWrapMode(
-            QPlainTextEdit.LineWrapMode.WidgetWidth if self.wrap_action.isChecked()
+            QPlainTextEdit.LineWrapMode.WidgetWidth if self.wrap_action.isChecked() or tab.long_line
             else QPlainTextEdit.LineWrapMode.NoWrap)
+        tab.edit_anyway.connect(lambda t=tab: self._make_writable(t))
         index = self.tabs.addTab(tab, "")
         self._update_title(tab)
         if self.preview_new_tabs and tab.path.lower().endswith((".md", ".markdown", ".mdown", ".mkd")):
@@ -574,13 +655,14 @@ class EditorWindow(QMainWindow):
         index = self.tabs.indexOf(tab)
         if index < 0:
             return
-        title = (tr("{name} [read-only]").format(name=tab.name) if tab.read_only else tab.name) \
+        name = _shown(tab.name)  # as the pane shows names
+        title = (tr("{name} [read-only]").format(name=name) if tab.read_only else name) \
             + (" *" if tab.is_modified() else "")
         self.tabs.setTabText(index, title)
         if tab.untitled:
-            tip = tr("{name} (not saved yet)").format(name=tab.name)
+            tip = tr("{name} (not saved yet)").format(name=name)
         else:
-            tip = f"{tab.path} [{getattr(tab.backend, 'name', '')}]"
+            tip = f"{_shown(tab.path)} [{getattr(tab.backend, 'name', '')}]"
         self.tabs.setTabToolTip(index, tip)
 
     def _update_status(self) -> None:
@@ -918,7 +1000,8 @@ class EditorWindow(QMainWindow):
     def _set_wrap(self, on: bool) -> None:
         mode = QPlainTextEdit.LineWrapMode.WidgetWidth if on else QPlainTextEdit.LineWrapMode.NoWrap
         for tab in self._tabs():
-            tab.editor.setLineWrapMode(mode)
+            if not tab.long_line:  # unwrapped, its line holds the window
+                tab.editor.setLineWrapMode(mode)
 
     def _zoom(self, steps: int) -> None:
         tab = self.current_tab()

@@ -197,7 +197,11 @@ def _record_check(files: dict, record_text: str, record_path: str) -> list[str]:
             continue
         name = row[0]
         listed.add(name)
-        if name == record_path or name.endswith((".jws", ".p7s")):
+        # RECORD's own line (no hash by definition) is written with a
+        # backslash by some Windows builds (PyQt6-Qt6's win_amd64 wheel):
+        # only that line is taken in either spelling, any other name must
+        # be a member exactly
+        if name in (record_path, record_path.replace("/", "\\")) or name.endswith((".jws", ".p7s")):
             continue
         digest = row[1] if len(row) > 1 else ""
         if name not in files:

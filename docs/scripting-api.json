@@ -441,7 +441,7 @@
       ],
       "returns": "FileBackend",
       "summary": "Open a backend from a URL like ``sftp://user@host/``, ``s3://bucket``, ``smb://server/share``, ``gopher://host:70``.",
-      "doc": "Open a backend from a URL like ``sftp://user@host/``,\n``s3://bucket``, ``smb://server/share``, ``gopher://host:70``.\n\nSensitive credentials in the URL are honoured but a saved profile\nis preferred for anything you'll re-use — :func:`open` looks up\nkeys / passphrases via ``keyring`` so they don't end up in\nprocess history.\n\n**Proxy support** (SOCKS4 / SOCKS5 / HTTP CONNECT). Pass any of\n``proxy_type``, ``proxy_host``, ``proxy_port``, ``proxy_username``,\n``proxy_password`` as kwargs; for proxy-capable protocols\n(sftp, scp, ftp/s, smb/dfsn, webdav, rsync, telnet,\ncisco-telnet, imap, pop3, nntp, gopher, pjl, adb-tcp,\nazure_blob/files, onedrive, sharepoint, gdrive, dropbox, winrm,\nand S3 over HTTP CONNECT), the proxy is wired into the backend's\ntransport. Backends without clean SOCKS/HTTP support log a warning\ninstead of silently ignoring the proxy fields. Per-protocol caveats\nstill apply: S3 is HTTP-CONNECT only, and rsync's OpenBSD-nc path\ncannot carry ``proxy_password``. Requests-based SDK sessions\ncontrolled by Axross ignore process-level ``HTTP_PROXY`` /\n``HTTPS_PROXY`` so the profile/script proxy is the route source of\ntruth. OAuth browser consent pages are external and may follow\nbrowser/system proxy settings. When ``proxy_type`` is not ``\"none\"``,\n``proxy_host`` and a non-zero ``proxy_port`` are required;\nhalf-configured proxies fail closed instead of falling back to\ndirect traffic.\n\nExample::\n\n    b = axross.open_url(\n        \"sftp://alice@gateway.example.com/\",\n        password=\"hunter2\",\n        proxy_type=\"socks5\",\n        proxy_host=\"127.0.0.1\",\n        proxy_port=1080,\n    )\n\nAny other keyword that names a :class:`ConnectionProfile` field sets\nit, as in a saved profile. iSCSI, for instance - the target and what\nthe initiator sends about itself (empty: the system's\n``/etc/iscsi/initiatorname.iscsi`` and any interface)::\n\n    b = axross.open_url(\n        \"iscsi://192.0.2.10/\",\n        iscsi_target_iqn=\"iqn.2026-10.example:disk1\",\n        iscsi_initiator_name=\"iqn.2026-11.org.example:client1\",\n        iscsi_initiator_interface=\"eth1\",\n    )\n\nNFS the same way: ``nfs_machine_name``, ``nfs_uid``, ``nfs_gid`` and\n``nfs_gids`` (\"27, 100\") are what the client sends (AUTH_SYS); any of\nthem set makes axross speak NFS itself (v3, or v4 with ``nfs_version=4``\nor ``\"4.1\"`` and ``nfs_client_id``, the NFSv4 client id) instead of mounting.\n\nRecognised schemes match registered backend protocol IDs, with\na few ergonomic aliases: ``http://`` / ``https://`` open WebDAV,\n``gophers://`` opens TLS Gopher, ``nntps://`` opens TLS NNTP,\n``git+local://`` opens a local Git repository path, and\n``sftp+key://`` / ``sftp+agent://`` select SSH auth mode.",
+      "doc": "Open a backend from a URL like ``sftp://user@host/``,\n``s3://bucket``, ``smb://server/share``, ``gopher://host:70``.\n\nSensitive credentials in the URL are honoured but a saved profile\nis preferred for anything you'll re-use — :func:`open` looks up\nkeys / passphrases via ``keyring`` so they don't end up in\nprocess history.\n\n**Proxy support** (SOCKS4 / SOCKS5 / HTTP CONNECT). Pass any of\n``proxy_type``, ``proxy_host``, ``proxy_port``, ``proxy_username``,\n``proxy_password`` as kwargs; for proxy-capable protocols\n(sftp, scp, ftp/s, smb/dfsn, webdav, rsync, telnet,\ncisco-telnet, imap, pop3, nntp, gopher, pjl, adb-tcp,\nazure_blob/files, onedrive, sharepoint, gdrive, dropbox, winrm,\nand S3 over HTTP CONNECT), the proxy is wired into the backend's\ntransport. Backends without clean SOCKS/HTTP support log a warning\ninstead of silently ignoring the proxy fields. Per-protocol caveats\nstill apply: S3 is HTTP-CONNECT only, and an *address_family* of\n``ipv4`` / ``ipv6`` through a proxy needs an IP address as host (the\nproxy resolves names). Requests-based SDK sessions\ncontrolled by Axross ignore process-level ``HTTP_PROXY`` /\n``HTTPS_PROXY`` so the profile/script proxy is the route source of\ntruth. OAuth browser consent pages are external and may follow\nbrowser/system proxy settings. When ``proxy_type`` is not ``\"none\"``,\n``proxy_host`` and a non-zero ``proxy_port`` are required;\nhalf-configured proxies fail closed instead of falling back to\ndirect traffic.\n\nExample::\n\n    b = axross.open_url(\n        \"sftp://alice@gateway.example.com/\",\n        password=\"hunter2\",\n        proxy_type=\"socks5\",\n        proxy_host=\"127.0.0.1\",\n        proxy_port=1080,\n    )\n\nAny other keyword that names a :class:`ConnectionProfile` field sets\nit, as in a saved profile. iSCSI, for instance - the target and what\nthe initiator sends about itself (empty: the system's\n``/etc/iscsi/initiatorname.iscsi`` and any interface)::\n\n    b = axross.open_url(\n        \"iscsi://192.0.2.10/\",\n        iscsi_target_iqn=\"iqn.2026-10.example:disk1\",\n        iscsi_initiator_name=\"iqn.2026-11.org.example:client1\",\n        iscsi_initiator_interface=\"eth1\",\n    )\n\nNFS the same way: ``nfs_machine_name``, ``nfs_uid``, ``nfs_gid`` and\n``nfs_gids`` (\"27, 100\") are what the client sends (AUTH_SYS); any of\nthem set makes axross speak NFS itself (v3, or v4 with ``nfs_version=4``\nor ``\"4.1\"`` and ``nfs_client_id``, the NFSv4 client id) instead of mounting.\n\nRecognised schemes match registered backend protocol IDs, with\na few ergonomic aliases: ``http://`` / ``https://`` open WebDAV,\n``gophers://`` opens TLS Gopher, ``nntps://`` opens TLS NNTP,\n``git+local://`` opens a local Git repository path, and\n``sftp+key://`` / ``sftp+agent://`` select SSH auth mode.\n``imap://``, ``pop3://`` and ``ldap://`` upgrade with STARTTLS before\nthe login and refuse a server without it; ``imaps://``, ``pop3s://``\nand ``ldaps://`` are implicit TLS; ``imap+plain://``, ``pop3+plain://``\nand ``ldap+plain://`` the explicit choice of no encryption.",
       "examples": [
         "b = axross.open_url(\n    \"sftp://alice@gateway.example.com/\",\n    password=\"hunter2\",\n    proxy_type=\"socks5\",\n    proxy_host=\"127.0.0.1\",\n    proxy_port=1080,\n)",
         "b = axross.open_url(\n    \"iscsi://192.0.2.10/\",\n    iscsi_target_iqn=\"iqn.2026-10.example:disk1\",\n    iscsi_initiator_name=\"iqn.2026-11.org.example:client1\",\n    iscsi_initiator_interface=\"eth1\",\n)"
@@ -1256,8 +1256,8 @@
         }
       ],
       "returns": "None",
-      "summary": "Create a new bookmark. Idempotent on (path, backend_name).",
-      "doc": "Create a new bookmark. Idempotent on (path, backend_name).",
+      "summary": "Create a new bookmark. Idempotent on (path, backend_name). Raises OSError when the bookmarks file could not be written.",
+      "doc": "Create a new bookmark. Idempotent on (path, backend_name). Raises\nOSError when the bookmarks file could not be written.",
       "examples": [],
       "raises": [],
       "mutates": true,
@@ -1276,10 +1276,12 @@
         }
       ],
       "returns": "None",
-      "summary": "Remove the bookmark at ``index`` (zero-based).",
-      "doc": "Remove the bookmark at ``index`` (zero-based).",
+      "summary": "Remove the bookmark at ``index`` (zero-based, as :func:`list_bookmarks` lists them). Raises IndexError for an index outside that list (also a negative one) and OSError when the bookmarks file could not be written.",
+      "doc": "Remove the bookmark at ``index`` (zero-based, as\n:func:`list_bookmarks` lists them). Raises IndexError for an index\noutside that list (also a negative one) and OSError when the bookmarks\nfile could not be written.",
       "examples": [],
-      "raises": [],
+      "raises": [
+        "IndexError"
+      ],
       "mutates": true,
       "prompts": false
     },
@@ -2614,7 +2616,9 @@
       "doc": "Issue a single SNMP GET request. Returns one ``SnmpVar`` for\nthe OID. Raises ``OSError`` on transport failure.\n\nFor v3, supply ``user`` (and optionally ``auth_key`` / ``priv_key``).\nFor v2c (the default), the ``community`` string is enough.",
       "examples": [],
       "raises": [
-        "OSError"
+        "FileNotFoundError",
+        "OSError",
+        "ValueError"
       ],
       "mutates": false,
       "prompts": false
@@ -2712,7 +2716,8 @@
       "doc": "Walk an OID subtree, returning every leaf as an ``SnmpVar``.\n``max_vars`` caps the result at a sane number — a walk of ``1.3``\non a packed device returns thousands of varbinds.",
       "examples": [],
       "raises": [
-        "OSError"
+        "OSError",
+        "ValueError"
       ],
       "mutates": false,
       "prompts": false
@@ -4800,7 +4805,7 @@
       ],
       "returns": "None",
       "summary": "Non-modal toast in the bottom-right corner of the main window.",
-      "doc": "Non-modal toast in the bottom-right corner of the main window.\n\nAuto-dismisses after ``timeout`` seconds. Multiple toasts stack.\nLevels: same colour palette as :func:`message`.\n\nExample::\n\n    axross.toast(\"Connection lost — retrying\", level=\"error\")\n    axross.toast(\"Saved 1.2 MB to /tmp/dump.json\",\n                 level=\"success\", timeout=2)",
+      "doc": "Non-modal toast in the bottom-right corner of the main window.\n\nAuto-dismisses after ``timeout`` seconds (held to 0.5 s .. 1 hour; a\ntimeout that is no number raises TypeError). Multiple toasts stack.\nLevels: same colour palette as :func:`message`.\n\nExample::\n\n    axross.toast(\"Connection lost — retrying\", level=\"error\")\n    axross.toast(\"Saved 1.2 MB to /tmp/dump.json\",\n                 level=\"success\", timeout=2)",
       "examples": [
         "axross.toast(\"Connection lost — retrying\", level=\"error\")\naxross.toast(\"Saved 1.2 MB to /tmp/dump.json\",\n             level=\"success\", timeout=2)"
       ],
@@ -6163,7 +6168,15 @@
           "annotation": "bool"
         },
         {
+          "name": "imap_starttls",
+          "annotation": "bool"
+        },
+        {
           "name": "pop3_ssl",
+          "annotation": "bool"
+        },
+        {
+          "name": "pop3_starttls",
           "annotation": "bool"
         },
         {
@@ -6181,6 +6194,30 @@
         {
           "name": "tftp_max_size_bytes",
           "annotation": "int"
+        },
+        {
+          "name": "db_name",
+          "annotation": "str"
+        },
+        {
+          "name": "db_tls",
+          "annotation": "bool"
+        },
+        {
+          "name": "ldap_ssl",
+          "annotation": "bool"
+        },
+        {
+          "name": "ldap_starttls",
+          "annotation": "bool"
+        },
+        {
+          "name": "slp_scope",
+          "annotation": "str"
+        },
+        {
+          "name": "exchange_email",
+          "annotation": "str"
         },
         {
           "name": "adb_mode",
@@ -6220,6 +6257,14 @@
         },
         {
           "name": "rsync_preserve_metadata",
+          "annotation": "bool"
+        },
+        {
+          "name": "winrm_https",
+          "annotation": "bool"
+        },
+        {
+          "name": "winrm_verify_tls",
           "annotation": "bool"
         },
         {
@@ -6265,6 +6310,12 @@
           "signature": "set_proxy_password(password: str) -> None",
           "returns": "None",
           "summary": "Store proxy password in keyring."
+        },
+        {
+          "name": "tls_mode",
+          "signature": "tls_mode() -> str",
+          "returns": "str",
+          "summary": "IMAP, POP3 and LDAP: ``\"tls\"`` (implicit TLS), ``\"starttls\"`` (upgraded before the login, refused without it) or ``\"plain\"`` (chosen: no encryption); ``\"\"`` for any other protocol."
         },
         {
           "name": "to_dict",
@@ -6593,7 +6644,7 @@
         {
           "name": "permissions_str",
           "returns": "str",
-          "summary": "Return rwxrwxrwx style permission string."
+          "summary": "Return rwxrwxrwx style permission string (setuid, setgid and sticky as ``ls -l`` shows them)."
         },
         {
           "name": "size_human",
@@ -7356,6 +7407,14 @@
         {
           "name": "_compiled_contains",
           "annotation": "re.Pattern[str] | None"
+        },
+        {
+          "name": "_folded_name",
+          "annotation": "str"
+        },
+        {
+          "name": "_folded_name_for",
+          "annotation": "str | None"
         }
       ],
       "methods": [
@@ -7375,7 +7434,7 @@
           "name": "matches_name",
           "signature": "matches_name(name: str) -> bool",
           "returns": "bool",
-          "summary": ""
+          "summary": "``name`` (a glob) and ``regex`` against *name*, both in NFC: a name decomposed as macOS writes it (\"A\" + combining diaeresis) is the same name as the composed one. The glob ignores case with Unicode casefolding (\"strasse\" finds \"Straße\", as the offline index does); the regex is case-sensitive unless it says (?i)."
         },
         {
           "name": "matches_size",

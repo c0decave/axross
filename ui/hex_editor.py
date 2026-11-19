@@ -34,6 +34,7 @@ from ui.close_corner import add_close_corner
 from ui.scan_job import ScanJob
 from ui.icon_provider import set_window_icon
 from core.i18n import tr
+from core.remote_name import sanitize_for_display as _shown
 
 if TYPE_CHECKING:
     from core.backend import FileBackend
@@ -52,9 +53,19 @@ class HexEditorReadLimitError(OSError):
 def _read_capped(handle, cap: int | None = None) -> bytes:
     if cap is None:
         cap = max_open_bytes()
-    data = handle.read(cap + 1)
-    if isinstance(data, str):
-        data = data.encode("utf-8", errors="replace")
+    # Read to the end (or past the cap) across short reads: a network
+    # reader may give less per call, and one read showed - and a save wrote
+    # back - only the first part of the file.
+    parts, size = [], 0
+    while size <= cap:
+        chunk = handle.read(cap + 1 - size)
+        if not chunk:
+            break
+        if isinstance(chunk, str):
+            chunk = chunk.encode("utf-8", errors="replace")
+        parts.append(bytes(chunk))
+        size += len(chunk)
+    data = b"".join(parts)
     if len(data) > cap:
         raise HexEditorReadLimitError(f"file exceeds {cap} byte hex editor cap")
     return bytes(data)
@@ -540,7 +551,7 @@ class HexEditorDialog(QDialog):
 
         filename = file_path.rsplit(backend.separator(), 1)[-1]
         prefix = tr("View Hex") if read_only else tr("Hex")
-        self.setWindowTitle(f"{prefix}: {filename} [{backend.name}]")
+        self.setWindowTitle(f"{prefix}: {_shown(filename)} [{backend.name}]")
         self.resize(900, 600)
 
         self._setup_ui()

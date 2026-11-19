@@ -166,13 +166,19 @@ def _write(backend, path: str, text: str) -> None:
     is written as its own bytes, the way sha256sum writes it. The text is
     encoded before anything is opened and goes to a temporary file that is
     renamed into place: before, the encoding failed after *path* had been
-    truncated, and the empty SHA256SUMS left behind later "verified"."""
+    truncated, and the empty SHA256SUMS left behind later "verified".
+
+    It replaces a manifest there through core.server_ops' backup step: a
+    plain rename onto it failed where a rename does not replace (SMB,
+    Windows), so Replace and Update never wrote."""
+    from core.server_ops import _finalize_temp_destination
+
     data = text.encode("utf-8", "surrogateescape")
     temp = backend.join(backend.parent(path), f".{MANIFEST_NAME}.{secrets.token_hex(4)}.part")
     try:
         with backend.open_write(temp) as fh:
             fh.write(data)
-        backend.rename(temp, path)
+        _finalize_temp_destination(backend, temp, path)
     except BaseException:
         try:
             backend.remove(temp)

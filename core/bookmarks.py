@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import math
@@ -13,7 +14,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from core.secure_storage import locked_store_update
+from core.secure_storage import keep_unreadable_copy, locked_store_update
 
 log = logging.getLogger(__name__)
 
@@ -47,16 +48,32 @@ def _bookmarks_file() -> Path:
 _KEEP = object()
 
 
-def _set_aside(path: Path) -> None:
-    """Rename an unreadable store file to a unique sibling, best effort."""
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    aside = path.with_name(f"{path.name}.unreadable-{stamp}-{uuid.uuid4().hex[:8]}")
+def _set_aside(path: Path, raw: bytes) -> bool:
+    """Rename the unreadable store file *path* (holding *raw*) to a unique
+    sibling, best effort - only while it still holds *raw*: another
+    window's save in the meantime is never renamed away. Returns False
+    when the file was replaced since it was read."""
+    from core.json_store import set_aside_if_unchanged
+
     try:
-        os.rename(path, aside)
+        return set_aside_if_unchanged(path, raw) is not None or not path.exists()
     except OSError as exc:
         log.error("Could not set unreadable %s aside: %s", path, exc)
+        return True
+
+
+def _fsync_dir(folder: Path) -> None:
+    """Make a rename in *folder* durable, best effort (not on Windows)."""
+    try:
+        fd = os.open(folder, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    except OSError:
         return
-    log.warning("Unreadable %s kept as %s", path, aside)
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
 
 
 _HEX_COLOR = re.compile(r"#[0-9a-fA-F]{6}")
@@ -143,6 +160,11 @@ class Bookmark:
     bookmark without a profile into a local shell, reports a missing
     profile instead of running the host's commands here. The four host
     fields are written to the file only for such a bookmark.
+
+    A *kind* this version does not know (a newer version's) opens as a
+    folder but is kept as it is, and ``extra`` holds the fields of the file
+    this version does not know: both are written back verbatim, so an edit
+    here does not change what a newer axross made.
     """
 
     name: str
@@ -163,10 +185,17 @@ class Bookmark:
     port: int = 22
     username: str = ""
     key_file: str = ""
+    #: Stored fields this version does not know, kept for the next save.
+    extra: dict = field(default_factory=dict, repr=False)
 
     @property
     def is_terminal(self) -> bool:
         return self.kind == KIND_TERMINAL
+
+    @property
+    def is_foreign_kind(self) -> bool:
+        """A kind a newer version made: opened as a folder, saved as it is."""
+        return self.kind not in KINDS
 
     @property
     def is_host_terminal(self) -> bool:
@@ -182,6 +211,24 @@ class Bookmark:
 SMART_FOLDER_BACKEND = "Smart Folder"
 #: A stored search larger than this (as JSON) is dropped on load.
 MAX_SEARCH_JSON_BYTES = 64 * 1024
+#: A Smart Folder search nested deeper than this is damaged: it passed
+#: json.loads and the size check, and every save then raised RecursionError.
+MAX_SEARCH_DEPTH = 32
+
+
+def _nesting(value, limit: int) -> int:
+    """How deep *value* (parsed JSON) is nested, counted up to *limit* + 1."""
+    deepest = 0
+    stack = [(value, 1)]
+    while stack:
+        node, depth = stack.pop()
+        if depth > limit:
+            return depth
+        deepest = max(deepest, depth)
+        children = node.values() if isinstance(node, dict) else node if isinstance(node, list) else ()
+        stack.extend((child, depth + 1) for child in children
+                     if isinstance(child, (dict, list)))
+    return deepest
 
 
 def new_smart_folder(name: str, search: dict, icon_name: str = "find-index") -> Bookmark:
@@ -291,12 +338,55 @@ def is_host_profile(profile: object) -> bool:
 
 def bookmark_dict(bookmark: Bookmark) -> dict:
     """*bookmark* as stored: every field, the host fields only for a host
-    terminal bookmark, so files of other bookmarks keep their shape."""
+    terminal bookmark, so files of other bookmarks keep their shape, and
+    the fields this version does not know (``extra``) as they were read."""
     data = asdict(bookmark)
+    extra = data.pop("extra", None) or {}
     if not bookmark.is_host_terminal:
         for name in HOST_FIELDS:
             data.pop(name, None)
+    for name, value in extra.items():
+        data.setdefault(name, value)
     return data
+
+
+#: A kind kept as it is when this version does not know it (a newer
+#: version's); anything else in ``kind`` is damage.
+_FOREIGN_KIND = re.compile(r"[A-Za-z][A-Za-z0-9_.:-]{0,63}")
+#: Fields this version does not know are kept up to this size (as JSON) per
+#: entry and this depth per value; deeper ones raised RecursionError at the
+#: save (see MAX_SEARCH_DEPTH), larger ones are no bookmark data.
+MAX_EXTRA_JSON_BYTES = 64 * 1024
+MAX_EXTRA_DEPTH = 32
+#: What a stored bookmark's keys mean to this version (the host fields only
+#: for a terminal bookmark, see _load_nodes).
+_MARK_KEYS = frozenset(
+    {"name", "path", "backend_name", "profile_name", "icon_name", "color", "search",
+     "created", "kind"}
+)
+_GROUP_KEYS = frozenset({"type", "name", "icon_name", "color", "expanded", "children"})
+
+
+def _extra_fields(item: dict, known: frozenset | set, lost: list) -> dict:
+    """The fields of the stored *item* outside *known*, kept verbatim; one
+    nested too deeply or past the size limit is dropped and noted in *lost*."""
+    extra: dict = {}
+    total = 0
+    for name, value in item.items():
+        if name in known:
+            continue
+        if isinstance(value, (dict, list)) and _nesting(value, MAX_EXTRA_DEPTH) > MAX_EXTRA_DEPTH:
+            lost.append(f"field {name!r} nested too deeply")
+            continue
+        try:
+            total += len(name) + len(json.dumps(value))
+        except (TypeError, ValueError, RecursionError):
+            total = MAX_EXTRA_JSON_BYTES + 1
+        if total > MAX_EXTRA_JSON_BYTES:
+            lost.append(f"field {name!r} too large")
+            continue
+        extra[name] = value
+    return extra
 
 
 def _loaded_search(item: dict) -> dict | None:
@@ -307,6 +397,9 @@ def _loaded_search(item: dict) -> dict | None:
     search = item.get("search", {})
     if not isinstance(search, dict):
         log.warning("Dropping bookmark %r: its search is not a mapping", item.get("name"))
+        return None
+    if search and _nesting(search, MAX_SEARCH_DEPTH) > MAX_SEARCH_DEPTH:
+        log.warning("Dropping bookmark %r: its search is nested too deeply", item.get("name"))
         return None
     if search:
         try:
@@ -332,17 +425,24 @@ class BookmarkGroup:
     color: str = ""
     expanded: bool = True
     children: list = field(default_factory=list)
+    #: Stored fields this version does not know (see Bookmark.extra).
+    extra: dict = field(default_factory=dict, repr=False)
 
 
 Node = Bookmark | BookmarkGroup
 
 
-def _normalise_kind(bookmark: Bookmark) -> None:
-    """The same rules load() applies: a known kind; a terminal bookmark on
+def _normalise_kind(bookmark: Bookmark, keep_foreign: bool = False) -> None:
+    """The same rules load() applies: a known kind (with *keep_foreign* a
+    newer version's kind read from the file stays); a terminal bookmark on
     a host has no profile and its address as backend name; any other
     terminal bookmark without a profile is a local shell."""
-    if bookmark.kind not in KINDS:
+    if bookmark.kind not in KINDS and not (
+        keep_foreign and isinstance(bookmark.kind, str) and _FOREIGN_KIND.fullmatch(bookmark.kind)
+    ):
         bookmark.kind = KIND_FOLDER
+    if not isinstance(bookmark.extra, dict):
+        bookmark.extra = {}
     for name in ("host", "username", "key_file"):
         if not isinstance(getattr(bookmark, name), str):
             setattr(bookmark, name, "")
@@ -376,6 +476,9 @@ class BookmarkManager:
         # form). save() compares the file against it to tell what another
         # writer (a script, a second window) changed in the meantime.
         self._base: list[dict] = []
+        #: A failed save raises (after it is reported) - for a script, which
+        #: must not be told a change happened that is gone at the next start.
+        self.raise_save_errors = False
         self.load()
 
     # ------------------------------------------------------------------
@@ -466,35 +569,50 @@ class BookmarkManager:
     # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
-    def load(self) -> None:
+    def load(self, _attempts: int = 3) -> None:
         bf = _bookmarks_file()
         if not bf.exists():
             return
         try:
-            data = json.loads(bf.read_text(encoding="utf-8"))
+            raw = bf.read_bytes()
+        except OSError as e:
+            # Not readable now (permissions, an I/O error of a network
+            # home): the file stays where it is - set aside, the user lost
+            # every bookmark - and a save merges with it once it can be
+            # read again, or refuses (_read_disk).
+            log.error("Bookmarks cannot be read now, nothing is shown or written: %s", e)
+            return
+        try:
+            data = json.loads(raw.decode("utf-8"))
             if not isinstance(data, list):
                 raise TypeError("Bookmarks JSON must be a list")
-            self._root = self._load_nodes(data, 0)
-            self._base = self._dump_nodes(self._root)
+            root = self._load_nodes(data, 0)
+            base = self._dump_nodes(root)
+            self._root, self._base = root, base
             log.info("Loaded %d bookmarks", len(self.all()))
-        except (ValueError, OSError, TypeError, RecursionError) as e:
+        except (ValueError, TypeError, RecursionError) as e:
             # ValueError covers JSONDecodeError and UnicodeDecodeError.
             log.error("Failed to load bookmarks: %s", e)
             # The next save writes the (now empty) tree to this path; move
             # the unreadable file out of the way so it cannot be destroyed.
-            _set_aside(bf)
+            if not _set_aside(bf, raw) and _attempts > 1:
+                self.load(_attempts - 1)  # another window saved meanwhile
 
     @classmethod
-    def _read_disk(cls, bf: Path) -> list[dict] | None:
-        """The file's tree in dumped form; ``[]`` when there is no file and
-        ``None`` when it cannot be read (it is then set aside)."""
+    def _read_disk(cls, bf: Path) -> tuple[list[dict] | None, bool]:
+        """The file's tree in dumped form; ``[]`` when there is no file,
+        ``None`` when it is no bookmark file (it is then set aside); an
+        OSError when it cannot be read now. The flag tells whether the
+        file holds entries that cannot be kept (see _load_nodes)."""
         try:
             raw = bf.read_bytes()
         except FileNotFoundError:
-            return []
+            return [], False
         except OSError as e:
+            # Raised: the save must not write this manager's tree over a
+            # file it cannot read (save() reports it as a failed save).
             log.error("Failed to re-read bookmarks: %s", e)
-            return None
+            raise
         try:
             # Decoded here, not by read_text(): a file another writer left
             # in another encoding is set aside like one that is no JSON.
@@ -503,9 +621,14 @@ class BookmarkManager:
                 raise TypeError("Bookmarks JSON must be a list")
         except (ValueError, TypeError, RecursionError) as e:
             log.error("Failed to re-read bookmarks: %s", e)
-            _set_aside(bf)
-            return None
-        return cls._dump_nodes(cls._load_nodes(data, 0))
+            _set_aside(bf, raw)
+            return None, False
+        lost: list = []
+        dumped = cls._dump_nodes(cls._load_nodes(data, 0, lost))
+        if lost:
+            log.warning("Bookmarks: %d entries or fields cannot be kept (%s)", len(lost),
+                        "; ".join(lost[:5]))
+        return dumped, bool(lost)
 
     @staticmethod
     def _flatten(dumped: list[dict]) -> tuple[dict, dict]:
@@ -528,9 +651,12 @@ class BookmarkManager:
         walk(dumped, ())
         return marks, groups
 
-    def _group_at(self, gpath: tuple[str, ...], fields: dict[tuple[str, ...], dict]):
+    def _group_at(self, gpath: tuple[str, ...], fields: dict[tuple[str, ...], dict],
+                  orders: dict[tuple[str, ...], list[tuple]] | None = None):
         """The group at name path *gpath*, created (with the attributes in
-        *fields*) where it is missing. ``()`` is the top level (``None``)."""
+        *fields*) where it is missing - in the place *orders* (the other
+        writer's, see :meth:`_orders`) gives it, else at the end. ``()`` is
+        the top level (``None``)."""
         parent: BookmarkGroup | None = None
         for depth in range(len(gpath)):
             name = gpath[depth]
@@ -549,55 +675,203 @@ class BookmarkManager:
                     icon_name=attrs.get("icon_name", _GROUP_ICON_DEFAULT),
                     color=attrs.get("color", ""),
                     expanded=attrs.get("expanded", True),
+                    extra=_extra_fields(attrs, _GROUP_KEYS, []),
                 )
-                self._siblings(parent).append(found)
+                if orders is None:
+                    self._siblings(parent).append(found)
+                else:
+                    self._place(parent, found, orders.get(gpath[:depth], []))
             parent = found
         return parent
 
     def _merge_from_disk(self, bf: Path) -> None:
         """Fold in what another writer changed in the file since this
-        manager last read or wrote it. Bookmarks are matched by
-        ``(kind, backend_name, path)``: one the other writer added is added
-        here, one it removed is removed here unless this manager changed
-        it, and one it edited takes the edit unless this manager edited
-        it too. Removals made here are never undone."""
-        disk = self._read_disk(bf)
+        manager last read or wrote it - a three-way merge of the file
+        (theirs), the tree as last read or written (base) and this tree
+        (mine). What this manager did not change takes their version:
+
+        * bookmarks, matched by ``(kind, backend_name, path)``: one they
+          added is added, one they removed is removed, one they edited
+          takes the edit, one they moved to another group moves there;
+        * groups, matched by their name path: one they added is added (in
+          its place), one they removed goes once it is empty here, one
+          they recoloured takes the colours; a rename is a new group the
+          bookmarks moved into, the old one then empty and removed;
+        * the order of a group's entries, unless it was changed here.
+
+        What this manager changed wins, and removals made here are never
+        undone.
+
+        Returns whether the file holds entries or fields that cannot be
+        kept: save() keeps a copy of it before it writes."""
+        disk, lossy = self._read_disk(bf)
         if disk is None or disk == self._base:
-            return
+            return lossy
+        mine_dump = self._dump_nodes(self._root)
         base_marks, base_groups = self._flatten(self._base)
         disk_marks, disk_groups = self._flatten(disk)
+        mine_marks, mine_groups = self._flatten(mine_dump)
+        base_order, disk_order = self._orders(self._base), self._orders(disk)
+        mine_order = self._orders(mine_dump)
+
         for mark in self.all():
             key = (mark.kind, mark.backend_name, mark.path)
-            if key not in base_marks or bookmark_dict(mark) != base_marks[key][1]:
-                continue  # added or changed here: this manager's version wins
+            if key not in base_marks:
+                continue  # added here
+            base_path, base_fields = base_marks[key]
+            mine_path = mine_marks[key][0] if key in mine_marks else base_path
+            edited = bookmark_dict(mark) != base_fields
+            moved = mine_path != base_path
             if key not in disk_marks:
+                if not edited and not moved:
+                    siblings = self._siblings(self.parent_of(mark))
+                    siblings.pop(_index_by_identity(siblings, mark))
+                continue
+            disk_path, disk_fields = disk_marks[key]
+            if not edited and disk_fields != base_fields:
+                theirs = self._node_from_dump(disk_fields)
+                for spec in dataclasses.fields(Bookmark):
+                    setattr(mark, spec.name, getattr(theirs, spec.name))
+            if not moved and disk_path != base_path:
                 siblings = self._siblings(self.parent_of(mark))
                 siblings.pop(_index_by_identity(siblings, mark))
-            elif disk_marks[key][1] != base_marks[key][1]:
-                for name, value in disk_marks[key][1].items():
-                    setattr(mark, name, value)
-        known = {(m.kind, m.backend_name, m.path) for m in self.all()}
+                self._place(self._group_at(disk_path, disk_groups, disk_order), mark,
+                            disk_order.get(disk_path, []))
+
+        # Groups they added, each in its place among its siblings.
         for gpath in disk_groups:
             if gpath not in base_groups:
-                self._group_at(gpath, disk_groups)
+                self._group_at(gpath, disk_groups, disk_order)
+        # Group attributes they changed and this manager did not.
+        for gpath, fields in disk_groups.items():
+            base = base_groups.get(gpath)
+            mine = mine_groups.get(gpath)
+            if base is None or mine is None or self._group_attrs(mine) != self._group_attrs(base):
+                continue
+            if self._group_attrs(fields) != self._group_attrs(base):
+                group = self._find_group(gpath)
+                if group is not None:
+                    group.icon_name = fields.get("icon_name", _GROUP_ICON_DEFAULT)
+                    group.color = fields.get("color", "")
+                    group.expanded = fields.get("expanded", True)
+                    group.extra = _extra_fields(fields, _GROUP_KEYS, [])
+
+        known = {(m.kind, m.backend_name, m.path) for m in self.all()}
         for key, (gpath, fields) in disk_marks.items():
             if key in base_marks or key in known:
                 continue
-            self._siblings(self._group_at(gpath, disk_groups)).append(Bookmark(**fields))
+            self._place(self._group_at(gpath, disk_groups, disk_order),
+                        self._node_from_dump(fields), disk_order.get(gpath, []))
             known.add(key)
 
+        # Groups they removed: gone here too once empty (what is still in
+        # one was added or changed here), unless changed here. Deepest first.
+        for gpath in sorted(base_groups, key=len, reverse=True):
+            if gpath in disk_groups or gpath not in mine_groups:
+                continue
+            if self._group_attrs(mine_groups[gpath]) != self._group_attrs(base_groups[gpath]):
+                continue
+            group = self._find_group(gpath)
+            if group is not None and not group.children:
+                siblings = self._siblings(self._find_group(gpath[:-1]) if gpath[:-1] else None)
+                siblings.pop(_index_by_identity(siblings, group))
+
+        # The order they gave a group's entries, where it was not changed here.
+        for gpath, order in disk_order.items():
+            if mine_order.get(gpath) != base_order.get(gpath):
+                continue
+            if gpath and self._find_group(gpath) is None:
+                continue
+            rank = {ident: i for i, ident in enumerate(order)}
+            siblings = self._siblings(self._find_group(gpath) if gpath else None)
+            siblings.sort(key=lambda node: rank.get(self._identity(node), len(rank)))
+        return lossy
+
+    @staticmethod
+    def _group_attrs(fields: dict) -> tuple:
+        extra = {k: v for k, v in fields.items() if k not in _GROUP_KEYS}
+        return (fields.get("icon_name"), fields.get("color"), fields.get("expanded", True),
+                json.dumps(extra, sort_keys=True))
+
+    @staticmethod
+    def _identity(node) -> tuple:
+        """A node as the merge tells it apart from its siblings."""
+        if isinstance(node, dict):
+            if node.get("type") == "group":
+                return ("group", node.get("name"))
+            return ("mark", node.get("kind", KIND_FOLDER), node.get("backend_name"),
+                    node.get("path"))
+        if isinstance(node, BookmarkGroup):
+            return ("group", node.name)
+        return ("mark", node.kind, node.backend_name, node.path)
+
     @classmethod
-    def _load_nodes(cls, data: list, depth: int) -> list[Node]:
+    def _orders(cls, dumped: list[dict]) -> dict[tuple[str, ...], list[tuple]]:
+        """``group path -> the identities of its entries, in order`` of a
+        dumped tree; ``()`` is the top level."""
+        orders: dict[tuple[str, ...], list[tuple]] = {}
+
+        def walk(nodes: list[dict], gpath: tuple[str, ...]) -> None:
+            if gpath in orders:
+                return  # a second group of that name: the first one counts
+            orders[gpath] = [cls._identity(item) for item in nodes]
+            for item in nodes:
+                if item.get("type") == "group":
+                    walk(item["children"], gpath + (item["name"],))
+
+        walk(dumped, ())
+        return orders
+
+    def _find_group(self, gpath: tuple[str, ...]) -> BookmarkGroup | None:
+        parent: BookmarkGroup | None = None
+        for name in gpath:
+            parent = next(
+                (n for n in self._siblings(parent) if isinstance(n, BookmarkGroup) and n.name == name),
+                None,
+            )
+            if parent is None:
+                return None
+        return parent
+
+    def _place(self, parent: BookmarkGroup | None, node, order: list[tuple]) -> None:
+        """Put *node* into *parent* where *order* (the other writer's) has
+        it: after the nearest entry before it that is here too."""
+        siblings = self._siblings(parent)
+        ident = self._identity(node)
+        if ident not in order:
+            siblings.append(node)
+            return
+        present = {self._identity(n): i for i, n in enumerate(siblings)}
+        for before in reversed(order[: order.index(ident)]):
+            if before in present:
+                siblings.insert(present[before] + 1, node)
+                return
+        siblings.insert(0, node)
+
+    @classmethod
+    def _load_nodes(cls, data: list, depth: int, lost: list | None = None) -> list[Node]:
+        """The nodes of the stored list *data* at *depth*. What cannot be
+        taken in (an entry that is no mapping or is damaged, a group nested
+        deeper than _MAX_DEPTH, a field too deep or too large) is left out
+        and noted in *lost*: save() then keeps a copy of the file first."""
+        if lost is None:
+            lost = []
         nodes: list[Node] = []
         for item in data:
             if not isinstance(item, dict):
+                lost.append("an entry that is no mapping")
                 continue
             if item.get("type") == "group":
                 name = item.get("name")
                 children = item.get("children", [])
-                if not isinstance(name, str) or depth >= _MAX_DEPTH:
+                if not isinstance(name, str):
+                    lost.append("a group without a name")
+                    continue
+                if depth >= _MAX_DEPTH:
+                    lost.append(f"group {name!r} nested too deeply")
                     continue
                 if not isinstance(children, list):
+                    lost.append(f"the entries of group {name!r}")
                     children = []
                 nodes.append(
                     BookmarkGroup(
@@ -605,41 +879,49 @@ class BookmarkManager:
                         icon_name=_sanitize_icon_name(item.get("icon_name"), _GROUP_ICON_DEFAULT),
                         color=_sanitize_color(item.get("color")),
                         expanded=item.get("expanded", True) is not False,
-                        children=cls._load_nodes(children, depth + 1),
+                        children=cls._load_nodes(children, depth + 1, lost),
+                        extra=_extra_fields(item, _GROUP_KEYS, lost),
                     )
                 )
                 continue
             search = _loaded_search(item)
-            if (
+            if not (
                 search is not None
                 and isinstance(item.get("name"), str)
                 and isinstance(item.get("path"), str)
                 and isinstance(item.get("backend_name", "Local"), str)
                 and isinstance(item.get("profile_name", ""), str)
             ):
-                # An unknown kind (a newer version's) opens as a folder: never
-                # dropped, so the next save cannot lose it.
-                kind = item.get("kind") if item.get("kind") in KINDS else KIND_FOLDER
-                bookmark = Bookmark(
-                    name=item["name"],
-                    path=item["path"],
-                    backend_name=item.get("backend_name", "Local"),
-                    profile_name=item.get("profile_name", ""),
-                    icon_name=_sanitize_icon_name(item.get("icon_name", "bookmark")),
-                    color=_sanitize_color(item.get("color")),
-                    search=search,
-                    created=_sanitize_created(item.get("created")),
-                    kind=kind,
-                )
-                if kind == KIND_TERMINAL:
-                    # Damaged host fields fall back to defaults; without a
-                    # usable host the bookmark stays what it was before.
-                    bookmark.host = item.get("host", "")
-                    bookmark.port = item.get("port", DEFAULT_SSH_PORT)
-                    bookmark.username = item.get("username", "")
-                    bookmark.key_file = item.get("key_file", "")
-                _normalise_kind(bookmark)
-                nodes.append(bookmark)
+                lost.append(f"bookmark {item.get('name')!r}")
+                continue
+            # An unknown kind (a newer version's) opens as a folder and is
+            # saved as it is: never dropped, never turned into a folder.
+            kind = item.get("kind", KIND_FOLDER)
+            if kind not in KINDS and not (isinstance(kind, str) and _FOREIGN_KIND.fullmatch(kind)):
+                lost.append(f"the kind of bookmark {item['name']!r}")
+                kind = KIND_FOLDER
+            known = _MARK_KEYS | set(HOST_FIELDS) if kind == KIND_TERMINAL else _MARK_KEYS
+            bookmark = Bookmark(
+                name=item["name"],
+                path=item["path"],
+                backend_name=item.get("backend_name", "Local"),
+                profile_name=item.get("profile_name", ""),
+                icon_name=_sanitize_icon_name(item.get("icon_name", "bookmark")),
+                color=_sanitize_color(item.get("color")),
+                search=search,
+                created=_sanitize_created(item.get("created")),
+                kind=kind,
+                extra=_extra_fields(item, known, lost),
+            )
+            if kind == KIND_TERMINAL:
+                # Damaged host fields fall back to defaults; without a
+                # usable host the bookmark stays what it was before.
+                bookmark.host = item.get("host", "")
+                bookmark.port = item.get("port", DEFAULT_SSH_PORT)
+                bookmark.username = item.get("username", "")
+                bookmark.key_file = item.get("key_file", "")
+            _normalise_kind(bookmark, keep_foreign=True)
+            nodes.append(bookmark)
         return nodes
 
     @classmethod
@@ -647,19 +929,25 @@ class BookmarkManager:
         out: list[dict] = []
         for node in nodes:
             if isinstance(node, BookmarkGroup):
-                out.append(
-                    {
-                        "type": "group",
-                        "name": node.name,
-                        "icon_name": node.icon_name,
-                        "color": node.color,
-                        "expanded": node.expanded,
-                        "children": cls._dump_nodes(node.children),
-                    }
-                )
+                entry = {
+                    "type": "group",
+                    "name": node.name,
+                    "icon_name": node.icon_name,
+                    "color": node.color,
+                    "expanded": node.expanded,
+                    "children": cls._dump_nodes(node.children),
+                }
+                for name, value in (node.extra or {}).items():
+                    entry.setdefault(name, value)
+                out.append(entry)
             else:
                 out.append(bookmark_dict(node))
         return out
+
+    @classmethod
+    def _node_from_dump(cls, fields: dict):
+        """The node a dumped entry stands for (the load rules applied)."""
+        return cls._load_nodes([fields], 0)[0]
 
     def save(self) -> None:
         """Write the tree, first merging what another writer changed in the
@@ -669,12 +957,20 @@ class BookmarkManager:
         try:
             target_dir.mkdir(parents=True, exist_ok=True)
             with locked_store_update(bf):
-                self._merge_from_disk(bf)
+                if self._merge_from_disk(bf) and not keep_unreadable_copy(bf):
+                    # What this version cannot keep would be gone with the
+                    # write: no copy, no write.
+                    raise OSError(
+                        f"{bf} holds entries this version cannot keep and no copy of it "
+                        "could be made"
+                    )
                 self._write(bf)
         except OSError as e:
             from core.json_store import report_save_failure
 
             report_save_failure("bookmarks", e)
+            if self.raise_save_errors:
+                raise
 
     def _write(self, bf: Path) -> None:
         target_dir = bf.parent
@@ -695,8 +991,13 @@ class BookmarkManager:
             with os.fdopen(fd, "w", encoding="utf-8", errors="backslashreplace") as tmp:
                 fd = -1
                 tmp.write(payload)
+                # On disk before the rename: a crash or power cut right
+                # after it otherwise leaves an empty bookmarks.json.
+                tmp.flush()
+                os.fsync(tmp.fileno())
             os.replace(temp_name, bf)
             os.chmod(bf, 0o600)
+            _fsync_dir(target_dir)
         except BaseException:
             if fd != -1:
                 try:
@@ -778,7 +1079,8 @@ class BookmarkManager:
         # Normalise the same way load() does.
         new.icon_name = _sanitize_icon_name(new.icon_name)
         new.color = _sanitize_color(new.color)
-        _normalise_kind(new)
+        # A newer version's kind stays through an edit that keeps it.
+        _normalise_kind(new, keep_foreign=new.kind == old.kind)
         # An edit is not a new bookmark: it keeps its age.
         new.created = _sanitize_created(new.created) or old.created
         siblings = self._siblings(parent)
@@ -788,6 +1090,30 @@ class BookmarkManager:
             self._siblings(group).append(new)
         self.save()
 
+    def _levels_below(self, parent: BookmarkGroup | None) -> int:
+        """How many group levels are above an entry of *parent* (0 for the
+        top level)."""
+        levels = 0
+        while parent is not None:
+            levels += 1
+            parent = self.parent_of(parent)
+        return levels
+
+    @staticmethod
+    def _group_height(node) -> int:
+        """The group levels *node* brings along: 0 for a bookmark."""
+        if not isinstance(node, BookmarkGroup):
+            return 0
+        return 1 + max((BookmarkManager._group_height(c) for c in node.children), default=0)
+
+    def _check_nesting(self, parent: BookmarkGroup | None, nodes) -> None:
+        """ValueError when *nodes* in *parent* would nest groups deeper
+        than load() takes (_MAX_DEPTH): the next start dropped them, with
+        every bookmark inside."""
+        base = self._levels_below(parent)
+        if any(base + self._group_height(node) > _MAX_DEPTH for node in nodes):
+            raise ValueError(f"bookmark groups nest {_MAX_DEPTH} levels deep at most")
+
     def add_group(
         self,
         name: str,
@@ -795,6 +1121,9 @@ class BookmarkManager:
         color: str = "",
         parent: BookmarkGroup | None = None,
     ) -> BookmarkGroup:
+        """A new group in *parent*; ValueError past _MAX_DEPTH levels."""
+        if self._levels_below(parent) + 1 > _MAX_DEPTH:
+            raise ValueError(f"bookmark groups nest {_MAX_DEPTH} levels deep at most")
         group = BookmarkGroup(
             name=name,
             icon_name=_sanitize_icon_name(icon_name, _GROUP_ICON_DEFAULT),
@@ -847,6 +1176,7 @@ class BookmarkManager:
         old_parent = self.parent_of(node)  # KeyError for unknown nodes
         if isinstance(node, BookmarkGroup) and parent is not None and self._contains(node, parent):
             raise ValueError("a group cannot be moved into itself or its descendants")
+        self._check_nesting(parent, [node])
         old_siblings = self._siblings(old_parent)
         old_pos = _index_by_identity(old_siblings, node)
         old_siblings.pop(old_pos)
@@ -902,6 +1232,7 @@ class BookmarkManager:
                 node, parent
             ):
                 raise ValueError("a group cannot be moved into itself or its descendants")
+        self._check_nesting(parent, moving)
         if not moving:
             return False
         dest = self._siblings(parent)

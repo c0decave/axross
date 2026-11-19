@@ -139,6 +139,13 @@ class _RowAdapter:
     def _db_delete_subtree(self, path: str) -> None:
         raise NotImplementedError
 
+    def _transaction(self):
+        """A context in which several writes land together or not at all;
+        stores without transactions (Redis, MongoDB) do them one by one."""
+        import contextlib
+
+        return contextlib.nullcontext()
+
 
 # ---------------------------------------------------------------------------
 # Public mixin
@@ -375,7 +382,9 @@ class DbFsBackend(_RowAdapter, SessionLifecycle):
             raise FileNotFoundError(errno.ENOENT, f"No such path: {path}")
         self._refuse_slash_on_file(raw, row)
         if row.get("is_dir"):
-            children = list(self._db_list(path))
+            # Names only: the full rows shipped every child's file body
+            # just to see whether the folder is empty.
+            children = list(self._db_list_meta(path))
             if children and not recursive:
                 raise OSError(errno.ENOTEMPTY, f"Directory not empty: {path}")
             self._db_delete_subtree(path)
@@ -411,26 +420,56 @@ class DbFsBackend(_RowAdapter, SessionLifecycle):
             raise FileExistsError(errno.EEXIST, f"Destination already exists: {dst}")
         dst_parent = self.parent(dst)
         self._check_parent(dst_parent)
-        # Use copy-then-delete via DB ops: read the bytes, insert
-        # under the new path, drop the old. Subclasses with native
-        # rename can override this whole method.
-        self._db_insert(
-            {
-                "path": dst,
-                "parent": dst_parent,
-                "is_dir": row.get("is_dir", False),
-                # Schemaless stores hand back whatever another client
-                # stored; the adapters' inserts take an int.
-                "mode": parse_mode(row.get("mode"), 0o755 if row.get("is_dir") else 0o644),
-                "mtime": _now(),
-                "content": row.get("content"),
-            }
-        )
-        if row.get("is_dir"):
-            for child in list(self._db_list(src)):
-                child_dst = posixpath.join(dst, posixpath.basename(child["path"]))
-                self.rename(child["path"], child_dst)
-        self._db_delete(src)
+        # Copy-then-delete via DB ops, in one transaction where the store
+        # has them (SQLite, PostgreSQL): a failure half way left a folder
+        # split between the old and the new name.
+        with self._transaction():
+            self._move_row(src, dst, row)
+
+    def _move_row(self, src: str, dst: str, row: dict) -> None:
+        """Insert *row* (of *src*) under *dst*, its children after it,
+        then drop *src*. The modification time stays the row's own.
+
+        A child is a row whose path is directly under its folder: the
+        ``parent`` column alone named a folder its own parent (the walk
+        called itself until RecursionError) or moved a row of another
+        folder (/x/y "of" /a went to /b/y). The walk is a loop, not a
+        recursion: a deep tree is no RecursionError either."""
+        pending = [(src, dst, row)]
+        moved: list[str] = []
+        while pending:
+            src, dst, row = pending.pop()
+            self._db_insert(
+                {
+                    "path": dst,
+                    "parent": self.parent(dst),
+                    "is_dir": row.get("is_dir", False),
+                    # Schemaless stores hand back whatever another client
+                    # stored; the adapters' inserts take an int.
+                    "mode": parse_mode(row.get("mode"), 0o755 if row.get("is_dir") else 0o644),
+                    "mtime": row.get("mtime") or _now(),
+                    "content": row.get("content"),
+                }
+            )
+            moved.append(src)
+            if not row.get("is_dir"):
+                continue
+            for child in list(self._db_list_meta(src)):
+                child_path = child.get("path")
+                if not isinstance(child_path, str) or self.parent(child_path) != src \
+                        or child_path == src:
+                    log.warning("DB rename: row %r is listed under %r but is not in it; left alone",
+                                child_path, src)
+                    continue
+                child_row = self._db_get(child_path)
+                if child_row is None:
+                    continue  # gone meanwhile
+                pending.append(
+                    (child_path, posixpath.join(dst, posixpath.basename(child_path)), child_row)
+                )
+        # Children before their folder, as the recursion deleted them.
+        for path in reversed(moved):
+            self._db_delete(path)
 
     @_driver_errors_as_oserror
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:

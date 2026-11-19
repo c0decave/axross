@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import os
+import re
 from pathlib import Path
 
 from PyQt6.QtCore import QRegularExpression, Qt, QThread, QTimer, pyqtSignal
@@ -51,11 +52,57 @@ from ui.icon_provider import set_window_icon
 
 log = logging.getLogger(__name__)
 
+#: The most of a remote authorized_keys Deploy SSH Key reads (thousands of
+#: keys): read whole, a link to /dev/zero or a file of gigabytes filled
+#: the memory.
+MAX_AUTHORIZED_KEYS_BYTES = 4 * 1024 * 1024
+
 #: Protocols without a login name: the Username row is hidden for them and
 #: validation never asks for one - one list, so a hidden field can never be
 #: a required one (it was for RamFS, TFTP and MTP).
+#: Protocols whose backend dials with the system's choice of address family:
+#: no "IP Version" row (only SSH / SCP read profile.address_family).
+_NO_ADDRESS_FAMILY = frozenset({"smb", "dfsn", "nfs", "iscsi", "mtp"})
+
 NO_USERNAME_PROTOCOLS = frozenset(
-    {"nfs", "onedrive", "sharepoint", "gdrive", "dropbox", "gopher", "pjl", "ramfs", "tftp", "mtp"}
+    {"nfs", "onedrive", "sharepoint", "gdrive", "dropbox", "gopher", "pjl", "ramfs", "tftp", "mtp",
+     "adb", "sqlite", "git", "redis", "slp"}
+)
+
+#: Protocols whose "Host" row holds something else, with its label and
+#: placeholder: the SQLite file, the Git repository, the SVN URL, the
+#: Exchange server (optional). None of them has a port to set.
+HOST_ROW_AS = {
+    "sqlite": ("Database file:", "/path/to/files.sqlite"),
+    "git": ("Repository:", "https://host/repo.git, git@host:repo.git or /path/to/repo"),
+    "svn": ("Repository URL:", "https://svn.example.org/repo or svn://host/repo"),
+    "exchange": ("Server:", "empty: autodiscover from the e-mail address"),
+}
+
+#: The "Host" row may hold a path with spaces for these.
+HOST_IS_PATH = frozenset({"sqlite", "git"})
+
+#: Protocols whose backend dials its own socket and has no say in IPv4 or
+#: IPv6: the IP Version row would be a setting without effect.
+NO_ADDRESS_FAMILY_PROTOCOLS = frozenset(
+    {"sqlite", "git", "svn", "imap", "pop3", "nntp", "gopher", "pjl", "postgres", "redis",
+     "mongodb", "ldap", "slp", "exchange"}
+)
+
+#: The TLS check box of a protocol and its port with / without TLS: the
+#: port follows the box unless the user typed another one.
+TLS_PORTS = {
+    "imap": ("_imap_ssl", 993, 143),
+    "pop3": ("_pop3_ssl", 995, 110),
+    "nntp": ("_nntp_ssl", 563, 119),
+    "ldap": ("_ldap_ssl", 636, 389),
+}
+
+
+#: Protocols whose backend does not take the IP version (it resolves the
+#: host itself): the row is hidden for them instead of being ignored.
+ADDRESS_FAMILY_IGNORED = frozenset(
+    {"winrm", "wmi", "tftp"}
 )
 
 
@@ -64,18 +111,32 @@ class _ConnectThread(QThread):
 
     success = pyqtSignal(str)  # home directory
     error = pyqtSignal(str)  # error message
-    #: The server's host key is not in known_hosts yet. A test has nobody
-    #: to ask (it runs without the trust prompt), so this is no failure:
-    #: the text sends the user to Connect, which shows the fingerprint.
+    #: The server's host key was not trusted: the user said No to "Trust
+    #: Host Key?" (or nobody was left to ask) - a note, no failure.
     unknown_host_key = pyqtSignal(str)
+    #: A note while the connect waits for the user elsewhere ("Check the
+    #: phone: allow USB debugging", core.connect_notice).
+    notice = pyqtSignal(str)
 
-    def __init__(self, profile: ConnectionProfile, password: str, key_passphrase: str, parent=None):
+    def __init__(self, profile: ConnectionProfile, password: str, key_passphrase: str, parent=None,
+                 on_unknown_host=None):
         super().__init__(parent)
         self._profile = profile
         self._password = password
         self._key_passphrase = key_passphrase
+        #: Asks "Trust Host Key?" on the GUI thread (core.connect_worker
+        #: .HostKeyPrompt.ask), as Connect does. A test of a new profile
+        #: only said "Use Connect to review its fingerprint" and offered no
+        #: way to trust the key.
+        self._on_unknown_host = on_unknown_host
 
     def run(self) -> None:
+        from core import connect_notice
+
+        with connect_notice.receiving(self.notice.emit):
+            self._run()
+
+    def _run(self) -> None:
         try:
             from core.connection_manager import ConnectionManager
 
@@ -97,6 +158,7 @@ class _ConnectThread(QThread):
                     self._profile,
                     password=self._password,
                     key_passphrase=self._key_passphrase,
+                    on_unknown_host=self._on_unknown_host,
                 )
                 home = session.home()
             finally:
@@ -121,6 +183,11 @@ def _expand_home(path: str) -> str:
 
 class ConnectionDialog(QDialog):
     """Dialog for creating/editing connection profiles and connecting."""
+
+    #: A profile was saved under a new name and the old one removed (old,
+    #: new): bookmarks and the saved layout on disk follow already
+    #: (core.profile_references); a running window updates its own panes.
+    profile_renamed = pyqtSignal(str, str)
 
     def __init__(
         self,
@@ -247,6 +314,20 @@ class ConnectionDialog(QDialog):
         self._protocol_combo.currentIndexChanged.connect(self._on_protocol_changed)
         conn_form.addRow(tr("Protocol:"), self._protocol_combo)
 
+        # ADB: over the network (adb tcpip) or the USB cable, which device
+        self._adb_mode = QComboBox()
+        self._adb_mode.addItem(tr("TCP / Wi-Fi"), "tcp")
+        self._adb_mode.addItem(tr("USB"), "usb")
+        self._adb_mode.setToolTip(tr(
+            "TCP / Wi-Fi: the phone listens on the network after \"adb tcpip 5555\". "
+            "USB: the phone on the cable (no adb server may hold it)."))
+        conn_form.addRow(tr("Mode:"), self._adb_mode)
+        self._adb_usb_serial = QLineEdit()
+        self._adb_usb_serial.setPlaceholderText(tr("any connected device"))
+        self._adb_usb_serial.setToolTip(tr(
+            "The serial number \"adb devices\" shows; empty takes the first phone found."))
+        conn_form.addRow(tr("USB serial:"), self._adb_usb_serial)
+
         self._host = QLineEdit()
         self._host.setPlaceholderText(tr("hostname or IP"))
         conn_form.addRow(tr("Host:"), self._host)
@@ -287,10 +368,53 @@ class ConnectionDialog(QDialog):
         self._ftp_passive.setChecked(True)
         conn_form.addRow(tr("FTP Mode:"), self._ftp_passive)
 
+        # FTPS and WinRM over HTTPS: whether the certificate is checked.
+        self._tls_verify = QCheckBox(tr("Verify the server's TLS certificate"))
+        self._tls_verify.setChecked(True)
+        self._tls_verify.setToolTip(tr(
+            "Turn this off only for a server you know whose certificate is self-signed "
+            "(a lab server, WinRM's quickconfig listener): the connection is then "
+            "encrypted but not protected against someone in between."
+        ))
+        conn_form.addRow("", self._tls_verify)
+
+        # WinRM: HTTPS listener (5986) or HTTP listener (5985).
+        self._winrm_https = QCheckBox(tr("Use HTTPS (port 5986)"))
+        self._winrm_https.setChecked(True)
+        self._winrm_https.setToolTip(tr(
+            "Off: the HTTP listener on port 5985, Windows' default. With NTLM the "
+            "commands and files are still encrypted."
+        ))
+        self._winrm_https.toggled.connect(self._on_winrm_https_toggled)
+        conn_form.addRow("", self._winrm_https)
+
         # SMB: share name
         self._smb_share = QLineEdit()
         self._smb_share.setPlaceholderText(tr("Share name (e.g. Documents)"))
         conn_form.addRow(tr("Share:"), self._smb_share)
+
+        # SMB / DFS-N: the workstation name NTLM sends (core.smb_client)
+        from core.client_identity import SMB_CLIENT_NAME
+
+        self._smb_client_name = QLineEdit()
+        self._smb_client_name.setPlaceholderText(SMB_CLIENT_NAME)
+        self._smb_client_name.setToolTip(tr(
+            "The workstation name the login sends to the server (NTLM). Empty: {name}, "
+            "never this computer's real name.").format(name=SMB_CLIENT_NAME))
+        conn_form.addRow(tr("Workstation:"), self._smb_client_name)
+
+        # MTP: which device, mounted by which FUSE mounter (core.mtp_client)
+        self._mtp_device_id = QLineEdit()
+        self._mtp_device_id.setPlaceholderText(tr("1 (the first device)"))
+        self._mtp_device_id.setToolTip(tr(
+            "The device number the mounter lists (jmtpfs -l, simple-mtpfs -l); 1 is the "
+            "first device."))
+        conn_form.addRow(tr("Device:"), self._mtp_device_id)
+        self._mtp_mounter = QComboBox()
+        self._mtp_mounter.addItem(tr("Automatic"), "")
+        for mounter in ("jmtpfs", "simple-mtpfs", "go-mtpfs"):
+            self._mtp_mounter.addItem(mounter, mounter)
+        conn_form.addRow(tr("Mounter:"), self._mtp_mounter)
 
         # WebDAV: full URL
         self._webdav_url = QLineEdit()
@@ -321,6 +445,13 @@ class ConnectionDialog(QDialog):
         self._rsync_ssh_key = QLineEdit()
         self._rsync_ssh_key.setPlaceholderText(tr("Path to SSH key (optional)"))
         conn_form.addRow(tr("SSH Key:"), self._rsync_ssh_key)
+
+        self._rsync_preserve = QCheckBox(tr("Keep owner, permissions and times on upload"))
+        self._rsync_preserve.setToolTip(tr(
+            "Off: uploads get the server's defaults, so they do not carry your local "
+            "user and group IDs. On: an archive copy, for backups."
+        ))
+        conn_form.addRow("", self._rsync_preserve)
 
         # --- NFS fields ---
         self._nfs_export = QLineEdit()
@@ -482,6 +613,73 @@ class ConnectionDialog(QDialog):
         self._nntp_ssl = QCheckBox(tr("Use SSL/TLS (NNTPS, port 563)"))
         self._nntp_ssl.setChecked(True)
         conn_form.addRow("", self._nntp_ssl)
+
+        # --- POP3 / LDAP: TLS ---
+        self._pop3_ssl = QCheckBox(tr("Use SSL/TLS (POP3S, port 995)"))
+        self._pop3_ssl.setChecked(True)
+        conn_form.addRow("", self._pop3_ssl)
+        self._ldap_ssl = QCheckBox(tr("Use SSL/TLS (LDAPS, port 636)"))
+        conn_form.addRow("", self._ldap_ssl)
+        # Without implicit TLS: STARTTLS before the login (refused when the
+        # server does not offer it) - or, unticked, the explicit choice of
+        # plain text. Only one of the two boxes means anything at a time.
+        self._imap_starttls = QCheckBox(
+            tr("STARTTLS before the login (port 143; off: no encryption, the password in clear text)"))
+        self._pop3_starttls = QCheckBox(
+            tr("STLS before the login (port 110; off: no encryption, the password in clear text)"))
+        self._ldap_starttls = QCheckBox(
+            tr("StartTLS before the bind (port 389; off: no encryption, the password in clear text)"))
+        starttls_tip = tr(
+            "The connection is encrypted with STARTTLS and the certificate checked before the "
+            "user name and password are sent. A server that does not offer it is refused. "
+            "Untick only for a server that has no TLS at all: then anyone on the network can "
+            "read the password.")
+        for box, form_row_after in ((self._imap_starttls, self._imap_ssl),
+                                    (self._pop3_starttls, self._pop3_ssl),
+                                    (self._ldap_starttls, self._ldap_ssl)):
+            box.setChecked(True)
+            box.setToolTip(starttls_tip)
+            conn_form.insertRow(conn_form.getWidgetPosition(form_row_after)[0] + 1, "", box)
+        for tls_box, starttls_box in self._starttls_boxes():
+            tls_box.toggled.connect(lambda checked, b=starttls_box: b.setEnabled(not checked))
+            starttls_box.setEnabled(not tls_box.isChecked())
+        # A TLS switch moves the port between the two defaults.
+        self._ports_follow_tls = True
+        for _proto, (box, _on, _off) in TLS_PORTS.items():
+            getattr(self, box).toggled.connect(
+                lambda checked, p=_proto: self._on_tls_toggled(p, checked))
+
+        # --- Databases: the database, Redis over TLS ---
+        self._db_name = QLineEdit()
+        conn_form.addRow(tr("Database:"), self._db_name)
+        self._db_tls = QCheckBox(tr("Use TLS (rediss://)"))
+        conn_form.addRow("", self._db_tls)
+
+        # --- SLP: the scope ---
+        self._slp_scope = QLineEdit()
+        self._slp_scope.setPlaceholderText(tr("empty: DEFAULT"))
+        conn_form.addRow(tr("Scope:"), self._slp_scope)
+
+        # --- Exchange: the mailbox ---
+        self._exchange_email = QLineEdit()
+        self._exchange_email.setPlaceholderText(tr("empty: the username"))
+        conn_form.addRow(tr("E-mail address:"), self._exchange_email)
+
+        # --- TFTP fields: TFTP cannot list a folder, so the files to show
+        # are named here.
+        self._tftp_filelist = QLineEdit()
+        self._tftp_filelist.setPlaceholderText(tr("pxelinux.0, configs/router.cfg"))
+        self._tftp_filelist.setToolTip(tr(
+            "TFTP cannot list a folder: name the files to show, separated by commas. "
+            "Empty: the folder stays empty."
+        ))
+        conn_form.addRow(tr("Files:"), self._tftp_filelist)
+        self._tftp_max_size = QSpinBox()
+        self._tftp_max_size.setRange(1, 512)
+        self._tftp_max_size.setValue(16)
+        self._tftp_max_size.setSuffix(tr(" MiB"))
+        self._tftp_max_size.setToolTip(tr("The largest file a transfer may move."))
+        conn_form.addRow(tr("Largest file:"), self._tftp_max_size)
 
         # Simple password field for non-SSH protocols
         self._simple_password = QLineEdit()
@@ -656,10 +854,16 @@ class ConnectionDialog(QDialog):
                "you click Connect also opens a new pane.")
         )
         layout.addWidget(self._new_pane_box)
+        # What a running Test Connection waits for (the phone's question).
+        self._test_status = QLabel()
+        self._test_status.setWordWrap(True)
+        self._test_status.hide()
+        layout.addWidget(self._test_status)
         layout.addWidget(buttons)
 
         self._update_auth_fields()
         self._on_protocol_changed()
+        self._adb_mode.currentIndexChanged.connect(self._apply_adb_mode)
 
     def _selected_protocol(self) -> str:
         """Return the currently selected protocol ID."""
@@ -734,7 +938,15 @@ class ConnectionDialog(QDialog):
 
         # Protocol-specific field visibility
         self._set_form_row_visible(self._ftp_passive, is_ftp)
+        self._set_form_row_visible(self._tls_verify, proto in ("ftps", "winrm"))
+        self._set_form_row_visible(self._winrm_https, proto == "winrm")
+        self._tls_verify.setEnabled(proto != "winrm" or self._winrm_https.isChecked())
+        self._set_form_row_visible(self._tftp_filelist, proto == "tftp")
+        self._set_form_row_visible(self._tftp_max_size, proto == "tftp")
         self._set_form_row_visible(self._smb_share, is_smb)
+        self._set_form_row_visible(self._smb_client_name, is_smb)
+        self._set_form_row_visible(self._mtp_device_id, proto == "mtp")
+        self._set_form_row_visible(self._mtp_mounter, proto == "mtp")
         if is_smb:
             self._set_form_label(
                 self._smb_share,
@@ -749,6 +961,7 @@ class ConnectionDialog(QDialog):
         self._set_form_row_visible(self._rsync_module, is_rsync)
         self._set_form_row_visible(self._rsync_ssh, is_rsync)
         self._set_form_row_visible(self._rsync_ssh_key, is_rsync)
+        self._set_form_row_visible(self._rsync_preserve, is_rsync)
 
         # NFS
         self._set_form_row_visible(self._nfs_export, is_nfs)
@@ -789,7 +1002,9 @@ class ConnectionDialog(QDialog):
 
         # IMAP
         self._set_form_row_visible(self._imap_ssl, is_imap)
+        self._set_form_row_visible(self._imap_starttls, is_imap)
         self._set_form_row_visible(self._nntp_ssl, proto == "nntp")
+        self._show_store_rows(proto)
 
         # Host/Port visibility
         # Azure: the endpoint comes from the account name or the connection
@@ -805,13 +1020,22 @@ class ConnectionDialog(QDialog):
             "azure_files",
             # An in-process RAM workspace: nothing to connect to.
             "ramfs",
+            # A USB device: the Device row says which one.
+            "mtp",
         )
         needs_host = proto not in no_host_protos
         self._set_form_row_visible(self._host, needs_host)
-        self._set_form_row_visible(self._port, needs_host)
+        # WMI: DCOM always starts at the endpoint mapper (135).
+        self._set_form_row_visible(
+            self._port, needs_host and proto not in HOST_ROW_AS and proto != "wmi")
+        host_label, host_hint = HOST_ROW_AS.get(proto, ("Host:", "hostname or IP"))
+        self._set_form_label(self._host, host_label)
+        self._host.setPlaceholderText(tr(host_hint))
 
         # Username visibility — cloud OAuth and no-auth protocols don't need it
-        needs_username = proto not in NO_USERNAME_PROTOCOLS
+        # Azure: the Account row is the account (the backend reads the
+        # username only for profiles saved before that row existed).
+        needs_username = proto not in NO_USERNAME_PROTOCOLS and not is_azure
         self._set_form_row_visible(self._username, needs_username)
 
         # Username label
@@ -821,21 +1045,104 @@ class ConnectionDialog(QDialog):
         elif is_azure:
             self._set_form_label(self._username, "Account:")
             self._username.setPlaceholderText(tr("Storage account name"))
+        elif proto == "ldap":
+            self._set_form_label(self._username, "Bind DN:")
+            self._username.setPlaceholderText(tr("cn=admin,dc=example,dc=org (empty: anonymous)"))
+        elif proto == "exchange":
+            self._username.setPlaceholderText(tr("user@example.org or DOMAIN\\user"))
+            self._set_form_label(self._username, "Username:")
         else:
             self._set_form_label(self._username, "Username:")
             self._username.setPlaceholderText("")
 
         # IP version — only relevant for host-based protocols
-        self._set_form_row_visible(self._addr_family, needs_host)
+        # Only where the backend honours it.
+        self._set_form_row_visible(
+            self._addr_family,
+            needs_host and proto not in NO_ADDRESS_FAMILY_PROTOCOLS
+            and proto not in _NO_ADDRESS_FAMILY and proto not in ADDRESS_FAMILY_IGNORED)
         self._set_form_row_visible(self._sftp_timeout, proto == "sftp")
 
         # Update default port
         from core.backend_registry import get as get_backend
 
         info = get_backend(proto)
-        if info:
+        if proto in TLS_PORTS:
+            box, on, off = TLS_PORTS[proto]
+            self._port.setValue(on if getattr(self, box).isChecked() else off)
+        elif info:
             self._port.setValue(info.default_port)
+        if proto == "winrm" and not self._winrm_https.isChecked():
+            self._port.setValue(5985)
+        self._apply_adb_mode()
         self._grow_to_content()
+
+    def _on_winrm_https_toggled(self, https: bool) -> None:
+        """The listener's port follows HTTPS / HTTP unless one of its own was
+        typed; a certificate check means nothing over HTTP."""
+        if self._selected_protocol() != "winrm":
+            return
+        if self._port.value() in (5985, 5986):
+            self._port.setValue(5986 if https else 5985)
+        self._tls_verify.setEnabled(https)
+
+    def _adb_usb(self) -> bool:
+        """ADB over the USB cable is chosen."""
+        return self._selected_protocol() == "adb" and self._adb_mode.currentData() == "usb"
+
+    def _apply_adb_mode(self) -> None:
+        """The ADB rows: Mode for ADB, the serial for USB. USB has no
+        host, port, IP version or proxy - those rows go."""
+        is_adb = self._selected_protocol() == "adb"
+        usb = self._adb_usb()
+        self._set_form_row_visible(self._adb_mode, is_adb)
+        self._set_form_row_visible(self._adb_usb_serial, usb)
+        if not is_adb:
+            return
+        for widget in (self._host, self._port, self._addr_family):
+            self._set_form_row_visible(widget, not usb)
+        from core.connection_manager import proxy_unavailable_reason
+
+        reason = tr("ADB over USB does not use the network.") if usb else (
+            proxy_unavailable_reason("adb"))
+        self._proxy_group.setEnabled(reason is None)
+        self._proxy_group.setVisible(reason is None)
+        self._proxy_group.setToolTip(
+            ""
+            if reason is None
+            else tr("A proxy cannot be used with this protocol. {reason}").format(reason=reason)
+        )
+        if reason is not None:
+            self._proxy_group.setChecked(False)
+        self._grow_to_content()
+
+    def _show_store_rows(self, proto: str) -> None:
+        """The rows of POP3, LDAP, the databases, SLP and Exchange."""
+        self._set_form_row_visible(self._pop3_ssl, proto == "pop3")
+        self._set_form_row_visible(self._pop3_starttls, proto == "pop3")
+        self._set_form_row_visible(self._ldap_ssl, proto == "ldap")
+        self._set_form_row_visible(self._ldap_starttls, proto == "ldap")
+        self._set_form_row_visible(self._db_name, proto in ("postgres", "mongodb", "redis"))
+        self._db_name.setPlaceholderText(
+            tr("0 (the database number)") if proto == "redis"
+            else "axross" if proto == "mongodb" else tr("database name"))
+        self._set_form_row_visible(self._db_tls, proto == "redis")
+        self._set_form_row_visible(self._slp_scope, proto == "slp")
+        self._set_form_row_visible(self._exchange_email, proto == "exchange")
+
+    def _starttls_boxes(self):
+        """(implicit TLS box, STARTTLS box) of IMAP, POP3 and LDAP."""
+        return ((self._imap_ssl, self._imap_starttls), (self._pop3_ssl, self._pop3_starttls),
+                (self._ldap_ssl, self._ldap_starttls))
+
+    def _on_tls_toggled(self, proto: str, checked: bool) -> None:
+        """The port follows a TLS switch while it is the other default
+        (993 <-> 143, ...); a port the user typed stays."""
+        if not self._ports_follow_tls or self._selected_protocol() != proto:
+            return
+        _box, on, off = TLS_PORTS[proto]
+        if self._port.value() == (off if checked else on):
+            self._port.setValue(on if checked else off)
 
     def _grow_to_content(self) -> None:
         """Rows shown for a protocol or a custom proxy: a dialog on screen
@@ -953,6 +1260,8 @@ class ConnectionDialog(QDialog):
         if p.protocol in self._protocol_ids:
             self._protocol_combo.setCurrentIndex(self._protocol_ids.index(p.protocol))
 
+        self._adb_mode.setCurrentIndex(max(0, self._adb_mode.findData(p.adb_mode)))
+        self._adb_usb_serial.setText(p.adb_usb_serial)
         self._host.setText(p.host)
         self._port.setValue(p.port)
         self._username.setText(p.username)
@@ -975,6 +1284,9 @@ class ConnectionDialog(QDialog):
         # Protocol-specific fields
         self._ftp_passive.setChecked(p.ftp_passive)
         self._smb_share.setText(p.smb_share)
+        self._smb_client_name.setText(p.smb_client_name)
+        self._mtp_device_id.setText(p.mtp_device_id if p.protocol == "mtp" else "")
+        self._mtp_mounter.setCurrentIndex(max(0, self._mtp_mounter.findData(p.mtp_mounter)))
         self._webdav_url.setText(p.webdav_url)
         self._s3_bucket.setText(p.s3_bucket)
         self._s3_region.setText(p.s3_region)
@@ -983,6 +1295,17 @@ class ConnectionDialog(QDialog):
         self._rsync_module.setText(p.rsync_module)
         self._rsync_ssh.setChecked(p.rsync_ssh)
         self._rsync_ssh_key.setText(p.rsync_ssh_key)
+        self._rsync_preserve.setChecked(p.rsync_preserve_metadata)
+        # FTPS / WinRM
+        self._tls_verify.setChecked(
+            p.winrm_verify_tls if p.protocol == "winrm" else p.ftps_verify_tls)
+        self._winrm_https.blockSignals(True)
+        self._winrm_https.setChecked(p.winrm_https)
+        self._winrm_https.blockSignals(False)
+        self._tls_verify.setEnabled(p.protocol != "winrm" or p.winrm_https)
+        # TFTP
+        self._tftp_filelist.setText(p.tftp_filelist)
+        self._tftp_max_size.setValue(max(1, p.tftp_max_size_bytes // (1024 * 1024)))
         # NFS
         self._nfs_export.setText(p.nfs_export)
         self._nfs_version.setCurrentIndex(0 if p.nfs_version != 4 else (2 if p.nfs_minor else 1))
@@ -996,7 +1319,10 @@ class ConnectionDialog(QDialog):
         self._azure_container.setText(p.azure_container)
         self._azure_share.setText(p.azure_share)
         self._azure_connection_string.setText(p.azure_connection_string)
-        self._azure_account_name.setText(p.azure_account_name)
+        # Older Azure profiles kept the account in the username.
+        self._azure_account_name.setText(
+            p.azure_account_name
+            or (p.username if p.protocol in ("azure_blob", "azure_files") else ""))
         self._azure_sas_token.setText(p.azure_sas_token)
         # OneDrive / SharePoint
         self._onedrive_client_id.setText(p.onedrive_client_id)
@@ -1014,8 +1340,21 @@ class ConnectionDialog(QDialog):
         self._iscsi_initiator_name.setText(p.iscsi_initiator_name)
         self._iscsi_initiator_interface.setText(p.iscsi_initiator_interface)
         # IMAP
-        self._imap_ssl.setChecked(p.imap_ssl)
-        self._nntp_ssl.setChecked(p.nntp_ssl)
+        self._ports_follow_tls = False  # the profile's port is kept
+        try:
+            self._imap_ssl.setChecked(p.imap_ssl)
+            self._nntp_ssl.setChecked(p.nntp_ssl)
+            self._pop3_ssl.setChecked(p.pop3_ssl)
+            self._ldap_ssl.setChecked(p.ldap_ssl)
+            self._imap_starttls.setChecked(p.imap_starttls)
+            self._pop3_starttls.setChecked(p.pop3_starttls)
+            self._ldap_starttls.setChecked(p.ldap_starttls)
+        finally:
+            self._ports_follow_tls = True
+        self._db_name.setText(p.db_name)
+        self._db_tls.setChecked(p.db_tls)
+        self._slp_scope.setText("" if p.slp_scope == "DEFAULT" else p.slp_scope)
+        self._exchange_email.setText(p.exchange_email)
         self._production.setChecked(bool(p.production))
 
         mode = getattr(p, "proxy_mode", "custom")
@@ -1035,6 +1374,7 @@ class ConnectionDialog(QDialog):
             self._proxy_command.setText(p.proxy_command)
         else:
             self._proxy_group.setChecked(False)
+        self._apply_adb_mode()  # no proxy for ADB over USB
         self._update_proxy_fields()
 
     def _reset_proxy_fields(self) -> None:
@@ -1117,6 +1457,8 @@ class ConnectionDialog(QDialog):
         self._host.clear()
         self._port.setValue(22)
         self._username.clear()
+        self._adb_mode.setCurrentIndex(0)  # TCP
+        self._adb_usb_serial.clear()
         self._addr_family.setCurrentIndex(0)  # "auto": not the last profile's
         self._sftp_timeout.setValue(0)  # the default
         self._clear_typed_secrets()
@@ -1128,6 +1470,9 @@ class ConnectionDialog(QDialog):
         # Protocol-specific
         self._ftp_passive.setChecked(True)
         self._smb_share.clear()
+        self._smb_client_name.clear()
+        self._mtp_device_id.clear()
+        self._mtp_mounter.setCurrentIndex(0)
         self._webdav_url.clear()
         self._s3_bucket.clear()
         self._s3_region.clear()
@@ -1135,6 +1480,14 @@ class ConnectionDialog(QDialog):
         self._rsync_module.clear()
         self._rsync_ssh.setChecked(False)
         self._rsync_ssh_key.clear()
+        self._rsync_preserve.setChecked(False)
+        self._tls_verify.setChecked(True)
+        self._winrm_https.blockSignals(True)
+        self._winrm_https.setChecked(True)
+        self._winrm_https.blockSignals(False)
+        self._tls_verify.setEnabled(True)
+        self._tftp_filelist.clear()
+        self._tftp_max_size.setValue(16)
         self._nfs_export.clear()
         self._nfs_version.setCurrentIndex(0)
         for w in (self._nfs_machine_name, self._nfs_uid, self._nfs_gid, self._nfs_gids, self._nfs_client_id):
@@ -1158,6 +1511,14 @@ class ConnectionDialog(QDialog):
         self._iscsi_initiator_interface.clear()
         self._imap_ssl.setChecked(True)
         self._nntp_ssl.setChecked(True)
+        self._pop3_ssl.setChecked(True)
+        self._ldap_ssl.setChecked(False)
+        for _tls_box, starttls_box in self._starttls_boxes():
+            starttls_box.setChecked(True)
+        self._db_name.clear()
+        self._db_tls.setChecked(False)
+        self._slp_scope.clear()
+        self._exchange_email.clear()
         self._production.setChecked(False)
 
     def _build_profile(self) -> ConnectionProfile:
@@ -1193,14 +1554,26 @@ class ConnectionDialog(QDialog):
         proto = self._selected_protocol()
         host = self._host.text().strip()
         username = self._username.text().strip()
+        adb_usb = self._adb_usb()
+        adb_serial = self._adb_usb_serial.text().strip()
+        if proto == "adb":
+            username = ""  # ADB has no login
+            if adb_usb:
+                host = ""  # the cable, no address
+        if proto in ADDRESS_FAMILY_IGNORED:
+            address_family = "auto"
+        tftp_filelist = ", ".join(
+            x.strip() for x in self._tftp_filelist.text().split(",") if x.strip())
 
         # Auto-generate name
         if proto == "s3":
             auto_name = f"s3://{self._s3_bucket.text().strip()}"
         elif proto == "webdav":
             auto_name = f"webdav://{self._webdav_url.text().strip()[:30]}"
-        elif proto == "smb":
+        elif proto in ("smb", "dfsn"):
             auto_name = f"\\\\{host}\\{self._smb_share.text().strip()}"
+        elif proto == "mtp":
+            auto_name = f"MTP device {self._mtp_device_id.text().strip() or '1'}"
         elif proto == "rsync":
             auto_name = f"rsync://{host}/{self._rsync_module.text().strip()}"
         elif proto == "nfs":
@@ -1226,6 +1599,15 @@ class ConnectionDialog(QDialog):
             auto_name = "RAM workspace"
         elif proto == "tftp":
             auto_name = f"tftp://{host}"
+        elif proto == "adb":
+            if adb_usb:
+                auto_name = f"adb-usb:{adb_serial}" if adb_serial else "adb-usb"
+            else:
+                auto_name = f"adb://{host}:{self._port.value()}"
+        elif proto in ("sqlite", "git", "svn"):
+            auto_name = f"{proto}: {host[-40:]}"
+        elif proto == "exchange":
+            auto_name = f"Exchange: {self._exchange_email.text().strip() or username}"
         else:
             auto_name = f"{username}@{host}"
 
@@ -1258,6 +1640,9 @@ class ConnectionDialog(QDialog):
             # Protocol-specific
             ftp_passive=self._ftp_passive.isChecked(),
             smb_share=self._smb_share.text().strip(),
+            smb_client_name=self._smb_client_name.text().strip(),
+            mtp_device_id=self._mtp_device_id.text().strip() or "1",
+            mtp_mounter=self._mtp_mounter.currentData() or "",
             webdav_url=self._webdav_url.text().strip(),
             s3_bucket=self._s3_bucket.text().strip(),
             s3_region=self._s3_region.text().strip(),
@@ -1266,6 +1651,15 @@ class ConnectionDialog(QDialog):
             rsync_module=self._rsync_module.text().strip(),
             rsync_ssh=self._rsync_ssh.isChecked(),
             rsync_ssh_key=self._rsync_ssh_key.text().strip(),
+            rsync_preserve_metadata=self._rsync_preserve.isChecked(),
+            # FTPS / WinRM
+            ftps_verify_tls=self._tls_verify.isChecked() if proto == "ftps" else True,
+            winrm_https=self._winrm_https.isChecked() if proto == "winrm" else True,
+            winrm_verify_tls=self._tls_verify.isChecked() if proto == "winrm" else True,
+            # TFTP
+            tftp_filelist=tftp_filelist if proto == "tftp" else "",
+            tftp_filelist_enabled=proto == "tftp" and bool(tftp_filelist),
+            tftp_max_size_bytes=self._tftp_max_size.value() * 1024 * 1024,
             # NFS
             nfs_export=self._nfs_export.text().strip(),
             nfs_version=3 if self._nfs_version.currentIndex() == 0 else 4,
@@ -1300,8 +1694,23 @@ class ConnectionDialog(QDialog):
             # IMAP
             imap_ssl=self._imap_ssl.isChecked(),
             nntp_ssl=self._nntp_ssl.isChecked(),
+            # ADB
+            adb_mode=self._adb_mode.currentData() or "tcp",
+            adb_usb_serial=adb_serial,
+            pop3_ssl=self._pop3_ssl.isChecked(),
+            ldap_ssl=self._ldap_ssl.isChecked(),
+            imap_starttls=self._imap_starttls.isChecked(),
+            pop3_starttls=self._pop3_starttls.isChecked(),
+            ldap_starttls=self._ldap_starttls.isChecked(),
+            db_name=self._db_name.text().strip(),
+            db_tls=self._db_tls.isChecked(),
+            slp_scope=self._slp_scope.text().strip() or "DEFAULT",
+            exchange_email=self._exchange_email.text().strip(),
             production=self._production.isChecked(),
         )
+        if proxy_command and proxy_command == getattr(self, "_imported_proxy_command", ""):
+            # Imported from an SSH config: asked for on Connect (core.connection_manager).
+            fields["proxy_command_confirmed"] = False
         if self._loaded_profile is None:
             return ConnectionProfile(**fields)
         # Editing: the form overrides what it shows; everything else the
@@ -1382,7 +1791,7 @@ class ConnectionDialog(QDialog):
 
         for label, value, allow_space in (
             ("Profile name", profile_name, True),
-            ("Host", host, False),
+            ("Host", host, proto in HOST_IS_PATH),
             ("Username", username, False),
             ("Proxy host", proxy_host, False),
             ("Proxy username", self._proxy_username.text().strip(), True),
@@ -1482,8 +1891,6 @@ class ConnectionDialog(QDialog):
                 QMessageBox.warning(self, tr("Validation"), tr("S3 bucket name or URL is required."))
                 return False
             # Accept full URLs (https://bucket.s3.region.amazonaws.com) or plain names
-            import re
-
             is_url = any(bucket.startswith(p) for p in ("https://", "http://", "s3://"))
             is_hostname = ".amazonaws.com" in bucket or ".s3." in bucket
             if not is_url and not is_hostname:
@@ -1510,15 +1917,40 @@ class ConnectionDialog(QDialog):
             if not host:
                 QMessageBox.warning(self, tr("Validation"), tr("Host is required."))
                 return False
-        elif proto in ("telnet", "cisco-telnet"):
+        elif proto in ("telnet", "cisco-telnet", "rsh"):
             # The username is optional: telnet_client logs in on a bare
             # password prompt or a no-auth shell, and IOS line-password
-            # mode has no username at all (core/telnet_cisco.py).
+            # mode has no username at all (core/telnet_cisco.py); rsh
+            # without -l logs in as the local user.
             if not host:
                 QMessageBox.warning(self, tr("Validation"), tr("Host is required."))
                 return False
+        elif proto == "mtp":
+            # A USB device: no host, no login - the device the mounter lists.
+            from core.mtp_client import _DEVICE_ID_SAFE
+
+            device = self._mtp_device_id.text().strip() or "1"
+            if not _DEVICE_ID_SAFE.fullmatch(device):
+                QMessageBox.warning(self, tr("Validation"), tr(
+                    "The MTP device is a number as the mounter lists it (1 is the first "
+                    "device)."))
+                return False
         elif proto == "ramfs":
             pass  # an in-process RAM workspace: no host, no login
+        elif proto == "adb":
+            # No login: the phone trusts this computer's key. USB needs no
+            # address; a serial is what "adb devices" prints.
+            if not self._adb_usb() and not host:
+                QMessageBox.warning(self, tr("Validation"), tr("Host is required."))
+                return False
+            serial = self._adb_usb_serial.text().strip()
+            if self._adb_usb() and not re.fullmatch(r"[A-Za-z0-9_\-]*", serial):
+                QMessageBox.warning(self, tr("Validation"), tr(
+                    "The USB serial may hold only letters, digits, \"-\" and \"_\", as "
+                    "\"adb devices\" shows it."))
+                return False
+        elif proto in HOST_ROW_AS or proto in ("postgres", "mongodb", "redis", "ldap", "slp"):
+            return self._validate_store(proto, host, username)
         else:
             # SFTP, FTP, FTPS need host + username; a protocol whose Username
             # row is hidden (MTP) must not ask for one.
@@ -1554,6 +1986,53 @@ class ConnectionDialog(QDialog):
                         self, tr("Validation"), tr("Key file does not exist or is not a file.")
                     )
                     return False
+        return True
+
+    def _validate_store(self, proto: str, host: str, username: str) -> bool:
+        """The databases, Git, SVN, LDAP, SLP and Exchange: what each one
+        needs (and nothing it does not have)."""
+        required = {
+            "sqlite": "Database file is required.",
+            "git": "Repository is required.",
+            "svn": "Repository URL is required.",
+        }
+        problem = ""
+        if proto in required:
+            if not host:
+                problem = required[proto]
+        elif proto == "exchange":
+            if not username:
+                problem = "Username is required."
+        elif not host:
+            problem = "Host is required."
+        if not problem and proto == "postgres" and not self._db_name.text().strip():
+            problem = "Database is required."
+        if not problem and proto == "redis" and not self._db_name.text().strip().isdigit() \
+                and self._db_name.text().strip():
+            problem = "The Redis database is a number (0, 1, 2, ...)."
+        if not problem and any(
+            not self._is_safe_text(w.text(), allow_space=True)
+            for w in (self._db_name, self._slp_scope, self._exchange_email)
+        ):
+            problem = "A field contains invalid characters."
+        if problem:
+            QMessageBox.warning(self, tr("Validation"), tr(problem))
+            return False
+        return self._validate_proxy_fields()
+
+    def _validate_proxy_fields(self) -> bool:
+        if (
+            self._proxy_group.isChecked()
+            and self._proxy_mode.currentIndex() == 1
+            and not self._proxy_host.text().strip()
+            and not self._proxy_command.text().strip()
+        ):
+            QMessageBox.warning(
+                self,
+                tr("Validation"),
+                tr("Proxy host or ProxyCommand is required when proxy support is enabled."),
+            )
+            return False
         return True
 
     @staticmethod
@@ -1626,6 +2105,13 @@ class ConnectionDialog(QDialog):
             keyring_problem = describe(e)
         if saved and old_profile_name and old_profile_name != profile.name:
             saved = self._profile_manager.remove(old_profile_name, report_failure=False)
+            if saved:
+                # Bookmarks, terminal bookmarks, Smart Folders and saved
+                # panes named the old profile: they follow it.
+                from core.profile_references import rename_profile_references
+
+                rename_profile_references(old_profile_name, profile.name)
+                self.profile_renamed.emit(old_profile_name, profile.name)
         self._loaded_profile_name = profile.name
         self._loaded_profile = self._profile_manager.get(profile.name) or profile
 
@@ -1716,11 +2202,21 @@ class ConnectionDialog(QDialog):
         self._btn_test.setEnabled(False)
         self._btn_test.setText(tr("Connecting…"))
 
+        # The host-key question comes back to this thread, as for Connect
+        # and Deploy Key (core.connect_worker.HostKeyPrompt).
+        from core.connect_worker import HostKeyPrompt
+
+        bridge = HostKeyPrompt()
+        bridge.set_prompt(self._confirm_unknown_host)
+        bridge.request.connect(bridge.handle_request, Qt.ConnectionType.QueuedConnection)
+        self._host_key_bridge = bridge
         self._connect_thread = _ConnectThread(
-            profile, self._effective_password(), self._key_passphrase.text(), parent=self
+            profile, self._effective_password(), self._key_passphrase.text(), parent=self,
+            on_unknown_host=bridge.ask,
         )
         self._connect_thread.success.connect(self._on_test_success)
         self._connect_thread.error.connect(self._on_test_error)
+        self._connect_thread.notice.connect(self._on_test_notice)
         self._connect_thread.unknown_host_key.connect(self._on_test_unknown_host_key)
         self._connect_thread.finished.connect(self._on_test_done)
         self._connect_thread.start()
@@ -1767,10 +2263,13 @@ class ConnectionDialog(QDialog):
         # be destroyed with it (the window keeps this dialog until exit).
         from ui.thread_lifetime import detach_running_thread
 
+        bridge = getattr(self, "_host_key_bridge", None)
+        if bridge is not None:
+            bridge.abandon()  # a test waiting for "Trust Host Key?" is told No at once
         thread = getattr(self, "_connect_thread", None)
         if thread is not None:
             detach_running_thread(thread, thread.success, thread.error,
-                                  thread.unknown_host_key, thread.finished)
+                                  thread.unknown_host_key, thread.notice, thread.finished)
             self._btn_test.setEnabled(True)
             self._btn_test.setText(tr("Test Connection"))
         super().done(result)
@@ -1782,13 +2281,20 @@ class ConnectionDialog(QDialog):
         QMessageBox.critical(self, tr("Connection Failed"), error)
 
     def _on_test_unknown_host_key(self, text: str) -> None:
-        """The server answered, but with a host key not in known_hosts: no
-        failure of the connection - Connect shows the fingerprint to trust."""
-        QMessageBox.information(self, tr("New host key"), text)
+        """The host key was not trusted (No to "Trust Host Key?"): a note,
+        not a red failure."""
+        QMessageBox.information(self, tr("Not Connected"), text)
+
+    def _on_test_notice(self, text: str) -> None:
+        """What the running test waits for (the phone's question)."""
+        self._test_status.setText(text)
+        self._test_status.show()
 
     def _on_test_done(self) -> None:
         self._btn_test.setEnabled(True)
         self._btn_test.setText(tr("Test Connection"))
+        self._test_status.clear()
+        self._test_status.hide()
 
     def _store_profile_credentials(
         self,
@@ -1887,8 +2393,13 @@ class ConnectionDialog(QDialog):
             self._auth_password.setChecked(True)
             self._key_file.clear()
         self._proxy_command.setText(host.proxy_command or "")
+        # Someone else's shell command: unconfirmed while it is unchanged.
+        self._imported_proxy_command = host.proxy_command or ""
         if host.proxy_command:
             self._proxy_group.setChecked(True)
+            # A ProxyCommand is a custom proxy: under "Default proxy" the
+            # saved profile dropped it and went past the jump host.
+            self._proxy_mode.setCurrentIndex(1)
         elif self._proxy_type.currentIndex() == 0 and not self._proxy_host.text().strip():
             self._proxy_group.setChecked(False)
         addr_map = {"auto": 0, "ipv4": 1, "ipv6": 2}
@@ -1939,6 +2450,23 @@ class ConnectionDialog(QDialog):
         from ui.off_gui import run_off_gui
 
         profile = self._build_profile()
+        if profile.proxy_command and not profile.proxy_command_confirmed:
+            # Imported: someone else's shell command, asked for as Connect
+            # asks (ui.main_window._proxy_command_confirmed).
+            reply = QMessageBox.question(
+                self,
+                tr("Run ProxyCommand?"),
+                tr("The profile '{name}' was imported and connects through this command, "
+                   "which runs on this computer:\n\n{command}\n\nRun it now and from now on?"
+                   ).format(name=profile.name, command=profile.proxy_command),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+            profile.proxy_command_confirmed = True
+            # Saved with the profile, too: the user has seen it.
+            self._imported_proxy_command = ""
         password = self._password.text()
         key_passphrase = self._key_passphrase.text()
         self._btn_deploy_key.setEnabled(False)
@@ -1976,7 +2504,13 @@ class ConnectionDialog(QDialog):
 
                 if session.exists(authorized_keys):
                     with session.open_read(authorized_keys) as f:
-                        existing = f.read()
+                        existing = f.read(MAX_AUTHORIZED_KEYS_BYTES + 1)
+                    if len(existing) > MAX_AUTHORIZED_KEYS_BYTES:
+                        raise OSError(tr(
+                            "The server's {path} is larger than {size} MiB; it was "
+                            "left as it is – add the key by hand."
+                        ).format(path=authorized_keys,
+                                 size=MAX_AUTHORIZED_KEYS_BYTES // (1024 * 1024) or 1))
                 else:
                     existing = b""
 

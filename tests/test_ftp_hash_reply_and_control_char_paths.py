@@ -78,13 +78,13 @@ def test_sad_a_hash_reply_without_a_hash_field_is_no_checksum(ftp):
         lambda s: s.list_dir("/a\nb"),
         lambda s: s.open_read("/a\nb"),
         lambda s: s.open_write("/a\nb"),
-        lambda s: s.exists("/a\x00b"),
+        lambda s: s.exists("/a\x01b"),
         lambda s: s.is_dir("/a\x15b"),
         lambda s: s.checksum("/a\nb", "md5"),
     ],
     ids=[
         "stat", "mkdir", "rename", "remove", "list_dir",
-        "open_read", "open_write", "exists-NUL", "is_dir-NAK", "checksum",
+        "open_read", "open_write", "exists-SOH", "is_dir-NAK", "checksum",
     ],
 )
 def test_sad_a_control_character_path_is_an_oserror_and_sends_nothing(ftp, op):
@@ -97,6 +97,21 @@ def test_sad_a_control_character_path_is_an_oserror_and_sends_nothing(ftp, op):
 
 
 # -- edge --------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("op", ["exists", "is_dir"])
+def test_edge_a_nul_path_answers_no_and_sends_nothing(ftp, op):
+    # A NUL marks a listed name no path can hold (core.backend_guard):
+    # exists() and is_dir() answer no for it, nothing reaches the server -
+    # every write through it is the EINVAL above.
+    session, srv = ftp({})
+    before = list(srv.commands)
+    assert getattr(session, op)("/a\x00b") is False
+    assert srv.commands == before
+    with pytest.raises(OSError) as info:
+        session.open_write("/a\x00b")
+    assert info.value.errno == errno.EINVAL
+    assert srv.commands == before
 
 
 def test_edge_a_name_with_blanks_after_the_hash_field_is_ignored(ftp):

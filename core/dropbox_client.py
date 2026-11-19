@@ -198,7 +198,13 @@ def _sdk_error(exc: BaseException, message: str, filename: str | None = None) ->
     """*message* as the typed OSError of an SDK failure. An OSError with
     an errno (already typed by _GuardedDropbox) keeps it."""
     if isinstance(exc, OSError) and isinstance(exc.errno, int) and exc.errno:
+        if isinstance(exc, cloud_http.CloudSignInExpired):
+            return exc
         return cloud_http.rewrap(exc, message, filename)
+    if type(exc).__name__ == "AuthError":
+        # invalid_access_token / expired_access_token after the refresh:
+        # the sign-in, not a right to the file ("ask its owner").
+        return cloud_http.CloudSignInExpired("Dropbox", str(getattr(exc, "error", "") or "")[:200])
     return cloud_http.oserror(_sdk_errno(exc), message, filename)
 
 
@@ -280,6 +286,11 @@ class _GuardedDropbox:
     def _done_by_an_earlier_try(self, name: str, args, kwargs, err: OSError) -> bool:
         """After a 5xx and a retry that failed with *err*: whether the
         first try did what *name* asked."""
+        if isinstance(err, FileExistsError) and name in ("files_create_folder_v2",
+                                                         "files_copy_v2"):
+            # The retry met what the first try made: a mkdir or copy that
+            # worked was reported as "already exists".
+            return self._made_by_an_earlier_try(name, args, kwargs)
         if not isinstance(err, FileNotFoundError):
             return False
         if name == "files_delete_v2":
@@ -294,6 +305,27 @@ class _GuardedDropbox:
                 return False
             return True
         return False
+
+    def _made_by_an_earlier_try(self, name: str, args, kwargs) -> bool:
+        """Whether the item a retried mkdir / copy found in its way is the
+        one its first try made: a folder for the mkdir, the source's
+        content for the copy."""
+        try:
+            if name == "files_create_folder_v2":
+                path = kwargs.get("path", args[0] if args else None)
+                meta = self._sdk.files_get_metadata(path)
+                return type(meta).__name__ == "FolderMetadata"
+            src = kwargs.get("from_path", args[0] if args else None)
+            dst = kwargs.get("to_path", args[1] if len(args) > 1 else None)
+            one = self._sdk.files_get_metadata(src)
+            two = self._sdk.files_get_metadata(dst)
+        except Exception:  # noqa: BLE001 - not knowable: not done
+            return False
+        hash_one = getattr(one, "content_hash", None)
+        if type(one).__name__ == "FolderMetadata":
+            return type(two).__name__ == "FolderMetadata"
+        return bool(hash_one) and hash_one == getattr(two, "content_hash", None) and getattr(
+            one, "size", None) == getattr(two, "size", None)
 
     def __getattr__(self, name: str):
         attr = getattr(self._sdk, name)
@@ -576,9 +608,31 @@ class DropboxSession(SessionLifecycle):
             proxy_password,
         )
         self._dbx: dropbox.Dropbox | None = None
+        #: "<account> (Dropbox)", read once at connect: ``name`` is read
+        #: for every row a pane paints (tags, tool tips) and asked the
+        #: server each time - and turned into "Dropbox" when that failed,
+        #: which moved the pane's tags and bookmarks to another key.
+        self._display_name = "Dropbox"
 
-        self._authenticate()
+        try:
+            self._authenticate()
+        except OSError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the SDK's own (5xx, 429, ...)
+            status = getattr(exc, "status_code", None)
+            what = (f"Dropbox answered {status}" if isinstance(status, int)
+                    else "Dropbox did not answer as expected")
+            raise _sdk_error(exc, f"Dropbox connect failed: {what}; try again later") from exc
+        self._display_name = self._account_display_name()
         log.info("Dropbox connected: %s", self.name)
+
+    def _account_display_name(self) -> str:
+        try:
+            acct = _GuardedDropbox(self._dbx).users_get_current_account()
+            return f"{acct.name.display_name} (Dropbox)"
+        except Exception as exc:  # noqa: BLE001 - the name is a label only
+            log.debug("Dropbox: account name not read: %s", exc)
+            return "Dropbox"
 
     # ------------------------------------------------------------------
     # Authentication
@@ -798,13 +852,7 @@ class DropboxSession(SessionLifecycle):
 
     @property
     def name(self) -> str:
-        if self._dbx is not None:
-            try:
-                acct = self._dbx.users_get_current_account()
-                return f"{acct.name.display_name} (Dropbox)"
-            except Exception:
-                pass
-        return "Dropbox"
+        return getattr(self, "_display_name", "Dropbox")
 
     @property
     def connected(self) -> bool:
@@ -1028,7 +1076,7 @@ class DropboxSession(SessionLifecycle):
     # ------------------------------------------------------------------
 
     def normalize(self, path: str) -> str:
-        return posixpath.normpath(path) or "/"
+        return posixpath.normpath(path) if path else "/"  # normpath("") is "."
 
     def separator(self) -> str:
         return "/"

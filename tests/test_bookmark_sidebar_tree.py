@@ -454,12 +454,12 @@ class LiteralNamesTest(_Base):
     def test_deleting_a_smart_folder_or_a_folderless_terminal_shows_no_key_or_blank(self) -> None:
         smart = BM.new_smart_folder("Saved", {"version": 1})
         self.m.add(smart)
-        text = self._question_text(smart)
+        text = _shown(self._question_text(smart))
         self.assertNotIn(smart.path, text)  # "search:<id>" is a store key, not a place
         self.assertTrue(text.endswith("Saved"))
         term = Bookmark("shell", "", profile_name=BM.LOCAL_SHELL, kind=BM.KIND_TERMINAL)
         self.m.add(term)
-        self.assertTrue(self._question_text(term).endswith("shell"))
+        self.assertTrue(_shown(self._question_text(term)).endswith("shell"))
 
     def test_a_group_tooltip_shows_the_name_as_typed(self) -> None:
         for name in (NASTY, MARKUP):

@@ -88,13 +88,45 @@ class RunnerPlan:
         return self.runner
 
 
+#: A version at the end of a program's name (``pip3.11``, ``gem3.1``,
+#: ``jbang-0.110``) and the extension of a script or archive a program is.
+_VERSION_SUFFIX = re.compile(r"(?<=[a-z_])[-_]?v?[0-9]+(?:\.[0-9]+)*$")
+_SCRIPT_SUFFIX = re.compile(r"\.(?:jar|py|pyz|pyw|js|cjs|mjs|rb|pl|php|phar|sh)$")
+
+
+def _known_program(name: str) -> bool:
+    return (name in _RUNNER_NAMES or name in _TOOL_SCRIPTS or name in _SCRIPT_LAUNCHERS
+            or name in _NODES or name in _SHELLS or name in _POWERSHELLS
+            or name in _CODE_INTERPRETERS or name in _PLAIN_PREFIXES
+            or name in _VALUE_PREFIXES or name in ("env", "java", "dotnet", "cmd"))
+
+
 def _program(argv) -> str:
+    """The program *argv* runs, by name: lower case, no Windows extension,
+    and - when that makes it a program this module knows - no version
+    or script suffix (``/usr/bin/pip3.11`` is pip, ``jbang-0.110.jar`` jbang)."""
     name = re.split(r"[\\/]", str(argv[0] if argv else ""))[-1].lower()
     for suffix in (".exe", ".cmd", ".bat", ".ps1"):
         if name.endswith(suffix):
             name = name[: -len(suffix)]
             break
-    return _SCRIPT_PROGRAMS.get(name, name)
+    if name in _SCRIPT_PROGRAMS:
+        return _SCRIPT_PROGRAMS[name]
+    if not _PYTHONS.fullmatch(name) and not _known_program(name):
+        bare = _SCRIPT_SUFFIX.sub("", name)
+        for candidate in (bare, _VERSION_SUFFIX.sub("", bare)):
+            if candidate != name and (_known_program(candidate)
+                                      or candidate in _SCRIPT_PROGRAMS):
+                return _SCRIPT_PROGRAMS.get(candidate, candidate)
+        # A runner's name with a word of its own after it (pip3.11-wrapper,
+        # maven-wrapper.jar, npx-wrapper.js, uvx_shim.py, pip.real): that
+        # runner. Only runners and tool managers count - an interpreter's
+        # name in front (node-server.js) never makes a launcher of a script.
+        lead = re.match(r"[a-z]+", bare)
+        if lead and lead.group(0) != bare and (lead.group(0) in _RUNNER_NAMES
+                                               or lead.group(0) in _TOOL_SCRIPTS):
+            return lead.group(0)
+    return name
 
 
 def _npm(runner: str, rest: list[str]) -> RunnerPlan:
@@ -274,13 +306,19 @@ _DOWNLOADERS = frozenset({"curl", "wget", "aria2c"})
 _PACKAGE_TOOLS = frozenset({
     "gem", "pip-run", "jbang", "cs", "coursier", "mise", "asdf", "volta", "hatch", "pdm",
     "poetry", "conda", "mamba", "micromamba", "pipenv", "rye", "dotnet",
+    # Ansible fetches collections and roles (galaxy) or a whole playbook
+    # repository (pull) and runs them; easy_install fetches eggs.
+    "ansible-galaxy", "ansible-pull", "easy_install",
+    # @antfu/ni: nlx downloads and runs a package like npx, ni / nci / nun /
+    # nup install (nr and na, words an argument may be, count by their package path)
+    "ni", "nlx", "nci", "nun", "nup",
 })
 #: Build tools that fetch dependencies and plugins and run what they build
 #: (``cargo install x``, ``cargo run``, ``mvn exec:java``, ``gradle run``):
 #: their build scripts and plugins are downloaded code as well.
 _BUILD_TOOLS = frozenset({
     "cargo", "cargo-binstall", "rustup", "mvn", "mvnw", "gradle", "gradlew", "sbt", "lein",
-    "cabal", "composer", "cpanm", "cpan", "cpanp", "luarocks", "bazelisk",
+    "cabal", "composer", "cpanm", "cpan", "cpanp", "luarocks", "bazelisk", "maven",
 })
 #: Programs that download (or install) what they run, wherever they stand
 #: in a command line: a word naming one makes the command a runner.
@@ -302,7 +340,7 @@ _PYTHON_TOOL_MODULES = frozenset({"pdm", "poetry", "hatch", "conda", "mamba", "e
 #: Node packages whose scripts are package managers (``node
 #: …/node_modules/yarn/lib/cli.js dlx x``, ``…/corepack/dist/pnpx.js``).
 _NODE_RUNNER_PACKAGE = re.compile(
-    r"(?:^|[\\/])(?:node_modules[\\/](?:@yarnpkg[\\/][^\\/]+|yarn|corepack|pnpm|npm|bun)"
+    r"(?:^|[\\/])(?:node_modules[\\/](?:@yarnpkg[\\/][^\\/]+|@antfu[\\/]ni|yarn|corepack|pnpm|npm|bun)"
     r"|share[\\/]yarn)[\\/]", re.IGNORECASE)
 #: What makes a word of a command line a line of its own (``script -qc "npx x"``).
 _LINE_MARKS = re.compile(r"[\s;&|()<>$`'\"\\]")
@@ -739,7 +777,12 @@ def _python(program: str, rest: list[str], depth: int):
         if arg == "-":
             return _unreadable(program, f"{program} - reads its code from its input")
         if arg == "--" or not arg.startswith("-"):
-            return None  # a script on disk
+            # A script on disk; one inside an installed package runs that
+            # package like -m does (.../dist-packages/pip/__pip-runner__.py).
+            at = i + 1 if arg == "--" else i
+            module = _site_module(rest[at]) if at < len(rest) else ""
+            return _python_module_plan(program, module, rest[at + 1:], depth) if module \
+                else None
         if arg.startswith("--"):
             i += 1
             continue
@@ -751,19 +794,46 @@ def _python(program: str, rest: list[str], depth: int):
             if letter == "m":
                 module = letters[at + 1:] or (rest[i + 1] if i + 1 < len(rest) else "")
                 after = rest[i + 1:] if letters[at + 1:] else rest[i + 2:]
-                name = module.split(".", 1)[0].lower()
-                if name in ("pip", "uv", "uvx", "pipx", "pip3"):
-                    return _with_env(_runner([name, *after], depth + 1), {}, f"{program} -m")
-                if name in _PYTHON_TOOL_MODULES:
-                    return _unreadable(f"{program} -m {name}", f"{program} -m {name} is a "
-                                                               "package tool")
-                return None
+                return _python_module_plan(program, module, after, depth)
             if letter in ("X", "W", "Q"):
                 if not letters[at + 1:]:
                     i += 1  # the value is the next word
                 break
         i += 1
     return None
+
+
+def _python_module_plan(program: str, module: str, after: list[str], depth: int):
+    """The plan of ``python -m <module> <after…>`` (None: no runner)."""
+    name = module.split(".", 1)[0].lower()
+    if name in ("pip", "uv", "uvx", "pipx", "pip3"):
+        return _with_env(_runner([name, *after], depth + 1), {}, f"{program} -m")
+    if name in _PYTHON_TOOL_MODULES or _program([name]) in _RUNNER_NAMES:
+        return _unreadable(f"{program} -m {name}", f"{program} -m {name} is a "
+                                                   "package tool")
+    return None
+
+
+_SITE_DIR = re.compile(r"[\\/](?:site|dist)-packages[\\/]+([^\\/]+)", re.IGNORECASE)
+
+
+def _site_module(word: str) -> str:
+    """The top-level module of a script inside a site-packages or
+    dist-packages folder (as written or resolved; ``…/pip/__main__.py`` is
+    ``pip``, ``…/six.py`` ``six``), "" for any other script."""
+    import os
+
+    found = _SITE_DIR.search(word)
+    if found is None:
+        try:
+            found = _SITE_DIR.search(os.path.realpath(word))
+        except (OSError, ValueError):
+            found = None
+    if found is None:
+        return ""
+    name = found.group(1)
+    return name[:-3] if name.lower().endswith(".py") else name.split(".", 1)[0] \
+        if name.lower().endswith((".pyc", ".so", ".pyd")) else name
 
 
 def _code_interpreter(program: str, rest: list[str]):
@@ -1101,7 +1171,9 @@ def launcher_script(argv) -> str | None:
                 return None
             i += 1
         if i < len(rest) and _script_word(rest[i]) and not _stdlib_script(rest[i]):
-            return rest[i]
+            module = _site_module(rest[i])
+            # Inside an installed package: as -m <package> (an MCP server's only).
+            return rest[i] if not module or mcp_module(module) else None
         return None
     if program in _NODES:
         i = 0
@@ -1299,6 +1371,57 @@ def _volume_problem(value: str) -> str:
     return ""
 
 
+#: The folders the podman of a container server may lie in (by absolute
+#: path, or found there on PATH): the system's packages, Homebrew, the
+#: podman installer of macOS.
+CONTAINER_PROGRAM_DIRS = ("/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/local/bin",
+                          "/opt/homebrew/bin", "/opt/podman/bin")
+
+
+def container_program_problem(program: str) -> str:
+    """Why the absolute *program* may not be the podman of a container
+    server ("" = it may): a podman in one of :data:`CONTAINER_PROGRAM_DIRS`,
+    which (and its file, when there is one) belongs to root and no one else
+    may write - not any program named podman (``~/bin/podman`` runs on the
+    host with the user's rights)."""
+    import os
+
+    folder = os.path.dirname(os.path.normpath(program))
+    shown = M.clean_text(program, 120)
+    if os.path.basename(program) != "podman" or folder not in CONTAINER_PROGRAM_DIRS:
+        return (f"{shown}: a container server's podman must be the system's "
+                f"({', '.join(CONTAINER_PROGRAM_DIRS[:5])}, …)")
+    from core.posix_compat import effective_uid
+
+    if effective_uid() is None:
+        return ""
+    real = os.path.realpath(program)
+    managed = real.startswith(_MANAGED_SYSTEM)
+    if not managed and (not _system_owned(os.path.realpath(folder))
+                        or (os.path.lexists(program) and not _system_owned(real))):
+        return (f"{shown}: a container server's podman must belong to root and be "
+                "writable by no one else")
+    return ""
+
+
+def container_program(program: str, error=ValueError, path: str | None = None) -> str:
+    """The absolute podman to start for the line's *program*: itself when
+    absolute, else found on *path* (PATH) - either way checked
+    (:func:`container_program_problem`); *error* raised when it may not."""
+    import os
+    import shutil
+
+    found = program if program.startswith("/") else shutil.which(
+        program, path=path if path is not None else os.environ.get("PATH", os.defpath))
+    if not found:
+        raise error(f"{M.clean_text(program, 60)} is not installed (not found on PATH)")
+    found = os.path.abspath(found)
+    problem = container_program_problem(found)
+    if problem:
+        raise error(problem)
+    return found
+
+
 def container_flag_problems(argv) -> list[str]:
     """Why *argv* is not the podman line of a container server ([] = it is).
     An allow-list: only the shape core.mcp_install.run_command writes -
@@ -1319,6 +1442,10 @@ def container_flag_problems(argv) -> list[str]:
     if posixpath.basename(program) != "podman" or ("/" in program and not program.startswith("/")):
         return ["a container server runs only on the podman line axross writes "
                 "(Install in a Container)"]
+    if program.startswith("/"):
+        where = container_program_problem(program)
+        if where:
+            return [where]
     if len(argv) < 2 or argv[1] != "run":
         return [f"podman options before run are not allowed "
                 f"({M.clean_text(argv[1] if len(argv) > 1 else '', 60)})"]

@@ -4,6 +4,28 @@
   "5.0.0": {
    "accepted_findings": [],
    "archives": {
+    "bcrypt-5.0.0-cp38-abi3-macosx_10_12_universal2.whl": {
+     "entry_points": [],
+     "files": {
+      "bcrypt-5.0.0.dist-info/LICENSE": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90",
+      "bcrypt-5.0.0.dist-info/METADATA": "8b477d56972f624b96f5ab80002f130b97c6105212dd2126e88db80dc6ee884d",
+      "bcrypt-5.0.0.dist-info/RECORD": "dd953bfab120fd900e4910cb563e6245092108cca19453e36a7cde2e3f4e6350",
+      "bcrypt-5.0.0.dist-info/WHEEL": "d4e6be8f5622e69375e8ba739244f34391eecebaa3a7c7ad37cbbe490c72f884",
+      "bcrypt-5.0.0.dist-info/top_level.txt": "06447fa81cc36d2bb270ccc7584d6fcd7adf61e700cd456642ce86d82ba4a8d2",
+      "bcrypt/__init__.py": "72ff8dba9217e8fee8e80e0f2bf174babe886680ebdc69efcb314ef64d7ac0a4",
+      "bcrypt/__init__.pyi": "21350207d98f554f2c2946c940c0d41f961f41765bd4ee7917daaf29947fa3c2",
+      "bcrypt/_bcrypt.abi3.so": "2f76950e200f2bf97d37c8eb05b11af23b7ff0ae5c3521e5ed0b7e4b8ced3db8",
+      "bcrypt/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "fdfa948d56596b565d0a2907725ba2ed653256150fd615b7921403b744efcbf3",
+     "native": {
+      "bcrypt/_bcrypt.abi3.so": "macho-fat"
+     },
+     "pth": {},
+     "sha256": "fc746432b951e92b58317af8e0ca746efe93e66555f1b40888865ef5bf56446b"
+    },
     "bcrypt-5.0.0-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": {
      "entry_points": [],
      "files": {
@@ -25,11 +47,43 @@
      },
      "pth": {},
      "sha256": "560ddb6ec730386e7b3b26b8b4c88197aaed924430e7b74666a586ac997249ef"
+    },
+    "bcrypt-5.0.0-cp38-abi3-win_amd64.whl": {
+     "entry_points": [],
+     "files": {
+      "bcrypt-5.0.0.dist-info/LICENSE": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90",
+      "bcrypt-5.0.0.dist-info/METADATA": "8ef608800dfe16e1c892b7d04535647cada908b72b5ed60e4e72771c497f03b8",
+      "bcrypt-5.0.0.dist-info/RECORD": "515e9a9e8ec6f030b1f134e3ee7dfa0c996e49e82f4f8d10520b9c99bdf0c00b",
+      "bcrypt-5.0.0.dist-info/WHEEL": "ad72c0e29fbd2fa062f03b84332d25c7a6f1ef2f4d538c6b2512fd3913edd030",
+      "bcrypt-5.0.0.dist-info/top_level.txt": "06447fa81cc36d2bb270ccc7584d6fcd7adf61e700cd456642ce86d82ba4a8d2",
+      "bcrypt/__init__.py": "72ff8dba9217e8fee8e80e0f2bf174babe886680ebdc69efcb314ef64d7ac0a4",
+      "bcrypt/__init__.pyi": "21350207d98f554f2c2946c940c0d41f961f41765bd4ee7917daaf29947fa3c2",
+      "bcrypt/_bcrypt.pyd": "7cbbc029ea5f979dcf1150ab5ca1209900ead8da42fe55d2a72c0926257764c8",
+      "bcrypt/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "54aa22a0a6650c121af4b32cd8c69b5b9475d9cc46f46aaea34f51b52786c98b",
+     "native": {
+      "bcrypt/_bcrypt.pyd": "pe"
+     },
+     "pth": {},
+     "sha256": "35a77ec55b541e5e583eb3436ffbbf53b0ffa1fa16ca6782279daf95d146dcd9"
     }
    },
    "name": "bcrypt",
    "provenance": {
+    "bcrypt-5.0.0-cp38-abi3-macosx_10_12_universal2.whl": {
+     "kind": "GitHub",
+     "repository": "pyca/bcrypt",
+     "workflow": "pypi-publish.yml"
+    },
     "bcrypt-5.0.0-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": {
+     "kind": "GitHub",
+     "repository": "pyca/bcrypt",
+     "workflow": "pypi-publish.yml"
+    },
+    "bcrypt-5.0.0-cp38-abi3-win_amd64.whl": {
      "kind": "GitHub",
      "repository": "pyca/bcrypt",
      "workflow": "pypi-publish.yml"
@@ -45,11 +99,82 @@
    },
    "reviewed": {
     "by": "claude",
-    "date": "2026-11-05",
-    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 native binaries profiled, none with network/process imports or addresses; attestation verifies (pyca/bcrypt)."
+    "date": "2026-11-20",
+    "earlier": [
+     {
+      "by": "claude",
+      "date": "2026-11-05",
+      "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 native binaries profiled, none with network/process imports or addresses; attestation verifies (pyca/bcrypt)."
+     }
+    ],
+    "note": "macOS universal2 and Windows amd64 wheels of the reviewed version: same 9 members as the Linux wheel, only _bcrypt.abi3.so/.pyd differs (METADATA CRLF on Windows). No new finding or YARA hit, no .pth, no hook. The PE imports IsDebuggerPresent/GetProcAddress/LoadLibraryA (MSVC CRT, Rust std's dynamic lookup) and bcryptprimitives.dll (Rust std's RNG); the Mach-O imports nothing in a flagged category. Attestations verify, same publisher (pyca/bcrypt pypi-publish.yml)."
    },
    "scans": {
     "capa": {
+     "2f76950e200f2bf97d37c8eb05b11af23b7ff0ae5c3521e5ed0b7e4b8ced3db8": {
+      "capabilities": [],
+      "note": "no capa for this kind",
+      "path": "bcrypt/_bcrypt.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [],
+       "rpath": [],
+       "urls": [
+        "https://github.com/pyca/bcrypt/__version_ex__5.0.0The"
+       ]
+      }
+     },
+     "7cbbc029ea5f979dcf1150ab5ca1209900ead8da42fe55d2a72c0926257764c8": {
+      "capabilities": [
+       "PEB access",
+       "compiled with rust",
+       "contain loop",
+       "create or open mutex on Windows",
+       "delay execution",
+       "encode data using Base64",
+       "encode data using XOR",
+       "encrypt data using RC4 PRGA",
+       "encrypt data using blowfish",
+       "get common file path",
+       "hash data using SHA512",
+       "link function at runtime on Windows",
+       "link many functions at runtime",
+       "query environment variable",
+       "write file on Windows"
+      ],
+      "note": "",
+      "path": "bcrypt/_bcrypt.pyd",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "IsDebuggerPresent"
+        ],
+        "dynamic-code": [
+         "GetProcAddress",
+         "LoadLibraryA"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "KERNEL32.dll",
+        "VCRUNTIME140.dll",
+        "api-ms-win-core-synch-l1-2-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "bcryptprimitives.dll",
+        "ntdll.dll",
+        "python3.dll"
+       ],
+       "rpath": [],
+       "urls": [
+        "https://github.com/pyca/bcrypt/__version_ex__5.0.0The"
+       ]
+      }
+     },
      "87ce5749c8500c12d3695f7f6949f32e8bc89cf15cf9ed6b31b2b6cb22abacb2": {
       "capabilities": [
        "compiled with rust",

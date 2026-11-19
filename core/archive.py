@@ -28,9 +28,9 @@ Every extraction enforces:
    non-directory tar member (device, FIFO) refuses the archive.
 4. **Size / count / ratio caps** — an archive that claims to
    expand to more than ``MAX_EXTRACT_TOTAL_BYTES`` OR contains
-   more than ``MAX_EXTRACT_FILES`` entries OR shows a per-entry
-   compression ratio above ``MAX_COMPRESSION_RATIO`` is refused
-   as a likely zip-bomb.
+   more than ``MAX_EXTRACT_FILES`` entries OR has a member of at
+   least ``RATIO_CHECK_FLOOR`` (64 MiB) with a compression ratio
+   above ``MAX_COMPRESSION_RATIO`` is refused as a likely zip-bomb.
 
 Cancellation
 ------------
@@ -49,6 +49,7 @@ extract the same archive without clobbering earlier extractions.
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import importlib.util
 import io
 import logging
@@ -56,10 +57,12 @@ import os
 import posixpath
 import shutil
 import stat
+import sys
 import tarfile
 import tempfile
 import time
 import zipfile
+import zlib
 from dataclasses import dataclass
 from typing import Callable
 
@@ -79,6 +82,91 @@ def _installed(name: str) -> bool:
 # first Find Files (core.file_search imports this module).
 SEVEN_Z_AVAILABLE = _installed("py7zr")
 py7zr = None  # the module once _seven_zip() has imported it
+
+
+class ArchivePasswordRequired(OSError):
+    """The archive (a 7z, or ZIP members with ZipCrypto) is encrypted with
+    a password and none was given - or, with ``wrong`` true, the one given
+    does not open it. Its text is written for the user; the caller asks
+    for the password and calls again with ``password=``."""
+
+    def __init__(self, message: str, *, wrong: bool = False) -> None:
+        super().__init__(message)
+        self.wrong = wrong
+
+
+#: The password of the extraction or listing running in this thread (or
+#: task): set by the public functions for the time of one call, read by
+#: the ZIP and 7z readers. It lives in memory only, for that call.
+_PASSWORD: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "archive_password", default=None,
+)
+
+
+@contextlib.contextmanager
+def _with_password(password: str | None):
+    token = _PASSWORD.set(password or None)
+    try:
+        yield
+    finally:
+        _PASSWORD.reset(token)
+
+
+def _password_needed() -> ArchivePasswordRequired:
+    return ArchivePasswordRequired("the archive is encrypted with a password")
+
+
+def _password_wrong() -> ArchivePasswordRequired:
+    return ArchivePasswordRequired(
+        "the password does not open the archive (or the archive is damaged)", wrong=True,
+    )
+
+
+def _7z_damage_not_password(archive_path) -> bool:
+    """True when a 7z that failed to decode with a password failed for
+    another reason: it needs no password at all, or it cannot even be
+    opened up to its encrypted part. A wrong password and a damaged
+    encrypted part read alike (7z keeps no password check), and stay
+    "wrong password (or damaged)"."""
+    if not isinstance(archive_path, (str, os.PathLike)):
+        return False
+    try:
+        with _seven_zip("7z").SevenZipFile(archive_path, mode="r") as sz:
+            return not sz.needs_password()
+    except Exception as exc:  # noqa: BLE001 - py7zr's own error types
+        return type(exc).__name__ != "PasswordRequired"
+
+
+def _password_refusal(func):
+    """Turn py7zr's password errors of *func* into ArchivePasswordRequired:
+    it showed as "PasswordRequired ([{'method': b'\\x06\\xf1...", the
+    header of the archive dumped as text. With a password given, a
+    decoding failure is the password's - a wrong one gives an LZMA, CRC or
+    "Unknown field" error (an encrypted header decrypted to noise) - unless
+    the archive needs no password or is broken before its encrypted part
+    (:func:`_7z_damage_not_password`): that error is said as it is."""
+    import functools
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except (UnsafeArchive, ExtractCancelled, ArchivePasswordRequired, OSError, MemoryError):
+            raise
+        except Exception as exc:
+            if type(exc).__name__ in ("PasswordRequired", "WrongPasswordError"):
+                raise (_password_wrong() if _PASSWORD.get() else _password_needed()) from None
+            if _PASSWORD.get():
+                if args and _7z_damage_not_password(args[0]):
+                    log.info("archive: a 7z is damaged (%s), not a password matter",
+                             type(exc).__name__)
+                    raise
+                log.info("archive: a 7z did not decode with the password given (%s)",
+                         type(exc).__name__)
+                raise _password_wrong() from None
+            raise
+
+    return wrapper
 
 
 def _seven_zip(what: str):
@@ -149,6 +237,11 @@ MAX_TAR_READ = 16 * 1024 * 1024
 # accommodates legitimate text archives (which can legitimately
 # compress 20:1 or so) without admitting the pathological case.
 MAX_COMPRESSION_RATIO = 100
+# Members smaller than this (uncompressed) skip the ratio check: a small
+# member cannot be a bomb (the total, member-count and nesting caps bound
+# the archive), and 1 MB of zeros - a disk image, a preallocated file - is
+# 1000:1 even when axross packed it itself (its own ZIP did not extract).
+RATIO_CHECK_FLOOR = 64 * 1024 * 1024
 
 # An archive inside an archive is opened in the preview by extracting it
 # (with every guard above) to a temp folder first. Each level is one more
@@ -333,8 +426,9 @@ def archive_family(name_or_path: str) -> str | None:
 
 
 def check_bomb_ratio(uncompressed: int, compressed: int, member_name: str) -> None:
-    """Raise :class:`UnsafeArchive` when one member's compression ratio
-    is above :data:`MAX_COMPRESSION_RATIO` - the guard extraction uses,
+    """Raise :class:`UnsafeArchive` when one member of at least
+    :data:`RATIO_CHECK_FLOOR` bytes has a compression ratio above
+    :data:`MAX_COMPRESSION_RATIO` - the guard extraction uses,
     for callers that read members themselves (Find Files)."""
     _check_bomb_ratio(uncompressed, compressed, member_name)
 
@@ -410,13 +504,198 @@ def _zip_is_link(info: zipfile.ZipInfo) -> bool:
     return info.create_system == 3 and stat.S_ISLNK(info.external_attr >> 16)
 
 
+_ZIP_UTF8_FLAG = 0x800  # general purpose bit 11: the name is UTF-8
+_ZIP_UNICODE_PATH = 0x7075  # Info-ZIP Unicode Path extra field
+# chardet's confidence below which a guess over the names is not taken:
+# a Latin name in cp437 or cp1252 comes back as some other single-byte
+# code page at about 0.04; Cyrillic, Japanese and Chinese names at 0.1+.
+_ZIP_GUESS_CONFIDENCE = 0.1
+
+
+def _zip_raw_name(info: zipfile.ZipInfo, enc: str = "cp437") -> bytes | None:
+    """The name bytes of a member written without the UTF-8 flag (zipfile
+    decoded them as *enc*; cp437 maps every byte); None for a flagged one."""
+    if info.flag_bits & _ZIP_UTF8_FLAG:
+        return None
+    try:
+        return info.orig_filename.encode(enc)
+    except UnicodeEncodeError:  # pragma: no cover - read with another encoding
+        return None
+
+
+def zip_name_encoding(infos) -> str | None:
+    """The encoding of the names of *infos* written without the UTF-8
+    flag, as unzip and 7-Zip find it: UTF-8 when every such name is valid
+    UTF-8 (macOS, Linux zip, 7-Zip write it so), else chardet's guess
+    over all names together when it decodes every one, else None (cp437,
+    the format's own). None too when every such name is ASCII."""
+    raw = [r for r in map(_zip_raw_name, infos) if r is not None and not r.isascii()]
+    if not raw:
+        return None
+    try:
+        for r in raw:
+            r.decode("utf-8")
+        return "utf-8"
+    except UnicodeDecodeError:
+        pass
+    try:
+        import chardet  # type: ignore[import-not-found]
+    except ImportError:
+        return None
+    try:
+        guess = chardet.detect(b"\n".join(raw))
+    except Exception:  # pragma: no cover - a broken detector
+        return None
+    enc = (guess or {}).get("encoding")
+    if not enc or (guess.get("confidence") or 0) < _ZIP_GUESS_CONFIDENCE:
+        return None
+    try:
+        import codecs
+
+        enc = codecs.lookup(enc).name
+        for r in raw:
+            if any(ord(c) < 32 or 0x7F <= ord(c) < 0xA0 for c in r.decode(enc)):
+                return None
+    except (LookupError, UnicodeDecodeError):
+        return None
+    return None if enc == "cp437" else enc
+
+
+def _zip_unicode_path(info: zipfile.ZipInfo, enc: str) -> str | None:
+    """The name of the Info-ZIP Unicode Path extra field (WinZip, Info-ZIP
+    zip), when its CRC matches the member's name bytes (read as *enc*)."""
+    raw = _zip_raw_name(info, enc)
+    extra = info.extra or b""
+    pos = 0
+    while raw is not None and pos + 4 <= len(extra):
+        tag = int.from_bytes(extra[pos : pos + 2], "little")
+        size = int.from_bytes(extra[pos + 2 : pos + 4], "little")
+        body = extra[pos + 4 : pos + 4 + size]
+        pos += 4 + size
+        if tag != _ZIP_UNICODE_PATH or len(body) < 6 or body[0] != 1:
+            continue
+        if int.from_bytes(body[1:5], "little") != zlib.crc32(raw):
+            return None
+        try:
+            name = body[5:].decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+        return name.split("\x00", 1)[0] or None
+    return None
+
+
+def open_zip(source) -> zipfile.ZipFile:
+    """A ZipFile over *source* (a path or a seekable file) whose names read
+    as written: a name without the UTF-8 flag in the encoding
+    :func:`zip_name_encoding` finds, a Unicode Path extra field taken."""
+    zf = zipfile.ZipFile(source)
+    try:
+        enc = zip_name_encoding(zf.infolist())
+        if enc is not None:
+            zf.close()
+            if hasattr(source, "seek"):
+                source.seek(0)
+            zf = zipfile.ZipFile(source, metadata_encoding=enc)
+        for info in zf.infolist():
+            name = _zip_unicode_path(info, enc or "cp437")
+            if name is not None:
+                info.filename = name.replace(os.sep, "/") if os.sep != "/" else name
+    except BaseException:
+        zf.close()
+        raise
+    return zf
+
+
+def _zip_write_member(zf: zipfile.ZipFile, info: zipfile.ZipInfo, sink, name: str,
+                      dest: str) -> None:
+    """Stream member *info* into *sink* (no whole-file buffer); an
+    encrypted member (ZipCrypto) with the password of this call."""
+    if not info.flag_bits & 0x1:
+        with zf.open(info) as src:
+            sink.write(name, dest, src, _zip_mode(info), _zip_mtime(info))
+        return
+    if info.compress_type == 99:
+        raise OSError(
+            f"{name!r} is AES-encrypted: axross opens ZIP members encrypted with "
+            "ZipCrypto only - open this archive with 7-Zip",
+        )
+    password = _PASSWORD.get()
+    if not password:
+        raise _password_needed()
+    try:
+        with zf.open(info, pwd=password.encode("utf-8")) as src:
+            sink.write(name, dest, src, _zip_mode(info), _zip_mtime(info))
+    except RuntimeError as exc:
+        if "password" not in str(exc).lower():
+            raise
+        raise _password_wrong() from None
+    except (zipfile.BadZipFile, zlib.error):
+        # ZipCrypto's check byte lets 1 wrong password in 256 through:
+        # the data then fails its CRC (or does not inflate).
+        raise _password_wrong() from None
+
+
 def _as_result(written, skipped: list[str]) -> ExtractResult:
     if skipped:
         log.info("archive: %d link member(s) left out: %s", len(skipped), ", ".join(skipped[:20]))
     return ExtractResult(int(written), skipped)
 
 
-def _write_member_file(dest: str, src, mode: int | None, mtime: float | None) -> None:
+#: An extraction asks its progress callback (which raises ExtractCancelled
+#: after Cancel) at least once per this many bytes written: a single
+#: member - a 7z, a RAR, one .gz - can be a gigabyte, and Cancel waited for
+#: all of it. Such a call has ``total`` 0 ("busy", as while headers are read).
+POLL_BYTES = 1024 * 1024
+
+
+class _Poller:
+    """``tick(nbytes)``: calls ``progress(done, 0, name)`` each time
+    another :data:`POLL_BYTES` were written - where Cancel is heard."""
+
+    def __init__(self, progress: Callable[[int, int, str], None] | None) -> None:
+        self.progress = progress
+        self.done = 0
+        self.name = ""
+        self._pending = 0
+
+    def reported(self) -> Callable[[int, int, str], None] | None:
+        """The progress callback for the extractors: each call is passed on
+        and kept (its count and name go into the next tick)."""
+        if self.progress is None:
+            return None
+
+        def report(done: int, total: int, name: str) -> None:
+            if total:
+                self.done = done
+            self.name = name
+            self.progress(done, total, name)
+
+        return report
+
+    def tick(self, nbytes: int) -> None:
+        if self.progress is None:
+            return
+        self._pending += nbytes
+        if self._pending >= POLL_BYTES:
+            self._pending = 0
+            self.progress(self.done, 0, self.name)
+
+
+def _copy_polled(src, dst, poll: "_Poller | None") -> int:
+    """Copy *src* to *dst* in 64 KiB chunks, *poll* ticked after each."""
+    total = 0
+    while True:
+        chunk = src.read(64 * 1024)
+        if not chunk:
+            return total
+        dst.write(chunk)
+        total += len(chunk)
+        if poll is not None:
+            poll.tick(len(chunk))
+
+
+def _write_member_file(dest: str, src, mode: int | None, mtime: float | None,
+                       poll: "_Poller | None" = None) -> None:
     """Write one member's bytes to *dest* with its stored mode and time.
 
     The file is created with the member's rwx bits (set-id and sticky
@@ -428,12 +707,34 @@ def _write_member_file(dest: str, src, mode: int | None, mtime: float | None) ->
     flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0)
     fd = os.open(dest, flags, perm)
     with os.fdopen(fd, "wb") as dst:
-        shutil.copyfileobj(src, dst, length=64 * 1024)
+        _copy_polled(src, dst, poll)
     if mtime is not None and mtime > 0:
         try:
             os.utime(dest, (mtime, mtime))
         except (OSError, OverflowError, ValueError) as exc:
             log.debug("archive: cannot set the time of %s: %s", dest, exc)
+
+
+def _open_up(path: str) -> None:
+    """Give the owner every right on the staging entry *path* (a folder:
+    enter, list, empty it; a file: read it) - never through a link."""
+    try:
+        st = os.lstat(path)
+        if stat.S_ISDIR(st.st_mode):
+            os.chmod(path, stat.S_IMODE(st.st_mode) | 0o700)
+        elif stat.S_ISREG(st.st_mode):
+            os.chmod(path, stat.S_IMODE(st.st_mode) | 0o600)
+    except OSError:
+        pass  # the walk or the read reports what is wrong
+
+
+def _remove_staging(staging: str) -> None:
+    """Remove a staging folder whatever modes its members were given."""
+    _open_up(staging)
+    for dirpath, dirnames, _files in os.walk(staging, followlinks=False):
+        for d in dirnames:
+            _open_up(os.path.join(dirpath, d))  # before the walk goes in
+    shutil.rmtree(staging, ignore_errors=True)
 
 
 def _member_parts(member_name: str) -> list[str]:
@@ -457,9 +758,9 @@ class _Sink:
     is created with ``O_EXCL`` - another process that writes in the same
     tree (it swaps a folder just created for a symlink to
     ``~/.config/autostart``, or plants a hard link) makes the extraction
-    fail instead of writing outside. 7z and RAR, whose libraries write by
-    path, extract into a private temporary folder first and are copied in.
-    Without ``dir_fd`` (Windows) the paths are used, as before.
+    fail instead of writing outside. 7z and RAR members are written the
+    same way: py7zr hands their bytes to a writer of the sink, rarfile is
+    read as a stream - neither library writes by path. Without ``dir_fd`` (Windows) the paths are used, as before.
     """
 
     def __init__(self, target: str, parent_fd: int | None = None, name: str = "",
@@ -471,6 +772,11 @@ class _Sink:
         #: ``check(path)`` run on the path of every folder and file before it
         #: is made (raises to refuse it): the MCP server's write confinement.
         self.check: Callable[[str], None] | None = None
+        #: The mode each folder member stores, by its parts below the
+        #: target: set once everything is written (apply_folder_modes).
+        self._folder_modes: dict[tuple[str, ...], int] = {}
+        #: Ticked while member data is written (Cancel, :class:`_Poller`).
+        self.poll: _Poller | None = None
 
     def _check(self, member_name: str, dest: str | None) -> None:
         if self.check is None:
@@ -553,8 +859,14 @@ class _Sink:
                 "extracted - refused"
             ) from exc
 
-    def makedirs(self, member_name: str, dest: str) -> None:
+    def makedirs(self, member_name: str, dest: str, mode: int | None = None) -> None:
+        """The folder of a folder member (and its parents). *mode*, the
+        member's stored mode, is applied at the end (apply_folder_modes)."""
         self._check(member_name, dest)
+        if mode is not None:  # 0: a folder stored closed (0000) is one too
+            parts = tuple(_member_parts(member_name))
+            if parts:
+                self._folder_modes[parts] = mode & 0o777
         if self.fd is None:
             os.makedirs(dest or os.path.join(self.target, *_member_parts(member_name)),
                         exist_ok=True)
@@ -594,11 +906,11 @@ class _Sink:
             self._check(member_name, dest)
             dest = dest or os.path.join(self.target, *_member_parts(member_name))
             os.makedirs(os.path.dirname(dest), exist_ok=True)
-            _write_member_file(dest, src, mode, mtime)
+            _write_member_file(dest, src, mode, mtime, self.poll)
             return
         perm = (mode & 0o777) if mode else 0o666
         with self.open_new(member_name, dest or member_name, perm) as dst:
-            shutil.copyfileobj(src, dst, length=64 * 1024)
+            _copy_polled(src, dst, self.poll)
             dst.flush()
             if mtime is not None and mtime > 0:
                 try:
@@ -606,41 +918,40 @@ class _Sink:
                 except (OSError, OverflowError, ValueError) as exc:
                     log.debug("archive: cannot set the time of %s: %s", member_name, exc)
 
-    def staged(self, extract_into: Callable[[str], None]) -> None:
-        """Run *extract_into(folder)* of a library that writes by path
-        (py7zr, rarfile): without a descriptor into the target itself, else
-        into a private temporary folder whose files are then copied in (also
-        without a descriptor when every member is checked: :attr:`check`)."""
-        if self.fd is None and self.check is None:
-            extract_into(self.target)
-            return
-        staging = tempfile.mkdtemp(prefix="axross-extract-")
-        try:
-            extract_into(staging)
-        except BaseException:
-            shutil.rmtree(staging, ignore_errors=True)
-            raise
-        self._adopt(staging)
+    def apply_folder_modes(self) -> None:
+        """Give each folder member its stored mode less the umask, as tar
+        does - deepest first and after every file is written: a 0500
+        folder set at once would refuse the files inside it, and one made
+        earlier for a file inside it kept the default. Every folder came
+        out 0755 before: a 0700 one of the archive, open to everyone."""
+        from core.posix_compat import fchmod_private
+        from core.process_umask import process_umask
 
-    def _adopt(self, staging: str) -> None:
-        """Copy what a library extracted into *staging* into the target
-        (regular files and folders only), then remove *staging*."""
-        try:
-            for dirpath, dirnames, filenames in os.walk(staging, followlinks=False):
-                rel = os.path.relpath(dirpath, staging)
-                base = "" if rel == "." else rel.replace(os.sep, "/") + "/"
-                for d in dirnames:
-                    if not os.path.islink(os.path.join(dirpath, d)):
-                        self.makedirs(base + d, "")
-                for f in filenames:
-                    path = os.path.join(dirpath, f)
-                    st = os.lstat(path)
-                    if not stat.S_ISREG(st.st_mode):
-                        continue
-                    with open(path, "rb") as src:
-                        self.write(base + f, None, src, stat.S_IMODE(st.st_mode), st.st_mtime)
-        finally:
-            shutil.rmtree(staging, ignore_errors=True)
+        if not self._folder_modes:
+            return
+        umask = process_umask()
+        for parts, mode in sorted(self._folder_modes.items(), key=lambda kv: -len(kv[0])):
+            perm = mode & ~umask & 0o777
+            try:
+                if self.fd is None:
+                    os.chmod(os.path.join(self.target, *parts), perm)
+                    continue
+                from core import confined_fs as CF
+
+                # The folder opened for reading (makedirs_beneath's O_PATH
+                # descriptor takes no fchmod), never through a symlink.
+                pfd = self._confined(lambda p=parts: CF.makedirs_beneath(self.fd, list(p[:-1])))
+                try:
+                    fd = os.open(parts[-1], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+                                 | getattr(os, "O_CLOEXEC", 0), dir_fd=pfd)
+                finally:
+                    os.close(pfd)
+                try:
+                    fchmod_private(fd, perm)
+                finally:
+                    os.close(fd)
+            except (OSError, UnsafeArchive) as exc:
+                log.debug("archive: cannot set the mode of %s: %s", "/".join(parts), exc)
 
     def measure(self) -> int:
         """The bytes of the regular files in the target (see
@@ -698,11 +1009,24 @@ class _Sink:
         self.fd = self.parent_fd = None
 
 
+def _zip_is_dir(info: zipfile.ZipInfo) -> bool:
+    """A folder entry: its name ends in ``/`` - or in ``\\``, as some
+    Windows tools write it (zipfile's is_dir() knows the slash only, and
+    "docs\\" became an empty file "docs" that "docs\\a.txt" then could
+    not be written below)."""
+    return info.filename.endswith(("/", "\\"))
+
+
 def _zip_mode(info: zipfile.ZipInfo) -> int | None:
-    """The Unix mode a ZIP made on Unix stores, None for any other maker."""
+    """The Unix mode a ZIP made on Unix stores, None for any other maker -
+    and for a folder entry whose stored mode is not a folder's (a 0600
+    "file" mode on "docs\\" closed the folder it named)."""
     if info.create_system != 3:
         return None
-    return (info.external_attr >> 16) & 0o7777 or None
+    unix = info.external_attr >> 16
+    if _zip_is_dir(info) and not stat.S_ISDIR(unix):
+        return None
+    return unix & 0o7777 or None
 
 
 def _zip_mtime(info: zipfile.ZipInfo) -> float | None:
@@ -726,6 +1050,77 @@ def _is_root_dir_entry(member_name: str) -> bool:
     return all(part in ("", ".") for part in normalised.split("/"))
 
 
+def _refuse_spoofing_name(member_name: str) -> None:
+    """Refuse a member name with control characters or bidi overrides, as a
+    transfer skips such a name from a server (core.remote_name): extracted,
+    "invoice<U+202E>gpj.exe" showed as "invoiceexe.jpg" in every other
+    program, and a name with a terminal escape coloured the shell's listing.
+    Tab, line feed and carriage return are left to core.remote_name's rule
+    (some archivers write them); right-to-left text itself is fine."""
+    from core.remote_name import _BAD_CONTROLS, _BIDI_OVERRIDES
+
+    bad = (set(member_name) & _BAD_CONTROLS) | (set(member_name) & _BIDI_OVERRIDES)
+    if bad:
+        points = ",".join(f"U+{ord(c):04X}" for c in sorted(bad))
+        raise UnsafeArchive(
+            f"archive entry name contains control or direction characters ({points}): "
+            f"{member_name!r}",
+        )
+
+
+#: Names Windows takes for a device in any folder, with any extension.
+_WINDOWS_DEVICES = frozenset(
+    {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"}
+    | {f"{port}{n}" for port in ("COM", "LPT") for n in "123456789\u00b9\u00b2\u00b3"}
+)
+
+#: Whether the extraction running in this thread writes where Windows'
+#: name rules apply (:func:`windows_names_apply`), set by extract() and
+#: extract_members() for one call.
+_WINDOWS_RULES: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "archive_windows_rules", default=False,
+)
+
+
+def windows_names_apply(path: str) -> bool:
+    """Windows' name rules apply to *path*: axross runs on Windows, or
+    *path* lies on a share of a Windows server or an NTFS / FAT disk
+    (core.tmpfs_detect.windows_names_fs)."""
+    if sys.platform == "win32":
+        return True
+    from core import tmpfs_detect
+
+    try:
+        return tmpfs_detect.windows_names_fs(path)
+    except (OSError, ValueError):
+        return False
+
+
+def _windows_name_problem(segment: str) -> str | None:
+    """Why Windows would not write *segment* as a file of that name, or None."""
+    if segment in ("", ".", ".."):
+        return None
+    if ":" in segment:
+        return "a ':' (Windows writes an alternate data stream of another file)"
+    if segment != segment.rstrip(". "):
+        return "a trailing dot or space (Windows drops it - another name)"
+    if segment.split(".", 1)[0].rstrip(" ").upper() in _WINDOWS_DEVICES:
+        return "a Windows device name"
+    if set(segment) & set('<>"|?*'):
+        return "a character Windows refuses in a name"
+    return None
+
+
+def _refuse_windows_name(member_name: str) -> None:
+    for segment in member_name.replace("\\", "/").split("/"):
+        problem = _windows_name_problem(segment)
+        if problem:
+            raise UnsafeArchive(
+                f"archive entry name has {problem}, where Windows' name rules apply: "
+                f"{member_name!r}",
+            )
+
+
 def _safe_member_path(target_root: str, member_name: str) -> str:
     """Resolve *member_name* under *target_root* and refuse any
     escape. Returns the absolute path to extract to. Raises
@@ -740,6 +1135,9 @@ def _safe_member_path(target_root: str, member_name: str) -> str:
         raise UnsafeArchive(
             f"archive entry name contains NUL byte: {member_name!r}",
         )
+    _refuse_spoofing_name(member_name)
+    if _WINDOWS_RULES.get():
+        _refuse_windows_name(member_name)
     normalised = member_name.replace("\\", "/")
     if normalised in {"", "."}:
         raise UnsafeArchive(
@@ -920,8 +1318,35 @@ def _check_duplicate_member(seen: set[str], target_path: str, member_name: str) 
     seen.add(key)
 
 
+def _tar_last_of_each(members: list) -> list:
+    """*members* without the earlier copies of a path the tar holds more
+    than once (``tar -r`` appends a newer copy): the last one is the one
+    tar itself leaves, and the archive was refused whole. A name that
+    leaves the target is kept as it is - the extraction refuses it."""
+    last: dict[str, int] = {}
+    keys: list[str | None] = []
+    for index, m in enumerate(members):
+        try:
+            parts = _member_parts(m.name)
+        except UnsafeArchive:
+            parts = []
+        key = os.path.normcase("/".join(parts)) if parts else None
+        if key is not None and sys.platform in ("darwin", "win32"):
+            key = key.casefold()
+        keys.append(key)
+        if key is not None:
+            last[key] = index
+    kept = [m for index, m in enumerate(members)
+            if keys[index] is None or last[keys[index]] == index]
+    if len(kept) != len(members):
+        log.info("archive: %d earlier copies of repeated tar members left out",
+                 len(members) - len(kept))
+    return kept
+
+
 def _check_bomb_ratio(uncompressed: int, compressed: int, member_name: str) -> None:
-    """Refuse an entry whose compression ratio exceeds the cap.
+    """Refuse an entry of at least :data:`RATIO_CHECK_FLOOR` bytes whose
+    compression ratio exceeds the cap (a smaller one is not checked).
     Called per-entry; a single bomb entry is enough to refuse the
     whole archive since processing further entries only compounds
     the damage."""
@@ -935,6 +1360,8 @@ def _check_bomb_ratio(uncompressed: int, compressed: int, member_name: str) -> N
                 "(bomb signature)",
             )
         return
+    if uncompressed < RATIO_CHECK_FLOOR:
+        return  # small: bounded by the archive's total, not by its ratio
     ratio = uncompressed / compressed
     if ratio > MAX_COMPRESSION_RATIO:
         raise UnsafeArchive(
@@ -962,7 +1389,7 @@ def _extract_zip(
     a side effect of ensuring parents for file entries)."""
     sink = sink or _Sink(target)
     _check_zip_entry_count(archive_path, MAX_EXTRACT_FILES)
-    with zipfile.ZipFile(archive_path) as zf:
+    with open_zip(archive_path) as zf:
         infos = zf.infolist()
         if len(infos) > MAX_EXTRACT_FILES:
             raise UnsafeArchive(
@@ -970,13 +1397,13 @@ def _extract_zip(
             )
         # Pre-sum uncompressed sizes so a declaration of 10 GiB total
         # is refused before we've written even one byte.
-        total_uncompressed = sum(max(0, i.file_size) for i in infos if not i.is_dir())
+        total_uncompressed = sum(max(0, i.file_size) for i in infos if not _zip_is_dir(i))
         if total_uncompressed > MAX_EXTRACT_TOTAL_BYTES:
             raise UnsafeArchive(
                 f"archive declares {total_uncompressed} uncompressed "
                 f"bytes; cap is {MAX_EXTRACT_TOTAL_BYTES}",
             )
-        files_total = sum(1 for i in infos if not i.is_dir() and not _zip_is_link(i))
+        files_total = sum(1 for i in infos if not _zip_is_dir(i) and not _zip_is_link(i))
         files_done = 0
         skipped: list[str] = []
         seen_paths: set[str] = set()
@@ -987,10 +1414,10 @@ def _extract_zip(
                 continue
             # zipfile flags directories by trailing slash OR
             # explicit attrs; use is_dir() to cover both.
-            if info.is_dir():
+            if _zip_is_dir(info):
                 dest = _safe_member_path(target, name)
                 _check_duplicate_member(seen_paths, dest, name)
-                sink.makedirs(name, dest)
+                sink.makedirs(name, dest, _zip_mode(info))
                 continue
             _check_bomb_ratio(
                 info.file_size,
@@ -1000,8 +1427,7 @@ def _extract_zip(
             dest = _safe_member_path(target, name)
             _check_duplicate_member(seen_paths, dest, name)
             # Stream decompressed bytes — no whole-file buffer.
-            with zf.open(info) as src:
-                sink.write(name, dest, src, _zip_mode(info), _zip_mtime(info))
+            _zip_write_member(zf, info, sink, name, dest)
             files_done += 1
             if progress is not None:
                 progress(files_done, files_total, name)
@@ -1079,10 +1505,10 @@ def _open_tar(archive_path: str, budget: int | None = None):
             yield tf
 
 
-def _copy_capped(src, dst, limit: int, what: str) -> int:
+def _copy_capped(src, dst, limit: int, what: str, poll: _Poller | None = None) -> int:
     total = 0
     while True:
-        chunk = src.read(1024 * 1024)
+        chunk = src.read(256 * 1024)
         if not chunk:
             return total
         total += len(chunk)
@@ -1092,6 +1518,8 @@ def _copy_capped(src, dst, limit: int, what: str) -> int:
                 f"cap is {MAX_EXTRACT_TOTAL_BYTES} — likely a bomb",
             )
         dst.write(chunk)
+        if poll is not None:
+            poll.tick(len(chunk))
 
 
 def _single_reader(archive_path: str, ext: str):
@@ -1138,7 +1566,7 @@ def _extract_single(
         progress(0, 1, name)
     try:
         with _single_reader(archive_path, ext) as src, sink.open_new(name, out_path) as dst:
-            _copy_capped(src, dst, MAX_EXTRACT_TOTAL_BYTES, archive_path)
+            _copy_capped(src, dst, MAX_EXTRACT_TOTAL_BYTES, archive_path, sink.poll)
     except (UnsafeArchive, ExtractCancelled):
         raise
     except Exception as exc:  # noqa: BLE001 - zlib.error, LZMAError, ZstdError, EOFError, …
@@ -1166,6 +1594,7 @@ def _extract_tar(
             # Cancel is honoured while the headers are read, too.
             poll=(lambda name: progress(0, 0, name)) if progress is not None else None,
         )
+        members = _tar_last_of_each(members)
         total_uncompressed = sum(max(0, m.size) for m in members if m.isfile())
         if total_uncompressed > MAX_EXTRACT_TOTAL_BYTES:
             raise UnsafeArchive(
@@ -1194,7 +1623,7 @@ def _extract_tar(
                     continue
                 dest = _safe_member_path(target, m.name)
                 _check_duplicate_member(seen_paths, dest, m.name)
-                sink.makedirs(m.name, dest)
+                sink.makedirs(m.name, dest, m.mode)
                 continue
             # Tarfile doesn't expose per-entry compressed size the
             # same way zipfile does — the whole archive is a single
@@ -1217,6 +1646,7 @@ def _extract_tar(
         return _as_result(files_done, skipped)
 
 
+@_password_refusal
 def _extract_7z(
     archive_path: str,
     target: str,
@@ -1232,10 +1662,11 @@ def _extract_7z(
             "7z extraction requires py7zr — install with: pip install py7zr",
         )
     seven_zip = _seven_zip("7z extraction")
-    with seven_zip.SevenZipFile(archive_path, mode="r") as sz:
+    with seven_zip.SevenZipFile(archive_path, mode="r", password=_PASSWORD.get()) as sz:
         # py7zr.list() returns FileInfo objects with uncompressed
         # sizes but no compressed size per entry; cap on count +
         # total bytes.
+        _check_7z_count(sz, MAX_EXTRACT_FILES)
         entries = sz.list()
         if len(entries) > MAX_EXTRACT_FILES:
             raise UnsafeArchive(
@@ -1268,23 +1699,164 @@ def _extract_7z(
             dest = _safe_member_path(target, name)
             _check_duplicate_member(seen_paths, dest, name)
             safe_targets.append(name)
-        # py7zr.extractall can't cooperate with a per-entry progress
-        # callback in a portable way; emit a single "starting"
-        # progress and a single "done" progress.
+        files_total = sum(1 for e in entries if not getattr(e, "is_directory", False))
         if progress is not None:
-            progress(0, len(entries), "")
-    # py7zr needs its own fresh open for extraction — the sz.list()
-    # above advanced internal state.
-    # py7zr writes by path: into a private folder, then copied in by the sink.
-    def into(out: str) -> None:
-        with seven_zip.SevenZipFile(archive_path, mode="r") as sz:
-            sz.extract(path=out, targets=safe_targets)
-
-    sink.staged(into)
-    files_written = sum(1 for e in entries if not getattr(e, "is_directory", False))
+            progress(0, files_total, "")
+        # What py7zr knows of each member beyond the listing: its stored
+        # mode and time (ArchiveFile).
+        members = {f.filename: f for f in sz.files}
+    for name in safe_targets:
+        f = members.get(name)
+        if f is not None and f.is_directory:
+            sink.makedirs(name, _safe_member_path(target, name), _7z_mode(f))
+    written = _7z_write_into(seven_zip, archive_path, target, sink, members, progress,
+                             files_total)
     if progress is not None:
-        progress(files_written, files_written, "")
-    return files_written
+        progress(written, files_total, "")
+    return written
+
+
+def _7z_mode(f) -> int | None:
+    """The permission bits a 7z member stores (None: none stored); a
+    read-only one of a Windows maker is 0o444."""
+    mode = getattr(f, "posix_mode", None)
+    if mode is not None:
+        return stat.S_IMODE(mode)
+    if getattr(f, "readonly", False) and not getattr(f, "is_directory", False):
+        return 0o444
+    return None
+
+
+def _7z_mtime(f) -> float | None:
+    stamp = getattr(f, "lastwritetime", None)
+    if stamp is None:
+        return None
+    try:
+        return float(stamp.totimestamp())
+    except (AttributeError, OverflowError, ValueError, TypeError):
+        return None
+
+
+def _7z_write_into(seven_zip, archive_path: str, target: str, sink: "_Sink", members: dict,
+                   progress, files_total: int) -> int:
+    """Decode the 7z into *sink*: py7zr hands each file's bytes to a writer
+    of axross (its writer factory), which creates the file beneath the
+    target (``O_EXCL``, never through a link, its stored rwx bits from the
+    first byte, set-id bits dropped) - py7zr writes nothing by path.
+
+    py7zr's own writing set each folder's stored mode as it went: a folder
+    stored 0000 was closed before the time of a file inside it was set, and
+    the extraction failed. A Cancel is heard while the data is written
+    (the sink's poll), and the bytes written are counted against
+    MAX_EXTRACT_TOTAL_BYTES as they come. The archive is opened as a file
+    object: py7zr then decodes in this thread, not in one thread per
+    folder, so the progress callback is called from the caller's thread."""
+    import pathlib
+
+    from py7zr.helpers import get_sanitized_output_path
+    from py7zr.io import Py7zIO, WriterFactory
+
+    poll = sink.poll
+    written = [0, 0]  # files, bytes
+    opened: list = []
+    # py7zr joins each name to the path given and hands that to the
+    # factory; an empty private folder of ours, so no name is resolved
+    # against a folder anyone else can put a link in. Nothing is written there.
+    base = tempfile.mkdtemp(prefix="axross-7z-")
+    by_key: dict[str, str] = {}
+    for name, f in members.items():
+        if f.is_directory:
+            continue
+        try:
+            key = get_sanitized_output_path(name, pathlib.Path(base)).as_posix()
+        except Exception as exc:  # noqa: BLE001 - py7zr's Bad7zFile
+            raise UnsafeArchive(f"7z entry has a bad path: {name!r}") from exc
+        by_key[key] = name
+
+    class Writer(Py7zIO):
+        def __init__(self, fh, dest: str, mtime: float | None) -> None:
+            self._fh = fh
+            self._dest = dest
+            self._mtime = mtime
+            self._size = 0
+
+        def write(self, s) -> int:
+            n = len(s)
+            written[1] += n
+            if written[1] > MAX_EXTRACT_TOTAL_BYTES:
+                raise UnsafeArchive(
+                    f"archive extracts beyond {MAX_EXTRACT_TOTAL_BYTES} bytes — likely a bomb "
+                    "with declared sizes smaller than its data",
+                )
+            self._fh.write(s)
+            self._size += n
+            if poll is not None:
+                poll.tick(n)
+            return n
+
+        def read(self, size: int | None = None) -> bytes:
+            return b""
+
+        def seek(self, offset: int, whence: int = 0) -> int:
+            return self._size
+
+        def seekable(self) -> bool:
+            return False  # MemIO.close() then does not rewind
+
+        def flush(self) -> None:
+            self._fh.flush()
+
+        def size(self) -> int:
+            return self._size
+
+        def close(self) -> None:
+            if self._fh.closed:
+                return
+            try:
+                self._fh.flush()
+                if self._mtime is not None and self._mtime > 0:
+                    when = (self._mtime, self._mtime)
+                    try:
+                        if os.utime in os.supports_fd:
+                            os.utime(self._fh.fileno(), when)
+                        else:
+                            self._fh.close()
+                            os.utime(self._dest, when)
+                    except (OSError, OverflowError, ValueError) as exc:
+                        log.debug("archive: cannot set the time of %s: %s", self._dest, exc)
+            finally:
+                self._fh.close()
+
+    class Factory(WriterFactory):
+        def create(self, filename: str) -> Py7zIO:
+            name = by_key.get(filename)
+            f = members.get(name) if name is not None else None
+            if f is None:
+                raise UnsafeArchive(f"7z member was not checked: {filename!r}")
+            if progress is not None:
+                progress(written[0], files_total, name)
+            if poll is not None:
+                poll.name = name
+            dest = _safe_member_path(target, name)
+            mode = _7z_mode(f)
+            fh = sink.open_new(name, dest, mode if mode is not None else 0o666)
+            writer = Writer(fh, dest, _7z_mtime(f))
+            opened.append(writer)
+            written[0] += 1
+            return writer
+
+    try:
+        with open(archive_path, "rb") as fh, \
+                seven_zip.SevenZipFile(fh, mode="r", password=_PASSWORD.get()) as sz:
+            sz.extractall(path=base, factory=Factory())
+    finally:
+        for writer in opened:
+            try:
+                writer.close()
+            except OSError:
+                pass
+        _remove_staging(base)
+    return written[0]
 
 
 def _extract_rar(
@@ -1334,6 +1906,7 @@ def _extract_rar(
             # _extract_tar guards. Only validated file/dir names ever reach
             # extractall(members=...).
             safe_targets: list[str] = []
+            safe_infos: list = []
             seen_paths: set[str] = set()
             for ri in infos:
                 name = ri.filename
@@ -1350,7 +1923,7 @@ def _extract_rar(
                 dest = _safe_member_path(target, name)
                 _check_duplicate_member(seen_paths, dest, name)
                 if ri.is_dir():
-                    sink.makedirs(name, dest)
+                    sink.makedirs(name, dest, _rar_mode(ri))
                     continue
                 _check_bomb_ratio(
                     int(getattr(ri, "file_size", 0) or 0),
@@ -1358,10 +1931,21 @@ def _extract_rar(
                     name,
                 )
                 safe_targets.append(name)
+                safe_infos.append((ri, dest))
             if progress is not None:
                 progress(0, files_total, "")
-            # rarfile writes by path: into a private folder, then copied in.
-            sink.staged(lambda out: rf.extractall(path=out, members=safe_targets))
+            # Each file's bytes are read from rarfile's stream and written
+            # beneath the target by the sink (O_EXCL, never through a link,
+            # Cancel heard while they are written) - rarfile writes nothing
+            # by path. Its extractall() wrote a whole member - or archive -
+            # before the progress callback was asked again.
+            password = _PASSWORD.get()
+            for done, (ri, dest) in enumerate(safe_infos):
+                if progress is not None:
+                    progress(done, files_total, ri.filename)
+                with rf.open(ri, pwd=password) as src:
+                    sink.write(ri.filename, dest, src, _rar_mode(ri),
+                               _zip_date_time_to_epoch(tuple(getattr(ri, "date_time", ()) or ())))
     except (rarfile.RarCannotExec, rarfile.RarExecError) as exc:  # type: ignore[union-attr]
         # Backend tool (unrar/unar) missing or unrunnable. Surface the
         # same remediation hint as the import-failure path.
@@ -1372,6 +1956,15 @@ def _extract_rar(
     return files_written
 
 
+def _rar_mode(ri) -> int | None:
+    """The permission bits a RAR member made on Unix stores, else None."""
+    unix = getattr(rarfile, "RAR_OS_UNIX", 3)
+    mode = getattr(ri, "mode", None)
+    if getattr(ri, "host_os", None) != unix or not isinstance(mode, int):
+        return None
+    return stat.S_IMODE(mode)
+
+
 # --------------------------------------------------------------------------
 # Partial extraction — pick a subset of members
 # --------------------------------------------------------------------------
@@ -1379,11 +1972,12 @@ def _extract_rar(
 
 def _norm_member(name: str) -> str:
     """Normalise an archive member name for selection matching:
-    backslashes → ``/`` and a single trailing ``/`` stripped. Used only
+    backslashes → ``/``, empty and ``.`` segments dropped (``./d/`` and
+    ``d//`` are ``d`` - the folder row the archive view shows). Used only
     to compare *requested* names against *archive* names — the actual
     extraction still flows through :func:`_safe_member_path` on the raw
     member name, so this normalisation is never a security boundary."""
-    return name.replace("\\", "/").rstrip("/")
+    return "/".join(seg for seg in name.replace("\\", "/").split("/") if seg and seg != ".")
 
 
 def _is_selected(member_name: str, requested_norm: set[str]) -> bool:
@@ -1450,7 +2044,7 @@ def _extract_members_zip(
     the selection, not the whole archive."""
     sink = sink or _Sink(target)
     _check_zip_entry_count(archive_path, MAX_LIST_ENTRIES)
-    with zipfile.ZipFile(archive_path) as zf:
+    with open_zip(archive_path) as zf:
         infos = zf.infolist()
         if len(infos) > MAX_LIST_ENTRIES:
             raise UnsafeArchive(
@@ -1460,7 +2054,7 @@ def _extract_members_zip(
         selected = [i for i in infos if _is_selected(i.filename, requested)]
         skipped = [i.filename for i in selected if _zip_is_link(i)]
         selected = [i for i in selected if not _zip_is_link(i)]
-        sel_files = [i for i in selected if not i.is_dir()]
+        sel_files = [i for i in selected if not _zip_is_dir(i)]
         if len(sel_files) > MAX_EXTRACT_FILES:
             raise UnsafeArchive(
                 f"selection has {len(sel_files)} files; cap is {MAX_EXTRACT_FILES}",
@@ -1476,16 +2070,15 @@ def _extract_members_zip(
         seen_paths: set[str] = set()
         for info in selected:
             name = info.filename
-            if info.is_dir():
+            if _zip_is_dir(info):
                 dest = _safe_member_path(target, name)
                 _check_duplicate_member(seen_paths, dest, name)
-                sink.makedirs(name, dest)
+                sink.makedirs(name, dest, _zip_mode(info))
                 continue
             _check_bomb_ratio(info.file_size, info.compress_size, name)
             dest = _safe_member_path(target, name)
             _check_duplicate_member(seen_paths, dest, name)
-            with zf.open(info) as src:
-                sink.write(name, dest, src, _zip_mode(info), _zip_mtime(info))
+            _zip_write_member(zf, info, sink, name, dest)
             files_done += 1
             if progress is not None:
                 progress(files_done, files_total, name)
@@ -1511,7 +2104,8 @@ def _extract_members_tar(
             poll=(lambda name: progress(0, 0, name)) if progress is not None else None,
         )
         requested = _resolve_selection([m.name for m in members_all], members)
-        selected = [m for m in members_all if _is_selected(m.name, requested)]
+        selected = _tar_last_of_each(
+            [m for m in members_all if _is_selected(m.name, requested)])
         sel_files = [m for m in selected if m.isfile()]
         if len(sel_files) > MAX_EXTRACT_FILES:
             raise UnsafeArchive(
@@ -1542,7 +2136,7 @@ def _extract_members_tar(
                     continue
                 dest = _safe_member_path(target, m.name)
                 _check_duplicate_member(seen_paths, dest, m.name)
-                sink.makedirs(m.name, dest)
+                sink.makedirs(m.name, dest, m.mode)
                 continue
             dest = _safe_member_path(target, m.name)
             _check_duplicate_member(seen_paths, dest, m.name)
@@ -1567,9 +2161,10 @@ def extract_members(
     *,
     parent_dir=None,
     check_member: Callable[[str], None] | None = None,
+    password: str | None = None,
 ) -> ExtractResult:
     """Extract ONLY the named *members* from *archive_path* into *target*.
-    *check_member(path)* as in :func:`extract`.
+    *check_member(path)* and *password* as in :func:`extract`.
 
     *members* is a list of member names as reported by
     :func:`list_archive`. A name that refers to a DIRECTORY pulls in
@@ -1606,6 +2201,17 @@ def extract_members(
       and would need a separate descendant-expansion + guard pass to
       match the contract here — deferred rather than shipped half-guarded.
     """
+    token = _WINDOWS_RULES.set(windows_names_apply(target))
+    try:
+        with _with_password(password):
+            return _extract_members(archive_path, target, members, progress, parent_dir,
+                                    check_member)
+    finally:
+        _WINDOWS_RULES.reset(token)
+
+
+def _extract_members(archive_path, target, members, progress, parent_dir,
+                     check_member) -> ExtractResult:
     if not os.path.isfile(archive_path):
         raise FileNotFoundError(
             f"archive not found or not a regular file: {archive_path!r}",
@@ -1651,6 +2257,8 @@ def extract_members(
     # descriptor of the folder made here, nothing followed (_Sink).
     sink = _Sink.create(target, parent_dir)
     sink.check = check_member
+    sink.poll = _Poller(progress)
+    progress = sink.poll.reported()
     try:
         written = runner(archive_path, target, members, progress, sink)
         # Post-extraction size re-verification, same as extract(): the
@@ -1662,6 +2270,7 @@ def extract_members(
                 f"{MAX_EXTRACT_TOTAL_BYTES} — likely bomb with "
                 "declared-size metadata smaller than reality",
             )
+        sink.apply_folder_modes()
         return written if isinstance(written, ExtractResult) else ExtractResult(written)
     except BaseException:
         # Clean on ANY failure (UnsafeArchive, KeyError, ExtractCancelled,
@@ -1690,13 +2299,13 @@ def _zip_date_time_to_epoch(date_time: tuple[int, ...]) -> float | None:
 def _list_zip(p: str) -> list[ArchiveEntry]:
     out: list[ArchiveEntry] = []
     _check_zip_entry_count(p, MAX_LIST_ENTRIES)
-    with zipfile.ZipFile(p) as zf:
+    with open_zip(p) as zf:
         infos = zf.infolist()
         if len(infos) > MAX_LIST_ENTRIES:
             raise UnsafeArchive(f"archive has {len(infos)} entries; cap is {MAX_LIST_ENTRIES}")
         for zi in infos:
             unix = (zi.external_attr >> 16) if zi.create_system == 3 else 0
-            if zi.is_dir():
+            if _zip_is_dir(zi):
                 kind = "dir"
             elif unix and stat.S_ISLNK(unix):
                 kind = "symlink"
@@ -1708,7 +2317,7 @@ def _list_zip(p: str) -> list[ArchiveEntry]:
                     size=int(zi.file_size),
                     compressed=int(zi.compress_size),
                     mtime=_zip_date_time_to_epoch(zi.date_time),
-                    is_dir=zi.is_dir(),
+                    is_dir=_zip_is_dir(zi),
                     mode=_zip_mode(zi),
                     kind=kind,
                 ),
@@ -1755,6 +2364,16 @@ def _tar_kind(ti: tarfile.TarInfo) -> str:
     return "file" if ti.isreg() else "other"
 
 
+def _check_7z_count(sz, cap: int) -> None:
+    """Refuse a 7z holding more than *cap* members before their listing is
+    made (py7zr itself reads up to 8 million): a small 7z of tiny members
+    cost gigabytes of objects in the preview."""
+    count = len(getattr(sz, "files", None) or ())
+    if count > cap:
+        raise UnsafeArchive(f"archive has {count} entries; cap is {cap}")
+
+
+@_password_refusal
 def _list_7z(p: str) -> list[ArchiveEntry]:
     if not SEVEN_Z_AVAILABLE:
         raise UnsafeArchive(
@@ -1762,7 +2381,8 @@ def _list_7z(p: str) -> list[ArchiveEntry]:
         )
     seven_zip = _seven_zip("7z listing")
     out: list[ArchiveEntry] = []
-    with seven_zip.SevenZipFile(p, mode="r") as sz:
+    with seven_zip.SevenZipFile(p, mode="r", password=_PASSWORD.get()) as sz:
+        _check_7z_count(sz, MAX_LIST_ENTRIES)
         for fi in sz.list():
             size = int(getattr(fi, "uncompressed", 0) or 0)
             out.append(
@@ -1811,7 +2431,8 @@ def _list_rar(p: str) -> list[ArchiveEntry]:
 
 
 def list_archive(
-    archive_path: str, *, cancel: Callable[[], bool] | None = None
+    archive_path: str, *, cancel: Callable[[], bool] | None = None,
+    password: str | None = None,
 ) -> list[ArchiveEntry]:
     """Return the member listing of *archive_path* WITHOUT extracting
     anything to disk. Dispatch is by filename extension (case-
@@ -1832,7 +2453,15 @@ def list_archive(
     tar header: :class:`ExtractCancelled` then. A compressed tar whose
     members declare more than :data:`MAX_LIST_TAR_BYTES` is refused
     (:class:`UnsafeArchive`) before that much is decompressed.
+
+    *password* opens a 7z with an encrypted header; without it such a
+    listing raises :class:`ArchivePasswordRequired`.
     """
+    with _with_password(password):
+        return _list_archive(archive_path, cancel)
+
+
+def _list_archive(archive_path: str, cancel) -> list[ArchiveEntry]:
     lower = archive_path.lower()
     # RAR is checked first so the availability gate fires before file
     # IO (per contract). The .rar extension is unambiguous.
@@ -1874,6 +2503,7 @@ def extract_nested_archive(
     *,
     depth: int,
     progress: Callable[[int, int, str], None] | None = None,
+    password: str | None = None,
 ) -> str:
     """Extract *member* of *archive_path* - itself an archive - into
     *workdir* so it can be listed and extracted like any archive, and
@@ -1896,7 +2526,8 @@ def extract_nested_archive(
         )
     if not is_supported_archive(member):
         raise UnsafeArchive(f"not an archive: {member!r}")
-    entry = next((e for e in list_archive(archive_path) if e.name == member), None)
+    entry = next((e for e in list_archive(archive_path, password=password)
+                  if e.name == member), None)
     if entry is None:
         raise KeyError(f"not in the archive: {member}")
     if entry.is_dir:
@@ -1907,7 +2538,7 @@ def extract_nested_archive(
             "for an archive opened inside another one"
         )
     target = os.path.join(workdir, "nested")
-    extract_members(archive_path, target, [member], progress=progress)
+    extract_members(archive_path, target, [member], progress=progress, password=password)
     path = os.path.join(target, *[seg for seg in member.replace("\\", "/").split("/") if seg])
     try:
         if not os.path.isfile(path):
@@ -1935,6 +2566,7 @@ def extract(
     progress: Callable[[int, int, str], None] | None = None,
     parent_dir=None,
     check_member: Callable[[str], None] | None = None,
+    password: str | None = None,
 ) -> ExtractResult:
     """Extract *archive_path* into *target*.
 
@@ -1961,7 +2593,20 @@ def extract(
     it is made; what it raises refuses the extraction (nothing is left).
     The MCP server checks each against its root and the protected places:
     a member can land in a protected folder below a new target.
+
+    *password* opens an encrypted 7z and ZipCrypto ZIP members; it is
+    held in memory for this call only. Without it, or with a wrong one,
+    :class:`ArchivePasswordRequired` (``wrong`` true for a wrong one).
     """
+    token = _WINDOWS_RULES.set(windows_names_apply(target))
+    try:
+        with _with_password(password):
+            return _extract(archive_path, target, progress, parent_dir, check_member)
+    finally:
+        _WINDOWS_RULES.reset(token)
+
+
+def _extract(archive_path, target, progress, parent_dir, check_member) -> ExtractResult:
     if not os.path.isfile(archive_path):
         raise FileNotFoundError(
             f"archive not found or not a regular file: {archive_path!r}",
@@ -2016,6 +2661,8 @@ def extract(
     # beneath its root instead.
     sink = _Sink.create(target, parent_dir)
     sink.check = check_member
+    sink.poll = _Poller(progress)
+    progress = sink.poll.reported()
     try:
         written = runner(archive_path, target, progress, sink)
         # Post-extraction sanity: some archive formats (notably 7z via
@@ -2031,6 +2678,7 @@ def extract(
                 f"{MAX_EXTRACT_TOTAL_BYTES} — likely bomb with "
                 "declared-size metadata smaller than reality",
             )
+        sink.apply_folder_modes()
         return written if isinstance(written, ExtractResult) else ExtractResult(written)
     except BaseException:
         # Cleanup on ANY failure — UnsafeArchive, ExtractCancelled,
@@ -2042,6 +2690,28 @@ def extract(
         raise
     finally:
         sink.close()
+
+
+def archive_needs_password(archive_path: str) -> bool:
+    """True when *archive_path* is a 7z encrypted with a password or a ZIP
+    with a ZipCrypto member: :func:`extract` needs ``password=`` then.
+    False for anything it cannot tell (the extraction says why)."""
+    lower = archive_path.lower()
+    try:
+        if lower.endswith(_SEVEN_Z_EXTENSIONS) and SEVEN_Z_AVAILABLE:
+            seven_zip = _seven_zip("7z")
+            try:
+                with seven_zip.SevenZipFile(archive_path, mode="r") as sz:
+                    return bool(sz.needs_password())
+            except Exception as exc:  # an encrypted header is read with the password only
+                return type(exc).__name__ == "PasswordRequired"
+        if lower.endswith(_ZIP_EXTENSIONS):
+            _check_zip_entry_count(archive_path, MAX_LIST_ENTRIES)
+            with zipfile.ZipFile(archive_path) as zf:
+                return any(i.flag_bits & 0x1 and i.compress_type != 99 for i in zf.infolist())
+    except (OSError, ValueError, UnsafeArchive, zipfile.BadZipFile):
+        return False
+    return False
 
 
 #: Public name of :func:`_open_tar` for readers outside this module.
@@ -2076,8 +2746,11 @@ def _measure_tree_bytes(root: str) -> int:
 
 __all__ = [
     "ArchiveEntry",
+    "ArchivePasswordRequired",
+    "archive_needs_password",
     "ExtractCancelled",
     "MAX_COMPRESSION_RATIO",
+    "RATIO_CHECK_FLOOR",
     "MAX_EXTRACT_FILES",
     "MAX_EXTRACT_TOTAL_BYTES",
     "MAX_LIST_ENTRIES",
@@ -2091,6 +2764,8 @@ __all__ = [
     "MAX_NESTED_DEPTH",
     "check_bomb_ratio",
     "extract",
+    "POLL_BYTES",
+    "windows_names_apply",
     "extract_members",
     "extract_nested_archive",
     "is_supported_archive",

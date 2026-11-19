@@ -126,7 +126,7 @@ class _BlobClient:
             copy=SimpleNamespace(status="success", status_description=""),
         )
 
-    def delete_blob(self):
+    def delete_blob(self, **_kw):
         if self.name not in self.store.blobs:
             raise azure_exceptions.ResourceNotFoundError("BlobNotFound")
         del self.store.blobs[self.name]
@@ -149,10 +149,10 @@ class _Container:
     def get_blob_client(self, name):
         return _BlobClient(self, name)
 
-    def delete_blob(self, name):
+    def delete_blob(self, name, **_kw):
         _BlobClient(self, name).delete_blob()
 
-    def delete_blobs(self, *names):
+    def delete_blobs(self, *names, **_kw):
         for name in names:
             self.delete_blob(name)
 

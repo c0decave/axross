@@ -30,15 +30,19 @@ confinement and audit helpers the file tools use - and return
 
 from __future__ import annotations
 
+import io
 import logging
 import os
 import posixpath
 import re
+import sys
 import threading
 import weakref
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from typing import Any
+
+from core.server_ops import ShortCopy
 
 log = logging.getLogger(__name__)
 
@@ -331,14 +335,21 @@ class _ConfinedListing:
     def __init__(self, env: GroupEnv, backend) -> None:
         self._backend = backend
         self._refuse = _secret_refuser(env, backend)
+        #: Folders whose listing failed (the walk goes on without them).
+        self.failed: list[str] = []
 
     def __getattr__(self, name):
         return getattr(self._backend, name)
 
     def list_dir(self, path: str):
+        try:
+            listed = self._backend.list_dir(path)
+        except OSError:
+            self.failed.append(path)
+            raise
         return [
             child
-            for child in self._backend.list_dir(path)
+            for child in listed
             if getattr(child, "name", "") in ("", ".", "..")
             or not self._refuse(self._backend.join(path, child.name))
         ]
@@ -368,48 +379,85 @@ def _free_name(stem: str, ext: str, n: int) -> str:
     return f"{stem}{ext}" if n == 1 else f"{stem} ({n}){ext}"
 
 
-def _place_new(env: GroupEnv, backend, path: str, data: bytes, *, ext: str | None = None) -> str:
+def _write_into(fh, data) -> None:
+    """*data* (bytes, or a callable that writes into the handle) into *fh*."""
+    if callable(data):
+        data(fh)
+    else:
+        fh.write(data)
+
+
+def _place_new(env: GroupEnv, backend, path: str, data, *, ext: str | None = None) -> str:
     """Write *data* to *path*, or to ``stem (2).ext``, ``stem (3).ext`` …
     when the name is taken - never over an existing file. Every candidate
     is confined like *path*. *ext* overrides the suffix split (``.axenc``
-    for ``a.txt.axenc``). A local file is created with O_EXCL and mode
-    0600; a remote one after an existence check. Returns the path used."""
+    for ``a.txt.axenc``). *data* is bytes or a callable ``write(fh)`` that
+    streams into the new file. Returns the path used.
+
+    The content is written under a temporary name beside the target
+    (``.<name>.axross-part-<pid>-<random>``, mode 0600, recorded by
+    core.partials) and renamed to the free name only when it is complete -
+    without replacing anything. A process killed mid-write (a decrypt cut
+    at 0.9 s) left a truncated file under the final name, indistinguishable
+    from a whole one; now it leaves a temporary file, removed when it fails
+    and swept at the next start when the process was killed."""
+    from core import partials
+
     folder = backend.parent(path)
     name = posixpath.basename(path.replace("\\", "/").rstrip("/"))
     if ext is not None and name.endswith(ext) and len(name) > len(ext):
         stem = name[: -len(ext)]
     else:
         stem, ext = _split_name(name)
-    for n in range(1, 10_000):
-        # A new entry: checked as one (a missing folder that would hold a
-        # protected place is refused, not only the places themselves).
-        candidate = env.entry_path(backend.join(folder, _free_name(stem, ext, n)), backend)
+    import secrets
+
+    tmp = env.entry_path(backend.join(
+        folder, f".{name[:80]}.axross-part-{os.getpid()}-{secrets.token_hex(4)}"), backend)
+    local = _is_local(backend)
+    record = partials.track(tmp) if local else None
+    try:
         if hasattr(backend, "create_new"):
             # core.confined_fs: created beneath the root's descriptor - a
             # folder of the path swapped for a symlink meanwhile is refused.
-            try:
-                fh = backend.create_new(candidate, 0o600)
-            except FileExistsError:
-                continue
-            with fh:
-                fh.write(data)
-            return candidate
-        if _is_local(backend):
+            with backend.create_new(tmp, 0o600) as fh:
+                _write_into(fh, data)
+        elif local:
             flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+            with os.fdopen(os.open(tmp, flags, 0o600), "wb") as fh:
+                _write_into(fh, data)
+        else:
+            with backend.open_write(tmp) as fh:
+                _write_into(fh, data)
+        for n in range(1, 10_000):
+            # A new entry: checked as one (a missing folder that would hold
+            # a protected place is refused, not only the places themselves).
+            candidate = env.entry_path(backend.join(folder, _free_name(stem, ext, n)), backend)
             try:
-                fd = os.open(candidate, flags, 0o600)
+                if hasattr(backend, "rename_no_replace"):
+                    backend.rename_no_replace(tmp, candidate)
+                elif local:
+                    os.link(tmp, candidate)  # fails when the name is taken
+                    os.unlink(tmp)
+                else:
+                    if backend.exists(candidate):
+                        continue
+                    backend.rename(tmp, candidate)
             except FileExistsError:
                 continue
-            with os.fdopen(fd, "wb") as fh:
-                fh.write(data)
+            partials.done(record)
             return candidate
-        if backend.exists(candidate):
-            continue
-        from core.atomic_io import atomic_write
+        raise OSError(f"no free name for {path}")
+    except BaseException:
+        _remove_quietly(backend, tmp)
+        partials.done(record)
+        raise
 
-        atomic_write(backend, candidate, data)
-        return candidate
-    raise OSError(f"no free name for {path}")
+
+def _remove_quietly(backend, path: str) -> None:
+    try:
+        backend.remove(path)
+    except Exception as exc:  # noqa: BLE001 - clean-up is best effort
+        log.debug("could not remove the partial %s: %s", path, exc)
 
 
 def _audited(
@@ -447,7 +495,9 @@ def _metadata_targets(
         backend, folder, recursive=recursive, max_items=max_files + 1, cancel=cancel
     )
     paths = [p for p in (_confined(env, backend, i.path) for i in scan.items) if p]
-    truncated = bool(scan.truncated) or len(paths) > max_files
+    # A folder that could not be listed (a remote over its listing cap)
+    # makes the result incomplete, not empty.
+    truncated = bool(scan.truncated) or bool(scan.unreadable) or len(paths) > max_files
     return paths[:max_files], truncated
 
 
@@ -653,10 +703,21 @@ def _type_info(info) -> dict:
     return out
 
 
-def _walk_files(env: GroupEnv, backend, start: str, max_depth: int, ctx):
+def _unreadable(paths) -> dict:
+    """The ``unreadable`` field of a walk's result: the folders it could
+    not list (a few), when there were any."""
+    paths = list(paths)
+    return {"unreadable": paths[:_MAX_UNREADABLE]} if paths else {}
+
+
+_MAX_UNREADABLE = 20
+
+
+def _walk_files(env: GroupEnv, backend, start: str, max_depth: int, ctx,
+                failed: list | None = None):
     """Breadth-first ``(path, item)`` of the files under *start*: symlinks
     and entries that leave the root are skipped, cancel is polled per
-    folder."""
+    folder; folders that could not be listed go to *failed*."""
     from core.path_policy import safe_join
 
     queue: list[tuple[str, int]] = [(start, 0)]
@@ -666,6 +727,8 @@ def _walk_files(env: GroupEnv, backend, start: str, max_depth: int, ctx):
         try:
             children = sorted(backend.list_dir(folder), key=lambda c: getattr(c, "name", ""))
         except OSError:
+            if failed is not None:
+                failed.append(folder)
             continue
         for child in children:
             name = getattr(child, "name", "")
@@ -716,7 +779,8 @@ def _build_filetype(env: GroupEnv) -> list:
         entries: list[dict] = []
         scanned = 0
         truncated = False
-        for full, _item in _walk_files(env, backend, start, max_depth, ctx):
+        failed: list[str] = []
+        for full, _item in _walk_files(env, backend, start, max_depth, ctx, failed):
             if scanned >= max_files:
                 truncated = True
                 break
@@ -729,7 +793,7 @@ def _build_filetype(env: GroupEnv) -> list:
                 use_file_command=use_file,
             )
             scanned += 1
-            ctx.progress(float(scanned), float(max_files), f"identified {full}")
+            ctx.progress(float(scanned), None, f"identified {full}")
             if only_mismatch and not info.mismatch:
                 continue
             entries.append(_type_info(info))
@@ -737,7 +801,8 @@ def _build_filetype(env: GroupEnv) -> list:
             "path": start,
             "entries": entries,
             "files_scanned": scanned,
-            "truncated": truncated,
+            "truncated": truncated or bool(failed),
+            **_unreadable(failed),
         }
 
     limits = {
@@ -854,17 +919,22 @@ def _build_duplicates(env: GroupEnv) -> list:
         algo = _algorithm(args, "sha256")
         rehash = _bool_arg(args, "rehash", False)
         bid = cas.backend_id_for(backend)
+        cap = _WalkCap(env, backend, args)
+
+        def progress(scanned, indexed, p):
+            cap.count(scanned)
+            ctx.progress(float(scanned), None, f"{indexed} indexed - {p}")
+
+        listing = _ConfinedListing(env, backend)
         count = cas.rebuild(
             # Hashing reads every file: a secret is not read (nor indexed).
-            _ConfinedListing(env, backend),
+            listing,
             folder,
             backend_id=bid,
             algorithm=algo,
             rehash=rehash,
-            cancel=lambda: ctx.is_cancelled,
-            progress=lambda scanned, indexed, p: ctx.progress(
-                float(scanned), None, f"{indexed} indexed - {p}"
-            ),
+            cancel=lambda: ctx.is_cancelled or cap.reached,
+            progress=progress,
         )
         if ctx.is_cancelled:
             raise _cancelled()
@@ -883,6 +953,8 @@ def _build_duplicates(env: GroupEnv) -> list:
             "algorithm": algo,
             "files_indexed": count,
             "status": record.status if record else cas.SCAN_COMPLETE,
+            "truncated": cap.reached or bool(listing.failed),
+            **_unreadable(listing.failed),
         }
 
     def _scans(args, ctx):
@@ -1060,6 +1132,7 @@ def _build_duplicates(env: GroupEnv) -> list:
                     "description": "Hash algorithm.",
                 },
                 "rehash": _bool_prop("Hash every file even when unchanged.", default=False),
+                "max_files": _WalkCap.prop(),
             },
             _scan,
             group="duplicates",
@@ -1131,13 +1204,21 @@ def _build_index(env: GroupEnv) -> list:
         recursive = _bool_arg(args, "recursive", True)
         prune = _bool_arg(args, "prune", False)
         bid = env.index_backend_id(backend)
+        cap = _WalkCap(env, backend, args)
+
+        def progress(scanned, done, p):
+            cap.count(scanned)
+            ctx.progress(float(done), None, f"indexed {p}")
+
+        walk = {"skipped": [], "complete": True, "seen": set()}
         indexed = MX.index_dir(
             backend,
             folder,
             backend_id=bid,
             recursive=recursive,
-            cancel=lambda: ctx.is_cancelled,
-            progress=lambda scanned, done, p: ctx.progress(float(done), None, f"indexed {p}"),
+            cancel=lambda: ctx.is_cancelled or cap.reached,
+            progress=progress,
+            _walk=walk,
         )
         if ctx.is_cancelled:
             raise _cancelled()
@@ -1148,6 +1229,10 @@ def _build_index(env: GroupEnv) -> list:
             "recursive": recursive,
             "indexed": indexed,
             "pruned": pruned,
+            # A folder that could not be listed (a remote over its listing
+            # cap) is no empty folder.
+            "truncated": cap.reached or bool(walk["skipped"]) or not walk["complete"],
+            **_unreadable(walk["skipped"]),
         }
 
     return [
@@ -1165,6 +1250,7 @@ def _build_index(env: GroupEnv) -> list:
                 "prune": _bool_prop(
                     "Also drop rows of files under the folder that are gone.", default=False
                 ),
+                "max_files": _WalkCap.prop(),
             },
             _build,
             group="index",
@@ -1353,6 +1439,13 @@ def _build_packer(env: GroupEnv) -> list:
 _MAX_ARCHIVE_ENTRIES = 10_000
 
 
+def pinned_local_file(backend, path: str):
+    """core.confined_fs.pinned_path (kept here for the group code)."""
+    from core.confined_fs import pinned_path
+
+    return pinned_path(backend, path)
+
+
 def _local_archive(env: GroupEnv, args: dict) -> tuple[Any, str]:
     backend = env.resolve_backend(args)
     if not _is_local(backend):
@@ -1370,10 +1463,13 @@ def _build_archive(env: GroupEnv) -> list:
     from core import archive as A
 
     def _list(args, ctx):
-        _backend, path = _local_archive(env, args)
+        backend, path = _local_archive(env, args)
         max_entries = _int_arg(args, "max_entries", 1000, 1, _MAX_ARCHIVE_ENTRIES)
         try:
-            entries = A.list_archive(path, cancel=lambda: ctx.is_cancelled)
+            # Read through the file the confined backend opened, not by
+            # name (a folder swapped for a symlink meanwhile).
+            with pinned_local_file(backend, path) as pinned:
+                entries = A.list_archive(pinned, cancel=lambda: ctx.is_cancelled)
         except A.ExtractCancelled as exc:
             raise _cancelled() from exc
         return {
@@ -1424,9 +1520,10 @@ def _build_archive(env: GroupEnv) -> list:
             try:
                 # Beneath the confined backend's descriptors (core.archive._Sink):
                 # a folder swapped for a symlink while it extracts is refused.
-                files = A.extract(path, target, progress=progress,
-                                  parent_dir=getattr(backend, "parent_dir", None),
-                                  check_member=_entry_checker(env, backend))
+                with pinned_local_file(backend, path) as pinned:
+                    files = A.extract(pinned, target, progress=progress,
+                                      parent_dir=getattr(backend, "parent_dir", None),
+                                      check_member=_entry_checker(env, backend))
             except A.ExtractCancelled as exc:
                 raise CancelledError("request cancelled by client") from exc
             out = {"path": target, "files": int(files)}
@@ -1477,7 +1574,8 @@ def _build_archive(env: GroupEnv) -> list:
             "Extract an archive into a new folder named after it inside dest_dir (default: "
             "the archive's folder): 'x.zip' -> 'x', then 'x-1', … - an existing folder is "
             "never written into. Zip-slip, absolute paths, more than 10,000 entries, "
-            "more than 1 GiB or a compression ratio above 100 are refused and nothing is "
+            "more than 1 GiB or a member of 64 MiB or more compressed above 100:1 are "
+            "refused and nothing is "
             "left behind. Returns {path (the new folder), files}, plus {skipped_links, note} "
             "when symbolic links were left out (they are never extracted). Progress per file; "
             "cancellable (the partial folder is removed). Local backend only.",
@@ -1499,6 +1597,24 @@ def _build_archive(env: GroupEnv) -> list:
 # ---------------------------------------------------------------------------
 
 
+#: Single-shot (AXXE1) decryptions held in memory at once: each holds the
+#: whole file (up to 1 GiB) and its plaintext.
+_SINGLE_SHOT_SLOTS = threading.BoundedSemaphore(2)
+
+
+class _CountingWriter:
+    """Counts the bytes written through it."""
+
+    def __init__(self, out) -> None:
+        self._out = out
+        self.count = 0
+
+    def write(self, data) -> int:
+        self._out.write(data)
+        self.count += len(data)
+        return len(data)
+
+
 def _build_crypto(env: GroupEnv) -> list:
     from core import encrypted_overlay as E
 
@@ -1511,19 +1627,32 @@ def _build_crypto(env: GroupEnv) -> list:
 
     def _encrypt(args, ctx):
         def work():
-            from core.mcp_server import _read_capped_stream
-
             backend, path = _source(args)
             passphrase = _str_arg(args, "passphrase")
             cap = E.MAX_ENCRYPTED_SIZE
-            with backend.open_read(path) as fh:
-                data, too_big = _read_capped_stream(fh, cap)
-            if too_big:
-                raise ValueError(f"file larger than {cap} bytes, the most one .axenc file holds")
-            blob = E.encrypt_bytes(data, passphrase)
+            if not passphrase:
+                raise ValueError("passphrase must be non-empty")
+            # Streamed in the chunked format (AXXE2: every chunk
+            # authenticated with its index, the last one marked, so a
+            # reordered or cut file fails): a few MiB of memory whatever
+            # the file's size, not the whole file several times.
+            budget = _Budget(cap)
+            sizes = {}
+
+            def write(out) -> None:
+                counted = _CountingWriter(out)
+                with backend.open_read(path) as fh:
+                    try:
+                        E.encrypt_stream(_CancelAwareHandle(fh, ctx, budget), counted,
+                                         passphrase)
+                    except SourceTooLarge:
+                        raise ValueError(f"file larger than {cap} bytes, the most one .axenc "
+                                         "file holds") from None
+                sizes["out"] = counted.count
+
             target = path if path.endswith(E.ENC_SUFFIX) else path + E.ENC_SUFFIX
-            written = _place_new(env, backend, target, blob, ext=E.ENC_SUFFIX)
-            return {"path": written, "size": len(blob), "plaintext_size": len(data)}
+            written = _place_new(env, backend, target, write, ext=E.ENC_SUFFIX)
+            return {"path": written, "size": sizes.get("out", 0), "plaintext_size": budget.used}
 
         return _audited(
             env,
@@ -1536,13 +1665,53 @@ def _build_crypto(env: GroupEnv) -> list:
     def _decrypt(args, ctx):
         def work():
             backend, path = _source(args)
-            plaintext = E.read_encrypted(backend, path, _str_arg(args, "passphrase"))
+            passphrase = _str_arg(args, "passphrase")
             if path.endswith(E.ENC_SUFFIX) and len(path) > len(E.ENC_SUFFIX):
                 target = path[: -len(E.ENC_SUFFIX)]
             else:
                 target = path + ".decrypted"
-            written = _place_new(env, backend, target, plaintext)
-            return {"path": written, "size": len(plaintext)}
+            with backend.open_read(path) as fh:
+                head = fh.read(len(E.MAGIC_V2))
+            if E.is_streaming_blob(head or b""):
+                # The chunked format: decrypted chunk by chunk into the new
+                # file; a chunk that fails, or a missing last chunk, removes
+                # it again.
+                sizes = {}
+
+                def write(out) -> None:
+                    counted = _CountingWriter(out)
+                    with backend.open_read(path) as fh:
+                        E.decrypt_stream(_CancelAwareHandle(fh, ctx), counted, passphrase)
+                    sizes["out"] = counted.count
+
+                written = _place_new(env, backend, target, write)
+                return {"path": written, "size": sizes.get("out", 0)}
+            # The single-shot format (AXXE1, files encrypted before): streamed
+            # too (its GCM tag is read first, checked at the end; a failure
+            # removes the new file). A source that cannot seek is held in
+            # memory instead - at most _SINGLE_SHOT_SLOTS of them at a time.
+            size = int(getattr(backend.stat(path), "size", 0) or 0)
+            if size > E.MAX_ENCRYPTED_SIZE:
+                raise ValueError(f"encrypted file larger than {E.MAX_ENCRYPTED_SIZE} bytes")
+            sizes = {}
+
+            def write_v1(out) -> None:
+                with backend.open_read(path) as fh:
+                    if not callable(getattr(fh, "seek", None)) or (
+                            callable(getattr(fh, "seekable", None)) and not fh.seekable()):
+                        raise io.UnsupportedOperation("not seekable")
+                    sizes["out"] = E.decrypt_v1_stream(_CancelAwareHandle(fh, ctx), size,
+                                                       out, passphrase)
+
+            try:
+                written = _place_new(env, backend, target, write_v1)
+                return {"path": written, "size": sizes.get("out", 0)}
+            except io.UnsupportedOperation:
+                pass
+            with _SINGLE_SHOT_SLOTS:
+                plaintext = E.read_encrypted(backend, path, passphrase)
+                written = _place_new(env, backend, target, plaintext)
+                return {"path": written, "size": len(plaintext)}
 
         return _audited(
             env,
@@ -1663,6 +1832,88 @@ class OpenedBackend:
     profile: Any
     #: False for a connection lent by the GUI (attach): never released here.
     owned: bool = True
+    #: The ConnectionManager it came from (released there).
+    manager: Any = None
+
+
+#: Seconds an SFTP request of a profile opened over MCP may wait for its
+#: answer: a server that stops answering mid-read held a worker thread
+#: (and its partial file) for good. A healthy server answers each
+#: request long before this.
+REMOTE_IO_TIMEOUT_SECONDS = 60.0
+
+
+def remote_io_timeout() -> float:
+    """The SFTP request deadline: AXROSS_MCP_REMOTE_TIMEOUT (seconds, 5 to
+    3600) or REMOTE_IO_TIMEOUT_SECONDS. A CLOSE, REMOVE or rename waits
+    longer anyway (core.ssh_client._SLOW_BY_NATURE)."""
+    raw = os.environ.get("AXROSS_MCP_REMOTE_TIMEOUT", "").strip()
+    try:
+        value = float(raw) if raw else REMOTE_IO_TIMEOUT_SECONDS
+    except ValueError:
+        log.warning("AXROSS_MCP_REMOTE_TIMEOUT=%r is no number of seconds; using %g", raw,
+                    REMOTE_IO_TIMEOUT_SECONDS)
+        return REMOTE_IO_TIMEOUT_SECONDS
+    if not 5 <= value <= 3600:
+        log.warning("AXROSS_MCP_REMOTE_TIMEOUT=%g is outside 5..3600; using %g", value,
+                    REMOTE_IO_TIMEOUT_SECONDS)
+        return REMOTE_IO_TIMEOUT_SECONDS
+    return value
+
+
+def _bound_remote_io(backend) -> None:
+    """Bound every SFTP request of *backend*: REMOTE_IO_TIMEOUT_SECONDS
+    without an answer ends it (an OSError), keepalives or not, on every
+    thread's channel (core.ssh_client.SSHSession.bound_requests). Other
+    clients: their channel's read time-out."""
+    bound = getattr(backend, "bound_requests", None)
+    if callable(bound):
+        bound(remote_io_timeout())
+        return
+    sftp = getattr(backend, "sftp", None)
+    try:
+        channel = sftp.get_channel() if sftp is not None else None
+        if channel is not None:
+            channel.settimeout(remote_io_timeout())
+    except Exception as exc:  # noqa: BLE001 - a stand-in client: nothing to bound
+        log.debug("no SFTP channel timeout for %s: %s", type(backend).__name__, exc)
+
+
+def _unknown_host_advice(profile, exc) -> str:
+    """How to trust a host key without the GUI: commands that work as given
+    - the bare host name for ``-p`` (the known_hosts form ``[host]:port``
+    is what ssh-keyscan writes, not what it takes) and ssh-keyscan's key
+    type names (rsa, ed25519, ecdsa)."""
+    import shlex
+
+    host = str(getattr(profile, "host", "") or exc.host)
+    port = int(getattr(profile, "port", 22) or 22)
+    raw_type = str(getattr(exc, "key_type", "") or "")
+    kind = ("rsa" if "rsa" in raw_type else "ed25519" if "ed25519" in raw_type
+            else "ecdsa" if "ecdsa" in raw_type else "")
+    scan = f"ssh-keyscan -p {port}{f' -t {kind}' if kind else ''} {shlex.quote(host)}"
+    # Every command in backticks runs as given when pasted (a remark in
+    # the middle of one was a shell syntax error).
+    return (f"the host key of {exc.host} ({raw_type} SHA256:{exc.fingerprint_sha256}) is not "
+            "trusted yet - the MCP server never prompts. Check that fingerprint with the "
+            f"server's admin. To trust it: run `{scan} > /tmp/hostkey`, check that "
+            "`ssh-keygen -lf /tmp/hostkey` shows the same SHA256, then run "
+            "`mkdir -p ~/.ssh && cat /tmp/hostkey >> ~/.ssh/known_hosts`. Or connect once "
+            f"with `ssh -p {port} {shlex.quote(host)}` and accept it there, or once in the "
+            "axross GUI")
+
+
+def _tear_down(backend, bid: str) -> None:
+    """Close *backend*'s connection, whoever still holds it."""
+    for name in ("close", "disconnect"):
+        method = getattr(backend, name, None)
+        if callable(method):
+            try:
+                method()
+                log.info("remote_close: %s torn down (calls on it had not stopped)", bid)
+                return
+            except Exception as exc:  # noqa: BLE001 - best effort
+                log.debug("remote_close: %s of %s failed: %s", name, bid, exc)
 
 
 class RemoteRegistry:
@@ -1689,6 +1940,11 @@ class RemoteRegistry:
         self._attached: dict[str, OpenedBackend] = {}
         self._gate = gate
         self._manager = None
+        # Production profiles connect through a pool of their own: the
+        # shared pool hands two profiles of one server the same session,
+        # and a write through the production one looked like a write
+        # through the other (round 1 of the MCP review).
+        self._production_manager = None
         RemoteRegistry._live.add(self)
 
     @staticmethod
@@ -1697,17 +1953,19 @@ class RemoteRegistry:
 
         return _current_session_id.get() or ""
 
-    def _connections(self):
-        if self._manager is None:
+    def _connections(self, production: bool = False):
+        attr = "_production_manager" if production else "_manager"
+        if getattr(self, attr) is None:
             from core.backend_registry import all_backends, init_registry
             from core.connection_manager import ConnectionManager
             from core.profiles import ProfileManager
 
             if not all_backends():
                 init_registry()
-            self._manager = ConnectionManager()
-            self._manager.set_profile_resolver(lambda name: ProfileManager().get(name))
-        return self._manager
+            manager = ConnectionManager()
+            manager.set_profile_resolver(lambda name: ProfileManager().get(name))
+            setattr(self, attr, manager)
+        return getattr(self, attr)
 
     def attach(self, bid: str, backend, profile) -> None:
         """Lend *backend* (with its *profile*, or None) under *bid*."""
@@ -1742,14 +2000,23 @@ class RemoteRegistry:
                         return opened
         return None
 
+    def _all_for(self, backend) -> list[OpenedBackend]:
+        if backend is None:
+            return []
+        with self._lock:
+            return [o for scope in (self._attached, *self._scopes.values())
+                    for o in scope.values() if o.backend is backend]
+
     def refuse_production(self, backend) -> None:
-        opened = self._find(backend)
-        if opened is not None and getattr(opened.profile, "production", False):
-            raise PermissionError(
-                f"profile {opened.profile.name!r} is flagged production: the MCP server "
-                "refuses every mutation on it (the GUI's production countdown cannot be "
-                "shown over MCP)"
-            )
+        # Every profile that reaches this connection counts, not the first
+        # one found: one production profile among them refuses.
+        for opened in self._all_for(backend):
+            if getattr(opened.profile, "production", False):
+                raise PermissionError(
+                    f"profile {opened.profile.name!r} is flagged production: the MCP server "
+                    "refuses every mutation on it (the GUI's production countdown cannot be "
+                    "shown over MCP)"
+                )
 
     def open(self, name: str) -> tuple[str, OpenedBackend, bool]:
         from core.local_fs import LocalFS
@@ -1784,16 +2051,13 @@ class RemoteRegistry:
                 "store it once from the axross GUI (connection dialog: Store password) - "
                 "the MCP server never prompts"
             )
-        manager = self._connections()
+        production = bool(getattr(profile, "production", False))
+        manager = self._connections(production=production)
         unknown_host, mismatch = _host_key_errors()
         try:
             backend = manager.connect(profile, password=password, on_unknown_host=None)
         except unknown_host as exc:
-            raise PermissionError(
-                f"the host key of {exc.host} ({exc.key_type} SHA256:{exc.fingerprint_sha256}) "
-                "is not trusted yet; connect once in the axross GUI and accept it - the MCP "
-                "server never prompts"
-            ) from None
+            raise PermissionError(_unknown_host_advice(profile, exc)) from None
         except mismatch as exc:
             raise PermissionError(
                 f"refused: the host key of {name!r} does not match known_hosts "
@@ -1809,7 +2073,17 @@ class RemoteRegistry:
                 f"profile {name!r} opens the local file system, which would bypass --mcp-root; "
                 "refused"
             )
-        opened = OpenedBackend(backend=backend, profile=profile)
+        _bound_remote_io(backend)
+        opened = OpenedBackend(backend=backend, profile=profile, manager=manager)
+        shared = [o for o in self._all_for(backend)
+                  if bool(getattr(o.profile, "production", False)) != production]
+        if shared:
+            # Belt and braces: a session must never be both a production
+            # profile's and an ordinary one's.
+            manager.release(profile)
+            raise PermissionError(
+                f"profile {name!r} would share its connection with "
+                f"{shared[0].profile.name!r}, which differs in the production flag; refused")
         with self._lock:
             mine = self._scopes.setdefault(scope, {})
             if bid in mine:  # a concurrent open of the same profile won
@@ -1825,7 +2099,14 @@ class RemoteRegistry:
             opened = self._scopes.get(self._scope(), {}).pop(bid, None)
         if opened is None:
             return False
-        self._connections().release(opened.profile)
+        (opened.manager or self._connections()).release(opened.profile)
+        from core.mcp_server import _ABANDONED
+
+        if _ABANDONED.alive(bid):
+            # Calls on it did not stop (a server that stalls a request but
+            # answers keepalives): only closing the connection ends their
+            # waits - and frees the profile for a new remote_open.
+            _tear_down(opened.backend, bid)
         return True
 
     def _release(self, opened_backends) -> None:
@@ -1833,7 +2114,7 @@ class RemoteRegistry:
             if not opened.owned:
                 continue
             try:
-                self._connections().release(opened.profile)
+                (opened.manager or self._connections()).release(opened.profile)
             except Exception as exc:  # noqa: BLE001 - closing is best effort
                 log.debug("remote close failed: %s", exc)
 
@@ -1964,16 +2245,40 @@ _MAX_TRANSFER_FILES = 10_000
 _DEFAULT_MAX_FILE_BYTES = 10 * (1 << 30)
 
 
-class _CancelAwareHandle:
-    """A read handle that polls the call's cancellation before every read."""
+class SourceTooLarge(OSError):
+    """A source sent more bytes than the call's byte cap (a server can say
+    a file has 5 bytes and send gigabytes)."""
 
-    def __init__(self, handle, ctx) -> None:
+
+class _Budget:
+    """Bytes one call may still read from its sources, shared by them."""
+
+    def __init__(self, limit: int | None) -> None:
+        self.limit = limit
+        self.used = 0
+
+    def take(self, count: int) -> None:
+        self.used += count
+        if self.limit is not None and self.used > self.limit:
+            raise SourceTooLarge(f"the source sent more than {self.limit} bytes "
+                                 "(the call's max_file_bytes); stopped")
+
+
+class _CancelAwareHandle:
+    """A read handle that polls the call's cancellation before every read
+    and counts what it reads against the call's byte budget."""
+
+    def __init__(self, handle, ctx, budget: "_Budget | None" = None) -> None:
         self._handle = handle
         self._ctx = ctx
+        self._budget = budget
 
     def read(self, *args):
         self._ctx.check_cancel()
-        return self._handle.read(*args)
+        data = self._handle.read(*args)
+        if self._budget is not None and data:
+            self._budget.take(len(data))
+        return data
 
     def __enter__(self):
         return self
@@ -1994,18 +2299,124 @@ class _CancelAwareSource:
     tasks/cancel stops it within one segment (the manifest keeps the done
     segments for the next run)."""
 
-    def __init__(self, backend, ctx) -> None:
+    def __init__(self, backend, ctx, budget: "_Budget | None" = None) -> None:
         self._backend = backend
         self._ctx = ctx
+        self._budget = budget
 
     def open_read(self, *args, **kwargs):
-        return _CancelAwareHandle(self._backend.open_read(*args, **kwargs), self._ctx)
+        return _CancelAwareHandle(self._backend.open_read(*args, **kwargs), self._ctx,
+                                  self._budget)
 
     def __getattr__(self, name):
         attr = getattr(self._backend, name)
         if name == "open_read_range":
-            return lambda *a, **k: _CancelAwareHandle(attr(*a, **k), self._ctx)
+            return lambda *a, **k: _CancelAwareHandle(attr(*a, **k), self._ctx, self._budget)
         return attr
+
+
+def _source_mode(backend, path: str) -> int | None:
+    """The st_mode of *path* itself (not following a link) where the
+    backend can tell: SFTP's lstat, the local file system's. None
+    elsewhere (the byte budget still bounds what is read)."""
+    import stat as _stat  # noqa: F401 - for callers' S_IS* checks
+
+    sftp = getattr(backend, "sftp", None)
+    try:
+        if sftp is not None:
+            return int(sftp.lstat(path).st_mode)
+        if _is_local(backend):
+            return os.lstat(path).st_mode
+    except (OSError, AttributeError, TypeError, ValueError):
+        return None
+    except Exception:  # noqa: BLE001 - a backend's own error: not known
+        return None
+    return None
+
+
+def _special_source(backend, path: str, item=None) -> str | None:
+    """Why *path* is no regular file to copy, or None. On a remote: a
+    symlink (the server follows it when reading: /zero -> /dev/zero), a
+    device, a FIFO, a socket. On the local disk a link is followed - the
+    root check already refused one that leaves the root - and what it
+    reaches must be a regular file."""
+    import stat as _stat
+
+    if _is_local(backend):
+        try:
+            mode = os.stat(path).st_mode
+        except OSError:
+            return None
+        return None if _stat.S_ISREG(mode) or _stat.S_ISDIR(mode) else "special-file"
+    if item is not None and getattr(item, "is_link", False):
+        return "symlink"
+    mode = _source_mode(backend, path)
+    if mode is None:
+        return None
+    if _stat.S_ISLNK(mode):
+        return "symlink"
+    if _stat.S_ISDIR(mode) or _stat.S_ISREG(mode):
+        return None
+    return "special-file"
+
+
+#: Characters a name taken from another machine may not bring into a local
+#: name (a newline split a file's line in every listing and log).
+def _unsafe_name(name: str) -> bool:
+    return any(ord(ch) < 32 or ord(ch) == 127 for ch in name)
+
+
+class _WalkCap:
+    """The entries a whole-tree walk (index_build, duplicates_scan) may
+    visit: ``max_files``, by default 100,000 on a remote (a server that
+    lists without end) and 1,000,000 locally. Reached, the walk stops and
+    the result says ``truncated``."""
+
+    REMOTE_DEFAULT = 100_000
+    LOCAL_DEFAULT = 1_000_000
+
+    def __init__(self, env, backend, args) -> None:
+        remote = env.remote is not None and env.remote.holds(backend)
+        default = self.REMOTE_DEFAULT if remote else self.LOCAL_DEFAULT
+        self.limit = _int_arg(args, "max_files", default, 1, self.LOCAL_DEFAULT)
+        self.reached = False
+
+    def count(self, scanned) -> None:
+        if int(scanned) >= self.limit:
+            self.reached = True
+
+    @staticmethod
+    def prop() -> dict:
+        prop = _int_prop("Visit at most this many entries (truncated=true); default 100,000 "
+                         "on a remote, 1,000,000 locally.", minimum=1, maximum=1_000_000,
+                         default=1_000_000)
+        prop.pop("default")  # it depends on the backend
+        return prop
+
+
+def _whole_or_raise(size: int, sent, backend, path: str) -> int:
+    """The bytes a copy wrote to *path* on *backend* (*sent* when the copy
+    counted them, else the destination's size); :class:`ShortCopy` when
+    that is not the source's reported *size*."""
+    got = int(sent) if sent else int(getattr(backend.stat(path), "size", 0) or 0)
+    if got != int(size):
+        raise ShortCopy(f"the source reported {int(size)} bytes and sent {got}; "
+                        "not a complete copy")
+    return got
+
+
+def _sends_more_than(backend, path: str, size: int) -> bool:
+    """Whether *path* has a byte past *size* (a server that reported 5
+    bytes and holds 30 MiB). Seeks there; a stream that cannot seek is not
+    asked (False)."""
+    try:
+        with backend.open_read(path) as fh:
+            if not callable(getattr(fh, "seek", None)):
+                return False
+            fh.seek(size)
+            return bool(fh.read(1))
+    except (OSError, ValueError, io.UnsupportedOperation):
+        return False
 
 
 def _ensure_dir(backend, path: str) -> None:
@@ -2067,20 +2478,52 @@ def _build_transfer(env: GroupEnv) -> list:
             def record(s, d, size, action, **extra):
                 entries.append({"src": s, "dst": d, "size": size, "action": action, **extra})
 
-            def one(s: str, d: str, size: int) -> None:
-                d = env.write_path(d, db)
+            def one(s: str, d: str, size: int, item=None) -> None:
+                try:
+                    d = env.write_path(d, db)
+                except PermissionError as exc:
+                    # A protected place (a .git hook, a shell start file):
+                    # this file is left out, the rest of the tree goes on
+                    # and the report says what landed and what did not.
+                    record(s, d, size, "skipped", reason="protected",
+                           error=redact_text(str(exc)))
+                    return
+                except ValueError as exc:
+                    # A name the destination refuses (C:.. from a hostile
+                    # listing): this entry is left out, not the whole copy.
+                    record(s, d, size, "skipped", reason="unsafe-name",
+                           error=redact_text(str(exc)))
+                    return
                 if size > max_file_bytes:
                     record(s, d, size, "skipped", reason="too-large")
+                    return
+                why = _special_source(sb, s, item)
+                if why is not None:
+                    # A symlink is followed by the server when read (/zero
+                    # -> /dev/zero filled the disk), a device or FIFO never
+                    # ends: only regular files are copied.
+                    record(s, d, size, "skipped", reason=why)
                     return
                 if not resumable and not overwrite and db.exists(d):
                     record(s, d, size, "skipped", reason="exists")
                     return
+                if _is_local(sb):
+                    # A local link is followed: its target's size is what
+                    # the copy must bring (a listing gave the link's own).
+                    try:
+                        size = os.stat(s).st_size
+                    except OSError:
+                        pass
                 ctx.check_cancel()
+                # What the source really sends counts, not what it said its
+                # size was; the cap and a cancel stop the copy mid-file and
+                # the partial destination is removed.
+                budget = _Budget(max_file_bytes)
                 try:
                     _ensure_dir(db, db.parent(d))
                     if resumable:
                         report = CR.resumable_copy(
-                            _CancelAwareSource(sb, ctx),
+                            _CancelAwareSource(sb, ctx, budget),
                             s,
                             db,
                             d,
@@ -2091,6 +2534,15 @@ def _build_transfer(env: GroupEnv) -> list:
                         )
                         if not report.completed:
                             raise OSError("the resumable copy did not complete")
+                        if _sends_more_than(sb, s, size) or int(
+                                getattr(db.stat(d), "size", 0) or 0) != size:
+                            # It copied the size the source gave; the source
+                            # holds more. Not a complete copy: no file.
+                            _remove_quietly(db, d)
+                            record(s, d, size, "error", reason="size-mismatch",
+                                   error="the source sends more bytes than the size it "
+                                         "reports; the copy was removed")
+                            return
                         record(
                             s,
                             d,
@@ -2099,11 +2551,39 @@ def _build_transfer(env: GroupEnv) -> list:
                             bytes=report.bytes_transferred,
                             resumed_segments=report.segments_skipped,
                         )
-                    else:
+                    elif sb is db:
+                        # One backend: its own copy (the bytes never pass
+                        # through here); the source is a regular file.
                         moved = S.copy(sb, s, db, d, overwrite=overwrite)
-                        record(s, d, size, "copied", bytes=int(moved or 0))
+                        _whole_or_raise(size, None, db, d)
+                        record(s, d, size, "copied", bytes=size)
+                    else:
+                        from core.server_ops import stream_copy_between_backends
+
+                        if not overwrite and db.exists(d):
+                            raise FileExistsError(d)
+                        with S._mutation_gate(db, f"copy {s!r} to {d!r}"):
+                            moved = stream_copy_between_backends(
+                                _CancelAwareSource(sb, ctx, budget), s, db, d,
+                                expected_size=size)
+                        _whole_or_raise(size, moved, db, d)
+                        record(s, d, size, "copied", bytes=size)
+                    if _is_local(db):
+                        # Files the groups create are the user's alone.
+                        try:
+                            os.chmod(d, 0o600)
+                        except OSError:
+                            pass
                 except CancelledError:
                     raise
+                except ShortCopy as exc:
+                    # Another byte count than the source reported: the copy
+                    # is removed, the entry says why (never complete).
+                    _remove_quietly(db, d)
+                    record(s, d, size, "error", reason="size-mismatch",
+                           error=redact_text(str(exc)))
+                except SourceTooLarge:
+                    record(s, d, size, "skipped", reason="too-large", bytes=budget.used)
                 except FileExistsError:
                     record(s, d, size, "skipped", reason="exists")
                 except Exception as exc:  # noqa: BLE001 - one file must not end a tree copy
@@ -2118,7 +2598,7 @@ def _build_transfer(env: GroupEnv) -> list:
             truncated = False
             top = sb.stat(src)
             if not getattr(top, "is_dir", False):
-                one(src, dst, int(getattr(top, "size", 0) or 0))
+                one(src, dst, int(getattr(top, "size", 0) or 0), top)
             else:
                 queue: list[tuple[str, str, int]] = [(src, dst, 0)]
                 while queue and not truncated:
@@ -2136,6 +2616,8 @@ def _build_transfer(env: GroupEnv) -> list:
                             continue
                         size = int(getattr(child, "size", 0) or 0)
                         try:
+                            if _unsafe_name(name):
+                                raise ValueError("control character in the name")
                             child_src = safe_join(sb, cur_src, name)
                             child_dst = safe_join(db, cur_dst, name)
                         except ValueError:
@@ -2158,8 +2640,8 @@ def _build_transfer(env: GroupEnv) -> list:
                         if copied() >= max_files:
                             truncated = True
                             break
-                        one(child_src, child_dst, size)
-                        ctx.progress(float(copied()), float(max_files), f"copied {child_src}")
+                        one(child_src, child_dst, size, child)
+                        ctx.progress(float(copied()), None, f"copied {child_src}")
             from core.mcp_server import _bulk_copy_complete
 
             return {
@@ -2198,7 +2680,51 @@ def _build_transfer(env: GroupEnv) -> list:
                 env.refuse_moved_links(src, dst, sb)  # a link is moved as the link
             ctx.check_cancel()
             _ensure_dir(db, db.parent(dst))
-            moved = S.move(sb, src, db, dst, overwrite=False)
+            if sb is db:
+                moved = S.move(sb, src, db, dst, overwrite=False)  # a rename
+            else:
+                item = sb.stat(src)
+                why = _special_source(sb, src, item)
+                if why is not None:
+                    raise ValueError(f"transfer_move moves regular files; {src} is a {why}")
+                from core.server_ops import stream_copy_between_backends
+
+                # The bytes the source sends count, cancellable, with the
+                # size it gave plus slack as the cap.
+                # The size the source says: a local link is followed (its
+                # target is what is read), a remote link was refused above.
+                said = int(getattr(item, "size", 0) or 0)
+                if _is_local(sb):
+                    try:
+                        said = os.stat(src).st_size
+                    except OSError:
+                        pass
+                budget = _Budget(said + (16 << 20))
+                with S._mutation_gate(db, f"move {src!r} to {dst!r}"), \
+                        S._mutation_gate(sb, f"remove {src!r} after moving it"):
+                    moved = stream_copy_between_backends(
+                        _CancelAwareSource(sb, ctx, budget), src, db, dst,
+                        expected_size=said)
+                    try:
+                        # Only a whole copy lets the source go: a server that
+                        # said 1 MiB and sent 10 bytes kept nothing else.
+                        moved = _whole_or_raise(said, moved, db, dst)
+                    except Exception:
+                        _remove_quietly(db, dst)
+                        raise
+                    try:
+                        sb.remove(src)
+                    except Exception:
+                        try:
+                            db.remove(dst)  # the source stays: so does nothing else
+                        except Exception as undo_exc:  # noqa: BLE001
+                            log.warning("transfer_move: undo of %s failed: %s", dst, undo_exc)
+                        raise
+                if _is_local(db):
+                    try:
+                        os.chmod(dst, 0o600)
+                    except OSError:
+                        pass
             if not moved:
                 moved = int(getattr(db.stat(dst), "size", 0) or 0)
             return {"src": src, "dst": dst, "bytes": int(moved)}
@@ -2236,10 +2762,13 @@ def _build_transfer(env: GroupEnv) -> list:
             "stopped when called again with the same arguments. Returns {src, dst, copied, "
             "truncated, complete, entries: [{src, dst, size, action (copied|skipped|error), "
             "reason, bytes, resumed_segments, error, folder}]}. Every part left out has a "
-            "record: reason exists, too-large, symlink, unsafe-name, outside-root or "
-            "max-depth (also sets truncated); a folder that could not be listed is an error "
-            "with folder=true. complete is true only when every file was copied or already "
-            "existed. Progress per file; cancellable.",
+            "record: reason exists, too-large (also when a source sends more than "
+            "max_file_bytes, whatever size it gave), symlink, special-file (device, FIFO), "
+            "protected (a protected destination), unsafe-name (control characters too), "
+            "outside-root or max-depth (also sets truncated); a folder that could not be "
+            "listed is an error with folder=true. complete is true only when every file was "
+            "copied or already existed. Local files it creates are mode 0600. Progress per "
+            "file; cancellable mid-file (the partial file is removed).",
             {
                 **ends,
                 "overwrite": _bool_prop("Replace existing destination files.", default=False),
@@ -2751,11 +3280,33 @@ def build_group_tools(groups: Iterable[str], env: GroupEnv) -> list:
         builder = _BUILDERS.get(group)
         if builder is None:
             raise GroupError(f"MCP tool group {group!r} has no tools in this build")
+        try:
+            built = builder(env)
+        except ImportError as exc:
+            # A package the group needs is missing (crypto without
+            # cryptography): the group is left out with one clear line,
+            # the server and every other group still start.
+            missing = getattr(exc, "name", None) or str(exc)
+            if group not in _MISSING_GROUPS:
+                _MISSING_GROUPS[group] = str(missing)
+                message = (f"MCP tool group {group!r} left out: it needs the Python package "
+                           f"{missing!r} (pip install {missing})")
+                log.warning("%s", message)
+                print(f"axross MCP: {message}", file=sys.stderr)
+            continue
         # exec's tools are mutating but gated by their own flag, not --mcp-write
         tools.extend(
-            t for t in builder(env) if env.allow_write or not t.write or t.group == "exec"
+            t for t in built if env.allow_write or not t.write or t.group == "exec"
         )
     return tools
+
+
+#: Groups asked for but left out, with the package each one lacked.
+_MISSING_GROUPS: dict[str, str] = {}
+
+
+def missing_groups() -> dict[str, str]:
+    return dict(_MISSING_GROUPS)
 
 
 # ---------------------------------------------------------------------------
@@ -2798,7 +3349,12 @@ def tool_manifest(
     """The manifest of *tools* (as built by ``_build_tools`` for these flags):
     everything a client needs to call each tool, and nothing about the
     host (no root, no version)."""
-    from core.mcp_server import PROTOCOL_VERSION, SERVER_NAME, TIMEOUT_CLASSES
+    from core.mcp_server import (
+        PROTOCOL_VERSION,
+        SERVER_NAME,
+        SUPPORTED_PROTOCOL_VERSIONS,
+        TIMEOUT_CLASSES,
+    )
 
     descriptions = {**BASE_GROUP_DESCRIPTIONS, **GROUP_DESCRIPTIONS}
     order = ["core", "write", "scripts", *GROUPS]
@@ -2806,6 +3362,7 @@ def tool_manifest(
     return {
         "server": SERVER_NAME,
         "protocol_version": PROTOCOL_VERSION,
+        "protocol_versions": list(SUPPORTED_PROTOCOL_VERSIONS),
         "generated_for": {
             "mcp_tools": sorted(check_groups(groups)),
             "mcp_write": bool(allow_write),
@@ -2823,6 +3380,7 @@ def tool_manifest(
         "tools": [
             {
                 "name": t.name,
+                "title": t.title,
                 "group": t.group,
                 "mutating": bool(t.write),
                 "required_flags": _required_flags(t),
@@ -2830,7 +3388,9 @@ def tool_manifest(
                 "timeout_class": t.timeout_class,
                 "timeout_seconds": t.timeout_seconds,
                 "description": t.description,
+                "annotations": t.annotations,
                 "input_schema": t.schema,
+                **({"output_schema": t.output_schema} if t.output_schema is not None else {}),
             }
             for t in tools
         ],

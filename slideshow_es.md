@@ -2,6 +2,30 @@
 
 Todas las capturas de pantalla de axross, cada una con lo que muestra. Volver al [README](README_es.md).
 
+## Una ventana, cuatro sistemas de archivos
+
+![Paneles Local, SFTP, FTP y WebDAV en una ventana](docs/screenshots/remote-panes.png)
+
+Una carpeta local y un share SFTP lado a lado en la vista de miniaturas, debajo una raíz web FTP y una carpeta WebDAV. Cada panel nombra su conexión; el **SOURCE** azul y el **TARGET** verde fijan la dirección de copy (F5) y move (F6).
+
+## Hacker Mode
+
+![Cuatro paneles de archivos y dos terminales locales en Hacker Mode](docs/screenshots/quad-files-shells.png)
+
+Cuatro paneles de archivos y dos terminales locales en un layout. Los terminales se sitúan en el splitter junto a los paneles de archivos; los presets `dev-shells`, `triage` y `shells-quad` los colocan por ti.
+
+## Dock Agent
+
+![El dock Agent: un modelo local lee un archivo desde un sandbox bubblewrap](docs/screenshots/agent-dock.png)
+
+Un modelo local (aquí Qwen 2.5 en llama.cpp) lee un archivo por ti. El tab corre en el sandbox `Normal` (bubblewrap), el modo es `Ask` y cada tool call aparece en el transcript.
+
+## Visor de Markdown
+
+![El visor de Markdown: esquema, código resaltado, notas al pie](docs/screenshots/markdown-viewer.png)
+
+Un archivo Markdown renderizado en una ventana propia (F3 sobre un archivo `.md`): los encabezados como esquema junto al texto, las tablas y listas de tareas de GitHub, el código coloreado por Pygments, notas al pie y fórmulas. Lo que contiene un archivo se muestra, nunca se ejecuta; Edit (F4) abre el editor con el renderizado junto al texto.
+
 ## Subida a SFTP
 
 ![Subida de un panel local a SFTP con el dock Transfers](docs/screenshots/remote-transfer.png)

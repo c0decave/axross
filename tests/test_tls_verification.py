@@ -76,8 +76,9 @@ class LdapTest(unittest.TestCase):
     """ldap3 is optional; its names are replaced so the code path runs anyway."""
 
     class _FakeTls:
-        def __init__(self, validate=None):
+        def __init__(self, validate=None, **kw):
             self.validate = validate
+            self.kw = kw
 
     def _build(self, **kw):
         from core import ldap_fs_client as L
@@ -103,6 +104,12 @@ class LdapTest(unittest.TestCase):
 
     def test_plain_ldap_has_no_tls_object(self) -> None:
         self.assertIsNone(self._build(port=389, use_tls=False)["tls"])
+
+    def test_starttls_gets_a_validating_tls_object_with_the_server_name(self) -> None:
+        kwargs = self._build(port=389, tls_mode="starttls")
+        self.assertEqual(kwargs["tls"].validate, ssl.CERT_REQUIRED)
+        self.assertEqual(kwargs["tls"].kw.get("sni"), "ldap.example")
+        self.assertFalse(kwargs["use_ssl"])
 
 
 if __name__ == "__main__":

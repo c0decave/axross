@@ -159,9 +159,12 @@ class PipelinedListingTest(unittest.TestCase):
         path = self._folder("attrs", 50)
         os.symlink("e00001.dat", self.root / "attrs" / "link")
         (self.root / "attrs" / "sub").mkdir()
-        got = sorted((a.filename, a.st_size, a.st_mode, a.st_mtime, a.longname)
+        # The ls -l longname is not kept (round-3 review: it doubled each
+        # entry's memory; nothing reads it): the rest is the sequential one.
+        got = sorted((a.filename, a.st_size, a.st_mode, a.st_mtime)
                      for a in self.s._list_attrs(path))
-        self.assertEqual(got, self._expected(path))
+        self.assertEqual(got, [e[:4] for e in self._expected(path)])
+        self.assertTrue(all(not a.longname for a in self.s._list_attrs(path)))
 
     def test_happy_the_session_stays_usable_after_listings(self) -> None:
         path = self._folder("again", 40)

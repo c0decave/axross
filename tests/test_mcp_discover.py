@@ -11,6 +11,7 @@ its format. The registry answer in tests/fixtures/mcp is a real one
 from __future__ import annotations
 
 import json
+import os
 import socket
 import sys
 import threading
@@ -391,7 +392,26 @@ def test_edge_discover_is_a_switchable_source_on_by_default():
 # -- live -----------------------------------------------------------------------------
 
 
+def _network_accepts_everything() -> bool:
+    """Whether a connect proves nothing here: behind a proxy that accepts
+    every connection (a sandbox that relays or holds each one until it is
+    allowed) the connect below always succeeds, and the test then waited on
+    a registry that never answered. tests/conftest.py found it out already
+    (AXROSS_TEST_ACCEPT_ALL_NET); without it, 192.0.2.1 (TEST-NET-1) never
+    answers on a real network."""
+    known = os.environ.get("AXROSS_TEST_ACCEPT_ALL_NET")
+    if known in ("0", "1"):
+        return known == "1"
+    try:
+        socket.create_connection(("192.0.2.1", 9), timeout=0.3).close()
+        return True
+    except OSError:
+        return False
+
+
 def _online(host: str) -> bool:
+    if _network_accepts_everything():
+        return False  # offline as far as this test can tell
     try:
         socket.create_connection((host, 443), timeout=5).close()
         return True

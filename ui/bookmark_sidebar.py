@@ -26,7 +26,7 @@ thread. Payloads from other programs (text, URLs) are ignored.
 from __future__ import annotations
 
 import logging
-from html import escape as _html_escape
+from html import escape
 
 from PyQt6.QtCore import QRect, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QPainter, QPalette, QPen
@@ -49,8 +49,15 @@ from core.i18n import tr, tr_n
 from ui.bookmark_edit_dialog import BookmarkEditDialog, GroupEditDialog
 from ui.file_pane import TRANSFER_MIME_TYPE, _drop_action, decode_transfer_payload
 from ui.icon_provider import icon, set_window_icon
+from ui.plain_text import as_written, defused
 
 log = logging.getLogger(__name__)
+
+
+def _html_escape(text: str) -> str:
+    """*text* for a rich-text tooltip: shown as the file pane shows a name
+    (a bidi override or control as U+FFFD), then escaped."""
+    return escape(defused(text))
 
 _NODE_ROLE = Qt.ItemDataRole.UserRole
 
@@ -349,7 +356,9 @@ class BookmarkTreeEditing:
         for node in nodes:
             item = QTreeWidgetItem(parent_item)
             item.setData(0, _NODE_ROLE, node)
-            item.setText(0, node.name)  # plain text: markup is not interpreted
+            # plain text: markup is not interpreted; a bidi override or
+            # control is U+FFFD, as the file pane shows a name
+            item.setText(0, defused(node.name))
             if isinstance(node, BookmarkGroup):
                 item.setIcon(0, icon(node.icon_name or "folder", 32, node.color))
                 # Rich text like the other tooltips, so the escaped name is
@@ -491,7 +500,7 @@ class BookmarkTreeEditing:
         moving_groups = [n for n in nodes if isinstance(n, BookmarkGroup)]
         for depth, group in self._manager.groups():
             # As the Bookmarks menu does: no markup, "&" is no mnemonic.
-            label = group.name.replace("<", "").replace(">", "").replace("&", "&&")
+            label = defused(group.name).replace("<", "").replace(">", "").replace("&", "&&")
             action = sub.addAction("    " * depth + label)
             # A group cannot go into itself or below itself.
             action.setEnabled(not any(BookmarkManager._contains(g, group) for g in moving_groups))
@@ -682,7 +691,14 @@ class BookmarkTreeEditing:
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         name, icon_name, color = dialog.result()
-        self._manager.add_group(name, icon_name, color, parent=parent)
+        try:
+            self._manager.add_group(name, icon_name, color, parent=parent)
+        except ValueError:
+            # Deeper than a start reads back (core.bookmarks._MAX_DEPTH).
+            QMessageBox.information(self, tr("New Group"), tr(
+                "Groups nest 16 levels deep at most: this one would be lost at the next "
+                "start."))
+            return
         if parent is not None:
             self._manager.set_expanded(parent, True)
         self._after_change()
@@ -820,7 +836,7 @@ class BookmarkTreeEditing:
         reply = QMessageBox.question(
             self,
             title,
-            text,
+            as_written(text),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )

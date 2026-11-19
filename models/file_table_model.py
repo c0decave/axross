@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import fnmatch
 import re
+import unicodedata
 from bisect import bisect_left, bisect_right
 from html import escape
 
@@ -45,10 +47,11 @@ def _italic() -> QFont:
 # -- sorting --------------------------------------------------------------------------------
 #
 # The order: "." first, then "..", then folders, then files - each group
-# by the column's value, ascending. Descending is the same order reversed
-# (files first, "." last), ties keeping the order they had: what
-# QSortFilterProxyModel did with the former lessThan, and what
-# ``sorted(key=(group, value), reverse=True)`` does. Sorted by positions
+# by the column's value, ascending. Descending reverses the order inside
+# each group, ties keeping the order they had; the groups stay as they are
+# - ".." on top and the folders before the files, as in Total Commander
+# (before, the whole list was reversed: files first, ".." at the bottom of
+# a long folder). Sorted by positions
 # with a precomputed value list (``sorted(rows, key=values.__getitem__)``):
 # no Python call per row or comparison, ~5x quicker than a tuple key per
 # item for 100,000 entries.
@@ -117,11 +120,38 @@ def sort_positions(items: list[FileItem], column: int, order: Qt.SortOrder,
         positions.sort(key=key, reverse=descending)  # merges the sorted runs
     else:
         positions = sorted(range(n), key=key, reverse=descending)
-    positions.sort(key=groups.__getitem__, reverse=descending)
+    positions.sort(key=groups.__getitem__)  # groups ascending in both orders
     return positions
 
 
 # -- what the filter reads ------------------------------------------------------------------
+
+
+def fold_name(text: str) -> str:
+    """*text* as the case-insensitive filter and type-to-find compare it:
+    casefolded and in NFC. A name written on macOS (or a share or archive
+    made there) carries "ä" as "a" + U+0308; a keyboard types one code
+    point - compared as written, "äpf" never found "Äpfel.txt"."""
+    folded = text.casefold()
+    return folded if folded.isascii() else unicodedata.normalize("NFC", folded)
+
+
+def name_pattern(text: str, fold: bool = True):
+    """The compiled pattern of a filter text holding ``*`` or ``?``, else
+    None: each word (``*.jpg *.png``) a shell pattern for the whole name,
+    folded as fold_name; ``[`` is a plain character (names like
+    "Film [1080p].mkv"). Use its ``match`` on fold_name of a name."""
+    if "*" not in text and "?" not in text:
+        return None
+    words = (fold_name(text) if fold else text).split()
+    return re.compile("|".join(fnmatch.translate(w.replace("[", "[[]")) for w in words))
+
+
+def _fold_names(names: list[str]) -> list[str]:
+    """fold_name of each of *names* (one comprehension: 50,000 names)."""
+    nfc = unicodedata.normalize
+    return [f if f.isascii() else nfc("NFC", f) for f in [n.casefold() for n in names]]
+
 
 #: Row classes (_RowCache.classes): "." / ".." (always shown), an entry,
 #: a hidden entry (shown only with hidden files on).
@@ -148,7 +178,7 @@ class _RowCache:
                  unhidden=None, groups=None):
         self.items = items
         self.names = [it.name for it in items] if names is None else names
-        self.folded = [n.casefold() for n in self.names] if folded is None else folded
+        self.folded = _fold_names(self.names) if folded is None else folded
         self.classes = [_row_class(it) for it in items] if classes is None else classes
         self.unhidden = [i for i, c in enumerate(self.classes) if c != _HIDDEN] \
             if unhidden is None else unhidden
@@ -174,7 +204,7 @@ class _RowCache:
         for row in range(max(0, first), min(last, len(items) - 1) + 1):
             item = items[row]
             self.names[row] = item.name
-            self.folded[row] = item.name.casefold()
+            self.folded[row] = fold_name(item.name)
             self.classes[row] = _row_class(item)
             self.groups[row] = _groups([item.name], [item])[0]
         self.unhidden = [i for i, c in enumerate(self.classes) if c != _HIDDEN]
@@ -618,7 +648,8 @@ class FileSortProxyModel(QAbstractProxyModel):
     ``mapFromSource``, ``sort``. A subclass that overrides
     ``filterAcceptsRow`` gets it asked per row, as Qt did. A fixed text
     compares casefolded names when case-insensitive: "STRASSE" also finds
-    "straße" (Qt compared simple case folds).
+    "straße" (Qt compared simple case folds), in NFC (fold_name). The
+    pane's own ``set_filter_text`` also takes name patterns (``*.jpg``).
     """
 
     def __init__(self, parent=None):
@@ -632,6 +663,8 @@ class FileSortProxyModel(QAbstractProxyModel):
         self._rows: list[int] = []
         self._mode = _FIXED
         self._text = ""
+        #: The filter text is a set of name patterns (set_filter_text).
+        self._patterns = False
         self._case = Qt.CaseSensitivity.CaseSensitive
         self._regex: QRegularExpression | None = None  # made on first use
         self._key_column = 0
@@ -772,7 +805,13 @@ class FileSortProxyModel(QAbstractProxyModel):
                 return list(candidates)
             folded = self._case == Qt.CaseSensitivity.CaseInsensitive
             names = cache.folded if folded else cache.names
-            needle = self._text.casefold() if folded else self._text
+            needle = fold_name(self._text) if folded else self._text
+            pattern = self._name_pattern()
+            if pattern is not None:  # "*.jpg *.png": every row, no narrowing
+                self._last_pass = None
+                match = pattern.match
+                return [r for r in candidates
+                        if classes[r] == _NAV or match(names[r]) or needle in names[r]]
             last = self._last_pass
             if (tag is None and last is not None and last[0] is cache
                     and last[1] == self._show_hidden and last[2] == folded and last[3] in needle):
@@ -907,11 +946,44 @@ class FileSortProxyModel(QAbstractProxyModel):
         if self._mode == _FIXED:
             if not self._text:
                 return True
-            if self._case == Qt.CaseSensitivity.CaseInsensitive:
-                return self._text.casefold() in item.name.casefold()
-            return self._text in item.name
+            insensitive = self._case == Qt.CaseSensitivity.CaseInsensitive
+            name = fold_name(item.name) if insensitive else item.name
+            needle = fold_name(self._text) if insensitive else self._text
+            pattern = self._name_pattern()
+            if pattern is not None and pattern.match(name):
+                return True
+            return needle in name
         regex = self.filterRegularExpression()
         return not regex.pattern() or regex.match(item.name).hasMatch()
+
+    def match(self, start, role, value, hits=1,  # noqa: D401 - Qt override
+              flags=Qt.MatchFlag.MatchStartsWith | Qt.MatchFlag.MatchWrap):
+        """Type-to-find (QAbstractItemView.keyboardSearch) asks this for the
+        next name starting with the letters typed. For names it reads the
+        folded names the filter keeps (fold_name: "äp" finds a decomposed
+        "Äpfel.txt") instead of a Python data() call per row - 200-270 ms
+        per key in a folder of 50,000. Anything else goes to Qt."""
+        model = self._file_model
+        bits = flags.value if hasattr(flags, "value") else int(flags)
+        handled = (int(Qt.MatchFlag.MatchStartsWith.value)
+                   | int(Qt.MatchFlag.MatchWrap.value))
+        if (model is None or role != Qt.ItemDataRole.DisplayRole or not isinstance(value, str)
+                or not start.isValid() or start.column() != 0 or start.parent().isValid()
+                or bits & ~handled or not bits & int(Qt.MatchFlag.MatchStartsWith.value)):
+            return super().match(start, role, value, hits, flags)
+        needle = fold_name(value)
+        names, rows = model.row_cache().folded, self._rows
+        first = start.row()
+        order = list(range(first, len(rows)))
+        if bits & int(Qt.MatchFlag.MatchWrap.value):
+            order += range(0, first)
+        found = []
+        for row in order:
+            if names[rows[row]].startswith(needle):
+                found.append(self.index(row, 0))
+                if hits != -1 and len(found) >= hits:
+                    break
+        return found
 
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:  # noqa: N802
         """Never called: the source model sorts. Kept so code (and tests)
@@ -928,7 +1000,27 @@ class FileSortProxyModel(QAbstractProxyModel):
     def setFilterFixedString(self, text: str) -> None:  # noqa: N802 - Qt API
         """Show the entries whose name holds *text* as written."""
         self._mode, self._text, self._regex = _FIXED, str(text or ""), None
+        self._patterns = False
         self._refilter()
+
+    def set_filter_text(self, text: str) -> None:
+        """The pane's filter: the entries whose name holds *text* - or, when
+        it holds ``*`` or ``?``, whose whole name fits one of its words as a
+        pattern (``*.jpg *.png``, see name_pattern; case as set). "*.pdf"
+        showed nothing before: no name holds those characters (search
+        review). A name holding the text as written still shows."""
+        text = str(text or "")
+        self._mode, self._text, self._regex = _FIXED, text, None
+        self._patterns = name_pattern(text) is not None
+        self._refilter()
+
+    def _name_pattern(self) -> re.Pattern | None:
+        """The compiled name patterns of set_filter_text's text, or None."""
+        if not self._patterns:
+            return None
+        if self._case == Qt.CaseSensitivity.CaseInsensitive:
+            return name_pattern(self._text)
+        return name_pattern(self._text, fold=False)
 
     def setFilterRegularExpression(self, pattern) -> None:  # noqa: N802 - Qt API
         """A QRegularExpression brings its own case option (as in Qt); a
@@ -1001,6 +1093,15 @@ class FileSortProxyModel(QAbstractProxyModel):
     def set_tag_filter(self, predicate) -> None:
         self._tag_filter = predicate
         self.invalidateFilter()
+
+    def forget_filter(self) -> None:
+        """Drop the filter text and tag without working the rows out again:
+        for a caller that resets the source model next (a new folder), whose
+        reset works them out once, unfiltered."""
+        self._mode, self._text, self._regex = _FIXED, "", None
+        self._patterns = False
+        self._tag_filter = None
+        self._last_pass = None
 
     def entry_counts(self) -> tuple[int, int, int]:
         """``(shown, hidden, filtered_out)``: the entries shown (not "."

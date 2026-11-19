@@ -34,7 +34,7 @@ def test_sad_an_unwritable_folder_is_a_pack_error_and_leaves_no_staging(tmp_path
     def refuse(*_args, **_kwargs):
         raise PermissionError(13, "Permission denied", str(work))
 
-    monkeypatch.setattr(P.tempfile, "mkstemp", refuse)
+    monkeypatch.setattr(P, "_local_temp", refuse)  # the archive's temporary file
     with pytest.raises(P.PackError):
         P.pack(LocalFS(), str(work), ["f.txt"], "bundle", P.PackOptions("zip"))
     assert list(temp.iterdir()) == []

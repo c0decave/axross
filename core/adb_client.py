@@ -42,18 +42,23 @@ Not supported on V1
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import errno
+import io
 import logging
 import os
 import posixpath
 import shlex
 import threading
+import time
 from datetime import datetime, timezone
 from typing import IO, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from models.exec_result import ExecResult
 
+from core import transfer_hooks
 from core.backend import SessionLifecycle
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
@@ -62,15 +67,17 @@ log = logging.getLogger(__name__)
 
 
 try:  # pragma: no cover — optional dep
-    from adb_shell.adb_device import AdbDeviceTcp, AdbDeviceUsb  # type: ignore[import-not-found]
+    from adb_shell.adb_device import AdbDevice, AdbDeviceUsb  # type: ignore[import-not-found]
     from adb_shell.auth.keygen import keygen  # type: ignore[import-not-found]
     from adb_shell.auth.sign_pythonrsa import PythonRSASigner  # type: ignore[import-not-found]
+    from adb_shell.transport.tcp_transport import TcpTransport  # type: ignore[import-not-found]
 
     ADB_SHELL_AVAILABLE = True
 except ImportError:  # pragma: no cover — optional dep
-    AdbDeviceTcp = None  # type: ignore[assignment]
+    AdbDevice = None  # type: ignore[assignment]
     AdbDeviceUsb = None  # type: ignore[assignment]
     PythonRSASigner = None  # type: ignore[assignment]
+    TcpTransport = None  # type: ignore[assignment]
     keygen = None  # type: ignore[assignment]
     ADB_SHELL_AVAILABLE = False
 
@@ -94,18 +101,253 @@ def _adb_tcp_module(proxy):
 # Default path for the ADB RSA keypair. Matches what the system
 # ``adb`` binary uses so the user doesn't get a second "allow
 # debugging" prompt from our backend after having already approved
-# the CLI tool.
+# the CLI tool. Read when a session is made (tests point it elsewhere).
 DEFAULT_ADB_KEY_PATH = os.path.expanduser("~/.android/adbkey")
 
-# Wall-clock ceiling for connect(). Phones sometimes take a few
-# seconds to accept the authentication prompt; 15s is generous
-# without being painful on a dead endpoint.
-DEFAULT_CONNECT_TIMEOUT = 15.0
+#: Seconds for the TCP connect and the device's first answer.
+DEFAULT_CONNECT_TIMEOUT = 10.0
+
+#: Seconds the phone may take to answer "Allow USB debugging?" on a first
+#: connect: the user has to notice it, unlock the phone and tap Allow.
+DEFAULT_AUTH_TIMEOUT = 60.0
 
 # Default transport timeout per primitive (list_dir, push/pull
 # chunk). 30 s covers slow WAN links; lower defaults are unfriendly
 # to over-the-air connections.
 DEFAULT_TRANSPORT_TIMEOUT = 30.0
+
+#: Seconds a command that works without printing may take: a checksum of a
+#: big video, ``cp`` / ``mv`` of a big file on the device, ``rm -rf`` of a
+#: big folder, ``pm install``.
+DEFAULT_LONG_COMMAND_TIMEOUT = 3600.0
+
+#: The banner of the CNXN message. adb_shell sends the workstation's host
+#: name ("host::<hostname>") and the phone keeps it; the adb tool sends its
+#: features there, never a name (docs/OPSEC.md).
+_BANNER = b"features="
+
+#: The comment after the public key the phone stores in
+#: /data/misc/adb/adb_keys: a fixed neutral one, never ``user@hostname``
+#: (docs/OPSEC.md).
+NEUTRAL_KEY_COMMENT = "unknown@unknown"
+
+#: The mode an upload gets: rw-r--r-- like a file the shell makes. adb_shell's
+#: default (S_IFREG | 0o770) made every upload executable and group-writable.
+_PUSH_MODE = 0o100644
+
+
+class _RawCommand(str):
+    """A command or device path that adb_shell sends as the bytes it names.
+
+    adb_shell encodes with ``.encode("utf8")``: a name that is not UTF-8,
+    listed as surrogate escapes (as the local file system does, see
+    os.fsdecode), could not be sent back. Here such a name goes back as
+    its original bytes."""
+
+    def encode(self, encoding: str = "utf-8", errors: str = "strict") -> bytes:  # noqa: ARG002
+        return str.encode(self, "utf-8", "surrogateescape")
+
+
+def _as_text(raw) -> str:
+    """adb_shell's answer (bytes with ``decode=False``) as text; a byte
+    that is no UTF-8 stays a surrogate escape (as os.fsdecode)."""
+    if isinstance(raw, (bytes, bytearray)):
+        return bytes(raw).decode("utf-8", "surrogateescape")
+    return raw
+
+
+#: The time-out of the commands run in the body of :func:`_command_timeout`
+#: (None: the session's transport time-out).
+_COMMAND_TIMEOUT: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "axross_adb_command_timeout", default=None
+)
+
+
+class _ShellDeadline(TimeoutError):
+    """A shell answer still coming at its deadline (_shell)."""
+
+
+class _ShellTooLarge(OSError):
+    """A shell answer over SHELL_OUTPUT_CAP (_shell)."""
+
+
+#: The most one shell answer may hold (a listing of ~500 000 entries):
+#: adb_shell joined every packet, so an endless answer filled the memory.
+SHELL_OUTPUT_CAP = 64 * 1024 * 1024
+#: Seconds one ordinary command may take in all (each packet has the
+#: transport time-out); a long one (_command_timeout) has its own.
+SHELL_DEADLINE = 600.0
+#: exec(): how much of the head of an answer is kept (its stdout_cap);
+#: the rest is read and dropped but for the tail with the status trailer.
+_SHELL_KEEP_HEAD: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "adb_shell_keep_head", default=None)
+
+
+@contextlib.contextmanager
+def _command_timeout(seconds: float | None):
+    """Commands of the body may run *seconds* without an answer."""
+    token = _COMMAND_TIMEOUT.set(seconds)
+    try:
+        yield
+    finally:
+        _COMMAND_TIMEOUT.reset(token)
+
+
+class AdbAuthTimeout(OSError):
+    """The phone asked "Allow USB debugging?" and did not allow the
+    connection in time (no answer, or Deny)."""
+
+
+class AdbNeedsApproval(OSError):
+    """A connection made without asking (a reconnect) would have made the
+    phone ask "Allow USB debugging?" again."""
+
+
+class AdbConnectionLost(ConnectionResetError):
+    """The device closed the connection."""
+
+
+class AdbTlsPortError(OSError):
+    """The port answered with STLS: Android 11+'s "Wireless debugging"
+    port, which wants pairing and TLS (adb_shell speaks neither)."""
+
+
+class AdbNotAdbError(OSError):
+    """Something answered on the port, but not as an ADB device."""
+
+
+class AdbUsbError(OSError):
+    """ADB over USB failed; :attr:`kind` says why: ``missing-package``
+    (libusb1 not installed), ``missing-library`` (no libusb-1.0 on the
+    system), ``not-found`` (no phone with USB debugging on the cable),
+    ``busy`` (another program - an adb server - holds it), ``access``
+    (no permission for the USB device: udev rules)."""
+
+    def __init__(self, kind: str, message: str, serial: str = "") -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.serial = serial
+
+
+def _usb_missing_kind() -> str:
+    """Why adb_shell has no USB transport: the package or the library."""
+    try:
+        import usb1  # type: ignore[import-not-found]  # noqa: F401
+        import adb_shell.transport.usb_transport  # type: ignore[import-not-found]  # noqa: F401
+    except ImportError:
+        return "missing-package"
+    except OSError:
+        return "missing-library"
+    return "missing-package"
+
+
+def _usb_error(exc: BaseException, serial: str) -> AdbUsbError | None:
+    """The :class:`AdbUsbError` for a libusb / adb_shell USB failure."""
+    names, text = _names(exc), str(exc)
+    which = f"USB {serial or 'device'}"
+    if "InvalidTransportError" in names:
+        kind = _usb_missing_kind()
+        return AdbUsbError(kind, f"ADB over USB needs libusb ({kind}): {text}", serial)
+    if names & {"UsbDeviceNotFoundError", "DeviceNotFoundError", "USBErrorNoDevice",
+                "USBErrorNotFound"}:
+        return AdbUsbError("not-found", f"ADB: no Android device found on {which}", serial)
+    if "USBErrorBusy" in names or "LIBUSB_ERROR_BUSY" in text:
+        return AdbUsbError("busy", f"ADB: {which} is held by another program ({text})", serial)
+    if "USBErrorAccess" in names or "LIBUSB_ERROR_ACCESS" in text:
+        return AdbUsbError("access", f"ADB: no permission to open {which} ({text})", serial)
+    return None
+
+
+#: adb_shell errors that are the device's answer to one command: the
+#: connection itself is fine.
+_COMMAND_ERRORS = frozenset({
+    "AdbCommandFailureException", "PushFailedError", "DevicePathInvalidError",
+    "UnicodeError",
+})
+#: adb_shell / socket time-outs.
+_TIMEOUT_ERRORS = frozenset({"TcpTimeoutException", "AdbTimeoutError", "TimeoutError", "timeout"})
+
+
+def _names(exc: BaseException) -> set[str]:
+    return {cls.__name__ for cls in type(exc).__mro__}
+
+
+def _breaks_connection(exc: BaseException) -> bool:
+    """Whether *exc* leaves the connection unusable (a lost socket, a
+    time-out in the middle of a stream, a cancelled transfer) rather than
+    being the device's answer to one command."""
+    return not (_names(exc) & _COMMAND_ERRORS)
+
+
+def _closed_aware_transport(host: str, port: int, address_family: str | None = None):
+    """adb_shell's TcpTransport, except that a connection the device
+    closed is an :class:`AdbConnectionLost` at once: ``recv()`` returning
+    b"" made adb_shell loop until its read time-out (10 s at full CPU) and
+    report "Timeout: read 0 of 24 bytes". *address_family* ``ipv4`` /
+    ``ipv6`` connects over that IP version only (not through a proxy:
+    the proxy resolves the name)."""
+    import socket
+
+    class _Transport(TcpTransport):  # type: ignore[misc, valid-type]
+        def connect(self, transport_timeout_s):
+            family = {"ipv4": socket.AF_INET, "ipv6": socket.AF_INET6}.get(address_family or "")
+            if family is None:
+                return super().connect(transport_timeout_s)
+            import adb_shell.transport.tcp_transport as module  # type: ignore[import-not-found]
+
+            last: OSError | None = None
+            for *_rest, address in socket.getaddrinfo(host, port, family, socket.SOCK_STREAM):
+                try:
+                    self._connection = module.socket.create_connection(
+                        address[:2], timeout=transport_timeout_s)
+                    break
+                except OSError as exc:
+                    last = exc
+            else:
+                raise last or OSError(f"no {address_family} address for {host}")
+            if transport_timeout_s:
+                self._connection.setblocking(False)
+            return None
+
+        def bulk_read(self, numbytes, transport_timeout_s):
+            if self._connection is None:
+                raise AdbConnectionLost(f"the connection to {host}:{port} is closed")
+            data = super().bulk_read(numbytes, transport_timeout_s)
+            if numbytes and not data:
+                raise AdbConnectionLost(f"the device {host}:{port} closed the connection")
+            return data
+
+        def bulk_write(self, data, transport_timeout_s):
+            if self._connection is None:
+                raise AdbConnectionLost(f"the connection to {host}:{port} is closed")
+            return super().bulk_write(data, transport_timeout_s)
+
+    return _Transport(host, port)
+
+
+if ADB_SHELL_AVAILABLE:
+
+    class AdbDeviceTcp(AdbDevice):  # type: ignore[misc, valid-type]
+        """adb_shell's AdbDeviceTcp over :func:`_closed_aware_transport`."""
+
+        def __init__(self, host, port=5555, default_transport_timeout_s=None, banner=None,
+                     address_family=None):
+            super().__init__(_closed_aware_transport(host, port, address_family),
+                             default_transport_timeout_s, banner)
+
+else:  # pragma: no cover — optional dep
+    AdbDeviceTcp = None  # type: ignore[assignment, misc]
+
+
+def _close_quietly(device) -> None:
+    """Close an adb_shell device; whatever it raises is logged."""
+    close = getattr(device, "close", None)
+    if close is None:
+        return
+    try:
+        close()
+    except Exception as exc:  # noqa: BLE001 - a dead socket may refuse its close
+        log.debug("ADB close raised: %s", exc)
 
 
 def is_available() -> bool:
@@ -114,8 +356,12 @@ def is_available() -> bool:
     return ADB_SHELL_AVAILABLE
 
 
-def ensure_adb_key(path: str = DEFAULT_ADB_KEY_PATH) -> str:
-    """Ensure an ADB RSA keypair exists at *path*. Creates one with
+_KEYGEN_LOCK = threading.Lock()
+
+
+def ensure_adb_key(path: str | None = None) -> str:
+    """Ensure an ADB RSA keypair exists at *path* (default
+    :data:`DEFAULT_ADB_KEY_PATH`). Creates one with
     ``adb_shell.auth.keygen.keygen`` if missing. Returns the path
     (useful for downstream logging). Refuses to overwrite an
     existing key — the ADB fingerprint on the phone ties to the
@@ -125,14 +371,14 @@ def ensure_adb_key(path: str = DEFAULT_ADB_KEY_PATH) -> str:
     Security details:
 
     * The enclosing ``~/.android`` directory is created mode 0o700.
-    * ``keygen`` is called inside an ``os.umask(0o077)`` bracket so
-      the private key file is never briefly world-readable between
-      write and chmod. (The previous flow relied on a follow-up
-      chmod, which left a TOCTOU window for another local process
-      to race the read.)
-    * An explicit ``os.chmod(path, 0o600)`` runs after keygen and
-      re-raises on failure — better to refuse to return the key
-      than return one with unsafe perms a caller might sign with.
+    * ``keygen`` writes into a fresh 0o700 folder next to the key, so
+      the private key is never readable by anyone else, whatever mode
+      keygen gives it - without ``os.umask``, which is process-wide (the
+      old bracket changed the mode of files other threads made meanwhile).
+    * The key is put in place with ``O_CREAT | O_EXCL``, mode 0o600: two
+      connects at once (two panes, or two axross processes) make ONE key -
+      the second keygen replaced the key the phone had just been asked to
+      trust. A thread lock keeps keygen to one run per process.
     * An EXISTING key with unsafe perms (e.g. copied in from a
       git checkout) is flagged loudly rather than silently trusted.
     """
@@ -140,77 +386,95 @@ def ensure_adb_key(path: str = DEFAULT_ADB_KEY_PATH) -> str:
         raise RuntimeError(
             "adb-shell not installed — pip install adb-shell",
         )
-    if os.path.exists(path):
-        # Defensive: reject pre-existing keys with world/group
-        # readable bits. Adversary could have planted a key they
-        # control, forcing a MITM on every subsequent ADB session.
+    path = path or DEFAULT_ADB_KEY_PATH
+    with _KEYGEN_LOCK:
+        if os.path.exists(path):
+            _check_existing_key(path)
+            return path
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True, mode=0o700)
+        import shutil
+        import tempfile
+
+        workdir = tempfile.mkdtemp(prefix=".axross-adbkey-", dir=parent or None)  # 0o700
         try:
-            st = os.stat(path)
-        except OSError as exc:
-            raise OSError(
-                f"ADB key at {path!r}: cannot stat: {exc}",
-            ) from exc
-        if st.st_mode & 0o077:
-            raise PermissionError(
-                f"ADB key {path!r} has unsafe permissions "
-                f"(mode={oct(st.st_mode & 0o777)}); "
-                f"run `chmod 0600 {path}` before continuing",
-            )
-        return path
-    parent = os.path.dirname(path)
-    if parent:
-        os.makedirs(parent, exist_ok=True, mode=0o700)
-    # Tighten umask BEFORE keygen so the private half is never
-    # briefly readable between write and chmod. Restore in finally
-    # so we don't accidentally leak the restricted umask to
-    # unrelated code paths elsewhere in the process.
-    old_umask = os.umask(0o077)
-    try:
-        keygen(path)  # type: ignore[misc]
-    finally:
-        os.umask(old_umask)
-    # Explicit chmod — let OSError propagate. A key with 0o644
-    # perms on a shared filesystem is strictly worse than no key
-    # at all; refuse rather than silently continue.
-    os.chmod(path, 0o600)
-    # Identity hygiene: adb_shell.auth.keygen writes the .pub file
-    # with a trailing comment that can include ``user@hostname`` (or
-    # an upstream-chosen default like ``unknown@unknown``). The
-    # comment is shipped to the phone verbatim on first pairing and
-    # persists in /data/misc/adb/adb_keys. Strip it to the canonical
-    # two-token form so the workstation identity doesn't leak.
-    # See docs/OPSEC.md finding #8.
-    pub_path = path + ".pub"
-    try:
-        with open(pub_path, "rb") as fh:
-            pub_raw = fh.read().strip()
-        tokens = pub_raw.split(None, 2)
-        if len(tokens) >= 2:
-            scrubbed = b" ".join(tokens[:2]) + b"\n"
-            if scrubbed != pub_raw + b"\n":
-                with open(pub_path, "wb") as fh:
-                    fh.write(scrubbed)
-                os.chmod(pub_path, 0o644)
-    except OSError as exc:
-        log.warning("Could not scrub ADB pub-key comment at %r: %s", pub_path, exc)
+            draft = os.path.join(workdir, "adbkey")
+            keygen(draft)  # type: ignore[misc]
+            with open(draft, "rb") as fh:
+                private = fh.read()
+            with open(draft + ".pub", "rb") as fh:
+                tokens = fh.read().split()
+            try:
+                fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                return path  # another process made it meanwhile: that one counts
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(private)
+            os.chmod(path, 0o600)
+            # Identity hygiene: adb_shell.auth.keygen writes the .pub file
+            # as "<base64> user@hostname". The comment is shipped to the
+            # phone on first pairing and persists in /data/misc/adb/adb_keys:
+            # keep the key (the first token) with a fixed neutral comment.
+            # (Keeping "two tokens" kept exactly that comment.) See
+            # docs/OPSEC.md finding #8.
+            if tokens:
+                pub_draft = draft + ".pub"
+                with open(pub_draft, "wb") as fh:
+                    fh.write(tokens[0] + b" " + NEUTRAL_KEY_COMMENT.encode() + b"\n")
+                os.chmod(pub_draft, 0o644)
+                os.replace(pub_draft, path + ".pub")
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
     return path
 
 
-def _load_signer(path: str = DEFAULT_ADB_KEY_PATH) -> "PythonRSASigner":
-    """Load the RSA signer for an existing keypair. Raises OSError
-    when the pub key is missing — callers should call
-    :func:`ensure_adb_key` first.
-    """
+def _check_existing_key(path: str) -> None:
+    """Defensive: reject a pre-existing key with world/group readable
+    bits. An adversary could have planted a key they control, forcing a
+    MITM on every subsequent ADB session."""
+    try:
+        st = os.stat(path)
+    except OSError as exc:
+        raise OSError(
+            f"ADB key at {path!r}: cannot stat: {exc}",
+        ) from exc
+    if st.st_mode & 0o077:
+        raise PermissionError(
+            f"ADB key {path!r} has unsafe permissions "
+            f"(mode={oct(st.st_mode & 0o777)}); "
+            f"run `chmod 0600 {path}` before continuing",
+        )
+
+
+def _load_signer(path: str) -> "PythonRSASigner":
+    """Load the RSA signer for an existing key (callers call
+    :func:`ensure_adb_key` first). A missing ``.pub`` is derived from the
+    private key."""
     pub_path = path + ".pub"
     try:
         with open(path, "r", encoding="utf-8") as f:
             priv = f.read()
+    except OSError as exc:
+        raise OSError(f"ADB key unreadable at {path!r}: {exc}") from exc
+    try:
         with open(pub_path, "r", encoding="utf-8") as f:
             pub = f.read()
+    except FileNotFoundError:
+        # The adb tool needs only the private key; a key copied without
+        # its .pub is complete. The public half follows from it.
+        import base64
+
+        from adb_shell.auth.keygen import encode_pubkey  # type: ignore[import-not-found]
+
+        pub = base64.b64encode(encode_pubkey(path)).decode("ascii")
     except OSError as exc:
-        raise OSError(
-            f"ADB keypair unreadable at {path!r} (+.pub): {exc}",
-        ) from exc
+        raise OSError(f"ADB public key unreadable at {pub_path!r}: {exc}") from exc
+    # What the phone gets on the first pairing: the key with a neutral
+    # comment, also when an older adbkey.pub carries user@hostname.
+    tokens = pub.split()
+    if tokens:
+        pub = f"{tokens[0]} {NEUTRAL_KEY_COMMENT}"
     return PythonRSASigner(pub, priv)  # type: ignore[misc]
 
 
@@ -248,6 +512,9 @@ _SPECIAL_NAMES = {
     "s": "socket",
 }
 _SPECIAL_TYPES = frozenset(_SPECIAL_NAMES)
+#: Guards each session's ``_special_paths`` (a listing and a stat of two
+#: threads changed it at once: "dictionary changed size during iteration").
+_SPECIAL_LOCK = threading.Lock()
 
 
 def _checked(path: str) -> str:
@@ -320,8 +587,12 @@ def _parse_ls_entry(line: str, rest: str = "") -> tuple[FileItem, str] | None:
     is_link = mode.startswith("l")
     name = m.group("name") + rest
     link_target = ""
+    size = m.group("size")
     if is_link and " -> " in name:
-        name, _, link_target = name.partition(" -> ")
+        from core.telnet_client import split_link_field
+
+        # toolbox prints no size for a link: an ambiguous name is kept whole.
+        name, link_target = split_link_field(name, int(size) if size is not None else None)
     # Android's ``ls -la`` without --full-time omits seconds. ls runs under
     # TZ=UTC0 (AdbSession._LS): the date is UTC, returned aware (FileItem
     # converts it); the device's wall clock was handed out as local time.
@@ -331,7 +602,6 @@ def _parse_ls_entry(line: str, rest: str = "") -> tuple[FileItem, str] | None:
         )
     except ValueError:
         modified = datetime.fromtimestamp(0)
-    size = m.group("size")
     item = FileItem(
         name=name,
         size=int(size) if size is not None else 0,
@@ -376,6 +646,11 @@ class _AdbPushOnClose:
         self._tmp_path = self._tmp.name
         self._cleanup = weakref.finalize(self, remove_quietly, self._tmp_path)
         self._closed = False
+        # The running transfer's Cancel and progress (core.transfer_hooks):
+        # the upload happens in close(), after the copy loop.
+        self._hooks = transfer_hooks.current()
+        if self._hooks is not None:
+            self._hooks.expect_upload()
 
     def write(self, data: bytes) -> int:
         if self._closed:
@@ -406,7 +681,7 @@ class _AdbPushOnClose:
                 self._tmp.flush()  # a full disk fails here: removed all the same
             finally:
                 self._tmp.close()
-            self._session._push_file(self._tmp_path, self._remote_path)
+            self._session._push_file(self._tmp_path, self._remote_path, hooks=self._hooks)
         finally:
             try:
                 os.unlink(self._tmp_path)
@@ -448,6 +723,13 @@ class AdbSession(SessionLifecycle):
 
     Construct with TCP args (host + port) OR USB args
     (usb=True, usb_serial=... optional). One or the other.
+
+    The connection is watched: an operation that finds it lost (the
+    device closed it, a time-out in the middle of an answer) fails with
+    that, :attr:`connected` turns False - ConnectionManager then makes a
+    new session instead of handing out this one - and the next operation
+    connects again, without asking the phone: a key the phone no longer
+    accepts is :class:`AdbNeedsApproval`, not a prompt nobody waits for.
     """
 
     # ADB shell on most Android images doesn't ship with ln / ln -s
@@ -462,6 +744,17 @@ class AdbSession(SessionLifecycle):
     #: wall clock, handed out as the client's local time (as Telnet / SCP).
     _LS = "TZ=UTC0 ls -la"
 
+    # Defaults of a session (also of one a test builds without __init__).
+    _label = "ADB"
+    _transport_timeout = DEFAULT_TRANSPORT_TIMEOUT
+    _long_timeout = DEFAULT_LONG_COMMAND_TIMEOUT
+    #: The command connection was lost; the next operation reconnects.
+    _dead = False
+    #: close() was called: nothing reconnects.
+    _closed = False
+    #: Made by __init__ (the parameters to connect again are known).
+    _can_reconnect = False
+
     def __init__(
         self,
         host: str = "",
@@ -469,9 +762,12 @@ class AdbSession(SessionLifecycle):
         *,
         usb: bool = False,
         usb_serial: str = "",
-        adb_key_path: str = DEFAULT_ADB_KEY_PATH,
+        adb_key_path: str | None = None,
         connect_timeout: float = DEFAULT_CONNECT_TIMEOUT,
+        auth_timeout: float = DEFAULT_AUTH_TIMEOUT,
         transport_timeout: float = DEFAULT_TRANSPORT_TIMEOUT,
+        long_command_timeout: float = DEFAULT_LONG_COMMAND_TIMEOUT,
+        address_family: str = "auto",
         proxy_type: str = "none",
         proxy_host: str = "",
         proxy_port: int = 0,
@@ -490,11 +786,21 @@ class AdbSession(SessionLifecycle):
         self._usb_serial = usb_serial
         self._host = host
         self._port = port
+        self._connect_timeout = connect_timeout
+        self._auth_timeout = auth_timeout
         self._transport_timeout = transport_timeout
+        self._long_timeout = long_command_timeout
+        self._address_family = address_family
         self._conn_lock = threading.Lock()
-        ensure_adb_key(adb_key_path)
-        self._signer = _load_signer(adb_key_path)
-        from core.proxy import ProxyConfig, routed_create_connection
+        # The transfer connection (see _transfer_channel): made on the
+        # first pull / push; off for USB (one program per USB device).
+        self._xfer_lock = threading.Lock()
+        self._xfer_device = None
+        self._xfer_off = self._usb
+        key_path = adb_key_path or DEFAULT_ADB_KEY_PATH
+        ensure_adb_key(key_path)
+        self._signer = _load_signer(key_path)
+        from core.proxy import ProxyConfig
 
         self._proxy = ProxyConfig(
             proxy_type=proxy_type or "none",
@@ -510,18 +816,68 @@ class AdbSession(SessionLifecycle):
                     "incompatible with usb=True; remove the proxy or "
                     "switch to TCP mode.",
                 )
-            self._device = AdbDeviceUsb(  # type: ignore[misc]
-                serial=usb_serial or None,
-                default_transport_timeout_s=transport_timeout,
-            )
             self._label = f"USB {usb_serial or 'first'}"
         else:
-            self._device = AdbDeviceTcp(  # type: ignore[misc]
-                host,
-                port,
-                default_transport_timeout_s=transport_timeout,
-            )
             self._label = f"{host}:{port}"
+        self._device = self._open_device(interactive=True)
+        self._can_reconnect = True
+        log.info("AdbSession opened: %s", self._label)
+
+    # ------------------------------------------------------------------
+    # Connections
+    # ------------------------------------------------------------------
+    def _new_device(self):
+        """An unconnected adb_shell device for this session's transport."""
+        if self._usb:
+            try:
+                return AdbDeviceUsb(  # type: ignore[misc]
+                    serial=self._usb_serial or None,
+                    default_transport_timeout_s=self._transport_timeout,
+                    banner=_BANNER,
+                )
+            except Exception as exc:
+                usb = _usb_error(exc, self._usb_serial)
+                if usb is not None:
+                    raise usb from exc
+                raise
+        return AdbDeviceTcp(  # type: ignore[misc]
+            self._host,
+            self._port,
+            default_transport_timeout_s=self._transport_timeout,
+            banner=_BANNER,
+            # A proxy resolves the name itself.
+            address_family=None if self._proxy.enabled else self._address_family,
+        )
+
+    def _open_device(self, *, interactive: bool):
+        """A connected device. *interactive*: a key the phone does not
+        know yet makes it ask "Allow USB debugging?" (the user is told,
+        core.connect_notice) and the answer is waited for; otherwise
+        :class:`AdbNeedsApproval` instead of a prompt."""
+        from core.proxy import routed_create_connection
+
+        try:
+            device = self._new_device()
+        except AdbUsbError:
+            raise
+        except Exception as exc:
+            raise OSError(f"ADB connect to {self._label} failed: {exc}") from exc
+        prompted: list[bool] = []
+
+        def on_prompt(_io_manager) -> None:
+            if not interactive:
+                raise AdbNeedsApproval(
+                    f"ADB {self._label}: the phone no longer accepts this computer's key; "
+                    "connect again and allow USB debugging",
+                )
+            prompted.append(True)
+            from core import connect_notice
+            from core.i18n import tr
+
+            connect_notice.notify(tr(
+                "Check the phone: unlock it and allow USB debugging for this computer "
+                "(tick \"Always allow from this computer\")."))
+
         try:
             # adb_shell.transport.tcp_transport.TcpTransport.connect()
             # calls ``socket.create_connection`` of its own module. It is
@@ -532,15 +888,140 @@ class AdbSession(SessionLifecycle):
             # waited - up to the "Allow USB debugging?" tap on the phone.
             # The socket it made stays adb_shell's; later I/O reuses it.
             with routed_create_connection(_adb_tcp_module(self._proxy), self._proxy):
-                self._device.connect(
+                device.connect(
                     rsa_keys=[self._signer],
-                    auth_timeout_s=connect_timeout,
+                    transport_timeout_s=self._connect_timeout,
+                    read_timeout_s=self._connect_timeout,
+                    auth_timeout_s=self._auth_timeout,
+                    auth_callback=on_prompt,
                 )
         except Exception as exc:
-            raise OSError(
-                f"ADB connect to {self._label} failed: {exc}",
-            ) from exc
-        log.info("AdbSession opened: %s", self._label)
+            _close_quietly(device)
+            if isinstance(exc, AdbNeedsApproval):
+                raise
+            raise self._connect_error(exc, prompted=bool(prompted)) from exc
+        return device
+
+    def _connect_error(self, exc: BaseException, *, prompted: bool) -> OSError:
+        """The OSError for a failed connect: the phone's prompt not
+        answered is :class:`AdbAuthTimeout`, a time-out a TimeoutError."""
+        names = _names(exc)
+        if self._usb:
+            usb = _usb_error(exc, self._usb_serial)
+            if usb is not None:
+                return usb
+        if "STLS" in str(exc):
+            return AdbTlsPortError(
+                f"ADB connect to {self._label}: this is a Wireless debugging (TLS) port; "
+                "use the port of \"adb tcpip\" (5555)",
+            )
+        if names & {"InvalidCommandError", "InvalidChecksumError", "InvalidResponseError"}:
+            return AdbNotAdbError(
+                f"ADB connect to {self._label}: the answer is not ADB ({str(exc)[:80]})",
+            )
+        if prompted and (names & _TIMEOUT_ERRORS or isinstance(exc, ConnectionError)):
+            return AdbAuthTimeout(
+                f"ADB connect to {self._label}: the phone did not allow USB debugging "
+                f"within {self._auth_timeout:.0f} s",
+            )
+        if names & _TIMEOUT_ERRORS:
+            return TimeoutError(
+                f"ADB connect to {self._label}: no answer within {self._connect_timeout:.0f} s",
+            )
+        return OSError(f"ADB connect to {self._label} failed: {exc}")
+
+    @property
+    def connected(self) -> bool:
+        """False once the connection was found lost or the session closed
+        (the next operation of a lost one connects again)."""
+        if self._closed or self._dead:
+            return False
+        return bool(getattr(self.__dict__.get("_device"), "available", True))
+
+    def _main(self):
+        """The command connection (``_conn_lock`` held), connected again
+        first when it was lost."""
+        if self._closed:
+            raise OSError(f"ADB {self._label}: the session is closed")
+        if self._dead and self._can_reconnect:
+            _close_quietly(self._device)
+            self._device = self._open_device(interactive=False)
+            self._dead = False
+            log.info("AdbSession reconnected: %s", self._label)
+        return self._device
+
+    def _lost(self, exc: BaseException) -> None:
+        """Note that *exc* broke the command connection. A connection the
+        device closed takes an idle transfer connection with it (it went
+        the same way: adbd restarted, the Wi-Fi dropped)."""
+        if not _breaks_connection(exc):
+            return
+        self._dead = True
+        _close_quietly(self.__dict__.get("_device"))
+        xlock = self.__dict__.get("_xfer_lock")
+        if isinstance(exc, ConnectionError) and xlock is not None and xlock.acquire(blocking=False):
+            try:
+                _close_quietly(self._xfer_device)
+                self._xfer_device = None
+            finally:
+                xlock.release()
+
+    @contextlib.contextmanager
+    def _transfer_channel(self):
+        """The device for a transfer or a long command: the transfer
+        connection when there is one, so a listing in another pane does
+        not wait for it; else (USB, a second connection would need the
+        phone's approval, a session built without __init__) the command
+        connection. A connection the body breaks is dropped."""
+        xlock = self.__dict__.get("_xfer_lock")
+        if xlock is not None and not self.__dict__.get("_xfer_off", True):
+            with xlock:
+                device = self._xfer_device or self._open_transfer_connection()
+                if device is not None:
+                    try:
+                        yield device
+                    except BaseException as exc:
+                        if _breaks_connection(exc):
+                            self._xfer_device = None
+                            _close_quietly(device)
+                            if isinstance(exc, ConnectionError):
+                                self._dead = True  # the command connection went too
+                        raise
+                    return
+        with self._conn_lock:
+            device = self._main()
+            try:
+                yield device
+            except BaseException as exc:
+                self._lost(exc)
+                raise
+
+    def _open_transfer_connection(self):
+        """A second connection for transfers (``_xfer_lock`` held), or None
+        to use the command connection: it would need the phone's approval
+        ("Always allow" was not ticked), or it cannot be made now."""
+        if self._closed:
+            raise OSError(f"ADB {self._label}: the session is closed")
+        try:
+            device = self._open_device(interactive=False)
+        except AdbNeedsApproval:
+            log.info("ADB %s: no second connection without the phone's approval; "
+                     "transfers share the command connection", self._label)
+            self._xfer_off = True
+            return None
+        except OSError as exc:
+            log.info("ADB %s: no transfer connection (%s); using the command one",
+                     self._label, exc)
+            return None
+        self._xfer_device = device
+        return device
+
+    def _error(self, what: str, exc: BaseException, timeout: float) -> OSError:
+        """The OSError for a failed command: a time-out is a TimeoutError,
+        a lost connection keeps its cause (core.user_errors reads it)."""
+        if _names(exc) & _TIMEOUT_ERRORS:
+            return TimeoutError(f"{what} on {self._label}: no answer within {timeout:.0f} s")
+        return OSError(f"{what} on {self._label}: {exc}")
 
     # ------------------------------------------------------------------
     # FileBackend identity / traversal
@@ -589,17 +1070,77 @@ class AdbSession(SessionLifecycle):
         on transport failure. Non-zero shell exit does NOT raise —
         Android's adb shell doesn't reliably propagate exit codes
         through the wire; callers distinguish empty results from
-        failures by content."""
+        failures by content.
+
+        It may run silent for the transport time-out, in the body of
+        :func:`_command_timeout` for that one (adb_shell's own read
+        time-out of 10 s, which also capped the transport time-out, failed
+        every checksum of a big file)."""
+        long_timeout = _COMMAND_TIMEOUT.get()
+        timeout = long_timeout or self._transport_timeout
+        # The whole command, not only each packet: SHELL_DEADLINE, or the
+        # long command's own time-out.
+        deadline = time.monotonic() + (long_timeout or max(SHELL_DEADLINE, timeout))
+        keep_head = _SHELL_KEEP_HEAD.get()
+        # A long command runs beside the listings, as a transfer does.
+        channel = self._transfer_channel() if long_timeout else self._command_channel()
         try:
-            with self._conn_lock:
-                return self._device.shell(
-                    cmd,
-                    transport_timeout_s=self._transport_timeout,
-                )
+            with channel as device:
+                # Read as a stream: device.shell() joined every packet, so
+                # an endless answer filled the memory and never returned.
+                # Leaving it early leaves its rest unread: the exception
+                # out of this body drops the connection (_lost).
+                head = bytearray()
+                tail = b""
+                size = 0
+                kwargs = dict(transport_timeout_s=timeout, read_timeout_s=timeout, decode=False)
+                stream = getattr(device, "streaming_shell", None)
+                chunks = (stream(_RawCommand(cmd), **kwargs) if stream is not None
+                          else [device.shell(_RawCommand(cmd), **kwargs)])  # a stand-in
+                for chunk in chunks:
+                    if isinstance(chunk, str):
+                        chunk = chunk.encode("utf-8", "surrogateescape")
+                    size += len(chunk)
+                    if keep_head is None:
+                        if size > SHELL_OUTPUT_CAP:
+                            raise _ShellTooLarge(
+                                errno.EFBIG,
+                                f"ADB shell({cmd[:60]!r}): the answer holds more than "
+                                f"{SHELL_OUTPUT_CAP // (1024 * 1024)} MiB",
+                            )
+                        head += chunk
+                    else:
+                        room = keep_head + 1 - len(head)
+                        if room > 0:
+                            head += chunk[:room]
+                        tail = (tail + chunk)[-4096:]
+                    if time.monotonic() > deadline:
+                        raise _ShellDeadline(
+                            errno.ETIMEDOUT,
+                            f"ADB shell({cmd[:60]!r}) on {self._label}: still answering after "
+                            f"{(long_timeout or max(SHELL_DEADLINE, timeout)):.0f} s; stopped",
+                        )
+                if keep_head is not None and size > len(head):
+                    # The head (stdout_cap and one byte more) and the tail
+                    # that holds exec's status trailer.
+                    return _as_text(bytes(head)) + "\n" + _as_text(tail)
+                return _as_text(bytes(head))
+        except (_ShellDeadline, _ShellTooLarge):
+            raise
         except Exception as exc:
-            raise OSError(
-                f"ADB shell({cmd[:60]!r}) on {self._label}: {exc}",
-            ) from exc
+            raise self._error(f"ADB shell({cmd[:60]!r})", exc, timeout) from exc
+
+    @contextlib.contextmanager
+    def _command_channel(self):
+        """The command connection (locked); a connection the body breaks
+        is noted (:meth:`_lost`)."""
+        with self._conn_lock:
+            device = self._main()
+            try:
+                yield device
+            except BaseException as exc:
+                self._lost(exc)
+                raise
 
     def _shell_q(self, path: str) -> str:
         """Shell-quote *path* for embedding in a shell command. We
@@ -663,11 +1204,12 @@ class AdbSession(SessionLifecycle):
     def _remember_special(self, folder: str, special: dict[str, str]) -> None:
         """Note the device nodes, FIFOs and sockets a listing of *folder*
         named: open_read refuses them (a pull of /dev/zero never ends)."""
-        known = self.__dict__.setdefault("_special_paths", {})
         prefix = posixpath.normpath(folder).rstrip("/") + "/"
-        for old in [p for p in known if p.startswith(prefix) and "/" not in p[len(prefix):]]:
-            del known[old]
-        known.update(special)
+        with _SPECIAL_LOCK:  # stat() in another thread adds to the map
+            known = self.__dict__.setdefault("_special_paths", {})
+            for old in [p for p in known if p.startswith(prefix) and "/" not in p[len(prefix):]]:
+                del known[old]
+            known.update(special)
 
     def stat(self, path: str) -> FileItem:
         """The entry at *path*. FileNotFoundError only when ``ls`` says
@@ -688,11 +1230,12 @@ class AdbSession(SessionLifecycle):
                     errors.append(line.strip())
                 continue
             fi, kind = entry
-            known = self.__dict__.setdefault("_special_paths", {})
-            if kind in _SPECIAL_TYPES:
-                known[posixpath.normpath(path)] = kind
-            else:
-                known.pop(posixpath.normpath(path), None)
+            with _SPECIAL_LOCK:
+                known = self.__dict__.setdefault("_special_paths", {})
+                if kind in _SPECIAL_TYPES:
+                    known[posixpath.normpath(path)] = kind
+                else:
+                    known.pop(posixpath.normpath(path), None)
             # ls -d echoes the path as the name; reduce to basename
             # so callers comparing against FileItem.name aren't
             # surprised by a leading slash. FileItem is frozen — we
@@ -739,7 +1282,8 @@ class AdbSession(SessionLifecycle):
         from core.read_spool import new_named_spool, remove_quietly
 
         _checked(path)
-        kind = self.__dict__.get("_special_paths", {}).get(posixpath.normpath(path))
+        with _SPECIAL_LOCK:
+            kind = self.__dict__.get("_special_paths", {}).get(posixpath.normpath(path))
         if kind is not None:
             # A device node, FIFO or socket the listing named: no file
             # content to pull, and a pull of /dev/zero never ends.
@@ -748,15 +1292,24 @@ class AdbSession(SessionLifecycle):
                 f"ADB: {path} is not a regular file ({_SPECIAL_NAMES[kind]}); not read",
                 path,
             )
+        hooks = transfer_hooks.current()
+        total = None
+        if hooks is not None:
+            hooks.check()
+            try:
+                total = self.stat(path).size  # for the progress bar
+            except OSError:
+                total = None
         # In the spool folder (not /tmp, a tmpfs), removed on every path.
         local = new_named_spool(tag="adb", delete=False)
         local_path = local.name
-        local.close()
         try:
-            with self._conn_lock:
-                self._device.pull(path, local_path)
+            with local:
+                self._pull_into(path, local, hooks, total)
         except BaseException as exc:
             remove_quietly(local_path)
+            if isinstance(exc, InterruptedError):
+                raise
             if isinstance(exc, Exception):
                 raise self._pull_refused(path, exc) from exc
             raise
@@ -770,6 +1323,19 @@ class AdbSession(SessionLifecycle):
             # the caller never close it.
             remove_quietly(local_path)
         return _CleanupOnClose(handle, local_path)
+
+    def _pull_into(self, path: str, local, hooks, total: int | None) -> None:
+        """Pull *path* into the open file *local* on the transfer channel:
+        each chunk reports progress and checks Cancel (*hooks*); Cancel
+        closes the connection, which also wakes a read that waits."""
+        timeout = self._transport_timeout
+        with self._transfer_channel() as device:
+            sink = _PullSink(local, hooks, total, abort=lambda: _close_quietly(device))
+            with _closed_on_cancel(device, hooks, sink):
+                device.pull(_RawCommand(path), sink,
+                            transport_timeout_s=timeout, read_timeout_s=timeout)
+        if hooks is not None and sink.done == 0:
+            hooks.received(0, total)
 
     def _pull_refused(self, path: str, exc: BaseException) -> OSError:
         """A failed pull typed by what *path* is (adb's sync error text
@@ -800,16 +1366,40 @@ class AdbSession(SessionLifecycle):
             )
         return _AdbPushOnClose(self, _checked(path))
 
-    def _push_file(self, local_path: str, remote_path: str) -> None:
+    def _push_file(self, local_path: str, remote_path: str, hooks=None) -> None:
         """Push *local_path* to *remote_path* on the device. Used by
         :class:`_AdbPushOnClose` on flush/close."""
+        timeout = self._transport_timeout
         try:
-            with self._conn_lock:
-                self._device.push(local_path, remote_path)
-        except Exception as exc:
+            remote_path.encode("utf-8")
+        except UnicodeEncodeError:
+            # adb_shell builds the SEND request with str.format + utf-8.
             raise OSError(
-                f"ADB push({remote_path}) to {self._label}: {exc}",
-            ) from exc
+                errno.EINVAL,
+                f"ADB push({remote_path!r}): an upload to a name that is not UTF-8 is "
+                "not possible",
+                remote_path,
+            ) from None
+        if hooks is not None and hooks.cancelled():
+            # Nothing sent yet: the destination is as it was.
+            raise transfer_hooks.UploadCancelled(transfer_hooks.CANCELLED)
+        try:
+            with self._transfer_channel() as device:
+                if hooks is None:
+                    device.push(local_path, remote_path, st_mode=_PUSH_MODE,
+                                transport_timeout_s=timeout, read_timeout_s=timeout)
+                    return
+                size = os.path.getsize(local_path)
+                with open(local_path, "rb") as fh:
+                    source = _PushSource(fh, hooks, size, abort=lambda: _close_quietly(device))
+                    with _closed_on_cancel(device, hooks, source):
+                        device.push(source, remote_path, st_mode=_PUSH_MODE,
+                                    transport_timeout_s=timeout, read_timeout_s=timeout)
+                hooks.sent(size, size, check=False)
+        except InterruptedError:
+            raise  # a part of the file may be there: the engine rolls back
+        except Exception as exc:
+            raise self._error(f"ADB push({remote_path})", exc, timeout) from exc
 
     # ------------------------------------------------------------------
     # Mutation
@@ -817,7 +1407,8 @@ class AdbSession(SessionLifecycle):
     def remove(self, path: str, recursive: bool = False) -> None:
         from core.telnet_client import remove_command
 
-        out = self._shell(remove_command(path, recursive=recursive, quote=self._shell_q))
+        with _command_timeout(self._long_timeout):  # rm -rf of a big folder
+            out = self._shell(remove_command(path, recursive=recursive, quote=self._shell_q))
         if out.strip():
             # rm on Android's toybox is quiet on success; any output
             # indicates a refusal - ls's "No such file or directory" for a
@@ -840,7 +1431,8 @@ class AdbSession(SessionLifecycle):
         # (review B6, 2026-10-17); the guard's message is the error.
         from core.telnet_client import rename_command
 
-        out = self._shell(rename_command(_checked(src), _checked(dst)))
+        with _command_timeout(self._long_timeout):  # mv to another file system copies
+            out = self._shell(rename_command(_checked(src), _checked(dst)))
         if out.strip():
             raise OSError(f"ADB mv({src}→{dst}): {out.strip()}")
 
@@ -853,6 +1445,18 @@ class AdbSession(SessionLifecycle):
         if out.strip():
             raise OSError(f"ADB chmod({path}): {out.strip()}")
 
+    def set_modified(self, path: str, mtime: float) -> None:
+        """Give *path* the modification time *mtime* (whole seconds), so an
+        upload keeps its source's time (core.transfer_worker); a push
+        stamps the time of the upload. ``touch -t`` under UTC, which
+        toybox and busybox take."""
+        stamp = datetime.fromtimestamp(int(mtime), tz=timezone.utc).strftime("%Y%m%d%H%M.%S")
+        out = self._shell(f"TZ=UTC0 touch -c -m -t {stamp} {self._shell_q(path)}")
+        if out.strip():
+            raise OSError(f"ADB touch({path}): {out.strip()[:500]}")
+        # -c makes no file: a missing one said nothing.
+        self.stat(path)
+
     def readlink(self, path: str) -> str:
         out = self._shell(f"readlink {self._shell_q(path)}").strip()
         if not out:
@@ -862,7 +1466,8 @@ class AdbSession(SessionLifecycle):
     def copy(self, src: str, dst: str) -> None:
         from core.telnet_client import copy_command
 
-        out = self._shell(copy_command(_checked(src), _checked(dst)))
+        with _command_timeout(self._long_timeout):  # cp of a big file
+            out = self._shell(copy_command(_checked(src), _checked(dst)))
         if out.strip():
             raise OSError(f"ADB cp({src}→{dst}): {out.strip()}")
 
@@ -879,9 +1484,8 @@ class AdbSession(SessionLifecycle):
         }.get(algorithm)
         if tool is None:
             return ""
-        out = self._shell(
-            f"{tool} {self._shell_q(path)}",
-        ).strip()
+        with _command_timeout(self._long_timeout):  # a big file takes a while
+            out = self._shell(f"{tool} {self._shell_q(path)}").strip()
         if not out:
             return ""
         from core.exec_util import digest_from_sum_output
@@ -958,7 +1562,12 @@ class AdbSession(SessionLifecycle):
                 fh.write(stdin)
             line = f"{line} < {shlex.quote(tmp)}"
         try:
-            raw = self._shell(f"{line}; echo {tag} $?")
+            keep = _SHELL_KEEP_HEAD.set(max(0, int(stdout_cap)))
+            try:
+                with _command_timeout(timeout or self._long_timeout):
+                    raw = self._shell(f"{line}; echo {tag} $?")
+            finally:
+                _SHELL_KEEP_HEAD.reset(keep)
         finally:
             if tmp is not None:
                 try:
@@ -1015,7 +1624,8 @@ class AdbSession(SessionLifecycle):
             " ".join(flags) or "(none)",
         )
         try:
-            return self._shell(cmd)
+            with _command_timeout(self._long_timeout):  # a big app takes a minute
+                return self._shell(cmd)
         finally:
             # Best-effort cleanup; ignore errors so a failed install
             # still surfaces its real reason instead of a cleanup IOError.
@@ -1033,11 +1643,17 @@ class AdbSession(SessionLifecycle):
         # the raw shell that returns bytes.
         try:
             with self._conn_lock:
-                return self._device.shell(
-                    "screencap -p",
-                    transport_timeout_s=self._transport_timeout,
-                    decode=False,
-                )
+                device = self._main()
+                try:
+                    return device.shell(
+                        "screencap -p",
+                        transport_timeout_s=self._transport_timeout,
+                        read_timeout_s=self._transport_timeout,
+                        decode=False,
+                    )
+                except Exception as exc:
+                    self._lost(exc)
+                    raise
         except Exception as exc:
             raise OSError(
                 f"ADB screencap on {self._label}: {exc}",
@@ -1087,13 +1703,85 @@ class AdbSession(SessionLifecycle):
     # Teardown
     # ------------------------------------------------------------------
     def close(self) -> None:
-        try:
-            self._device.close()
-        except Exception as exc:  # noqa: BLE001
-            log.debug("ADB close(%s) raised: %s", self._label, exc)
+        self._closed = True
+        _close_quietly(self.__dict__.get("_device"))
+        _close_quietly(self.__dict__.get("_xfer_device"))
 
     def disconnect(self) -> None:
         self.close()
+
+
+class _PullSink(io.BytesIO):
+    """Where adb_shell's pull writes (it takes a BytesIO for a stream):
+    the spool file, with progress and Cancel per chunk. Cancel closes the
+    connection first (*abort*), so the pull's own clean-up (a CLSE it
+    waits for) ends at once."""
+
+    def __init__(self, fh, hooks, total: int | None, abort) -> None:
+        super().__init__()
+        self._fh = fh
+        self._hooks = hooks
+        self._total = total
+        self._abort = abort
+        self.done = 0
+        self.cancelled = False
+
+    def write(self, data) -> int:  # type: ignore[override]
+        hooks = self._hooks
+        if hooks is not None and hooks.cancelled():
+            self.cancelled = True
+            self._abort()
+            raise InterruptedError(transfer_hooks.CANCELLED)
+        written = self._fh.write(data)
+        self.done += len(data)
+        if hooks is not None:
+            hooks.received(self.done, self._total)
+        return written
+
+
+class _PushSource(io.BytesIO):
+    """What adb_shell's push reads (it takes a BytesIO for a stream): the
+    spool file, with progress and Cancel per chunk."""
+
+    def __init__(self, fh, hooks, total: int, abort) -> None:
+        super().__init__()
+        self._fh = fh
+        self._hooks = hooks
+        self._total = total
+        self._abort = abort
+        self.done = 0
+        self.cancelled = False
+
+    def read(self, n: int | None = -1) -> bytes:  # type: ignore[override]
+        if self._hooks.cancelled():
+            self.cancelled = True
+            self._abort()
+            raise InterruptedError(transfer_hooks.CANCELLED)
+        data = self._fh.read(n)
+        self.done += len(data)
+        if data:
+            self._hooks.sent(self.done, self._total, check=False)
+        return data
+
+
+@contextlib.contextmanager
+def _closed_on_cancel(device, hooks, stream):
+    """In a running transfer: close *device* the moment Cancel is pressed
+    (core.transfer_hooks.CancelWatch) - a read that waits on a silent
+    network wakes at once - and raise InterruptedError for whatever the
+    closed connection caused."""
+    watch = transfer_hooks.watch_cancel(lambda: _close_quietly(device), hooks) \
+        if hooks is not None else None
+    try:
+        yield
+    except BaseException as exc:
+        cancelled = stream.cancelled or (watch is not None and watch.fired)
+        if cancelled and not isinstance(exc, InterruptedError):
+            raise InterruptedError(transfer_hooks.CANCELLED) from exc
+        raise
+    finally:
+        if watch is not None:
+            watch.stop()
 
 
 class _CleanupOnClose:

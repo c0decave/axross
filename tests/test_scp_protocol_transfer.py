@@ -66,7 +66,7 @@ def _session(streams: dict[str, bytes], transfer_method: str = "scp"):
     s._scp_channel = channel
     s.commands = []
 
-    def run(cmd, timeout=None, stdin_data=None):
+    def run(cmd, timeout=None, stdin_data=None, **_kw):
         s.commands.append(cmd)
         if " ls -la " in f" {cmd} ":
             return streams.get("ls", ""), 0

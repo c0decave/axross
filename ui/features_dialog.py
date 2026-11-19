@@ -44,7 +44,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import features as F
-from core.i18n import tr
+from core.i18n import tr, tr_n
 from core.thread_relay import GuiCall
 from ui.close_corner import add_close_corner
 from ui.scan_job import ScanJob
@@ -434,8 +434,11 @@ class FeaturesDialog(QDialog):
             return
         self._packs_release = None
         self.update_packs_button.setVisible(False)
-        self.status.setText(tr("Packs updated: {n} files checked and unpacked. "
-                               "Restart axross to use them.").format(n=files))
+        self.status.setText(tr_n(
+            files,
+            "Packs updated: {n} file checked and unpacked. Restart axross to use them.",
+            "Packs updated: {n} files checked and unpacked. Restart axross to use them.",
+        ))
 
     def copy_command(self) -> None:
         lines = [F.how_to_get(f, family=self._family) for f in self._selected() if not f.available]

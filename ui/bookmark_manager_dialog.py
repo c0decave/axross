@@ -34,6 +34,7 @@ from core.i18n import tr
 from ui.bookmark_sidebar import BookmarkTreeEditing, _BookmarkTree, _count_bookmarks
 from ui.close_corner import add_close_corner
 from ui.icon_provider import set_window_icon
+from ui.plain_text import defused, plain_tooltip
 
 log = logging.getLogger(__name__)
 
@@ -178,17 +179,18 @@ class BookmarkManagerDialog(BookmarkTreeEditing, QDialog):
         if node.is_smart_folder:
             from core.file_search import describe_saved_search
 
-            item.setText(COL_LOCATION, describe_saved_search(node.search))
+            item.setText(COL_LOCATION, defused(describe_saved_search(node.search)))
             item.setText(COL_CONNECTION, tr("Smart Folder"))
         elif node.is_terminal:
             host = tr("Local Shell") if node.profile_name == LOCAL_SHELL else node.profile_name
-            item.setText(COL_LOCATION, node.path)
-            item.setText(COL_CONNECTION, tr("Terminal: {host}").format(host=host))
+            item.setText(COL_LOCATION, defused(node.path))
+            item.setText(COL_CONNECTION, defused(tr("Terminal: {host}").format(host=host)))
         else:
-            item.setText(COL_LOCATION, node.path)
-            item.setText(COL_CONNECTION, node.backend_name)
+            item.setText(COL_LOCATION, defused(node.path))
+            item.setText(COL_CONNECTION, defused(node.backend_name))
         for col in (COL_LOCATION, COL_CONNECTION):
-            item.setToolTip(col, item.text(col))
+            # (a tooltip guesses its format: a path holding "<b>" was markup)
+            item.setToolTip(col, plain_tooltip(item.text(col)))
         info = self._bookmark_security(node)
         if info is not None:
             from ui.security_badge import security_icon, tooltip_html

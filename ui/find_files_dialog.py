@@ -54,10 +54,13 @@ from PyQt6.QtWidgets import (
 from core import file_categories as FC
 from core import file_search as FS
 from core.i18n import format_decimal, tr
+from core.remote_name import sanitize_for_display
 from core.search_federation import SearchQuery
 from ui.close_corner import add_close_corner
 from ui.scan_job import BusyStrip, ScanJob, shorten
 from ui.icon_provider import set_window_icon
+from ui.plain_text import plain_tooltip
+from ui.screen_fit import fit_size
 
 log = logging.getLogger("ui.find_files_dialog")
 
@@ -68,25 +71,49 @@ _ROWS_PER_TICK = 500
 #: How often found rows are put in while a search runs, and the GUI time
 #: one such step may take (500 rows took ~150 ms).
 _DRAIN_INTERVAL_MS = 50
+#: Columns of the Types box: six side by side made the window wider than
+#: a 1024 px screen.
+_TYPE_COLUMNS = 4
 _DRAIN_BUDGET_S = 0.03
 _SORT_ROLE = Qt.ItemDataRole.UserRole + 1
 _ROW_ROLE = Qt.ItemDataRole.UserRole
-_SIZE_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([kmgt]?)(?:i?b)?\s*$", re.IGNORECASE)
+_SIZE_RE = re.compile(r"^\s*(\d+(?:[.,]\d+)?)\s*([kmgt]?)(?:i?b)?\s*$", re.IGNORECASE)
 _UNITS = {"": 1, "k": 1024, "m": 1024**2, "g": 1024**3, "t": 1024**4}
 
 
 def parse_size(text: str) -> int:
-    """``""`` -> -1 (no bound); ``10``, ``10K``, ``1.5 MiB``, ``2g``, ``3 kb``
-    -> bytes (binary units). ``ValueError`` for anything else."""
+    """``""`` -> -1 (no bound); ``10``, ``10K``, ``1.5 MiB``, ``1,5M`` (the
+    decimal comma the German table shows), ``2g``, ``3 kb`` -> bytes
+    (binary units). ``ValueError`` for anything else."""
     if not text.strip():
         return -1
     m = _SIZE_RE.match(text)
     if m is None:
         raise ValueError(f"{text.strip()!r} is not a size (e.g. 500, 10K, 1.5M, 2G)")
-    value = float(m.group(1)) * _UNITS[m.group(2).lower()]
+    value = float(m.group(1).replace(",", ".")) * _UNITS[m.group(2).lower()]
     if not math.isfinite(value) or value > 2**62:
         raise ValueError(f"{text.strip()!r} is too large")
     return int(value)
+
+
+def name_pattern(text: str) -> str:
+    """The glob of what was typed in Name: text without * or ? matches
+    anywhere in the name, its brackets included ("Song [Remix]"); with
+    them it is the pattern itself, where [0-9] is a set."""
+    text = text.strip()
+    if not text or any(c in text for c in "*?"):
+        return text
+    return "*{}*".format(text.replace("[", "[[]"))
+
+
+def name_text(pattern: str) -> str:
+    """What to show in Name for a saved *pattern*: the text typed, when
+    :func:`name_pattern` made the pattern of it ("*report*" -> "report")."""
+    inner = pattern[1:-1] if len(pattern) > 2 and pattern[0] == pattern[-1] == "*" else ""
+    text = inner.replace("[[]", "[")
+    if inner and name_pattern(text) == pattern:
+        return text
+    return pattern
 
 
 def _format_size(n: int) -> str:
@@ -177,7 +204,9 @@ class FindFilesDialog(QDialog):
         super().__init__(parent)
         set_window_icon(self, "find-files")
         self.setWindowTitle(tr("Find Files"))
-        self.resize(1100, 760)
+        # At most the screen: on 1024x600 it opened at 1100x760, its
+        # buttons and right edge off the screen.
+        self.resize(fit_size((1100, 760), parent))
         self._index_db = index_db
         self._rows: list[tuple[FS.SearchScope, object]] = []
         self._queue: deque = deque()
@@ -191,6 +220,9 @@ class FindFilesDialog(QDialog):
         self._drain_timer.setInterval(_DRAIN_INTERVAL_MS)
         self._drain_timer.timeout.connect(self._drain)
         self._build_ui()
+        # Typing after Alt+F7 goes into Name (the focus was on the window's
+        # corner button, so the first letters went nowhere).
+        self.name_edit.setFocus()
         for choice in scopes:
             self._add_scope(choice)
         if saved is not None and self._apply_saved(saved) and autostart:
@@ -218,8 +250,8 @@ class FindFilesDialog(QDialog):
         self.name_edit = QLineEdit(self)
         self.name_edit.setPlaceholderText(tr("part of the name, or a pattern like *.pdf"))
         self.name_edit.setToolTip(
-            tr("Text without * ? [ ] matches anywhere in the name; a pattern (*.jpg, IMG_????.*) "
-               "the whole name. Upper and lower case are the same.")
+            tr("Text without * or ? matches anywhere in the name; a pattern (*.jpg, IMG_????.*, "
+               "IMG_[0-9]*) the whole name. Upper and lower case are the same.")
         )
         # Enter searches through the default button (Search, below); a
         # returnPressed connection on top started the search twice.
@@ -287,6 +319,10 @@ class FindFilesDialog(QDialog):
         self.depth_spin.setSpecialValueText(tr("unlimited"))
         self.depth_spin.setPrefix(tr("depth "))
         self.tag_combo = QComboBox(self)
+        # A long tag name must not widen the window past the screen.
+        self.tag_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.tag_combo.setMinimumContentsLength(14)
         self.tag_combo.setToolTip(tr("Only files that carry this tag (an archive's tag counts "
                                      "for its members), offline-index hits included"))
         self.tag_combo.addItem(tr("Any tag"), "")
@@ -294,11 +330,17 @@ class FindFilesDialog(QDialog):
 
         for tag in TG.store().tags():
             self.tag_combo.addItem(tag.name, tag.name)
-        for widget in (self.archives_box, self.hidden_box, self.noise_box, self.depth_spin,
-                       self.tag_combo):
+        # Two rows: in one, the options made the window at least 1040 px
+        # wide (more in German) - wider than a 1024 px screen.
+        for widget in (self.archives_box, self.hidden_box, self.noise_box):
             options.addWidget(widget)
         options.addStretch(1)
         form.addRow(tr("Options:"), options)
+        options_more = QHBoxLayout()
+        for widget in (self.depth_spin, self.tag_combo):
+            options_more.addWidget(widget)
+        options_more.addStretch(1)
+        form.addRow("", options_more)
         top.addWidget(criteria, 3)
 
         right = QVBoxLayout()
@@ -337,7 +379,7 @@ class FindFilesDialog(QDialog):
             box = QCheckBox(tr(FC.label(cid)).replace("&", "&&"), self)
             box.setToolTip(tr(FC.CATEGORIES[cid].description))
             self.category_boxes[cid] = box
-            grid.addWidget(box, i // 6, i % 6)
+            grid.addWidget(box, i // _TYPE_COLUMNS, i % _TYPE_COLUMNS)
         root.addWidget(cats)
 
         buttons = QHBoxLayout()
@@ -439,7 +481,10 @@ class FindFilesDialog(QDialog):
         if self.name_regex_box.isChecked():
             regex = text
         elif text:
-            name = text if any(c in text for c in "*?[") else f"*{text}*"
+            # Only * and ? make a pattern: "Song [Remix]" is part of a name
+            # (as a pattern its brackets were a character set and it found
+            # nothing); in a pattern, [abc] stays a set.
+            name = name_pattern(text)
         try:
             min_size = parse_size(self.min_size_edit.text())
             max_size = parse_size(self.max_size_edit.text())
@@ -486,7 +531,7 @@ class FindFilesDialog(QDialog):
             self.name_regex_box.setChecked(True)
             self.name_edit.setText(query.regex)
         else:
-            self.name_edit.setText(query.name)
+            self.name_edit.setText(name_text(query.name))
         self.contains_edit.setText(query.contains)
         self.contains_regex_box.setChecked(query.contains_is_regex)
         self.case_box.setChecked(query.case_sensitive)
@@ -579,6 +624,7 @@ class FindFilesDialog(QDialog):
                 use_index=use_index,
                 index_db=index_db,
                 accept=tagged,
+                include_dirs=True,
             )
 
         self._started = time.monotonic()
@@ -624,25 +670,30 @@ class FindFilesDialog(QDialog):
     def _append_row(self, scope: FS.SearchScope, hit) -> None:
         index = len(self._rows)
         self._rows.append((scope, hit))
-        name, folder = _split_display(scope, hit)
+        # Shown as the file pane shows a name: a control or bidi override
+        # as U+FFFD ("inv\u202efdp.exe" read as "invexe.pdf"). Opening,
+        # revealing and copying use hit.path.
+        name, folder = (sanitize_for_display(part) for part in _split_display(scope, hit))
         row = self.table.rowCount()
         self.table.insertRow(row)
         name_item = _NameItem(name)
         name_item.setData(_ROW_ROLE, index)
-        name_item.setToolTip(hit.path)
+        name_item.setToolTip(plain_tooltip(sanitize_for_display(hit.path)))
         size_item = _SortItem(_format_size(hit.size) if not hit.is_dir else "")
         size_item.setData(_SORT_ROLE, int(hit.size))
         size_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         when_item = _SortItem(_format_when(hit.mtime))
         when_item.setData(_SORT_ROLE, float(hit.mtime))
-        snippet = QTableWidgetItem(hit.snippet)
-        snippet.setToolTip(hit.snippet)
+        shown_snippet = sanitize_for_display(hit.snippet)  # the file's own text
+        snippet = QTableWidgetItem(shown_snippet)
+        snippet.setToolTip(plain_tooltip(shown_snippet))
         cells = (
             name_item,
             QTableWidgetItem(folder),
             size_item,
             when_item,
-            QTableWidgetItem(tr(FC.label(hit.category)) if hit.category else ""),
+            QTableWidgetItem(tr("Folder") if hit.is_dir
+                             else tr(FC.label(hit.category)) if hit.category else ""),
             QTableWidgetItem(hit.backend_label),
             snippet,
         )

@@ -108,6 +108,7 @@ class MailDockRunner:
         self.tools = tools = MD.MailTools(self.dock, mailbox, ask_send=self._ask_send, smtp=self._smtp,
                                           drafts_dir=self.state_dir / "drafts", bus=self.bus,
                                           on_log=self._on_log)
+        tools.remember_notes(reports)   # what other docks wrote: not this mail's text
         profile, api_key = self._llm(self.dock)
         if profile is None:
             raise OSError("no LLM profile: choose one in the dock's settings or make one active")

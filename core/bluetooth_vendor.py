@@ -46,9 +46,20 @@ SYSTEM_TABLES = ("/usr/share/wireshark/manuf", "/usr/local/share/wireshark/manuf
 
 
 def notifier() -> _Notifier:
+    """The app-wide QObject whose ``loaded`` fires when the table is ready.
+
+    Owned by C++ (sip.transferto), as core.audio_route's: the exit clean-up
+    (core.qt_exit.delete_python_owned_qobjects) leaves it alone, and one
+    deleted all the same is made anew - a Bluetooth panel started after
+    that failed with "wrapped C/C++ object of type _Notifier has been
+    deleted"."""
     global _notifier
-    if _notifier is None:
-        _notifier = _Notifier()
+    from PyQt6 import sip
+
+    if _notifier is None or sip.isdeleted(_notifier):
+        made = _Notifier()
+        sip.transferto(made, None)
+        _notifier = made
     return _notifier
 
 

@@ -81,11 +81,22 @@ def _reveal(pane, path: Path) -> None:
 
 def test_happy_a_filter_that_hides_the_entry_is_cleared(pane):
     pane.test_window.set_show_hidden(True)
+    pane.navigate(str(pane.test_sub))  # the filter belongs to this folder
     pane._filter_edit.setText("notes")
     _reveal(pane, pane.test_sub / "report.txt")
     assert pane._filter_edit.text() == ""
     assert pane.selected_items() == [str(pane.test_sub / "report.txt")]
     assert "Filter cleared" in pane._status.text()
+
+
+def test_happy_a_reveal_in_another_folder_starts_it_unfiltered(pane):
+    """Another folder is shown unfiltered anyway (search review: the
+    filter of the folder left no longer goes along)."""
+    pane.test_window.set_show_hidden(True)
+    pane._filter_edit.setText("su")
+    _reveal(pane, pane.test_sub / "report.txt")
+    assert pane._filter_edit.text() == ""
+    assert pane.selected_items() == [str(pane.test_sub / "report.txt")]
 
 
 def test_sad_a_hidden_entry_is_shown_for_its_reveal_only(pane):
@@ -102,6 +113,7 @@ def test_sad_a_hidden_entry_is_shown_for_its_reveal_only(pane):
 
 def test_edge_a_visible_entry_changes_nothing_and_a_gone_one_is_said(pane):
     pane.test_window.set_show_hidden(True)
+    pane.navigate(str(pane.test_sub))
     pane._filter_edit.setText("re")
     _reveal(pane, pane.test_sub / "report.txt")
     assert pane._filter_edit.text() == "re"  # it matched: the filter stays

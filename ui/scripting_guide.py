@@ -44,6 +44,7 @@ from core.i18n import tr
 from ui import guide_view
 from ui.close_corner import add_close_corner
 from ui.icon_provider import set_window_icon
+from ui.screen_fit import fit_size
 
 #: ``source`` value when the guide comes from :data:`BUILT_IN_GUIDE`.
 BUILT_IN_SOURCE = "built-in"
@@ -262,7 +263,7 @@ class ScriptingGuideDialog(QDialog):
         layout.addWidget(split, 1)
         layout.addWidget(buttons)
         add_close_corner(self)
-        self.resize(1060, 700)
+        self.resize(fit_size((1060, 700), self))  # at most the screen (1024x600)
         self._fill_contents()
 
     # -- contents and links ----------------------------------------------------------------

@@ -62,7 +62,11 @@ def transcribe_server(
     request.add_header("Content-Type", content_type)
     if api_key:
         request.add_header("Authorization", f"Bearer {api_key}")
-    opener = opener or urllib.request.urlopen
+    if opener is None:
+        # Never on to where a redirect points: the API key would go along.
+        from core.agent_net import opener_without_redirects
+
+        opener = opener_without_redirects().open
     try:
         with opener(request, timeout=profile.timeout) as response:
             raw = response.read(MAX_ANSWER_BYTES + 1)

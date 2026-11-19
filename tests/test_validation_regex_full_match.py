@@ -48,6 +48,7 @@ ALLOWED: dict[tuple[str, str], str] = {
     # end", a newline after the prompt is the device's.
     ("core/telnet_cisco.py", "_PROMPT_RE"): "prompt at the end of the buffer",
     ("core/telnet_cisco.py", "_PRIV_PROMPT_RE"): "prompt at the end of the buffer",
+    ("core/telnet_cisco.py", "_prompt_re"): "the device's own prompt at the end of the buffer",
     # Matching more is the safe side here: a fullmatch would let a
     # trailing newline through unmasked or unproxied.
     ("core/mcp_detect.py", "_SECRET_NAME"): "flags a secret's name; more is safer",

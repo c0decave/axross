@@ -19,6 +19,7 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from core import transfer_hooks
 from core.path_policy import hidden_sibling_name, safe_join
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -85,11 +86,24 @@ def _discard_or_close_writer(writer, *, completed: bool) -> None:
         log.debug("Failed to discard incomplete stream-copy output", exc_info=True)
 
 
+def _local_with_atomic_rename(backend) -> bool:
+    """A local file system whose rename is the plain atomic one: LocalFS,
+    or the MCP root's confined file system (it renames beneath the
+    folders' descriptors). A subclass with another rename is not."""
+    from core.local_fs import LocalFS
+
+    if not isinstance(backend, LocalFS):
+        return False
+    if type(backend).rename is LocalFS.rename:
+        return True
+    from core.confined_fs import ConfinedLocalFS
+
+    return type(backend).rename is ConfinedLocalFS.rename
+
+
 def _known_backend_capabilities(backend):
     try:
-        from core.local_fs import LocalFS
-
-        if isinstance(backend, LocalFS) and type(backend).rename is LocalFS.rename:
+        if _local_with_atomic_rename(backend):
             from core.backend_registry import POSIX_CAPS
 
             return POSIX_CAPS
@@ -156,6 +170,11 @@ def _rename_fallback_allowed(backend, exc: BaseException) -> bool:
     return any(marker in message for marker in _UNSUPPORTED_RENAME_MARKERS)
 
 
+class ShortCopy(OSError):
+    """The source sent another number of bytes than the size it reported
+    (a server that says 1 MiB and sends 10 bytes): not a complete copy."""
+
+
 def _supports_temp_destination(backend) -> bool:
     needed = ("parent", "join", "separator", "rename", "remove", "exists", "is_dir")
     if not all(hasattr(backend, name) for name in needed):
@@ -163,7 +182,10 @@ def _supports_temp_destination(backend) -> bool:
     try:
         from core.local_fs import LocalFS
 
-        if isinstance(backend, LocalFS) and type(backend).rename is not LocalFS.rename:
+        # The MCP root's confined file system renames atomically too
+        # (beneath the folders' descriptors); without it a partial download
+        # sat under the final name.
+        if isinstance(backend, LocalFS) and not _local_with_atomic_rename(backend):
             return False
     except Exception:
         pass
@@ -182,7 +204,10 @@ def _temp_destination_path(backend, dst: str) -> str:
     separator = backend.separator()
     name = dst.rsplit(separator, 1)[-1] if separator in dst else dst
     return safe_join(
-        backend, parent, hidden_sibling_name(name, f".copy-{uuid.uuid4().hex}.tmp")
+        # The process id in the name: core.partials sweeps a leftover only
+        # when it is the dead process's own.
+        backend, parent,
+        hidden_sibling_name(name, f".copy-{os.getpid()}-{uuid.uuid4().hex[:24]}.tmp")
     )
 
 
@@ -193,6 +218,27 @@ def _replacement_backup_path(backend, dst: str) -> str:
     return safe_join(
         backend, parent, hidden_sibling_name(name, f".replace-{uuid.uuid4().hex}.bak")
     )
+
+
+def _track_temp(backend, temp_path: str | None):
+    """Record a local temporary destination (core.partials): a process
+    killed mid-copy leaves it, the next MCP start sweeps it."""
+    if not temp_path:
+        return None
+    from core.local_fs import LocalFS
+
+    if not isinstance(backend, LocalFS):
+        return None
+    from core import partials
+
+    return partials.track(temp_path)
+
+
+def _untrack_temp(record) -> None:
+    if record:
+        from core import partials
+
+        partials.done(record)
 
 
 def _cleanup_temp_destination(backend, temp_path: str | None) -> None:
@@ -571,6 +617,42 @@ def refuse_changed_source(backend, path: str, size_before: int | None, copy_path
     )
 
 
+def local_source_state(backend, path: str) -> tuple | None:
+    """What the local file *path* is now - device, inode, size and
+    modification time in ns - for :func:`refuse_changed_local_source`; None
+    for another backend or when it cannot be read."""
+    from core.local_fs import LocalFS
+
+    if not isinstance(backend, LocalFS):
+        return None
+    try:
+        st = os.lstat(path)
+    except (OSError, TypeError, ValueError):
+        return None
+    if not stat_module.S_ISREG(st.st_mode):
+        return None
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+
+
+def refuse_changed_local_source(backend, path: str, before: tuple | None,
+                                copy_path: str) -> None:
+    """Raise :class:`OSError` when the local file *path* was written to or
+    replaced while it was copied - also at the same size (a database or a
+    disk image rewritten in place, a file saved anew), which the size check
+    does not see and no checksum checks where the destination has none
+    to compare (WebDAV, S3, FTP): the move would delete the only copy of
+    the change."""
+    if before is None:
+        return
+    now = local_source_state(backend, path)
+    if now == before:
+        return
+    raise OSError(
+        f"{path} changed while it was copied (written to or replaced); it was not "
+        f"removed, the copy at {copy_path} may miss the change"
+    )
+
+
 def _local_tree_sizes(path: str) -> dict[str, tuple[bool, int]]:
     """Every entry of the local entry *path* (itself as ``""``, a folder's
     contents below it, links not followed) as ``(is_folder, size)``; a
@@ -663,8 +745,13 @@ def stream_copy_between_backends(
     dst: str,
     *,
     buffer_size: int = 1024 * 1024,
+    expected_size: int | None = None,
 ) -> int:
     """Copy bytes across backend instances with partial-output cleanup.
+
+    *expected_size*: the size the source reported; another byte count
+    raises :class:`ShortCopy` before the destination is replaced (and the
+    partial output is removed as on any failure).
 
     When the destination backend supports a normal temp-file + rename
     workflow, stream into a sibling temp path and only replace the final
@@ -676,6 +763,7 @@ def stream_copy_between_backends(
     if _supports_temp_destination(dst_backend):
         temp_path = _temp_destination_path(dst_backend, dst)
         target = temp_path
+    record = _track_temp(dst_backend, temp_path)
     destination_existed = False
     destination_snapshot = None
     defer = temp_path is None and write_traits(dst_backend).spools_until_close
@@ -696,11 +784,18 @@ def stream_copy_between_backends(
                 if not defer:
                     opened = True
                 while True:
+                    # A cancelled call (an MCP task stopped at SIGTERM, a
+                    # pane's Cancel) stops between two chunks.
+                    transfer_hooks.check()
                     chunk = rf.read(buffer_size)
                     if not chunk:
                         break
                     wf.write(chunk)
                     transferred += len(chunk)
+                if expected_size is not None and transferred != int(expected_size):
+                    raise ShortCopy(
+                        f"the source reported {int(expected_size)} bytes and sent "
+                        f"{transferred}; not a complete copy")
                 if defer and destination_existed:
                     # The writer has sent nothing so far: the old bytes now.
                     destination_snapshot = read_destination_snapshot(dst_backend, dst)
@@ -709,9 +804,11 @@ def stream_copy_between_backends(
                 _discard_or_close_writer(wf, completed=completed)
         if temp_path is not None:
             _finalize_temp_destination(dst_backend, temp_path, dst)
+        _untrack_temp(record)
         return transferred
     except BaseException:
         _cleanup_temp_destination(dst_backend, temp_path)
+        _untrack_temp(record)
         if temp_path is None and opened:  # a writer never opened changed nothing
             _rollback_direct_destination(
                 dst_backend,
@@ -817,6 +914,86 @@ def _is_cross_device(backend, exc: BaseException) -> bool:
     return isinstance(backend, LocalFS)
 
 
+def _copy_local_entry(src: str, dst: str) -> None:
+    """copy2 for a moved entry - and, as mv does, a named pipe, a socket
+    or a device node made again at *dst* (it is a name, it holds no data):
+    copy2 refused a pipe ("is a named pipe") and could not open a socket,
+    so Move to Trash of a folder holding one failed across file systems.
+    A device node this process may not make stops the move (nothing is
+    moved: the caller removes the partial copy)."""
+    st = os.lstat(src)
+    mode = st.st_mode
+    if stat_module.S_ISFIFO(mode):
+        os.mkfifo(dst, stat_module.S_IMODE(mode))
+    elif stat_module.S_ISSOCK(mode) or stat_module.S_ISCHR(mode) or stat_module.S_ISBLK(mode):
+        os.mknod(dst, mode, st.st_rdev)
+    else:
+        _copy_private_then_stat(src, dst)
+        return
+    shutil.copystat(src, dst, follow_symlinks=False)
+
+
+def _copy_private_then_stat(src: str, dst: str, *, strict: bool = True) -> None:
+    """copy2 of the regular file *src* to the new name *dst* - made O_EXCL,
+    never through a link, 0600 while the data goes in; the mode, times and
+    extended attributes of *src* follow (copystat). copy2 made it with the
+    umask's 0644 first: a 0600 file sat readable by everyone for the copy.
+    *strict* False: a file system that takes no mode or times (vfat) keeps
+    the data copied, 0600."""
+    rflags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) \
+        | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_BINARY", 0)
+    wflags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) \
+        | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_BINARY", 0)
+    rfd = os.open(src, rflags)
+    try:
+        if not stat_module.S_ISREG(os.fstat(rfd).st_mode):
+            raise OSError(errno.EINVAL, f"{src} is no longer a regular file; not copied", src)
+        if hasattr(os, "set_blocking"):
+            os.set_blocking(rfd, True)
+        wfd = os.open(dst, wflags, 0o600)
+        try:
+            with os.fdopen(rfd, "rb", closefd=False) as fsrc, \
+                    os.fdopen(wfd, "wb", closefd=False) as fdst:
+                shutil.copyfileobj(fsrc, fdst, 1024 * 1024)
+        finally:
+            os.close(wfd)
+    finally:
+        os.close(rfd)
+    try:
+        shutil.copystat(src, dst, follow_symlinks=False)
+    except OSError:
+        if strict:
+            raise
+        log.debug("no mode or times for %s", dst, exc_info=True)
+
+
+def _copy_local_tree(src: str, dst: str) -> None:
+    """copytree(symlinks=True) of the local folder *src* to the new *dst*,
+    every folder made 0700 while its entries are copied and given its own
+    mode and times last, deepest first: copytree made them with the umask's
+    0755, so the files of a 0700 folder could be opened by anyone in the
+    meantime. Files as :func:`_copy_local_entry`, links as links."""
+    os.mkdir(dst, 0o700)
+    folders = [(src, dst)]
+    stack = [(src, dst)]
+    while stack:
+        here, there = stack.pop()
+        with os.scandir(here) as it:
+            entries = list(it)
+        for entry in entries:
+            target = os.path.join(there, entry.name)
+            if entry.is_symlink():
+                os.symlink(os.readlink(entry.path), target)
+            elif entry.is_dir(follow_symlinks=False):
+                os.mkdir(target, 0o700)
+                folders.append((entry.path, target))
+                stack.append((entry.path, target))
+            else:
+                _copy_local_entry(entry.path, target)
+    for here, there in reversed(folders):
+        shutil.copystat(here, there, follow_symlinks=False)
+
+
 def _move_across_devices(src: str, dst: str, rename_exc: BaseException) -> None:
     """Move a local entry to another file system: copy, then remove.
 
@@ -835,11 +1012,11 @@ def _move_across_devices(src: str, dst: str, rename_exc: BaseException) -> None:
     before = _local_tree_sizes(src)
     try:
         if is_tree:
-            shutil.copytree(src, dst, symlinks=True)
+            _copy_local_tree(src, dst)
         elif os.path.islink(src):
             os.symlink(os.readlink(src), dst)
         else:
-            shutil.copy2(src, dst, follow_symlinks=False)
+            _copy_local_entry(src, dst)
         if _local_tree_sizes(src) != before:
             raise OSError(
                 f"{src} changed while it was copied; it was not moved to {dst}"
@@ -1009,12 +1186,14 @@ def server_side_move(
     if _exists_true(backend, dst):
         raise OSError(f"move target already exists: {dst}")
     size_before = source_size(backend, src)
+    local_before = local_source_state(backend, src)
     server_side_copy(backend, src, dst)
     try:
         # The copy's own size: a server-side copy reports no byte count.
         # Files only - a new folder's own size says nothing about its content.
         refuse_short_copy(src, size_before, _file_size(backend, dst), dst)
         refuse_changed_source(backend, src, size_before, dst)
+        refuse_changed_local_source(backend, src, local_before, dst)
         backend.remove(src)
     except OSError as exc:
         log.warning(

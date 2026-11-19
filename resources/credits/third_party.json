@@ -747,6 +747,23 @@
    }
   },
   {
+   "id": "libidn2",
+   "name": "libidn2",
+   "kind": "library",
+   "purpose": "Internationalised domain names (IDNA 2008) used by GnuTLS",
+   "license": "LGPL-3.0-or-later OR GPL-2.0-or-later",
+   "url": "https://gitlab.com/libidn/libidn2",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "match": {
+    "libraries": [
+     "libidn2"
+    ]
+   }
+  },
+  {
    "id": "libsodium",
    "name": "libsodium",
    "kind": "library",
@@ -761,6 +778,23 @@
    "match": {
     "libraries": [
      "libsodium"
+    ]
+   }
+  },
+  {
+   "id": "libtasn1",
+   "name": "libtasn1",
+   "kind": "library",
+   "purpose": "ASN.1 parsing used by GnuTLS and p11-kit",
+   "license": "LGPL-2.1-or-later",
+   "url": "https://www.gnu.org/software/libtasn1/",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "match": {
+    "libraries": [
+     "libtasn1"
     ]
    }
   },
@@ -805,6 +839,23 @@
    "match": {
     "modules": [
      "multidict"
+    ]
+   }
+  },
+  {
+   "id": "p11-kit",
+   "name": "p11-kit",
+   "kind": "library",
+   "purpose": "PKCS #11 module loading and the system trust store, used by GnuTLS",
+   "license": "BSD-3-Clause",
+   "url": "https://p11-glue.github.io/p11-glue/p11-kit.html",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "match": {
+    "libraries": [
+     "libp11-kit"
     ]
    }
   },
@@ -1650,7 +1701,7 @@
    "id": "faster-whisper-models",
    "name": "faster-whisper models (Whisper base, small)",
    "kind": "data",
-   "purpose": "Local speech recognition models, downloaded in Help > Features…",
+   "purpose": "Local speech recognition models, downloaded in Help > Features\u2026",
    "license": "MIT",
    "url": "https://huggingface.co/Systran",
    "ships": [
@@ -1942,19 +1993,20 @@
    "id": "gnutls",
    "name": "GnuTLS",
    "kind": "library",
-   "purpose": "TLS for network streams of PyAV's FFmpeg",
+   "purpose": "TLS library: the system copy in the Linux binaries (with its libraries Nettle, p11-kit, libtasn1, libidn2, libunistring) and PyAV's FFmpeg network streams",
    "license": "LGPL-2.1-or-later",
    "url": "https://www.gnutls.org",
    "ships": [
     "axross-full",
+    "axross-slim",
     "pip-extra"
    ],
-   "via": "PyAV",
    "match": {
     "libraries": [
      "libgnutls"
     ]
-   }
+   },
+   "note": "axross-slim carries the system copy only; PyAV's own copy is in axross-full and the av wheel"
   },
   {
    "id": "google-api-core",
@@ -2913,14 +2965,14 @@
    "id": "libunistring",
    "name": "libunistring",
    "kind": "library",
-   "purpose": "Unicode string functions used by GnuTLS",
+   "purpose": "Unicode string functions used by GnuTLS (the system copy, and PyAV's own in axross-full)",
    "license": "LGPL-3.0-or-later OR GPL-2.0-or-later",
    "url": "https://www.gnu.org/software/libunistring/",
    "ships": [
     "axross-full",
+    "axross-slim",
     "pip-extra"
    ],
-   "via": "PyAV",
    "match": {
     "libraries": [
      "libunistring"
@@ -3329,14 +3381,14 @@
    "id": "nettle",
    "name": "Nettle",
    "kind": "library",
-   "purpose": "Cryptographic library used by GnuTLS",
+   "purpose": "Cryptographic library used by GnuTLS (the system copy, and PyAV's own in axross-full)",
    "license": "LGPL-3.0-or-later OR GPL-2.0-or-later",
    "url": "https://www.lysator.liu.se/~nisse/nettle/",
    "ships": [
     "axross-full",
+    "axross-slim",
     "pip-extra"
    ],
-   "via": "PyAV",
    "match": {
     "libraries": [
      "libnettle",
@@ -3708,7 +3760,7 @@
    "id": "piper-voices",
    "name": "Piper voices",
    "kind": "data",
-   "purpose": "The Agent dock's voices, downloaded in Help > Features…",
+   "purpose": "The Agent dock's voices, downloaded in Help > Features\u2026",
    "license": "MIT",
    "url": "https://huggingface.co/rhasspy/piper-voices",
    "ships": [
@@ -3753,7 +3805,7 @@
    "id": "polkit",
    "name": "polkit (pkexec)",
    "kind": "program",
-   "purpose": "\"Open as root…\" and privileged mounts",
+   "purpose": "\"Open as root\u2026\" and privileged mounts",
    "license": "LGPL-2.0-or-later",
    "url": "https://github.com/polkit-org/polkit",
    "ships": [

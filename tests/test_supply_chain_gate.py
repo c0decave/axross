@@ -97,6 +97,28 @@ def test_sad_a_member_changed_after_the_build_breaks_the_record(tmp_path):
     assert any("x/extra.py is in the wheel but not in RECORD" in p for p in problems)
 
 
+def test_a_record_naming_itself_with_a_backslash_is_no_problem_but_another_member_is(tmp_path):
+    # PyQt6-Qt6's Windows wheel writes RECORD's own line as 'dist-info\RECORD,,'
+    info = "demo-1.0.dist-info"
+    members = {"x/a.py": b"ok = 1\n", f"{info}/METADATA": b"Metadata-Version: 2.1\nName: demo\nVersion: 1.0\n"}
+    lines = [_record_line(n, d) for n, d in members.items()]
+    good = zipfile.ZipFile(tmp_path / "demo-1.0-py3-none-win_amd64.whl", "w")
+    for n, d in members.items():
+        good.writestr(n, d)
+    good.writestr(f"{info}/RECORD", "\n".join(lines + [f"{info}\\RECORD,,"]) + "\n")
+    good.close()
+    assert PI.inspect(good.filename).record_problems == []
+    bad = zipfile.ZipFile(tmp_path / "demo-1.0-py3-none-any.whl", "w")
+    for n, d in members.items():
+        bad.writestr(n, d)
+    bad.writestr(f"{info}/RECORD", "\n".join([_record_line("x\\a.py", b"ok = 1\n"), lines[1],
+                                              f"{info}\\RECORD,,"]) + "\n")
+    bad.close()
+    problems = PI.inspect(bad.filename).record_problems
+    assert any("RECORD lists x\\a.py, which is not in the wheel" in p for p in problems)
+    assert any("x/a.py is in the wheel but not in RECORD" in p for p in problems)
+
+
 def test_sad_a_member_that_leaves_the_archive_is_refused(tmp_path):
     path = tmp_path / "x-1.0.tar.gz"
     make_sdist(path, {"x-1.0/setup.py": b"from setuptools import setup\nsetup()\n", "../../etc/evil": b"x"})

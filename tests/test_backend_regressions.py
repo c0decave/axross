@@ -1646,13 +1646,28 @@ class RshBackendTests(unittest.TestCase):
         with self.assertRaises(OSError):
             _validate_path("/foo\x00bar")
 
-    def test_open_read_uses_head_c_cap(self) -> None:
+    def test_open_read_streams_cat_and_stops_at_the_cap(self) -> None:
+        # The read streams "cat -- path" through the rsh process into a
+        # spool; the cap is counted on the client (tests/
+        # test_rsh_read_integrity.py), not by "head -c" in memory.
+        import io
+        import re as _re
+
         sess = self._make_session()
         recorded: list[str] = []
-        with self._patch_runner(recorded, stdout=b"file payload"):
-            sess.open_read("/etc/motd")
-        # The head -c <cap> guard must appear in the rsh command line.
-        self.assertTrue(any("head -c" in cmd for cmd in recorded), recorded)
+
+        def fake_popen(argv, **_kw):
+            recorded.append(" ".join(argv))
+            tag = _re.search(r"__AXROSS_RSH_STATUS_[0-9a-f]+__", argv[-1]).group(0)
+            proc = mock.Mock(returncode=0)
+            proc.stdout = io.BytesIO(b"file payload" + f"\n{tag} 0\n".encode())
+            proc.stderr = io.BytesIO(b"")
+            proc.poll.return_value = 0
+            return proc
+
+        with mock.patch("core.rsh_client.subprocess.Popen", side_effect=fake_popen):
+            self.assertEqual(sess.open_read("/etc/motd").read(), b"file payload")
+        self.assertTrue(any("cat -- /etc/motd" in cmd for cmd in recorded), recorded)
 
     def test_perms_to_octal(self) -> None:
         from core.rsh_client import _perms_to_octal
@@ -3120,7 +3135,11 @@ class SvnFsSessionTests(unittest.TestCase):
                 ("LICENSE", "file", 567),
             ]
         )
-        with mock.patch("subprocess.run") as run:
+        # svn ls streams through Popen (SvnFsSession._run_capped).
+        with (
+            mock.patch("subprocess.run") as run,
+            mock.patch("subprocess.Popen", popen_from_run(run)),
+        ):
             run.return_value = mock.MagicMock(
                 returncode=0,
                 stdout=ls_xml,
@@ -3186,7 +3205,10 @@ class SvnFsSessionTests(unittest.TestCase):
 
     def test_subprocess_failure_surfaces_as_oserror(self) -> None:
         sess, svn_mod = self._make_session()
-        with mock.patch("subprocess.run") as run:
+        with (
+            mock.patch("subprocess.run") as run,
+            mock.patch("subprocess.Popen", popen_from_run(run)),
+        ):
             run.return_value = mock.MagicMock(
                 returncode=1,
                 stdout=b"",
@@ -3198,9 +3220,8 @@ class SvnFsSessionTests(unittest.TestCase):
 
     def test_subprocess_timeout_surfaces_as_oserror(self) -> None:
         sess, svn_mod = self._make_session()
-        with mock.patch(
-            "subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="svn", timeout=60.0)
-        ):
+        run = mock.MagicMock(side_effect=subprocess.TimeoutExpired(cmd="svn", timeout=60.0))
+        with mock.patch("subprocess.Popen", popen_from_run(run)):
             with self.assertRaises(OSError) as cm:
                 sess.list_dir("/anything")
         self.assertIn("timed out", str(cm.exception).lower())
@@ -3221,13 +3242,18 @@ class SvnFsSessionTests(unittest.TestCase):
                 url="https://svn.example.com/repo",
                 revision="42",
             )
+        # svn ls streams through Popen (SvnFsSession._run_capped).
+        with (
+            mock.patch("subprocess.run") as run,
+            mock.patch("subprocess.Popen", popen_from_run(run)),
+        ):
             run.return_value = mock.MagicMock(
                 returncode=0,
                 stdout=self._ls_xml([("foo", "file", 1)]),
                 stderr=b"",
             )
             sess.list_dir("/")
-        # Last call to subprocess.run should include --revision 42.
+        # The svn ls call should include --revision 42.
         last_argv = run.call_args.args[0]
         self.assertIn("--revision", last_argv)
         idx = last_argv.index("--revision")

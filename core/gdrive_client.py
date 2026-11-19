@@ -103,6 +103,16 @@ def _is_retryable(exc: BaseException, idempotent: bool) -> bool:
     return idempotent and status in cloud_http.RETRYABLE_STATUSES
 
 
+class _CancelledAfterUncertainTry(InterruptedError):
+    """Cancel in the retry pause after a try whose fate is unknown (a 5xx,
+    a lost answer): that try may have done its work."""
+
+
+class _MayHaveCommitted(InterruptedError):
+    """A cancelled upload whose last chunk may have made the file: not
+    reported as untouched (UploadCancelled)."""
+
+
 def _run(request, *, idempotent: bool = True, gone_ok: bool = False, step=None):
     """``request.execute()`` with bounded retries (cloud_http) on what
     Drive documents as "try again": 429, the 403 rate limits, 5xx.
@@ -138,7 +148,13 @@ def _run(request, *, idempotent: bool = True, gone_ok: bool = False, step=None):
             # the first try did its work is unknown.
             uncertain = uncertain or (status is not None and status >= 500) or status is None
             log.debug("Google Drive request failed (%s); retry %d", exc, attempt)
-            cloud_http.pause(attempt, retry_after)
+            try:
+                cloud_http.pause(attempt, retry_after)
+            except InterruptedError:
+                if uncertain:
+                    # The try before the pause may have done its work.
+                    raise _CancelledAfterUncertainTry(transfer_hooks.CANCELLED) from None
+                raise
 
 
 def _drive_error(exc: BaseException, message: str, filename: str | None = None) -> OSError:
@@ -150,6 +166,12 @@ def _drive_error(exc: BaseException, message: str, filename: str | None = None) 
     if isinstance(exc, InterruptedError):
         return transfer_hooks.UploadCancelled(*exc.args) if isinstance(
             exc, transfer_hooks.UploadCancelled) else InterruptedError(*exc.args)
+    if isinstance(exc, cloud_http.CloudSignInExpired):
+        return exc
+    if type(exc).__name__ == "RefreshError":
+        # google.auth: the refresh token was revoked or expired
+        # (invalid_grant) - shown as raw text with EIO before.
+        return cloud_http.CloudSignInExpired("Google Drive", cloud_http.reason(exc)[:200])
     status = _http_status(exc)
     if status is None:
         return cloud_http.rewrap(exc, message, filename)
@@ -252,15 +274,24 @@ def _upload(request, hooks, size: int) -> None:
         if hooks is not None:
             hooks.sent(size, size, check=False)
         return
+    sent = 0
     while True:
         hooks.check()
-        status, response = _run(request, step=request.next_chunk)
+        try:
+            status, response = _run(request, step=request.next_chunk)
+        except _CancelledAfterUncertainTry:
+            if sent + _UPLOAD_CHUNK >= size:
+                # The chunk whose answer was lost was the last: Drive may
+                # have made the file with it.
+                raise _MayHaveCommitted(transfer_hooks.CANCELLED) from None
+            raise
         if response is not None:
             # The last chunk made the file: too late for a Cancel.
             hooks.sent(size, size, check=False)
             return
         done = getattr(status, "resumable_progress", None)
         if isinstance(done, int):
+            sent = done
             hooks.sent(done, size)
 
 
@@ -318,6 +349,7 @@ class _SpooledWriter:
                 request = self._service.files().update(
                     fileId=self._existing_id,
                     media_body=media,
+                    **_ALL_DRIVES,
                 )
             else:
                 body = {
@@ -327,10 +359,14 @@ class _SpooledWriter:
                 request = self._service.files().create(
                     body=body,
                     media_body=media,
+                    **_ALL_DRIVES,
                 )
             with transfer_hooks.bound(hooks):
                 _upload(request, hooks, size)
-        except InterruptedError:
+        except InterruptedError as exc:
+            if isinstance(exc, _MayHaveCommitted):
+                # The engine rolls the destination back.
+                raise InterruptedError(transfer_hooks.CANCELLED) from None
             # Cancelled between two chunks: a resumable session commits
             # the file only with its last chunk, so nothing was made or
             # replaced (Drive drops the unfinished session).
@@ -794,7 +830,10 @@ class GDriveSession(SessionLifecycle):
     def _invalidate_cache(self, path: str) -> None:
         """Remove a path (and its children) from the resolution cache."""
         path = self.normalize(path)
-        to_remove = [k for k in self._path_cache if k == path or k.startswith(path + "/")]
+        # list(): one step under the GIL - a comprehension over the dict
+        # itself failed with "dictionary changed size during iteration"
+        # while another thread's listing filled the cache.
+        to_remove = [k for k in list(self._path_cache) if k == path or k.startswith(path + "/")]
         for k in to_remove:
             del self._path_cache[k]
 
@@ -940,7 +979,7 @@ class GDriveSession(SessionLifecycle):
         # Names cached before and gone from the folder now (renamed,
         # moved or deleted on the web) leave the cache with their subtree.
         prefix = base.rstrip("/") + "/"
-        for cached in [k for k in self._path_cache if k.startswith(prefix)
+        for cached in [k for k in list(self._path_cache) if k.startswith(prefix)
                        and "/" not in k[len(prefix):] and k[len(prefix):] not in ids]:
             self._invalidate_cache(cached)
         for name, file_ids in ids.items():
@@ -1014,6 +1053,7 @@ class GDriveSession(SessionLifecycle):
                 .create(
                     body=body,
                     fields="id",
+                    **_ALL_DRIVES,
                 ), idempotent=False)
             )
         except Exception as e:
@@ -1394,6 +1434,7 @@ class GDriveSession(SessionLifecycle):
                     fileId=fid,
                     body=body,
                     fields="id",
+                    **_ALL_DRIVES,
                 ), idempotent=False)
             )
             meta = as_dict(
@@ -1401,6 +1442,7 @@ class GDriveSession(SessionLifecycle):
                 .get(
                     fileId=fid,
                     fields="webViewLink,webContentLink",
+                    **_ALL_DRIVES,
                 ))
             )
         except Exception as exc:
@@ -1423,10 +1465,14 @@ class GDriveSession(SessionLifecycle):
     def share_revoke(self, path: str, permission_id: str) -> None:
         """Remove a permission previously granted via share()."""
         fid = self._resolve_path(path)
-        _run(self._service.permissions().delete(
-            fileId=fid,
-            permissionId=permission_id,
-        ))
+        try:
+            _run(self._service.permissions().delete(
+                fileId=fid,
+                permissionId=permission_id,
+                **_ALL_DRIVES,
+            ))
+        except Exception as exc:
+            raise _drive_error(exc, f"Cannot revoke the share of {path}: {exc}") from exc
 
     def permissions_list(self, path: str) -> list[dict]:
         """List every permission on a file (incl. owners + inherited
@@ -1439,6 +1485,7 @@ class GDriveSession(SessionLifecycle):
             kwargs = dict(
                 fileId=fid,
                 fields="permissions(id,role,type,emailAddress,domain),nextPageToken",
+                **_ALL_DRIVES,
             )
             if page_token:
                 kwargs["pageToken"] = page_token
@@ -1487,6 +1534,7 @@ class GDriveSession(SessionLifecycle):
                 .get(
                     fileId=fid,
                     fields=f"{field},md5Checksum",
+                    **_ALL_DRIVES,
                 ))
             )
         except Exception as exc:

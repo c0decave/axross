@@ -256,14 +256,25 @@ def from_profile(profile) -> SecurityInfo:
                             "user id the client claims (no Kerberos krb5p)")
     if proto == "iscsi":
         return SecurityInfo(LEVEL_CLEARTEXT, f"iSCSI - {_CLEAR} (CHAP protects only the login)")
-    for name, flag, title in (("imap", "imap_ssl", "IMAP"), ("pop3", "pop3_ssl", "POP3"),
-                              ("nntp", "nntp_ssl", "NNTP")):
+    for name, flag, title, upgrade in (("imap", "imap_ssl", "IMAP", "STARTTLS"),
+                                       ("pop3", "pop3_ssl", "POP3", "STLS"),
+                                       ("nntp", "nntp_ssl", "NNTP", "")):
         if proto == name:
             if get(flag, True):
                 return SecurityInfo(LEVEL_TLS, f"{title} over TLS, certificate verified")
+            if upgrade and get(f"{name}_starttls", True):
+                return SecurityInfo(LEVEL_TLS, f"{title} with {upgrade} before the login, certificate "
+                                    "verified - refused when the server does not offer it")
             return SecurityInfo(LEVEL_CLEARTEXT, f"{title} without TLS - {_CLEAR}, the password too")
     if proto == "winrm":
-        return SecurityInfo(LEVEL_TLS, "WinRM over HTTPS (TLS)")
+        if not get("winrm_https", True):
+            # pywinrm seals NTLM messages (RC4) over http://: not readable
+            # as such, but weak, and no certificate checks the server.
+            return SecurityInfo(LEVEL_TLS_WEAK, "WinRM over HTTP (port 5985), no TLS - only NTLM "
+                                "message encryption (RC4), the server is not checked by a certificate")
+        if not get("winrm_verify_tls", True):
+            return SecurityInfo(LEVEL_TLS_WEAK, "WinRM over HTTPS (TLS), certificate NOT verified")
+        return SecurityInfo(LEVEL_TLS, "WinRM over HTTPS (TLS), certificate verified")
     if proto == "svn":
         host = str(get("host", "") or "")
         scheme = urlsplit(host).scheme.lower() if "://" in host else ""
@@ -288,6 +299,30 @@ def from_profile(profile) -> SecurityInfo:
         return SecurityInfo(LEVEL_CLEARTEXT, f"Gopher - {_CLEAR}")
     if proto == "pjl":
         return SecurityInfo(LEVEL_CLEARTEXT, f"PJL printer port - {_CLEAR}")
+    if proto == "sqlite":
+        return SecurityInfo(LEVEL_LOCAL, "A database file on this computer - no network")
+    if proto == "git":
+        repo = str(get("host", "") or "")
+        if "://" in repo:
+            return url_info(repo, what="Git")
+        if ":" in repo and not repo.startswith(("/", "~", ".")):
+            return SecurityInfo(LEVEL_ENCRYPTED, "Git over SSH, encrypted")
+        return SecurityInfo(LEVEL_LOCAL, "A repository on this computer - no network")
+    if proto == "ldap":
+        if get("ldap_ssl", False):
+            return SecurityInfo(LEVEL_TLS, "LDAPS, certificate verified")
+        if get("ldap_starttls", True):
+            return SecurityInfo(LEVEL_TLS, "LDAP with StartTLS before the bind, certificate verified - "
+                                "refused when the server does not offer it")
+        return SecurityInfo(LEVEL_CLEARTEXT, f"LDAP without TLS - {_CLEAR}, the bind password too")
+    if proto == "redis":
+        if get("db_tls", False):
+            return SecurityInfo(LEVEL_TLS, "Redis over TLS, certificate verified")
+        return SecurityInfo(LEVEL_CLEARTEXT, f"Redis without TLS - {_CLEAR}, the password too")
+    if proto == "slp":
+        return SecurityInfo(LEVEL_CLEARTEXT, f"SLP service discovery - {_CLEAR}")
+    if proto == "exchange":
+        return SecurityInfo(LEVEL_TLS, "Exchange Web Services over HTTPS (TLS)")
     return SecurityInfo(LEVEL_UNKNOWN, f"{proto or 'This connection'}: how it is protected is not known")
 
 

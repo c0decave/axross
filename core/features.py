@@ -24,6 +24,7 @@ answer is the axross-full download of the same release.
 from __future__ import annotations
 
 import importlib
+import importlib.machinery
 import importlib.util
 import os
 import shutil
@@ -45,7 +46,7 @@ EXTRAS: dict[str, tuple[str, ...]] = {
     "winrm": ("pywinrm>=0.4",),
     "wmi": ("impacket>=0.11",),
     "exchange": ("exchangelib>=5.0",),
-    "adb": ("adb-shell>=0.4",),
+    "adb": ("adb-shell[usb]>=0.4",),
     "archive": ("py7zr>=1.1.3", "rarfile>=4.0", "backports.zstd>=1.0; python_version < '3.14'"),
     "tftp": ("tftpy>=0.8",),
     "postgres": ("psycopg[binary]>=3.1",),
@@ -324,7 +325,10 @@ def can_pip_install() -> tuple[bool, str]:
     if is_frozen():
         return False, ("This is a frozen axross build: pip cannot add to it. The axross-full "
                        "build of the same release has every optional feature.")
-    if importlib.util.find_spec("pip") is None:
+    # sys.path only, past the meta path: setuptools' distutils hack answers
+    # a lookup of "pip" by switching itself off for the process (so a later
+    # "import setuptools" in it fails on the standard library's distutils).
+    if importlib.machinery.PathFinder.find_spec("pip") is None:
         return False, "This Python has no pip module (python -m pip)."
     return True, ""
 

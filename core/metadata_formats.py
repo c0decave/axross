@@ -22,13 +22,22 @@ TIFF
 Office (docx / xlsx / pptx and the macro variants, odt / ods / odp)
     The zip is rewritten entry by entry with the same order and compression
     method; only the property parts (``docProps/core.xml``, ``app.xml``,
-    ``custom.xml`` or ODF ``meta.xml``) are replaced by empty ones, so every
-    other entry decompresses to the same bytes. The zip comment and the
-    per-entry extra fields (which can carry timestamps and user ids) go too.
+    ``custom.xml`` - found by their relationships, in any letter case and
+    in Strict OOXML too - or every ODF ``meta.xml``, an embedded object's
+    ``Object N/meta.xml`` included) are replaced by empty ones, so every
+    other entry decompresses to the same bytes. The zip comment, entry
+    comments and the per-entry extra fields (which can carry timestamps and
+    user ids) go too, and the reader lists them: a file with nothing else
+    would otherwise read as empty and be left as it was. Kept: the entries'
+    own dates, and everything inside the content parts (comments, tracked
+    changes, embedded pictures).
 PDF
     Read through pypdf when installed, else QtPdf. Removal needs pypdf and is
-    a full rewrite (Info dictionary, XMP streams of the catalog and pages,
-    PieceInfo): an incremental update would leave the old bytes in the file.
+    a full rewrite: the Info dictionary, XMP and PieceInfo wherever they are
+    (catalog, pages, images, forms, any object), earlier saved revisions and
+    objects nothing uses go. The reader lists each of those, so a PDF whose
+    only author is in an earlier revision is not "unchanged". Kept: the
+    trailer /ID, annotations, attachments and the content of images.
 Audio / video
     ``ffprobe`` to read, ``ffmpeg -map_metadata -1 -map_chapters -1 -c copy``
     to remove (streams copied, never re-encoded). Data streams (camera GPS
@@ -55,6 +64,7 @@ import warnings
 import zipfile
 import zlib
 from dataclasses import dataclass
+from html import escape as html_escape
 
 log = logging.getLogger(__name__)
 
@@ -1446,6 +1456,9 @@ _OOXML_REL_TYPES = {
     "core-properties": "Office core",
     "extended-properties": "Office app",
     "custom-properties": "Office custom",
+    # Strict OOXML (ISO/IEC 29500 Strict) names them so.
+    "extendedProperties": "Office app",
+    "customProperties": "Office custom",
 }
 _OOXML_DEFAULTS = {
     "docProps/core.xml": "Office core",
@@ -1516,33 +1529,70 @@ def _office_open(path: str) -> tuple[zipfile.ZipFile, str, dict[str, str]]:
                 f"Office file would unpack to {declared} bytes (limit {MAX_ZIP_UNCOMPRESSED})"
             )
         by_name = {i.filename: i for i in infos}
-        if "[Content_Types].xml" in by_name:
+        # OPC part names ignore case: Office opens docProps/Core.xml named
+        # /docProps/core.xml in its relationship.
+        by_folded = {name.casefold(): name for name in by_name}
+        if "[content_types].xml" in by_folded:
             parts: dict[str, str] = {}
-            rels = by_name.get("_rels/.rels")
+            rels = by_name.get(by_folded.get("_rels/.rels", ""))
             if rels is not None:
                 try:
                     root = parse_xml(_read_member(zf, rels, MAX_XML_BYTES))
                     for rel in root:
                         rtype = rel.get("Type", "")
-                        target = rel.get("Target", "").lstrip("/")
+                        target = by_folded.get(rel.get("Target", "").lstrip("/").casefold())
                         for suffix, group in _OOXML_REL_TYPES.items():
-                            if rtype.endswith("/" + suffix) and target in by_name:
+                            if rtype.endswith("/" + suffix) and target is not None:
                                 parts[target] = group
                 except FormatError as exc:
                     log.info("metadata: unreadable _rels/.rels: %s", exc)
             for name, group in _OOXML_DEFAULTS.items():
-                if name in by_name and name not in parts:
-                    parts[name] = group
+                actual = by_folded.get(name.casefold())
+                if actual is not None and actual not in parts:
+                    parts[actual] = group
             return zf, "ooxml", parts
         mimetype = by_name.get("mimetype")
         if mimetype is not None:
             kind = _read_member(zf, mimetype, 256)
             if kind.startswith(b"application/vnd.oasis.opendocument"):
-                return zf, "odf", ({"meta.xml": "ODF meta"} if "meta.xml" in by_name else {})
+                # The document's meta.xml and each embedded object's own
+                # ("Object 1/meta.xml": a chart keeps its author there).
+                return zf, "odf", {name: "ODF meta" for name in by_name
+                                   if name == "meta.xml" or name.endswith("/meta.xml")}
         raise FormatError("neither an OOXML nor an OpenDocument file")
     except BaseException:
         zf.close()
         raise
+
+
+def _zip_fields(zf: zipfile.ZipFile, fields: _Fields) -> None:
+    """What the zip itself carries besides its parts: the archive comment
+    (a saved path such as C:\\Users\\<name>), entry comments and extra
+    fields (owner uid / gid, exact times). A rewrite drops them all; without
+    them listed a file whose properties were already empty was "unchanged"."""
+    if zf.comment:
+        fields.add("Zip", "archive comment", zf.comment)
+    infos = zf.infolist()
+    commented = [i.filename for i in infos if i.comment]
+    if commented:
+        fields.add("Zip", "entry comments", f"{len(commented)} entries ({commented[0]}, …)")
+    extra = sum(1 for i in infos if i.extra)
+    if extra:
+        fields.add("Zip", "extra fields (owner ids, times)", f"{extra} entries")
+
+
+def _empty_part(root, group: str) -> bytes:
+    """An empty property part with the root element of *root*: the usual
+    one for Transitional, the document's own namespace for Strict."""
+    default = _EMPTY_PARTS[group]
+    tag = getattr(root, "tag", "")
+    if not isinstance(tag, str) or not tag.startswith("{"):
+        return default.encode("utf-8")
+    namespace, local = tag[1:].split("}", 1)
+    if f'"{namespace}"' in default:
+        return default.encode("utf-8")
+    return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+            f'<p:{local} xmlns:p="{html_escape(namespace, quote=True)}"/>').encode("utf-8")
 
 
 def office_fields(path: str) -> tuple[list[Field], str, bool]:
@@ -1553,6 +1603,7 @@ def office_fields(path: str) -> tuple[list[Field], str, bool]:
         return [], str(exc), False
     error = ""
     with zf:
+        _zip_fields(zf, fields)
         for member, group in parts.items():
             try:
                 root = parse_xml(_read_member(zf, zf.getinfo(member), MAX_XML_BYTES))
@@ -1606,7 +1657,11 @@ def office_clean(src: str, dst: str) -> None:
                     pass
                 replacements[member] = _odf_empty_meta(version).encode("utf-8")
             else:
-                replacements[member] = _EMPTY_PARTS[group].encode("utf-8")
+                try:
+                    root = parse_xml(_read_member(zf, zf.getinfo(member), MAX_XML_BYTES))
+                except FormatError:
+                    root = None
+                replacements[member] = _empty_part(root, group)
         try:
             with zipfile.ZipFile(dst, "w") as out:
                 for info in zf.infolist():
@@ -1703,18 +1758,118 @@ def _pdf_fields_pypdf(path: str) -> tuple[list[Field], str, bool]:
             stream = root["/Metadata"].get_object()
             raw = stream.get_data()
             xmp_fields(raw[:MAX_XML_BYTES], fields)
+        page_ids = set()
         for n, page in enumerate(reader.pages):
             if n >= 10_000:
                 break
+            ref = getattr(page, "indirect_reference", None)
+            if ref is not None:
+                page_ids.add(ref.idnum)
             if "/Metadata" in page:
                 fields.add("XMP", f"page {n + 1}", "page-level XMP stream")
             if "/PieceInfo" in page:
                 fields.add("PDF", f"page {n + 1} PieceInfo", "application private data")
         if "/PieceInfo" in root:
             fields.add("PDF", "PieceInfo", "application private data")
+        _pdf_hidden_fields(reader, path, root, page_ids, fields)
     except Exception as exc:  # noqa: BLE001 - pypdf raises many types on hostile input
         return list(fields), f"unreadable PDF: {exc}", fields.truncated
     return list(fields), "", fields.truncated
+
+
+#: Most objects whose references are followed to find the ones nothing uses.
+MAX_PDF_WALK_OBJECTS = 500_000
+
+
+def _pdf_listed_ids(reader) -> set[int]:
+    """The object numbers the cross-reference sections list as in use."""
+    ids: set[int] = set()
+    for table in getattr(reader, "xref", {}).values():
+        ids.update(int(n) for n in table)
+    ids.update(int(n) for n in getattr(reader, "xref_objStm", {}))
+    ids.discard(0)
+    return ids
+
+
+def _pdf_reachable(reader, listed: set[int]) -> set[int] | None:
+    """The objects reachable from the trailer (and a linearisation
+    dictionary); None when there are too many to follow."""
+    from pypdf.generic import ArrayObject, DictionaryObject, IndirectObject
+
+    if len(listed) > MAX_PDF_WALK_OBJECTS:
+        return None
+    seen: set[int] = set()
+    stack: list = [reader.trailer]
+    for idnum in listed:  # a linearisation dictionary is referenced by nothing
+        try:
+            obj = reader.get_object(idnum)
+        except Exception:  # noqa: BLE001 - a damaged object: not a start
+            continue
+        if isinstance(obj, DictionaryObject) and ("/Linearized" in obj
+                                                  or obj.get("/Type") in ("/ObjStm", "/XRef")):
+            seen.add(idnum)
+            stack.append(obj)
+    while stack:
+        obj = stack.pop()
+        if isinstance(obj, IndirectObject):
+            if obj.idnum in seen:
+                continue
+            seen.add(obj.idnum)
+            try:
+                obj = obj.get_object()
+            except Exception:  # noqa: BLE001 - a dangling reference
+                continue
+        if isinstance(obj, DictionaryObject):
+            stack.extend(obj.values())
+        elif isinstance(obj, ArrayObject):
+            stack.extend(obj)
+    return seen
+
+
+def _pdf_hidden_fields(reader, path: str, root, page_ids: set[int], fields) -> None:
+    """What a PDF carries outside its current Info, catalog and pages:
+    XMP or PieceInfo on any other object (an image, a form), earlier saved
+    revisions, and objects nothing uses (an author an incremental save
+    "removed" by no longer pointing at it). The rewrite drops them all;
+    unlisted, such a file read as empty and was left "unchanged"."""
+    from pypdf.generic import DictionaryObject
+
+    listed = _pdf_listed_ids(reader)
+    if len(listed) > MAX_PDF_WALK_OBJECTS:
+        # Too many to look at one by one (a hostile file can list millions):
+        # not "nothing found" - the rewrite still drops what it can.
+        fields.add("PDF", "objects not checked", f"{len(listed)} (rewritten anyway)")
+        return
+    root_ref = reader.trailer.raw_get("/Root") if hasattr(reader.trailer, "raw_get") else None
+    root_id = getattr(root_ref, "idnum", None)
+    shown = 0
+    for idnum in sorted(listed):
+        if idnum in page_ids or idnum == root_id:
+            continue
+        try:
+            obj = reader.get_object(idnum)
+        except Exception:  # noqa: BLE001
+            continue
+        if not isinstance(obj, DictionaryObject):
+            continue
+        what = str(obj.get("/Subtype") or obj.get("/Type") or "object").lstrip("/")
+        for key, label in (("/Metadata", "XMP"), ("/PieceInfo", "PieceInfo")):
+            if key in obj and shown < 200:
+                shown += 1
+                fields.add("PDF objects", f"{label} on object {idnum} ({what})",
+                           "XMP stream" if label == "XMP" else "application private data")
+    try:
+        with open(path, "rb") as fh:
+            sections = fh.read().count(b"startxref")
+    except OSError:
+        sections = 1
+    if sections > 1:
+        fields.add("PDF", "saved revisions", f"{sections} (the earlier ones are dropped)")
+    reachable = _pdf_reachable(reader, listed)
+    if reachable is not None:
+        unused = len(listed - reachable)
+        if unused:
+            fields.add("PDF", "objects nothing uses", f"{unused} (dropped)")
 
 
 _QT_PDF_NAMES = (
@@ -1730,26 +1885,20 @@ _QT_PDF_NAMES = (
 
 
 def _pdf_fields_qt(path: str) -> tuple[list[Field], str, bool]:
-    from PyQt6.QtPdf import QPdfDocument
+    # pdfium in a killable child (core.pdf_worker): a PDF that hangs or
+    # crashes it ends only that child.
+    from core import pdf_worker as PW
 
     fields = _Fields()
-    doc = QPdfDocument(None)
     try:
-        error = doc.load(path)
-        if error != QPdfDocument.Error.None_:
-            name = getattr(error, "name", str(error))
-            return [], f"QtPdf cannot read the PDF ({name})", False
-        for key in _QT_PDF_NAMES:
-            value = doc.metaData(getattr(QPdfDocument.MetaDataField, key))
-            if hasattr(value, "isValid"):
-                if not value.isValid():
-                    continue
-                value = value.toString("yyyy-MM-dd HH:mm:ss t")
-            if value not in (None, ""):
-                fields.add("PDF Info", key, value)
-    finally:
-        doc.close()
-        doc.deleteLater()
+        with PW.borrowed() as renderer:
+            renderer.open(path)
+            info = renderer.metadata(_QT_PDF_NAMES)
+    except PW.PdfError as exc:
+        return [], f"QtPdf cannot read the PDF ({exc})", False
+    for key in _QT_PDF_NAMES:
+        if info.get(key):
+            fields.add("PDF Info", key, info[key])
     try:
         with open(path, "rb") as fh:
             _xmp_scan(fh.read(64 * 1024 * 1024), fields)
@@ -1793,6 +1942,14 @@ def pdf_clean(src: str, dst: str) -> None:
             for key in ("/Metadata", "/PieceInfo"):
                 if key in page:
                     del page[key]
+        # ...and on every other object: an image or a form keeps its own XMP.
+        from pypdf.generic import DictionaryObject
+
+        for obj in getattr(writer, "_objects", []) or []:
+            if isinstance(obj, DictionaryObject):
+                for key in ("/Metadata", "/PieceInfo"):
+                    if key in obj:
+                        del obj[key]
         # The Info dictionary and the XMP stream are unreferenced now but
         # still among the writer's objects; without dropping orphans their
         # bytes would be written out again.

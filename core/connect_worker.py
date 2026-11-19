@@ -174,6 +174,9 @@ class _ConnectWorker(QObject):
     succeeded = pyqtSignal(object)  # session
     failed = pyqtSignal(object)  # exception
     finished = pyqtSignal()  # always fires on exit (even cancelled)
+    #: A note while the connect waits for the user elsewhere
+    #: (core.connect_notice: "Check the phone: allow USB debugging").
+    notice = pyqtSignal(str)
 
     def __init__(
         self,
@@ -198,6 +201,12 @@ class _ConnectWorker(QObject):
 
     @pyqtSlot()
     def run(self) -> None:
+        from core import connect_notice
+
+        with connect_notice.receiving(self.notice.emit):
+            self._run()
+
+    def _run(self) -> None:
         try:
             try:
                 session = self._cm.connect(
@@ -295,12 +304,14 @@ def run_connect(
     host_key_prompt: Callable[[Any], bool] | None = None,
     on_success: Callable[[Any], None] | None = None,
     on_failure: Callable[[Exception], None] | None = None,
+    on_notice: Callable[[str], None] | None = None,
 ) -> ConnectTask:
     """Start a non-blocking connect and wire up success / failure.
 
     ``host_key_prompt`` runs on the GUI thread; the worker blocks
     until it returns. ``on_success`` / ``on_failure`` both run on the
-    GUI thread too.
+    GUI thread too, as ``on_notice(text)``: what the connect waits for
+    meanwhile (core.connect_notice).
     """
     bridge = HostKeyPrompt()
     # Worker-side callback that routes to the GUI thread.
@@ -328,6 +339,8 @@ def run_connect(
         worker.succeeded.connect(on_success)
     if on_failure is not None:
         worker.failed.connect(on_failure)
+    if on_notice is not None:
+        worker.notice.connect(on_notice)
 
     # Cleanup: quit the thread when the worker signals finished
     # (always fires, even when cancelled). Direct, so the thread ends

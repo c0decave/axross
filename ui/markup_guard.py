@@ -598,6 +598,40 @@ def holds_link(text) -> bool:
 _COMMENT = "<!--"
 
 
+def _shown_as_a_name(text):
+    """*text* with a bidi override, control or invisible character as
+    U+FFFD (line breaks and tabs stay) - as the pane shows a name
+    (ui.plain_text.defused). A str only; plain ASCII is passed as it is."""
+    if isinstance(text, str) and (not text.isascii()
+                                  or any(c < " " and c not in "\n\t" for c in text)):
+        from ui.plain_text import defused
+
+        return defused(text)
+    return text
+
+
+def _message_text(text):
+    """A message box text: :func:`defuse_message`, and shown as the pane
+    shows a name (:func:`_shown_as_a_name`) - a bidi override in a quoted
+    archive or file name read the message reversed."""
+    return defuse_message(_shown_as_a_name(text))
+
+
+def _wrap_shown_as_a_name(cls, name: str, index: int = 0) -> None:
+    """Wrap ``cls.name`` so its positional argument *index* is shown as a
+    name (:func:`_shown_as_a_name`), whatever the text format."""
+    original = getattr(cls, name)
+
+    @functools.wraps(original)
+    def wrapper(self, *args, **kwargs):
+        if len(args) > index:
+            args = list(args)
+            args[index] = _shown_as_a_name(args[index])
+        return original(self, *args, **kwargs)
+
+    setattr(cls, name, wrapper)
+
+
 def defuse_message(text):
     """:func:`defuse` for a message box text: a link (opened in the browser
     on a click) is shown as written too, and so is a text with an HTML
@@ -615,12 +649,82 @@ def defuse_message(text):
 _FORCED_RICH = contextvars.ContextVar("axross_forced_rich", default=False)
 
 
+#: The elements Qt's HTML parser knows (QTextHtmlParser's table): the
+#: first tag of a text is one of them for Qt.mightBeRichText to say yes.
+_QT_ELEMENTS = frozenset((
+    "a address b big blockquote body br caption center cite code dd dfn div dl dt em "
+    "font h1 h2 h3 h4 h5 h6 head hr html i img kbd li link meta nobr ol p pre qt s "
+    "samp script small span strong style sub sup table tbody td tfoot th thead title "
+    "tr tt u ul var").split())
+
+
+def _might_be_rich_text(text: str) -> bool:
+    """Qt.mightBeRichText (qtextdocument.cpp) for a process where PyQt6
+    does not expose it: the first tag before the first line break, past
+    leading space and an ``<?xml ...?>``, is an element Qt knows, or the
+    text starts with ``<!doctype`` or holds ``&lt;`` before it."""
+    if not text:
+        return False
+    n = len(text)
+    start = 0
+    while start < n and text[start].isspace():
+        start += 1
+    if text.startswith("<?xml", start):
+        end = text.find("?>", start)
+        if end != -1:
+            start = end + 2
+            while start < n and text[start].isspace():
+                start += 1
+    if text[start:start + 5].lower() == "<!doc":
+        return True
+    open_ = start
+    while open_ < n and text[open_] not in "<\n":
+        if text[open_] == "&" and text.startswith("lt;", open_ + 1):
+            return True
+        open_ += 1
+    if open_ >= n or text[open_] != "<":
+        return False
+    close = text.find(">", open_)
+    if close == -1:
+        return False
+    tag = []
+    for i in range(open_ + 1, close):
+        ch = text[i]
+        if ch.isdigit() or ch.isalpha():
+            tag.append(ch.lower())
+        elif tag and ch.isspace():
+            break
+        elif tag and ch == "/" and i + 1 == close:
+            break
+        elif not ch.isspace() and (tag or ch != "!"):
+            return False
+    return "".join(tag) in _QT_ELEMENTS
+
+
+def _qt_might_be_rich_text():
+    """Qt.mightBeRichText, or None. PyQt6 puts it on QtCore's ``Qt`` only
+    with PyQt6.QtWidgets imported: a process that has QtCore or QtGui
+    alone (a test of the guard, a drawing child) has it after that
+    import."""
+    from PyQt6.QtCore import Qt
+
+    fn = getattr(Qt, "mightBeRichText", None)
+    if fn is None:
+        try:
+            import PyQt6.QtWidgets  # noqa: F401  (adds it to Qt)
+        except ImportError:
+            return None
+        fn = getattr(Qt, "mightBeRichText", None)
+    return fn
+
+
 def _rich(text: str) -> bool:
     if _FORCED_RICH.get():
         return True
-    from PyQt6.QtCore import Qt
-
-    return bool(Qt.mightBeRichText(text))
+    fn = _qt_might_be_rich_text()
+    if fn is None:
+        return _might_be_rich_text(text)
+    return bool(fn(text))
 
 
 def _rich_format(widget) -> bool:
@@ -916,6 +1020,25 @@ def _base_folder(view) -> str | None:
     return None
 
 
+def _wrap_window_title(cls) -> None:
+    """Wrap ``cls.setWindowTitle`` so a title is shown as a one-line status
+    is (ui.plain_text.one_line): a name from outside in it - a Bluetooth
+    device's, a file's path - with a bidi override read the title bar and
+    the task bar reversed, a line break split it. axross' own titles hold
+    neither."""
+    original = cls.setWindowTitle
+
+    @functools.wraps(original)
+    def wrapper(self, title, *args, **kwargs):
+        if isinstance(title, str) and (not title.isascii() or any(c < " " for c in title)):
+            from ui.plain_text import one_line
+
+            title = one_line(title)
+        return original(self, title, *args, **kwargs)
+
+    cls.setWindowTitle = wrapper
+
+
 def install() -> None:
     """Install the wrappers (once per process)."""
     global _installed
@@ -943,14 +1066,15 @@ def install() -> None:
     _wrap_init_strings(QLabel)
     _wrap_text_at(QLabel, "setText", 0, unless_plain=True)
     _wrap_set_text_format(QLabel, (("text", "setText"),))
-    _wrap_init_strings(QMessageBox, defuse_message, _no_external_links)
+    _wrap_init_strings(QMessageBox, _message_text, _no_external_links)
     for name in ("setText", "setInformativeText"):
         _wrap_text_at(QMessageBox, name, 0, unless_plain=True, fn=defuse_message,
                       after=_no_external_links)
+        _wrap_shown_as_a_name(QMessageBox, name)
     _wrap_set_text_format(QMessageBox, (("text", "setText"),
                                         ("informativeText", "setInformativeText")))
     for name in ("warning", "critical", "information", "question", "about"):
-        _wrap_static_text_at(QMessageBox, name, 2, defuse_message)
+        _wrap_static_text_at(QMessageBox, name, 2, _message_text)
     _wrap_static_text_at(QToolTip, "showText", 1)
     # Progress and input dialogs: their label is a QLabel Qt makes in C++
     # (AutoText), past the QLabel wrappers above - also the one of the
@@ -976,6 +1100,7 @@ def install() -> None:
     _wrap_role_data(QTreeWidgetItem, "setData", 1, 2)     # (column, role, value)
     for cls in (QTextEdit, QTextBrowser):
         cls.loadResource = _safe_load_resource(cls.loadResource)
+    _wrap_window_title(QWidget)
 
 
 __all__ = ["MAX_CELLS", "MAX_FONT_PX", "MAX_IMAGE_BYTES", "MAX_INDENT_DEPTH", "MAX_LENGTH_PX",

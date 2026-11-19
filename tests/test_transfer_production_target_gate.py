@@ -111,7 +111,7 @@ def test_sad_overwriting_a_production_target_asks_and_a_cancel_queues_nothing(
     shown = _countdown(monkeypatch, QDialog.DialogCode.Rejected)
     _answer(win, ConflictAction.OVERWRITE)
     win._request_transfer(ctx["a"], ctx["b"], [str(ctx["src"] / "a.txt")], move=False)
-    assert shown == ["overwrite 1 item(s)"]
+    assert shown == ["overwrite 1 item"]
     assert ctx["queued"] == []
     assert (ctx["dst"] / "a.txt").read_text() == "PRODUCTION DATA"
 
@@ -122,7 +122,7 @@ def test_happy_an_accepted_countdown_queues_the_overwrite_once(win, monkeypatch)
     _answer(win, ConflictAction.OVERWRITE)
     paths = [str(ctx["src"] / "a.txt"), str(ctx["src"] / "fresh.txt")]
     win._request_transfer(ctx["a"], ctx["b"], paths, move=False)
-    assert shown == ["overwrite 1 item(s)"]  # one question for the operation
+    assert shown == ["overwrite 1 item"]  # one question for the operation
     assert len(ctx["queued"]) == 1
 
 
@@ -140,7 +140,7 @@ def test_edge_only_a_plan_that_replaces_something_asks(win, monkeypatch):
     os.utime(ctx["src"] / "a.txt", (newer, newer))  # "if newer" replaces it
     _answer(win, ConflictAction.OVERWRITE_IF_NEWER)
     win._request_transfer(ctx["a"], ctx["b"], paths, move=False)
-    assert shown == ["overwrite 1 item(s)"] and len(ctx["queued"]) == 3
+    assert shown == ["overwrite 1 item"] and len(ctx["queued"]) == 3
 
 
 def test_sad_a_move_into_a_production_target_asks(win, monkeypatch):
@@ -148,5 +148,5 @@ def test_sad_a_move_into_a_production_target_asks(win, monkeypatch):
     shown = _countdown(monkeypatch, QDialog.DialogCode.Rejected)
     monkeypatch.setattr("core.move_permissions.undeletable_sources", lambda *a, **k: [])
     win._request_transfer(ctx["a"], ctx["b"], [str(ctx["src"] / "fresh.txt")], move=True)
-    assert shown == ["move 1 item(s) here"]
+    assert shown == ["move 1 item here"]
     assert ctx["queued"] == []

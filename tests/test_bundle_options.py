@@ -225,3 +225,27 @@ def test_edge_the_spec_drops_from_the_data_toc_too():
     assert datas_filter, "no filter of a.datas in the spec"
     assert "dropped(entry[0])" in datas_filter.group(1)
     assert "dropped_data(entry[0])" in datas_filter.group(1)
+
+
+def test_sad_the_cups_print_plugin_leaves_the_bundle():
+    """Qt's CUPS print plugin needs libcups.so.2 from the system, which a
+    bundle may not need (the --system-libs gate refused axross-base for it);
+    Qt then prints to PDF."""
+    assert B.dropped("PyQt6/Qt6/plugins/printsupport/libcupsprintersupport.so")
+    assert not B.dropped("PyQt6/Qt6/lib/libQt6PrintSupport.so.6")
+
+
+@pytest.mark.parametrize("path", [
+    "PyQt6/Qt6/plugins/sqldrivers/libqsqlpsql.dylib",
+    "PyQt6/Qt6/plugins/sqldrivers/libqsqlodbc.dylib",
+    "PyQt6/Qt6/plugins/sqldrivers/libqsqlmimer.dylib",
+    "PyQt6/Qt6/plugins/sqldrivers/qsqlite.dll",
+    "PyQt6/Qt6/plugins/sqldrivers/libqsqlite.so",
+])
+def test_sad_qt_sql_drivers_never_ship(path):
+    """axross uses no QtSql. The macOS wheel's SQL driver plugins link
+    absolute build-machine paths (/Applications/Postgres.app/...,
+    /opt/homebrew/...), which a user can write to: a driver loaded from
+    there would run that code in axross. The whole folder leaves the
+    bundle on every system."""
+    assert B.dropped(path)
