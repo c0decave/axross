@@ -1,0 +1,90 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.c0decave/axross-headless-mcp",
+  "title": "axross headless MCP",
+  "description": "File tools for local disks and SFTP, SMB, WebDAV, S3 and more: list, read, search, hash, write",
+  "websiteUrl": "https://github.com/c0decave/axross-headless-mcp",
+  "repository": {
+    "url": "https://github.com/c0decave/axross-headless-mcp",
+    "source": "github"
+  },
+  "version": "0.15.179",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "axross-headless-mcp",
+      "version": "0.15.179",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "named",
+          "name": "--mcp-root",
+          "description": "The folder the tools may use (default: your home folder); --mcp-write needs it",
+          "format": "filepath",
+          "isRequired": false
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "AXROSS_MCP_TOOLS",
+          "description": "Capability groups on top of the file tools, comma-separated, or 'all'",
+          "isRequired": false
+        },
+        {
+          "name": "AXROSS_MCP_WRITE",
+          "description": "1: also serve the write tools (needs --mcp-root)",
+          "isRequired": false
+        }
+      ]
+    },
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/c0decave/axross-headless-mcp:0.15.179",
+      "transport": {
+        "type": "stdio"
+      },
+      "runtimeArguments": [
+        {
+          "type": "named",
+          "name": "-v",
+          "value": "{folder}:/data",
+          "description": "The folder the tools may use, mounted at /data",
+          "variables": {
+            "folder": {
+              "description": "A folder on this machine",
+              "format": "filepath",
+              "isRequired": true
+            }
+          }
+        }
+      ],
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "--mcp-server"
+        },
+        {
+          "type": "named",
+          "name": "--mcp-root",
+          "value": "/data"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "AXROSS_MCP_TOOLS",
+          "description": "Capability groups on top of the file tools, comma-separated, or 'all'",
+          "isRequired": false
+        },
+        {
+          "name": "AXROSS_MCP_WRITE",
+          "description": "1: also serve the write tools in /data",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}

@@ -76,6 +76,18 @@ _KNOWN_SHOWS: list[tuple[str, str]] = [
 # inside command text accidentally trigger.
 _PROMPT_RE = re.compile(r"\r?\n[A-Za-z][\w\-.]*[>#] *$")
 _PRIV_PROMPT_RE = re.compile(r"\r?\n[A-Za-z][\w\-.]*# *$")
+#: After the password: the device prompt (logged in), or a refusal - IOS's
+#: "% Login invalid" / "% Bad passwords" / "% Authentication failed", or a
+#: login or password prompt shown again.
+_LOGIN_ANSWER_RE = re.compile(
+    r"(?P<prompt>\r?\n(?P<host>[A-Za-z][\w\-.]*)[>#] *$)"
+    r"|(?P<refused>% ?(?:Login invalid|Bad passwords?|Authentication failed|Access denied)"
+    r"|(?:username|login|password)\s*:\s*$)",
+    re.IGNORECASE,
+)
+#: Seconds a show command may take to answer (show tech-support, a long
+#: log): the login time-out (15 s) cut those off.
+SHOW_TIMEOUT = 300.0
 # IOS-XE shows a generic "Password:" prompt for both login + enable;
 # we re-use the existing module-level pattern instead of duplicating.
 
@@ -122,6 +134,7 @@ class CiscoTelnetSession(SessionLifecycle):
         proxy_username: str = "",
         proxy_password: str = "",
         timeout: float = 15.0,
+        address_family: str = "auto",
         **_ignored,
     ):
         from core.proxy import ProxyConfig
@@ -144,8 +157,17 @@ class CiscoTelnetSession(SessionLifecycle):
             host,
             self._port,
             proxy=self._proxy,
+            address_family=address_family,
         )
         self._privileged = False
+        # The device's own prompt (hostname, then > or #), learnt at login:
+        # any line that merely looked like a prompt ended an answer early.
+        self._prompt_re = _PROMPT_RE
+        # One command at a time on the line (a preview and a copy read
+        # each other's answers).
+        import threading
+
+        self._lock = threading.RLock()
         try:
             self._login()
             self._enable_paging_off()
@@ -224,8 +246,16 @@ class CiscoTelnetSession(SessionLifecycle):
                 self._transport.send(self._username)
                 self._transport.read_until_re(_PASSWORD_RE, timeout=self._timeout)
         self._transport.send(self._password)
-        # Wait for an IOS prompt suffix.
-        self._transport.read_until_re(_PROMPT_RE, timeout=self._timeout)
+        # Wait for an IOS prompt suffix - or the refusal, which waited for
+        # the time-out and read as "did not answer in time".
+        from core.telnet_client import LoginFailure
+
+        text, m = self._transport.read_until_re(_LOGIN_ANSWER_RE, timeout=self._timeout)
+        if m.group("refused"):
+            raise LoginFailure(f"Cisco-Telnet login refused by {self._host}: {text[-200:]!r}")
+        self._prompt_re = re.compile(
+            r"\r?\n" + re.escape(m.group("host")) + r"(?:\([\w\-]+\))?[>#] *$"
+        )
 
     def _enter_enable_mode(self) -> None:
         """Send ``enable`` + the enable-secret, raise if the device
@@ -235,7 +265,7 @@ class CiscoTelnetSession(SessionLifecycle):
         self._transport.send("enable")
         self._transport.read_until_re(_PASSWORD_RE, timeout=self._timeout)
         self._transport.send(self._enable_password)
-        text, _m = self._transport.read_until_re(_PROMPT_RE, timeout=self._timeout)
+        text, _m = self._transport.read_until_re(self._prompt_re, timeout=self._timeout)
         # The promoted prompt ends in ``#`` instead of ``>``.
         if _PRIV_PROMPT_RE.search(text):
             self._privileged = True
@@ -364,20 +394,29 @@ class CiscoTelnetSession(SessionLifecycle):
     def _send_show(self, command: str) -> str:
         """Send a single command line + read until the prompt comes
         back. Returns the raw response *minus* the trailing prompt."""
-        self._transport.send(command)
-        # IOS echoes the command back, so the prompt-end RE is the
-        # cleanest delimiter.
-        blob, _m = self._transport.read_until_re(
-            _PROMPT_RE,
-            timeout=self._timeout,
-        )
+        with self._lock:
+            self._transport.send(command)
+            # IOS echoes the command back; the device's prompt ends the
+            # answer.
+            try:
+                blob, _m = self._transport.read_until_re(
+                    self._prompt_re,
+                    timeout=max(self._timeout, SHOW_TIMEOUT),
+                    lookback=512,
+                )
+            except TimeoutError:
+                # The rest of this answer would arrive as the next
+                # command's: the line is out of step for good.
+                self._transport.close()
+                raise
         if len(blob) > MAX_SHOW_BYTES:
             raise OSError(f"Cisco-show response exceeds {MAX_SHOW_BYTES} byte cap")
         # Strip leading echo of our own command.
         first_line_end = blob.find("\n")
         if first_line_end != -1 and command in blob[: first_line_end + 1]:
             blob = blob[first_line_end + 1 :]
-        return _strip_trailing_prompt(blob)
+        m = self._prompt_re.search(blob)
+        return blob[: m.start()] if m else blob
 
     # ------------------------------------------------------------------
     # FileBackend — read surface

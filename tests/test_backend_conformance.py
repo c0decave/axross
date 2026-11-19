@@ -371,7 +371,7 @@ class _TelnetShell:
     """telnet_client._ShellSession stand-in: one terminal stream (stderr
     joins stdout) and the exit status."""
 
-    def execute(self, cmd, timeout=None):
+    def execute(self, cmd, timeout=None, **_kw):
         p = _sh(cmd)
         return (p.stdout + p.stderr).decode("utf-8", "replace"), p.returncode
 
@@ -470,7 +470,19 @@ def _rsh(tmp_path):
                            input=stdin)
         return p.returncode, p.stdout, p.stderr
 
+    def spawn(cmd, *, stdin):
+        # Transfers stream through a running rsh process (open_read,
+        # open_write): the same local shell, with the status trailer.
+        tag = "__AXROSS_RSH_STATUS_0123456789abcdef__"
+        script = f"{cmd}; printf '\\n%s %d\\n' {tag} \"$?\""
+        return tag, subprocess.Popen(
+            ["sh", "-c", script], env=_SHELL_ENV,
+            stdin=subprocess.PIPE if stdin else subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+
     s._run_status = run_status
+    s._spawn = spawn
     root = _shell_root(tmp_path, "rsh")
     return Target("rsh", s, str(root), root)
 
@@ -482,9 +494,18 @@ def _adb(tmp_path):
     s._conn_lock = threading.Lock()
     s._label = "fake device"
 
-    def copy(src, dst):
-        with open(src, "rb") as fi, open(dst, "wb") as fo:
-            fo.write(fi.read())
+    def copy(src, dst, **_kwargs):
+        # adb_shell's push / pull take a local path or a stream (BytesIO)
+        if hasattr(src, "read"):
+            data = src.read()
+        else:
+            with open(src, "rb") as fi:
+                data = fi.read()
+        if hasattr(dst, "write"):
+            dst.write(data)
+        else:
+            with open(dst, "wb") as fo:
+                fo.write(data)
 
     s._device = SimpleNamespace(push=copy, pull=copy)
 

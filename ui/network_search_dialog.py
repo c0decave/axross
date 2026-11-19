@@ -18,7 +18,7 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QEvent, Qt, QTimer
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -54,6 +54,8 @@ log = logging.getLogger(__name__)
 #: More hosts than this and the run asks first.
 ASK_ABOVE_HOSTS = 256
 _HIT_COLUMNS = ("UNC", "Size", "Modified", "Owner")
+#: How often hits that came in are put into the table while a run goes.
+_FLUSH_MS = 100
 
 
 def _when(mtime, fmt: str | None) -> str:
@@ -92,6 +94,14 @@ class NetworkSearchDialog(QDialog):
         self._login: Login | None = None
         self._hits: list[RS.SweepHit] = []
         self._host_rows: dict[str, int] = {}
+        # Hits that came in since the last flush: the table takes them in one
+        # go (sorting off meanwhile). Re-sorting the whole table per hit held
+        # the window for ~50 s with 10,000 hits.
+        self._pending: list[RS.SweepHit] = []
+        self._flush_timer = QTimer(self)
+        self._flush_timer.setSingleShot(True)
+        self._flush_timer.setInterval(_FLUSH_MS)
+        self._flush_timer.timeout.connect(self._flush_hits)
         self._build()
         add_close_corner(self)
         # F1: the handbook (its contents) - the main window's F1 does not reach this window.
@@ -195,9 +205,14 @@ class NetworkSearchDialog(QDialog):
             table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
             table.horizontalHeader().setStretchLastSection(True)
         self.results_table.setSortingEnabled(True)
+        # A to Z by UNC path (Qt's own start is Z to A).
+        self.results_table.sortByColumn(0, Qt.SortOrder.AscendingOrder)
         self.results_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.results_table.customContextMenuRequested.connect(self._results_menu)
         self.results_table.doubleClicked.connect(lambda _index: self.open_selected())
+        # Enter on a result opens it; it used to reach the default button
+        # (Start) and begin a new search over the results.
+        self.results_table.installEventFilter(self)
         self.results_table.setColumnWidth(0, 420)
         hosts_box = QWidget()
         hosts_layout = QVBoxLayout(hosts_box)
@@ -281,7 +296,20 @@ class NetworkSearchDialog(QDialog):
             self.cancel_button.setEnabled(False)
             self.summary_label.setText(tr("Cancelling…"))
 
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt
+        if (
+            watched is self.results_table
+            and event.type() == QEvent.Type.KeyPress
+            and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+            and event.modifiers() == Qt.KeyboardModifier.NoModifier
+        ):
+            self.open_selected()
+            return True
+        return super().eventFilter(watched, event)
+
     def _reset_tables(self, hosts: list[str]) -> None:
+        self._flush_timer.stop()
+        self._pending.clear()
         self._hits.clear()
         self.results_table.setSortingEnabled(False)
         self.results_table.setRowCount(0)
@@ -295,19 +323,36 @@ class NetworkSearchDialog(QDialog):
             self.hosts_table.setItem(row, 2, QTableWidgetItem(""))
 
     def _on_hit(self, hit: RS.SweepHit) -> None:
-        self._hits.append(hit)
+        self._pending.append(hit)
+        if not self._flush_timer.isActive():
+            self._flush_timer.start()
+
+    def _flush_hits(self) -> None:
+        """Put the hits that came in since the last flush into the table."""
+        self._flush_timer.stop()
+        pending, self._pending = self._pending, []
+        if not pending:
+            return
         table = self.results_table
         table.setSortingEnabled(False)
-        row = table.rowCount()
-        table.insertRow(row)
-        unc = QTableWidgetItem(hit.unc)
-        unc.setData(Qt.ItemDataRole.UserRole, len(self._hits) - 1)
-        size = QTableWidgetItem()
-        size.setData(Qt.ItemDataRole.DisplayRole, hit.size)
-        when = _when(hit.mtime, "%Y-%m-%d %H:%M")
-        for col, item in enumerate((unc, size, QTableWidgetItem(when), QTableWidgetItem(hit.owner_sid))):
-            table.setItem(row, col, item)
-        table.setSortingEnabled(True)
+        table.setUpdatesEnabled(False)
+        try:
+            row = table.rowCount()
+            table.setRowCount(row + len(pending))
+            for hit in pending:
+                self._hits.append(hit)
+                unc = QTableWidgetItem(hit.unc)
+                unc.setData(Qt.ItemDataRole.UserRole, len(self._hits) - 1)
+                size = QTableWidgetItem()
+                size.setData(Qt.ItemDataRole.DisplayRole, hit.size)
+                when = _when(hit.mtime, "%Y-%m-%d %H:%M")
+                for col, item in enumerate(
+                        (unc, size, QTableWidgetItem(when), QTableWidgetItem(hit.owner_sid))):
+                    table.setItem(row, col, item)
+                row += 1
+        finally:
+            table.setSortingEnabled(True)
+            table.setUpdatesEnabled(True)
 
     def _on_status(self, host: str, state: str, detail: str) -> None:
         row = self._host_rows.get(host)
@@ -318,6 +363,7 @@ class NetworkSearchDialog(QDialog):
             self.hosts_table.item(row, 2).setText(detail)
 
     def _on_finished(self, result, error: str) -> None:
+        self._flush_hits()
         self._thread = None
         self._cancel = None
         self.start_button.setEnabled(True)

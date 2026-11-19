@@ -109,6 +109,19 @@ VALID_PROTOCOLS = {
     "dfsn",
     "adb",
     "mtp",
+    # Databases, version control and directories as file systems, and
+    # Exchange: in the protocol list of Connect to Server, so a saved
+    # profile of theirs must load as itself (it came back as SFTP).
+    "sqlite",
+    "postgres",
+    "redis",
+    "mongodb",
+    "git",
+    "ldap",
+    "slp",
+    "exchange",
+    "rsh",
+    "wmi",
 }
 
 #: Protocols with the one plain secret field - password, S3 secret key or
@@ -133,6 +146,13 @@ SIMPLE_PASSWORD_PROTOCOLS = frozenset(
         "telnet",
         "cisco-telnet",
         "winrm",
+        "svn",
+        "postgres",
+        "redis",
+        "mongodb",
+        "ldap",
+        "exchange",
+        "wmi",
     }
 )
 
@@ -155,12 +175,42 @@ def password_needed(profile) -> bool:
         return bool(getattr(profile, "username", ""))
     if proto == "rsync":
         return not getattr(profile, "rsync_ssh", False)
+    if proto == "iscsi":
+        # CHAP needs a user name: without one no secret is sent.
+        return bool(getattr(profile, "username", ""))
     if proto in ("azure_blob", "azure_files"):
         return not (
             getattr(profile, "azure_connection_string", "")
             or getattr(profile, "azure_sas_token", "")
         )
+    if proto in ("svn", "postgres", "mongodb", "ldap"):
+        # An anonymous checkout, a trusted local database or an anonymous
+        # LDAP bind: no login name, no password.
+        return bool(getattr(profile, "username", ""))
+    if proto == "redis":
+        # Redis has no user name to tell; a server with AUTH has the
+        # password kept in the keyring (or typed into the dialog).
+        return bool(getattr(profile, "store_password", False))
     return True
+
+
+def default_port(protocol: str, *, tls: bool = True) -> int:
+    """The port a profile of *protocol* uses when none is given: the
+    registry's, or the plain variant's for IMAP, POP3, NNTP and LDAP
+    without TLS. 22 (SFTP) when the protocol has no port of its own."""
+    plain = {"imap": 143, "pop3": 110, "nntp": 119}
+    if not tls and protocol in plain:
+        return plain[protocol]
+    if tls and protocol == "ldap":
+        return 636
+    try:
+        from core.backend_registry import get as get_backend
+
+        info = get_backend(protocol)
+    except Exception:  # noqa: BLE001 - a profile loads without the registry too
+        info = None
+    port = getattr(info, "default_port", 0) or 0
+    return port if 1 <= port <= 65535 else 22
 
 
 SENSITIVE_PROFILE_FIELDS = (
@@ -173,6 +223,7 @@ SENSITIVE_PROFILE_FIELDS = (
 
 #: The largest SFTP time-out a profile may set (seconds).
 SFTP_TIMEOUT_MAX = 3600
+
 
 
 @dataclass
@@ -300,6 +351,23 @@ class ConnectionProfile:
     tftp_filelist_enabled: bool = False
     tftp_max_size_bytes: int = 16 * 1024 * 1024
 
+    # Databases as file systems. SQLite keeps its file in ``host``, as
+    # Git keeps its repository (URL or local path) and SVN its URL there.
+    # ``db_name``: the PostgreSQL / MongoDB database, the Redis database
+    # number. ``db_tls``: Redis over TLS (rediss://).
+    db_name: str = ""
+    db_tls: bool = False
+
+    # LDAP over TLS (LDAPS, port 636)
+    ldap_ssl: bool = False
+
+    # SLP: the scope the directory is asked in
+    slp_scope: str = "DEFAULT"
+
+    # Exchange (EWS): the mailbox; empty = the username. ``host`` is the
+    # EWS server; empty = autodiscover.
+    exchange_email: str = ""
+
     # ADB (Android Debug Bridge)
     adb_mode: str = "tcp"  # "tcp" or "usb"
     adb_usb_serial: str = ""  # USB serial filter (optional)
@@ -342,6 +410,12 @@ class ConnectionProfile:
     # UID scheme. Set True on a per-profile basis when doing a true
     # archive/backup flow where metadata preservation matters.
     rsync_preserve_metadata: bool = False
+
+    # WinRM: HTTPS (the 5986 listener) or HTTP (5985, Windows' default
+    # listener; NTLM still encrypts the messages), and whether the HTTPS
+    # certificate is checked (quickconfig's listener is self-signed).
+    winrm_https: bool = True
+    winrm_verify_tls: bool = True
 
     # Shell-history suppression: when True (the safe default), the
     # SSH/Telnet terminal flow silently disables HISTFILE / HISTSIZE /
@@ -519,6 +593,23 @@ class ConnectionProfile:
         elif proto == "nntp":
             d["nntp_ssl"] = self.nntp_ssl
 
+        elif proto in ("postgres", "mongodb", "redis"):
+            if self.db_name:
+                d["db_name"] = self.db_name
+            if proto == "redis" and self.db_tls:
+                d["db_tls"] = True
+
+        elif proto == "ldap":
+            d["ldap_ssl"] = self.ldap_ssl
+
+        elif proto == "slp":
+            if self.slp_scope != "DEFAULT":
+                d["slp_scope"] = self.slp_scope
+
+        elif proto == "exchange":
+            if self.exchange_email:
+                d["exchange_email"] = self.exchange_email
+
         elif proto == "tftp":
             if self.tftp_filelist:
                 d["tftp_filelist"] = self.tftp_filelist
@@ -526,6 +617,11 @@ class ConnectionProfile:
                 d["tftp_filelist_enabled"] = True
             if self.tftp_max_size_bytes != 16 * 1024 * 1024:
                 d["tftp_max_size_bytes"] = self.tftp_max_size_bytes
+
+        elif proto == "winrm":
+            d["winrm_https"] = self.winrm_https
+            if not self.winrm_verify_tls:
+                d["winrm_verify_tls"] = False
 
         elif proto == "adb":
             d["adb_mode"] = self.adb_mode
@@ -610,7 +706,13 @@ class ConnectionProfile:
             name=_string("name"),
             protocol=protocol,
             host=_string("host"),
-            port=_int_in_range("port", 22, 1, 65535),
+            # An imported profile without a port: its protocol's (22 is SFTP's).
+            port=_int_in_range(
+                "port",
+                default_port(protocol, tls=_boolean(f"{protocol}_ssl", protocol != "ldap")),
+                1,
+                65535,
+            ),
             username=_string("username"),
             auth_type=auth_type,
             key_file=_string("key_file"),
@@ -673,6 +775,12 @@ class ConnectionProfile:
             pop3_ssl=_boolean("pop3_ssl", True),
             # NNTP
             nntp_ssl=_boolean("nntp_ssl", True),
+            # Databases, LDAP, SLP, Exchange
+            db_name=_string("db_name"),
+            db_tls=_boolean("db_tls"),
+            ldap_ssl=_boolean("ldap_ssl"),
+            slp_scope=_string("slp_scope", "DEFAULT") or "DEFAULT",
+            exchange_email=_string("exchange_email"),
             # TFTP
             tftp_filelist=_string("tftp_filelist"),
             tftp_filelist_enabled=_boolean("tftp_filelist_enabled"),
@@ -732,6 +840,9 @@ class ConnectionProfile:
                 500,
             ),
             rsync_preserve_metadata=_boolean("rsync_preserve_metadata"),
+            # Saved before the field existed: port 5985 is the HTTP listener.
+            winrm_https=_boolean("winrm_https", d.get("port") != 5985),
+            winrm_verify_tls=_boolean("winrm_verify_tls", True),
             # The safe default is True; only honour an explicit False.
             suppress_shell_history=_boolean(
                 "suppress_shell_history",

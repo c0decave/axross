@@ -251,6 +251,31 @@ class ConflictPlan:
         return cls(dest_backend, ConflictScan())
 
     @classmethod
+    def duplicates(cls, source_backend: FileBackend, dest_backend: FileBackend, dest_dir: str,
+                   sources, taken, folders=()) -> ConflictPlan:
+        """A plan that copies each of *sources* into *dest_dir* - the folder
+        they are in - under a name of its own: ``a (1).txt``, ``a (2).txt``
+        (:func:`unique_name`, as Rename at the conflict prompt). *taken*:
+        the names in *dest_dir* now; *folders*: the sources that are
+        folders (the number goes at the end of their name). Each job
+        refuses to replace anything (IF_EXISTS_FAIL): a name taken in the
+        meantime fails that job instead of being overwritten."""
+        plan = cls(dest_backend, ConflictScan())
+        names = set(taken)
+        folders = set(folders)
+        for source in sources:
+            sep = source_backend.separator() or "/"
+            leaf = source.rstrip(sep).rsplit(sep, 1)[-1]
+            name = transfer_leaf(source_backend, dest_backend, leaf)
+            names.add(name)  # (it is there: a copy never takes its own name)
+            new_name = unique_name(name, names, is_dir=source in folders)
+            names.add(new_name)
+            target = safe_join(dest_backend, dest_dir, new_name)
+            dest = safe_join(dest_backend, dest_dir, name)
+            plan._decisions[(source, dest)] = (target, IF_EXISTS_FAIL)
+        return plan
+
+    @classmethod
     def only_newer(cls, dest_backend: FileBackend, pairs) -> ConflictPlan:
         """A plan for ``(source, destination)`` pairs a comparison found
         newer at the source: each job replaces its destination only when

@@ -472,8 +472,10 @@ start; no Python needed - and the Python package:
 | `axross-slim` | the same without the cloud SDKs, the Windows protocols, Matrix/XMPP, voice, analysis and numpy - SFTP, SMB, WebDAV, S3, FTP, Android and the rest are in it; about half the size | the same |
 | `axross-base` | the core only: local files, SFTP / SCP / FTP, the panes, the editor, the terminal, the settings. Everything else - each backend, each extension - is a *pack* you add from *Help → Features… → Packs…*: fetched from the same release, signature and SHA-256 checked before anything is unpacked | the same |
 | `axross-full-glibc2.36`, `axross-slim-glibc2.36`, `axross-base-glibc2.36` | the same three, built with Debian 12's (newer) libraries | Linux x86-64 with glibc 2.36 or newer (Debian 12+, Ubuntu 22.10+, Fedora 37+) |
-| `axross-slim-macos-arm64` | slim | macOS on Apple silicon (not notarized: [first start](docs/PACKAGING.md#macos-binary-the-first-start)) |
-| `axross-slim-windows-x64.exe` | slim | Windows 10 / 11, x64 |
+| `axross-full-x86_64.AppImage`, `axross-slim-x86_64.AppImage`, `axross-base-x86_64.AppImage` | the glibc 2.34 `axross-full`, `-slim`, `-base` as AppImages: a menu entry and an icon with AppImage tools (appimaged, Gear Lever); they update themselves as AppImages | Linux x86-64 with glibc 2.34 or newer |
+| `axross-slim-macos-arm64`, `axross-full-macos-arm64` | slim, full | macOS on Apple silicon (not notarized: [first start](docs/PACKAGING.md#macos-binary-the-first-start)) |
+| `axross-slim-macos-arm64.dmg`, `axross-full-macos-arm64.dmg` | slim, full as `axross.app` in a disk image: open it, drag axross to Applications (new versions come as a new image) | macOS on Apple silicon (not notarized: [first start](docs/PACKAGING.md#macos-binary-the-first-start)) |
+| `axross-slim-windows-x64.exe`, `axross-full-windows-x64.exe` | slim, full | Windows 10 / 11, x64 |
 | `axross-media-player`, `axross-system-info` (and `-glibc2.36`) | the Media Player and System Information as programs of their own ([docs/STANDALONE.md](docs/STANDALONE.md)) | Linux x86-64 |
 | `axross-X.Y.Z.tar.gz`, `axross-X.Y.Z-py3-none-any.whl` | the Python package, the same as on PyPI (`pip install "axross[all]"`, below) | every system with Python 3.11+ |
 | `packs-X.Y.Z.json` and the wheels beside it | the packs an `axross-base` adds | - |

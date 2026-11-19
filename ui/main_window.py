@@ -337,10 +337,8 @@ def _desktop_font_size() -> int:
 
 def _already_in(source_backend, paths, dest_backend, dest_dir: str) -> set[str]:
     """The *paths* whose folder is *dest_dir* itself (core.storage_identity:
-    proven the same entry, not merely the same text): copying them there
+    proven the same folder, not merely the same text): copying them there
     would write each file onto itself."""
-    from core.storage_identity import same_entry
-
     verdict: dict[str, bool] = {}
     here = set()
     for path in paths:
@@ -349,10 +347,37 @@ def _already_in(source_backend, paths, dest_backend, dest_dir: str) -> set[str]:
         except Exception:  # noqa: BLE001 - no parent known: not provably here
             continue
         if folder not in verdict:
-            verdict[folder] = same_entry(source_backend, folder, dest_backend, dest_dir)
+            verdict[folder] = _same_folder(source_backend, folder, dest_backend, dest_dir)
         if verdict[folder]:
             here.add(path)
     return here
+
+
+def _same_folder(source_backend, folder: str, dest_backend, dest_dir: str) -> bool:
+    """*folder* and *dest_dir* are one folder: the same entry, or - on this
+    machine - one folder reached through a symlink or a bind mount (the
+    target pane in ``b/alias -> a``; same_entry keeps a link its own
+    entry, right for the files a transfer replaces, not for the folder
+    they are in)."""
+    from core.storage_identity import _strict_local_path, same_entry
+
+    if same_entry(source_backend, folder, dest_backend, dest_dir):
+        return True
+    try:
+        local_a = _strict_local_path(source_backend, folder)
+        local_b = _strict_local_path(dest_backend, dest_dir)
+        return bool(local_a and local_b and os.path.samefile(local_a, local_b))
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def _into_itself(source_backend, paths, dest_backend, dest_dir: str) -> list[str]:
+    """The *paths* that are *dest_dir* or a folder above it: a copy there
+    would list itself while it is made (core.storage_identity.is_within;
+    the transfer refuses each one again)."""
+    from core.storage_identity import is_within
+
+    return [p for p in paths if is_within(source_backend, p, dest_backend, dest_dir)]
 
 
 class _Translated(str):
@@ -5878,34 +5903,33 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         dlg.deleteLater()
 
     def _on_metadata_search_open(self, backend_id: str, path: str, is_dir: bool) -> None:
-        """User double-clicked a search result. Navigate the active
-        pane to the path's parent (or the path itself if it's a dir)
-        when it lives on the active pane's backend; otherwise just
-        beep — the index is multi-backend but pane targeting requires
-        the right session, which we don't auto-spawn."""
-        from ui.metadata_search_dialog import _backend_id_for
-
-        pane = self._active_pane
+        """An index hit was opened (Find in Index, Find Files' index rows):
+        a folder opens, a file is shown selected in its folder - in the
+        active pane when it is on the hit's connection, else in another
+        open pane that is (it used to answer "open the matching session
+        first" while one was open). The index spans connections; one that
+        no pane is on is not opened from here."""
+        pane = self._pane_for_backend_id(backend_id)
         if pane is None:
-            return
-        if _backend_id_for(pane.backend) != backend_id:
             QMessageBox.information(
                 self,
                 tr("Find in Index"),
-                tr("That entry lives on backend [{backend}] but the active pane is on "
-                   "[{active}]. Open the matching session first.").format(
-                    backend=backend_id, active=_backend_id_for(pane.backend)),
+                tr("No pane is open on [{backend}].").format(backend=backend_id),
             )
             return
-        target = path if is_dir else pane.backend.parent(path)
+        if pane is not self._active_pane:
+            self._set_active_pane(pane)
         try:
-            pane.navigate_async(target)
+            if is_dir:
+                pane.navigate_async(path)
+            else:
+                pane.reveal_path(path)
         except OSError as exc:
             QMessageBox.warning(
                 self,
                 tr("Find in Index"),
                 tr("Could not navigate to {path}:\n{error}").format(
-                    path=target, error=describe(exc, target)),
+                    path=path, error=describe(exc, path)),
             )
 
     # ------------------------------------------------------------------
@@ -6317,6 +6341,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             host_key_prompt=self._confirm_unknown_host,
             on_success=_wrap_success,
             on_failure=_wrap_failure,
+            # What the connect waits for ("Check the phone: allow USB debugging").
+            on_notice=lambda text: self.statusBar().showMessage(text, 0),
         )
         self._connect_tasks.append(task)
 
@@ -7950,14 +7976,19 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                           "folder below it ({folder}).").format(folder=dest_dir)
             QMessageBox.warning(self, tr("Paste"), text)
             return
+        if not cut.move:
+            # A copy pasted into the folder it came from is a copy under a
+            # new name ("a (1).txt"), as file managers do; it said "Nothing
+            # to copy" and Ctrl+C, Ctrl+V in one folder did nothing.
+            if plan.already_here:
+                self._duplicate_here(source, target, list(plan.already_here), dest_dir)
+            if plan.paths:
+                self._request_transfer(source, target, list(plan.paths), dest_dir=dest_dir)
+            return
         if not plan.paths:
             self.statusBar().showMessage(
-                (tr("Nothing to move: the cut entries already are in {folder}") if cut.move
-                 else tr("Nothing to copy: the copied entries already are in {folder}")
-                 ).format(folder=dest_dir), 8000)
-            return
-        if not cut.move:
-            self._request_transfer(source, target, list(plan.paths), dest_dir=dest_dir)
+                tr("Nothing to move: the cut entries already are in {folder}").format(
+                    folder=dest_dir), 8000)
             return
         # The production countdown for the move is _request_transfer's.
         self._request_transfer(
@@ -7966,6 +7997,60 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             # Every entry of it removed or renamed since: nothing left to paste.
             on_all_gone=lambda: board.clear(cut),
         )
+
+    def _duplicate_here(self, source: FilePaneWidget, target: FilePaneWidget,
+                        paths: list[str], dest_dir: str) -> None:
+        """Copy *paths* into *dest_dir*, the folder they are in, each under a
+        name of its own (``a (1).txt``; TC.ConflictPlan.duplicates). The
+        folder is listed off the GUI thread; the copies go through the
+        transfer queue like any other, never replacing a name."""
+        from core import transfer_conflicts as TC
+        from ui.scan_job import ScanJob
+
+        source_backend, dest_backend = source.backend, target.backend
+        check = ScanJob(self)
+        self._conflict_checks.add(check)
+        self._note_transfer_preparing()
+
+        def work(_cancel, _progress):
+            taken = {item.name for item in dest_backend.list_dir(dest_dir)}
+            folders = {p for p in paths if source_backend.is_dir(p)}
+            return taken, folders
+
+        def finished(kind: str, value, cancelled: bool) -> None:
+            self._conflict_checks.discard(check)
+            self._note_transfer_preparing()
+            check.deleteLater()
+            self.statusBar().clearMessage()
+            if cancelled:
+                return
+            if kind == "error":
+                QMessageBox.warning(
+                    self, tr("Copy"),
+                    tr("Could not check {dest} for existing names, so nothing was "
+                       "queued:\n{error}").format(dest=dest_dir, error=describe(value)))
+                return
+            if (source not in self._panes or target not in self._panes
+                    or source.backend is not source_backend
+                    or target.backend is not dest_backend):
+                log.info("Copy dropped: a pane closed or changed connection meanwhile")
+                return
+            taken, folders = value
+            try:
+                plan = TC.ConflictPlan.duplicates(source_backend, dest_backend, dest_dir,
+                                                  paths, taken, folders)
+            except ValueError as exc:
+                QMessageBox.warning(self, tr("Copy"), describe(exc))
+                return
+            self._start_transfer_between(source, target, paths, dest_dir=dest_dir,
+                                         conflict_plan=plan)
+            self.statusBar().showMessage(tr_n(
+                len(paths), "Copying {n} item into its own folder under a new name",
+                "Copying {n} items into their own folder under new names"), 8000)
+
+        check.finished.connect(finished)
+        self.statusBar().showMessage(tr("Checking the destination for existing names…"))
+        check.start(work)
 
     def _on_drop_transfer(
         self,
@@ -8047,6 +8132,21 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         *on_all_gone* when a move finds none of its sources there any more.
         """
         if not selected:
+            return
+        # A folder into itself or a folder below it: said now, as Paste says
+        # it (plan_paste), instead of a failed row after the check - and
+        # before a production source asks about a move that cannot happen.
+        inside = _into_itself(source.backend, list(selected), target.backend,
+                              target.current_path if dest_dir is None else dest_dir)
+        if inside:
+            QMessageBox.warning(
+                self, tr("Move") if move else tr("Copy"),
+                (tr("Nothing was moved: a folder cannot be moved into itself or a folder "
+                    "below it ({folder}).") if move else
+                 tr("Nothing was copied: a folder cannot be copied into itself or a folder "
+                    "below it ({folder}).")).format(
+                    folder=target.current_path if dest_dir is None else dest_dir))
+            log.info("Transfer not queued: %s is the destination or above it", inside[0])
             return
         # Every move (F6, the toolbar, the pane's menu, drag & drop, Paste,
         # a drop on a bookmark) removes the sources afterwards: a production
@@ -10370,9 +10470,12 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
 
             from ui.plain_text import plain_message
 
-            box = plain_message(self, QMessageBox.Icon.Warning, "Transfers running",
-                                f"{unfinished} transfer(s) are running or waiting. Quitting cancels "
-                                "them; partly copied files are left behind.\n\nQuit anyway?",
+            box = plain_message(self, QMessageBox.Icon.Warning, tr("Transfers running"),
+                                tr_n(unfinished,
+                                     "{n} transfer is running or waiting. Quitting cancels it; "
+                                     "a partly copied file is left behind.\n\nQuit anyway?",
+                                     "{n} transfers are running or waiting. Quitting cancels "
+                                     "them; partly copied files are left behind.\n\nQuit anyway?"),
                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
             box.setDefaultButton(QMessageBox.StandardButton.No)
             if box.exec() != QMessageBox.StandardButton.Yes:

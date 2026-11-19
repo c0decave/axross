@@ -264,9 +264,13 @@ class _CancelView:
 
 
 def _is_local(backend) -> bool:
+    """A local file system used by path. The MCP server's confined one is
+    not: a path checked there and then opened by name here could meanwhile
+    lead through a folder swapped for a symlink - its files are read and
+    written through the backend, like a remote's."""
     from core.local_fs import LocalFS
 
-    return isinstance(backend, LocalFS)
+    return isinstance(backend, LocalFS) and not getattr(backend, "confined_beneath", False)
 
 
 def _name(backend, path: str) -> str:

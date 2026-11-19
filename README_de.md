@@ -502,8 +502,10 @@ Jedes [Release](https://github.com/c0decave/axross/releases/latest) enthält Pro
 | `axross-slim` | dasselbe ohne die Cloud-SDKs, die Windows-Protokolle, Matrix/XMPP, Sprache, Analyse und numpy - SFTP, SMB, WebDAV, S3, FTP, Android und der Rest sind drin; etwa halb so groß | dasselbe |
 | `axross-base` | nur der Kern: lokale Dateien, SFTP / SCP / FTP, die Panes, der Editor, das Terminal, die Einstellungen. Alles andere - jedes Backend, jede Extension - ist ein *Pack*, das du über *Help → Features… → Packs…* hinzufügst: aus demselben Release geladen, Signatur und SHA-256 geprüft, bevor etwas entpackt wird | dasselbe |
 | `axross-full-glibc2.36`, `axross-slim-glibc2.36`, `axross-base-glibc2.36` | dieselben drei, gebaut mit den (neueren) Bibliotheken von Debian 12 | Linux x86-64 mit glibc 2.36 oder neuer (Debian 12+, Ubuntu 22.10+, Fedora 37+) |
-| `axross-slim-macos-arm64` | slim | macOS auf Apple Silicon (nicht notarisiert: [erster Start](docs/PACKAGING.md#macos-binary-the-first-start)) |
-| `axross-slim-windows-x64.exe` | slim | Windows 10 / 11, x64 |
+| `axross-full-x86_64.AppImage`, `axross-slim-x86_64.AppImage`, `axross-base-x86_64.AppImage` | `axross-full`, `-slim`, `-base` (glibc 2.34) als AppImage: Menüeintrag und Symbol mit AppImage-Werkzeugen (appimaged, Gear Lever); sie aktualisieren sich als AppImage | Linux x86-64 mit glibc 2.34 oder neuer |
+| `axross-slim-macos-arm64`, `axross-full-macos-arm64` | slim, full | macOS auf Apple Silicon (nicht notarisiert: [erster Start](docs/PACKAGING.md#macos-binary-the-first-start)) |
+| `axross-slim-macos-arm64.dmg`, `axross-full-macos-arm64.dmg` | slim, full als `axross.app` in einem Disk-Image: öffnen, axross nach Programme ziehen (neue Versionen kommen als neues Image) | macOS auf Apple Silicon (nicht notarisiert: [erster Start](docs/PACKAGING.md#macos-binary-the-first-start)) |
+| `axross-slim-windows-x64.exe`, `axross-full-windows-x64.exe` | slim, full | Windows 10 / 11, x64 |
 | `axross-media-player`, `axross-system-info` (und `-glibc2.36`) | Media Player und System Information als eigene Programme ([docs/STANDALONE.md](docs/STANDALONE.md)) | Linux x86-64 |
 | `axross-X.Y.Z.tar.gz`, `axross-X.Y.Z-py3-none-any.whl` | das Python-Paket, dasselbe wie auf PyPI (`pip install "axross[all]"`, unten) | jedes System mit Python 3.11+ |
 | `packs-X.Y.Z.json` und die Wheels daneben | die Packs, die ein `axross-base` hinzufügt | - |

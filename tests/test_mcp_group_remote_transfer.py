@@ -442,11 +442,16 @@ def test_happy_resumable_copy_resumes_after_a_cancel(root, saved):
     args = {"src": str(root / "big.bin"), "dst": str(root / "copy.bin"), "resumable": True}
     with pytest.raises(M.CancelledError):
         T.run_handler(tools, "transfer_copy", args, cancel=_CancelAfter(4))
-    assert 0 < (root / "copy.bin").stat().st_size < len(big)
+    # The partial copy sits beside the destination, never under its name
+    # (round-3 review: a failing copy left the final name truncated).
+    assert not (root / "copy.bin").exists()
+    partial = [p for p in root.iterdir() if p.name.endswith(".axross-resume.part")]
+    assert len(partial) == 1 and 0 < partial[0].stat().st_size < len(big)
     out = T.call(tools, "transfer_copy", args)
     entry = out["entries"][0]
     assert entry["action"] == "copied" and entry["resumed_segments"] >= 1
     assert (root / "copy.bin").read_bytes() == big
+    assert not partial[0].exists()
 
 
 # -- an ended HTTP session closes its connections -------------------------------------

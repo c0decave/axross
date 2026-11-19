@@ -49,6 +49,50 @@ _MSG_PATH_RE = re.compile(r"^/(?P<group>[^/]+)/(?P<msgno>\d+)_[^/]*\.eml$")
 _NO_SUCH_ARTICLE = (423, 430)
 
 
+def _connection_lost(exc: BaseException) -> bool:
+    """*exc* says the connection went away (not: the server refused)."""
+    from core.nntp_lib import NntpResponseError
+
+    seen = 0
+    cur: BaseException | None = exc
+    while cur is not None and seen < 6:
+        if isinstance(cur, NntpResponseError):
+            return False
+        if isinstance(cur, (ConnectionError, EOFError, TimeoutError)) and not (
+            isinstance(cur, ConnectionError) and cur.errno == errno.ENOTCONN
+        ):
+            return True
+        if "connection closed" in str(cur):
+            return True
+        cur = cur.__cause__ or cur.__context__
+        seen += 1
+    return False
+
+
+def _reconnecting(method):
+    """A read: under the session lock, and once more on a new connection
+    when the server had closed this one (an idle timeout shows only when
+    the next command meets the closed socket)."""
+    import functools
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with io_lock(self):
+            if self._closed_by_user:
+                raise ConnectionError(errno.ENOTCONN, f"NNTP {self._host}: disconnected")
+            try:
+                return method(self, *args, **kwargs)
+            except Exception as exc:  # noqa: BLE001 - re-raised unless the link is gone
+                nntp = self._nntp
+                if self._closed_by_user or not _connection_lost(exc) or (
+                        nntp is not None and not nntp.closed):
+                    raise
+                log.info("NNTP: the connection to %s was lost (%s); retrying", self._host, exc)
+                return method(self, *args, **kwargs)
+
+    return wrapper
+
+
 def _sanitize(name: str, max_len: int = 80) -> str:
     cleaned = _FILENAME_BAD.sub("_", name).strip(". ")
     if not cleaned:
@@ -61,6 +105,11 @@ class NntpSession(SessionLifecycle):
 
     supports_symlinks = False
     supports_hardlinks = False
+    #: The connection (core.nntp_lib.NntpClient); ``_client`` opens a new
+    #: one when the server dropped this one.
+    _nntp = None
+    #: close() was called: no reconnect.
+    _closed_by_user = False
 
     def __init__(
         self,
@@ -78,12 +127,7 @@ class NntpSession(SessionLifecycle):
         proxy_username: str = "",
         proxy_password: str = "",
     ):
-        from core.nntp_lib import (
-            DEFAULT_PORT,
-            DEFAULT_TLS_PORT,
-            NntpAuthRequired,
-            NntpClient,
-        )
+        from core.nntp_lib import DEFAULT_PORT, DEFAULT_TLS_PORT
         from core.proxy import ProxyConfig
 
         self._host = host
@@ -92,8 +136,12 @@ class NntpSession(SessionLifecycle):
         else:
             self._port = DEFAULT_TLS_PORT if (use_tls and not starttls) else DEFAULT_PORT
         self._use_tls = bool(use_tls or starttls)
+        self._implicit_tls = bool(use_tls)
         self._starttls = bool(starttls)
         self._username = username
+        # Kept for a reconnect: a Usenet server closes an idle connection
+        # after a few minutes.
+        self._password = password
         self._group_prefix = group_prefix
         self._window = max(1, int(window))
         self._proxy = ProxyConfig(
@@ -104,26 +152,7 @@ class NntpSession(SessionLifecycle):
             password=proxy_password,
         )
 
-        # Connect + auth.
-        try:
-            self._client = NntpClient(
-                host=host,
-                port=self._port,
-                use_tls=use_tls,
-                starttls=starttls,
-                proxy_config=self._proxy,
-            )
-        except Exception as exc:
-            raise OSError(f"Cannot connect to NNTP {host}:{self._port}: {exc}") from exc
-        try:
-            self._client.mode_reader()
-            if username:
-                self._client.authinfo(username, password)
-        except NntpAuthRequired as exc:
-            raise OSError(f"NNTP requires auth: {exc}") from exc
-        except Exception:
-            self._client.quit()
-            raise
+        self._nntp = self._open_client()
 
         # Per-group cache: group → (count, low, high)
         self._group_info_cache: dict[str, tuple[int, int, int]] = {}
@@ -141,18 +170,64 @@ class NntpSession(SessionLifecycle):
         who = self._username or "anon"
         return f"{scheme}: {who}@{self._host}:{self._port}"
 
+    def _open_client(self):
+        """A new connection, in reader mode and logged in."""
+        from core.nntp_lib import NntpAuthRequired, NntpClient
+
+        try:
+            client = NntpClient(
+                host=self._host,
+                port=self._port,
+                use_tls=self._implicit_tls,
+                starttls=self._starttls,
+                proxy_config=self._proxy,
+            )
+        except Exception as exc:
+            raise OSError(f"Cannot connect to NNTP {self._host}:{self._port}: {exc}") from exc
+        try:
+            client.mode_reader()
+            if self._username:
+                client.authinfo(self._username, getattr(self, "_password", ""))
+        except NntpAuthRequired as exc:
+            client.quit()
+            raise OSError(f"NNTP requires auth: {exc}") from exc
+        except Exception:
+            client.quit()
+            raise
+        return client
+
+    @property
+    def _client(self):
+        """The connection - a new one when the server dropped the last
+        (an idle Usenet connection is closed after a few minutes: every
+        call after that failed with "connection is closed" until the user
+        reconnected by hand). ENOTCONN after close()."""
+        if self._closed_by_user:
+            raise ConnectionError(errno.ENOTCONN, f"NNTP {self._host}: disconnected")
+        client = self._nntp
+        if client is None or client.closed:
+            log.info("NNTP: the connection to %s was closed; reconnecting", self._host)
+            self._group_info_cache = {}
+            client = self._nntp = self._open_client()
+        return client
+
+    @_client.setter
+    def _client(self, client) -> None:
+        self._nntp = client
+
     @property
     def connected(self) -> bool:
         # nntp_lib closes a connection whose response broke off (the stream
         # is out of step); the client object outlives its socket.
-        client = self._client
-        return client is not None and not client.closed
+        client = self._nntp
+        return not self._closed_by_user and client is not None and not client.closed
 
     @serialized
     def close(self) -> None:
-        if getattr(self, "_client", None) is not None:
-            self._client.quit()
-            self._client = None  # type: ignore[assignment]
+        self._closed_by_user = True
+        if self._nntp is not None:
+            self._nntp.quit()
+            self._nntp = None
 
     def disconnect(self) -> None:
         self.close()
@@ -187,7 +262,7 @@ class NntpSession(SessionLifecycle):
     # FileBackend — read surface
     # ------------------------------------------------------------------
 
-    @serialized
+    @_reconnecting
     def list_dir(self, path: str) -> list[FileItem]:
         path = self.normalize(path)
         if path == "/":
@@ -271,7 +346,7 @@ class NntpSession(SessionLifecycle):
             )
         return items
 
-    @serialized
+    @_reconnecting
     def stat(self, path: str) -> FileItem:
         path = self.normalize(path)
         if path == "/":
@@ -362,7 +437,7 @@ class NntpSession(SessionLifecycle):
         except FileNotFoundError:
             return False
 
-    @serialized
+    @_reconnecting
     def open_read(self, path: str) -> IO[bytes]:
         m = _MSG_PATH_RE.fullmatch(self.normalize(path))
         if not m:

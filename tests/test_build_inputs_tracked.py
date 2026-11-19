@@ -30,6 +30,9 @@ READERS = (
 # build/<name> references; <system>.txt placeholders and outputs are not inputs
 _REF = re.compile(r"build/([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?)")
 _OUTPUTS = {"dist-work", "lib", "sysroot"}
+# Tools the build downloads itself (pinned, SHA-256 checked): not inputs git
+# carries; the check failed on any machine where a build had fetched one.
+_DOWNLOADED = {"appimagetool-x86_64.AppImage"}  # scripts/fetch_appimagetool.sh
 
 
 def _tracked() -> set[str]:
@@ -52,7 +55,7 @@ def _referenced() -> set[str]:
             ref = match.group(1).rstrip(".")
             if ref.split("/")[0] in _OUTPUTS and "/" not in ref:
                 continue
-            if "<" in ref or not (ROOT / "build" / ref).is_file():
+            if "<" in ref or ref in _DOWNLOADED or not (ROOT / "build" / ref).is_file():
                 continue
             names.add("build/" + ref)
     return names

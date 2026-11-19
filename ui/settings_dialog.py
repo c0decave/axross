@@ -1006,6 +1006,23 @@ def _matching_widgets(page: QWidget, needle: str) -> list[QWidget]:
     return found
 
 
+def _tabs_showing(widget: QWidget, page: QWidget) -> list[tuple[QTabWidget, int]] | None:
+    """The tabs to switch to for *widget* of *page* to be in sight, as
+    ``(tab widget, index)`` pairs; None when anything else hides it (a group
+    shown only for some choice, a field of a profile not chosen)."""
+    tabs = []
+    current = widget
+    while current is not None and current is not page:
+        parent = current.parentWidget()
+        if current.isHidden():
+            holder = parent.parentWidget() if isinstance(parent, QStackedWidget) else None
+            if not isinstance(holder, QTabWidget) or holder.indexOf(current) < 0:
+                return None
+            tabs.append((holder, holder.indexOf(current)))
+        current = parent
+    return tabs if current is page else None
+
+
 class SettingsDialog(QDialog):
     """Edit > Settings…: the categories, their pages, OK / Apply / Cancel."""
 
@@ -1347,6 +1364,28 @@ class SettingsDialog(QDialog):
         else:
             # The page shown before the search went empty, and its marks.
             self._on_item_changed(current)
+        self._bring_mark_into_sight()
+
+    def _bring_mark_into_sight(self) -> None:
+        """When no setting the search marked is in sight because they sit
+        on tabs not shown (the Agent page's Access tab), show the tab of the
+        first one: the page opened at its first tab with nothing marked
+        there (search review). A tab with a mark in sight stays."""
+        page_id = self.current_page_id()
+        page = self._pages.get(page_id)
+        if page is None or not self._marked:
+            return
+        if any(w.isVisibleTo(page) for w in self._marked):
+            return
+        for widget in self._marked:
+            tabs = _tabs_showing(widget, page)
+            if tabs is None:
+                continue
+            for tab_widget, index in reversed(tabs):  # the outer tabs first
+                tab_widget.setCurrentIndex(index)
+            if widget.isVisibleTo(page):
+                self._scrolls[page_id].ensureWidgetVisible(widget)
+                return
 
     def visible_page_ids(self) -> list[str]:
         return [pid for pid, item in self._items.items() if not item.isHidden()]

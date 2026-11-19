@@ -3,6 +3,10 @@
 #
 # Usage:
 #   scripts/fetch_appimagetool.sh DEST
+#   scripts/fetch_appimagetool.sh DEST --runtime   the pinned AppImage type-2
+#       runtime (the ELF that starts every AppImage; it goes into the image, so
+#       appimagetool gets it with --runtime-file instead of fetching the
+#       "continuous" build itself)
 #   scripts/fetch_appimagetool.sh DEST --url URL --sha256 HEX   (tests)
 #
 # DEST is reused when it exists and has the pinned digest; a DEST with any
@@ -20,20 +24,28 @@
 #     | python3 -c 'import json,sys; print([a["digest"] for a in json.load(sys.stdin)["assets"]
 #                   if a["name"] == "appimagetool-x86_64.AppImage"])'
 # Cross-check by downloading it and running sha256sum on the file.
-# tests/test_appimagetool_pin.py holds the pin's form.
+# The runtime the same way, from https://github.com/AppImage/type2-runtime/releases
+# (a dated release, not "continuous"), asset runtime-x86_64.
+# tests/test_appimagetool_pin.py holds the pins' form.
 
 set -euo pipefail
 
 APPIMAGETOOL_VERSION="1.9.1"
 APPIMAGETOOL_SHA256="ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
 APPIMAGETOOL_URL="https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL_VERSION}/appimagetool-x86_64.AppImage"
+APPIMAGE_RUNTIME_VERSION="20251108"
+APPIMAGE_RUNTIME_SHA256="2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d"
+APPIMAGE_RUNTIME_URL="https://github.com/AppImage/type2-runtime/releases/download/${APPIMAGE_RUNTIME_VERSION}/runtime-x86_64"
 
-DEST="${1:?usage: fetch_appimagetool.sh DEST [--url URL --sha256 HEX]}"
+DEST="${1:?usage: fetch_appimagetool.sh DEST [--runtime] [--url URL --sha256 HEX]}"
 shift
 URL="$APPIMAGETOOL_URL"
 SHA256="$APPIMAGETOOL_SHA256"
+WHAT="appimagetool $APPIMAGETOOL_VERSION"
 while [ "$#" -gt 0 ]; do
     case "$1" in
+        --runtime) URL="$APPIMAGE_RUNTIME_URL"; SHA256="$APPIMAGE_RUNTIME_SHA256"
+                   WHAT="AppImage runtime $APPIMAGE_RUNTIME_VERSION"; shift ;;
         --url) URL="$2"; shift 2 ;;
         --sha256) SHA256="$2"; shift 2 ;;
         *) echo "fetch_appimagetool: unknown argument $1" >&2; exit 2 ;;
@@ -51,7 +63,7 @@ fi
 mkdir -p -- "$(dirname -- "$DEST")"
 TMP="$(mktemp "$DEST.part.XXXXXX")"
 trap 'rm -f -- "$TMP"' EXIT
-echo ">>> Downloading appimagetool $APPIMAGETOOL_VERSION ($URL)"
+echo ">>> Downloading $WHAT ($URL)"
 curl -fL --proto '=https,file' -o "$TMP" -- "$URL"
 GOT="$(digest "$TMP")"
 if [ "$GOT" != "$SHA256" ]; then
@@ -63,4 +75,4 @@ fi
 chmod 0755 -- "$TMP"
 mv -f -- "$TMP" "$DEST"
 trap - EXIT
-echo ">>> appimagetool $APPIMAGETOOL_VERSION verified (sha256 $SHA256)"
+echo ">>> $WHAT verified (sha256 $SHA256)"

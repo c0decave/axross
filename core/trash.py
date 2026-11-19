@@ -1046,8 +1046,12 @@ class EmptyTrashIncomplete(OSError):
         )
 
 
-def empty_trash(backend, root: str | None = None) -> int:
+def empty_trash(backend, root: str | None = None, *, should_continue=None) -> int:
     """Permanently remove every trash entry. Returns count removed.
+
+    *should_continue* (no arguments) is asked before each entry: False
+    stops there, the entries not reached stay in the trash (the Trash
+    window's Cancel).
 
     Per entry the data goes first and its sidecar only once the data is
     gone. In listing order the sidecar could go first: a data folder whose
@@ -1081,6 +1085,9 @@ def empty_trash(backend, root: str | None = None) -> int:
         log.warning("empty_trash: keeping %r in %s - it has no sidecar, the Trash "
                     "window does not show it", name, trash_root)
     for trash_id in sidecar_ids:
+        if should_continue is not None and not should_continue():
+            log.info("empty_trash: stopped after %d entries", removed)
+            break
         try:
             meta_file = _meta_path(backend, trash_root, trash_id)
             data_file = _data_path(backend, trash_root, trash_id)

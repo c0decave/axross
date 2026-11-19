@@ -57,6 +57,32 @@ from models.file_item import FileItem
 log = logging.getLogger(__name__)
 
 
+def _private_autodiscover_cache() -> None:
+    """Move exchangelib's autodiscover cache out of the shared temp folder.
+
+    It is a ``shelve`` (pickle) file at a predictable name in /tmp: another
+    local user who created it first decided what was unpickled - code run
+    as this user - and which endpoint got the credentials. It lives in a
+    0700 folder of this user's cache directory now."""
+    try:
+        from pathlib import Path
+
+        from exchangelib.autodiscover import cache as _cache  # type: ignore[import-not-found]
+
+        base = Path.home() / ".cache" / "axross" / "exchangelib"
+        base.mkdir(parents=True, exist_ok=True, mode=0o700)
+        base.chmod(0o700)
+        _cache.AUTODISCOVER_PERSISTENT_STORAGE = base / _cache.shelve_filename()
+    except Exception as exc:  # noqa: BLE001 - autodiscover then refuses below
+        log.warning("Exchange: no private autodiscover cache (%s)", exc)
+        _AUTODISCOVER_CACHE_PROBLEM.append(str(exc) or type(exc).__name__)
+
+
+#: Why the autodiscover cache could not be made private (autodiscover is
+#: refused then).
+_AUTODISCOVER_CACHE_PROBLEM: list[str] = []
+
+
 try:  # pragma: no cover — optional dep
     import exchangelib  # type: ignore[import-not-found]
     from exchangelib import (  # type: ignore[import-not-found]
@@ -81,6 +107,7 @@ try:  # pragma: no cover — optional dep
     except AttributeError:
         pass
     EXCHANGELIB_AVAILABLE = True
+    _private_autodiscover_cache()
 except ImportError:  # pragma: no cover — optional dep
     exchangelib = None  # type: ignore[assignment]
     Account = None  # type: ignore[assignment]
@@ -355,13 +382,49 @@ EXCHANGE_RETRY_MAX_WAIT = 60
 
 
 def _retry_policy():
-    """exchangelib's FaultTolerance bounded by EXCHANGE_RETRY_MAX_WAIT,
-    or None when this exchangelib has none (its default then applies)."""
+    """exchangelib's FaultTolerance bounded by EXCHANGE_RETRY_MAX_WAIT in
+    TOTAL, a 401 a refused login - or None when this exchangelib has none
+    (its default then applies).
+
+    FaultTolerance's max_wait bounds each single back-off: a server that
+    kept answering ErrorServerBusy with a back-off under a minute was
+    retried for ever. And it reads every 401 as throttling: a wrong
+    password was sent four times (an account lock-out after five) over
+    70 s and then reported as "Max timeout reached"."""
     try:
         from exchangelib import FaultTolerance  # type: ignore[import-not-found]
+        from exchangelib.errors import RateLimitError, UnauthorizedError
     except ImportError:
         return None
-    return FaultTolerance(max_wait=EXCHANGE_RETRY_MAX_WAIT)
+    import time as _time
+
+    class _BoundedFaultTolerance(FaultTolerance):
+        def __init__(self, max_wait):
+            super().__init__(max_wait=max_wait)
+            self._episode_start = None
+            self._episode_last = None
+
+        def __setstate__(self, state):
+            super().__setstate__(state)
+            self._episode_start = self._episode_last = None
+
+        def back_off(self, seconds):
+            now = _time.monotonic()
+            if self._episode_last is None or now - self._episode_last > self.max_wait:
+                self._episode_start = now  # a new busy spell
+            self._episode_last = now
+            waited = now - self._episode_start
+            if waited + float(seconds or 0) > self.max_wait:
+                raise RateLimitError(
+                    f"the server stayed busy for {waited:.0f} s", wait=seconds)
+            super().back_off(seconds)
+
+        def raise_response_errors(self, response):
+            if getattr(response, "status_code", None) == 401:
+                raise UnauthorizedError(f"Invalid credentials for {response.url}")
+            return super().raise_response_errors(response)
+
+    return _BoundedFaultTolerance(EXCHANGE_RETRY_MAX_WAIT)
 
 
 class ExchangeSession(SessionLifecycle):
@@ -418,6 +481,12 @@ class ExchangeSession(SessionLifecycle):
         if not EXCHANGELIB_AVAILABLE:
             raise ImportError(
                 "Exchange support requires exchangelib. Install with: pip install axross[exchange]"
+            )
+        if autodiscover and _AUTODISCOVER_CACHE_PROBLEM:
+            raise OSError(
+                errno.EACCES,
+                "Exchange: autodiscover needs a private cache folder "
+                f"({_AUTODISCOVER_CACHE_PROBLEM[0]}); give the server instead",
             )
 
         try:
@@ -548,6 +617,13 @@ class ExchangeSession(SessionLifecycle):
         Idempotent."""
         self._safely_close_account()
         self._account = None
+
+    @property
+    def connected(self) -> bool:
+        """False after close(). There was no such property: the connection
+        manager counted a closed session as alive, and the health check
+        reported "no connected state" for ever."""
+        return getattr(self, "_account", None) is not None
 
     # ------------------------------------------------------------------
     # FileBackend protocol — surface
@@ -711,10 +787,27 @@ class ExchangeSession(SessionLifecycle):
                     f"resolve to the same on-disk name "
                     f"({len(matches)} matches) — refusing to guess"
                 )
-            payload = bytes(getattr(matches[0], "content", b"") or b"")
+            payload = self._attachment_bytes(matches[0], path)
             self._enforce_size_cap(payload, path)
             return io.BytesIO(payload)
         raise OSError(f"Exchange open_read({path}): not a message or attachment")
+
+    @staticmethod
+    def _attachment_bytes(att, path: str) -> bytes:
+        """The bytes of a file attachment, or the attached mail (an
+        ItemAttachment: a forwarded message) as its MIME source. An
+        ItemAttachment has no ``content``: it was read as 0 bytes while
+        the listing showed its real size."""
+        if hasattr(att, "content"):
+            return bytes(getattr(att, "content", b"") or b"")
+        item = getattr(att, "item", None)
+        mime = getattr(item, "mime_content", None) if item is not None else None
+        if mime:
+            return mime if isinstance(mime, bytes) else str(mime).encode("utf-8")
+        raise OSError(
+            errno.EOPNOTSUPP,
+            f"Exchange open_read({path}): the attached item has no content to download",
+        )
 
     @staticmethod
     def _enforce_size_cap(payload: bytes, path: str) -> None:
@@ -955,7 +1048,11 @@ class ExchangeSession(SessionLifecycle):
         if folder:
             parts = [p for p in folder.strip("/").split("/") if p]
             target = self._resolve_folder(parts) if parts else acct.inbox
-        items = target.filter(subject__icontains=query) | target.filter(body__icontains=query)
+        from exchangelib import Q  # type: ignore[import-not-found]
+
+        # One filter with an OR: two QuerySets joined with "|" raised
+        # TypeError - search() never worked.
+        items = target.filter(Q(subject__icontains=query) | Q(body__icontains=query))
         out: list[dict] = []
         for msg in items.order_by("-datetime_received")[: int(limit)]:
             try:

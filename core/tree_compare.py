@@ -105,6 +105,10 @@ def walk(
             return
         if depth >= max_depth:
             log.debug("tree_compare: depth cap reached at %s", path)
+            if unlisted is not None:
+                # Not read is not "the same": what lies below shows as
+                # unknown (it was left out, and Sync said the sides match).
+                unlisted[prefix.rstrip("/")] = f"not compared: deeper than {max_depth} folders"
             return
         try:
             entries = backend.list_dir(path)

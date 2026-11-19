@@ -569,8 +569,7 @@ def atomic_write(backend, path: str, data: bytes) -> None:
         owned = carried and _carry_remote_owner(backend, path, tmp)
         carried = carried and owned
         if carried:
-            from core.server_ops import _finalize_temp_destination
-
+            _finalize_temp_destination = _temp_commit()
             _finalize_temp_destination(backend, tmp, path)
             log.debug("atomic_write: rename-based commit for %s", path)
             _finish_journal(
@@ -667,8 +666,7 @@ def atomic_write_stream(
         if written is None and previous_mode is not None and not previous_mode & _OWNER_WRITE:
             _restore_mode(backend, tmp, previous_mode)
         _refuse_swapped_temp(tmp, written)
-        from core.server_ops import _finalize_temp_destination
-
+        _finalize_temp_destination = _temp_commit()
         _finalize_temp_destination(backend, tmp, path)
         return bytes_done
     except BaseException:
@@ -682,3 +680,17 @@ def atomic_write_stream(
                 cleanup_exc,
             )
         raise
+
+
+def _temp_commit():
+    """core.server_ops' commit of a temp file to its place (a backup of the
+    file there first) - or, in a program exported without axross's transfers
+    (axross-markdown's editor: local files only), the backend's rename,
+    which replaces the file there. Its import unguarded, the editor's Save
+    always failed there."""
+    try:
+        from core.server_ops import _finalize_temp_destination
+    except ImportError:
+        def _finalize_temp_destination(backend, temp_path: str, dst: str) -> None:
+            backend.rename(temp_path, dst)
+    return _finalize_temp_destination

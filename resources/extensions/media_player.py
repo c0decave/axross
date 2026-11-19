@@ -162,6 +162,11 @@ MAX_REMOTE_BYTES = 512 * 1024 * 1024
 #: The arrow keys seek by this much, with Shift by the big step (ms).
 SEEK_STEP_MS = 5_000
 SEEK_BIG_STEP_MS = 30_000
+#: The -15 s / +15 s buttons.
+SKIP_BUTTON_MS = 15_000
+#: A skip past the end lands this far before it, so the track ends as it
+#: always does (next track, repeat, sleep timer) on every engine.
+SKIP_END_MARGIN_MS = 250
 #: Seconds of decoded audio the equalizer engine keeps behind the queue, so
 #: a seek back into them needs no decoder: QAudioDecoder cannot seek, and
 #: decoding from the top again took up to 0.8 s for a seek back to 40 s of
@@ -192,6 +197,13 @@ CONTROL_ICONS = {
     "pause": '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>',
     "stop": '<rect x="5" y="5" width="14" height="14" rx="1"/>',
     "next": '<polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/>',
+    # a turning arrow round a "15" drawn in strokes (a <text> needs a font)
+    "back15": '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>'
+              '<path stroke-width="1.4" d="M8.6 10.6l1.2-.9v5.6M15.6 9.7h-2.9l-.3 2.6'
+              'c.4-.3.9-.4 1.4-.4a1.6 1.6 0 0 1 0 3.2c-.6 0-1.1-.2-1.5-.6"/>',
+    "forward15": '<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>'
+                 '<path stroke-width="1.4" d="M8.6 10.6l1.2-.9v5.6M15.6 9.7h-2.9l-.3 2.6'
+                 'c.4-.3.9-.4 1.4-.4a1.6 1.6 0 0 1 0 3.2c-.6 0-1.1-.2-1.5-.6"/>',
     "shuffle": '<polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/>'
                '<polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/>'
                '<line x1="4" y1="4" x2="9" y2="9"/>',
@@ -4950,12 +4962,20 @@ class PlayerPanel(QWidget):
         self.play_button = QPushButton()
         self.stop_button = QPushButton()
         self.next_button = QPushButton()
+        self.back15_button = QPushButton()
+        self.forward15_button = QPushButton()
         self.shuffle_button = QPushButton()
         self.repeat_button = QPushButton()
         self.prev_button.setToolTip(tr("Previous (Ctrl+←); after 3 s: start of the track"))
         self.play_button.setToolTip(tr("Play / pause (Space)"))
         self.stop_button.setToolTip(tr("Stop"))
         self.next_button.setToolTip(tr("Next (Ctrl+→)"))
+        self.back15_button.setToolTip(tr("Back 15 seconds (← 5 s, Shift+← 30 s)"))
+        self.forward15_button.setToolTip(tr("Forward 15 seconds (→ 5 s, Shift+→ 30 s)"))
+        self.back15_button.setAccessibleName(tr("Back 15 seconds"))
+        self.forward15_button.setAccessibleName(tr("Forward 15 seconds"))
+        self.back15_button.clicked.connect(lambda: self.skip(-SKIP_BUTTON_MS))
+        self.forward15_button.clicked.connect(lambda: self.skip(SKIP_BUTTON_MS))
         self.shuffle_button.setCheckable(True)
         self.shuffle_button.setToolTip(tr("Shuffle"))
         self.repeat_button.setCheckable(True)
@@ -4979,7 +4999,8 @@ class PlayerPanel(QWidget):
         # 343 px at least and the playlist's 424, so the panel was cut off
         # on the right in a 366 px dock - its error text with it.
         controls.setSpacing(2)
-        for widget in (self.prev_button, self.play_button, self.stop_button, self.next_button,
+        for widget in (self.prev_button, self.back15_button, self.play_button, self.stop_button,
+                       self.forward15_button, self.next_button,
                        self.shuffle_button, self.repeat_button):
             widget.setMinimumWidth(30)
             controls.addWidget(widget)
@@ -5840,6 +5861,18 @@ class PlayerPanel(QWidget):
     def seek_relative(self, delta_ms: int) -> None:
         if self.engine.loaded:
             self.seek_to(max(0, self.engine.position_ms() + int(delta_ms)))
+
+    def skip(self, delta_ms: int) -> None:
+        """The -15 s / +15 s buttons: from where the track is, never before its
+        start; past its end it ends as usual (a moment before the end, so
+        repeat, the next track and the sleep timer do what they always do)."""
+        if not self.engine.loaded:
+            return
+        target = max(0, self.engine.position_ms() + int(delta_ms))
+        duration = self._duration()
+        if delta_ms > 0 and duration > 0:
+            target = min(target, max(0, duration - SKIP_END_MARGIN_MS))
+        self.seek_to(target)
 
     def _slider_action(self, action: int) -> None:
         # Keyboard steps on the slider (Page Up/Down, Home, End); a drag
@@ -6706,6 +6739,8 @@ class PlayerPanel(QWidget):
                           "pause" if getattr(self.engine, "state", "") == "playing" else "play")
         self._set_control(self.stop_button, "stop")
         self._set_control(self.next_button, "next")
+        self._set_control(self.back15_button, "back15")
+        self._set_control(self.forward15_button, "forward15")
         self._set_control(self.shuffle_button, "shuffle")
         self._set_control(self.repeat_button,
                           "repeat-one" if self.repeat == "one" else "repeat")

@@ -68,7 +68,7 @@ AREAS: tuple[Area, ...] = (
     Area("protocols", "Protocols"),
     Area("protocols.connections", "Connections & Proxy", (
         *_core("backend", "backend_registry", "capability_contracts", "connection_manager",
-               "connect_worker", "conn_health", "dashboard", "diagnostics", "profiles",
+               "connect_worker", "connect_notice", "conn_health", "dashboard", "diagnostics", "profiles",
                "net_helpers", "auth_prompt", "proxy", "proxy_http", "pac", "proxy_settings",
                "tls_context", "tls_env", "client_identity", "remote_name", "storage_identity",
                "session_lock", "server_ops", "version_stubs", "adaptive_io", "read_spool",
@@ -151,7 +151,8 @@ AREAS: tuple[Area, ...] = (
         *_ui("mcp_catalog_dialog"),
     )),
     Area("mcp.server", "MCP Server (axross as a server)",
-         _core("mcp_server", "mcp_http", "mcp_groups", "confined_fs", "regex_worker")),
+         _core("mcp_server", "mcp_http", "mcp_groups", "mcp_cli", "partials", "confined_fs",
+               "regex_worker")),
     Area("scripting", "Scripting", (
         *_core("scripting", "script_runner", "ui_helpers", "llm_guide"),
         *_ui("repl_widget", "script_editor", "scripting_guide", "scripts_dock"),

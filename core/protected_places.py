@@ -1683,7 +1683,19 @@ SECRET_NAMES_ANYWHERE = (".git-credentials", ".netrc", "_netrc", ".pgpass", ".en
                          "id_ed25519[._~-]*", "*.ppk", "*.p12", "*.pfx", ".npmrc", ".pypirc",
                          ".htpasswd", ".htdigest", "kubeconfig", "*.kubeconfig",
                          "kubeconfig.y*ml", "credentials.json", "client_secret*.json",
-                         "secrets.y*ml", "secrets.json", "*.secrets.y*ml")
+                         "secrets.y*ml", "secrets.json", "*.secrets.y*ml",
+                         # MySQL's, Vault's, s3cmd's and boto's credential files
+                         ".my.cnf", ".mylogin.cnf", ".vault-token", ".s3cfg", ".boto",
+                         # OAuth and cloud credentials, Terraform's, Docker's old
+                         # one, Java and GnuPG key stores
+                         "token.json", "service-account*.json", "*service_account*.json",
+                         "credentials.tfrc.json", ".dockercfg", "*.jks", "*.keystore",
+                         "secring.gpg")
+#: Suffixes of a copy a person or an editor leaves (``.env~``,
+#: ``.netrc.bak``): taken off before a name is matched, as often as there
+#: are.
+SECRET_BACKUP_SUFFIXES = ("~", ".bak", ".old", ".orig", ".save", ".swp", ".swo", ".tmp",
+                          ".backup", ".copy")
 #: ``(folder, file)`` that is secret wherever it is (a project's copy of
 #: ``~/.aws/credentials``, ``~/.docker/config.json``, ``~/.kube/config``).
 SECRET_PATHS_ANYWHERE = ((".aws", "credentials"), (".docker", "config.json"),
@@ -1704,11 +1716,60 @@ _KEEPASS_MAGIC = (b"\x03\xd9\xa2\x9a\x67\xfb\x4b\xb5", b"\x03\xd9\xa2\x9a\x65\xf
                   b"\x03\xd9\xa2\x9a\x66\xfb\x4b\xb5")
 
 
+def _without_backup_suffix(name: str) -> str:
+    """*name* without the backup suffixes of :data:`SECRET_BACKUP_SUFFIXES`."""
+    folded = name
+    changed = True
+    while changed and folded:
+        changed = False
+        for suffix in SECRET_BACKUP_SUFFIXES:
+            if len(folded) > len(suffix) and folded.casefold().endswith(suffix):
+                folded = folded[: -len(suffix)]
+                changed = True
+    # vim's swap file of .env is .env.swp, of foo it is .foo.swp
+    return folded
+
+
 def _secret_anywhere(name: str) -> bool:
     """Whether a file is secret by its name wherever it is
-    (:data:`SECRET_NAMES_ANYWHERE`)."""
-    return (_secret_name(name, SECRET_NAMES_ANYWHERE)
-            and not _secret_name(name, SECRET_NAMES_ANYWHERE_UNLESS))
+    (:data:`SECRET_NAMES_ANYWHERE`) - its backup copies too."""
+    for candidate in dict.fromkeys((name, _without_backup_suffix(name))):
+        if (_secret_name(candidate, SECRET_NAMES_ANYWHERE)
+                and not _secret_name(candidate, SECRET_NAMES_ANYWHERE_UNLESS)):
+            return True
+    return False
+
+
+#: Folders whose files are secret on any machine (a remote one too): every
+#: file but these names.
+REMOTE_SECRET_FOLDERS = {
+    ".ssh": ("*.pub", "known_hosts", "known_hosts.old", "authorized_keys", "authorized_keys2",
+             "config"),
+    ".gnupg": ("*.conf", "pubring.kbx", "pubring.gpg", "trustdb.gpg"),
+}
+
+
+def remote_secret_refusal(path: str) -> str | None:
+    """Why *path* on a remote machine is a secret by its name, or None: the
+    names secret anywhere (and their backup copies), the folder/file pairs
+    of :data:`SECRET_PATHS_ANYWHERE`, and the files of ``.ssh`` and
+    ``.gnupg`` (:data:`REMOTE_SECRET_FOLDERS`). The local rules that need
+    the home folder or the file's content cannot be applied there."""
+    import fnmatch
+
+    parts = tuple(p for p in path.replace("\\", "/").split("/") if p and p != ".")
+    if not parts:
+        return None
+    name = parts[-1]
+    secret = _secret_anywhere(name) or _secret_path_anywhere(parts)
+    for folder, allowed in REMOTE_SECRET_FOLDERS.items():
+        if len(parts) >= 2 and folder in (p.casefold() for p in parts[:-1]):
+            if not any(fnmatch.fnmatchcase(name.casefold(), pat) for pat in allowed):
+                secret = True
+    if not secret:
+        return None
+    return (f"{path}: the MCP server does not read this secret file on a remote either "
+            "(--mcp-allow-secret-reads hands secrets out)")
 
 
 def _secret_path_anywhere(ck: tuple[str, ...]) -> bool:
@@ -1719,10 +1780,7 @@ def _secret_path_anywhere(ck: tuple[str, ...]) -> bool:
     return any(tail == (folder, name) for folder, name in SECRET_PATHS_ANYWHERE)
 
 
-def _secret_content(path: str) -> bool:
-    """Whether the regular file *path* holds a private key or a password
-    database: a KeePass signature at its start, a PEM or OpenSSH private
-    key or a PuTTY key in its first :data:`SECRET_CONTENT_SCAN` bytes."""
+def _secret_pattern():
     global _SECRET_CONTENT
     import re
 
@@ -1730,9 +1788,224 @@ def _secret_content(path: str) -> bool:
         # Any characters of one line around "PRIVATE KEY" (a no-break space
         # in the header does not hide the key below it); bounded, so the
         # search stays linear.
+        # A PuTTY key's first line anywhere, not only at a line start: inside
+        # an uncompressed tar or zip, or after other text on its line, it was
+        # handed out (round-3 review).
+        # PEM and OpenSSH (five dashes), ssh.com / Tectia (four dashes and
+        # a space: PuTTYgen's "Export ssh.com key"), spaced or not, in any
+        # case; a PuTTY key; an age identity (its 58 Bech32 characters).
         _SECRET_CONTENT = re.compile(
-            rb"-----BEGIN[^\r\n]{1,60}?PRIVATE KEY[^\r\n]{0,20}?-----|^PuTTY-User-Key-File-",
-            re.MULTILINE)
+            _BEGIN_LINE
+            + rb"|PuTTY-User-Key-File-[0-9]{1,2}:"
+            + rb"|AGE-SECRET-KEY-1[02-9AC-HJ-NP-Z]{58}",
+            re.IGNORECASE)
+    return _SECRET_CONTENT
+
+
+#: A key's BEGIN / END line: four or five dashes, a space or not.
+_BEGIN_LINE = rb"-{4,5} ?BEGIN[^\r\n]{1,60}?PRIVATE KEY[^\r\n]{0,20}?-{4,5}"
+_END_LINE = rb"-{4,5} ?END[^\r\n]{1,60}?PRIVATE KEY[^\r\n]{0,20}?-{4,5}"
+
+_MARKER_WORDS = ("PRIVATE KEY", "PuTTY-User-Key-File-", "AGE-SECRET-KEY-1")
+#: The markers in UTF-16 and UTF-32 (a key saved by a Windows editor), in
+#: their usual case, upper and lower case: such a window is also looked at
+#: as text.
+_WIDE_CODECS = ("utf-16-le", "utf-16-be", "utf-32-le", "utf-32-be")
+_WIDE_MARKERS = tuple(
+    {variant.encode(codec)
+     for marker in _MARKER_WORDS
+     for variant in (marker, marker.upper(), marker.lower())
+     for codec in _WIDE_CODECS})
+_PLAIN_MARKER = None
+
+
+def _marked(data: bytes) -> bool:
+    """Whether *data* has one of the markers - plain in any case, or wide -
+    at all (the cheap test before the patterns)."""
+    global _PLAIN_MARKER
+    import re
+
+    if _PLAIN_MARKER is None:
+        _PLAIN_MARKER = re.compile(
+            b"|".join(re.escape(m.encode()) for m in _MARKER_WORDS), re.IGNORECASE)
+    return (_PLAIN_MARKER.search(data) is not None
+            or any(marker in data for marker in _WIDE_MARKERS))
+
+
+def _as_text_variants(data: bytes):
+    """*data* itself and, when it has a wide marker, its UTF-16 and UTF-32
+    readings (both byte orders, every alignment) as UTF-8."""
+    yield data
+    if not any(marker in data for marker in _WIDE_MARKERS):
+        return
+    for codec in _WIDE_CODECS:
+        width = 4 if "32" in codec else 2
+        for start in range(width):
+            part = data[start:]
+            yield part[: len(part) // width * width].decode(codec, "ignore").encode(
+                "utf-8", "ignore")
+
+
+#: A key's end line: what a window of a file that starts inside the key
+#: still holds (its BEGIN line may lie before the window).
+_SECRET_END = None
+
+
+def secret_in_content(data: bytes) -> bool:
+    """Whether *data* - a window of a file being handed out - holds a
+    private key's BEGIN or END line, a PuTTY key or a KeePass signature.
+    :func:`read_refusal` looks at a file's first
+    :data:`SECRET_CONTENT_SCAN` bytes; a read beyond them (a read_file
+    offset) checks what it serves with this."""
+    global _SECRET_END
+    import re
+
+    if _SECRET_END is None:
+        _SECRET_END = re.compile(_END_LINE, re.IGNORECASE)
+    if data[:8] in _KEEPASS_MAGIC:
+        return True
+    if not _marked(data):
+        return False
+    return any(_secret_pattern().search(text) is not None
+               or _SECRET_END.search(text) is not None
+               for text in _as_text_variants(data))
+
+
+#: How far :func:`inside_key_block` walks back over base64 lines.
+KEY_BLOCK_WALK_LIMIT = 16 << 20
+
+
+def _base64_line(line: bytes) -> bool:
+    line = line.rstrip(b"\r")
+    return bool(line) and len(line) <= 128 and all(
+        c in b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=" for c in line)
+
+
+def inside_key_block(fh, offset: int, limit: int = KEY_BLOCK_WALK_LIMIT) -> bool:
+    """Whether *offset* of the seekable *fh* lies inside a private key's
+    block whose BEGIN line is further back than any fixed margin (a PGP
+    key block of hundreds of KiB): the lines before *offset* are walked
+    back while they are base64 (and the armour's few ``Name: value``
+    lines); a BEGIN ... PRIVATE KEY line reached that way is True.
+    Anything else - text, a base64 blob that is no key - is False quickly
+    or at *limit* bytes."""
+    import re
+
+    begin = re.compile(_BEGIN_LINE, re.IGNORECASE)
+    pos = max(0, int(offset))
+    pending = b""  # the start of the line that continues past the chunk
+    walked = 0
+    headers = 0
+    first = True
+    while pos > 0 and walked < limit:
+        step = min(64 * 1024, pos)
+        pos -= step
+        fh.seek(pos)
+        chunk = fh.read(step)
+        walked += len(chunk)
+        lines = (chunk + pending).split(b"\n")
+        pending = lines[0] if pos > 0 else b""
+        body = lines[1:] if pos > 0 else lines
+        for line in reversed(body):
+            if first:
+                first = False
+                if not line or _base64_line(line):
+                    continue  # the line the window starts in
+                return bool(begin.search(line))
+            if _base64_line(line) or not line.strip(b"\r"):
+                continue
+            if begin.search(line):
+                return True
+            if b": " in line and len(line) < 200 and headers < 16:
+                headers += 1  # an armour header (Version: ...)
+                continue
+            return False
+    return bool(pending) and begin.search(pending) is not None
+
+
+class SecretScanningReader:
+    """A read handle that refuses (PermissionError) as soon as the bytes it
+    has handed out hold a private key's BEGIN or END line, a PuTTY key or
+    a KeePass signature - anywhere in the file, not only in the first MiB
+    :func:`read_refusal` looks at. The MCP server reads every local file
+    through it (encrypt, pack, copies to a remote, resources/read ...): a
+    key padded past 1 MiB was handed out inside an .axenc, an archive or a
+    remote copy. A window of the last bytes carries a marker split between
+    two reads."""
+
+    #: Bytes of the previous reads kept to find a marker split between two
+    #: reads: a BEGIN line, in UTF-16 too.
+    _KEEP = 512
+
+    def __init__(self, handle, path: str) -> None:
+        self._handle = handle
+        self._path = path
+        self._tail = b""
+        self._at_start = True
+
+    def _scan(self, data) -> None:
+        if not data:
+            return
+        chunk = bytes(data)
+        window = self._tail + chunk
+        hit = (self._at_start and chunk[:8] in _KEEPASS_MAGIC) or (
+            _marked(window) and secret_in_content(window))
+        self._at_start = False
+        self._tail = window[-self._KEEP:]
+        if hit:
+            raise PermissionError(
+                f"{self._path}: refused - the file holds a private key or a password "
+                "database (--mcp-allow-secret-reads hands secrets out)")
+
+    def read(self, *args):
+        data = self._handle.read(*args)
+        self._scan(data)
+        return data
+
+    def read1(self, *args):
+        data = self._handle.read1(*args)
+        self._scan(data)
+        return data
+
+    def readinto(self, buffer):
+        count = self._handle.readinto(buffer)
+        if count:
+            self._scan(memoryview(buffer)[:count])
+        return count
+
+    def readline(self, *args):
+        data = self._handle.readline(*args)
+        self._scan(data)
+        return data
+
+    def seek(self, *args):
+        # A jump: the window no longer continues the bytes before it.
+        self._tail = b""
+        return self._handle.seek(*args)
+
+    def __iter__(self):
+        while True:
+            line = self.readline()
+            if not line:
+                return
+            yield line
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self._handle.close()
+        return False
+
+    def __getattr__(self, name):
+        return getattr(self._handle, name)
+
+
+def _secret_content(path: str) -> bool:
+    """Whether the regular file *path* holds a private key or a password
+    database: a KeePass signature at its start, a PEM or OpenSSH private
+    key or a PuTTY key in its first :data:`SECRET_CONTENT_SCAN` bytes."""
+    _secret_pattern()
     try:
         fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
                      | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
@@ -1744,18 +2017,19 @@ def _secret_content(path: str) -> bool:
         if not stat_module.S_ISREG(os.fstat(fd).st_mode):
             return False
         head = os.read(fd, SECRET_CONTENT_HEAD)
-        if head[:8] in _KEEPASS_MAGIC or _SECRET_CONTENT.search(head) is not None:
+        if secret_in_content(head):
             return True
-        # Further on, in chunks that overlap by more than a header's length.
-        done, tail = len(head), head[-128:]
+        # Further on, in chunks that overlap by more than a header's length
+        # (in UTF-16 too).
+        keep = SecretScanningReader._KEEP
+        done, tail = len(head), head[-keep:]
         while len(head) and done < SECRET_CONTENT_SCAN:
             head = os.read(fd, min(256 * 1024, SECRET_CONTENT_SCAN - done))
             done += len(head)
             chunk = tail + head
-            if (b"PRIVATE KEY" in chunk or b"PuTTY-User-Key-File-" in chunk) and \
-                    _SECRET_CONTENT.search(chunk) is not None:
+            if _marked(chunk) and secret_in_content(b"\0" * 8 + chunk):
                 return True
-            tail = chunk[-128:]
+            tail = chunk[-keep:]
         return False
     except OSError:
         return False

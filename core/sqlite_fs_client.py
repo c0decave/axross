@@ -27,6 +27,7 @@ The backend is pure-stdlib (``sqlite3``) — no extra dependency.
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import sqlite3
@@ -95,18 +96,51 @@ class SqliteFsSession(DbFsBackend):
         # check_same_thread=False — Qt slots routinely cross thread
         # boundaries (transfer worker → UI). We protect with our own
         # lock so SQLite itself stays consistent.
-        self._conn = sqlite3.connect(
-            self._db_path,
-            isolation_level=None,
-            check_same_thread=False,
-        )
-        self._conn.row_factory = sqlite3.Row
-        self._lock = threading.RLock()
-        with self._lock:
-            for stmt in _SCHEMA.strip().split(";"):
-                if stmt.strip():
-                    self._conn.execute(stmt)
+        self._conn = None
+        self._closed = False
+        try:
+            self._conn = sqlite3.connect(
+                self._db_path,
+                isolation_level=None,
+                check_same_thread=False,
+            )
+            self._conn.row_factory = sqlite3.Row
+            self._lock = threading.RLock()
+            with self._lock:
+                for stmt in _SCHEMA.strip().split(";"):
+                    if stmt.strip():
+                        self._conn.execute(stmt)
+        except sqlite3.Error as exc:
+            # "unable to open database file" / "file is not a database",
+            # no path and no OSError; the connection was left open.
+            if self._conn is not None:
+                self._conn.close()
+            raise OSError(
+                errno.EIO, f"Cannot open the SQLite database: {exc}", self._db_path
+            ) from exc
         log.info("SQLite-FS session opened: %s", self._db_path)
+
+    @property
+    def connected(self) -> bool:
+        return not self._closed
+
+    def _transaction(self):
+        """BEGIN ... COMMIT (ROLLBACK on an error) under the session lock:
+        the connection runs in autocommit mode otherwise."""
+        import contextlib
+
+        @contextlib.contextmanager
+        def transaction():
+            with self._lock:
+                self._conn.execute("BEGIN IMMEDIATE")
+                try:
+                    yield
+                except BaseException:
+                    self._conn.execute("ROLLBACK")
+                    raise
+                self._conn.execute("COMMIT")
+
+        return transaction()
 
     # ------------------------------------------------------------------
     # Identity
@@ -118,6 +152,7 @@ class SqliteFsSession(DbFsBackend):
 
     def close(self) -> None:
         log.info("SQLite-FS closing: %s", self._db_path)
+        self._closed = True
         try:
             self._conn.close()
         except Exception:  # noqa: BLE001

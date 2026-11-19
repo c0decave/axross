@@ -1,7 +1,7 @@
 {
  "name": "opentelemetry-api",
  "versions": {
-  "1.45.1": {
+  "1.45.2": {
    "accepted_findings": [
     "yara|capability_filesystem_read|opentelemetry/metrics/_internal/__init__.py|3c9fff182aeb63d9",
     "yara|capability_network_download|opentelemetry/metrics/_internal/__init__.py|3c9fff182aeb63d9",
@@ -9,7 +9,7 @@
     "yara|capability_process_spawn|opentelemetry/propagators/_envcarrier.py|49632cef601c16bf"
    ],
    "archives": {
-    "opentelemetry_api-1.45.1-py3-none-any.whl": {
+    "opentelemetry_api-1.45.2-py3-none-any.whl": {
      "entry_points": [
       "contextvars_context = opentelemetry.context.contextvars_context:ContextVarsRuntimeContext",
       "api = opentelemetry.environment_variables",
@@ -48,7 +48,7 @@
       "opentelemetry/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "opentelemetry/trace/__init__.py": "395e280f8dc25cb5ffa8fdea946b00d3c76423c76ee239bdccaecad151317f78",
       "opentelemetry/trace/propagation/__init__.py": "7f064ececa407f1a421113a4a7f82b73bec72a95ca6f1a7013940db0bbb2495d",
-      "opentelemetry/trace/propagation/tracecontext.py": "ac6fbcf1610a51ebf9d9161e42e9e98d4e22a50552c57bb37596a62963e00776",
+      "opentelemetry/trace/propagation/tracecontext.py": "473a216560d73fb5e3008991e2b6a744eb3ffba133db6d8bffdb4818fcae4d12",
       "opentelemetry/trace/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "opentelemetry/trace/span.py": "67886d3802f7d87adcc6bc26d790ecef0b1fb89b1aed3e28f7c6d73b0b739e38",
       "opentelemetry/trace/status.py": "a7e825e751ecb11fb09e7004d325bfc02d3cc327eb3edb04599108699a00e014",
@@ -59,25 +59,25 @@
       "opentelemetry/util/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "opentelemetry/util/re.py": "5b3d01e8241ee9a693ef0eafd88a008ae567acabcb157835bbf66f6ef2a0d83d",
       "opentelemetry/util/types.py": "ab652ee21c742044ce0d8f62e0ebc0f23d1be0ccfbb119ef94324c688a0aa2e6",
-      "opentelemetry/version/__init__.py": "5b0fe18ed3a8b5e373d3b94fa2738797d281f95f9d1af58ea3a768e1732c162c",
+      "opentelemetry/version/__init__.py": "6ad44b6f37536e3c42c3248d7ae1b660bdc3a72e4c24dd59eec47a53aeedf1c4",
       "opentelemetry/version/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "opentelemetry_api-1.45.1.dist-info/METADATA": "5bc71e90cb421be92a43bf5ad5b0f25dccfa2a24ddceaa2877779879962a4c9e",
-      "opentelemetry_api-1.45.1.dist-info/RECORD": "d9c5826874e25e35714a30f21b8283ac7b336c902b17d2d65aec180a61223d8b",
-      "opentelemetry_api-1.45.1.dist-info/WHEEL": "5b77e4a649bbfb07fdbc123967eeecd1e5a478cfaca6eefc23c35e6fdf037848",
-      "opentelemetry_api-1.45.1.dist-info/entry_points.txt": "7713ead1845b4034b097c42447e23d037f2b6db7ca406e61dae3458e9bd4e95e",
-      "opentelemetry_api-1.45.1.dist-info/licenses/LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+      "opentelemetry_api-1.45.2.dist-info/METADATA": "aa93f63be0d6d1f662966e67b22a77c0d9966752e3a32ad87c1347f595cea7cb",
+      "opentelemetry_api-1.45.2.dist-info/RECORD": "4a028c0bf15491f1c93f57acd4eb27580568ee078e9371a14d362bdd304f7089",
+      "opentelemetry_api-1.45.2.dist-info/WHEEL": "da266b2640c891e0e1d24f528a428ca85b913feb9aea66f822bd40b04478044c",
+      "opentelemetry_api-1.45.2.dist-info/entry_points.txt": "7713ead1845b4034b097c42447e23d037f2b6db7ca406e61dae3458e9bd4e95e",
+      "opentelemetry_api-1.45.2.dist-info/licenses/LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
      },
      "hooks": [],
      "kind": "wheel",
-     "manifest": "4cf85926aee28b0fb679b3011060dc0ea0f4c87d58d1164d1b9e608e3905e5ae",
+     "manifest": "772c5b28159fc76123317ef81cff860542547c443faec2ff7ff2f887c85ce406",
      "native": {},
      "pth": {},
-     "sha256": "b31553efa588ae44bc306f863c785c5333a9ecc091248c6ee68b4b6c87fdedfb"
+     "sha256": "2cbd737377e710ee740d261c94e93fa0f08e6d037c18f17513cc0a2d94479a34"
     }
    },
    "name": "opentelemetry-api",
    "provenance": {
-    "opentelemetry_api-1.45.1-py3-none-any.whl": null
+    "opentelemetry_api-1.45.2-py3-none-any.whl": null
    },
    "pypi": {
     "author_email": "OpenTelemetry Authors <cncf-opentelemetry-contributors@lists.cncf.io>",
@@ -90,8 +90,8 @@
    },
    "reviewed": {
     "by": "claude",
-    "date": "2026-11-05",
-    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read, network_download, network_outbound, process_spawn; no attestation: content review only."
+    "date": "2026-11-17",
+    "note": "Security update from 1.45.1: fixes GHSA-mf5v-w3w3-f6cg / CVE-2026-126360 (quadratic-time traceparent regex in TraceContextTextMapPropagator.extract). The only code change against the reviewed 1.45.1 is that fix in opentelemetry/trace/propagation/tracecontext.py (the regex no longer backtracks, a 512-character limit) plus the version string. All 42 modules identical to the v1.45.2 tag of github.com/open-telemetry/opentelemetry-python (opentelemetry-api/src). Uploaded 2026-10-29, older than 14 days. No attestation (as 1.45.1): the content review is the evidence. OSV: no advisory for 1.45.2."
    },
    "scans": {
     "capa": {},
@@ -108,7 +108,7 @@
      "capability_process_spawn:capability_process_spawn opentelemetry/propagators/_envcarrier.py"
     ]
    },
-   "version": "1.45.1"
+   "version": "1.45.2"
   }
  }
 }

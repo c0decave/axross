@@ -36,13 +36,13 @@ def _sh(cmd: str) -> subprocess.CompletedProcess:
 
 
 def _exec_pair(session):
-    def run(cmd, timeout=30, stdin_data=None):
+    def run(cmd, timeout=30, stdin_data=None, **_kw):
         p = _sh(cmd)
         if p.returncode != 0:
             raise OSError(f"Command failed (exit {p.returncode}): {p.stderr.decode()}")
         return p.stdout.decode()
 
-    def raw(cmd, timeout=30, stdin_data=None):
+    def raw(cmd, timeout=30, stdin_data=None, **_kw):
         p = _sh(cmd)
         return (p.stdout + p.stderr).decode(), p.returncode
 
@@ -66,7 +66,7 @@ def _telnet():
 def _rsh():
     s = object.__new__(RshSession)
 
-    def run_remote(cmd, *, stdin=None):
+    def run_remote(cmd, *, stdin=None, timeout=None):
         p = _sh(cmd)
         if p.returncode != 0:
             raise OSError(p.stderr.decode())

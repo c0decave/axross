@@ -110,7 +110,9 @@ profile goes, with its stored password.
   Profile proxies cover axross-owned API/token traffic; the external
   browser consent page may use browser or system proxy settings.
   See [OAUTH_SETUP.md](../OAUTH_SETUP.md) for the per-provider app
-  registration recipe.
+  registration recipe. An expired or revoked sign-in says "Your sign-in to …
+  expired or was revoked. Reconnect to sign in again." - only Connect or
+  Reconnect opens the browser, and its sign-in must be done within 5 minutes.
 - **Proxy support.** SOCKS4/4a, SOCKS5, HTTP CONNECT and HTTPS proxies
   (TLS to the proxy), with Basic, NTLM and Negotiate authentication,
   per profile or as one global default (*Edit → Settings… → Network &
@@ -195,6 +197,87 @@ profile goes, with its stored password.
   someone else's work and catches up as above. When the remote cannot be reached
   the cached copy opens read-only and the status line says "offline".
   Scripts can pass `auto_push=False` and push with `axross.git_push()`.
+
+- **Databases, directories and more in Connect to Server.** SQLite
+  (*Database file*), Git (*Repository*: a URL, `user@host:path` or a local
+  path), PostgreSQL and MongoDB (*Database*: a name), Redis (*Database*: a
+  number, *Use TLS*), LDAP (Bind DN, *LDAPS*), SLP (*Scope*) and Exchange
+  (*Server* - empty autodiscovers from the *E-mail address*, which cannot
+  be combined with a proxy) connect from a saved profile; SVN takes a
+  *Repository URL* with optional user name and password. The TLS boxes of
+  IMAP, POP3, NNTP and LDAP move the port between 993/143, 995/110,
+  563/119 and 636/389; an imported profile without a port gets its
+  protocol's own; *IP Version* is shown only where the protocol honours it.
+  Waits: Git 15 s to connect and 60 s per answer (HTTP(S), SSH),
+  PostgreSQL 10 s to connect, Redis 10 s / 30 s per command, MongoDB 10 s
+  / 60 s per answer - a URL's own options win. An NNTP connection the
+  server dropped while idle is opened again by itself. Exchange gives up a
+  busy server after 60 s in total, a wrong password fails at once (it is
+  not retried towards an account lockout), its autodiscover cache is in
+  `~/.cache/axross/exchangelib`, and a forwarded mail attached as an item
+  downloads as its `.eml` source. LDAP never follows a referral (it would
+  carry the password to another host).
+
+- **SSH, FTP and shell connections.** *IP Version* is honoured by SFTP,
+  SCP, FTP, FTPS, rsync, Telnet, Cisco Telnet and rsh (TFTP is IPv4 only).
+  FTPS on port 21 is explicit (AUTH TLS), on 990 implicit; *Verify the
+  server's TLS certificate* (FTPS, WinRM) is on by default. WinRM: port 5985
+  is HTTP, 5986 HTTPS (*Use HTTPS*); reads of any size, uploads up to
+  32 MiB. rsh needs no user name, and rsh and WMI work as profiles (WMI takes
+  `DOMAIN\user`, an account with remote WMI rights; *Test Connection*
+  really logs in). TFTP lists only the files named in *Files* that the
+  server has, up to *Largest file*. SCP transfers run beside browsing, list
+  folders of about 300 000 entries and take names that are no UTF-8; SCP
+  gives up a stalled handshake after 10 s. An unanswered keepalive shows an
+  SSH connection as disconnected; host keys are matched in lower case;
+  agent login needs a running ssh-agent with keys; a ProxyCommand's `%h` /
+  `%r` refuse shell characters and a leading `-`. rsync over SSH needs a
+  key or the agent (no password can be typed) and a host key trusted once
+  through an SFTP profile; port 873 or empty means 22 in SSH mode and the
+  other way round; downloads stream and can be cancelled, uploads finish
+  as one block. rsh and Telnet stream transfers with progress and Cancel
+  (Telnet in pieces when the server has `dd` and `wc`); a Telnet command
+  times out after 30 s without output, not 30 s in total. Cisco Telnet
+  reports a wrong password at once; show commands may take up to 300 s.
+
+- **Shares, devices and object stores.** SMB and DFS-N have a
+  *Workstation* row (the NTLM workstation name; WORKSTATION by default,
+  never the real host name); a missing or refused share says so. MTP has
+  no host or port but *Device* (the number the mounter lists, 1 is the
+  first) and *Mounter* (Automatic, jmtpfs, simple-mtpfs or go-mtpfs).
+  Azure has one *Account* row; a SAS token for one container or share
+  connects (it needs the List permission). WebDAV waits up to 10 minutes
+  for the server's work after a PUT, MOVE, COPY or DELETE (a Nextcloud
+  assembling a big upload); with two-factor login use an app password.
+  NFS without root or password-less sudo: set a machine name or UID in the
+  profile to use the built-in client, which needs no mount; a kernel mount
+  whose server is gone shows as disconnected after about 10 s. Wrong
+  passwords, missing buckets or containers and closed ports are named as
+  such, and a phone unplugged, an NFS server or iSCSI session gone is
+  noticed, so Reconnect opens a new session.
+
+- **Android phones (ADB).** Two modes in the profile. *TCP / Wi-Fi*:
+  connect the phone by USB once, enable USB debugging, run
+  `adb tcpip 5555`, then use the phone's IP and port 5555 (a SOCKS or HTTP
+  proxy can be used). *USB*: the phone on the cable; the USB serial (as
+  `adb devices` shows it) is optional - empty means the first phone found.
+  There is no login: axross uses the adb tool's key `~/.android/adbkey`
+  and creates it when missing; the phone learns no user or host name of
+  this computer. On the first connection the phone asks "Allow USB
+  debugging?" - unlock it and tap Allow within a minute (axross says
+  "Check the phone" while it waits) and tick "Always allow from this
+  computer"; without that tick every new connection asks again, and a
+  transfer then shares the one connection, so browsing waits for it.
+  Android 11's *Wireless debugging* (pairing code, random port, TLS) is
+  not supported - use `adb tcpip 5555`. USB on Linux needs libusb-1.0
+  from the system (`pip install 'axross[adb]'` brings the Python side);
+  a running adb server holds the phone (`adb kill-server` first), and
+  without permission to the device add a udev rule for Android devices,
+  your user to the `plugdev` group and replug the phone. After a dropped
+  connection the next action reconnects by itself; long actions on the
+  phone (a checksum, a copy or move there, deleting a big folder, an APK
+  install) are waited for up to an hour; uploads get `rw-r--r--` and keep
+  the source's modification time.
 
 ## Multi-pane layout
 
@@ -474,7 +557,7 @@ The right-click menu is one column. **Open** comes first (a folder opens in the 
 | Disk Image… | Right-click (one `.img .raw .dd .iso .qcow2 .vdi .vmdk .vhd(x) .e01 …` file) | The container (qcow2, VDI, VMDK, VHD/VHDX, E01), the partition table (MBR with logical partitions, GPT) and each volume's file system and label, read in plain Python through any backend. A local image mounts one volume through a loop device over exactly its bytes: `udisksctl` without a prompt first (where polkit allows it), then `sudo`, then `pkexec`, then `udisksctl` letting polkit ask. The sudo password is asked once and kept in memory while axross runs (never on disk, never on a command line); *Remember the sudo password* (*Edit → Settings… → Security*) switches that off, which restores the order `udisksctl` (polkit asks), `pkexec`, `sudo` asked every time. Paranoid Security Mode never remembers it. sudo, pkexec and udisksctl are run only from root-owned system folders, never from `$PATH`. **Read-only** unless *Allow writing* is ticked and confirmed. The mounted folder opens in a new pane; *Unmount* gives the loop device back. Mounts made by axross are remembered across restarts (`~/.config/axross/mounts.json`, only those still mounted come back). *Identify File Type…* recognises disk images by content too (GPT, MBR, virtual disks) and offers *Disk Image…* for such a row, whatever its name. qcow2 / dynamic VDI / VMDK need converting (`qemu-img convert -O raw`) first; a fixed VDI mounts directly. |
 | New Folder | Right-click | `backend.mkdir(path)` on every writeable backend. |
 | Tags ▸ | Right-click a selection | Tick a coloured tag (Important and Review later exist; New Tag… adds one) for every selected file on any backend; dots in the Name column, the tags in its tooltip; `tag:<name>` in the filter field shows only those files; *View → Tagged Files…* lists every tag's files and goes there. Stored in `~/.config/axross/tags.json`. |
-| New File… | Right-click | Zero-byte file via `backend.open_write(path).write(b"")`. |
+| New File… | Right-click | Zero-byte file via `backend.open_write(path).write(b"")`; it never replaces a file of that name (also one saved meanwhile). |
 | New Symlink… | Right-click | Two prompts. Visible only on `supports_symlinks=True` backends. |
 | New Hardlink… | Right-click | Same shape; cross-device hardlinks surface as `OSError(EXDEV)`. |
 | Find in Index | `Ctrl+Shift+F` | Search the offline metadata index by name / ext / size. |
@@ -482,7 +565,7 @@ The right-click menu is one column. **Open** comes first (a folder opens in the 
 | Duplicate Finder | View menu, `Ctrl+Shift+D` | Groups indexed files by content hash and moves extra copies to the trash — see *Duplicate Finder* under *Tools*. |
 | View Media… / View Selected Media… | Right-click, View menu | Images, PDFs and videos of the folder (optionally recursive) or the selection as overview grid, click-through viewer or slideshow — see *Editors and viewers*. |
 | Show / Remove / Export Metadata… | Right-click | EXIF / GPS / XMP / IPTC, Office properties, PDF info, audio / video tags of the selection — or of the whole folder when nothing is selected (subfolders optional) — see *File metadata*. |
-| Calculate Size (N dirs) | Right-click on folders | Total size, file and folder count of each selected folder, walked in the background through the connection (*Cancel* in the status line); the result table sorts, and the sizes show in the pane's Size column until the folder is reloaded. **Hidden files count**: dotfiles, hidden folders and entries a backend flags hidden are summed like every other entry — as `du` does — whether or not the pane shows them. A link counts with its own size and is never followed; a folder that cannot be read is named in the result and skipped. |
+| Calculate Size (N dirs) | Right-click on folders | Total size, file and folder count of each selected folder, walked in the background through the connection (*Cancel* in the status line); the result table sorts, and the sizes show in the pane's Size column until the folder is reloaded. **Hidden files count**: dotfiles, hidden folders and entries a backend flags hidden are summed like every other entry — as `du` does — whether or not the pane shows them. A link counts with its own size and is never followed; a folder that cannot be read is named in the result and skipped, and an entry whose size cannot be read makes the total a lower bound (the note says how many). |
 | Identify Files in This Folder… | Right-click (also on empty space); the button of the *Identify File Type* window | Every file directly in the folder (a selected folder, else the folder shown; subfolders are counted, not entered; hidden files included) identified like *Identify File Type…*, in the background and through the connection, so remote panes work too. Bounded: at most 2000 files, 64 KiB read per file, a 15 s timeout per read, *Cancel*; `file(1)` is not asked. The columns sort: name, detected type, MIME type, the *mismatch* verdict, size, a note — for a disk image its container, partition table and partition count (`Raw disk image, MBR, 2 partitions, 4.0 MiB`; at most 4 MiB read for it) — and, for local files when the `sift` extra is installed, sift's kind. A row opens *Disk Image…* (disk images) or *Properties…*; a double-click picks the one that fits. |
 | Analyse with sift / Analyse Folder with sift | Right-click (the folder entry also on empty space), the Actions menu, *Tools → Analyse with sift* | Opens the *Analysis (sift)* dock (sift's sieve icon, `Ctrl+Shift+I`) and explains the file there without a model. Several selected files, or a folder (the selected one, else the folder shown), are offered as one batch for the active LLM profile; *Tools → Analyse with sift* takes the selection, or the folder shown when nothing is selected. sift's own directory summary (`sift --dir-summary`, sift 0.1.96 and later) is not part of the dock: a folder is analysed file by file. Without sift (axross-slim, or a source install without the `sift` extra) every entry says that sift comes with axross-full or the `axross[sift]` extra and links *Help → Features…*. |
 | Identify File Type… | Right-click (selection) | One row per entry: the real type from the content (magic bytes via Qt's MIME database, puremagic, a built-in signature table), the MIME type, what the extension claims and a highlighted *mismatch* when they disagree, size, and for text the encoding and line endings. Reads at most 64 KiB per file through the backend, off the GUI thread, with a 15 s timeout per file — a dead remote gives a "timed out" row. Local files also show `file(1)`'s description when it is installed. Scripting: `axross.file_type(b, path)`. |
@@ -493,7 +576,7 @@ The right-click menu is one column. **Open** comes first (a folder opens in the 
 | Delete Permanently | Right-click, `Shift+Del` | First counts what will go (folders, files, size, hidden entries) off the GUI thread, then asks - with **No** as the default button, so `Enter` keeps the files. A selected folder that holds hidden entries (dotfiles, or a backend's hidden flag) - or one the check could not fully read - needs a second OK whose default is No. The removal runs in the background: the status line shows the progress, Cancel stops at the next entry - also inside a folder being deleted on a local path, SMB, SFTP or FTP (SFTP removes a folder's files in batches of 16 requests at once and stops after the running batch), and the status line then says how much of that folder went (removed entries stay removed; a server that deletes a whole folder in one request, such as WebDAV or S3, finishes that folder first) - failures are listed per entry, and the folder is reloaded at the end. A path that is already being deleted is refused, also from the other pane. Three deletes ask once more, each with its own explanation and **No** as the default: INBOX on an IMAP server whose folders all live below it (Courier, Cyrus, Dovecot with the `INBOX.` prefix) - Yes deletes those folders, INBOX and its messages stay, because no IMAP server deletes INBOX; a DFS link on SMB - Yes deletes the contents of the share it leads to (named in the question), the link itself stays; and on WinRM/WMI a name made only of dots and spaces, which Windows reads as the folder above it. No deletes nothing. A script says yes with `keep_namespace_root=True`, `follow_dfs_link=True` or `confirm_alias=True`; the agent and MCP clients cannot, they get the explanation and tell you. |
 | Show Trash… | Right-click | Restore / permanently-delete dialog. |
 | Show Versions… | Right-click | Snapshot browser — Save Version As, Restore as Current. |
-| Show Checksum… | Right-click | Native checksum (S3 ETag, Drive md5, ssh sha256sum…) with stream-hash fallback. |
+| Show Checksum… | Right-click | Native checksum (S3 ETag, Drive md5, ssh sha256sum…) with stream-hash fallback; a local file is hashed with progress and *Cancel*, and where the server's own checksum fails, SHA-256 by reading the file is offered. |
 | Extract to folder… | Right-click on a supported archive | Same-named sibling folder, cancellable, with the `core.archive` safety guards. Local backends only. |
 | Encrypt / Decrypt with passphrase | Right-click | AES-256-GCM. |
 | Open as root… | Right-click | Local-only; routes through `pkexec`. Hidden when polkit/pkexec are missing. |
@@ -511,16 +594,17 @@ stays the pane's live filter.
 
 | Field | What it does |
 |---|---|
-| Name | Text without `* ? [ ]` matches anywhere in the name (`report` finds `Q3-report.pdf`); a pattern (`*.jpg`, `IMG_????.*`) the whole name. Case is ignored. *Regex* takes a regular expression instead. |
-| Contains | Text inside the file, line by line, in the first 32 MiB of each file; *Regex* and *Case-sensitive* as usual. |
+| Name | Text without `*` or `?` matches anywhere in the name, brackets included (`report` finds `Q3-report.pdf`, `Song [Remix]` finds itself); a pattern (`*.jpg`, `IMG_????.*`, `IMG_[0-9]*`) the whole name, where `[0-9]` is a set. Case and the Unicode form are ignored (`strasse` finds `Straße`, a Mac-written `Ärger` is found). A name search also lists matching folders (category *Folder*), unless Contains, Size or Types is set. *Regex* takes a regular expression instead. |
+| Contains | Text inside the file, line by line, in the first 32 MiB of each file - UTF-8, UTF-16 with a byte order mark, and for plain text (not *Regex*) also Latin-1 / Windows-1252; *Regex* and *Case-sensitive* as usual. |
 | Types | Any of the ticked presets: Images, Videos, Audio, Documents, Archives, Disk & VM images (dd / raw / img, ISO, qcow2, VDI, VMDK, VHD(X), E01 / AFF, DMG, LUKS…), Crypto wallets (Bitcoin Core / Litecoin `wallet.dat`, Electrum, Ethereum `UTC--…` keystores, Exodus, Monero, MultiBit / Armory, Wasabi, Atomic, Ledger Live, MetaMask / Phantom / … browser wallets), Keys & certificates (PEM / DER, `.p12` / `.pfx`, Java key stores, SSH and PuTTY keys, KeePass), Source code, Email, Databases. Decided by name and folder; for local files whose extension says nothing (`blob`, `wallet.dat`, `UTC--…`) also by the first bytes, and by `sift` when the `sift` extra is installed (`axross[sift]`). Types name file *kinds* — nothing looks for passwords or keys inside files. |
-| Size / Modified | `10K`, `1.5M`, `2G`; a date range. |
-| Inside archives | Also look into zip, tar, tar.gz / .bz2 / .xz / .zst, single .gz / .bz2 / .xz / .zst files and archives nested in them (3 levels); 7z and rar by member name. A hit reads `archive.zip!/folder/file.txt`. Bounded: 10 000 members and 1 GiB decompressed per archive, 64 MiB per nested archive, the extraction's 100:1 zip-bomb ratio; a remote archive is copied (at most 256 MiB) to a private temporary file first. |
+| Size / Modified | `10K`, `1.5M` (or `1,5M`), `2G`; a date range, both days included. |
+| Inside archives | Also look into zip, tar, tar.gz / .bz2 / .xz / .zst, single .gz / .bz2 / .xz / .zst files and archives nested in them (3 levels); 7z and rar by member name. A hit reads `archive.zip!/folder/file.txt`. Bounded: 10 000 members and 1 GiB decompressed per archive, 64 MiB per nested archive, the extraction's 100:1 zip-bomb ratio for members of 64 MiB or more (smaller members are not ratio-checked, so a ZIP of a disk image full of zeros extracts); a remote archive is copied (at most 256 MiB) to a private temporary file first. |
 | Tag | Only files that carry the chosen tag (right-click → *Tags*); a tagged archive counts for its members. A Smart Folder keeps the tag. Offline-index hits are filtered too. |
 | Hidden files, Skip .git / node_modules / caches, depth | What the walk includes. Symlinked folders are never followed. |
 | Look in | Every open pane's folder (the active one ticked), *Add Folder…*, and *Also search the offline index* (names, sizes, dates; no content). |
 
-Results stream in while the search runs; *Stop* or closing the window
+Results stream in while the search runs (at most 5000; a file below two
+ticked folders is listed once); *Stop* or closing the window
 cancels it. The columns sort; double-click or `Enter` shows the file
 selected in a pane (an archive member opens the archive view), and the
 right-click menu has *Open*, *Reveal in Pane*, *Copy Path* and *Send to
@@ -727,25 +811,94 @@ bar docks it again.
 - **Markdown viewer** — F3 / double-click on a `.md` / `.markdown` /
   `.mdown` / `.mkd` file, local or remote (F4 still edits it): GitHub's
   Markdown (tables, task lists, strike-through, autolinks, footnotes)
-  with the headings in an outline beside it, highlighted code, zoom
-  (Ctrl +/-/0), find (Ctrl+F, Enter or F3 for the next), Reload (F5) and
-  Edit (F4). What the file holds is shown, never run: raw HTML is shown
-  as text, nothing is loaded from the network (a remote image is a box
-  naming its address), images are read only relative to the file (no
-  absolute path, no `file:`), only regular files, never a secret file,
-  at most 8 MiB and 40 million pixels each and 200 per file. A link to
-  another Markdown file opens it in a viewer of its own; a web link opens
-  in the browser only after a question that shows its real address (and
-  not at all in the `paranoid` security mode). In the editor, *View →
-  Markdown Preview* (Ctrl+Shift+M) shows the text rendered beside it,
-  following the typing.
+  with the headings in an outline beside it that follows the place you
+  read, highlighted code, zoom (Ctrl +/-/0), find (Ctrl+F marks every
+  match and says which of how many; Enter or F3 the next, Shift+Enter or
+  Shift+F3 the one before), Reload (F5) and Edit (F4). A local file is
+  shown anew when it changes on disk, where you were stays. *Export*
+  saves the page as HTML (its images inside it, nothing it could load
+  from elsewhere) or PDF, or prints it (Ctrl+P). A long file shows its start at
+  once and is laid out in parts while you read ("Rendering… 40 %"). A
+  jump goes straight to its place - dropping the scroll bar, Find (from the
+  top of what you see, also after scrolling away from the last match; its count reads "12+" until the page is complete),
+  a link to a heading, Ctrl+End, a reload - and the parts in between
+  appear as you scroll to them, without moving what you read. Select All,
+  Export and Print take the whole page. A match or a `#…` link inside a
+  folded `<details>` opens it. Reload (also when the file changes),
+  folding, zoom and resizing keep the place you read, and a reload shows
+  the old page until the new one is there; Find goes in page order and
+  wraps round; Select All and Copy work at once, also on a long page, and copy exactly
+  what the page shows (formulas as their TeX: `$$…$$` on a line of its own,
+  `$…$` inline, a list item with its number or bullet - dragging and the selection
+  clipboard give the same); the outline lists
+  every heading from the start. Below 700 px the outline hides itself
+  (*Outline* brings it back); the window goes down to 440 px. Right-click a heading in the
+  outline for *Copy Link to Heading*, a code block for *Copy Code Block*.
+  Links open in the same window - another Markdown file at the heading
+  its `#…` names, a folder's README, a text file as text, an image at
+  its own size - and Back / Forward (Alt+Left / Alt+Right, the mouse's
+  buttons) go through them. A link above the document's folder opens
+  only after a question (No is the default), a secret file never. A web link opens in the browser (a `mailto:`
+  link in the mail program) only after a question that shows its real
+  address (and not at all in the `paranoid`
+  security mode) - a look-alike host (Cyrillic, mixed or Latin look-alike letters) is shown
+  and linked in punycode (`xn--…`), also as the text of a `www.…` or e-mail link
+  and in the mail question; anything else (`file:`, an absolute path, a secret
+  file) is named in the status line, not opened.
+  What the file holds is shown, never run: of raw HTML only a short list
+  of harmless tags is kept (`<p align>`, `<img>`, `<br>`,
+  `<details>`/`<summary>` (folded unless it says `open`; a click on the
+  summary opens or folds it), `<kbd>`, `<sub>`/`<sup>` and the like; scripts,
+  styles and frames go with their contents, other tags go and their text
+  stays), nothing is loaded from the network (a remote image or badge is a
+  small "▣ alt text" chip (in the terminal "🖼 alt text"), its address in
+  the tooltip; an image
+  embedded as `data:` is shown), images are read only from the file's folder and
+  the folders below it (no parent folder, no absolute path, no `file:`),
+  only regular files, never a secret file, at most 8 MiB and 40 million
+  pixels each and 200 per file. In the editor, *View → Markdown Preview*
+  (Ctrl+Shift+M) shows the text rendered beside it, following the typing.
   With markdown-it-py installed (axross-markdown brings it), the viewer
-  shows the full set - footnotes, definition lists, front matter, aligned
-  tables, code coloured by Pygments - in colours for light and dark themes;
-  without it Qt's own Markdown is used. In a terminal, `axross-mdcat
-  FILE.md` (axross-markdown) shows the same in colour.
+  shows the full set - footnotes (numbered as on GitHub: a reference to a
+  note that doesn't exist stays as written, each citation has its own way
+  back), definition lists, front matter (simple `key: value` as a
+  table, as on GitHub; other YAML in a labelled box), aligned
+  tables, GitHub's alerts (`> [!NOTE]` …), math set like KaTeX (`$x^2$`:
+  italic variables, upright function names, large sums and integrals with
+  their limits, stacked fractions and binomials, stretching brackets,
+  matrices and cases as grids, `\tag` numbers at the right (in `align` rows too),
+  `\overset`, `\cfrac`, `\substack`, `\not`, `\boxed`, `\color`; without a maths font installed a serif
+  face, and a formula nested too deeply or too long is shown in its line
+  as text), emoji
+  shortcodes (`:tada:`), bare `https://…`, `www.…` and e-mail addresses as
+  links, code in GitHub's colours - for light and dark themes; without it
+  Qt's own Markdown is used, with the same allowed HTML, alerts, emoji,
+  reference links and math (also in code blocks of the language `math`), but `<details>` always shown open.
+  Huge blocks (a log of 100 000 lines in a fence, thousands of formulas) never
+  freeze the window, also inside a list item, quote, alert, definition or
+  note, and raw HTML tables and lists: such a block stays where it is and is
+  laid out in pieces as you scroll. A heading, table row or term with more
+  than 100 formulas shows the rest as TeX, with a note. Code longer than
+  500 lines or 40 000 characters is shown on its grey ground without a box.
+  Lists nested deeper than 16 levels and quotes deeper than 8 are shown
+  flatter ("Laid out flatter"), in every view. A long Copy runs in pieces
+  ("Copying… 40 %"); a reload during it cancels it and says so. `<a id>` / `<a name>` anchors may hold digits and dots
+  (`#26.8.0`), footnote labels match regardless of case, and GitHub's
+  `` $`…`$ `` is a formula too, as is `$$ … $$` with spaces inside. Math
+  covers KaTeX's common symbols, single-token arguments (`\frac12`,
+  `\sqrt5`), `\choose`, `\bigcup`, `\lbrace`, `\ket`, `\mathscr`,
+  `\operatorname*` and nested scripts; `\cfrac`, `\overset`, `\underset` and `\stackrel` are stacked
+  in display formulas only (inline and in the terminal they are written
+  beside), and a command it does not know is shown as written. In a terminal, `axross-mdcat FILE.md` (axross-markdown)
+  shows the same in colour, with links and pictures where the terminal
+  can show them; `--watch` shows the file anew when it changes, `--toc`
+  lists its headings; a long file is written as it is rendered. The
+  standalone `axross-markdown [FILE…]` opens the viewer; `--term` (the
+  terminal output, with mdcat's options), `--html FILE|-` (an HTML page),
+  `--help` and `--version` start no Qt, and an unknown option is an error.
 - **Image viewer** — F3 / double-click, MIME-allow-listed, size-
-  capped to keep Qt's allocator happy.
+  capped to keep Qt's allocator happy. Ctrl + / Ctrl - (or `+` / `-`,
+  Ctrl + wheel) zoom, Ctrl+0 (or `0`) shows 100 %, `F` fits.
 - **PDF** — F3 / double-click opens the PDF on its own in the media
   viewer below (needs QtPdf; without it, or in the `paranoid` security
   mode, the hex editor opens instead and the log says why).
@@ -764,8 +917,9 @@ bar docks it again.
   page gets a page control `← n / m →` in the button bar; Up / Down
   turn its pages. Home / End, F11 fullscreen, Ctrl+M
   maximize / restore (the window remembers its last size, position
-  and maximized state for the next open), wheel or
-  `+` / `-` zoom, `F` fit, `1` 100 %, `R` rotate, `S` slideshow
+  and maximized state for the next open), wheel (on a PDF Ctrl + wheel),
+  Ctrl + / Ctrl - or `+` / `-` zoom (on a fitted PDF from the size it is
+  shown at), Ctrl+0 100 %, `F` fit, `1` 100 %, `R` rotate, `S` slideshow
   (interval in seconds; the slideshow loops, a video plays to its
   end), Esc back to the overview, Esc again closes. **Delete**
   deletes the shown file (or the selected tile) after a question;
@@ -816,7 +970,9 @@ bar docks it again.
   (another backend or device). Keys while the player has
   the focus: Space play/pause, Enter play the selected row, Delete
   remove the selected rows, Left / Right seek 5 s (with Shift 30 s),
-  Ctrl+Left / Ctrl+Right previous / next, M mute, + / - volume. With
+  Ctrl+Left / Ctrl+Right previous / next, M mute, + / - volume; the
+  buttons beside Play skip 15 s back and forth (past the end the track
+  ends as usual). With
   numpy: 10-band equalizer with presets (the arrow left of *Equalizer*
   folds the band sliders away and gives the playlist the room; it is
   axross's one equalizer - the Agent's voice goes through it too, it is

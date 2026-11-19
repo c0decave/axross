@@ -115,6 +115,7 @@ class HandbookDialog(QDialog):
         self.search.setPlaceholderText(tr("Find (Return: next match)"))
         self.search.setClearButtonEnabled(True)
         self.search.returnPressed.connect(self.find_next)
+        self.search.textChanged.connect(self._search_text_changed)
         self.search_hint = QLabel()
         find_row = QHBoxLayout()
         find_row.addWidget(self.search, 1)
@@ -310,6 +311,16 @@ class HandbookDialog(QDialog):
         if needle:
             self.search_hint.setText(tr("Not found"))
         return False
+
+    def _search_text_changed(self, _text: str) -> None:
+        """Another text: "Not found" was about the last one, and the next
+        Return looks from the start of the match shown - typing "Trans" on
+        to "Transfers" skipped the "Transfers" found (search review)."""
+        self.search_hint.clear()
+        cursor = self.view.textCursor()
+        if cursor.hasSelection():
+            cursor.setPosition(cursor.selectionStart())
+            self.view.setTextCursor(cursor)
 
     def _open_tours(self) -> None:
         opener = getattr(self.parent(), "show_tours", None)

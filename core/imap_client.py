@@ -111,6 +111,13 @@ _SEARCH_LINE_CAP = 24 * 1024 * 1024
 _BODY_SLACK = 64 * 1024
 
 
+class LoginError(PermissionError):
+    """The server refused the login (a NO or BAD to LOGIN / AUTHENTICATE):
+    an OSError (EACCES) that core.user_errors reads as "check the user name
+    and the password" - imaplib's own error carried the raw server bytes
+    and was no OSError."""
+
+
 class ImapAnswerTooLarge(OSError):
     """A server's answer to one command went over its byte budget.
 
@@ -131,6 +138,26 @@ def _human(n: int) -> str:
     if n >= 1024 * 1024:
         return f"{n / (1024 * 1024):.0f} MiB"
     return f"{n // 1024} KiB" if n >= 1024 else f"{n} bytes"
+
+
+#: What an IMAP atom cannot hold (RFC 3501 atom-specials and "]").
+_NOT_IN_ATOM = re.compile(r'[\x00-\x20\x7f(){%*"\\\]]')
+
+
+def _login_word(name: str) -> str:
+    """*name* as one LOGIN argument: a bare atom when it is one, else a
+    quoted string (imaplib quotes the password only)."""
+    if name and not _NOT_IN_ATOM.search(name):
+        return name
+    return '"' + name.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _server_text(exc: BaseException) -> str:
+    """imaplib's error text: the server's answer, bytes decoded."""
+    arg = exc.args[0] if exc.args else ""
+    if isinstance(arg, bytes):
+        arg = arg.decode("utf-8", "replace")
+    return str(arg)[:300]
 
 
 class _LiteralInSteps:
@@ -792,6 +819,9 @@ class _SpooledWriter:
         import email.mime.text
         from email.utils import formatdate
 
+        # A local name with CR / LF raised HeaderParseError (no OSError)
+        # and must never become a header line of its own.
+        filename = re.sub(r"[\x00-\x1f\x7f]", "_", filename)
         msg = email.mime.multipart.MIMEMultipart()
         msg["Subject"] = f"File: {filename}"
         msg["From"] = "axross@localhost"
@@ -871,7 +901,9 @@ class ImapSession(SessionLifecycle):
         raised UnicodeEncodeError at every connect. PLAIN carries UTF-8
         (RFC 4616). ``(typ, data)`` as imaplib answers."""
         if (self._username + self._password).isascii():
-            return self._imap.login(self._username, self._password)
+            # imaplib quotes the password only: a user name with a blank,
+            # "\" (DOMAIN\user) or a quote was a syntax error.
+            return self._imap.login(_login_word(self._username), self._password)
         caps = {str(c).upper() for c in getattr(self._imap, "capabilities", ())}
         if "AUTH=PLAIN" not in caps:
             raise ConnectionError("IMAP: the user name or password has characters beyond "
@@ -918,9 +950,16 @@ class ImapSession(SessionLifecycle):
                 else:
                     self._imap = _IMAP4(self._host, self._port, timeout=IMAP_TIMEOUT)
 
-            typ, data = self._login()
+            try:
+                typ, data = self._login()
+            except imaplib.IMAP4.abort:
+                raise  # the connection, not the login
+            except imaplib.IMAP4.error as exc:
+                raise LoginError(
+                    errno.EACCES, f"IMAP {self._host}: the login was refused ({_server_text(exc)})"
+                ) from exc
             if typ != "OK":
-                raise ConnectionError(f"IMAP LOGIN failed: {data}")
+                raise LoginError(errno.EACCES, f"IMAP {self._host}: the login was refused ({data})")
             self._refresh_capabilities()
 
             # Detect hierarchy separator from LIST
@@ -1582,6 +1621,7 @@ class ImapSession(SessionLifecycle):
         return leaf.casefold() in (_message_name(uid, subject).casefold(), legacy.casefold())
 
     @_imap_errors_as_oserror
+    @serialized
     def is_dir(self, path: str) -> bool:
         """Check if the path refers to a directory-like entity."""
         parsed = self._parse_path(path)

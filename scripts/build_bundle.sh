@@ -18,8 +18,9 @@
 #
 # Requires:
 #   PyInstaller in .venv (auto-installed if missing)
-#   appimagetool in PATH (for --appimage; else the pinned release is
-#   downloaded and its SHA-256 checked: scripts/fetch_appimagetool.sh)
+#   for --appimage: scripts/build_appimage.sh - appimagetool in PATH, else the
+#   pinned release, and the pinned type-2 runtime, downloaded and SHA-256
+#   checked (scripts/fetch_appimagetool.sh); the program `file` (appimagetool)
 #
 # Temp build artifacts go to $TMPDIR/axross-build-<flavor> (TMPDIR
 # defaults to /tmp); a full build needs ~3 GB of scratch space. On a
@@ -304,49 +305,13 @@ fi
 # AppImage wrap
 # --------------------------------------------------------------------------
 if (( BUILD_APPIMAGE == 1 )); then
-    APPIMAGETOOL="${APPIMAGETOOL:-}"
-    if [[ -z "$APPIMAGETOOL" ]]; then
-        # Prefer a PATH entry; fall back to downloading into build/.
-        if command -v appimagetool >/dev/null 2>&1; then
-            APPIMAGETOOL=$(command -v appimagetool)
-        else
-            # The pinned release, its SHA-256 checked on every build (a
-            # cached copy too); a mismatch stops the build.
-            DL="$PROJECT_ROOT/build/appimagetool-x86_64.AppImage"
-            bash "$SCRIPT_DIR/fetch_appimagetool.sh" "$DL"
-            APPIMAGETOOL="$DL"
-        fi
+    # scripts/build_appimage.sh: the pinned appimagetool and type-2 runtime,
+    # both SHA-256 checked (scripts/fetch_appimagetool.sh). An appimagetool
+    # in PATH is taken instead of the pinned one ($APPIMAGETOOL wins over both).
+    if [[ -z "${APPIMAGETOOL:-}" ]] && command -v appimagetool >/dev/null 2>&1; then
+        export APPIMAGETOOL="$(command -v appimagetool)"
     fi
-
-    APPDIR="$WORK_DIR/AppDir"
-    rm -rf "$APPDIR"
-    mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" \
-             "$APPDIR/usr/share/icons/hicolor/scalable/apps"
-
-    # Binary — renamed to 'axross' inside the AppImage so the
-    # .desktop file's Exec= line matches regardless of flavor.
-    cp "$ELF_PATH" "$APPDIR/usr/bin/axross"
-
-    # AppRun is the entry point the AppImage runtime invokes. A
-    # plain symlink to the binary works for single-file apps.
-    ln -sf "usr/bin/axross" "$APPDIR/AppRun"
-
-    # Desktop file + icon. Both need to sit at the AppDir root AND
-    # under the standard hicolor path so the host can index them
-    # when installed via appimaged or similar.
-    cp "$PROJECT_ROOT/build/axross.desktop" \
-       "$APPDIR/axross.desktop"
-    cp "$PROJECT_ROOT/build/axross.desktop" \
-       "$APPDIR/usr/share/applications/axross.desktop"
-    cp "$PROJECT_ROOT/build/axross.svg" \
-       "$APPDIR/axross.svg"
-    cp "$PROJECT_ROOT/build/axross.svg" \
-       "$APPDIR/usr/share/icons/hicolor/scalable/apps/axross.svg"
-
-    APPIMAGE_OUT="$PROJECT_ROOT/dist/axross-${FLAVOR}-x86_64.AppImage"
-    ARCH=x86_64 "$APPIMAGETOOL" --no-appstream "$APPDIR" "$APPIMAGE_OUT"
-    APPIMAGE_SIZE=$(du -h "$APPIMAGE_OUT" | cut -f1)
-    echo ">>> Built $APPIMAGE_OUT ($APPIMAGE_SIZE)"
+    bash "$SCRIPT_DIR/build_appimage.sh" "$ELF_PATH" "$PROJECT_ROOT/dist/axross-${FLAVOR}-x86_64.AppImage"
 fi
 
 echo

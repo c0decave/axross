@@ -527,6 +527,17 @@ def _cm_protocols() -> frozenset[str]:
         "pjl",
         "cisco-telnet",
         "winrm",
+        # Opened from a profile since they are in Connect to Server; a URL
+        # (postgres://, rediss://, git+local://, a SQLite path, ...) and
+        # their keyword arguments go to the constructor as before.
+        "sqlite",
+        "postgres",
+        "redis",
+        "mongodb",
+        "git",
+        "ldap",
+        "slp",
+        "exchange",
     }
     return frozenset(set(VALID_PROTOCOLS) - direct_is_better)
 

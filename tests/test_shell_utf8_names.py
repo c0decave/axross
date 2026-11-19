@@ -32,7 +32,7 @@ def _scp(output=LS):
     s._caps = scp_client._Capabilities()
     s.commands = []
 
-    def run(cmd, timeout=None):
+    def run(cmd, timeout=None, **_kw):
         s.commands.append(cmd)
         return output
 

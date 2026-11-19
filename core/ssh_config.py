@@ -25,6 +25,36 @@ class SSHHostConfig:
     address_family: str = "auto"  # "auto", "ipv4", "ipv6"
 
 
+#: Characters a host or user name must not bring into a ProxyCommand: what
+#: OpenSSH 9.6 refuses there (CVE-2023-51385) - shell syntax and quotes.
+_PROXY_NAME_FORBIDDEN = frozenset("'`\"$\\;&<>|(){}*?[]!~#")
+
+
+def _refuse_shell_syntax(value: str, what: str) -> None:
+    """ValueError when *value* (the profile's host or user name) would be
+    shell syntax or an option in a ProxyCommand: a common one starts a
+    shell (``sh -c 'nc %h %p'``) or passes %h as an argument (``nc %h
+    %p``), so a host name such as ``x$(touch /tmp/p)`` or ``-e/bin/sh``
+    ran a command on this machine."""
+    bad = (
+        value.startswith("-")
+        or any(ch in _PROXY_NAME_FORBIDDEN or ch.isspace() or not ch.isprintable() for ch in value)
+    )
+    if bad:
+        from core.i18n import tr
+
+        text = (
+            tr("The host name {value} cannot be put into the ProxyCommand: it holds "
+               "characters a shell would interpret, or starts with '-'. Check the "
+               "profile's host name; the ProxyCommand runs on this computer.")
+            if what == "host name" else
+            tr("The user name {value} cannot be put into the ProxyCommand: it holds "
+               "characters a shell would interpret, or starts with '-'. Check the "
+               "profile's user name; the ProxyCommand runs on this computer.")
+        )
+        raise ValueError(text.format(value=repr(value)))
+
+
 def expand_proxy_command(
     command: str,
     *,
@@ -40,6 +70,9 @@ def expand_proxy_command(
     full connection parameters so the system SSH can reach them even if the alias only
     exists in the Axross profile database.
     """
+    for token, value, what in (("%h", host, "host name"), ("%r", username, "user name")):
+        if token in command.replace("%%", ""):
+            _refuse_shell_syntax(value, what)
     # For -W flag: IPv6 addresses need bracket notation [addr]:port
     is_ipv6 = ":" in host
     host_for_w = f"[{host}]" if is_ipv6 else host

@@ -74,11 +74,28 @@ class FakeNfsd:
         self._sock = socket.create_server(("127.0.0.1", 0))
         self.port = self._sock.getsockname()[1]
         self._stop = False
+        self._conns: list[socket.socket] = []
         threading.Thread(target=self._serve, daemon=True).start()
 
     def close(self) -> None:
         self._stop = True
         self._sock.close()
+
+    def drop(self) -> None:
+        """Go away: stop listening and cut every open connection. (A plain
+        close() of the listening socket leaves the blocked accept() taking
+        new clients on Linux; shutdown() ends it.)"""
+        self._stop = True
+        try:
+            self._sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        self._sock.close()
+        for conn in self._conns:
+            try:
+                conn.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
 
     # --- handles -------------------------------------------------------------
 
@@ -121,6 +138,7 @@ class FakeNfsd:
                 conn, _ = self._sock.accept()
             except OSError:
                 return
+            self._conns.append(conn)
             threading.Thread(target=self._conn, args=(conn,), daemon=True).start()
 
     def _conn(self, conn: socket.socket) -> None:
@@ -163,6 +181,8 @@ class FakeNfsd:
         else:
             uid = None
         self.calls.append((prog, proc))
+        if proc == 0:                          # NULL: every program answers it
+            return head + u32(0)
         if prog == 100000:
             p, v = r.u32(), r.u32()
             port = self.port if (p, v) in ((100005, 3), (100003, 3)) else 0

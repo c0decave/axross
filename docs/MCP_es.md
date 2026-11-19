@@ -14,7 +14,21 @@ la lista de extensiones. Un manifiesto legible por máquina de todas las
 herramientas lo da `axross --mcp-list-tools` o
 [`mcp-tools.json`](mcp-tools.json) (§9.7).
 
-El servidor habla la versión de protocolo MCP **2024-11-05**.
+El servidor habla las revisiones de MCP **2025-11-25**, **2025-06-18** y
+**2024-11-05**: `initialize` responde con la revisión del cliente si es
+una de ellas y, si no, con la más nueva. Desde 2025-06-18 una sesión
+recibe el título y las anotaciones de cada herramienta (`readOnlyHint`,
+`destructiveHint`, `idempotentHint`, `openWorldHint`), `outputSchema` y
+`structuredContent`, y en HTTP la cabecera `MCP-Protocol-Version`; desde
+2025-11-25 los argumentos rechazados vuelven como error de herramienta
+(`isError`) en lugar de -32602. Detalles: [MCP.md §1.4](MCP.md#14-protocol-revisions).
+
+Sin la interfaz gráfica: el paquete **axross-headless-mcp** (`pip install
+axross-headless-mcp`, sin PyQt6) es este servidor con las mismas opciones, stdio por
+defecto; la imagen `ghcr.io/c0decave/axross-headless-mcp` es el mismo en un
+contenedor ([MCP.md §1.3](MCP.md#13-without-the-gui-axross-headless-mcp-and-the-docker-image)).
+Ambos se publican con cada versión, y el servidor figura en el registro
+oficial de MCP como `io.github.c0decave/axross-headless-mcp`.
 
 Idiomas: [English](MCP.md) · [Deutsch](MCP_de.md) · **Español**
 
@@ -102,10 +116,16 @@ limpiamente en máquinas sin pantalla.
 axross --mcp-server --mcp-http 127.0.0.1:7331
 # [::1]:7331 para loopback IPv6
 
-# mTLS — los tres ficheros son obligatorios:
+# mTLS — los tres ficheros son obligatorios; solo con ellos escucha fuera
+# de loopback (0.0.0.0 sin ellos se rechaza):
 axross --mcp-server --mcp-http 0.0.0.0:7331 \
     --mcp-cert server.pem --mcp-key server.key --mcp-ca trusted-ca.pem
 ```
+
+HTTP sin TLS solo sirve en loopback; en un contenedor el host no lo
+alcanza por `-p`: allí mTLS, o `--network host` con
+`--mcp-http 127.0.0.1:7331`. Los cuerpos con `Transfer-Encoding: chunked`
+se rechazan (400): un POST necesita `Content-Length`.
 
 Endpoints:
 
@@ -121,7 +141,7 @@ usuario y proceso local alcanza `127.0.0.1`. Por eso un servidor sin
 mTLS responde `401` a toda petición salvo `GET /health` que no lleve
 `Authorization: Bearer <token>`. Al arrancar, el token se muestra una
 vez por stderr y se escribe en
-`$XDG_RUNTIME_DIR/axross/mcp-http-PORT.token` (si no, en
+`$XDG_RUNTIME_DIR/axross/mcp-http-HOST-PORT.token` (si no, en
 `~/.config/axross/`; fichero con modo 0600, carpeta 0700). Es nuevo en
 cada arranque; `AXROSS_MCP_HTTP_TOKEN` lo fija para la configuración de
 un cliente. El cliente MCP propio de axross (los servidores MCP externos
@@ -210,8 +230,8 @@ ver arriba). Cada llamada emite entradas de auditoría en el logger
   terminan todos los procesos que arrancó (uno que llama a `setsid` se
   escapa).
 * **Wall clock.** `timeout_s` (por defecto 60, como máximo 600) detiene
-  la ejecución: SIGTERM al grupo, SIGKILL 3 s después. `tasks/start` +
-  `tasks/cancel` ejecutan y detienen un script en segundo plano.
+  la ejecución: SIGTERM al grupo, SIGKILL 3 s después. `axross/tasks/start` +
+  `axross/tasks/cancel` ejecutan y detienen un script en segundo plano.
 * **Respuesta.** `{name, exit, timed_out, duration_ms, stdout, stderr,
   namespace_keys}`; tras una excepción no capturada además
   `error_type`, `error` y un `traceback` acotado (solo los frames del
@@ -296,10 +316,10 @@ menos verbosos los flujos de todos los clientes.
 | `ping`          | Liveness check de MCP; resultado vacío.                                 |
 | `tools/list`    | El catálogo de herramientas con sus input schemas.                      |
 | `tools/call`    | Ejecuta una herramienta de forma síncrona.                              |
-| `tasks/start`   | **Extensión de Axross, no forma parte de MCP.** Lanza una herramienta en segundo plano; devuelve `task_id`. Mismo chequeo de schema, mismo rate limit y mismo timeout por herramienta que `tools/call`; como máximo 8 tareas en ejecución por scope (`MAX_RUNNING_TASKS_PER_SCOPE`). |
-| `tasks/status`  | Estado, último progreso y, al terminar, resultado o error.              |
-| `tasks/cancel`  | Cancela una tarea en ejecución.                                         |
-| `tasks/list`    | Resumen breve de las tareas del scope.                                  |
+| `axross/tasks/start`   | **Extensión de Axross, no forma parte de MCP.** Lanza una herramienta en segundo plano; devuelve `task_id`. Mismo chequeo de schema, mismo rate limit y mismo timeout por herramienta que `tools/call`; como máximo 8 tareas en ejecución por scope (`MAX_RUNNING_TASKS_PER_SCOPE`). |
+| `axross/tasks/status`  | Estado, último progreso y, al terminar, resultado o error.              |
+| `axross/tasks/cancel`  | Cancela una tarea en ejecución.                                         |
+| `axross/tasks/list`    | Resumen breve de las tareas del scope.                                  |
 
 Las tareas tienen scope por sesión en HTTP y global del servidor en
 stdio. Las tareas terminadas se conservan una hora
@@ -321,7 +341,10 @@ frames `notifications/progress` desde los handlers que lo soportan:
 copiados), además de las herramientas largas de los grupos de §9
 (`metadata_read` / `metadata_export` sobre carpetas, `metadata_remove`,
 `file_type_scan`, `duplicates_scan`, `duplicates_dedupe`,
-`index_build`, `pack`, `archive_extract`, `transfer_copy`). Dentro de una tarea de `tasks/start` las mismas
+`index_build`, `pack`, `archive_extract`, `transfer_copy`). `total` solo
+se envía cuando se conoce (los bytes de un fichero, los ficheros de una
+lista); un recorrido no conoce su cuenta, y su límite (`max_entries`,
+`max_files`) no es un total, así que esos frames no lo llevan. Dentro de una tarea de `axross/tasks/start` las mismas
 herramientas reportan progreso con el `task_id` como token. En stdio
 los frames van a stdout por el mismo lock que cada respuesta, así que
 frames de threads distintos nunca se entremezclan dentro de una línea;
@@ -342,8 +365,8 @@ thread. Mientras corre un `tools/call` síncrono, el bucle lo espera y
 no lee más entrada, así que un `notifications/cancelled` para esa
 llamada solo se lee cuando ya ha terminado. En stdio, por tanto, un
 `tools/call` síncrono solo lo detiene su timeout (§3.3). El trabajo
-que deba poder cancelarse en stdio va por `tasks/start` +
-`tasks/cancel`, que funciona en ambos transportes. En HTTP cada
+que deba poder cancelarse en stdio va por `axross/tasks/start` +
+`axross/tasks/cancel`, que funciona en ambos transportes. En HTTP cada
 petición corre en su propio thread, así que `notifications/cancelled`
 sí alcanza una llamada en curso.
 
@@ -362,7 +385,7 @@ Toda herramienta tiene un límite de tiempo real:
 | `script`   | 610 s   | `script_run`. Detiene a su hijo ya en su propio `timeout_s` (por defecto 60 s, como máximo 600 s); la clase suma el grace del kill y el drenaje de la salida, así que el deadline solo respalda |
 
 La clase de cada herramienta de grupo está en el manifiesto (§9.7).
-Una tarea de `tasks/start` recibe el mismo timeout que su herramienta.
+Una tarea de `axross/tasks/start` recibe el mismo timeout que su herramienta.
 
 Dos mecanismos paralelos respaldan el plazo:
 
@@ -403,12 +426,12 @@ miente o corre bajo fork().
 
 Activado por defecto: burst de 30 tokens, refill de 1 token/seg
 (60 llamadas por minuto en régimen estable). `tools/call` y
-`tasks/start` consumen del mismo bucket (uno por servidor en stdio,
+`axross/tasks/start` consumen del mismo bucket (uno por servidor en stdio,
 uno por sesión en HTTP); `tools/list`, `initialize`, `ping`,
-`resources/*`, `tasks/status|cancel|list` y `logging/setLevel` siguen
+`resources/*`, `axross/tasks/status|cancel|list` y `logging/setLevel` siguen
 libres.
 
-Rechazo: -32001 con `data.type = "RateLimitError"`. Un `tasks/start`
+Rechazo: -32001 con `data.type = "RateLimitError"`. Un `axross/tasks/start`
 por encima del tope de tareas en ejecución también es -32001, con
 `data.type = "TaskLimitError"`.
 
@@ -484,7 +507,20 @@ serve(ServerConfig(
 └──────────┘                                 └──────────┘
 ```
 
- - Las sesiones ociosas se expulsan tras 30 minutos (ajustable).
+ - Las sesiones ociosas se expulsan tras 10 minutos (ajustable), contados
+   desde el final de su última petición. Una sesión en trabajo nunca se
+   expulsa: un `tools/call` en curso, una tarea en curso o un flujo SSE
+   abierto cuentan como actividad. En el tope de sesiones (256) un
+   `initialize` expulsa la sesión ociosa más antigua - ociosa 30 s o más y
+   sin trabajo - en vez de responder 503; con mTLS un cliente tiene como
+   mucho 32 sesiones, en loopback solo cuenta el tope del servidor. Cada
+   sesión tiene su propio cubo de tasa y su cliente uno compartido cuatro
+   veces mayor, y una reserva de la mitad de su tasa cuando el compartido
+   está vacío; como mucho 16 llamadas por sesión a la vez; 256 conexiones
+   (lleno, una nueva sustituye a la más antigua que aún envía su petición;
+   fuera de loopback 32 por dirección); una petición debe leerse en 15 s.
+   En el tope de sesiones también se van las que solo mantienen su flujo
+   SSE (30 s sin petición), las últimas y del cliente con más sesiones.
  - Tope de cola por sesión: 10 000 notificaciones. Un cliente
    que nunca drene su SSE no hace crecer la memoria sin
    control — los frames excedentes se descartan con aviso en log.
@@ -507,7 +543,7 @@ red-team que se pensó. Los tests de MCP están en
 | `tests/test_secfix_r7_host_header.py` | `Host` leído estrictamente como `host[:puerto]` (`localhost:1@evil`, rutas, espacios, IPv6 sin corchetes rechazados); dos cabeceras `Host`/`Origin` rechazadas (MCP HTTP y reverse-serve). |
 | `tests/test_mcp_http_sse_lifecycle.py` | Un flujo SSE por sesión, DELETE/expulsión lo terminan, replay al reconectar. |
 | `tests/test_mcp_search_root.py` | `search` nunca devuelve rutas indexadas fuera de la raíz. |
-| `tests/test_mcp_tasks_limits.py` | Rate limit de `tasks/start`, tope de tareas en ejecución, timeout de la herramienta. |
+| `tests/test_mcp_tasks_limits.py` | Rate limit de `axross/tasks/start`, tope de tareas en ejecución, timeout de la herramienta. |
 | `tests/test_mcp_write_root.py` | `--mcp-write` exige `--mcp-root`; `--mcp-allow-scripts` rechazado con `--mcp-http`. |
 | `tests/test_mcp_secret_reads.py` | Los ficheros secretos (§7.12) no se leen, ni se buscan con grep, ni se hashean, ni se previsualizan, copian, mueven o enlazan con hardlink, tampoco por un symlink, una herramienta de grupo o `resources/read`; sus nombres se listan; `--mcp-allow-secret-reads` (solo stdio) permite leerlos. |
 | `tests/test_mcp_http_mode.py` | `--mcp-http` solo arranca el servidor HTTP (abría la ventana) y no se separa del terminal. |
@@ -526,7 +562,7 @@ red-team que se pensó. Los tests de MCP están en
 | `tests/test_mcp_manifest.py` | `--mcp-list-tools` y el `docs/mcp-tools.json` del repositorio siguen sincronizados con el código. |
 | `tests/test_mcp_protocol_matrix.py` | Cada protocolo registrado tiene una vía: `remote_open` alcanza cada protocolo de perfil (la contraseña guardada llega, se escriben y releen ficheros), el inicio de sesión en navegador y el modo `paranoid` se rechazan con su motivo, los backends solo por URL se abren con `axross.open_url`. |
 | `tests/test_mcp_docs_group_table.py` | La tabla del §9.2 de este fichero y de sus versiones inglesa y alemana lista exactamente las herramientas de grupo de `docs/mcp-tools.json`. |
-| `tests/test_mcp_groups_e2e.py` | El servidor real por stdio y HTTP con `--mcp-tools all`: una llamada por grupo, `tasks/start` + `tasks/cancel`. |
+| `tests/test_mcp_groups_e2e.py` | El servidor real por stdio y HTTP con `--mcp-tools all`: una llamada por grupo, `axross/tasks/start` + `axross/tasks/cancel`. |
 | `tests/test_fuzz_mcp.py` | Peticiones hostiles contra el dispatcher, ambos transportes y cada herramienta de grupo. |
 
 §7.1, §7.5, §7.7, §7.8, §7.11 y el hard-stop de §7.4 aún no tienen
@@ -748,7 +784,7 @@ también lo levanta.
 | -32601   | METHOD_NOT_FOUND        | Método / herramienta desconocidos o capability desactivada. |
 | -32602   | INVALID_PARAMS          | Fallo de jsonschema, ValueError en el handler, URI inválida. |
 | -32603   | INTERNAL                | Un resultado que no se puede enviar (no serializable, por encima del límite de tamaño), o una llamada cancelada por el cliente. |
-| **-32001** | **RATE_LIMITED**      | `tools/call` / `tasks/start` limitados, o tope de tareas en ejecución alcanzado. |
+| **-32001** | **RATE_LIMITED**      | `tools/call` / `axross/tasks/start` limitados, o tope de tareas en ejecución alcanzado. |
 | **-32002** | **TIMEOUT**           | La herramienta superó su timeout de tiempo real.      |
 
 Una herramienta que se ejecutó y falló (el handler lanzó algo distinto de
@@ -865,7 +901,8 @@ Qué hace cada grupo:
 * **archive** — listar entradas sin extraer; extraer en una carpeta
   nueva (`x.zip` → `x`, `x-1`, …) con las protecciones de
   `core.archive` contra zip-slip, enlaces, tamaño (1 GiB), número de
-  entradas (10.000) y ratio de compresión (100). Solo archivos locales:
+  entradas (10.000) y ratio de compresión (100:1, para entradas de
+  64 MiB o más). Solo archivos locales:
   trae primero un archivo remoto con `transfer_copy`.
 * **crypto** — el formato `.axenc` de la GUI (AES-256-GCM,
   PBKDF2-SHA256 con 200.000 iteraciones, como máximo 1 GiB por
@@ -919,7 +956,7 @@ capas:
 7. **Trabajo acotado.** Cada lista tiene un tope (`max_files`,
    `max_groups`, `max_entries`, …, `truncated=true` al cortar); los
    trabajos largos informan progreso, comprueban la cancelación y
-   corren bajo `tasks/start`; los resultados de más de 16 MiB se
+   corren bajo `axross/tasks/start`; los resultados de más de 16 MiB se
    rechazan como en cualquier herramienta.
 
 ### 9.4 Security mode `paranoid`
@@ -994,9 +1031,9 @@ GUI y en el scripting sigue bloqueado aquí:
 Un trabajo largo en segundo plano, cancelable en ambos transportes:
 
 ```json
-{"jsonrpc":"2.0","id":11,"method":"tasks/start","params":{"name":"duplicates_scan","arguments":{"path":"/home/me/data"}}}
-{"jsonrpc":"2.0","id":12,"method":"tasks/status","params":{"task_id":"<task_id>"}}
-{"jsonrpc":"2.0","id":13,"method":"tasks/cancel","params":{"task_id":"<task_id>"}}
+{"jsonrpc":"2.0","id":11,"method":"axross/tasks/start","params":{"name":"duplicates_scan","arguments":{"path":"/home/me/data"}}}
+{"jsonrpc":"2.0","id":12,"method":"axross/tasks/status","params":{"task_id":"<task_id>"}}
+{"jsonrpc":"2.0","id":13,"method":"axross/tasks/cancel","params":{"task_id":"<task_id>"}}
 ```
 
 ### 9.7 Manifiesto legible por máquina
@@ -1104,7 +1141,7 @@ servidor se arrancó con ellos en `--mcp-tools`.
   llamada se rechaza antes de enviar nada.
 * **Acotado.** `max_steps` (1–30, por defecto 10) peticiones al modelo;
   los resultados de las herramientas se recortan para el modelo; la
-  llamada corre en la clase de timeout `long`; `tasks/cancel` la
+  llamada corre en la clase de timeout `long`; `axross/tasks/cancel` la
   detiene tras la petición al modelo en curso.
 * La API key sale del keyring y no aparece en ningún resultado ni línea
   de log.

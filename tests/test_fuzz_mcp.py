@@ -346,7 +346,10 @@ def test_happy_stdio_corpus(root):
     assert M.serve(cfg) == 0
     answers = [json.loads(x) for x in out.getvalue().splitlines()]
     assert all("result" in a for a in answers if a.get("id") is not None), answers
-    assert answers[-1]["id"] == "sentinel"
+    # Tool calls and resources/read run on workers (round 2 of the MCP
+    # review): the ping can be answered before them; the server read on to
+    # the end and answered it.
+    assert "sentinel" in [a.get("id") for a in answers]
 
 
 def test_sad_stdio_survives_mutated_lines(root):
@@ -361,7 +364,7 @@ def test_sad_stdio_survives_mutated_lines(root):
     assert exc is None, f"serve() died: {exc!r}"
     assert rc == 0
     answers = [json.loads(x) for x in out.getvalue().splitlines() if x.strip()]
-    assert answers and answers[-1].get("id") == "sentinel", answers[-3:]
+    assert answers and "sentinel" in [a.get("id") for a in answers], answers[-3:]
 
 
 # -- HTTP transport -----------------------------------------------------------
@@ -411,6 +414,11 @@ def _exchange(port: int, raw: bytes, timeout: float = 10.0) -> bytes:
                 data += chunk
         except ConnectionResetError:
             pass
+    # An interim 100 Continue is how the server asks a half-closed client
+    # (this one shuts its sending side) whether it is still there; a
+    # client skips it (round 4/5 of the MCP review).
+    while data.startswith(b"HTTP/1.1 100 "):
+        data = data.split(b"\r\n\r\n", 1)[1]
     return data
 
 

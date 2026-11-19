@@ -37,7 +37,6 @@ Requires the ``rsh`` system binary on PATH (Debian package:
 from __future__ import annotations
 
 import errno
-import io
 import logging
 import posixpath
 import re
@@ -45,6 +44,8 @@ import secrets
 import shlex
 import shutil
 import subprocess
+import threading
+import time
 from dataclasses import replace
 from datetime import datetime
 from typing import IO, TYPE_CHECKING
@@ -52,6 +53,7 @@ from typing import IO, TYPE_CHECKING
 if TYPE_CHECKING:
     from models.exec_result import ExecResult
 
+from core import transfer_hooks
 from core.backend import SessionLifecycle
 from core.subprocess_env import clean_child_env
 from core.telnet_client import copy_command, ls_records, remove_command, rename_command
@@ -62,7 +64,16 @@ log = logging.getLogger(__name__)
 
 
 DEFAULT_TIMEOUT = 30.0
-MAX_FILE_BYTES = 64 * 1024 * 1024  # cap on a single read; rsh has no chunking
+#: cp / mv / rm -r / sha256sum on the server: a large copy or hash takes
+#: minutes, and the 30 s time-out failed it while it was still running.
+TREE_OP_TIMEOUT = 3600.0
+#: A transfer fails only when nothing moved for this long (not when a
+#: large file simply takes longer than a fixed time).
+TRANSFER_IDLE_TIMEOUT = 120.0
+#: Sanity cap on one download (it streams into a spool on disk now; the
+#: old in-memory cap of 64 MiB made larger files unreadable).
+MAX_FILE_BYTES = 64 * 1024**3
+_PIECE = 1024 * 1024
 
 
 # Pattern matching `ls -la` POSIX output. Loose by design — different
@@ -138,6 +149,7 @@ class RshSession(SessionLifecycle):
         username: str = "",
         password: str = "",
         timeout: float = DEFAULT_TIMEOUT,
+        address_family: str = "auto",
         **_ignored,
     ):
         from core.proxy import refuse_unsupported_proxy
@@ -149,10 +161,18 @@ class RshSession(SessionLifecycle):
             "rsh needs a reverse stderr connection from the server to the client and a "
             "privileged source port, which no forward proxy can provide.",
         )
+        # rsh reads its options with getopt: a host "-lroot" was the option
+        # -l root, and the command became the host name.
+        if not host or host.startswith("-") or any(ch.isspace() for ch in host):
+            raise OSError(errno.EINVAL, f"rsh: not a host name: {host!r}")
+        if username.startswith("-"):
+            raise OSError(errno.EINVAL, f"rsh: not a user name: {username!r}")
         self._host = host
         self._port = int(port)
         self._username = username
         self._timeout = float(timeout)
+        # The profile's IP version: rsh -4 / -6 (netkit, inetutils).
+        self._family_flag = {"ipv4": "-4", "ipv6": "-6"}.get(address_family or "auto", "")
         self._rsh = _ensure_rsh_available()
         # Plaintext-credential warning. rsh negotiation never carries
         # the password (host-based auth) but sends username + command
@@ -239,27 +259,19 @@ class RshSession(SessionLifecycle):
         line with a per-call random tag. No trailer means the stream was
         cut short, and that is an error too, never a short result.
         """
-        tag = f"__AXROSS_RSH_STATUS_{secrets.token_hex(8)}__"
-        # sh -c: the login shell rshd hands the command to may be csh,
-        # which has no "$?"; one line, as csh rejects a quoted newline.
-        script = f"{command}; printf '\\n%s %d\\n' {tag} \"$?\""
-        argv = [self._rsh]
-        if self._port and self._port != 514:
-            # netkit-rsh accepts -p; some forks don't. Only add when
-            # the user actually customised the port.
-            argv += ["-p", str(self._port)]
-        if self._username:
-            argv += ["-l", self._username]
-        argv += [self._host, f"sh -c {shlex.quote(script)}"]
+        tag, argv = self._argv(command)
         log.debug("rsh exec: %s", " ".join(shlex.quote(a) for a in argv))
+        # No input: stdin is /dev/null, not axross' own (the terminal it
+        # was started from, which rsh forwarded to the server).
+        io_kw = {"input": stdin} if stdin is not None else {"stdin": subprocess.DEVNULL}
         try:
             proc = subprocess.run(
                 argv,
-                input=stdin,
                 capture_output=True,
                 timeout=timeout or self._timeout,
                 check=False,
-                            env=clean_child_env(),
+                env=clean_child_env(),
+                **io_kw,
             )
         except subprocess.TimeoutExpired as exc:
             raise RshError(f"rsh timed out: {exc}") from exc
@@ -268,7 +280,29 @@ class RshSession(SessionLifecycle):
             raise RshError(
                 f"rsh '{command[:60]}...' on {self._host} exited {proc.returncode}: {err}"
             )
-        out = proc.stdout or b""
+        status, out = self._split_status(command, tag, proc.stdout or b"", err)
+        return status, out, proc.stderr or b""
+
+    def _argv(self, command: str) -> tuple[str, list[str]]:
+        """The per-call status tag and the rsh command line for *command*."""
+        tag = f"__AXROSS_RSH_STATUS_{secrets.token_hex(8)}__"
+        # sh -c: the login shell rshd hands the command to may be csh,
+        # which has no "$?"; one line, as csh rejects a quoted newline.
+        script = f"{command}; printf '\\n%s %d\\n' {tag} \"$?\""
+        argv = [self._rsh]
+        if getattr(self, "_family_flag", ""):
+            argv.append(self._family_flag)
+        if self._port and self._port != 514:
+            # netkit-rsh accepts -p; some forks don't. Only add when
+            # the user actually customised the port.
+            argv += ["-p", str(self._port)]
+        if self._username:
+            argv += ["-l", self._username]
+        argv += [self._host, f"sh -c {shlex.quote(script)}"]
+        return tag, argv
+
+    def _split_status(self, command: str, tag: str, out: bytes, err: str) -> tuple[int, bytes]:
+        """(remote exit status, the output before the status trailer)."""
         marker = b"\n" + tag.encode() + b" "
         idx = out.rfind(marker)
         status = out[idx + len(marker) :].strip() if idx >= 0 else b""
@@ -277,12 +311,28 @@ class RshSession(SessionLifecycle):
                 f"rsh '{command[:60]}...' on {self._host}: output ended without the "
                 f"remote exit status (connection cut?): {err}"
             )
-        return int(status), out[:idx], proc.stderr or b""
+        return int(status), out[:idx]
 
-    def _run_remote(self, command: str, *, stdin: bytes | None = None) -> bytes:
+    def _spawn(self, command: str, *, stdin: bool) -> tuple[str, subprocess.Popen]:
+        """*command* in a running rsh process (a streamed transfer): stdout
+        and stderr piped, stdin piped when *stdin* else /dev/null."""
+        tag, argv = self._argv(command)
+        log.debug("rsh stream: %s", " ".join(shlex.quote(a) for a in argv))
+        proc = subprocess.Popen(
+            argv,
+            stdin=subprocess.PIPE if stdin else subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=clean_child_env(),
+        )
+        return tag, proc
+
+    def _run_remote(
+        self, command: str, *, stdin: bytes | None = None, timeout: float | None = None
+    ) -> bytes:
         """Like :meth:`_run_status`, but a non-zero exit raises
         :class:`RshError` carrying the captured stderr; returns stdout."""
-        status, out, err = self._run_status(command, stdin=stdin)
+        status, out, err = self._run_status(command, stdin=stdin, timeout=timeout)
         if status != 0:
             detail = err.decode("utf-8", "replace").strip()
             raise RshError(f"rsh '{command[:60]}...' on {self._host} exited {status}: {detail}")
@@ -411,25 +461,72 @@ class RshSession(SessionLifecycle):
             return False
 
     def open_read(self, path: str) -> IO[bytes]:
+        """The file streamed through ``cat`` into a spool: progress per
+        piece, Cancel kills the rsh process, a time-out only when nothing
+        arrives for TRANSFER_IDLE_TIMEOUT. The status trailer after the
+        content says whether ``cat`` read it all; a stream without it was
+        cut. Above MAX_FILE_BYTES the read fails, never comes back short."""
+        from core.read_spool import new_spool
+
         path = _validate_path(self.normalize(path))
-        # ``head -c <cap> -- <path>`` enforces a wire-level cap so a
-        # hostile remote can't dump GB of unbounded data through the rsh
-        # socket while we buffer. The explicit ``--`` separator stops
-        # any path that survived _validate_path from re-attaching as a
-        # flag on the remote tool.
-        # One byte past the cap tells "exactly at the cap" from "cut by it":
-        # a truncated file must fail, not arrive as a shorter file.
-        cmd = f"head -c {MAX_FILE_BYTES + 1} -- {shlex.quote(path)}"
+        command = f"cat -- {shlex.quote(path)}"
+        tag, proc = self._spawn(command, stdin=False)
+        watch = _Watchdog(proc, TRANSFER_IDLE_TIMEOUT)
+        err_buf = _Drain(proc.stderr)
+        hooks = transfer_hooks.current()
+        spool = new_spool(max_size=8 * 1024 * 1024)
+        keep = len(tag) + 16  # the trailer "\n<tag> <status>\n" stays back
+        carry = b""
+        done = 0
         try:
-            data = self._run_remote(cmd)
-        except OSError as exc:
-            raise self._refused(f"rsh read({path})", path, exc, wanted="file") from exc
-        if len(data) > MAX_FILE_BYTES:
-            raise RshError(
-                f"rsh read of {path}: file is larger than the {MAX_FILE_BYTES} byte cap "
-                "for a single rsh read"
-            )
-        return io.BytesIO(data)
+            while True:
+                piece = proc.stdout.read1(_PIECE)
+                watch.moved()
+                if not piece:
+                    break
+                carry += piece
+                if len(carry) > keep:
+                    spool.write(carry[:-keep])
+                    done += len(carry) - keep
+                    carry = carry[-keep:]
+                if done > MAX_FILE_BYTES:
+                    raise RshError(
+                        f"rsh read of {path}: file is larger than the {MAX_FILE_BYTES} byte cap "
+                        "for a single rsh read"
+                    )
+                if hooks is not None:
+                    hooks.received(done)
+            proc.wait(timeout=DEFAULT_TIMEOUT)
+            if watch.fired:
+                raise RshError(
+                    f"rsh read of {path}: nothing arrived for {TRANSFER_IDLE_TIMEOUT:.0f} s"
+                )
+            err = err_buf.text()
+            if proc.returncode != 0:
+                raise RshError(
+                    f"rsh '{command[:60]}' on {self._host} exited {proc.returncode}: {err}"
+                )
+            status, rest = self._split_status(command, tag, carry, err)
+            if status != 0:
+                exc = RshError(f"rsh '{command[:60]}' on {self._host} exited {status}: {err}")
+                raise self._refused(f"rsh read({path})", path, exc, wanted="file")
+            spool.write(rest)
+            done += len(rest)
+            if done > MAX_FILE_BYTES:
+                raise RshError(
+                    f"rsh read of {path}: file is larger than the {MAX_FILE_BYTES} byte cap "
+                    "for a single rsh read"
+                )
+            if hooks is not None:
+                hooks.received(done, done)
+            spool.seek(0)
+            return spool
+        except BaseException:
+            spool.close()
+            raise
+        finally:
+            watch.stop()
+            _end(proc)
 
     def readlink(self, path: str) -> str:
         path = _validate_path(self.normalize(path))
@@ -454,7 +551,7 @@ class RshSession(SessionLifecycle):
         from core.exec_util import ls_error
 
         try:
-            self._run_remote(remove_command(path, recursive=recursive))
+            self._run_remote(remove_command(path, recursive=recursive), timeout=TREE_OP_TIMEOUT)
         except OSError as exc:
             # The message ends in the remote stderr: ls's wording types it.
             raise ls_error(f"rsh remove({path})", str(exc)) from exc
@@ -476,7 +573,7 @@ class RshSession(SessionLifecycle):
         refuse_folder_path(dst, "rename to", source_is_file=lambda: self._is_file(src))
         dst = _validate_path(self.normalize(dst))
         # Plain mv moves src INTO an existing folder dst (review B6 twin).
-        self._run_remote(rename_command(src, dst))
+        self._run_remote(rename_command(src, dst), timeout=TREE_OP_TIMEOUT)
 
     def chmod(self, path: str, mode: int) -> None:
         path = _validate_path(self.normalize(path))
@@ -488,7 +585,7 @@ class RshSession(SessionLifecycle):
         systems anyway)."""
         src = _validate_path(self.normalize(src))
         dst = _validate_path(self.normalize(dst))
-        self._run_remote(copy_command(src, dst, preserve=True))
+        self._run_remote(copy_command(src, dst, preserve=True), timeout=TREE_OP_TIMEOUT)
 
     def disk_usage(self, path: str) -> tuple[int, int, int]:
         path = _validate_path(self.normalize(path))
@@ -522,7 +619,9 @@ class RshSession(SessionLifecycle):
         if not tool:
             return ""
         try:
-            out = self._run_remote(f"{tool} -- {shlex.quote(path)}").decode("utf-8", "replace")
+            out = self._run_remote(
+                f"{tool} -- {shlex.quote(path)}", timeout=TREE_OP_TIMEOUT
+            ).decode("utf-8", "replace")
         except RshError:
             return ""
         from core.exec_util import digest_from_sum_output
@@ -531,15 +630,6 @@ class RshSession(SessionLifecycle):
         if not digest:
             return ""
         return f"{algorithm}:{digest}"
-
-    # ------------------------------------------------------------------
-    # Internal: actual upload (called by writer.close)
-    # ------------------------------------------------------------------
-
-    def _upload(self, path: str, data: bytes, append: bool) -> None:
-        op = ">>" if append else ">"
-        cmd = f"cat {op} {shlex.quote(path)}"
-        self._run_remote(cmd, stdin=data)
 
 
 def _parse_ls_line(raw: str, rest: str = "") -> FileItem | None:
@@ -586,36 +676,152 @@ def _perms_to_octal(text: str) -> int:
     return bits
 
 
+class _Watchdog:
+    """Kills *proc* when :meth:`moved` was not called for *idle* seconds
+    (a transfer that stalls; one that is merely long goes on)."""
+
+    def __init__(self, proc: subprocess.Popen, idle: float) -> None:
+        self._proc = proc
+        self._idle = idle
+        self._last = time.monotonic()
+        self._stop = threading.Event()
+        self.fired = False
+        threading.Thread(target=self._run, daemon=True, name="rsh-watchdog").start()
+
+    def moved(self) -> None:
+        self._last = time.monotonic()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _run(self) -> None:
+        while not self._stop.wait(1.0):
+            if time.monotonic() - self._last > self._idle:
+                self.fired = True
+                _end(self._proc)
+                return
+
+
+class _Drain:
+    """Reads a pipe to its end in a thread (at most 64 KiB kept), so the
+    process never blocks on a full pipe nobody reads."""
+
+    def __init__(self, pipe) -> None:
+        self._data = bytearray()
+        self._thread = threading.Thread(target=self._run, args=(pipe,), daemon=True)
+        self._thread.start()
+
+    def _run(self, pipe) -> None:
+        try:
+            while True:
+                chunk = pipe.read1(65536) if hasattr(pipe, "read1") else pipe.read(65536)
+                if not chunk:
+                    return
+                if len(self._data) < 65536:
+                    self._data += chunk[: 65536 - len(self._data)]
+        except (OSError, ValueError):
+            return
+
+    def data(self) -> bytes:
+        self._thread.join(DEFAULT_TIMEOUT)
+        return bytes(self._data)
+
+    def text(self) -> str:
+        return self.data().decode("utf-8", "replace").strip()
+
+
+def _end(proc: subprocess.Popen) -> None:
+    """*proc* gone: killed if it still runs, reaped."""
+    if proc.poll() is None:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
+
+
 class _RshWriter:
-    """File-like writer: buffers in memory, ships via ``cat > path``
-    on close."""
+    """File-like writer that streams into ``cat > path`` through a running
+    rsh process: nothing is held in memory, the transfer engine's progress
+    and Cancel act on the real upload, and a time-out comes only when the
+    pipe takes nothing for TRANSFER_IDLE_TIMEOUT. close() reads the status
+    trailer (a failed ``cat`` - no such folder, no permission - raises)."""
 
     def __init__(self, session: RshSession, path: str, append: bool = False):
         self._session = session
         self._path = path
-        self._append = append
-        self._buf = io.BytesIO()
+        op = ">>" if append else ">"
+        self._command = f"cat {op} {shlex.quote(path)}"
+        self._tag, self._proc = session._spawn(self._command, stdin=True)
+        self._watch = _Watchdog(self._proc, TRANSFER_IDLE_TIMEOUT)
+        self._out = _Drain(self._proc.stdout)
+        self._err = _Drain(self._proc.stderr)
         self._closed = False
 
     def write(self, data: bytes) -> int:
         if self._closed:
             raise OSError("writer closed")
-        return self._buf.write(data)
+        view = memoryview(data)
+        try:
+            for start in range(0, len(view), _PIECE):
+                self._proc.stdin.write(view[start : start + _PIECE])
+                self._proc.stdin.flush()
+                self._watch.moved()
+        except (OSError, ValueError) as exc:
+            # cat (or the connection) ended early: say why.
+            self._closed = True
+            self._finish(cause=exc)
+        return len(data)
+
+    def _finish(self, cause: BaseException | None = None) -> None:
+        proc = self._proc
+        try:
+            try:
+                proc.stdin.close()
+            except (OSError, ValueError):
+                pass
+            try:
+                proc.wait(timeout=TRANSFER_IDLE_TIMEOUT)
+            except subprocess.TimeoutExpired as exc:
+                raise RshError(f"rsh upload of {self._path}: no answer after the data") from exc
+            err = self._err.text()
+            if self._watch.fired:
+                raise RshError(
+                    f"rsh upload of {self._path}: nothing moved for {TRANSFER_IDLE_TIMEOUT:.0f} s"
+                )
+            host = self._session._host
+            if proc.returncode != 0:
+                raise RshError(
+                    f"rsh upload of {self._path} on {host} exited {proc.returncode}: {err}"
+                ) from cause
+            status, _ = self._session._split_status(
+                self._command, self._tag, self._out.data(), err
+            )
+            if status != 0:
+                raise RshError(
+                    f"rsh upload of {self._path} on {host} exited {status}: {err}"
+                ) from cause
+            if cause is not None:
+                raise RshError(f"rsh upload of {self._path}: {cause}") from cause
+        finally:
+            self._watch.stop()
+            _end(proc)
 
     def close(self) -> None:
         if self._closed:
             return
         self._closed = True
-        try:
-            self._session._upload(self._path, self._buf.getvalue(), self._append)
-        finally:
-            self._buf.close()
+        self._finish()
 
     def discard(self) -> None:
         if self._closed:
             return
         self._closed = True
-        self._buf.close()
+        self._watch.stop()
+        _end(self._proc)
 
     def __enter__(self):
         return self

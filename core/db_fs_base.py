@@ -139,6 +139,13 @@ class _RowAdapter:
     def _db_delete_subtree(self, path: str) -> None:
         raise NotImplementedError
 
+    def _transaction(self):
+        """A context in which several writes land together or not at all;
+        stores without transactions (Redis, MongoDB) do them one by one."""
+        import contextlib
+
+        return contextlib.nullcontext()
+
 
 # ---------------------------------------------------------------------------
 # Public mixin
@@ -375,7 +382,9 @@ class DbFsBackend(_RowAdapter, SessionLifecycle):
             raise FileNotFoundError(errno.ENOENT, f"No such path: {path}")
         self._refuse_slash_on_file(raw, row)
         if row.get("is_dir"):
-            children = list(self._db_list(path))
+            # Names only: the full rows shipped every child's file body
+            # just to see whether the folder is empty.
+            children = list(self._db_list_meta(path))
             if children and not recursive:
                 raise OSError(errno.ENOTEMPTY, f"Directory not empty: {path}")
             self._db_delete_subtree(path)
@@ -411,25 +420,34 @@ class DbFsBackend(_RowAdapter, SessionLifecycle):
             raise FileExistsError(errno.EEXIST, f"Destination already exists: {dst}")
         dst_parent = self.parent(dst)
         self._check_parent(dst_parent)
-        # Use copy-then-delete via DB ops: read the bytes, insert
-        # under the new path, drop the old. Subclasses with native
-        # rename can override this whole method.
+        # Copy-then-delete via DB ops, in one transaction where the store
+        # has them (SQLite, PostgreSQL): a failure half way left a folder
+        # split between the old and the new name.
+        with self._transaction():
+            self._move_row(src, dst, row)
+
+    def _move_row(self, src: str, dst: str, row: dict) -> None:
+        """Insert *row* (of *src*) under *dst*, its children after it,
+        then drop *src*. The modification time stays the row's own."""
         self._db_insert(
             {
                 "path": dst,
-                "parent": dst_parent,
+                "parent": self.parent(dst),
                 "is_dir": row.get("is_dir", False),
                 # Schemaless stores hand back whatever another client
                 # stored; the adapters' inserts take an int.
                 "mode": parse_mode(row.get("mode"), 0o755 if row.get("is_dir") else 0o644),
-                "mtime": _now(),
+                "mtime": row.get("mtime") or _now(),
                 "content": row.get("content"),
             }
         )
         if row.get("is_dir"):
-            for child in list(self._db_list(src)):
+            for child in list(self._db_list_meta(src)):
+                child_row = self._db_get(child["path"])
+                if child_row is None:
+                    continue  # gone meanwhile
                 child_dst = posixpath.join(dst, posixpath.basename(child["path"]))
-                self.rename(child["path"], child_dst)
+                self._move_row(child["path"], child_dst, child_row)
         self._db_delete(src)
 
     @_driver_errors_as_oserror

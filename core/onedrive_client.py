@@ -42,6 +42,10 @@ except ImportError:
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 GRAPH_TIMEOUT = 30
+#: How long the browser sign-in at connect may take (seconds).
+INTERACTIVE_LOGIN_TIMEOUT = 300
+#: Characters OneDrive and SharePoint refuse in a file or folder name.
+_FORBIDDEN_NAME_CHARS = frozenset('"*:<>?\\|')
 
 
 def _graph_json(resp, what: str, *, empty_ok: bool = False) -> dict:
@@ -247,6 +251,9 @@ class OneDriveSession(SessionLifecycle):
             authority=authority,
             token_cache=self._cache,
             proxies=self._proxies or None,
+            # MSAL's own token requests waited without a limit: a stalled
+            # login.microsoftonline.com hung every Graph call behind it.
+            timeout=GRAPH_TIMEOUT,
         )
 
         # Acquire initial token
@@ -289,6 +296,8 @@ class OneDriveSession(SessionLifecycle):
             result = self._app.acquire_token_interactive(
                 scopes=self._scopes,
                 redirect_uri="http://localhost",
+                # A login nobody finishes ends instead of waiting forever.
+                timeout=INTERACTIVE_LOGIN_TIMEOUT,
             )
 
         if not isinstance(result, dict) or "access_token" not in result:
@@ -327,15 +336,29 @@ class OneDriveSession(SessionLifecycle):
 
     def _ensure_token(self) -> None:
         """Re-acquire token if expired."""
+        self._access_token = self._refresh_token()
+
+    def _refresh_token(self, force: bool = False) -> str:
+        """An access token from the cache or the refresh token - never the
+        browser login. Once connected, a request runs on any thread (the
+        health check, a transfer, the MCP server): the login opened a
+        browser tab from there, once per request, and waited for it
+        without a limit. A sign-in that expired or was revoked is
+        :class:`CloudSignInExpired`; Reconnect signs in again. *force*
+        skips the cached access token (Graph refused it)."""
         accounts = self._app.get_accounts()
+        result = None
         if accounts:
-            result = self._app.acquire_token_silent(self._scopes, account=accounts[0])
-            if result and "access_token" in result:
-                self._access_token = result["access_token"]
-                self._save_cache()
-                return
-        # Need interactive re-auth
-        self._access_token = self._acquire_token()
+            result = self._app.acquire_token_silent(
+                self._scopes, account=accounts[0], force_refresh=force)
+        if not isinstance(result, dict) or "access_token" not in result:
+            detail = result.get("error_description", "") if isinstance(result, dict) else ""
+            raise cloud_http.CloudSignInExpired(self._service_name(), str(detail)[:200])
+        self._save_cache()
+        return result["access_token"]
+
+    def _service_name(self) -> str:
+        return "SharePoint" if getattr(self, "_drive_type", "") == "sharepoint" else "OneDrive"
 
     def _headers(self) -> dict[str, str]:
         """Return authorization headers for Graph API requests."""
@@ -444,12 +467,17 @@ class OneDriveSession(SessionLifecycle):
                 raise cloud_http.oserror(err, f"Graph API {method} {url} failed: {exc}") from exc
             status = resp.status_code
             if status == 401 and auth and not refreshed:
-                # The token may have expired between _ensure_token and now.
+                # The token may have expired between _ensure_token and now,
+                # or Graph no longer takes it: a fresh one, not the cached
+                # one Graph has just refused.
                 refreshed = True
                 resp.close()
-                self._access_token = self._acquire_token()
+                self._access_token = self._refresh_token(force=True)
                 attempt -= 1
                 continue
+            if status == 401 and auth:
+                resp.close()
+                raise cloud_http.CloudSignInExpired(self._service_name(), "Graph refused the token")
             if status in cloud_http.RETRYABLE_STATUSES and attempt < cloud_http.ATTEMPTS and (
                     idempotent or status == 429):
                 retry_after = cloud_http.retry_after_seconds(_header(resp, "Retry-After"))
@@ -606,8 +634,10 @@ class OneDriveSession(SessionLifecycle):
         prefix = self._drive_prefix()
         before = self._content_tag(path)
         url = f"{GRAPH_BASE}{prefix}/root:{self._escape_path(path)}:/createUploadSession"
+        # Idempotent: a second createUploadSession is only another session,
+        # and one 503 here failed the whole large upload.
         answer = self._graph_post(
-            url, {"item": {"@microsoft.graph.conflictBehavior": "replace"}}
+            url, {"item": {"@microsoft.graph.conflictBehavior": "replace"}}, idempotent=True
         )
         upload_url = as_str(answer.get("uploadUrl"))
         if not upload_url.lower().startswith("https://"):
@@ -815,10 +845,25 @@ class OneDriveSession(SessionLifecycle):
         except FileNotFoundError:
             return False
 
+    @staticmethod
+    def _check_name(path: str) -> None:
+        """EINVAL, with a sentence, for a name OneDrive and SharePoint
+        refuse - the user saw Graph's raw "invalidRequest" JSON."""
+        name = posixpath.basename(path.rstrip("/"))
+        bad = sorted({c for c in name if c in _FORBIDDEN_NAME_CHARS})
+        if bad:
+            raise OSError(
+                errno.EINVAL,
+                "OneDrive and SharePoint do not allow these characters in a name: "
+                + " ".join(bad),
+                path,
+            )
+
     def mkdir(self, path: str) -> None:
         normed = path.strip("/")
         if not normed:
             raise OSError(errno.EEXIST, "Cannot create root directory", "/")
+        self._check_name(path)
 
         parent_path = posixpath.dirname(normed)
         folder_name = posixpath.basename(normed)
@@ -854,6 +899,7 @@ class OneDriveSession(SessionLifecycle):
 
     def rename(self, src: str, dst: str) -> None:
         refuse_folder_path(dst, "rename to", source_is_file=lambda: not self.stat(src).is_dir)
+        self._check_name(dst)
         item_id = self._get_item_id(src)
         prefix = self._drive_prefix()
         url = f"{GRAPH_BASE}{prefix}/items/{item_id}"
@@ -890,6 +936,7 @@ class OneDriveSession(SessionLifecycle):
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
         # The Graph path drops the slash: "x/" was written as the FILE x.
         refuse_folder_path(path)
+        self._check_name(path)
         if append:
             cap = self._MAX_APPEND_EXISTING_SIZE
             existing = read_existing_for_append(
@@ -1023,6 +1070,7 @@ class OneDriveSession(SessionLifecycle):
         """
         what = f"OneDrive copy {src} -> {dst}"
         refuse_folder_path(dst, "copy to", source_is_file=lambda: not self.stat(src).is_dir)
+        self._check_name(dst)
         try:
             parent = self._graph_get(self._item_path_url(self.parent(dst)))
             parent_id = as_str(parent.get("id"))
@@ -1278,10 +1326,10 @@ class OneDriveSession(SessionLifecycle):
                 "resolved — was the session connected?"
             )
 
-    def _graph_post(self, url: str, body: dict) -> dict:
+    def _graph_post(self, url: str, body: dict, *, idempotent: bool = False) -> dict:
         """POST a JSON body to the Graph API. Mirrors _graph_get's
         auth + error-mapping pattern."""
-        resp = self._graph_post_response(url, body)
+        resp = self._graph_post_response(url, body, idempotent=idempotent)
         return _graph_json(resp, f"POST {url}", empty_ok=True)
 
     def _graph_post_response(self, url: str, body: dict, *, idempotent: bool = False):

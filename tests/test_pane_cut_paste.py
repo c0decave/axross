@@ -722,13 +722,47 @@ def test_edge_e2e_copying_something_else_ends_the_pending_copy(win) -> None:
     win._quit_with_transfers = True
 
 
-def test_edge_e2e_a_copy_pasted_into_its_own_folder_copies_nothing(win) -> None:
+def test_happy_e2e_a_copy_pasted_into_its_own_folder_is_a_copy_under_a_new_name(win) -> None:
+    """Ctrl+C, Ctrl+V in one folder (as in any file manager): a copy named
+    "f (1).txt", a folder "sub (1)" with its contents; again: "(2)". It
+    said "Nothing to copy" and did nothing."""
+    ctx = win.test_ctx
+    left, a = ctx["left"], ctx["a"]
+    copy_in(left, "f.txt", "sub")
+    press(left._table, Qt.Key.Key_V, CTRL)
+    settle(win)
+    assert (a / "f (1).txt").read_text() == "payload"
+    assert (a / "sub (1)" / "inner.txt").read_text() == "inner"
+    assert (a / "f.txt").read_text() == "payload"
+    assert (a / "sub" / "inner.txt").read_text() == "inner"
+    assert ctx["asked"] == []  # new names: nothing to ask
+    press(left._table, Qt.Key.Key_V, CTRL)
+    settle(win)
+    assert (a / "f (2).txt").read_text() == "payload"
+    assert (a / "sub (2)" / "inner.txt").read_text() == "inner"
+    assert not (a / "sub (1)" / "sub").exists()  # a copy beside it, never into it
+    win._quit_with_transfers = True
+
+
+def test_edge_e2e_a_copy_pasted_into_its_own_folder_from_the_other_pane(win) -> None:
+    """The other pane showing the same folder: the same copy under a new name."""
     ctx = win.test_ctx
     copy_in(ctx["left"], "f.txt")
     ctx["right"].navigate(str(ctx["a"]))
     pump()
     press(ctx["right"]._table, Qt.Key.Key_V, CTRL)
-    pump(0.3)
     settle(win)
-    assert not win._transfer_manager._jobs
-    assert "Nothing to copy" in win.statusBar().currentMessage()
+    assert (ctx["a"] / "f (1).txt").read_text() == "payload"
+    assert sorted(p.name for p in ctx["a"].iterdir() if p.is_file()) == ["f (1).txt", "f.txt"]
+    win._quit_with_transfers = True
+
+
+def test_edge_e2e_cut_then_paste_into_its_own_folder_still_moves_nothing(win) -> None:
+    ctx = win.test_ctx
+    left = ctx["left"]
+    select(left, "f.txt")
+    press(left._table, Qt.Key.Key_X, CTRL)
+    press(left._table, Qt.Key.Key_V, CTRL)
+    settle(win)
+    assert sorted(p.name for p in ctx["a"].iterdir() if p.is_file()) == ["f.txt"]
+    assert "Nothing to move" in win.statusBar().currentMessage()

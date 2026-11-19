@@ -758,6 +758,16 @@ class _DragTableView(QTableView):
                 return
         super().mousePressEvent(event)
 
+    def keyboardSearch(self, search: str) -> None:  # noqa: N802 - Qt override
+        """Type-to-find looks in the names. Qt searches the current cell's
+        column: after a click in Size or Modified the letters typed were
+        compared with sizes and dates and found nothing (search review)."""
+        current = self.currentIndex()
+        if current.isValid() and current.column() != 0:
+            self.selectionModel().setCurrentIndex(
+                current.siblingAtColumn(0), QItemSelectionModel.SelectionFlag.NoUpdate)
+        super().keyboardSearch(search)
+
     def mouseMoveEvent(self, event) -> None:
         if self._band_origin is not None and event.buttons() & Qt.MouseButton.LeftButton:
             pos = event.position().toPoint()
@@ -1010,6 +1020,26 @@ _MIN_COLUMN_WIDTH = 60
 CHECKSUM_CHUNK = 1024 * 1024
 #: Seconds Mount as FUSE waits for the kernel to show the mount.
 FUSE_MOUNT_WAIT_S = 5
+
+
+def _creates_exclusively(backend) -> bool:
+    """Whether a new file on *backend* can be made with O_EXCL here: a
+    plain local folder (LocalFS's own writes, not a confined or mapped one)."""
+    private = getattr(backend, "private_writes", None)
+    try:
+        return callable(private) and bool(private())
+    except Exception:  # noqa: BLE001 - unknown: the backend's own write
+        return False
+
+
+def _streams_locally(backend) -> bool:
+    """Whether *backend*'s checksum is nothing but reading the file here
+    (LocalFS's own): then the cancellable stream hash is the checksum. A
+    backend with a checksum of its own keeps it."""
+    from core.local_fs import LocalFS
+
+    method = getattr(backend, "checksum", None)
+    return getattr(method, "__func__", None) is LocalFS.checksum
 
 
 def _stream_sha256(backend, path: str, total: int, cancelled, report) -> str | None:
@@ -1376,7 +1406,13 @@ class FilePaneWidget(QWidget):
         self._filter_edit.setObjectName("axPaneFilter")
         self._filter_edit.setProperty("axHelpTopic", "path-bar")
         self._filter_edit.setPlaceholderText(tr("Type to filter files…"))
+        self._filter_edit.setToolTip(tr(
+            "Part of a name, or patterns like *.jpg *.png; tag:<name> shows tagged files. "
+            "Esc clears the filter; another folder starts unfiltered."))
         self._filter_edit.setClearButtonEnabled(True)
+        #: Edits of the filter text so far: a navigation clears the filter
+        #: only when nobody typed one for the folder on its way (_apply_listing).
+        self._filter_edits = 0
         self._filter_edit.textChanged.connect(self._on_filter_changed)
         filter_bar.addWidget(self._filter_edit)
 
@@ -1624,12 +1660,14 @@ class FilePaneWidget(QWidget):
             return None
 
     def _apply_listing(self, path: str, items: list, history="push", usage=_UNSET,
-                       listed_after: int = -1, keep_sizes: bool = False) -> None:
+                       listed_after: int = -1, keep_sizes: bool = False,
+                       filter_edits: int | None = None) -> None:
         """UI part of a navigation. *history* is ``"push"`` (record the path),
         ``"keep"`` (refresh: leave the history alone) or an int (back / forward:
         move to that position). *listed_after* is the watcher's last report
         when the listing was asked for (-1: unknown) - a change reported up
-        to then is in it (_on_debounce_fired)."""
+        to then is in it (_on_debounce_fired). *filter_edits*: the count of
+        filter edits when the navigation began (see _clear_filter_for)."""
         self._shown_listing_after = listed_after
         # The same folder again (F5, an operation, the watcher): the model
         # reset drops the selection, so it is taken by name and given back -
@@ -1637,6 +1675,8 @@ class FilePaneWidget(QWidget):
         same_folder = path == self._current_path
         keep = self._selection_by_name() if same_folder else None
         places = self._scroll_places() if same_folder else None
+        if not same_folder:
+            self._clear_filter_for(filter_edits)
         # Calculated folder sizes go with a reload the user asked for (F5)
         # and with another folder; a refresh of its own keeps them.
         self._model.set_items(items, keep_sizes=keep_sizes and same_folder)
@@ -1707,10 +1747,11 @@ class FilePaneWidget(QWidget):
 
         try:
             listed_after = self._watch_report
+            filter_edits = self._filter_edits
             path, items = self._fetch_listing(path)
             # Track history (skip during back/forward and refresh)
             self._apply_listing(path, items, "keep" if self._history_navigating else "push",
-                                listed_after=listed_after)
+                                listed_after=listed_after, filter_edits=filter_edits)
         except OSError as e:
             log.error("Navigation failed: %s", e)
             self._feedback(tr("Error: {error}").format(error=describe(e, path)))
@@ -1736,7 +1777,8 @@ class FilePaneWidget(QWidget):
         comes back as home, decided off the GUI thread)."""
         self._status_before = self._status.text()
         self._nav_ctx = {"path": path, "history": history, "quiet": quiet,
-                         "fallback": fallback, "keep_sizes": keep_sizes}
+                         "fallback": fallback, "keep_sizes": keep_sizes,
+                         "filter_edits": self._filter_edits}
         if not quiet:
             self._progress_bar.show()
             self._cancel_nav_btn.show()
@@ -1773,6 +1815,33 @@ class FilePaneWidget(QWidget):
         if ctx and ctx["path"] != self._current_path:
             return
         self.refresh_async(quiet=quiet, keep_sizes=True)
+
+    def _refresh_selecting(self, name: str) -> None:
+        """:meth:`refresh_after_change`, then the entry *name* of this folder
+        selected and current: a renamed entry (the selection was kept by
+        its old name, gone, and the next key started at the top) or a new
+        one. Nothing is selected when the pane has gone elsewhere."""
+        folder, backend = self._current_path, self._backend
+
+        def arrived(loaded: str, ok: bool) -> None:
+            try:
+                self.navigation_finished.disconnect(arrived)
+            except (TypeError, RuntimeError):
+                pass
+            if (ok and loaded == folder and backend is self._backend
+                    and not self._shutting_down):
+                self._restore_selection({name}, name)
+                index = self._table.currentIndex()
+                if index.isValid():
+                    self._table.scrollTo(index)
+
+        self.navigation_finished.connect(arrived)
+        self.refresh_after_change()
+        if not self._nav_ctx:  # no load started (the pane is leaving): no wait
+            try:
+                self.navigation_finished.disconnect(arrived)
+            except (TypeError, RuntimeError):
+                pass
 
     def cancel_navigation(self) -> None:
         """Stop a running background load (the pane stays where it was)."""
@@ -1814,7 +1883,8 @@ class FilePaneWidget(QWidget):
             return
         path, items, usage, listed_after = value
         self._apply_listing(path, items, ctx["history"], usage, listed_after=listed_after,
-                            keep_sizes=ctx.get("keep_sizes", False))
+                            keep_sizes=ctx.get("keep_sizes", False),
+                            filter_edits=ctx.get("filter_edits"))
         self.navigation_finished.emit(path, True)
 
     def refresh(self) -> None:
@@ -3054,7 +3124,33 @@ class FilePaneWidget(QWidget):
 
     # --- Filter ---
 
+    def _clear_filter_for(self, filter_edits: int | None) -> None:
+        """Another folder is about to be shown: its listing starts
+        unfiltered. The filter text of the folder left went along before -
+        "proj" typed to find a folder showed that folder filtered by "proj",
+        often empty (search review). A filter typed while the folder was
+        loading (*filter_edits* no longer the current count) was typed for
+        it and stays. Only the proxy's state is dropped here: the model
+        reset that follows works the rows out once, unfiltered."""
+        if not self._filter_edit.text():
+            return
+        if filter_edits is not None and filter_edits != self._filter_edits:
+            return
+        self._proxy.forget_filter()
+        # Not blockSignals: the line's clear button would stay shown.
+        self._filter_cleared_quietly = True
+        try:
+            self._filter_edit.clear()
+        finally:
+            self._filter_cleared_quietly = False
+
+    #: True while _clear_filter_for empties the line (the proxy knows already).
+    _filter_cleared_quietly = False
+
     def _on_filter_changed(self, text: str) -> None:
+        if self._filter_cleared_quietly:
+            return
+        self._filter_edits += 1
         # Key column and case sensitivity are set once in _setup_ui:
         # setting them here re-filtered every row a second time per key.
         # "tag:<name>" shows the files that carry that tag (core.tags).
@@ -3069,7 +3165,7 @@ class FilePaneWidget(QWidget):
             return
         if self._proxy._tag_filter is not None:
             self._proxy.set_tag_filter(None)
-        self._proxy.setFilterFixedString(text)
+        self._proxy.set_filter_text(text)
 
     # --- Tags ---
 
@@ -4065,7 +4161,9 @@ class FilePaneWidget(QWidget):
         group(more)
         self._add_terminal_actions(more)
         self._add_fuse_actions(more, more_entry)
-        if selected and not hostile:
+        if len(selected) == 1 and not hostile:
+            # One entry: the editor shows and sets one entry's mode (with
+            # several selected, OK changed the first one alone).
             group(more)
             more_entry("permissions", tr("Per&missions…"), self._show_permissions)
         # -- protect (single file: passphrase prompt flow)
@@ -4484,6 +4582,10 @@ class FilePaneWidget(QWidget):
             if value.skipped:
                 text += " " + tr_n(len(value.skipped), "({n} link skipped)",
                                    "({n} links skipped)")
+            special = getattr(value, "special", None) or ()
+            if special:
+                text += " " + tr_n(len(special), "({n} socket, pipe or device skipped)",
+                                   "({n} sockets, pipes or devices skipped)")
             self.status_message(text)
             self.refresh_after_change(quiet=True)
             return
@@ -4519,7 +4621,7 @@ class FilePaneWidget(QWidget):
 
         def done(_value):
             log.info("Created folder: %s", path)
-            self.refresh_after_change()
+            self._refresh_selecting(name)
 
         self._run_op(tr("Creating {name}…").format(name=name), work, done, tr("New Folder"),
                      exists=tr("Path already exists:\n{name}").format(name=name),
@@ -4554,12 +4656,21 @@ class FilePaneWidget(QWidget):
         def work(_cancelled, _report):
             if backend.exists(path):
                 raise FileExistsError(path)
+            if _creates_exclusively(backend):
+                # Exclusive: a file saved under the name since the check is
+                # refused, never emptied ("wb" truncated it).
+                import os
+
+                os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                                 | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
+                                 0o666))
+                return
             with backend.open_write(path) as fh:
                 fh.write(b"")
 
         def done(_value):
             log.info("Created empty file: %s", path)
-            self.refresh_after_change()
+            self._refresh_selecting(name)
 
         self._run_op(tr("Creating {name}…").format(name=name), work, done, tr("New File"),
                      exists=tr("Path already exists:\n{name}").format(name=name),
@@ -4695,7 +4806,9 @@ class FilePaneWidget(QWidget):
 
         backend = self._backend
         new_path = backend.join(folder, new_name)
-        failed = f"Could not rename {item.name} to {new_name}:\n{{error}}"
+        # {error} stays for _run_op; the names are values, never re-parsed.
+        failed = tr("Could not rename {old} to {new}:\n{error}").format(
+            old=item.name, new=new_name, error="{error}")
         busy = tr("Renaming {name}…").format(name=item.name)
 
         def check(_cancelled, _report):
@@ -4710,7 +4823,7 @@ class FilePaneWidget(QWidget):
         def moved(_value):
             log.info("Renamed %s -> %s", old_path, new_path)
             self._tags_follow_rename(old_path, new_path)
-            self.refresh_after_change()
+            self._refresh_selecting(new_name)
 
         def checked(_value):
             # The production question between the check and the move: on
@@ -5274,8 +5387,8 @@ class FilePaneWidget(QWidget):
         from ui.permissions_dialog import PermissionsDialog
 
         items = self.selected_file_items()
-        if not items:
-            return
+        if len(items) != 1:
+            return  # one entry's mode; several would change only the first
         item = items[0]
         path = self._safe_item_path(item)
         if path is None or not self._production_ok(
@@ -5459,6 +5572,12 @@ class FilePaneWidget(QWidget):
         # through this one, not the one the pane shows by then.
         self._checksum_target = (item, full_path)
         self._checksum_backend = backend
+        if _streams_locally(backend):
+            # A local "native" checksum is the same read, but one Cancel
+            # could not stop and without progress (on a named pipe it
+            # blocked in open() for good): the stream reader does both.
+            self._start_stream_checksum(item, full_path)
+            return
         self._checksum_phase = "native"
         self._begin_checksum(tr("Checksum of {name}…").format(name=item.name))
         job.start(lambda _cancelled, _report: backend.checksum(full_path))
@@ -5512,10 +5631,26 @@ class FilePaneWidget(QWidget):
             return
         item, full_path = self._checksum_target
         stream = self._checksum_phase == "stream"
+        if kind == "error" and not stream:
+            # The server's checksum failed (an SFTP server that runs no
+            # commands: "Channel closed"): reading the file still works.
+            # It ended in "Failed to compute checksum" with no way on.
+            from ui.plain_text import as_written
+
+            reply = QMessageBox.question(
+                self,
+                tr("Checksum"),
+                as_written(tr("{name}: the server could not compute the checksum:\n{error}\n\n"
+                              "Compute SHA-256 by reading the entire file?").format(
+                    name=item.name, error=value)),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self._start_stream_checksum(item, full_path)
+            return
         if kind == "error":
-            text = (tr("Failed to read file for hashing:\n{error}") if stream
-                    else tr("Failed to compute checksum:\n{error}"))
-            QMessageBox.warning(self, tr("Checksum"), text.format(error=value))
+            QMessageBox.warning(self, tr("Checksum"),
+                                tr("Failed to read file for hashing:\n{error}").format(error=value))
             return
         if stream:
             self._present_checksum(full_path, "sha256", value, "stream-read")

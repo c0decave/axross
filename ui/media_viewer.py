@@ -41,6 +41,7 @@ from typing import Any
 from PyQt6 import sip
 from PyQt6.QtCore import (
     QAbstractListModel,
+    QEvent,
     QModelIndex,
     QObject,
     QPointF,
@@ -63,6 +64,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QButtonGroup,
     QCheckBox,
     QComboBox,
@@ -928,8 +930,47 @@ class MediaViewer(QWidget):
             self._pdf_view.setPageMode(QPdfView.PageMode.SinglePage)
             self._pdf_view.setZoomMode(QPdfView.ZoomMode.FitInView)
             self._pdf_view.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            # Ctrl + wheel zooms the page (the wheel alone still scrolls it)
+            self._pdf_view.viewport().installEventFilter(self)
             self.pages.addWidget(self._pdf_view)
         return self._pdf_view
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 - Qt override
+        if (
+            event.type() == QEvent.Type.Wheel
+            and self._pdf_view is not None
+            and obj is self._pdf_view.viewport()
+            and event.modifiers() & Qt.KeyboardModifier.ControlModifier
+        ):
+            steps = event.angleDelta().y() / 120.0
+            if steps:
+                self.zoom_by(1.25**steps)
+            event.accept()
+            return True
+        return super().eventFilter(obj, event)
+
+    def _pdf_shown_zoom(self) -> float:
+        """The zoom the PDF page is shown at: its factor, or in fit mode the
+        factor fitting the page into the view (QPdfView reports 1.0 there,
+        so a zoom step from fit jumped to 125 % of the page's own size)."""
+        from PyQt6.QtPdfWidgets import QPdfView
+
+        view = self._pdf_view
+        if view.zoomMode() == QPdfView.ZoomMode.Custom or self._pdf_doc is None:
+            return view.zoomFactor()
+        page = self._pdf_doc.pagePointSize(max(0, view.pageNavigator().currentPage()))
+        screen = view.screen() or QApplication.primaryScreen()
+        scale = (screen.logicalDotsPerInch() if screen is not None else 96.0) / 72.0
+        width, height = page.width() * scale, page.height() * scale
+        if width <= 0 or height <= 0:
+            return view.zoomFactor()
+        margins = view.documentMargins()
+        vp = view.viewport().size()
+        fit_w = (vp.width() - margins.left() - margins.right()) / width
+        if view.zoomMode() == QPdfView.ZoomMode.FitToWidth:
+            return max(0.05, fit_w)
+        fit_h = (vp.height() - margins.top() - margins.bottom()) / height
+        return max(0.05, min(fit_w, fit_h))
 
     def _ensure_player(self):
         if self._player is None:
@@ -1332,7 +1373,7 @@ class MediaViewer(QWidget):
         if self.mode == "pdf" and self._pdf_view is not None:
             from PyQt6.QtPdfWidgets import QPdfView
 
-            current = self._pdf_view.zoomFactor()
+            current = self._pdf_shown_zoom()
             self._pdf_view.setZoomMode(QPdfView.ZoomMode.Custom)
             self._pdf_view.setZoomFactor(max(0.05, min(20.0, current * factor)))
         else:

@@ -2,7 +2,8 @@
 # Lock the supply-chain gate's scanners (build/requirements-scan-tools.in)
 # with hashes, for CPython 3.12 on Linux x86_64 - the build machine. Only
 # releases at least MIN_AGE_DAYS old are considered (uv --exclude-newer),
-# the gate's minimum age.
+# the gate's minimum age. Arguments go to uv (e.g. --upgrade-package NAME to
+# move one pin past the current lock, which uv otherwise keeps).
 set -euo pipefail
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIN_AGE_DAYS=14
@@ -15,6 +16,6 @@ while read -r pkg date _; do
 done < build/young-release-exceptions.txt
 UV_NO_CONFIG=1 uv pip compile build/requirements-scan-tools.in --python-version 3.12 \
     --python-platform x86_64-manylinux_2_28 --generate-hashes --index-url https://pypi.org/simple \
-    --exclude-newer "$CUTOFF" "${EXCEPTIONS[@]}" --custom-compile-command "scripts/lock_scan_tools.sh" --quiet \
+    --exclude-newer "$CUTOFF" "${EXCEPTIONS[@]}" --custom-compile-command "scripts/lock_scan_tools.sh" --quiet "$@" \
     --output-file build/requirements-scan-tools.txt
 echo "locked (releases up to $CUTOFF): $(grep -c '==' build/requirements-scan-tools.txt) pins"

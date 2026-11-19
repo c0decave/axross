@@ -344,13 +344,28 @@ def test_sad_an_unreadable_folder_is_skipped_and_reported(tree, monkeypatch) -> 
 
 
 def test_sad_a_zip_bomb_member_is_not_decompressed(tree) -> None:
-    (tree / "bomb.zip").write_bytes(_zip_bytes({"zeros.txt": b"0" * (4 * 1024 * 1024)}))
+    from core.archive import RATIO_CHECK_FLOOR
+
+    # Over 100:1 and at least the floor (a smaller member is searched: see
+    # test_happy_a_small_member_of_zeros_is_searched).
+    big = b"0" * (RATIO_CHECK_FLOOR + 1024 * 1024)
+    (tree / "bomb.zip").write_bytes(_zip_bytes({"zeros.txt": big}))
     hits, summary = _local(tree, name="zeros.txt", contains="0", search_archives=True)
     assert hits == []
     assert summary.skipped.get("bomb", 0) == 1
     # The name alone is still found: listing does not decompress.
     hits, _ = _local(tree, name="zeros.txt", search_archives=True)
     assert _rel(hits, tree) == {"bomb.zip!/zeros.txt"}
+
+
+def test_happy_a_small_member_of_zeros_is_searched(tree) -> None:
+    """4 MiB of "0" deflates about 1000:1. Under the 64 MiB floor the ratio
+    is not checked (it refused axross's own ZIPs of such files): its
+    content is searched."""
+    (tree / "zeros.zip").write_bytes(_zip_bytes({"zeros.txt": b"0" * (4 * 1024 * 1024)}))
+    hits, summary = _local(tree, name="zeros.txt", contains="0", search_archives=True)
+    assert _rel(hits, tree) == {"zeros.zip!/zeros.txt"}
+    assert summary.skipped.get("bomb", 0) == 0
 
 
 def test_sad_a_damaged_archive_is_reported_and_the_search_goes_on(tree) -> None:

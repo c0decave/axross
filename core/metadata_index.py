@@ -406,6 +406,7 @@ def index_dir(
         log.warning("metadata_index: list_dir(%s) failed: %s", root, exc)
         if _walk is not None:
             _walk["skipped"].append(root)  # unknown, not gone
+            _walk.setdefault("errors", []).append((root, exc))
         return 0
     for it in entries:
         if cancel is not None and cancel():
@@ -452,7 +453,11 @@ def index_dir(
                 progress(_counter[0], _done[0], full)
             except Exception as exc:  # noqa: BLE001 — a UI callback must not kill the walk
                 log.debug("metadata_index: progress callback failed: %s", exc)
-        if recursive and bool(getattr(it, "is_dir", False)):
+        # A folder that is a link (a symlink, an SMB junction) is indexed but
+        # not walked into, like Find Files and the network search: a
+        # junction pointing up indexed the same files again on every level.
+        if (recursive and bool(getattr(it, "is_dir", False))
+                and not bool(getattr(it, "is_link", False))):
             count += index_dir(
                 backend,
                 full,
@@ -478,10 +483,13 @@ def reindex_dir(
     db_path=None,
     cancel=None,
     progress=None,
+    errors: list | None = None,
 ) -> tuple[int, int]:
     """Index *root* like :func:`index_dir`, then drop the rows under it
     that the walk did not see: what was deleted since the last index.
-    Returns ``(indexed, removed)``.
+    Returns ``(indexed, removed)``. *errors*, when given, receives a
+    ``(folder, OSError)`` pair per folder whose listing failed (*root*
+    itself first when it could not be read at all).
 
     Only a complete walk removes anything. A cancelled walk or one that hit
     MAX_WALK_ENTRIES removes nothing, and rows under a folder whose listing
@@ -492,6 +500,8 @@ def reindex_dir(
     walk: dict = {"seen": set(), "skipped": [], "complete": True}
     indexed = index_dir(backend, root, backend_id=backend_id, db_path=db_path, cancel=cancel,
                         progress=progress, _walk=walk)
+    if errors is not None:
+        errors.extend(walk.get("errors", ()))
     if not walk["complete"]:
         return indexed, 0
     return indexed, _drop_unseen(db_path, backend_id, root, walk["seen"], walk["skipped"])

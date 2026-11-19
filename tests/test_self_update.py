@@ -167,8 +167,112 @@ def test_edge_unknown_platform_or_flavor_has_no_asset(tmp_path):
     assert unknown.asset == "" and not unknown.can_self_replace
     arm = frozen_install(exe, platform="linux", machine="aarch64")
     assert arm.asset == "" and "no axross-full build" in arm.why_not().lower()
-    mac_full = frozen_install(exe, platform="darwin", machine="arm64")
-    assert mac_full.asset == ""
+    mac_base = frozen_install(exe, flavor="base", platform="darwin", machine="arm64")
+    assert mac_base.asset == ""
+    mac_intel = frozen_install(exe, flavor="slim", platform="darwin", machine="x86_64")
+    assert mac_intel.asset == ""
+
+
+def test_happy_full_on_macos_and_windows_has_its_asset(binary):
+    """From 0.15.179 the release carries axross-full for macOS and Windows
+    too, and those binaries update themselves like the slim ones."""
+    assert frozen_install(binary, platform="darwin",
+                          machine="arm64").asset == "axross-full-macos-arm64"
+    win = frozen_install(binary, platform="win32", machine="AMD64")
+    assert win.asset == "axross-full-windows-x64.exe"
+    assert SU.versioned_name(win.asset, "0.15.180") == "axross-full-windows-x64-0.15.180.exe"
+
+
+# --- an AppImage -------------------------------------------------------------
+
+
+def _appimage(tmp_path, flavor="full", variant=None):
+    """A binary inside a mounted AppImage: (the image file, the binary, its bundle)."""
+    image = tmp_path / "Apps" / f"axross-{flavor}-x86_64.AppImage"
+    image.parent.mkdir()
+    image.write_bytes(OLD_BYTES)
+    image.chmod(0o755)
+    mount = tmp_path / ".mount_axrossX"
+    (mount / "usr" / "bin").mkdir(parents=True)
+    exe = mount / "usr" / "bin" / "axross"
+    exe.write_bytes(OLD_BYTES)
+    bundle = tmp_path / "_MEI99"
+    bundle.joinpath(*SU.FLAVOR_PATH).parent.mkdir(parents=True)
+    bundle.joinpath(*SU.FLAVOR_PATH).write_text(flavor + "\n")
+    if variant:
+        bundle.joinpath(*SU.VARIANT_PATH).write_text(variant + "\n")
+    env = {"APPIMAGE": str(image), "APPDIR": str(mount)}
+    return image, exe, bundle, env
+
+
+@pytest.mark.parametrize("flavor", SU.FLAVORS)
+def test_happy_inside_an_appimage_the_appimage_is_replaced(tmp_path, flavor):
+    image, exe, bundle, env = _appimage(tmp_path, flavor, "glibc-2.34")
+    inst = SU.detect_install(frozen=True, executable=str(exe), bundle_dir=str(bundle),
+                             platform="linux", machine="x86_64", environ=env)
+    assert inst.asset == f"axross-{flavor}-x86_64.AppImage"
+    assert inst.executable == image.resolve()
+    assert inst.can_self_replace
+    # never the plain binary: the old updater's exact names stay the plain ones
+    assert inst.asset != SU.asset_name("linux", "x86_64", flavor)
+
+
+def test_happy_an_appimage_without_the_variant_file_is_a_glibc_2_34_one(tmp_path):
+    image, exe, bundle, env = _appimage(tmp_path)
+    inst = SU.detect_install(frozen=True, executable=str(exe), bundle_dir=str(bundle),
+                             platform="linux", machine="x86_64", environ=env)
+    assert (inst.asset, inst.executable) == ("axross-full-x86_64.AppImage", image.resolve())
+
+
+def test_edge_an_appimage_of_a_glibc_2_36_binary_has_no_asset(tmp_path):
+    """No AppImage is made from the glibc-2.36 binaries: such an image (built
+    by hand) is not given the plain binary, nor a 2.34 AppImage."""
+    image, exe, bundle, env = _appimage(tmp_path, variant="glibc-2.36")
+    inst = SU.detect_install(frozen=True, executable=str(exe), bundle_dir=str(bundle),
+                             platform="linux", machine="x86_64", environ=env)
+    assert inst.asset == "" and not inst.can_download
+    assert inst.executable == image.resolve()
+
+
+def test_sad_a_plain_binary_started_from_another_appimage_stays_itself(tmp_path, binary):
+    """APPIMAGE and APPDIR are inherited by every child: a plain axross
+    started from a terminal that runs as an AppImage must not replace that
+    other program's image."""
+    image, _exe, bundle, env = _appimage(tmp_path)
+    inst = SU.detect_install(frozen=True, executable=str(binary), bundle_dir=str(bundle),
+                             platform="linux", machine="x86_64", environ=env)
+    assert (inst.asset, inst.executable) == ("axross-full", binary.resolve())
+    assert image.read_bytes() == OLD_BYTES
+
+
+@pytest.mark.parametrize("env", [
+    {}, {"APPIMAGE": "relative.AppImage", "APPDIR": "/tmp/x"},
+    {"APPDIR": "MOUNT"}, {"APPIMAGE": "IMAGE"}, {"APPIMAGE": "IMAGE", "APPDIR": "/"},
+    {"APPIMAGE": "MISSING", "APPDIR": "MOUNT"}, {"APPIMAGE": "MOUNT/usr/bin/axross", "APPDIR": "MOUNT"},
+])
+def test_sad_an_incomplete_appimage_environment_is_no_appimage(tmp_path, env):
+    image, exe, bundle, _ = _appimage(tmp_path)
+    names = {"IMAGE": str(image), "MOUNT": str(exe.parent.parent.parent),
+             "MISSING": str(tmp_path / "gone.AppImage")}
+    env = {k: names.get(v.split("/")[0], "") + v[len(v.split("/")[0]):]
+           if v.split("/")[0] in names else v for k, v in env.items()}
+    inst = SU.detect_install(frozen=True, executable=str(exe), bundle_dir=str(bundle),
+                             platform="linux", machine="x86_64", environ=env)
+    assert inst.executable == exe.resolve()
+    assert inst.asset == "axross-full"
+
+
+def test_happy_an_appimage_update_replaces_the_image_file(fake, tmp_path):
+    image, exe, bundle, env = _appimage(tmp_path)
+    fake.release.files["axross-full-x86_64.AppImage"] = b"\x7fELF new appimage" * 50
+    inst = SU.detect_install(frozen=True, executable=str(exe), bundle_dir=str(bundle),
+                             platform="linux", machine="x86_64", environ=env)
+    release = SU.check(opener=opener_for(fake)).release
+    result = SU.update(release, inst, opener=opener_for(fake))
+    assert result.path == image.resolve() and result.replaced
+    assert image.read_bytes() == fake.release.files["axross-full-x86_64.AppImage"]
+    assert image.with_name(image.name + ".previous").read_bytes() == OLD_BYTES
+    assert exe.read_bytes() == OLD_BYTES  # the mount is never written
 
 
 def test_sad_not_frozen_never_replaces_itself():

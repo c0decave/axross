@@ -39,7 +39,7 @@ class _FakeShell:
         self.answers = list(answers)
         self.sent = []
 
-    def execute(self, cmd, timeout=None):
+    def execute(self, cmd, timeout=None, **_kw):
         self.sent.append((cmd, timeout))
         return self.answers.pop(0) if self.answers else ("", 0)
 
@@ -79,7 +79,8 @@ def _rsh(monkeypatch, stdout: bytes, status: int, rc: int = 0, stderr: bytes = b
     s._rsh, s._port, s._username, s._host, s._timeout = "rsh", 514, "u", "lab", 10.0
     seen = {}
 
-    def run(argv, input=None, capture_output=True, timeout=None, check=False, env=None):
+    def run(argv, input=None, capture_output=True, timeout=None, check=False, env=None,
+            stdin=None):
         seen.update(argv=argv, input=input, timeout=timeout)
         tag = re.search(r"__AXROSS_RSH_STATUS_[0-9a-f]+__", argv[-1]).group(0)
         body = stdout + b"\n" + tag.encode() + b" " + str(status).encode() + b"\n"
@@ -311,7 +312,7 @@ def _real_sh(line: str, stdin: bytes | None = None) -> tuple[str, int]:
     return (proc.stdout + proc.stderr).decode(), proc.returncode
 
 
-def _persistent_sh(line: str, timeout=None) -> tuple[str, int]:
+def _persistent_sh(line: str, timeout=None, **_kw) -> tuple[str, int]:
     """Telnet's login shell outlives the command: run *line* the way
     _ShellSession.execute does and see whether the shell is still there
     to report the status; if not, the real session times out."""
@@ -337,7 +338,8 @@ def _sh_backed(maker, monkeypatch):
         s = rsh_client.RshSession.__new__(rsh_client.RshSession)
         s._rsh, s._port, s._username, s._host, s._timeout = "rsh", 514, "u", "lab", 10.0
 
-        def run(argv, input=None, capture_output=True, timeout=None, check=False, env=None):
+        def run(argv, input=None, capture_output=True, timeout=None, check=False, env=None,
+                stdin=None):
             out, _rc = _real_sh(argv[-1], input)  # rshd hands argv[-1] to the login shell
             return subprocess.CompletedProcess(argv, 0, stdout=out.encode(), stderr=b"")
 

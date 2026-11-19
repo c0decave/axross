@@ -54,10 +54,11 @@ class _ScriptedStdin:
         start = {
             "jsonrpc": "2.0",
             "id": 1,
-            "method": "tasks/start",
+            "method": "axross/tasks/start",
             "params": {"name": "chatty", "arguments": {}},
         }
-        self._lines = [json.dumps(start) + "\n"]
+        init = {"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {}}
+        self._lines = [json.dumps(init) + "\n", json.dumps(start) + "\n"]
         self._lines += [
             json.dumps({"jsonrpc": "2.0", "id": 100 + i, "method": "ping"}) + "\n"
             for i in range(PINGS)
@@ -125,7 +126,7 @@ def test_concurrent_stdio_writers_never_interleave_inside_a_line(monkeypatch, tm
     responses = [f for f in frames if "id" in f]
     assert len(progress) == PROGRESS_FRAMES
     assert len(messages) == PROGRESS_FRAMES
-    assert len(responses) == PINGS + 1  # every ping plus tasks/start
+    assert len(responses) == PINGS + 2  # initialize, tasks/start, every ping
 
 
 def test_serialized_writer_releases_the_lock_when_the_stream_raises() -> None:

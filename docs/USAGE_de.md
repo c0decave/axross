@@ -119,7 +119,10 @@ Klartext.
   gespeichert. Profil-Proxies gelten für API-/Token-Traffic, den
   axross selbst kontrolliert; die externe Browser-Consent-Seite kann
   die Proxy-Einstellungen des Browsers oder des Systems verwenden. App-Registrierung pro Anbieter:
-  [OAUTH_SETUP.md](../OAUTH_SETUP.md).
+  [OAUTH_SETUP.md](../OAUTH_SETUP.md). Eine abgelaufene oder widerrufene
+  Anmeldung sagt das und bittet um neues Verbinden; nur Verbinden oder Neu
+  verbinden öffnet den Browser, und die Anmeldung dort muss binnen 5 Minuten
+  fertig sein.
 - **Proxy-Support.** Per Profil SOCKS5 / SOCKS4 / HTTP-CONNECT für
   Backends mit echtem Transport-Hook. SOCKS5 löst Hostnamen
   serverseitig auf (kein DNS-Leak). SOCKS4 hängt vom Transport ab:
@@ -220,6 +223,98 @@ Klartext.
   sich die zwischengespeicherte Kopie schreibgeschützt, und die
   Statuszeile sagt „offline“. Skripte können `auto_push=False` übergeben
   und mit `axross.git_push()` pushen.
+
+- **Datenbanken, Verzeichnisse und mehr in „Mit Server verbinden“.**
+  SQLite (*Datenbankdatei*), Git (*Repository*: eine URL, `user@host:pfad`
+  oder ein lokaler Pfad), PostgreSQL und MongoDB (*Datenbank*: ein Name),
+  Redis (*Datenbank*: eine Nummer, *TLS verwenden*), LDAP (Bind-DN,
+  *LDAPS*), SLP (*Bereich*) und Exchange (*Server* - leer per Autodiscover aus
+  der *E-Mail-Adresse*, nicht zusammen mit einem Proxy) verbinden aus einem
+  gespeicherten Profil; SVN nimmt eine *Repository-URL* mit optionalem
+  Benutzernamen und Passwort. Die TLS-Kästchen von IMAP, POP3, NNTP und
+  LDAP stellen den Port zwischen 993/143, 995/110, 563/119 und 636/389 um;
+  ein importiertes Profil ohne Port bekommt den seines Protokolls;
+  *IP-Version* erscheint nur, wo das Protokoll sie beachtet. Wartezeiten:
+  Git 15 s zum Verbinden und 60 s je Antwort (HTTP(S), SSH), PostgreSQL
+  10 s zum Verbinden, Redis 10 s / 30 s je Befehl, MongoDB 10 s / 60 s je
+  Antwort - eigene Optionen einer URL gehen vor. Eine NNTP-Verbindung, die
+  der Server im Leerlauf geschlossen hat, wird von selbst neu geöffnet.
+  Exchange gibt einen ausgelasteten Server nach insgesamt 60 s auf, ein
+  falsches Passwort scheitert sofort (keine Wiederholungen bis zur
+  Kontosperre), sein Autodiscover-Cache liegt in
+  `~/.cache/axross/exchangelib`, und eine als Element angehängte
+  weitergeleitete Mail lädt als ihre `.eml`-Quelle. LDAP folgt nie einem
+  Referral (es trüge das Passwort zu einem anderen Host).
+
+- **SSH-, FTP- und Shell-Verbindungen.** *IP-Version* beachten SFTP, SCP,
+  FTP, FTPS, rsync, Telnet, Cisco-Telnet und rsh (TFTP kann nur IPv4).
+  FTPS auf Port 21 ist explizit (AUTH TLS), auf 990 implizit; *TLS-Zertifikat
+  des Servers prüfen* (FTPS, WinRM) ist standardmäßig an. WinRM: Port 5985
+  ist HTTP, 5986 HTTPS (*HTTPS verwenden*); Lesen beliebiger Größe,
+  Hochladen bis 32 MiB. rsh braucht keinen Benutzernamen, und rsh und WMI
+  funktionieren als Profil (WMI nimmt `DOMAIN\user`, ein Konto mit
+  WMI-Fernrechten; *Verbindung testen* meldet sich wirklich an). TFTP zeigt
+  nur die unter *Dateien* genannten Dateien, die der Server hat, bis
+  *Größte Datei*. SCP-Übertragungen laufen neben dem Blättern, SCP listet
+  Ordner mit etwa 300 000 Einträgen und nimmt Namen, die kein UTF-8 sind;
+  ein hängender Handshake wird nach 10 s aufgegeben. Ein unbeantworteter
+  Keepalive zeigt eine SSH-Verbindung als getrennt; Host-Schlüssel werden
+  ohne Groß-/Kleinschreibung verglichen; Agent-Anmeldung braucht einen
+  laufenden ssh-agent mit Schlüsseln; `%h` / `%r` eines ProxyCommand lehnen
+  Shell-Zeichen und ein führendes `-` ab. rsync über SSH braucht einen
+  Schlüssel oder den Agenten (ein Passwort kann nicht eingegeben werden) und
+  einen Host-Schlüssel, der einmal über ein SFTP-Profil bestätigt wurde;
+  Port 873 oder leer heißt im SSH-Modus 22 und umgekehrt; Downloads
+  streamen und lassen sich abbrechen, Uploads enden als ein Block. rsh und
+  Telnet übertragen mit Fortschritt und Abbrechen (Telnet in Stücken, wenn
+  der Server `dd` und `wc` hat); ein Telnet-Befehl läuft nach 30 s ohne
+  Ausgabe ab, nicht nach 30 s insgesamt. Cisco-Telnet meldet ein falsches
+  Passwort sofort; show-Befehle dürfen bis zu 300 s dauern.
+
+- **Freigaben, Geräte und Objektspeicher.** SMB und DFS-N haben eine
+  Zeile *Arbeitsstation* (der NTLM-Arbeitsstationsname; standardmäßig
+  WORKSTATION, nie der echte Rechnername); eine fehlende oder verweigerte
+  Freigabe wird so benannt. MTP hat weder Host noch Port, sondern *Gerät*
+  (die Nummer, die der Mounter auflistet, 1 ist das erste) und *Mounter*
+  (Automatisch, jmtpfs, simple-mtpfs oder go-mtpfs). Azure hat eine Zeile
+  *Konto*; ein SAS-Token für einen einzelnen Container oder eine Freigabe
+  verbindet (es braucht das Recht List). WebDAV wartet bis zu 10 Minuten
+  auf die Arbeit des Servers nach PUT, MOVE, COPY oder DELETE (eine
+  Nextcloud, die einen großen Upload zusammensetzt); bei
+  Zwei-Faktor-Anmeldung ein App-Passwort nehmen. NFS ohne root oder sudo
+  ohne Passwort: im Profil einen Rechnernamen oder eine UID setzen, dann
+  nimmt axross den eingebauten Client, der nichts einhängt; ein
+  Kernel-Mount, dessen Server weg ist, gilt nach etwa 10 s als getrennt.
+  Falsche Passwörter, fehlende Buckets oder Container und geschlossene
+  Ports werden als solche benannt, und ein abgezogenes Telefon, ein
+  verschwundener NFS-Server oder eine iSCSI-Sitzung fallen auf, sodass Neu
+  verbinden eine neue Sitzung öffnet.
+
+- **Android-Telefone (ADB).** Zwei Modi im Profil. *TCP / WLAN*: das
+  Telefon einmal per USB anschließen, USB-Debugging einschalten,
+  `adb tcpip 5555` ausführen, dann die IP des Telefons und Port 5555
+  nehmen (ein SOCKS- oder HTTP-Proxy ist möglich). *USB*: das Telefon am
+  Kabel; die USB-Seriennummer (wie `adb devices` sie zeigt) ist optional -
+  leer heißt das erste gefundene Telefon. Es gibt kein Login: axross nimmt
+  den Schlüssel des adb-Werkzeugs `~/.android/adbkey` und legt ihn an, wenn
+  er fehlt; das Telefon erfährt keinen Benutzer- oder Rechnernamen. Bei der
+  ersten Verbindung fragt das Telefon "USB-Debugging zulassen?" - entsperren
+  und binnen einer Minute zulassen (axross zeigt "Bitte aufs Telefon
+  schauen", solange es wartet) und "Von diesem Computer immer zulassen" ankreuzen;
+  ohne das fragt jede neue Verbindung wieder, und eine Übertragung teilt
+  sich dann die eine Verbindung, das Blättern wartet auf sie. Das
+  *Kabellose Debugging* von Android 11 (Kopplungscode, zufälliger Port,
+  TLS) wird nicht unterstützt - `adb tcpip 5555` nehmen. USB unter Linux
+  braucht libusb-1.0 vom System (`pip install 'axross[adb]'` bringt die
+  Python-Seite); ein laufender adb-Server hält das Telefon (vorher
+  `adb kill-server`), und ohne Rechte am Gerät eine udev-Regel für
+  Android-Geräte anlegen, den Benutzer in die Gruppe `plugdev` aufnehmen
+  und das Telefon neu einstecken. Nach einer abgerissenen Verbindung
+  verbindet die nächste Aktion von selbst neu; lange Aktionen auf dem
+  Telefon (eine Prüfsumme, Kopieren oder Verschieben dort, ein großer
+  Ordner löschen, eine APK-Installation) werden bis zu einer Stunde
+  abgewartet; hochgeladene Dateien bekommen `rw-r--r--` und behalten die
+  Änderungszeit der Quelle.
 
 ## Multi-Pane-Layout
 
@@ -541,12 +636,12 @@ seiner Beschriftung.
 | Disk-Image… | Rechtsklick (eine `.img .raw .dd .iso .qcow2 .vdi .vmdk .vhd(x) .e01 …`-Datei) | Container (qcow2, VDI, VMDK, VHD/VHDX, E01), Partitionstabelle (MBR mit logischen Partitionen, GPT) sowie Dateisystem und Label jedes Volumes, in reinem Python über jedes Backend gelesen. Ein lokales Image mountet ein Volume über ein Loop-Device genau über dessen Bytes: zuerst `udisksctl` ohne Abfrage (wo polkit es erlaubt), dann `sudo`, dann `pkexec`, zuletzt `udisksctl` mit polkit-Abfrage. Das sudo-Passwort wird einmal gefragt und im Speicher gehalten, solange axross läuft (nie auf Platte, nie auf einer Kommandozeile); *Das sudo-Passwort merken* (*Bearbeiten → Einstellungen… → Sicherheit*) schaltet das ab, dann gilt wieder `udisksctl` (polkit fragt), `pkexec`, `sudo` mit Abfrage jedes Mal. Im paranoiden Sicherheitsmodus wird es nie gemerkt. sudo, pkexec und udisksctl laufen nur aus root-eigenen Systemordnern, nie aus `$PATH`. **Nur lesend**, außer *Schreiben erlauben* ist angehakt und bestätigt. Der Mount-Ordner öffnet sich in einem neuen Pane; *Unmounten* gibt das Loop-Device zurück. Von axross angelegte Mounts bleiben über Neustarts bekannt (`~/.config/axross/mounts.json`, nur noch gemountete kommen zurück). *Dateityp erkennen…* erkennt Disk-Images auch am Inhalt (GPT, MBR, virtuelle Disks) und bietet für so eine Zeile *Disk-Image…* an, egal wie die Datei heißt. qcow2 / dynamisches VDI / VMDK erst konvertieren (`qemu-img convert -O raw`); ein festes VDI mountet direkt. |
 | Tags ▸ | Rechtsklick auf eine Auswahl | Einen farbigen Tag anhaken (Wichtig und Später ansehen gibt es; Neuer Tag… legt einen an) für jede gewählte Datei auf jedem Backend; Punkte in der Namensspalte, die Tags im Tooltip; `tag:<name>` im Filterfeld zeigt nur diese Dateien; *Ansicht → Getaggte Dateien…* listet die Dateien jedes Tags und springt hin. Gespeichert in `~/.config/axross/tags.json`. |
 | Neuer Ordner | Rechtsklick | `backend.mkdir(path)` auf jedem schreibfähigen Backend. |
-| Neue Datei… | Rechtsklick | Leere Datei (0 Byte) über `backend.open_write(path).write(b"")`. |
+| Neue Datei… | Rechtsklick | Leere Datei (0 Byte) über `backend.open_write(path).write(b"")`; ersetzt nie eine Datei dieses Namens (auch keine, die inzwischen gespeichert wurde). |
 | Neuer Symlink… | Rechtsklick | Zwei Abfragen. Nur sichtbar auf Backends mit `supports_symlinks=True`. |
 | Neuer Hardlink… | Rechtsklick | Ebenso; ein Hardlink über Gerätegrenzen hinweg endet mit `OSError(EXDEV)`. |
 | Im Index suchen | `Strg+Umschalt+F` | Sucht im Offline-Index nach Name / Endung / Größe. |
 | In diesem Ordner suchen… | Rechtsklick (auch auf freie Fläche) | Dateien finden mit diesem (oder dem gewählten) Ordner angehakt – siehe *Dateien finden*. |
-| Größe berechnen (N Ordner) | Rechtsklick auf Ordner | Gesamtgröße, Datei- und Ordnerzahl jedes gewählten Ordners, im Hintergrund über die Verbindung gezählt (*Abbrechen* in der Statuszeile); die Ergebnistabelle sortiert, und die Größen stehen in der Spalte *Größe* des Panes, bis der Ordner neu geladen wird. **Versteckte Dateien zählen mit**: Dotfiles, versteckte Ordner und Einträge, die das Backend als versteckt markiert, werden wie jeder andere Eintrag summiert – wie bei `du` –, egal ob das Pane sie anzeigt. Ein Link zählt mit seiner eigenen Größe und wird nie verfolgt; ein Ordner, der sich nicht lesen lässt, wird im Ergebnis genannt und übersprungen. |
+| Größe berechnen (N Ordner) | Rechtsklick auf Ordner | Gesamtgröße, Datei- und Ordnerzahl jedes gewählten Ordners, im Hintergrund über die Verbindung gezählt (*Abbrechen* in der Statuszeile); die Ergebnistabelle sortiert, und die Größen stehen in der Spalte *Größe* des Panes, bis der Ordner neu geladen wird. **Versteckte Dateien zählen mit**: Dotfiles, versteckte Ordner und Einträge, die das Backend als versteckt markiert, werden wie jeder andere Eintrag summiert – wie bei `du` –, egal ob das Pane sie anzeigt. Ein Link zählt mit seiner eigenen Größe und wird nie verfolgt; ein Ordner, der sich nicht lesen lässt, wird im Ergebnis genannt und übersprungen, und ein Eintrag, dessen Größe sich nicht lesen lässt, macht die Summe zur Untergrenze (der Hinweis sagt, wie viele). |
 | Dateien in diesem Ordner identifizieren… | Rechtsklick (auch auf freie Fläche); der Button im Fenster *Dateityp erkennen* | Jede Datei direkt im Ordner (ein gewählter Ordner, sonst der angezeigte; Unterordner werden gezählt, nicht betreten; versteckte Dateien eingeschlossen) wie bei *Dateityp erkennen…* am Inhalt erkannt, im Hintergrund und über die Verbindung – also auch in Remote-Panes. Begrenzt: höchstens 2000 Dateien, 64 KiB je Datei, 15 s Zeitlimit je Lesevorgang, *Abbrechen*; `file(1)` wird nicht gefragt. Die Spalten sortieren: Name, erkannter Typ, MIME-Typ, das Urteil *Abweichung*, Größe, eine Notiz – bei einem Disk-Image Container, Partitionstabelle und Partitionszahl (`Raw disk image, MBR, 2 partitions, 4.0 MiB`; dafür höchstens 4 MiB gelesen) – und für lokale Dateien mit installiertem `sift`-Extra die Art laut sift. Eine Zeile öffnet *Disk-Image…* (Disk-Images) oder *Eigenschaften…*; Doppelklick nimmt das Passende. |
 | Mit sift analysieren / Ordner mit sift analysieren | Rechtsklick (der Ordner-Eintrag auch auf freie Fläche), das Menü Aktionen, *Tools → Mit sift analysieren* | Öffnet das Dock *Analyse (sift)* (sifts Sieb-Icon, `Strg+Umschalt+I`) und erklärt die Datei dort ohne Modell. Mehrere gewählte Dateien oder ein Ordner (der gewählte, sonst der angezeigte) werden als ein Batch für das aktive LLM-Profil angeboten; *Tools → Mit sift analysieren* nimmt die Auswahl, ohne Auswahl den angezeigten Ordner. sifts eigene Ordner-Zusammenfassung (`sift --dir-summary`, ab sift 0.1.96) gehört nicht zum Dock: ein Ordner wird Datei für Datei analysiert. Ohne sift (axross-slim oder eine Installation aus dem Quellcode ohne das Extra `sift`) sagt jeder Eintrag, dass sift in axross-full oder im Extra `axross[sift]` steckt, mit Link auf *Hilfe → Funktionen…*. |
 | Dateityp erkennen… | Rechtsklick (Auswahl) | Eine Zeile pro Eintrag: der echte Typ laut Inhalt (Magic Bytes über Qts MIME-Datenbank, puremagic, eine eingebaute Signaturtabelle), der MIME-Typ, was die Endung behauptet, und eine hervorgehobene *Abweichung*, wenn sie sich widersprechen, Größe, bei Text die Zeichenkodierung und die Zeilenenden. Liest höchstens 64 KiB je Datei über das Backend, außerhalb des GUI-Threads, mit 15 s Zeitlimit je Datei – ein Server, der nicht antwortet, ergibt eine Zeile „timed out“. Lokale Dateien zeigen auch die Beschreibung von `file(1)`, wenn es installiert ist. Skripte: `axross.file_type(b, path)`. |
@@ -560,7 +655,7 @@ seiner Beschriftung.
 | Endgültig löschen | Rechtsklick, `Umschalt+Entf` | Zählt zuerst abseits des GUI-Threads, was wegfällt (Ordner, Dateien, Bytes, versteckte Einträge), dann die Rückfrage – mit **Nein** als Standardknopf, `Eingabe` behält also die Dateien. Ein ausgewählter Ordner mit versteckten Einträgen (Dotfiles oder vom Backend als versteckt markiert) – oder einer, den die Prüfung nicht vollständig lesen konnte – braucht ein zweites OK mit *Nein* als Standard. Das Löschen läuft im Hintergrund: die Statuszeile zeigt den Fortschritt, *Abbrechen* hält beim nächsten Eintrag an – auch innerhalb eines Ordners, der lokal, per SMB, SFTP oder FTP gelöscht wird (SFTP entfernt die Dateien eines Ordners in Gruppen von 16 gleichzeitigen Anfragen und hält nach der laufenden Gruppe an); die Statuszeile sagt dann, wie viel von diesem Ordner schon weg ist (Gelöschtes bleibt gelöscht; ein Server, der einen ganzen Ordner mit einer Anfrage löscht, etwa WebDAV oder S3, löscht diesen Ordner zu Ende) – Fehler werden je Eintrag gemeldet, danach wird der Ordner neu geladen. Ein Pfad, der gerade gelöscht wird, wird abgewiesen, auch aus dem anderen Pane. Drei Löschvorgänge fragen noch einmal, jeweils mit eigener Erklärung und **Nein** als Standard: INBOX auf einem IMAP-Server, auf dem alle Ordner darunter liegen (Courier, Cyrus, Dovecot mit dem Präfix `INBOX.`) – *Ja* löscht diese Ordner, INBOX und ihre Nachrichten bleiben, denn kein IMAP-Server löscht INBOX; ein DFS-Link auf SMB – *Ja* löscht den Inhalt der Freigabe, auf die er zeigt (die Frage nennt sie), der Link selbst bleibt; und auf WinRM/WMI ein Name nur aus Punkten und Leerzeichen, den Windows als den Ordner darüber liest. *Nein* löscht nichts. Ein Skript sagt Ja mit `keep_namespace_root=True`, `follow_dfs_link=True` oder `confirm_alias=True`; der Agent und MCP-Clients können das nicht, sie bekommen die Erklärung und sagen sie dir. |
 | Papierkorb anzeigen… | Rechtsklick | Dialog zum Wiederherstellen und endgültigen Löschen. |
 | Versionen anzeigen… | Rechtsklick | Versionsliste – *Version speichern unter…*, *Als aktuelle wiederherstellen*. |
-| Prüfsumme anzeigen… | Rechtsklick | Die Prüfsumme, die der Server selbst liefert (S3 ETag, Drive md5, ssh sha256sum…), sonst ein Hash über die gelesenen Daten. |
+| Prüfsumme anzeigen… | Rechtsklick | Die Prüfsumme, die der Server selbst liefert (S3 ETag, Drive md5, ssh sha256sum…), sonst ein Hash über die gelesenen Daten; eine lokale Datei mit Fortschritt und *Abbrechen*, und scheitert die Prüfsumme des Servers, bietet axross SHA-256 durch Lesen der Datei an. |
 | Entpacken… | Rechtsklick auf Archiv | In einen gleichnamigen Ordner daneben, abbrechbar, mit den Schutzprüfungen von `core.archive`. Nur lokale Backends. |
 | Mit Passphrase verschlüsseln… / entschlüsseln… | Rechtsklick | AES-256-GCM. |
 | Als root öffnen… | Rechtsklick | Nur lokal; läuft über `pkexec`. Ausgeblendet, wenn polkit/pkexec fehlen. |
@@ -578,11 +673,11 @@ Offline-Index. `Strg+F` bleibt der Live-Filter des Panes.
 
 | Feld | Was es tut |
 |---|---|
-| Name | Text ohne `* ? [ ]` passt irgendwo im Namen (`report` findet `Q3-report.pdf`); ein Muster (`*.jpg`, `IMG_????.*`) auf den ganzen Namen. Groß-/Kleinschreibung zählt nicht. *Regex* nimmt stattdessen einen regulären Ausdruck. |
-| Contains | Text in der Datei, Zeile für Zeile, in den ersten 32 MiB jeder Datei; *Regex* und *Groß-/Kleinschreibung beachten* wie üblich. |
+| Name | Text ohne `*` oder `?` passt irgendwo im Namen, Klammern eingeschlossen (`report` findet `Q3-report.pdf`, `Song [Remix]` sich selbst); ein Muster (`*.jpg`, `IMG_????.*`, `IMG_[0-9]*`) auf den ganzen Namen, `[0-9]` ist dabei eine Menge. Groß-/Kleinschreibung und Unicode-Form zählen nicht (`strasse` findet `Straße`, ein auf dem Mac geschriebenes `Ärger` wird gefunden). Eine Namenssuche listet auch passende Ordner (Kategorie *Ordner*), außer Contains, Size oder Types ist gesetzt. *Regex* nimmt stattdessen einen regulären Ausdruck. |
+| Contains | Text in der Datei, Zeile für Zeile, in den ersten 32 MiB jeder Datei – UTF-8, UTF-16 mit Byte-Order-Mark und bei einfachem Text (nicht *Regex*) auch Latin-1 / Windows-1252; *Regex* und *Groß-/Kleinschreibung beachten* wie üblich. |
 | Types | Eine der angehakten Vorlagen: Bilder, Videos, Audio, Dokumente, Archive, Disk- & VM-Images (dd / raw / img, ISO, qcow2, VDI, VMDK, VHD(X), E01 / AFF, DMG, LUKS…), Krypto-Wallets (Bitcoin Core / Litecoin `wallet.dat`, Electrum, Ethereum-`UTC--…`-Keystores, Exodus, Monero, MultiBit / Armory, Wasabi, Atomic, Ledger Live, MetaMask / Phantom / … Browser-Wallets), Schlüssel & Zertifikate (PEM / DER, `.p12` / `.pfx`, Java-Keystores, SSH- und PuTTY-Schlüssel, KeePass), Quellcode, E-Mail, Datenbanken. Entschieden nach Name und Ordner; bei lokalen Dateien, deren Endung nichts sagt (`blob`, `wallet.dat`, `UTC--…`), auch nach den ersten Bytes und – mit dem Extra `sift` (`axross[sift]`) – durch sift. Types benennen Datei-*Arten*: nichts sucht in Dateien nach Passwörtern oder Schlüsseln. |
-| Size / Modified | `10K`, `1.5M`, `2G`; ein Zeitraum. |
-| Inside archives | Sucht auch in zip, tar, tar.gz / .bz2 / .xz / .zst, einzelnen .gz / .bz2 / .xz / .zst-Dateien und darin verschachtelten Archiven (3 Ebenen); in 7z und rar nach Member-Namen. Ein Treffer heißt `archive.zip!/ordner/datei.txt`. Begrenzt: 10 000 Member und 1 GiB entpackt pro Archiv, 64 MiB pro verschachteltem Archiv, das 100:1-Zip-Bomb-Verhältnis des Entpackens; ein entferntes Archiv wird zuerst (höchstens 256 MiB) in eine private Temp-Datei kopiert. |
+| Size / Modified | `10K`, `1.5M` (oder `1,5M`), `2G`; ein Zeitraum, beide Tage eingeschlossen. |
+| Inside archives | Sucht auch in zip, tar, tar.gz / .bz2 / .xz / .zst, einzelnen .gz / .bz2 / .xz / .zst-Dateien und darin verschachtelten Archiven (3 Ebenen); in 7z und rar nach Member-Namen. Ein Treffer heißt `archive.zip!/ordner/datei.txt`. Begrenzt: 10 000 Member und 1 GiB entpackt pro Archiv, 64 MiB pro verschachteltem Archiv, das 100:1-Zip-Bomb-Verhältnis des Entpackens für Einträge ab 64 MiB (kleinere werden nicht nach dem Verhältnis geprüft, ein ZIP eines Disk-Images voller Nullen lässt sich also entpacken); ein entferntes Archiv wird zuerst (höchstens 256 MiB) in eine private Temp-Datei kopiert. |
 | Tag | Nur Dateien mit dem gewählten Tag (Rechtsklick → *Tags*); ein getaggtes Archiv gilt für seine Member. Ein Smart Folder behält den Tag. Offline-Index-Treffer werden ebenso gefiltert. |
 | Hidden files, Skip .git / node_modules / caches, depth | Was der Durchlauf einschließt. Symlink-Ordnern wird nie gefolgt. |
 | Look in | Der Ordner jedes offenen Panes (der aktive angehakt), *Ordner hinzufügen…* und *Auch den Offline-Index durchsuchen* (Namen, Größen, Daten; kein Inhalt). |
@@ -751,7 +846,7 @@ eines floating Panels dockt es wieder an.
   Ersetzen mit Regex, Case und ganzem Wort (Strg+F / Strg+H, F3), Gehe
   zu Zeile (Strg+G), Umbruch, Zoom, Zeilenenden (LF / CRLF / CR) und
   Encoding (UTF-8, UTF-8 BOM, Latin-1, UTF-16) unter *Format*, Save /
-  Save All. *Datei → Neu* (Strg+N) öffnet einen Tab ohne Datei, *Open…*
+  Save All. *Datei → Neu* (Strg+N) öffnet einen Tab ohne Datei, *Öffnen…*
   (Strg+O) lokale Dateien (Remote-Dateien öffnet ihr Pane), *Save As…*
   (Strg+Umschalt+S) schreibt einen lokalen Tab in eine lokale Datei und
   einen Remote-Tab in einen Pfad auf seinem Backend und fragt, bevor er
@@ -769,27 +864,104 @@ eines floating Panels dockt es wieder an.
 - **Markdown-Viewer** – F3 / Doppelklick auf eine `.md`-, `.markdown`-,
   `.mdown`- oder `.mkd`-Datei, lokal oder remote (F4 bearbeitet sie
   weiterhin): GitHubs Markdown (Tabellen, Aufgabenlisten, Durchstreichen,
-  Autolinks, Fußnoten) mit den Überschriften als Gliederung daneben,
-  hervorgehobenem Code, Zoom (Strg +/-/0), Suche (Strg+F, Eingabe oder F3
-  für den nächsten Treffer), Neu laden (F5) und Bearbeiten (F4). Was die
-  Datei enthält, wird gezeigt, nie ausgeführt: rohes HTML erscheint als
-  Text, nichts wird aus dem Netz geladen (ein entferntes Bild ist ein
-  Kasten mit seiner Adresse), Bilder werden nur relativ zur Datei gelesen
-  (kein absoluter Pfad, kein `file:`), nur reguläre Dateien, nie eine
-  geheime Datei, höchstens 8 MiB und 40 Millionen Pixel je Bild und 200
-  pro Datei. Ein Link auf eine andere Markdown-Datei öffnet sie in einem
-  eigenen Viewer; ein Web-Link öffnet sich im Browser erst nach einer
-  Frage, die seine echte Adresse zeigt (im Sicherheitsmodus `paranoid`
-  gar nicht). Im Editor zeigt der Eintrag *Markdown-Preview* seines
-  Menüs *Ansicht* (Strg+Umschalt+M) den Text daneben dargestellt,
-  während man tippt.
+  Autolinks, Fußnoten) mit den Überschriften als Gliederung daneben, die
+  der Lesestelle folgt, hervorgehobenem Code, Zoom (Strg +/-/0), Suche
+  (Strg+F markiert jeden Treffer und sagt, der wievielte von wie vielen;
+  Eingabe oder F3 der nächste, Umschalt+Eingabe oder Umschalt+F3 der
+  vorige), Neu laden (F5) und Bearbeiten (F4). Eine lokale Datei wird neu
+  gezeigt, wenn sie sich auf der Platte ändert; die Lesestelle bleibt.
+  *Export* speichert die Seite als HTML (ihre Bilder darin, nichts, was
+  sie anderswo laden könnte) oder PDF oder druckt sie (Strg+P). Eine lange Datei zeigt ihren
+  Anfang sofort und wird während des Lesens in Teilen aufgebaut
+  („Rendering… 40 %“). Ein Sprung geht direkt an seine Stelle – den
+  Rollbalken loslassen, Suche (ab oben im sichtbaren Teil; ihre Zahl lautet
+  „12+“, bis die Seite vollständig ist), ein Link auf eine Überschrift,
+  Strg+Ende, Neu laden –, und die Teile dazwischen erscheinen, wenn man
+  dorthin scrollt, ohne dass sich das Gelesene verschiebt. Alles markieren,
+  Export und Drucken nehmen die ganze Seite. Ein Treffer oder ein
+  `#…`-Link in einem zugeklappten `<details>` klappt es auf. Neu laden
+  (auch wenn sich die Datei ändert), Auf- und Zuklappen, Zoom und eine
+  andere Fenstergröße behalten die Lesestelle, und Neu laden zeigt die alte
+  Seite, bis die neue da ist; die Suche geht in Seitenreihenfolge und
+  beginnt am Ende wieder vorn; Alles markieren und Kopieren wirken sofort, auch auf einer langen Seite,
+  und kopieren genau, was die Seite zeigt (Formeln als ihr TeX: `$$…$$` auf
+  eigener Zeile, `$…$` im Text, ein Listenpunkt mit seiner Nummer oder seinem Aufzählungszeichen –
+  Ziehen und die Auswahl-Zwischenablage liefern dasselbe); die
+  Gliederung listet von Anfang an jede Überschrift. Unter 700 px blendet sich die
+  Gliederung aus (*Gliederung* holt sie zurück); das Fenster geht bis 440 px. Ein
+  Rechtsklick auf eine Überschrift der Gliederung bietet *Link zur
+  Überschrift kopieren*, auf einen Codeblock *Codeblock kopieren*.
+  Links öffnen im selben Fenster – eine andere Markdown-Datei an der
+  Überschrift, die ihr `#…` nennt, das README eines Ordners, eine
+  Textdatei als Text, ein Bild in seiner eigenen Größe –, Zurück / Vor
+  (Alt+Links / Alt+Rechts, die Maustasten) gehen durch sie. Ein Link
+  oberhalb des Ordners der Datei öffnet sich erst nach einer Frage (Nein
+  ist voreingestellt), eine geheime Datei nie. Ein Web-Link
+  öffnet sich im Browser (ein `mailto:`-Link im Mailprogramm) erst nach
+  einer Frage, die seine echte Adresse
+  zeigt (im Sicherheitsmodus `paranoid` gar nicht) – ein Doppelgänger-Host
+  (kyrillische, gemischte oder lateinisch aussehende Ersatzbuchstaben) erscheint und verlinkt als
+  Punycode (`xn--…`), auch als Text eines `www.…`- oder E-Mail-Links und in der
+  Mail-Frage; alles andere
+  (`file:`, ein absoluter Pfad, eine geheime Datei) wird in der
+  Statuszeile genannt, nicht geöffnet.
+  Was die Datei enthält, wird gezeigt, nie ausgeführt: von rohem HTML
+  bleibt nur eine kurze Liste harmloser Tags (`<p align>`, `<img>`,
+  `<br>`, `<details>`/`<summary>` (zugeklappt, außer mit `open`; ein Klick auf
+  die Zusammenfassung klappt auf oder zu), `<kbd>`, `<sub>`/`<sup>` und
+  ähnliche; Skripte, Styles und Frames fallen samt Inhalt weg, andere Tags
+  fallen weg und ihr Text bleibt), nichts wird aus dem Netz geladen (ein
+  entferntes Bild oder Badge ist ein kleines „▣ Alt-Text“-Feld (im Terminal „🖼 Alt-Text“), seine
+  Adresse im Tooltip; ein als `data:` eingebettetes Bild wird gezeigt), Bilder werden nur
+  aus dem Ordner der Datei und den Ordnern darunter gelesen (kein
+  Elternordner, kein absoluter Pfad, kein `file:`), nur reguläre Dateien,
+  nie eine geheime Datei, höchstens 8 MiB und 40 Millionen Pixel je Bild
+  und 200 pro Datei. Im Editor zeigt der Eintrag *Markdown-Preview* seines
+  Menüs *Ansicht* (Strg+Umschalt+M) den Text daneben dargestellt, während
+  man tippt.
   Mit markdown-it-py (axross-markdown bringt es mit) zeigt der Viewer den
-  vollen Umfang - Fußnoten, Definitionslisten, Front Matter, ausgerichtete
-  Tabellen, von Pygments eingefärbten Code - in Farben für helle und dunkle
-  Themes; ohne es nimmt er Qts eigenes Markdown. Im Terminal zeigt
-  `axross-mdcat DATEI.md` (axross-markdown) dasselbe in Farbe.
+  vollen Umfang – Fußnoten (nummeriert wie auf GitHub: ein Verweis auf eine
+  Fußnote, die es nicht gibt, bleibt wie geschrieben, jede Stelle hat ihren
+  eigenen Rücksprung), Definitionslisten, Front Matter (einfaches `key: value` als
+  Tabelle wie auf GitHub, anderes YAML in einem beschrifteten Kasten),
+  ausgerichtete
+  Tabellen, GitHubs Hinweisboxen (`> [!NOTE]` …), Mathematik im Satz
+  wie KaTeX (`$x^2$`: kursive Variablen, aufrechte Funktionsnamen, große Summen
+  und Integrale mit ihren Grenzen, gestapelte Brüche und Binomialkoeffizienten,
+  mitwachsende Klammern, Matrizen und Fallunterscheidungen als Raster,
+  `\tag`-Nummern rechts; ohne installierte Mathe-Schrift eine Serifenschrift,
+  und eine zu tief verschachtelte oder zu lange Formel steht als Text in ihrer
+  Zeile), Emoji-Kürzel (`:tada:`), nackte `https://…`-, `www.…`- und
+  E-Mail-Adressen als Links, Code in GitHubs Farben – für helle und dunkle
+  Themes; ohne es nimmt er Qts eigenes Markdown, mit demselben erlaubten
+  HTML, Hinweisboxen, Emoji, Referenz-Links und Mathematik (auch in Codeblöcken der Sprache `math`),
+  aber `<details>` immer aufgeklappt. Riesige Blöcke (ein Log mit 100 000 Zeilen in einem
+  Codeblock, Tausende Formeln) frieren das Fenster nie ein, auch in einem Listenpunkt,
+  Zitat, einer Hinweisbox, Definition oder Fußnote und bei HTML-Tabellen und -Listen:
+  ein solcher Block bleibt, wo er steht, und wird beim Scrollen in Stücken gesetzt. Eine
+  Überschrift, Tabellenzeile oder ein Begriff mit mehr als 100 Formeln zeigt den Rest als
+  TeX, mit einem Hinweis. Code über 500 Zeilen oder 40 000 Zeichen steht auf seinem
+  grauen Grund ohne Rahmen. Listen, die tiefer als 16 Ebenen, und Zitate, die tiefer als 8
+  verschachtelt sind, erscheinen in jeder Ansicht flacher, mit einem Hinweis. Ein langes
+  Kopieren läuft in Stücken ("Wird kopiert… 40 %"); ein Neuladen währenddessen bricht es ab
+  und sagt das. Anker `<a id>` / `<a name>` dürfen Ziffern
+  und Punkte enthalten (`#26.8.0`), Fußnoten-Bezeichner passen ohne Rücksicht auf Groß-
+  und Kleinschreibung, und GitHubs `` $`…`$ `` ist ebenfalls eine Formel, ebenso `$$ … $$`
+  mit Leerzeichen innen. Die Mathematik kennt die gängigen Symbole von KaTeX, Argumente aus
+  einem Zeichen (`\frac12`, `\sqrt5`), `\choose`, `\bigcup`, `\lbrace`, `\ket`, `\mathscr`,
+  `\operatorname*` und verschachtelte Indizes; `\cfrac`, `\overset`,
+  `\underset` und `\stackrel` werden nur in abgesetzten Formeln gestapelt (im Text und im
+  Terminal stehen sie daneben), und ein unbekannter Befehl erscheint, wie er geschrieben
+  ist. Im Terminal zeigt
+  `axross-mdcat DATEI.md` (axross-markdown) dasselbe in Farbe, mit Links
+  und Bildern, wo das Terminal sie zeigen kann; `--watch` zeigt die Datei
+  neu, wenn sie sich ändert, `--toc` listet ihre Überschriften; eine lange Datei wird geschrieben,
+  während sie entsteht. Das eigenständige `axross-markdown [DATEI…]` öffnet den Viewer;
+  `--term` (die Terminal-Ausgabe, mit den Optionen von mdcat), `--html DATEI|-` (eine
+  HTML-Seite), `--help` und `--version` starten kein Qt, und eine unbekannte Option ist ein Fehler.
 - **Bild-Viewer** – F3 / Doppelklick, MIME-Allowlist, Größen-
-  kappen.
+  kappen. Strg + / Strg - (oder `+` / `-`, Strg + Mausrad) zoomen,
+  Strg+0 (oder `0`) zeigt 100 %, `F` passt ein.
 - **PDF** – F3 / Doppelklick öffnet das PDF allein im Media Viewer
   (braucht QtPdf; ohne QtPdf oder im Security-Mode `paranoid` öffnet
   stattdessen der Hex-Editor, das Log nennt den Grund).
@@ -809,7 +981,8 @@ eines floating Panels dockt es wieder an.
   Button-Leiste; Hoch / Runter blättern seine Seiten. Home / End, F11 Fullscreen,
   Strg+M Maximize / Restore (das Fenster merkt sich Größe, Position
   und Maximize-Zustand für das nächste Öffnen),
-  Mausrad oder `+` / `-` Zoom, `F` Fit, `1` 100 %, `R` drehen, `S`
+  Mausrad (bei einem PDF Strg + Mausrad), Strg + / Strg - oder `+` / `-`
+  Zoom (bei einem eingepassten PDF von der gezeigten Größe aus), Strg+0 100 %, `F` Fit, `1` 100 %, `R` drehen, `S`
   Slideshow (Intervall in Sekunden; die Slideshow läuft im Kreis,
   ein Video spielt bis zum Ende), Esc zurück zur Overview, nochmal
   Esc schließt. **Entf** (Delete) löscht die gezeigte Datei (oder
@@ -866,7 +1039,8 @@ eines floating Panels dockt es wieder an.
   Play/Pause, Eingabe spielt die markierte Zeile, Entf entfernt die
   markierten Zeilen, Links / Rechts spulen 5 s (mit Shift 30 s),
   Strg+Links / Strg+Rechts vorheriger / nächster Track, M Mute,
-  + / – Lautstärke. Mit numpy: 10-Band-Equalizer mit Presets (der
+  + / – Lautstärke; die Knöpfe neben Play springen 15 s zurück und vor
+  (über das Ende hinaus endet der Track wie sonst). Mit numpy: 10-Band-Equalizer mit Presets (der
   Pfeil links von *Equalizer* klappt die Band-Slider ein und gibt der
   Playlist den Platz; es ist der eine Equalizer von axross – auch die
   Stimme des Agents läuft hindurch, er steht in `audio.json` und kommt

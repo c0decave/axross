@@ -186,9 +186,12 @@ def with_packs_issue(data: bytes, issue: int) -> bytes:
 
 def sign_release(key_path: Path, sums_path: Path, *, allow_unpinned: bool = False,
                  version: str | None = None, packs_issue: int | None = None,
-                 allow_new_key: bool = False) -> Path:
-    """Sign *sums_path* with the key in *key_path*; returns the .sig path."""
-    key = load_private_key(read_key_file(key_path))
+                 allow_new_key: bool = False,
+                 private_key: Ed25519PrivateKey | None = None) -> Path:
+    """Sign *sums_path* with the key in *key_path* (or *private_key*, already
+    loaded from it: an encrypted key asks for its passphrase once); returns
+    the .sig path."""
+    key = private_key if private_key is not None else load_private_key(read_key_file(key_path))
     public = public_key_b64(key)
     pinned = public in SU.TRUSTED_KEYS
     if not pinned and not allow_unpinned:

@@ -1646,13 +1646,28 @@ class RshBackendTests(unittest.TestCase):
         with self.assertRaises(OSError):
             _validate_path("/foo\x00bar")
 
-    def test_open_read_uses_head_c_cap(self) -> None:
+    def test_open_read_streams_cat_and_stops_at_the_cap(self) -> None:
+        # The read streams "cat -- path" through the rsh process into a
+        # spool; the cap is counted on the client (tests/
+        # test_rsh_read_integrity.py), not by "head -c" in memory.
+        import io
+        import re as _re
+
         sess = self._make_session()
         recorded: list[str] = []
-        with self._patch_runner(recorded, stdout=b"file payload"):
-            sess.open_read("/etc/motd")
-        # The head -c <cap> guard must appear in the rsh command line.
-        self.assertTrue(any("head -c" in cmd for cmd in recorded), recorded)
+
+        def fake_popen(argv, **_kw):
+            recorded.append(" ".join(argv))
+            tag = _re.search(r"__AXROSS_RSH_STATUS_[0-9a-f]+__", argv[-1]).group(0)
+            proc = mock.Mock(returncode=0)
+            proc.stdout = io.BytesIO(b"file payload" + f"\n{tag} 0\n".encode())
+            proc.stderr = io.BytesIO(b"")
+            proc.poll.return_value = 0
+            return proc
+
+        with mock.patch("core.rsh_client.subprocess.Popen", side_effect=fake_popen):
+            self.assertEqual(sess.open_read("/etc/motd").read(), b"file payload")
+        self.assertTrue(any("cat -- /etc/motd" in cmd for cmd in recorded), recorded)
 
     def test_perms_to_octal(self) -> None:
         from core.rsh_client import _perms_to_octal

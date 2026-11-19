@@ -18,6 +18,8 @@
 #   scripts/lock_bundle_deps.sh --here     # no container: where this already runs
 #                                          # isolated (a sandbox); keeps the pins
 #                                          # of the current lock, adds what is new
+#   ... --upgrade-package=NAME             # (repeatable) let NAME move past its
+#                                          # current pin, e.g. to a security fix
 #
 # After a refresh, audit the exact pins before committing:
 #   python -m security.dep_floor_audit --lock build/requirements-bundle.txt
@@ -32,11 +34,13 @@ BOOTSTRAP_FILE="$PROJECT_ROOT/build/requirements-bootstrap.txt"
 
 MODE="write"
 HERE=0
+UPGRADE=""
 for arg in "$@"; do
     case "$arg" in
         --check) MODE="check" ;;
         --here) HERE=1 ;;
-        *) echo "usage: $0 [--check] [--here]" >&2; exit 2 ;;
+        --upgrade-package=?*) UPGRADE+=" --upgrade-package ${arg#--upgrade-package=}" ;;
+        *) echo "usage: $0 [--check] [--here] [--upgrade-package=NAME ...]" >&2; exit 2 ;;
     esac
 done
 
@@ -101,7 +105,7 @@ if [[ "$HERE" == 1 ]]; then
         "$OUT_DIR/uv-tool/bin/uv" pip compile requirements-bundle.in \
             --universal --python-version 3.12 --generate-hashes \
             --index-url https://pypi.org/simple \
-            --exclude-newer "$CUTOFF" $EXCEPTIONS \
+            --exclude-newer "$CUTOFF" $EXCEPTIONS $UPGRADE \
             --custom-compile-command "scripts/lock_bundle_deps.sh" \
             --quiet --output-file requirements-bundle.txt)
 else
@@ -110,7 +114,7 @@ else
 "$ENGINE" run --rm --cap-drop=ALL --security-opt=no-new-privileges \
     --read-only --tmpfs /tmp:rw,exec,size=2g \
     -e HOME=/tmp -e UV_CACHE_DIR=/tmp/uv-cache -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    -e UV_NO_CONFIG=1 -e CUTOFF="$CUTOFF" -e EXCEPTIONS="$EXCEPTIONS" \
+    -e UV_NO_CONFIG=1 -e CUTOFF="$CUTOFF" -e EXCEPTIONS="$EXCEPTIONS" -e UPGRADE="$UPGRADE" \
     -v "$OUT_DIR:/work:Z" -w /work \
     "$PYTHON_IMAGE" \
     sh -euc '
@@ -118,7 +122,7 @@ else
             --target /tmp/uv-tool -r uv-tool.txt
         PYTHONPATH=/tmp/uv-tool python -m uv pip compile requirements-bundle.in \
             --universal --python-version 3.12 --generate-hashes \
-            --index-url https://pypi.org/simple --exclude-newer "$CUTOFF" $EXCEPTIONS \
+            --index-url https://pypi.org/simple --exclude-newer "$CUTOFF" $EXCEPTIONS $UPGRADE \
             --custom-compile-command "scripts/lock_bundle_deps.sh" \
             --quiet --output-file requirements-bundle.txt
     '

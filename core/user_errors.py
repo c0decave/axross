@@ -60,7 +60,9 @@ _TIMEOUT_NAMES = {"TimeoutError", "timeout", "TimeoutExpired", "ReadTimeout",
                   "ConnectTimeout", "ConnectTimeoutError", "ReadTimeoutError", "Timeout"}
 _AUTH_NAMES = {"AuthenticationException", "BadAuthenticationType", "AuthenticationError",
                "LoginError", "LogonRefused", "SMBAuthenticationError", "LoginFailure",
-               "InvalidCredentials", "Unauthorized"}
+               "InvalidCredentials", "Unauthorized",
+               # smbprotocol: STATUS_LOGON_FAILURE / _WRONG_PASSWORD / _PASSWORD_EXPIRED
+               "LogonFailure", "WrongPassword", "PasswordExpired"}
 _KEYRING_NAMES = {"KeyringError", "NoKeyringError", "KeyringLocked", "InitError",
                   "PasswordSetError", "PasswordDeleteError"}
 _DROPPED_NAMES = {"ConnectionResetError", "ConnectionAbortedError", "BrokenPipeError",
@@ -156,6 +158,48 @@ def _written_for_user(exc: BaseException) -> bool:
     return any(n.endswith(("Refused", "Denied")) for n in _names(exc))
 
 
+def _adb_sentence(exc: BaseException, names: set[str], host: str) -> str | None:
+    """The sentence for an ADB connect failure (core.adb_client), or None."""
+    if "AdbAuthTimeout" in names:
+        return tr("The phone did not allow the connection. Unlock it, answer \"Allow USB "
+                  "debugging?\" with Allow (tick \"Always allow from this computer\") and "
+                  "try again.")
+    if "AdbNeedsApproval" in names:
+        return tr("The phone no longer accepts this computer. Connect again and allow USB "
+                  "debugging on the phone.")
+    if "AdbTlsPortError" in names:
+        return tr("This is the port of Android's \"Wireless debugging\", which needs pairing "
+                  "and TLS; axross does not support it. Connect the phone by USB once, run "
+                  "\"adb tcpip 5555\" and use port 5555.")
+    if "AdbNotAdbError" in names:
+        return tr("{host} did not answer as an Android device (ADB). Check the address and "
+                  "the port: \"adb tcpip\" uses 5555 unless told otherwise.").format(host=host)
+    if "AdbUsbError" in names:
+        kind = getattr(exc, "kind", "")
+        serial = getattr(exc, "serial", "")
+        if kind == "missing-package":
+            return tr("ADB over USB needs the Python package libusb1: install axross with "
+                      "pip install 'axross[adb]' (it brings it along).")
+        if kind == "missing-library":
+            return tr("ADB over USB needs the libusb-1.0 library. Install it from your "
+                      "system's packages (e.g. libusb-1.0-0) and try again.")
+        if kind == "not-found" and serial:
+            return tr("No Android device with the serial {serial} was found on USB. Plug in "
+                      "the phone, unlock it and turn on USB debugging in the developer "
+                      "options.").format(serial=serial)
+        if kind == "not-found":
+            return tr("No Android device was found on USB. Plug in the phone, unlock it and "
+                      "turn on USB debugging in the developer options.")
+        if kind == "busy":
+            return tr("Another program holds the phone's USB connection, usually a running "
+                      "adb server. Stop it with \"adb kill-server\" and try again.")
+        if kind == "access":
+            return tr("No permission to open the phone's USB device. Add a udev rule for "
+                      "Android devices (51-android.rules), add your user to the plugdev "
+                      "group, then plug the phone in again.")
+    return None
+
+
 _SSH_HANDSHAKE_TEXTS = ("No existing session", "Negotiation timed out", "Negotiation failed")
 
 
@@ -183,10 +227,23 @@ def _classify(exc: BaseException, subject: str) -> str | None:
         return tr("{host} has a new host key that axross has not seen yet. Use Connect to "
                   "review its fingerprint and trust it.").format(host=getattr(exc, "host", host))
 
+    # --- Android (core.adb_client) -------------------------------------------
+    adb_text = _adb_sentence(exc, names, host)
+    if adb_text:
+        return adb_text
+
     # --- logins -----------------------------------------------------------
+    if "PasswordRequiredException" in names and str(exc).startswith("Wrong passphrase"):
+        # core.ssh_client: the key did not decrypt with the passphrase given -
+        # "Enter the passphrase" read as if none had been typed.
+        return tr("The passphrase is wrong for this key. Type it again, or choose "
+                  "another key file.")
     if "PasswordRequiredException" in names:
         return tr("The key file is protected by a passphrase. Enter the passphrase and "
                   "try again.")
+    if "CloudSignInExpired" in names:
+        return tr("Your sign-in to {service} expired or was revoked. Reconnect to sign in "
+                  "again.").format(service=getattr(exc, "service", "") or tr("the service"))
     if "ProxyAuthError" in names:
         return tr("The proxy refused the login. Check the proxy user name and password.")
     if names & _AUTH_NAMES:
@@ -218,7 +275,10 @@ def _classify(exc: BaseException, subject: str) -> str | None:
     if "SlowServerTimeout" in names:
         return tr("{host} is still connected but did not answer for a long time; it may "
                   "be busy or stuck. Try again later.").format(host=host)
-    if names & _TIMEOUT_NAMES:
+    if names & _TIMEOUT_NAMES and "NewConnectionError" not in names:
+        # urllib3's NewConnectionError subclasses ConnectTimeoutError, but
+        # it is raised for every failed dial: what failed is its cause (a
+        # refused port, an unknown host) further down the chain.
         return tr("{host} did not answer in time. Check the network connection and that "
                   "the server is running, then try again.").format(host=host)
 

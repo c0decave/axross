@@ -88,6 +88,20 @@ def oserror(err: int, message: str, filename: str | None = None) -> OSError:
     return OSError(err, message, filename)
 
 
+class CloudSignInExpired(PermissionError):
+    """The sign-in to a cloud service expired or was revoked: no token can
+    be had without the user signing in again. A permission error (EACCES)
+    to every caller, but :func:`core.user_errors.describe` says "sign in
+    again" instead of "ask the owner for access". *service* names it."""
+
+    def __init__(self, service: str, detail: str = "") -> None:
+        super().__init__(
+            errno.EACCES,
+            f"{service}: the sign-in expired or was revoked" + (f" ({detail})" if detail else ""),
+        )
+        self.service = service
+
+
 def status_oserror(status: int | None, message: str, filename: str | None = None) -> OSError:
     """The typed OSError of an HTTP error *status*."""
     return oserror(errno_for_status(status), message, filename)
@@ -162,3 +176,59 @@ def no_file_as_folder(path: str, item):
     if path.endswith("/") and path.strip("/") and not item.is_dir:
         raise NotADirectoryError(errno.ENOTDIR, "Not a directory", path)
     return item
+
+
+#: Socket errnos that say the request never reached the server (or its
+#: answer never came back), whatever an SDK wraps them in.
+_TRANSPORT_ERRNOS = frozenset({
+    errno.ECONNREFUSED, errno.EHOSTUNREACH, errno.ENETUNREACH, errno.ENETDOWN,
+    errno.ETIMEDOUT, errno.ECONNRESET, errno.ECONNABORTED,
+})
+
+
+def transport_cause(exc: BaseException) -> OSError | None:
+    """The socket-level error under an SDK's transport failure - a refused
+    port, a host name that does not resolve, an unreachable network, a
+    time-out - or None. botocore's EndpointConnectionError and azure-core's
+    ServiceRequestError wrap it (``__context__``, ``inner_exception``,
+    urllib3's ``reason``) where core.user_errors does not look, so a refused
+    port was reported as "closed by the other side"."""
+    import socket
+
+    pending: list[object] = [exc]
+    seen: set[int] = set()
+    while pending and len(seen) < 24:
+        current = pending.pop(0)
+        if not isinstance(current, BaseException) or id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, socket.gaierror):
+            return current
+        if isinstance(current, OSError) and current.errno in _TRANSPORT_ERRNOS:
+            return current
+        if isinstance(current, (socket.timeout, TimeoutError)) and isinstance(current, OSError):
+            return current
+        pending.extend((
+            current.__cause__, current.__context__,
+            getattr(current, "inner_exception", None), getattr(current, "reason", None),
+            (getattr(current, "kwargs", None) or {}).get("error")
+            if isinstance(getattr(current, "kwargs", None), dict) else None,
+        ))
+    return None
+
+
+def transport_oserror(exc: BaseException, message: str) -> OSError | None:
+    """*message* as the OSError of the socket failure under *exc*
+    (:func:`transport_cause`): ConnectionRefusedError for a refused port,
+    ``socket.gaierror`` for a name that does not resolve, TimeoutError ...
+    - the class core.user_errors explains. None when *exc* is no transport
+    failure."""
+    import socket
+
+    cause = transport_cause(exc)
+    if cause is None:
+        return None
+    if isinstance(cause, socket.gaierror):
+        return socket.gaierror(cause.errno, message)
+    code = cause.errno if isinstance(cause.errno, int) and cause.errno else errno.ETIMEDOUT
+    return oserror(code, message)

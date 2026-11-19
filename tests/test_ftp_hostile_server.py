@@ -45,15 +45,16 @@ def test_happy_utf8_listing_names_decode():
 @pytest.mark.parametrize(
     "payload, expected",
     [
-        (b"type=file;size=3; caf\xe9.txt\r\ntype=file;size=1; ok\r\n", ["caf�.txt", "ok"]),
-        (b"type=file;size=3; \xff\xfe\r\n", ["��"]),
+        (b"type=file;size=3; caf\xe9.txt\r\ntype=file;size=1; ok\r\n", ["caf\udce9.txt", "ok"]),
+        (b"type=file;size=3; \xff\xfe\r\n", ["\udcff\udcfe"]),
     ],
     ids=["latin1-name", "garbage-name"],
 )
-def test_sad_undecodable_mlsd_names_list_with_replacement(payload, expected):
+def test_sad_undecodable_mlsd_names_list_with_their_bytes(payload, expected):
     """A server that accepted OPTS UTF8 but lists latin-1 names: the
-    listing shows (replacement characters, like the control channel),
-    instead of a UnicodeDecodeError nobody catches."""
+    listing shows (with surrogateescape, like the control channel - the
+    bytes go back unchanged, see test_ftp_non_utf8_names.py), instead of
+    a UnicodeDecodeError nobody catches."""
     with FakeFtpServer(data={"MLSD": payload}) as srv:
         assert [i.name for i in _session(srv).list_dir("/")] == expected
 
@@ -70,14 +71,14 @@ def test_sad_undecodable_nlst_and_list_fallback():
         s = _session(srv)
         assert not s._has_mlsd
         items = s.list_dir("/")
-        assert [i.name for i in items] == ["caf�", "ok"]
+        assert [i.name for i in items] == ["caf\udce9", "ok"]
         assert all(i.size == 3 for i in items)
 
 
 def test_edge_truncated_multibyte_sequence_at_end_of_listing():
     with FakeFtpServer(data={"MLSD": b"type=file;size=1; ok\r\ntype=file; \xc3"}) as srv:
         names = [i.name for i in _session(srv).list_dir("/")]
-    assert names == ["ok", "�"]
+    assert names == ["ok", "\udcc3"]
 
 
 # --- a 213 SIZE reply whose size is not a number --------------------------
@@ -136,9 +137,11 @@ def test_sad_unencodable_name_on_latin1_server_is_an_oserror(op):
             calls[op](s)
 
 
-def test_edge_lone_surrogate_name_on_utf8_server_is_an_oserror():
-    with FakeFtpServer(data={"MLSD": b""}) as srv:
+def test_edge_lone_surrogate_name_on_utf8_server_goes_out_as_its_byte():
+    """A surrogate-escaped name (as a listing decodes a byte that is not
+    UTF-8) is sent back as that byte, not refused."""
+    with FakeFtpServer(data={"MLSD": b""}, replies={"MKD": b'257 "x" created\r\n'}) as srv:
         s = _session(srv)
         assert s._ftp.encoding == "utf-8"
-        with pytest.raises(OSError, match="cannot be encoded"):
-            s.mkdir("/caf\udce9")
+        s.mkdir("/caf\udce9")
+        assert b"MKD /caf\xe9\r\n" in srv.raw_commands

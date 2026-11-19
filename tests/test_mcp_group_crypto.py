@@ -40,7 +40,8 @@ def test_happy_encrypt_then_decrypt_round_trip(root, caplog):
     enc = T.call(tools, "encrypt", {"path": str(root / "a.txt"), "passphrase": PASS})
     assert enc["path"] == str(root / "a.txt.axenc")
     blob = (root / "a.txt.axenc").read_bytes()
-    assert blob.startswith(E.MAGIC) and b"plain secret" not in blob
+    # The chunked format (AXXE2): encrypt streams, whatever the size.
+    assert blob.startswith(E.MAGIC_V2) and b"plain secret" not in blob
     assert (root / "a.txt").exists()  # the plaintext stays, as in the GUI
     dec = T.call(tools, "decrypt", {"path": enc["path"], "passphrase": PASS})
     assert dec["path"] == str(root / "a (2).txt")  # a.txt exists: never overwritten

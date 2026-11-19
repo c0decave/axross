@@ -117,6 +117,8 @@ class _SizeWorker(QObject):
             if item.is_dir and not item.is_link:
                 total += self._walk(child, depth + 1)
             else:
+                if getattr(item, "stat_error", ""):
+                    self.complete = False  # listed, size unknown: a floor
                 total += item.size
         return total
 

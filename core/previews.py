@@ -54,6 +54,7 @@ import io
 import logging
 import os
 import re
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -251,14 +252,93 @@ def guess_mime(backend, path: str) -> str:
         raise PreviewNotAvailable(f"not a regular file: {abs_path}")
     try:
         from PyQt6.QtCore import QMimeDatabase
-    except ImportError as exc:  # pragma: no cover
-        raise PreviewNotAvailable(f"PyQt6.QtCore.QMimeDatabase unavailable: {exc}") from exc
+    except ImportError:
+        # Headless (axross-headless-mcp has no Qt): the content as Pillow
+        # reads it, from its own format list only.
+        return _pillow_mime(abs_path)
     db = QMimeDatabase()
     mt = db.mimeTypeForFile(abs_path)
     name = mt.name() or "application/octet-stream"
     # QMimeDatabase returns "application/octet-stream" for unknown —
     # pass through without further classification.
     return name
+
+
+#: Header bytes -> (Pillow format, MIME) of the formats a headless preview
+#: reads: told from the first bytes, nothing decoded.
+_SIGNATURES = (
+    (b"\x89PNG\r\n\x1a\n", "PNG", "image/png"),
+    (b"\xff\xd8\xff", "JPEG", "image/jpeg"),
+    (b"GIF87a", "GIF", "image/gif"),
+    (b"GIF89a", "GIF", "image/gif"),
+    (b"BM", "BMP", "image/bmp"),
+    (b"II*\x00", "TIFF", "image/tiff"),
+    (b"MM\x00*", "TIFF", "image/tiff"),
+)
+
+
+def _sniff(abs_path: str) -> tuple[str, str] | None:
+    try:
+        with open(abs_path, "rb") as fh:
+            head = fh.read(16)
+    except OSError:
+        return None
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "WEBP", "image/webp"
+    if head[:2] in (b"P3", b"P6"):
+        return "PPM", "image/x-portable-pixmap"
+    for magic, fmt, mime in _SIGNATURES:
+        if head.startswith(magic):
+            return fmt, mime
+    return None
+
+
+def _sniff_format(abs_path: str) -> str | None:
+    found = _sniff(abs_path)
+    return found[0] if found is not None else None
+
+
+def _pillow_mime(abs_path: str) -> str:
+    """The MIME type of *abs_path* from its first bytes (no decoding: an
+    ICO's embedded PNG was decoded in full just to name its type),
+    ``application/octet-stream`` for anything else."""
+    if _PILImage is None:
+        raise PreviewNotAvailable("no image decoder here: neither Qt nor Pillow is installed "
+                                  "(pip install Pillow, or axross-headless-mcp[images])")
+    found = _sniff(abs_path)
+    return found[1] if found is not None else "application/octet-stream"
+
+
+_QT_GUI: bool | None = None
+
+
+def _qt_gui() -> bool:
+    """Whether Qt's image classes load here (PyQt6 installed and its GUI
+    libraries present: a headless host may lack libEGL)."""
+    global _QT_GUI
+    if _QT_GUI is None:
+        try:
+            from PyQt6.QtGui import QImageReader  # noqa: F401
+        except ImportError:
+            _QT_GUI = False
+        else:
+            _QT_GUI = True
+    return _QT_GUI
+
+
+def preview_available() -> bool:
+    """Whether :func:`thumbnail` can decode anything here: Pillow (the
+    headless server's ``images`` extra), or PyQt6 being installed. Nothing
+    of Qt is imported to answer (the MCP server asks while it starts, and
+    its start never touches Qt): PyQt6 is looked up on the path only."""
+    if _PILImage is not None:
+        return True
+    from importlib.machinery import PathFinder
+
+    try:
+        return PathFinder.find_spec("PyQt6") is not None
+    except (ImportError, ValueError):
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -359,11 +439,32 @@ def _decode_with_pillow(abs_path: str, edge: int | None, *, encode: bool = True)
             f"installed (pip install Pillow for TIFF/extra formats)"
         )
 
+    with _PILLOW_SLOTS:
+        return _decode_with_pillow_slot(abs_path, edge, encode=encode)
+
+
+#: Pillow decodes at once (each may hold up to PILLOW_ALLOC_LIMIT_MIB):
+#: three parallel previews of a big picture reached 1.9 GB.
+_PILLOW_SLOTS = threading.BoundedSemaphore(2)
+#: Pixel copies a decode makes on top of the image itself (the mode
+#: conversion, EXIF transpose, the thumbnail): the budget counts them.
+PILLOW_COPIES = 3
+
+
+def _decode_with_pillow_slot(abs_path: str, edge: int | None, *, encode: bool = True):
+    # The format from the file's first bytes, and Pillow told to open that
+    # one only: its own probing decoded an .ico's embedded PNG in full
+    # (13000x13000, 700 MB) before any check ran.
+    sniffed = _sniff_format(abs_path)
+    # Not one of those (the viewer's TGA, PCX, DDS): Pillow's list without
+    # the containers that embed a PNG (ICO, ICNS) - Qt reads those itself.
+    formats = [sniffed] if sniffed is not None else [
+        f for f in PILLOW_FALLBACK_FORMATS if f not in ("ICO", "ICNS")]
     try:
         # An explicit format list: Pillow's default opens EPS, which
         # spawns Ghostscript on load(), and sniffs content rather than
         # the extension, so "x.png" can be a PostScript program.
-        img = _PILImage.open(abs_path, formats=list(PILLOW_FALLBACK_FORMATS))
+        img = _PILImage.open(abs_path, formats=formats)
     except _PILImage.DecompressionBombError as exc:
         raise PreviewTooLarge(
             f"{abs_path}: Pillow decompression-bomb guard tripped: {exc}"
@@ -384,7 +485,14 @@ def _decode_with_pillow(abs_path: str, edge: int | None, *, encode: bool = True)
             f"{abs_path}: dimensions {w}x{h} exceed MAX_DIMENSION {MAX_DIMENSION}"
         )
 
-    if w * h * 4 > PILLOW_ALLOC_LIMIT_MIB * 1024 * 1024:
+    if edge is not None and img.format == "JPEG":
+        # JPEG decodes scaled down by 1/2, 1/4, 1/8 for a thumbnail.
+        try:
+            img.draft("RGB", (edge, edge))
+            w, h = img.size
+        except Exception:  # noqa: BLE001 - a full decode then
+            pass
+    if w * h * 4 * PILLOW_COPIES > PILLOW_ALLOC_LIMIT_MIB * 1024 * 1024:
         raise PreviewTooLarge(
             f"{abs_path}: {w}x{h} would need more than {PILLOW_ALLOC_LIMIT_MIB} MiB to decode"
         )
@@ -543,7 +651,10 @@ def _raster_route(abs_path: str, *, allow_svg: bool) -> str:
     """``"svg"`` when the content is an SVG the caller may draw (through
     :func:`_render_svg`, its gate and its killable worker), else the Qt
     raster format to decode it with (``""``: Pillow). Vector content under
-    a raster name is never drawn in this process."""
+    a raster name is never drawn in this process. Without Qt's image
+    classes everything goes to Pillow, which opens only raster formats."""
+    if not _qt_gui():
+        return ""
     fmt = _content_format(abs_path)
     if fmt in _QT_SVG_FORMATS:
         if allow_svg:

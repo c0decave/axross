@@ -8486,7 +8486,7 @@ class _FakeAdbDevice:
                 return val
         return ""
 
-    def push(self, local, remote):
+    def push(self, local, remote, **_kwargs):
         self.push_calls.append((local, remote))
 
 

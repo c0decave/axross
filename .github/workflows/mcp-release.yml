@@ -1,0 +1,140 @@
+# The headless MCP server of a release (docs/PACKAGING.md, "Release flow"):
+# on a release tag vX.Y.Z the Docker image ghcr.io/c0decave/axross-headless-mcp:X.Y.Z
+# (and :latest) is built from Dockerfile.mcp and pushed with this workflow's
+# own GITHUB_TOKEN, and the server's entry in the official MCP registry
+# (registry.modelcontextprotocol.io, server.json) is published through
+# GitHub OIDC - no stored secret in either. The PyPI package axross-headless-mcp is
+# the maintainer's upload (scripts/export_standalone.py mcp, step 12 of the
+# release flow); the registry checks it, so the registry job waits for it.
+# tests/test_mcp_release.py holds this workflow and server.json in place.
+
+name: MCP release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The release tag (vX.Y.Z) to publish the registry entry for again"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        ref: ${{ inputs.tag || github.ref }}
+    - name: The tag, axross/_version.py and server.json name one version
+      id: version
+      env:
+        TAG: ${{ inputs.tag || github.ref_name }}
+      run: |
+        VERSION="${TAG#v}"
+        python3 scripts/check_mcp_release.py "$VERSION"
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  image:
+    needs: check
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/c0decave/axross-headless-mcp
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Build Dockerfile.mcp on the base image pinned by digest
+      run: |
+        # The tag resolved once, here; the build uses that exact image and
+        # the image's label records it.
+        DIGEST=$(docker buildx imagetools inspect python:3.12-slim --format '{{json .Manifest.Digest}}' | tr -d '"')
+        case "$DIGEST" in sha256:*) ;; *) echo "::error::no digest for python:3.12-slim"; exit 1 ;; esac
+        echo "base image python:3.12-slim@$DIGEST"
+        docker build -f Dockerfile.mcp --build-arg "VERSION=$VERSION" \
+          --build-arg "PYTHON_IMAGE=python:3.12-slim@$DIGEST" --build-arg "BASE_DIGEST=$DIGEST" \
+          -t "$IMAGE:$VERSION" -t "$IMAGE:latest" .
+    - name: The image names the registry entry and answers MCP without Qt
+      run: |
+        test "$(docker inspect -f '{{ index .Config.Labels "io.modelcontextprotocol.server.name" }}' "$IMAGE:$VERSION")" \
+          = "$(python3 -c 'import json; print(json.load(open("server.json"))["name"])')"
+        printf '%s\n' \
+          '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' \
+          '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+          '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+          | docker run -i --rm "$IMAGE:$VERSION" --mcp-server --mcp-tools all > replies.jsonl
+        python3 - <<'EOF'
+        import json
+        replies = {m.get("id"): m for m in map(json.loads, open("replies.jsonl"))}
+        assert replies[1]["result"]["protocolVersion"] == "2025-11-25", replies
+        names = {t["name"] for t in replies[2]["result"]["tools"]}
+        assert {"read_file", "metadata_read", "remote_profiles"} <= names, names
+        print(len(names), "tools")
+        EOF
+        docker run --rm --entrypoint python "$IMAGE:$VERSION" -c \
+          "import importlib.util, sys; sys.exit(importlib.util.find_spec('PyQt6') is not None)"
+    - name: Push to ghcr.io
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+        docker push "$IMAGE:$VERSION"
+        docker push "$IMAGE:latest"
+        docker logout ghcr.io
+
+  registry:
+    needs: [check, image]
+    # After the image (a tag push), or alone (workflow_dispatch: the image
+    # is there already).
+    if: always() && needs.check.result == 'success' && (needs.image.result == 'success' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write   # mcp-publisher login github-oidc
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      # mcp-publisher, pinned: the release and the SHA-256 its
+      # registry_<v>_checksums.txt gives for the Linux amd64 archive.
+      PUBLISHER_VERSION: "1.8.2"
+      PUBLISHER_SHA256: "d0554112d8f7affad9a10041776d63129a60b163c05036ae26caf73ecbbd89c8"
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        ref: ${{ inputs.tag || github.ref }}
+    - name: axross-headless-mcp of this version is on PyPI (the registry checks it)
+      run: |
+        # The maintainer uploads it last (release flow, step 12); wait for
+        # it a while, then fail: re-run this job once it is there
+        # (gh run rerun <run> --failed, or workflow_dispatch with the tag).
+        for _ in $(seq 1 40); do
+          if curl -fsS "https://pypi.org/pypi/axross-headless-mcp/$VERSION/json" -o pypi.json; then
+            python3 -c 'import json; d = json.load(open("pypi.json")); assert "mcp-name: io.github.c0decave/axross-headless-mcp" in d["info"]["description"], "the README lacks the mcp-name line"'
+            exit 0
+          fi
+          sleep 60
+        done
+        echo "::error::axross-headless-mcp $VERSION is not on PyPI yet - upload it, then re-run this job"
+        exit 1
+    - name: Install mcp-publisher ${{ env.PUBLISHER_VERSION }}
+      run: |
+        curl -fsSL -o mcp-publisher.tar.gz \
+          "https://github.com/modelcontextprotocol/registry/releases/download/v${PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+        echo "${PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum -c -
+        tar xzf mcp-publisher.tar.gz mcp-publisher
+    - name: Validate server.json
+      run: ./mcp-publisher validate server.json
+    - name: Log in with GitHub OIDC
+      run: ./mcp-publisher login github-oidc
+    - name: Publish io.github.c0decave/axross-headless-mcp ${{ env.VERSION }}
+      run: ./mcp-publisher publish server.json

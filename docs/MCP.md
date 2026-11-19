@@ -12,7 +12,15 @@ extra backends, and the extension list. A machine-readable manifest of
 every tool is `axross --mcp-list-tools` / [`mcp-tools.json`](mcp-tools.json)
 (§9.7).
 
-The server speaks MCP protocol version **2024-11-05**.
+The server speaks the MCP revisions **2025-11-25**, **2025-06-18** and
+**2024-11-05** (§1.4): `initialize` answers the client's revision when it
+is one of them and the newest otherwise.
+
+Without the GUI: the package **axross-headless-mcp** (`pip install axross-headless-mcp`, no
+PyQt6) is this server with the same flags, stdio by default; the image
+`ghcr.io/c0decave/axross-headless-mcp` is it in a container (§1.3). Both ship with
+every release, and the server is listed in the official MCP registry as
+`io.github.c0decave/axross-headless-mcp`.
 
 Languages: **English** · [Deutsch](MCP_de.md) · [Español](MCP_es.md)
 
@@ -98,10 +106,16 @@ not imported — the server runs cleanly on a headless host.
 axross --mcp-server --mcp-http 127.0.0.1:7331
 # [::1]:7331 for IPv6 loopback
 
-# mTLS — all three files required:
+# mTLS — all three files required; only with them may it listen beyond
+# loopback (0.0.0.0 without them is refused):
 axross --mcp-server --mcp-http 0.0.0.0:7331 \
     --mcp-cert server.pem --mcp-key server.key --mcp-ca trusted-ca.pem
 ```
+
+Plain HTTP serves loopback only. In a container that means the host
+cannot reach it through `-p`: use mTLS there, or `--network host` with
+`--mcp-http 127.0.0.1:7331`. `Transfer-Encoding: chunked` request bodies
+are refused (400): a POST needs `Content-Length`.
 
 Endpoints:
 
@@ -117,7 +131,7 @@ local user and process reaches `127.0.0.1`. A server without mTLS
 therefore answers every request except `GET /health` with `401` unless
 it carries `Authorization: Bearer <token>`. At start the token is shown
 once on stderr and written to
-`$XDG_RUNTIME_DIR/axross/mcp-http-PORT.token` (else `~/.config/axross/`;
+`$XDG_RUNTIME_DIR/axross/mcp-http-HOST-PORT.token` (else `~/.config/axross/`;
 the file is mode 0600, its folder 0700). It is new on every start; set
 `AXROSS_MCP_HTTP_TOKEN` to keep one fixed for a client config. axross'
 own MCP client (the agent's external MCP servers, docs/USAGE.md) sends
@@ -131,7 +145,13 @@ saved profiles and run commands.
 Sessions are required on HTTP. The first `POST /messages` carrying
 `initialize` gets a fresh session id back in the `Mcp-Session-Id`
 response header; every subsequent request stamps that id. Unknown
-or expired ids answer 404.
+or expired ids answer 404. A notification is answered `202 Accepted`
+without a body. A client of 2025-06-18 or later also sends
+`MCP-Protocol-Version: <revision>` on every request after `initialize`
+(POST, GET, DELETE): a revision the server does not speak, or another
+one than the session agreed on, is answered `400`; without the header
+the session's revision applies. A JSON array (a JSON-RPC batch) is
+refused with `400` - no supported revision has batches.
 
 mTLS is built with `CERT_REQUIRED` + TLS 1.2 minimum: a client that
 can't present a certificate signed by the CA bundle is rejected
@@ -141,6 +161,59 @@ The HTTP transport serves the read-only and (with `--mcp-write`) the
 write tools and the `--mcp-tools` groups; it never serves the script
 tools.
 
+### 1.3 Without the GUI: `axross-headless-mcp` and the Docker image
+
+`axross-headless-mcp` is the same server as its own package, without PyQt6 - for
+a server, a container, CI. Its command takes exactly the MCP flags of
+this section; `--mcp-server` may be left out (stdio is its default):
+
+```bash
+pipx install axross-headless-mcp              # or pip; 'axross-headless-mcp[all]' adds every protocol
+axross-headless-mcp --mcp-root ~/data --mcp-tools all                 # stdio
+axross-headless-mcp --mcp-http 127.0.0.1:7331 --mcp-root ~/data       # HTTP, bearer token
+axross-headless-mcp --mcp-list-tools --mcp-tools all                  # the manifest
+```
+
+A client starts it like `axross --mcp-server` (Claude Code: `claude mcp
+add axross -- axross-headless-mcp --mcp-root ~/data --mcp-tools all`; Claude
+Desktop and others: `"command": "axross-headless-mcp", "args": [...]`). It reads
+axross's settings, saved profiles and indexes in `~/.config/axross` like
+axross does. `scripts/export_standalone.py mcp OUT` writes the package
+from this tree: the modules the MCP path imports (and the backends the
+registry names in strings), nothing of `ui/`; a module that imports
+PyQt6 when it is imported stops the export.
+
+The image (`Dockerfile.mcp`, released as
+`ghcr.io/c0decave/axross-headless-mcp:<version>` and `:latest`) runs as the
+non-root user `axross`; mount the folder to work in at `/data`:
+
+```bash
+docker run -i --rm -v "$PWD:/data" ghcr.io/c0decave/axross-headless-mcp:latest \
+    --mcp-server --mcp-root /data --mcp-tools all
+# HTTP from a container: mTLS (plain HTTP is loopback-only, see 1.2)
+docker run --rm -p 7331:7331 -v "$PWD:/data" -v "$PWD/certs:/certs:ro" \
+    ghcr.io/c0decave/axross-headless-mcp:latest --mcp-server --mcp-root /data \
+    --mcp-http 0.0.0.0:7331 --mcp-cert /certs/server.pem \
+    --mcp-key /certs/server-key.pem --mcp-ca /certs/ca.pem
+```
+
+### 1.4 Protocol revisions
+
+| Revision | What a session of it gets |
+|---|---|
+| 2024-11-05 | Tools as `{name, description, inputSchema}`, results as text; refused arguments are JSON-RPC error -32602. What axross always sent. |
+| 2025-06-18 | Also: each tool's `title` and **annotations** (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`, §2), an `outputSchema` for `stat`, `read_file`, `checksum` and `walk`, and `structuredContent` (the result object; the text block keeps the same JSON) for every tool whose result is an object. `serverInfo.title`. The `MCP-Protocol-Version` header on HTTP (§1.2). |
+| 2025-11-25 | Also: arguments a tool refuses (schema or value) come back as a tool error (`isError: true`) the model can read and correct, not as -32602; an unknown tool stays -32601. `serverInfo.description` and `websiteUrl`. |
+
+A client asking for anything else - 2025-03-26 (the one revision with
+JSON-RPC batches, which 2025-06-18 removed again), a future one -
+is answered with 2025-11-25 and decides itself whether to stay. The
+`server/discover` probe of newer clients (2026-07-28) is an unknown
+method (-32601) here; the official SDK then falls back to `initialize`.
+`tests/test_mcp_protocol_revisions.py` holds the table;
+`tests/test_mcp_sdk_interop.py` drives the server with the official MCP
+Python SDK over stdio and HTTP.
+
 ---
 
 ## 2. Tool surface
@@ -148,6 +221,20 @@ tools.
 The file tools below are always the base. Everything else (metadata,
 duplicates, packer, archives, encryption, index building, file types,
 transfers, remote profiles, extensions) is a capability group, see §9.
+
+Every tool carries a `title` and **annotations** (sent from 2025-06-18
+on, §1.4; in the manifest always): `readOnlyHint` - it changes nothing
+(`duplicates_scan` and `index_build` write axross's indexes, so they are
+not read-only although `--mcp-write` does not gate them);
+`destructiveHint` - it can overwrite, remove or change what exists
+(`false`: it only adds, under a free name); `idempotentHint` - the same
+call again changes nothing more (`false` wherever a second call writes
+`x (2)` or that is not certain); `openWorldHint` - it reaches beyond the
+configured backends (`remote_open`, `remote_exec`, `remote_script`,
+`script_run`, `agent_run`). They are hints for a client's confirmation
+dialogs, not guarantees - the gates are the flags. The table is
+`_TOOL_HINTS` in `core/mcp_server.py`; a tool without an entry fails
+`tests/test_mcp_protocol_revisions.py`.
 
 ### Read-only tools (always available)
 
@@ -163,13 +250,13 @@ transfers, remote profiles, extensions) is a capability group, see §9.
 | `grep(pattern, path, max_depth, max_matches)` | Regex search inside file contents. Skips files over 4 MiB, caps matches at 500; emits progress. Folders and files it could not read are named in `unreadable`; no match with `complete: false` is no answer. |
 | `list_versions(path)` | Per-version metadata where the backend supports it.                |
 | `open_version_read(path, version_id, max_bytes=)` | Base64 content of a specific version.          |
-| `preview(path, edge=256)` | Thumbnail of an image — returned as MCP **image content** with proper mimeType. |
+| `preview(path, edge=256)` | Thumbnail of an image — returned as MCP **image content** with proper mimeType. Decoded by Qt, or by Pillow where there is no Qt (axross-headless-mcp with its `images` extra); without either the tool is not listed. |
 
 ### Write tools (only when `--mcp-write`)
 
 | Name                              | Description                                                                |
 |-----------------------------------|----------------------------------------------------------------------------|
-| `write_file(path, content \| content_b64)` | Upload: `content` as UTF-8 text or `content_b64` as Base64 bytes, exactly one. |
+| `write_file(path, content \| content_b64)` | Upload: `content` as UTF-8 text or `content_b64` as Base64 bytes, exactly one. A new file is 0600; a file written over keeps its mode without the bits `chmod` refuses (setuid, setgid, sticky, group and world write - `& 0755`); `copy` and `bulk_copy` carry modes the same way. |
 | `mkdir(path)`                     | Create directory.                                                          |
 | `remove(path, recursive=False)`   | Delete.                                                                    |
 | `rename(src, dst)`                | Rename / move.                                                             |
@@ -204,7 +291,7 @@ bytes.
   process group of its own; when the run ends, every process it started
   ends with it (one that calls `setsid` escapes).
 * **Wall clock.** `timeout_s` (default 60, at most 600) stops the run:
-  SIGTERM to the group, SIGKILL 3 s later. `tasks/start` + `tasks/cancel`
+  SIGTERM to the group, SIGKILL 3 s later. `axross/tasks/start` + `axross/tasks/cancel`
   run and stop a script in the background.
 * **Reply.** `{name, exit, timed_out, duration_ms, stdout, stderr,
   namespace_keys}`; after an uncaught exception also `error_type`,
@@ -272,11 +359,10 @@ Client can dial the threshold live:
 Accepted levels: `debug`, `info`, `notice`, `warning`, `error`,
 `critical`, `alert`, `emergency`.
 
-**On HTTP the level is server-wide, not per session:** there is one
-shared forwarder, so a `logging/setLevel` from any session changes
-the threshold for every session on that server. Routing stays
-per-session — a session only ever receives its own records — but
-one client can make all clients' streams more or less verbose.
+**On HTTP the level is per session:** a `logging/setLevel` sets the
+threshold of the session that sent it (one client no longer makes every
+client's stream more or less verbose); a session that never sets one
+gets the default, `warning`. Each audit line is forwarded once.
 
 ### Other methods
 
@@ -286,15 +372,38 @@ one client can make all clients' streams more or less verbose.
 | `ping`          | MCP liveness check; empty result.                                       |
 | `tools/list`    | The tool catalogue with input schemas.                                  |
 | `tools/call`    | Run one tool synchronously.                                             |
-| `tasks/start`   | **Axross extension, not part of MCP.** Start a tool in the background; returns `task_id`. Same schema check, same rate limit and same per-tool timeout as `tools/call`; at most 8 running tasks per scope (`MAX_RUNNING_TASKS_PER_SCOPE`). |
-| `tasks/status`  | Status, last progress, and result or error once finished.               |
-| `tasks/cancel`  | Cancel a running task.                                                  |
-| `tasks/list`    | Short summary of the scope's tasks.                                     |
+| `axross/tasks/start`   | **Axross extension, not part of MCP.** Start a tool in the background; returns `task_id`. Same schema check, same rate limit and same per-tool timeout as `tools/call`; at most 8 running tasks per scope (`MAX_RUNNING_TASKS_PER_SCOPE`) and 16 in the server (`MAX_RUNNING_TASKS_TOTAL`). |
+| `axross/tasks/status`  | Status, last progress, and result or error once finished; `abandoned: true` when the task ended without its tool (below). |
+| `axross/tasks/cancel`  | Cancel a running task; answers `{ok, task_id, status}`.                 |
+| `axross/tasks/list`    | Short summary of the scope's tasks.                                     |
 
-Tasks are scoped per session on HTTP and server-wide on stdio.
-Finished tasks are kept for an hour (`TASK_RETENTION_SECONDS`); once a
-scope holds more than 100 tasks (`MAX_TASKS_PER_SCOPE`) the oldest
-finished ones are evicted early. Results over 16 MiB become an error.
+The methods are `axross/tasks/*`: MCP 2025-11-25 defines a `tasks/*` of
+its own (task-augmented requests, `taskId`, other states), which this
+server does not offer. Sessions of 2024-11-05 and 2025-06-18 may still
+call the bare `tasks/start`, `tasks/status`, `tasks/cancel`, `tasks/list`;
+a 2025-11-25 session gets -32601 for them. An unknown task id is -32602.
+
+Tasks are scoped per session on HTTP and server-wide on stdio. A
+cancel - and a tool's timeout - asks the tool to stop; the tools stop
+within one chunk or entry (checksum hashes local files chunk by chunk,
+transfer_copy checks between chunks). A tool that does not stop within
+`TASK_STOP_GRACE_SECONDS` (10 s; a backend call that cannot be
+interrupted) is abandoned: the task ends (`cancelled`, or `error` after
+a timeout, with `abandoned: true`), its slot is free, the call runs out
+in the background and its result is dropped. An HTTP session that ends
+(DELETE, idle eviction) cancels and forgets its tasks; a stdio server
+whose client closes stdin (or that gets SIGTERM) cancels its tasks and
+gives them 5 s to clean up before it exits. Finished tasks are kept for
+an hour (`TASK_RETENTION_SECONDS`), at most 100 per scope
+(`MAX_TASKS_PER_SCOPE`) and 64 MiB of results in the whole server
+(`MAX_TASK_RESULTS_TOTAL_BYTES`), oldest finished first, in every scope
+on every call. A result over 16 MiB becomes an error.
+
+**Notifications and the lifecycle.** A message without an `id` is a
+notification: it is never answered and never runs a tool (a `tools/call`
+without an id does nothing). An `id` of `null`, a `jsonrpc` other than
+`"2.0"` and any request but `initialize` and `ping` before `initialize`
+are -32600. A client's response object is ignored (HTTP: 202).
 
 ---
 
@@ -309,8 +418,11 @@ hashed, streaming fallback only), `recursive_checksum` (files hashed)
 and `bulk_copy` (files copied), and the long group tools of §9
 (`metadata_read` / `metadata_export` on folders, `metadata_remove`,
 `file_type_scan`, `duplicates_scan`, `duplicates_dedupe`,
-`index_build`, `pack`, `archive_extract`, `transfer_copy`). Inside a
-`tasks/start` task the same
+`index_build`, `pack`, `archive_extract`, `transfer_copy`). `total` is
+sent only when it is known (the bytes of one file, the files of a list);
+a walk does not know its count, and its cap (`max_entries`, `max_files`)
+is no total, so those frames have none. Inside a
+`axross/tasks/start` task the same
 tools report progress with the `task_id` as token. On stdio the frames go to
 stdout through the same lock as every response, so frames from
 different threads never interleave inside a line; on HTTP they're
@@ -321,18 +433,30 @@ queued per-session and relayed over the SSE stream (`GET /messages`).
 Clients send `notifications/cancelled` with a `requestId`. A cancel
 registry (per session on HTTP, per server on stdio) flips a
 `threading.Event` that every long-running handler polls via
-`ctx.check_cancel()`. The handler raises `CancelledError`, the
-dispatcher answers -32603 with `data.type = "CancelledError"`, and
-the client discards the response.
+`ctx.check_cancel()`. The handler raises `CancelledError` and the
+cancelled request gets **no response** (as MCP says); the same event is
+core.transfer_hooks' cancel for the call, so a backend's long listing, a
+server-side copy command or a spooled upload stop on it too.
 
-**Known limitation — stdio:** the stdio loop is single-threaded. While
-a synchronous `tools/call` runs, the loop waits for it and reads no
-further input, so a `notifications/cancelled` for that call is only
-read after the call has finished. On stdio a synchronous `tools/call`
-is therefore stopped only by its timeout (§3.3). Work that must be
-cancellable on stdio goes through `tasks/start` + `tasks/cancel`,
-which works on both transports. On HTTP every request runs on its own
-thread, so `notifications/cancelled` reaches a running call.
+On stdio every `tools/call` and `resources/read` runs on a worker thread
+(at most 16 at once): the loop keeps reading, answers `ping` while a
+70 s pack runs, and delivers `notifications/cancelled` to the call. When
+stdin closes, the calls in flight get 5 s to finish and answer (a client
+that pipes its requests still reads them), then what still runs is
+cancelled and the server exits. On HTTP every request runs on its own
+thread as well. Stdio is a pipe with back-pressure: a client that sends
+more than 16 calls without reading stdout waits once the answers fill
+the pipe (the workers wait to write, new calls wait for a worker) -
+read the answers as they come.
+
+A call that does not stop - a backend call that cannot be interrupted -
+is left to end in the background when its timeout passes (a task: after
+`TASK_STOP_GRACE_SECONDS`). Such threads are counted: while 8
+(`MAX_ABANDONED_WORKERS`) still run, new `tools/call` and
+`axross/tasks/start` are refused (-32001) instead of piling up threads.
+A profile opened over MCP has a 60 s read timeout on its SFTP channel
+(a server that stops answering ends the call), and an SFTP folder
+listing stops at 300,000 entries and at a cancel.
 
 ### 3.3 Timeouts
 
@@ -349,7 +473,7 @@ Every tool has a wall-clock ceiling:
 | `script`  | 610 s   | `script_run`. It stops its child at its own `timeout_s` (default 60 s, at most 600 s); the class adds the kill grace and the output drain, so the deadline only backs that up |
 
 The class of every group tool is in the manifest (§9.7). A
-`tasks/start` task gets the same timeout as its tool.
+`axross/tasks/start` task gets the same timeout as its tool.
 
 Two parallel mechanisms back the deadline:
 
@@ -387,13 +511,13 @@ is either lying or running under fork().
 ## 4. Rate limiting
 
 Default on: 30-token burst, refills at 1 token/sec (60 calls per
-minute steady-state). `tools/call` and `tasks/start` draw from the
+minute steady-state). `tools/call` and `axross/tasks/start` draw from the
 same bucket (one bucket per server on stdio, one per session on
 HTTP); `tools/list`, `initialize`, `ping`, `resources/*`,
-`tasks/status|cancel|list` and `logging/setLevel` stay free.
+`axross/tasks/status|cancel|list` and `logging/setLevel` stay free.
 
 Rejection is -32001 with `data.type = "RateLimitError"`. A
-`tasks/start` beyond the running-task cap is also -32001, with
+`axross/tasks/start` beyond the running-task cap is also -32001, with
 `data.type = "TaskLimitError"`.
 
 Tune via `ServerConfig.rate_burst` / `rate_refill_per_sec` or
@@ -466,7 +590,101 @@ serve(ServerConfig(
 └──────────┘                                 └──────────┘
 ```
 
- - Idle sessions are evicted after 30 minutes (tunable).
+ - Idle sessions are evicted after 10 minutes (tunable), counted from
+   the end of their last request. A session at work is never evicted, by
+   the idle sweep or to make room: a `tools/call` still running, a running
+   task and an open SSE stream (a client waiting for a long task's result)
+   count as activity for the idle sweep. At the session cap (256) an
+   `initialize` evicts a session idle 30 s or more (no request in that
+   time) without a running call or task, instead of answering 503: first
+   one without an SSE stream, then one that only holds its stream - from
+   the client holding the most sessions, idle longest (one local client
+   held all 256 sessions with a stream each). With none idle that long,
+   the client holding more than half the sessions - on loopback every
+   local client together - gives up its least recently used session that
+   runs nothing (a client kept 256 sessions busy with pings); that
+   session's client gets 404 and starts a new one, as MCP has it. Only
+   when every session runs a call or task is the answer 503. Under mTLS one client (its address and certificate)
+   holds at most 32 sessions, and at that cap its own session idle
+   longest makes room the same way; on loopback (plain HTTP) every local
+   client is one address and one token, so only the server's cap applies.
+ - Rate: each session has its own `tools/call` bucket, and its client
+   one shared bucket four times that size (`FAIR_SHARE_SESSIONS`). When
+   the shared bucket is empty, a session still has a reserve of its own:
+   half its rate (`FAIR_RESERVE_SHARE`, 0.5 calls/s, burst 2) - for a
+   quiet session only (its attempts, refused ones included, within its
+   own rate), and drawn from its client's pool of reserves, twice the
+   shared rate. So flooding sessions - any number - leave a quiet session
+   that minimum, and more sessions add no rate past the shared bucket and
+   the pool. The pool is shared by the quiet sessions: very many of them
+   each calling just under its own rate (200 at once) divide it, and a
+   quiet session then gets its share of the pool, not 0.5 calls/s. The per-IP edge cap (§7.7) is shared the same way
+   - with a bucket and reserve only for a session the server knows (any
+   other `Mcp-Session-Id` shares one; the edge keeps at most 4096
+   buckets).
+ - A session runs at most 16 `tools/call` at once (-32001,
+   `CallLimitError`, past it). On plain HTTP a client that closes its
+   connection while its call runs has the call cancelled: the server
+   watches the socket, and at the end of the client's input writes an
+   interim `100 Continue` (an HTTP/1.1 client skips it) - a reset in reply
+   is a closed client, anything else a half-close (`nc -N`, `shutdown(
+   SHUT_WR)`) whose call runs on and is answered; it is asked again every
+   5 s, so closing fully later is noticed too. An HTTP/1.0 request gets no
+   interim answer. Under TLS the call runs to its end or time-out.
+ - Every connection is read on a thread of its own (a TLS handshake or a
+   request that blocks holds that connection only). At most 1024 are
+   served at once - fewer when the process's file-descriptor limit is low:
+   half of what is left after 256 descriptors of headroom (384 at a soft
+   limit of 1024), and fewer where fewer threads can start (RLIMIT_NPROC,
+   the cgroup's pids.max, an address-space limit); a thread that still
+   fails to start lowers the cap to 16 below what is open (never below 8),
+   and after 32 thread starts in a row it rises again by 16. During a
+   reconnect flood at a thread limit a request can still wait several
+   seconds (3.7-5.6 s measured at 1000-1400 connections/s) or be reset.
+   Past the cap a new connection takes the place of one that has never
+   shown its token or certificate: from an address (an IPv6 /64) that
+   clearly holds more such connections at least 1 s old (three or more,
+   and twice the median of the other addresses; one client's parallel
+   calls, a connection each, do not count) first; then, of the oldest ones
+   at least 0.2 s old, the one silent longest (a burst and then a stall,
+   not a handshake that keeps receiving its next record), then the one
+   that sent the fewest bytes. None that old (the table turns over faster):
+   not simply the oldest - a slow handshake - but the oldest of the address
+   holding the most (of equally many, the one with the newest connection). A connection that has shown its token or
+   certificate is never pushed out (`GET /health`, which needs no token,
+   does not count; the server speaks HTTP/1.0, one request per
+   connection). Known limit: from the client's own
+   address (or /64), connections that trickle a byte every few
+   milliseconds look more alive than a slow handshake and can push it
+   out - the attacker needs that address. A request's
+   head must arrive within 15 s; its body, once authenticated, may take up
+   to 300 s but no slower than 1 KiB/s after its first 10 s (408 then;
+   `AXROSS_MCP_MIN_BODY_RATE` sets the rate in bytes/s, 0 switches it
+   off). One client - on loopback every local one - has at most 16 bodies
+   arriving at once: past that a fresh request takes the place of the
+   slowest one that has been arriving for a second at less than four times
+   the minimum rate, and gets 503 when every body is faster (up to 1 MiB
+   of its body is read past first, so the client sees the 503 rather than
+   a broken pipe). Off loopback
+   one address (an IPv6 /64) holds at most 32 connections. On loopback
+   every local process is one address: a local process that opens
+   connections faster than a request arrives can still delay it -
+   loopback trusts local processes that far. TLS renegotiation is off.
+ - Stopping the server (Ctrl+C, SIGTERM) ends every session as DELETE
+   would - running calls and tasks are cancelled - and gives the task
+   workers 5 s, as on stdio.
+ - A session that ends cancels its running tool calls and tasks.
+ - A new SSE stream without `Last-Event-ID` sends only what no stream
+   delivered yet; with it, the replay from that id.
+ - `POST` needs `Content-Type: application/json` (415 otherwise: a web
+   form cannot post one without a preflight). Under mTLS an `Origin`
+   other than the server's own `https://` origin is refused (403), and
+   every path but `GET /health` needs a verified client certificate (the
+   TLS layer asks for one but lets a health probe in without).
+ - The bearer token file is written once the socket is bound (a second
+   server on a busy port no longer overwrites the running one's), is
+   named `mcp-http-<host>-<port>.token`, and is removed when the server
+   stops (also on SIGTERM).
  - Per-session queue cap: 10 000 notifications. A client that
    never drains its SSE stream doesn't grow server memory
    unbounded — excess frames are dropped with a warning log.
@@ -491,7 +709,7 @@ we've thought about. The MCP tests live in `tests/test_mcp_*.py`:
 | `tests/test_mcp_http_bearer_token.py` | Plain HTTP refuses requests without the bearer token (401, `/health` exempt), the token file is 0600 and never written through a symlink, `--mcp-http` always serves with one. |
 | `tests/test_mcp_http_sse_lifecycle.py` | One SSE stream per session, DELETE/idle eviction end it, replay on reconnect. |
 | `tests/test_mcp_search_root.py` | `search` never returns indexed paths outside the root. |
-| `tests/test_mcp_tasks_limits.py` | `tasks/start` rate limit, running-task cap, tool timeout. |
+| `tests/test_mcp_tasks_limits.py` | `axross/tasks/start` rate limit, running-task cap, tool timeout. |
 | `tests/test_mcp_write_root.py` | `--mcp-write` needs `--mcp-root`; `--mcp-allow-scripts` refused with `--mcp-http`. |
 | `tests/test_mcp_secret_reads.py` | Secret files (§7.12) are not read, grepped, hashed, previewed, copied, moved or hard-linked, also through a symlink, a group tool or `resources/read`; their names are listed; `--mcp-allow-secret-reads` (stdio only) lets them be read. |
 | `tests/test_mcp_http_mode.py` | `--mcp-http` alone starts the HTTP server (it opened the window) and does not detach from the terminal. |
@@ -510,7 +728,7 @@ we've thought about. The MCP tests live in `tests/test_mcp_*.py`:
 | `tests/test_mcp_manifest.py` | `--mcp-list-tools` and the committed `docs/mcp-tools.json` stay in sync with the code. |
 | `tests/test_mcp_protocol_matrix.py` | Every registered protocol has a route: `remote_open` reaches each profile protocol (stored password handed over, files written and read back), browser sign-in and paranoid-mode refusals carry their reason, the URL-only ones open through `axross.open_url`. |
 | `tests/test_mcp_docs_group_table.py` | The §9.2 table of this file and of its German and Spanish versions lists exactly the group tools of `docs/mcp-tools.json`. |
-| `tests/test_mcp_groups_e2e.py` | The real server over stdio and HTTP with `--mcp-tools all`: one call per group, `tasks/start` + `tasks/cancel`. |
+| `tests/test_mcp_groups_e2e.py` | The real server over stdio and HTTP with `--mcp-tools all`: one call per group, `axross/tasks/start` + `axross/tasks/cancel`. |
 | `tests/test_fuzz_mcp.py` | Hostile requests against the dispatcher, both transports and every group tool. |
 
 §7.1, §7.5, §7.7, §7.8, §7.11 and the hard-stop of §7.4 have no
@@ -671,8 +889,42 @@ certificates of a bundle), and files secret by their name (`.env`,
 `.htpasswd`, `*.tfstate`, `*.kdbx`, `id_rsa`, `id_ed25519`, `id_ecdsa` and
 their copies such as `id_rsa.bak`, `*.ppk`, `*.p12`, `*.pfx`,
 `kubeconfig`, `credentials.json`, `client_secret*.json`, `secrets.yaml`,
-`secrets.json`, `.aws/credentials`, `.docker/config.json`,
-`.kube/config`); below `/proc` a
+`secrets.json`, `.my.cnf`, `.mylogin.cnf`, `.vault-token`, `.s3cfg`,
+`.boto`, `.aws/credentials`, `.docker/config.json`,
+`.kube/config`), and these names with a backup suffix (`.bak`, `~`,
+`.old`, `.orig`, `.save`, `.swp`: `.env~`, `.netrc.bak`); also
+`token.json`, `service-account*.json`, `credentials.tfrc.json`,
+`.dockercfg`, `*.jks`, `secring.gpg`. Past the first MiB every local read
+is scanned as it goes (core.protected_places.SecretScanningReader): a
+private key's BEGIN or END line anywhere in a file stops `read_file`,
+`grep`, `resources/read` and every tool that copies or transforms bytes
+(`encrypt`, `pack`, `transfer_copy` to a remote, `copy`...) - a key
+padded past 1 MiB is not handed out inside an archive or an .axenc
+either. **On a remote** (a profile opened with `remote_open`) the
+name-based rules apply too - the names above, `.ssh/` but its public
+files, `.gnupg/` private parts - and what `read_file` serves is scanned
+for a key.
+
+**What the content scan finds, and what it does not.** It finds a PEM,
+OpenSSH or ssh.com/Tectia private key's BEGIN or END line (five or four
+dashes, spaced or not, any case), a PuTTY key's first line and an age
+identity (`AGE-SECRET-KEY-1…`) anywhere in a file - inside an
+uncompressed tar or a stored zip member, mid-line, in UTF-16 and UTF-32
+too - and a
+KeePass database by the signature at its start. A `read_file` window from
+the middle of a key block is refused too: the server walks back over the
+block's base64 lines to its BEGIN line (up to 16 MiB). It does **not**
+find: a key that is compressed (`.tar.gz`, a deflated zip member, a
+`.gz`) or encoded (base64 of a PEM, hex); a KeePass database inside an
+archive; cloud credentials and tokens in files with neutral names (an
+AWS key pair, a kubeconfig token, an API key in `settings.ini` - only the
+names listed above are known); passwords in general. On a remote only
+what `read_file` serves is scanned; copies from a remote are not. The
+pinned opens of §7.1 (no folder swap between check and read) need Linux's
+`/proc`; on macOS and BSD the path is opened again by name. Treat the
+scan as a guard against accidents, and keep secrets outside the root.
+
+Below `/proc` a
 process's `environ`, `cmdline`, `mem`, `maps`, `fd` and the like and all of
 `/proc/self` (a root of `/` would hand out axross's API keys), and
 `/run/secrets`. `chmod` refuses a file with other hard links.
@@ -719,10 +971,10 @@ whole home lifts nothing. Names stay listable; other files read as before.
 |----------|-------------------------|-------------------------------------------------------|
 | -32700   | PARSE                   | JSON decode failed.                                   |
 | -32600   | INVALID_REQUEST         | Missing method, non-object body.                      |
-| -32601   | METHOD_NOT_FOUND        | Unknown method / tool / disabled capability.          |
-| -32602   | INVALID_PARAMS          | jsonschema failure, ValueError in handler, bad URI.   |
+| -32601   | METHOD_NOT_FOUND        | Unknown method / disabled capability.                 |
+| -32602   | INVALID_PARAMS          | Unknown tool or task id, jsonschema failure, ValueError in handler, bad URI (2025-11-25 sessions: a refused argument is a tool error result instead). |
 | -32603   | INTERNAL                | A result that cannot be sent (not serialisable, over the size cap), or a call cancelled by the client. |
-| **-32001** | **RATE_LIMITED**      | `tools/call` / `tasks/start` throttled, or running-task cap reached. |
+| **-32001** | **RATE_LIMITED**      | `tools/call` / `axross/tasks/start` throttled, or running-task cap reached. |
 | **-32002** | **TIMEOUT**           | Tool exceeded its wall-clock timeout.                 |
 
 A tool that ran and failed - its handler raised anything other than
@@ -741,7 +993,20 @@ can react:
 
 The text is redacted like every error message (credentials in URLs,
 `password=` pairs, auth headers); `_meta.type` names the exception.
-Bad arguments stay -32602 and an unknown tool -32601.
+Bad arguments stay -32602 - in a 2025-11-25 session they are such a
+result too (§1.4) - and so does an unknown tool (-32602, as MCP names
+it). An archive refused as unsafe and an image that has no preview are
+the tool's failure: an `isError` result, not -32602.
+
+**File names that are not UTF-8.** A name whose bytes are not UTF-8 (a
+Latin-1 name on a Linux disk) goes out with U+FFFD in place of the
+undecodable bytes - JSON may carry a lone surrogate, but a client's UTF-8
+decoder refuses it (the official SDK dropped the response and waited
+forever) - and a sibling field with the raw bytes in base64: `name_b64`,
+`path_b64`, ... Every path argument has a twin that takes them back:
+`path_b64`, `src_b64`, `dst_b64`, `dest_dir_b64`, `folder_b64`,
+`link_path_b64`, `out_b64`, `target_b64`, `names_b64` (a list); the twin
+wins over the plain argument. Error texts carry U+FFFD only.
 
 ---
 
@@ -845,8 +1110,8 @@ What each group does:
   / xz / bz2. ZIP has no password option (ZipCrypto is broken).
 * **archive** — list members without extracting; extract into a fresh
   folder (`x.zip` → `x`, `x-1`, …) with the zip-slip, link, size
-  (1 GiB), entry-count (10,000) and ratio (100) guards of
-  `core.archive`. Local archives only: copy a remote archive with
+  (1 GiB), entry-count (10,000) and ratio (100:1, for members of
+  64 MiB or more) guards of `core.archive`. Local archives only: copy a remote archive with
   `transfer_copy` first.
 * **crypto** — the axross `.axenc` format of the GUI (AES-256-GCM,
   PBKDF2-SHA256 with 200,000 iterations, at most 1 GiB per file).
@@ -893,8 +1158,25 @@ Every guard of the base server stays; the groups add layers:
    allow-list (no password, key, token, SAS or connection string).
 7. **Bounded work.** Every list has a cap (`max_files`, `max_groups`,
    `max_entries`, …, `truncated=true` when cut); long jobs report
-   progress, poll cancellation and run under `tasks/start`; results
+   progress, poll cancellation and run under `axross/tasks/start`; results
    above 16 MiB are refused like any tool result.
+8. **Writes of one backend run one at a time** (one lock per backend a
+   call changes, keyed by the backend the call's arguments resolve to -
+   `local` for this machine, whatever string names it): two calls cannot
+   interleave a rename and a symlink. A call takes all its locks at once
+   or none - it never holds one while waiting for another - so a remote
+   whose CLOSE takes 30 minutes holds only that remote's writes, not the
+   local disk's, even while a move from it waits. Waiting is first come,
+   first served among calls that could go.
+9. **Outputs appear whole or not at all.** decrypt, encrypt, pack and the
+   copies write under a temporary name that carries the process id and
+   rename when complete. Each temporary path is recorded in
+   `~/.local/state/axross/partials/` (or `$XDG_STATE_HOME`); the next
+   server start removes what a killed process left - only axross's own
+   temporary names with the dead process's id, inside the root that
+   server serves, reached without a symlink. Records are neither written
+   nor read while that folder lies inside the served root (an agent could
+   plant one there).
 
 ### 9.4 Paranoid security mode
 
@@ -935,6 +1217,43 @@ GUI and in scripting stays blocked here:
 * Opened profiles are per session on HTTP (one client never sees
   another's), at most 8 per session; when an HTTP session ends
   (`DELETE` or idle eviction) its connections are closed.
+* **A stalled server holds its own profile, not the server.** An SFTP
+  request that gets no answer for 60 s fails, even while the server
+  answers keepalives, and a cancelled call stops waiting within 5 s.
+  `AXROSS_MCP_REMOTE_TIMEOUT` (seconds, 5 to 3600) sets that deadline. A
+  request a healthy server may take long over - the CLOSE that flushes an
+  upload, a REMOVE, a rename, fsync - waits up to 30 minutes while the
+  connection answers keepalives (a NAS flushing for 70 s lost the upload).
+  Calls that did not stop are counted per backend: at 8 on one profile,
+  new calls on that profile are refused (-32001, `AbandonedWorkers`)
+  while local tools and other profiles go on; `remote_close` tears the
+  connection down, which ends the stalled calls, and `remote_open` can
+  connect it again.
+* **What a remote sends is checked against what it said.** A copy or
+  move whose source sends another number of bytes than its size is an
+  error (`size-mismatch`) and leaves nothing behind - `transfer_move`
+  keeps the source then. Every count an answer carries (listing entries,
+  extended attributes, in a listing and in a stat) is bounded by the
+  bytes that carry it - a 13-byte answer claiming 4 billion entries is
+  refused at once - and a long answer notices a cancel and a closed
+  connection. A listing stops at 300,000 entries or 64 MiB of
+  answers - names, longnames and attributes, extended ones too (900 KiB
+  of them per entry took a listing past 2.5 GB); a name over 4 KiB is
+  left out, extended attributes are not kept. `checksum` and a
+  server-side copy run no command on anything but a regular file (a
+  symlink to `/dev/zero`: `sha256sum` ran on the server for good) nor on
+  a file in `/proc`, `/sys` or `/dev` (`/proc/kmsg` is a regular file of
+  size 0 that never ends); a file of size 0 is hashed here, and a hash
+  that streams the file stops 16 MiB past the size it gave.
+* **Outputs appear whole.** Downloads into the root are written under a
+  temporary name and renamed; a `resumable` copy writes
+  `.<name>.axross-resume.part` beside the destination (a later run
+  resumes it) and replaces the destination only when it is complete - a
+  failing source or a refused secret leaves an existing destination as
+  it was. A hostile name in a remote folder (`C:..`) is skipped, not the
+  whole copy; a folder that cannot be listed makes `index_build`,
+  `file_type_scan`, `metadata_*` and `duplicates_scan` say `truncated`
+  (and name it in `unreadable`).
 * Opening an arbitrary URL is not offered: an LLM-chosen URL could
   point the server at `sftp://localhost` with the user's SSH agent, or
   at a local file (`sqlite://`, `git+local://`), and walk around
@@ -964,9 +1283,9 @@ GUI and in scripting stays blocked here:
 A long job in the background, cancellable on both transports:
 
 ```json
-{"jsonrpc":"2.0","id":11,"method":"tasks/start","params":{"name":"duplicates_scan","arguments":{"path":"/home/me/data"}}}
-{"jsonrpc":"2.0","id":12,"method":"tasks/status","params":{"task_id":"<task_id>"}}
-{"jsonrpc":"2.0","id":13,"method":"tasks/cancel","params":{"task_id":"<task_id>"}}
+{"jsonrpc":"2.0","id":11,"method":"axross/tasks/start","params":{"name":"duplicates_scan","arguments":{"path":"/home/me/data"}}}
+{"jsonrpc":"2.0","id":12,"method":"axross/tasks/status","params":{"task_id":"<task_id>"}}
+{"jsonrpc":"2.0","id":13,"method":"axross/tasks/cancel","params":{"task_id":"<task_id>"}}
 ```
 
 ### 9.7 Machine-readable manifest
@@ -979,14 +1298,17 @@ server, starts nothing and prints JSON:
 ```json
 {
   "server": "axross-mcp",
-  "protocol_version": "2024-11-05",
+  "protocol_version": "2025-11-25",
+  "protocol_versions": ["2025-11-25", "2025-06-18", "2024-11-05"],
   "generated_for": {"mcp_allow_exec": true, "mcp_allow_scripts": true, "mcp_tools": ["..."], "mcp_write": true},
   "timeout_classes": {"quick": 15.0, "walk": 60.0, "write": 30.0, "preview": 30.0, "stream": 300.0, "long": 1800.0,
                       "script": 610.0},
   "groups": {"metadata": {"description": "...", "tools": ["metadata_read", "..."]}},
-  "tools": [{"name": "...", "group": "...", "mutating": false, "required_flags": ["--mcp-tools metadata"],
+  "tools": [{"name": "...", "title": "...", "group": "...", "mutating": false,
+             "required_flags": ["--mcp-tools metadata"],
              "transports": ["stdio", "http"], "timeout_class": "stream", "timeout_seconds": 300.0,
-             "description": "...", "input_schema": {"type": "object", "...": "..."}}]
+             "description": "...", "annotations": {"title": "...", "readOnlyHint": true, "...": "..."},
+             "input_schema": {"type": "object", "...": "..."}, "output_schema": "(some tools)"}]
 }
 ```
 
@@ -1077,6 +1399,6 @@ the server itself was started with them in `--mcp-tools`.
   refused before anything is sent.
 * **Bounded.** `max_steps` (1–30, default 10) model requests; tool
   results are cut for the model; the call runs in the `long` timeout
-  class; `tasks/cancel` stops it after the model request in flight.
+  class; `axross/tasks/cancel` stops it after the model request in flight.
 * The API key comes from the keyring and never appears in a result or
   a log line.

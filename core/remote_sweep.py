@@ -27,6 +27,7 @@ import fnmatch
 import logging
 import socket
 import threading
+import unicodedata
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -64,7 +65,8 @@ class SweepConfig:
     domain: str = ""
     #: None: the setting (parallel_hosts()).
     parallel: int | None = None
-    #: Glob on the file name, case-insensitive; "" matches every file.
+    #: Glob on the file name, case-insensitive; text without * or ? matches
+    #: anywhere in the name; "" matches every file.
     name: str = ""
     #: Only files whose owner is the logged-on account.
     owner_only: bool = False
@@ -241,6 +243,23 @@ def _safe_detail(exc: BaseException, config: SweepConfig) -> str:
     return text
 
 
+def _fold(text: str) -> str:
+    """NFC and casefolded: "STRASSE" matches "Straße", a decomposed "Ä"
+    (macOS) a composed one."""
+    return unicodedata.normalize("NFC", text).casefold()
+
+
+def _name_pattern(name: str) -> str:
+    """The glob a file name is matched with. Text without ``*`` or ``?``
+    matches anywhere in the name, brackets included, as in Find Files
+    ("report" finds "Q3-report.docx"; it found only a file named exactly
+    "report", and "Song [Remix]" nothing)."""
+    pattern = _fold(name.strip())
+    if pattern and not any(c in pattern for c in "*?"):
+        pattern = "*" + pattern.replace("[", "[[]") + "*"
+    return pattern
+
+
 def sweep(
     config: SweepConfig,
     *,
@@ -252,7 +271,7 @@ def sweep(
 ) -> SweepResult:
     """Search every target of *config*; calls *on_hit* per file found and
     ``on_status(host, state, detail)`` with state one of ``unreachable``,
-    ``searching``, ``done``, ``error``, ``skipped``. Returns the summary.
+    ``searching``, ``done``, ``error``, ``skipped``, ``cancelled``. Returns the summary.
 
     Raises :class:`core.net_helpers.TargetError` for a bad target list and
     PermissionError in paranoid security mode, before any connection.
@@ -267,7 +286,7 @@ def sweep(
     stop = threading.Event()  # set on a logon failure
     result = SweepResult(hosts_total=len(hosts))
     lock = threading.Lock()
-    name_glob = config.name.lower()
+    name_glob = _name_pattern(config.name)
     logged_on: set[str] = set()  # hosts that accepted the credential
 
     def emit(hit: SweepHit) -> None:
@@ -275,8 +294,9 @@ def sweep(
             result.hits += 1
         on_hit(hit)
 
-    def search_host(host: str) -> None:
-        """One host from logon to the last directory. Raises LogonRefused."""
+    def search_host(host: str) -> bool:
+        """One host from logon to the last directory. Raises LogonRefused.
+        False when the run was cancelled or stopped before the walk ended."""
         session = connect(host, config.port, config.timeout)
         try:
             try:
@@ -295,7 +315,7 @@ def sweep(
                 stack = [("/", 0)]
                 while stack:
                     if cancel.is_set() or stop.is_set():
-                        return
+                        return False
                     path, depth = stack.pop()
                     try:
                         entries = session.list_dir(share, path)
@@ -308,14 +328,14 @@ def sweep(
                             result.truncated = True
                         on_status(host, "error",
                                   f"stopped after {config.max_entries_per_host} entries")
-                        return
+                        return True
                     for name, is_dir, size, mtime in sorted(entries):
                         full = path.rstrip("/") + "/" + name
                         if is_dir:
                             if depth + 1 < config.max_depth:
                                 stack.append((full, depth + 1))
                             continue
-                        if name_glob and not fnmatch.fnmatch(name.lower(), name_glob):
+                        if name_glob and not fnmatch.fnmatchcase(_fold(name), name_glob):
                             continue
                         owner = ""
                         if config.owner_only:
@@ -329,9 +349,10 @@ def sweep(
                         if found >= config.max_files_per_host:
                             with lock:
                                 result.truncated = True
-                            return
+                            return True
                         found += 1
                         emit(SweepHit(host, share, full, int(size), float(mtime), owner))
+            return True
         finally:
             session.close()
 
@@ -346,7 +367,7 @@ def sweep(
     def search_counted(host: str) -> None:
         """search_host with the bookkeeping; a refused logon stops the run."""
         try:
-            search_host(host)
+            complete = search_host(host)
         except LogonRefused as exc:
             with lock:
                 if not result.aborted:
@@ -359,6 +380,11 @@ def sweep(
             with lock:
                 result.hosts_failed += 1
             on_status(host, "error", _safe_detail(as_os_error(host, exc), config))
+            return
+        if not complete:
+            # Cut short by Cancel (or by a refused logon on another host):
+            # neither "done" nor counted as searched.
+            on_status(host, "cancelled" if cancel.is_set() else "skipped", "")
             return
         with lock:
             result.hosts_searched += 1

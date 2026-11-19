@@ -310,6 +310,7 @@ def make_session(graph=None):
     s._access_token = "tok"
     s._ensure_token = lambda: None
     s._acquire_token = lambda: "tok"
+    s._refresh_token = lambda force=False: "tok"
     s._tenant_id = "t"
     s._COPY_POLL_INTERVAL = 0.0
     return s

@@ -187,6 +187,11 @@ class ImageViewerDialog(QDialog):
             (QKeySequence("="), lambda: self._zoom_by(1.25)),
             (QKeySequence("-"), lambda: self._zoom_by(0.8)),
             (QKeySequence("0"), self._reset_zoom),
+            # Ctrl + / - / 0 as in browsers and the other viewers
+            (QKeySequence("Ctrl++"), lambda: self._zoom_by(1.25)),
+            (QKeySequence("Ctrl+="), lambda: self._zoom_by(1.25)),
+            (QKeySequence("Ctrl+-"), lambda: self._zoom_by(0.8)),
+            (QKeySequence("Ctrl+0"), self._reset_zoom),
             (QKeySequence("f"), self._fit_window),
             (QKeySequence("r"), self._rotate_cw),
             (QKeySequence("i"), self.toggle_metadata),
@@ -205,6 +210,23 @@ class ImageViewerDialog(QDialog):
             done=self._after_drag,
         )
         self._move_watch = VFA.MoveWatch(self, self._backend, self._pane, self._moved_away)
+        # Ctrl + wheel zooms (the wheel alone still scrolls a large image)
+        self._scroll.viewport().installEventFilter(self)
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 - Qt override
+        from PyQt6.QtCore import QEvent
+
+        if (
+            event.type() == QEvent.Type.Wheel
+            and obj is self._scroll.viewport()
+            and event.modifiers() & Qt.KeyboardModifier.ControlModifier
+        ):
+            steps = event.angleDelta().y() / 120.0
+            if steps:
+                self._zoom_by(1.25**steps)
+            event.accept()
+            return True
+        return super().eventFilter(obj, event)
 
     # ------------------------------------------------------------------
     # Window

@@ -346,6 +346,46 @@ def _proxied_transport(url: str, proxy_cfg) -> tuple[str, dict, list]:
     return connect_url, kwargs, [tunnel]
 
 
+#: Seconds a remote may take to accept a connection, and to send the next
+#: bytes of an answer. dulwich waits without a limit: a remote that took
+#: the connection and never answered held the session (and, during a
+#: write, every pane on it) for ever.
+GIT_CONNECT_TIMEOUT = 15
+GIT_READ_TIMEOUT = 60
+
+
+def _with_network_timeouts(url: str, kwargs: dict) -> dict:
+    """*kwargs* for dulwich's transport of *url*, with time-outs: the HTTP
+    client's (or the proxy pool's), ssh's ConnectTimeout and keep-alive.
+    git:// has no hook in dulwich and stays as it is."""
+    kwargs = dict(kwargs)
+    if "://" in url:
+        scheme = urlsplit(url).scheme.lower()
+    elif _SCP_LIKE_RE.match(url) and not url.startswith(("/", ".")):
+        scheme = "ssh"
+    else:
+        return kwargs  # a local path
+    if scheme in ("http", "https"):
+        import urllib3
+
+        # A pool of our own: porcelain drops a "timeout" argument.
+        pool = kwargs.get("pool_manager")
+        if pool is None:
+            from dulwich.client import default_urllib3_manager
+
+            pool = kwargs["pool_manager"] = default_urllib3_manager(None, base_url=url)
+        pool.connection_pool_kw.setdefault(
+            "timeout", urllib3.Timeout(connect=GIT_CONNECT_TIMEOUT, read=GIT_READ_TIMEOUT))
+    elif scheme in ("ssh", "git+ssh", "ssh+git"):
+        base = kwargs.get("ssh_command") or os.environ.get("GIT_SSH_COMMAND") or "ssh"
+        alive = max(1, GIT_READ_TIMEOUT // 4)
+        kwargs["ssh_command"] = (
+            f"{base} -o ConnectTimeout={GIT_CONNECT_TIMEOUT} "
+            f"-o ServerAliveInterval={alive} -o ServerAliveCountMax=4"
+        )
+    return kwargs
+
+
 def _dulwich_url(url: str) -> str:
     """*url* as dulwich understands it.
 
@@ -430,6 +470,8 @@ class GitFsSession(SessionLifecycle):
                 self._connect_url, self._transport_kwargs, self._tunnels = _proxied_transport(
                     url, proxy_cfg
                 )
+            self._transport_kwargs = _with_network_timeouts(
+                self._connect_url, self._transport_kwargs)
             try:
                 if (cache_dir / ".git").exists() or (cache_dir / "HEAD").exists():
                     self._repo = Repo(str(cache_dir))
@@ -970,7 +1012,7 @@ class GitFsSession(SessionLifecycle):
             return  # the session's view was stale already: GitBranchMoved
         changed = self._changed_paths(self._repo[before].tree, self._repo[after].tree)
         if not self._overlapping(set(changed), {sub.encode("utf-8") for sub in subs}):
-            self._branch_tips[branch] = after
+            self._set_branch_tip(branch, after)
             log.info(
                 "Git-FS: %s moved on origin (%s -> %s) by other files; committing on it",
                 branch, _short_sha(before), _short_sha(after),
@@ -1063,22 +1105,31 @@ class GitFsSession(SessionLifecycle):
     # ------------------------------------------------------------------
 
     def _refresh_branch_tips(self) -> None:
+        # Built aside and put in place at once: readers use the map without
+        # the lock, and while it was emptied and refilled a listing in
+        # another thread found "No such branch: main".
         with self._lock:
-            self._branch_tips = {}
+            tips: dict[str, bytes] = {}
+            remote: dict[str, bytes] = {}
             refs = self._repo.get_refs()
             for ref, sha in refs.items():
                 ref_str = ref.decode("utf-8", "replace") if isinstance(ref, bytes) else ref
                 if ref_str.startswith("refs/heads/"):
-                    self._branch_tips[ref_str[len("refs/heads/") :]] = sha
+                    tips[ref_str[len("refs/heads/") :]] = sha
                 elif (
                     ref_str.startswith("refs/remotes/origin/")
                     and ref_str != "refs/remotes/origin/HEAD"
                 ):
-                    name = ref_str[len("refs/remotes/origin/") :]
-                    # Only expose remote branches that don't already
-                    # have a local counterpart.
-                    if name not in self._branch_tips:
-                        self._branch_tips[name] = sha
+                    remote[ref_str[len("refs/remotes/origin/") :]] = sha
+            # Only expose remote branches that don't already have a local
+            # counterpart.
+            for name, sha in remote.items():
+                tips.setdefault(name, sha)
+            self._branch_tips = tips
+
+    def _set_branch_tip(self, branch: str, sha: bytes) -> None:
+        """One tip changed: a new map, never the one a reader iterates."""
+        self._branch_tips = {**self._branch_tips, branch: sha}
 
     def _list_branches(self, prefix: str = "") -> list[FileItem]:
         return [
@@ -1430,8 +1481,16 @@ class GitFsSession(SessionLifecycle):
 
     @_object_errors_as_oserror
     def copy(self, src: str, dst: str) -> None:
+        if dst.endswith("/"):
+            raise IsADirectoryError(errno.EISDIR, "A file name cannot end in '/'", dst)
         src = self.normalize(src)
         dst = self.normalize(dst)
+        if not all(self._split_branch(dst)):
+            # "/main" (a drop onto the branch folder) or "/": the copy
+            # committed a tree entry without a name - a tree git itself
+            # calls corrupt ("empty filename in tree entry"), pushed too.
+            raise IsADirectoryError(
+                errno.EISDIR, "Git copy: the target must be /<branch>/<file>", dst)
         with self.open_read(src) as fh:
             data = fh.read()
         src_branch, src_sub = self._split_branch(src)
@@ -1837,6 +1896,14 @@ class GitFsSession(SessionLifecycle):
 
     def _commit_changes(self, branch: str, subs: list[str], build, message: str,
                         push: bool = True) -> None:
+        for sub in subs:
+            if not branch or not sub or "" in sub.split("/"):
+                # Never a tree entry without a name.
+                raise OSError(errno.EINVAL, f"Git: no file name in /{branch}/{sub}")
+        self._commit_changes_checked(branch, subs, build, message, push=push)
+
+    def _commit_changes_checked(self, branch: str, subs: list[str], build, message: str,
+                                push: bool = True) -> None:
         """One commit on ``branch``: the tree ``build(root)`` makes of the
         tip's root tree (an empty Tree on a new branch), *subs* the paths
         it changes (the sync with origin refuses when someone else changed
@@ -1957,7 +2024,7 @@ class GitFsSession(SessionLifecycle):
                     f"branch, so that work is kept; refresh the folder and repeat the "
                     f"change.",
                 )
-            self._branch_tips[branch] = commit.id
+            self._set_branch_tip(branch, commit.id)
             log.info("Git-FS commit %s on %s: %s", commit.id.decode()[:8], branch, message)
         if push and self._pushes():
             try:

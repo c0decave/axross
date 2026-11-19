@@ -14,7 +14,6 @@ import io
 import logging
 import posixpath
 import re
-import select
 import shlex
 import socket
 import threading
@@ -24,6 +23,7 @@ from datetime import datetime, timezone
 from typing import IO, TYPE_CHECKING
 
 from core import transfer_hooks
+from core.posix_compat import wait_io
 from core.read_spool import new_spool
 from core.backend import SessionLifecycle
 from core.exec_util import shell_path
@@ -72,6 +72,31 @@ _CMD_EXIT_PREFIX = "__AXX_CMD_EXIT_"
 _LOGIN_RE = re.compile(r"(login|username)\s*:", re.IGNORECASE)
 _PASSWORD_RE = re.compile(r"password\s*:", re.IGNORECASE)
 _SHELL_PROMPT_RE = re.compile(r"[$#%>]\s*$")
+#: A login prompt the server shows AGAIN after the password: the login was
+#: refused ("Login incorrect", then "login:"). Anchored at the end: "Last
+#: login: Mon ..." in a welcome message is no prompt.
+_RELOGIN_RE = re.compile(r"(login|username|password)\s*:\s*$", re.IGNORECASE)
+_REFUSAL_WORDS = ("incorrect", "denied", "failed", "invalid", "bad")
+
+
+class LoginFailure(PermissionError):
+    """The server refused the user name or password (core.user_errors
+    knows the class by name and says so in a sentence)."""
+
+
+def _login_verdict(text: str) -> bool | None:
+    """True: logged in (a shell prompt ends the answer); False: refused (a
+    new login or password prompt ends it, or refusal words without any
+    prompt); None: not decided yet.
+
+    Only what the answer ENDS with decides: RHEL greets a good login with
+    "Last failed login: ... 3 failed login attempts", which the old word
+    search refused as invalid credentials."""
+    if _RELOGIN_RE.search(text):
+        return False
+    if _SHELL_PROMPT_RE.search(text):
+        return True
+    return None
 
 # Strip ANSI escape sequences (colors, cursor movements, etc.)
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]|\x1b\([AB0-2]")
@@ -98,6 +123,9 @@ TREE_OP_TIMEOUT = 3600.0
 MAX_HEREDOC_CHARS = 64 * 1024
 _READ_SLICE = 0.1  # select() poll interval
 MAX_READ_UNTIL_CHARS = 64 * 1024 * 1024
+#: Bytes of a file one command of a download moves (``dd ... | base64``):
+#: each piece is one answer, reports progress and checks Cancel.
+TELNET_READ_CHUNK = 4 * 1024 * 1024
 # Longest IAC SB ... IAC SE the transport waits for. Real subnegotiations
 # (terminal type, window size, environment) are a few dozen bytes.
 MAX_SUBNEGOTIATION_BYTES = 64 * 1024
@@ -116,6 +144,31 @@ def _validate_telnet_host(host: str) -> None:
         raise OSError("Telnet host must not contain whitespace")
 
 
+_FAMILIES = {"ipv4": socket.AF_INET, "ipv6": socket.AF_INET6}
+
+
+def _connect_direct(host: str, port: int, timeout: float, address_family: str) -> socket.socket:
+    """A TCP connection to *host*; with *address_family* "ipv4" / "ipv6"
+    (the profile's IP version) only to addresses of that family - the
+    dialog offered the choice and the connection ignored it."""
+    family = _FAMILIES.get(address_family or "auto")
+    if family is None:
+        return socket.create_connection((host, port), timeout=timeout)
+    last: OSError | None = None
+    for fam, kind, proto, _name, addr in socket.getaddrinfo(
+        host, port, family, socket.SOCK_STREAM
+    ):
+        sock = socket.socket(fam, kind, proto)
+        try:
+            sock.settimeout(timeout)
+            sock.connect(addr)
+            return sock
+        except OSError as exc:
+            last = exc
+            sock.close()
+    raise last or OSError(f"no {address_family} address for {host}")
+
+
 class _TelnetTransport:
     """Raw TCP socket with telnet IAC negotiation (IPv4 + IPv6).
 
@@ -125,6 +178,10 @@ class _TelnetTransport:
     SOCKS4/SOCKS5/HTTP-CONNECT proxy can tunnel it.
     """
 
+    #: Bytes the server sent while a send waited for room (_send_all):
+    #: read before the socket.
+    _early: bytes = b""
+
     def __init__(
         self,
         host: str,
@@ -133,6 +190,7 @@ class _TelnetTransport:
         proxy: "ProxyConfig | None" = None,
         naws_width: int = 0,
         naws_height: int = 0,
+        address_family: str = "auto",
     ):
         _validate_telnet_host(host)
         if not 0 < int(port) < 65536:
@@ -170,10 +228,7 @@ class _TelnetTransport:
                 # create_connection transparently handles IPv4/IPv6 via
                 # getaddrinfo and tries each resolved address until one
                 # succeeds.
-                self._sock = socket.create_connection(
-                    (host, port),
-                    timeout=timeout,
-                )
+                self._sock = _connect_direct(host, int(port), timeout, address_family)
         except (socket.gaierror, OSError, ConnectionError) as e:
             log.warning("Telnet connect to %s:%d failed: %s", host, port, e)
             raise OSError(f"Cannot connect to {host}:{port}: {e}") from e
@@ -201,23 +256,55 @@ class _TelnetTransport:
         raw_bytes = b"\r\n".join(line.encode("utf-8") for line in lines)
         if not raw_bytes.endswith(b"\r\n"):
             raw_bytes += b"\r\n"
-        try:
-            # Send in chunks to avoid telnet server buffer issues
-            chunk_size = 4096
-            for i in range(0, len(raw_bytes), chunk_size):
-                self._sock.sendall(raw_bytes[i : i + chunk_size])
-                if len(raw_bytes) > chunk_size:
-                    time.sleep(0.01)  # pace large sends
-        except OSError as e:
-            self._closed = True
-            raise OSError(f"Send failed: {e}") from e
+        self._send_all(raw_bytes)
 
     def send_raw(self, data: bytes) -> None:
         """Send raw bytes without newline appending."""
         if self._closed:
             raise OSError("Transport closed")
+        self._send_all(data)
+
+    def _send_all(self, data: bytes, timeout: float = CMD_TIMEOUT) -> None:
+        """Send *data* on the non-blocking socket, waiting for room.
+
+        ``sendall`` on it failed ("Send failed: Resource temporarily
+        unavailable") as soon as the kernel's send buffer was full, and a
+        10 ms sleep per 4 KiB that kept it from filling held every upload
+        at ~0.3 MB/s. Now the send waits until the socket takes more (up to
+        *timeout* seconds without progress); what the server sends
+        meanwhile (an echoing terminal) is kept for the next read, so
+        neither end blocks on a full buffer."""
+        view = memoryview(data)
+        deadline = time.monotonic() + timeout
         try:
-            self._sock.sendall(data)
+            while view:
+                try:
+                    sent = self._sock.send(view)
+                except BlockingIOError:
+                    sent = 0
+                if sent:
+                    view = view[sent:]
+                    deadline = time.monotonic() + timeout
+                    continue
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(f"Telnet send: no progress for {timeout:.0f} s")
+                readable, _ = wait_io([self._sock], [self._sock], timeout=min(remaining, 1.0))
+                if readable:
+                    try:
+                        raw = self._sock.recv(65536)
+                    except BlockingIOError:
+                        continue
+                    if not raw:
+                        raise ConnectionResetError("the server closed the connection")
+                    self._early += raw
+                    if len(self._early) > MAX_READ_UNTIL_CHARS:
+                        raise OSError(
+                            f"Telnet response exceeds {MAX_READ_UNTIL_CHARS} character cap"
+                        )
+        except TimeoutError:
+            self._closed = True
+            raise
         except OSError as e:
             self._closed = True
             raise OSError(f"Send failed: {e}") from e
@@ -241,12 +328,26 @@ class _TelnetTransport:
                     raise OSError(f"Telnet response exceeds {MAX_READ_UNTIL_CHARS} character cap")
                 if match in text:
                     return text
+            elif self._closed:
+                self._raise_closed(text)
         # unreachable
 
     def read_until_re(
-        self, pattern: re.Pattern, timeout: float = CMD_TIMEOUT
+        self,
+        pattern: re.Pattern,
+        timeout: float = CMD_TIMEOUT,
+        *,
+        lookback: int | None = None,
+        idle: bool = False,
     ) -> tuple[str, re.Match]:
-        """Read until regex *pattern* matches somewhere in the accumulated text."""
+        """Read until regex *pattern* matches somewhere in the accumulated text.
+
+        *lookback*: the longest text a match can span. With it, each new
+        chunk is searched together with only that much of the text before
+        it, not the whole answer again (a multi-megabyte answer made the
+        search quadratic: 16 MiB took 20 s). *idle*: *timeout* counts the
+        seconds without any new text, not the whole wait (a long listing
+        over a slow line keeps arriving and must not time out)."""
         deadline = time.monotonic() + timeout
         text = ""
         while True:
@@ -257,12 +358,17 @@ class _TelnetTransport:
                 )
             chunk = self._read_chunk(min(remaining, _READ_SLICE))
             if chunk:
+                if idle:
+                    deadline = time.monotonic() + timeout
+                start = 0 if lookback is None else max(0, len(text) - lookback)
                 text += chunk
                 if len(text) > MAX_READ_UNTIL_CHARS:
                     raise OSError(f"Telnet response exceeds {MAX_READ_UNTIL_CHARS} character cap")
-                m = pattern.search(text)
+                m = pattern.search(text, start)
                 if m:
                     return text, m
+            elif self._closed:
+                self._raise_closed(text)
 
     def read_some(self, timeout: float = 1.0) -> str:
         """Read whatever is available within timeout."""
@@ -277,9 +383,19 @@ class _TelnetTransport:
                 text += chunk
                 if len(text) > MAX_READ_UNTIL_CHARS:
                     raise OSError(f"Telnet response exceeds {MAX_READ_UNTIL_CHARS} character cap")
-            elif text:
-                break  # Got some data, nothing more coming
+            elif text or self._closed:
+                break  # Got some data, nothing more coming (or never will)
         return text
+
+    def _raise_closed(self, text: str) -> None:
+        """The server closed the connection (or it broke) while an answer
+        was awaited: said at once - the wait went on to the time-out (30 s
+        for a command, an hour for a tree operation) before."""
+        raise ConnectionResetError(
+            f"Telnet: the connection to {getattr(self, '_host', '?')}:"
+            f"{getattr(self, '_port', '?')} was closed "
+            f"(last text: {text[-200:]!r})"
+        )
 
     def close(self) -> None:
         if not self._closed:
@@ -296,20 +412,27 @@ class _TelnetTransport:
 
     def _read_chunk(self, timeout: float) -> str:
         """Read available data from socket, process IAC sequences."""
+        if self._early:
+            raw, self._early = self._early, b""
+            return self._process(raw)
         try:
-            ready, _, _ = select.select([self._sock], [], [], max(timeout, 0))
+            ready, _ = wait_io([self._sock], timeout=max(timeout, 0))
         except (ValueError, OSError):
             self._closed = True
             return ""
         if not ready:
             return ""
         try:
-            raw = self._sock.recv(4096)
+            raw = self._sock.recv(65536)
         except BlockingIOError:
             return ""
         except OSError as e:
             self._closed = True
             raise OSError(f"Read failed: {e}") from e
+        return self._process(raw)
+
+    def _process(self, raw: bytes) -> str:
+        """*raw* bytes from the server as text, IAC sequences handled."""
         if not raw:
             self._closed = True
             # Bytes of a character the stream ended inside of.
@@ -479,15 +602,8 @@ class _ShellSession:
             if _PASSWORD_RE.search(text):
                 # Some systems skip username, go straight to password
                 self._transport.send(self._password)
-                try:
-                    result = self._transport.read_some(timeout=5.0)
-                    text += result
-                except TimeoutError:
-                    pass
-                if _SHELL_PROMPT_RE.search(text):
-                    log.info("Telnet login successful (password-only)")
-                    return
-                raise PermissionError("Telnet login failed")
+                self._await_login_verdict("password-only")
+                return
             if _SHELL_PROMPT_RE.search(text):
                 log.info("Telnet: no-auth shell detected")
                 return
@@ -504,36 +620,38 @@ class _ShellSession:
             if _SHELL_PROMPT_RE.search(text2):
                 log.info("Telnet login successful (no password)")
                 return
-            raise PermissionError("Telnet login failed: no password prompt received")
+            raise LoginFailure(
+                "Telnet login failed: no password prompt after the user name "
+                f"{self._username!r}"
+            )
 
         # Send password
         self._transport.send(self._password)
+        self._await_login_verdict("")
 
-        # Wait for shell prompt or error
-        try:
-            result = self._transport.read_some(timeout=10.0)
-        except TimeoutError:
-            raise PermissionError("Telnet login timed out after password")
-
-        if any(kw in result.lower() for kw in ("incorrect", "denied", "failed", "invalid", "bad")):
-            raise PermissionError("Telnet login failed: invalid credentials")
-
-        # Check for shell prompt
-        if _SHELL_PROMPT_RE.search(result):
-            log.info("Telnet login successful")
-            return
-
-        # Try reading a bit more
-        try:
-            more = self._transport.read_some(timeout=5.0)
-            result += more
-        except TimeoutError:
-            pass
-        if _SHELL_PROMPT_RE.search(result):
-            log.info("Telnet login successful")
-            return
-
-        raise PermissionError(f"Telnet login failed: unexpected response: {result[-200:]!r}")
+    def _await_login_verdict(self, how: str) -> None:
+        """Read the answer to the password until it ends in a shell prompt
+        (logged in) or a new login prompt (refused); LoginFailure for a
+        refusal or an answer that never ends in a prompt."""
+        result = ""
+        deadline = time.monotonic() + 15.0
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            # A welcome message may arrive in parts: wait for the end.
+            result += self._transport.read_some(timeout=min(remaining, 5.0))
+            verdict = _login_verdict(result)
+            if verdict is True:
+                log.info("Telnet login successful%s", f" ({how})" if how else "")
+                return
+            if verdict is False:
+                raise LoginFailure(f"Telnet login refused by the server: {result[-200:]!r}")
+            if self._transport.closed:
+                break
+        if any(word in result.lower() for word in _REFUSAL_WORDS):
+            raise LoginFailure(f"Telnet login refused by the server: {result[-200:]!r}")
+        raise LoginFailure(f"Telnet login failed: unexpected response: {result[-200:]!r}")
 
     _SHELL_PROBE_MARKER = "__AXROSS_SHELL_PROBE__"
 
@@ -672,8 +790,15 @@ class _ShellSession:
             log.warning("Could not set custom prompt, continuing anyway")
             self._prompt_ready = True
 
-    def execute(self, cmd: str, timeout: float = CMD_TIMEOUT) -> tuple[str, int]:
+    def execute(
+        self, cmd: str, timeout: float = CMD_TIMEOUT, *, idle: bool = True
+    ) -> tuple[str, int]:
         """Execute a shell command and return (stdout, exit_code).
+
+        *timeout*: the seconds the command may stay silent (*idle*, the
+        default: a listing of a large folder over a slow line went past
+        the 30 s while it was still arriving, and was then run again after
+        a reconnect), or its whole run time (``idle=False``, exec()).
 
         Uses per-session randomized markers to reliably delimit command output.
         For multi-line commands (heredocs), the exit marker is placed on its
@@ -695,7 +820,9 @@ class _ShellSession:
             # Read until this command's exit marker; answers to earlier
             # commands that arrive late are skipped over.
             try:
-                text, m = self._transport.read_until_re(exit_re, timeout=timeout)
+                text, m = self._transport.read_until_re(
+                    exit_re, timeout=timeout, lookback=256, idle=idle
+                )
             except TimeoutError:
                 raise TimeoutError(f"Command timed out: {cmd[:80]!r}")
 
@@ -1424,6 +1551,7 @@ class TelnetSession(SessionLifecycle):
         proxy_password: str = "",
         naws_width: int = 0,
         naws_height: int = 0,
+        address_family: str = "auto",
     ):
         self._host = host
         self._port = port
@@ -1431,6 +1559,7 @@ class TelnetSession(SessionLifecycle):
         self._password = password
         self._naws_width = naws_width
         self._naws_height = naws_height
+        self._address_family = address_family
         # Build an optional ProxyConfig from the kwargs. ProxyConfig's
         # ``enabled`` property decides whether we go through a proxy
         # or direct.
@@ -1448,6 +1577,9 @@ class TelnetSession(SessionLifecycle):
         self._caps: _Capabilities = _Capabilities()
         self._home_dir: str = "/"
         self._connected = False
+        # One login at a time: threads that find the connection dropped
+        # share one reconnect (each logged in on its own, leaking shells).
+        self._reconnect_lock = threading.Lock()
         self._connect()
 
     def _connect(self) -> None:
@@ -1458,6 +1590,7 @@ class TelnetSession(SessionLifecycle):
             proxy=self._proxy,
             naws_width=self._naws_width,
             naws_height=self._naws_height,
+            address_family=getattr(self, "_address_family", "auto"),
         )
         self._shell = _ShellSession(self._transport, self._username, self._password)
         self._caps = _probe_capabilities(self._shell)
@@ -1484,25 +1617,40 @@ class TelnetSession(SessionLifecycle):
             raise ConnectionError(errno.ENOTCONN,
                                   f"Telnet {getattr(self, '_host', '')}: disconnected")
 
+    def _alive(self) -> bool:
+        return bool(
+            self._connected and self._shell and self._transport and not self._transport.closed
+        )
+
     def _ensure_connected(self) -> _ShellSession:
         """Reconnect if the connection has dropped."""
         self._refuse_if_closed()
-        if self._connected and self._shell and not self._transport.closed:
+        if self._alive():
             return self._shell
-        log.info("Telnet: reconnecting to %s:%d", self._host, self._port)
-        if self._transport and not self._transport.closed:
-            self._transport.close()
-        self._connect()
-        return self._shell
+        with self._reconnect_lock:
+            self._refuse_if_closed()
+            if self._alive():  # another thread reconnected meanwhile
+                return self._shell
+            log.info("Telnet: reconnecting to %s:%d", self._host, self._port)
+            if self._transport and not self._transport.closed:
+                self._transport.close()
+            self._connect()
+            return self._shell
 
-    def _force_reconnect(self) -> _ShellSession:
-        """Force a full reconnect (close + reconnect)."""
+    def _force_reconnect(self, failed: _ShellSession | None = None) -> _ShellSession:
+        """Force a full reconnect (close + reconnect). *failed*: the shell
+        the caller saw fail - when another thread has replaced it
+        meanwhile, that new shell is used, not replaced again."""
         self._refuse_if_closed()
-        self._connected = False
-        if self._transport and not self._transport.closed:
-            self._transport.close()
-        self._connect()
-        return self._shell
+        with self._reconnect_lock:
+            self._refuse_if_closed()
+            if failed is not None and self._shell is not failed and self._alive():
+                return self._shell
+            self._connected = False
+            if self._transport and not self._transport.closed:
+                self._transport.close()
+            self._connect()
+            return self._shell
 
     def _exec(self, cmd: str, timeout: float = CMD_TIMEOUT) -> str:
         """Execute command, auto-reconnect once on failure."""
@@ -1515,7 +1663,7 @@ class TelnetSession(SessionLifecycle):
         except (OSError, TimeoutError):
             # Force reconnect and retry once
             log.debug("Telnet: command failed, reconnecting and retrying")
-            shell = self._force_reconnect()
+            shell = self._force_reconnect(shell)
             return shell.execute_checked(cmd, timeout=timeout)
 
     def _exec_raw(self, cmd: str, timeout: float = CMD_TIMEOUT) -> tuple[str, int]:
@@ -1524,7 +1672,7 @@ class TelnetSession(SessionLifecycle):
         try:
             return shell.execute(cmd, timeout=timeout)
         except (OSError, TimeoutError):
-            shell = self._force_reconnect()
+            shell = self._force_reconnect(shell)
             return shell.execute(cmd, timeout=timeout)
 
     # --- FileBackend interface ---
@@ -1564,7 +1712,7 @@ class TelnetSession(SessionLifecycle):
                 fh.write(stdin)
             line = f"{line} < {shlex.quote(tmp)}"
         try:
-            out, code = self._shell.execute(line, timeout=timeout or CMD_TIMEOUT)
+            out, code = self._shell.execute(line, timeout=timeout or CMD_TIMEOUT, idle=False)
         finally:
             if tmp is not None:
                 try:
@@ -1579,14 +1727,27 @@ class TelnetSession(SessionLifecycle):
 
     @property
     def connected(self) -> bool:
-        if not self._connected or not self._shell:
+        shell = self._shell
+        if not self._connected or not shell:
             return False
+        # A shell running a command (a transfer, a tree operation of up to
+        # an hour) is alive: asking it "echo ok" waited for its lock.
         try:
-            _, code = self._shell.execute("echo ok", timeout=5.0)
+            idle = shell._lock.acquire(blocking=False)
+        except Exception as exc:  # noqa: BLE001 - a dead shell object
+            log.debug("Telnet liveness check failed: %s", exc)
+            return False
+        if not idle:
+            transport = self._transport
+            return transport is not None and not transport.closed
+        try:
+            _, code = shell.execute("echo ok", timeout=5.0)
             return code == 0
         except Exception as exc:  # noqa: BLE001 - any failure means not connected
             log.debug("Telnet liveness check failed: %s", exc)
             return False
+        finally:
+            shell._lock.release()
 
     def _path(self, path: str) -> str:
         """*path* normalized for a command line; OSError when it holds a
@@ -1765,6 +1926,12 @@ class TelnetSession(SessionLifecycle):
         qpath = shell_path(path)
         shell = self._ensure_connected()
 
+        if (
+            self._caps.transfer_method in ("base64", "xxd")
+            and self._caps.has_dd
+            and self._caps.has_wc
+        ):
+            return self._read_in_pieces(shell, path, qpath)
         if self._caps.transfer_method == "base64":
             output, code = shell.execute(f"base64 < {qpath}", timeout=TRANSFER_TIMEOUT)
             if code != 0:
@@ -1796,6 +1963,60 @@ class TelnetSession(SessionLifecycle):
         buf = io.BytesIO(data)
         buf.seek(0)
         return buf
+
+    def _read_in_pieces(self, shell: _ShellSession, path: str, qpath: str) -> IO[bytes]:
+        """The file in pieces of TELNET_READ_CHUNK bytes (``dd | base64``
+        or ``dd | xxd -p``) into a spool: no answer outgrows the transport's
+        cap, every piece reports progress and checks Cancel. The pieces must
+        add up to the size the file had when the read began; a file that
+        shrank or could not be read further is an error, never a shorter
+        file (``dd``'s own failure is hidden behind the pipe's status)."""
+        size_text, code = shell.execute(f"wc -c < {qpath}", timeout=CMD_TIMEOUT)
+        if code != 0:
+            raise self._read_refused(path, size_text.strip()[:300] or f"wc failed (exit {code})")
+        try:
+            size = int(size_text.strip().split()[-1])
+        except (ValueError, IndexError) as exc:
+            raise OSError(f"Cannot read {path}: no size from wc: {size_text[:200]!r}") from exc
+        base64_mode = self._caps.transfer_method == "base64"
+        encoder = "base64" if base64_mode else "xxd -p"
+        piece_size = TELNET_READ_CHUNK
+        hooks = transfer_hooks.current()
+        spool = new_spool(size, max_size=8 * 1024 * 1024)
+        try:
+            done = 0
+            index = 0
+            while done < size:
+                if hooks is not None:
+                    hooks.received(done, size)
+                output, code = shell.execute(
+                    f"dd if={qpath} bs={piece_size} skip={index} count=1 2>/dev/null | {encoder}",
+                    timeout=TRANSFER_TIMEOUT,
+                )
+                if code != 0:
+                    raise OSError(f"Cannot read {path}: {encoder} failed (exit {code})")
+                text = output.replace("\n", "").replace(" ", "")
+                try:
+                    piece = base64.b64decode(text) if base64_mode else bytes.fromhex(text)
+                except (ValueError, binascii.Error) as exc:
+                    raise OSError(f"Cannot decode {path}: {exc}") from exc
+                wanted = min(piece_size, size - done)
+                if len(piece) < wanted:
+                    raise OSError(
+                        f"Cannot read {path}: {done + len(piece)} of {size} bytes arrived "
+                        "(the file changed or could not be read further)"
+                    )
+                # A file that grew meanwhile: the size it had at the start.
+                spool.write(piece[:wanted])
+                done += wanted
+                index += 1
+            if hooks is not None:
+                hooks.received(done, size)
+            spool.seek(0)
+            return spool
+        except BaseException:
+            spool.close()
+            raise
 
     def _read_refused(self, path: str, message: str) -> OSError:
         """A failed read typed by what *path* is: the redirect's wording
@@ -1920,7 +2141,10 @@ class TelnetSession(SessionLifecycle):
         if not tool:
             return ""
         path = self._path(path)
-        output, code = self._exec_raw(f"{tool} {shell_path(path)} 2>/dev/null")
+        # A hash of a large file on a slow box takes minutes: the long
+        # time-out of the tree operations, and never sent a second time
+        # (_exec_raw re-ran it after a reconnect).
+        output, code = self._exec_tree_op(f"{tool} {shell_path(path)} 2>/dev/null")
         if code != 0 or not output:
             return ""
         from core.exec_util import digest_from_sum_output

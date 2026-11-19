@@ -329,6 +329,11 @@ def _warn_unsupported_proxy(profile: "ConnectionProfile") -> None:
 
 
 
+#: An scp-like Git remote: ``user@host:path`` or ``host:path`` (but not a
+#: Windows drive letter such as ``C:\\repo``).
+_SCP_LIKE_GIT = re.compile(r"^(?:[^@/:\s]+@)?[^@/:\s]{2,}:(?!//)")
+
+
 def _own_id(name: str) -> int:
     """This process's effective UID / GID for NFS AUTH_SYS; 65534 (nobody)
     where the platform has none (Windows)."""
@@ -432,12 +437,21 @@ class ConnectionManager:
             str(profile.sftp_timeout),
             str(profile.telnet_naws_width),
             str(profile.telnet_naws_height),
+            str(profile.winrm_https),
+            str(profile.winrm_verify_tls),
             str(hash(profile.gdrive_client_secret)),
             str(hash(profile.dropbox_app_secret)),
             # NNTP over TLS and plaintext NNTP to one host and port are
             # two different connections: a TLS profile must never reuse
             # a plaintext session.
             str(profile.nntp_ssl),
+            # Databases, LDAP, SLP, Exchange: another database, TLS
+            # switch, scope or mailbox is another connection.
+            profile.db_name,
+            str(profile.db_tls),
+            str(profile.ldap_ssl),
+            profile.slp_scope,
+            profile.exchange_email,
             # A RAM workspace has no server to tell two of them apart: the
             # profile name is its identity. The OAuth cloud backends keep
             # one token file per profile name (_profile_token_files), so
@@ -696,6 +710,7 @@ class ConnectionManager:
                 tls=(proto == "ftps"),
                 passive=profile.ftp_passive,
                 verify_tls=profile.ftps_verify_tls,
+                address_family=profile.address_family,
                 **proxy_kw,
             )
 
@@ -719,6 +734,7 @@ class ConnectionManager:
                 username=profile.username,
                 password=password,
                 port=profile.port or 445,
+                client_name=profile.smb_client_name,
                 **proxy_kw,
             )
 
@@ -755,6 +771,7 @@ class ConnectionManager:
                 ssh_mode=profile.rsync_ssh,
                 ssh_key=profile.rsync_ssh_key,
                 preserve_metadata=profile.rsync_preserve_metadata,
+                address_family=profile.address_family,
                 **proxy_kw,
             )
 
@@ -925,6 +942,10 @@ class ConnectionManager:
                 system_reserve_bytes=settings.ramfs_system_reserve_bytes,
             )
 
+        session = self._create_store_session(proto, profile, password, proxy_kw)
+        if session is not None:
+            return session
+
         if proto == "svn":
             cls = load_backend_class("svn")
             return cls(
@@ -943,6 +964,7 @@ class ConnectionManager:
                 password=password,
                 naws_width=profile.telnet_naws_width,
                 naws_height=profile.telnet_naws_height,
+                address_family=profile.address_family,
                 **proxy_kw,
             )
 
@@ -953,6 +975,7 @@ class ConnectionManager:
                 port=profile.port or 23,
                 username=profile.username,
                 password=password,
+                address_family=profile.address_family,
                 **proxy_kw,
             )
 
@@ -975,6 +998,7 @@ class ConnectionManager:
             return cls(
                 host=profile.host,
                 port=profile.port or 5555,
+                address_family=profile.address_family,
                 **proxy_kw,
             )
 
@@ -985,7 +1009,7 @@ class ConnectionManager:
             device = MtpDevice(
                 device_id=profile.mtp_device_id or "1",
                 vendor="",
-                product=profile.host or "device",
+                product=profile.host or profile.name or "device",
                 mounter=profile.mtp_mounter,
             )
             return cls(
@@ -1017,13 +1041,136 @@ class ConnectionManager:
             cls = load_backend_class("winrm")
             return cls(
                 host=profile.host,
-                port=profile.port or 5986,
+                port=profile.port or (5986 if profile.winrm_https else 5985),
                 username=profile.username,
                 password=password,
+                use_https=profile.winrm_https,
+                verify_ssl=profile.winrm_verify_tls,
+                **proxy_kw,
+            )
+
+        if proto == "rsh":
+            # Host-based trust (.rhosts): no password; the backend refuses
+            # a proxy itself (it needs a reverse connection).
+            cls = load_backend_class("rsh")
+            return cls(
+                host=profile.host,
+                port=profile.port or 514,
+                username=profile.username,
+                address_family=profile.address_family,
+                **proxy_kw,
+            )
+
+        if proto == "wmi":
+            # NTLM wants the domain apart: "CORP\\alice" or
+            # "alice@corp.example" as typed in the Username field.
+            user, domain = profile.username, ""
+            if "\\" in user:
+                domain, user = user.split("\\", 1)
+            elif "@" in user:
+                user, domain = user.rsplit("@", 1)
+            cls = load_backend_class("wmi")
+            return cls(
+                host=profile.host,
+                username=user,
+                password=password,
+                domain=domain,
                 **proxy_kw,
             )
 
         raise ValueError(f"Unsupported protocol: {proto}")
+
+    @staticmethod
+    def _create_store_session(
+        proto: str, profile: ConnectionProfile, password: str, proxy_kw: dict
+    ) -> FileBackend | None:
+        """The databases, Git, LDAP, SLP and Exchange as a profile builds
+        them - all in the protocol list of Connect to Server, and all of
+        them ended in "Unsupported protocol" here. None for any other
+        protocol."""
+        if proto == "sqlite":
+            # The database file is the profile's "host".
+            return load_backend_class("sqlite")(url=os.path.expanduser(profile.host))
+
+        if proto == "postgres":
+            return load_backend_class("postgres")(
+                host=profile.host,
+                port=profile.port or 5432,
+                username=profile.username,
+                password=password,
+                database=profile.db_name,
+                **proxy_kw,
+            )
+
+        if proto == "redis":
+            try:
+                database = int(profile.db_name or 0)
+            except ValueError:
+                raise ValueError(
+                    f"The Redis database of profile {profile.name!r} is a number "
+                    f"(0, 1, 2, ...), not {profile.db_name!r}"
+                ) from None
+            return load_backend_class("redis")(
+                host=profile.host,
+                port=profile.port or 6379,
+                password=password,
+                database=database,
+                use_tls=profile.db_tls,
+                **proxy_kw,
+            )
+
+        if proto == "mongodb":
+            return load_backend_class("mongodb")(
+                host=profile.host,
+                port=profile.port or 27017,
+                username=profile.username,
+                password=password,
+                database=profile.db_name or "axross",
+                **proxy_kw,
+            )
+
+        if proto == "git":
+            # The repository is the profile's "host": a remote URL
+            # (scheme://... or scp-like user@host:path) or a local path.
+            target = profile.host.strip()
+            cls = load_backend_class("git")
+            if "://" in target or _SCP_LIKE_GIT.match(target):
+                return cls(url=target, **proxy_kw)
+            return cls(path=os.path.expanduser(target), **proxy_kw)
+
+        if proto == "ldap":
+            return load_backend_class("ldap")(
+                host=profile.host,
+                port=profile.port or (636 if profile.ldap_ssl else 389),
+                username=profile.username,
+                password=password,
+                use_tls=profile.ldap_ssl,
+                **proxy_kw,
+            )
+
+        if proto == "slp":
+            return load_backend_class("slp")(
+                host=profile.host,
+                port=profile.port or 427,
+                scope=profile.slp_scope or "DEFAULT",
+                **proxy_kw,
+            )
+
+        if proto == "exchange":
+            # The EWS server is the profile's "host"; without one the
+            # mailbox's domain is autodiscovered.
+            server = profile.host.strip()
+            kwargs: dict = {"autodiscover": not server}
+            if server:
+                kwargs["server"] = server
+            return load_backend_class("exchange")(
+                smtp_address=profile.exchange_email or profile.username,
+                username=profile.username,
+                password=password,
+                **kwargs,
+                **proxy_kw,
+            )
+        return None
 
     @staticmethod
     def _is_connected(session: object) -> bool:

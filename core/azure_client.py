@@ -116,6 +116,12 @@ def _azure_error(exc: BaseException, message: str, filename: str | None = None, 
         return InterruptedError(*exc.args)
     if isinstance(exc, OSError) and isinstance(exc.errno, int) and exc.errno:
         return cloud_http.rewrap(exc, message, filename)
+    if getattr(exc, "status_code", None) is None:
+        # No answer at all: a refused port, a name that does not resolve,
+        # a time-out - not "closed by the other side" for every one.
+        transport = cloud_http.transport_oserror(exc, message)
+        if transport is not None:
+            return transport
     code = _error_code(exc)
     if code == "ResourceTypeMismatch":
         return cloud_http.oserror(type_mismatch, message, filename)
@@ -138,6 +144,67 @@ def _azure_error(exc: BaseException, message: str, filename: str | None = None, 
     if name in ("ServiceRequestError", "ServiceResponseError"):
         return cloud_http.oserror(errno.ECONNRESET, message, filename)
     return cloud_http.oserror(errno.EIO, message, filename)
+
+
+#: The answers to a SAS that may list a container / share but not read its
+#: properties: a service SAS ("Generate SAS" on one container or share).
+_PROPERTIES_NOT_PERMITTED = frozenset({
+    "AuthorizationPermissionMismatch", "AuthorizationResourceTypeMismatch",
+})
+#: The answers to a key, SAS or connection string Azure does not accept
+#: (wrong or rotated key, expired or edited SAS, the account's firewall).
+_LOGIN_REFUSED = frozenset({
+    "AuthenticationFailed", "AuthorizationFailure", "InvalidAuthenticationInfo",
+})
+#: Liveness and connect probes are not retried on a dead connection: the
+#: SDK's retry waits 15 s, 18 s and 24 s before it gives up - a closed port
+#: kept Test Connection (and every reconnect) waiting a minute.
+_PROBE_OPTIONS = {"retry_connect": 0, "retry_read": 0}
+
+
+def _probe_options(fn) -> dict:
+    """_PROBE_OPTIONS for an SDK call that passes keywords to its pipeline."""
+    return dict(_PROBE_OPTIONS) if _takes_keyword(fn, "retry_connect") else {}
+
+
+def _probe(read_properties, list_first_page) -> None:
+    """Ask the container / share whether this login may use it: its
+    properties, or - for a SAS that may not read them - the first page of
+    its listing. Raises the SDK's error of the probe that decides."""
+    try:
+        read_properties(**_probe_options(read_properties))
+    except Exception as exc:  # noqa: BLE001 - the SDK's HttpResponseError and the rest
+        if _error_code(exc) not in _PROPERTIES_NOT_PERMITTED:
+            raise
+        list_first_page()
+
+
+def _connect_error(exc: BaseException, kind: str, name: str) -> OSError:
+    """The connect failure *exc* of the container / share *name* as an
+    OSError whose text says what to check (shown as it is by
+    core.user_errors: no errno, so no generic sentence replaces it)."""
+    from core.i18n import tr
+
+    code = _error_code(exc)
+    if code in _LOGIN_REFUSED or type(exc).__name__ == "ClientAuthenticationError":
+        return PermissionError(tr(
+            "Azure Storage refused the login for the {kind} {name}. Check the account key, "
+            "the SAS token or the connection string: a SAS token may have expired, and the "
+            "storage account's firewall may not let this network in."
+        ).format(kind=tr(kind), name=name))
+    if code in ("ContainerNotFound", "ShareNotFound") or (
+        _is_not_found(exc) and code in ("", "ResourceNotFound")
+    ):
+        return FileNotFoundError(tr(
+            "The {kind} {name} does not exist in this storage account. Check its name "
+            "(Azure names are lowercase)."
+        ).format(kind=tr(kind), name=name))
+    if code in _PROPERTIES_NOT_PERMITTED:
+        return PermissionError(tr(
+            "The SAS token may not list the {kind} {name}. Create a SAS with the List "
+            "permission (and Read, Write, Delete for the operations you need)."
+        ).format(kind=tr(kind), name=name))
+    return _azure_error(exc, f"Cannot access the Azure {kind} '{name}': {cloud_http.reason(exc)}")
 
 
 def _client_name(client, attr: str) -> str:
@@ -580,9 +647,9 @@ class AzureBlobSession(SessionLifecycle):
 
         try:
             self._container = self._service.get_container_client(container)
-            self._container.get_container_properties()
+            self._probe()
         except Exception as e:
-            raise _azure_error(e, f"Cannot access Azure Blob container '{container}': {cloud_http.reason(e)}") from e
+            raise _connect_error(e, "container", container) from e
 
         log.info("Azure Blob connected: container=%s, account=%s", container, account_name)
 
@@ -592,10 +659,18 @@ class AzureBlobSession(SessionLifecycle):
     def name(self) -> str:
         return f"azure-blob://{self._container_name} (Azure Blob)"
 
+    def _probe(self) -> None:
+        _probe(
+            self._container.get_container_properties,
+            lambda: next(iter(self._container.list_blobs(
+                results_per_page=1, **_probe_options(self._container.list_blobs)
+            ).by_page()), None),
+        )
+
     @property
     def connected(self) -> bool:
         try:
-            self._container.get_container_properties()
+            self._probe()
             return True
         except Exception as exc:  # noqa: BLE001 - any failure means not connected
             log.debug("Azure Blob liveness check of %s failed: %s", self._container_name, exc)
@@ -1418,9 +1493,9 @@ class AzureFilesSession(SessionLifecycle):
 
         try:
             self._share = self._service.get_share_client(share_name)
-            self._share.get_share_properties()
+            self._probe()
         except Exception as e:
-            raise _azure_error(e, f"Cannot access Azure Files share '{share_name}': {cloud_http.reason(e)}") from e
+            raise _connect_error(e, "file share", share_name) from e
 
         log.info("Azure Files connected: share=%s, account=%s", share_name, account_name)
 
@@ -1430,10 +1505,20 @@ class AzureFilesSession(SessionLifecycle):
     def name(self) -> str:
         return f"azure-files://{self._share_name} (Azure Files)"
 
+    def _probe(self) -> None:
+        _probe(
+            self._share.get_share_properties,
+            lambda: self._list_first_page(),
+        )
+
+    def _list_first_page(self) -> None:
+        listing = self._share.get_directory_client("").list_directories_and_files
+        next(iter(listing(results_per_page=1, **_probe_options(listing)).by_page()), None)
+
     @property
     def connected(self) -> bool:
         try:
-            self._share.get_share_properties()
+            self._probe()
             return True
         except Exception as exc:  # noqa: BLE001 - any failure means not connected
             log.debug("Azure Files liveness check of %s failed: %s", self._share_name, exc)

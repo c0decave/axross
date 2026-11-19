@@ -55,7 +55,7 @@ def _scp_names(output: str) -> dict[str, tuple]:
 
     s = SCPSession.__new__(SCPSession)
     s._caps = _Capabilities()
-    s._exec = lambda cmd, timeout=None: output
+    s._exec = lambda cmd, timeout=None, **_kw: output
     return {
         i.name: (i.is_dir, i.is_link, i.size, i.permissions) for i in s.list_dir("/etc")
     }

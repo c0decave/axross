@@ -12,7 +12,9 @@ refuses then):
 
 * ``DIST`` - the folder ``scripts/build_dist.sh`` wrote (``dist/<version>/``):
   ``glibc-2.34/`` and ``glibc-2.36/`` with ``axross-{base,slim,full}`` and the
-  tools ``axross-{media-player,system-info}``, the wheel
+  tools ``axross-{media-player,system-info}``, ``appimage/`` with
+  ``axross-{base,slim,full}-x86_64.AppImage`` (made from the glibc-2.34
+  binaries, scripts/build_appimage.sh), the wheel
   ``axross-<version>-py3-none-any.whl`` and the sdist ``axross-<version>.tar.gz``,
   ``standalone/`` (the tools' sdists and wheels) and ``packs/``.
 * ``CI`` - the artifacts of the tag's "Cross-platform" workflow
@@ -38,10 +40,12 @@ Output, ``DIR`` (must not exist or be empty):
 * ``DIR/assets/`` - the release assets, flat, under the names of the
   updater's contract (core.self_update.asset_name, docs/PACKAGING.md
   "Self-update: what a release must carry"): ``axross-full``,
-  ``axross-full-glibc2.36``, ..., ``axross-slim-macos-arm64``,
-  ``axross-slim-windows-x64.exe``; the tools and the macOS / Windows
-  axross-full the same way (download only: the updater has no asset for
-  them). The per-folder ``SHA256SUMS`` and the CI's ``.sha256`` files are
+  ``axross-full-glibc2.36``, ..., ``axross-full-x86_64.AppImage``, ...,
+  ``axross-slim-macos-arm64``, ``axross-full-macos-arm64``,
+  ``axross-slim-windows-x64.exe``, ``axross-full-windows-x64.exe``; the
+  tools the same way (download only: the updater has no asset for them);
+  the macOS disk images ``axross-{slim,full}-macos-arm64.dmg`` (axross.app,
+  optional: a missing one is named, never refused; no updater takes them). The per-folder ``SHA256SUMS`` and the CI's ``.sha256`` files are
   checked against their files and dropped; one ``SHA256SUMS`` takes their
   place, first line ``# axross-release X.Y.Z``, a line for every asset.
   With ``--key`` it is signed (scripts/sign_release.py: ``SHA256SUMS.sig``).
@@ -57,7 +61,10 @@ Output, ``DIR`` (must not exist or be empty):
   decide where an asset is listed: GitHub lists a release's assets sorted
   by name, ignoring case.
 * ``DIR/notes.md`` - the release notes: the version's CHANGELOG.md section,
-  the native components, the assets and how to verify them.
+  the native components, the assets and how to verify them; the same text is
+  the asset ``RELEASE-NOTES-<version>.md`` (with its line in SHA256SUMS, so
+  written before SHA256SUMS is signed), as releases 0.10.31 to 0.13.157
+  carried it.
 
 Then the result is checked through core.self_update and core.packs
 themselves: for every platform, machine, flavour and variant the release
@@ -165,7 +172,7 @@ class Item:
 
     name: str
     kind: str  # "binary" (the updater's), "download" (a binary it does not update),
-    #            "tool", "python", "manifest", "pack"
+    #            "image" (a macOS disk image), "tool", "python", "manifest", "pack"
     origin: str  # for the summary: where it was found
     source: Path
     member: str = ""  # inside the zip *source*, "" for a plain file
@@ -264,6 +271,35 @@ def collect_linux(dist: Path, plan: Plan) -> None:
         for path in sorted(folder.iterdir()):
             if path.name not in known:
                 plan.skipped.append(f"{variant}/{path.name}: not a release asset")
+    collect_appimages(dist, plan)
+
+
+#: build_dist.sh's folder of the AppImages (made from the glibc-2.34 binaries).
+APPIMAGE_DIR = "appimage"
+
+
+def collect_appimages(dist: Path, plan: Plan) -> None:
+    """``DIST/appimage/axross-<flavor>-x86_64.AppImage``: the updater's
+    asset of a binary that runs inside an AppImage (core.self_update.appimage_of)."""
+    folder = dist / APPIMAGE_DIR
+    if not folder.is_dir():
+        plan.missing.append(f"{APPIMAGE_DIR}/: the AppImages "
+                            f"(axross-{{{','.join(SU.FLAVORS)}}}{SU.APPIMAGE_SUFFIX})")
+        return
+    sums = _folder_sums(folder, plan, APPIMAGE_DIR)
+    known = {SU.SUMS_NAME}
+    for flavor in SU.FLAVORS:
+        name = SU.appimage_asset_name(flavor)
+        known.add(name)
+        path = folder / name
+        if not path.is_file():
+            plan.missing.append(f"{APPIMAGE_DIR}/{name}")
+            continue
+        plan.add(Item(name, "binary", f"{APPIMAGE_DIR}/{name}", path,
+                      expected=sums.get(name, ""), system="appimage"))
+    for path in sorted(folder.iterdir()):
+        if path.name not in known:
+            plan.skipped.append(f"{APPIMAGE_DIR}/{path.name}: not a release asset")
 
 
 #: BUILD-INFO.md's line naming the commit (scripts/build_dist.sh: "From commit
@@ -505,12 +541,64 @@ def collect_ci(ci: Path, plan: Plan) -> None:
         plan.add(Item(name, "binary" if served else "download", f"ci/{artifact}/{binary}", path,
                       member, expected=expected, system=platform))
         found.add((platform, flavor))
-        for other in sorted(set(files) - {binary, binary + ".sha256"}):
+        taken = {binary, binary + ".sha256"}
+        if platform == "darwin":
+            taken |= collect_dmg(artifact, files, flavor, plan)
+        for other in sorted(set(files) - taken):
             plan.skipped.append(f"ci/{artifact}/{other}: not a release asset")
     for (runner_os, arch), (platform, machine, _suffix) in CI_SYSTEMS.items():
         for flavor in SU.FLAVORS:
             if SU.asset_name(platform, machine, flavor) and (platform, flavor) not in found:
                 plan.missing.append(f"axross-{flavor}-{runner_os}-{arch} (the CI artifact)")
+
+
+def notes_asset_name(version: str) -> str:
+    """The release notes as an asset (notes.md's content), as releases
+    0.10.31 to 0.13.157 carried them."""
+    return f"RELEASE-NOTES-{version}.md"
+
+
+def dmg_asset_name(flavor: str) -> str:
+    """The macOS disk image of *flavor* (axross.app, scripts/build_macos_dmg.sh)."""
+    return f"axross-{flavor}-macos-arm64.dmg"
+
+
+def collect_dmg(artifact: str, files: dict, flavor: str, plan: Plan) -> set[str]:
+    """The bundle job's ``axross-<flavor>-macos-arm64.dmg`` and its .sha256:
+    an optional asset (its step may fail without failing the job) - a missing
+    one is named in the summary, never refused. No updater takes it
+    (core.self_update: no asset inside axross.app). The file names it takes."""
+    name = dmg_asset_name(flavor)
+    if name not in files:
+        plan.skipped.append(f"ci/{artifact}: no {name} (optional: the disk image step of the "
+                            "bundle job did not make one)")
+        return set()
+    path, member = files[name]
+    expected = ""
+    if name + ".sha256" in files:
+        spath, smember = files[name + ".sha256"]
+        expected = SU.parse_sums(_read_member(spath, smember).decode("utf-8", "replace")
+                                 ).get(name, "")
+        if not expected:
+            raise Refused(f"ci/{artifact}/{name}.sha256 names no checksum of {name}")
+        plan.dropped.append(f"ci/{artifact}/{name}.sha256")
+    plan.add(Item(name, "image", f"ci/{artifact}/{name}", path, member, expected=expected,
+                  system="dmg"))
+    return {name, name + ".sha256"}
+
+
+def _dmg_trailer(item: Item) -> bytes:
+    """The last 512 bytes of a disk image: its "koly" trailer."""
+    if item.member:
+        with zipfile.ZipFile(item.source) as zf:
+            size = zf.getinfo(item.member).file_size
+            with zf.open(item.member) as fh:
+                fh.seek(max(0, size - 512))
+                return fh.read()
+    with open(item.source, "rb") as fh:
+        fh.seek(0, os.SEEK_END)
+        fh.seek(max(0, fh.tell() - 512))
+        return fh.read()
 
 
 # -- writing -------------------------------------------------------------------------
@@ -519,10 +607,14 @@ def collect_ci(ci: Path, plan: Plan) -> None:
 def _check_header(item: Item, head: bytes) -> None:
     """A binary is the kind of file its system runs (a swapped artifact, an
     HTML error page saved under the name, are refused)."""
-    if item.system == "linux":
+    if item.system in ("linux", "appimage"):
         ok = head[:4] == b"\x7fELF" and len(head) >= 20 \
             and int.from_bytes(head[18:20], "little") == _ELF_X86_64
         what = "an x86-64 ELF executable"
+        if item.system == "appimage":
+            # a type-2 AppImage: its magic in the ELF header's padding
+            ok = ok and head[8:11] == b"AI\x02"
+            what = "an x86-64 AppImage (type 2)"
     elif item.system == "darwin":
         ok = head[:4] == b"\xca\xfe\xba\xbe" or (
             head[:4] == b"\xcf\xfa\xed\xfe" and int.from_bytes(head[4:8], "little") == _MACHO_ARM64)
@@ -530,6 +622,10 @@ def _check_header(item: Item, head: bytes) -> None:
     elif item.system == "win32":
         ok = head[:2] == b"MZ"
         what = "a Windows executable"
+    elif item.system == "dmg":
+        trailer = _dmg_trailer(item)
+        ok = len(trailer) == 512 and trailer[:4] == b"koly"
+        what = "a macOS disk image (UDIF)"
     else:
         return
     if not ok:
@@ -583,7 +679,8 @@ def sums_text(version: str, items: list[Item]) -> str:
 def upload_order(items: list[Item]) -> tuple[list[str], list[str]]:
     """(first, then): what the updater needs before the pack wheels."""
     first = [SU.SUMS_NAME, SU.SIG_NAME]
-    rank = {"manifest": 0, "binary": 1, "download": 2, "tool": 3, "python": 4}
+    rank = {"manifest": 0, "binary": 1, "download": 2, "image": 3, "tool": 4, "python": 5,
+            "notes": 6}
     first += [i.name for i in sorted((i for i in items if i.kind != "pack"),
                                      key=lambda i: (rank[i.kind], i.name))]
     return first, sorted(i.name for i in items if i.kind == "pack")
@@ -619,8 +716,18 @@ def _bundle(tmp: Path, flavor: str | None, variant: str | None) -> Path:
 
 
 def installs():
-    """(label, platform, machine, flavor, variant marker or None, flavor marker?)
-    of every kind of installed binary the updater serves."""
+    """(label, platform, machine, flavor, variant marker or None, flavor marker?,
+    inside an AppImage?) of every kind of installed binary the updater serves."""
+    for item in _installs():
+        yield (*item, False)
+    for flavor in SU.FLAVORS:
+        yield (f"linux x86_64 axross-{flavor} AppImage", "linux", "x86_64", flavor,
+               "glibc-2.34", True, True)
+        yield (f"linux x86_64 axross-{flavor} AppImage (no variant file)", "linux", "x86_64",
+               flavor, None, True, True)
+
+
+def _installs():
     for flavor in SU.FLAVORS:
         for variant in SU.VARIANTS:
             for machine in ("x86_64", "amd64"):
@@ -643,7 +750,8 @@ def updater_assets(version: str) -> set[str]:
     """What an updater looks for in a release: SHA256SUMS, its signature, the
     pack manifest and the binary of every platform, flavour and variant -
     as the updater of 0.14.136 names them and as this tree's does."""
-    names = {SU.SUMS_NAME, SU.SIG_NAME, P.manifest_name(version), *FIELD_UPDATER_ASSETS}
+    names = {SU.SUMS_NAME, SU.SIG_NAME, P.manifest_name(version), *FIELD_UPDATER_ASSETS,
+             *(SU.appimage_asset_name(flavor) for flavor in SU.FLAVORS)}
     for platform, machine in (("linux", "x86_64"), *((p, m) for p, m, _s in CI_SYSTEMS.values())):
         for flavor in SU.FLAVORS:
             for variant in SU.VARIANTS:
@@ -868,15 +976,27 @@ def check_release(assets: Path, version: str, *, keys: tuple[str, ...] | None,
 
     # Every kind of installed binary the updater serves finds its asset.
     with tempfile.TemporaryDirectory(prefix="axross-assemble-") as tmp:
-        for label, platform, machine, flavor, variant, marked in installs():
-            want = SU.asset_name(platform, machine, flavor, variant or "glibc-2.34")
-            exe = Path(tmp, "bin", f"axross-{flavor}" + (".exe" if platform == "win32" else ""))
+        image = Path(tmp, "Applications", "axross.AppImage")
+        image.parent.mkdir()
+        image.touch()
+        mount = Path(tmp, ".mount_axross", "usr", "bin")
+        mount.mkdir(parents=True)
+        for label, platform, machine, flavor, variant, marked, in_image in installs():
+            if in_image:
+                want = SU.appimage_asset_name(flavor)
+                exe = mount / "axross"
+                environ = {"APPIMAGE": str(image), "APPDIR": str(mount.parent.parent)}
+            else:
+                want = SU.asset_name(platform, machine, flavor, variant or "glibc-2.34")
+                exe = Path(tmp, "bin", f"axross-{flavor}" + (".exe" if platform == "win32"
+                                                             else ""))
+                environ = {}
             exe.parent.mkdir(exist_ok=True)
             exe.touch()
             bundle = _bundle(Path(tmp), flavor if marked else None,
                              variant if marked and platform == "linux" else None)
             inst = SU.detect_install(frozen=True, executable=str(exe), bundle_dir=str(bundle),
-                                     platform=platform, machine=machine)
+                                     platform=platform, machine=machine, environ=environ)
             if inst.asset != want or not inst.can_download:
                 report.problems.append(f"{label}: detect_install gives {inst.asset!r}, "
                                        f"not {want!r}")
@@ -968,6 +1088,8 @@ def release_notes(version: str, plan: Plan, section: str, native: str, signer: s
     assets = ["## Assets", ""]
     for kind, what in (("binary", "One-file binaries (they update themselves)"),
                        ("download", "One-file binaries to download (no self-update)"),
+                       ("image", "macOS disk images with axross.app (drag it to Applications; "
+                                 "new versions come as a new image)"),
                        ("tool", "The tools as programs of their own"),
                        ("python", "Python packages (wheels; those on PyPI are the same files)")):
         if names(kind):
@@ -996,7 +1118,7 @@ def release_notes(version: str, plan: Plan, section: str, native: str, signer: s
     else:
         verify += ["```", "", f"This release is not signed: no {SU.SIG_NAME}."]
     sums = [f"{i.sha256}  {i.name}" for i in sorted(plan.items, key=lambda i: i.name)
-            if i.kind in ("binary", "download", "tool", "python")]
+            if i.kind in ("binary", "download", "image", "tool", "python")]
     if sums:
         verify += ["", "The binaries and packages:", "", "```", *sums, "```"]
     parts.append("\n".join(verify))
@@ -1119,54 +1241,50 @@ def _assemble(args, stack: contextlib.ExitStack) -> int:
         raise
 
 
-def _signing_key(data: bytes, sig: Path, signer: str | None) -> str:
-    """The public key *sig* verifies with (TRUSTED_KEYS, or the dry run's)."""
-    if not sig.is_file():
-        return ""
-    for key in (*([signer] if signer else []), *SU.TRUSTED_KEYS):
-        try:
-            SU.verify_signature(data, sig.read_bytes(), keys=(key,))
-        except SU.SignatureError:
-            continue
-        return key
-    return ""
-
-
 def _write_and_check(args, plan: Plan, out: Path, assets: Path,
                      notes_inputs: tuple[str, str]) -> int:
     version = plan.version
     for item in plan.items:
         copy_item(item, assets / item.name)
-    sums = assets / SU.SUMS_NAME
-    sums.write_text(sums_text(version, plan.items), encoding="utf-8")
-    first, then = upload_order(plan.items)
 
-    signer = None
+    # The key first: the notes name it, and the notes are an asset with a
+    # line in SHA256SUMS (RELEASE-NOTES-<version>.md, as releases 0.10.31 to
+    # 0.13.157 carried them), so they are written before SHA256SUMS is signed.
+    key = signer = None
     if args.key is not None:
         import sign_release
 
+        try:
+            key = sign_release.load_private_key(sign_release.read_key_file(args.key))
+        except sign_release.Refused as exc:
+            raise Refused(f"signing: {exc}") from None
+        signer = sign_release.public_key_b64(key)
+    section, native = notes_inputs
+    notes = release_notes(version, plan, section, native, signer or "")
+    if len(notes) > MAX_NOTES:
+        raise Refused(f"the release notes have {len(notes)} characters; GitHub takes 125000 "
+                      f"(this script at most {MAX_NOTES})")
+    (out / NOTES).write_text(notes, encoding="utf-8")
+    notes_item = Item(notes_asset_name(version), "notes", NOTES, out / NOTES)
+    plan.add(notes_item)
+    copy_item(notes_item, assets / notes_item.name)
+
+    sums = assets / SU.SUMS_NAME
+    sums.write_text(sums_text(version, plan.items), encoding="utf-8")
+    first, then = upload_order(plan.items)
+    if key is not None:
         kwargs = {"allow_unpinned": args.allow_unpinned, "allow_new_key": args.allow_new_key,
-                  "version": version}
+                  "version": version, "private_key": key}
         if args.packs_issue is not None:
             kwargs["packs_issue"] = args.packs_issue
         try:
             sign_release.sign_release(args.key, sums, **kwargs)
         except sign_release.Refused as exc:
             raise Refused(f"signing: {exc}") from None
-        signer = sign_release.public_key_b64(
-            sign_release.load_private_key(sign_release.read_key_file(args.key))) \
-            if args.allow_unpinned else None
     if not (assets / SU.SIG_NAME).exists():
         first.remove(SU.SIG_NAME)
     (out / "upload-1.txt").write_text("".join(f"assets/{n}\n" for n in first), encoding="utf-8")
     (out / "upload-2.txt").write_text("".join(f"assets/{n}\n" for n in then), encoding="utf-8")
-    section, native = notes_inputs
-    notes = release_notes(version, plan, section, native,
-                          _signing_key(sums.read_bytes(), assets / SU.SIG_NAME, signer))
-    if len(notes) > MAX_NOTES:
-        raise Refused(f"the release notes have {len(notes)} characters; GitHub takes 125000 "
-                      f"(this script at most {MAX_NOTES})")
-    (out / NOTES).write_text(notes, encoding="utf-8")
 
     total = sum(i.size for i in plan.items)
     packs_count = sum(1 for i in plan.items if i.kind == "pack")

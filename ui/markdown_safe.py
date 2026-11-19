@@ -8,6 +8,8 @@ Its own small module so a program exported without axross's updater
 
 from __future__ import annotations
 
+import re
+
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QTextCursor, QTextDocument
 
@@ -57,13 +59,122 @@ NOTES_MARKDOWN = _markdown_features(QTextDocument.MarkdownFeature.MarkdownDialec
                                     QTextDocument.MarkdownFeature.MarkdownNoHTML)
 
 
-#: Marks each backslash :func:`_escape_html` adds (WORD JOINER: invisible,
-#: no Markdown syntax), so :func:`_unmark` finds exactly those again.
-_MARK = "\u2060"
+#: Marks each backslash :func:`_escape_html` adds - a character of Unicode's
+#: private use area, no Markdown syntax, taken out of the text first: so
+#: :func:`_unmark` finds exactly those again. (It was WORD JOINER, which a
+#: text may hold: the author's own ones went too.)
+_MARK = "\ue05c"
+#: A character beyond the BMP: two UTF-16 units (a QTextDocument position each).
+_WIDE = re.compile("[\U00010000-\U0010ffff]")
+
+
+#: A CommonMark autolink: ``<scheme:…>`` (a scheme of 2-32 characters, no
+#: space, ``<`` or ``>`` in it) and ``<user@host>``.
+_AUTOLINK = re.compile(r"<([A-Za-z][A-Za-z0-9+.\-]{1,31}:[^<>\x00-\x20]*)>"
+                       r"|<([A-Za-z0-9.!#$%&'*+/=?^_`{|}~\-]+@[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}"
+                       r"[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?)*)>")
+_PUNCTUATION = frozenset("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
+_FENCE = re.compile(r" {0,3}(`{3,}|~{3,})")
+
+
+def _as_link(match: re.Match) -> str:
+    """An autolink as an inline link: its text with every punctuation
+    character escaped (no emphasis, no bracket comes out of it), its
+    address with the characters that would end a destination encoded."""
+    url, mail = match.group(1), match.group(2)
+    shown = url or mail
+    target = url if url else f"mailto:{mail}"
+    text = "".join("\\" + c if c in _PUNCTUATION else c for c in shown)
+    target = target.replace("\\", "%5C").replace("(", "%28").replace(")", "%29")
+    return f"[{text}]({target})"
+
+
+def _autolinks(text: str) -> str:
+    """*text* with its autolinks (``<https://…>``) written as inline links,
+    which survive :func:`_escape_html` (it takes every ``<``, autolinks
+    too: Qt's parser showed them as text). Code - fenced (also in a quote
+    or a list), indented, in backticks - is left as written, and so is a
+    ``\\<`` escaped. Linear in the length of the text."""
+    if "<" not in text:
+        return text
+    out: list[str] = []
+    fence = ""
+    for line in text.splitlines(keepends=True):
+        body = _CONTAINERS.match(line)
+        rest = line[body.end():] if body else line
+        opener = _FENCE.match(rest)
+        if fence:
+            if opener and opener.group(1)[0] == fence[0] and len(opener.group(1)) >= len(fence) \
+                    and not rest.strip().strip(fence[0]):
+                fence = ""
+            out.append(line)
+            continue
+        if opener:
+            fence = opener.group(1)
+            out.append(line)
+            continue
+        if line.startswith(("    ", "\t")) or "<" not in line:
+            out.append(line)  # (indented code, or nothing to do)
+            continue
+        out.append(_autolinks_in_line(line))
+    return "".join(out)
+
+
+#: What a line of a quote or a list item starts with (``> ``, ``- ``, ``1. ``).
+_CONTAINERS = re.compile(r"(?:[ \t]*(?:>|[-+*]|\d{1,9}[.)])(?=[ \t]|$))*[ \t]*")
+_BACKTICKS = re.compile(r"`+")
+#: Schemes markdown-it's validateLink refuses: such an autolink stays text.
+_UNSAFE_SCHEMES = frozenset({"javascript", "vbscript", "file", "data"})
+
+
+def _autolinks_in_line(line: str) -> str:
+    """One line: autolinks outside code spans as inline links. A code span
+    runs from a run of backticks to the next run of the same length (the
+    runs found once, so a line full of unmatched ones stays linear)."""
+    runs: dict[int, list[int]] = {}
+    for m in _BACKTICKS.finditer(line):
+        runs.setdefault(m.end() - m.start(), []).append(m.start())
+    taken: dict[int, int] = {length: 0 for length in runs}
+    out: list[str] = []
+    i = 0
+    backslashes = 0
+    while i < len(line):
+        ch = line[i]
+        if ch == "`":
+            m = _BACKTICKS.match(line, i)
+            length = m.end() - m.start()
+            starts = runs[length]
+            # the next run of this length after this one closes the span
+            k = taken[length]
+            while k < len(starts) and starts[k] <= i:
+                k += 1
+            taken[length] = k
+            end = starts[k] + length if k < len(starts) else m.end()
+            if k < len(starts):
+                taken[length] = k + 1
+            out.append(line[i:end])
+            i = end
+            backslashes = 0
+            continue
+        if ch == "<" and backslashes % 2 == 0:
+            match = _AUTOLINK.match(line, i)
+            if match and match.group(1) and \
+                    match.group(1).split(":", 1)[0].lower() in _UNSAFE_SCHEMES:
+                match = None  # (as markdown-it's validateLink: left as text)
+            if match:
+                out.append(_as_link(match))
+                i = match.end()
+                backslashes = 0
+                continue
+        out.append(ch)
+        backslashes = backslashes + 1 if ch == "\\" else 0
+        i += 1
+    return "".join(out)
 
 
 def _escape_html(text: str) -> str:
-    """*text* with every ``<`` as a Markdown backslash escape.
+    """*text* with every ``<`` as a Markdown backslash escape (its autolinks
+    first written as inline links: :func:`_autolinks`).
 
     Raw HTML (inline or block) and autolinks all begin with ``<``; ``\\<``
     is a literal ``<`` in every dialect, with HTML enabled or not. A
@@ -71,6 +182,7 @@ def _escape_html(text: str) -> str:
     after an even run the added backslash escapes the ``<``, not one of
     them. In a code span or block a backslash is literal - there the
     added one is taken out again after rendering (:func:`_unmark`)."""
+    text = _autolinks(text.replace(_MARK, ""))
     out: list[str] = []
     backslashes = 0
     for ch in text:
@@ -81,25 +193,64 @@ def _escape_html(text: str) -> str:
     return "".join(out)
 
 
-def _unmark(document: QTextDocument) -> None:
-    """Remove what :func:`_escape_html` added from the rendered document:
-    the mark, and the backslash after it where it stayed (code). Only
-    characters go; the HTML question was settled by the parser."""
+def _unmark(document: QTextDocument, since: int = 0) -> None:
+    """Remove what :func:`_escape_html` added from the rendered document
+    (from position *since* on: a part of a page as it comes in): the mark,
+    and the backslash after it where it stayed (code). Only characters go;
+    the HTML question was settled by the parser."""
     # The marks are found in the document's raw text (a position there is
     # a position in the document) and taken out from the last one back, so
     # the places before stay where they are: QTextDocument.find() from
     # each mark again took 2.4 s for 20,000 "<" (quadratic).
     raw = document.toRawText()
+    marks = [m.start() for m in re.finditer(_MARK, raw)]
+    if not marks:
+        return
+    # A position in the document counts UTF-16 units, a Python index
+    # characters: each character beyond the BMP (an emoji) before a mark
+    # moves it one further (the wrong characters went, after an emoji).
+    wide = [m.start() for m in _WIDE.finditer(raw)]
     cursor = QTextCursor(document)
     cursor.beginEditBlock()
-    start = raw.rfind(_MARK)
-    while start >= 0:
+    before = len(wide)
+    for start in reversed(marks):
+        while before and wide[before - 1] > start:
+            before -= 1
         added = raw[start + 1:start + 3] == "\\<"
-        cursor.setPosition(start)
-        cursor.setPosition(start + (2 if added else 1), QTextCursor.MoveMode.KeepAnchor)
+        position = start + before
+        if position < since:
+            break  # (an earlier part's: unmarked with it)
+        cursor.setPosition(position)
+        cursor.setPosition(position + (2 if added else 1), QTextCursor.MoveMode.KeepAnchor)
         cursor.removeSelectedText()
-        start = raw.rfind(_MARK, 0, start)
+    _unmark_targets(document, cursor, since)
     cursor.endEditBlock()
+
+
+def _unmark_targets(document: QTextDocument, cursor: QTextCursor, since: int = 0) -> None:
+    """The marks out of what is no text of the page: a link's target and an
+    image's name ("[q](https://x.com/?a=<b>)" opened "?a=<mark><b>"). A walk
+    over the page's pieces; only those holding a mark are changed."""
+    changes = []
+    block = document.findBlock(since)
+    while block.isValid():
+        pieces = block.begin()
+        while not pieces.atEnd():
+            piece = pieces.fragment()
+            fmt = piece.charFormat()
+            if fmt.isImageFormat() and _MARK in fmt.toImageFormat().name():
+                image = fmt.toImageFormat()
+                image.setName(image.name().replace(_MARK, ""))
+                changes.append((piece.position(), piece.length(), image))
+            elif fmt.isAnchor() and _MARK in fmt.anchorHref():
+                fmt.setAnchorHref(fmt.anchorHref().replace(_MARK, ""))
+                changes.append((piece.position(), piece.length(), fmt))
+            pieces += 1
+        block = block.next()
+    for position, length, fmt in changes:
+        cursor.setPosition(position)
+        cursor.setPosition(position + length, QTextCursor.MoveMode.KeepAnchor)
+        cursor.setCharFormat(fmt)
 
 
 def _visible_controls(text: str) -> str:
@@ -112,33 +263,52 @@ def _visible_controls(text: str) -> str:
                    else c for c in text)
 
 
-def open_link_question(href: str, text: str) -> str:
+#: Characters of an address the question shows (a longer one is cut, its
+#: length said), and of each of its lines (a long one made the box as wide
+#: as the screen and more).
+ADDRESS_SHOWN = 1000
+LINE_SHOWN = 80
+
+
+def _lines(text: str) -> str:
+    """*text* in lines of at most LINE_SHOWN characters."""
+    return "\n".join(text[i:i + LINE_SHOWN] for i in range(0, len(text), LINE_SHOWN)) or text
+
+
+def open_link_question(href: str, text: str, where: str = "notes") -> str:
     """The body of the Open Link question: the address fully encoded (an
     IDN host as punycode, ``xn--…``, never its look-alike letters; bidi
-    controls of the path percent-encoded), its host on a line of its own,
-    and the link's text - with controls made visible - when it differs."""
+    controls of the path percent-encoded; a long one cut, its length said,
+    in lines), its host on a line of its own, and the link's text - with
+    controls made visible - when it differs (*where* the link is: the
+    release "notes" or a "document")."""
     url = QUrl(href)
     shown = bytes(url.toEncoded()).decode("ascii", "replace") if url.isValid() else href
     shown = _visible_controls(shown)
-    body = tr("Open this address in your web browser?") + "\n\n" + shown
+    if len(shown) > ADDRESS_SHOWN:
+        shown = shown[:ADDRESS_SHOWN] + "… " + tr("({count} characters)").format(count=len(shown))
+    question = (tr("Write to this address with your mail program?") if url.scheme().lower() == "mailto"
+                else tr("Open this address in your web browser?"))
+    body = question + "\n\n" + _lines(shown)
     host = url.host(QUrl.ComponentFormattingOption.FullyEncoded)
     if host:
-        body += "\n\n" + tr("Host: {host}").format(host=_visible_controls(host))
+        body += "\n\n" + tr("Host: {host}").format(host=_lines(_visible_controls(host)))
     text = (text or "").strip()
     if text and text != href and text != shown:
-        body += "\n\n" + tr("The link in the notes reads: {text}").format(
-            text=_visible_controls(text[:300]))
+        reads = (tr("The link in the document reads: {text}") if where == "document"
+                 else tr("The link in the notes reads: {text}"))
+        body += "\n\n" + _lines(reads.format(text=_visible_controls(text[:300])))
     return body
 
 
-def ask_open_link(parent, href: str, text: str) -> bool:
-    """Ask before a link of the release notes opens in the browser: the
-    notes come from the release page, and a link's text can name another
-    address than it opens - the real one is shown (:func:`open_link_question`),
-    and the text too when it differs."""
+def ask_open_link(parent, href: str, text: str, where: str = "notes") -> bool:
+    """Ask before a link opens in the browser (the release notes', a
+    Markdown document's): a link's text can name another address than it
+    opens - the real one is shown (:func:`open_link_question`), and the text
+    too when it differs."""
     from PyQt6.QtWidgets import QMessageBox
 
-    body = open_link_question(href, text)
+    body = open_link_question(href, text, where)
     box = QMessageBox(QMessageBox.Icon.Question, tr("Open Link"), body,
                       QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Cancel, parent)
     box.setTextFormat(Qt.TextFormat.PlainText)

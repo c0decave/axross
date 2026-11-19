@@ -31,13 +31,13 @@ from __future__ import annotations
 
 import ipaddress
 import logging
-import select
 import socket
 import threading
 import time
 from typing import Iterable
 
 from core.agent_net import parse_host
+from core.posix_compat import wait_io
 
 log = logging.getLogger(__name__)
 
@@ -251,7 +251,7 @@ class EgressProxy:
         a.settimeout(None)
         pair = {a: b, b: a}
         while not self._closed.is_set():
-            readable, _, _ = select.select(list(pair), [], [], IDLE_TIMEOUT)
+            readable, _ = wait_io(list(pair), timeout=IDLE_TIMEOUT)
             if not readable:
                 return  # idle
             for sock in readable:

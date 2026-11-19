@@ -38,6 +38,9 @@ CONTRACT = {  # docs/PACKAGING.md, "Asset names"
     "axross-full", "axross-slim", "axross-base",
     "axross-full-glibc2.36", "axross-slim-glibc2.36", "axross-base-glibc2.36",
     "axross-slim-macos-arm64", "axross-slim-windows-x64.exe",
+    # from 0.15.179: axross-full for macOS and Windows, the AppImages
+    "axross-full-macos-arm64", "axross-full-windows-x64.exe",
+    "axross-full-x86_64.AppImage", "axross-slim-x86_64.AppImage", "axross-base-x86_64.AppImage",
 }
 
 
@@ -46,6 +49,12 @@ CONTRACT = {  # docs/PACKAGING.md, "Asset names"
 
 def elf(tag: str) -> bytes:
     return b"\x7fELF\x02\x01\x01" + b"\0" * 9 + b"\x02\x00\x3e\x00" + tag.encode() * 40
+
+
+def appimage(tag: str) -> bytes:
+    """A type-2 AppImage: an x86-64 ELF with "AI\\x02" at offset 8."""
+    return b"\x7fELF\x02\x01\x01" + b"\0" + b"AI\x02" + b"\0" * 5 + b"\x02\x00\x3e\x00" \
+        + tag.encode() * 40
 
 
 def macho(tag: str) -> bytes:
@@ -62,7 +71,7 @@ def sums_of(folder: Path, names) -> None:
 
 
 def make_dist(root: Path, version: str = VERSION, *, variants=SU.VARIANTS, python=True,
-              packs=True, blobs=2, pypi=True) -> Path:
+              packs=True, blobs=2, pypi=True, appimages=True) -> Path:
     """dist/<version>/ as scripts/build_dist.sh writes it."""
     dist = root / "dist" / version
     dist.mkdir(parents=True)
@@ -74,6 +83,13 @@ def make_dist(root: Path, version: str = VERSION, *, variants=SU.VARIANTS, pytho
             (folder / name).write_bytes(elf(name + variant))
             names.append(name)
         (folder / f"BUILD-PACKAGES-{variant}.txt").write_text("glibc 2.x\n")
+        sums_of(folder, names)
+    if appimages and "glibc-2.34" in variants:
+        folder = dist / "appimage"
+        folder.mkdir()
+        names = [SU.appimage_asset_name(f) for f in SU.FLAVORS]
+        for name in names:
+            (folder / name).write_bytes(appimage(name))
         sums_of(folder, names)
     if python:
         wheel, sdist = f"axross-{version}-py3-none-any.whl", f"axross-{version}.tar.gz"
@@ -132,25 +148,32 @@ def make_packs(folder: Path, version: str = VERSION, *, blobs=2, pypi=True) -> P
     return folder
 
 
-def make_ci(root: Path, *, zipped=False, flavors=("slim", "full")) -> Path:
+def dmg(tag: str) -> bytes:
+    """A UDIF disk image: its 512-byte "koly" trailer at the end."""
+    return tag.encode() * 40 + b"koly" + b"\0" * 508
+
+
+def make_ci(root: Path, *, zipped=False, flavors=("slim", "full"), dmgs=True) -> Path:
     """The bundle job's artifacts, as gh run download (folders) or the web
-    page (.zip) hands them out."""
+    page (.zip) hands them out (the macOS ones with their disk image)."""
     ci = root / "ci"
     ci.mkdir()
     for runner_os, arch, ext, make in (("macOS", "ARM64", "", macho), ("Windows", "X64", ".exe", pe)):
         for flavor in flavors:
             artifact = f"axross-{flavor}-{runner_os}-{arch}"
-            binary = f"axross-{flavor}{ext}"
-            data = make(artifact)
-            check = f"{hashlib.sha256(data).hexdigest()}  {binary}\n"
+            files = {f"axross-{flavor}{ext}": make(artifact)}
+            if dmgs and runner_os == "macOS":
+                files[f"axross-{flavor}-macos-arm64.dmg"] = dmg(artifact)
+            for name, data in list(files.items()):
+                files[name + ".sha256"] = f"{hashlib.sha256(data).hexdigest()}  {name}\n".encode()
             if zipped:
                 with zipfile.ZipFile(ci / f"{artifact}.zip", "w") as zf:
-                    zf.writestr(binary, data)
-                    zf.writestr(binary + ".sha256", check)
+                    for name, data in files.items():
+                        zf.writestr(name, data)
             else:
                 (ci / artifact).mkdir()
-                (ci / artifact / binary).write_bytes(data)
-                (ci / artifact / (binary + ".sha256")).write_text(check)
+                for name, data in files.items():
+                    (ci / artifact / name).write_bytes(data)
     return ci
 
 
@@ -208,8 +231,7 @@ def test_happy_everything_assembled_signed_and_checked(tmp_path, field_key, caps
                "--require-all") == 0
     names = assets_of(out)
     assert CONTRACT <= names
-    assert {"axross-full-macos-arm64", "axross-full-windows-x64.exe",  # download only
-            "axross-media-player", "axross-system-info-glibc2.36",
+    assert {"axross-media-player", "axross-system-info-glibc2.36",
             f"axross-{VERSION}-py3-none-any.whl", f"axross-{VERSION}.tar.gz",
             f"axross_media_player-{VERSION}-py3-none-any.whl",
             f"packs-{VERSION}.json", "SHA256SUMS", "SHA256SUMS.sig"} <= names
@@ -228,8 +250,10 @@ def test_happy_everything_assembled_signed_and_checked(tmp_path, field_key, caps
         assert (out / "assets" / name).stat().st_mode & 0o777 == 0o755
     assert (out / "assets" / f"packs-{VERSION}.json").stat().st_mode & 0o777 == 0o644
     report = capsys.readouterr().out
-    assert "XX" not in report and "--  " not in report
+    assert "  XX  " not in report and "--  " not in report
     assert "axross-base glibc-2.36" in report and "no variant file: before 0.15.166" in report
+    assert "linux x86_64 axross-base AppImage" in report
+    assert "darwin arm64 axross-full" in report and "-> axross-full-windows-x64.exe" in report
 
 
 def test_happy_the_upload_lists_put_the_updaters_assets_first(tmp_path, field_key):
@@ -306,7 +330,9 @@ def test_edge_only_linux_says_what_is_missing(tmp_path, capsys):
     assert run("--version", VERSION, "--dist", dist, "--out", out) == 0
     report = capsys.readouterr().out
     assert assets_of(out) == {"axross-full", "axross-slim", "axross-base", "axross-media-player",
-                              "axross-system-info", "SHA256SUMS"}
+                              "axross-system-info", "SHA256SUMS", "axross-full-x86_64.AppImage",
+                              "axross-slim-x86_64.AppImage", "axross-base-x86_64.AppImage",
+                              f"RELEASE-NOTES-{VERSION}.md"}
     for missing in ("glibc-2.36/", "the macOS and Windows binaries", f"packs-{VERSION}.json",
                     f"axross-{VERSION}-py3-none-any.whl", "not signed",
                     "darwin arm64 axross-slim: no axross-slim-macos-arm64",
@@ -421,7 +447,7 @@ def test_happy_a_dry_run_with_a_throwaway_key(tmp_path, capsys):
     assert run("--version", VERSION, "--dist", make_dist(tmp_path), "--ci", make_ci(tmp_path),
                "--out", out, "--key", key_file, "--allow-unpinned") == 0
     report = capsys.readouterr().out
-    assert "the signing key alone" in report and "XX" not in report
+    assert "the signing key alone" in report and "  XX  " not in report
 
 
 def test_edge_asset_names_are_the_updaters(tmp_path):
@@ -946,3 +972,248 @@ def test_happy_tag_commit_reads_the_repositorys_tag(tmp_path, monkeypatch):
     monkeypatch.setattr(AR, "ROOT", repo)
     assert AR.tag_commit(VERSION) == head  # the annotated tag's commit, not the tag object
     assert AR.tag_commit("9.9.10") is None
+
+
+# -- 0.15.179: the AppImages and axross-full for macOS and Windows -----------------------
+
+
+def test_sad_require_all_refuses_a_release_without_the_appimages(tmp_path, capsys):
+    out = tmp_path / "rel"
+    assert run("--version", VERSION, "--dist", make_dist(tmp_path, appimages=False),
+               "--ci", make_ci(tmp_path), "--out", out, "--require-all") == 1
+    assert "appimage/: the AppImages" in capsys.readouterr().err
+    assert not (out / "assets").exists()
+
+
+def test_sad_require_all_refuses_a_release_without_the_desktop_full_builds(tmp_path, capsys):
+    out = tmp_path / "rel"
+    assert run("--version", VERSION, "--dist", make_dist(tmp_path),
+               "--ci", make_ci(tmp_path, flavors=("slim",)), "--out", out, "--require-all") == 1
+    err = capsys.readouterr().err
+    assert "axross-full-macOS-ARM64 (the CI artifact)" in err
+    assert "axross-full-Windows-X64 (the CI artifact)" in err
+
+
+def test_sad_a_plain_elf_under_an_appimage_name_is_refused(tmp_path, capsys):
+    dist = make_dist(tmp_path)
+    folder = dist / "appimage"
+    (folder / "axross-slim-x86_64.AppImage").write_bytes(elf("not an AppImage"))
+    sums_of(folder, [SU.appimage_asset_name(f) for f in SU.FLAVORS])
+    assert run("--version", VERSION, "--dist", dist, "--out", tmp_path / "rel") == 1
+    assert "is not an x86-64 AppImage (type 2)" in capsys.readouterr().err
+
+
+def test_sad_an_appimage_that_differs_from_its_checksum_is_refused(tmp_path, capsys):
+    dist = make_dist(tmp_path)
+    (dist / "appimage" / "axross-full-x86_64.AppImage").write_bytes(appimage("swapped"))
+    assert run("--version", VERSION, "--dist", dist, "--out", tmp_path / "rel") == 1
+    assert "appimage/axross-full-x86_64.AppImage differs from the checksum" in \
+        capsys.readouterr().err
+
+
+def test_edge_no_updater_takes_an_appimage_for_the_plain_binary():
+    """The installed updaters pick their asset by its exact name: an
+    AppImage's name is none of them, and every one of them sorts with the
+    plain binaries into the first 100."""
+    appimages = {SU.appimage_asset_name(f) for f in SU.FLAVORS}
+    plain = {SU.asset_name(p, m, f, v) for p, m in (("linux", "x86_64"), ("darwin", "arm64"),
+                                                     ("win32", "amd64"))
+             for f in SU.FLAVORS for v in SU.VARIANTS} - {""}
+    assert not appimages & plain
+    assert not appimages & set(AR.FIELD_UPDATER_ASSETS)
+    assert appimages <= AR.updater_assets(VERSION)
+
+
+def test_happy_e2e_a_binary_inside_an_appimage_updates_its_image(tmp_path, field_key,
+                                                                 monkeypatch):
+    from axross._version import __version__
+
+    _key, key_file = field_key
+    version = newer_than(__version__)
+    dist = make_dist(tmp_path, version, packs=False)
+    out = tmp_path / "rel"
+    assert run("--version", version, "--dist", dist, "--out", out, "--key", key_file) == 0
+
+    class Assembled(FakeRelease):
+        def all_files(self):
+            return dict(self.files)
+
+    release = Assembled(version, {p.name: p.read_bytes() for p in (out / "assets").iterdir()})
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    image = tmp_path / "Apps" / "axross-slim-x86_64.AppImage"
+    image.parent.mkdir()
+    image.write_bytes(b"old image")
+    image.chmod(0o755)
+    exe = tmp_path / ".mount_axross" / "usr" / "bin" / "axross"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"old")
+    bundle = tmp_path / "_MEI1"
+    bundle.joinpath(*SU.FLAVOR_PATH).parent.mkdir(parents=True)
+    bundle.joinpath(*SU.FLAVOR_PATH).write_text("slim\n")
+    inst = SU.detect_install(frozen=True, executable=str(exe), bundle_dir=str(bundle),
+                             platform="linux", machine="x86_64",
+                             environ={"APPIMAGE": str(image), "APPDIR": str(exe.parents[2])})
+    assert inst.asset == "axross-slim-x86_64.AppImage"
+    with FakeGitHub(release) as server:
+        opener = SU.build_opener(handlers=[FakeHttpsHandler(server.port)])
+        found = SU.check(opener=opener).release
+        assert SU.update(found, inst, opener=opener).replaced
+    assert image.read_bytes() == (dist / "appimage" / "axross-slim-x86_64.AppImage").read_bytes()
+    assert exe.read_bytes() == b"old"
+
+
+# -- 0.15.179: the macOS disk images ----------------------------------------------------
+
+DMGS = {"axross-slim-macos-arm64.dmg", "axross-full-macos-arm64.dmg"}
+
+
+def test_happy_the_disk_images_are_assets_with_their_lines(tmp_path, field_key, capsys):
+    _key, key_file = field_key
+    out = tmp_path / "rel"
+    assert run("--version", VERSION, "--dist", make_dist(tmp_path), "--ci", make_ci(tmp_path),
+               "--out", out, "--key", key_file, "--require-all") == 0
+    assert DMGS <= assets_of(out)
+    sums = SU.parse_sums((out / "assets" / "SHA256SUMS").read_text())
+    for name in DMGS:
+        data = (out / "assets" / name).read_bytes()
+        assert sums[name] == hashlib.sha256(data).hexdigest()
+        assert (out / "assets" / name).stat().st_mode & 0o777 == 0o644
+    assert "macOS disk images with axross.app" in (out / "notes.md").read_text()
+    assert not any(n.endswith(".dmg.sha256") for n in assets_of(out))
+    assert "  XX  " not in capsys.readouterr().out
+
+
+def test_happy_zipped_artifacts_carry_the_disk_images_too(tmp_path):
+    out = tmp_path / "rel"
+    assert run("--version", VERSION, "--dist", make_dist(tmp_path), "--ci",
+               make_ci(tmp_path, zipped=True), "--out", out, "--require-all") == 0
+    assert DMGS <= assets_of(out)
+
+
+def test_edge_a_missing_disk_image_is_named_not_refused(tmp_path, capsys):
+    """The DMG step may fail without failing the bundle job: the release
+    goes out without the image, and the summary says so."""
+    out = tmp_path / "rel"
+    assert run("--version", VERSION, "--dist", make_dist(tmp_path),
+               "--ci", make_ci(tmp_path, dmgs=False), "--out", out, "--require-all") == 0
+    assert not DMGS & assets_of(out)
+    report = capsys.readouterr().out
+    assert "no axross-full-macos-arm64.dmg (optional" in report
+
+
+def test_sad_a_disk_image_that_is_none_is_refused(tmp_path, capsys):
+    ci = make_ci(tmp_path)
+    folder = ci / "axross-full-macOS-ARM64"
+    data = b"<html>an error page</html>" * 40
+    (folder / "axross-full-macos-arm64.dmg").write_bytes(data)
+    (folder / "axross-full-macos-arm64.dmg.sha256").write_text(
+        f"{hashlib.sha256(data).hexdigest()}  axross-full-macos-arm64.dmg\n")
+    assert run("--version", VERSION, "--dist", make_dist(tmp_path), "--ci", ci,
+               "--out", tmp_path / "rel") == 1
+    assert "is not a macOS disk image (UDIF)" in capsys.readouterr().err
+
+
+def test_sad_a_disk_image_that_differs_from_its_checksum_is_refused(tmp_path, capsys):
+    ci = make_ci(tmp_path)
+    (ci / "axross-slim-macOS-ARM64" / "axross-slim-macos-arm64.dmg").write_bytes(dmg("swapped"))
+    assert run("--version", VERSION, "--dist", make_dist(tmp_path), "--ci", ci,
+               "--out", tmp_path / "rel") == 1
+    assert "axross-slim-macos-arm64.dmg differs from the checksum" in capsys.readouterr().err
+
+
+def test_edge_no_updater_takes_a_disk_image():
+    assert not DMGS & AR.updater_assets(VERSION)
+    plain = {SU.asset_name("darwin", "arm64", f) for f in SU.FLAVORS} - {""}
+    assert plain == {"axross-slim-macos-arm64", "axross-full-macos-arm64"}
+    assert not DMGS & plain
+
+
+@pytest.mark.parametrize("flavor", ["slim", "full"])
+def test_sad_a_binary_inside_axross_app_never_replaces_itself(tmp_path, flavor):
+    """Replacing Contents/MacOS/axross would break the app's signature seal:
+    inside axross.app the update points to the release page."""
+    exe = tmp_path / "Applications" / "axross.app" / "Contents" / "MacOS" / "axross"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"mach-o")
+    bundle = tmp_path / "_MEI5"
+    bundle.joinpath(*SU.FLAVOR_PATH).parent.mkdir(parents=True)
+    bundle.joinpath(*SU.FLAVOR_PATH).write_text(flavor + "\n")
+    inst = SU.detect_install(frozen=True, executable=str(exe), bundle_dir=str(bundle),
+                             platform="darwin", machine="arm64", environ={})
+    assert inst.asset == "" and not inst.can_download and inst.app_bundle
+    assert "disk image from the release page" in inst.why_not()
+    plain = tmp_path / "bin" / f"axross-{flavor}-macos-arm64"
+    plain.parent.mkdir()
+    plain.write_bytes(b"mach-o")
+    assert SU.detect_install(frozen=True, executable=str(plain), bundle_dir=str(bundle),
+                             platform="darwin", machine="arm64",
+                             environ={}).asset == f"axross-{flavor}-macos-arm64"
+
+
+def test_edge_the_bundle_job_makes_the_disk_images_without_risking_the_binaries():
+    """The DMG step runs on macOS before the checksums (so the image gets
+    its .sha256 and is uploaded with the artifact) and may fail without
+    failing the job: the one-file binary is uploaded either way."""
+    import shutil
+    import subprocess
+
+    yaml = pytest.importorskip("yaml")
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "cross-platform.yml").read_text())
+    steps = workflow["jobs"]["bundle"]["steps"]
+    names = [s.get("name", "") for s in steps]
+    dmg_step = next(s for s in steps if "disk image" in s.get("name", ""))
+    assert dmg_step["if"] == "runner.os == 'macOS'" and dmg_step["continue-on-error"] is True
+    assert "scripts/build_macos_dmg.sh" in dmg_step["run"]
+    assert "axross-${{ matrix.flavor }}-macos-arm64.dmg" in dmg_step["run"]
+    assert names.index(dmg_step["name"]) < names.index("Checksum")
+    script = ROOT / "scripts" / "build_macos_dmg.sh"
+    text = script.read_text()
+    assert "-format UDZO" in text and 'ln -s /Applications' in text
+    assert "io.github.c0decave.axross" in text and "codesign --force --sign -" in text
+    if shutil.which("bash"):
+        assert subprocess.run(["bash", "-n", str(script)], check=False).returncode == 0
+
+
+
+# -- 0.15.179: the notes as an asset, as releases 0.10.31 to 0.13.157 carried them ------
+
+
+def test_happy_the_notes_are_an_asset_with_their_line_and_signed(tmp_path, field_key):
+    _key, key_file = field_key
+    out = tmp_path / "rel"
+    assert run("--version", VERSION, "--dist", make_dist(tmp_path), "--ci", make_ci(tmp_path),
+               "--out", out, "--key", key_file, "--require-all") == 0
+    asset = out / "assets" / f"RELEASE-NOTES-{VERSION}.md"
+    assert asset.read_text() == (out / "notes.md").read_text()
+    assert asset.stat().st_mode & 0o777 == 0o644
+    data = (out / "assets" / "SHA256SUMS").read_bytes()
+    assert SU.parse_sums(data.decode())[asset.name] == hashlib.sha256(asset.read_bytes()).hexdigest()
+    SU.verify_signature(data, (out / "assets" / "SHA256SUMS.sig").read_bytes(),
+                        keys=sign_release.FIELD_KEYS)
+    # the notes name the key that signed
+    assert sign_release.FIELD_KEYS[0] in asset.read_text()
+    assert f"assets/{asset.name}" in (out / "upload-1.txt").read_text().split()
+    # and a re-check of the folder takes it like any asset
+    assert run("--version", VERSION, "--check", out, "--require-all") == 0
+
+
+def test_happy_unsigned_notes_say_so(tmp_path):
+    out = tmp_path / "rel"
+    assert run("--version", VERSION, "--dist", make_dist(tmp_path), "--out", out) == 0
+    assert "This release is not signed" in (out / "assets" / f"RELEASE-NOTES-{VERSION}.md").read_text()
+
+
+def test_edge_the_notes_asset_sorts_into_the_first_100_and_needs_nothing_after_it():
+    names = sorted(["SHA256SUMS", "SHA256SUMS.sig", f"RELEASE-NOTES-{VERSION}.md",
+                    f"packs-{VERSION}.json", "axross-full"], key=lambda n: (n.lower(), n))
+    assert names.index(f"RELEASE-NOTES-{VERSION}.md") < names.index("SHA256SUMS")
+    assert f"RELEASE-NOTES-{VERSION}.md" not in AR.updater_assets(VERSION)
+
+
+def test_sad_a_refused_signature_leaves_no_notes_and_no_assets(tmp_path, capsys):
+    out = tmp_path / "rel"
+    other = write_key(tmp_path / "other.pem", Ed25519PrivateKey.generate())
+    assert run("--version", VERSION, "--dist", make_dist(tmp_path), "--out", out,
+               "--key", other) == 1
+    assert not (out / "notes.md").exists() and not (out / "assets").exists()
+    assert "not pinned" in capsys.readouterr().err

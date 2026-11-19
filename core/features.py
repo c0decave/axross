@@ -45,7 +45,7 @@ EXTRAS: dict[str, tuple[str, ...]] = {
     "winrm": ("pywinrm>=0.4",),
     "wmi": ("impacket>=0.11",),
     "exchange": ("exchangelib>=5.0",),
-    "adb": ("adb-shell>=0.4",),
+    "adb": ("adb-shell[usb]>=0.4",),
     "archive": ("py7zr>=1.1.3", "rarfile>=4.0", "backports.zstd>=1.0; python_version < '3.14'"),
     "tftp": ("tftpy>=0.8",),
     "postgres": ("psycopg[binary]>=3.1",),

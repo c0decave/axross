@@ -176,6 +176,10 @@ class LdapFsSession(SessionLifecycle):
                 password=password or None,
                 auto_bind=True,
                 receive_timeout=int(self._timeout),
+                # ldap3 follows a referral to ANY host it names and binds
+                # there with this DN and password - directly (around the
+                # proxy) and over plain ldap:// even from an LDAPS session.
+                auto_referrals=False,
             )
         except LDAPException as exc:
             if self._tunnel is not None:

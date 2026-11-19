@@ -86,9 +86,12 @@ BASELINE_DIR = ROOT / "security" / "supply_chain_baseline"
 CACHE_DIR = Path(os.environ.get("AXROSS_SUPPLY_CHAIN_CACHE") or (ROOT / "build" / "supply-chain-cache"))
 TOP_PACKAGES = HERE / "top_pypi_packages.txt"
 SCANNER = HERE / "supply_chain_scan.py"
-#: The locks the release build installs from.
+#: The locks the release build installs from, and the locks of the tools
+#: axross exports as programs of their own (scripts/lock_standalone_deps.sh;
+#: the exporter ships them, their CI installs from them).
 LOCKS = ("build/requirements-bootstrap.txt", "build/requirements-dist-tools.txt",
-         "build/requirements-bundle.txt", "build/requirements-scan-tools.txt")
+         "build/requirements-bundle.txt", "build/requirements-standalone-markdown.txt",
+         "build/requirements-scan-tools.txt")
 #: Files that configure where pip and uv fetch from.
 INDEX_CONFIG = ("scripts/build_dist.sh", "scripts/build_bundle.sh", "scripts/lock_bundle_deps.sh",
                 "Dockerfile.build", "build/requirements-bundle.in")
@@ -521,9 +524,11 @@ def _prepare(known: list[str]) -> list[tuple[str, str, str]]:
     return prepared
 
 
-def typosquat_of(name: str, known: list[str]) -> str | None:
+def typosquat_of(name: str, known: list[str], affixes: tuple[str, ...] = _AFFIXES) -> str | None:
     """The popular package *name* could be a typo of, or None. *known* is in
-    popularity order; a name that is itself popular is no squat."""
+    popularity order; a name that is itself popular is no squat. *affixes*:
+    the prefixes and suffixes squatters add (PyPI's by default; the Cargo
+    gate passes Rust's)."""
     c = canonical(name)
     if not c.isascii() or any(unicodedata.category(ch).startswith("C") for ch in name):
         return f"(non-ASCII or control characters in {name!r})"
@@ -533,13 +538,13 @@ def typosquat_of(name: str, known: list[str]) -> str | None:
     flat = c.replace("-", "")
     look = flat.translate(_LOOKALIKE)
     candidates: set[str] = set()
-    for affix in _AFFIXES:
+    for affix in affixes:
         if c.startswith(affix) and len(c) > len(affix) + 2:
             candidates.add(c[len(affix):].strip("-"))
         if c.endswith(affix) and len(c) > len(affix) + 2:
             candidates.add(c[: -len(affix)].strip("-"))
     for one in list(candidates):
-        for affix in _AFFIXES:
+        for affix in affixes:
             if one.startswith(affix) and len(one) > len(affix) + 2:
                 candidates.add(one[len(affix):].strip("-"))
             if one.endswith(affix) and len(one) > len(affix) + 2:

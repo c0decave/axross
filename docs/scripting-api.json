@@ -6183,6 +6183,26 @@
           "annotation": "int"
         },
         {
+          "name": "db_name",
+          "annotation": "str"
+        },
+        {
+          "name": "db_tls",
+          "annotation": "bool"
+        },
+        {
+          "name": "ldap_ssl",
+          "annotation": "bool"
+        },
+        {
+          "name": "slp_scope",
+          "annotation": "str"
+        },
+        {
+          "name": "exchange_email",
+          "annotation": "str"
+        },
+        {
           "name": "adb_mode",
           "annotation": "str"
         },
@@ -6220,6 +6240,14 @@
         },
         {
           "name": "rsync_preserve_metadata",
+          "annotation": "bool"
+        },
+        {
+          "name": "winrm_https",
+          "annotation": "bool"
+        },
+        {
+          "name": "winrm_verify_tls",
           "annotation": "bool"
         },
         {

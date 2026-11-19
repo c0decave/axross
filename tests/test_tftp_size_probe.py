@@ -76,8 +76,10 @@ class _FakeTftpServer:
             block = 1
             while True:
                 chunk = payload[(block - 1) * BLOCK : block * BLOCK]
-                t.sendto(b"\x00\x03" + block.to_bytes(2, "big") + chunk, addr)
+                # Counted before it goes out: the client can be done (and
+                # the test read the count) before this thread runs on.
                 self.blocks_sent += 1
+                t.sendto(b"\x00\x03" + block.to_bytes(2, "big") + chunk, addr)
                 try:
                     t.recvfrom(1024)
                 except OSError:

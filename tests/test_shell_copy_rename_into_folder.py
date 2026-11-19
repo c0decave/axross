@@ -63,7 +63,7 @@ def test_edge_preserve_and_a_dash_name(tree):
 
 
 class _Device:
-    def shell(self, cmd, transport_timeout_s=None, decode=True):
+    def shell(self, cmd, transport_timeout_s=None, decode=True, **_kwargs):
         # Android's ls prints "YYYY-MM-DD HH:MM"; GNU ls does with long-iso.
         # (Its locale dates parse as nothing - an error since an answer
         # without one listing line understood is no empty folder.)

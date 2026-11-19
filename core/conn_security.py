@@ -288,6 +288,27 @@ def from_profile(profile) -> SecurityInfo:
         return SecurityInfo(LEVEL_CLEARTEXT, f"Gopher - {_CLEAR}")
     if proto == "pjl":
         return SecurityInfo(LEVEL_CLEARTEXT, f"PJL printer port - {_CLEAR}")
+    if proto == "sqlite":
+        return SecurityInfo(LEVEL_LOCAL, "A database file on this computer - no network")
+    if proto == "git":
+        repo = str(get("host", "") or "")
+        if "://" in repo:
+            return url_info(repo, what="Git")
+        if ":" in repo and not repo.startswith(("/", "~", ".")):
+            return SecurityInfo(LEVEL_ENCRYPTED, "Git over SSH, encrypted")
+        return SecurityInfo(LEVEL_LOCAL, "A repository on this computer - no network")
+    if proto == "ldap":
+        if get("ldap_ssl", False):
+            return SecurityInfo(LEVEL_TLS, "LDAPS, certificate verified")
+        return SecurityInfo(LEVEL_CLEARTEXT, f"LDAP without TLS - {_CLEAR}, the bind password too")
+    if proto == "redis":
+        if get("db_tls", False):
+            return SecurityInfo(LEVEL_TLS, "Redis over TLS, certificate verified")
+        return SecurityInfo(LEVEL_CLEARTEXT, f"Redis without TLS - {_CLEAR}, the password too")
+    if proto == "slp":
+        return SecurityInfo(LEVEL_CLEARTEXT, f"SLP service discovery - {_CLEAR}")
+    if proto == "exchange":
+        return SecurityInfo(LEVEL_TLS, "Exchange Web Services over HTTPS (TLS)")
     return SecurityInfo(LEVEL_UNKNOWN, f"{proto or 'This connection'}: how it is protected is not known")
 
 

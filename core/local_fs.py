@@ -433,7 +433,11 @@ class LocalFS(SessionLifecycle):
             if stat_module.S_ISDIR(mode):
                 raise IsADirectoryError(errno.EISDIR, os.strerror(errno.EISDIR), path)
             if not stat_module.S_ISREG(mode):
-                from core.file_type import _special_description
+                try:
+                    from core.file_type import _special_description
+                except ImportError:  # (a program exported without it: axross-markdown)
+                    def _special_description(_mode: int) -> str:
+                        return "not a regular file"
 
                 raise OSError(
                     errno.EINVAL,

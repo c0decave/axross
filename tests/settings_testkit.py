@@ -132,6 +132,9 @@ def isolate(tmp_path: Path, monkeypatch) -> Stores:
         staticmethod(lambda *a, **k: QMessageBox.StandardButton.No),
     )
     icon_provider.set_monochrome(False)
+    # a theme row sets the icons' tint and backdrop: the next test got icons
+    # tinted by it (a monochrome switch then changed nothing)
+    tint, backdrop = icon_provider.get_tint(), icon_provider.get_backdrop()
     app = QApplication.instance() or QApplication([])
     font = app.font()
     stylesheet_before = app.styleSheet()
@@ -148,6 +151,8 @@ def isolate(tmp_path: Path, monkeypatch) -> Stores:
                 win.deleteLater()
         app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         icon_provider.set_monochrome(False)
+        icon_provider.set_tint(tint)
+        icon_provider.set_backdrop(backdrop)
         app.setFont(font)
         app.setStyleSheet(stylesheet_before)
         PS.set_session_password("")

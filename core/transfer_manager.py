@@ -295,6 +295,47 @@ def _source_metadata(item) -> tuple[int | None, float | None]:
     return mode, (mtime if mtime and mtime > 0 else None)
 
 
+#: Group and other read / search rights of a folder: a source folder that
+#: lacks one of them keeps others out of what is inside.
+_FOLDER_SHARED_BITS = 0o055
+
+
+def _stat_or_none(backend, path: str):
+    """``backend.stat(path)``, None when it fails (the caller goes on)."""
+    try:
+        return backend.stat(path)
+    except Exception as exc:  # noqa: BLE001 - only the folder's mode is at stake
+        log.debug("stat of %s for its mode failed: %s", path, exc)
+        return None
+
+
+def _keep_folder_private(backend, folder: str, source_item) -> None:
+    """Give a folder a copy just made no group/other right its source
+    folder lacks. Files keep their own mode (copy_mode), but a folder got
+    the server's default: a 0700 folder arrived as 0755, and the 0644
+    files in it - private through their folder before - were readable to
+    everyone there. The owner keeps full rights (the copy writes into it).
+    Only a folder more private than the usual 0755 costs a request; one
+    the listing gives no mode for, or a backend without chmod, stays as
+    made. Best effort: a refused chmod is logged, the copy goes on."""
+    if source_item is None or getattr(source_item, "is_link", False):
+        return
+    mode = int(getattr(source_item, "permissions", 0) or 0) & 0o777
+    if not mode or mode & _FOLDER_SHARED_BITS == _FOLDER_SHARED_BITS:
+        return
+    chmod = getattr(backend, "chmod", None)
+    if not callable(chmod):
+        return
+    from core.transfer_worker import process_umask
+
+    wanted = 0o700 | (mode & 0o077 & ~process_umask())
+    try:
+        chmod(folder, wanted)
+    except Exception as exc:  # noqa: BLE001 - a backend that cannot: the default stays
+        log.warning("Could not make the copied folder %s as private as its source (%o): %s",
+                    folder, wanted, exc)
+
+
 def _self_target_refusal(
     source_backend: FileBackend,
     source_path: str,
@@ -741,6 +782,8 @@ class TransferManager(QObject):
                         move=move,
                         dest_listing=dest_listing,
                         conflict_plan=conflict_plan,
+                        source_item=(source_item if source_item is not None
+                                     and not isinstance(source_item, OSError) else None),
                     )
                     jobs.extend(sub_jobs)
                     continue
@@ -1144,8 +1187,11 @@ class TransferManager(QObject):
         move: bool = False,
         dest_listing: _DestListings | None = None,
         conflict_plan: ConflictPlan | None = None,
+        source_item=None,
     ) -> list[TransferJob]:
-        """Recursively transfer a directory."""
+        """Recursively transfer a directory. *source_item* is the listing
+        entry (or stat) of *source_dir* when the caller has it: a folder
+        this makes keeps the privacy of its source (_keep_folder_private)."""
         jobs = []
         if dest_listing is None:
             dest_listing = _DestListings(dest_backend)
@@ -1158,6 +1204,9 @@ class TransferManager(QObject):
             else:
                 dest_backend.mkdir(dest_dir)
                 dest_listing.created(dest_dir)
+                _keep_folder_private(dest_backend, dest_dir,
+                                     source_item if source_item is not None
+                                     else _stat_or_none(source_backend, source_dir))
                 if move:
                     self._journal_move_folder(source_backend, dest_backend, source_dir,
                                               dest_dir, direction)
@@ -1248,6 +1297,7 @@ class TransferManager(QObject):
                     move=move,
                     dest_listing=dest_listing,
                     conflict_plan=conflict_plan,
+                    source_item=item,
                 )
                 jobs.extend(sub_jobs)
             else:
@@ -1532,6 +1582,15 @@ class TransferManager(QObject):
         if not (job.use_temp_file and job.temp_path and job.dest_backend is not None):
             return ""
         if job.transferred_bytes <= 0 and not job.resume:
+            return ""
+        from core.transfer_worker import _source_reads_at_offset, is_out_of_space
+
+        # What the worker removed is not kept: a full destination (the
+        # partial is what filled it) and a source a resume cannot read from
+        # an offset. The status line said "kept for Retry Failed" for them.
+        if job.error is not None and is_out_of_space(job.error):
+            return ""
+        if not _source_reads_at_offset(job.source_backend):
             return ""
         from core.server_ops import write_traits
 

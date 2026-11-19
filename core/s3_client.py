@@ -130,7 +130,57 @@ def _s3_error(exc: BaseException, message: str, filename: str | None = None) -> 
         if isinstance(exc, transfer_hooks.UploadCancelled):
             return transfer_hooks.UploadCancelled(*exc.args)
         return InterruptedError(*exc.args)
+    if not isinstance(getattr(exc, "response", None), dict):
+        # No answer at all: a refused port, a host name that does not
+        # resolve, a time-out - botocore's EndpointConnectionError was
+        # "closed by the other side" for each of them.
+        transport = cloud_http.transport_oserror(exc, message)
+        if transport is not None:
+            return transport
     return cloud_http.oserror(_s3_errno(exc), message, filename)
+
+
+#: S3 error codes of a key the server does not accept (not: a key that may
+#: not use this bucket).
+_LOGIN_REFUSED = frozenset({
+    "InvalidAccessKeyId", "SignatureDoesNotMatch", "ExpiredToken", "InvalidToken",
+    "TokenRefreshRequired", "InvalidClientTokenId",
+})
+
+
+def _connect_error(exc: BaseException, bucket: str) -> OSError:
+    """The connect failure *exc* of *bucket* as an OSError whose text says
+    what to check: core.user_errors shows an errno-less text as it is,
+    where "[Errno 13] Access denied to S3 bucket ..." became "Permission
+    denied for the item" and a missing bucket "the item was not found ...
+    refresh the folder"."""
+    from core.i18n import tr
+
+    response = getattr(exc, "response", None)
+    if not isinstance(response, dict):
+        return _s3_error(exc, f"Cannot access S3 bucket '{bucket}': {exc}")
+    code = str((response.get("Error") or {}).get("Code", ""))
+    if code in _LOGIN_REFUSED:
+        return PermissionError(tr(
+            "S3 refused the access key for the bucket {bucket}. Check the access key and the "
+            "secret key; temporary credentials may have expired."
+        ).format(bucket=bucket))
+    if code == "RequestTimeTooSkewed":
+        return PermissionError(tr(
+            "S3 refused the request because this computer's clock differs too much from the "
+            "server's. Set the clock right and try again."
+        ))
+    if code in ("AccessDenied", "403", "AllAccessDisabled", "AccountProblem"):
+        return PermissionError(tr(
+            "Access to the S3 bucket {bucket} was denied. Check that the access key may list "
+            "this bucket - or, for a public bucket, connect without a key."
+        ).format(bucket=bucket))
+    if code in ("NoSuchBucket", "404", "NotFound"):
+        return FileNotFoundError(tr(
+            "The S3 bucket {bucket} does not exist at this endpoint. Check the bucket name, "
+            "the region and the endpoint."
+        ).format(bucket=bucket))
+    return _s3_error(exc, f"Cannot access S3 bucket '{bucket}': {exc}")
 
 
 def _is_not_found(exc: Exception) -> bool:
@@ -524,21 +574,13 @@ class S3Session(SessionLifecycle):
                         e = e2
                         code = e.response.get("Error", {}).get("Code", "")
 
-            if code in ("NoSuchBucket", "404"):
-                raise _s3_error(e, f"S3 bucket '{bucket}' does not exist") from e
-            if code in ("AccessDenied", "403", "AllAccessDisabled"):
-                raise OSError(
-                    errno.EACCES,
-                    f"Access denied to S3 bucket '{bucket}'. "
-                    "Check credentials or try anonymous access."
-                ) from e
-            raise _s3_error(e, f"Cannot access S3 bucket '{bucket}': {e}") from e
+            raise _connect_error(e, bucket) from e
         except Exception as e:
             raise _s3_error(e, f"Cannot access S3 bucket '{bucket}': {e}") from e
 
     def _test_bucket(self, bucket: str) -> None:
         """Try to access the bucket, preferring list then head."""
-        if self._anonymous:
+        if getattr(self, "_anonymous", False):
             try:
                 self._s3.list_objects_v2(Bucket=bucket, MaxKeys=1)
                 return
@@ -555,7 +597,17 @@ class S3Session(SessionLifecycle):
                     # ``raise list_err`` (drops the head_bucket trace).
                     raise list_err from head_err
         else:
-            self._s3.head_bucket(Bucket=bucket)
+            try:
+                self._s3.head_bucket(Bucket=bucket)
+            except ClientError as head_err:
+                code = str(head_err.response.get("Error", {}).get("Code", ""))
+                if code not in ("403", "AccessDenied"):
+                    raise
+                # A HEAD answer has no body: "403" says neither whether the
+                # key is wrong nor whether it may only list. The listing's
+                # answer names the cause (InvalidAccessKeyId,
+                # SignatureDoesNotMatch, AccessDenied) - or succeeds.
+                self._s3.list_objects_v2(Bucket=bucket, MaxKeys=1)
 
     @property
     def name(self) -> str:
@@ -564,7 +616,7 @@ class S3Session(SessionLifecycle):
     @property
     def connected(self) -> bool:
         try:
-            self._s3.head_bucket(Bucket=self._bucket)
+            self._test_bucket(self._bucket)
             return True
         except Exception as exc:  # noqa: BLE001 - any failure means not connected
             log.debug("S3 liveness check of bucket %s failed: %s", self._bucket, exc)

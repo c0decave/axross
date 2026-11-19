@@ -396,7 +396,9 @@ def _make_file_handler(path: Path, settings: LogSettings) -> logging.Handler:
         pass
     handler = logging.handlers.RotatingFileHandler(
         path, maxBytes=settings.file_max_mib * MIB, backupCount=settings.file_backups,
-        encoding="utf-8")
+        # A path with an undecodable byte arrives as a surrogate: escaped
+        # (bad\udcffname) instead of a "Logging error" and a lost line.
+        encoding="utf-8", errors="backslashreplace")
     handler.setFormatter(logging.Formatter(FILE_FORMAT))
     handler._axross_handler = True  # type: ignore[attr-defined]
     handler._axross_role = "file"  # type: ignore[attr-defined]

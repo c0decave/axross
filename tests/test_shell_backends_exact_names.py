@@ -149,7 +149,7 @@ def test_sad_telnet_injection_on_a_real_terminal(tmp_path) -> None:
             raw = data.replace("\r\n", "\n").replace("\r", "\n")
             os.write(fd, (raw if raw.endswith("\n") else raw + "\n").encode())
 
-        def read_until_re(self, pattern, timeout=30):
+        def read_until_re(self, pattern, timeout=30, **_kw):
             end = time.monotonic() + timeout
             text = ""
             while time.monotonic() < end:
@@ -247,7 +247,7 @@ def test_sad_scp_delete_of_listed_entry_removes_that_entry(blank_tree) -> None:
 
     s = SCPSession.__new__(SCPSession)
     s._caps = ScpCaps()
-    s._exec = lambda cmd, timeout=None: _gnu_ls(blank_tree)
+    s._exec = lambda cmd, timeout=None, **_kw: _gnu_ls(blank_tree)
     victim = next(i for i in s.list_dir(str(blank_tree)) if i.size == 9)
     assert victim.name == "report "
 
@@ -287,7 +287,7 @@ def test_sad_telnet_answer_keeps_trailing_blanks() -> None:
         def send(self, data):
             self.cmd = data
 
-        def read_until_re(self, pattern, timeout=30):
+        def read_until_re(self, pattern, timeout=30, **_kw):
             start = re.search(r"echo '([^']+)'", self.cmd).group(1)
             tag = start[len("__AXX_CMD_START_"):-2]
             text = f"{start}\nline one\n-rw-r--r-- 1 u g 9 Jan  1  2020 report \n__AXX_CMD_EXIT_{tag}_0__"

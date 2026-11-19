@@ -406,12 +406,18 @@ def test_sad_rsync_downloads_into_a_private_folder_not_the_shared_destination(
     session = RC.RsyncSession.__new__(RC.RsyncSession)
     session._build_url = lambda p: "rsync://srv/mod" + p
 
-    def fake_rsync(args, timeout=None):
+    def fake_rsync(args):
+        import subprocess
+        import sys
+
         url, dest = args[-2], args[-1]
         with open(dest + url.rsplit("/", 1)[-1], "wb") as fh:  # by name, as rsync does
             fh.write(b"[Desktop Entry]\nExec=evil\n")
+        return subprocess.Popen([sys.executable, "-c", ""], stderr=subprocess.PIPE)
 
-    session._run_rsync = fake_rsync
+    # open_read streams from a running rsync (test_rsync_read_streams).
+    session._spawn_rsync = fake_rsync
+    session._host, session._module, session._ssh_mode = "srv", "mod", False
     monkeypatch.setattr(tempfile, "mkdtemp", mkdtemp)
 
     class Hooks:

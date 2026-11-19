@@ -117,7 +117,11 @@ DROPPED = ("platformthemes/libqgtk3.so", "networkinformation/libqglib.so",
            "libgio-2.0.so.0", "libgmodule-2.0.so.0",
            "platforms/libqvnc.so", "platforms/libqeglfs.so", "platforms/libqlinuxfb.so",
            "platforms/libqminimal.so", "platforms/libqminimalegl.so",
-           "platforms/libqvkkhrdisplay.so", "libQt6EglFSDeviceIntegration.so.6")
+           "platforms/libqvkkhrdisplay.so", "libQt6EglFSDeviceIntegration.so.6",
+           # Qt's CUPS print plugin needs libcups.so.2, which the builder does
+           # not bundle and not every host has; without it Qt prints to PDF
+           # (the Markdown viewer's Print / Export) and lists no CUPS printers.
+           "printsupport/libcupsprintersupport.so")
 #: Folders the build removes with everything in them.
 DROPPED_FOLDERS = ("egldeviceintegrations",)
 

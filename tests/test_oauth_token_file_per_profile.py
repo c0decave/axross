@@ -246,14 +246,14 @@ def msal_stub(monkeypatch):
     seen: list[tuple[str, str]] = []
 
     class _App:
-        def __init__(self, client_id, authority=None, token_cache=None, proxies=None):
+        def __init__(self, client_id, authority=None, token_cache=None, proxies=None, timeout=None):
             self.client_id, self.cache = client_id, token_cache
             seen.append((client_id, token_cache.serialize()))
 
         def get_accounts(self):
             return []
 
-        def acquire_token_interactive(self, scopes, redirect_uri=None):
+        def acquire_token_interactive(self, scopes, redirect_uri=None, timeout=None):
             self.cache.deserialize(json.dumps(_msal_cache(self.client_id)))
             self.cache.has_state_changed = True
             return {"access_token": "t-" + self.client_id}
@@ -343,7 +343,7 @@ def test_happy_onedrive_installs_the_clean_browser_before_the_login(
     stub = O.msal.PublicClientApplication
 
     class _Ordered(stub):
-        def acquire_token_interactive(self, scopes, redirect_uri=None):
+        def acquire_token_interactive(self, scopes, redirect_uri=None, timeout=None):
             order.append("login")
             return super().acquire_token_interactive(scopes, redirect_uri)
 

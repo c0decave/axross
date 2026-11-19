@@ -33,6 +33,7 @@ Safety
 
 from __future__ import annotations
 
+import atexit
 import bz2
 import gzip
 import io
@@ -203,6 +204,9 @@ class PackResult:
     bytes_out: int = 0
     #: Left out, by archive name: symlinks, and what *refuse* turned down.
     skipped: list[str] = field(default_factory=list)
+    #: Left out, by archive name: sockets, pipes and devices (no content to
+    #: pack; reading a pipe could wait for ever). They failed the pack.
+    special: list[str] = field(default_factory=list)
 
 
 def default_name(names: list[str], folder: str = "") -> str:
@@ -255,20 +259,76 @@ def _is_local(backend) -> bool:
     return isinstance(backend, LocalFS) and not hasattr(backend, "create_new")
 
 
+#: Staging folders of this process, removed at exit when a pack was cut off
+#: (the process ended mid-task) - none is left behind.
+_STAGING: dict[str, str | None] = {}
+_STAGING_LOCK = threading.Lock()
+
+
+def _remove_staging_at_exit() -> None:
+    from core import partials
+
+    with _STAGING_LOCK:
+        left = list(_STAGING.items())
+        _STAGING.clear()
+    for path, record in left:
+        shutil.rmtree(path, ignore_errors=True)
+        partials.done(record)
+
+
+atexit.register(_remove_staging_at_exit)
+
+
+def _staging_folder(backend, folder: str) -> str:
+    """A private folder for the archive being built: in the root of a
+    confined backend that holds *folder* (the same file system as the
+    archive - not the system temp folder, often a RAM disk, which a big
+    pack filled), else in the system temp folder (a remote destination)."""
+    base = None
+    for root in getattr(backend, "roots", ()) or ():
+        real = os.path.realpath(root)
+        target = os.path.realpath(folder) if isinstance(folder, str) else ""
+        if target == real or target.startswith(real.rstrip(os.sep) + os.sep):
+            base = real
+            break
+    from core import partials
+
+    path = tempfile.mkdtemp(prefix=f".axross-pack-{os.getpid()}-", dir=base) if base else \
+        tempfile.mkdtemp(prefix="axross-pack-")
+    # Recorded: a process killed mid-pack leaves it, the next start sweeps it.
+    with _STAGING_LOCK:
+        _STAGING[path] = partials.track(path)
+    return path
+
+
 def _mtime(item) -> float:
     modified = getattr(item, "modified", None)
     try:
-        return max(315532800.0, modified.timestamp())  # 1980: ZIP's earliest
+        # Any date from 1970 on: tar and 7z keep it; ZIP's earliest (1980)
+        # is applied where a ZIP entry is made (_zip_date_time).
+        return max(0.0, modified.timestamp())
     except (AttributeError, OSError, OverflowError, ValueError):
         return time.time()
 
 
+def _local_special(backend, path: str) -> bool:
+    """A socket, pipe or device on this machine's disk (no content to pack)."""
+    if not _is_local(backend):
+        return False
+    try:
+        mode = os.lstat(path).st_mode
+    except OSError:
+        return False  # the read reports it
+    return not (stat_mod.S_ISREG(mode) or stat_mod.S_ISDIR(mode) or stat_mod.S_ISLNK(mode))
+
+
 def _collect(
-    backend, folder: str, names: list[str], cancel, refuse=None
+    backend, folder: str, names: list[str], cancel, refuse=None, special=None
 ) -> tuple[list[_Entry], list[str]]:
     """The entries to pack and the archive names left out. *refuse(path)*:
     true for a path that must not be read (core.mcp_groups: a secret such
-    as an SSH key) - checked for every name and everything below it."""
+    as an SSH key) - checked for every name and everything below it.
+    Sockets, pipes and devices on a local disk go to *special* (a list)."""
     try:
         listing = {i.name: i for i in backend.list_dir(folder)}
     except OSError as exc:
@@ -278,28 +338,37 @@ def _collect(
     files = 0
 
     def add(item, path: str, arcname: str) -> None:
+        # Iterative, depth first in name order (the order the recursion had):
+        # a tree 1500 folders deep hit Python's recursion limit.
         nonlocal files
-        if cancel is not None and cancel.is_set():
-            raise PackCancelled("cancelled")
-        if getattr(item, "is_link", False) or (refuse is not None and refuse(path)):
-            skipped.append(arcname)
-            return
-        if item.is_dir:
-            entries.append(_Entry(arcname, path, True, 0, _mtime(item), _mode(backend, item, path, True)))
-            try:
-                children = backend.list_dir(path)
-            except OSError as exc:
-                raise PackError(f"cannot list {arcname}: {exc}") from exc
-            for child in sorted(children, key=lambda c: c.name):
-                if child.name in ("..", "."):
-                    continue
-                add(child, backend.join(path, child.name), f"{arcname}/{child.name}")
-            return
-        files += 1
-        if files > MAX_PACK_FILES:
-            raise PackError(f"more than {MAX_PACK_FILES} files - pack fewer at a time")
-        entries.append(_Entry(arcname, path, False, max(0, int(item.size or 0)), _mtime(item),
-                              _mode(backend, item, path, False)))
+        stack = [(item, path, arcname)]
+        while stack:
+            item, path, arcname = stack.pop()
+            if cancel is not None and cancel.is_set():
+                raise PackCancelled("cancelled")
+            if getattr(item, "is_link", False) or (refuse is not None and refuse(path)):
+                skipped.append(arcname)
+                continue
+            if item.is_dir:
+                entries.append(_Entry(arcname, path, True, 0, _mtime(item),
+                                      _mode(backend, item, path, True)))
+                try:
+                    children = backend.list_dir(path)
+                except OSError as exc:
+                    raise PackError(f"cannot list {arcname}: {exc}") from exc
+                below = [(child, backend.join(path, child.name), f"{arcname}/{child.name}")
+                         for child in sorted(children, key=lambda c: c.name)
+                         if child.name not in ("..", ".")]
+                stack.extend(reversed(below))
+                continue
+            if special is not None and _local_special(backend, path):
+                special.append(arcname)
+                continue
+            files += 1
+            if files > MAX_PACK_FILES:
+                raise PackError(f"more than {MAX_PACK_FILES} files - pack fewer at a time")
+            entries.append(_Entry(arcname, path, False, max(0, int(item.size or 0)),
+                                  _mtime(item), _mode(backend, item, path, False)))
 
     for name in names:
         if name in ("", ".", "..") or "/" in name or "\\" in name:
@@ -388,17 +457,30 @@ def _zip_date_time(mtime: float) -> tuple:
     return max(_ZIP_EARLIEST, min(_ZIP_LATEST, stamp))
 
 
+class _RawNameZipInfo(zipfile.ZipInfo):
+    """A member whose name is not UTF-8 (a Latin-1 file name on Linux,
+    decoded with surrogateescape) keeps its raw bytes, without the UTF-8
+    flag - as zip tools store such names - instead of failing the pack
+    ("surrogates not allowed")."""
+
+    def _encodeFilenameFlags(self):  # noqa: N802 - zipfile's name
+        try:
+            return super()._encodeFilenameFlags()
+        except UnicodeEncodeError:
+            return self.filename.encode("utf-8", "surrogateescape"), self.flag_bits
+
+
 def _write_zip(backend, entries, out_path, opts, step, cancel) -> None:
     level = opts.level_for("deflate")
     with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED, compresslevel=level) as zf:
         for e in entries:
             stamp = _zip_date_time(e.mtime)
             if e.is_dir:
-                info = zipfile.ZipInfo(e.arcname + "/", date_time=stamp)
+                info = _RawNameZipInfo(e.arcname + "/", date_time=stamp)
                 info.external_attr = (stat_mod.S_IFDIR | e.mode) << 16 | 0x10
                 zf.writestr(info, b"")
                 continue
-            info = zipfile.ZipInfo(e.arcname, date_time=stamp)
+            info = _RawNameZipInfo(e.arcname, date_time=stamp)
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = (stat_mod.S_IFREG | e.mode) << 16
             fh, src = _open_source(backend, e, cancel)
@@ -407,11 +489,15 @@ def _write_zip(backend, entries, out_path, opts, step, cancel) -> None:
             step(e)
 
 
-def _compressor(fmt: str, raw, opts: PackOptions):
+def _compressor(fmt: str, raw, opts: PackOptions, name: str = ""):
+    """The compressing writer around *raw*. *name* is what a gzip header
+    names as the original file ("" for none): GzipFile took the temporary
+    file's name otherwise, and ``gunzip -N`` restored ``.axross-pack-….tmp``."""
     codec = fmt.split(".")[-1]
     if codec == "gz":
         return gzip.GzipFile(
-            fileobj=raw, mode="wb", compresslevel=opts.level_for("deflate"), mtime=0
+            filename=name, fileobj=raw, mode="wb",
+            compresslevel=opts.level_for("deflate"), mtime=0
         )
     if codec == "bz2":
         return bz2.BZ2File(raw, "wb", compresslevel=opts.level_for("bz2"))
@@ -426,7 +512,9 @@ def _write_tar(backend, entries, out_path, opts, step, cancel) -> None:
     with open(out_path, "wb") as raw:
         comp = _compressor(opts.fmt, raw, opts)
         try:
-            with tarfile.open(fileobj=comp, mode="w|", format=tarfile.PAX_FORMAT) as tf:
+            # surrogateescape: a name that is not UTF-8 keeps its bytes.
+            with tarfile.open(fileobj=comp, mode="w|", format=tarfile.PAX_FORMAT,
+                              encoding="utf-8", errors="surrogateescape") as tf:
                 for e in entries:
                     info = tarfile.TarInfo(e.arcname)
                     info.mtime = int(e.mtime)
@@ -449,8 +537,30 @@ def _write_tar(backend, entries, out_path, opts, step, cancel) -> None:
             comp.close()
 
 
+def _stamp_staged(path: str, e: _Entry) -> None:
+    """Give a staging file or folder *e*'s time and mode (py7zr stores what
+    it finds on the file it is handed). The owner keeps what the pack
+    needs: a folder (used again) all rights, a file (read next) reading."""
+    try:
+        os.chmod(path, (e.mode & 0o777) | (0o700 if e.is_dir else 0o400))
+        os.utime(path, (e.mtime, e.mtime))
+    except OSError:
+        pass  # the default time and mode stay: the content is what matters
+
+
 def _write_7z(backend, entries, out_path, opts, step, cancel, staging: str) -> None:
     import py7zr
+
+    for e in entries:
+        # 7z keeps names as UTF-16: a name that is not UTF-8 (its bytes kept
+        # as surrogates) cannot go in. py7zr failed with a codec error that
+        # named no file.
+        try:
+            e.arcname.encode("utf-16-le")
+        except UnicodeEncodeError:
+            shown = e.arcname.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+            raise PackError(f"7z cannot store the name {shown!r} (it is not UTF-8); "
+                            "tar keeps it") from None
 
     filters = [{"id": py7zr.FILTER_LZMA2, "preset": opts.level_for("7z")}]
     if opts.password:
@@ -469,6 +579,9 @@ def _write_7z(backend, entries, out_path, opts, step, cancel, staging: str) -> N
             if cancel is not None and cancel.is_set():
                 raise PackCancelled("cancelled")
             if e.is_dir:
+                # py7zr takes the time and mode of the file it is given:
+                # the folder's own, not the staging folder's.
+                _stamp_staged(empty_dir, e)
                 zf.write(empty_dir, e.arcname)
                 continue
             if local:
@@ -483,6 +596,7 @@ def _write_7z(backend, entries, out_path, opts, step, cancel, staging: str) -> N
                 fh, src = _open_source(backend, e, cancel)
                 with fh, open(tmp, "wb") as dst:
                     _copy(src, dst)
+                _stamp_staged(tmp, e)  # the file's time and mode, not the copy's
                 zf.write(tmp, e.arcname)
                 os.unlink(tmp)
             step(e)
@@ -493,7 +607,7 @@ def _write_single(backend, entries, out_path, opts, step, cancel) -> None:
     if len(entries) != 1 or len(files) != 1:
         raise PackError(f"{FORMATS[opts.fmt].label} compresses exactly one file")
     with open(out_path, "wb") as raw:
-        comp = _compressor(opts.fmt, raw, opts)
+        comp = _compressor(opts.fmt, raw, opts, name=files[0].arcname.rsplit("/", 1)[-1])
         try:
             fh, src = _open_source(backend, files[0], cancel)
             with fh:
@@ -635,11 +749,12 @@ def pack(
     if stem.lower().endswith(fmt.suffix):
         stem = stem[: -len(fmt.suffix)]
 
-    entries, skipped = _collect(backend, folder, names, cancel, refuse)
+    special: list[str] = []
+    entries, skipped = _collect(backend, folder, names, cancel, refuse, special)
     if fmt.single and (len(entries) != 1 or entries[0].is_dir):
         raise PackError(f"{fmt.label} compresses exactly one file")
     total = sum(1 for e in entries if not e.is_dir)
-    result = PackResult(path="", skipped=skipped)
+    result = PackResult(path="", skipped=skipped, special=special)
     result.folders = sum(1 for e in entries if e.is_dir)
 
     def step(entry: _Entry) -> None:
@@ -652,7 +767,7 @@ def pack(
 
     local = _is_local(backend)
     try:
-        staging = tempfile.mkdtemp(prefix="axross-pack-")
+        staging = _staging_folder(backend, folder)
     except OSError as exc:
         raise PackError(f"packing failed: no temporary folder: {exc}") from exc
     tmp = ""
@@ -699,6 +814,10 @@ def pack(
             except OSError:
                 pass
         shutil.rmtree(staging, ignore_errors=True)
+        from core import partials
+
+        with _STAGING_LOCK:
+            partials.done(_STAGING.pop(staging, None))
 
 
 __all__ = [

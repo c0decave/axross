@@ -150,6 +150,12 @@ def _drive_error(exc: BaseException, message: str, filename: str | None = None) 
     if isinstance(exc, InterruptedError):
         return transfer_hooks.UploadCancelled(*exc.args) if isinstance(
             exc, transfer_hooks.UploadCancelled) else InterruptedError(*exc.args)
+    if isinstance(exc, cloud_http.CloudSignInExpired):
+        return exc
+    if type(exc).__name__ == "RefreshError":
+        # google.auth: the refresh token was revoked or expired
+        # (invalid_grant) - shown as raw text with EIO before.
+        return cloud_http.CloudSignInExpired("Google Drive", cloud_http.reason(exc)[:200])
     status = _http_status(exc)
     if status is None:
         return cloud_http.rewrap(exc, message, filename)
@@ -794,7 +800,10 @@ class GDriveSession(SessionLifecycle):
     def _invalidate_cache(self, path: str) -> None:
         """Remove a path (and its children) from the resolution cache."""
         path = self.normalize(path)
-        to_remove = [k for k in self._path_cache if k == path or k.startswith(path + "/")]
+        # list(): one step under the GIL - a comprehension over the dict
+        # itself failed with "dictionary changed size during iteration"
+        # while another thread's listing filled the cache.
+        to_remove = [k for k in list(self._path_cache) if k == path or k.startswith(path + "/")]
         for k in to_remove:
             del self._path_cache[k]
 
@@ -940,7 +949,7 @@ class GDriveSession(SessionLifecycle):
         # Names cached before and gone from the folder now (renamed,
         # moved or deleted on the web) leave the cache with their subtree.
         prefix = base.rstrip("/") + "/"
-        for cached in [k for k in self._path_cache if k.startswith(prefix)
+        for cached in [k for k in list(self._path_cache) if k.startswith(prefix)
                        and "/" not in k[len(prefix):] and k[len(prefix):] not in ids]:
             self._invalidate_cache(cached)
         for name, file_ids in ids.items():
@@ -1423,10 +1432,13 @@ class GDriveSession(SessionLifecycle):
     def share_revoke(self, path: str, permission_id: str) -> None:
         """Remove a permission previously granted via share()."""
         fid = self._resolve_path(path)
-        _run(self._service.permissions().delete(
-            fileId=fid,
-            permissionId=permission_id,
-        ))
+        try:
+            _run(self._service.permissions().delete(
+                fileId=fid,
+                permissionId=permission_id,
+            ))
+        except Exception as exc:
+            raise _drive_error(exc, f"Cannot revoke the share of {path}: {exc}") from exc
 
     def permissions_list(self, path: str) -> list[dict]:
         """List every permission on a file (incl. owners + inherited

@@ -101,7 +101,8 @@ def test_edge_the_tool_the_agent_gets_has_no_keyword_to_say_yes(tmp_path):
     tools = M._build_tools(LocalFS(), allow_write=True, root=str(tmp_path))
     remove = tools["remove"] if isinstance(tools, dict) else next(
         t for t in tools if t.name == "remove")
-    assert set(remove.schema["properties"]) == {"path", "recursive"}
+    # path_b64: the same path, as raw bytes (a name that is not UTF-8).
+    assert set(remove.schema["properties"]) == {"path", "path_b64", "recursive"}
 
 
 def test_edge_only_true_counts_in_a_script(inbox):

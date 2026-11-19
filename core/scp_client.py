@@ -22,7 +22,6 @@ import os
 import posixpath
 import re
 import socket
-import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,9 +48,16 @@ from core.ssh_client import (
     RevokedHostKeyError,
     UnknownHostKeyError,
     _read_limited_stream,
+    _transport_watch,
+    agent_with_keys,
     append_known_host,
+    command_bytes,
     drain_exec_channel,
+    dropped_connection,
+    host_key_aliases,
     load_known_hosts,
+    transport_answers,
+    transport_suspect,
 )
 from core.ssh_config import expand_proxy_command
 from models.file_item import FileItem
@@ -83,6 +89,17 @@ from core.telnet_client import (  # noqa: E402 — re-using telnet shell-output 
 CMD_TIMEOUT = 30.0
 TRANSFER_TIMEOUT = 300.0
 COMMAND_STDOUT_CAP = 4 * 1024 * 1024
+#: ``ls -la`` of one folder: room for the 300 000 entries an SFTP listing
+#: takes (core.ssh_client.MAX_LISTING_ENTRIES), long names included. With
+#: the 4 MiB of COMMAND_STDOUT_CAP a folder of 20 000 long names failed.
+LISTING_STDOUT_CAP = 96 * 1024 * 1024
+#: ``sha256sum`` of a big file prints nothing until it has read it all;
+#: the 30 s of CMD_TIMEOUT gave the checksum after an upload up as
+#: unavailable. Cancel of the running transfer still stops it at once.
+CHECKSUM_TIMEOUT = TREE_OP_TIMEOUT
+#: Seconds a keepalive may go unanswered after a command got no answer
+#: before the connection counts as lost (see SCPSession._lost_connection).
+PROBE_TIMEOUT = 15.0
 COMMAND_STDERR_CAP = 256 * 1024
 _READ_CHUNK = 1024 * 1024
 _READ_SPOOL_MAX = 8 * 1024 * 1024
@@ -204,6 +221,18 @@ def _closed_on_cancel(channel):
     finally:
         if watch is not None:
             watch.stop()
+
+
+def _wire_command(cmd: str) -> str | bytes:
+    """*cmd* as an exec request can carry it: unchanged, or - when it names
+    a file that is not UTF-8 (lone surrogates, see
+    core.ssh_client.command_bytes) - as its bytes. paramiko encodes a str
+    strictly as UTF-8 and raised UnicodeEncodeError for such a name."""
+    try:
+        cmd.encode("utf-8")
+    except UnicodeEncodeError:
+        return command_bytes(cmd)
+    return cmd
 
 
 def _scp_read_line(chan) -> bytes:
@@ -406,7 +435,10 @@ class SCPSession(SessionLifecycle):
         self._client: paramiko.SSHClient | None = None
         self._home_dir: str = "/"
         self._caps: _Capabilities = _Capabilities()
-        self._lock = threading.Lock()
+        # No session-wide lock: each command, a whole file transfer
+        # included, runs on its own SSH channel. Under one lock a running
+        # download held up every pane on the host (the connection manager
+        # shares the session) until it ended.
         self._known_hosts_path = Path.home() / ".ssh" / "known_hosts"
         # Read at connect; the host key policy consults its @revoked keys.
         self._known_hosts = None
@@ -422,7 +454,12 @@ class SCPSession(SessionLifecycle):
         if self._client is None:
             return False
         transport = self._client.get_transport()
-        return transport is not None and transport.is_active()
+        # Also False while the connection did not answer its last
+        # keepalive (core.ssh_client.transport_suspect): a reconnect then
+        # opens a new session instead of handing out this one again.
+        return (
+            transport is not None and transport.is_active() and not transport_suspect(transport)
+        )
 
     @property
     def transport(self) -> paramiko.Transport | None:
@@ -511,6 +548,10 @@ class SCPSession(SessionLifecycle):
             for host in self._known_hosts.keys():
                 for key_type, key in self._known_hosts.lookup(host).items():
                     client_keys.add(host, key_type, key)
+                    if not host.startswith("|") and host != host.lower():
+                        # Stored as typed (axross did): found under the
+                        # lower-case name SSHClient looks up (host_key_aliases).
+                        client_keys.add(host.lower(), key_type, key)
 
             # Build auth kwargs
             auth_kw: dict = {
@@ -519,6 +560,9 @@ class SCPSession(SessionLifecycle):
             }
 
             if profile.auth_type == "agent":
+                # Asked first: without an agent paramiko said only "No
+                # authentication methods available".
+                agent_with_keys()[0].close()
                 auth_kw["allow_agent"] = True
                 auth_kw["look_for_keys"] = False
             elif profile.auth_type == "key":
@@ -535,9 +579,16 @@ class SCPSession(SessionLifecycle):
                 auth_kw["allow_agent"] = False
                 auth_kw["look_for_keys"] = False
 
+            from core import ssh_client
+
             self._client.connect(
-                profile.host,
+                # The name the host keys are looked up by (the socket is
+                # open already): lower case, as OpenSSH (host_key_aliases).
+                profile.host.lower(),
                 port=profile.port,
+                # Without it SSHClient waited for a stalled key exchange
+                # for ever (SFTP: the same limit).
+                timeout=ssh_client.SSH_HANDSHAKE_TIMEOUT,
                 **auth_kw,
             )
 
@@ -547,6 +598,9 @@ class SCPSession(SessionLifecycle):
                 transport.set_keepalive(profile.ssh_keepalive_interval)
 
             # Probe capabilities
+            if transport is not None:
+                # Every packet counts for a keepalive probe (_lost_connection).
+                _transport_watch(transport)
             self._caps = _probe_capabilities(self._exec_raw)
 
             # Determine home directory
@@ -599,9 +653,7 @@ class SCPSession(SessionLifecycle):
         return load_private_key(path, passphrase)
 
     def _host_key_aliases(self) -> list[str]:
-        if self._profile.port == 22:
-            return [self._profile.host]
-        return [f"[{self._profile.host}]:{self._profile.port}"]
+        return host_key_aliases(self._profile.host, self._profile.port)
 
     @staticmethod
     def _fingerprint_sha256(key: paramiko.PKey) -> str:
@@ -620,64 +672,119 @@ class SCPSession(SessionLifecycle):
         append_known_host(self._known_hosts_path, self._host_key_aliases()[0], remote_key)
 
     def _exec_raw(
-        self, cmd: str, timeout: float = CMD_TIMEOUT, stdin_data: bytes | None = None
+        self,
+        cmd: str,
+        timeout: float | None = None,
+        stdin_data: bytes | None = None,
+        stdout_cap: int | None = None,
     ) -> tuple[str, int]:
         """Execute a command via SSH exec_command. Returns (stdout, exit_code).
 
+        *timeout*: the longest silence (default :data:`CMD_TIMEOUT`).
         ``stdin_data`` is sent on the command's stdin, followed by EOF.
         It is written before any output is read, so it suits commands
         that only consume stdin (``base64 -d > file``, ``cat > file``).
+        In a running transfer Cancel closes the channel (InterruptedError).
         """
+        self._require_active()
+        if timeout is None:
+            timeout = CMD_TIMEOUT
+        if stdout_cap is None:
+            stdout_cap = COMMAND_STDOUT_CAP
+
+        channel = None
+        try:
+            stdin, stdout, stderr = self._client.exec_command(
+                _wire_command(cmd),
+                timeout=timeout,
+            )
+            channel = stdin.channel
+            with _closed_on_cancel(channel):
+                if stdin_data is not None:
+                    for chunk in _chunks(stdin_data):
+                        stdin.channel.sendall(chunk)
+                    stdin.channel.shutdown_write()
+                out_bytes = _read_limited_stream(
+                    stdout,
+                    stdout_cap,
+                    "SCP command stdout",
+                )
+                err_bytes = _read_limited_stream(
+                    stderr,
+                    COMMAND_STDERR_CAP,
+                    "SCP command stderr",
+                )
+                exit_code = stdout.channel.recv_exit_status()
+            if exit_code != 0 and err_bytes:
+                out_bytes += b"\n" + err_bytes
+            # A name that is not UTF-8 keeps its bytes (as lone surrogates,
+            # as SFTP and local names decode them): the replacement
+            # character made a name no file has.
+            out = out_bytes.decode("utf-8", errors="surrogateescape")
+            return out, exit_code
+        except InterruptedError:
+            # A cancelled upload (core.transfer_hooks) while its stdin
+            # was sent: the command must not wait for the rest.
+            if channel is not None:
+                channel.close()
+            raise
+        except (paramiko.SSHException, socket.error, EOFError) as exc:
+            if self._dropped():
+                raise dropped_connection(self.name) from exc
+            lost = self._lost_connection(exc, timeout)
+            if lost is not None:
+                raise lost from exc
+            raise OSError(f"Command execution failed: {exc}") from exc
+
+    def _lost_connection(self, exc: BaseException, waited: float) -> OSError | None:
+        """For a command that got no answer for *waited* seconds (a read
+        time-out, a channel the server did not open): the error to raise,
+        after asking the SSH connection whether it is alive. A keepalive
+        without an answer turns ``connected`` False (core.ssh_client
+        .transport_suspect), so a reconnect opens a new session; before,
+        a network gone silent left the dead session "connected" and the
+        reconnect handed it out again. None for any other error."""
+        if not (isinstance(exc, TimeoutError) or str(exc).startswith("Timeout opening channel")):
+            return None
+        get_transport = getattr(self._client, "get_transport", None)
+        transport = get_transport() if get_transport is not None else None
+        if transport is not None and not transport_answers(transport, PROBE_TIMEOUT):
+            return TimeoutError(
+                errno.ETIMEDOUT,
+                f"SCP: the server sent nothing for {waited:g} s and the SSH connection did "
+                "not answer a keepalive either; the network connection is probably lost. "
+                "Reconnect and try again.",
+            )
+        return TimeoutError(errno.ETIMEDOUT, f"SCP: no answer from the server within {waited:g} s")
+
+    def _require_active(self) -> None:
+        """ConnectionError unless the SSH connection is up: plain "Not
+        connected" after disconnect(), ConnectionAbortedError (reconnect)
+        when the server or the network dropped it."""
         if not self._client:
             raise ConnectionError("Not connected")
+        if self._dropped():
+            raise dropped_connection(self.name)
 
-        with self._lock:
-            channel = None
-            try:
-                stdin, stdout, stderr = self._client.exec_command(
-                    cmd,
-                    timeout=timeout,
-                )
-                channel = stdin.channel
-                watched = (
-                    _closed_on_cancel(channel)
-                    if stdin_data is not None
-                    else contextlib.nullcontext()
-                )
-                with watched:
-                    if stdin_data is not None:
-                        for chunk in _chunks(stdin_data):
-                            stdin.channel.sendall(chunk)
-                        stdin.channel.shutdown_write()
-                    out_bytes = _read_limited_stream(
-                        stdout,
-                        COMMAND_STDOUT_CAP,
-                        "SCP command stdout",
-                    )
-                    err_bytes = _read_limited_stream(
-                        stderr,
-                        COMMAND_STDERR_CAP,
-                        "SCP command stderr",
-                    )
-                    exit_code = stdout.channel.recv_exit_status()
-                if exit_code != 0 and err_bytes:
-                    out_bytes += b"\n" + err_bytes
-                out = out_bytes.decode("utf-8", errors="replace")
-                return out, exit_code
-            except InterruptedError:
-                # A cancelled upload (core.transfer_hooks) while its stdin
-                # was sent: the command must not wait for the rest.
-                if channel is not None:
-                    channel.close()
-                raise
-            except (paramiko.SSHException, socket.error) as exc:
-                raise OSError(f"Command execution failed: {exc}") from exc
+    def _dropped(self) -> bool:
+        """Whether the SSH connection was there and is gone (False for a
+        stand-in client without a transport)."""
+        get_transport = getattr(self._client, "get_transport", None)
+        if get_transport is None:
+            return False
+        transport = get_transport()
+        return transport is None or not transport.is_active()
 
     def _exec(
-        self, cmd: str, timeout: float = CMD_TIMEOUT, stdin_data: bytes | None = None
+        self,
+        cmd: str,
+        timeout: float | None = None,
+        stdin_data: bytes | None = None,
+        **kw,
     ) -> str:
-        """Execute command, raise OSError on non-zero exit code."""
-        output, code = self._exec_raw(cmd, timeout, stdin_data=stdin_data)
+        """Execute command, raise OSError on non-zero exit code. *kw*:
+        ``stdout_cap`` for :meth:`_exec_raw`."""
+        output, code = self._exec_raw(cmd, timeout, stdin_data=stdin_data, **kw)
         if code != 0:
             # Read stderr for better error messages
             raise OSError(f"Command failed (exit {code}): {cmd[:120]}\n{output[:500]}")
@@ -784,12 +891,10 @@ class SCPSession(SessionLifecycle):
         """
         if not self._client:
             raise OSError("SCP exec: not connected")
-        log.info(
-            "SCP exec on %s: %s%s",
-            self.name,
-            cmd[:120],
-            "..." if len(cmd) > 120 else "",
-        )
+        from core.redaction import command_summary
+
+        # Never the command's text: it carries passwords.
+        log.info("SCP exec on %s: %s", self.name, command_summary(cmd))
         if env:
             import re as _re
 
@@ -804,41 +909,40 @@ class SCPSession(SessionLifecycle):
                         f"SCP exec: env value for {k!r} must not contain "
                         "NUL/CR/LF (refusing to send). F39."
                     )
-        with self._lock:
+        try:
+            stdin_chan, stdout_chan, _stderr_chan = self._client.exec_command(
+                _wire_command(cmd),
+                timeout=timeout,
+                environment=env or None,
+            )
+            chan = stdout_chan.channel
             try:
-                stdin_chan, stdout_chan, _stderr_chan = self._client.exec_command(
-                    cmd,
+                if stdin:
+                    try:
+                        stdin_chan.write(stdin)
+                        stdin_chan.flush()
+                    except OSError:
+                        pass
+                    try:
+                        chan.shutdown_write()
+                    except Exception:  # noqa: BLE001
+                        pass
+                # Both streams together, like SSHSession.exec: reading
+                # stdout to its cap and then waiting for stderr's end
+                # deadlocked once the unread stdout filled the window.
+                return drain_exec_channel(
+                    chan,
                     timeout=timeout,
-                    environment=env or None,
+                    stdout_cap=stdout_cap,
+                    stderr_cap=stderr_cap,
+                    label="SCP exec",
                 )
-                chan = stdout_chan.channel
-                try:
-                    if stdin:
-                        try:
-                            stdin_chan.write(stdin)
-                            stdin_chan.flush()
-                        except OSError:
-                            pass
-                        try:
-                            chan.shutdown_write()
-                        except Exception:  # noqa: BLE001
-                            pass
-                    # Both streams together, like SSHSession.exec: reading
-                    # stdout to its cap and then waiting for stderr's end
-                    # deadlocked once the unread stdout filled the window.
-                    return drain_exec_channel(
-                        chan,
-                        timeout=timeout,
-                        stdout_cap=stdout_cap,
-                        stderr_cap=stderr_cap,
-                        label="SCP exec",
-                    )
-                finally:
-                    chan.close()
-            except TimeoutError:
-                raise
-            except (paramiko.SSHException, socket.error) as exc:
-                raise OSError(f"SCP exec failed: {exc}") from exc
+            finally:
+                chan.close()
+        except TimeoutError:
+            raise
+        except (paramiko.SSHException, socket.error) as exc:
+            raise OSError(f"SCP exec failed: {exc}") from exc
 
     def _env_prefix(self) -> str:
         """SHELL_ENV in front of a command, where the shell takes it."""
@@ -868,6 +972,8 @@ class SCPSession(SessionLifecycle):
         try:
             return self._exec_raw(cmd, TREE_OP_TIMEOUT)
         except OSError as exc:
+            if self._dropped():
+                raise  # the connection is gone, not the command slow
             if isinstance(exc, TimeoutError) or isinstance(exc.__cause__, TimeoutError):
                 raise TimeoutError(
                     errno.ETIMEDOUT,
@@ -884,7 +990,9 @@ class SCPSession(SessionLifecycle):
 
         ls, utc = self._ls("-la")
         try:
-            output = self._exec(f"{ls} {shell_path(ls_dir_operand(path))}")
+            output = self._exec(
+                f"{ls} {shell_path(ls_dir_operand(path))}", stdout_cap=LISTING_STDOUT_CAP
+            )
         except (TimeoutError, ConnectionError):
             raise
         except OSError as exc:
@@ -1019,51 +1127,52 @@ class SCPSession(SessionLifecycle):
         use_base64 = self._caps.transfer_method == "base64"
         tool = "base64" if use_base64 else "cat"
         cmd = f"base64 < {qpath}" if use_base64 else f"cat {qpath}"
-        if not self._client:
-            raise ConnectionError("Not connected")
+        self._require_active()
 
         spool = new_spool(max_size=_READ_SPOOL_MAX)
         # In a running transfer each piece checks Cancel and counts as
         # received: the whole download happens here, before the copy loop.
         hooks = transfer_hooks.current()
         try:
-            with self._lock:
-                channel = None
-                try:
-                    stdin, stdout, stderr = self._client.exec_command(
-                        cmd, timeout=TRANSFER_TIMEOUT
+            channel = None
+            try:
+                stdin, stdout, stderr = self._client.exec_command(
+                    _wire_command(cmd), timeout=TRANSFER_TIMEOUT
+                )
+                channel = stdout.channel
+                with _closed_on_cancel(channel):
+                    stdin.channel.shutdown_write()
+                    carry = b""
+                    while True:
+                        if hooks is not None:
+                            hooks.received(spool.tell())
+                        chunk = stdout.read(_READ_CHUNK)
+                        if not chunk:
+                            break
+                        if not use_base64:
+                            spool.write(chunk)
+                            continue
+                        text = carry + b"".join(chunk.split())
+                        whole = len(text) - len(text) % 4
+                        spool.write(base64.b64decode(text[:whole], validate=True))
+                        carry = text[whole:]
+                    err = _read_limited_stream(
+                        stderr, COMMAND_STDERR_CAP, "SCP command stderr"
                     )
-                    channel = stdout.channel
-                    with _closed_on_cancel(channel):
-                        stdin.channel.shutdown_write()
-                        carry = b""
-                        while True:
-                            if hooks is not None:
-                                hooks.received(spool.tell())
-                            chunk = stdout.read(_READ_CHUNK)
-                            if not chunk:
-                                break
-                            if not use_base64:
-                                spool.write(chunk)
-                                continue
-                            text = carry + b"".join(chunk.split())
-                            whole = len(text) - len(text) % 4
-                            spool.write(base64.b64decode(text[:whole], validate=True))
-                            carry = text[whole:]
-                        err = _read_limited_stream(
-                            stderr, COMMAND_STDERR_CAP, "SCP command stderr"
-                        )
-                        # -1: the channel closed without an exit status, i.e.
-                        # the stream was cut - never a complete file.
-                        code = stdout.channel.recv_exit_status()
-                except InterruptedError:
-                    if channel is not None:
-                        channel.close()  # the remote cat stops on the closed channel
-                    raise
-                except (paramiko.SSHException, socket.error) as exc:
-                    raise OSError(f"Cannot read {path}: {exc}") from exc
-                except binascii.Error as exc:
-                    raise OSError(f"Cannot decode {path}: {exc}") from exc
+                    # -1: the channel closed without an exit status, i.e.
+                    # the stream was cut - never a complete file.
+                    code = stdout.channel.recv_exit_status()
+            except InterruptedError:
+                if channel is not None:
+                    channel.close()  # the remote cat stops on the closed channel
+                raise
+            except (paramiko.SSHException, socket.error) as exc:
+                lost = self._lost_connection(exc, TRANSFER_TIMEOUT)
+                if lost is not None:
+                    raise lost from exc
+                raise OSError(f"Cannot read {path}: {exc}") from exc
+            except binascii.Error as exc:
+                raise OSError(f"Cannot decode {path}: {exc}") from exc
             if code != 0:
                 from core.exec_util import refused_as
 
@@ -1085,51 +1194,49 @@ class SCPSession(SessionLifecycle):
         """An exec channel running *cmd*, for the SCP protocol."""
         chan = self._client.get_transport().open_session()
         chan.settimeout(TRANSFER_TIMEOUT)
-        chan.exec_command(cmd)
+        chan.exec_command(_wire_command(cmd))
         return chan
 
     def _scp_read(self, path: str) -> IO[bytes]:
         """Read *path* with ``scp -f`` (source mode) into a spooled file."""
-        if not self._client:
-            raise ConnectionError("Not connected")
+        self._require_active()
         spool = new_spool(max_size=_READ_SPOOL_MAX)
         try:
-            with self._lock:
-                chan = self._scp_channel(f"scp -f {shell_path(path)}")
-                with _closed_on_cancel(chan):
+            chan = self._scp_channel(f"scp -f {shell_path(path)}")
+            with _closed_on_cancel(chan):
+                try:
+                    chan.sendall(b"\0")
+                    header = _scp_read_line(chan)
+                    if header[:1] in (b"\1", b"\2"):
+                        _scp_raise(path, header[1:])
+                    if not header.startswith(b"C"):
+                        raise OSError(f"Cannot read {path}: not a regular file over SCP")
                     try:
-                        chan.sendall(b"\0")
-                        header = _scp_read_line(chan)
-                        if header[:1] in (b"\1", b"\2"):
-                            _scp_raise(path, header[1:])
-                        if not header.startswith(b"C"):
-                            raise OSError(f"Cannot read {path}: not a regular file over SCP")
-                        try:
-                            size = int(header.split(b" ", 2)[1])
-                        except (IndexError, ValueError):
-                            raise OSError(f"Cannot read {path}: bad SCP header {header[:80]!r}")
-                        chan.sendall(b"\0")
-                        left = size
-                        hooks = transfer_hooks.current()
-                        while left:
-                            if hooks is not None:
-                                hooks.received(size - left, size)
-                            chunk = chan.recv(min(_READ_CHUNK, left))
-                            if not chunk:
-                                raise OSError(
-                                    f"Cannot read {path}: the SCP stream ended after "
-                                    f"{size - left} of {size} bytes"
-                                )
-                            spool.write(chunk)
-                            left -= len(chunk)
-                        _scp_status(chan, path)
-                        chan.sendall(b"\0")
-                    except (paramiko.SSHException, socket.error) as exc:
-                        if isinstance(exc, FileNotFoundError | PermissionError | InterruptedError):
-                            raise
-                        raise OSError(f"Cannot read {path}: {exc}") from exc
-                    finally:
-                        chan.close()
+                        size = int(header.split(b" ", 2)[1])
+                    except (IndexError, ValueError):
+                        raise OSError(f"Cannot read {path}: bad SCP header {header[:80]!r}")
+                    chan.sendall(b"\0")
+                    left = size
+                    hooks = transfer_hooks.current()
+                    while left:
+                        if hooks is not None:
+                            hooks.received(size - left, size)
+                        chunk = chan.recv(min(_READ_CHUNK, left))
+                        if not chunk:
+                            raise OSError(
+                                f"Cannot read {path}: the SCP stream ended after "
+                                f"{size - left} of {size} bytes"
+                            )
+                        spool.write(chunk)
+                        left -= len(chunk)
+                    _scp_status(chan, path)
+                    chan.sendall(b"\0")
+                except (paramiko.SSHException, socket.error) as exc:
+                    if isinstance(exc, FileNotFoundError | PermissionError | InterruptedError):
+                        raise
+                    raise OSError(f"Cannot read {path}: {exc}") from exc
+                finally:
+                    chan.close()
         except BaseException:
             spool.close()
             raise
@@ -1142,31 +1249,29 @@ class SCPSession(SessionLifecycle):
         name = posixpath.basename(path)
         if "\n" in name or "\r" in name:
             raise OSError(f"SCP cannot carry a file name with a line break: {path!r}")
-        if not self._client:
-            raise ConnectionError("Not connected")
-        with self._lock:
-            chan = self._scp_channel(f"scp -t {shell_path(path)}")
-            with _closed_on_cancel(chan):
-                try:
-                    _scp_status(chan, path)
-                    if isinstance(data, bytes):
-                        size = len(data)
-                    else:
-                        size = data.seek(0, os.SEEK_END)
-                        data.seek(0)
-                    chan.sendall(b"C0644 %d %s\n" % (size, name.encode("utf-8")))
-                    _scp_status(chan, path)
-                    for chunk in _chunks(data):
-                        chan.sendall(chunk)
-                    chan.sendall(b"\0")
-                    _scp_status(chan, path)
-                    chan.shutdown_write()
-                except (paramiko.SSHException, socket.error) as exc:
-                    if isinstance(exc, FileNotFoundError | PermissionError | InterruptedError):
-                        raise
-                    raise OSError(f"Cannot write {path}: {exc}") from exc
-                finally:
-                    chan.close()
+        self._require_active()
+        chan = self._scp_channel(f"scp -t {shell_path(path)}")
+        with _closed_on_cancel(chan):
+            try:
+                _scp_status(chan, path)
+                if isinstance(data, bytes):
+                    size = len(data)
+                else:
+                    size = data.seek(0, os.SEEK_END)
+                    data.seek(0)
+                chan.sendall(b"C0644 %d %s\n" % (size, name.encode("utf-8", "surrogateescape")))
+                _scp_status(chan, path)
+                for chunk in _chunks(data):
+                    chan.sendall(chunk)
+                chan.sendall(b"\0")
+                _scp_status(chan, path)
+                chan.shutdown_write()
+            except (paramiko.SSHException, socket.error) as exc:
+                if isinstance(exc, FileNotFoundError | PermissionError | InterruptedError):
+                    raise
+                raise OSError(f"Cannot write {path}: {exc}") from exc
+            finally:
+                chan.close()
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
         if path.endswith("/") and path.strip("/"):
@@ -1247,7 +1352,7 @@ class SCPSession(SessionLifecycle):
         if not tool:
             return ""
         path = self._path(path)
-        output, code = self._exec_raw(f"{tool} {shell_path(path)} 2>/dev/null")
+        output, code = self._exec_raw(f"{tool} {shell_path(path)} 2>/dev/null", CHECKSUM_TIMEOUT)
         if code != 0 or not output:
             return ""
         from core.exec_util import digest_from_sum_output

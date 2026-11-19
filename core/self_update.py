@@ -12,10 +12,19 @@ Which file (:func:`detect_install`):
 =================  ==========================================================
 Python install     pip or a source checkout: never replaced, the answer is
                    ``pip install -U axross``
-axross-full        Linux x86-64 one-file binary (asset ``axross-full``)
+axross-full        Linux x86-64 one-file binary (asset ``axross-full``), macOS
+                   arm64 (``axross-full-macos-arm64``, from 0.15.179), Windows
+                   x64 (``axross-full-windows-x64.exe``, from 0.15.179)
 axross-slim        Linux x86-64 (``axross-slim``), macOS arm64
                    (``axross-slim-macos-arm64``), Windows x64
                    (``axross-slim-windows-x64.exe``)
+axross-base        Linux x86-64 (``axross-base``)
+axross.app         macOS (``axross-<flavor>-macos-arm64.dmg``, from 0.15.179): no
+                   update in place - replacing Contents/MacOS/axross would break
+                   the app's signature seal; the window points to the release page
+AppImage           Linux x86-64, glibc 2.34 (``axross-<flavor>-x86_64.AppImage``,
+                   from 0.15.179): the AppImage file itself is replaced, never
+                   by the plain binary (:func:`appimage_of`)
 =================  ==========================================================
 
 The bundle records its flavour in :data:`FLAVOR_PATH` (build/axross.spec);
@@ -137,6 +146,11 @@ FLAVORS = ("full", "slim", "base")
 VARIANT_FILE = "axross-bundle-variant.txt"
 VARIANT_PATH = ("axross", VARIANT_FILE)
 VARIANTS = ("glibc-2.34", "glibc-2.36")
+#: The flavours built for macOS and Windows (the bundle job of
+#: cross-platform.yml); axross-base is Linux only.
+DESKTOP_FLAVORS = ("full", "slim")
+#: An AppImage's asset is ``axross-<flavor>`` and this (from 0.15.179).
+APPIMAGE_SUFFIX = "-x86_64.AppImage"
 
 MAX_API_BYTES = 1 << 20
 #: The assets of a release: GitHub's answer to ``releases/latest`` carries
@@ -232,6 +246,8 @@ class Install:
     executable: Path | None = None  # the real file of the running binary
     platform: str = ""
     machine: str = ""
+    #: the binary runs from inside axross.app (the macOS disk image)
+    app_bundle: bool = False
 
     @property
     def can_download(self) -> bool:
@@ -254,6 +270,10 @@ class Install:
         if not self.flavor:
             return ("This binary does not say whether it is axross-full or axross-slim; "
                     "download the new version from the release page.")
+        if self.app_bundle:
+            return ("This axross runs from axross.app (the macOS disk image), which cannot "
+                    "replace its own program; download the new disk image from the release "
+                    "page.")
         if not self.asset:
             return (f"There is no {self.title} build for {self.platform} {self.machine} in "
                     "the releases; download the new version from the release page.")
@@ -271,11 +291,49 @@ def asset_name(platform: str, machine: str, flavor: str, variant: str = "glibc-2
     if platform.startswith("linux") and machine in ("x86_64", "amd64") and flavor in FLAVORS:
         suffix = "" if variant in ("", "glibc-2.34") else "-" + variant.replace("-", "")
         return f"axross-{flavor}{suffix}" if variant in VARIANTS or not variant else ""
-    if platform == "darwin" and machine == "arm64" and flavor == "slim":
-        return "axross-slim-macos-arm64"
-    if platform == "win32" and machine in ("amd64", "x86_64") and flavor == "slim":
-        return "axross-slim-windows-x64.exe"
+    if platform == "darwin" and machine == "arm64" and flavor in DESKTOP_FLAVORS:
+        return f"axross-{flavor}-macos-arm64"
+    if platform == "win32" and machine in ("amd64", "x86_64") and flavor in DESKTOP_FLAVORS:
+        return f"axross-{flavor}-windows-x64.exe"
     return ""
+
+
+def app_bundle_of(executable: Path) -> bool:
+    """Whether *executable* is the program of a macOS app bundle
+    (``….app/Contents/MacOS/<name>``)."""
+    parts = Path(executable).parts
+    return len(parts) >= 4 and parts[-2] == "MacOS" and parts[-3] == "Contents" \
+        and parts[-4].lower().endswith(".app")
+
+
+def appimage_asset_name(flavor: str) -> str:
+    """The release asset of the AppImage of *flavor* (Linux x86-64, built
+    from the glibc-2.34 binary): ``axross-full-x86_64.AppImage``."""
+    return f"axross-{flavor}{APPIMAGE_SUFFIX}" if flavor in FLAVORS else ""
+
+
+def appimage_of(executable: Path, environ=None) -> Path | None:
+    """The AppImage file this binary runs from, or None.
+
+    The AppImage runtime mounts the image at ``$APPDIR`` and names the
+    image file in ``$APPIMAGE``; the binary inside runs from the read-only
+    mount. Both variables are inherited by every child, so a plain binary
+    started from inside another AppImage sees them too: only a binary that
+    lies inside ``$APPDIR`` is the AppImage's own."""
+    env = os.environ if environ is None else environ
+    image, appdir = env.get("APPIMAGE", ""), env.get("APPDIR", "")
+    if not image or not appdir or not os.path.isabs(image) or not os.path.isabs(appdir):
+        return None
+    try:
+        root = Path(os.path.realpath(appdir))
+        if not Path(os.path.realpath(executable)).is_relative_to(root) or root == Path("/"):
+            return None
+        path = Path(os.path.realpath(image))
+        if not path.is_file() or path.is_relative_to(root):
+            return None
+    except (OSError, ValueError):
+        return None
+    return path
 
 
 def _flavor_of(bundle_dir, executable: Path) -> str:
@@ -308,8 +366,11 @@ def _variant_of(bundle_dir) -> str:
 
 
 def detect_install(*, frozen=None, executable=None, bundle_dir=_UNSET, platform=None,
-                   machine=None) -> Install:
-    """This process's :class:`Install` (every argument is for tests)."""
+                   machine=None, environ=None) -> Install:
+    """This process's :class:`Install` (every argument is for tests). A
+    binary inside an AppImage (:func:`appimage_of`) is the AppImage file:
+    that is what an update replaces, with the AppImage asset of its flavour
+    (glibc 2.34 only - the AppImages are made from those binaries)."""
     frozen = bool(getattr(sys, "frozen", False)) if frozen is None else bool(frozen)
     platform = platform or sys.platform
     machine = (machine or _platform.machine() or "").lower()
@@ -320,6 +381,14 @@ def detect_install(*, frozen=None, executable=None, bundle_dir=_UNSET, platform=
         bundle_dir = getattr(sys, "_MEIPASS", None)
     flavor = _flavor_of(bundle_dir, exe)
     variant = _variant_of(bundle_dir)
+    if platform.startswith("linux"):
+        image = appimage_of(exe, environ)
+        if image is not None:
+            asset = appimage_asset_name(flavor) \
+                if asset_name(platform, machine, flavor, variant) == f"axross-{flavor}" else ""
+            return Install(True, flavor, asset, image, platform, machine)
+    if platform == "darwin" and app_bundle_of(exe):
+        return Install(True, flavor, "", exe, platform, machine, app_bundle=True)
     return Install(True, flavor, asset_name(platform, machine, flavor, variant), exe, platform, machine)
 
 
@@ -1111,8 +1180,10 @@ def _copy_verified(source: Path, folder: Path, name: str, sha256: str, mode: int
 
 
 def versioned_name(name: str, version: str) -> str:
-    """``axross-full-0.14.0``, ``axross-slim-windows-x64-0.14.0.exe``."""
-    stem, dot, suffix = name.rpartition(".") if name.endswith(".exe") else (name, "", "")
+    """``axross-full-0.14.0``, ``axross-slim-windows-x64-0.14.0.exe``,
+    ``axross-full-x86_64-0.15.180.AppImage``."""
+    stem, dot, suffix = name.rpartition(".") if name.endswith((".exe", ".AppImage")) \
+        else (name, "", "")
     return f"{stem}-{version}{dot}{suffix}"
 
 

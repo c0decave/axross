@@ -96,6 +96,15 @@ _RETRY_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "PROPFIND", "PUT", "DELETE
 _RETRY_ON_429_ONLY = frozenset({"MOVE", "COPY"})
 
 
+#: Requests the server may work on for long after the body arrived before
+#: it answers: a PUT that Nextcloud / ownCloud assemble, virus-scan or
+#: encrypt, a MOVE / COPY / DELETE of a large folder. Their answer gets
+#: _SLOW_ANSWER_TIMEOUT; the connection and every other answer the
+#: client's own time-out (30 s), so a dead server is still noticed soon.
+_SLOW_METHODS = frozenset({"PUT", "MOVE", "COPY", "DELETE"})
+_SLOW_ANSWER_TIMEOUT = 600.0
+
+
 def _may_retry(method: str, status) -> bool:
     method = method.upper()
     if method in _RETRY_ON_429_ONLY:
@@ -384,6 +393,8 @@ class _WebDavClient:
         from core import cloud_http
 
         url = self._full_url(path)
+        if method.upper() in _SLOW_METHODS:
+            kwargs.setdefault("timeout", (self._timeout, max(self._timeout, _SLOW_ANSWER_TIMEOUT)))
         kwargs.setdefault("timeout", self._timeout)
         kwargs.setdefault("auth", self._auth)
         rewind = _body_rewinder(kwargs.get("data"))
@@ -926,10 +937,34 @@ class WebDavSession(SessionLifecycle):
             # but still serve the actual mount path. That's fine —
             # connection is alive, we'll find out on the first list.
             pass
+        except WebDavRequestError as e:
+            raise self._connect_refused(e) from e
         except Exception as e:
             raise OSError(f"Cannot connect to WebDAV server: {e}") from e
 
         log.info("WebDAV connected: %s@%s", username, self._display_url)
+
+    def _connect_refused(self, exc: "WebDavRequestError") -> OSError:
+        """The connect probe's error answer as a sentence that says what
+        to check (no errno: core.user_errors shows it as it is) - not
+        "WebDAV PROPFIND http://...: HTTP 401"."""
+        from core.i18n import tr
+
+        if exc.status == 401:
+            return PermissionError(tr(
+                "The WebDAV server refused the login. Check the user name and the password; "
+                "with two-factor login (Nextcloud, ownCloud) use an app password."))
+        if exc.status == 403:
+            return PermissionError(tr(
+                "The WebDAV server denied access to {url}. Check the URL: it must end at a "
+                "folder your account may open (Nextcloud: .../remote.php/dav/files/USER)."
+            ).format(url=self._display_url))
+        if exc.status in (405, 501):
+            return OSError(tr(
+                "{url} does not answer as a WebDAV server (HTTP {status}). Check the URL: "
+                "Nextcloud's is .../remote.php/dav/files/USER."
+            ).format(url=self._display_url, status=exc.status))
+        return OSError(f"Cannot connect to WebDAV server: {exc}")
 
     # ------------------------------------------------------------------
     # Identity / lifecycle

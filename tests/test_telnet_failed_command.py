@@ -38,7 +38,7 @@ def _session(shell, fresh=None) -> TC.TelnetSession:
     s._transport = mock.Mock(closed=False)
     s.reconnects = 0
 
-    def reconnect():
+    def reconnect(failed=None):
         s.reconnects += 1
         s._shell = fresh
         return fresh

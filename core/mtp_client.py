@@ -465,6 +465,14 @@ class MtpSession(LocalFS):
     # FileBackend surface — only overrides needed beyond LocalFS.
     # ------------------------------------------------------------------
     @property
+    def connected(self) -> bool:
+        """The mounter's FUSE mount is still there. An unplugged phone ends
+        the mounter: the folder is no mount point any more (or answers
+        ENOTCONN, which os.path.ismount reads as False). Without this
+        LocalFS had no ``connected`` and the dead session was reused."""
+        return bool(getattr(self, "_mounted", False)) and os.path.ismount(self._mount_dir)
+
+    @property
     def name(self) -> str:
         return f"MTP: {self._device_label}"
 

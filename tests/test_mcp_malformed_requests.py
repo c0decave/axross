@@ -138,9 +138,10 @@ def test_sad_stdio_bad_line_is_a_parse_error_and_the_next_line_is_served(body):
 
 def test_edge_stdio_meta_not_an_object_then_ping():
     bad = b'{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_dir","_meta":3}}'
-    answers = _serve_stdio(bad + b"\n" + _PING + b"\n")
-    assert answers[0]["error"]["code"] == M.ERR_INVALID_PARAMS
-    assert answers[1]["id"] == 7
+    init = b'{"jsonrpc":"2.0","id":0,"method":"initialize","params":{}}'
+    answers = _serve_stdio(init + b"\n" + bad + b"\n" + _PING + b"\n")
+    assert answers[1]["error"]["code"] == M.ERR_INVALID_PARAMS
+    assert answers[2]["id"] == 7
 
 
 def test_edge_stdio_text_stream_without_a_byte_buffer():

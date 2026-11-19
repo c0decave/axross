@@ -129,6 +129,13 @@ _NT_ERRNO = {
 }
 
 
+#: Errnos of a lost or refused connection (see _smb_error).
+_CONNECTION_ERRNOS = frozenset({
+    errno.ECONNREFUSED, errno.ECONNRESET, errno.ECONNABORTED, errno.ETIMEDOUT,
+    errno.EHOSTUNREACH, errno.ENETUNREACH, errno.ENETDOWN, errno.ENOTCONN, errno.EPIPE,
+})
+
+
 def _smb_error(exc: BaseException, what: str, path: str) -> OSError:
     """*exc* as the OSError the backend contract names: smbprotocol's
     SMBOSError carries the errno of its NT status, but is no
@@ -157,6 +164,10 @@ def _smb_error(exc: BaseException, what: str, path: str) -> OSError:
         detail = exc.strerror  # not "[Errno n] ..." a second time
     else:
         detail = str(exc) or type(exc).__name__
+    if isinstance(code, int) and code in _CONNECTION_ERRNOS:
+        # About the server, not the path: with the path as its file name
+        # core.user_errors said "/ refused the connection".
+        return OSError(code, f"{what}: {detail}")
     if isinstance(code, int) and code in errno.errorcode:
         return OSError(code, f"{what}: {detail}", path)
     if isinstance(exc, (TimeoutError, ConnectionError)):
@@ -754,9 +765,44 @@ class SmbSession(SessionLifecycle):
                 smbclient.listdir(self._prefix, **self._kw)
             except Exception as exc:
                 self._close_connections()
-                raise OSError(f"SMB connect failed for {self._prefix}: {exc}") from exc
+                error = self._connect_error(exc)
+                if error.errno is None and isinstance(error, (FileNotFoundError, PermissionError)):
+                    # The sentence says it all; chained, core.user_errors
+                    # would explain the cause's errno ("\\h\s was not
+                    # found ... refresh the folder") instead.
+                    log.info("SMB connect to %s failed: %s", self._prefix, exc)
+                    raise error from None
+                raise error from exc
 
         log.info("SMB connected: %s@%s\\%s:%d", username, host, share, port)
+
+    def _connect_error(self, exc: BaseException) -> OSError:
+        """The failed first listing of the share as a sentence that says
+        what to check (no errno: core.user_errors shows it as it is). A
+        refused login and a lost connection stay chained under a plain
+        OSError, for core.user_errors to explain."""
+        from core.i18n import tr
+
+        names = {cls.__name__ for cls in type(exc).__mro__}
+        status = getattr(exc, "ntstatus", None)
+        if not isinstance(status, int):
+            status = getattr(exc, "status", None)
+        code = exc.errno if isinstance(exc, OSError) else None
+        if (
+            "BadNetworkName" in names
+            or status in (0xC00000CC, 0xC000003A, 0xC0000034)
+            or code == errno.ENOENT
+        ):
+            return FileNotFoundError(tr(
+                "The share {share} does not exist on {host}. Check the share name (for "
+                "DFS, the namespace)."
+            ).format(share=self._share, host=self._host))
+        if "AccessDenied" in names or status == 0xC0000022 or code == errno.EACCES:
+            return PermissionError(tr(
+                "{host} does not let {user} open the share {share}. Check the user name, or "
+                "ask the server's administrator for access."
+            ).format(host=self._host, user=self._username or tr("a guest"), share=self._share))
+        return OSError(f"SMB connect failed for {self._prefix}: {exc}")
 
     @property
     def name(self) -> str:

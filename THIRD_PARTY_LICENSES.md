@@ -724,6 +724,24 @@ Axross calls out to.
 | [Python container image (python:3.12-slim)](https://hub.docker.com/_/python) | PSF-2.0 AND LicenseRef-Debian-Packages | Base image of Dockerfile.mcp, Dockerfile.agent and Dockerfile.gui | built on Debian; each Debian package's licence is in /usr/share/doc/<package>/copyright inside the image |
 <!-- /third-party:containers -->
 
+## The AppImage runtime (the `*-x86_64.AppImage` assets)
+
+Each AppImage of a release (`axross-{full,slim,base}-x86_64.AppImage`,
+made by `scripts/build_appimage.sh`) starts with the AppImage project's
+[type-2 runtime](https://github.com/AppImage/type2-runtime) - release
+`20251108`, `runtime-x86_64`, SHA-256 pinned in
+`scripts/fetch_appimagetool.sh` - followed by a SquashFS image holding the
+unchanged `axross-<flavor>` binary, `axross.desktop` and `axross.svg`. The
+runtime is MIT-licensed and statically linked; by the AppImage project's
+account it contains libfuse 3 (LGPL-2.1), squashfuse (BSD-2-Clause), zstd
+(BSD-3-Clause), zlib (Zlib), liblzma (0BSD) and musl libc (MIT). The
+runtime is a separate program at the start of the file: replacing it (for
+example with a rebuilt one, `appimagetool --runtime-file`) leaves the axross
+binary inside as it is, and `--appimage-extract` unpacks that binary to run
+it without the runtime. The source of the runtime is the tag `20251108` of
+that repository. `appimagetool` itself (1.9.1, MIT) only builds the images
+and is not shipped.
+
 ## Notes for redistributors
 
 - Source redistribution: retain `LICENSE`, `NOTICE`, and this file.

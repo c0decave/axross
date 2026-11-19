@@ -19,6 +19,7 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from core import transfer_hooks
 from core.path_policy import hidden_sibling_name, safe_join
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -85,11 +86,24 @@ def _discard_or_close_writer(writer, *, completed: bool) -> None:
         log.debug("Failed to discard incomplete stream-copy output", exc_info=True)
 
 
+def _local_with_atomic_rename(backend) -> bool:
+    """A local file system whose rename is the plain atomic one: LocalFS,
+    or the MCP root's confined file system (it renames beneath the
+    folders' descriptors). A subclass with another rename is not."""
+    from core.local_fs import LocalFS
+
+    if not isinstance(backend, LocalFS):
+        return False
+    if type(backend).rename is LocalFS.rename:
+        return True
+    from core.confined_fs import ConfinedLocalFS
+
+    return type(backend).rename is ConfinedLocalFS.rename
+
+
 def _known_backend_capabilities(backend):
     try:
-        from core.local_fs import LocalFS
-
-        if isinstance(backend, LocalFS) and type(backend).rename is LocalFS.rename:
+        if _local_with_atomic_rename(backend):
             from core.backend_registry import POSIX_CAPS
 
             return POSIX_CAPS
@@ -156,6 +170,11 @@ def _rename_fallback_allowed(backend, exc: BaseException) -> bool:
     return any(marker in message for marker in _UNSUPPORTED_RENAME_MARKERS)
 
 
+class ShortCopy(OSError):
+    """The source sent another number of bytes than the size it reported
+    (a server that says 1 MiB and sends 10 bytes): not a complete copy."""
+
+
 def _supports_temp_destination(backend) -> bool:
     needed = ("parent", "join", "separator", "rename", "remove", "exists", "is_dir")
     if not all(hasattr(backend, name) for name in needed):
@@ -163,7 +182,10 @@ def _supports_temp_destination(backend) -> bool:
     try:
         from core.local_fs import LocalFS
 
-        if isinstance(backend, LocalFS) and type(backend).rename is not LocalFS.rename:
+        # The MCP root's confined file system renames atomically too
+        # (beneath the folders' descriptors); without it a partial download
+        # sat under the final name.
+        if isinstance(backend, LocalFS) and not _local_with_atomic_rename(backend):
             return False
     except Exception:
         pass
@@ -182,7 +204,10 @@ def _temp_destination_path(backend, dst: str) -> str:
     separator = backend.separator()
     name = dst.rsplit(separator, 1)[-1] if separator in dst else dst
     return safe_join(
-        backend, parent, hidden_sibling_name(name, f".copy-{uuid.uuid4().hex}.tmp")
+        # The process id in the name: core.partials sweeps a leftover only
+        # when it is the dead process's own.
+        backend, parent,
+        hidden_sibling_name(name, f".copy-{os.getpid()}-{uuid.uuid4().hex[:24]}.tmp")
     )
 
 
@@ -193,6 +218,27 @@ def _replacement_backup_path(backend, dst: str) -> str:
     return safe_join(
         backend, parent, hidden_sibling_name(name, f".replace-{uuid.uuid4().hex}.bak")
     )
+
+
+def _track_temp(backend, temp_path: str | None):
+    """Record a local temporary destination (core.partials): a process
+    killed mid-copy leaves it, the next MCP start sweeps it."""
+    if not temp_path:
+        return None
+    from core.local_fs import LocalFS
+
+    if not isinstance(backend, LocalFS):
+        return None
+    from core import partials
+
+    return partials.track(temp_path)
+
+
+def _untrack_temp(record) -> None:
+    if record:
+        from core import partials
+
+        partials.done(record)
 
 
 def _cleanup_temp_destination(backend, temp_path: str | None) -> None:
@@ -663,8 +709,13 @@ def stream_copy_between_backends(
     dst: str,
     *,
     buffer_size: int = 1024 * 1024,
+    expected_size: int | None = None,
 ) -> int:
     """Copy bytes across backend instances with partial-output cleanup.
+
+    *expected_size*: the size the source reported; another byte count
+    raises :class:`ShortCopy` before the destination is replaced (and the
+    partial output is removed as on any failure).
 
     When the destination backend supports a normal temp-file + rename
     workflow, stream into a sibling temp path and only replace the final
@@ -676,6 +727,7 @@ def stream_copy_between_backends(
     if _supports_temp_destination(dst_backend):
         temp_path = _temp_destination_path(dst_backend, dst)
         target = temp_path
+    record = _track_temp(dst_backend, temp_path)
     destination_existed = False
     destination_snapshot = None
     defer = temp_path is None and write_traits(dst_backend).spools_until_close
@@ -696,11 +748,18 @@ def stream_copy_between_backends(
                 if not defer:
                     opened = True
                 while True:
+                    # A cancelled call (an MCP task stopped at SIGTERM, a
+                    # pane's Cancel) stops between two chunks.
+                    transfer_hooks.check()
                     chunk = rf.read(buffer_size)
                     if not chunk:
                         break
                     wf.write(chunk)
                     transferred += len(chunk)
+                if expected_size is not None and transferred != int(expected_size):
+                    raise ShortCopy(
+                        f"the source reported {int(expected_size)} bytes and sent "
+                        f"{transferred}; not a complete copy")
                 if defer and destination_existed:
                     # The writer has sent nothing so far: the old bytes now.
                     destination_snapshot = read_destination_snapshot(dst_backend, dst)
@@ -709,9 +768,11 @@ def stream_copy_between_backends(
                 _discard_or_close_writer(wf, completed=completed)
         if temp_path is not None:
             _finalize_temp_destination(dst_backend, temp_path, dst)
+        _untrack_temp(record)
         return transferred
     except BaseException:
         _cleanup_temp_destination(dst_backend, temp_path)
+        _untrack_temp(record)
         if temp_path is None and opened:  # a writer never opened changed nothing
             _rollback_direct_destination(
                 dst_backend,

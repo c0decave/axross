@@ -28,9 +28,9 @@ Every extraction enforces:
    non-directory tar member (device, FIFO) refuses the archive.
 4. **Size / count / ratio caps** — an archive that claims to
    expand to more than ``MAX_EXTRACT_TOTAL_BYTES`` OR contains
-   more than ``MAX_EXTRACT_FILES`` entries OR shows a per-entry
-   compression ratio above ``MAX_COMPRESSION_RATIO`` is refused
-   as a likely zip-bomb.
+   more than ``MAX_EXTRACT_FILES`` entries OR has a member of at
+   least ``RATIO_CHECK_FLOOR`` (64 MiB) with a compression ratio
+   above ``MAX_COMPRESSION_RATIO`` is refused as a likely zip-bomb.
 
 Cancellation
 ------------
@@ -149,6 +149,11 @@ MAX_TAR_READ = 16 * 1024 * 1024
 # accommodates legitimate text archives (which can legitimately
 # compress 20:1 or so) without admitting the pathological case.
 MAX_COMPRESSION_RATIO = 100
+# Members smaller than this (uncompressed) skip the ratio check: a small
+# member cannot be a bomb (the total, member-count and nesting caps bound
+# the archive), and 1 MB of zeros - a disk image, a preallocated file - is
+# 1000:1 even when axross packed it itself (its own ZIP did not extract).
+RATIO_CHECK_FLOOR = 64 * 1024 * 1024
 
 # An archive inside an archive is opened in the preview by extracting it
 # (with every guard above) to a temp folder first. Each level is one more
@@ -333,8 +338,9 @@ def archive_family(name_or_path: str) -> str | None:
 
 
 def check_bomb_ratio(uncompressed: int, compressed: int, member_name: str) -> None:
-    """Raise :class:`UnsafeArchive` when one member's compression ratio
-    is above :data:`MAX_COMPRESSION_RATIO` - the guard extraction uses,
+    """Raise :class:`UnsafeArchive` when one member of at least
+    :data:`RATIO_CHECK_FLOOR` bytes has a compression ratio above
+    :data:`MAX_COMPRESSION_RATIO` - the guard extraction uses,
     for callers that read members themselves (Find Files)."""
     _check_bomb_ratio(uncompressed, compressed, member_name)
 
@@ -921,7 +927,8 @@ def _check_duplicate_member(seen: set[str], target_path: str, member_name: str) 
 
 
 def _check_bomb_ratio(uncompressed: int, compressed: int, member_name: str) -> None:
-    """Refuse an entry whose compression ratio exceeds the cap.
+    """Refuse an entry of at least :data:`RATIO_CHECK_FLOOR` bytes whose
+    compression ratio exceeds the cap (a smaller one is not checked).
     Called per-entry; a single bomb entry is enough to refuse the
     whole archive since processing further entries only compounds
     the damage."""
@@ -935,6 +942,8 @@ def _check_bomb_ratio(uncompressed: int, compressed: int, member_name: str) -> N
                 "(bomb signature)",
             )
         return
+    if uncompressed < RATIO_CHECK_FLOOR:
+        return  # small: bounded by the archive's total, not by its ratio
     ratio = uncompressed / compressed
     if ratio > MAX_COMPRESSION_RATIO:
         raise UnsafeArchive(
@@ -2078,6 +2087,7 @@ __all__ = [
     "ArchiveEntry",
     "ExtractCancelled",
     "MAX_COMPRESSION_RATIO",
+    "RATIO_CHECK_FLOOR",
     "MAX_EXTRACT_FILES",
     "MAX_EXTRACT_TOTAL_BYTES",
     "MAX_LIST_ENTRIES",

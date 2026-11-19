@@ -390,16 +390,25 @@ class TrashBrowserDialog(QDialog):
 
         def work(cancelled, report):
             report(0, 1, tr("emptying the trash"))
-            return T.empty_trash(backend)
+            # Cancel stops between entries; it was offered and ignored, and
+            # every entry went for good.
+            removed = T.empty_trash(backend, should_continue=lambda: not cancelled())
+            return removed, cancelled()
 
         def done(kind, value, cancelled) -> None:
             if kind == "error":
                 QMessageBox.warning(self, tr("Empty Trash"), tr("Failed:\n{value}").format(value=value))
                 return
+            if not isinstance(value, tuple):
+                return  # closed meanwhile
+            removed, stopped = value
             QMessageBox.information(
                 self,
                 tr("Empty Trash"),
-                tr_n(value, "Removed {n} entry.", "Removed {n} entries."),
+                tr_n(removed, "Stopped: removed {n} entry, the rest stay in the trash.",
+                     "Stopped: removed {n} entries, the rest stay in the trash.")
+                if stopped else
+                tr_n(removed, "Removed {n} entry.", "Removed {n} entries."),
             )
 
         self._run(work, done)

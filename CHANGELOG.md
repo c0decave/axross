@@ -4,14 +4,24 @@ What changed in each axross release, for the people who use it. The full
 notes of a release, with every fix, are on its
 [GitHub release page](https://github.com/c0decave/axross/releases).
 
-## 0.15.178 - 2026-11-16
+## 0.15.179 - 2026-11-19
 
-0.15.178 is the first release since 0.14.136 with one-file binaries for
-Linux, macOS and Windows: installed binaries update to it. Nine rounds of
-reviews of the whole code (backends and transfers, security, the windows,
+0.15.179 is the first release since 0.14.136 with one-file binaries for
+Linux, macOS and Windows: installed binaries update to it. It takes in the
+never-published 0.15.177 and 0.15.178 (their notes are below). Nine rounds
+of reviews of the whole code (backends and transfers, security, the windows,
 the extensions, the entry points, concurrency, the docs against the code)
-found and fixed several hundred bugs; every fix comes with tests that fail on
-the old code.
+found and fixed several hundred bugs; then a review of every connection type,
+nine rounds of an adversarial review of the MCP server and sixteen of the
+Markdown reader. Every fix comes with tests that fail on the old code.
+
+New downloads: AppImages for Linux (`axross-full-x86_64.AppImage`,
+`-slim-`, `-base-`) and axross-full for macOS and Windows
+(`axross-full-macos-arm64`, `axross-full-windows-x64.exe`) beside the
+slim ones, and macOS disk images with axross.app
+(`axross-slim-macos-arm64.dmg`, `axross-full-macos-arm64.dmg`: drag it to
+Applications; axross.app does not update itself - a new version comes as a
+new image from the release page).
 
 **In short** (the update dialog shows the start of these notes):
 
@@ -32,8 +42,68 @@ the old code.
   downloads and leaves nothing half-written; undo checks it moves the file
   it moved; Del moves to the trash (Shift+Del deletes); questions that
   destroy default to No.
+- **Since 0.15.178 (never published):** every connection type reviewed -
+  SFTP, SCP, rsync, rsh, Telnet, Cisco Telnet, WinRM, WMI, FTP/FTPS, TFTP;
+  SMB, DFS-N, WebDAV, NFS, iSCSI, MTP, S3, Azure; the cloud drives, mail
+  (IMAP, Exchange, NNTP), the databases, Git, LDAP; Android phones over
+  ADB (TCP, USB, pairing, Wireless debugging): refused logins, missing
+  shares and closed ports say what to check, dropped connections are
+  noticed and reconnect, the profile's IP version reaches every backend,
+  long transfers show progress and cancel. The MCP server hardened in
+  nine review rounds (bounded answers and listings, fair admission of
+  HTTP connections, per-backend write locks). The Markdown reader after
+  sixteen reviews: TeX formulas in the common forms, big documents laid
+  out without holding up the window, Copy that takes what is shown.
+  Ctrl + / Ctrl - / Ctrl 0 and Ctrl + wheel zoom images and PDFs in the
+  viewers; the Media Player has -15 s / +15 s buttons.
+
+### Known limitations
+
+- **Markdown reader:** a few large documents still pause the window for
+  about a quarter of a second (0.25-0.3 s) while a part is laid out.
+  `\overset`, `\underset`, `\stackrel` and `\cfrac` are stacked only in
+  display formulas; inline and in the terminal (`axross-mdcat`) they are
+  written beside each other.
+- **MCP server over HTTP:** from the client's own address (or its IPv6
+  /64), connections that trickle a byte every few milliseconds look more
+  alive than a slow TLS handshake and can push it out of a full server -
+  an attacker needs that very address (docs/MCP.md).
+- **Binaries:** the macOS binaries are only ad-hoc signed, not
+  notarized, and the Windows ones are not signed (Gatekeeper and
+  SmartScreen warn at the first start); there
+  is no macOS build for Intel Macs and no Linux build for arm64. The
+  AppImages need FUSE to mount themselves; without it, start them with
+  `--appimage-extract-and-run`.
+- **Printing on Linux (binaries):** the one-file Linux binaries carry no CUPS
+  print plugin; *Print* writes a PDF there, and printers are reached from
+  the PDF viewer. The PyPI install uses the host's Qt plugins as before.
+- **Tours:** the narrated videos of *Help → Tours* are not published with
+  this release yet, so a tour's video cannot be downloaded; the tours
+  themselves (the steps through the window) work.
 
 ### Fixed
+
+- **Connections (the review of every connection type, since 0.15.178):**
+  SFTP and SCP say when a key passphrase is wrong or no SSH agent runs,
+  notice a dropped or silent connection and ask to reconnect, fail a
+  stalled key exchange instead of hanging, store host keys under the
+  lower-case host name and keep a ProxyCommand's `%h` / `%r` free of shell
+  syntax; SCP lists names that are not UTF-8 and huge folders. FTP takes
+  implicit FTPS on port 990, keeps the bytes of names that are not UTF-8
+  and reads MLSD support from FEAT. Telnet and Cisco Telnet notice a
+  closed connection at once, count silence rather than a whole answer as a
+  time-out and transfer large files in pieces with progress and Cancel;
+  rsh and rsync stream with progress and Cancel and honour the IP version.
+  WinRM and WMI: Test Connection fails when the host does, 5985 is HTTP.
+  TFTP names a missing file. SMB, S3, WebDAV and Azure say whether a login,
+  a share, a bucket or a container was refused or a port is closed; a
+  container or share SAS connects; NFS, MTP and iSCSI notice a dropped
+  connection; a hung NFS mount no longer hangs its probe. Cloud drives ask
+  to sign in again when a sign-in expired. Exchange, IMAP, NNTP, LDAP,
+  PostgreSQL, Redis, MongoDB, SQLite and Git-as-FS: clear connect errors,
+  time-outs, a folder rename that lands whole. Android phones over ADB: TCP
+  and USB, pairing and Wireless debugging, reconnects. Every profile type
+  connects from Connect to Server.
 
 - **Mail docks:** a reply sent without asking goes only to the sender's
   *From* address; a *Reply-To* the mail names needs your yes. A mail file
@@ -1228,7 +1298,7 @@ the old code.
 - Updates: an update is refused unless the release is newer than the
   running version, and a re-issued pack manifest is numbered in the signed
   checksums so an older one cannot be put back.
-- 0.15.177 is signed with the release key that installed binaries trust
+- 0.15.179 is signed with the release key that installed binaries trust
   (the first of the two keys 0.15.176 pins); the second key signs only
   once binaries that carry it are in use.
 - MCP file tools open every local path beneath their root without
@@ -1328,6 +1398,36 @@ the old code.
 
 ### New
 
+- **The MCP server on its own: `axross-headless-mcp`.** `pip install axross-headless-mcp`
+  is axross's headless MCP server without Qt - for a server, a container
+  or CI - with the flags of `axross --mcp-server` (stdio by default,
+  `--mcp-http` for HTTP), every tool group, and axross's settings and
+  saved profiles. The image `ghcr.io/c0decave/axross-headless-mcp` and the entry
+  `io.github.c0decave/axross-headless-mcp` in the official MCP registry come with
+  every release.
+- **MCP 2025-11-25 and 2025-06-18.** The server speaks the current MCP
+  revisions besides 2024-11-05 (it answers the client's): every tool has
+  a title and annotations (read-only, destructive, idempotent, open
+  world), `stat`, `read_file`, `checksum` and `walk` declare their output
+  and every object result also comes as `structuredContent`, refused
+  arguments come back as an error the model can read and correct, and
+  HTTP checks the `MCP-Protocol-Version` header and answers a
+  notification with 202. Tested with the official MCP Python SDK.
+- **The headless MCP server, hardened** (eight rounds of an adversarial
+  review before its first release): a private key anywhere in a file is
+  refused by every read, `resources/read`, encrypt, pack and copy (PuTTY,
+  ssh.com, age, UTF-16 and UTF-32 spellings too); copies from a remote stop
+  at max_file_bytes, refuse symlinks and devices, and appear whole or not at
+  all; every answer and listing is bounded (an SFTP answer's counts by its
+  bytes); on stdio `ping` and `notifications/cancelled` work during a long
+  call; over HTTP each connection has a deadline for its request head and a
+  minimum rate for its body (`AXROSS_MCP_MIN_BODY_RATE`), a full server
+  makes room from the address that clearly holds the most connections and
+  never pushes out one that showed its token, sessions share the rate
+  fairly, and writes are serialised per backend. File names that are not
+  UTF-8 no longer hang the official SDK client (U+FFFD plus the raw bytes
+  in `*_b64`). The background-task methods are now `axross/tasks/*`.
+  docs/MCP.md has every limit.
 - **Markdown viewer.** F3 or a double-click on a `.md` file (local or
   remote) shows it rendered: GitHub's Markdown with the headings as an
   outline beside it, footnotes, highlighted code, the images beside the
@@ -1467,7 +1567,7 @@ Mixer, System Information, the NFSv4 client and more.
 **It shipped without binaries:** the release page has only the wheel and
 the sdist - no `axross-*` binaries, no `SHA256SUMS`, no `SHA256SUMS.sig` -
 and it was not uploaded to PyPI. Installed binaries therefore stayed on
-0.14.136 and update straight to 0.15.177.
+0.14.136 and update straight to 0.15.179.
 
 ## Earlier releases
 

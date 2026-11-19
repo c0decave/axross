@@ -219,16 +219,31 @@ class SseLifecycleTest(unittest.TestCase):
 
 
 class SseEvictionTest(unittest.TestCase):
-    def test_edge_idle_eviction_ends_the_open_stream(self) -> None:
+    def test_edge_an_open_stream_keeps_its_session_a_closed_one_idles_out(self) -> None:
+        # An open SSE stream is a client waiting (for a long task's result,
+        # say): the session is busy, not idle (round-3 review - a 30-minute
+        # job could not survive over HTTP). A stream whose client went away
+        # ends at its next keepalive, and then the session idles out.
+        saved = mcp_http.SSE_KEEPALIVE_SECONDS
+        mcp_http.SSE_KEEPALIVE_SECONDS = 0.2
+        self.addCleanup(setattr, mcp_http, "SSE_KEEPALIVE_SECONDS", saved)
         srv = _Server(session_idle_seconds=0.3)
         self.addCleanup(srv.close)
         sid = srv.initialize()
-        sock, status = srv.open_sse(sid)
+        stream, status = srv.open_sse(sid)
         self.assertEqual(status, 200)
         time.sleep(0.5)
         srv.initialize()  # create() evicts idle sessions
-        eof, _ = _read(sock, _EOF_WAIT)
-        self.assertTrue(eof, "SSE stream outlived its evicted session")
+        eof, _ = _read(stream, 1.0)
+        self.assertFalse(eof, "a session waiting on its stream was evicted")
+        self.assertIsNotNone(srv.session(sid))
+        stream.sock.close()
+        deadline = time.monotonic() + _EOF_WAIT
+        while time.monotonic() < deadline and srv.session(sid).sse_stream is not None:
+            time.sleep(0.05)
+        time.sleep(0.4)
+        srv.initialize()
+        self.assertIsNone(srv.server.RequestHandlerClass._sessions._sessions.get(sid))
 
 
 if __name__ == "__main__":

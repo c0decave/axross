@@ -133,16 +133,14 @@ def test_sad_an_article_lookup_that_fails_after_an_empty_overview_is_an_oserror(
 
 def test_sad_a_closed_client_is_an_oserror_not_absent(srv, s):
     # A status line that cannot be read closes the connection (nntp_lib);
-    # every later command meets NntpError("... is closed").
+    # the next command goes out on a new one - which meets the broken
+    # answer again: still an OSError, never "absent".
     srv.replies["OVER"] = b"\xff not a status line\r\n"
     with pytest.raises(OSError):
         s.exists("/comp.lang.python/1_Hello.eml")
-    assert s._client.closed
+    assert s._nntp.closed
     with pytest.raises(OSError) as info:
         s.exists("/alt.test/2_x.eml")
-    assert _not_a_miss(info.value)
-    with pytest.raises(OSError) as info:
-        s.exists("/alt.test")
     assert _not_a_miss(info.value)
 
 

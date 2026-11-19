@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.i18n import format_percent, tr
+from core.i18n import format_percent, tr, tr_n
 from ui.close_corner import add_close_corner
 from ui.format_utils import measured_bytes as size_text
 from ui.icon_provider import set_window_icon
@@ -46,21 +46,33 @@ class SizeRow:
     folders: int
     unreadable: int = 0
     depth_capped: bool = False
+    #: Entries whose size could not be read (listed, not stat'ed).
+    unstattable: int = 0
+    #: The first folders that could not be read, named in the note.
+    unreadable_paths: tuple = ()
 
     @property
     def incomplete(self) -> bool:
         """Some of it could not be measured: the size is a lower bound."""
-        return bool(self.unreadable or self.depth_capped)
+        return bool(self.unreadable or self.depth_capped or self.unstattable)
 
     @property
     def notes(self) -> str:
         notes = []
         if self.unreadable:
-            notes.append(
+            note = (
                 tr("1 folder could not be read")
                 if self.unreadable == 1
                 else tr("{n} folders could not be read").format(n=self.unreadable)
             )
+            if self.unreadable_paths:  # named, as the handbook says
+                shown = ", ".join(self.unreadable_paths[:3])
+                more = ", …" if self.unreadable > min(3, len(self.unreadable_paths)) else ""
+                note += f" ({shown}{more})"
+            notes.append(note)
+        if self.unstattable:
+            notes.append(tr_n(self.unstattable, "the size of {n} entry could not be read",
+                              "the sizes of {n} entries could not be read"))
         if self.depth_capped:
             notes.append(tr("depth limit reached"))
         return ", ".join(notes)
@@ -78,6 +90,8 @@ def rows_from_results(results) -> list[SizeRow]:
             folders=max(0, int(r.folders) - 1),
             unreadable=int(r.unreadable),
             depth_capped=bool(r.depth_capped),
+            unstattable=int(getattr(r, "unstattable", 0) or 0),
+            unreadable_paths=tuple(str(p) for p in getattr(r, "unreadable_paths", ()) or ()),
         )
         for name, r in results
     ]

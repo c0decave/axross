@@ -85,3 +85,38 @@ jobs:
       run: python scripts/coverage_matrix.py --check
     - name: The LLM guide is current
       run: python -m core.llm_guide --check
+
+  # The headless MCP server where PyQt6 does not exist: the axross-headless-mcp
+  # package exported from this commit (scripts/export_standalone.py mcp) is
+  # installed without Qt, the MCP path of the checkout runs with PyQt6
+  # absent and blocked (stdio, HTTP, every tool group - an import of Qt on
+  # that path fails here), the package's own tests run against the
+  # installed command, and its sdist and wheel pass twine.
+  # tests/test_mcp_release.py holds these steps in place.
+  mcp-headless:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Set up Python 3.11
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: "3.11"
+    - name: Install axross-headless-mcp - and no Qt
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install -r dev-requirements.txt
+        python scripts/export_standalone.py mcp "$RUNNER_TEMP/axross-headless-mcp"
+        python -m pip install "$RUNNER_TEMP/axross-headless-mcp"
+        python -c "import importlib.util, sys; sys.exit(importlib.util.find_spec('PyQt6') is not None)"
+    - name: The MCP path without PyQt6 (stdio, HTTP, every group, protocol revisions)
+      run: python -m pytest -q -p no:cacheprovider tests/test_mcp_without_qt.py tests/test_mcp_protocol_revisions.py tests/test_mcp_round1_protocol.py tests/test_mcp_round1_http.py
+    - name: The installed axross-headless-mcp answers over stdio and HTTP
+      run: |
+        cd "$RUNNER_TEMP/axross-headless-mcp"
+        axross-headless-mcp --version
+        python -m pytest -q -p no:cacheprovider tests
+    - name: Build axross-headless-mcp's sdist and wheel
+      run: |
+        python -m build --sdist --wheel --outdir "$RUNNER_TEMP/axross-headless-mcp/dist" "$RUNNER_TEMP/axross-headless-mcp"
+        python -m twine check --strict "$RUNNER_TEMP/axross-headless-mcp/dist/"*

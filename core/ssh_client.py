@@ -22,7 +22,7 @@ from typing import IO, TYPE_CHECKING
 
 import paramiko
 
-from core import removal_cancel
+from core import removal_cancel, transfer_hooks
 from core.backend import SessionLifecycle
 from core.client_identity import SSH_LOCAL_VERSION, apply_paramiko_banner_override
 from core.exec_util import command_missing, digest_from_sum_output
@@ -52,6 +52,9 @@ apply_paramiko_banner_override()
 log = logging.getLogger(__name__)
 
 HELPER_STDOUT_CAP = 4 * 1024 * 1024
+#: Seconds the SSH key exchange may take before a connect gives up (a
+#: server that sends its banner and then stalls).
+SSH_HANDSHAKE_TIMEOUT = 10.0
 HELPER_STDERR_CAP = 256 * 1024
 # hardlink(): the shell's answer when the link path is already taken.
 _HARDLINK_TAKEN = "axross-hardlink-target-exists"
@@ -127,6 +130,18 @@ def _sftp_errors_as_oserror(fn):
 
 #: READDIR requests kept on the wire while a folder is listed.
 LISTING_READDIRS_IN_FLIGHT = 16
+#: Most entries one folder listing collects: a server that answers READDIR
+#: without end (or a folder of millions) grew the client's memory without
+#: bound - past 1 GB inside one MCP call. Over it the listing fails.
+MAX_LISTING_ENTRIES = 300_000
+#: Most bytes the answers of one folder listing may carry - names,
+#: longnames, attributes, extended ones too: 4000-character names took a
+#: client to 1.5 GB in 8 s well below the entry cap, 900 KiB of extended
+#: attributes per entry past 2.5 GB. Over it the listing fails.
+MAX_LISTING_BYTES = 64 << 20
+#: A longer name is no name any file system here holds (NAME_MAX is 255
+#: bytes): such an entry is left out of the listing.
+MAX_NAME_BYTES = 4096
 
 #: REMOVE requests a recursive delete keeps on the wire (one batch); the
 #: pane's Cancel is asked between batches.
@@ -158,6 +173,23 @@ def command_bytes(cmd: str | bytes) -> bytes:
         raise OSError(errno.EILSEQ, f"SSH command cannot be sent: {exc}") from exc
 
 
+def _duration(seconds: float) -> str:
+    if seconds >= 60:
+        return f"{seconds / 60:g} minutes"
+    return f"{seconds:g} s"
+
+
+def _slow_requests() -> frozenset:
+    from paramiko.sftp import CMD_CLOSE, CMD_EXTENDED, CMD_REMOVE, CMD_RENAME, CMD_RMDIR
+
+    return frozenset({CMD_CLOSE, CMD_REMOVE, CMD_RMDIR, CMD_RENAME, CMD_EXTENDED})
+
+
+#: SFTP requests a healthy server may answer slowly (see
+#: _SurrogateSftpClient._request).
+_SLOW_BY_NATURE = _slow_requests()
+
+
 class _SurrogateSftpClient(paramiko.SFTPClient):
     """paramiko's SFTP client with paths encoded by :func:`wire_path`.
 
@@ -167,8 +199,39 @@ class _SurrogateSftpClient(paramiko.SFTPClient):
     open, rename and remove raised UnicodeEncodeError - or, decoded with
     replacement characters, asked for a name that is not there."""
 
+    #: The longest a request waits for its answer while the SSH connection
+    #: answers keepalives (:meth:`_still_waiting`); an MCP profile sets its
+    #: own, much shorter one (:meth:`SSHSession.bound_requests`).
+    slow_server_cap: float | None = None
+    #: Numbers of the requests slow by nature still unanswered (see
+    #: _async_request).
+    _slow_nums: frozenset | set = frozenset()
+
     def _adjust_cwd(self, path):
         return super()._adjust_cwd(wire_path(path))
+
+    def _async_request(self, fileobj, t, *args):
+        """paramiko's (its ``_request`` sends through here too); a request a
+        healthy server may take long to answer - the CLOSE that flushes an
+        upload (a NAS), the REMOVE of a huge file, a rename, fsync - is
+        noted: while one is unanswered, a wait lasts up to
+        :data:`SFTP_SLOW_SERVER_CAP` as long as the connection answers
+        keepalives, not the short deadline an MCP profile sets for the rest
+        (a 70 s CLOSE failed and the finished upload was removed)."""
+        num = super()._async_request(fileobj, t, *args)
+        if t in _SLOW_BY_NATURE:
+            if not isinstance(self._slow_nums, set):
+                self._slow_nums = set()
+            self._slow_nums.add(num)
+        return num
+
+    def _slow_pending(self) -> bool:
+        nums = self._slow_nums
+        if not nums:
+            return False
+        expecting = getattr(self, "_expecting", {})
+        nums.intersection_update(expecting)
+        return bool(nums)
 
     def _read_all(self, n):
         """paramiko's, but a request whose answer is late is not failed
@@ -221,13 +284,23 @@ class _SurrogateSftpClient(paramiko.SFTPClient):
             silent_since = now - (chan.gettimeout() or 0.0)
         if chan.closed:
             raise EOFError()
-        if now - silent_since >= SFTP_SLOW_SERVER_CAP:
-            minutes = SFTP_SLOW_SERVER_CAP / 60
+        try:
+            # A cancelled call (an MCP tool past its time-out, Cancel in a
+            # pane) stops waiting: the channel is this thread's own, so
+            # closing it ends nothing else.
+            transfer_hooks.check()
+        except InterruptedError:
+            chan.close()
+            raise
+        cap = self.slow_server_cap if self.slow_server_cap is not None else SFTP_SLOW_SERVER_CAP
+        if self._slow_pending():
+            cap = max(cap, SFTP_SLOW_SERVER_CAP)
+        if now - silent_since >= cap:
             chan.close()
             raise SlowServerTimeout(
                 errno.ETIMEDOUT,
                 f"SFTP: the server is connected but did not answer a request for "
-                f"{minutes:g} minutes; it may be stuck. Try again later.",
+                f"{_duration(cap)}; it may be stuck. Try again later.",
             )
         limit = chan.gettimeout() or SFTP_IO_TIMEOUT
         if not transport_answers(chan.get_transport(), limit, lambda: chan.closed):
@@ -288,6 +361,67 @@ class _SurrogateSftpClient(paramiko.SFTPClient):
         return cls(chan)
 
 
+class _HostileAnswer(paramiko.SFTPError):
+    """An answer that cannot be what it claims (a count its bytes cannot
+    carry): its channel is closed, not read on."""
+
+
+def _over_budget(path: str) -> OSError:
+    """The error of a listing past MAX_LISTING_BYTES: an OSError (EFBIG),
+    marked so its channel is closed, not read on (see _HostileAnswer)."""
+    exc = OSError(errno.EFBIG, f"{path}: more than {MAX_LISTING_BYTES} bytes in the listing's "
+                  "answers; not listed")
+    exc.axross_hostile = True
+    return exc
+
+
+def _bytes_left(msg) -> int:
+    """Bytes of *msg* (a paramiko Message) not read yet."""
+    packet = msg.packet
+    return len(packet.getbuffer()) - packet.tell()
+
+
+#: Most extended attributes one attribute block may carry (none is kept;
+#: OpenSSH sends none). More - or more than the packet can hold - is a
+#: malformed answer: a count of 0xFFFFFFFF spun a worker in paramiko.
+MAX_EXTENDED_ATTRIBUTES = 1024
+
+
+def _bounded_unpack(self, msg) -> None:
+    """paramiko's SFTPAttributes._unpack with every count bounded by the
+    bytes that carry it; the extended attributes are read past, not kept."""
+    self._flags = msg.get_int()
+    if self._flags & self.FLAG_SIZE:
+        self.st_size = msg.get_int64()
+    if self._flags & self.FLAG_UIDGID:
+        self.st_uid = msg.get_int()
+        self.st_gid = msg.get_int()
+    if self._flags & self.FLAG_PERMISSIONS:
+        self.st_mode = msg.get_int()
+    if self._flags & self.FLAG_AMTIME:
+        self.st_atime = msg.get_int()
+        self.st_mtime = msg.get_int()
+    if self._flags & self.FLAG_EXTENDED:
+        count = msg.get_int()
+        if count > MAX_EXTENDED_ATTRIBUTES or count * 8 > _bytes_left(msg):
+            raise _HostileAnswer(
+                f"malformed attributes ({count} extended attributes in "
+                f"{_bytes_left(msg)} bytes)")
+        for _ in range(count):
+            msg.get_string()
+            msg.get_string()
+        self.attr = {}
+
+
+def _install_bounded_attribute_parser() -> None:
+    """Every attribute block paramiko unpacks here - stat, lstat, fstat, a
+    listing - goes through :func:`_bounded_unpack`."""
+    paramiko.SFTPAttributes._unpack = _bounded_unpack
+
+
+_install_bounded_attribute_parser()
+
+
 class _AnswersByNumber:
     """Receives the answers to pipelined requests (registered as their
     owner, so paramiko hands each one over, whoever reads it) and keeps
@@ -295,9 +429,19 @@ class _AnswersByNumber:
 
     def __init__(self) -> None:
         self.answers: dict[int, tuple[int, paramiko.Message]] = {}
+        #: Bytes of every answer received so far (names, longnames,
+        #: attributes - extended ones too) and the size of the last one.
+        self.received = 0
+        self.last_size = 0
+        #: Set once the listing is over: late answers are only counted.
+        self.discard = False
 
     def _async_response(self, t, msg, num) -> None:
-        self.answers[num] = (t, msg)
+        size = len(msg.asbytes())
+        self.received += size
+        self.last_size = size
+        if not self.discard:
+            self.answers[num] = (t, msg)
 
 
 def _listdir_attr(sftp: paramiko.SFTPClient, path: str) -> list[paramiko.SFTPAttributes]:
@@ -333,10 +477,19 @@ def _listdir_attr(sftp: paramiko.SFTPClient, path: str) -> list[paramiko.SFTPAtt
     receiver = _AnswersByNumber()
     in_flight: deque[int] = deque()
     entries: list[paramiko.SFTPAttributes] = []
+    overlong = 0
+
+    def over_budget() -> None:
+        # Everything the answers carried counts - an entry's extended
+        # attributes too (900 KiB each took a listing past 2.5 GB while
+        # only the names were counted).
+        if receiver.received > MAX_LISTING_BYTES:
+            raise _over_budget(path)
 
     def send() -> None:
         in_flight.append(sftp._async_request(receiver, CMD_READDIR, handle))
 
+    hostile = False
     try:
         for _ in range(LISTING_READDIRS_IN_FLIGHT):
             send()
@@ -344,6 +497,7 @@ def _listdir_attr(sftp: paramiko.SFTPClient, path: str) -> list[paramiko.SFTPAtt
             num = in_flight.popleft()
             while num not in receiver.answers:
                 sftp._read_response()
+                over_budget()
             t, msg = receiver.answers.pop(num)
             if t == CMD_STATUS:
                 try:
@@ -352,23 +506,81 @@ def _listdir_attr(sftp: paramiko.SFTPClient, path: str) -> list[paramiko.SFTPAtt
                     break
             if t != CMD_NAME:
                 raise paramiko.SFTPError("Expected name response")
-            for _ in range(msg.get_int()):
-                filename = text(msg.get_string())
-                longname = text(msg.get_string())
-                attr = paramiko.SFTPAttributes._from_msg(msg, filename, longname)
+            count = msg.get_int()
+            # An entry is at least 12 bytes (two string lengths and the
+            # attribute flags): a count the packet cannot carry is a lie -
+            # paramiko reads zeros past its end, and 0xFFFFFFFF of them grew
+            # a worker to gigabytes.
+            if count * 12 > _bytes_left(msg):
+                raise _HostileAnswer(
+                    f"{path}: malformed listing answer ({count} entries in "
+                    f"{_bytes_left(msg)} bytes)")
+            for index in range(count):
+                if index % 1024 == 1023:
+                    # A long answer: a cancelled call or a closed connection
+                    # (remote_close) stops it here too.
+                    transfer_hooks.check()
+                    if getattr(getattr(sftp, "sock", None), "closed", False):
+                        raise EOFError("the SFTP channel was closed")
+                if len(entries) > MAX_LISTING_ENTRIES:
+                    raise OSError(errno.EFBIG,
+                                  f"{path}: more than {MAX_LISTING_ENTRIES} entries; not listed")
+                raw_name = msg.get_string()
+                msg.get_string()  # the ls -l longname: never kept (it doubled each entry)
+                if len(raw_name) > MAX_NAME_BYTES:
+                    paramiko.SFTPAttributes._from_msg(msg)  # its attributes, skipped
+                    overlong += 1
+                    continue
+                filename = text(raw_name)
+                attr = paramiko.SFTPAttributes._from_msg(msg, filename, "")
+                attr.attr = {}  # extended attributes: nothing here reads them
                 if filename not in (".", ".."):
                     entries.append(attr)
-            send()
+            if len(entries) > MAX_LISTING_ENTRIES:
+                raise OSError(errno.EFBIG,
+                              f"{path}: more than {MAX_LISTING_ENTRIES} entries; not listed")
+            over_budget()
+            # A cancelled transfer or MCP call (core.transfer_hooks) stops
+            # a long listing between two answers, so does a closed channel.
+            transfer_hooks.check()
+            if getattr(getattr(sftp, "sock", None), "closed", False):
+                raise EOFError("the SFTP channel was closed")
+            # Big answers (a MiB and more): one READDIR on the wire at a
+            # time, so the answers held at once stay few.
+            if receiver.last_size <= (1 << 20) or not in_flight:
+                send()
+    except _HostileAnswer:
+        hostile = True
+        raise
+    except OSError as exc:
+        hostile = bool(getattr(exc, "axross_hostile", False))
+        raise
     finally:
-        # The READDIRs still out are answered before CLOSE (end of folder,
-        # or whatever a failing server says): nothing is left for another
-        # request to read. A dead connection raises its own error here.
-        try:
-            while any(owner is receiver for owner in list(sftp._expecting.values())):
-                sftp._read_response()
-        finally:
+        receiver.discard = True
+        if hostile:
+            # A malformed or oversized answer: the READDIRs still out are
+            # not read (16 of 15 MB each), the channel is closed instead -
+            # this thread opens a new one for its next request.
+            try:
+                sftp.sock.close()
+            except Exception:  # noqa: BLE001 - closing is all that is left
+                pass
             receiver.answers.clear()
+            # (no CLOSE of the handle either: the channel is gone)
+        else:
+            # The READDIRs still out are answered before CLOSE (end of
+            # folder, or whatever a failing server says): nothing is left
+            # for another request to read. A dead connection raises its
+            # own error here.
+            try:
+                while any(owner is receiver for owner in list(sftp._expecting.values())):
+                    sftp._read_response()
+            finally:
+                receiver.answers.clear()
     sftp._request(CMD_CLOSE, handle)
+    if overlong:
+        log.warning("SFTP %s: %d entries with names over %d bytes left out", path, overlong,
+                    MAX_NAME_BYTES)
     return entries
 
 
@@ -383,9 +595,9 @@ _HOST_KEY_ALGORITHMS = {
 def _wait_readable(chan, timeout: float) -> bool:
     """Wait up to *timeout* s for *chan* to signal data (paramiko's pipe
     behind ``fileno``). Only a wait: that pipe can miss a wake-up."""
-    import select as _select
+    from core.posix_compat import wait_io
 
-    rlist, _, _ = _select.select([chan], [], [], timeout)
+    rlist, _ = wait_io([chan], timeout=timeout)
     return chan in rlist
 
 
@@ -416,6 +628,9 @@ class _TransportWatch:
         #: answers come in order (RFC 4254 4), so that many are ours.
         #: axross itself sends no other global request that wants one.
         self.pending_requests = 0
+        #: A probe went unanswered and nothing has arrived since
+        #: (transport_suspect); the next packet read clears it.
+        self.unanswered = False
         self._next_channel = 0
         ref = weakref.ref(transport)
         packetizer = transport.packetizer
@@ -423,6 +638,7 @@ class _TransportWatch:
 
         def read_message():
             result = read()
+            self.unanswered = False
             if self.waiters:
                 self._wake()
             return result
@@ -614,8 +830,29 @@ def transport_answers(transport, timeout: float, stop: Callable[[], bool] | None
         left = deadline - time.monotonic()
         if probe.answered.wait(min(0.1, max(left, 0.0))):
             return transport.is_active()
-        if left <= 0 or not transport.is_active() or (stop is not None and stop()):
+        if not transport.is_active() or (stop is not None and stop()):
             return False
+        if left <= 0:
+            if watch is not None:
+                watch.unanswered = True
+            log.warning("SSH connection did not answer a keepalive for %.0f s", timeout)
+            return False
+
+
+def transport_suspect(transport) -> bool:
+    """Whether *transport*'s last keepalive probe went unanswered and
+    nothing has arrived since: the connection is most likely gone. A
+    network gone silent sends no FIN or RST, so paramiko keeps the
+    transport "active" for as long as TCP takes to give up (minutes); the
+    sessions' ``connected`` asks this too, so the connection manager
+    opens a new session on a reconnect instead of handing out the dead
+    one again. Any packet that arrives clears it: a network that comes
+    back keeps the session working for whoever still holds it."""
+    try:
+        watch = _WATCHES.get(transport)
+    except TypeError:
+        return False
+    return watch is not None and watch.unanswered
 
 
 class _ExecWatch:
@@ -815,6 +1052,17 @@ class CleanEnvProxyCommand(paramiko.ProxyCommand):
         self.timeout = None
 
 
+def dropped_connection(name: str) -> ConnectionAbortedError:
+    """The error for a request on an SSH connection the other side or the
+    network has closed: ConnectionAbortedError, which
+    core.user_errors.describe turns into "closed by the other side,
+    reconnect". The bare "Not connected" (SFTP) and "SSH session not
+    active" (SCP) gave no hint what to do."""
+    return ConnectionAbortedError(
+        errno.ECONNABORTED, f"Not connected: the SSH connection {name} was closed"
+    )
+
+
 class SlowServerTimeout(TimeoutError):
     """An SFTP request the server left unanswered for
     :data:`SFTP_SLOW_SERVER_CAP` while the SSH connection kept answering:
@@ -971,6 +1219,45 @@ def append_known_host(path: Path, alias: str, key: paramiko.PKey) -> None:
         os.close(fd)
 
 
+class NoAgentKeysError(OSError):
+    """No SSH agent answered, or it holds no key: nothing was offered to
+    the server, so "the server refused the login" would be wrong."""
+
+
+def agent_with_keys() -> tuple[paramiko.Agent, list]:
+    """The running SSH agent (SSH_AUTH_SOCK) and its keys; the caller
+    closes the agent. NoAgentKeysError when there is none or it is empty:
+    paramiko then raised "No keys available from SSH agent" as an
+    AuthenticationException (SFTP) or "No authentication methods
+    available" (SCP), both read as a refused login."""
+    from core.i18n import tr
+
+    agent = paramiko.Agent()
+    keys = list(agent.get_keys())
+    if not keys:
+        agent.close()
+        raise NoAgentKeysError(tr(
+            "No SSH agent answered, or it holds no keys. Start ssh-agent and add your "
+            "key with ssh-add, or choose a key file for this connection."))
+    return agent, keys
+
+
+def host_key_aliases(host: str, port: int) -> list[str]:
+    """The known_hosts names of *host*:*port*, the one to store first.
+
+    OpenSSH lower-cases the host name before it reads or writes
+    known_hosts (``ssh Server.Example`` stores ``server.example``); a
+    profile host typed with a capital letter was "a new host key" for a
+    host already known, and the user was asked to trust it again. The
+    name as typed follows, for entries axross stored that way before."""
+    names = []
+    for name in (host.lower(), host):
+        alias = name if port == 22 else f"[{name}]:{port}"
+        if alias not in names:
+            names.append(alias)
+    return names
+
+
 def _private_key_classes() -> list[type[paramiko.PKey]]:
     classes = [paramiko.Ed25519Key, paramiko.ECDSAKey, paramiko.RSAKey]
     # DSSKey was removed in paramiko 4.x
@@ -1028,6 +1315,11 @@ class SSHSession(SessionLifecycle):
         self._thread_local = threading.local()
         self._thread_sftp: dict[int, paramiko.SFTPClient] = {}
         self._sftp_lock = threading.Lock()
+        #: Set by :meth:`bound_requests` (the MCP server): the longest one
+        #: SFTP request may go unanswered, keepalives or not, and how often
+        #: a waiting request looks at its call's cancel.
+        self.sftp_request_deadline: float | None = None
+        self.sftp_poll_seconds: float | None = None
         self._known_hosts_path = Path.home() / ".ssh" / "known_hosts"
         #: Why checksum() cannot work on this session, once the server said
         #: so for good: the hash tool is not installed, or the server
@@ -1041,7 +1333,12 @@ class SSHSession(SessionLifecycle):
 
     @property
     def connected(self) -> bool:
-        return self._transport is not None and self._transport.is_active()
+        """False also while the connection did not answer its last
+        keepalive (transport_suspect): a reconnect then opens a new one."""
+        transport = self._transport
+        return (
+            transport is not None and transport.is_active() and not transport_suspect(transport)
+        )
 
     @property
     def transport(self) -> paramiko.Transport | None:
@@ -1058,6 +1355,10 @@ class SSHSession(SessionLifecycle):
     def sftp(self) -> paramiko.SFTPClient:
         sftp = self._get_sftp_client()
         if sftp is None:
+            if self._transport is not None:
+                # The server or the network dropped it (not a disconnect()):
+                # core.user_errors says to reconnect.
+                raise dropped_connection(self.name)
             raise ConnectionError("Not connected")
         return sftp
 
@@ -1116,7 +1417,7 @@ class SSHSession(SessionLifecycle):
             # Before the transport reads: every packet counts for a probe.
             _transport_watch(self._transport)
             self._prefer_known_host_key_types()
-            self._transport.start_client(timeout=10.0)
+            self._transport.start_client(timeout=SSH_HANDSHAKE_TIMEOUT)
             # paramiko waits an hour for the server to open a channel.
             self._transport.channel_timeout = self._io_timeout()
             self._verify_host_key(on_unknown_host=on_unknown_host)
@@ -1155,9 +1456,7 @@ class SSHSession(SessionLifecycle):
         return load_known_hosts(self._known_hosts_path)
 
     def _host_key_aliases(self) -> list[str]:
-        if self._profile.port == 22:
-            return [self._profile.host]
-        return [f"[{self._profile.host}]:{self._profile.port}"]
+        return host_key_aliases(self._profile.host, self._profile.port)
 
     def _prefer_known_host_key_types(self) -> None:
         """Offer the host key types known_hosts holds for this host first.
@@ -1249,18 +1548,18 @@ class SSHSession(SessionLifecycle):
 
         if profile.auth_type == "agent":
             log.info("Authenticating via SSH agent")
-            agent = paramiko.Agent()
-            agent_keys = agent.get_keys()
-            if not agent_keys:
-                raise paramiko.AuthenticationException("No keys available from SSH agent")
-
-            for key in agent_keys:
-                try:
-                    self._transport.auth_publickey(profile.username, key)
-                    log.info("Authenticated with agent key: %s", key.get_name())
-                    return
-                except paramiko.AuthenticationException:
-                    continue
+            agent, agent_keys = agent_with_keys()
+            try:
+                for key in agent_keys:
+                    try:
+                        self._transport.auth_publickey(profile.username, key)
+                        log.info("Authenticated with agent key: %s", key.get_name())
+                        return
+                    except paramiko.AuthenticationException:
+                        continue
+            finally:
+                # Its socket to the agent: one more open per connect.
+                agent.close()
             raise paramiko.AuthenticationException("All SSH agent keys rejected")
 
         elif profile.auth_type == "key":
@@ -1358,6 +1657,29 @@ class SSHSession(SessionLifecycle):
             self._thread_local.sftp = existing
             return existing
 
+    def bound_requests(self, deadline: float, poll: float = 5.0) -> None:
+        """Every SFTP request of this session - on every thread's channel,
+        open now or later - fails after *deadline* seconds without an
+        answer, even while the server answers keepalives (a server that
+        stalls a READDIR held an MCP worker for 30 minutes), and a waiting
+        request notices its call's cancel within *poll* seconds."""
+        self.sftp_request_deadline = float(deadline)
+        self.sftp_poll_seconds = float(poll)
+        with self._sftp_lock:
+            clients = list(self._thread_sftp.values())
+        for client in clients:
+            self._apply_request_bounds(client)
+
+    def _apply_request_bounds(self, client) -> None:
+        if client is None or self.sftp_request_deadline is None:
+            return
+        try:
+            client.slow_server_cap = self.sftp_request_deadline
+            client.get_channel().settimeout(
+                min(self.sftp_poll_seconds or 5.0, self.sftp_request_deadline))
+        except Exception as exc:  # noqa: BLE001 - a stand-in or a closed channel
+            log.debug("SFTP request bounds not applied: %s", exc)
+
     def _open_sftp_client(self) -> paramiko.SFTPClient:
         """A new SFTP channel. A server that refuses the SFTP subsystem
         (SSH and SCP working, SFTP switched off - common on NAS boxes)
@@ -1373,6 +1695,7 @@ class SSHSession(SessionLifecycle):
                 self._transport, window_size=2 * ReadAheadRaw.MAX_WINDOW,
                 timeout=self._io_timeout(),
             )
+            self._apply_request_bounds(client)
             return client
         except paramiko.ChannelException as exc:
             # The server would not open one more channel at all - not an
@@ -2086,15 +2409,15 @@ class SSHSession(SessionLifecycle):
         """
         if not self._transport or not self._transport.is_active():
             raise OSError("SSH exec: transport not active")
+        from core.redaction import command_summary
+
+        # Never the command's text: it carries passwords (mysql -pSECRET,
+        # a token in a URL) that no redaction pattern finds.
         log.info(
-            "SSH exec on %s@%s: %s%s",
+            "SSH exec on %s@%s: %s",
             self._profile.username,
             self._profile.host,
-            # A name that is not UTF-8 (surrogates) as \udcXX: the log
-            # file is UTF-8 and would drop the line.
-            (cmd[:120].encode("utf-8", "backslashreplace").decode("utf-8")
-             if isinstance(cmd, str) else repr(cmd[:120])),
-            "..." if len(cmd) > 120 else "",
+            command_summary(cmd),
         )
         if env:
             import re as _re

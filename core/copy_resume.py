@@ -27,6 +27,13 @@ Resumability requires:
   (``<safe dst label + path>.json``, directory mode 0o700) by default;
   pass ``manifest_path`` to override. Manifest is mode 0o600.
 
+The bytes go to a partial file beside the destination
+(``.<name>.axross-resume.part``, where the destination backend can rename)
+and only a complete copy is renamed over the destination: a source that
+fails mid-way, a refused read (a private key in the source) or a cancel
+leaves an existing destination as it was. Backends that cannot rename
+write the destination directly, as before.
+
 The verification on resume is conservative: every "done" segment must
 match the destination's current bytes for that range *and* hash to the
 expected SHA-256. Any mismatch → the manifest is discarded and the
@@ -386,6 +393,35 @@ def _dst_size(backend, path: str) -> int | None:
         return None
 
 
+def _partial_path(backend, dst_path: str) -> str:
+    """Where the copy writes until it is complete: a hidden sibling of the
+    destination with a fixed name (a later run resumes it), or the
+    destination itself on a backend that cannot rename atomically."""
+    from core.path_policy import hidden_sibling_name, safe_join
+    from core.server_ops import _supports_temp_destination
+
+    if not _supports_temp_destination(backend):
+        return dst_path
+    separator = backend.separator()
+    name = dst_path.rsplit(separator, 1)[-1] if separator in dst_path else dst_path
+    return safe_join(backend, backend.parent(dst_path),
+                     hidden_sibling_name(name, ".axross-resume.part"))
+
+
+def _drop_partial(backend, part: str, dst_path: str, mpath: Path) -> None:
+    """Forget a partial copy that must not be resumed (its source was
+    refused): the partial file - never the destination - and the manifest."""
+    if part != dst_path:
+        try:
+            backend.remove(part)
+        except Exception as exc:  # noqa: BLE001 - best effort
+            log.debug("copy_resume: cannot remove the partial %s: %s", part, exc)
+    try:
+        mpath.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def _open_write_for_resume(backend, path: str, *, append: bool):
     """Open a destination write handle with a clear failure for backends
     that cannot append.
@@ -571,7 +607,11 @@ def resumable_copy(
         )
         _save_manifest(manifest, mpath)
 
-    # On resume, verify already-done segments against the destination.
+    # The bytes go to the partial file; the destination changes only when
+    # the copy is complete.
+    part = _partial_path(dst_backend, dst_path)
+
+    # On resume, verify already-done segments against the partial file.
     bytes_skipped = 0
     restart_from_scratch = False
     if any(s.done for s in manifest.segments):
@@ -584,7 +624,7 @@ def resumable_copy(
                 continue
             dst_ok = _verify_segment_bytes(
                 dst_backend,
-                dst_path,
+                part,
                 seg.offset,
                 seg.length,
                 seg.sha256,
@@ -614,7 +654,7 @@ def resumable_copy(
                 break
             bytes_skipped += seg.length
 
-    existing_size = _dst_size(dst_backend, dst_path)
+    existing_size = _dst_size(dst_backend, part)
     if bytes_skipped > 0 and existing_size != bytes_skipped:
         log.warning(
             "copy_resume: destination size is %s but verified resume "
@@ -634,7 +674,16 @@ def resumable_copy(
     # resume manifest accounts for it. A matching partial manifest is
     # allowed to restart from byte 0; otherwise a broken transfer could
     # never recover after failing before the first segment checkpoint.
-    if not overwrite and bytes_skipped == 0:
+    if part != dst_path and not overwrite:
+        # The partial file is this copy's own; the destination is what
+        # overwrite protects.
+        final_size = _dst_size(dst_backend, dst_path)
+        if final_size is not None:
+            raise FileExistsError(
+                f"resumable_copy: destination {dst_path!r} exists "
+                f"({final_size} bytes). Pass overwrite=True to replace."
+            )
+    elif not overwrite and bytes_skipped == 0:
         if existing_size and existing_size > 0:
             if loaded_resume_manifest or restart_from_scratch:
                 log.warning(
@@ -654,7 +703,7 @@ def resumable_copy(
     try:
         dst_handle = _open_write_for_resume(
             dst_backend,
-            dst_path,
+            part,
             append=append_mode,
         )
     except OSError as exc:
@@ -691,6 +740,16 @@ def resumable_copy(
                 except Exception as exc:  # noqa: BLE001
                     log.warning("resumable_copy: progress raised: %s", exc)
         copied = True
+    except PermissionError:
+        # A refused read (a private key in the source): nothing of it is
+        # kept for a later run.
+        source.close()
+        try:
+            dst_handle.close()
+        except Exception:  # noqa: BLE001
+            pass
+        _drop_partial(dst_backend, part, dst_path, mpath)
+        raise
     finally:
         source.close()
         if not copied:
@@ -710,6 +769,15 @@ def resumable_copy(
         ) from exc
 
     completed = all(s.done for s in manifest.segments)
+    if completed and part != dst_path:
+        from core.server_ops import _finalize_temp_destination
+
+        try:
+            _finalize_temp_destination(dst_backend, part, dst_path, no_replace=not overwrite)
+        except OSError as exc:
+            raise OSError(
+                f"resumable_copy: putting the copy at {dst_path!r} failed: {exc}"
+            ) from exc
     if completed:
         # Successful end-to-end: clean the manifest. Keeping it would
         # confuse a future copy of the same path.

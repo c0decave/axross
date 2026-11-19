@@ -94,6 +94,7 @@ def test_sad_imap_after_disconnect_does_not_log_in_again(monkeypatch):
 def _telnet_session():
     s = object.__new__(TC.TelnetSession)
     s._connected = True
+    s._reconnect_lock = TC.threading.Lock()
     s._shell = mock.Mock()
     s._transport = mock.Mock(closed=False)
     s._host, s._port = "127.0.0.1", 23

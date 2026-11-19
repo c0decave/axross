@@ -42,8 +42,9 @@ jobs:
         QT_QPA_PLATFORM: offscreen
       run: python -m pytest -v tests/test_cross_platform_smoke.py tests/test_windows_import_surface.py tests/test_terminal_winpty.py
 
-  # One-file binaries for macOS and Windows, slim and full (the Linux ones:
-  # the linux job below, scripts/build_dist.sh). Unsigned:
+  # One-file binaries for macOS and Windows, slim and full - all four are
+  # release assets (axross-{slim,full}-macos-arm64, -windows-x64.exe; the
+  # Linux ones: the linux job below, scripts/build_dist.sh). Unsigned:
   # Gatekeeper and SmartScreen warn on first start. full carries what the
   # lock installs on the platform (the cloud SDKs, numpy for the Media
   # Player and the Bluetooth streams, Bumble for a Bluetooth stick used
@@ -86,6 +87,14 @@ jobs:
       # Cocoa on macOS, the desktop on Windows: the checks above never open
       # a window, so a crash on the way to it passed every run before.
       run: python scripts/bundle_smoke.py --native dist/${{ matrix.flavor }}
+    - name: axross.app in a disk image (macOS)
+      # axross-<flavor>-macos-arm64.dmg: axross.app around the binary, ad-hoc
+      # signed, checked mounted (scripts/build_macos_dmg.sh). An optional
+      # asset: should this step fail, the binary is still uploaded
+      # (assemble_release.py names the missing DMG).
+      if: runner.os == 'macOS'
+      continue-on-error: true
+      run: bash scripts/build_macos_dmg.sh ${{ matrix.flavor }} dist/${{ matrix.flavor }}/axross-${{ matrix.flavor }} dist/${{ matrix.flavor }}/axross-${{ matrix.flavor }}-macos-arm64.dmg
     - name: Checksum
       # SHA-256 next to the binary (the format of sha256sum), for the release's SHA256SUMS
       run: python -c "import hashlib,pathlib;[pathlib.Path(str(p)+'.sha256').write_text(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name+'\n') for p in pathlib.Path('dist/${{ matrix.flavor }}').glob('axross-*') if p.suffix!='.sha256']"
@@ -101,7 +110,9 @@ jobs:
   # baseline; the scanners; the venvs against their locks; the system
   # packages), then glibc-2.34/ (AlmaLinux 9 libraries) and glibc-2.36/
   # (Debian 12 libraries) with axross-{base,slim,full} and the tools
-  # axross-{media-player,system-info}, standalone/, packs/ with
+  # axross-{media-player,system-info}, appimage/ (the glibc-2.34 binaries as
+  # AppImages: appimagetool and its runtime pinned by SHA-256 in
+  # scripts/fetch_appimagetool.sh), standalone/, packs/ with
   # packs-<version>.json, the wheel, the sdist, SUPPLY-CHAIN.md and
   # BUILD-INFO.md. No container: build_dist.sh fetches each target's
   # packages (build/sysroot/<system>.txt, signatures and hashes checked)
@@ -125,9 +136,10 @@ jobs:
         # the build runs the locked packages' code: no token left in .git/config
         persist-credentials: false
     - name: The builder's tools
-      # what build_dist.sh names: git, curl, gpgv, dpkg-deb (the runner's), uv
+      # what build_dist.sh names: git, curl, gpgv, dpkg-deb, file (appimagetool;
+      # the runner's), uv
       run: |
-        for tool in git curl gpgv dpkg-deb python3 sha256sum; do
+        for tool in git curl gpgv dpkg-deb file python3 sha256sum; do
             command -v "$tool" >/dev/null || { echo "::error::$tool is missing"; exit 1; }
         done
         # sysroot_fetch.py checks Debian's Release files against Debian's keys
@@ -243,3 +255,16 @@ jobs:
       run: |
         chmod +x "$AXROSS_FROZEN_BINARY"
         python -m pytest -v -rs tests/test_frozen_binary_host_e2e.py
+    - name: axross-${{ matrix.flavor }}-x86_64.AppImage starts and holds that binary
+      # no FUSE on the runner: the runtime unpacks the image and runs it from there
+      env:
+        IMAGE: dist/linux/appimage/axross-${{ matrix.flavor }}-x86_64.AppImage
+        QT_QPA_PLATFORM: offscreen
+      run: |
+        chmod +x "$IMAGE"
+        want="axross $(python3 -c 'import re; print(re.search(r"__version__ = \"([^\"]+)\"", open("axross/_version.py").read()).group(1))')"
+        got="$(APPIMAGE_EXTRACT_AND_RUN=1 timeout 300 "$IMAGE" --version | tail -n 1)"
+        echo "$got"
+        [ "$got" = "$want" ] || { echo "::error::$IMAGE --version says '$got', not '$want'"; exit 1; }
+        mkdir -p "$RUNNER_TEMP/image" && (cd "$RUNNER_TEMP/image" && "$GITHUB_WORKSPACE/$IMAGE" --appimage-extract usr/bin/axross >/dev/null)
+        cmp "$RUNNER_TEMP/image/squashfs-root/usr/bin/axross" dist/linux/glibc-2.34/axross-${{ matrix.flavor }}

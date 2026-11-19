@@ -118,9 +118,20 @@ class SessionFloodTest(unittest.TestCase):
         server, thread = _start(http_ip_rate_enabled=False)
         try:
             port = server.server_address[1]
-            statuses = [_post(port)[0] for _ in range(mcp_http.MAX_SESSIONS + 5)]
-            self.assertEqual(statuses[: mcp_http.MAX_SESSIONS], [200] * mcp_http.MAX_SESSIONS)
-            self.assertTrue(all(s == 503 for s in statuses[mcp_http.MAX_SESSIONS :]))
+            # Plain HTTP is loopback: every local client is one address
+            # there, so the server-wide cap applies, not the per-client
+            # one (round 3: 32 sessions of one local client locked every
+            # other out); the per-client cap is for mTLS clients.
+            cap = mcp_http.MAX_SESSIONS
+            statuses = [_post(port)[0] for _ in range(cap + 5)]
+            self.assertEqual(statuses[:cap], [200] * cap)
+            # Round 4: past the cap the client holding more than half of the
+            # sessions gives up its least recently used one (none of these
+            # runs anything) - one local client no longer keeps every slot -
+            # and the number of live sessions stays at the cap.
+            self.assertTrue(all(s == 200 for s in statuses[cap:]))
+            registry = server.RequestHandlerClass._sessions
+            self.assertEqual(len(registry._sessions), cap)
         finally:
             _stop(server, thread)
 
@@ -133,10 +144,10 @@ class SessionFloodTest(unittest.TestCase):
 
     def test_cap_applies_after_eviction(self) -> None:
         registry = mcp_http._SessionRegistry(idle_seconds=3600.0, max_sessions=2)
-        registry.create()
-        registry.create()
+        registry.create("a")
+        registry.create("b")
         with self.assertRaises(mcp_http.SessionLimitError):
-            registry.create()
+            registry.create("c")  # both are fresh: none may be evicted
 
 
 class MalformedRequestTest(unittest.TestCase):

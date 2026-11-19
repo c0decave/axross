@@ -115,17 +115,18 @@ def test_markdown_files_are_known_by_their_names():
 def test_slugs_and_footnotes():
     assert MDV.slug("Hello, World!") == "hello-world"
     text, notes = MDV.with_footnotes("a[^x] b\n```\n[^y] stays\n```\n[^x]: the note\n")
-    assert notes == ["x"]
-    assert "(#fn-x)" in text and "[^y] stays" in text
-    assert text.rstrip().endswith("\\[x\\] the note")
+    # (numbered in the order they are referred to, as markdown-it - test_markdown_reader_bugs5)
+    assert notes == ["1"]
+    assert "(#fn-1)" in text and "[^y] stays" in text
+    assert text.rstrip().endswith("1\\. the note [↩](#fnref-1)")  # (and back: bugs7; "1." as GitHub's: bugs9)
 
 
-def test_what_qt_cannot_lay_out_in_time_is_cut_and_said():
+def test_what_qt_cannot_lay_out_in_time_is_shown_as_written_and_said():
     items = "\n".join(f"- {i}" for i in range(MDV.LIST_ITEMS + 10))
     part, why = MDV.renderable("intro\n" + items)
-    assert why and part.count("\n- ") == MDV.LIST_ITEMS
+    assert not why and part.count("\n- ") == MDV.LIST_ITEMS + 10  # (a long list: in parts, laid out whole)
     part, why = MDV.renderable("a " + "x" * MDV.LONG_RUN)
-    assert why and part == ""
+    assert why and "x" * 100 not in part
     assert MDV.renderable("# fine\n\ntext") == ("# fine\n\ntext", "")
 
 
@@ -153,7 +154,7 @@ def test_image_names_point_beside_the_file_only(tmp_path):
     source = MDV.ImageSource(LocalFS(), str(tmp_path / "docs" / "a.md"))
     assert source.kind("pic.png") == ("local", str(tmp_path / "docs" / "pic.png"))
     assert source.kind("img/p%20q.png") == ("local", str(tmp_path / "docs" / "img" / "p q.png"))
-    assert source.kind("../up.png") == ("local", str(tmp_path / "up.png"))
+    assert source.kind("../up.png") == ("outside", "../up.png")  # (above the file's folder)
     assert source.kind("https://x.example/p.png")[0] == "remote"
     assert source.kind("//x.example/p.png")[0] == "remote"
     assert source.kind("data:image/png;base64,AAAA")[0] == "data"
@@ -217,17 +218,24 @@ def test_happy_the_viewer_renders_outline_footnotes_code_and_images(docs):
                           and view.images["pic.png"].width() == 40)
         assert view.images["../docs/pic.png"].width() == 40
         # Placeholders (420 x 36) for what is never read.
-        assert view.images["https://example.com/x.png"].width() == 420
-        assert view.images["/etc/hostname"].width() == 420
+        # A remote image is a chip in the line, never asked for; what is never
+        # read a placeholder as tall as a line of text.
+        assert "https://example.com/x.png" not in view.images and "▣ remote" in view.browser.toPlainText()  # (no emoji font needed: bugs7)
+        assert view.images["/etc/hostname"].width() < 420 and view.images["/etc/hostname"].height() < 36
     finally:
         _close(viewer)
 
 
-def test_sad_raw_html_is_shown_as_the_text_it_is(docs):
+def test_sad_raw_html_is_shown_as_its_allowed_subset(docs):
+    """markdown-it: <b> and <img> kept, the script gone with its text
+    (tests/test_markdown_raw_html.py); Qt's own parser (md4c): all as text."""
     viewer = _viewer(docs / "README.md")
     try:
         text = viewer.view.browser.toPlainText()
-        assert "<b>bold?</b>" in text and "<img src=pic.png>" in text and "<script>x()</script>" in text
+        if viewer.view.full:
+            assert "and bold? \ufffc end." in text and "x()" not in text and "<" not in text.split("if a")[0]
+        else:
+            assert "<b>bold?</b>" in text and "<img src=pic.png>" in text and "<script>x()</script>" in text
         assert "if a < b:" in text  # code keeps its "<"
         assert "\x01" not in text and "\\<" not in text  # the escape marks are gone
     finally:
@@ -301,10 +309,13 @@ def test_edge_a_big_file_is_cut_and_said(tmp_path, monkeypatch):
 def test_links_are_routed_by_the_window(docs, monkeypatch):
     viewer = _viewer(docs / "README.md")
     try:
-        assert viewer.target_of(QUrl("other.md")) == ("markdown", str(docs / "other.md"))
+        assert viewer.target_of(QUrl("other.md")) == ("markdown", str(docs / "other.md"), "")
+        assert viewer.target_of(QUrl("other.md#part")) == ("markdown", str(docs / "other.md"), "part")
         assert viewer.target_of(QUrl("https://example.com/a"))[0] == "web"
-        for refused in ("file:///etc/passwd", "/abs.md", "mailto:a@b.example", "../x.txt",
-                        "javascript:alert(1)", "//host/x.md"):
+        # (a file that is no Markdown is looked at: tests/test_markdown_viewer_window.py)
+        assert viewer.target_of(QUrl("../x.txt")) == ("file", str(docs.parent / "x.txt"), "")
+        assert viewer.target_of(QUrl("mailto:a@b.example"))[0] == "web"  # (asked about, as a web link)
+        for refused in ("file:///etc/passwd", "/abs.md", "mailto:", "javascript:alert(1)", "//host/x.md"):
             assert viewer.target_of(QUrl(refused))[0] == "refused", refused
         # An anchor scrolls in the view and never reaches the window.
         reached = []
@@ -315,23 +326,18 @@ def test_links_are_routed_by_the_window(docs, monkeypatch):
         from ui import markdown_safe
 
         opened = []
-        monkeypatch.setattr(markdown_safe, "ask_open_link", lambda *_a: False)
+        monkeypatch.setattr(markdown_safe, "ask_open_link", lambda *_a, **_kw: False)
         monkeypatch.setattr("core.desktop_open.open_url", lambda url: opened.append(url))
         viewer.follow(QUrl("https://example.com/a"))
         assert opened == []
-        monkeypatch.setattr(markdown_safe, "ask_open_link", lambda *_a: True)
+        monkeypatch.setattr(markdown_safe, "ask_open_link", lambda *_a, **_kw: True)
         viewer.follow(QUrl("https://example.com/a"))
         assert len(opened) == 1
-        # Another Markdown file opens in a viewer of its own.
-        from ui import viewer_window as VW
-        from ui.markdown_viewer import MarkdownViewerDialog
-
+        # Another Markdown file opens in this window; Back returns.
         viewer.follow(QUrl("other.md"))
-        others = [w for w in VW.independent_windows()
-                  if isinstance(w, MarkdownViewerDialog) and w.path == str(docs / "other.md")]
-        assert others
-        for other in others:
-            _close(other)
+        assert wait_until(lambda: viewer.path == str(docs / "other.md")
+                          and viewer.view.headings() == ["Other"])
+        assert viewer.back() and wait_until(lambda: viewer.view.headings() == ["Title", "Code", "Title"])
     finally:
         _close(viewer)
 
@@ -344,7 +350,7 @@ def test_sad_the_security_mode_without_external_viewers_opens_no_browser(docs, m
         monkeypatch.setattr("core.security_mode.current_policy",
                             lambda: SimpleNamespace(allow_external_viewer=False))
         asked = []
-        monkeypatch.setattr("ui.markdown_safe.ask_open_link", lambda *a: asked.append(a) or True)
+        monkeypatch.setattr("ui.markdown_safe.ask_open_link", lambda *a, **kw: asked.append(a) or True)
         viewer.follow(QUrl("https://example.com"))
         assert asked == [] and "security mode" in viewer.view.status.text()
     finally:

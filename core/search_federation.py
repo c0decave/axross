@@ -42,6 +42,7 @@ import queue
 import re
 import threading
 import time
+import unicodedata
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, wait
 from dataclasses import dataclass, field
@@ -151,6 +152,9 @@ class SearchQuery:
         repr=False,
         compare=False,
     )
+    #: matches_name(): fold_name(name), and the name it was made of.
+    _folded_name: str = field(default="", init=False, repr=False, compare=False)
+    _folded_name_for: str | None = field(default=None, init=False, repr=False, compare=False)
 
     def validate(self) -> None:
         """Validate fields that can otherwise fail late or consume CPU."""
@@ -203,8 +207,21 @@ class SearchQuery:
         return flags
 
     def matches_name(self, name: str) -> bool:
-        if self.name and not fnmatch.fnmatch(name.lower(), self.name.lower()):
-            return False
+        """``name`` (a glob) and ``regex`` against *name*, both in NFC: a
+        name decomposed as macOS writes it ("A" + combining diaeresis) is
+        the same name as the composed one. The glob ignores case with
+        Unicode casefolding ("strasse" finds "Straße", as the offline
+        index does); the regex is case-sensitive unless it says (?i)."""
+        if not (self.name or self.regex):
+            return True
+        if not name.isascii():
+            name = unicodedata.normalize("NFC", name)
+        if self.name:
+            if self._folded_name_for != self.name:
+                self._folded_name = fold_name(self.name)
+                self._folded_name_for = self.name
+            if not fnmatch.fnmatchcase(name.casefold(), self._folded_name):
+                return False
         if self.regex:
             pattern = self._compiled_regex
             if pattern is None:
@@ -238,6 +255,12 @@ class SearchQuery:
                 self._contains_flags(),
             )
         return self._compiled_contains
+
+
+def fold_name(text: str) -> str:
+    """*text* as :meth:`SearchQuery.matches_name` compares names: NFC,
+    casefolded."""
+    return unicodedata.normalize("NFC", text).casefold()
 
 
 def _compile_user_regex(pattern: str, field_name: str, flags: int = 0) -> re.Pattern[str] | None:

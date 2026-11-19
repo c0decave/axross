@@ -50,6 +50,9 @@ log = logging.getLogger(__name__)
 _DEVICE_POLL_INTERVAL = 0.5  # seconds
 _DEVICE_POLL_TIMEOUT = 30.0  # seconds
 _PRIVILEGED_CMD_TIMEOUT = 30.0  # seconds
+#: The kernel's iSCSI sessions (open-iscsi): <session>/targetname, /state.
+_ISCSI_SESSIONS = "/sys/class/iscsi_session"
+_PROC_MOUNTS = "/proc/mounts"
 
 # Allowlist for the iqn/ip values that get interpolated into a shell
 # glob when resolving the node-config file path. iqn grammar per
@@ -202,7 +205,50 @@ class IscsiSession(SessionLifecycle):
 
     @property
     def connected(self) -> bool:
-        return self._logged_in and (not self._auto_mount or self._mounted)
+        """Logged in (and mounted) - and still so in the kernel: a target
+        that dropped the session (sysfs state FAILED / FREE, or no session
+        any more) or a file system unmounted under it is not connected, so
+        a reconnect logs in again instead of reusing a dead session."""
+        if not (self._logged_in and (not self._auto_mount or self._mounted)):
+            return False
+        if self._auto_mount and not self._mount_listed():
+            return False
+        state = self._kernel_session_state()
+        return state is None or state == "LOGGED_IN"
+
+    def _kernel_session_state(self) -> str | None:
+        """The sysfs state of this target's session ("LOGGED_IN",
+        "FAILED", "FREE"; "" for none); None where there is no sysfs
+        (not Linux, a container without it) - the flags decide then."""
+        try:
+            names = os.listdir(_ISCSI_SESSIONS)
+        except OSError:
+            return None
+        states = []
+        for name in names:
+            base = os.path.join(_ISCSI_SESSIONS, name)
+            try:
+                with open(os.path.join(base, "targetname")) as fh:
+                    if fh.read().strip() != self._target_iqn:
+                        continue
+                with open(os.path.join(base, "state")) as fh:
+                    states.append(fh.read().strip())
+            except OSError:
+                continue
+        if "LOGGED_IN" in states:
+            return "LOGGED_IN"
+        return states[0] if states else ""
+
+    def _mount_listed(self) -> bool:
+        """The mount point is in /proc/mounts (True where it cannot be read)."""
+        try:
+            with open(_PROC_MOUNTS) as fh:
+                mounts = fh.read().splitlines()
+        except OSError:
+            return True
+        target = os.path.abspath(self._mount_point)
+        return any(len(parts) > 1 and parts[1] == target
+                   for parts in (line.split() for line in mounts))
 
     # ------------------------------------------------------------------
     # Connect / disconnect
@@ -1205,7 +1251,7 @@ class IscsiSession(SessionLifecycle):
         """Return the first mountpoint where our block device is mounted,
         or an empty string if none."""
         try:
-            with open("/proc/mounts") as fh:
+            with open(_PROC_MOUNTS) as fh:
                 for line in fh:
                     parts = line.split()
                     if len(parts) < 2:

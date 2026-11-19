@@ -11,8 +11,8 @@ import io
 import logging
 import posixpath
 import re
-import select
 import socket
+import sys
 import threading
 import time
 import weakref
@@ -23,6 +23,7 @@ from typing import IO, NoReturn
 
 from core import removal_cancel, transfer_hooks
 from core.backend import SessionLifecycle
+from core.posix_compat import wait_io
 from core.path_policy import (
     MAX_RECURSIVE_DELETE_DEPTH,
     check_tree_depth,
@@ -56,11 +57,38 @@ IDLE_CONNECTIONS = MAX_PARALLEL
 # connection may take (ftplib keeps it as the socket's timeout).
 SOCKET_TIMEOUT = 15.0
 
+# Seconds the reply to a server-side checksum (HASH / XSHA256 / XMD5) may
+# take: the server reads the whole file first, which takes minutes for a
+# few GB - far longer than any other reply. Other calls on the session
+# wait meanwhile (one control connection), so not unbounded.
+CHECKSUM_TIMEOUT = 300.0
+
 # A refusal (421 / 530) within this many seconds after a login of ours
 # timed out or broke may be caused by that login: the server can still
 # count it (it was busy hashing the password when we gave up). Such a
 # refusal does not turn the session to one connection for good.
 LOGIN_FAILURE_GRACE = 60.0
+
+# The port of implicit FTPS (RFC 4217 has only explicit FTPS, AUTH TLS;
+# port 990 is the implicit convention): TLS from the first byte there.
+IMPLICIT_FTPS_PORTS = frozenset({990})
+
+# A profile's "IP Version" choice -> the address family to connect with.
+_FAMILIES = {"ipv4": socket.AF_INET, "ipv6": socket.AF_INET6}
+
+# A 530 to the login that is about the number of users, not the password.
+_TOO_MANY_WORDING = re.compile(r"too many|maximum|limit|exceed", re.IGNORECASE)
+
+
+class AuthenticationError(PermissionError):
+    """The server refused the login (530). core.user_errors names this
+    class a refused login; the server's own words stay in the message."""
+
+
+class FtpsUnavailableRefused(OSError):
+    """FTPS was asked for and the server refused AUTH TLS. The message is
+    written for the user (the class name ends in "Refused")."""
+
 
 # How often a data connection is asked for when PASV / EPSV answers 425
 # (the server found no free passive port), and the pause before the next
@@ -365,6 +393,17 @@ def _is_not_found_reply(exc: BaseException) -> bool:
 _REFUSAL_WORDING = re.compile(r"denied|permission|not allowed|forbidden", re.IGNORECASE)
 
 
+def _refused_error(text: str, path: str, exc: BaseException) -> OSError:
+    """The OSError for a command the server refused: a PermissionError
+    (EACCES, naming *path*) when the 5xx reply is worded as a refusal
+    ("550 Permission denied", IIS's "550 Access is denied."), so callers
+    and the message box can tell it from any other failure."""
+    reply = str(exc)
+    if reply[:1] == "5" and _REFUSAL_WORDING.search(reply):
+        return PermissionError(errno.EACCES, text, path)
+    return OSError(text)
+
+
 def _features(ftp) -> frozenset[str]:
     """The keywords *ftp*'s server names in its ``FEAT`` reply (RFC 2389),
     upper case, asked once per control connection. A refused FEAT
@@ -533,6 +572,23 @@ def _hash_reply_digest(resp: str, algorithm: str, *, draft: bool) -> str:
     return ""
 
 
+@contextlib.contextmanager
+def _reply_timeout(ftp, seconds: float):
+    """Wait up to *seconds* for the replies inside the ``with`` body on
+    *ftp*'s control connection; its own time-out is restored after."""
+    sock = getattr(ftp, "sock", None)
+    if not isinstance(sock, socket.socket):
+        yield
+        return
+    before = sock.gettimeout()
+    sock.settimeout(seconds)
+    try:
+        yield
+    finally:
+        with contextlib.suppress(OSError):
+            sock.settimeout(before)
+
+
 def _quit_quietly(ftp) -> None:
     """QUIT a control connection; close it when QUIT fails."""
     try:
@@ -551,7 +607,7 @@ def _socket_quiet(ftp) -> bool:
     try:
         if getattr(sock, "pending", lambda: 0)():  # TLS bytes already buffered
             return False
-        readable, _, _ = select.select([sock], [], [], 0)
+        readable, _ = wait_io([sock], timeout=0)
     except (OSError, ValueError):
         return False
     return not readable
@@ -963,6 +1019,43 @@ class _ControlChannelMixin:
     transfer command has gone out yet."""
 
     _axross_type: str | None = None
+    #: The address family the control connection may use (0: any).
+    _axross_family: int = 0
+    #: Implicit FTPS: TLS on the control connection before the greeting.
+    _axross_implicit: bool = False
+
+    def connect(self, host="", port=0, timeout=-999, source_address=None):
+        """ftplib's connect, but over the addresses of the chosen family
+        only, and with TLS before the greeting for implicit FTPS."""
+        if not self._axross_family and not self._axross_implicit:
+            return super().connect(host, port, timeout, source_address)  # type: ignore[misc]
+        if host != "":
+            self.host = host
+        if port > 0:
+            self.port = port
+        if timeout != -999:
+            self.timeout = timeout
+        if source_address is not None:
+            self.source_address = source_address
+        sys.audit("ftplib.connect", self, self.host, self.port)
+        sock = _open_control_socket(self.host, self.port, self.timeout,
+                                    self._axross_family, self.source_address)
+        self._axross_attach(sock)
+        return self.welcome
+
+    def _axross_attach(self, sock) -> None:
+        """Take *sock* as the control connection (wrapped in TLS first
+        for implicit FTPS) and read the greeting."""
+        self.af = sock.family
+        if self._axross_implicit:
+            try:
+                sock = self.context.wrap_socket(sock, server_hostname=self.host)  # type: ignore[attr-defined]
+            except BaseException:
+                sock.close()
+                raise
+        self.sock = sock
+        self.file = sock.makefile("r", encoding=self.encoding)
+        self.welcome = self.getresp()  # type: ignore[attr-defined]
 
     def makepasv(self):
         for attempt in range(1, PASV_ATTEMPTS + 1):
@@ -974,6 +1067,15 @@ class _ControlChannelMixin:
                 log.debug("FTP passive port refused (%s); asking again", exc)
                 time.sleep(PASV_RETRY_DELAY * attempt)
         raise AssertionError("unreachable")  # pragma: no cover
+
+    def putline(self, line):
+        """ftplib's putline, encoding with ``surrogateescape``: a name
+        listed with bytes that are not in the session encoding (decoded
+        so by the readers below) goes back to the server as those bytes."""
+        if "\r" in line or "\n" in line:
+            raise ValueError("an illegal newline character should not be contained")
+        sys.audit("ftplib.sendcmd", self, line)
+        self.sock.sendall((line + "\r\n").encode(self.encoding, "surrogateescape"))  # type: ignore[attr-defined]
 
     def putcmd(self, line):
         if line[:5].upper() == "TYPE ":
@@ -997,7 +1099,8 @@ class _ControlChannelMixin:
 
 
 class _LenientListingMixin:
-    """``retrlines`` that decodes the data channel with ``errors="replace"``.
+    """``retrlines`` that decodes the data channel with
+    ``errors="surrogateescape"``.
 
     ftplib decodes LIST / NLST / MLSD data strictly in ``self.encoding``
     (ftplib.FTP.retrlines: ``conn.makefile('r', encoding=self.encoding)``),
@@ -1005,8 +1108,12 @@ class _LenientListingMixin:
     but lists latin-1 names - raised UnicodeDecodeError out of list_dir,
     which no caller catches, and left the reply of the aborted transfer
     unread on the control channel. The control channel is already read
-    with ``errors="replace"`` (see FtpSession._connect); listings now
-    follow the same rule. Otherwise this is ftplib's own retrlines.
+    the same way (see FtpSession._login); listings follow the same rule.
+    ``surrogateescape``, not ``replace``: a name such as b"lat\\xe9.txt" on
+    a UTF-8 server was listed as "lat\\ufffd.txt", and every command on it
+    asked for a name that is not there (550); with the bytes kept,
+    _ControlChannelMixin.putline sends them back unchanged. Otherwise this
+    is ftplib's own retrlines.
     """
 
     def retrlines(self, cmd, callback=None):
@@ -1017,7 +1124,7 @@ class _LenientListingMixin:
         self.sendcmd("TYPE A")
         with (
             self.transfercmd(cmd) as conn,
-            conn.makefile("r", encoding=self.encoding, errors="replace") as fp,
+            conn.makefile("r", encoding=self.encoding, errors="surrogateescape") as fp,
         ):
             while True:
                 line = fp.readline(self.maxline + 1)
@@ -1078,6 +1185,36 @@ except ImportError:  # pragma: no cover — Python<3.x
     parse150 = None  # type: ignore[assignment]
 
 
+def _open_control_socket(host: str, port: int, timeout, family: int, source_address=None):
+    """A TCP connection to *host*:*port*; with *family* set only over
+    addresses of that family (``socket.create_connection`` tries every
+    address the name has)."""
+    if not family:
+        return socket.create_connection((host, port), timeout, source_address=source_address)
+    kind = "IPv6" if family == socket.AF_INET6 else "IPv4"
+    try:
+        infos = socket.getaddrinfo(host, port, family, socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise OSError(
+            errno.EADDRNOTAVAIL,
+            f"{host} has no {kind} address (the profile allows {kind} only): {exc}",
+        ) from exc
+    last: OSError | None = None
+    for af, socktype, proto, _canon, addr in infos:
+        sock = socket.socket(af, socktype, proto)
+        try:
+            if timeout is not None:
+                sock.settimeout(timeout)
+            if source_address is not None:
+                sock.bind(source_address)
+            sock.connect(addr)
+            return sock
+        except OSError as exc:
+            sock.close()
+            last = exc
+    raise last if last is not None else OSError(f"Cannot connect to {host}:{port} over {kind}")
+
+
 def _ftp_connect_via_proxy(ftp, host: str, port: int, proxy_config, timeout: float):
     """Connect a proxy-aware ``ftplib.FTP`` (or ``FTP_TLS``) through a
     SOCKS / HTTP proxy.
@@ -1102,8 +1239,6 @@ def _ftp_connect_via_proxy(ftp, host: str, port: int, proxy_config, timeout: flo
     )
     ftp.host = host
     ftp.port = int(port)
-    ftp.sock = sock
-    ftp.af = sock.family
     # Propagate the timeout onto ``ftp.timeout`` too. Without this,
     # ftplib's data-channel sockets (PASV ``ntransfercmd``) inherit
     # ``None`` and block indefinitely if the data port is unreachable.
@@ -1111,9 +1246,9 @@ def _ftp_connect_via_proxy(ftp, host: str, port: int, proxy_config, timeout: flo
     # Stash the proxy + timeout where the mixin can find them.
     ftp._axross_proxy = proxy_config  # type: ignore[attr-defined]
     ftp._axross_timeout = float(timeout)  # type: ignore[attr-defined]
-    ftp.file = sock.makefile("r", encoding=ftp.encoding)
-    # Read the 220 server greeting — same shape as ftplib.FTP.connect.
-    ftp.welcome = ftp.getresp()
+    # Read the 220 server greeting - same shape as ftplib.FTP.connect
+    # (implicit FTPS: after the TLS handshake).
+    ftp._axross_attach(sock)
     return ftp.welcome
 
 
@@ -1149,6 +1284,7 @@ class FtpSession(SessionLifecycle):
         proxy_port: int = 0,
         proxy_username: str = "",
         proxy_password: str = "",
+        address_family: str = "auto",
     ):
         """Create an FTP / FTPS session.
 
@@ -1172,6 +1308,11 @@ class FtpSession(SessionLifecycle):
         self._tls = tls
         self._passive = passive
         self._verify_tls = verify_tls
+        # "ipv4" / "ipv6": the control connection uses only addresses of
+        # that family (the data connections follow it).
+        self._family = _FAMILIES.get(address_family or "auto", 0)
+        # FTPS to port 990 is implicit FTPS: TLS before the greeting.
+        self._implicit = bool(tls) and int(port) in IMPLICIT_FTPS_PORTS
         from core.proxy import ProxyConfig
 
         self._proxy = ProxyConfig(
@@ -1209,16 +1350,22 @@ class FtpSession(SessionLifecycle):
 
     def _connect(self) -> None:
         """Establish FTP connection."""
-        ftp = self._login()
-
-        # Probe MLSD support. _ProxyFTP/_ProxyFTP_TLS override
-        # ntransfercmd(), so PASV data channels used by MLSD are
-        # proxied the same way RETR/STOR/NLST data channels are.
         try:
-            list(ftp.mlsd("/", facts=["type"]))
-            self._has_mlsd = True
-        except Exception:
-            self._has_mlsd = False
+            ftp = self._login()
+        except error_perm as exc:
+            # The session's own login (Connect, a reconnect): a 530 is a
+            # refused login and says so. The transfer connections keep
+            # ftplib's error: a 530 there may be "no more connections".
+            if str(exc)[:3] == "530" and not _TOO_MANY_WORDING.search(str(exc)):
+                raise AuthenticationError(
+                    errno.EACCES, f"FTP login to {self._host} refused: {exc}"
+                ) from exc
+            raise OSError(f"FTP login to {self._host}: {exc}") from exc
+        except error_temp as exc:
+            # "421 Too many connections" and the like, in the server's words.
+            raise OSError(f"FTP {self._host}: {exc}") from exc
+
+        self._has_mlsd = self._probe_mlsd(ftp)
 
         self._ftp = ftp
         log.info(
@@ -1229,6 +1376,29 @@ class FtpSession(SessionLifecycle):
             self._port,
             self._has_mlsd,
         )
+
+    @staticmethod
+    def _probe_mlsd(ftp) -> bool:
+        """Whether the server lists with MLSD. RFC 3659 7.8: a server
+        with MLSD names MLST in its FEAT reply, so that decides when FEAT
+        answers. Listing "/" to find out turned MLSD off for the session
+        when the account may not read the root folder, and moved a whole
+        root of tens of thousands of entries at every login. Only a server
+        without FEAT is still asked with MLSD of its login folder.
+        _ProxyFTP/_ProxyFTP_TLS override ntransfercmd(), so that MLSD
+        goes through the proxy like every data connection."""
+        try:
+            features = _features(ftp)
+        except (*_FTP_PROTOCOL_ERRORS, OSError) as exc:
+            log.debug("FTP FEAT failed: %s", exc)
+            features = frozenset()
+        if features:
+            return "MLST" in features
+        try:
+            list(ftp.mlsd("", facts=["type"]))
+            return True
+        except Exception:  # noqa: BLE001 - any refusal: list with NLST / LIST
+            return False
 
     def _login(self, *, announce: bool = True) -> FTP:
         """A new control connection, logged in and set up. ``announce``
@@ -1256,8 +1426,10 @@ class FtpSession(SessionLifecycle):
             ftp = (
                 _ProxyFTP_TLS(context=context) if self._proxy.enabled else _FTP_TLS(context=context)
             )
+            ftp._axross_implicit = getattr(self, "_implicit", False)
         else:
             ftp = _ProxyFTP() if self._proxy.enabled else _FTP()  # nosec B321
+        ftp._axross_family = getattr(self, "_family", 0)
 
         try:
             if self._proxy.enabled:
@@ -1270,6 +1442,17 @@ class FtpSession(SessionLifecycle):
                 )
             else:
                 ftp.connect(self._host, self._port, timeout=SOCKET_TIMEOUT)
+            if isinstance(ftp, FTP_TLS) and not getattr(self, "_implicit", False):
+                try:
+                    ftp.auth()
+                except error_perm as exc:
+                    from core.i18n import tr
+
+                    raise FtpsUnavailableRefused(
+                        tr("{host} does not offer FTPS: it refused to start TLS ({reply}). "
+                           "Choose FTP if an unencrypted connection is acceptable, or check "
+                           "the port.").format(host=self._host, reply=str(exc).strip()),
+                    ) from exc
             ftp.login(self._username, self._password)
 
             if self._tls and isinstance(ftp, FTP_TLS):
@@ -1288,14 +1471,14 @@ class FtpSession(SessionLifecycle):
             # when the server accepts OPTS UTF8 ON it may still echo paths
             # back in latin-1 (vsftpd/pure-ftpd both do this for non-ASCII
             # names on certain builds). A raw UnicodeDecodeError inside
-            # ftplib.getline() aborts the control session; switching the
-            # decoder to errors='replace' keeps the channel alive while
-            # logging what happened.
+            # ftplib.getline() aborts the control session; surrogateescape
+            # keeps the channel alive and the name's bytes (MLST, PWD), which
+            # putline sends back as they came.
             try:
                 raw = ftp.sock.makefile(
                     "r",
                     encoding=ftp.encoding,
-                    errors="replace",
+                    errors="surrogateescape",
                 )
                 ftp.file = raw
             except Exception as exc:
@@ -1410,8 +1593,11 @@ class FtpSession(SessionLifecycle):
                         continue
                     items.append(self._mlsd_to_item(name, facts))
                 return items
-            except error_perm:
-                pass
+            except error_perm as exc:
+                if str(exc)[:3] in ("500", "502"):
+                    # FEAT named MLST, but MLSD is not implemented after
+                    # all: not asked again in this session.
+                    self._has_mlsd = False
 
         # Fallback: NLST + individual stat
         try:
@@ -1420,7 +1606,7 @@ class FtpSession(SessionLifecycle):
             refused = self._read_refused(path, e)
             if isinstance(refused, FileNotFoundError):
                 raise FileNotFoundError(errno.ENOENT, f"Cannot list {path}: {e}", path) from e
-            raise OSError(f"Cannot list {path}: {e}") from e
+            raise _refused_error(f"Cannot list {path}: {e}", path, e) from e
         names = [n for n in names if (posixpath.basename(n.rstrip("/")) or n) not in (".", "..")]
         # NLST (and LIST) of a FILE answers with that file - vsftpd,
         # pure-ftpd and proftpd run ls on the argument; MLSD of a file is
@@ -1717,7 +1903,7 @@ class FtpSession(SessionLifecycle):
             raise
         except UnicodeDecodeError as e:
             # A reply in another encoding than the negotiated one; the
-            # control channel normally reads with errors="replace"
+            # control channel normally reads with errors="surrogateescape"
             # (_connect), so this is a reader that could not be
             # hardened. Its code is unknown: no answer, not "no".
             raise OSError(f"FTP CWD {path}: reply could not be decoded: {e}") from e
@@ -1786,7 +1972,7 @@ class FtpSession(SessionLifecycle):
                 raise FileExistsError(
                     errno.EEXIST, f"Cannot create directory {path}: it exists", path
                 ) from e
-            raise OSError(f"Cannot create directory {path}: {e}") from e
+            raise _refused_error(f"Cannot create directory {path}: {e}", path, e) from e
 
     @_ftp_errors_as_oserror
     @serialized
@@ -1800,7 +1986,7 @@ class FtpSession(SessionLifecycle):
                 try:
                     ftp.delete(path)
                 except error_perm as e:
-                    raise OSError(f"Cannot delete link {path}: {e}") from e
+                    raise _refused_error(f"Cannot delete link {path}: {e}", path, e) from e
             elif recursive:
                 if kind != "dir":
                     raise OSError(
@@ -1812,7 +1998,7 @@ class FtpSession(SessionLifecycle):
                 try:
                     ftp.rmd(path)
                 except error_perm as e:
-                    raise OSError(f"Cannot remove directory {path}: {e}") from e
+                    raise _refused_error(f"Cannot remove directory {path}: {e}", path, e) from e
         else:
             try:
                 ftp.delete(path)
@@ -1823,7 +2009,7 @@ class FtpSession(SessionLifecycle):
                     raise FileNotFoundError(
                         errno.ENOENT, f"Cannot delete {path}: not found", path
                     ) from e
-                raise OSError(f"Cannot delete {path}: {e}") from e
+                raise _refused_error(f"Cannot delete {path}: {e}", path, e) from e
 
     _MAX_TREE_DEPTH = MAX_RECURSIVE_DELETE_DEPTH
 
@@ -1879,7 +2065,7 @@ class FtpSession(SessionLifecycle):
         try:
             ftp.rename(src, dst)
         except error_perm as e:
-            raise OSError(f"Cannot rename {src} -> {dst}: {e}") from e
+            raise _refused_error(f"Cannot rename {src} -> {dst}: {e}", src, e) from e
 
     @_ftp_errors_as_oserror
     @serialized
@@ -2120,7 +2306,7 @@ class FtpSession(SessionLifecycle):
                 there = None
             if there is False:
                 return FileNotFoundError(errno.ENOENT, f"Cannot read {path}: {exc}", path)
-        return OSError(f"Cannot read {path}: {exc}")
+        return _refused_error(f"Cannot read {path}: {exc}", path, exc)
 
     @serialized
     def _open_read_shared(self, path: str) -> IO[bytes]:
@@ -2323,7 +2509,9 @@ class FtpSession(SessionLifecycle):
         for cmd_text in cmd_map.get(algorithm, ()):
             cmd, _, _ = cmd_text.partition(" ")
             try:
-                resp = ftp.sendcmd(f"{cmd_text} {path}")
+                # The server hashes the whole file before it answers.
+                with _reply_timeout(ftp, CHECKSUM_TIMEOUT):
+                    resp = ftp.sendcmd(f"{cmd_text} {path}")
             except error_perm:
                 continue
             except Exception as exc:  # noqa: BLE001 - best effort: try the next command
