@@ -104,6 +104,7 @@ CONTEXT_COMMANDS: dict[str, tuple[str | None, str | None]] = {
     "open-with": ("file", None),
     "open-text": ("file", None),
     "open-hex": ("code", None),
+    "open-markdown": ("file", None),
     "open-root": ("shield", None),
     "preview-archive": ("archive", None),
     "extract": ("download", None),
@@ -2301,6 +2302,13 @@ class FilePaneWidget(QWidget):
             dlg.deleteLater()
         return True
 
+    def _open_as_markdown(self, path: str) -> None:
+        """Open With > Open as Markdown: *path* rendered in the Markdown viewer
+        whatever its name."""
+        from ui.markdown_viewer import open_markdown_viewer
+
+        open_markdown_viewer(self._backend, path, self, source_pane=self)
+
     def _open_markdown_viewer(self, path: str, name: str) -> bool:
         """Open the Markdown file *name* rendered in the Markdown viewer
         (ui.markdown_viewer): local or remote, read in the background.
@@ -2790,6 +2798,37 @@ class FilePaneWidget(QWidget):
         if any(r.left() != 0 or r.right() != last for r in ranges):
             return [index.row() for index in sel.selectedRows(COL_NAME)]
         return list(dict.fromkeys(row for r in ranges for row in range(r.top(), r.bottom() + 1)))
+
+    def deselect_paths(self, paths) -> None:
+        """Take *paths* out of the selection (a copy or move of them was
+        queued): after F5 the copied files stayed marked in the source pane,
+        and the next F5 or Delete took them again by surprise. Rows selected
+        since, and other rows, keep their mark."""
+        if self._shutting_down:
+            return
+        wanted = set(paths)
+        if not wanted:
+            return
+        sel = self._table.selectionModel()
+        get = self._model.get_item
+        last = self._proxy.columnCount() - 1
+        drop = []
+        rows = self._selected_rows()
+        for proxy_row, source_row in zip(rows, self._proxy.source_rows_of(rows)):
+            item = get(source_row)
+            if item is None or item.is_nav:
+                continue
+            if self._safe_item_path(item, warn=False) in wanted:
+                drop.append(proxy_row)
+        if not drop:
+            return
+        from PyQt6.QtCore import QItemSelection
+
+        gone = QItemSelection()
+        for row in drop:
+            gone.select(self._proxy.index(row, 0), self._proxy.index(row, last))
+        sel.select(gone, sel.SelectionFlag.Deselect)
+        self.selection_changed.emit()
 
     def _selected_source_items(self) -> list[FileItem]:
         """The listing items of the selected rows ("." and ".." included)."""
@@ -4176,6 +4215,10 @@ class FilePaneWidget(QWidget):
         if single_path is not None:
             with_entry("open-text", tr("Open as &Text"), lambda: self._open_editor(single_path))
             with_entry("open-hex", tr("Open as &Hex"), lambda: self._open_hex_editor(single_path))
+            # Any file rendered as Markdown (a README without an extension, notes.txt): a
+            # double-click does this only for Markdown names.
+            with_entry("open-markdown", tr("Open as &Markdown"),
+                       lambda: self._open_as_markdown(single_path))
             # "Open as root…" only for local backends with pkexec + the
             # helper binaries (cat/tee/stat/ls): no click into an error dialog.
             if self._elevated_io_available():

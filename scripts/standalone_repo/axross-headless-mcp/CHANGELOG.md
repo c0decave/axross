@@ -4,6 +4,27 @@ What changed in each release of axross-headless-mcp. The code is axross's MCP
 server (https://github.com/c0decave/axross), written out by axross's
 `scripts/export_standalone.py mcp`; its version is axross's.
 
+## 0.15.182 - 2026-11-20
+
+The MCP server's part of axross 0.15.182: tool definitions an agent can use
+without guessing.
+
+- **Every tool** opens with a summary, then *Use when*, *Instead* (the
+  sibling tool), *Requires* (the flags), *Behavior* and *Returns*; the
+  shared rules (paths, backends, `_b64` twins, secret files, write guards,
+  paranoid mode, `max_depth`, `truncated`/`complete`) are in the
+  `initialize` instructions once.
+- **Schemas:** titles and truthful annotations, defaults, ranges and enums,
+  `additionalProperties: false`, an `outputSchema` on 54 of 55 tools
+  (`structuredContent` from MCP 2025-06-18).
+- **New:** `stat` returns `mode`; `grep` takes `include`; `search` takes
+  `offset` and `path`; `is_link` in listings; ISO 8601 times everywhere;
+  archive passwords.
+- **Fixed:** `grep` without a path searches the MCP root; `max_depth=0`;
+  `file_type`'s deadline; `remote_exec`/`remote_script` need `backend`;
+  `preview` refuses an out-of-range edge; the drift check's doubled path.
+  The tool names are unchanged.
+
 ## 0.15.181 - 2026-11-20
 
 The MCP server's part of axross 0.15.181: tool definitions a client can

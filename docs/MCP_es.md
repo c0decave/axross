@@ -857,7 +857,7 @@ en su lugar, y `all` deja fuera el grupo sin ese flag (§9.8).
 | `crypto` | `encrypt` | modifica | `--mcp-tools crypto` `--mcp-write` `--mcp-root DIR` | stream |
 | `crypto` | `decrypt` | modifica | `--mcp-tools crypto` `--mcp-write` `--mcp-root DIR` | stream |
 | `index` | `index_build` | solo lectura | `--mcp-tools index` | long |
-| `filetype` | `file_type` | solo lectura | `--mcp-tools filetype` | quick |
+| `filetype` | `file_type` | solo lectura | `--mcp-tools filetype` | walk |
 | `filetype` | `file_type_scan` | solo lectura | `--mcp-tools filetype` | stream |
 | `transfer` | `transfer_copy` | modifica | `--mcp-tools transfer` `--mcp-write` `--mcp-root DIR` | long |
 | `transfer` | `transfer_move` | modifica | `--mcp-tools transfer` `--mcp-write` `--mcp-root DIR` | long |

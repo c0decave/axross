@@ -1010,6 +1010,24 @@ def read_state(path) -> tuple[dict, bool]:
     return (state, True) if isinstance(state, dict) else ({}, False)
 
 
+def _restorable_path(path: str) -> bool:
+    """Whether a saved track's *path* may come back into the playlist. A
+    control character (a newline, an escape) or a lone surrogate that no file
+    name can hold refuses it; a name that is no UTF-8 (saved as its surrogate
+    escapes, U+DC80..U+DCFF, by os.fsdecode) and a no-break or other unusual
+    space are file names like any other - ``str.isprintable`` refused both,
+    so such a track was lost at every start."""
+    if not path:
+        return False
+    for ch in path:
+        code = ord(ch)
+        if code < 0x20 or 0x7F <= code < 0xA0:
+            return False
+        if 0xD800 <= code <= 0xDFFF and not 0xDC80 <= code <= 0xDCFF:
+            return False
+    return True
+
+
 def encode_state(state: dict) -> str:
     """*state* as the JSON the state file holds, within MAX_STATE_BYTES (what
     read_state accepts): a playlist too long for it keeps its first tracks
@@ -6970,7 +6988,7 @@ class PlayerPanel(QWidget):
         for index, track in enumerate(tracks[:MAX_PLAYLIST_ENTRIES]
                                       if isinstance(tracks, list) else []):
             path = track.get("path") if isinstance(track, dict) else None
-            if not isinstance(path, str) or not path.isprintable():
+            if not isinstance(path, str) or not _restorable_path(path):
                 continue
             title = track.get("title")
             duration = track.get("duration")

@@ -8661,6 +8661,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                     if not self._target_production_ok(target, value, None, len(paths), True):
                         return
                     self._elevated_move(source, target, paths, dest_dir)
+                    source.deselect_paths(paths)
                     if on_queued is not None:
                         on_queued()
                     return
@@ -8678,6 +8679,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                 source, target, paths, move=move_now, dest_dir=dest_dir, conflict_plan=plan,
                 kept=self._plan_skips(value, plan, dest_backend),
             )
+            # The queued entries are no longer marked in the source pane.
+            source.deselect_paths(paths)
             if on_queued is not None:
                 on_queued()
 

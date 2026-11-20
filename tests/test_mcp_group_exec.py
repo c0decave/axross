@@ -108,10 +108,21 @@ def test_sad_no_tools_without_the_exec_flag(tmp_path):
 
 
 def test_sad_a_backend_without_a_shell_is_refused(tmp_path):
-    tools = _tools(tmp_path)
+    from core.local_fs import LocalFS
+
+    tools = _tools(tmp_path, box=_Shell(), files=LocalFS())
     with pytest.raises(T.RpcError) as info:
-        T.call(tools, "remote_exec", {"command": "id"})  # default backend: local files
+        T.call(tools, "remote_exec", {"backend": "files", "command": "id"})  # local files
     assert "no remote shell" in str(info.value)
+
+
+def test_sad_the_backend_must_be_named(tmp_path):
+    # The default backend (the local disk) runs no commands: backend is required.
+    tools = _tools(tmp_path)
+    assert "backend" in tools["remote_exec"].schema["required"]
+    with pytest.raises(T.RpcError) as info:
+        T.call(tools, "remote_exec", {"command": "id"})
+    assert "'backend' is a required property" in str(info.value)
 
 
 def test_sad_cisco_runs_no_scripts(tmp_path):

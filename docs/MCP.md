@@ -1070,7 +1070,7 @@ out unless that flag is given (§9.8).
 | `crypto` | `encrypt` | mutating | `--mcp-tools crypto` `--mcp-write` `--mcp-root DIR` | stream |
 | `crypto` | `decrypt` | mutating | `--mcp-tools crypto` `--mcp-write` `--mcp-root DIR` | stream |
 | `index` | `index_build` | read-only | `--mcp-tools index` | long |
-| `filetype` | `file_type` | read-only | `--mcp-tools filetype` | quick |
+| `filetype` | `file_type` | read-only | `--mcp-tools filetype` | walk |
 | `filetype` | `file_type_scan` | read-only | `--mcp-tools filetype` | stream |
 | `transfer` | `transfer_copy` | mutating | `--mcp-tools transfer` `--mcp-write` `--mcp-root DIR` | long |
 | `transfer` | `transfer_move` | mutating | `--mcp-tools transfer` `--mcp-write` `--mcp-root DIR` | long |

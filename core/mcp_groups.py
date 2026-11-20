@@ -42,6 +42,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from core import mcp_terms as T
 from core.server_ops import ShortCopy
 
 log = logging.getLogger(__name__)
@@ -585,11 +586,12 @@ def _build_metadata(env: GroupEnv) -> list:
                 )
                 # The cleaned copy is written next to each file: none in a
                 # read-only folder below *path*.
-                targets = [t for t in targets if _removable(t, backend, env, entry=False)]
+                skipped = [t for t in targets if not _removable(t, backend, env, entry=False)]
+                targets = [t for t in targets if t not in skipped]
             else:
                 if not backend.exists(path):
                     raise FileNotFoundError(f"no such file: {path}")
-                targets, truncated = [path], False
+                targets, truncated, skipped = [path], False, []
             batch = MT.remove_many(
                 backend,
                 targets,
@@ -599,10 +601,17 @@ def _build_metadata(env: GroupEnv) -> list:
                 source=path,
             )
             ctx.check_cancel()
+            # Over MCP every result is a copy: the per-result mode and the
+            # in-place trash_id would always be "copy" and "".
+            results = [{k: v for k, v in r.to_dict().items() if k not in ("mode", "trash_id")}
+                       for r in batch.results]
+            results += [{"path": s, "status": "skipped", "output": "", "removed": 0,
+                         "error": "", "sha256": "", "note": "in a read-only folder"}
+                        for s in skipped]
             return {
                 "path": path,
                 "mode": MT.MODE_COPY,
-                "results": [r.to_dict() for r in batch.results],
+                "results": results,
                 "truncated": truncated,
             }
 
@@ -613,10 +622,18 @@ def _build_metadata(env: GroupEnv) -> list:
         return _audited(env, "metadata_remove", {"path": source}, work, ok)
 
     common = {
-        "path": _path_prop("A file, or a folder whose supported files are used."),
-        "recursive": _bool_prop("For a folder: descend into subfolders.", default=False),
+        "path": _path_prop(
+            "A file, or a folder whose supported files are read (absolute, or relative to "
+            "the MCP root)."
+        ),
+        "recursive": _bool_prop(
+            "For a folder: also take the files in its subfolders (false: the folder's own "
+            "files only). Ignored for a file.",
+            default=False,
+        ),
         "max_files": _int_prop(
-            "For a folder: at most this many files (truncated=true when cut).",
+            "For a folder: take at most this many files; more sets truncated=true. Ignored for "
+            "a file.",
             minimum=1,
             maximum=_MAX_METADATA_FILES,
             default=200,
@@ -626,20 +643,24 @@ def _build_metadata(env: GroupEnv) -> list:
         "type": "string",
         "enum": list(MT.EXPORT_FORMATS),
         "default": "json",
-        "description": 'json: {"files": [...]}; csv: one row per field, formula-safe.',
+        "description": "Text format. json: {\"files\": [<metadata_read file report>, ...]}; "
+        "csv: header path,kind,group,field,value,removable,error and one row per field, cells "
+        "that would start a spreadsheet formula prefixed with '.",
     }
-    kinds = (
-        "images (JPEG/PNG/WebP/GIF/TIFF), Office (docx/xlsx/pptx/odt/ods/odp), PDF, "
-        "audio/video (ffprobe)"
-    )
     return [
         _tool(
             "metadata_read",
-            "Read the metadata of a file or of every supported file in a folder: "
-            f"{kinds}. Returns {{path, is_dir, truncated, files: [{{path, name, kind, size, "
-            "error, truncated, removable_count, fields: [{group, name, value, removable}]}]}}. "
-            "An unsupported or unreadable file is a report with error set, not a failure. "
-            "Values are length-bounded. Local paths are confined to the MCP root.",
+            "Read the embedded metadata (EXIF, XMP, document properties, tags) of a file or "
+            "of every supported file in a folder.\n"
+            "Use when: checking what a photo, document or media file reveals before "
+            "sharing it.\n"
+            "Instead: metadata_export for one JSON/CSV text; metadata_remove (needs "
+            "--mcp-write) for cleaned copies.\n"
+            "Behavior: read-only. Images, Office, PDF, audio/video (ffprobe, "
+            f"{T.PARANOID_TAG}). A file it cannot read is a report with error set. "
+            f"{T.SECRET_TAG} Values are cut at 512 characters. Cancellable.\n"
+            "Returns: {path, is_dir, truncated, files: [{path, kind, error ('' when read), "
+            "fields: [{group, name, value, removable}], ...}]}.",
             common,
             _read,
             group="metadata",
@@ -648,8 +669,13 @@ def _build_metadata(env: GroupEnv) -> list:
         ),
         _tool(
             "metadata_export",
-            "The metadata_read data of a file or folder as one text in JSON or CSV. Returns "
-            "{path, format, files, truncated, text}.",
+            "Export the metadata_read data of a file or folder as one JSON or CSV text.\n"
+            "Use when: you need the metadata as a document to quote or diff.\n"
+            "Instead: metadata_read for structured fields; metadata_export_file (needs "
+            "--mcp-write) for a file, better for big folders.\n"
+            "Behavior: read-only; reads as metadata_read does. A result over 16 MiB "
+            "fails.\n"
+            "Returns: {path, format, files (number of file reports), truncated, text}.",
             {**common, "format": fmt},
             _export,
             group="metadata",
@@ -658,11 +684,23 @@ def _build_metadata(env: GroupEnv) -> list:
         ),
         _tool(
             "metadata_export_file",
-            "Write the metadata_export text of path into the new file out (under the MCP "
-            "root, mode 0600). An existing file is never overwritten: 'meta.json' becomes "
-            "'meta (2).json'. Returns {path (the file written), format, files, truncated, "
-            "size}.",
-            {**common, "format": fmt, "out": _path_prop("File to create.")},
+            "Save the metadata_export text of path as a new file at out, on the same "
+            "backend.\n"
+            "Use when: the export should stay on disk next to the data.\n"
+            "Instead: metadata_export for the text in the response.\n"
+            "Behavior: only adds; a taken name gets a counter ('meta (2).json'). Not "
+            "idempotent: each call adds a file. Written via a temporary name; new local "
+            f"files are mode 0600. {T.WRITE_TAG}\n"
+            "Returns: {path (the file written, not the source), format, files, truncated, "
+            "size (bytes)}.",
+            {
+                **common,
+                "format": fmt,
+                "out": _path_prop(
+                    "The new file on path's backend (absolute, or relative to the MCP root); its "
+                    "folder must exist. A taken name gets a counter."
+                ),
+            },
             _export_file,
             group="metadata",
             required=("path", "out"),
@@ -671,15 +709,22 @@ def _build_metadata(env: GroupEnv) -> list:
         ),
         _tool(
             "metadata_remove",
-            "Remove the metadata of a file, or of every supported file in a folder, by "
-            "writing a cleaned copy next to each ('photo.jpg' -> 'photo.clean.jpg', then "
-            "'photo.clean (1).jpg'); the original is never modified and nothing is "
-            "overwritten. Images keep orientation and colour profile, pixels are not "
-            "re-encoded. PDF removal needs pypdf, audio/video needs ffmpeg (both blocked in "
-            "the paranoid security mode). Returns {path, mode: 'copy', truncated, results: "
-            "[{path, status (cleaned|unchanged|unsupported|error), output, removed, error, "
-            "note, sha256}]}.",
-            common,
+            "Strip the metadata of a file, or of each supported file in a folder, into "
+            "cleaned copies next to the originals.\n"
+            "Use when: sharing a file without its camera, GPS or author data; look with "
+            "metadata_read first.\n"
+            "Instead: metadata_export_file to keep the metadata as a record.\n"
+            f"Requires: PDF needs pypdf; audio/video ffmpeg, {T.PARANOID_TAG}.\n"
+            "Behavior: only adds; originals stay ('photo.jpg' -> 'photo.clean.jpg', taken: "
+            "'photo.clean (1).jpg'); no in-place mode. Not idempotent: a repeat writes "
+            "another copy. A missing file fails. "
+            f"{T.SECRET_TAG} {T.WRITE_TAG} Progress; cancellable.\n"
+            "Returns: {path, truncated, results: [{path, status, output (the copy), removed "
+            "(fields), sha256, error}]}; status: cleaned, unchanged, unsupported, skipped "
+            "(read-only folder) or error.",
+            {**common, "path": _path_prop(
+                "A file, or a folder whose supported files are cleaned (absolute, or relative "
+                "to the MCP root).")},
             _remove,
             group="metadata",
             required=("path",),
@@ -714,7 +759,7 @@ _MAX_UNREADABLE = 20
 
 
 def _walk_files(env: GroupEnv, backend, start: str, max_depth: int, ctx,
-                failed: list | None = None):
+                failed: list | None = None, cut: list | None = None):
     """Breadth-first ``(path, item)`` of the files under *start*: symlinks
     and entries that leave the root are skipped, cancel is polled per
     folder; folders that could not be listed go to *failed*."""
@@ -743,6 +788,8 @@ def _walk_files(env: GroupEnv, backend, start: str, max_depth: int, ctx,
             if getattr(child, "is_dir", False):
                 if depth < max_depth:
                     queue.append((full, depth + 1))
+                elif cut is not None:
+                    cut.append(full)  # max_depth: listed, not entered
                 continue
             yield full, child
 
@@ -780,7 +827,8 @@ def _build_filetype(env: GroupEnv) -> list:
         scanned = 0
         truncated = False
         failed: list[str] = []
-        for full, _item in _walk_files(env, backend, start, max_depth, ctx, failed):
+        cut: list[str] = []
+        for full, _item in _walk_files(env, backend, start, max_depth, ctx, failed, cut):
             if scanned >= max_files:
                 truncated = True
                 break
@@ -801,61 +849,84 @@ def _build_filetype(env: GroupEnv) -> list:
             "path": start,
             "entries": entries,
             "files_scanned": scanned,
-            "truncated": truncated or bool(failed),
+            # As walk: truncated - max_files or max_depth cut it; complete -
+            # nothing cut and no folder left unread.
+            "truncated": truncated or bool(cut),
+            "complete": not (truncated or cut or failed),
             **_unreadable(failed),
         }
 
     limits = {
         "max_bytes": _int_prop(
-            "Read at most this many bytes per file.",
+            "Bytes read from the start of each file for the content check (64 KiB default, "
+            "at most 1 MiB).",
             minimum=1,
             maximum=_MAX_TYPE_BYTES,
             default=FT.DEFAULT_MAX_BYTES,
         ),
         "use_file_command": _bool_prop(
-            "Also ask file(1) for its description (local files only).", default=True
+            "Also run the file(1) command for its description (file_command); local regular "
+            "files only, ignored on remote backends.",
+            default=True,
         ),
     }
-    record = (
-        "{path, name, kind (file|directory|special|error|timeout|cancelled), description, "
-        "mime (from the content), extension, extension_mime (what the name claims), verdict "
-        "(match|mismatch|unknown), mismatch (bool), size, encoding, line_endings, engine, "
-        "file_command, bytes_read, error}"
-    )
     return [
         _tool(
             "file_type",
-            "Identify one file by its content (magic bytes), not its name, and say whether "
-            f"the extension matches. Returns {record}. Never fails for an unreadable file: "
-            "kind is then error or timeout with error set.",
-            {"path": _path_prop("File to identify."), **limits},
+            "Identify one file's real type from its content (magic bytes) and check the "
+            "extension against it.\n"
+            "Use when: an extension may lie, or encoding and line endings matter.\n"
+            "Instead: file_type_scan for a folder; stat for size and date.\n"
+            "Behavior: read-only; reads at most max_bytes. An unreadable or missing file "
+            "is a result (kind error); reading gives up after 15 s per file (kind "
+            f"timeout). {T.SECRET_TAG}\n"
+            "Returns: {path, name, kind, verdict (match|mismatch|unknown), mime, "
+            "extension, ...}; every field in outputSchema.",
+            {
+                "path": _path_prop(
+                    "The file to identify (absolute, or relative to the MCP root)."
+                ),
+                **limits,
+                "max_bytes": {**limits["max_bytes"], "description": "Bytes read from the "
+                              "start of the file for the content check (64 KiB default, at "
+                              "most 1 MiB)."},
+            },
             _one,
             group="filetype",
             required=("path",),
-            timeout_class="quick",
+            timeout_class="walk",  # above its 15 s per-file limit: that is a result
         ),
         _tool(
             "file_type_scan",
-            "Identify every file under a folder (breadth-first, symlinks skipped). Returns "
-            f"{{path, files_scanned, truncated, entries: [{record}]}}; with mismatches_only "
-            "only files whose content contradicts their extension are listed. One progress "
-            "notification per file; honours cancellation.",
+            "Identify the content type of every file under a folder and flag misleading "
+            "extensions.\n"
+            "Use when: auditing a folder for disguised files (mismatches_only=true).\n"
+            "Instead: file_type for one file; walk for names only.\n"
+            "Behavior: read-only, breadth-first, name order; symlinks are skipped. "
+            "max_files or a folder at max_depth sets truncated; an unlistable folder "
+            "goes to unreadable. "
+            f"{T.SECRET_TAG} Progress; cancellable.\n"
+            "Returns: {path, files_scanned, truncated, complete, unreadable (folder paths), "
+            "entries: "
+            "[file_type records]}; mismatches_only lists verdict=mismatch only.",
             {
-                "path": _path_prop("Folder to scan."),
+                "path": _path_prop(
+                    "The folder to scan (absolute, or relative to the MCP root)."
+                ),
                 "max_depth": _int_prop(
-                    "Subfolder levels to descend (0: the folder itself only).",
+                    T.descend_text(),
                     minimum=0,
                     maximum=50,
                     default=2,
                 ),
                 "max_files": _int_prop(
-                    "Stop after this many files (truncated=true).",
+                    "Stop after identifying this many files; more sets truncated=true.",
                     minimum=1,
                     maximum=_MAX_TYPE_SCAN_FILES,
                     default=500,
                 ),
                 "mismatches_only": _bool_prop(
-                    "List only files whose content does not match the extension.",
+                    "List only files whose content contradicts their extension.",
                     default=False,
                 ),
                 **limits,
@@ -899,6 +970,18 @@ def _folder_arg(env: GroupEnv, backend, args: dict) -> str:
 
 def _iso(when) -> str | None:
     return when.isoformat() if when is not None else None
+
+
+def _iso_seconds(seconds) -> str | None:
+    """Unix seconds as the ISO 8601 the file tools give (modified)."""
+    from datetime import datetime
+
+    if seconds is None:
+        return None
+    try:
+        return datetime.fromtimestamp(float(seconds)).isoformat()
+    except (OverflowError, OSError, ValueError):
+        return None
 
 
 def _build_duplicates(env: GroupEnv) -> list:
@@ -953,7 +1036,8 @@ def _build_duplicates(env: GroupEnv) -> list:
             "algorithm": algo,
             "files_indexed": count,
             "status": record.status if record else cas.SCAN_COMPLETE,
-            "truncated": cap.reached or bool(listing.failed),
+            "truncated": cap.reached,
+            "complete": not cap.reached and not listing.failed,
             **_unreadable(listing.failed),
         }
 
@@ -1003,9 +1087,10 @@ def _build_duplicates(env: GroupEnv) -> list:
     def _list_groups(args, ctx):
         backend = env.resolve_backend(args)
         max_groups = _int_arg(args, "max_groups", 100, 1, _MAX_GROUPS)
+        offset = _int_arg(args, "offset", 0, 0, 2**31 - 1)
         folder, _bid, groups = _groups(args, backend)
         out = []
-        for group in groups[:max_groups]:
+        for group in groups[offset:offset + max_groups]:
             head = group[0]
             out.append(
                 {
@@ -1017,6 +1102,7 @@ def _build_duplicates(env: GroupEnv) -> list:
                             "path": e.path,
                             "size": e.size,
                             "mtime": e.mtime,
+                            "modified": _iso_seconds(e.mtime),
                             "scan_id": e.scan_id,
                             "keep": n == 0,
                         }
@@ -1024,7 +1110,8 @@ def _build_duplicates(env: GroupEnv) -> list:
                     ],
                 }
             )
-        return {"path": folder, "groups": out, "truncated": len(groups) > max_groups}
+        return {"path": folder, "groups": out,
+                "truncated": len(groups) > offset + max_groups}
 
     def _dedupe(args, ctx):
         dry_run = _bool_arg(args, "dry_run", True)
@@ -1096,11 +1183,14 @@ def _build_duplicates(env: GroupEnv) -> list:
             env, "duplicates_dedupe", {"path": source, "dry_run": dry_run}, work, ok
         )
 
-    folder = _path_prop("Folder; default: the MCP root (local backend).")
+    folder = _path_prop(
+        "The folder (absolute, or relative to the MCP root). Default on the local "
+        "backend: the MCP root; other backends need it."
+    )
     algo_any = {
         "type": "string",
         "enum": list(_HASH_ALGORITHMS),
-        "description": "Only groups hashed with this algorithm; omit for all.",
+        "description": "Only groups hashed with this algorithm; omit for every algorithm.",
     }
     scope = {
         "path": folder,
@@ -1109,29 +1199,41 @@ def _build_duplicates(env: GroupEnv) -> list:
             "type": "integer",
             "minimum": 0,
             "maximum": 2**31 - 1,
-            "description": "Only groups with at least one copy from this scan "
-            "(duplicates_scans); 0 = rows from before scans were recorded.",
+            "description": "Only groups with at least one copy from this scan (a scan_id from "
+            "duplicates_scans); 0 = rows from before scans were recorded. Omit for all scans.",
         },
     }
-    copy_shape = "{path, size, mtime, scan_id, keep}"
+    copy_shape = "{path, size, mtime (Unix seconds), modified (ISO 8601), scan_id, keep}"
     return [
         _tool(
             "duplicates_scan",
-            "Hash every file under a folder into the Duplicate Finder's index (the same "
-            "index the GUI uses), skipping symlinks, the axross trash and secret files (private "
-            "keys, tokens); files whose size and "
-            "mtime did not change are not hashed again unless rehash. Returns {scan_id, root, "
-            "backend_id, algorithm, files_indexed, status}. One progress notification per "
-            "file; cancellable (rows indexed so far are kept). Run it before duplicates_groups.",
+            "Run a duplicate scan: hash every file under a folder into the Duplicate "
+            "Finder's index.\n"
+            "Use when: before duplicates_groups or duplicates_dedupe, or after "
+            "changes.\n"
+            "Instead: duplicates_scans for past scans; checksum for one file.\n"
+            "Behavior: writes index rows, never files. path must be a folder. Not "
+            "idempotent: each run adds a scan record (the rows stay the same). Symlinks, "
+            "the axross trash and secret files are skipped. "
+            "Unchanged files are not hashed again unless rehash. The local disk hashes by "
+            "reading; remote backends use their own checksum, so ETag-only ones (plain "
+            "S3, WebDAV) index nothing. A capped or "
+            "cancelled scan keeps its rows. Progress.\n"
+            "Returns: {scan_id (null: no scan record was written), root, backend_id, "
+            "algorithm, files_indexed, status, truncated (max_files), complete, "
+            "unreadable (folder paths)}.",
             {
                 "path": folder,
                 "algorithm": {
                     "type": "string",
                     "enum": list(_HASH_ALGORITHMS),
                     "default": "sha256",
-                    "description": "Hash algorithm.",
+                    "description": "Hash algorithm for the index rows.",
                 },
-                "rehash": _bool_prop("Hash every file even when unchanged.", default=False),
+                "rehash": _bool_prop(
+                    "Hash every file again, even when size and mtime are unchanged.",
+                    default=False,
+                ),
                 "max_files": _WalkCap.prop(),
             },
             _scan,
@@ -1140,27 +1242,44 @@ def _build_duplicates(env: GroupEnv) -> list:
         ),
         _tool(
             "duplicates_scans",
-            "The scan history of the addressed backend, newest first, limited to scans of "
-            "folders inside the MCP root: {scans: [{scan_id, root, backend_id, algorithm, "
-            "started_at, finished_at, files_indexed, files_in_index, duplicate_groups, status "
-            "(complete|cancelled|failed|running), error}], truncated}.",
+            "List past duplicate scans (scan history), newest first.\n"
+            "Use when: choosing a scan_id, or checking that a scan finished.\n"
+            "Instead: duplicates_scan to run one; duplicates_groups for the duplicates.\n"
+            "Behavior: read-only; this backend's scans (local: inside the MCP root), the "
+            "newest 1000 only.\n"
+            "Returns: {scans: [{scan_id, root, backend_id, algorithm, started_at, "
+            "finished_at (ISO 8601, null while running), files_indexed, files_in_index, "
+            "duplicate_groups, status, error}], truncated}.",
             {},
             _scans,
             group="duplicates",
         ),
         _tool(
             "duplicates_groups",
-            "Groups of identical files from the index, every copy inside path. Each group is "
-            f"{{algorithm, value (hash), size, copies: [{copy_shape}]}} in survivor order: the "
-            "first copy (keep=true) is the oldest by mtime (ties: shorter, then "
-            "alphabetically first path) and is what duplicates_dedupe keeps. The index is a "
-            "record of the last scan; nothing is read from the files. Returns {path, groups, "
-            "truncated}.",
+            "List groups of identical files from the duplicate index, every copy inside "
+            "path.\n"
+            "Use when: reviewing duplicates after duplicates_scan.\n"
+            "Instead: duplicates_dedupe (needs --mcp-write) with dry_run for the trash "
+            "plan.\n"
+            "Behavior: read-only; the index as of the last scan, no file is read. Groups "
+            "come by hash; empty files never group. The first copy (keep=true) is the "
+            "oldest, the one duplicates_dedupe keeps. Pages with offset and "
+            "max_groups.\n"
+            f"Returns: {{path, truncated, groups: [{{algorithm, value, size, copies: "
+            f"[{copy_shape}]}}]}}.",
             {
                 **scope,
                 "max_groups": _int_prop(
-                    "Return at most this many groups.", minimum=1, maximum=_MAX_GROUPS,
+                    "Return at most this many groups; more sets truncated=true.",
+                    minimum=1,
+                    maximum=_MAX_GROUPS,
                     default=100,
+                ),
+                "offset": _int_prop(
+                    "Groups to skip, for the next page: the previous offset + max_groups.",
+                    minimum=0,
+                    maximum=2**31 - 1,
+                    default=0,
                 ),
             },
             _list_groups,
@@ -1168,17 +1287,22 @@ def _build_duplicates(env: GroupEnv) -> list:
         ),
         _tool(
             "duplicates_dedupe",
-            "Keep the first copy of every duplicate group inside path and move the others to "
-            "the axross trash (restorable; for the local backend the trash is "
-            "<MCP root>/.axross-trash). A dry run unless dry_run=false: the dry run only "
-            "returns the plan. A real run re-checks every copy on disk first: a copy that "
-            "changed since the scan, or a group without another verified copy, is reported "
-            "in refused and left alone. Returns {path, dry_run, groups, undated_groups, keep, "
-            "trash, removed, refused: [{path, reason}], failed: [{path, reason}], trash_root}.",
+            "Keep the first copy of each duplicate group inside path and move the others "
+            "to the axross trash.\n"
+            "Use when: after duplicates_groups; run dry_run=true first.\n"
+            "Instead: duplicates_groups to look; remove to delete for good.\n"
+            "Behavior: destructive but restorable; dry_run=true (default) only plans. "
+            f"{T.IDEMPOTENT}: trashed copies leave the index, so a repeat plans none. "
+            "Each copy is re-checked first; changed ones go to refused. "
+            "The trash is .axross-trash in the MCP root (remote: the home folder); "
+            "restore in the axross app.\n"
+            "Returns: {path, dry_run, groups, undated_groups (survivor chosen by path), "
+            "keep, trash (planned moves), removed (moves done; [] on dry_run), refused, "
+            "failed, trash_root}.",
             {
                 **scope,
                 "dry_run": _bool_prop(
-                    "true: only plan; false: move the planned copies to the trash.",
+                    "true: only return the plan; false: move the planned copies to the trash.",
                     default=True,
                 ),
             },
@@ -1231,24 +1355,36 @@ def _build_index(env: GroupEnv) -> list:
             "pruned": pruned,
             # A folder that could not be listed (a remote over its listing
             # cap) is no empty folder.
-            "truncated": cap.reached or bool(walk["skipped"]) or not walk["complete"],
+            "truncated": cap.reached or not walk["complete"],
+            "complete": not cap.reached and walk["complete"] and not walk["skipped"],
             **_unreadable(walk["skipped"]),
         }
 
     return [
         _tool(
             "index_build",
-            "Walk a folder and record every entry (name, size, type, mtime) in the offline "
-            "metadata index that the search tool reads - the same index as the GUI's "
-            "metadata search. Additive; prune=true also drops index rows under the folder "
-            "whose file no longer exists. Returns {path, backend_id, recursive, indexed, "
-            "pruned}. One progress notification per entry; cancellable (what was indexed is "
-            "kept).",
+            "Record every entry under a folder (name, size, type, mtime) in the offline "
+            "index that search reads.\n"
+            "Use when: before search, or to refresh it.\n"
+            "Instead: search to query; walk for the live state.\n"
+            "Behavior: writes index rows, never files; reads listings only. "
+            f"{T.IDEMPOTENT}. prune=true drops rows of files now gone. Linked folders are "
+            "not followed; folders deeper than 50 levels go to unreadable. A cancelled "
+            "run keeps its rows. Progress.\n"
+            "Returns: {path, backend_id, recursive, indexed, pruned, truncated (max_files), "
+            "complete, unreadable (folder paths)}.",
             {
-                "path": _path_prop("Folder; default: the MCP root (local backend)."),
-                "recursive": _bool_prop("Descend into subfolders.", default=True),
+                "path": _path_prop(
+                    "The folder to index (absolute, or relative to the MCP root). Default on the "
+                    "local backend: the MCP root; other backends need it."
+                ),
+                "recursive": _bool_prop(
+                    "Also index the subfolders (false: the folder's own entries only).",
+                    default=True,
+                ),
                 "prune": _bool_prop(
-                    "Also drop rows of files under the folder that are gone.", default=False
+                    "Afterwards drop index rows below the folder whose file is gone.",
+                    default=False,
                 ),
                 "max_files": _WalkCap.prop(),
             },
@@ -1365,9 +1501,14 @@ def _build_packer(env: GroupEnv) -> list:
     return [
         _tool(
             "pack_formats",
-            "The archive formats pack can write and whether each is usable here: "
-            "{formats: [{format, label, suffix, single (exactly one file in), encrypts "
-            "(takes a password), available, reason}], levels}.",
+            "List the archive formats pack can write and whether each works here.\n"
+            "Use when: before pack, to pick an available format.\n"
+            "Instead: archive_list to read an archive; pack (needs --mcp-write) to create "
+            "one.\n"
+            "Behavior: read-only, no arguments; availability depends on installed "
+            "packages (zstd, py7zr).\n"
+            "Returns: {formats: [{format, label, suffix, single (one file in), encrypts "
+            "(takes a password), available, reason}], levels (what pack's level takes)}.",
             {},
             _formats,
             group="packer",
@@ -1375,52 +1516,62 @@ def _build_packer(env: GroupEnv) -> list:
         ),
         _tool(
             "pack",
-            "Pack entries of folder into a new archive folder/archive_name + suffix. Folders "
-            "are packed recursively; symbolic links are skipped and listed in skipped, never "
-            "followed, and so are secret files (private keys, tokens) and folders that "
-            "read_file refuses. The archive is written to a temporary file first and an existing "
-            "archive is never overwritten: 'bundle.zip' becomes 'bundle (2).zip'. Only 7z "
-            "takes a password (AES-256; encrypt_names also hides the file list); ZIP and tar "
-            "refuse one. Single-file formats (gz, bz2, xz, zst) take exactly one file. "
-            "Returns {path, format, files, folders, bytes_in, bytes_out, skipped, encrypted}. "
-            "One progress notification per file; cancellable (nothing is left behind).",
+            "Pack entries of one folder into a new archive in that folder.\n"
+            "Use when: bundling or compressing files, optionally with a 7z password.\n"
+            "Instead: pack_formats for formats; archive_extract to unpack; encrypt for one "
+            "file.\n"
+            "Behavior: any backend (bytes pass through this machine). Only adds: a taken "
+            "name gets a counter ('bundle (2).zip'). Not idempotent: each call adds an "
+            "archive. A failure "
+            "leaves nothing. Symlinks and secret files go to skipped. "
+            f"{T.WRITE_TAG} Progress.\n"
+            "Returns: {path, format, files, folders, bytes_in, bytes_out, skipped, "
+            "encrypted}.",
             {
-                "folder": _path_prop("Folder holding the entries; the archive is created here."),
+                "folder": _path_prop(
+                    "The folder holding the entries (absolute, or relative to the MCP root); the "
+                    "archive is created in it."
+                ),
                 "names": {
                     "type": "array",
                     "items": {"type": "string", "minLength": 1},
                     "minItems": 1,
                     "maxItems": _MAX_PACK_NAMES,
                     "uniqueItems": True,
-                    "description": "Names of files or folders directly inside folder (no "
-                    "path separators, no repeats).",
+                    "description": "Names of files or folders directly inside folder, e.g. "
+                    "['report.pdf', 'images']; no path separators, no repeats.",
                 },
                 "archive_name": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Archive file name without directory; the format's suffix "
-                    "is added when missing.",
+                    "description": "Archive file name without a folder, e.g. 'bundle'; the "
+                    "format's suffix (.zip, .tar.gz, ...) is added when missing.",
                 },
                 "format": {
                     "type": "string",
                     "enum": list(P.FORMATS),
                     "default": "zip",
-                    "description": "Archive format (see pack_formats).",
+                    "description": "Archive format; pack_formats tells which are available "
+                    "here. gz, zst, xz and bz2 compress exactly one file.",
                 },
                 "level": {
                     "type": "string",
                     "enum": list(P.LEVELS),
                     "default": "normal",
-                    "description": "Compression level.",
+                    "description": "Compression level: fast (larger, quicker), normal or "
+                    "best (smallest, slowest).",
                 },
                 "password": {
                     "type": "string",
                     "minLength": 1,
                     "writeOnly": True,
-                    "description": "7z only: encrypt with AES-256. Never logged or returned.",
+                    "description": "7z only: encrypt the archive with AES-256 using this "
+                    "password; any other format fails with one. Never logged or returned.",
                 },
                 "encrypt_names": _bool_prop(
-                    "7z with password: also encrypt the file list.", default=True
+                    "7z with a password: also encrypt the file list, so names are hidden "
+                    "without the password. Ignored otherwise.",
+                    default=True,
                 ),
             },
             _pack,
@@ -1469,7 +1620,8 @@ def _build_archive(env: GroupEnv) -> list:
             # Read through the file the confined backend opened, not by
             # name (a folder swapped for a symlink meanwhile).
             with pinned_local_file(backend, path) as pinned:
-                entries = A.list_archive(pinned, cancel=lambda: ctx.is_cancelled)
+                entries = A.list_archive(pinned, cancel=lambda: ctx.is_cancelled,
+                                         password=args.get("password") or None)
         except A.ExtractCancelled as exc:
             raise _cancelled() from exc
         return {
@@ -1482,6 +1634,7 @@ def _build_archive(env: GroupEnv) -> list:
                     "size": e.size,
                     "compressed": e.compressed,
                     "mtime": e.mtime,
+                    "modified": _iso_seconds(e.mtime),
                     "is_dir": e.is_dir,
                 }
                 for e in entries[:max_entries]
@@ -1523,7 +1676,8 @@ def _build_archive(env: GroupEnv) -> list:
                 with pinned_local_file(backend, path) as pinned:
                     files = A.extract(pinned, target, progress=progress,
                                       parent_dir=getattr(backend, "parent_dir", None),
-                                      check_member=_entry_checker(env, backend))
+                                      check_member=_entry_checker(env, backend),
+                                      password=args.get("password") or None)
             except A.ExtractCancelled as exc:
                 raise CancelledError("request cancelled by client") from exc
             out = {"path": target, "files": int(files)}
@@ -1547,47 +1701,74 @@ def _build_archive(env: GroupEnv) -> list:
                        "skipped_links": len(r.get("skipped_links", ()))},
         )
 
-    path = _path_prop("Archive file (zip family, tar.*, 7z, rar, gz/bz2/xz/zst) on the local "
-                      "backend.")
+    path = _path_prop(
+        "The archive on the local disk (absolute, or relative to the MCP root): zip "
+        "family, tar.*, 7z, rar, gz, bz2, xz or zst."
+    )
+    password = {
+        "type": "string",
+        "minLength": 1,
+        "writeOnly": True,
+        "description": "The password of an encrypted 7z or ZIP (e.g. one pack made with a "
+        "password). Without it such an archive fails with 'the archive is encrypted with a "
+        "password'; a wrong one fails too. Never logged or returned.",
+    }
     return [
         _tool(
             "archive_list",
-            "List an archive's members without extracting anything: {path, total, truncated, "
-            "entries: [{name, size (uncompressed), compressed, mtime, is_dir}]}. Local "
-            "backend only.",
+            "List the members of an archive on the local disk without extracting.\n"
+            "Use when: checking contents or unpacked size before archive_extract.\n"
+            "Instead: archive_extract (needs --mcp-write) to unpack it. A remote archive: "
+            "transfer_copy (needs --mcp-write) to the local disk first.\n"
+            "Behavior: read-only, local disk only. Unknown or damaged files fail; an "
+            "encrypted 7z or ZIP needs password; 7z needs py7zr, rar rarfile. "
+            f"{T.SECRET_TAG} Cancellable.\n"
+            "Returns: {path, total, truncated, entries: [{name, size, compressed, mtime "
+            "(Unix seconds), modified (ISO 8601), is_dir}]}.",
             {
                 "path": path,
                 "max_entries": _int_prop(
-                    "Return at most this many entries.",
+                    "Return at most this many members; total still counts all, truncated "
+                    "tells when some were left out.",
                     minimum=1,
                     maximum=_MAX_ARCHIVE_ENTRIES,
                     default=1000,
                 ),
+                "password": password,
             },
             _list,
             group="archive",
             required=("path",),
             timeout_class="walk",
+            accepts_backend=False,
         ),
         _tool(
             "archive_extract",
-            "Extract an archive into a new folder named after it inside dest_dir (default: "
-            "the archive's folder): 'x.zip' -> 'x', then 'x-1', … - an existing folder is "
-            "never written into. Zip-slip, absolute paths, more than 10,000 entries, "
-            "more than 1 GiB or a member of 64 MiB or more compressed above 100:1 are "
-            "refused and nothing is "
-            "left behind. Returns {path (the new folder), files}, plus {skipped_links, note} "
-            "when symbolic links were left out (they are never extracted). Progress per file; "
-            "cancellable (the partial folder is removed). Local backend only.",
+            "Extract an archive on the local disk into a new folder named after it.\n"
+            "Use when: unpacking; look with archive_list first.\n"
+            "Instead: archive_list to look; decrypt for .axenc files. A remote archive: "
+            "transfer_copy to the local disk first.\n"
+            "Behavior: only adds - 'x.zip' -> folder 'x', then 'x-1' (folders count with "
+            "'-n'). Not idempotent: a repeat "
+            "makes 'x-1'. An encrypted archive needs password. Zip-slip, over 10,000 "
+            "members or 1 GiB unpacked, or zip bombs are refused, leaving nothing. "
+            f"Links are never extracted. Local disk only. {T.WRITE_TAG}\n"
+            "Returns: {path (the new folder), files}, plus skipped_links and note (how "
+            "many links were left out) when there were links.",
             {
                 "path": path,
-                "dest_dir": _path_prop("Existing folder under the MCP root to extract into."),
+                "dest_dir": _path_prop(
+                    "An existing local folder that receives the new folder (absolute, or relative "
+                    "to the MCP root). Default: the archive's folder."
+                ),
+                "password": password,
             },
             _extract,
             group="archive",
             required=("path",),
             write=True,
             timeout_class="long",
+            accepts_backend=False,
         ),
     ]
 
@@ -1725,17 +1906,27 @@ def _build_crypto(env: GroupEnv) -> list:
         "type": "string",
         "minLength": 1,
         "writeOnly": True,
-        "description": "Passphrase (PBKDF2-SHA256, 200,000 iterations, AES-256-GCM). Never "
-        "logged or returned.",
+        "description": "The passphrase; the key is derived with PBKDF2-SHA256 (200,000 "
+        "iterations) for AES-256-GCM. Never logged or returned.",
     }
     return [
         _tool(
             "encrypt",
-            "Encrypt a file (at most 1 GiB) into the axross encrypted-overlay format next to "
-            "it: 'a.txt' -> 'a.txt.axenc', then 'a.txt (2).axenc' - nothing is overwritten. "
-            "The plaintext stays in place, as in the GUI. Returns {path (the .axenc file), "
-            "size, plaintext_size}.",
-            {"path": _path_prop("File to encrypt."), "passphrase": passphrase},
+            "Encrypt one file into a new .axenc file next to it (axross's format).\n"
+            "Use when: one file must be kept or shared under a passphrase; decrypt "
+            "reverses it.\n"
+            "Instead: pack as 7z with a password for several files.\n"
+            "Behavior: only adds; the plaintext stays ('a.txt' -> 'a.txt.axenc', taken: "
+            "'a.txt (2).axenc'). Not "
+            "idempotent: each call adds a file. At most 1 GiB; new local files are mode "
+            f"0600. {T.SECRET_TAG} {T.WRITE_TAG} Cancellable.\n"
+            "Returns: {path, size, plaintext_size}.",
+            {
+                "path": _path_prop(
+                    "The file to encrypt, not a folder (absolute, or relative to the MCP root)."
+                ),
+                "passphrase": passphrase,
+            },
             _encrypt,
             group="crypto",
             required=("path", "passphrase"),
@@ -1744,11 +1935,21 @@ def _build_crypto(env: GroupEnv) -> list:
         ),
         _tool(
             "decrypt",
-            "Decrypt an .axenc file into a new file next to it: 'a.txt.axenc' -> 'a.txt', or "
-            "'a (2).txt' when that exists (a name without .axenc gets '.decrypted'); mode "
-            "0600, nothing is overwritten. A wrong passphrase or a tampered file fails with "
-            "nothing written. Returns {path (the plaintext file), size}.",
-            {"path": _path_prop("The .axenc file."), "passphrase": passphrase},
+            "Decrypt an .axenc file into a new plaintext file next to it.\n"
+            "Use when: restoring a file encrypted with axross.\n"
+            "Instead: archive_extract for encrypted 7z or ZIP archives.\n"
+            "Behavior: only adds ('a.txt.axenc' -> 'a.txt', taken: 'a (2).txt'; a name "
+            "without .axenc gets '.decrypted'). Not "
+            "idempotent: each call adds a file. A wrong passphrase or tampered file fails, "
+            f"leaving nothing. At most 1 GiB; new local files are mode 0600. "
+            f"{T.WRITE_TAG} Cancellable.\n"
+            "Returns: {path, size}.",
+            {
+                "path": _path_prop(
+                    "The .axenc file to decrypt (absolute, or relative to the MCP root)."
+                ),
+                "passphrase": passphrase,
+            },
             _decrypt,
             group="crypto",
             required=("path", "passphrase"),
@@ -2199,10 +2400,14 @@ def _build_remote(env: GroupEnv) -> list:
     return [
         _tool(
             "remote_profiles",
-            "The saved connection profiles, without any secret: {profiles: [{name, protocol, "
-            "host, port, username, auth_type, store_password, production, open_as (backend "
-            "id when opened in this session, else null), openable, reason (why remote_open "
-            "would refuse, else empty)}]}.",
+            "List the saved connection profiles (SFTP, SMB, WebDAV, S3 ...) and whether "
+            "remote_open can open each.\n"
+            "Use when: finding the name to pass to remote_open.\n"
+            "Instead: list_backends for what is open now.\n"
+            "Behavior: read-only; no network, no keyring, never a secret.\n"
+            "Returns: {profiles: [{name, protocol, host, port, username, auth_type, "
+            "store_password (a password is kept), production, open_as (its backend id "
+            "when open), openable, reason}]}, by name.",
             {},
             _profiles,
             group="remote",
@@ -2210,14 +2415,25 @@ def _build_remote(env: GroupEnv) -> list:
         ),
         _tool(
             "remote_open",
-            "Connect a saved profile and register it as backend 'profile:<name>' for this "
-            "session; every other tool then reaches it with backend='profile:<name>'. "
-            "Credentials come from the keyring when the profile stores them; a profile that "
-            "would need a prompt (password not stored, SSH host key not yet trusted, browser "
-            "sign-in) fails with an error instead. --mcp-root does not apply to remote paths. "
-            "Writing needs --mcp-write, and a production-flagged profile stays read-only. "
-            "Returns {backend, profile, protocol, class, production, writable, reused}.",
-            {"profile": {"type": "string", "minLength": 1, "description": "Profile name."}},
+            "Connect a saved profile as backend 'profile:<name>' for this session.\n"
+            "Use when: files on a remote server or cloud store are needed.\n"
+            "Instead: remote_profiles to list profiles; remote_close when done.\n"
+            "Requires: a profile that needs no prompt (password in the keyring, host key "
+            "trusted).\n"
+            "Behavior: changes no files; opens a network connection and holds one of 8 "
+            "session slots (a ninth fails: 'call remote_close first'). "
+            f"{T.IDEMPOTENT}; it returns the open one (reused=true). "
+            "Remote paths are outside --mcp-root; production profiles are read-only.\n"
+            f"Returns: {{backend, profile, protocol, {T.CLASS_TEXT}, production, writable, "
+            "reused}.",
+            {
+                "profile": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The saved profile's name, exactly as remote_profiles "
+                    "lists it, e.g. 'nas'.",
+                }
+            },
             _open,
             group="remote",
             required=("profile",),
@@ -2226,10 +2442,20 @@ def _build_remote(env: GroupEnv) -> list:
         ),
         _tool(
             "remote_close",
-            "Disconnect a profile opened with remote_open in this session: its backend id "
-            "stops working for later calls, and calls still running on it are ended. "
-            "Returns {backend, closed}.",
-            {"backend": {"type": "string", "minLength": 1, "description": "'profile:<name>'."}},
+            "Disconnect a profile that remote_open opened in this session.\n"
+            "Use when: done with a remote backend, or to free a slot.\n"
+            "Instead: list_backends to see what is open.\n"
+            "Behavior: changes no files; the id stops working and calls stuck on it end. "
+            f"{T.IDEMPOTENT}; it fails with 'no open backend'. A connection lent by an "
+            "axross pane is refused.\n"
+            "Returns: {backend, closed: true}.",
+            {
+                "backend": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The backend id remote_open returned, e.g. 'profile:nas'.",
+                }
+            },
             _close,
             group="remote",
             required=("backend",),
@@ -2388,8 +2614,9 @@ class _WalkCap:
 
     @staticmethod
     def prop() -> dict:
-        prop = _int_prop("Visit at most this many entries (truncated=true); default 100,000 "
-                         "on a remote, 1,000,000 locally.", minimum=1, maximum=1_000_000,
+        prop = _int_prop("Visit at most this many entries; reaching it stops the walk and "
+                         "sets truncated=true. Default 1,000,000 on the local backend, "
+                         "100,000 on a remote one.", minimum=1, maximum=1_000_000,
                          default=1_000_000)
         prop.pop("default")  # it depends on the backend
         return prop
@@ -2738,55 +2965,64 @@ def _build_transfer(env: GroupEnv) -> list:
         "src_backend": {
             "type": "string",
             "minLength": 1,
-            "default": "local",
-            "description": "Backend id of the source (list_backends); 'local' is the local "
-            "file system under the MCP root.",
+            "description": "Backend id of the source, from list_backends, e.g. 'profile:nas'; "
+            "omit for the default backend.",
         },
-        "src": _path_prop("Source path on src_backend."),
+        "src": _path_prop(
+            "Source path on src_backend (absolute, or relative to the MCP root)."
+        ),
         "dst_backend": {
             "type": "string",
             "minLength": 1,
-            "default": "local",
-            "description": "Backend id of the destination.",
+            "description": "Backend id of the destination, from list_backends; omit for the "
+            "default backend.",
         },
-        "dst": _path_prop("Destination path on dst_backend (the file, or the folder that "
-                          "becomes the copy of a source folder)."),
+        "dst": _path_prop(
+            "Destination on dst_backend (absolute, or relative to the MCP root): the file, or "
+            "for a source folder the folder that becomes its copy. Parents are created."
+        ),
     }
     return [
         _tool(
             "transfer_copy",
-            "Copy a file or a folder tree from one backend to another (or within one). "
-            "Local paths are confined to the MCP root, remote ones are not. Existing "
-            "destination files are skipped unless overwrite; symlinks are skipped; missing "
-            "destination folders are created. resumable=true copies each file in 4 MiB "
-            "segments with a local manifest: a cancelled or failed run continues where it "
-            "stopped when called again with the same arguments. Returns {src, dst, copied, "
-            "truncated, complete, entries: [{src, dst, size, action (copied|skipped|error), "
-            "reason, bytes, resumed_segments, error, folder}]}. Every part left out has a "
-            "record: reason exists, too-large (also when a source sends more than "
-            "max_file_bytes, whatever size it gave), symlink, special-file (device, FIFO), "
-            "protected (a protected destination), unsafe-name (control characters too), "
-            "outside-root or max-depth (also sets truncated); a folder that could not be "
-            "listed is an error with folder=true. complete is true only when every file was "
-            "copied or already existed. Local files it creates are mode 0600. Progress per "
-            "file; cancellable mid-file (the partial file is removed).",
+            "Copy a file or folder tree from one backend to another, or within one.\n"
+            "Use when: data must cross backends, or a big copy should be resumable.\n"
+            "Instead: copy or bulk_copy within one backend; transfer_move to move one "
+            "file.\n"
+            "Behavior: never changes the source. Existing files are skipped unless "
+            f"overwrite=true (destructive). {T.IDEMPOTENT}. Regular files only; whatever "
+            "is left out gets a reason. resumable=true and the same arguments continue an "
+            "interrupted run; without it a partial file starts over. Mode and mtime are "
+            "not kept (new local files 0600). "
+            f"{T.SECRET_TAG} {T.WRITE_TAG} Progress; cancellable.\n"
+            "Returns: {src, dst, copied, truncated, complete, entries}; reasons in "
+            "outputSchema.",
             {
                 **ends,
-                "overwrite": _bool_prop("Replace existing destination files.", default=False),
+                "overwrite": _bool_prop(
+                    "Replace destination files that exist (false: skip them, reason exists).",
+                    default=False,
+                ),
                 "resumable": _bool_prop(
-                    "Segmented copy that can continue after an interruption.", default=False
+                    "Copy in 4 MiB segments that a repeated call can resume after an "
+                    "interruption.",
+                    default=False,
                 ),
                 "max_files": _int_prop(
-                    "Copy at most this many files (truncated=true).",
+                    "Copy at most this many files; more sets truncated=true.",
                     minimum=1,
                     maximum=_MAX_TRANSFER_FILES,
                     default=1000,
                 ),
                 "max_depth": _int_prop(
-                    "Subfolder levels to descend.", minimum=0, maximum=50, default=10
+                    T.descend_text("src"),
+                    minimum=0,
+                    maximum=50,
+                    default=10,
                 ),
                 "max_file_bytes": _int_prop(
-                    "Skip files above this size (reason too-large).",
+                    "Skip files larger than this many bytes (reason too-large), also when a "
+                    "source sends more than it reported. Default 10 GiB.",
                     minimum=1,
                     maximum=1 << 50,
                     default=_DEFAULT_MAX_FILE_BYTES,
@@ -2801,10 +3037,26 @@ def _build_transfer(env: GroupEnv) -> list:
         ),
         _tool(
             "transfer_move",
-            "Move one file to another backend (copy, then delete the source; the copy is "
-            "removed again if the source cannot be deleted) or within one backend (rename). "
-            "An existing destination is refused. Returns {src, dst, bytes}.",
-            ends,
+            "Move one file to another backend: copy, check the byte count, delete the "
+            "source.\n"
+            "Use when: a file must leave one backend for another.\n"
+            "Instead: rename within one backend (folders too); for a folder across "
+            "backends transfer_copy, then remove.\n"
+            "Behavior: destructive for the source, deleted only after a complete copy. "
+            f"{T.IDEMPOTENT}; it fails with 'destination exists'. An existing destination or a "
+            f"folder fails. {T.SECRET_TAG} {T.WRITE_TAG}\n"
+            "Returns: {src, dst, bytes}.",
+            {
+                **ends,
+                "src": _path_prop(
+                    "The source file on src_backend, not a folder (absolute, or relative to "
+                    "the MCP root)."
+                ),
+                "dst": _path_prop(
+                    "The destination file on dst_backend (absolute, or relative to the MCP "
+                    "root); it must not exist. Parents are created."
+                ),
+            },
             _move,
             group="transfer",
             required=("src", "dst"),
@@ -2884,10 +3136,12 @@ def _build_extensions(env: GroupEnv) -> list:
     return [
         _tool(
             "extensions_list",
-            "The installed extensions (user and bundled) and their state, read without "
-            f"importing any of them: {{allowed (false in the paranoid security mode), "
-            f"runnable_over_mcp (always false), why_not_runnable, extensions: [{row}]}}. "
-            "Extensions are GUI plugins with no headless actions, so none can be run here.",
+            "List the installed axross extensions (app plugins) and their state.\n"
+            "Use when: asking which extensions exist, are on, or fail to load.\n"
+            "Instead: extensions_info for one by id.\n"
+            "Behavior: read-only; imports nothing. Extensions add app menus only, so "
+            f"none runs over MCP; they are {T.PARANOID_TAG}.\n"
+            f"Returns: {{allowed, why_not_runnable, extensions: [{row}]}}.",
             {},
             _list,
             group="extensions",
@@ -2895,12 +3149,17 @@ def _build_extensions(env: GroupEnv) -> list:
         ),
         _tool(
             "extensions_info",
-            f"One extension by id: {row} plus runnable_over_mcp and why_not_runnable.",
+            "Show one installed axross extension by id.\n"
+            "Use when: you have an id from extensions_list and need its state or error.\n"
+            "Instead: extensions_list to find ids.\n"
+            "Behavior: read-only; imports nothing. An unknown id fails.\n"
+            "Returns: one extensions_list entry plus why_not_runnable.",
             {
                 "ext_id": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Extension id from extensions_list.",
+                    "description": "The extension id from extensions_list, e.g. "
+                    "'bundled:arcade' or 'user:my_tool'.",
                 }
             },
             _info,
@@ -2923,6 +3182,10 @@ _POSIX_INTERPRETERS = {
     "perl": "perl -",
 }
 _MAX_EXEC_OUTPUT = 16 * 1024 * 1024
+#: remote_exec / remote_script ``timeout``: a minute below the tools' own deadline
+#: (core.mcp_server's "long" class, 30 min), so a command that runs out is
+#: answered as such, not cut off by the deadline first.
+_MAX_EXEC_TIMEOUT = 1740
 
 
 def _exec_kind(backend) -> str | None:
@@ -2964,7 +3227,12 @@ def _build_exec(env: GroupEnv) -> list:
         return backend, kind
 
     def common(args):
-        timeout = _int_arg(args, "timeout", 60, 1, 3600)
+        timeout = args.get("timeout", 60)
+        if timeout is None:
+            timeout = 60
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) \
+                or not 1 <= timeout <= _MAX_EXEC_TIMEOUT:
+            raise ValueError(f"timeout must be a number of seconds, 1 to {_MAX_EXEC_TIMEOUT}")
         cap = _int_arg(args, "max_output", 1024 * 1024, 1, _MAX_EXEC_OUTPUT)
         variables = args.get("env") or {}
         if not isinstance(variables, dict) or not all(
@@ -3073,35 +3341,62 @@ def _build_exec(env: GroupEnv) -> list:
                 found.append({"backend": bid, "class": type(backend).__name__, "kind": kind})
         return {"backends": found}
 
-    env_prop = {
-        "type": "object",
-        "additionalProperties": {"type": "string"},
-        "description": "Environment variables for the command (names [A-Za-z_][A-Za-z0-9_]*).",
-    }
-    timeout_prop = _int_prop(
-        "Seconds before the command is given up.", minimum=1, maximum=3600, default=60
-    )
+    def env_prop(what):
+        return {
+            "type": "object",
+            "propertyNames": {"pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
+            "additionalProperties": {"type": "string"},
+            "description": f"Environment variables for the {what} as {{NAME: value}}, e.g. "
+            "{\"LANG\": \"C\"}. On POSIX shells they are exported in the command line, so "
+            "other users of the host may see the values: pass no secrets this way.",
+        }
+
+    def timeout_prop(what):
+        return {
+            "type": "number",
+            "minimum": 1,
+            "maximum": _MAX_EXEC_TIMEOUT,
+            "default": 60,
+            "description": f"Seconds the {what} may run (at most {_MAX_EXEC_TIMEOUT}, below "
+            "the call's 30 min); longer fails with a timeout error and returns no output.",
+        }
     cap_prop = _int_prop(
-        "Bytes of stdout kept (stderr: at most 1 MiB); truncated_* tells when output was cut.",
+        "Most bytes of stdout kept; stderr keeps min(max_output, 1 MiB). truncated_stdout "
+        "/ truncated_stderr tell when output was cut.",
         minimum=1,
         maximum=_MAX_EXEC_OUTPUT,
         default=1024 * 1024,
     )
+    result = "{returncode, stdout, stderr, truncated_stdout, truncated_stderr} (text, UTF-8 " \
+        "with undecodable bytes replaced)"
+    gate = f"Requires: a backend from exec_backends; {T.PARANOID_TAG}.\n"
     return [
         _tool(
             "remote_exec",
-            "Run one command on a remote host (backend = an id from exec_backends) and return "
-            "{returncode, stdout, stderr, truncated_stdout, truncated_stderr}. A non-zero exit is "
-            "a result, not an error. Telnet and ADB deliver stderr inside stdout. Cisco: show "
-            "commands only. WinRM: PowerShell.",
+            "Run one command line on a remote host (SSH, Telnet, ADB, WinRM, Cisco).\n"
+            "Use when: a shell command is needed there (ps, df, a Cisco show).\n"
+            "Instead: remote_script for scripts; the file tools for files.\n"
+            f"{gate}"
+            "Behavior: destructive - runs with the profile user's rights. Not idempotent: "
+            "it runs again. Refused on production profiles. A non-zero exit is a result; "
+            "past timeout the call fails and no output returns. "
+            "Telnet and ADB mix stderr into stdout; Cisco runs show only; WinRM "
+            "PowerShell.\n"
+            f"Returns: {result}.",
             {
-                "command": {"type": "string", "minLength": 1, "description": "The command line."},
+                "command": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The command line, run by the remote's shell, e.g. "
+                    "'df -h /'.",
+                },
                 "stdin": {
                     "type": "string",
-                    "description": "Text fed to the command's stdin (not on WinRM/Cisco).",
+                    "description": "Text fed to the command's stdin (UTF-8); not supported on "
+                    "WinRM or Cisco. Default: none.",
                 },
-                "env": env_prop,
-                "timeout": timeout_prop,
+                "env": env_prop("command"),
+                "timeout": timeout_prop("command"),
                 "max_output": cap_prop,
             },
             _remote_exec,
@@ -3112,23 +3407,37 @@ def _build_exec(env: GroupEnv) -> list:
         ),
         _tool(
             "remote_script",
-            "Run a script on a remote host: POSIX hosts get it on stdin of sh, bash, python3 or "
-            "perl with args after it; WinRM hosts run it as PowerShell. "
-            "Same result as remote_exec.",
+            "Run a multi-line script on a remote host: sh, bash, python3 or perl on "
+            "POSIX, PowerShell on WinRM.\n"
+            "Use when: the job needs loops or a scripting language there.\n"
+            "Instead: remote_exec for one command; script_run on this machine.\n"
+            f"{gate}"
+            "Behavior: destructive - runs with the profile user's rights. Not idempotent: "
+            "it runs again. The script goes to the interpreter's stdin, so it cannot "
+            "read stdin itself. Refused on production profiles and Cisco. Past timeout "
+            "the call fails and no output returns.\n"
+            f"Returns: {result}.",
             {
-                "script": {"type": "string", "minLength": 1, "description": "The script text."},
+                "script": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The script text, e.g. 'for f in /var/log/*.log; do wc -l "
+                    "\"$f\"; done'.",
+                },
                 "interpreter": {
                     "type": "string",
                     "enum": sorted([*_POSIX_INTERPRETERS, "powershell"]),
-                    "description": "sh by default; powershell on WinRM.",
+                    "description": "What runs the script. Default: sh on POSIX hosts, "
+                    "powershell on WinRM (the only choice there).",
                 },
                 "args": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Script arguments.",
+                    "description": "Arguments passed to the script ($1... / sys.argv[1:]) as raw "
+                    "strings; the server shell-quotes each one. POSIX hosts only. Default: none.",
                 },
-                "env": env_prop,
-                "timeout": timeout_prop,
+                "env": env_prop("script"),
+                "timeout": timeout_prop("script"),
                 "max_output": cap_prop,
             },
             _remote_script,
@@ -3139,8 +3448,12 @@ def _build_exec(env: GroupEnv) -> list:
         ),
         _tool(
             "exec_backends",
-            "List the backends that can run commands: {backend, class, kind} with kind "
-            "posix-shell, powershell or ios-show. Open more with remote_open.",
+            "List the open backends that can run commands.\n"
+            "Use when: choosing remote_exec's or remote_script's backend.\n"
+            "Instead: list_backends for all; remote_open to open more.\n"
+            "Behavior: read-only; runs and opens nothing.\n"
+            f"Returns: {{backends: [{{backend, {T.CLASS_TEXT}, kind: posix-shell, powershell "
+            "(WinRM) or ios-show (Cisco IOS, show commands only)}]}.",
             {},
             _exec_backends,
             group="exec",
@@ -3161,6 +3474,18 @@ AGENT_GROUPS = ("metadata", "duplicates", "packer", "archive", "index", "filetyp
 #: stored credentials, the extensions' code): agent_run passes them on only
 #: when the server itself offers them.
 AGENT_GROUPS_SERVER_ONLY = frozenset({"remote", "extensions"})
+#: What each group gives agent_run's model: its tools that need no
+#: --mcp-write (tests/test_mcp_tool_quality.py holds it to the real groups).
+AGENT_GROUP_TOOLS = {
+    "metadata": ("metadata_read", "metadata_export"),
+    "duplicates": ("duplicates_scan", "duplicates_scans", "duplicates_groups"),
+    "packer": ("pack_formats",),
+    "archive": ("archive_list",),
+    "index": ("index_build",),
+    "filetype": ("file_type", "file_type_scan"),
+    "remote": ("remote_profiles", "remote_open", "remote_close", "list_backends"),
+    "extensions": ("extensions_list", "extensions_info"),
+}
 
 
 def _build_agent(env: GroupEnv) -> list:
@@ -3175,8 +3500,9 @@ def _build_agent(env: GroupEnv) -> list:
         settings = LP.LLMSettings.load()
         profile = settings.profile(name) if name else settings.active_profile()
         if profile is None:
+            known = ", ".join(repr(p.name) for p in settings.profiles) or "none"
             raise ValueError(
-                f"no LLM profile named {name!r}" if name else
+                f"no LLM profile named {name!r}; the profiles: {known}" if name else
                 "no LLM profile is active: set one up in the axross GUI (Agent dock: LLM…)"
             )
         groups = args.get("groups") or []
@@ -3214,29 +3540,49 @@ def _build_agent(env: GroupEnv) -> list:
     return [
         _tool(
             "agent_run",
-            "Hand a task to the user's own LLM (the active LLM profile of the axross GUI, or "
-            "'profile'). It works with axross' read-only tools inside the MCP root - plus the "
-            "read-only tools of 'groups' - and returns {answer, stopped, calls, profile, model}. "
-            "It cannot change files or run commands. Use it to keep file content on the user's "
-            "machine, e.g. to summarise documents with a local model.",
+            "Hand a task to the user's own LLM profile, which works with axross tools "
+            "that write no files and answers in text.\n"
+            "Use when: file contents should stay with the user's model, e.g. a local "
+            "one.\n"
+            "Instead: read_file or grep directly - faster, when the contents may reach "
+            "you.\n"
+            "Requires: an LLM profile set up in the axross app (an unknown name's error "
+            "lists them).\n"
+            "Behavior: does not write files itself; sends file contents to the "
+            "configured LLM, so it is not read-only. Its model gets the groups' tools that "
+            "need no --mcp-write, inside the MCP root. Not idempotent: it asks again. "
+            "Stops after max_steps; cancellable.\n"
+            "Returns: {answer, stopped (answered|max_steps|cancelled), calls, profile, "
+            "model}.",
             {
                 "task": {
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 20000,
-                    "description": "What the local model should do, in plain language.",
+                    "description": "What the model should do, in plain language, e.g. "
+                    "'Summarise the PDFs in reports/2024 in five bullet points'.",
                 },
                 "profile": {
                     "type": "string",
-                    "description": "An LLM profile name; default: the active one.",
+                    "description": "Name of an LLM profile set up in the axross app. No tool "
+                    "lists them: omit it for the active profile, the usual choice. An unknown "
+                    "name fails.",
                 },
                 "groups": {
                     "type": "array",
                     "items": {"type": "string", "enum": list(AGENT_GROUPS)},
-                    "description": "Extra tool groups the model may use (read-only tools only).",
+                    "description": "Extra groups for the model, each with its tools that need "
+                    "no --mcp-write: " + "; ".join(
+                        f"{g} ({', '.join(AGENT_GROUP_TOOLS[g])})" for g in AGENT_GROUPS)
+                    + ". remote and extensions fail unless this server runs with them. "
+                    "Default: none (the core file tools only).",
                 },
                 "max_steps": _int_prop(
-                    "Most model requests for this task.", minimum=1, maximum=30, default=10
+                    "Most model requests for this task; reaching it ends with "
+                    "stopped=max_steps.",
+                    minimum=1,
+                    maximum=30,
+                    default=10,
                 ),
             },
             _agent_run,
@@ -3371,6 +3717,9 @@ def tool_manifest(
             "mcp_allow_exec": bool(allow_exec),
         },
         "timeout_classes": dict(TIMEOUT_CLASSES),
+        # The rules every tool shares (the initialize instructions carry them;
+        # a description names one with a short tag only).
+        "rules": list(T.RULES),
         "groups": {
             g: {
                 "description": descriptions[g],

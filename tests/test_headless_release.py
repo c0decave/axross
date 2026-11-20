@@ -179,3 +179,12 @@ def test_happy_the_export_carries_the_drift_guard_and_the_script_needs_no_packag
                  for a in n.names}
     assert imported <= set(sys.stdlib_module_names) | {"__future__"}, imported
     assert os.access(ROOT / "scripts" / "headless_release.py", os.R_OK)
+
+
+def test_sad_a_relative_axross_path_is_not_taken_twice(tmp_path, monkeypatch):
+    """Before: the drift workflow passes ``--axross .axross-source``; the export
+    ran inside that folder with the relative path again
+    (``.axross-source/.axross-source/scripts/...``) and failed every time."""
+    axross, headless, _commit = _synced(tmp_path)
+    monkeypatch.chdir(axross.parent)
+    assert HR.check(headless, Path(axross.name)) == []

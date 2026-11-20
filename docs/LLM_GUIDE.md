@@ -282,105 +282,212 @@ decision: report it instead of retrying another way.
 
 Timeout classes: `quick` 15 s, `preview` 30 s, `write` 30 s, `walk` 60 s, `stream` 300 s, `script` 610 s, `long` 1800 s.
 
+Rules every tool shares (the server's initialize instructions; a description names one with a short tag such as "Refuses secret files."):
+
+- Paths are absolute or relative to the MCP root; local paths stay inside the root, a remote backend takes that host's paths. Tools take backend only when there is more than one; its ids come from list_backends, served then ('profile:<name>' after remote_open); omitted, the default backend. A <name>_b64 argument carries the raw bytes of a non-UTF-8 name in base64, as listings return it (name_b64), and replaces <name>.
+- Tools that write files need --mcp-write (they say so); the script tools --mcp-allow-scripts, the remote command tools --mcp-allow-exec; each optional group its --mcp-tools name. remove deletes for good; only duplicates_dedupe moves files to axross's restorable trash.
+- Secret files (SSH and GnuPG private keys, axross's tokens; on remote hosts also .env and credentials files) are refused, unless the server was started with --mcp-allow-secret-reads.
+- Write guards: writes stay inside a writable MCP root and outside protected places (shell and session start files, autostart, user services, SSH and GnuPG folders, axross settings); production-flagged profiles are read-only.
+- Paranoid mode (AXROSS_SECURITY_MODE=paranoid or the app setting) turns off scripts, extensions, remote commands, ffmpeg/ffprobe and legacy protocols.
+- max_depth: walk, grep, recursive_checksum and bulk_copy count levels from 1 (1 = path's own entries); file_type_scan and transfer_copy count subfolder levels from 0 (0 = path's own files).
+- truncated: a limit (max_*, or max_depth leaving a folder unentered) cut the result; tree walks also carry complete, false when anything was cut or left unread, and unreadable ({path, error} in walk and grep, folder paths elsewhere). A call past its time limit fails with a timeout error and returns nothing; work it started may still finish.
+- An idempotent tool changes nothing more when repeated; the description names the error a repeat may give.
+
 ### `core`
 
 File tools of the configured backend; always on, read-only.
 
 #### `list_dir` — read-only · quick (15 s) · stdio + http · *backend*
 
-List the entries of one folder (one level; walk goes deeper). Returns [{name, is_dir, size, modified}] - modified is ISO 8601 or null; '.' and '..' are left out. A name that is not UTF-8 also comes as name_b64.
+List the entries of one folder, one level deep.
 
-- `path` (string, required): The folder to list: an absolute path on the backend.
-- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
+**Use when:** you need what is directly inside a folder.
+
+**Instead:** walk for a subtree or a capped listing; stat for one path; search for indexed names.
+
+**Behavior:** read-only. Every entry, hidden ones too, in the backend's order; a symlink is listed itself (is_link true, is_dir false). No entry cap, but a result over 16 MiB fails. A missing path or a file fails. Time limit: 15 s.
+
+**Returns:** a JSON array of {name, is_dir, is_link, size, modified (ISO 8601 or null)}; structuredContent wraps it as {entries}.
+
+- `path` (string): The folder to list (absolute, or relative to the MCP root). Required unless path_b64 is given.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
 
 #### `stat` — read-only · quick (15 s) · stdio + http · *backend*
 
-Details of one file or folder without reading it. Returns {name, is_dir, size, modified} - modified is ISO 8601 or null. Fails when nothing is at path, so it also tells whether a path exists.
+Get the type, size, modification time and mode of one file or folder.
 
-- `path` (string, required): The file or folder to describe.
-- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
+**Use when:** checking that a path exists or what it is, or reading the mode before chmod.
+
+**Instead:** list_dir for a folder's entries; read_file for the contents.
+
+**Behavior:** read-only. Follows a symlink: the fields, name included, are the target's; is_link says the path itself is a link (local disk; remote backends report false). Nothing at path, or a dangling link, fails. Time limit: 15 s.
+
+**Returns:** {name, is_dir, is_link, size, modified (ISO 8601 or null), mode (octal such as '0644', null without POSIX bits)}.
+
+- `path` (string): The file or folder to describe (absolute, or relative to the MCP root). Required unless path_b64 is given.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
 
 #### `read_file` — read-only · quick (15 s) · stdio + http · *backend*
 
-Read up to max_bytes (default 4 MiB) from a file, from byte offset on (default 0). Returns {content_b64, size, truncated} - or with encoding='text' {text, size, truncated, replaced}: UTF-8, undecodable bytes replaced (replaced=true). truncated=true when more follows; then next_offset is where to continue (also given with an offset).
+Read one file's contents as base64 bytes or UTF-8 text, at most 4 MiB per call.
 
-- `path` (string, required): The file to read.
-- `encoding` (string, one of `base64`, `text`, default `"base64"`): base64 (exact bytes) or text (UTF-8, for text files).
-- `max_bytes` (integer, >= 0): Most bytes to return (default and ceiling 4 MiB).
-- `offset` (integer, default `0`, >= 0): Byte offset to start at: next_offset of the previous call to read on.
-- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
+**Use when:** you need a file's contents; page through a larger one with offset.
+
+**Instead:** grep to find lines across files; open_version_read for an older version; preview for an image.
+
+**Behavior:** read-only. Refuses secret files. A folder or missing file fails; text never cuts a character in two. Time limit: 15 s.
+
+**Returns:** {content_b64 or text, size (bytes returned; stat gives the file's), truncated, replaced (text: bad bytes became U+FFFD)}; with truncated or an offset also offset and next_offset. Past the end: empty, truncated false.
+
+- `encoding` (string, one of `base64`, `text`, default `"base64"`): base64 (default): the exact bytes, safe for any file. text: decoded as UTF-8 - pass it for text files.
+- `max_bytes` (integer, default `4194304`, 0..4194304): Most bytes to return; 0 or omitted means the ceiling, 4194304 (4 MiB).
+- `offset` (integer, default `0`, >= 0): Byte offset to start at; pass the previous call's next_offset to continue.
+- `path` (string): The file to read (absolute, or relative to the MCP root). Required unless path_b64 is given.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
 
 #### `checksum` — read-only · stream (300 s) · stdio + http · *backend*
 
-Content hash of a file. Tries the backend's native fingerprint first (S3 ETag, Drive md5Checksum, ssh sha256sum, etc.); falls back to streaming the file through hashlib when the backend has no cheap hash. The streaming fallback emits MCP progress notifications every few MiB when the caller supplied _meta.progressToken, and stops within one chunk of a notifications/cancelled. algorithm must be one of sha256 / sha1 / md5 / sha512 — backend-specific hash names (etag, dropbox, quickxor) are rejected.
+Compute one file's hash (md5, sha1, sha256 or sha512).
 
-- `path` (string, required): The file to hash.
-- `algorithm` (string, one of `md5`, `sha1`, `sha256`, `sha512`): The hash to compute (default sha256).
-- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
+**Use when:** comparing a file with a copy or a published digest without transferring it.
+
+**Instead:** recursive_checksum for a folder; duplicates_scan to find identical files.
+
+**Behavior:** read-only. Uses the backend's own hash when it has one (e.g. sha256sum over SSH), else streams the file; cancellable. Refuses secret files. A folder or missing path fails. Time limit: 5 min.
+
+**Returns:** {value (hex digest), algorithm, source (native|stream)}.
+
+- `algorithm` (string, one of `md5`, `sha1`, `sha256`, `sha512`, default `"sha256"`): The hash algorithm.
+- `path` (string): The file to hash (absolute, or relative to the MCP root). Required unless path_b64 is given.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
 
 #### `search` — read-only · quick (15 s) · stdio + http · *backend*
 
-Search the offline metadata index (built by index_build, or by axross's Index Active Folder) by name substring, extension and size range: no network round-trip, but only what was indexed - for the live state of a folder use walk or list_dir. Returns [{backend_id, path, name, size, is_dir, modified}]. At most limit results (default 1000, at most 10000): ask for one more than you need to learn whether there are more. A notifications/cancelled stops it.
+Find files and folders by name, extension and size in the offline metadata index, without touching the backend.
 
-- `ext` (string): File extension without the dot, e.g. pdf.
-- `limit` (integer, 1..10000): Most results (default 1000).
-- `max_size` (integer, >= 0): Largest size in bytes.
-- `min_size` (integer, >= 0): Smallest size in bytes.
-- `needle` (string): Part of the file name, any case and Unicode form.
+**Use when:** looking up names fast across folders indexed before.
+
+**Instead:** walk for the live tree (slower, never stale); grep for contents.
+
+**Requires:** an index from index_build or the axross app.
+
+**Behavior:** read-only; results can be stale. The given filters must all match; none gives every indexed entry. Pages with offset and limit. Time limit: 15 s.
+
+**Returns:** a JSON array of {backend_id, path, name, size, is_dir, modified}; structuredContent {entries, indexed (false: no index yet), truncated (more after this page)}. Fewer than limit entries is the last page.
+
+- `ext` (string): File extension, matched whole in any case; a leading dot is ignored, e.g. 'pdf'.
+- `limit` (integer, default `1000`, 1..10000): Most results to return.
+- `max_size` (integer, >= 0): Largest size in bytes, inclusive; omit for no upper bound. Below min_size nothing matches.
+- `min_size` (integer, default `0`, >= 0): Smallest size in bytes, inclusive.
+- `needle` (string): Substring of the file name, matched ignoring case and Unicode normalisation, e.g. 'report' finds 'Q3_Report.pdf'.
+- `offset` (integer, default `0`, >= 0): Matches to skip, for the next page: the previous offset + limit.
+- `path` (string): Only entries anywhere below this folder (absolute, or relative to the MCP root).
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
 
 #### `walk` — read-only · walk (60 s) · stdio + http · *backend*
 
-Breadth-first recursive listing of the live folder tree under path (list_dir lists one level; search queries the offline index). Caps at max_depth (default 4, at most 64) and max_entries (default 1000, at most 100000). Returns {entries: [{path, name, is_dir, size}], truncated, unreadable: [{path, error}], complete}: unreadable names every folder below path that could not be listed; complete is true only when nothing was cut or left out. An unreadable path itself is an error. Emits MCP progress notifications when the caller supplied _meta.progressToken.
+List the live folder tree under path, breadth-first, to max_depth levels.
 
-- `path` (string, required): The folder to walk.
-- `max_depth` (integer, 0..64): Folder levels below path (default 4; 0 = path only).
-- `max_entries` (integer, 1..100000): Most entries to return (default 1000).
-- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
+**Use when:** you need every file and folder below a path.
+
+**Instead:** list_dir for one level; search for the indexed (faster, maybe stale) view; grep for contents.
+
+**Behavior:** read-only. Symlinked folders are listed, not entered. Hitting max_entries, or a folder at max_depth left unentered, sets truncated; an unlistable subfolder goes to unreadable. Progress; cancellable. Time limit: 60 s.
+
+**Returns:** {entries: [{path, name, is_dir, is_link, size, modified}], truncated, unreadable: [{path, error}], complete (false when anything was cut or unread)}.
+
+- `max_depth` (integer, default `4`, 1..64): Levels to visit, counted from 1: 1 = path's own entries.
+- `max_entries` (integer, default `1000`, 1..100000): Most entries to return (files and folders together).
+- `path` (string): The folder to walk (absolute, or relative to the MCP root). Required unless path_b64 is given.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
 
 #### `recursive_checksum` — read-only · stream (300 s) · stdio + http · *backend*
 
-Hash every file under path breadth-first. Each record is either {path, size, algorithm, checksum, source} (hashed), {path, size, algorithm, skipped: "too-large"} (file above max_file_bytes), or {path, size, algorithm, error: "<msg>"} (backend refused that one file), or {path, folder: true, algorithm, error} (a folder that could not be listed: the files below it are missing). complete is true only when every file was hashed and nothing was cut; an unreadable path itself is an error. Emits one progress notification per hashed file; a notifications/cancelled lands within one chunk of the current file. algorithm is one of sha256 / sha1 / md5 / sha512. Defaults: max_files=500, max_depth=10, max_file_bytes=1 GiB (at most max_files=50000, max_depth=64). If path names a file instead of a directory the result contains exactly one record.
+Hash every file under a folder (or one file) and list each digest.
 
-- `path` (string, required): The folder (or one file) to hash.
-- `algorithm` (string, one of `md5`, `sha1`, `sha256`, `sha512`): The hash to compute (default sha256).
-- `max_depth` (integer, 0..64): Folder levels below path (default 10).
-- `max_file_bytes` (integer, >= 1): Larger files are skipped (default 1 GiB).
-- `max_files` (integer, 1..50000): Most files to hash (default 500).
-- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
+**Use when:** verifying or comparing a whole tree, e.g. after a copy.
 
-#### `preview` — read-only · preview (30 s) · stdio + http · *backend*
+**Instead:** checksum for one file; duplicates_scan to group identical files.
 
-Render a thumbnail of an image file. Returns MCP image content (base64 + mimeType). edge (default 256) is clamped to [16, 2048]. MIME allow-list + size/dimension caps from core.previews apply. Local backends only.
+**Behavior:** read-only, breadth-first. Symlinked files are hashed, symlinked folders get an error record. Refuses secret files. Files above max_file_bytes are skipped; max_files or a folder at max_depth sets truncated. Unreadable entries get records. Progress per file; cancellable. Time limit: 5 min.
 
-- `path` (string, required): The image file.
-- `edge` (integer, 16..2048): Longest side of the thumbnail in pixels (default 256).
-- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
+**Returns:** {entries: [{path, size, algorithm, then checksum and source, or skipped, or error (folder: true for an unlisted folder)}], truncated, complete}.
+
+- `algorithm` (string, one of `md5`, `sha1`, `sha256`, `sha512`, default `"sha256"`): The hash algorithm.
+- `max_depth` (integer, default `10`, 1..64): Levels to visit, counted from 1: 1 = path's own entries.
+- `max_file_bytes` (integer, default `1073741824`, >= 1): Files larger than this many bytes are skipped (default 1 GiB).
+- `max_files` (integer, default `500`, 1..50000): Most files to hash; truncated=true when there were more.
+- `path` (string): The folder (or one file) to hash (absolute, or relative to the MCP root). Required unless path_b64 is given.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
+
+#### `preview` — read-only · preview (30 s) · stdio + http
+
+Render a PNG thumbnail of an image file on the local disk.
+
+**Use when:** you need to see an image (PNG, JPEG, GIF, BMP, WebP, TIFF ...) under the MCP root.
+
+**Instead:** read_file for the raw bytes; metadata_read for EXIF. A remote image: transfer_copy (needs --mcp-write) to the local disk first.
+
+**Behavior:** read-only, local disk only. Files over 50 MiB, images over 20000 px, SVG, other types and undecodable files fail. Time limit: 30 s.
+
+**Returns:** an MCP image content block (image/png) with _meta {width, height}.
+
+- `edge` (integer, default `256`, 16..2048): Longest side of the thumbnail in pixels, 16-2048.
+- `path` (string): The image file on the local disk (absolute, or relative to the MCP root). Required unless path_b64 is given.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
 
 #### `grep` — read-only · walk (60 s) · stdio + http · *backend*
 
-Regex search inside file contents under a root path. Recurses up to max_depth (default 2); skips files larger than 4 MiB. Returns {matches: up to max_matches (default 100, ceiling 500) {path, line_no, line}, files_scanned, truncated, unreadable: [{path, error}] (folders and files that could not be read), complete}. No match with complete=false is no answer. An unreadable path itself is an error. Cooperates with notifications/cancelled.
+Search file contents under a folder for lines matching a regular expression.
 
-- `pattern` (string, required): A Python regular expression, matched per line.
-- `max_depth` (integer, >= 0): Folder levels below path (default 2).
-- `max_matches` (integer, >= 1): Most matching lines (default 100, at most 500).
-- `path` (string): The file or folder to search (default the root).
-- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
+**Use when:** finding which files contain a word or pattern, with line numbers.
+
+**Instead:** search or walk to match names; read_file for a whole file.
+
+**Behavior:** read-only, breadth-first; include narrows by file name. Every file is read as UTF-8 text, binary ones too: bad bytes show as U+FFFD. Files over 4 MiB are skipped; lines are cut at 500 characters. Patterns with nested quantifiers, or slower than 5 s on a file, are refused (ReDoS). Refuses secret files. Time limit: 60 s.
+
+**Returns:** {matches: [{path, line_no, line}], files_scanned, truncated (max_matches, or a folder at max_depth not searched), unreadable, complete}; no match with complete=false is no answer.
+
+- `pattern` (string, required): A Python regular expression, matched against each line, e.g. 'import|require' or '(?i)password'.
+- `include` (string): Only files whose name matches this glob, case-sensitive, e.g. '*.py' or '*.[ch]'.
+- `max_depth` (integer, default `2`, 1..64): Levels to visit, counted from 1: 1 = path's own entries.
+- `max_matches` (integer, default `100`, 1..500): Most matching lines to return.
+- `path` (string): The folder to search (absolute, or relative to the MCP root); default the MCP root, '/' on a remote backend.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
 
 #### `list_versions` — read-only · quick (15 s) · stdio + http · *backend*
 
-List historical versions of a file (S3 ObjectVersions, Dropbox revisions, GDrive revision-history, Azure blob snapshots, WebDAV DeltaV, Git: one per commit that changed the file). Empty list on backends with no native versioning.
+List the stored older versions of one file.
 
-- `path` (string, required): The file whose versions to list.
-- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
+**Use when:** you need an earlier state on a versioning backend (S3, Dropbox, Drive, Azure, WebDAV DeltaV, Git).
+
+**Instead:** open_version_read to read one; read_file for the current one.
+
+**Behavior:** read-only. Unsorted (the backend's order). Backends without versions, the local disk too, give [] (open_version_read fails there). Time limit: 15 s.
+
+**Returns:** a JSON array of {version_id, size, modified (ISO 8601 or null), is_current, label (may be empty)}; structuredContent: {versions}.
+
+- `path` (string): The file whose versions to list (absolute, or relative to the MCP root). Required unless path_b64 is given.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
 
 #### `open_version_read` — read-only · quick (15 s) · stdio + http · *backend*
 
-Read a specific historical version of a file. Same max_bytes cap (default 4 MiB) as read_file. version_id comes from list_versions.
+Read the bytes of one older version of a file (from list_versions), at most 4 MiB.
 
-- `path` (string, required): The file to read.
-- `version_id` (string, required): A version's id from list_versions.
-- `max_bytes` (integer, >= 0): Most bytes to return (default and ceiling 4 MiB).
-- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
+**Use when:** inspecting or recovering an older version.
+
+**Instead:** read_file for the current version.
+
+**Requires:** a version_id from list_versions.
+
+**Behavior:** read-only. No offset: only the first 4 MiB of a version can be read over MCP. Refuses secret files. Backends without versions fail. Time limit: 15 s.
+
+**Returns:** {content_b64, size, truncated (the version is longer)}.
+
+- `version_id` (string, required): The version_id of one entry from list_versions for this path.
+- `max_bytes` (integer, default `4194304`, 0..4194304): Most bytes to return; 0 or omitted means the ceiling, 4194304 (4 MiB).
+- `path` (string): The file to read (absolute, or relative to the MCP root). Required unless path_b64 is given.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
 
 ### `write`
 
@@ -388,102 +495,192 @@ Write tools; only with --mcp-write, which needs --mcp-root.
 
 #### `write_file` — mutating · write (30 s) · stdio + http · *backend*
 
-Overwrite a file with content (UTF-8 text) or content_b64 (base64 bytes) - exactly one of them. Returns {size}.
+Create a file or replace its whole contents with text or bytes.
+
+**Use when:** saving content to one file; to edit, read_file, change, write back.
+
+**Instead:** copy to duplicate a file; mkdir for folders.
+
+**Requires:** available only with --mcp-write.
+
+**Behavior:** destructive - replaces the file. Idempotent: a repeat changes nothing more. Atomic (temp file, rename); new local files get mode 0600. The parent must exist; a symlink at path is followed (its target is written), a folder fails. A request is at most 16 MiB. Write guards apply. Time limit: 30 s.
+
+**Returns:** {size: bytes written}.
 
 Needs: `--mcp-write` `--mcp-root DIR`.
 
-- `path` (string, required): The file to create or overwrite, under the root.
-- `content` (string): The new content as UTF-8 text.
-- `content_b64` (string): The new content as base64 bytes.
-- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
+- `content` (string): The new content as text, stored UTF-8 encoded. Exactly one of content and content_b64 is required: neither or both fails.
+- `content_b64` (string): content as base64 of the raw bytes, for binary files; give this or content.
+- `path` (string): The file to create or replace (absolute, or relative to the MCP root). Required unless path_b64 is given.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
 
 #### `mkdir` — mutating · write (30 s) · stdio + http · *backend*
 
-Create a folder under the MCP root (not the root itself). Returns {ok: true}.
+Create a folder, with missing parents on the local disk.
+
+**Use when:** a folder must exist before writing into it.
+
+**Instead:** bulk_copy and transfer_copy make their destinations.
+
+**Requires:** available only with --mcp-write.
+
+**Behavior:** only adds. Idempotent: a repeat changes nothing more; locally it succeeds. Remote backends create no parents, and an existing folder fails there with 'exists'. A file at path fails. Write guards apply. Time limit: 30 s.
+
+**Returns:** {ok: true}.
 
 Needs: `--mcp-write` `--mcp-root DIR`.
 
-- `path` (string, required): The folder to create.
-- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
+- `path` (string): The folder to create (absolute, or relative to the MCP root). Required unless path_b64 is given.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
 
 #### `remove` — mutating · write (30 s) · stdio + http · *backend*
 
-Delete a file, a link or a folder permanently (no trash; the MCP root itself is refused). A folder that is not empty needs recursive=true. Returns {ok: true}.
+Permanently delete a file, symbolic link or folder.
+
+**Use when:** something must go for good; there is no trash.
+
+**Instead:** rename to move it aside; remove has no trash.
+
+**Requires:** available only with --mcp-write.
+
+**Behavior:** destructive, irreversible. Idempotent: a repeat changes nothing more; it fails with 'No such file'. A non-empty folder needs recursive=true; a failure half-way leaves the rest. A symlink is removed, not its target. Write guards apply. Time limit: 30 s.
+
+**Returns:** {ok: true}.
 
 Needs: `--mcp-write` `--mcp-root DIR`.
 
-- `path` (string, required): What to delete.
-- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
-- `recursive` (boolean): Also delete a folder's contents (default false).
+- `path` (string): The file, link or folder to delete (absolute, or relative to the MCP root). Required unless path_b64 is given.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
+- `recursive` (boolean, default `false`): true: also delete everything inside a folder. false: a non-empty folder fails.
 
 #### `rename` — mutating · write (30 s) · stdio + http · *backend*
 
-Move or rename a file or folder on the same backend, by the server where it can. Both src and dst must be under the MCP root; an existing dst is never replaced. Returns {ok: true}.
+Move or rename a file or folder within one backend.
+
+**Use when:** renaming, or moving on the same backend - folders too.
+
+**Instead:** copy to keep the original; transfer_move to another backend.
+
+**Requires:** available only with --mcp-write.
+
+**Behavior:** destructive for the old path. Idempotent: a repeat changes nothing more; it fails with 'target already exists'. Native rename (atomic locally), else copy then delete. dst's parent must exist; an existing dst is never replaced. A symlink moves itself; secret files cannot be moved. Write guards apply. Time limit: 30 s.
+
+**Returns:** {ok: true}.
 
 Needs: `--mcp-write` `--mcp-root DIR`.
 
-- `dst` (string, required): The new path; must not exist yet.
-- `src` (string, required): What to move.
-- `dst_b64` (string): Instead of dst: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a dst_b64 / name_b64 field).
-- `src_b64` (string): Instead of src: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a src_b64 / name_b64 field).
+- `dst` (string): Its new path, including the new name; must not exist yet (absolute, or relative to the MCP root). Required unless dst_b64 is given.
+- `dst_b64` (string): dst as base64 of its raw bytes, for non-UTF-8 names; replaces dst.
+- `src` (string): The file or folder to move (absolute, or relative to the MCP root). Required unless src_b64 is given.
+- `src_b64` (string): src as base64 of its raw bytes, for non-UTF-8 names; replaces src.
 
 #### `copy` — mutating · write (30 s) · stdio + http · *backend*
 
-Server-side copy of src to dst. Uses the backend's native copy primitive (S3 CopyObject, WebDAV COPY, shell cp) where available — no client-side streaming. An existing dst is never replaced; bulk_copy copies folders. Returns {ok: true}.
+Copy one file to a new path on the same backend.
+
+**Use when:** duplicating a single file.
+
+**Instead:** bulk_copy for a folder tree (copy takes files only); transfer_copy across backends or for big files.
+
+**Requires:** available only with --mcp-write.
+
+**Behavior:** only adds. Idempotent: a repeat changes nothing more; it fails with 'already exists'. Native copy (S3, WebDAV, cp over SSH) where possible; locally mode and mtime are kept. dst's parent must exist; a folder as src fails. Refuses secret files. Write guards apply. Time limit: 30 s.
+
+**Returns:** {ok: true}.
 
 Needs: `--mcp-write` `--mcp-root DIR`.
 
-- `dst` (string, required): The new file's path; must not exist yet.
-- `src` (string, required): The file to copy.
-- `dst_b64` (string): Instead of dst: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a dst_b64 / name_b64 field).
-- `src_b64` (string): Instead of src: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a src_b64 / name_b64 field).
+- `dst` (string): The new file's path, including its name; must not exist yet (absolute, or relative to the MCP root). Required unless dst_b64 is given.
+- `dst_b64` (string): dst as base64 of its raw bytes, for non-UTF-8 names; replaces dst.
+- `src` (string): The file to copy (absolute, or relative to the MCP root). Required unless src_b64 is given.
+- `src_b64` (string): src as base64 of its raw bytes, for non-UTF-8 names; replaces src.
 
 #### `bulk_copy` — mutating · stream (300 s) · stdio + http · *backend*
 
-Copy a file OR directory tree from src into dst. Per-file records: {src, dst, size, action} where action is "copied", "skipped" (reason: "too-large", "exists", "unsafe-name", or "max-depth" for a folder below max_depth), or "error" (folder: true for a folder that could not be listed). "truncated" is true when max_files or max_depth cut the walk; "complete" is true only when every file was copied or already existed. Emits one progress notification per copied file; a notifications/cancelled stops within one file. Defaults: max_files=1000, max_depth=10, max_file_bytes=10 GiB, overwrite=false (at most max_files=100000, max_depth=64). Missing dst parent directories are created automatically. Same-backend only in V1 — cross-backend copy is handled by the transfer manager, not the MCP surface.
+Copy a folder tree (or one file) to another path on the same backend.
+
+**Use when:** duplicating or merging a folder on one backend.
+
+**Instead:** copy for a single file; transfer_copy across backends.
+
+**Requires:** available only with --mcp-write.
+
+**Behavior:** breadth-first; src's entries land in dst, folders are created. Existing files are skipped unless overwrite=true (destructive). Idempotent: a repeat changes nothing more (overwrite=true rewrites the same files). Locally mode and mtime are kept. Failures per file are recorded. Refuses secret files. Write guards apply. Progress; cancellable. Time limit: 5 min.
+
+**Returns:** {entries, truncated, complete}; actions and reasons in outputSchema.
 
 Needs: `--mcp-write` `--mcp-root DIR`.
 
-- `dst` (string, required): Where the copy goes.
-- `src` (string, required): The file or folder to copy.
-- `dst_b64` (string): Instead of dst: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a dst_b64 / name_b64 field).
-- `max_depth` (integer, 0..64): Folder levels below src (default 10).
-- `max_file_bytes` (integer, >= 1): Larger files are skipped (default 10 GiB).
-- `max_files` (integer, 1..100000): Most files to copy (default 1000).
-- `overwrite` (boolean): Replace files that exist at dst (default false).
-- `src_b64` (string): Instead of src: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a src_b64 / name_b64 field).
+- `dst` (string): The copy (absolute, or relative to the MCP root): for a file the new file, for a folder the folder that becomes the copy, made if missing. Required unless dst_b64 is given.
+- `dst_b64` (string): dst as base64 of its raw bytes, for non-UTF-8 names; replaces dst.
+- `max_depth` (integer, default `10`, 1..64): Levels to visit, counted from 1: 1 = src's own entries. Deeper folders get a 'max-depth' record.
+- `max_file_bytes` (integer, default `10737418240`, >= 1): Files larger than this many bytes are skipped (default 10 GiB).
+- `max_files` (integer, default `1000`, 1..100000): Most files to copy; truncated=true when there were more.
+- `overwrite` (boolean, default `false`): true: replace files that exist at the destination. false: skip them (reason 'exists').
+- `src` (string): The file or folder to copy (absolute, or relative to the MCP root). Required unless src_b64 is given.
+- `src_b64` (string): src as base64 of its raw bytes, for non-UTF-8 names; replaces src.
 
 #### `symlink` — mutating · write (30 s) · stdio + http · *backend*
 
-Create a symbolic link. target may point anywhere the backend permits (dangling links are allowed); link_path is capped to the MCP root. Raises on backends without symlink support (S3, cloud stores). Returns {ok: true}.
+Create a symbolic link at link_path pointing to target.
+
+**Use when:** a second path should lead to a file or folder.
+
+**Instead:** hardlink for a second name of one file; copy for a copy.
+
+**Requires:** available only with --mcp-write.
+
+**Behavior:** only adds. Idempotent: a repeat changes nothing more; it fails with 'File exists'. Locally the target must also stay inside the root; it may dangle. Local disk, SFTP and NFS only. Write guards apply. Time limit: 30 s.
+
+**Returns:** {ok: true}, plus target when the one stored differs.
 
 Needs: `--mcp-write` `--mcp-root DIR`.
 
-- `link_path` (string, required): The new link's path, under the root.
-- `target` (string, required): What the link points to (stored as given).
-- `link_path_b64` (string): Instead of link_path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a link_path_b64 / name_b64 field).
-- `target_b64` (string): Instead of target: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a target_b64 / name_b64 field).
+- `link_path` (string): The new link's own path; must not exist yet (absolute, or relative to the MCP root). Required unless link_path_b64 is given.
+- `link_path_b64` (string): link_path as base64 of its raw bytes, for non-UTF-8 names; replaces link_path.
+- `target` (string): What the link points to: absolute, or relative to the link's folder, e.g. '../shared/data.csv'. SFTP and NFS store it as given. Required unless target_b64 is given.
+- `target_b64` (string): target as base64 of its raw bytes, for non-UTF-8 names; replaces target.
 
 #### `hardlink` — mutating · write (30 s) · stdio + http · *backend*
 
-Create a hard link (second name for the same inode). Cross-device errors surface as the backend's OSError. Most protocols refuse — POSIX/SSH only. Returns {ok: true}.
+Create a hard link: a second name for an existing file.
+
+**Use when:** one file must appear under two paths.
+
+**Instead:** symlink for folders or across file systems; copy for a copy.
+
+**Requires:** available only with --mcp-write.
+
+**Behavior:** only adds. Idempotent: a repeat changes nothing more; it fails with 'File exists'. One file system; local disk, SFTP and NFS only. Refuses secret files. Write guards apply. Time limit: 30 s.
+
+**Returns:** {ok: true}.
 
 Needs: `--mcp-write` `--mcp-root DIR`.
 
-- `link_path` (string, required): The new name, under the root.
-- `target` (string, required): The existing file, under the root.
-- `link_path_b64` (string): Instead of link_path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a link_path_b64 / name_b64 field).
-- `target_b64` (string): Instead of target: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a target_b64 / name_b64 field).
+- `link_path` (string): The new name; must not exist yet (absolute, or relative to the MCP root). Required unless link_path_b64 is given.
+- `link_path_b64` (string): link_path as base64 of its raw bytes, for non-UTF-8 names; replaces link_path.
+- `target` (string): The existing file to link to; unlike symlink's target it is resolved like any path (absolute, or relative to the MCP root). Required unless target_b64 is given.
+- `target_b64` (string): target as base64 of its raw bytes, for non-UTF-8 names; replaces target.
 
 #### `chmod` — mutating · write (30 s) · stdio + http · *backend*
 
-Change POSIX mode bits. Accepts integer (420 for 0o644) or octal-string ("0o644" / "644"). Backends without POSIX bits (S3, WebDAV, etc.) raise.
+Set the POSIX permission bits of a file or folder.
+
+**Use when:** making a script executable or a file private, e.g. '755', '600'; stat shows the current mode.
+
+**Instead:** write_file already makes new files private (0600).
+
+**Requires:** available only with --mcp-write.
+
+**Behavior:** destructive - replaces the mode. Idempotent: a repeat changes nothing more. Follows a symlink. Bits outside 0755 and files with several hard links are refused; backends without POSIX modes fail. Write guards apply. Time limit: 30 s.
+
+**Returns:** {ok: true}.
 
 Needs: `--mcp-write` `--mcp-root DIR`.
 
-- `mode` (any, required): The new mode: 420 or "0o644" / "644".
-- `path` (string, required): The file or folder.
-- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
+- `mode` (any, required): The new mode in octal: a string such as '644', '0644' or '0o755', or the integer value (420 = 0o644). Bits outside 0755 (setuid, setgid, sticky, group or world write) are refused.
+- `path` (string): The file or folder (absolute, or relative to the MCP root). Required unless path_b64 is given.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
 
 ### `scripts`
 
@@ -491,53 +688,112 @@ Saved-script tools; only with --mcp-allow-scripts, stdio only, not confined to t
 
 #### `script_list` — read-only · quick (15 s) · stdio
 
-Names of every saved Python script in the server's script directory (~/.config/axross/scripts/).
+List the names of the saved Python scripts.
+
+**Use when:** looking for a script to read, run or delete.
+
+**Instead:** script_read for a source; script_api_schema for the API.
+
+**Requires:** available only with --mcp-allow-scripts (stdio only).
+
+**Behavior:** read-only; the server's script folder, not the MCP root. Time limit: 15 s.
+
+**Returns:** {scripts: [name, ...]}, sorted, without '.py'.
 
 Needs: `--mcp-allow-scripts`.
 
 #### `script_api_schema` — read-only · quick (15 s) · stdio
 
-Describe the ``axross`` scripting API that script_run gives a script, as JSON built from the live code: rules and errors (the conventions and exceptions a script meets), groups (the names by topic), per public function its signature, parameters with types and defaults, return type, whole docstring, examples, ``raises``, ``mutates`` (can change files, remote state or settings) and ``prompts`` (needs a human: under script_run it raises NonInteractiveError unless the script opts in, e.g. confirm(assume_yes=True)); the public classes; the types the API returns (FileItem, results) with fields and methods; the methods every backend session has (with close() and the with statement); and a legend of every field. Same data as axross.api_schema(names) and docs/scripting-api.json. The whole API is large: call it with names=[] for the index, then with the names you need.
+Describe the axross Python API that scripts can call, as JSON from the live code.
+
+**Use when:** writing a script: names=[] gives the index (about 30 KB), then ask for the names you need.
+
+**Instead:** script_read to see an existing script.
+
+**Requires:** available only with --mcp-allow-scripts (stdio only).
+
+**Behavior:** read-only; runs no code. Without names: the whole API, some 200 KB. An unknown name fails. Time limit: 15 s.
+
+**Returns:** {schema_version, module, legend, rules, errors, groups (names by topic), functions, classes, backend_protocol, types}; the index has functions and classes empty, names fills them for those names.
 
 Needs: `--mcp-allow-scripts`.
 
-- `names` (array of string): Only these functions, classes and types, plus the types they use; [] gives the index alone. Default: everything.
-- `names_b64` (array of string): Instead of names: base64 of each name's raw bytes.
+- `names` (array of string): Function, class or type names (from the index's groups), e.g. ['open_url', 'FileItem']; each comes with the types it uses. [] gives the index alone; omitted, the whole API.
 
 #### `script_read` — read-only · quick (15 s) · stdio
 
-Read the source of a saved script by name. Names are [A-Za-z0-9_-]+; the path is built relative to the server's script directory.
+Read the Python source of one saved script.
+
+**Use when:** checking a script before script_run or script_write.
+
+**Instead:** script_list for names; read_file for files under the MCP root.
+
+**Requires:** available only with --mcp-allow-scripts (stdio only).
+
+**Behavior:** read-only. A missing script, a bad name or a symlinked file fails. Time limit: 15 s.
+
+**Returns:** {name, source}.
 
 Needs: `--mcp-allow-scripts`.
 
-- `name` (string, required): The script's name, from script_list.
+- `name` (string, required): The script's name, from script_list: letters, digits, '_' and '-', at most 80 characters, without '.py', e.g. 'disk_report'.
 
 #### `script_write` — mutating · quick (15 s) · stdio
 
-Save Python source as ``<name>.py`` (mode 0600) in the server's script directory. Overwrites any existing script with the same name.
+Save Python source as a named script, replacing one of that name.
+
+**Use when:** creating or changing a script for script_run.
+
+**Instead:** write_file for files under the MCP root.
+
+**Requires:** available only with --mcp-allow-scripts (stdio only).
+
+**Behavior:** destructive for a script of that name. Idempotent: a repeat changes nothing more. Atomic, mode 0600, in the script folder. Over 1 MiB of UTF-8 fails. Runs nothing. Time limit: 15 s.
+
+**Returns:** {name, path, size (bytes)}.
 
 Needs: `--mcp-allow-scripts`.
 
-- `name` (string, required): The script's name: letters, digits, _ and -.
-- `source` (string, required): The Python source.
+- `name` (string, required): The script's name: letters, digits, '_' and '-', at most 80 characters, without '.py', e.g. 'disk_report'.
+- `source` (string, required): The complete Python source; it runs with the module axross already imported.
 
 #### `script_delete` — mutating · quick (15 s) · stdio
 
-Remove a saved script by name from the server's script directory. Idempotent — no error when the file is already gone. Returns {name, deleted: true}.
+Delete one saved script permanently.
+
+**Use when:** a script is no longer needed.
+
+**Instead:** script_write to replace its source.
+
+**Requires:** available only with --mcp-allow-scripts (stdio only).
+
+**Behavior:** destructive, no trash. Idempotent: a repeat changes nothing more; it succeeds with deleted false. A bad name fails. Time limit: 15 s.
+
+**Returns:** {name, deleted (false: there was no such script)}.
 
 Needs: `--mcp-allow-scripts`.
 
-- `name` (string, required): The script's name, from script_list.
+- `name` (string, required): The script's name, from script_list: letters, digits, '_' and '-', at most 80 characters, without '.py', e.g. 'disk_report'.
 
 #### `script_run` — mutating · script (610 s) · stdio
 
-Run a saved script in its own Python process with ``axross`` (the scripting API; see script_api_schema) in its namespace. stdin is empty, so input() gets EOF and axross.confirm() raises NonInteractiveError unless the script passes assume_yes=True. ``args`` become sys.argv[1:]. The run is stopped after ``timeout_s`` seconds, with every process it started. Returns {name, exit, timed_out, duration_ms, stdout, stderr, namespace_keys} and, after an uncaught exception, error_type, error and traceback; exit follows SystemExit (None is 0, an int is itself, anything else is printed and gives 1) and is the negative signal number of a stopped run. stdout and stderr hold up to 1048576 characters each; more stops the run and fails the call.
+Run a saved Python script in a child process with the axross API imported.
+
+**Use when:** a job needs logic the file tools lack, e.g. a loop over backends.
+
+**Instead:** the file tools for single steps; remote_exec on a remote host.
+
+**Requires:** available only with --mcp-allow-scripts (stdio only); the script must exist; off in paranoid mode.
+
+**Behavior:** destructive - runs with the server user's full rights, outside the MCP root. Not idempotent: it runs again. stdin is empty; API prompts raise NonInteractiveError unless the script passes assume_yes=True to them. Stopped after timeout_s. Over 1 MiB of stdout or stderr fails the call with no output, though what the script did stays (remote_exec truncates instead).
+
+**Returns:** {name, exit (negative: killed by that signal), timed_out, duration_ms, stdout, stderr, namespace_keys (globals left defined)}, plus {error_type, error, traceback} after an exception.
 
 Needs: `--mcp-allow-scripts`.
 
-- `name` (string, required): The script's name, from script_list.
-- `args` (array of string): The script's sys.argv[1:]. Default: none.
-- `timeout_s` (number, <= 600.0): Wall-clock limit in seconds. Default: 60.
+- `name` (string, required): The script's name, from script_list: letters, digits, '_' and '-', at most 80 characters, without '.py', e.g. 'disk_report'.
+- `args` (array of string, default `[]`): Command-line arguments, the script's sys.argv[1:], e.g. ['--dry-run', 'docs']; no NUL characters.
+- `timeout_s` (number, default `60.0`, <= 600.0): Wall-clock limit for the run in seconds.
 
 ### `agent`
 
@@ -545,39 +801,71 @@ Hand a task to the user's own LLM (the active profile of the axross GUI): it wor
 
 #### `agent_run` — read-only · long (1800 s) · stdio + http
 
-Hand a task to the user's own LLM (the active LLM profile of the axross GUI, or 'profile'). It works with axross' read-only tools inside the MCP root - plus the read-only tools of 'groups' - and returns {answer, stopped, calls, profile, model}. It cannot change files or run commands. Use it to keep file content on the user's machine, e.g. to summarise documents with a local model.
+Hand a task to the user's own LLM profile, which works with axross tools that write no files and answers in text.
+
+**Use when:** file contents should stay with the user's model, e.g. a local one.
+
+**Instead:** read_file or grep directly - faster, when the contents may reach you.
+
+**Requires:** available only with --mcp-tools agent; an LLM profile set up in the axross app (an unknown name's error lists them).
+
+**Behavior:** does not write files itself; sends file contents to the configured LLM, so it is not read-only. Its model gets the groups' tools that need no --mcp-write, inside the MCP root. Not idempotent: it asks again. Stops after max_steps; cancellable. Time limit: 30 min.
+
+**Returns:** {answer, stopped (answered|max_steps|cancelled), calls, profile, model}.
 
 Needs: `--mcp-tools agent`.
 
-- `task` (string, required): What the local model should do, in plain language.
-- `groups` (array of string): Extra tool groups the model may use (read-only tools only).
-- `max_steps` (integer, default `10`, 1..30): Most model requests for this task.
-- `profile` (string): An LLM profile name; default: the active one.
+- `task` (string, required): What the model should do, in plain language, e.g. 'Summarise the PDFs in reports/2024 in five bullet points'.
+- `groups` (array of string): Extra groups for the model, each with its tools that need no --mcp-write: metadata (metadata_read, metadata_export); duplicates (duplicates_scan, duplicates_scans, duplicates_groups); packer (pack_formats); archive (archive_list); index (index_build); filetype (file_type, file_type_scan); remote (remote_profiles, remote_open, remote_close, list_backends); extensions (extensions_list, extensions_info). remote and extensions fail unless this server runs with them. Default: none (the core file tools only).
+- `max_steps` (integer, default `10`, 1..30): Most model requests for this task; reaching it ends with stopped=max_steps.
+- `profile` (string): Name of an LLM profile set up in the axross app. No tool lists them: omit it for the active profile, the usual choice. An unknown name fails.
 
 ### `archive`
 
 List an archive's members; extract it into a fresh folder (mutating).
 
-#### `archive_list` — read-only · walk (60 s) · stdio + http · *backend*
+#### `archive_list` — read-only · walk (60 s) · stdio + http
 
-List an archive's members without extracting anything: {path, total, truncated, entries: [{name, size (uncompressed), compressed, mtime, is_dir}]}. Local backend only.
+List the members of an archive on the local disk without extracting.
+
+**Use when:** checking contents or unpacked size before archive_extract.
+
+**Instead:** archive_extract (needs --mcp-write) to unpack it. A remote archive: transfer_copy (needs --mcp-write) to the local disk first.
+
+**Requires:** available only with --mcp-tools archive.
+
+**Behavior:** read-only, local disk only. Unknown or damaged files fail; an encrypted 7z or ZIP needs password; 7z needs py7zr, rar rarfile. Refuses secret files. Cancellable. Time limit: 60 s.
+
+**Returns:** {path, total, truncated, entries: [{name, size, compressed, mtime (Unix seconds), modified (ISO 8601), is_dir}]}.
 
 Needs: `--mcp-tools archive`.
 
-- `path` (string, required): Archive file (zip family, tar.*, 7z, rar, gz/bz2/xz/zst) on the local backend.
-- `max_entries` (integer, default `1000`, 1..10000): Return at most this many entries.
-- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
+- `max_entries` (integer, default `1000`, 1..10000): Return at most this many members; total still counts all, truncated tells when some were left out.
+- `password` (string, secret, never echoed): The password of an encrypted 7z or ZIP (e.g. one pack made with a password). Without it such an archive fails with 'the archive is encrypted with a password'; a wrong one fails too. Never logged or returned.
+- `path` (string): The archive on the local disk (absolute, or relative to the MCP root): zip family, tar.*, 7z, rar, gz, bz2, xz or zst. Required unless path_b64 is given.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
 
-#### `archive_extract` — mutating · long (1800 s) · stdio + http · *backend*
+#### `archive_extract` — mutating · long (1800 s) · stdio + http
 
-Extract an archive into a new folder named after it inside dest_dir (default: the archive's folder): 'x.zip' -> 'x', then 'x-1', … - an existing folder is never written into. Zip-slip, absolute paths, more than 10,000 entries, more than 1 GiB or a member of 64 MiB or more compressed above 100:1 are refused and nothing is left behind. Returns {path (the new folder), files}, plus {skipped_links, note} when symbolic links were left out (they are never extracted). Progress per file; cancellable (the partial folder is removed). Local backend only.
+Extract an archive on the local disk into a new folder named after it.
+
+**Use when:** unpacking; look with archive_list first.
+
+**Instead:** archive_list to look; decrypt for .axenc files. A remote archive: transfer_copy to the local disk first.
+
+**Requires:** available only with --mcp-tools archive and --mcp-write.
+
+**Behavior:** only adds - 'x.zip' -> folder 'x', then 'x-1' (folders count with '-n'). Not idempotent: a repeat makes 'x-1'. An encrypted archive needs password. Zip-slip, over 10,000 members or 1 GiB unpacked, or zip bombs are refused, leaving nothing. Links are never extracted. Local disk only. Write guards apply. Time limit: 30 min.
+
+**Returns:** {path (the new folder), files}, plus skipped_links and note (how many links were left out) when there were links.
 
 Needs: `--mcp-tools archive` `--mcp-write` `--mcp-root DIR`.
 
-- `path` (string, required): Archive file (zip family, tar.*, 7z, rar, gz/bz2/xz/zst) on the local backend.
-- `dest_dir` (string): Existing folder under the MCP root to extract into.
-- `dest_dir_b64` (string): Instead of dest_dir: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a dest_dir_b64 / name_b64 field).
-- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
+- `dest_dir` (string): An existing local folder that receives the new folder (absolute, or relative to the MCP root). Default: the archive's folder.
+- `dest_dir_b64` (string): dest_dir as base64 of its raw bytes, for non-UTF-8 names; replaces dest_dir.
+- `password` (string, secret, never echoed): The password of an encrypted 7z or ZIP (e.g. one pack made with a password). Without it such an archive fails with 'the archive is encrypted with a password'; a wrong one fails too. Never logged or returned.
+- `path` (string): The archive on the local disk (absolute, or relative to the MCP root): zip family, tar.*, 7z, rar, gz, bz2, xz or zst. Required unless path_b64 is given.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
 
 ### `crypto`
 
@@ -585,23 +873,43 @@ Encrypt a file into the axross .axenc format and decrypt it again (mutating).
 
 #### `encrypt` — mutating · stream (300 s) · stdio + http · *backend*
 
-Encrypt a file (at most 1 GiB) into the axross encrypted-overlay format next to it: 'a.txt' -> 'a.txt.axenc', then 'a.txt (2).axenc' - nothing is overwritten. The plaintext stays in place, as in the GUI. Returns {path (the .axenc file), size, plaintext_size}.
+Encrypt one file into a new .axenc file next to it (axross's format).
+
+**Use when:** one file must be kept or shared under a passphrase; decrypt reverses it.
+
+**Instead:** pack as 7z with a password for several files.
+
+**Requires:** available only with --mcp-tools crypto and --mcp-write.
+
+**Behavior:** only adds; the plaintext stays ('a.txt' -> 'a.txt.axenc', taken: 'a.txt (2).axenc'). Not idempotent: each call adds a file. At most 1 GiB; new local files are mode 0600. Refuses secret files. Write guards apply. Cancellable. Time limit: 5 min.
+
+**Returns:** {path, size, plaintext_size}.
 
 Needs: `--mcp-tools crypto` `--mcp-write` `--mcp-root DIR`.
 
-- `passphrase` (string, required, secret, never echoed): Passphrase (PBKDF2-SHA256, 200,000 iterations, AES-256-GCM). Never logged or returned.
-- `path` (string, required): File to encrypt.
-- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
+- `passphrase` (string, required, secret, never echoed): The passphrase; the key is derived with PBKDF2-SHA256 (200,000 iterations) for AES-256-GCM. Never logged or returned.
+- `path` (string): The file to encrypt, not a folder (absolute, or relative to the MCP root). Required unless path_b64 is given.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
 
 #### `decrypt` — mutating · stream (300 s) · stdio + http · *backend*
 
-Decrypt an .axenc file into a new file next to it: 'a.txt.axenc' -> 'a.txt', or 'a (2).txt' when that exists (a name without .axenc gets '.decrypted'); mode 0600, nothing is overwritten. A wrong passphrase or a tampered file fails with nothing written. Returns {path (the plaintext file), size}.
+Decrypt an .axenc file into a new plaintext file next to it.
+
+**Use when:** restoring a file encrypted with axross.
+
+**Instead:** archive_extract for encrypted 7z or ZIP archives.
+
+**Requires:** available only with --mcp-tools crypto and --mcp-write.
+
+**Behavior:** only adds ('a.txt.axenc' -> 'a.txt', taken: 'a (2).txt'; a name without .axenc gets '.decrypted'). Not idempotent: each call adds a file. A wrong passphrase or tampered file fails, leaving nothing. At most 1 GiB; new local files are mode 0600. Write guards apply. Cancellable. Time limit: 5 min.
+
+**Returns:** {path, size}.
 
 Needs: `--mcp-tools crypto` `--mcp-write` `--mcp-root DIR`.
 
-- `passphrase` (string, required, secret, never echoed): Passphrase (PBKDF2-SHA256, 200,000 iterations, AES-256-GCM). Never logged or returned.
-- `path` (string, required): The .axenc file.
-- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
+- `passphrase` (string, required, secret, never echoed): The passphrase; the key is derived with PBKDF2-SHA256 (200,000 iterations) for AES-256-GCM. Never logged or returned.
+- `path` (string): The .axenc file to decrypt (absolute, or relative to the MCP root). Required unless path_b64 is given.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
 
 ### `duplicates`
 
@@ -609,45 +917,86 @@ Duplicate Finder: scan a folder into the duplicate index, list scans and duplica
 
 #### `duplicates_scan` — read-only · long (1800 s) · stdio + http · *backend*
 
-Hash every file under a folder into the Duplicate Finder's index (the same index the GUI uses), skipping symlinks, the axross trash and secret files (private keys, tokens); files whose size and mtime did not change are not hashed again unless rehash. Returns {scan_id, root, backend_id, algorithm, files_indexed, status}. One progress notification per file; cancellable (rows indexed so far are kept). Run it before duplicates_groups.
+Run a duplicate scan: hash every file under a folder into the Duplicate Finder's index.
+
+**Use when:** before duplicates_groups or duplicates_dedupe, or after changes.
+
+**Instead:** duplicates_scans for past scans; checksum for one file.
+
+**Requires:** available only with --mcp-tools duplicates.
+
+**Behavior:** writes index rows, never files. path must be a folder. Not idempotent: each run adds a scan record (the rows stay the same). Symlinks, the axross trash and secret files are skipped. Unchanged files are not hashed again unless rehash. The local disk hashes by reading; remote backends use their own checksum, so ETag-only ones (plain S3, WebDAV) index nothing. A capped or cancelled scan keeps its rows. Progress. Time limit: 30 min.
+
+**Returns:** {scan_id (null: no scan record was written), root, backend_id, algorithm, files_indexed, status, truncated (max_files), complete, unreadable (folder paths)}.
 
 Needs: `--mcp-tools duplicates`.
 
-- `algorithm` (string, one of `md5`, `sha1`, `sha256`, `sha512`, default `"sha256"`): Hash algorithm.
-- `max_files` (integer, 1..1000000): Visit at most this many entries (truncated=true); default 100,000 on a remote, 1,000,000 locally.
-- `path` (string): Folder; default: the MCP root (local backend).
-- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
-- `rehash` (boolean, default `false`): Hash every file even when unchanged.
+- `algorithm` (string, one of `md5`, `sha1`, `sha256`, `sha512`, default `"sha256"`): Hash algorithm for the index rows.
+- `max_files` (integer, 1..1000000): Visit at most this many entries; reaching it stops the walk and sets truncated=true. Default 1,000,000 on the local backend, 100,000 on a remote one.
+- `path` (string): The folder (absolute, or relative to the MCP root). Default on the local backend: the MCP root; other backends need it.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
+- `rehash` (boolean, default `false`): Hash every file again, even when size and mtime are unchanged.
 
 #### `duplicates_scans` — read-only · quick (15 s) · stdio + http · *backend*
 
-The scan history of the addressed backend, newest first, limited to scans of folders inside the MCP root: {scans: [{scan_id, root, backend_id, algorithm, started_at, finished_at, files_indexed, files_in_index, duplicate_groups, status (complete|cancelled|failed|running), error}], truncated}.
+List past duplicate scans (scan history), newest first.
+
+**Use when:** choosing a scan_id, or checking that a scan finished.
+
+**Instead:** duplicates_scan to run one; duplicates_groups for the duplicates.
+
+**Requires:** available only with --mcp-tools duplicates.
+
+**Behavior:** read-only; this backend's scans (local: inside the MCP root), the newest 1000 only. Time limit: 15 s.
+
+**Returns:** {scans: [{scan_id, root, backend_id, algorithm, started_at, finished_at (ISO 8601, null while running), files_indexed, files_in_index, duplicate_groups, status, error}], truncated}.
 
 Needs: `--mcp-tools duplicates`.
 
 #### `duplicates_groups` — read-only · quick (15 s) · stdio + http · *backend*
 
-Groups of identical files from the index, every copy inside path. Each group is {algorithm, value (hash), size, copies: [{path, size, mtime, scan_id, keep}]} in survivor order: the first copy (keep=true) is the oldest by mtime (ties: shorter, then alphabetically first path) and is what duplicates_dedupe keeps. The index is a record of the last scan; nothing is read from the files. Returns {path, groups, truncated}.
+List groups of identical files from the duplicate index, every copy inside path.
+
+**Use when:** reviewing duplicates after duplicates_scan.
+
+**Instead:** duplicates_dedupe (needs --mcp-write) with dry_run for the trash plan.
+
+**Requires:** available only with --mcp-tools duplicates.
+
+**Behavior:** read-only; the index as of the last scan, no file is read. Groups come by hash; empty files never group. The first copy (keep=true) is the oldest, the one duplicates_dedupe keeps. Pages with offset and max_groups. Time limit: 15 s.
+
+**Returns:** {path, truncated, groups: [{algorithm, value, size, copies: [{path, size, mtime (Unix seconds), modified (ISO 8601), scan_id, keep}]}]}.
 
 Needs: `--mcp-tools duplicates`.
 
-- `algorithm` (string, one of `md5`, `sha1`, `sha256`, `sha512`): Only groups hashed with this algorithm; omit for all.
-- `max_groups` (integer, default `100`, 1..1000): Return at most this many groups.
-- `path` (string): Folder; default: the MCP root (local backend).
-- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
-- `scan_id` (integer, 0..2147483647): Only groups with at least one copy from this scan (duplicates_scans); 0 = rows from before scans were recorded.
+- `algorithm` (string, one of `md5`, `sha1`, `sha256`, `sha512`): Only groups hashed with this algorithm; omit for every algorithm.
+- `max_groups` (integer, default `100`, 1..1000): Return at most this many groups; more sets truncated=true.
+- `offset` (integer, default `0`, 0..2147483647): Groups to skip, for the next page: the previous offset + max_groups.
+- `path` (string): The folder (absolute, or relative to the MCP root). Default on the local backend: the MCP root; other backends need it.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
+- `scan_id` (integer, 0..2147483647): Only groups with at least one copy from this scan (a scan_id from duplicates_scans); 0 = rows from before scans were recorded. Omit for all scans.
 
 #### `duplicates_dedupe` — mutating · long (1800 s) · stdio + http · *backend*
 
-Keep the first copy of every duplicate group inside path and move the others to the axross trash (restorable; for the local backend the trash is <MCP root>/.axross-trash). A dry run unless dry_run=false: the dry run only returns the plan. A real run re-checks every copy on disk first: a copy that changed since the scan, or a group without another verified copy, is reported in refused and left alone. Returns {path, dry_run, groups, undated_groups, keep, trash, removed, refused: [{path, reason}], failed: [{path, reason}], trash_root}.
+Keep the first copy of each duplicate group inside path and move the others to the axross trash.
+
+**Use when:** after duplicates_groups; run dry_run=true first.
+
+**Instead:** duplicates_groups to look; remove to delete for good.
+
+**Requires:** available only with --mcp-tools duplicates and --mcp-write.
+
+**Behavior:** destructive but restorable; dry_run=true (default) only plans. Idempotent: a repeat changes nothing more: trashed copies leave the index, so a repeat plans none. Each copy is re-checked first; changed ones go to refused. The trash is .axross-trash in the MCP root (remote: the home folder); restore in the axross app. Time limit: 30 min.
+
+**Returns:** {path, dry_run, groups, undated_groups (survivor chosen by path), keep, trash (planned moves), removed (moves done; [] on dry_run), refused, failed, trash_root}.
 
 Needs: `--mcp-tools duplicates` `--mcp-write` `--mcp-root DIR`.
 
-- `algorithm` (string, one of `md5`, `sha1`, `sha256`, `sha512`): Only groups hashed with this algorithm; omit for all.
-- `dry_run` (boolean, default `true`): true: only plan; false: move the planned copies to the trash.
-- `path` (string): Folder; default: the MCP root (local backend).
-- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
-- `scan_id` (integer, 0..2147483647): Only groups with at least one copy from this scan (duplicates_scans); 0 = rows from before scans were recorded.
+- `algorithm` (string, one of `md5`, `sha1`, `sha256`, `sha512`): Only groups hashed with this algorithm; omit for every algorithm.
+- `dry_run` (boolean, default `true`): true: only return the plan; false: move the planned copies to the trash.
+- `path` (string): The folder (absolute, or relative to the MCP root). Default on the local backend: the MCP root; other backends need it.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
+- `scan_id` (integer, 0..2147483647): Only groups with at least one copy from this scan (a scan_id from duplicates_scans); 0 = rows from before scans were recorded. Omit for all scans.
 
 ### `exec`
 
@@ -655,32 +1004,62 @@ Run commands and scripts on remote hosts over SSH, SCP, Telnet, rsh, ADB, WinRM 
 
 #### `remote_exec` — mutating · long (1800 s) · stdio + http · *backend*
 
-Run one command on a remote host (backend = an id from exec_backends) and return {returncode, stdout, stderr, truncated_stdout, truncated_stderr}. A non-zero exit is a result, not an error. Telnet and ADB deliver stderr inside stdout. Cisco: show commands only. WinRM: PowerShell.
+Run one command line on a remote host (SSH, Telnet, ADB, WinRM, Cisco).
+
+**Use when:** a shell command is needed there (ps, df, a Cisco show).
+
+**Instead:** remote_script for scripts; the file tools for files.
+
+**Requires:** available only with --mcp-tools exec and --mcp-allow-exec; a backend from exec_backends; off in paranoid mode.
+
+**Behavior:** destructive - runs with the profile user's rights. Not idempotent: it runs again. Refused on production profiles. A non-zero exit is a result; past timeout the call fails and no output returns. Telnet and ADB mix stderr into stdout; Cisco runs show only; WinRM PowerShell.
+
+**Returns:** {returncode, stdout, stderr, truncated_stdout, truncated_stderr} (text, UTF-8 with undecodable bytes replaced).
 
 Needs: `--mcp-tools exec` `--mcp-allow-exec`.
 
-- `command` (string, required): The command line.
-- `env` (object): Environment variables for the command (names [A-Za-z_][A-Za-z0-9_]*).
-- `max_output` (integer, default `1048576`, 1..16777216): Bytes of stdout kept (stderr: at most 1 MiB); truncated_* tells when output was cut.
-- `stdin` (string): Text fed to the command's stdin (not on WinRM/Cisco).
-- `timeout` (integer, default `60`, 1..3600): Seconds before the command is given up.
+- `command` (string, required): The command line, run by the remote's shell, e.g. 'df -h /'.
+- `env` (object): Environment variables for the command as {NAME: value}, e.g. {"LANG": "C"}. On POSIX shells they are exported in the command line, so other users of the host may see the values: pass no secrets this way.
+- `max_output` (integer, default `1048576`, 1..16777216): Most bytes of stdout kept; stderr keeps min(max_output, 1 MiB). truncated_stdout / truncated_stderr tell when output was cut.
+- `stdin` (string): Text fed to the command's stdin (UTF-8); not supported on WinRM or Cisco. Default: none.
+- `timeout` (number, default `60`, 1..1740): Seconds the command may run (at most 1740, below the call's 30 min); longer fails with a timeout error and returns no output.
 
 #### `remote_script` — mutating · long (1800 s) · stdio + http · *backend*
 
-Run a script on a remote host: POSIX hosts get it on stdin of sh, bash, python3 or perl with args after it; WinRM hosts run it as PowerShell. Same result as remote_exec.
+Run a multi-line script on a remote host: sh, bash, python3 or perl on POSIX, PowerShell on WinRM.
+
+**Use when:** the job needs loops or a scripting language there.
+
+**Instead:** remote_exec for one command; script_run on this machine.
+
+**Requires:** available only with --mcp-tools exec and --mcp-allow-exec; a backend from exec_backends; off in paranoid mode.
+
+**Behavior:** destructive - runs with the profile user's rights. Not idempotent: it runs again. The script goes to the interpreter's stdin, so it cannot read stdin itself. Refused on production profiles and Cisco. Past timeout the call fails and no output returns.
+
+**Returns:** {returncode, stdout, stderr, truncated_stdout, truncated_stderr} (text, UTF-8 with undecodable bytes replaced).
 
 Needs: `--mcp-tools exec` `--mcp-allow-exec`.
 
-- `script` (string, required): The script text.
-- `args` (array of string): Script arguments.
-- `env` (object): Environment variables for the command (names [A-Za-z_][A-Za-z0-9_]*).
-- `interpreter` (string, one of `bash`, `perl`, `powershell`, `python3`, `sh`): sh by default; powershell on WinRM.
-- `max_output` (integer, default `1048576`, 1..16777216): Bytes of stdout kept (stderr: at most 1 MiB); truncated_* tells when output was cut.
-- `timeout` (integer, default `60`, 1..3600): Seconds before the command is given up.
+- `script` (string, required): The script text, e.g. 'for f in /var/log/*.log; do wc -l "$f"; done'.
+- `args` (array of string): Arguments passed to the script ($1... / sys.argv[1:]) as raw strings; the server shell-quotes each one. POSIX hosts only. Default: none.
+- `env` (object): Environment variables for the script as {NAME: value}, e.g. {"LANG": "C"}. On POSIX shells they are exported in the command line, so other users of the host may see the values: pass no secrets this way.
+- `interpreter` (string, one of `bash`, `perl`, `powershell`, `python3`, `sh`): What runs the script. Default: sh on POSIX hosts, powershell on WinRM (the only choice there).
+- `max_output` (integer, default `1048576`, 1..16777216): Most bytes of stdout kept; stderr keeps min(max_output, 1 MiB). truncated_stdout / truncated_stderr tell when output was cut.
+- `timeout` (number, default `60`, 1..1740): Seconds the script may run (at most 1740, below the call's 30 min); longer fails with a timeout error and returns no output.
 
 #### `exec_backends` — read-only · quick (15 s) · stdio + http
 
-List the backends that can run commands: {backend, class, kind} with kind posix-shell, powershell or ios-show. Open more with remote_open.
+List the open backends that can run commands.
+
+**Use when:** choosing remote_exec's or remote_script's backend.
+
+**Instead:** list_backends for all; remote_open to open more.
+
+**Requires:** available only with --mcp-tools exec and --mcp-allow-exec.
+
+**Behavior:** read-only; runs and opens nothing. Time limit: 15 s.
+
+**Returns:** {backends: [{backend, class (the backend's implementation, e.g. 'SSHSession'), kind: posix-shell, powershell (WinRM) or ios-show (Cisco IOS, show commands only)}]}.
 
 Needs: `--mcp-tools exec` `--mcp-allow-exec`.
 
@@ -690,46 +1069,86 @@ List installed extensions and whether they are enabled (read-only: extensions ar
 
 #### `extensions_list` — read-only · quick (15 s) · stdio + http
 
-The installed extensions (user and bundled) and their state, read without importing any of them: {allowed (false in the paranoid security mode), runnable_over_mcp (always false), why_not_runnable, extensions: [{id ('user:<name>' or 'bundled:<name>'), name, version, description, author, source, enabled (switched on in Extensions > Manage Extensions), loadable, error, active (loaded by the GUI: enabled, loadable and allowed)}]}. Extensions are GUI plugins with no headless actions, so none can be run here.
+List the installed axross extensions (app plugins) and their state.
+
+**Use when:** asking which extensions exist, are on, or fail to load.
+
+**Instead:** extensions_info for one by id.
+
+**Requires:** available only with --mcp-tools extensions.
+
+**Behavior:** read-only; imports nothing. Extensions add app menus only, so none runs over MCP; they are off in paranoid mode. Time limit: 15 s.
+
+**Returns:** {allowed, why_not_runnable, extensions: [{id ('user:<name>' or 'bundled:<name>'), name, version, description, author, source, enabled (switched on in Extensions > Manage Extensions), loadable, error, active (loaded by the GUI: enabled, loadable and allowed)}]}.
 
 Needs: `--mcp-tools extensions`.
 
 #### `extensions_info` — read-only · quick (15 s) · stdio + http
 
-One extension by id: {id ('user:<name>' or 'bundled:<name>'), name, version, description, author, source, enabled (switched on in Extensions > Manage Extensions), loadable, error, active (loaded by the GUI: enabled, loadable and allowed)} plus runnable_over_mcp and why_not_runnable.
+Show one installed axross extension by id.
+
+**Use when:** you have an id from extensions_list and need its state or error.
+
+**Instead:** extensions_list to find ids.
+
+**Requires:** available only with --mcp-tools extensions.
+
+**Behavior:** read-only; imports nothing. An unknown id fails. Time limit: 15 s.
+
+**Returns:** one extensions_list entry plus why_not_runnable.
 
 Needs: `--mcp-tools extensions`.
 
-- `ext_id` (string, required): Extension id from extensions_list.
+- `ext_id` (string, required): The extension id from extensions_list, e.g. 'bundled:arcade' or 'user:my_tool'.
 
 ### `filetype`
 
 Identify files by content (magic bytes), flag extension mismatches.
 
-#### `file_type` — read-only · quick (15 s) · stdio + http · *backend*
+#### `file_type` — read-only · walk (60 s) · stdio + http · *backend*
 
-Identify one file by its content (magic bytes), not its name, and say whether the extension matches. Returns {path, name, kind (file|directory|special|error|timeout|cancelled), description, mime (from the content), extension, extension_mime (what the name claims), verdict (match|mismatch|unknown), mismatch (bool), size, encoding, line_endings, engine, file_command, bytes_read, error}. Never fails for an unreadable file: kind is then error or timeout with error set.
+Identify one file's real type from its content (magic bytes) and check the extension against it.
+
+**Use when:** an extension may lie, or encoding and line endings matter.
+
+**Instead:** file_type_scan for a folder; stat for size and date.
+
+**Requires:** available only with --mcp-tools filetype.
+
+**Behavior:** read-only; reads at most max_bytes. An unreadable or missing file is a result (kind error); reading gives up after 15 s per file (kind timeout). Refuses secret files. Time limit: 60 s.
+
+**Returns:** {path, name, kind, verdict (match|mismatch|unknown), mime, extension, ...}; every field in outputSchema.
 
 Needs: `--mcp-tools filetype`.
 
-- `path` (string, required): File to identify.
-- `max_bytes` (integer, default `65536`, 1..1048576): Read at most this many bytes per file.
-- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
-- `use_file_command` (boolean, default `true`): Also ask file(1) for its description (local files only).
+- `max_bytes` (integer, default `65536`, 1..1048576): Bytes read from the start of the file for the content check (64 KiB default, at most 1 MiB).
+- `path` (string): The file to identify (absolute, or relative to the MCP root). Required unless path_b64 is given.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
+- `use_file_command` (boolean, default `true`): Also run the file(1) command for its description (file_command); local regular files only, ignored on remote backends.
 
 #### `file_type_scan` — read-only · stream (300 s) · stdio + http · *backend*
 
-Identify every file under a folder (breadth-first, symlinks skipped). Returns {path, files_scanned, truncated, entries: [{path, name, kind (file|directory|special|error|timeout|cancelled), description, mime (from the content), extension, extension_mime (what the name claims), verdict (match|mismatch|unknown), mismatch (bool), size, encoding, line_endings, engine, file_command, bytes_read, error}]}; with mismatches_only only files whose content contradicts their extension are listed. One progress notification per file; honours cancellation.
+Identify the content type of every file under a folder and flag misleading extensions.
+
+**Use when:** auditing a folder for disguised files (mismatches_only=true).
+
+**Instead:** file_type for one file; walk for names only.
+
+**Requires:** available only with --mcp-tools filetype.
+
+**Behavior:** read-only, breadth-first, name order; symlinks are skipped. max_files or a folder at max_depth sets truncated; an unlistable folder goes to unreadable. Refuses secret files. Progress; cancellable. Time limit: 5 min.
+
+**Returns:** {path, files_scanned, truncated, complete, unreadable (folder paths), entries: [file_type records]}; mismatches_only lists verdict=mismatch only.
 
 Needs: `--mcp-tools filetype`.
 
-- `path` (string, required): Folder to scan.
-- `max_bytes` (integer, default `65536`, 1..1048576): Read at most this many bytes per file.
-- `max_depth` (integer, default `2`, 0..50): Subfolder levels to descend (0: the folder itself only).
-- `max_files` (integer, default `500`, 1..5000): Stop after this many files (truncated=true).
-- `mismatches_only` (boolean, default `false`): List only files whose content does not match the extension.
-- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
-- `use_file_command` (boolean, default `true`): Also ask file(1) for its description (local files only).
+- `max_bytes` (integer, default `65536`, 1..1048576): Bytes read from the start of each file for the content check (64 KiB default, at most 1 MiB).
+- `max_depth` (integer, default `2`, 0..50): Counted from 0 (walk-style tools count from 1): 0 = path's own files, 1 = also its subfolders'.
+- `max_files` (integer, default `500`, 1..5000): Stop after identifying this many files; more sets truncated=true.
+- `mismatches_only` (boolean, default `false`): List only files whose content contradicts their extension.
+- `path` (string): The folder to scan (absolute, or relative to the MCP root). Required unless path_b64 is given.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
+- `use_file_command` (boolean, default `true`): Also run the file(1) command for its description (file_command); local regular files only, ignored on remote backends.
 
 ### `index`
 
@@ -737,15 +1156,25 @@ Build or refresh the offline metadata index that the search tool reads.
 
 #### `index_build` — read-only · long (1800 s) · stdio + http · *backend*
 
-Walk a folder and record every entry (name, size, type, mtime) in the offline metadata index that the search tool reads - the same index as the GUI's metadata search. Additive; prune=true also drops index rows under the folder whose file no longer exists. Returns {path, backend_id, recursive, indexed, pruned}. One progress notification per entry; cancellable (what was indexed is kept).
+Record every entry under a folder (name, size, type, mtime) in the offline index that search reads.
+
+**Use when:** before search, or to refresh it.
+
+**Instead:** search to query; walk for the live state.
+
+**Requires:** available only with --mcp-tools index.
+
+**Behavior:** writes index rows, never files; reads listings only. Idempotent: a repeat changes nothing more. prune=true drops rows of files now gone. Linked folders are not followed; folders deeper than 50 levels go to unreadable. A cancelled run keeps its rows. Progress. Time limit: 30 min.
+
+**Returns:** {path, backend_id, recursive, indexed, pruned, truncated (max_files), complete, unreadable (folder paths)}.
 
 Needs: `--mcp-tools index`.
 
-- `max_files` (integer, 1..1000000): Visit at most this many entries (truncated=true); default 100,000 on a remote, 1,000,000 locally.
-- `path` (string): Folder; default: the MCP root (local backend).
-- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
-- `prune` (boolean, default `false`): Also drop rows of files under the folder that are gone.
-- `recursive` (boolean, default `true`): Descend into subfolders.
+- `max_files` (integer, 1..1000000): Visit at most this many entries; reaching it stops the walk and sets truncated=true. Default 1,000,000 on the local backend, 100,000 on a remote one.
+- `path` (string): The folder to index (absolute, or relative to the MCP root). Default on the local backend: the MCP root; other backends need it.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
+- `prune` (boolean, default `false`): Afterwards drop index rows below the folder whose file is gone.
+- `recursive` (boolean, default `true`): Also index the subfolders (false: the folder's own entries only).
 
 ### `metadata`
 
@@ -753,51 +1182,91 @@ Show and export file metadata (EXIF/XMP/IPTC, Office, PDF, media tags); remove i
 
 #### `metadata_read` — read-only · stream (300 s) · stdio + http · *backend*
 
-Read the metadata of a file or of every supported file in a folder: images (JPEG/PNG/WebP/GIF/TIFF), Office (docx/xlsx/pptx/odt/ods/odp), PDF, audio/video (ffprobe). Returns {path, is_dir, truncated, files: [{path, name, kind, size, error, truncated, removable_count, fields: [{group, name, value, removable}]}]}}. An unsupported or unreadable file is a report with error set, not a failure. Values are length-bounded. Local paths are confined to the MCP root.
+Read the embedded metadata (EXIF, XMP, document properties, tags) of a file or of every supported file in a folder.
+
+**Use when:** checking what a photo, document or media file reveals before sharing it.
+
+**Instead:** metadata_export for one JSON/CSV text; metadata_remove (needs --mcp-write) for cleaned copies.
+
+**Requires:** available only with --mcp-tools metadata.
+
+**Behavior:** read-only. Images, Office, PDF, audio/video (ffprobe, off in paranoid mode). A file it cannot read is a report with error set. Refuses secret files. Values are cut at 512 characters. Cancellable. Time limit: 5 min.
+
+**Returns:** {path, is_dir, truncated, files: [{path, kind, error ('' when read), fields: [{group, name, value, removable}], ...}]}.
 
 Needs: `--mcp-tools metadata`.
 
-- `path` (string, required): A file, or a folder whose supported files are used.
-- `max_files` (integer, default `200`, 1..2000): For a folder: at most this many files (truncated=true when cut).
-- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
-- `recursive` (boolean, default `false`): For a folder: descend into subfolders.
+- `max_files` (integer, default `200`, 1..2000): For a folder: take at most this many files; more sets truncated=true. Ignored for a file.
+- `path` (string): A file, or a folder whose supported files are read (absolute, or relative to the MCP root). Required unless path_b64 is given.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
+- `recursive` (boolean, default `false`): For a folder: also take the files in its subfolders (false: the folder's own files only). Ignored for a file.
 
 #### `metadata_export` — read-only · stream (300 s) · stdio + http · *backend*
 
-The metadata_read data of a file or folder as one text in JSON or CSV. Returns {path, format, files, truncated, text}.
+Export the metadata_read data of a file or folder as one JSON or CSV text.
+
+**Use when:** you need the metadata as a document to quote or diff.
+
+**Instead:** metadata_read for structured fields; metadata_export_file (needs --mcp-write) for a file, better for big folders.
+
+**Requires:** available only with --mcp-tools metadata.
+
+**Behavior:** read-only; reads as metadata_read does. A result over 16 MiB fails. Time limit: 5 min.
+
+**Returns:** {path, format, files (number of file reports), truncated, text}.
 
 Needs: `--mcp-tools metadata`.
 
-- `path` (string, required): A file, or a folder whose supported files are used.
-- `format` (string, one of `json`, `csv`, default `"json"`): json: {"files": [...]}; csv: one row per field, formula-safe.
-- `max_files` (integer, default `200`, 1..2000): For a folder: at most this many files (truncated=true when cut).
-- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
-- `recursive` (boolean, default `false`): For a folder: descend into subfolders.
+- `format` (string, one of `json`, `csv`, default `"json"`): Text format. json: {"files": [<metadata_read file report>, ...]}; csv: header path,kind,group,field,value,removable,error and one row per field, cells that would start a spreadsheet formula prefixed with '.
+- `max_files` (integer, default `200`, 1..2000): For a folder: take at most this many files; more sets truncated=true. Ignored for a file.
+- `path` (string): A file, or a folder whose supported files are read (absolute, or relative to the MCP root). Required unless path_b64 is given.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
+- `recursive` (boolean, default `false`): For a folder: also take the files in its subfolders (false: the folder's own files only). Ignored for a file.
 
 #### `metadata_export_file` — mutating · stream (300 s) · stdio + http · *backend*
 
-Write the metadata_export text of path into the new file out (under the MCP root, mode 0600). An existing file is never overwritten: 'meta.json' becomes 'meta (2).json'. Returns {path (the file written), format, files, truncated, size}.
+Save the metadata_export text of path as a new file at out, on the same backend.
+
+**Use when:** the export should stay on disk next to the data.
+
+**Instead:** metadata_export for the text in the response.
+
+**Requires:** available only with --mcp-tools metadata and --mcp-write.
+
+**Behavior:** only adds; a taken name gets a counter ('meta (2).json'). Not idempotent: each call adds a file. Written via a temporary name; new local files are mode 0600. Write guards apply. Time limit: 5 min.
+
+**Returns:** {path (the file written, not the source), format, files, truncated, size (bytes)}.
 
 Needs: `--mcp-tools metadata` `--mcp-write` `--mcp-root DIR`.
 
-- `out` (string, required): File to create.
-- `path` (string, required): A file, or a folder whose supported files are used.
-- `format` (string, one of `json`, `csv`, default `"json"`): json: {"files": [...]}; csv: one row per field, formula-safe.
-- `max_files` (integer, default `200`, 1..2000): For a folder: at most this many files (truncated=true when cut).
-- `out_b64` (string): Instead of out: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a out_b64 / name_b64 field).
-- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
-- `recursive` (boolean, default `false`): For a folder: descend into subfolders.
+- `format` (string, one of `json`, `csv`, default `"json"`): Text format. json: {"files": [<metadata_read file report>, ...]}; csv: header path,kind,group,field,value,removable,error and one row per field, cells that would start a spreadsheet formula prefixed with '.
+- `max_files` (integer, default `200`, 1..2000): For a folder: take at most this many files; more sets truncated=true. Ignored for a file.
+- `out` (string): The new file on path's backend (absolute, or relative to the MCP root); its folder must exist. A taken name gets a counter. Required unless out_b64 is given.
+- `out_b64` (string): out as base64 of its raw bytes, for non-UTF-8 names; replaces out.
+- `path` (string): A file, or a folder whose supported files are read (absolute, or relative to the MCP root). Required unless path_b64 is given.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
+- `recursive` (boolean, default `false`): For a folder: also take the files in its subfolders (false: the folder's own files only). Ignored for a file.
 
 #### `metadata_remove` — mutating · long (1800 s) · stdio + http · *backend*
 
-Remove the metadata of a file, or of every supported file in a folder, by writing a cleaned copy next to each ('photo.jpg' -> 'photo.clean.jpg', then 'photo.clean (1).jpg'); the original is never modified and nothing is overwritten. Images keep orientation and colour profile, pixels are not re-encoded. PDF removal needs pypdf, audio/video needs ffmpeg (both blocked in the paranoid security mode). Returns {path, mode: 'copy', truncated, results: [{path, status (cleaned|unchanged|unsupported|error), output, removed, error, note, sha256}]}.
+Strip the metadata of a file, or of each supported file in a folder, into cleaned copies next to the originals.
+
+**Use when:** sharing a file without its camera, GPS or author data; look with metadata_read first.
+
+**Instead:** metadata_export_file to keep the metadata as a record.
+
+**Requires:** available only with --mcp-tools metadata and --mcp-write; PDF needs pypdf; audio/video ffmpeg, off in paranoid mode.
+
+**Behavior:** only adds; originals stay ('photo.jpg' -> 'photo.clean.jpg', taken: 'photo.clean (1).jpg'); no in-place mode. Not idempotent: a repeat writes another copy. A missing file fails. Refuses secret files. Write guards apply. Progress; cancellable. Time limit: 30 min.
+
+**Returns:** {path, truncated, results: [{path, status, output (the copy), removed (fields), sha256, error}]}; status: cleaned, unchanged, unsupported, skipped (read-only folder) or error.
 
 Needs: `--mcp-tools metadata` `--mcp-write` `--mcp-root DIR`.
 
-- `path` (string, required): A file, or a folder whose supported files are used.
-- `max_files` (integer, default `200`, 1..2000): For a folder: at most this many files (truncated=true when cut).
-- `path_b64` (string): Instead of path: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a path_b64 / name_b64 field).
-- `recursive` (boolean, default `false`): For a folder: descend into subfolders.
+- `max_files` (integer, default `200`, 1..2000): For a folder: take at most this many files; more sets truncated=true. Ignored for a file.
+- `path` (string): A file, or a folder whose supported files are cleaned (absolute, or relative to the MCP root). Required unless path_b64 is given.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
+- `recursive` (boolean, default `false`): For a folder: also take the files in its subfolders (false: the folder's own files only). Ignored for a file.
 
 ### `packer`
 
@@ -805,25 +1274,45 @@ List archive formats; pack files and folders into zip / tar.* / 7z / single-file
 
 #### `pack_formats` — read-only · quick (15 s) · stdio + http
 
-The archive formats pack can write and whether each is usable here: {formats: [{format, label, suffix, single (exactly one file in), encrypts (takes a password), available, reason}], levels}.
+List the archive formats pack can write and whether each works here.
+
+**Use when:** before pack, to pick an available format.
+
+**Instead:** archive_list to read an archive; pack (needs --mcp-write) to create one.
+
+**Requires:** available only with --mcp-tools packer.
+
+**Behavior:** read-only, no arguments; availability depends on installed packages (zstd, py7zr). Time limit: 15 s.
+
+**Returns:** {formats: [{format, label, suffix, single (one file in), encrypts (takes a password), available, reason}], levels (what pack's level takes)}.
 
 Needs: `--mcp-tools packer`.
 
 #### `pack` — mutating · long (1800 s) · stdio + http · *backend*
 
-Pack entries of folder into a new archive folder/archive_name + suffix. Folders are packed recursively; symbolic links are skipped and listed in skipped, never followed, and so are secret files (private keys, tokens) and folders that read_file refuses. The archive is written to a temporary file first and an existing archive is never overwritten: 'bundle.zip' becomes 'bundle (2).zip'. Only 7z takes a password (AES-256; encrypt_names also hides the file list); ZIP and tar refuse one. Single-file formats (gz, bz2, xz, zst) take exactly one file. Returns {path, format, files, folders, bytes_in, bytes_out, skipped, encrypted}. One progress notification per file; cancellable (nothing is left behind).
+Pack entries of one folder into a new archive in that folder.
+
+**Use when:** bundling or compressing files, optionally with a 7z password.
+
+**Instead:** pack_formats for formats; archive_extract to unpack; encrypt for one file.
+
+**Requires:** available only with --mcp-tools packer and --mcp-write.
+
+**Behavior:** any backend (bytes pass through this machine). Only adds: a taken name gets a counter ('bundle (2).zip'). Not idempotent: each call adds an archive. A failure leaves nothing. Symlinks and secret files go to skipped. Write guards apply. Progress. Time limit: 30 min.
+
+**Returns:** {path, format, files, folders, bytes_in, bytes_out, skipped, encrypted}.
 
 Needs: `--mcp-tools packer` `--mcp-write` `--mcp-root DIR`.
 
-- `archive_name` (string, required): Archive file name without directory; the format's suffix is added when missing.
-- `folder` (string, required): Folder holding the entries; the archive is created here.
-- `names` (array of string, required): Names of files or folders directly inside folder (no path separators, no repeats).
-- `encrypt_names` (boolean, default `true`): 7z with password: also encrypt the file list.
-- `folder_b64` (string): Instead of folder: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a folder_b64 / name_b64 field).
-- `format` (string, one of `zip`, `tar.gz`, `tar.zst`, `tar.xz`, `tar.bz2`, `7z`, `gz`, `zst`, `xz`, `bz2`, default `"zip"`): Archive format (see pack_formats).
-- `level` (string, one of `fast`, `normal`, `best`, default `"normal"`): Compression level.
-- `names_b64` (array of string): Instead of names: base64 of each name's raw bytes.
-- `password` (string, secret, never echoed): 7z only: encrypt with AES-256. Never logged or returned.
+- `archive_name` (string, required): Archive file name without a folder, e.g. 'bundle'; the format's suffix (.zip, .tar.gz, ...) is added when missing.
+- `encrypt_names` (boolean, default `true`): 7z with a password: also encrypt the file list, so names are hidden without the password. Ignored otherwise.
+- `folder` (string): The folder holding the entries (absolute, or relative to the MCP root); the archive is created in it. Required unless folder_b64 is given.
+- `folder_b64` (string): folder as base64 of its raw bytes, for non-UTF-8 names; replaces folder.
+- `format` (string, one of `zip`, `tar.gz`, `tar.zst`, `tar.xz`, `tar.bz2`, `7z`, `gz`, `zst`, `xz`, `bz2`, default `"zip"`): Archive format; pack_formats tells which are available here. gz, zst, xz and bz2 compress exactly one file.
+- `level` (string, one of `fast`, `normal`, `best`, default `"normal"`): Compression level: fast (larger, quicker), normal or best (smallest, slowest).
+- `names` (array of string): Names of files or folders directly inside folder, e.g. ['report.pdf', 'images']; no path separators, no repeats. Required unless names_b64 is given.
+- `names_b64` (array of string): names as base64 of each name's raw bytes, for non-UTF-8 names; replaces names.
+- `password` (string, secret, never echoed): 7z only: encrypt the archive with AES-256 using this password; any other format fails with one. Never logged or returned.
 
 ### `remote`
 
@@ -831,27 +1320,65 @@ List saved connection profiles (no secrets), open one as an extra backend that e
 
 #### `remote_profiles` — read-only · quick (15 s) · stdio + http
 
-The saved connection profiles, without any secret: {profiles: [{name, protocol, host, port, username, auth_type, store_password, production, open_as (backend id when opened in this session, else null), openable, reason (why remote_open would refuse, else empty)}]}.
+List the saved connection profiles (SFTP, SMB, WebDAV, S3 ...) and whether remote_open can open each.
+
+**Use when:** finding the name to pass to remote_open.
+
+**Instead:** list_backends for what is open now.
+
+**Requires:** available only with --mcp-tools remote.
+
+**Behavior:** read-only; no network, no keyring, never a secret. Time limit: 15 s.
+
+**Returns:** {profiles: [{name, protocol, host, port, username, auth_type, store_password (a password is kept), production, open_as (its backend id when open), openable, reason}]}, by name.
 
 Needs: `--mcp-tools remote`.
 
 #### `remote_open` — read-only · walk (60 s) · stdio + http
 
-Connect a saved profile and register it as backend 'profile:<name>' for this session; every other tool then reaches it with backend='profile:<name>'. Credentials come from the keyring when the profile stores them; a profile that would need a prompt (password not stored, SSH host key not yet trusted, browser sign-in) fails with an error instead. --mcp-root does not apply to remote paths. Writing needs --mcp-write, and a production-flagged profile stays read-only. Returns {backend, profile, protocol, class, production, writable, reused}.
+Connect a saved profile as backend 'profile:<name>' for this session.
+
+**Use when:** files on a remote server or cloud store are needed.
+
+**Instead:** remote_profiles to list profiles; remote_close when done.
+
+**Requires:** available only with --mcp-tools remote; a profile that needs no prompt (password in the keyring, host key trusted).
+
+**Behavior:** changes no files; opens a network connection and holds one of 8 session slots (a ninth fails: 'call remote_close first'). Idempotent: a repeat changes nothing more; it returns the open one (reused=true). Remote paths are outside --mcp-root; production profiles are read-only. Time limit: 60 s.
+
+**Returns:** {backend, profile, protocol, class (the backend's implementation, e.g. 'SSHSession'), production, writable, reused}.
 
 Needs: `--mcp-tools remote`.
 
-- `profile` (string, required): Profile name.
+- `profile` (string, required): The saved profile's name, exactly as remote_profiles lists it, e.g. 'nas'.
 
 #### `remote_close` — read-only · quick (15 s) · stdio + http · *backend*
 
-Disconnect a profile opened with remote_open in this session: its backend id stops working for later calls, and calls still running on it are ended. Returns {backend, closed}.
+Disconnect a profile that remote_open opened in this session.
+
+**Use when:** done with a remote backend, or to free a slot.
+
+**Instead:** list_backends to see what is open.
+
+**Requires:** available only with --mcp-tools remote.
+
+**Behavior:** changes no files; the id stops working and calls stuck on it end. Idempotent: a repeat changes nothing more; it fails with 'no open backend'. A connection lent by an axross pane is refused. Time limit: 15 s.
+
+**Returns:** {backend, closed: true}.
 
 Needs: `--mcp-tools remote`.
 
 #### `list_backends` — read-only · quick (15 s) · stdio + http
 
-List the backend ids: {id, class, name, is_default, remote} per backend; a profile opened with remote_open adds profile, protocol and production. Pass the id via the ``backend`` argument on any other tool to route that call to that backend.
+List the backend ids this session can address, the default marked.
+
+**Use when:** choosing another tool's backend argument, e.g. after remote_open.
+
+**Instead:** remote_profiles for saved connections; exec_backends for those that run commands.
+
+**Behavior:** read-only; connects nothing. Served whenever tools take a backend argument. Time limit: 15 s.
+
+**Returns:** a JSON array of {id, class (the backend's implementation, e.g. 'SSHSession'), name, is_default, remote}, opened profiles add {profile, protocol, production}; structuredContent: {backends}.
 
 Needs: `--mcp-tools remote`.
 
@@ -861,34 +1388,54 @@ Copy or move files and folders between backends, optionally resumable (mutating)
 
 #### `transfer_copy` — mutating · long (1800 s) · stdio + http
 
-Copy a file or a folder tree from one backend to another (or within one). Local paths are confined to the MCP root, remote ones are not. Existing destination files are skipped unless overwrite; symlinks are skipped; missing destination folders are created. resumable=true copies each file in 4 MiB segments with a local manifest: a cancelled or failed run continues where it stopped when called again with the same arguments. Returns {src, dst, copied, truncated, complete, entries: [{src, dst, size, action (copied|skipped|error), reason, bytes, resumed_segments, error, folder}]}. Every part left out has a record: reason exists, too-large (also when a source sends more than max_file_bytes, whatever size it gave), symlink, special-file (device, FIFO), protected (a protected destination), unsafe-name (control characters too), outside-root or max-depth (also sets truncated); a folder that could not be listed is an error with folder=true. complete is true only when every file was copied or already existed. Local files it creates are mode 0600. Progress per file; cancellable mid-file (the partial file is removed).
+Copy a file or folder tree from one backend to another, or within one.
+
+**Use when:** data must cross backends, or a big copy should be resumable.
+
+**Instead:** copy or bulk_copy within one backend; transfer_move to move one file.
+
+**Requires:** available only with --mcp-tools transfer and --mcp-write.
+
+**Behavior:** never changes the source. Existing files are skipped unless overwrite=true (destructive). Idempotent: a repeat changes nothing more. Regular files only; whatever is left out gets a reason. resumable=true and the same arguments continue an interrupted run; without it a partial file starts over. Mode and mtime are not kept (new local files 0600). Refuses secret files. Write guards apply. Progress; cancellable. Time limit: 30 min.
+
+**Returns:** {src, dst, copied, truncated, complete, entries}; reasons in outputSchema.
 
 Needs: `--mcp-tools transfer` `--mcp-write` `--mcp-root DIR`.
 
-- `dst` (string, required): Destination path on dst_backend (the file, or the folder that becomes the copy of a source folder).
-- `src` (string, required): Source path on src_backend.
-- `dst_b64` (string): Instead of dst: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a dst_b64 / name_b64 field).
-- `dst_backend` (string, default `"local"`): Backend id of the destination.
-- `max_depth` (integer, default `10`, 0..50): Subfolder levels to descend.
-- `max_file_bytes` (integer, default `10737418240`, 1..1125899906842624): Skip files above this size (reason too-large).
-- `max_files` (integer, default `1000`, 1..10000): Copy at most this many files (truncated=true).
-- `overwrite` (boolean, default `false`): Replace existing destination files.
-- `resumable` (boolean, default `false`): Segmented copy that can continue after an interruption.
-- `src_b64` (string): Instead of src: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a src_b64 / name_b64 field).
-- `src_backend` (string, default `"local"`): Backend id of the source (list_backends); 'local' is the local file system under the MCP root.
+- `dst` (string): Destination on dst_backend (absolute, or relative to the MCP root): the file, or for a source folder the folder that becomes its copy. Parents are created. Required unless dst_b64 is given.
+- `dst_b64` (string): dst as base64 of its raw bytes, for non-UTF-8 names; replaces dst.
+- `dst_backend` (string): Backend id of the destination, from list_backends; omit for the default backend.
+- `max_depth` (integer, default `10`, 0..50): Counted from 0 (walk-style tools count from 1): 0 = src's own files, 1 = also its subfolders'.
+- `max_file_bytes` (integer, default `10737418240`, 1..1125899906842624): Skip files larger than this many bytes (reason too-large), also when a source sends more than it reported. Default 10 GiB.
+- `max_files` (integer, default `1000`, 1..10000): Copy at most this many files; more sets truncated=true.
+- `overwrite` (boolean, default `false`): Replace destination files that exist (false: skip them, reason exists).
+- `resumable` (boolean, default `false`): Copy in 4 MiB segments that a repeated call can resume after an interruption.
+- `src` (string): Source path on src_backend (absolute, or relative to the MCP root). Required unless src_b64 is given.
+- `src_b64` (string): src as base64 of its raw bytes, for non-UTF-8 names; replaces src.
+- `src_backend` (string): Backend id of the source, from list_backends, e.g. 'profile:nas'; omit for the default backend.
 
 #### `transfer_move` — mutating · long (1800 s) · stdio + http
 
-Move one file to another backend (copy, then delete the source; the copy is removed again if the source cannot be deleted) or within one backend (rename). An existing destination is refused. Returns {src, dst, bytes}.
+Move one file to another backend: copy, check the byte count, delete the source.
+
+**Use when:** a file must leave one backend for another.
+
+**Instead:** rename within one backend (folders too); for a folder across backends transfer_copy, then remove.
+
+**Requires:** available only with --mcp-tools transfer and --mcp-write.
+
+**Behavior:** destructive for the source, deleted only after a complete copy. Idempotent: a repeat changes nothing more; it fails with 'destination exists'. An existing destination or a folder fails. Refuses secret files. Write guards apply. Time limit: 30 min.
+
+**Returns:** {src, dst, bytes}.
 
 Needs: `--mcp-tools transfer` `--mcp-write` `--mcp-root DIR`.
 
-- `dst` (string, required): Destination path on dst_backend (the file, or the folder that becomes the copy of a source folder).
-- `src` (string, required): Source path on src_backend.
-- `dst_b64` (string): Instead of dst: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a dst_b64 / name_b64 field).
-- `dst_backend` (string, default `"local"`): Backend id of the destination.
-- `src_b64` (string): Instead of src: base64 of the name's raw bytes, for a name that is not UTF-8 (listings give such a name as U+FFFD plus a src_b64 / name_b64 field).
-- `src_backend` (string, default `"local"`): Backend id of the source (list_backends); 'local' is the local file system under the MCP root.
+- `dst` (string): The destination file on dst_backend (absolute, or relative to the MCP root); it must not exist. Parents are created. Required unless dst_b64 is given.
+- `dst_b64` (string): dst as base64 of its raw bytes, for non-UTF-8 names; replaces dst.
+- `dst_backend` (string): Backend id of the destination, from list_backends; omit for the default backend.
+- `src` (string): The source file on src_backend, not a folder (absolute, or relative to the MCP root). Required unless src_b64 is given.
+- `src_b64` (string): src as base64 of its raw bytes, for non-UTF-8 names; replaces src.
+- `src_backend` (string): Backend id of the source, from list_backends, e.g. 'profile:nas'; omit for the default backend.
 
 <!-- END GENERATED TOOL CATALOG -->
 

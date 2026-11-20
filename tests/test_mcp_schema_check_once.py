@@ -89,7 +89,8 @@ class SchemaCheckedOnceTest(unittest.TestCase):
         checked = 0
         for name, args in cases:
             tool = next(t for t in self.tools if t.name == name)
-            expected = _reference_error(args, tool.schema)
+            # What the server checks: the published schema plus the twin rule.
+            expected = _reference_error(args, M._call_schema(tool))
             for _attempt in range(2):  # a fresh validator, then the kept one
                 response = _call(self.tools, name, args)
                 with self.subTest(name=name, args=args):
@@ -108,7 +109,7 @@ class SchemaCheckedOnceTest(unittest.TestCase):
 
     def test_sad_tasks_start_refuses_like_tools_call(self) -> None:
         tool = next(t for t in self.tools if t.name == "read_file")
-        message, path = _reference_error({}, tool.schema)
+        message, path = _reference_error({}, M._call_schema(tool))
         self.checks.clear()  # the reference's own check
         response = _call(self.tools, "read_file", {}, method="tasks/start")
         self.assertEqual(response["error"]["message"],
@@ -141,7 +142,7 @@ class SchemaCheckedOnceTest(unittest.TestCase):
         """Two tools with equal schemas share a validator; editing one dict
         afterwards does not change what the other one accepts."""
         stat = next(t for t in self.tools if t.name == "stat")
-        twin = M._Tool(name="twin", description="", schema=__import__("copy").deepcopy(stat.schema),
+        twin = M._Tool(name="twin", description="", schema=__import__("copy").deepcopy(M._call_schema(stat)),
                        handler=lambda args, ctx: {"ok": True})
         tools = [*self.tools, twin]
         self.assertNotIn("error", _call(tools, "twin", {"path": self.root}))

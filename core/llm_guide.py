@@ -66,6 +66,22 @@ def _argument(name: str, spec: dict, required: bool) -> str:
     return f"{text}: {description}" if description else text
 
 
+#: The labelled lines of a tool description (core.mcp_server's tool definitions).
+_DESCRIPTION_LABELS = ("Use when", "Instead", "Requires", "Behavior", "Returns")
+
+
+def _description_md(text: str) -> str:
+    """A tool description in Markdown: the summary, then each labelled line
+    as a paragraph of its own with the label in bold (as plain lines they
+    would run together into one paragraph)."""
+    first, *rest = text.strip().split("\n")
+    out = [first]
+    for line in rest:
+        label, sep, body = line.partition(": ")
+        out.append(f"**{label}:** {body}" if sep and label in _DESCRIPTION_LABELS else line)
+    return "\n\n".join(out)
+
+
 def render_catalog(manifest: dict) -> str:
     """The Markdown catalog for *manifest*, between the marker lines."""
     tools = {t["name"]: t for t in manifest["tools"]}
@@ -85,6 +101,10 @@ def render_catalog(manifest: dict) -> str:
         )
         + ".",
     ]
+    if manifest.get("rules"):
+        lines += ["", "Rules every tool shares (the server's initialize instructions; a "
+                  "description names one with a short tag such as \"Refuses secret files.\"):",
+                  ""] + [f"- {rule}" for rule in manifest["rules"]]
     for group in _group_order(manifest["groups"]):
         info = manifest["groups"][group]
         lines += ["", f"### `{group}`", "", info["description"].strip()]
@@ -100,7 +120,8 @@ def render_catalog(manifest: dict) -> str:
             ]
             if takes_backend:
                 tags.append("*backend*")
-            lines += ["", f"#### `{name}` — {' · '.join(tags)}", "", tool["description"].strip()]
+            lines += ["", f"#### `{name}` — {' · '.join(tags)}", "",
+                      _description_md(tool["description"])]
             if tool["required_flags"]:
                 lines += ["", "Needs: " + " ".join(f"`{f}`" for f in tool["required_flags"]) + "."]
             if props:

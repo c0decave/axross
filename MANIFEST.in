@@ -21,6 +21,7 @@ include docs/USAGE_de.md docs/USAGE_es.md docs/WINDOWS_TESTING.md
 include docs/patterns/PATTERN-001-splitlines-boundary-trust-mismatch.md
 include docs/releases/RELEASE-NOTES-0.15.180.md
 include docs/releases/RELEASE-NOTES-0.15.181.md
+include docs/releases/RELEASE-NOTES-0.15.182.md
 include docs/mcp-tools.json docs/scripting-api.json
 include llms.txt
 # Belt and braces should a glob come back above.

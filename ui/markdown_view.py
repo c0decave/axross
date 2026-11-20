@@ -1785,20 +1785,34 @@ def emoji_fonts() -> None:
     for code, emoji in markdown_doc.EMOJI.items():
         signs = [ord(ch) for ch in emoji if ch not in _EMOJI_JOINERS]
         missing[code] = signs
+    # (a machine without a font that has them all: every one of hundreds of families was asked for every
+    # emoji still missing, on the GUI thread - opening a Markdown file held the window for minutes. Each
+    # family is asked only for what is still missing, and the search ends after EMOJI_SCAN_SECONDS: what
+    # no font asked by then has stays as written)
+    import time
+
+    deadline = time.monotonic() + EMOJI_SCAN_SECONDS
+    total = len(missing)
     drawn, best, most = set(), "", 0
     for family in [None, *families]:
-        metric = QFontMetrics(QFont() if family is None else QFont(family))
-        found = 0
-        for code in missing:
-            if all(metric.inFontUcs4(sign) for sign in missing[code]):
-                found += 1
-                drawn.add(code)
-        if family is not None and found > most:
-            best, most = family, found
-        if len(drawn) == len(missing):
+        if family is not None and time.monotonic() > deadline:
             break
-    _EMOJI_DRAWN.append(None if len(drawn) == len(missing) else frozenset(drawn))
+        metric = QFontMetrics(QFont() if family is None else QFont(family))
+        found = [code for code, signs in missing.items()
+                 if all(metric.inFontUcs4(sign) for sign in signs)]
+        for code in found:
+            del missing[code]
+        drawn.update(found)
+        if family is not None and len(found) > most:
+            best, most = family, len(found)
+        if not missing:
+            break
+    _EMOJI_DRAWN.append(None if len(drawn) == total else frozenset(drawn))
     _EMOJI_FAMILY.append(best)
+
+
+#: (emoji_fonts) how long the search for the installed fonts' emoji may hold the first view at most.
+EMOJI_SCAN_SECONDS = 0.25
 
 
 #: (emoji_fonts) the family that draws most of the emoji ("" none): the page's second font (MarkdownView) -

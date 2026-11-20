@@ -678,7 +678,7 @@ it).
 
 ```bash
 export GH_HOST=github.com   # gh must talk to github.com, whatever its default host is
-VERSION=0.15.181
+VERSION=0.15.182
 ```
 
 1. **maintainer** - prepare the commit. `axross/_version.py` says
@@ -868,7 +868,7 @@ VERSION=0.15.181
 
 8. **maintainer** - assemble, sign and check the release, with the
    **field key**: a key of `FIELD_KEYS` in `scripts/sign_release.py`, the
-   key the binaries in use pin (for 0.15.181 that is still the first key,
+   key the binaries in use pin (for 0.15.182 that is still the first key,
    `rJX0yymA5/...`; see "Key rotation" below):
 
    ```bash

@@ -242,7 +242,8 @@ def test_sad_archive_tools_refuse_a_remote_backend(root, saved):
     bid = T.call(tools, "remote_open", {"profile": "ram1"})["backend"]
     with pytest.raises(T.RpcError) as err:
         T.call(tools, "archive_list", {"backend": bid, "path": "/x.zip"})
-    assert "local backend" in err.value.message
+    # The local disk only: the tool takes no backend argument at all.
+    assert "'backend' was unexpected" in err.value.message
 
 
 # -- SFTP: credentials from the keyring, never a prompt ----------------------------

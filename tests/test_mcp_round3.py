@@ -922,7 +922,13 @@ def test_sad_a_folder_that_cannot_be_listed_makes_a_walk_truncated(root, ram, mo
                        ("metadata_read", {"path": "/big", "recursive": True}),
                        ("duplicates_scan", {"path": "/big"})):
         out = T.call(tools, tool, {"backend": bid, **args})
-        assert out["truncated"] is True, (tool, out)
+        # A tree walk says it with complete=false (truncated is for a limit
+        # that cut it, as walk has it); metadata_read, which has no
+        # complete, with truncated.
+        if "complete" in out:
+            assert out["complete"] is False and out["unreadable"], (tool, out)
+        else:
+            assert out["truncated"] is True, (tool, out)
 
 
 def test_sad_every_command_in_the_host_key_advice_runs_as_given():

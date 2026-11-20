@@ -77,7 +77,10 @@ def source_of(repo: Path, ref: str = "HEAD") -> str:
 
 
 def export(axross: Path, out: Path) -> Path:
-    """``scripts/export_standalone.py mcp`` of the axross checkout *axross*."""
+    """``scripts/export_standalone.py mcp`` of the axross checkout *axross*.
+    Both paths are made absolute first: the export runs inside *axross*, so a
+    relative one (the drift workflow's ``.axross-source``) was taken twice."""
+    axross, out = Path(axross).resolve(), Path(out).resolve()
     run = subprocess.run([sys.executable, str(axross / "scripts" / "export_standalone.py"),
                           "mcp", str(out)], cwd=axross, capture_output=True, check=False)
     if run.returncode:

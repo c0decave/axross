@@ -99,14 +99,17 @@ def test_happy_a_new_session_gets_titles_annotations_and_output_schemas(tmp_path
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, tools, protocol=state
     )["result"]["tools"]}
     assert listing["read_file"]["title"] == "Read file"
+    # Every group on: the remote group lets read_file reach SFTP, S3... hosts.
     assert listing["read_file"]["annotations"] == {
         "title": "Read file", "readOnlyHint": True, "destructiveHint": False,
-        "idempotentHint": True, "openWorldHint": False}
+        "idempotentHint": True, "openWorldHint": True}
     assert listing["remove"]["annotations"]["destructiveHint"] is True
     assert listing["remote_exec"]["annotations"]["openWorldHint"] is True
-    assert set(listing["stat"]["outputSchema"]["required"]) == {"name", "is_dir", "size",
-                                                                "modified"}
-    assert "outputSchema" not in listing["list_dir"]  # a list, not an object
+    assert set(listing["stat"]["outputSchema"]["required"]) == {"name", "is_dir", "is_link",
+                                                                "size", "modified", "mode"}
+    # A list on the wire; its outputSchema describes the object structuredContent
+    # wraps it in.
+    assert listing["list_dir"]["outputSchema"]["required"] == ["entries"]
 
 
 def test_happy_every_tool_has_true_hints(tmp_path):
@@ -179,7 +182,12 @@ def test_happy_structured_content_only_for_objects_and_new_sessions(tree):
         "result"]
     new, _ = _session(tools, NEW)
     listed = _call(tools, new, "list_dir", {"path": str(tree)})["result"]
-    assert "structuredContent" not in listed and json.loads(listed["content"][0]["text"])
+    # The text stays the array every client read; structuredContent (an
+    # object, as MCP demands) wraps the same array.
+    array = json.loads(listed["content"][0]["text"])
+    assert array and listed["structuredContent"] == {"entries": array}
+    old_listed = _call(tools, old, "list_dir", {"path": str(tree)})["result"]
+    assert "structuredContent" not in old_listed
     read = _call(tools, new, "read_file", {"path": str(tree / "a.txt")})["result"]
     assert base64.b64decode(read["structuredContent"]["content_b64"]) == "héllo wörld\n".encode()
 

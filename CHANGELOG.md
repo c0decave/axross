@@ -4,6 +4,43 @@ What changed in each axross release, for the people who use it. The full
 notes of a release, with every fix, are on its
 [GitHub release page](https://github.com/c0decave/axross/releases).
 
+## 0.15.182 - 2026-11-20
+
+A hotfix: opening a Markdown file froze axross on machines without an emoji
+font that has every emoji - locally and over SFTP. The full list is in the
+release notes (`RELEASE-NOTES-0.15.182.md` on the
+[release page](https://github.com/c0decave/axross/releases/tag/v0.15.182)).
+The downloads are the same as for 0.15.181; installed binaries update to it.
+
+**In short:**
+
+- **Markdown files open at once again:** the viewer asked each of the
+  installed font families - hundreds on a desktop - for every emoji, on the
+  window's thread, before it showed; a double-click on a README held axross
+  for minutes. The search now asks each font only for what is still missing
+  and ends after a quarter of a second; emoji no font has by then stay as
+  written. A test opens the viewer with 2000 slow fonts and fails above
+  1.5 s (the old code took 10.7 s there).
+- **Open With > Open as Markdown:** any file rendered in the Markdown viewer
+  (a README without an extension, notes.txt).
+- **Copy and move:** the copied or moved entries are no longer marked in the
+  source pane once the transfer is queued (a cancelled copy keeps them).
+- **MCP server:** clearer tool definitions - when to use each tool and what
+  instead, every flag and limit, what each returns (output schemas), and
+  the shared rules once in the instructions; `stat` shows the mode, `grep`
+  takes an `include` glob, `search` pages and filters by folder.
+
+### Fixed
+
+- The media player keeps tracks whose file name is not UTF-8 or holds a
+  no-break space across a restart (they were saved and dropped).
+- MCP: `grep` without a path searches the MCP root (it searched `/`, which a
+  root other than `/` refused); `max_depth=0` no longer means the default;
+  `archive_list`/`archive_extract` take a password; `file_type` no longer
+  races its own deadline; `remote_exec`/`remote_script` need `backend`.
+- The headless repository's drift check exported from a doubled path and
+  failed every time.
+
 ## 0.15.181 - 2026-11-20
 
 Android phones over USB share the connection with the console's `adb`,
