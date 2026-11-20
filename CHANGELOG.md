@@ -4,6 +4,60 @@ What changed in each axross release, for the people who use it. The full
 notes of a release, with every fix, are on its
 [GitHub release page](https://github.com/c0decave/axross/releases).
 
+## 0.15.181 - 2026-11-20
+
+Android phones over USB share the connection with the console's `adb`,
+the MCP server describes its tools fully, and the Markdown reader of
+axross-markdown 0.16.6 and 0.16.7 is in axross. The full list is in the
+release notes (`RELEASE-NOTES-0.15.181.md` on the
+[release page](https://github.com/c0decave/axross/releases/tag/v0.15.181)).
+The downloads are the same as for 0.15.180; installed binaries update to it.
+
+**In short:**
+
+- **ADB through the adb server:** with the platform tools' adb server
+  running (`adb start-server`, Android Studio, any `adb` command), *USB /
+  adb server* mode reaches the phone through it instead of failing with
+  "Another program holds the phone's USB connection", and the console's
+  `adb` keeps working beside axross. The connection dialog lists the
+  phones connected now with their state (ready, not allowed yet, offline,
+  no permission) and a Refresh button. TCP mode on localhost:5037 uses the
+  server too when one phone is connected. Without a server axross opens the phone over USB itself, as
+  before.
+- **Uploads to a phone are atomic:** a file goes to a temporary name beside
+  it first; a broken upload leaves the old file as it was.
+- **MCP server:** every parameter of every tool is described, the tools say
+  what they return and which to use when (`search` the offline index,
+  `walk` and `list_dir` the live tree), `initialize` sends instructions
+  (MCP 2025-03-26 and later), and `serverInfo` and the registry entry carry
+  the logo (MCP 2025-11-25 and later).
+- **Markdown reader:** no hostile shape (a long line in a table cell or a
+  heading, a 90,000-character code span, a footnote cited 100,000 times,
+  thousands of headings, 50,000 emoji) holds the window, in any container;
+  display math in an alert and after text; the editor's preview follows
+  the typing in long texts; Ctrl+wheel and Ctrl+= zoom between 25 and
+  400 %.
+
+### Compatibility
+
+- **ADB:** `adb kill-server` is no longer needed before a USB connection.
+  axross uses an adb server on this computer only (127.0.0.1);
+  `ADB_SERVER_SOCKET` naming another host is ignored. The mode is now
+  called *USB / adb server*; saved profiles keep working.
+- **axross-headless-mcp:** its repository is written only by the export
+  (each commit names the axross tag it comes from, and a workflow fails on
+  any difference) and carries a Dockerfile for directories that build from
+  the repository. The tools' names are unchanged.
+
+### Fixed
+
+- ADB errors say what to do: not allowed yet (accept the prompt on the
+  phone), offline, no permission, several phones, an unknown serial, and
+  why axross could not share the phone through an adb server.
+- Release CI uploads each file as its own asset (the Linux artifact is over
+  GitHub's 2 GB per asset) and names the failing line.
+- Packaging: the release notes are in the sdist, not in the wheel.
+
 ## 0.15.180 - 2026-11-20
 
 0.15.180 closes three complete review rounds of every area of axross - files

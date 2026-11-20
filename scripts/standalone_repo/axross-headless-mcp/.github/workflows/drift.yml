@@ -1,0 +1,56 @@
+# Drift guard: this repository is axross's export and nothing else. Every
+# commit names the public axross ref it was exported from in a trailer
+# "Exported-From: c0decave/axross@<tag or commit>" (axross's
+# scripts/headless_release.py sync writes it); this job exports again from
+# that ref and fails on any file that differs, is missing or was added. A fix
+# or a feature goes into axross, never here by hand.
+name: drift
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ "v*.*.*" ]
+  pull_request:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export-matches:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+        fetch-depth: 1
+    - name: The commit names its axross source
+      id: source
+      env:
+        EVENT: ${{ github.event_name }}
+      run: |
+        if [ "$EVENT" = pull_request ]; then
+          echo "::error::this repository takes no pull requests: it is axross's export - change c0decave/axross instead"
+          exit 1
+        fi
+        ref=$(git log -1 --format='%(trailers:key=Exported-From,valueonly)' | sed -n 's#^c0decave/axross@##p' | head -n 1)
+        if [ -z "$ref" ]; then
+          echo "::error::the commit names no axross source (Exported-From trailer): it was committed by hand"
+          exit 1
+        fi
+        printf 'ref=%s\n' "$ref" >> "$GITHUB_OUTPUT"
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        repository: c0decave/axross
+        ref: ${{ steps.source.outputs.ref }}
+        path: .axross-source
+        persist-credentials: false
+        fetch-depth: 1
+    - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: "3.12"
+    - name: A fresh export of that ref equals this commit
+      run: python .axross-source/scripts/headless_release.py check --repo . --axross .axross-source --checked-out

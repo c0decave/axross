@@ -322,8 +322,18 @@ local shell's name in terminal bookmarks and saved layouts.
 - **Android phones (ADB).** Two modes in the profile. *TCP / Wi-Fi*:
   connect the phone by USB once, enable USB debugging, run
   `adb tcpip 5555`, then use the phone's IP and port 5555 (a SOCKS or HTTP
-  proxy can be used). *USB*: the phone on the cable; the USB serial (as
-  `adb devices` shows it) is optional - empty means the first phone found.
+  proxy can be used). *USB / adb server*: the phone on the cable. The Device list (Refresh
+  lists again) shows the phones connected now with their state - ready,
+  not allowed yet (accept the prompt on the phone), offline, no permission;
+  choosing one fills in its serial (as `adb devices` shows it), an empty
+  serial means the only phone on USB. When the adb server of the platform
+  tools runs on 127.0.0.1:5037 (`adb start-server`, Android Studio or any
+  `adb` command starts it), axross reaches the phone through it and shares
+  it with the console's `adb` - phones the server has over Wi-Fi
+  (`adb connect`) can be chosen too; without a server axross opens the
+  phone over USB itself. TCP mode pointed at localhost:5037 uses the
+  server as well. axross uses an adb server on this computer only:
+  `ADB_SERVER_SOCKET` naming another host is ignored.
   There is no login: axross uses the adb tool's key `~/.android/adbkey`
   and creates it when missing; the phone learns no user or host name of
   this computer. On the first connection the phone asks "Allow USB
@@ -334,13 +344,14 @@ local shell's name in terminal bookmarks and saved layouts.
   Android 11's *Wireless debugging* (pairing code, random port, TLS) is
   not supported - use `adb tcpip 5555`. USB on Linux needs libusb-1.0
   from the system (`pip install 'axross[adb]'` brings the Python side);
-  a running adb server holds the phone (`adb kill-server` first), and
+  a program other than an adb server that holds the phone is named, and
   without permission to the device add a udev rule for Android devices,
   your user to the `plugdev` group and replug the phone. After a dropped
   connection the next action reconnects by itself; long actions on the
   phone (a checksum, a copy or move there, deleting a big folder, an APK
-  install) are waited for up to an hour; uploads get `rw-r--r--` and keep
-  the source's modification time.
+  install) are waited for up to an hour; uploads get `rw-r--r--`, keep the source's modification time and go
+  to a temporary name beside the file first, which replaces it when
+  complete - a broken upload leaves the old file as it was.
 
 ## Multi-pane layout
 
@@ -930,9 +941,10 @@ bar docks it again.
   with the headings in an outline beside it that follows the place you
   read, highlighted code, zoom (Ctrl +/-/0), find (Ctrl+F marks every
   match and says which of how many; Enter or F3 the next, Shift+Enter or
-  Shift+F3 the one before), Reload (F5) and Edit (F4). The zoom button
-  between − and + shows the text's size in per cent; click it (or press
-  Ctrl+0) for the original size. A local file is
+  Shift+F3 the one before), Reload (F5) and Edit (F4). Ctrl+wheel, Ctrl++
+  (or Ctrl+=) and Ctrl+- zoom the text between 25 % and 400 %; the button
+  shows the level, and clicking it (or Ctrl+0) restores the original
+  size. A local file is
   shown anew when it changes on disk, where you were stays. *Export*
   saves the page as HTML (its images inside it, nothing it could load
   from elsewhere) or PDF, or prints it (Ctrl+P) - the whole page, with
@@ -985,7 +997,8 @@ bar docks it again.
   only regular files, never a secret file, at most 8 MiB and 40 million
   pixels each and 200 per file. In the editor, *View → Markdown Preview*
   (Ctrl+Shift+M) shows the text rendered beside it and follows the
-  typing: after a pause it shows the place of the line typed at.
+  typing (after a pause): the editor's preview keeps the line you type at
+  in view, also in long texts and in texts without headings.
   With markdown-it-py installed (axross-markdown brings it), the viewer
   shows the full set - footnotes (numbered as on GitHub: a reference to a
   note that doesn't exist stays as written, each citation has its own way
@@ -1006,7 +1019,11 @@ bar docks it again.
   freeze the window, also inside a list item, quote, alert, definition or
   note, and raw HTML tables and lists: such a block stays where it is and is
   laid out in pieces as you scroll. A heading, table row or term with more
-  than 100 formulas shows the rest as TeX, with a note. Code longer than
+  than 100 formulas shows the rest as TeX, with a note. A heading's or a
+  table cell's text longer than 2,000 characters is cut with "…" in the
+  window (the notice says so); the editor shows the whole line. A
+  footnote cited many times shows its first 20 ways back, followed by
+  "and N more". Code longer than
   500 lines or 40 000 characters is shown on its grey ground without a box.
   Code blocks are coloured in a separate process; one that takes longer
   than 5 seconds is shown without colours.
@@ -1014,7 +1031,9 @@ bar docks it again.
   flatter ("Laid out flatter"), in every view. A long Copy runs in pieces
   ("Copying… 40 %"); a reload during it cancels it and says so. `<a id>` / `<a name>` anchors may hold digits and dots
   (`#26.8.0`), footnote labels match regardless of case, and GitHub's
-  `` $`…`$ `` is a formula too, as is `$$ … $$` with spaces inside. Math
+  `` $`…`$ `` is a formula too, as is `$$ … $$` with spaces inside.
+  `$$…$$` on lines of its own is a display formula, also right after a
+  line of text or an alert's `[!NOTE]` line, as on GitHub. Math
   covers KaTeX's common symbols, single-token arguments (`\frac12`,
   `\sqrt5`), `\choose`, `\bigcup`, `\lbrace`, `\ket`, `\mathscr`,
   `\operatorname*` and nested scripts; `\cfrac`, `\overset`, `\underset` and `\stackrel` are stacked
@@ -1022,7 +1041,8 @@ bar docks it again.
   beside), and a command it does not know is shown as written. A file that
   is not UTF-8 is read as Windows-1252 / Latin-1. A text the parser cannot
   read (or that takes it too long) is shown as written, with a notice
-  saying why - never a blank page or a hang. A formula nested more than 64
+  saying why - never a blank page or a hang. A file that cannot be read
+  shows the reason in the page. A formula nested more than 64
   groups deep is shown as its TeX with the note "(nested more than 64 deep:
   shown as written)". An image whose address is not allowed (`file:`, or
   a `data:` address that is no image) is a box naming it, a file that is
@@ -1037,9 +1057,9 @@ bar docks it again.
   standalone `axross-markdown [FILE…]` opens the viewer; `--term` (the
   terminal output, with mdcat's options), `--html FILE|-` (an HTML page),
   `--help` and `--version` start no Qt, and an unknown option is an error.
-  On Windows, `axross-markdown.exe` opens no console window; for the
-  terminal view use `axross-mdcat.exe` (or `axross-markdown --term` from
-  a console).
+  On Windows, `axross-markdown.exe` opens no console window; the terminal
+  view is `axross-mdcat.exe` (or `axross-markdown --term` from a console),
+  and its output into a pipe or a file is UTF-8.
   When a system library the window needs is missing (libEGL on a minimal
   Linux), it names the library and the package that provides it and
   points to `--term` / `--html`. axross-markdown follows the desktop's

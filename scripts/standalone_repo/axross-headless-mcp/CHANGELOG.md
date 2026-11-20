@@ -4,6 +4,33 @@ What changed in each release of axross-headless-mcp. The code is axross's MCP
 server (https://github.com/c0decave/axross), written out by axross's
 `scripts/export_standalone.py mcp`; its version is axross's.
 
+## 0.15.181 - 2026-11-20
+
+The MCP server's part of axross 0.15.181: tool definitions a client can
+judge, and this repository written only by axross's export.
+
+- **Every parameter of every tool is described**, with its defaults and
+  limits (54 parameters of 23 tools had none). `list_dir`, `stat`,
+  `search`, `mkdir`, `remove`, `rename`, `copy`, `symlink`, `hardlink`,
+  `script_delete` and `remote_close` say what they return and when to use
+  them; `remove` says it is permanent, `rename` and `copy` that an existing
+  destination is never replaced; `search` names the index it reads
+  (`index_build`) and points at `walk` and `list_dir` for the live state.
+  The tool names are unchanged.
+- **Instructions on `initialize`** (MCP 2025-03-26 and later): facts about
+  the tools - backends, the root, secrets, which tool lists, reads and
+  searches what, when a result is truncated, the flags.
+- **A logo:** `serverInfo.icons` (MCP 2025-11-25 and later) and the
+  registry entry name `docs/assets/logo.png` by HTTPS URL; older protocol
+  revisions get `serverInfo` as before.
+- **A `Dockerfile`** at the repository's root, for directories that build
+  a server from its repository: it installs this repository's package, runs
+  it as an unprivileged user, read-only and confined to `/data` by default.
+- **This repository is axross's export and nothing else:** each commit
+  carries `Exported-From: c0decave/axross@<ref>` and the release tag is the
+  PyPI package's source; `drift.yml` exports again from that ref on every
+  push, every tag and weekly and fails on any difference.
+
 ## 0.15.180 - 2026-11-20
 
 The MCP server's part of axross 0.15.180: three more review rounds of

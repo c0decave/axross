@@ -185,11 +185,15 @@ def test_sad_a_big_block_in_an_item_keeps_the_list_as_the_terminal_shows_it(full
 @pytest.mark.parametrize("full", [True, False], ids=["markdown-it", "md4c"])
 def test_sad_formulas_past_a_headings_hundred_are_said_and_quick(full):
     """t/heading_math.md: 8,000 formulas in a heading held the window 3.3-11 s, said nothing."""
+    from ui import markdown_view as MV
+
     turns = Turns()
     view = _view("# " + " ".join(f"w{n} $x_{{{n}}}^2$" for n in range(8000)) + "\n\nText.\n", full)
     assert turns.worst() < 0.6
-    assert "TeX" in view.notice.text()
-    assert "$x_{7999}^2$" in view.browser.toPlainText().replace("\\", "")
+    assert "TeX" in view.notice.text() and str(MV.LINE_CAP) in view.notice.text()
+    # (since the twentieth review a heading's text past LINE_CAP characters is cut - the editor shows it)
+    shown = view.browser.toPlainText()
+    assert "w0" in shown and "…" in shown and "Text." in shown
 
 
 # -- 13. the notices say what they do --------------------------------------------------------------

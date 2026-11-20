@@ -6,11 +6,15 @@ no external ``adb`` binary needed. Two transport modes:
 * **TCP** (preferred): the device has ``adb tcpip 5555`` enabled
   and we connect to ``host:port``. Works over Wi-Fi, USB-over-IP,
   etc. Primary mode; the connection dialog defaults to this.
-* **USB**: direct libusb transport with an optional serial filter.
-  Works for a USB-cable-attached device without a running adb
-  daemon. Requires udev rules allowing the current user raw USB
-  access on the phone's vendor/product id — on Linux this usually
-  means the ``plugdev`` group plus a ``51-android.rules`` file.
+* **USB**: through the adb server of this computer when one answers on
+  127.0.0.1:5037 (core.adb_server: the platform tools' ``adb`` holds the
+  phone, axross shares it as the console's ``adb`` does), else a direct
+  libusb transport with an optional serial filter. libusb works for a
+  USB-cable-attached device without a running adb server. Requires udev
+  rules allowing the current user raw USB access on the phone's
+  vendor/product id — on Linux this usually means the ``plugdev`` group
+  plus a ``51-android.rules`` file. TCP mode pointed at the server's port
+  (localhost:5037) uses the server too.
 
 Auth
 ----
@@ -49,6 +53,7 @@ import io
 import logging
 import os
 import posixpath
+import secrets
 import shlex
 import threading
 import time
@@ -221,12 +226,18 @@ class AdbUsbError(OSError):
     (libusb1 not installed), ``missing-library`` (no libusb-1.0 on the
     system), ``not-found`` (no phone with USB debugging on the cable),
     ``busy`` (another program - an adb server - holds it), ``access``
-    (no permission for the USB device: udev rules)."""
+    (no permission for the USB device: udev rules). :attr:`server_note`:
+    why no adb server was used instead (core.adb_server), for ``busy``:
+    ``none`` (none answers on :attr:`server_address`), ``refused`` (the
+    setting :attr:`server_detail` names another computer), ``not-adb``."""
 
     def __init__(self, kind: str, message: str, serial: str = "") -> None:
         super().__init__(message)
         self.kind = kind
         self.serial = serial
+        self.server_note = ""
+        self.server_address = ""
+        self.server_detail = ""
 
 
 def _usb_missing_kind() -> str:
@@ -262,7 +273,7 @@ def _usb_error(exc: BaseException, serial: str) -> AdbUsbError | None:
 #: connection itself is fine.
 _COMMAND_ERRORS = frozenset({
     "AdbCommandFailureException", "PushFailedError", "DevicePathInvalidError",
-    "UnicodeError",
+    "UnicodeError", "AdbServerCommandFailed",
 })
 #: adb_shell / socket time-outs.
 _TIMEOUT_ERRORS = frozenset({"TcpTimeoutException", "AdbTimeoutError", "TimeoutError", "timeout"})
@@ -754,6 +765,12 @@ class AdbSession(SessionLifecycle):
     _closed = False
     #: Made by __init__ (the parameters to connect again are known).
     _can_reconnect = False
+    #: The current device goes through the adb server (core.adb_server).
+    _server_mode = False
+    #: Why the adb server was not used (AdbUsbError.server_note).
+    _server_note = ""
+    _server_address = ""
+    _server_detail = ""
 
     def __init__(
         self,
@@ -820,14 +837,22 @@ class AdbSession(SessionLifecycle):
         else:
             self._label = f"{host}:{port}"
         self._device = self._open_device(interactive=True)
+        self._mode_opened()
         self._can_reconnect = True
-        log.info("AdbSession opened: %s", self._label)
+        log.info("AdbSession opened: %s%s", self._label,
+                 " (through the adb server)" if self._server_mode else "")
 
     # ------------------------------------------------------------------
     # Connections
     # ------------------------------------------------------------------
     def _new_device(self):
-        """An unconnected adb_shell device for this session's transport."""
+        """An unconnected adb_shell device for this session's transport:
+        for USB (and TCP to the adb server's port) the phone through the
+        adb server when one answers, else libusb / TCP."""
+        server = self._server_device()
+        self._server_mode = server is not None
+        if server is not None:
+            return server
         if self._usb:
             try:
                 return AdbDeviceUsb(  # type: ignore[misc]
@@ -849,6 +874,58 @@ class AdbSession(SessionLifecycle):
             address_family=None if self._proxy.enabled else self._address_family,
         )
 
+    def _server_device(self):
+        """The phone through the adb server (core.adb_server), or None to
+        use libusb / TCP (no server answers: :attr:`_server_note` says
+        so). A server that answers but cannot give the phone raises
+        :class:`core.adb_server.AdbServerError`."""
+        from core import adb_server
+
+        via_port = (not self._usb and not self._proxy.enabled
+                    and adb_server.is_server_port(self._host, self._port))
+        if not (self._usb or via_port):
+            return None
+        address = adb_server.server_address()
+        self._server_address = str(address)
+        if address.refused:
+            self._server_note, self._server_detail = "refused", address.setting
+            log.info("ADB %s: %s", self._label, address.refused)
+            return None
+        try:
+            devices = adb_server.list_devices(
+                address, timeout=min(self._connect_timeout, adb_server.PROBE_TIMEOUT))
+        except adb_server.AdbServerError as exc:
+            if exc.kind != "protocol":
+                raise
+            self._server_note = "not-adb"
+            log.info("ADB %s: %s answers, but not as an adb server", self._label, address)
+            return None
+        except OSError as exc:
+            self._server_note = "none"
+            log.debug("ADB %s: no adb server answers on %s (%s); libusb / TCP",
+                      self._label, address, exc)
+            return None
+        try:
+            chosen = adb_server.choose_device(devices, self._usb_serial if self._usb else "",
+                                              usb_only=self._usb, address=address)
+        except adb_server.AdbServerError as exc:
+            exc.via_port = via_port
+            raise
+        return adb_server.AdbServerDevice(address, chosen.serial,
+                                          default_transport_timeout_s=self._transport_timeout)
+
+    def _note_server(self, exc: AdbUsbError) -> None:
+        """Tell *exc* why the adb server was not used (core.user_errors)."""
+        exc.server_note = self._server_note
+        exc.server_address = self._server_address
+        exc.server_detail = self._server_detail
+
+    def _mode_opened(self) -> None:
+        """After a connect: through the adb server a second connection for
+        transfers is free (the server multiplexes); libusb has one."""
+        if self._usb:
+            self._xfer_off = not self._server_mode
+
     def _open_device(self, *, interactive: bool):
         """A connected device. *interactive*: a key the phone does not
         know yet makes it ask "Allow USB debugging?" (the user is told,
@@ -856,9 +933,14 @@ class AdbSession(SessionLifecycle):
         :class:`AdbNeedsApproval` instead of a prompt."""
         from core.proxy import routed_create_connection
 
+        from core.adb_server import AdbServerError
+
         try:
             device = self._new_device()
-        except AdbUsbError:
+        except AdbUsbError as exc:
+            self._note_server(exc)
+            raise
+        except AdbServerError:
             raise
         except Exception as exc:
             raise OSError(f"ADB connect to {self._label} failed: {exc}") from exc
@@ -905,10 +987,20 @@ class AdbSession(SessionLifecycle):
     def _connect_error(self, exc: BaseException, *, prompted: bool) -> OSError:
         """The OSError for a failed connect: the phone's prompt not
         answered is :class:`AdbAuthTimeout`, a time-out a TimeoutError."""
+        from core.adb_server import AdbServerError
+
         names = _names(exc)
+        if isinstance(exc, AdbServerError):
+            if prompted and exc.kind == "unauthorized":
+                return AdbAuthTimeout(
+                    f"ADB connect to {self._label}: the phone did not allow USB debugging "
+                    f"for the adb server within {self._auth_timeout:.0f} s",
+                )
+            return exc
         if self._usb:
             usb = _usb_error(exc, self._usb_serial)
             if usb is not None:
+                self._note_server(usb)
                 return usb
         if "STLS" in str(exc):
             return AdbTlsPortError(
@@ -946,6 +1038,7 @@ class AdbSession(SessionLifecycle):
         if self._dead and self._can_reconnect:
             _close_quietly(self._device)
             self._device = self._open_device(interactive=False)
+            self._mode_opened()
             self._dead = False
             log.info("AdbSession reconnected: %s", self._label)
         return self._device
@@ -1366,10 +1459,18 @@ class AdbSession(SessionLifecycle):
             )
         return _AdbPushOnClose(self, _checked(path))
 
-    def _push_file(self, local_path: str, remote_path: str, hooks=None) -> None:
+    def _push_file(self, local_path: str, remote_path: str, hooks=None, *,
+                   atomic: bool = True) -> None:
         """Push *local_path* to *remote_path* on the device. Used by
-        :class:`_AdbPushOnClose` on flush/close."""
-        timeout = self._transport_timeout
+        :class:`_AdbPushOnClose` on flush/close.
+
+        Atomic, as the other backends' writes: the bytes go to a temporary
+        name beside the target (``.<name>.axross-part-<pid>-<random>``),
+        which a rename makes the target when it is complete - a broken or
+        cancelled upload leaves the old file as it was. A folder that takes
+        no new file (the target alone is writable) gets the bytes in
+        place, as before; so does a push to a fresh private name of
+        axross's own (*atomic* False: install_apk's package)."""
         try:
             remote_path.encode("utf-8")
         except UnicodeEncodeError:
@@ -1383,6 +1484,36 @@ class AdbSession(SessionLifecycle):
         if hooks is not None and hooks.cancelled():
             # Nothing sent yet: the destination is as it was.
             raise transfer_hooks.UploadCancelled(transfer_hooks.CANCELLED)
+        if not atomic:
+            self._send_file(local_path, remote_path, hooks)
+            return
+        folder = posixpath.dirname(remote_path) or "/"
+        temp = posixpath.join(folder, f".{posixpath.basename(remote_path)[:80]}"
+                                      f".axross-part-{os.getpid()}-{secrets.token_hex(4)}")
+        try:
+            self._send_file(local_path, temp, hooks)
+        except InterruptedError:
+            self._drop_temp(temp)
+            raise
+        except OSError as exc:
+            self._drop_temp(temp)
+            if not (_names(exc.__cause__ or exc) & _COMMAND_ERRORS):
+                raise
+            # The folder refused the new name: the target itself may be
+            # writable (an app's folder, a file shared by another app).
+            log.info("ADB push(%s): the folder takes no temporary file (%s); written in place",
+                     remote_path, exc)
+            self._send_file(local_path, remote_path, hooks)
+            return
+        try:
+            self._commit_push(temp, remote_path)
+        except BaseException:
+            self._drop_temp(temp)
+            raise
+
+    def _send_file(self, local_path: str, remote_path: str, hooks) -> None:
+        """One sync SEND of *local_path* to *remote_path*."""
+        timeout = self._transport_timeout
         try:
             with self._transfer_channel() as device:
                 if hooks is None:
@@ -1400,6 +1531,27 @@ class AdbSession(SessionLifecycle):
             raise  # a part of the file may be there: the engine rolls back
         except Exception as exc:
             raise self._error(f"ADB push({remote_path})", exc, timeout) from exc
+
+    def _commit_push(self, temp: str, remote_path: str) -> None:
+        """The complete *temp* becomes *remote_path* (a rename in one
+        folder); a folder in the target's place is refused."""
+        p, t = shlex.quote(remote_path), shlex.quote(temp)
+        out = self._shell(
+            f"( p={p}; t={t}; "
+            'if [ -d "$p" ]; then echo "$p: Is a directory"; exit 1; fi; '
+            'mv -f -- "$t" "$p" ) 2>&1'
+        )
+        if out.strip():
+            from core.exec_util import ls_error
+
+            raise ls_error(f"ADB push({remote_path})", out.strip()[:500])
+
+    def _drop_temp(self, temp: str) -> None:
+        """Remove an upload's temporary file; a failure is logged."""
+        try:
+            self._shell(f"rm -f -- {shlex.quote(temp)}")
+        except Exception as exc:  # noqa: BLE001 - the upload's own error counts
+            log.warning("ADB: could not remove the temporary file %s: %s", temp, exc)
 
     # ------------------------------------------------------------------
     # Mutation
@@ -1609,7 +1761,7 @@ class AdbSession(SessionLifecycle):
         import uuid as _uuid
 
         remote = f"/data/local/tmp/axross-install-{_os.getpid()}-{_uuid.uuid4().hex[:12]}.apk"
-        self._push_file(local_apk_path, remote)
+        self._push_file(local_apk_path, remote, atomic=False)  # a fresh name already
         flags = []
         if replace:
             flags.append("-r")

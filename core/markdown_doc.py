@@ -270,15 +270,110 @@ def _linkify_in_pieces(md) -> None:
     md.core.ruler.before("linkify", "linkify_pieces", cut)
 
 
+def _display_math_lines(state) -> None:
+    """A $$...$$ that stands on its own lines in a paragraph - after an alert's "[!NOTE]", after a line
+    of text - a display formula, as GitHub shows it: markdown-it read it as inline math (no block may
+    interrupt a paragraph), the window, --html and axross-mdcat set it in the line. The paragraph is
+    cut around it: text, the formula's block, text."""
+    Token = token_class()
+    tokens, out, index = state.tokens, [], 0
+    while index < len(tokens):
+        token = tokens[index]
+        inline = tokens[index + 1] if index + 2 < len(tokens) else None
+        if token.type != "paragraph_open" or inline is None or inline.type != "inline" or not inline.children \
+                or not any(child.type == "math_inline_double" for child in inline.children):
+            out.append(token)
+            index += 1
+            continue
+        children, close = inline.children, tokens[index + 2]
+        lines: list[list] = [[]]
+        for child in children:
+            if child.type in ("softbreak", "hardbreak"):
+                lines.append([])
+            else:
+                lines[-1].append(child)
+        alone = [any(c.type == "math_inline_double" for c in line)
+                 and all(c.type == "math_inline_double" or (c.type == "text" and not c.content.strip())
+                         for c in line) for line in lines]
+        if not any(alone):
+            out.append(token)
+            index += 1
+            continue
+        pending: list = []
+
+        def flush() -> None:
+            while pending and pending[-1].type in ("softbreak", "hardbreak"):
+                pending.pop()
+            if pending:
+                out.extend([token.copy(), inline.copy(children=list(pending),
+                                                     content="".join(c.content for c in pending)), close.copy()])
+            pending.clear()
+
+        for line, lone in zip(lines, alone):
+            if lone:
+                flush()
+                for child in line:
+                    if child.type == "math_inline_double":
+                        block = Token("math_block", "math", 0)
+                        block.content, block.markup, block.block = f"\n{child.content.strip()}\n", "$$", True
+                        block.map, block.level = token.map, token.level
+                        out.append(block)
+            else:
+                if pending:
+                    pending.append(Token("softbreak", "br", 0))
+                pending.extend(line)
+        flush()
+        index += 3
+    if len(out) != len(tokens):
+        state.tokens[:] = out
+
+
+#: A footnote's ways back to its references shown at most (the rest counted: "and 99,980 more").
+BACKREFS = 20
+
+
+def _fewer_backrefs(state) -> None:
+    """A footnote referred to again and again: its first BACKREFS ways back, the last of them counting
+    the rest (meta "more") - one note cited 100,000 times was a paragraph of 100,000 links, laid out at
+    once: 4.2 s of the window's for Ctrl+End, the page not done in 240 s."""
+    out, run, kept = [], 0, None
+    for token in state.tokens:
+        if token.type == "footnote_anchor":
+            run += 1
+            if run > BACKREFS:
+                kept.meta = {**(kept.meta or {}), "more": (kept.meta or {}).get("more", 0) + 1}
+                continue
+            kept = token
+        else:
+            run = 0
+        out.append(token)
+    if len(out) != len(state.tokens):
+        state.tokens[:] = out
+
+
 _QUOTE_MARK = re.compile(r"[ \t]{0,3}>[ \t]?")
+
+
+def _plugin_keeps_quote_marks() -> bool:
+    """Whether mdit-py-plugins keeps a quote's marks in a math block's lines (before 0.7 - the lock's)."""
+    try:
+        import mdit_py_plugins
+
+        version = tuple(int(part) for part in str(mdit_py_plugins.__version__).split(".")[:2])
+    except (ImportError, ValueError, AttributeError):
+        return True
+    return version < (0, 7)
 
 
 def _quoted_math(state) -> None:
     """A display formula in a quote without its lines' "> " (mdit-py-plugins
     0.6 keeps them in the block's content: "> $$ / > a = \\frac12 / > $$" was
     "> a = ½ >" - in the window, the terminal, the exported page and a copy).
-    Each line after the first loses one mark a quote around it - only when
-    every one of them has those marks (a newer plugin takes them off itself)."""
+    Each line after the first loses the marks of the quotes around it where it has them - a lazy line
+    without them stays as it is ("> $$ / f = \\frac17 / > $$" was "f = 1/7 >"); a newer plugin takes
+    them off itself and nothing is done."""
+    if not _plugin_keeps_quote_marks():
+        return
     depth = 0
     for token in state.tokens:
         if token.type == "blockquote_open":
@@ -294,12 +389,8 @@ def _quoted_math(state) -> None:
                     if mark is None:
                         break
                     line = line[mark.end():]
-                else:
-                    stripped.append(line)
-                    continue
-                break
-            else:
-                token.content = "\n".join([first, *stripped])
+                stripped.append(line)
+            token.content = "\n".join([first, *stripped])
 
 
 def make_parser():
@@ -346,6 +437,8 @@ def make_parser():
     md.core.ruler.at("normalize", _normalize)
     md.core.ruler.after("block", "github_alerts", _alerts)
     md.core.ruler.after("block", "quoted_math", _quoted_math)
+    md.core.ruler.after("footnote_tail", "fewer_backrefs", _fewer_backrefs)
+    md.core.ruler.after("inline", "display_math_lines", _display_math_lines)
     md.core.ruler.push("emoji", _emoji)
     md.core.ruler.after("inline", "safe_html", _safe_html)  # (before the task lists' own boxes)
     md.core.ruler.push("unsafe_links", _unsafe_links)

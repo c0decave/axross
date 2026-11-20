@@ -44,9 +44,11 @@ from core.proxy import is_valid_proxy_type  # noqa: E402
 # Allowlisted character set for USB serials. Real-world Android
 # vendors use either uppercase alphanumerics (e.g. ``ABCD1234EF``)
 # or 16-byte hex strings. Underscore + dash are tolerated because
-# some emulators use them. ANYTHING outside the set — including
-# CR/LF, ANSI escapes, null bytes — is stripped at load time.
-_USB_SERIAL_SAFE_RE = _re.compile(r"[^A-Za-z0-9_\-]")
+# some emulators use them; ``. : % @`` are in the serials the adb server
+# names (``192.168.1.5:5555``, mDNS ``adb-XXXX._adb-tls-connect._tcp``),
+# as core.adb_server.valid_serial allows. ANYTHING outside the set —
+# including CR/LF, ANSI escapes, null bytes, blanks — is stripped at load time.
+_USB_SERIAL_SAFE_RE = _re.compile(r"[^A-Za-z0-9._:%@\-]")
 _CONTROL_CHARS_RE = _re.compile(r"[\x00-\x1f\x7f]")
 
 # MTP device_id allowlist (mirrors the stricter one in

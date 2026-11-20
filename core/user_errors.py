@@ -174,6 +174,8 @@ def _adb_sentence(exc: BaseException, names: set[str], host: str) -> str | None:
     if "AdbNotAdbError" in names:
         return tr("{host} did not answer as an Android device (ADB). Check the address and "
                   "the port: \"adb tcpip\" uses 5555 unless told otherwise.").format(host=host)
+    if "AdbServerError" in names:
+        return _adb_server_sentence(exc)
     if "AdbUsbError" in names:
         kind = getattr(exc, "kind", "")
         serial = getattr(exc, "serial", "")
@@ -191,12 +193,84 @@ def _adb_sentence(exc: BaseException, names: set[str], host: str) -> str | None:
             return tr("No Android device was found on USB. Plug in the phone, unlock it and "
                       "turn on USB debugging in the developer options.")
         if kind == "busy":
-            return tr("Another program holds the phone's USB connection, usually a running "
-                      "adb server. Stop it with \"adb kill-server\" and try again.")
+            return _adb_busy_sentence(exc)
         if kind == "access":
             return tr("No permission to open the phone's USB device. Add a udev rule for "
                       "Android devices (51-android.rules), add your user to the plugdev "
                       "group, then plug the phone in again.")
+    return None
+
+
+def _adb_busy_sentence(exc: BaseException) -> str:
+    """The phone's USB device is held by another program: why axross did
+    not share it through the adb server (core.adb_client, server_note)."""
+    note = getattr(exc, "server_note", "")
+    address = getattr(exc, "server_address", "") or "127.0.0.1:5037"
+    if note == "refused":
+        return tr("Another program holds the phone's USB connection. axross could share it "
+                  "through the adb server, but {setting} does not name this computer (axross "
+                  "uses an adb server on 127.0.0.1 only). Correct the setting or close the "
+                  "other program, and try again.").format(
+                      setting=getattr(exc, "server_detail", "") or "ADB_SERVER_SOCKET")
+    if note == "not-adb":
+        return tr("Another program holds the phone's USB connection, and what answers on "
+                  "{address} is not an adb server, so axross cannot share the phone through "
+                  "it. Close the other program and try again.").format(address=address)
+    return tr("Another program holds the phone's USB connection, and no adb server answers "
+              "on {address} through which axross could share it. Start one with \"adb "
+              "start-server\" (axross then works beside the console's adb) or close the other "
+              "program, and try again.").format(address=address)
+
+
+def _adb_server_sentence(exc: BaseException) -> str | None:
+    """The sentence for an AdbServerError (core.adb_server), or None."""
+    kind = getattr(exc, "kind", "")
+    serial = getattr(exc, "serial", "")
+    detail = getattr(exc, "detail", "")
+    address = getattr(exc, "address", "") or "127.0.0.1:5037"
+    via_port = getattr(exc, "via_port", False)
+    if kind == "unauthorized":
+        return tr("The phone {serial} has not allowed this computer's adb server yet. Unlock "
+                  "it and answer \"Allow USB debugging?\" with Allow, then try again.").format(
+                      serial=serial)
+    if kind == "offline":
+        return tr("The adb server lists the phone {serial} as offline. Unplug it and plug it "
+                  "in again, or run \"adb reconnect\", and try again.").format(serial=serial)
+    if kind == "no-permissions":
+        return tr("The adb server may not open the phone {serial} on USB (no permissions). Add "
+                  "a udev rule for Android devices (51-android.rules), add your user to the "
+                  "plugdev group, then plug the phone in again.").format(serial=serial)
+    if kind == "several" and via_port:
+        return tr("{address} is the adb server, not a phone, and several phones are connected "
+                  "to it ({serials}). Choose the mode \"USB / adb server\" and pick the phone "
+                  "in the device list.").format(address=address, serials=detail)
+    if kind == "several":
+        return tr("Several phones are connected to the adb server ({serials}). Pick one in the "
+                  "device list and try again.").format(serials=detail)
+    if kind == "not-found" and via_port:
+        return tr("{address} is the adb server, not a phone, and it sees no phone. Plug in the "
+                  "phone, allow USB debugging, then choose the mode \"USB / adb server\".").format(
+                      address=address)
+    if kind == "not-found" and serial and detail:
+        return tr("The adb server does not see a phone with the serial {serial}; it sees "
+                  "{serials}. Pick one of them in the device list.").format(
+                      serial=serial, serials=detail)
+    if kind == "not-found" and serial:
+        return tr("The adb server does not see a phone with the serial {serial}. Plug in the "
+                  "phone, unlock it and turn on USB debugging in the developer options.").format(
+                      serial=serial)
+    if kind == "not-found":
+        return tr("The adb server sees no phone on USB. Plug in the phone, unlock it and turn "
+                  "on USB debugging in the developer options.")
+    if kind == "protocol":
+        return tr("What answers on {address} is not an adb server (its answer breaks the adb "
+                  "protocol). Restart the server with \"adb kill-server\" and \"adb "
+                  "start-server\".").format(address=address)
+    if kind == "refused":
+        return tr("The adb server setting names another computer; axross uses an adb server "
+                  "on this computer (127.0.0.1) only.")
+    if kind == "failed" and detail:
+        return tr("The adb server refused: {detail}").format(detail=detail)
     return None
 
 

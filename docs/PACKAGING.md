@@ -392,6 +392,17 @@ extras are its extras (`all` as axross's `all`, plus `images` for Pillow).
 The CI job `mcp-headless` of `python-app.yml` installs it where PyQt6
 does not exist and runs its tests and `tests/test_mcp_without_qt.py`.
 
+The repository `c0decave/axross-headless-mcp` holds that export and
+nothing else. Every commit there comes from `scripts/headless_release.py
+sync` and names its public axross ref in a trailer
+(`Exported-From: c0decave/axross@<tag or commit>`); the repository's
+workflow `drift.yml` (written by the export like its other files) exports
+again from that ref on every push, every tag and weekly, and fails on any
+file that differs, is missing or was added - a commit without the trailer
+or a pull request fails at once. `tests/test_headless_release.py` holds
+the script and the workflow. Release steps 10 and 12 commit, tag, push
+and compare it.
+
 ### GUI image for podman (`Dockerfile.gui`, `scripts/axross-podman.sh`)
 
 The desktop app, the MCP server and the Agent dock in one image
@@ -667,7 +678,7 @@ it).
 
 ```bash
 export GH_HOST=github.com   # gh must talk to github.com, whatever its default host is
-VERSION=0.15.180
+VERSION=0.15.181
 ```
 
 1. **maintainer** - prepare the commit. `axross/_version.py` says
@@ -857,7 +868,7 @@ VERSION=0.15.180
 
 8. **maintainer** - assemble, sign and check the release, with the
    **field key**: a key of `FIELD_KEYS` in `scripts/sign_release.py`, the
-   key the binaries in use pin (for 0.15.180 that is still the first key,
+   key the binaries in use pin (for 0.15.181 that is still the first key,
    `rJX0yymA5/...`; see "Key rotation" below):
 
    ```bash
@@ -973,8 +984,25 @@ VERSION=0.15.180
    ```
 
    The exported tree is also the content of the repository
-   `c0decave/axross-headless-mcp` (a commit "axross-headless-mcp $VERSION" there, as for
-   axross-markdown and axross-amp).
+   `c0decave/axross-headless-mcp`, in this same step and from this same
+   tree, so the tag's tree is the PyPI package's source:
+   `scripts/headless_release.py sync` replaces the clone's files with it,
+   commits "axross-headless-mcp $VERSION: exported from axross v$VERSION"
+   with the trailer `Exported-From: c0decave/axross@v$VERSION` and tags
+   `v$VERSION`. Nothing is ever committed there by hand: a fix goes into
+   axross and reaches the repository with the next export. The push waits
+   for step 12 (the repository's own release workflow builds its GitHub
+   release from the tag):
+
+   ```bash
+   git clone https://github.com/c0decave/axross-headless-mcp.git "$M/repo"   # once; later: git -C "$M/repo" pull
+   python3 scripts/headless_release.py sync --repo "$M/repo" --tree "$M/src-tree" \
+       --source "v$VERSION" --tag
+   ```
+
+   Between releases the repository changes the same way (a README or a
+   Dockerfile from axross's `main`): export from the public commit, then
+   `sync` with `--source <that commit>` and without `--tag`.
 
 11. **maintainer** - publish the GitHub release
    (`gh release edit "v$VERSION" --draft=false --latest`), then check
@@ -1001,6 +1029,18 @@ VERSION=0.15.180
     ```bash
     .venv/bin/twine upload "$A/axross-$VERSION.tar.gz" "$A/axross-$VERSION-py3-none-any.whl"
     .venv/bin/twine upload "$M/axross_headless_mcp-$VERSION.tar.gz" "$M/axross_headless_mcp-$VERSION-py3-none-any.whl"
+    git -C "$M/repo" push origin main "v$VERSION"     # step 10's commit and tag
+    ```
+
+    The repository's workflows then run on the tag: `release.yml` builds
+    its GitHub release (sdist, wheel, SHA256SUMS) and `drift.yml` exports
+    again from `v$VERSION` of c0decave/axross and fails on any file that
+    differs. Once that release is out, its files must carry what PyPI
+    carries (two builds of one tree: the same files and content, not
+    byte-identical archives):
+
+    ```bash
+    python3 scripts/headless_release.py compare-dists "$VERSION"     # "same content"
     ```
 
     Then open a new "Unreleased" section in `CHANGELOG.md`.

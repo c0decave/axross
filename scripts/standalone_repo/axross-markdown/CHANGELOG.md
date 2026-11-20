@@ -4,6 +4,67 @@ What changed in each release of axross-markdown. The code is axross's
 Markdown viewer (https://github.com/c0decave/axross), written out by axross's
 `scripts/export_standalone.py markdown`.
 
+## 0.16.7 - 2026-11-20
+
+- **A paragraph of many emoji on a host with many fonts:** 0.16.6's CI runner
+  (hundreds of fonts, a colour emoji font among them) still took 0.42 s a
+  turn for 50,000 emoji (0.68 s with Qt's own parser). An emoji now counts as
+  128 letters in a paragraph's pieces whatever the fonts, and a piece holds
+  as few as 40 characters, so each turn lays out about 14 times fewer emoji.
+  Here, with Noto Color Emoji: 0.035 and 0.043 s a turn before, 0.015 and
+  0.014 s now; with DejaVu alone 0.009 and 0.014 s.
+- **The release waits for the supply-chain gate and the tests:** release.yml
+  calls tests.yml before it builds anything, and the gate checks out
+  axross at a pinned commit (v0.15.180) instead of its default branch, which
+  can be an older release with an older baseline.
+
+## 0.16.6 - 2026-11-20
+
+The twentieth review's fixes - each stall fixed for its whole class, and a
+test that puts every hostile shape into every container (top level, a table's
+cell, a heading, a list, a quote, an alert, a footnote, a definition, a
+`<details>`) under both parsers. Measured with the dependencies of
+`requirements.lock.txt`; times are the window's own CPU in one event-loop
+turn.
+
+- **A long line in a table cell or a heading** no longer freezes the window
+  (1.2 to 2.1 s before): a heading's or a cell's text past 2,000 characters
+  is cut with "…" (the editor shows all of it), in any container. **One code
+  span of 90,000 characters** (0.8 to 1.8 s in any container) is laid out in
+  pieces. Every shape in every container now stays under 0.25 s a turn.
+- **A footnote cited 100,000 times:** its ways back are the first 20 and "and
+  99,980 more"; Ctrl+End reached the end after 4.3 s with one 3.8-second
+  turn, now 0.2 s (turns of 0.02 s).
+- **Many headings:** each part of a page with thousands of headings was
+  laid out slower than the last (a heading's anchor name made Qt compare
+  every new format with all the earlier ones): 30,000 headings took 104 s,
+  their last parts 1.2 to 1.6 s each; now each part costs the same (0.01 s),
+  1.5 s in all.
+- **The editor's preview follows the typing** far down a long text (36,000
+  lines) and in a text without headings - it finds the line typed at.
+- **Display math in an alert** (`> [!NOTE]` / `> $$` / ...), or after a line
+  of text, is a display formula, as on GitHub - in the window, --html and
+  axross-mdcat.
+- **A long text of one kind shows its first part at once:** 20,000 small
+  tables, 150,000 lines of short code spans, a line of 700 KB - axross-mdcat's
+  first lines after 0.2 to 0.5 s (3.8, 9.5 and 6.9 s before), the window's
+  first part likewise.
+- **The release checks every child of the binary:** `--lex-worker` (a YAML
+  and a Python block, their colours), `--image-worker` (a picture) and the
+  terminal view's colours, also through `axross-mdcat.exe`. The lexing and
+  decoding children find the package they belong to even when it is not
+  installed.
+- **Emoji on a host without a colour emoji font** (0.16.5's CI runner: 50,000
+  of them held the window 0.43 s a turn, 0.70 s with Qt's own parser): there
+  Qt looks each emoji's glyph up through the fonts, so an emoji now counts as
+  128 letters in a paragraph's pieces instead of 8 (a colour emoji font
+  keeps 8). With DejaVu alone: 0.007 and 0.012 s a turn.
+- **Small things:** a lazy line in a quoted formula; Ctrl+wheel and Ctrl+=
+  zoom through the button's level, between 25 % and 400 %; image boxes take
+  a theme chosen later; a file that cannot be read says why in the page; the
+  extended README no longer repeats the README, lists all its sections, says
+  where the theme is kept and names the guards.
+
 ## 0.16.5 - 2026-11-20
 
 The 0.16.4 release's build failed; this one carries its fixes.

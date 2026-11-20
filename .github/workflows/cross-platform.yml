@@ -375,13 +375,17 @@ jobs:
         case "$version" in *[!0-9.]*|"") echo "::error::not a version branch: $BRANCH"; exit 1;; esac
         tag="staging-$version"
         mkdir -p "$RUNNER_TEMP/art" "$RUNNER_TEMP/out"
+        trap 'echo "::error::stage failed at line $LINENO: $BASH_COMMAND"' ERR
         gh run download "$RUN_ID" -R "$REPO" -D "$RUNNER_TEMP/art"
-        for d in "$RUNNER_TEMP/art"/*/; do
-            name="$(basename "$d")"
-            tar -C "$RUNNER_TEMP/art" -cf "$RUNNER_TEMP/out/$name.tar" "$name"
+        # one asset per file (a release asset is at most 2 GB, the Linux
+        # artifact is more): <artifact>__<path with / as __>
+        (cd "$RUNNER_TEMP/art" && find . -type f | sed 's|^\./||') | while read -r rel; do
+            mv "$RUNNER_TEMP/art/$rel" "$RUNNER_TEMP/out/$(printf '%s' "$rel" | sed 's|/|__|g')"
         done
-        (cd "$RUNNER_TEMP/out" && sha256sum ./*.tar > staging-SHA256SUMS)
+        (cd "$RUNNER_TEMP/out" && sha256sum -- * > staging-SHA256SUMS)
         gh release delete "$tag" -R "$REPO" --yes --cleanup-tag 2>/dev/null || true
         gh release create "$tag" -R "$REPO" --draft --target "$GITHUB_SHA" \
-            --title "staging $version ($GITHUB_SHA)" --notes "CI build files of $GITHUB_SHA, not a release." \
-            "$RUNNER_TEMP/out"/*
+            --title "staging $version ($GITHUB_SHA)" --notes "CI build files of $GITHUB_SHA, not a release."
+        for f in "$RUNNER_TEMP/out"/*; do
+            gh release upload "$tag" -R "$REPO" "$f" --clobber
+        done

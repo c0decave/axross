@@ -344,6 +344,49 @@ def test_sad_the_windowed_program_writes_to_the_console_it_was_started_from(monk
     assert sys.stdout == "handed -11" and sys.stdin == "handed -10"
 
 
+def test_sad_the_release_smoke_test_checks_every_child_and_coloured_code(tmp_path):
+    """Review 20 (M4): the release checked only --svg-worker. It checks --lex-worker (a YAML and a
+    Python block, their colours) and --image-worker (a PNG) inside the binary, and that the terminal
+    view - axross-mdcat.exe on Windows - colours a YAML block through its own lexing child."""
+    import subprocess
+
+    workflow = (EXP.ROOT / "scripts" / "standalone_repo" / "axross-markdown" / ".github" / "workflows"
+                / "release.yml").read_text(encoding="utf-8")
+    smoke = workflow.split("- name: Smoke tests", 1)[1].split("\n    - name:", 1)[0]
+    assert 'AXROSS_BUNDLE_SMOKE=1 "$bin" --script packaging/children_check.py' in smoke
+    assert '"release/axross-mdcat-${{ matrix.suffix }}" --no-pager --color truecolor yaml.md' in smoke
+    assert '"$bin" --term --no-pager --color truecolor yaml.md' in smoke and "YAML not coloured" in smoke
+    out = EXP.export("markdown", tmp_path / "md")
+    check = out / "packaging" / "children_check.py"
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    env.update(PYTHONPATH=str(out / "src"), QT_QPA_PLATFORM="offscreen")
+    result = subprocess.run([sys.executable, str(check)], cwd=tmp_path, env=env, capture_output=True, text=True,
+                            timeout=180)
+    assert result.returncode == 0 and "children checked" in result.stdout, result.stderr[-2000:]
+
+
+def test_sad_the_extended_readme_says_one_thing_and_lists_what_it_holds(tmp_path):
+    """Review 20 (L4): the extended README said both that the theme is kept in axross-markdown's own
+    settings and that its settings are axross's; it repeated the README's Install, Tests and Licence,
+    none of them in its contents; its Limits left out the guards; "a remote image is a box naming its
+    address" - the window shows its alt text."""
+    import re
+
+    out = EXP.export("markdown", tmp_path / "md")
+    extended = (out / EXP.EXTENDED).read_text(encoding="utf-8")
+    assert "so both share the language, the theme" not in extended
+    assert "~/.config/axross-markdown/settings.json" in extended.split("## Where it comes from", 1)[1]
+    for repeated in ("## Install and run", "## Tests", "## Licence"):
+        assert repeated not in extended, repeated
+    headings = re.findall(r"^## (.+)$", extended, re.M)
+    contents = extended.split("## The window: keys", 1)[0]
+    for heading in headings:
+        assert f"]({EXP._anchor(heading)})" in contents, heading
+    limits = extended.split("## Limits", 1)[1].split("\n## ", 1)[0]
+    assert "100,000" in limits and "2,000 characters" in limits
+    assert "a remote image is a box with its alt text" in extended
+
+
 def test_sad_a_readme_without_ten_one_line_punchlines_stops_the_export():
     import dataclasses
 
@@ -428,7 +471,7 @@ def _workflow(name: str) -> dict:
 @pytest.mark.parametrize("name", ["axross-markdown", "axross-headless-mcp"])
 def test_happy_the_release_workflow_pins_every_action_and_writes_only_in_its_release_job(name):
     text = (STANDALONE_REPO / name / ".github" / "workflows" / "release.yml").read_text()
-    uses = [line.strip() for line in text.splitlines() if "uses:" in line]
+    uses = [line.strip() for line in text.splitlines() if "uses:" in line and "uses: ./.github/" not in line]
     assert uses and all(_SHA_PIN.search(line) for line in uses), uses
     workflow = _workflow(name)
     assert workflow["permissions"] == {"contents": "read"}
@@ -437,6 +480,36 @@ def test_happy_the_release_workflow_pins_every_action_and_writes_only_in_its_rel
     assert writers == ["release"]
     assert workflow["jobs"]["release"]["permissions"] == {"contents": "write"}
     assert "gh release create" in text and "SHA256SUMS" in text and "${{ github.token }}" in text
+
+
+def test_sad_the_markdown_release_builds_nothing_before_the_gate_and_the_tests(tmp_path):
+    """The release built and published without waiting for the supply-chain gate, which ran in tests.yml
+    only; and the gate took axross's default branch - at v0.16.6 an older release with an older baseline,
+    so the gate failed. The release calls tests.yml (workflow_call) and every job needs it; in tests.yml
+    the tests need the gate, and the gate's axross is pinned to a commit (v0.15.180's)."""
+    import re
+
+    yaml = pytest.importorskip("yaml")
+    jobs = _workflow("axross-markdown")["jobs"]
+    assert jobs["ci"] == {"uses": "./.github/workflows/tests.yml"}
+
+    def needs(job: str) -> set:
+        direct = jobs[job].get("needs", [])
+        direct = [direct] if isinstance(direct, str) else direct
+        return set(direct).union(*(needs(other) for other in direct))
+
+    for job in jobs:
+        if job != "ci":
+            assert "ci" in needs(job), job
+    out = EXP.export("markdown", tmp_path / "md")
+    tests = yaml.safe_load((out / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8"))
+    assert "workflow_call" in tests[True]
+    assert tests["jobs"]["test"]["needs"] == "supply-chain"
+    gate = [step for step in tests["jobs"]["supply-chain"]["steps"]
+            if step.get("with", {}).get("repository") == "c0decave/axross"]
+    assert len(gate) == 1 and gate[0]["with"]["ref"] == EXP.GATE_AXROSS_COMMIT
+    assert re.fullmatch(r"[0-9a-f]{40}", EXP.GATE_AXROSS_COMMIT)
+    assert EXP.GATE_AXROSS_COMMIT.startswith("37373f7f")  # (axross v0.15.180)
 
 
 @pytest.mark.parametrize("name, app", [("axross-markdown", "markdown"),
@@ -520,6 +593,8 @@ def test_happy_every_job_shows_the_end_of_its_log_on_failure(name):
     job tees its heavy steps and turns the last lines into annotations."""
     workflow = _workflow(name)
     for job, spec in workflow["jobs"].items():
+        if "uses" in spec:  # (a reusable workflow called - tests.yml: its jobs are its own)
+            continue
         tails = [s for s in spec["steps"] if "ci_log_tail.py" in s.get("run", "")]
         assert len(tails) == 1 and tails[0]["if"] == "failure()", job
         assert any('tee -a "$RUNNER_TEMP/job.log"' in s.get("run", "") for s in spec["steps"]), job

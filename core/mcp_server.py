@@ -256,6 +256,27 @@ SERVER_DESCRIPTION = (
     "on the local disk and on remote connections (SFTP, SMB, WebDAV, S3 and more)"
 )
 SERVER_WEBSITE = "https://github.com/c0decave/axross-headless-mcp"
+#: InitializeResult.instructions (2025-03-26 on): what a client may put
+#: ahead of the tool list. Facts about the tools only, no requests to the
+#: model - a client shows it as the server's own text.
+SERVER_INSTRUCTIONS = (
+    "axross file tools for the local disk and remote storage. A call works on the "
+    "server's own backend unless its backend argument names another (list_backends "
+    "lists them). Every path stays under the MCP root, and secret files such as "
+    "private keys are refused. list_dir lists one folder, walk a whole tree, stat a "
+    "single entry; read_file reads in pages (offset, next_offset). grep searches file "
+    "contents live; search queries only the offline index that index_build fills. "
+    "Results that can be cut short carry truncated and complete. The write tools are "
+    "there only with --mcp-write, the other groups only with --mcp-tools."
+)
+#: serverInfo's icons (2025-11-25): the headless server's logo, as in
+#: server.json for the registry. An HTTPS URL a client fetches itself; no
+#: image travels in the protocol.
+SERVER_ICONS = (
+    {"src": "https://raw.githubusercontent.com/c0decave/axross-headless-mcp/main/"
+            "docs/assets/logo.png",
+     "mimeType": "image/png", "sizes": ["400x400"]},
+)
 # The package version, so serverInfo and /health name the axross that runs.
 from axross._version import __version__ as SERVER_VERSION  # noqa: E402
 
@@ -2851,13 +2872,17 @@ def _build_tools(
     tools = [
         _Tool(
             name="list_dir",
-            description="List entries in a directory on the configured backend.",
+            description=(
+                "List the entries of one folder (one level; walk goes deeper). Returns "
+                "[{name, is_dir, size, modified}] - modified is ISO 8601 or null; '.' and "
+                "'..' are left out. A name that is not UTF-8 also comes as name_b64."
+            ),
             schema={
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Absolute path on the backend.",
+                        "description": "The folder to list: an absolute path on the backend.",
                     },
                 },
                 "required": ["path"],
@@ -2866,10 +2891,15 @@ def _build_tools(
         ),
         _Tool(
             name="stat",
-            description="Return name, type, size, and mtime for one path.",
+            description=(
+                "Details of one file or folder without reading it. Returns {name, is_dir, "
+                "size, modified} - modified is ISO 8601 or null. Fails when nothing is at "
+                "path, so it also tells whether a path exists."
+            ),
             schema={
                 "type": "object",
-                "properties": {"path": {"type": "string"}},
+                "properties": {"path": {"type": "string",
+                                        "description": "The file or folder to describe."}},
                 "required": ["path"],
             },
             handler=_stat,
@@ -2887,9 +2917,11 @@ def _build_tools(
             schema={
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string"},
-                    "max_bytes": {"type": "integer", "minimum": 0},
-                    "offset": {"type": "integer", "minimum": 0, "default": 0},
+                    "path": {"type": "string", "description": "The file to read."},
+                    "max_bytes": {"type": "integer", "minimum": 0,
+                                  "description": "Most bytes to return (default and ceiling 4 MiB)."},
+                    "offset": {"type": "integer", "minimum": 0, "default": 0,
+                               "description": "Byte offset to start at: next_offset of the previous call to read on."},
                     "encoding": {
                         "type": "string",
                         "enum": ["base64", "text"],
@@ -2918,10 +2950,11 @@ def _build_tools(
             schema={
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string"},
+                    "path": {"type": "string", "description": "The file to hash."},
                     "algorithm": {
                         "type": "string",
                         "enum": sorted(_HASHLIB_ALGOS),
+                        "description": "The hash to compute (default sha256).",
                     },
                 },
                 "required": ["path"],
@@ -2931,8 +2964,11 @@ def _build_tools(
         _Tool(
             name="search",
             description=(
-                "Search the offline metadata index by name substring, "
-                "extension, and size range. Free of network round-trips. "
+                "Search the offline metadata index (built by index_build, or by axross's "
+                "Index Active Folder) by name substring, extension and size range: no "
+                "network round-trip, but only what was indexed - for the live state of a "
+                "folder use walk or list_dir. Returns [{backend_id, path, name, size, "
+                "is_dir, modified}]. "
                 f"At most limit results (default {DEFAULT_SEARCH_LIMIT}, at most "
                 f"{MAX_SEARCH_RESULTS}): ask for one more than you need to learn "
                 "whether there are more. A notifications/cancelled stops it."
@@ -2940,11 +2976,16 @@ def _build_tools(
             schema={
                 "type": "object",
                 "properties": {
-                    "needle": {"type": "string"},
-                    "ext": {"type": "string"},
-                    "min_size": {"type": "integer", "minimum": 0},
-                    "max_size": {"type": "integer", "minimum": 0},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": MAX_SEARCH_RESULTS},
+                    "needle": {"type": "string",
+                               "description": "Part of the file name, any case and Unicode form."},
+                    "ext": {"type": "string",
+                            "description": "File extension without the dot, e.g. pdf."},
+                    "min_size": {"type": "integer", "minimum": 0,
+                                 "description": "Smallest size in bytes."},
+                    "max_size": {"type": "integer", "minimum": 0,
+                                 "description": "Largest size in bytes."},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": MAX_SEARCH_RESULTS,
+                              "description": f"Most results (default {DEFAULT_SEARCH_LIMIT})."},
                 },
             },
             handler=_search,
@@ -2952,7 +2993,8 @@ def _build_tools(
         _Tool(
             name="walk",
             description=(
-                "Breadth-first recursive listing under path. Caps at "
+                "Breadth-first recursive listing of the live folder tree under path "
+                "(list_dir lists one level; search queries the offline index). Caps at "
                 f"max_depth (default 4, at most {MAX_TREE_DEPTH}) and max_entries "
                 f"(default 1000, at most {MAX_WALK_ENTRIES}). "
                 "Returns {entries: [{path, name, is_dir, size}], truncated, "
@@ -2966,9 +3008,11 @@ def _build_tools(
             schema={
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string"},
-                    "max_depth": {"type": "integer", "minimum": 0, "maximum": MAX_TREE_DEPTH},
-                    "max_entries": {"type": "integer", "minimum": 1, "maximum": MAX_WALK_ENTRIES},
+                    "path": {"type": "string", "description": "The folder to walk."},
+                    "max_depth": {"type": "integer", "minimum": 0, "maximum": MAX_TREE_DEPTH,
+                                  "description": "Folder levels below path (default 4; 0 = path only)."},
+                    "max_entries": {"type": "integer", "minimum": 1, "maximum": MAX_WALK_ENTRIES,
+                                    "description": "Most entries to return (default 1000)."},
                 },
                 "required": ["path"],
             },
@@ -2997,15 +3041,19 @@ def _build_tools(
             schema={
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string"},
+                    "path": {"type": "string", "description": "The folder (or one file) to hash."},
                     "algorithm": {
                         "type": "string",
                         "enum": sorted(_HASHLIB_ALGOS),
+                        "description": "The hash to compute (default sha256).",
                     },
                     "max_files": {"type": "integer", "minimum": 1,
-                                  "maximum": MAX_RECURSIVE_CHECKSUM_FILES},
-                    "max_depth": {"type": "integer", "minimum": 0, "maximum": MAX_TREE_DEPTH},
-                    "max_file_bytes": {"type": "integer", "minimum": 1},
+                                  "maximum": MAX_RECURSIVE_CHECKSUM_FILES,
+                                  "description": "Most files to hash (default 500)."},
+                    "max_depth": {"type": "integer", "minimum": 0, "maximum": MAX_TREE_DEPTH,
+                                  "description": "Folder levels below path (default 10)."},
+                    "max_file_bytes": {"type": "integer", "minimum": 1,
+                                       "description": "Larger files are skipped (default 1 GiB)."},
                 },
                 "required": ["path"],
             },
@@ -3297,8 +3345,9 @@ def _build_tools(
                 schema={
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string"},
-                        "edge": {"type": "integer", "minimum": 16, "maximum": 2048},
+                        "path": {"type": "string", "description": "The image file."},
+                        "edge": {"type": "integer", "minimum": 16, "maximum": 2048,
+                                 "description": "Longest side of the thumbnail in pixels (default 256)."},
                     },
                     "required": ["path"],
                 },
@@ -3320,10 +3369,14 @@ def _build_tools(
                 schema={
                     "type": "object",
                     "properties": {
-                        "pattern": {"type": "string"},
-                        "path": {"type": "string"},
-                        "max_depth": {"type": "integer", "minimum": 0},
-                        "max_matches": {"type": "integer", "minimum": 1},
+                        "pattern": {"type": "string",
+                                    "description": "A Python regular expression, matched per line."},
+                        "path": {"type": "string",
+                                 "description": "The file or folder to search (default the root)."},
+                        "max_depth": {"type": "integer", "minimum": 0,
+                                      "description": "Folder levels below path (default 2)."},
+                        "max_matches": {"type": "integer", "minimum": 1,
+                                        "description": "Most matching lines (default 100, at most 500)."},
                     },
                     "required": ["pattern"],
                 },
@@ -3340,7 +3393,8 @@ def _build_tools(
                 ),
                 schema={
                     "type": "object",
-                    "properties": {"path": {"type": "string"}},
+                    "properties": {"path": {"type": "string",
+                                            "description": "The file whose versions to list."}},
                     "required": ["path"],
                 },
                 handler=_list_versions,
@@ -3355,9 +3409,11 @@ def _build_tools(
                 schema={
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string"},
-                        "version_id": {"type": "string"},
-                        "max_bytes": {"type": "integer", "minimum": 0},
+                        "path": {"type": "string", "description": "The file to read."},
+                        "version_id": {"type": "string",
+                                       "description": "A version's id from list_versions."},
+                        "max_bytes": {"type": "integer", "minimum": 0,
+                                      "description": "Most bytes to return (default and ceiling 4 MiB)."},
                     },
                     "required": ["path", "version_id"],
                 },
@@ -3993,7 +4049,8 @@ def _build_tools(
                     schema={
                         "type": "object",
                         "properties": {
-                            "path": {"type": "string"},
+                            "path": {"type": "string",
+                                     "description": "The file to create or overwrite, under the root."},
                             "content": {
                                 "type": "string",
                                 "description": "The new content as UTF-8 text.",
@@ -4010,10 +4067,14 @@ def _build_tools(
                 ),
                 _Tool(
                     name="mkdir",
-                    description="Create a directory on the backend.",
+                    description=(
+                        "Create a folder under the MCP root (not the root itself). "
+                        "Returns {ok: true}."
+                    ),
                     schema={
                         "type": "object",
-                        "properties": {"path": {"type": "string"}},
+                        "properties": {"path": {"type": "string",
+                                                "description": "The folder to create."}},
                         "required": ["path"],
                     },
                     handler=_mkdir,
@@ -4021,12 +4082,17 @@ def _build_tools(
                 ),
                 _Tool(
                     name="remove",
-                    description="Delete a file or directory.",
+                    description=(
+                        "Delete a file, a link or a folder permanently (no trash; the "
+                        "MCP root itself is refused). A folder that is not empty needs "
+                        "recursive=true. Returns {ok: true}."
+                    ),
                     schema={
                         "type": "object",
                         "properties": {
-                            "path": {"type": "string"},
-                            "recursive": {"type": "boolean"},
+                            "path": {"type": "string", "description": "What to delete."},
+                            "recursive": {"type": "boolean",
+                                          "description": "Also delete a folder's contents (default false)."},
                         },
                         "required": ["path"],
                     },
@@ -4036,14 +4102,16 @@ def _build_tools(
                 _Tool(
                     name="rename",
                     description=(
-                        "Move/rename a file or directory. Both src and dst "
-                        "must live under the configured root."
+                        "Move or rename a file or folder on the same backend, by the "
+                        "server where it can. Both src and dst must be under the MCP "
+                        "root; an existing dst is never replaced. Returns {ok: true}."
                     ),
                     schema={
                         "type": "object",
                         "properties": {
-                            "src": {"type": "string"},
-                            "dst": {"type": "string"},
+                            "src": {"type": "string", "description": "What to move."},
+                            "dst": {"type": "string",
+                                    "description": "The new path; must not exist yet."},
                         },
                         "required": ["src", "dst"],
                     },
@@ -4055,13 +4123,16 @@ def _build_tools(
                     description=(
                         "Server-side copy of src to dst. Uses the backend's "
                         "native copy primitive (S3 CopyObject, WebDAV COPY, "
-                        "shell cp) where available — no client-side streaming."
+                        "shell cp) where available — no client-side streaming. An "
+                        "existing dst is never replaced; bulk_copy copies folders. "
+                        "Returns {ok: true}."
                     ),
                     schema={
                         "type": "object",
                         "properties": {
-                            "src": {"type": "string"},
-                            "dst": {"type": "string"},
+                            "src": {"type": "string", "description": "The file to copy."},
+                            "dst": {"type": "string",
+                                    "description": "The new file's path; must not exist yet."},
                         },
                         "required": ["src", "dst"],
                     },
@@ -4093,14 +4164,18 @@ def _build_tools(
                     schema={
                         "type": "object",
                         "properties": {
-                            "src": {"type": "string"},
-                            "dst": {"type": "string"},
+                            "src": {"type": "string", "description": "The file or folder to copy."},
+                            "dst": {"type": "string", "description": "Where the copy goes."},
                             "max_files": {"type": "integer", "minimum": 1,
-                                          "maximum": MAX_BULK_COPY_FILES},
+                                          "maximum": MAX_BULK_COPY_FILES,
+                                          "description": "Most files to copy (default 1000)."},
                             "max_depth": {"type": "integer", "minimum": 0,
-                                          "maximum": MAX_TREE_DEPTH},
-                            "max_file_bytes": {"type": "integer", "minimum": 1},
-                            "overwrite": {"type": "boolean"},
+                                          "maximum": MAX_TREE_DEPTH,
+                                          "description": "Folder levels below src (default 10)."},
+                            "max_file_bytes": {"type": "integer", "minimum": 1,
+                                               "description": "Larger files are skipped (default 10 GiB)."},
+                            "overwrite": {"type": "boolean",
+                                          "description": "Replace files that exist at dst (default false)."},
                         },
                         "required": ["src", "dst"],
                     },
@@ -4113,13 +4188,16 @@ def _build_tools(
                         "Create a symbolic link. target may point anywhere "
                         "the backend permits (dangling links are allowed); "
                         "link_path is capped to the MCP root. Raises on "
-                        "backends without symlink support (S3, cloud stores)."
+                        "backends without symlink support (S3, cloud stores). "
+                        "Returns {ok: true}."
                     ),
                     schema={
                         "type": "object",
                         "properties": {
-                            "target": {"type": "string"},
-                            "link_path": {"type": "string"},
+                            "target": {"type": "string",
+                                       "description": "What the link points to (stored as given)."},
+                            "link_path": {"type": "string",
+                                          "description": "The new link's path, under the root."},
                         },
                         "required": ["target", "link_path"],
                     },
@@ -4131,13 +4209,15 @@ def _build_tools(
                     description=(
                         "Create a hard link (second name for the same inode). "
                         "Cross-device errors surface as the backend's OSError. "
-                        "Most protocols refuse — POSIX/SSH only."
+                        "Most protocols refuse — POSIX/SSH only. Returns {ok: true}."
                     ),
                     schema={
                         "type": "object",
                         "properties": {
-                            "target": {"type": "string"},
-                            "link_path": {"type": "string"},
+                            "target": {"type": "string",
+                                       "description": "The existing file, under the root."},
+                            "link_path": {"type": "string",
+                                          "description": "The new name, under the root."},
                         },
                         "required": ["target", "link_path"],
                     },
@@ -4154,8 +4234,9 @@ def _build_tools(
                     schema={
                         "type": "object",
                         "properties": {
-                            "path": {"type": "string"},
+                            "path": {"type": "string", "description": "The file or folder."},
                             "mode": {
+                                "description": 'The new mode: 420 or "0o644" / "644".',
                                 "oneOf": [
                                     {"type": "integer", "minimum": 0, "maximum": 0o7777},
                                     {"type": "string"},
@@ -4343,7 +4424,8 @@ def _build_tools(
                     ),
                     schema={
                         "type": "object",
-                        "properties": {"name": {"type": "string"}},
+                        "properties": {"name": {"type": "string",
+                                                "description": "The script's name, from script_list."}},
                         "required": ["name"],
                     },
                     handler=_script_read,
@@ -4358,8 +4440,9 @@ def _build_tools(
                     schema={
                         "type": "object",
                         "properties": {
-                            "name": {"type": "string"},
-                            "source": {"type": "string"},
+                            "name": {"type": "string",
+                                     "description": "The script's name: letters, digits, _ and -."},
+                            "source": {"type": "string", "description": "The Python source."},
                         },
                         "required": ["name", "source"],
                     },
@@ -4369,12 +4452,14 @@ def _build_tools(
                 _Tool(
                     name="script_delete",
                     description=(
-                        "Remove a saved script by name. Idempotent — no error "
-                        "when the file is already gone."
+                        "Remove a saved script by name from the server's script "
+                        "directory. Idempotent — no error when the file is already "
+                        "gone. Returns {name, deleted: true}."
                     ),
                     schema={
                         "type": "object",
-                        "properties": {"name": {"type": "string"}},
+                        "properties": {"name": {"type": "string",
+                                                "description": "The script's name, from script_list."}},
                         "required": ["name"],
                     },
                     handler=_script_delete,
@@ -4400,7 +4485,8 @@ def _build_tools(
                     schema={
                         "type": "object",
                         "properties": {
-                            "name": {"type": "string"},
+                            "name": {"type": "string",
+                                     "description": "The script's name, from script_list."},
                             "args": {
                                 "type": "array",
                                 "items": {"type": "string", "maxLength": MAX_SCRIPT_ARG_CHARS},
@@ -5258,6 +5344,7 @@ def _server_info(version: str) -> dict:
     if protocol_at_least(version, "2025-11-25"):
         info["description"] = SERVER_DESCRIPTION
         info["websiteUrl"] = SERVER_WEBSITE
+        info["icons"] = [dict(icon, sizes=list(icon["sizes"])) for icon in SERVER_ICONS]
     return info
 
 
@@ -5434,6 +5521,8 @@ def _dispatch(
                 "protocolVersion": agreed,
                 "serverInfo": _server_info(agreed),
                 "capabilities": caps,
+                **({"instructions": SERVER_INSTRUCTIONS}
+                   if protocol_at_least(agreed, "2025-03-26") else {}),
             },
         )
     if method == "ping":

@@ -175,7 +175,7 @@
         "readOnlyHint": true,
         "title": "List folder"
       },
-      "description": "List entries in a directory on the configured backend.",
+      "description": "List the entries of one folder (one level; walk goes deeper). Returns [{name, is_dir, size, modified}] - modified is ISO 8601 or null; '.' and '..' are left out. A name that is not UTF-8 also comes as name_b64.",
       "group": "core",
       "input_schema": {
         "properties": {
@@ -184,7 +184,7 @@
             "type": "string"
           },
           "path": {
-            "description": "Absolute path on the backend.",
+            "description": "The folder to list: an absolute path on the backend.",
             "type": "string"
           },
           "path_b64": {
@@ -216,7 +216,7 @@
         "readOnlyHint": true,
         "title": "File details"
       },
-      "description": "Return name, type, size, and mtime for one path.",
+      "description": "Details of one file or folder without reading it. Returns {name, is_dir, size, modified} - modified is ISO 8601 or null. Fails when nothing is at path, so it also tells whether a path exists.",
       "group": "core",
       "input_schema": {
         "properties": {
@@ -225,6 +225,7 @@
             "type": "string"
           },
           "path": {
+            "description": "The file or folder to describe.",
             "type": "string"
           },
           "path_b64": {
@@ -302,15 +303,18 @@
             "type": "string"
           },
           "max_bytes": {
+            "description": "Most bytes to return (default and ceiling 4 MiB).",
             "minimum": 0,
             "type": "integer"
           },
           "offset": {
             "default": 0,
+            "description": "Byte offset to start at: next_offset of the previous call to read on.",
             "minimum": 0,
             "type": "integer"
           },
           "path": {
+            "description": "The file to read.",
             "type": "string"
           },
           "path_b64": {
@@ -384,6 +388,7 @@
       "input_schema": {
         "properties": {
           "algorithm": {
+            "description": "The hash to compute (default sha256).",
             "enum": [
               "md5",
               "sha1",
@@ -397,6 +402,7 @@
             "type": "string"
           },
           "path": {
+            "description": "The file to hash.",
             "type": "string"
           },
           "path_b64": {
@@ -451,7 +457,7 @@
         "readOnlyHint": true,
         "title": "Search the file index"
       },
-      "description": "Search the offline metadata index by name substring, extension, and size range. Free of network round-trips. At most limit results (default 1000, at most 10000): ask for one more than you need to learn whether there are more. A notifications/cancelled stops it.",
+      "description": "Search the offline metadata index (built by index_build, or by axross's Index Active Folder) by name substring, extension and size range: no network round-trip, but only what was indexed - for the live state of a folder use walk or list_dir. Returns [{backend_id, path, name, size, is_dir, modified}]. At most limit results (default 1000, at most 10000): ask for one more than you need to learn whether there are more. A notifications/cancelled stops it.",
       "group": "core",
       "input_schema": {
         "properties": {
@@ -460,22 +466,27 @@
             "type": "string"
           },
           "ext": {
+            "description": "File extension without the dot, e.g. pdf.",
             "type": "string"
           },
           "limit": {
+            "description": "Most results (default 1000).",
             "maximum": 10000,
             "minimum": 1,
             "type": "integer"
           },
           "max_size": {
+            "description": "Largest size in bytes.",
             "minimum": 0,
             "type": "integer"
           },
           "min_size": {
+            "description": "Smallest size in bytes.",
             "minimum": 0,
             "type": "integer"
           },
           "needle": {
+            "description": "Part of the file name, any case and Unicode form.",
             "type": "string"
           }
         },
@@ -500,7 +511,7 @@
         "readOnlyHint": true,
         "title": "Walk folder tree"
       },
-      "description": "Breadth-first recursive listing under path. Caps at max_depth (default 4, at most 64) and max_entries (default 1000, at most 100000). Returns {entries: [{path, name, is_dir, size}], truncated, unreadable: [{path, error}], complete}: unreadable names every folder below path that could not be listed; complete is true only when nothing was cut or left out. An unreadable path itself is an error. Emits MCP progress notifications when the caller supplied _meta.progressToken.",
+      "description": "Breadth-first recursive listing of the live folder tree under path (list_dir lists one level; search queries the offline index). Caps at max_depth (default 4, at most 64) and max_entries (default 1000, at most 100000). Returns {entries: [{path, name, is_dir, size}], truncated, unreadable: [{path, error}], complete}: unreadable names every folder below path that could not be listed; complete is true only when nothing was cut or left out. An unreadable path itself is an error. Emits MCP progress notifications when the caller supplied _meta.progressToken.",
       "group": "core",
       "input_schema": {
         "properties": {
@@ -509,16 +520,19 @@
             "type": "string"
           },
           "max_depth": {
+            "description": "Folder levels below path (default 4; 0 = path only).",
             "maximum": 64,
             "minimum": 0,
             "type": "integer"
           },
           "max_entries": {
+            "description": "Most entries to return (default 1000).",
             "maximum": 100000,
             "minimum": 1,
             "type": "integer"
           },
           "path": {
+            "description": "The folder to walk.",
             "type": "string"
           },
           "path_b64": {
@@ -617,6 +631,7 @@
       "input_schema": {
         "properties": {
           "algorithm": {
+            "description": "The hash to compute (default sha256).",
             "enum": [
               "md5",
               "sha1",
@@ -630,20 +645,24 @@
             "type": "string"
           },
           "max_depth": {
+            "description": "Folder levels below path (default 10).",
             "maximum": 64,
             "minimum": 0,
             "type": "integer"
           },
           "max_file_bytes": {
+            "description": "Larger files are skipped (default 1 GiB).",
             "minimum": 1,
             "type": "integer"
           },
           "max_files": {
+            "description": "Most files to hash (default 500).",
             "maximum": 50000,
             "minimum": 1,
             "type": "integer"
           },
           "path": {
+            "description": "The folder (or one file) to hash.",
             "type": "string"
           },
           "path_b64": {
@@ -684,11 +703,13 @@
             "type": "string"
           },
           "edge": {
+            "description": "Longest side of the thumbnail in pixels (default 256).",
             "maximum": 2048,
             "minimum": 16,
             "type": "integer"
           },
           "path": {
+            "description": "The image file.",
             "type": "string"
           },
           "path_b64": {
@@ -729,14 +750,17 @@
             "type": "string"
           },
           "max_depth": {
+            "description": "Folder levels below path (default 2).",
             "minimum": 0,
             "type": "integer"
           },
           "max_matches": {
+            "description": "Most matching lines (default 100, at most 500).",
             "minimum": 1,
             "type": "integer"
           },
           "path": {
+            "description": "The file or folder to search (default the root).",
             "type": "string"
           },
           "path_b64": {
@@ -744,6 +768,7 @@
             "type": "string"
           },
           "pattern": {
+            "description": "A Python regular expression, matched per line.",
             "type": "string"
           }
         },
@@ -780,6 +805,7 @@
             "type": "string"
           },
           "path": {
+            "description": "The file whose versions to list.",
             "type": "string"
           },
           "path_b64": {
@@ -820,10 +846,12 @@
             "type": "string"
           },
           "max_bytes": {
+            "description": "Most bytes to return (default and ceiling 4 MiB).",
             "minimum": 0,
             "type": "integer"
           },
           "path": {
+            "description": "The file to read.",
             "type": "string"
           },
           "path_b64": {
@@ -831,6 +859,7 @@
             "type": "string"
           },
           "version_id": {
+            "description": "A version's id from list_versions.",
             "type": "string"
           }
         },
@@ -876,6 +905,7 @@
             "type": "string"
           },
           "path": {
+            "description": "The file to create or overwrite, under the root.",
             "type": "string"
           },
           "path_b64": {
@@ -910,7 +940,7 @@
         "readOnlyHint": false,
         "title": "Create folder"
       },
-      "description": "Create a directory on the backend.",
+      "description": "Create a folder under the MCP root (not the root itself). Returns {ok: true}.",
       "group": "write",
       "input_schema": {
         "properties": {
@@ -919,6 +949,7 @@
             "type": "string"
           },
           "path": {
+            "description": "The folder to create.",
             "type": "string"
           },
           "path_b64": {
@@ -953,7 +984,7 @@
         "readOnlyHint": false,
         "title": "Delete file or folder"
       },
-      "description": "Delete a file or directory.",
+      "description": "Delete a file, a link or a folder permanently (no trash; the MCP root itself is refused). A folder that is not empty needs recursive=true. Returns {ok: true}.",
       "group": "write",
       "input_schema": {
         "properties": {
@@ -962,6 +993,7 @@
             "type": "string"
           },
           "path": {
+            "description": "What to delete.",
             "type": "string"
           },
           "path_b64": {
@@ -969,6 +1001,7 @@
             "type": "string"
           },
           "recursive": {
+            "description": "Also delete a folder's contents (default false).",
             "type": "boolean"
           }
         },
@@ -999,7 +1032,7 @@
         "readOnlyHint": false,
         "title": "Move or rename"
       },
-      "description": "Move/rename a file or directory. Both src and dst must live under the configured root.",
+      "description": "Move or rename a file or folder on the same backend, by the server where it can. Both src and dst must be under the MCP root; an existing dst is never replaced. Returns {ok: true}.",
       "group": "write",
       "input_schema": {
         "properties": {
@@ -1008,6 +1041,7 @@
             "type": "string"
           },
           "dst": {
+            "description": "The new path; must not exist yet.",
             "type": "string"
           },
           "dst_b64": {
@@ -1015,6 +1049,7 @@
             "type": "string"
           },
           "src": {
+            "description": "What to move.",
             "type": "string"
           },
           "src_b64": {
@@ -1050,7 +1085,7 @@
         "readOnlyHint": false,
         "title": "Copy (server-side)"
       },
-      "description": "Server-side copy of src to dst. Uses the backend's native copy primitive (S3 CopyObject, WebDAV COPY, shell cp) where available — no client-side streaming.",
+      "description": "Server-side copy of src to dst. Uses the backend's native copy primitive (S3 CopyObject, WebDAV COPY, shell cp) where available — no client-side streaming. An existing dst is never replaced; bulk_copy copies folders. Returns {ok: true}.",
       "group": "write",
       "input_schema": {
         "properties": {
@@ -1059,6 +1094,7 @@
             "type": "string"
           },
           "dst": {
+            "description": "The new file's path; must not exist yet.",
             "type": "string"
           },
           "dst_b64": {
@@ -1066,6 +1102,7 @@
             "type": "string"
           },
           "src": {
+            "description": "The file to copy.",
             "type": "string"
           },
           "src_b64": {
@@ -1110,6 +1147,7 @@
             "type": "string"
           },
           "dst": {
+            "description": "Where the copy goes.",
             "type": "string"
           },
           "dst_b64": {
@@ -1117,23 +1155,28 @@
             "type": "string"
           },
           "max_depth": {
+            "description": "Folder levels below src (default 10).",
             "maximum": 64,
             "minimum": 0,
             "type": "integer"
           },
           "max_file_bytes": {
+            "description": "Larger files are skipped (default 10 GiB).",
             "minimum": 1,
             "type": "integer"
           },
           "max_files": {
+            "description": "Most files to copy (default 1000).",
             "maximum": 100000,
             "minimum": 1,
             "type": "integer"
           },
           "overwrite": {
+            "description": "Replace files that exist at dst (default false).",
             "type": "boolean"
           },
           "src": {
+            "description": "The file or folder to copy.",
             "type": "string"
           },
           "src_b64": {
@@ -1169,7 +1212,7 @@
         "readOnlyHint": false,
         "title": "Create symbolic link"
       },
-      "description": "Create a symbolic link. target may point anywhere the backend permits (dangling links are allowed); link_path is capped to the MCP root. Raises on backends without symlink support (S3, cloud stores).",
+      "description": "Create a symbolic link. target may point anywhere the backend permits (dangling links are allowed); link_path is capped to the MCP root. Raises on backends without symlink support (S3, cloud stores). Returns {ok: true}.",
       "group": "write",
       "input_schema": {
         "properties": {
@@ -1178,6 +1221,7 @@
             "type": "string"
           },
           "link_path": {
+            "description": "The new link's path, under the root.",
             "type": "string"
           },
           "link_path_b64": {
@@ -1185,6 +1229,7 @@
             "type": "string"
           },
           "target": {
+            "description": "What the link points to (stored as given).",
             "type": "string"
           },
           "target_b64": {
@@ -1220,7 +1265,7 @@
         "readOnlyHint": false,
         "title": "Create hard link"
       },
-      "description": "Create a hard link (second name for the same inode). Cross-device errors surface as the backend's OSError. Most protocols refuse — POSIX/SSH only.",
+      "description": "Create a hard link (second name for the same inode). Cross-device errors surface as the backend's OSError. Most protocols refuse — POSIX/SSH only. Returns {ok: true}.",
       "group": "write",
       "input_schema": {
         "properties": {
@@ -1229,6 +1274,7 @@
             "type": "string"
           },
           "link_path": {
+            "description": "The new name, under the root.",
             "type": "string"
           },
           "link_path_b64": {
@@ -1236,6 +1282,7 @@
             "type": "string"
           },
           "target": {
+            "description": "The existing file, under the root.",
             "type": "string"
           },
           "target_b64": {
@@ -1280,6 +1327,7 @@
             "type": "string"
           },
           "mode": {
+            "description": "The new mode: 420 or \"0o644\" / \"644\".",
             "oneOf": [
               {
                 "maximum": 4095,
@@ -1292,6 +1340,7 @@
             ]
           },
           "path": {
+            "description": "The file or folder.",
             "type": "string"
           },
           "path_b64": {
@@ -1399,6 +1448,7 @@
       "input_schema": {
         "properties": {
           "name": {
+            "description": "The script's name, from script_list.",
             "type": "string"
           }
         },
@@ -1432,9 +1482,11 @@
       "input_schema": {
         "properties": {
           "name": {
+            "description": "The script's name: letters, digits, _ and -.",
             "type": "string"
           },
           "source": {
+            "description": "The Python source.",
             "type": "string"
           }
         },
@@ -1464,11 +1516,12 @@
         "readOnlyHint": false,
         "title": "Delete script"
       },
-      "description": "Remove a saved script by name. Idempotent — no error when the file is already gone.",
+      "description": "Remove a saved script by name from the server's script directory. Idempotent — no error when the file is already gone. Returns {name, deleted: true}.",
       "group": "scripts",
       "input_schema": {
         "properties": {
           "name": {
+            "description": "The script's name, from script_list.",
             "type": "string"
           }
         },
@@ -1511,6 +1564,7 @@
             "type": "array"
           },
           "name": {
+            "description": "The script's name, from script_list.",
             "type": "string"
           },
           "timeout_s": {
@@ -2803,7 +2857,7 @@
         "readOnlyHint": true,
         "title": "Close connection"
       },
-      "description": "Disconnect a profile opened with remote_open in this session. Returns {backend, closed}.",
+      "description": "Disconnect a profile opened with remote_open in this session: its backend id stops working for later calls, and calls still running on it are ended. Returns {backend, closed}.",
       "group": "remote",
       "input_schema": {
         "additionalProperties": false,

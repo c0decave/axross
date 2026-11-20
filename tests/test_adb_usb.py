@@ -33,6 +33,18 @@ from core.user_errors import describe  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 
 
+@pytest.fixture(autouse=True)
+def _no_adb_server(monkeypatch):
+    """No adb server answers (tests/test_adb_server.py has the server):
+    USB mode goes to libusb, whatever runs on this machine's 5037."""
+    import socket
+
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    monkeypatch.setenv("ADB_SERVER_SOCKET", f"tcp:127.0.0.1:{s.getsockname()[1]}")
+    s.close()
+
+
 def _usb_session(tmp_path, **kwargs):
     return adb.AdbSession(usb=True, adb_key_path=str(tmp_path / "adbkey"), **kwargs)
 
@@ -69,7 +81,8 @@ def test_sad_without_libusb_the_install_is_named(tmp_path):
 
 
 @pytest.mark.parametrize("error, kind, words", [
-    ("LIBUSB_ERROR_BUSY [-6]", "busy", "adb kill-server"),
+    # 2026-11-20: a running adb server is used, not stopped (test_adb_server.py).
+    ("LIBUSB_ERROR_BUSY [-6]", "busy", "adb start-server"),
     ("LIBUSB_ERROR_ACCESS [-3]", "access", "udev"),
 ])
 def test_sad_a_held_or_forbidden_phone_says_what_to_do(tmp_path, error, kind, words):

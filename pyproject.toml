@@ -194,6 +194,7 @@ packages = [
     "resources.tours",
     "resources.handbook",
     "resources.handbook.patterns",
+    "resources.handbook.releases",
 ]
 
 # Help > Handbook reads docs/USAGE*.md (core/handbook.py). A wheel carries
@@ -207,10 +208,12 @@ packages = [
 # importable package "resources.handbook.patterns" to setuptools, which warns
 # "Package 'resources.handbook.patterns' is absent" on every build: it is
 # claimed here as a package of its own with no files (no module, and every
-# file excluded below), so the wheel carries nothing of it.
+# file excluded below), so the wheel carries nothing of it; docs/releases/
+# (the long release notes) the same way.
 [tool.setuptools.package-dir]
 "resources.handbook" = "docs"
 "resources.handbook.patterns" = "docs/patterns"
+"resources.handbook.releases" = "docs/releases"
 
 [tool.setuptools.package-data]
 "resources.logo" = ["*.png", "*.svg"]
@@ -228,8 +231,9 @@ packages = [
 "examples.scripting_api" = ["*.md"]
 
 [tool.setuptools.exclude-package-data]
-"resources.handbook" = ["*.json", "patterns/*", "[!U]*", "U[!S]*"]
+"resources.handbook" = ["*.json", "patterns/*", "releases/*", "[!U]*", "U[!S]*"]
 "resources.handbook.patterns" = ["*"]
+"resources.handbook.releases" = ["*"]
 
 [tool.setuptools.dynamic]
 version = { attr = "axross._version.__version__" }

@@ -2226,8 +2226,9 @@ def _build_remote(env: GroupEnv) -> list:
         ),
         _tool(
             "remote_close",
-            "Disconnect a profile opened with remote_open in this session. Returns {backend, "
-            "closed}.",
+            "Disconnect a profile opened with remote_open in this session: its backend id "
+            "stops working for later calls, and calls still running on it are ended. "
+            "Returns {backend, closed}.",
             {"backend": {"type": "string", "minLength": 1, "description": "'profile:<name>'."}},
             _close,
             group="remote",

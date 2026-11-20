@@ -127,11 +127,27 @@ class App:
     readme_short: str = ""
     #: The README's one line under its title (else the summary).
     tagline: str = ""
+    #: Where the program keeps its settings (the README's "Where it comes from"); default: axross's.
+    settings_text: str = ""
     #: axross's own tests of the tool (file names in tests/) that come with it,
     #: their imports renamed as the code's - ``python -m pytest tests`` in the
     #: export runs them - and the folders of tests/ they read (golden pages).
     tests: tuple[str, ...] = ()
     test_data: tuple[str, ...] = ()
+
+
+def _child_path_rewrites(package: str) -> tuple[tuple[str, str, str], ...]:
+    """The lexing and decoding children (core.lex_worker, core.image_worker) run ``python -I`` with the
+    folder of ``core`` - PACKAGE/_ax - on their path, and their modules import PACKAGE._ax.*: the
+    package's own root goes on the path too (unless there already), or the child found none (not
+    installed: "the highlighting process ended") or an older installed one."""
+    def rewrite(module: str) -> tuple[str, str, str]:
+        line = f"from {package}._ax.core.{module} import _serve\n"
+        return (f"core/{module}.py", line,
+                "import os as _os\n_package = _os.path.dirname(_os.path.dirname(sys.argv[-4]))\n"
+                "if _package not in sys.path:\n    sys.path.insert(0, _package)\n" + line)
+
+    return rewrite("lex_worker"), rewrite("image_worker")
 
 
 def _probe_rewrites(package: str) -> tuple[tuple[str, str, str], ...]:
@@ -223,6 +239,7 @@ Bluetooth needs BlueZ on the system bus (Linux) or a supported USB stick.
     "markdown": App(
         dist="axross-markdown",
         package="axross_markdown",
+        rewrites=_child_path_rewrites("axross_markdown"),
         repo="https://github.com/c0decave/axross-markdown",
         repo_files="scripts/standalone_repo/axross-markdown",
         start="ui/markdown_app.py",
@@ -247,7 +264,7 @@ Bluetooth needs BlueZ on the system bus (Linux) or a supported USB stick.
               "ui/off_gui.py", "core/connect_worker.py", "core/connect_notice.py", "core/secure_storage.py",
               "core/lex_worker.py", "core/image_worker.py", "core/process_launcher.py", "core/previews.py",
               "core/xdg_dirs.py"),
-        version="0.16.5",
+        version="0.16.7",
         pitch=(
             "- **GitHub Markdown, complete** - CommonMark, tables, task lists, footnotes, alerts, "
             "definition lists, front matter.",
@@ -291,6 +308,8 @@ Every dependency is pinned and reviewed in `requirements.lock.txt`
 ([how to install exactly those]({extended}#the-exact-reviewed-dependencies)).
 """,
         tagline="GitHub Markdown in a window of its own - or in the terminal: read, never run.",
+        settings_text=("it reads axross's settings\n(`~/.config/axross`) for the language and - until "
+                       "View → Theme chooses one in\n`~/.config/axross-markdown/settings.json` - the theme."),
         # (axross's tests of the reader that need nothing of axross but the reader - the release runs them)
         tests=("test_markdown_corpus.py", "test_markdown_full.py", "test_markdown_golden.py",
                "test_markdown_image_safety.py", "test_markdown_raw_html.py", "test_markdown_reader_bugs.py",
@@ -323,6 +342,8 @@ link opens in the browser only after a question that shows its real address.
 - [The security model](#the-security-model)
 - [Limits](#limits)
 - [Install options](#install-options)
+- [Where it comes from](#where-it-comes-from)
+- [The exact, reviewed dependencies](#the-exact-reviewed-dependencies)
 
 ## The window: keys
 
@@ -409,8 +430,8 @@ What a file holds is shown, never run:
 - **Raw HTML** is kept to a safe subset - no scripts, styles, frames, forms, event
   handlers or `javascript:` / `vbscript:` / `file:` / `data:` links (but data: images);
   what is left of it is shown as its text.
-- **Nothing from the network**: a remote image is a box naming its address; no page,
-  font or style sheet is fetched.
+- **Nothing from the network**: a remote image is a box with its alt text (its address in
+  the box's tooltip); no page, font or style sheet is fetched.
 - **Images** are read only relative to the file, regular files only, never a secret file
   (an SSH key, a keyring, a password store), bounded in bytes (8 MiB), pixels (40 million
   one, 100 million a page) and count (200); an SVG that names other files is not shown,
@@ -438,6 +459,10 @@ What a file holds is shown, never run:
   shown without colours.
 - An emoji short code (`:tada:`) of an emoji no installed font has stays as written.
 - A file that is no text (a picture, a program) is said to be one, not shown.
+- What would hold the window up is laid out shorter: a line of more than 100,000
+  characters without a space is not laid out (a note says so; the editor shows it); a
+  heading's or a table cell's text past 2,000 characters is cut, with "…"; a footnote's
+  ways back to its references are shown for the first 20 ("and 99,980 more").
 
 ## Install options
 
@@ -1117,7 +1142,10 @@ dist/
 #: (PyPI, OSV, age, names, provenance, every file against axross's reviewed
 #: baseline), then the scanners (GuardDog's and axross's YARA rules,
 #: attestations) from a venv of their own lock, installed from the archives
-#: the first stage inspected; the report is kept as an artifact.
+#: the first stage inspected; the report is kept as an artifact. The gate
+#: and its baseline are axross's at GATE_AXROSS_COMMIT (v0.15.180), not its
+#: default branch, which may be an older release.
+GATE_AXROSS_COMMIT = "37373f7fd46e2a9105be1d22ffd44046ff27f7bf"
 GATE_JOB = """
   supply-chain:
     runs-on: ubuntu-24.04
@@ -1129,6 +1157,9 @@ GATE_JOB = """
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: c0decave/axross
+          # (pinned by commit - axross v0.15.180: its default branch was an older release, its baseline
+          # older than this lock's, and the gate failed)
+          ref: GATE_AXROSS_COMMIT
           path: .axross
           persist-credentials: false
           sparse-checkout-cone-mode: false
@@ -1152,7 +1183,7 @@ GATE_JOB = """
         with:
           name: supply-chain-report
           path: supply-chain-report
-"""
+""".replace("GATE_AXROSS_COMMIT", GATE_AXROSS_COMMIT)
 
 
 def _workflow(app: App, locked: bool = False) -> str:
@@ -1197,14 +1228,14 @@ jobs:
 on:
   push:
   pull_request:
-
+CALLED
 permissions:
   contents: read
 
 jobs:
   test:
     runs-on: ubuntu-24.04
-    steps:
+NEEDS    steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -1221,7 +1252,10 @@ jobs:
         run: python -m pip install build && python -m build
 """.replace("INSTALL", "python -m pip install --require-hashes -r requirements.lock.txt && "
                        "python -m pip install --no-deps . && python -m pip install pytest"
-            if locked else "python -m pip install . pytest") + (GATE_JOB if locked else "")
+            if locked else "python -m pip install . pytest").replace(
+        "CALLED\n", "  # (the release runs it first: nothing is built for a release before the\n"
+                    "  # gate and the tests pass)\n  workflow_call:\n\n" if locked else "\n").replace(
+        "NEEDS", "    needs: supply-chain\n" if locked else "") + (GATE_JOB if locked else "")
 
 
 def _smoke_test(app: App) -> str:
@@ -1467,7 +1501,7 @@ def export(name: str, out: Path) -> Path:
     version = app.version or _version()
     (out / "pyproject.toml").write_text(_pyproject(app, version), encoding="utf-8")
     marker = f"{app.readme_marker}\n" if app.readme_marker else ""
-    shared = ("its settings are axross's\n(`~/.config/axross`), so both share the "
+    shared = app.settings_text or ("its settings are axross's\n(`~/.config/axross`), so both share the "
               "language, the theme and the tool's state.") if app.kind == "qt" else (
               "it reads axross's settings\n(`~/.config/axross`) and axross's saved "
               "connection profiles.")
@@ -1479,10 +1513,13 @@ def export(name: str, out: Path) -> Path:
     if app.pitch:
         (out / "README.md").write_text(f"{marker}{short_readme(app)}", encoding="utf-8")
         (out / "docs").mkdir(exist_ok=True)
+        # (install, tests and licence are the README's: here they were the same again, outside its contents)
         (out / EXTENDED).write_text(
             f"# {app.dist}: the extended README\n\nEverything on one page; the short version, "
-            f"with the screenshots, is the [README](../README.md).\n\n{app.summary}.\n\n"
-            f"{app.readme}\n{origin}{install}{tail}", encoding="utf-8")
+            f"with the screenshots, is the [README](../README.md) - installing, the tests and the "
+            f"licence are there.\n\n{app.summary}.\n\n"
+            f"{app.readme}\n## Where it comes from\n\n{origin}{_lock_readme() if lock is not None else ''}",
+            encoding="utf-8")
     else:
         (out / "README.md").write_text(
             f"{marker}# {app.dist}\n\n{app.summary}.\n\n{app.readme}\n{origin}{install}{tail}",

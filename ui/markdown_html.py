@@ -1140,6 +1140,10 @@ def _install_rules(md, dark: bool) -> None:
     if note_back is not None:
         def footnote_anchor(tokens, idx, options, env):
             made = note_back(tokens, idx, options, env)
+            more = (tokens[idx].meta or {}).get("more")
+            if more:  # (a note cited again and again: its first ways back, the rest counted - MD.BACKREFS)
+                made = made.rstrip("\n") + f' <span style="color: {palette["muted"]}">' \
+                    + html.escape(tr_text("and {count} more").format(count=f"{more:,}")) + "</span>"
             if idx + 1 < len(tokens) and tokens[idx + 1].type == "paragraph_close":
                 return made  # (in the note's last paragraph)
             # (a note ending in a code block, a list: its way back a line of the note's own - Qt put it
@@ -1779,9 +1783,23 @@ PARAGRAPH_SPANS = 200
 PARAGRAPH_TEXT = 6000
 
 
-#: Characters past U+1F000 (emoji, pictures) count as this many letters in a paragraph's pieces.
-PICTURE_WEIGHT = 8
+#: Characters past U+1F000 (emoji, pictures) count as this many letters in a paragraph's pieces: each costs
+#: Qt a glyph looked up and, from a colour font, a bitmap scaled - on a CI runner of hundreds of fonts, with
+#: or without a colour emoji font, 50,000 emoji in a paragraph held the window 0.3 s (markdown-it) and 0.5 s
+#: (Qt's own parser) a turn when one counted as 8 letters.
+PICTURE_WEIGHT = 128
 _PICTURE_SIGNS = re.compile("[\U0001F000-\U0010FFFF]")
+
+
+def picture_weight() -> int:
+    """How many letters an emoji counts as in a paragraph's pieces (PICTURE_WEIGHT, whatever the fonts)."""
+    return PICTURE_WEIGHT
+
+
+def piece_floor(weight: int) -> int:
+    """The fewest characters a piece of a paragraph holds: 200 - fewer where emoji weigh more (40 at
+    PICTURE_WEIGHT: about 20 emoji)."""
+    return max(40, 1600 // weight)
 
 
 def _paragraph_pieces(tokens: list) -> list:
@@ -1795,18 +1813,18 @@ def _paragraph_pieces(tokens: list) -> list:
         inline = tokens[index + 1] if index + 2 < len(tokens) else None
         # (an emoji, a picture sign costs a font's colour bitmap each: eight letters' worth - 3,000 colour
         # emoji a piece held a CI runner's window 2.6 s)
-        pictures, shown = 0, 0
+        pictures, shown, weight = 0, 0, picture_weight()
         if inline is not None and inline.type == "inline" and token.type == "paragraph_open" \
-                and len(inline.content) > PARAGRAPH_TEXT // PICTURE_WEIGHT:
+                and len(inline.content) > PARAGRAPH_TEXT // weight:
             # (in the text as shown: ":tada:" is an emoji there, not in the source)
             texts = [child.content for child in inline.children or () if child.type == "text"]
             shown = sum(map(len, texts))
             pictures = sum(len(_PICTURE_SIGNS.findall(text)) for text in texts)
         step = PARAGRAPH_TEXT if not pictures else max(
-            200, int(PARAGRAPH_TEXT * shown / (shown + (PICTURE_WEIGHT - 1) * pictures)))
+            piece_floor(weight), int(PARAGRAPH_TEXT * shown / (shown + (weight - 1) * pictures)))
         if token.type != "paragraph_open" or inline is None or inline.type != "inline" \
                 or (len(inline.children or ()) <= PARAGRAPH_SPANS and max(len(inline.content), shown) <= step
-                    and not pictures * PICTURE_WEIGHT > step):
+                    and not pictures * weight > step):
             out.append(token)
             index += 1
             continue
@@ -1821,6 +1839,14 @@ def _paragraph_pieces(tokens: list) -> list:
                         cut = len(words) if at + 2 * step >= len(words) \
                             else MD.cluster_end(words, at + step - 1)
                     children.append(child.copy(content=words[at:cut]))
+                    at = cut
+            elif child.type == "code_inline" and len(child.content) > PARAGRAPH_TEXT:
+                # (one code span of 90,000 characters - "`a``a``a`...", its inner runs no end to it - laid
+                # out as one: 0.8 to 1.8 s in any container; in spans of its own, one after another)
+                code, at = child.content, 0
+                while at < len(code):
+                    cut = len(code) if at + PARAGRAPH_TEXT >= len(code) else MD.cluster_end(code, at + PARAGRAPH_TEXT - 1)
+                    children.append(child.copy(content=code[at:cut]))
                     at = cut
             else:
                 children.append(child)

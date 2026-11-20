@@ -491,7 +491,7 @@ The release notes name the components and their versions.
 | `libp11-kit.so.0` | [p11-kit](https://p11-glue.github.io/p11-glue/p11-kit.html) | 0.26.4-1.el9_8 | rpm | rpm p11-kit | full, slim |
 | `libpcre.so.1` | [PCRE and PCRE2](https://www.pcre.org) | 8.44-4.el9 | rpm | rpm pcre | full, slim |
 | `libpcre2-8.so.0` | [PCRE and PCRE2](https://www.pcre.org) | 10.40-7.el9_8 | rpm | rpm pcre2 | full, slim |
-| `libsystemd.so.0` | [libsystemd](https://systemd.io) | 252-79.el9_9.alma.1 | rpm | rpm systemd-libs | full, slim |
+| `libsystemd.so.0` | [libsystemd](https://systemd.io) | 252-79.el9_9.1.alma.1 | rpm | rpm systemd-libs | full, slim |
 | `libxcb-util.so.1` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 0.4.0-19.el9 | rpm | rpm xcb-util | full, slim |
 | `libxcb-cursor.so.0` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 0.1.4-3.el9 | rpm | rpm xcb-util-cursor | full, slim |
 | `libxcb-image.so.0` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 0.4.0-19.el9 | rpm | rpm xcb-util-image | full, slim |

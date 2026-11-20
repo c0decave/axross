@@ -361,9 +361,19 @@ die lokale Shell in Terminal-Lesezeichen und gespeicherten Layouts.
 - **Android-Telefone (ADB).** Zwei Modi im Profil. *TCP / WLAN*: das
   Telefon einmal per USB anschließen, USB-Debugging einschalten,
   `adb tcpip 5555` ausführen, dann die IP des Telefons und Port 5555
-  nehmen (ein SOCKS- oder HTTP-Proxy ist möglich). *USB*: das Telefon am
-  Kabel; die USB-Seriennummer (wie `adb devices` sie zeigt) ist optional –
-  leer heißt das erste gefundene Telefon. Es gibt kein Login: axross nimmt
+  nehmen (ein SOCKS- oder HTTP-Proxy ist möglich). *USB / adb-Server*: das Telefon am Kabel. Die Liste Gerät (Aktualisieren
+  liest sie neu) zeigt die jetzt angeschlossenen Telefone mit ihrem Zustand
+  – bereit, noch nicht zugelassen (die Frage auf dem Telefon bestätigen),
+  offline, keine Berechtigung; die Auswahl trägt die Seriennummer ein (wie
+  `adb devices` sie zeigt), leer heißt das einzige Telefon an USB. Läuft
+  der adb-Server der Platform-Tools auf 127.0.0.1:5037 (`adb start-server`,
+  Android Studio oder jeder `adb`-Befehl startet ihn), erreicht axross das
+  Telefon über ihn und teilt es mit dem `adb` der Konsole – auch Telefone,
+  die der Server über WLAN hat (`adb connect`), sind wählbar; ohne Server
+  öffnet axross das Telefon selbst über USB. Der TCP-Modus auf
+  localhost:5037 nimmt ebenfalls den Server. axross nutzt nur einen
+  adb-Server auf diesem Rechner: ein `ADB_SERVER_SOCKET` mit einem anderen
+  Rechner wird übergangen. Es gibt kein Login: axross nimmt
   den Schlüssel des adb-Werkzeugs `~/.android/adbkey` und legt ihn an, wenn
   er fehlt; das Telefon erfährt keinen Benutzer- oder Rechnernamen. Bei der
   ersten Verbindung fragt das Telefon "USB-Debugging zulassen?" – entsperren
@@ -374,15 +384,16 @@ die lokale Shell in Terminal-Lesezeichen und gespeicherten Layouts.
   *Kabellose Debugging* von Android 11 (Kopplungscode, zufälliger Port,
   TLS) wird nicht unterstützt – `adb tcpip 5555` nehmen. USB unter Linux
   braucht libusb-1.0 vom System (`pip install 'axross[adb]'` bringt die
-  Python-Seite); ein laufender adb-Server hält das Telefon (vorher
-  `adb kill-server`), und ohne Rechte am Gerät eine udev-Regel für
+  Python-Seite); hält ein anderes Programm als ein adb-Server das Telefon, wird das gesagt, und ohne Rechte am Gerät eine udev-Regel für
   Android-Geräte anlegen, den Benutzer in die Gruppe `plugdev` aufnehmen
   und das Telefon neu einstecken. Nach einer abgerissenen Verbindung
   verbindet die nächste Aktion von selbst neu; lange Aktionen auf dem
   Telefon (eine Prüfsumme, Kopieren oder Verschieben dort, ein großer
   Ordner löschen, eine APK-Installation) werden bis zu einer Stunde
-  abgewartet; hochgeladene Dateien bekommen `rw-r--r--` und behalten die
-  Änderungszeit der Quelle.
+  abgewartet; hochgeladene Dateien bekommen `rw-r--r--`, behalten die Änderungszeit der
+  Quelle und gehen erst unter einen vorläufigen Namen neben der Datei, der
+  sie fertig ersetzt – ein abgebrochener Upload lässt die alte Datei, wie
+  sie war.
 
 ## Multi-Pane-Layout
 
@@ -998,9 +1009,10 @@ eines floating Panels dockt es wieder an.
   der Lesestelle folgt, hervorgehobenem Code, Zoom (Strg +/-/0), Suche
   (Strg+F markiert jeden Treffer und sagt, der wievielte von wie vielen;
   Eingabe oder F3 der nächste, Umschalt+Eingabe oder Umschalt+F3 der
-  vorige), Neu laden (F5) und Bearbeiten (F4). Der Zoom-Knopf zwischen −
-  und + zeigt die Textgröße in Prozent; klick ihn an (oder drück Strg+0)
-  für die Originalgröße. Eine lokale Datei wird neu
+  vorige), Neu laden (F5) und Bearbeiten (F4). Strg+Mausrad, Strg++ (oder
+  Strg+=) und Strg+- zoomen den Text zwischen 25 % und 400 %; der Knopf
+  zeigt die Stufe, und ein Klick darauf (oder Strg+0) stellt die
+  Originalgröße wieder her. Eine lokale Datei wird neu
   gezeigt, wenn sie sich auf der Platte ändert; die Lesestelle bleibt.
   *Export* speichert die Seite als HTML (ihre Bilder darin, nichts, was
   sie anderswo laden könnte) oder PDF oder druckt sie (Strg+P) – die ganze
@@ -1060,8 +1072,9 @@ eines floating Panels dockt es wieder an.
   nie eine geheime Datei, höchstens 8 MiB und 40 Millionen Pixel je Bild
   und 200 pro Datei. Im Editor zeigt der Eintrag *Markdown-Preview* seines
   Menüs *Ansicht* (Strg+Umschalt+M) den Text daneben dargestellt und folgt
-  dem Tippen: nach einer Pause zeigt die Vorschau die Stelle der Zeile, in
-  der du tippst.
+  dem Tippen (nach einer Pause): die Vorschau des Editors hält die Zeile,
+  in der du tippst, sichtbar, auch in langen Texten und in Texten ohne
+  Überschriften.
   Mit markdown-it-py (axross-markdown bringt es mit) zeigt der Viewer den
   vollen Umfang – Fußnoten (nummeriert wie auf GitHub: ein Verweis auf eine
   Fußnote, die es nicht gibt, bleibt wie geschrieben, jede Stelle hat ihren
@@ -1083,7 +1096,10 @@ eines floating Panels dockt es wieder an.
   Zitat, einer Hinweisbox, Definition oder Fußnote und bei HTML-Tabellen und -Listen:
   ein solcher Block bleibt, wo er steht, und wird beim Scrollen in Stücken gesetzt. Eine
   Überschrift, Tabellenzeile oder ein Begriff mit mehr als 100 Formeln zeigt den Rest als
-  TeX, mit einem Hinweis. Code über 500 Zeilen oder 40 000 Zeichen steht auf seinem
+  TeX, mit einem Hinweis. Ist der Text einer Überschrift oder einer Tabellenzelle länger
+  als 2000 Zeichen, wird er im Fenster mit „…“ gekürzt (der Hinweis sagt das); der
+  Editor zeigt die ganze Zeile. Eine Fußnote, die oft zitiert wird, zeigt ihre ersten
+  20 Rücksprünge, gefolgt von „und N weitere“. Code über 500 Zeilen oder 40 000 Zeichen steht auf seinem
   grauen Grund ohne Rahmen. Codeblöcke werden in einem eigenen Prozess
   eingefärbt; einer, der länger als 5 Sekunden braucht, erscheint ohne
   Farben. Listen, die tiefer als 16 Ebenen, und Zitate, die tiefer als 8
@@ -1092,7 +1108,9 @@ eines floating Panels dockt es wieder an.
   und sagt das. Anker `<a id>` / `<a name>` dürfen Ziffern
   und Punkte enthalten (`#26.8.0`), Fußnoten-Bezeichner passen ohne Rücksicht auf Groß-
   und Kleinschreibung, und GitHubs `` $`…`$ `` ist ebenfalls eine Formel, ebenso `$$ … $$`
-  mit Leerzeichen innen. Die Mathematik kennt die gängigen Symbole von KaTeX, Argumente aus
+  mit Leerzeichen innen. `$$…$$` auf eigenen Zeilen ist eine abgesetzte Formel, auch
+  direkt nach einer Textzeile oder der `[!NOTE]`-Zeile einer Hinweisbox, wie auf
+  GitHub. Die Mathematik kennt die gängigen Symbole von KaTeX, Argumente aus
   einem Zeichen (`\frac12`, `\sqrt5`), `\choose`, `\bigcup`, `\lbrace`, `\ket`, `\mathscr`,
   `\operatorname*` und verschachtelte Indizes; `\cfrac`, `\overset`,
   `\underset` und `\stackrel` werden nur in abgesetzten Formeln gestapelt (im Text und im
@@ -1100,7 +1118,8 @@ eines floating Panels dockt es wieder an.
   ist. Eine Datei, die nicht UTF-8 ist, wird als Windows-1252 / Latin-1
   gelesen. Einen Text, den der Parser nicht lesen kann (oder der zu lange
   dauert), zeigt der Viewer, wie er geschrieben ist, mit einem Hinweis auf
-  den Grund – nie eine leere Seite oder ein Hänger. Eine Formel, die mehr
+  den Grund – nie eine leere Seite oder ein Hänger. Bei einer Datei, die
+  sich nicht lesen lässt, steht der Grund in der Seite. Eine Formel, die mehr
   als 64 Gruppen tief verschachtelt ist, erscheint als ihr TeX mit dem
   Hinweis „(nested more than 64 deep: shown as written)“. Ein Bild, dessen
   Adresse nicht erlaubt ist (`file:` oder eine `data:`-Adresse, die kein
@@ -1116,9 +1135,10 @@ eines floating Panels dockt es wieder an.
   Nummern (`1. ☐ a`). Das eigenständige `axross-markdown [DATEI…]` öffnet den Viewer;
   `--term` (die Terminal-Ausgabe, mit den Optionen von mdcat), `--html DATEI|-` (eine
   HTML-Seite), `--help` und `--version` starten kein Qt, und eine unbekannte Option ist ein Fehler.
-  Unter Windows öffnet `axross-markdown.exe` kein Konsolenfenster; für die
-  Terminal-Ansicht nimm `axross-mdcat.exe` (oder `axross-markdown --term`
-  aus einer Konsole).
+  Unter Windows öffnet `axross-markdown.exe` kein Konsolenfenster; die
+  Terminal-Ansicht ist `axross-mdcat.exe` (oder `axross-markdown --term`
+  aus einer Konsole), und ihre Ausgabe in eine Pipe oder eine Datei ist
+  UTF-8.
   Fehlt eine Systembibliothek, die das Fenster braucht (libEGL auf einem
   minimalen Linux), nennt es die Bibliothek und das Paket, das sie
   liefert, und verweist auf `--term` / `--html`. axross-markdown folgt dem

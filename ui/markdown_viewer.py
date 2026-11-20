@@ -227,6 +227,9 @@ class MarkdownViewerDialog(QDialog):
         for keys, slot in (
             (QKeySequence.StandardKey.Find, lambda: self.find_field.setFocus()),
             (QKeySequence.StandardKey.ZoomIn, lambda: self.view.zoom_by(1)),
+            *(((QKeySequence("Ctrl+="), lambda: self.view.zoom_by(1)),)  # (Ctrl++ without Shift: it did nothing -
+              if QKeySequence("Ctrl+=") not in QKeySequence.keyBindings(QKeySequence.StandardKey.ZoomIn)
+              else ()),  # unless the platform's own zoom key is it: two on one key fire neither)
             (QKeySequence.StandardKey.ZoomOut, lambda: self.view.zoom_by(-1)),
             (QKeySequence("Ctrl+0"), lambda: self.view.zoom_by(0)),
             (QKeySequence("F5"), self.reload),
@@ -398,8 +401,13 @@ class MarkdownViewerDialog(QDialog):
             self.loaded_once = True
             return
         if error is not None:
-            self.view.status.setText(tr("Cannot read {path}: {error}").format(
-                path=MV.printable(self.path), error=MV.printable(error)))
+            said = tr("Cannot read {path}: {error}").format(path=MV.printable(self.path), error=MV.printable(error))
+            self.view.status.setText(said)
+            # (said in the page too: a missing file was a blank page, the reason in the status line only)
+            name = MV.printable(posixpath.basename(self.path) or self.path).replace("`", "'")
+            self.view.show_text(tr("{name} cannot be read: {error}").format(
+                name="`" + name + "`", error=MV.printable(error).replace("`", "'")), anchor, scroll)
+            self.view.status.setText(said)
             return
         text, self.cut = result
         if self.shown_as == "text":

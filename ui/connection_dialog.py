@@ -317,11 +317,33 @@ class ConnectionDialog(QDialog):
         # ADB: over the network (adb tcpip) or the USB cable, which device
         self._adb_mode = QComboBox()
         self._adb_mode.addItem(tr("TCP / Wi-Fi"), "tcp")
-        self._adb_mode.addItem(tr("USB"), "usb")
+        self._adb_mode.addItem(tr("USB / adb server"), "usb")
         self._adb_mode.setToolTip(tr(
             "TCP / Wi-Fi: the phone listens on the network after \"adb tcpip 5555\". "
-            "USB: the phone on the cable (no adb server may hold it)."))
+            "USB / adb server: the phones the running adb server sees (shared with the "
+            "console's adb), or without one the phone on the cable directly."))
         conn_form.addRow(tr("Mode:"), self._adb_mode)
+        # The phones connected now: the adb server's list (with their
+        # states), or the USB descriptors when no server runs.
+        self._adb_devices_row = QWidget()
+        devices_layout = QHBoxLayout(self._adb_devices_row)
+        devices_layout.setContentsMargins(0, 0, 0, 0)
+        self._adb_devices = QComboBox()
+        self._adb_devices.setToolTip(tr("The phones connected now; choosing one fills in its "
+                                        "serial."))
+        self._adb_devices.addItem(tr("any connected device"), "")
+        self._adb_devices.activated.connect(self._on_adb_device_chosen)
+        devices_layout.addWidget(self._adb_devices, 1)
+        self._adb_refresh = QPushButton(tr("Refresh"))
+        self._adb_refresh.setToolTip(tr("List the connected phones again"))
+        self._adb_refresh.clicked.connect(self._refresh_adb_devices)
+        devices_layout.addWidget(self._adb_refresh)
+        conn_form.addRow(tr("Device:"), self._adb_devices_row)
+        self._adb_devices_hint = QLabel()
+        self._adb_devices_hint.setWordWrap(True)
+        conn_form.addRow("", self._adb_devices_hint)
+        self._adb_discovery = None
+        self._adb_listing = False
         self._adb_usb_serial = QLineEdit()
         self._adb_usb_serial.setPlaceholderText(tr("any connected device"))
         self._adb_usb_serial.setToolTip(tr(
@@ -1090,6 +1112,101 @@ class ConnectionDialog(QDialog):
         """ADB over the USB cable is chosen."""
         return self._selected_protocol() == "adb" and self._adb_mode.currentData() == "usb"
 
+    def _refresh_adb_devices_once(self) -> None:
+        if self._adb_discovery is None and not self._adb_listing and self._adb_usb():
+            self._refresh_adb_devices()
+
+    def _refresh_adb_devices(self) -> None:
+        """List the connected phones (off the GUI thread): the adb
+        server's, or the USB descriptors without a server."""
+        from core import adb_server
+        from ui.off_gui import run_off_gui
+
+        if self._adb_listing:
+            return
+        self._adb_listing = True
+        try:
+            found = run_off_gui(adb_server.discover)
+        except Exception as exc:  # noqa: BLE001 - shown, not raised
+            log.info("ADB device list: %s", exc)
+            found = adb_server.Discovery("none", note=str(exc))
+        finally:
+            self._adb_listing = False
+        self._show_adb_devices(found)
+
+    def _show_adb_devices(self, found) -> None:
+        """Fill the device list from *found* (core.adb_server.Discovery)."""
+        self._adb_discovery = found
+        combo = self._adb_devices
+        current = self._adb_usb_serial.text().strip()
+        combo.clear()
+        combo.addItem(tr("any connected device"), "")
+        states = {
+            "device": tr("ready"),
+            "unauthorized": tr("not allowed yet"),
+            "authorizing": tr("not allowed yet"),
+            "offline": tr("offline"),
+            "no permissions": tr("no permission"),
+        }
+        for device in found.devices:
+            state = states.get(device.state, device.state)
+            combo.addItem(f"{device.label()} ({state})", device.serial)
+        index = combo.findData(current) if current else 0
+        combo.setCurrentIndex(max(0, index))
+        self._adb_devices_hint.setText(self._adb_hint(found, combo.currentIndex()))
+        self._apply_adb_mode()
+
+    def _on_adb_device_chosen(self, index: int) -> None:
+        found = self._adb_discovery
+        serial = self._adb_devices.itemData(index) or ""
+        device = next((d for d in (found.devices if found else ()) if d.serial == serial), None)
+        if device is None or device.state != "no permissions" or found.source == "server":
+            self._adb_usb_serial.setText(serial)
+        self._adb_devices_hint.setText(self._adb_hint(found, index))
+        self._set_form_row_visible(self._adb_devices_hint, bool(self._adb_devices_hint.text()))
+
+    def _adb_hint(self, found, index: int) -> str:
+        """What the list means and, for a phone that cannot be used yet
+        (the chosen one, or any when none is chosen), what to do."""
+        if found is None:
+            return ""
+        serial = self._adb_devices.itemData(index) or ""
+        device = next((d for d in found.devices if d.serial == serial), None)
+        if device is not None:
+            return self._adb_state_hint([device.state])
+        trouble = self._adb_state_hint([d.state for d in found.devices])
+        return " ".join(t for t in (self._adb_source_hint(found), trouble) if t)
+
+    @staticmethod
+    def _adb_state_hint(states: list[str]) -> str:
+        if "unauthorized" in states or "authorizing" in states:
+            return tr("The phone has not allowed this computer yet: unlock it, answer \"Allow "
+                      "USB debugging?\" with Allow, then press Refresh.")
+        if "offline" in states:
+            return tr("The adb server lists the phone as offline: plug it in again or run "
+                      "\"adb reconnect\", then press Refresh.")
+        if "no permissions" in states:
+            return tr("No permission for the phone's USB device: add a udev rule for Android "
+                      "devices (51-android.rules), plug the phone in again and press Refresh.")
+        return ""
+
+    @staticmethod
+    def _adb_source_hint(found) -> str:
+        if found.source == "server" and not found.devices:
+            return tr("The adb server on {address} sees no phone. Plug it in, unlock it and "
+                      "turn on USB debugging, then press Refresh.").format(address=found.address)
+        if found.source == "server":
+            return tr("Through the adb server on {address}: axross shares the phones with the "
+                      "console's adb.").format(address=found.address)
+        if found.source == "usb" and not found.devices:
+            return tr("No adb server runs and no phone with USB debugging was found on USB.")
+        if found.source == "usb":
+            return tr("No adb server runs: axross opens the phone over USB itself. With a "
+                      "running adb server (\"adb start-server\") axross shares the phone with "
+                      "the console's adb.")
+        return tr("The connected phones could not be listed (no adb server answers and libusb "
+                  "is not available).")
+
     def _apply_adb_mode(self) -> None:
         """The ADB rows: Mode for ADB, the serial for USB. USB has no
         host, port, IP version or proxy - those rows go."""
@@ -1097,6 +1214,12 @@ class ConnectionDialog(QDialog):
         usb = self._adb_usb()
         self._set_form_row_visible(self._adb_mode, is_adb)
         self._set_form_row_visible(self._adb_usb_serial, usb)
+        self._set_form_row_visible(self._adb_devices_row, usb)
+        self._set_form_row_visible(self._adb_devices_hint, usb and bool(
+            self._adb_devices_hint.text()))
+        if usb and self._adb_discovery is None:
+            # The first look at USB lists the phones (after the switch).
+            QTimer.singleShot(0, self._refresh_adb_devices_once)
         if not is_adb:
             return
         for widget in (self._host, self._port, self._addr_family):
@@ -1944,9 +2067,9 @@ class ConnectionDialog(QDialog):
                 QMessageBox.warning(self, tr("Validation"), tr("Host is required."))
                 return False
             serial = self._adb_usb_serial.text().strip()
-            if self._adb_usb() and not re.fullmatch(r"[A-Za-z0-9_\-]*", serial):
+            if self._adb_usb() and not re.fullmatch(r"[A-Za-z0-9._:%@\-]*", serial):
                 QMessageBox.warning(self, tr("Validation"), tr(
-                    "The USB serial may hold only letters, digits, \"-\" and \"_\", as "
+                    "The serial may hold only letters, digits and \". _ : % @ -\", as "
                     "\"adb devices\" shows it."))
                 return False
         elif proto in HOST_ROW_AS or proto in ("postgres", "mongodb", "redis", "ldap", "slp"):

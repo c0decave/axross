@@ -1633,6 +1633,70 @@ STREAM_ROWS = 4 * STREAM_LINES
 LONG_PARAGRAPH = 2000
 _PLAIN_ROW = re.compile(r"(?![#>=`$<\[]|[-+*_](?:[ \t]|[-+*_ \t]*\Z)|\d{1,9}[.)](?:[ \t]|\Z)|[:~][ \t])"
                         r"[^\s|$`<][^|$`<]*\Z")
+#: A paragraph's line longer than this is broken at its spaces into lines of about half of it.
+LONG_LINE = STREAM_PART_CHARS
+
+
+def _long_lines_broken(rows: list[str]) -> tuple[list[str], frozenset]:
+    """*rows* with each paragraph's line longer than LONG_LINE - one of markup (links, emphasis, code:
+    more than one character in a hundred), slow to parse - broken into lines at spaces (a line end in
+    a paragraph reads as the space it was), and the numbers of the lines a part may begin with: a line of
+    700 KB was one part, parsed whole before anything showed (12 s). Never in code, a table, a heading."""
+    if not any(len(row) > LONG_LINE for row in rows):
+        return rows, frozenset()
+    out, broken, fence = [], set(), None
+    for row in rows:
+        opened = _FENCE.match(row)
+        if fence is not None:
+            if opened and opened.group(1)[0] == fence[0] and len(opened.group(1)) >= len(fence):
+                fence = None
+            out.append(row)
+            continue
+        if opened:
+            fence = opened.group(1)
+            out.append(row)
+            continue
+        if len(row) <= LONG_LINE or row[:1] in " \t>|#" or "|" in row[:200] or _REFERENCE.match(row) \
+                or sum(row.count(mark) for mark in "[*_`<$") * 100 < len(row):
+            # (a line of words is parsed fast and laid out a line at a time: as it is - its wrapping too)
+            out.append(row)
+            continue
+        at, step = 0, LONG_LINE // 2
+        while at < len(row):
+            cut = row.find(" ", at + step) if at + step < len(row) else -1
+            piece = row[at:] if cut < 0 else row[at:cut]
+            if at:
+                piece = piece.lstrip(" ")
+                if piece[:1] in "#>-+*=|0123456789:~`" or not piece:  # (no block may begin there)
+                    out[-1] += " " + piece
+                    at = len(row) if cut < 0 else cut + 1
+                    continue
+                broken.add(len(out))
+            out.append(piece)
+            at = len(row) if cut < 0 else cut + 1
+    return out, frozenset(broken)
+
+
+_PLAIN_TICKS_ROW = re.compile(r"(?![#>=$<\[]|`{3}|[-+*_](?:[ \t]|[-+*_ \t]*\Z)|\d{1,9}[.)](?:[ \t]|\Z)|[:~][ \t])"
+                              r"[^\s|$<][^|$<]*\Z")
+_TICKS = re.compile(r"`+")
+
+
+def _closed_spans_row(row: str) -> bool:
+    """A paragraph's line whose code spans open and close on it - plain as _PLAIN_ROW's otherwise: 150,000
+    lines of short code spans were one paragraph, one part - nothing shown for a minute."""
+    if "`" not in row or not _PLAIN_TICKS_ROW.match(row):
+        return False
+    opened = 0
+    for run in _TICKS.finditer(row):
+        width = len(run.group(0))
+        if not opened:
+            opened = width
+        elif width == opened:
+            opened = 0
+    return not opened
+
+
 #: The labels a part refers to ("[label]": a link's, a reference's, an image's).
 _LABEL = re.compile(r"\[([^\[\]]{1,999})\]")
 _FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
@@ -1853,6 +1917,7 @@ def _text_parts(text: str, lines: int | None = None) -> list[tuple[str, bool, in
     if plan is not None:  # (the notes' definitions: a part of their own, the last - never cut)
         text, notes, _labels, noted = plan
     rows = text.split("\n")
+    rows, broken = (rows, frozenset()) if plan is not None else _long_lines_broken(rows)
     cuts, fence, since, ordinal, plain, size = [0], None, 0, None, 0, 0
     # (a footnote's definition no link's: all again in the last part - note_plan)
     definitions = [row for row in rows if _REFERENCE.match(row) and not row.lstrip().startswith("[^")]
@@ -1868,18 +1933,21 @@ def _text_parts(text: str, lines: int | None = None) -> list[tuple[str, bool, in
             continue
         since += 1
         size += len(row) + 1
-        plain = plain + 1 if _PLAIN_ROW.match(row) else 0
+        plain = plain + 1 if _PLAIN_ROW.match(row) or _closed_spans_row(row) else 0
         numbered = _NUMBERED_ITEM.match(row)
         if numbered:  # (a top-level ordered list's item: the number it is shown with)
             ordinal = int(numbered.group(1)) if ordinal is None else ordinal + 1
         elif row.strip() and row[:1] not in " \t":
             ordinal = None  # (the list has ended)
         if (since >= lines or size >= STREAM_PART_CHARS) and number and row.strip() \
-                and (row[:1] not in " \t>|" or GOES_ON in row[:2]) \
+                and (row[:1] not in " \t>|" or GOES_ON in row[:2]
+                     or (row[:1] == "|" and not rows[number - 1].strip() and number + 1 < len(rows)
+                         and _TABLE_DELIMITER.match(rows[number + 1]))) \
                 and not _FRONT_LINE.match(row) \
                 and (_TOP_ITEM.match(row) or not rows[number - 1].strip()
                      or plain > LONG_PARAGRAPH  # (a paragraph of thousands of lines: cut in it)
-                     or (_REFERENCE.match(row) and _REFERENCE.match(rows[number - 1]))) \
+                     or (_REFERENCE.match(row) and _REFERENCE.match(rows[number - 1]))
+                     or number in broken) \
                 and number not in noted:  # (... and between definitions)
             cuts.append(number)
             since = size = 0

@@ -7,6 +7,8 @@
 # The heavy steps write their output to $RUNNER_TEMP/job.log as well; a
 # failed job shows the log's last lines as annotations
 # (packaging/ci_log_tail.py), readable through the API without the logs.
+# Nothing is built before axross's supply-chain gate and the tests
+# (tests.yml, called as a reusable workflow) pass.
 name: release
 
 on:
@@ -18,7 +20,13 @@ permissions:
   contents: read
 
 jobs:
+  # The supply-chain gate on requirements.lock.txt, then the tests (tests.yml):
+  # no job below starts before both pass.
+  ci:
+    uses: ./.github/workflows/tests.yml
+
   python:
+    needs: ci
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -68,6 +76,7 @@ jobs:
         if-no-files-found: error
 
   binaries:
+    needs: ci
     strategy:
       fail-fast: false
       matrix:
@@ -133,11 +142,21 @@ jobs:
           # --svg-worker (core.svg_worker) - the frozen path, its bootloader in between.
           AXROSS_BUNDLE_SMOKE=1 "$bin" --script packaging/svg_check.py > svg.txt
           grep -q 'svg drawn' svg.txt || { echo "::error::no SVG drawn through --svg-worker"; exit 1; }
+          # The other children it starts as itself: --lex-worker (a YAML and a Python block, their
+          # colours asserted) and --image-worker (a PNG decoded).
+          AXROSS_BUNDLE_SMOKE=1 "$bin" --script packaging/children_check.py > children.txt
+          grep -q 'children checked' children.txt || { echo "::error::a child of the binary failed"; cat children.txt; exit 1; }
+          # The terminal view colours code through its own lexing child (a 24-bit colour code in the output).
+          printf '```yaml\nname: build\nretries: 3\n```\n' > yaml.md
           if [ "${{ runner.os }}" = "Windows" ]; then
             # (the window program opens no console there: the terminal view is axross-mdcat.exe)
             "release/axross-mdcat-${{ matrix.suffix }}" --no-pager --color never smoke.md > mdcat.txt
             grep -q 'Smoke' mdcat.txt || { echo "::error::axross-mdcat.exe wrote no heading"; exit 1; }
+            "release/axross-mdcat-${{ matrix.suffix }}" --no-pager --color truecolor yaml.md > yaml.txt
+          else
+            "$bin" --term --no-pager --color truecolor yaml.md > yaml.txt
           fi
+          grep -q $'\x1b\\[38;2;' yaml.txt || { echo "::error::YAML not coloured by the terminal view's --lex-worker"; exit 1; }
           if [ "${{ runner.os }}" = "Linux" ]; then
             "$bin" --term --no-pager --color never smoke.md > smoke.txt
             grep -q 'Smoke' smoke.txt || { echo "::error::--term wrote no heading"; exit 1; }

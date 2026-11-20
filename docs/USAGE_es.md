@@ -339,9 +339,19 @@ layouts guardados.
 - **Teléfonos Android (ADB).** Dos modos en el perfil. *TCP / Wi-Fi*:
   conecta el teléfono por USB una vez, activa la depuración USB, ejecuta
   `adb tcpip 5555` y usa la IP del teléfono y el puerto 5555 (se puede usar
-  un proxy SOCKS o HTTP). *USB*: el teléfono en el cable; el número de
-  serie USB (como lo muestra `adb devices`) es opcional - vacío es el
-  primer teléfono encontrado. No hay login: axross usa la clave de la
+  un proxy SOCKS o HTTP). *USB / servidor adb*: el teléfono en el cable. La lista Dispositivo
+  (Actualizar la vuelve a leer) muestra los teléfonos conectados ahora con
+  su estado - listo, aún no permitido (acepta la pregunta en el teléfono),
+  offline, sin permiso; elegir uno rellena su número de serie (como lo
+  muestra `adb devices`), vacío es el único teléfono en USB. Si el servidor
+  adb de las platform tools corre en 127.0.0.1:5037 (`adb start-server`,
+  Android Studio o cualquier orden `adb` lo arranca), axross llega al
+  teléfono a través de él y lo comparte con el `adb` de la consola - también
+  se pueden elegir teléfonos que el servidor tiene por Wi-Fi
+  (`adb connect`); sin servidor axross abre el teléfono por USB él mismo.
+  El modo TCP hacia localhost:5037 usa también el servidor. axross solo usa
+  un servidor adb en este ordenador: un `ADB_SERVER_SOCKET` con otro equipo
+  se ignora. No hay login: axross usa la clave de la
   herramienta adb `~/.android/adbkey` y la crea si falta; el teléfono no
   conoce ningún nombre de usuario ni de equipo. En la primera conexión el
   teléfono pregunta "¿Permitir depuración USB?" - desbloquéalo y acepta en
@@ -351,15 +361,16 @@ layouts guardados.
   conexión, así que navegar espera por ella. La *depuración inalámbrica*
   de Android 11 (código de emparejamiento, puerto aleatorio, TLS) no está
   soportada - usa `adb tcpip 5555`. USB en Linux necesita libusb-1.0 del
-  sistema (`pip install 'axross[adb]'` trae la parte de Python); un
-  servidor adb en marcha retiene el teléfono (antes `adb kill-server`), y
+  sistema (`pip install 'axross[adb]'` trae la parte de Python); se nombra un programa que no es un servidor adb y retiene el teléfono, y
   sin permiso sobre el dispositivo añade una regla udev para dispositivos
   Android, tu usuario al grupo `plugdev` y vuelve a conectar el teléfono.
   Tras una conexión caída la siguiente acción se reconecta sola; las
   acciones largas en el teléfono (una suma de comprobación, copiar o mover
   allí, borrar una carpeta grande, instalar un APK) se esperan hasta una
-  hora; los archivos subidos reciben `rw-r--r--` y conservan la fecha de
-  modificación del origen.
+  hora; los archivos subidos reciben `rw-r--r--`, conservan la fecha de
+  modificación del origen y van primero a un nombre temporal junto al
+  archivo, que lo sustituye al completarse - una subida rota deja el
+  archivo antiguo como estaba.
 
 ## Layout multi-panel
 
@@ -937,8 +948,9 @@ vuelve a acoplar.
   sigue el lugar que se lee, código resaltado, zoom (Ctrl +/-/0),
   búsqueda (Ctrl+F marca cada coincidencia y dice cuál de cuántas; Enter
   o F3 la siguiente, Shift+Enter o Shift+F3 la anterior), Recargar (F5) y
-  Editar (F4). El botón de zoom entre − y + muestra el tamaño del texto
-  en porcentaje; haz clic en él (o pulsa Ctrl+0) para el tamaño original.
+  Editar (F4). Ctrl+rueda, Ctrl++ (o Ctrl+=) y Ctrl+- hacen zoom del texto
+  entre 25 % y 400 %; el botón muestra el nivel, y si haces clic en él (o
+  pulsas Ctrl+0) vuelve al tamaño original.
   Un archivo local se muestra de nuevo cuando cambia en el
   disco, y el lugar que se leía se mantiene. *Export* guarda la página
   como HTML (con sus imágenes dentro, nada que pudiera cargar de otro
@@ -998,7 +1010,9 @@ vuelve a acoplar.
   nunca un archivo secreto, como máximo 8 MiB y 40 millones de píxeles
   cada una y 200 por archivo. En el editor, *View → Markdown Preview*
   (Ctrl+Shift+M) muestra el texto renderizado al lado y sigue lo que
-  escribes: tras una pausa muestra el lugar de la línea en la que escribes.
+  escribes (tras una pausa): la vista previa del editor mantiene a la vista
+  la línea en la que escribes, también en textos largos y en textos sin
+  encabezados.
   Con markdown-it-py instalado (axross-markdown lo trae), el visor muestra
   el conjunto completo - notas al pie (numeradas como en GitHub: una referencia
   a una nota que no existe queda como está escrita, cada cita tiene su propio
@@ -1020,7 +1034,10 @@ vuelve a acoplar.
   de un elemento de lista, una cita, una alerta, una definición o una nota, ni las tablas y
   listas HTML: un bloque así se queda donde está y se compone por partes al desplazarse. Un
   encabezado, una fila de tabla o un término con más de 100 fórmulas muestra el resto como
-  TeX, con una nota. El código de más de 500
+  TeX, con una nota. El texto de un encabezado o de una celda de tabla de
+  más de 2000 caracteres se corta con «…» en la ventana (el aviso lo dice);
+  el editor muestra la línea entera. Una nota al pie citada muchas veces
+  muestra sus primeros 20 regresos, seguidos de «and N more». El código de más de 500
   líneas o 40 000 caracteres se muestra sobre su fondo gris sin recuadro. Los
   bloques de código se colorean en un proceso aparte; uno que tarda más de
   5 segundos se muestra sin colores. Las listas
@@ -1029,7 +1046,9 @@ vuelve a acoplar.
   mientras tanto la cancela y lo dice. Las anclas
   `<a id>` / `<a name>` pueden llevar dígitos y puntos (`#26.8.0`), las etiquetas de notas
   al pie coinciden sin importar mayúsculas, y el `` $`…`$ `` de GitHub también es una
-  fórmula, igual que `$$ … $$` con espacios dentro. Las matemáticas cubren los símbolos
+  fórmula, igual que `$$ … $$` con espacios dentro. `$$…$$` en líneas
+  propias es una fórmula destacada, también justo después de una línea de
+  texto o de la línea `[!NOTE]` de una alerta, como en GitHub. Las matemáticas cubren los símbolos
   comunes de KaTeX, argumentos de un solo carácter (`\frac12`, `\sqrt5`), `\choose`,
   `\bigcup`, `\lbrace`, `\ket`, `\mathscr`, `\operatorname*` y los índices anidados;
   `\cfrac`, `\overset`, `\underset` y `\stackrel` se apilan solo en fórmulas destacadas (en el
@@ -1037,7 +1056,8 @@ vuelve a acoplar.
   escrito. Un archivo que no es UTF-8 se lee como Windows-1252 / Latin-1.
   Un texto que el parser no puede leer (o que tarda demasiado) se muestra
   tal como está escrito, con un aviso del motivo - nunca una página en
-  blanco ni un bloqueo. Una fórmula anidada más de 64 grupos se muestra
+  blanco ni un bloqueo. Un archivo que no se puede leer muestra el motivo
+  en la página. Una fórmula anidada más de 64 grupos se muestra
   como su TeX con la nota "(nested more than 64 deep: shown as written)".
   Una imagen cuya dirección no se permite (`file:`, o una dirección
   `data:` que no es una imagen) es un recuadro que la nombra, de un
@@ -1052,8 +1072,8 @@ vuelve a acoplar.
   de terminal, con las opciones de mdcat), `--html ARCHIVO|-` (una página HTML), `--help` y
   `--version` no inician Qt, y una opción desconocida es un error.
   En Windows, `axross-markdown.exe` no abre ninguna ventana de consola;
-  para la vista de terminal usa `axross-mdcat.exe` (o
-  `axross-markdown --term` desde una consola).
+  la vista de terminal es `axross-mdcat.exe` (o `axross-markdown --term`
+  desde una consola), y su salida a una tubería o a un archivo es UTF-8.
   Si falta una biblioteca del sistema que la ventana necesita (libEGL en un
   Linux mínimo), nombra la biblioteca y el paquete que la trae y remite a
   `--term` / `--html`. axross-markdown sigue el esquema claro u oscuro del
