@@ -271,7 +271,7 @@ def test_edge_the_tool_deadline_outlasts_the_longest_script_run() -> None:
         M.MAX_SCRIPT_TIMEOUT_S + SR.STOP_GRACE_SECONDS + SR.OUTPUT_DRAIN_SECONDS
     )
     props = tool.schema["properties"]
-    assert props["timeout_s"]["maximum"] == M.MAX_SCRIPT_TIMEOUT_S
+    assert props["timeout"]["maximum"] == M.MAX_SCRIPT_TIMEOUT_S
     assert props["args"]["maxItems"] == M.MAX_SCRIPT_ARGS
 
 

@@ -281,12 +281,44 @@ def test_edge_a_vanished_cut_is_dropped_and_not_offered_as_administrator(
 
 def test_happy_the_entries_still_there_move_and_the_vanished_one_is_named(
         win, tmp_path, monkeypatch):
+    """b.txt was selected and is gone before the check looks: left out and
+    named. (The test removed it only after the check had been started on
+    its thread: when that thread looked first, b.txt was still there and
+    its job failed instead - 2 runs in 10.)"""
     src, dst, left, right, asked = _setup(win, tmp_path, monkeypatch, "cancel", deny=False)
     (src / "b.txt").write_text("b")
+    selected = [str(src / "a.txt"), str(src / "b.txt")]
+    (src / "b.txt").unlink()
     shown: list = []
     win.statusBar().messageChanged.connect(shown.append)
-    win._request_transfer(left, right, [str(src / "a.txt"), str(src / "b.txt")], move=True)
-    (src / "b.txt").unlink()
+    win._request_transfer(left, right, selected, move=True)
     assert _pump(lambda: (dst / "a.txt").exists() and not (src / "a.txt").exists())
     assert asked == []
     assert any("1 item is no longer there" in m and "b.txt" in m for m in shown), shown
+    assert [j.source_path for j in win._transfer_manager.all_jobs()] == [str(src / "a.txt")]
+
+
+def test_sad_a_source_that_vanishes_after_the_check_fails_its_own_job_only(
+        win, tmp_path, monkeypatch):
+    """The other order, made certain: b.txt goes after the check saw it
+    (while the conflict prompt is open, say). Its job fails with the reason,
+    a.txt is moved all the same, and the summary counts both."""
+    src, dst, left, right, asked = _setup(win, tmp_path, monkeypatch, "cancel", deny=False)
+    (src / "b.txt").write_text("b")
+    real = MP.undeletable_sources
+
+    def check_then_vanish(*args, **kwargs):
+        found = real(*args, **kwargs)
+        (src / "b.txt").unlink()
+        return found
+
+    monkeypatch.setattr(MP, "undeletable_sources", check_then_vanish)
+    shown: list = []
+    win.statusBar().messageChanged.connect(shown.append)
+    win._request_transfer(left, right, [str(src / "a.txt"), str(src / "b.txt")], move=True)
+    assert _pump(lambda: any("1 moved, 1 failed" in m for m in shown)), shown
+    assert (dst / "a.txt").read_text() == "a" and not (src / "a.txt").exists()
+    assert not (dst / "b.txt").exists()
+    (failed,) = [j for j in win._transfer_manager.all_jobs() if j.error_message]
+    assert failed.source_path == str(src / "b.txt")
+    assert "No such file" in failed.error_message or "not there" in failed.error_message

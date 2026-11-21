@@ -242,8 +242,6 @@ def test_guard_no_formula_takes_long_to_lay_out():
 
 @pytest.mark.parametrize("full", [True, False], ids=["markdown-it", "md4c"])
 def test_guard_a_page_of_hostile_formulas_never_holds_up_the_window(full):
-    from PyQt6.QtCore import QTimer
-
     from ui import markdown_view as MV
 
     formulas = _fuzz(7, 30)
@@ -252,21 +250,17 @@ def test_guard_a_page_of_hostile_formulas_never_holds_up_the_window(full):
     view.full = view.full and full
     view.resize(900, 700)
     view.show()
-    beats, last = [], [time.thread_time()]  # (the GUI thread's own time a turn: not the loaded machine's)
+    from tests.markdown_heartbeat import Heartbeat, assert_responsive
 
-    def beat():
-        now = time.thread_time()
-        beats.append(now - last[0])
-        last[0] = now
 
-    timer = QTimer()
-    timer.timeout.connect(beat)
-    timer.start(10)
+    heartbeat = Heartbeat(10)  # (the GUI thread's own time a turn - not the loaded machine's - and the gaps)
     began = time.monotonic()
     view.render(text)
     view.load_rest()
     assert until(lambda: view._readable and not view.more(), 120)
-    timer.stop()
+    _turn, gap = heartbeat.stop()
+    beats = heartbeat.turns
+    assert_responsive(gap, "the heartbeat's longest gap")
     assert time.monotonic() - began < 60
     assert max(beats) < 0.5, sorted(beats)[-5:]  # (one formula: 19 s, 32 s)
     assert "Formula 37" in view.browser.toPlainText()

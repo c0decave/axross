@@ -50,7 +50,7 @@ keys and the slash-commands.
 
 Every surface runs a script as `__main__`: `__name__ == "__main__"`
 and `__file__` is the script's path - `axross --script`, Run, the
-scheduler, `script_run`, and also **Run in Console**, `.run` and
+scheduler, the MCP tool `run_script`, and also **Run in Console**, `.run` and
 `axross.run_script()` (in the Console only while it runs; the prompt
 has no `__file__`). An `if __name__ == "__main__":` block runs on
 every one of them.
@@ -350,14 +350,14 @@ expose:
 
 | Tool | Description | Gated by |
 |---|---|---|
-| `script_list` | Names of every saved script | `--mcp-allow-scripts` |
-| `script_api_schema` | The `axross.*` API as JSON (`axross.api_schema()`) | `--mcp-allow-scripts` |
-| `script_read` | Source of a saved script | `--mcp-allow-scripts` |
-| `script_write` | Save Python source as `<name>.py` (mode 0o600) | `--mcp-allow-scripts` |
-| `script_run` | Run a saved script in its own process (`args`, `timeout_s`); return exit status, stdout/stderr, an uncaught exception | `--mcp-allow-scripts` |
-| `script_delete` | Remove a saved script | `--mcp-allow-scripts` |
+| `list_scripts` | Names of every saved script | `--mcp-allow-scripts` |
+| `get_script_api` | The `axross.*` API as JSON (`axross.api_schema()`) | `--mcp-allow-scripts` |
+| `read_script` | Source of a saved script | `--mcp-allow-scripts` |
+| `write_script` | Save Python source as `<name>.py` (mode 0o600) | `--mcp-allow-scripts` |
+| `run_script` | Run a saved script in its own process (`args`, `timeout`); return exit status, stdout/stderr, an uncaught exception | `--mcp-allow-scripts` |
+| `delete_script` | Remove a saved script | `--mcp-allow-scripts` |
 
-`script_run` runs arbitrary Python as the server's user — in a child
+`run_script` runs arbitrary Python as the server's user — in a child
 process with empty stdin, a wall-clock timeout and its own process
 group, but with every right of that user — so the flag is **separate
 from `--mcp-write`**: don't enable scripting for an LLM client you
@@ -373,7 +373,7 @@ An LLM (or cron, CI, any caller without a human at the keyboard) needs
 a few guarantees the REPL never had to give. What the API offers:
 
 - **Discover before you write.** `axross.api_schema()` (MCP:
-  `script_api_schema`; committed as
+  `get_script_api`; committed as
   [`scripting-api.json`](scripting-api.json)) is the API as JSON,
   built from the code: rules and errors for scripts, the names by
   topic, per function the signature with types, the whole docstring,
@@ -386,7 +386,7 @@ a few guarantees the REPL never had to give. What the API offers:
   [LLM_GUIDE.md](LLM_GUIDE.md) §9 and §12 are the short path for a
   language model.
 - **Nobody to ask.** Without a Qt window and without a terminal on
-  stdin — or with `AXROSS_NONINTERACTIVE=1`, which `script_run` sets —
+  stdin — or with `AXROSS_NONINTERACTIVE=1`, which `run_script` sets —
   `axross.confirm()` raises `axross.NonInteractiveError` (a
   `PermissionError`) instead of guessing an answer. Pass
   `assume_yes=True` to answer yes without asking there;
@@ -402,7 +402,7 @@ a few guarantees the REPL never had to give. What the API offers:
   with axross.open("backup-server") as b:
       print(axross.summarize(b, "/var/log").render())
   ```
-- **Arguments and exit status.** `script_run` hands `args` to the
+- **Arguments and exit status.** `run_script` hands `args` to the
   script as `sys.argv[1:]` and reports `sys.exit(n)` as `exit`; an
   uncaught exception comes back as `error_type`, `error` and
   `traceback`.

@@ -92,7 +92,8 @@ def _viewer(path: Path, backend=None):
 
     viewer = MarkdownViewerDialog(backend or LocalFS(), str(path))
     viewer.show()
-    assert wait_until(lambda: viewer.loaded_once)
+    # (shown: a page with code is made on a worker - its coloured by a child the GUI thread never waits for)
+    assert wait_until(lambda: viewer.loaded_once and viewer.view._readable)
     return viewer
 
 
@@ -279,7 +280,9 @@ def test_sad_an_unreadable_file_is_said(tmp_path):
     (tmp_path / "x.md").write_text("# x")
     viewer = MarkdownViewerDialog(Failing(), str(tmp_path / "x.md"))
     try:
-        assert wait_until(lambda: "Permission denied" in viewer.view.status.text())
+        # (in words, not the system's error with its path again - the twenty-first review)
+        assert wait_until(lambda: "you may not read it" in viewer.view.status.text())
+        assert "Errno" not in viewer.view.status.text()
         assert not viewer.loaded_once
     finally:
         _close(viewer)

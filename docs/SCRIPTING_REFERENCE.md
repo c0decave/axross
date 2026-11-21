@@ -1285,7 +1285,7 @@ REPL-without-GUI both work. Accepts ``y/yes/j/ja/s/si/sí`` as Yes;
 an empty answer is ``default_yes``.
 
 When no human can answer - no Qt window and no terminal (an MCP
-``script_run``, the Scripts dock, cron, a pipe) or
+``run_script`` call, the Scripts dock, cron, a pipe) or
 ``AXROSS_NONINTERACTIVE=1`` - it raises :class:`NonInteractiveError`
 instead of guessing, whatever ``default_yes`` says. Pass
 ``assume_yes=True`` to answer yes without asking in that case; a
@@ -1317,7 +1317,7 @@ Example::
 True when a human can answer :func:`confirm` right now.
 
 False under ``AXROSS_NONINTERACTIVE=1`` (set for every MCP
-``script_run``), off the GUI thread of a Qt window, and without a Qt
+``run_script`` call), off the GUI thread of a Qt window, and without a Qt
 window when stdin is not a terminal. Scripts that a machine may run
 can branch on it instead of catching :class:`NonInteractiveError`.
 
@@ -1380,7 +1380,7 @@ names plus the types they and the session methods use; ``names=[]``
 gives the index alone (groups, rules, errors, session methods). An
 unknown name raises :class:`ValueError`.
 
-The MCP tool ``script_api_schema`` returns the same data, and
+The MCP tool ``get_script_api`` returns the same data, and
 ``docs/scripting-api.json`` is a copy of it. For prose, use
 :func:`docs`::
 

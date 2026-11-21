@@ -148,7 +148,7 @@ def test_happy_a_call_naming_a_remote_backend_goes_to_axross(fake, tmp_path):
     assert "from axross" in first["content"] and "local text" in second["content"]
     offered = {t["function"]["name"]: t["function"] for t in server.requests[0]["tools"]}
     assert "backend" in offered["read_file"]["parameters"]["properties"]
-    assert "remote_profiles" in offered  # a tool only axross has
+    assert "list_remote_profiles" in offered  # a tool only axross has
 
 
 def test_happy_a_host_only_tool_goes_to_axross_without_a_backend(fake, tmp_path):

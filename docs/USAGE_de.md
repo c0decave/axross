@@ -647,6 +647,42 @@ ein Durchlauf, der mittendrin abbricht, sagt, wie viel eingereiht wurde.
 - **Alle abbrechen** stoppt auch eine Kopie oder ein Verschieben, dessen
   Ordner noch durchlaufen wird: keine seiner Dateien kommt in die
   Warteschlange.
+- **Während es läuft.** Eine Ordnerkopie liest zuerst die Ordner und legt
+  sie im Ziel an, reiht dann jede Datei ein und kopiert sie danach: Die
+  Ordner können lange vor ihren Dateien erscheinen. Die Statusleiste sagt
+  es, bis die Kopie fertig ist, auch bei geschlossenem
+  Übertragungen-Dock – „Vorbereitung: 3.210 Dateien eingereiht…“, dann
+  „Kopieren: 1.210 von 10.000 Dateien – 12 %“; ein Klick darauf öffnet
+  das Übertragungen-Dock. Die Statuszeile des Ziel-Panes zeigt „Kopieren
+  läuft: 1.210 von 10.000“ mit einem schmalen Balken, der Gesamtbalken
+  des Docks „12 % – 1.210 von 10.000 Dateien“.
+- **Viele kleine Dateien.** Zu und von SFTP gehen die kleinen Dateien
+  eines Ordners in Gruppen (bis zu 64 Dateien zu höchstens 64 KiB, ihre
+  Anfragen zugleich unterwegs): Jede Datei wird trotzdem in ihre eigene
+  versteckte Temp-Datei geschrieben, ihre Größe geprüft, das Ziel direkt
+  vor dem Umbenennen angesehen (eine Antwort wie „nicht ersetzen“ gilt
+  auch für eine Datei, die inzwischen aufgetaucht ist), an ihren Platz
+  umbenannt und einzeln im Journal vermerkt; schlägt eine fehl, dann nur
+  sie. axross bestätigt, was der Server schickt, sofort (TCP_QUICKACK unter
+  Linux), sodass ein Server, der seine zweite Antwort bis zur Bestätigung
+  zurückhält (Nagle), nicht 40 ms darauf wartet. Ein Ordner mit 10.000
+  Dateien zu wenigen Bytes ist in Sekunden kopiert, nicht in Minuten –
+  auch von einem SFTP-Server auf einen anderen. Die Integritätsprüfung
+  einer Gruppe hasht alle ihre Dateien mit einem einzigen `sha256sum` auf
+  dem Server (jeder Name gequotet, lange Gruppen aufgeteilt), nicht mit
+  einem Befehl pro Datei; eine Datei, deren Zeile in der Antwort nicht
+  eindeutig ist, wird einzeln gehasht.
+- **Links in einem Ordner.** Ein symbolischer Link in einem kopierten
+  Ordner wird als Link kopiert, mit demselben Ziel – auf eine Datei, einen
+  Ordner oder nichts, im kopierten Ordner oder außerhalb: Worauf er zeigt,
+  wird weder gelesen noch verfolgt, und ein Verschieben verschiebt den
+  Link. Kann eine Seite keine symbolischen Links aufnehmen (S3 und andere
+  Objektspeicher, FTP, WebDAV, ein SFTP-Server, der keine Links liest),
+  wird der Link mit einem Hinweis im Übertragungen-Dock übersprungen
+  („übersprungen: symbolischer Link nicht kopiert …“); die Kopie läuft
+  weiter. Einen Link, den du allein auswählst, kopiert axross wie bisher:
+  einen Link auf eine Datei als diese Datei, einen Link auf einen Ordner
+  lehnt es mit Begründung ab.
 - **Verschieben auf einem Server.** Ein Verschieben, dessen Quelle und
   Ziel auf derselben Verbindung liegen (Ablegen auf einem Ordner im
   selben Pane, F6 zwischen zwei Panes einer Verbindung, Ausschneiden und
@@ -851,12 +887,12 @@ wieder nach vorn); das Fenster zeigt die Index-Datei.
   Dateien – nur nach einem vollständigen Lauf: ein abgebrochener oder einer,
   der an die Grenze der Einträge stieß, entfernt nichts, und Zeilen unter
   einem Ordner, dessen Auflistung scheiterte, bleiben. Das MCP-Tool
-  `index_build` fügt nur hinzu; mit `prune` fragt es zusätzlich das Backend
+  `build_index` fügt nur hinzu; mit `prune` fragt es zusätzlich das Backend
   nach jedem indizierten Pfad unter dem Ordner und entfernt die Zeilen,
   deren Datei fehlt.
 - **Wie er durchsucht wird.** Teilstring im Namen (ohne Groß/Klein in
   jeder Schrift: „ärger“ findet `Ärger.txt`, „strasse“ findet `Straße.pdf` –
-  auch im MCP-Werkzeug `search`), Endung, Größen- und Zeitraum, eine
+  auch im MCP-Werkzeug `search_index`), Endung, Größen- und Zeitraum, eine
   Verbindung. Endung, Größe und Datum nutzen SQLite-Indizes; ein
   Namens-Teilstring (`LIKE '%…%'`) kann keinen nutzen und liest jede Zeile.
   Die Suche läuft im Hintergrund, das Fenster listet die ersten 5000
@@ -1895,7 +1931,7 @@ Icon und axross-Glyph als Fenster-Icon.
 
 Der headless-Prompt von ``confirm()`` fragt nur, wenn stdin ein
 Terminal ist. Ohne Mensch – Cron, Pipe, der Kindprozess des
-Scripts-Docks, ein MCP-``script_run`` oder ``AXROSS_NONINTERACTIVE=1`` –
+Scripts-Docks, ein MCP-Aufruf von ``run_script`` oder ``AXROSS_NONINTERACTIVE=1`` –
 wirft er ``axross.NonInteractiveError``, statt den Default zu nehmen;
 ``assume_yes=True`` antwortet dort ohne Rückfrage mit Ja.
 
@@ -1952,8 +1988,8 @@ axross --mcp-server --mcp-write --mcp-root ~/data    # Schreib-Tools (auf diesen
 axross --mcp-server --mcp-http 127.0.0.1:7331        # HTTP-Loopback
 ```
 
-Die Read-only-Datei-Tools (`list_dir`, `stat`, `read_file`,
-`checksum`, `search`, `walk`, `grep`, …), die Schreib-Tools bei
+Die Read-only-Datei-Tools (`list_directory`, `get_path_info`, `read_file`,
+`compute_file_checksum`, `search_index`, `walk_tree`, `search_content`, …), die Schreib-Tools bei
 `--mcp-write`, die Capability-Gruppen von `--mcp-tools`
 (`axross --mcp-list-tools` gibt jedes Tool aus, das ein Satz Flags
 anbietet), `resources/*`-Endpoints,
@@ -2132,7 +2168,7 @@ und `commondir` und `config.worktree` der Git-Ordner von Submodulen und
 Worktrees (`.git/modules/<Name>`, `.git/worktrees/<Name>`), die während der
 Aufgabe entstehen. Ein neues Repository, das der Agent in seinem Ordner
 anlegt, ist nicht abgedeckt (die dokumentierte Grenze eines kompromittierten
-Workers). MCP-`chmod` setzt kein setuid-, setgid- oder Sticky-Bit, macht
+Workers). MCP-`set_permissions` setzt kein setuid-, setgid- oder Sticky-Bit, macht
 nichts für Gruppe oder alle schreibbar und ändert keine Datei mit weiteren
 Hardlinks (ihr Modus gilt für jeden Namen).
 
@@ -2553,7 +2589,7 @@ Container bubblewrap wählen – podman kann dort keine eigenen Container
 starten.
 
 Ein MCP-Client kann dem gleichen lokalen Modell mit `--mcp-tools agent`
-(`agent_run`) eine Aufgabe übergeben; dieses Modell kann nur lesen
+(`run_llm_agent`) eine Aufgabe übergeben; dieses Modell kann nur lesen
 ([MCP_de.md](MCP_de.md) §9.9).
 
 ### Mit dem Agenten sprechen
@@ -2876,8 +2912,9 @@ Environment. Der Check beim Start läuft nicht mit
 - `~/.config/axross/agent/voice.json` – die Einstellungen der Stimme (`0o600`).
 - `~/.config/axross/audio.json` – die Audio-Einstellungen: Backend,
   Ausgabe- und Eingabegerät, Lautstärken (`0o600`).
-- `~/.config/axross/column_prefs.json` – Spaltenbreiten und
-  ausgeblendete Spalten, eine Datei für alle Panes.
+- `~/.config/axross/column_prefs.json` – Reihenfolge, Breiten und
+  ausgeblendete Spalten, eine Datei für alle Panes; ein Pane schreibt nur,
+  was du darin geändert hast, die Änderung eines anderen Panes bleibt.
 - `~/.config/axross/agent/settings.json` – Agent-Einstellungen (Modi, Zugriff,
   Sandbox-Profile, MCP-Server; `0o600`).
 - `~/.config/axross/agent/sessions/` – eine JSON-Datei je behaltenem Agent-Tab (`0o600`).

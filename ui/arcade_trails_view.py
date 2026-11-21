@@ -288,7 +288,12 @@ class TrailsView(AC.ArcadeView):
             self._ribbons = None
             self.turns = {0: [], 1: []}
         fresh: dict[int, int] = {}
-        for cell, i in itertools.islice(g.trail.items(), self._trail_seen, None):
+        # only the cells added since the last tick, read from the trail's
+        # newest end: skipping the first _trail_seen cells walked the whole
+        # trail every tick - work that grew with the round
+        new = len(g.trail) - self._trail_seen
+        added = list(itertools.islice(reversed(g.trail.items()), new)) if new > 0 else []
+        for cell, i in reversed(added):
             if i >= 0:
                 self._paths.setdefault(i, []).append(cell)
                 fresh[i] = fresh.get(i, 0) + 1

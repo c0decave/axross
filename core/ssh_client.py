@@ -11,11 +11,14 @@ import posixpath
 import shlex
 import socket
 import stat as stat_module
+import struct
 import subprocess
 import threading
 import time
 import weakref
 from collections.abc import Callable
+from contextlib import contextmanager
+from contextlib import suppress as contextlib_suppress
 from datetime import datetime
 from pathlib import Path
 from typing import IO, TYPE_CHECKING
@@ -32,6 +35,7 @@ from core.proxy import (
     ProxyConfig,
     create_direct_socket,
     create_proxy_socket,
+    enable_quick_ack,
     enable_tcp_nodelay,
 )
 from core.redaction import redact_text
@@ -233,23 +237,91 @@ class _SurrogateSftpClient(paramiko.SFTPClient):
         nums.intersection_update(expecting)
         return bool(nums)
 
+    #: Bytes taken from the channel and not handed out yet (_read_all).
+    _rbuf: bytearray | None = None
+    _rpos = 0
+    #: What one read from the channel asks for at most (_read_all).
+    READ_CHUNK = 64 * 1024
+
     def _read_all(self, n):
         """paramiko's, but a request whose answer is late is not failed
-        while the SSH connection still answers (:meth:`_still_waiting`)."""
-        out = b""
+        while the SSH connection still answers (:meth:`_still_waiting`) -
+        and the channel is read in chunks: paramiko read every answer with
+        two reads (its length, then the rest), each a lock and a wait on
+        the channel - for the answers of a batch of small files, more time
+        than everything else. What is read beyond *n* stays here for the
+        next answer (only this client reads its channel)."""
+        buf = self._rbuf
+        if buf is None:
+            buf = self._rbuf = bytearray()
         silent_since = None
-        while n > 0:
+        while len(buf) - self._rpos < n:
             try:
-                x = self.sock.recv(n)
+                x = self.sock.recv(max(n - (len(buf) - self._rpos), self.READ_CHUNK))
             except TimeoutError:
                 silent_since = self._still_waiting(silent_since)
                 continue
             if len(x) == 0:
                 raise EOFError()
             silent_since = None
-            out += x
-            n -= len(x)
+            if self._rpos:
+                del buf[:self._rpos]
+                self._rpos = 0
+            buf += x
+        start = self._rpos
+        self._rpos = start + n
+        out = bytes(buf[start:start + n])
+        if self._rpos == len(buf):
+            buf.clear()
+            self._rpos = 0
         return out
+
+    def answer_pending(self) -> bool:
+        """An answer can be read without waiting: a whole one is in this
+        client's buffer, or the channel has bytes already."""
+        buf = self._rbuf
+        if buf is not None and len(buf) - self._rpos >= 4:
+            size = int.from_bytes(buf[self._rpos:self._rpos + 4], "big")
+            if len(buf) - self._rpos - 4 >= size:
+                return True
+        ready = getattr(self.sock, "recv_ready", None)
+        return bool(ready()) if callable(ready) else False
+
+    #: Requests held back by :meth:`holding_requests`, as bytes on the wire.
+    _held_out: list | None = None
+
+    def _send_packet(self, t, packet):
+        held = self._held_out
+        if held is None:
+            return super()._send_packet(t, packet)
+        packet = packet.asbytes()
+        held.append(struct.pack(">I", len(packet) + 1) + bytes((t,)) + packet)
+        return None
+
+    @contextmanager
+    def holding_requests(self):
+        """Requests sent in the ``with`` body go out together at the next
+        :meth:`flush_requests` (and at its end): one write to the channel,
+        one SSH packet for many small SFTP requests, instead of one each
+        (a send() each, 0.1 - 0.3 ms of system time per request)."""
+        if self._held_out is not None:
+            yield
+            return
+        self._held_out = []
+        try:
+            yield
+        finally:
+            try:
+                self.flush_requests()
+            finally:
+                self._held_out = None
+
+    def flush_requests(self) -> None:
+        held = self._held_out
+        if held:
+            data = b"".join(held)
+            held.clear()
+            self._write_all(data)
 
     def _write_all(self, out):
         """paramiko's, with the same patience as :meth:`_read_all` for a
@@ -427,6 +499,9 @@ class _AnswersByNumber:
     owner, so paramiko hands each one over, whoever reads it) and keeps
     them by request number."""
 
+    #: Called with the request number of every answer kept (or None).
+    on_answer = None
+
     def __init__(self) -> None:
         self.answers: dict[int, tuple[int, paramiko.Message]] = {}
         #: Bytes of every answer received so far (names, longnames,
@@ -442,6 +517,8 @@ class _AnswersByNumber:
         self.last_size = size
         if not self.discard:
             self.answers[num] = (t, msg)
+            if self.on_answer is not None:
+                self.on_answer(num)
 
 
 def _listdir_attr(sftp: paramiko.SFTPClient, path: str) -> list[paramiko.SFTPAttributes]:
@@ -1411,6 +1488,9 @@ class SSHSession(SessionLifecycle):
             # Without it every request after an exec channel waited ~40 ms
             # for a delayed ACK (Nagle); see core.proxy.enable_tcp_nodelay.
             enable_tcp_nodelay(sock)
+            # And acknowledge at once: a server's Nagle held its second
+            # small answer ~40 ms for our delayed ACK (core.proxy).
+            sock = enable_quick_ack(sock)
 
             log.info("Creating SSH transport to %s:%d", profile.host, profile.port)
             self._transport = paramiko.Transport(sock)
@@ -1850,6 +1930,292 @@ class SSHSession(SessionLifecycle):
             return self.stat(path)
         except OSError as exc:
             return exc
+
+    #: Files in progress at the same time in :meth:`_pipelined`.
+    SMALL_FILES_IN_FLIGHT = 64
+
+    def _pipelined(self, sftp, steps: list) -> list:
+        """Run *steps* - one generator per file, each yielding the requests
+        of its next stage (``(command, *arguments)`` tuples) and getting
+        their answers (``(type, message)`` pairs) back, its return value
+        its result - with up to :data:`SMALL_FILES_IN_FLIGHT` of them on
+        the wire at once. The answers of a stage come back together; the
+        stages of one file run in order. Every request sent is answered
+        before this returns or raises (nothing is left for another call to
+        read)."""
+        receiver = _AnswersByNumber()
+        results: list = [None] * len(steps)
+        waiting: dict[int, list] = {}  # file -> [its generator, request numbers, unanswered]
+        owner_of: dict[int, int] = {}  # request number -> file
+        ready: list[int] = []  # files whose stage is all answered
+        upcoming = iter(range(len(steps)))
+        hold = getattr(sftp, "holding_requests", None)
+        flush = getattr(sftp, "flush_requests", lambda: None)
+        pending = getattr(sftp, "answer_pending", lambda: False)
+
+        def answered(num: int) -> None:
+            index = owner_of.pop(num, None)
+            if index is not None:
+                entry = waiting[index]
+                entry[2] -= 1
+                if not entry[2]:
+                    ready.append(index)
+
+        receiver.on_answer = answered
+
+        def advance(index: int, step, answers) -> None:
+            try:
+                wanted = step.send(answers) if answers is not None else next(step)
+            except StopIteration as stop:
+                results[index] = stop.value
+                return
+            nums = [sftp._async_request(receiver, command, *args) for command, *args in wanted]
+            waiting[index] = [step, nums, len(nums)]
+            for num in nums:
+                owner_of[num] = index
+
+        try:
+            with hold() if callable(hold) else contextlib_suppress():
+                while True:
+                    while len(waiting) < self.SMALL_FILES_IN_FLIGHT:
+                        index = next(upcoming, None)
+                        if index is None:
+                            break
+                        advance(index, steps[index], None)
+                    if not waiting:
+                        break
+                    # Every request out in one write; then the next answer
+                    # and those already here; each file whose stage is all
+                    # answered goes on.
+                    flush()
+                    sftp._read_response()
+                    while pending():
+                        sftp._read_response()
+                    done, ready[:] = list(ready), []
+                    for index in done:
+                        step, nums, _left = waiting.pop(index)
+                        advance(index, step, [receiver.answers.pop(num) for num in nums])
+        finally:
+            try:
+                while any(owner is receiver for owner in list(sftp._expecting.values())):
+                    sftp._read_response()
+            finally:
+                receiver.answers.clear()
+        return results
+
+    @staticmethod
+    def _status_error(sftp, answer, what: str, path: str) -> OSError | None:
+        """The OSError a STATUS *answer* stands for, None for "OK"."""
+        from paramiko.sftp import CMD_STATUS
+
+        t, msg = answer
+        if t != CMD_STATUS:
+            return OSError(errno.EIO, f"SFTP {what}: unexpected answer from the server", path)
+        try:
+            sftp._convert_status(msg)
+        except EOFError as exc:
+            return OSError(errno.EIO, f"SFTP {what}: {exc or 'end of file'}", path)
+        except OSError as exc:
+            if exc.filename is None:
+                exc.filename = path
+            return exc
+        return None
+
+    @_sftp_errors_as_oserror
+    def upload_small_files(self, items: list[dict]) -> list[dict]:
+        """Write small files to their temp names, pipelined across files:
+        per item ``{"temp", "data", "mode"}`` an OPEN that creates (or
+        truncates) *temp* with *mode* in its attributes, the WRITEs of
+        *data* (32 KiB each) and the CLOSE, then an LSTAT of *temp*.
+
+        Per item ``{"error", "temp"}``: the OSError that stopped it (None)
+        and the temp file's stat. Nothing is renamed: the caller checks
+        each file and commits with :meth:`commit_small_files`.
+
+        One by one, an upload of a 10-byte file was an OPEN, a WRITE, a
+        CLOSE, two LSTATs and a SETSTAT with the RENAME - five round trips
+        each, waited for one after the other."""
+        sftp = self.sftp
+        if not isinstance(sftp, paramiko.SFTPClient):  # a stand-in client (tests)
+            raise NotImplementedError("pipelined uploads need a paramiko SFTP client")
+        from paramiko.sftp import (
+            CMD_CLOSE,
+            CMD_HANDLE,
+            CMD_LSTAT,
+            CMD_OPEN,
+            CMD_WRITE,
+            SFTP_FLAG_CREATE,
+            SFTP_FLAG_TRUNC,
+            SFTP_FLAG_WRITE,
+            int64,
+        )
+
+        flags = SFTP_FLAG_WRITE | SFTP_FLAG_CREATE | SFTP_FLAG_TRUNC
+        chunk = 32 * 1024
+
+        def upload(item: dict):
+            temp, data = item["temp"], item["data"]
+            attrs = paramiko.SFTPAttributes()
+            attrs.st_mode = int(item["mode"]) & 0o7777
+            (answer,) = yield [(CMD_OPEN, sftp._adjust_cwd(temp), flags, attrs)]
+            if answer[0] != CMD_HANDLE:
+                return {"error": self._status_error(sftp, answer, "open", temp)
+                        or OSError(errno.EIO, "SFTP open: the server sent no handle", temp),
+                        "temp": None, "dest": None}
+            handle = answer[1].get_binary()
+            writes = [(CMD_WRITE, handle, int64(offset), data[offset:offset + chunk])
+                      for offset in range(0, len(data), chunk)]
+            answers = yield writes + [(CMD_CLOSE, handle)]
+            for answer in answers:
+                error = self._status_error(sftp, answer, "write", temp)
+                if error is not None:
+                    return {"error": error, "temp": None, "dest": None}
+            (answer,) = yield [(CMD_LSTAT, sftp._adjust_cwd(temp))]
+            temp_stat = self._stat_answer(sftp, temp, *answer)
+            if isinstance(temp_stat, OSError):
+                return {"error": temp_stat, "temp": None}
+            return {"error": None, "temp": temp_stat}
+
+        return self._pipelined(sftp, [upload(item) for item in items])
+
+    @_sftp_errors_as_oserror
+    def commit_small_files(self, items: list[dict]) -> list[dict]:
+        """For each ``{"temp", "dest", "mode", "mtime", "no_replace",
+        "decide"}``: :meth:`rename_with_attributes` - a SETSTAT of mode and
+        time and the RENAME onto *dest* (posix-rename, which replaces; the
+        plain RENAME with *no_replace*, which refuses a *dest* that is
+        there) - for all files pipelined. With *decide* an LSTAT of *dest*
+        comes first, in the same pipeline: ``decide(its stat or OSError)``
+        returns *no_replace*, or an exception that stops this file (in the
+        result as "refused"). Per item ``{"attributes_set", "error",
+        "refused"}``; a rename the server refused is tried again on its own
+        as rename_with_attributes does (FileExistsError for a taken name)."""
+        sftp = self.sftp
+        if not isinstance(sftp, paramiko.SFTPClient):  # a stand-in client (tests)
+            raise NotImplementedError("pipelined renames need a paramiko SFTP client")
+        from paramiko.sftp import CMD_EXTENDED, CMD_RENAME, CMD_SETSTAT
+
+        from paramiko.sftp import CMD_LSTAT
+
+        def commit(item: dict):
+            no_replace = bool(item.get("no_replace"))
+            decide = item.get("decide")
+            if decide is not None:
+                # The last look at the destination, one round trip before
+                # the rename (the conflict answers: "fail", "newer").
+                (answer,) = yield [(CMD_LSTAT, sftp._adjust_cwd(item["dest"]))]
+                verdict = decide(self._stat_answer(sftp, item["dest"], *answer))
+                if isinstance(verdict, BaseException):
+                    return {"attributes_set": False, "renamed": False, "error": None,
+                            "refused": verdict}
+                no_replace = bool(verdict)
+            item["no_replace"] = no_replace
+            attr = paramiko.SFTPAttributes()
+            if item.get("mode") is not None:
+                attr.st_mode = item["mode"]
+            if item.get("mtime") is not None:
+                attr.st_atime, attr.st_mtime = time.time(), item["mtime"]
+            old, new = sftp._adjust_cwd(item["temp"]), sftp._adjust_cwd(item["dest"])
+            rename = ((CMD_RENAME, old, new) if no_replace
+                      else (CMD_EXTENDED, "posix-rename@openssh.com", old, new))
+            set_answer, rename_answer = yield [(CMD_SETSTAT, old, attr), rename]
+            set_error = self._status_error(sftp, set_answer, "setstat", item["temp"])
+            renamed = self._status_error(sftp, rename_answer, "rename", item["dest"]) is None
+            return {"attributes_set": set_error is None, "renamed": renamed, "error": None}
+
+        results = self._pipelined(sftp, [commit(item) for item in items])
+        for item, result in zip(items, results):
+            if not result["renamed"] and result.get("refused") is None:
+                # As _rename_with_attributes: the plain RENAME on its own,
+                # which names a target that is there.
+                try:
+                    self._plain_rename(item["temp"], item["dest"])
+                except Exception as exc:  # noqa: BLE001 - this file's error
+                    result["error"] = exc if isinstance(exc, OSError) else OSError(str(exc))
+        return results
+
+    @_sftp_errors_as_oserror
+    def discard_small_files(self, paths: list[str]) -> None:
+        """REMOVE of each temp file of a batch that is not committed, the
+        requests pipelined; one that is not there (any more) is no error."""
+        sftp = self.sftp
+        if not isinstance(sftp, paramiko.SFTPClient) or not paths:
+            for path in paths:
+                with contextlib_suppress(OSError):
+                    self.remove(path)
+            return
+        from paramiko.sftp import CMD_REMOVE
+
+        def remove(path: str):
+            (answer,) = yield [(CMD_REMOVE, sftp._adjust_cwd(path))]
+            error = self._status_error(sftp, answer, "remove", path)
+            if error is not None and not isinstance(error, FileNotFoundError):
+                log.warning("Could not remove the partial upload %s: %s", path, error)
+
+        self._pipelined(sftp, [remove(path) for path in paths])
+
+    @_sftp_errors_as_oserror
+    def read_small_files(self, entries: list[tuple[str, int]]) -> dict[str, bytes]:
+        """The contents of small files, read with pipelined requests:
+        *entries* are ``(path, listed size)`` pairs; per file an OPEN, then
+        one READ of the listed size and one byte more together with the
+        CLOSE - up to :data:`SMALL_FILES_IN_FLIGHT` files at once
+        (:meth:`_pipelined`).
+
+        Copying a folder of many small files read them one after the other,
+        each an OPEN, a READ and a second READ that said "end of file":
+        three round trips per 10-byte file. A file whose answer ends at its
+        listed size is in the result (for a regular file SFTP v3 returns
+        all a READ asks for, or up to the end of the file); one that could
+        not be opened or read, or that holds more or less than listed, is
+        not - the transfer reads that one on its own, and reports what
+        goes wrong there."""
+        sftp = self.sftp
+        if not isinstance(sftp, paramiko.SFTPClient):  # a stand-in client (tests)
+            return {}
+        from paramiko.sftp import (
+            CMD_CLOSE,
+            CMD_DATA,
+            CMD_HANDLE,
+            CMD_OPEN,
+            CMD_READ,
+            CMD_STATUS,
+            SFTP_EOF,
+            SFTP_FLAG_READ,
+            int64,
+        )
+
+        from core.sftp_io import _close_transport
+
+        # Cancel of the running transfer closes the channel: a batch waiting
+        # on a silent network ends at once, not after the I/O time-out.
+        watch = transfer_hooks.watch_cancel(sftp.close, escalate=lambda: _close_transport(sftp))
+
+        def read(path: str, size: int):
+            (answer,) = yield [(CMD_OPEN, sftp._adjust_cwd(path), SFTP_FLAG_READ,
+                                paramiko.SFTPAttributes())]
+            if answer[0] != CMD_HANDLE:
+                return None  # not readable: the job opens it itself
+            handle = answer[1].get_binary()
+            (t, msg), _closed = yield [(CMD_READ, handle, int64(0), int(size) + 1),
+                                       (CMD_CLOSE, handle)]
+            if t == CMD_DATA:
+                data = msg.get_string()
+                return data if len(data) == size else None
+            if t == CMD_STATUS and size == 0 and msg.get_int() == SFTP_EOF:
+                return b""
+            return None
+
+        try:
+            contents = self._pipelined(sftp, [read(path, size) for path, size in entries])
+        except BaseException as exc:
+            if watch is not None and watch.fired:
+                raise InterruptedError(transfer_hooks.CANCELLED) from exc
+            raise
+        finally:
+            if watch is not None:
+                watch.stop()
+        return {path: data for (path, _size), data in zip(entries, contents) if data is not None}
 
     def _stat_answer(self, sftp, path: str, t: int, msg) -> FileItem | OSError:
         """What ``stat(path)`` returns or raises for LSTAT answer *t*/*msg*
@@ -2712,6 +3078,82 @@ class SSHSession(SessionLifecycle):
         if not hex_digest:
             return ""
         return f"{algorithm}:{hex_digest}"
+
+    #: Bytes of one batch hash command line, and files in it, at most:
+    #: far below any server's ARG_MAX (Linux 2 MiB, older systems 64 KiB).
+    CHECKSUM_COMMAND_MAX = 32 * 1024
+    CHECKSUM_FILES_MAX = 64
+
+    def checksum_many(self, paths: list[str], algorithm: str = "sha256") -> dict[str, str]:
+        """:meth:`checksum` of many files with one remote command per chunk
+        (``sha256sum -- 'p1' 'p2' ...``, every name quoted, the command line
+        at most :data:`CHECKSUM_COMMAND_MAX` bytes and
+        :data:`CHECKSUM_FILES_MAX` files): a batch of uploads asked one
+        command per file - an SSH channel, an exec and its output each.
+
+        ``{path: "sha256:<hex>"}`` for the files whose line in the output
+        could be told apart (core.exec_util.digests_from_sum_output); a file
+        with no line, or a line that is not clear, is left out - the caller
+        asks :meth:`checksum` for that one. Empty when the server has no
+        such tool or runs no commands (remembered as :meth:`checksum`
+        does) or the connection is gone; never raises for that."""
+        from core.exec_util import digests_from_sum_output
+
+        tool = {"sha256": "sha256sum", "sha1": "sha1sum", "md5": "md5sum"}.get(algorithm)
+        if not tool or not paths or algorithm in self._checksum_unavailable:
+            return {}
+        result: dict[str, str] = {}
+        chunk: list[str] = []
+        size = 0
+        prefix = len(tool) + 4
+        for path in paths:
+            try:
+                quoted = len(command_bytes(shlex.quote(path))) + 1
+            except OSError:
+                continue  # no command can name it: checksum() says so for it
+            if chunk and (size + quoted > self.CHECKSUM_COMMAND_MAX - prefix
+                          or len(chunk) >= self.CHECKSUM_FILES_MAX):
+                if not self._checksum_chunk(tool, algorithm, chunk, result,
+                                            digests_from_sum_output):
+                    return result
+                chunk, size = [], 0
+            chunk.append(path)
+            size += quoted
+        if chunk:
+            self._checksum_chunk(tool, algorithm, chunk, result, digests_from_sum_output)
+        return result
+
+    def _checksum_chunk(self, tool: str, algorithm: str, chunk: list[str], result: dict,
+                        parse) -> bool:
+        """One command of :meth:`checksum_many`; False when no further one
+        is worth sending (no tool, no commands, no connection)."""
+        command = command_bytes(f"{tool} -- " + " ".join(shlex.quote(p) for p in chunk))
+        try:
+            ran = self._run_on_channel(f"SSH {tool}", lambda chan: chan.exec_command(command))
+        except _ExecRefused as exc:
+            reason = exc.__cause__ or exc
+            for name in ("sha256", "sha1", "md5"):
+                self._checksum_unavailable[name] = (
+                    f"the server refuses to run commands ({reason})")
+            return False
+        except InterruptedError:
+            raise
+        except (OSError, paramiko.SSHException) as exc:
+            log.debug("batch %s of %d files failed: %s", tool, len(chunk), exc)
+            return False
+        stderr = ran.stderr.decode("utf-8", errors="replace")
+        if command_missing(ran.returncode, stderr, tool):
+            log.debug("%s unavailable on %s: %s", tool, self._profile.host, stderr.strip())
+            self._checksum_unavailable[algorithm] = "missing"
+            return False
+        if ran.truncated_stdout:
+            return True  # each file is asked on its own then
+        # A file the tool could not read has no line, the others count
+        # (a non-zero exit then says only that one failed).
+        names = {wire_path(path): path for path in chunk}
+        for name, digest in parse(ran.stdout, list(names), algorithm).items():
+            result[names[name]] = f"{algorithm}:{digest}"
+        return True
 
     def _attr_to_item(self, attr: paramiko.SFTPAttributes, name_override: str = "") -> FileItem:
         mode = attr.st_mode or 0

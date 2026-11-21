@@ -104,7 +104,27 @@ class _Sftp(SFTPServerInterface):
         except OSError as exc:
             return self._err(exc)
 
-    lstat = stat
+    def lstat(self, path):
+        """LSTAT as OpenSSH's: the link itself, not what it points to."""
+        try:
+            return SFTPAttributes.from_stat(os.lstat(self._real(path).rstrip("/") or "/"))
+        except OSError as exc:
+            return self._err(exc)
+
+    def readlink(self, path):
+        try:
+            return os.fsencode(os.readlink(self._real(path)))
+        except OSError as exc:
+            return self._err(exc)
+
+    def symlink(self, target_path, path):
+        """SYMLINK: the target as sent (a path on the server, or relative to
+        the link), the link at *path* - never replacing an entry there."""
+        try:
+            os.symlink(target_path, self._real(path))
+            return SFTP_OK
+        except OSError as exc:
+            return self._err(exc)
 
     def open(self, path, flags, attr):
         real = self._real(path)
@@ -249,16 +269,50 @@ class _Auth(paramiko.ServerInterface):
             else paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
         )
 
+    def __init__(self, server=None) -> None:
+        super().__init__()
+        self._server = server
+
     def check_channel_exec_request(self, channel, command):
-        return False  # no remote shell: checksum falls back to streaming
+        """No remote shell (checksum falls back to streaming) - unless the
+        server was made with *commands*: then the command runs in
+        ``/bin/sh`` on this machine (the server's root must be "/" for
+        its paths to mean the same), counted in ``stats["exec"]``."""
+        server = self._server
+        if server is None or not server.commands:
+            return False
+        server.stats["exec"] = server.stats.get("exec", 0) + 1
+        server.commands_run.append(command)
+
+        def run() -> None:
+            import subprocess
+
+            try:
+                done = subprocess.run(["/bin/sh", "-c", command], capture_output=True,
+                                      timeout=60, env=server.command_env)
+                channel.sendall(done.stdout)
+                channel.sendall_stderr(done.stderr)
+                channel.send_exit_status(done.returncode)
+            except Exception:  # noqa: BLE001 - a test server: the client sees EOF
+                channel.send_exit_status(255)
+            finally:
+                channel.close()
+
+        threading.Thread(target=run, daemon=True).start()
+        return True
 
 
 class SftpServer:
     """``SftpServer(root)`` listens on 127.0.0.1:<port>; any password works."""
 
     def __init__(self, root: str, extra_host_keys: tuple = (), *,
-                 resolve_links: bool = False) -> None:
+                 resolve_links: bool = False, commands: bool = False,
+                 command_env: dict | None = None) -> None:
         self.root = root
+        #: Run exec requests in /bin/sh (with *command_env*), see _Auth.
+        self.commands = commands
+        self.command_env = command_env
+        self.commands_run: list = []
         #: REALPATH resolves symlinks as OpenSSH's does (paramiko: text).
         self.resolve_links = resolve_links
         self.stats: dict = {}
@@ -291,7 +345,7 @@ class SftpServer:
             t.set_subsystem_handler("sftp", _BytesPathSftpServer, _Sftp, root=root, stats=stats,
                                     resolve_links=self.resolve_links)
             try:
-                t.start_server(server=_Auth())
+                t.start_server(server=_Auth(self))
             except (paramiko.SSHException, OSError, EOFError):
                 # The client hung up in the handshake (it refused the host
                 # key, say). That ends this connection, not the server: the

@@ -144,7 +144,7 @@ More screenshots, each with an explanation: **[the slideshow](../slideshow.md)**
    (stdio only) lets the LLM **write and run its own Python** as
    your user, each run in a child process with a timeout — not
    confined to the root, so treat it as a shell. `--mcp-tools GROUP[,…]` (or `all`) adds capability groups:
-   metadata, duplicates, packer, archive, crypto, index, filetype,
+   metadata, duplicates, archive, crypto, index, filetype,
    transfer, remote (saved profiles as extra backends, credentials
    only from the keyring, never a prompt) and extensions; their
    mutating tools also need `--mcp-write`. The `exec` group runs
@@ -228,8 +228,8 @@ More screenshots, each with an explanation: **[the slideshow](../slideshow.md)**
     library and answers "what IS this directory?" — git repo,
     PostgreSQL data dir, nginx config tree, k8s manifests, Maildir,
     web-server log dir, Python / Node / Docker projects, … Designed
-    so an LLM agent can plan without an N-thousand-entry list_dir
-    dump.
+    so an LLM agent can plan without a directory listing of
+    thousands of entries.
 
 16. **Authorised credential testing.** `axross.bruteforce()`,
     `spray()`, `enumerate_users()` for pentest engagements you have

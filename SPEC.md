@@ -100,7 +100,7 @@ queried before any irreversible privileged operation.
   hardened against malformed responses, archive-extract `..`
   rejection, output-size caps, `conn_health` reconnect rate limit.
 - **Axross ↔ MCP client (T2).** Mediated by MCP root pinned to
-  `backend.home()`, write tools off by default, `script_run` gated
+  `backend.home()`, write tools off by default, `run_script` gated
   by `--mcp-allow-scripts` AND non-paranoid security mode, task
   registry caps (`MAX_TASKS_PER_SCOPE`).
 - **Network ↔ MCP HTTP listener (T3).** Mediated by mTLS

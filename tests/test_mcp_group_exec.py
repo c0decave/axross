@@ -18,6 +18,7 @@ import hashlib
 
 import pytest
 
+from core import mcp_names as N  # noqa: E402
 from core import security_mode
 from core.backend import SessionLifecycle
 from models.exec_result import ExecResult
@@ -82,10 +83,15 @@ def test_happy_remote_script_goes_on_stdin_to_the_interpreter(tmp_path):
     assert box.calls[0]["stdin"] == b"echo $1\n"
 
 
-def test_happy_exec_backends_lists_what_can_run_commands(tmp_path):
+def test_happy_list_backends_says_what_can_run_commands(tmp_path):
     tools = _tools(tmp_path, box=_Shell(), win=_WinRM(), sw=_Cisco())
-    listed = {b["backend"]: b["kind"] for b in T.call(tools, "exec_backends", {})["backends"]}
-    assert listed == {"box": "posix-shell", "win": "powershell", "sw": "ios-show"}
+    want = {"box": "posix-shell", "win": "powershell", "sw": "ios-show"}
+    every = {b["id"]: b["commands"] for b in T.call(tools, "list_backends", {})}
+    assert {k: v for k, v in every.items() if v} == want and None in every.values()
+    only = T.call(tools, "list_backends", {"can_run_commands": True})
+    assert {b["id"]: b["commands"] for b in only} == want
+    # The former exec_backends is list_backends with can_run_commands=true.
+    assert T.call(tools, "exec_backends", {}) == only
 
 
 def test_happy_powershell_scripts_run_on_winrm(tmp_path):
@@ -244,7 +250,7 @@ def test_edge_the_manifest_names_both_flags(tmp_path):
     manifest = mcp_groups.tool_manifest(
         tools, groups={"exec"}, allow_write=False, allow_scripts=False, allow_exec=True
     )
-    entry = next(t for t in manifest["tools"] if t["name"] == "remote_exec")
+    entry = next(t for t in manifest["tools"] if N.internal(t["name"]) == "remote_exec")
     assert entry["mutating"] is True
     assert entry["required_flags"] == ["--mcp-tools exec", "--mcp-allow-exec"]
 
@@ -290,7 +296,7 @@ def test_edge_list_tools_shows_exec_only_with_the_flag(capsys):
     ):
         code, err, _s, _h = _cli("--mcp-server", "--mcp-list-tools", *flags)
         assert code == 0, err
-        names = [t["name"] for t in json.loads(capsys.readouterr().out)["tools"]]
+        names = [N.internal(t["name"]) for t in json.loads(capsys.readouterr().out)["tools"]]
         assert ("remote_exec" in names) is expected
 
 

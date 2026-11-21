@@ -4,6 +4,32 @@ What changed in each release of axross-headless-mcp. The code is axross's MCP
 server (https://github.com/c0decave/axross), written out by axross's
 `scripts/export_standalone.py mcp`; its version is axross's.
 
+## 0.15.183 - 2026-11-21
+
+The MCP server's part of axross 0.15.183: consistent tool and parameter
+names, the former ones still working, and faster, verified copies.
+
+- **52 tools, named verb, then resource** (`list_directory`, `get_path_info`,
+  `search_content`, `walk_tree`, `delete_path`, `copy_path_to_backend`,
+  `open_remote_profile`, `run_backend_command` ...). Merged:
+  `metadata_export_file` into `export_metadata` (`out`, with `--mcp-write`),
+  `exec_backends` into `list_backends` (`can_run_commands`, `commands`),
+  `extensions_info` into `list_extensions` (`name`); the group `packer` into
+  `archive`. The former names still work in `tools/call` and
+  `--mcp-tools packer` still works; `tools/list` shows the new names only.
+- **`search_index`** returns `{entries, indexed, truncated}` as text too.
+- **One parameter name per meaning:** `max_depth` counts from 1 everywhere,
+  `subfolder_levels` (from 0) in `scan_file_types` and `copy_path_to_backend`;
+  `search_index` takes `pattern` and `max_results`, `run_script` `timeout`,
+  `create_archive` `path`. The former names still work.
+- **`copy_path_to_backend`** copies local links to files as files, like
+  `copy_tree`; the instructions come in sections and say how errors answer.
+- **`read_file_version`** takes `offset` and `encoding` like `read_file`;
+  `scan_file_types` lists refused secret files in `unreadable`;
+  `list_backends` marks lent connections. The shared write rules are said
+  once in the instructions; the descriptions say how refused files and
+  failed copies show up.
+
 ## 0.15.182 - 2026-11-20
 
 The MCP server's part of axross 0.15.182: tool definitions an agent can use

@@ -50,7 +50,7 @@ die Tasten des Scripts-Docks und die Slash-Commands.
 
 Jeder Weg führt ein Skript als `__main__` aus: `__name__ == "__main__"`
 und `__file__` ist der Skriptpfad – `axross --script`, Ausführen, der
-Scheduler, `script_run` und ebenso **In der Konsole ausführen**, `.run` und
+Scheduler, das MCP-Tool `run_script` und ebenso **In der Konsole ausführen**, `.run` und
 `axross.run_script()` (in der Console nur während des Laufs; der Prompt
 hat kein `__file__`). Ein Block `if __name__ == "__main__":` läuft auf
 jedem davon.
@@ -357,14 +357,14 @@ freigeschaltet:
 
 | Tool | Beschreibung | Freigeschaltet durch |
 |---|---|---|
-| `script_list` | Namen aller gespeicherten Skripte | `--mcp-allow-scripts` |
-| `script_api_schema` | Die `axross.*`-API als JSON (`axross.api_schema()`) | `--mcp-allow-scripts` |
-| `script_read` | Quelltext eines gespeicherten Skripts | `--mcp-allow-scripts` |
-| `script_write` | Python-Quelle als `<name>.py` speichern (Mode 0o600) | `--mcp-allow-scripts` |
-| `script_run` | Ein gespeichertes Skript im eigenen Prozess ausführen (`args`, `timeout_s`); liefert Exit-Status, stdout/stderr, eine nicht gefangene Exception | `--mcp-allow-scripts` |
-| `script_delete` | Ein gespeichertes Skript löschen | `--mcp-allow-scripts` |
+| `list_scripts` | Namen aller gespeicherten Skripte | `--mcp-allow-scripts` |
+| `get_script_api` | Die `axross.*`-API als JSON (`axross.api_schema()`) | `--mcp-allow-scripts` |
+| `read_script` | Quelltext eines gespeicherten Skripts | `--mcp-allow-scripts` |
+| `write_script` | Python-Quelle als `<name>.py` speichern (Mode 0o600) | `--mcp-allow-scripts` |
+| `run_script` | Ein gespeichertes Skript im eigenen Prozess ausführen (`args`, `timeout`); liefert Exit-Status, stdout/stderr, eine nicht gefangene Exception | `--mcp-allow-scripts` |
+| `delete_script` | Ein gespeichertes Skript löschen | `--mcp-allow-scripts` |
 
-`script_run` führt beliebigen Python-Code als Benutzer des Servers aus —
+`run_script` führt beliebigen Python-Code als Benutzer des Servers aus —
 in einem Kindprozess mit leerem stdin, Wall-Clock-Timeout und eigener
 Prozessgruppe, aber mit allen Rechten dieses Benutzers. Das Flag ist
 deshalb **getrennt von `--mcp-write`**: Scripting nicht für einen
@@ -381,7 +381,7 @@ braucht ein paar Zusagen, die der REPL nie geben musste. Was die API
 bietet:
 
 - **Erst nachsehen, dann schreiben.** `axross.api_schema()` (MCP:
-  `script_api_schema`; eingecheckt als
+  `get_script_api`; eingecheckt als
   [`scripting-api.json`](scripting-api.json)) ist die API als JSON, aus
   dem Code gebaut: Regeln und Exceptions für Skripte, die Namen nach
   Thema, je Funktion die Signatur mit Typen, der ganze Docstring, seine
@@ -395,7 +395,7 @@ bietet:
   [LLM_GUIDE.md](LLM_GUIDE.md) §9 und §12 sind der kurze Weg für ein
   Sprachmodell.
 - **Niemand zum Fragen.** Ohne Qt-Fenster und ohne Terminal auf stdin
-  — oder mit `AXROSS_NONINTERACTIVE=1`, das `script_run` setzt — wirft
+  — oder mit `AXROSS_NONINTERACTIVE=1`, das `run_script` setzt — wirft
   `axross.confirm()` `axross.NonInteractiveError` (ein
   `PermissionError`), statt eine Antwort zu raten. `assume_yes=True`
   antwortet dort ohne Rückfrage mit Ja; `axross.is_interactive()` sagt
@@ -412,7 +412,7 @@ bietet:
   with axross.open("backup-server") as b:
       print(axross.summarize(b, "/var/log").render())
   ```
-- **Argumente und Exit-Status.** `script_run` gibt `args` als
+- **Argumente und Exit-Status.** `run_script` gibt `args` als
   `sys.argv[1:]` ans Skript und meldet `sys.exit(n)` als `exit`; eine
   nicht gefangene Exception kommt als `error_type`, `error` und
   `traceback` zurück.

@@ -162,12 +162,14 @@ def _group_tools(group: str, root: str) -> set:
     """The tools the group *group* adds to the core file tools."""
     from core import agent as A
     from core import llm_profiles as LP
+    from core import mcp_names as N
 
     if group not in _GROUP_TOOLS:
         def names(groups):
             config = A.AgentConfig(profile=LP.LLMProfile(name="x"), root=root,
                                    groups=frozenset(groups))
-            return {t.name for t in A.build_tools(config)}
+            # The names the model is offered: the public ones (core.mcp_names).
+            return {N.public(t.name) for t in A.build_tools(config)}
 
         others = set().union(*(names({g}) for g in AGS.OFFERED_GROUPS if g != group))
         _GROUP_TOOLS[group] = names({group}) - names(set()) - others

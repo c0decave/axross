@@ -1440,6 +1440,47 @@ def enable_tcp_nodelay(sock) -> bool:
     return True
 
 
+class _QuickAckSocket(socket.socket):
+    """A TCP socket that acknowledges what it received at once.
+
+    A server with Nagle's algorithm on (OpenSSH's sshd does not switch it
+    off for an sftp session, paramiko never does) holds its second small
+    answer until the first is acknowledged - and Linux delays a lone ACK by
+    up to 40 ms. Two pipelined SFTP requests (a WRITE and its CLOSE, a
+    SETSTAT and its RENAME) then cost 40 ms instead of one round trip: an
+    upload of 200 small files took 24 s to the local test server, 2.7 s
+    with this. Linux clears TCP_QUICKACK as it pleases, so it is set again
+    after every read (one setsockopt, beside a read of a whole packet)."""
+
+    def recv(self, bufsize: int, *args) -> bytes:
+        data = super().recv(bufsize, *args)
+        try:
+            self.setsockopt(socket.IPPROTO_TCP, socket.TCP_QUICKACK, 1)
+        except OSError:
+            pass
+        return data
+
+
+def enable_quick_ack(sock):
+    """*sock* as a :class:`_QuickAckSocket` (the same connection, its
+    timeout kept) where the system has TCP_QUICKACK (Linux); anything else
+    - another system, a ProxyCommand pipe, a UNIX socket - as it is."""
+    if not hasattr(socket, "TCP_QUICKACK") or type(sock) is not socket.socket:
+        return sock
+    try:
+        if sock.family not in (socket.AF_INET, socket.AF_INET6) or sock.type != socket.SOCK_STREAM:
+            return sock
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_QUICKACK, 1)
+        timeout = sock.gettimeout()
+        family, kind, proto = sock.family, sock.type, sock.proto
+        quick = _QuickAckSocket(family, kind, proto, fileno=sock.detach())
+        quick.settimeout(timeout)
+        return quick
+    except OSError as exc:
+        log.debug("TCP_QUICKACK not set: %s", exc)
+        return sock
+
+
 def create_direct_socket(
     host: str,
     port: int,

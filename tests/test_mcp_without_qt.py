@@ -28,6 +28,9 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from core import mcp_names as N  # noqa: E402  (pure Python: no Qt)
 
 #: Prepended to every child: blocks PyQt6 and reports what tried to import it.
 BLOCK_QT = r'''
@@ -121,7 +124,7 @@ def test_happy_start_and_tools_list_of_every_group_never_touch_qt(tmp_path, data
         args.insert(0, "--mcp-server")
     proc, replies = _stdio(tmp_path, entry, args, _initialize())
     assert replies[1]["result"]["protocolVersion"] == "2025-11-25", proc.stderr[-3000:]
-    names = {t["name"] for t in replies[2]["result"]["tools"]}
+    names = {N.internal(t["name"]) for t in replies[2]["result"]["tools"]}
     assert GROUP_TOOLS <= names, GROUP_TOOLS - names
     assert _qt_tried(proc.stderr) == []
 
@@ -135,7 +138,7 @@ def test_happy_the_manifest_of_every_group_never_touches_qt(tmp_path, entry):
         capture_output=True, text=True, timeout=180, env=_env(home), cwd=tmp_path)
     assert proc.returncode == 0, proc.stderr[-3000:]
     assert {"read_file", "remote_profiles", "agent_run"} <= {
-        t["name"] for t in json.loads(proc.stdout)["tools"]}
+        N.internal(t["name"]) for t in json.loads(proc.stdout)["tools"]}
     assert _qt_tried(proc.stderr) == []
 
 
@@ -211,7 +214,7 @@ def test_happy_http_without_qt(tmp_path, data):
         post(_initialized, session)
         _, tools = post(listing, session)
         assert {"read_file", "metadata_read", "agent_run"} <= {
-            t["name"] for t in tools["result"]["tools"]}
+            N.internal(t["name"]) for t in tools["result"]["tools"]}
         _, read = post({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
                         "params": {"name": "read_file", "arguments": {
                             "path": str(data / "notes.txt"), "encoding": "text"}}}, session)

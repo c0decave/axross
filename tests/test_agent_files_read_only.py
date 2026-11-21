@@ -48,9 +48,11 @@ def _config(root, **kw) -> A.AgentConfig:
 
 
 def _write_tools(root) -> list[str]:
-    """The mutating tools an agent with changes allowed is offered."""
+    """The mutating tools an agent with changes allowed is offered (not
+    export_metadata, which Files read-only keeps without its out)."""
     agent = A.Agent(_config(root))
-    return sorted(t.name for t in agent._tool_list if t.write or t.group == "exec")
+    return sorted(t.name for t in agent._tool_list
+                  if (t.write and not t.write_args) or t.group == "exec")
 
 
 class _Script:
@@ -98,6 +100,11 @@ def test_happy_every_write_tool_is_refused_and_the_files_stay(root) -> None:
                          "src": str(root / "keep.txt"), "dst": str(root / "moved.txt")})
         )
         assert outcome == "unavailable", (name, outcome, text)
+    if any(t.name == "metadata_export" for t in agent._tool_list):
+        _tool, outcome, _text = agent._run_tool(
+            _call("metadata_export", {"path": str(root / "keep.txt"),
+                                      "out": str(root / "meta.json")}))
+        assert outcome == "error"  # read-only: no out to write with
     assert (root / "keep.txt").read_text() == "original"
     assert sorted(p.name for p in root.iterdir()) == ["keep.txt", "sub"]
 

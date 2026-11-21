@@ -173,7 +173,7 @@ def test_happy_stdio_reaches_axross_own_server(tmp_path):
     client = C.McpClient(_own_stdio(tmp_path))
     try:
         tools = {t.name: t for t in client.tools()}
-        assert "own__read_file" in tools and "own__list_dir" in tools
+        assert "own__read_file" in tools and "own__list_directory" in tools
         outcome, text = tools["own__read_file"].call(
             {"path": str(tmp_path / "a.txt"), "encoding": "text"}
         )

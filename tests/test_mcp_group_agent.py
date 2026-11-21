@@ -84,7 +84,7 @@ def test_happy_extra_read_only_groups_can_be_offered(tmp_path, llm):
     server = llm({"content": "ok"})
     T.call(_tools(tmp_path), "agent_run", {"task": "x", "groups": ["filetype", "metadata"]})
     names = {t["function"]["name"] for t in server.requests[0]["tools"]}
-    assert {"file_type", "metadata_read"} <= names
+    assert {"identify_file_type", "read_metadata"} <= names
 
 
 # --- sad --------------------------------------------------------------------
@@ -142,7 +142,7 @@ def test_edge_the_tool_is_read_only_in_the_manifest(tmp_path):
     manifest = mcp_groups.tool_manifest(
         tools, groups={"agent"}, allow_write=False, allow_scripts=False
     )
-    entry = next(t for t in manifest["tools"] if t["name"] == "agent_run")
+    entry = next(t for t in manifest["tools"] if t["name"] == "run_llm_agent")
     assert entry["mutating"] is False and entry["required_flags"] == ["--mcp-tools agent"]
     assert entry["timeout_class"] == "long"
     assert json.dumps(entry["input_schema"]).count('"backend"') == 0
@@ -161,4 +161,4 @@ def test_sad_groups_beyond_the_root_need_the_server_to_offer_them(tmp_path, llm)
     both = T.build(tmp_path, {"agent", "remote"})
     T.call(both, "agent_run", {"task": "x", "groups": ["remote"]})
     names = {t["function"]["name"] for t in server.requests[0]["tools"]}
-    assert "remote_profiles" in names
+    assert "list_remote_profiles" in names

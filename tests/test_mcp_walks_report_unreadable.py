@@ -157,7 +157,10 @@ def test_edge_transfer_copy_reports_folders_below_max_depth_and_symlinks(root):
     assert out["truncated"] is True and out["complete"] is False
     reasons = sorted((e.get("reason"), os.path.basename(e["src"]))
                      for e in out["entries"] if e["action"] == "skipped")
-    assert reasons == [("max-depth", "locked"), ("max-depth", "sub"), ("symlink", "link.txt")]
+    # A local link to a file is copied as the file, as copy_tree does (0.15.183).
+    assert reasons == [("max-depth", "locked"), ("max-depth", "sub")]
+    assert (root / "dst" / "link.txt").read_bytes() == (root / "src" / "top.txt").read_bytes()
+    assert not (root / "dst" / "link.txt").is_symlink()
     assert not (root / "dst" / "sub").exists()
 
 

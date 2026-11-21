@@ -205,6 +205,10 @@ def test_guard_one_huge_block_never_holds_up_the_window(bomb, full):
     timer.stop()
     worst = sorted(turns, reverse=True)[:3]
     assert worst[0][0] < 0.3, worst
+    from tests.markdown_heartbeat import assert_responsive
+
+    assert_responsive(max(wall for _cpu, wall in turns), "the longest gap between two beats")  # (the window
+    # frozen by a worker holding Python's lock: wall time, not the GUI thread's)
 
 
 # -- 5. reference links in Qt's own parser ------------------------------------------------------------

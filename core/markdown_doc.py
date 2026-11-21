@@ -231,6 +231,91 @@ def _task_lists(state) -> None:
         last[token.level] = index
 
 
+#: How far back in the text before "://" the inline linkify rule looks for its scheme ("https", "mailto").
+SCHEME_REACH = 40
+_INLINE_SPACE = re.compile(r"\s")
+#: markdown-it-py's own: a scheme at the end of the text before "://".
+SCHEME_RE = re.compile(r"(?:^|[^a-z0-9.+-])([a-z][a-z0-9.+-]*)\Z", re.IGNORECASE)
+_SCHEME_LETTER = re.compile(r"[a-z0-9.+-]", re.IGNORECASE)
+
+
+def _linear_inline_rules(md) -> None:
+    """markdown-it-py's inline rules html_inline and linkify, linear in the text (markdown-it-py 4.2's are
+    quadratic - "x " and "<!--" 4,749 times took 0.8 s, "<?" 9,000 times 1.2 s, "http:// " 2,374 times
+    0.8 s; 200 KB of them 18 s to 97 s before a page showed):
+    - html_inline: a tag, comment, instruction or CDATA section whose end ("-->", "?>", "]]>", ">") comes
+      nowhere after it is no tag - not looked for (its pattern scanned to the end of the text each time);
+      the last place of each end found once a text (as markdown-it-py 4.3 does);
+    - linkify: the scheme before "://" looked for in the last SCHEME_REACH characters of the text before it,
+      not in all of it; the address matched in the text up to the next space, not to the end."""
+    rules = {rule.name: rule.fn for rule in md.inline.ruler.__rules__}
+    original = rules.get("html_inline")
+    if original is not None and not getattr(original, "_ax_linear", False):
+        def last_end(state, end: str) -> int:
+            cache = state.__dict__.setdefault("_ax_ends", {})
+            if end not in cache:
+                cache[end] = state.src.rfind(end, 0, state.posMax)
+            return cache[end]
+
+        def html_inline(state, silent: bool) -> bool:
+            src, pos = state.src, state.pos
+            if src[pos] != "<" or pos + 2 >= state.posMax:
+                return False
+            ch = src[pos + 1]
+            if src.startswith("<!--", pos):
+                if not src.startswith(("<!-->", "<!--->"), pos) and last_end(state, "-->") < pos + 4:
+                    return False
+            elif src.startswith("<![CDATA[", pos):
+                if last_end(state, "]]>") < pos + 9:
+                    return False
+            elif ch == "?":
+                if last_end(state, "?>") < pos + 2:
+                    return False
+            elif last_end(state, ">") < pos + 2:
+                return False
+            return original(state, silent)
+
+        html_inline._ax_linear = True
+        md.inline.ruler.at("html_inline", html_inline)
+    if "linkify" in rules and not getattr(rules["linkify"], "_ax_linear", False):
+        def linkify(state, silent: bool) -> bool:
+            if not state.md.options.linkify or state.linkLevel > 0 or not state.md.linkify:
+                return False
+            pos, maximum, src = state.pos, state.posMax, state.src
+            if pos + 3 > maximum or src[pos:pos + 3] != "://":
+                return False
+            pending = state.pending
+            # (the scheme right before "://": in the pending text's end - and only there; the pattern ends at \Z: "$" would also match before a newline)
+            tail = pending[-SCHEME_REACH:]
+            match = SCHEME_RE.search(tail)
+            if not match or (match.start(1) == 0 and len(tail) < len(pending)
+                             and _SCHEME_LETTER.match(pending[-SCHEME_REACH - 1])):
+                return False
+            proto = match.group(1)
+            space = _INLINE_SPACE.search(src, pos, maximum)
+            link = state.md.linkify.match_at_start(src[pos - len(proto):space.start() if space else maximum])
+            if not link:
+                return False
+            url = link.url.rstrip("*")  # (no "*" at its end: emphasis's)
+            full_url = state.md.normalizeLink(url)
+            if not state.md.validateLink(full_url):
+                return False
+            if not silent:
+                state.pending = state.pending[:-len(proto)]
+                token = state.push("link_open", "a", 1)
+                token.attrs = {"href": full_url}
+                token.markup, token.info = "linkify", "auto"
+                token = state.push("text", "", 0)
+                token.content = state.md.normalizeLinkText(url)
+                token = state.push("link_close", "a", -1)
+                token.markup, token.info = "linkify", "auto"
+            state.pos += len(url) - len(proto)
+            return True
+
+        linkify._ax_linear = True
+        md.inline.ruler.at("linkify", linkify)
+
+
 def _linkify_in_pieces(md) -> None:
     """linkify-it-py's searches a piece of a long text at a time: its rule
     pretested all of an inline's text and matched all of a text token in one
@@ -421,6 +506,7 @@ def make_parser():
     # closes only after one, not before a digit - "tickets are $5 and $10" stays text.
     md.use(dollarmath_plugin, allow_space=False, allow_digits=False, double_inline=True,
            allow_blank_lines=False)
+    md.inline.ruler.before("strikethrough", "tilde_run", _tilde_run)
     md.inline.ruler.before("strikethrough", "single_tilde", _single_tilde)
     shown_as = md.normalizeLinkText
 
@@ -449,6 +535,7 @@ def make_parser():
         md.core.ruler.push("autolinks", _autolinks)
     md.block.ruler.before("front_matter", "toml_front_matter", _toml_front_matter,
                           {"alt": ["paragraph", "reference", "blockquote", "list"]})
+    _linear_inline_rules(md)
     _keep_deep_blocks(md)
     _guard(md)
     return md
@@ -1371,7 +1458,7 @@ def flatter(text: str, depth: int) -> tuple[str, bool]:
     that grows with the depth."""
     if not found_by_lines(_deeper(depth), text):
         return text, False
-    out, fence = [], None
+    out, fence, changed = [], None, False
     for line in text.split("\n"):
         opened = _FENCE_LINE.match(line)
         if fence is not None:
@@ -1382,9 +1469,11 @@ def flatter(text: str, depth: int) -> tuple[str, bool]:
         else:
             stripped = line.lstrip(" \t")
             if len(line) - len(stripped) > 2 * depth:
-                line = " " * (2 * depth) + stripped
+                line, changed = " " * (2 * depth) + stripped, True
         out.append(line)
-    return "\n".join(out), True
+    # (whether a line was made flatter: deep JSON in a fence is kept as it is - "shown flatter" said of it
+    # was false)
+    return ("\n".join(out), True) if changed else (text, False)
 
 
 #: The columns a table's grid of spanned cells (span_grid) has at most.
@@ -1652,18 +1741,36 @@ def _fewer_spans(state) -> None:
 LINE_FORMULAS = 100
 
 
+#: A formula longer than this (characters of TeX) is shown as its TeX - in a line as text, on lines of its own
+#: as a code block (_fewer_formulas): one of 80,000 was set in one piece, 0.6 to 0.8 s of the window's.
+FORMULA_CHARS = 4000
+#: ... its lines then at most this long (a code line of the window's: ui.markdown_view.LINE_CAP).
+FORMULA_LINE = 2000
+
+
 def _fewer_formulas(state) -> None:
-    """Past LINE_FORMULAS formulas in a heading, a cell or a term: their TeX
-    as text ("$x^2$")."""
+    """Past LINE_FORMULAS formulas in a heading, a cell or a term, and any formula longer than FORMULA_CHARS:
+    their TeX as text ("$x^2$"), a long display formula's as a code block."""
     tokens = state.tokens
     for index, token in enumerate(tokens):
-        if token.type != "inline" or not token.children or (index and tokens[index - 1].type == "paragraph_open"):
+        # (one too deep as well: math_runs shows it as written, with its note - as before)
+        if token.type in ("math_block", "math_block_label") and len(token.content) > FORMULA_CHARS \
+                and not math_too_deep(token.content):
+            token.type, token.tag, token.info, token.markup = "fence", "code", "tex", "```"
+            # (its long lines in lines of FORMULA_LINE characters, as a code block's: one block each)
+            token.content = "".join(
+                "\n".join(line[at:at + FORMULA_LINE] for at in range(0, len(line), FORMULA_LINE)) + "\n"
+                for line in token.content.strip("\n").split("\n"))
             continue
+        if token.type != "inline" or not token.children:
+            continue
+        line = not (index and tokens[index - 1].type == "paragraph_open")
         seen = 0
         for child in token.children:
             if child.type in ("math_inline", "math_inline_double"):
                 seen += 1
-                if seen > LINE_FORMULAS:
+                if (line and seen > LINE_FORMULAS) or (len(child.content) > FORMULA_CHARS
+                                                        and not math_too_deep(child.content)):
                     marks = "$$" if child.type == "math_inline_double" else "$"
                     child.type, child.tag, child.nesting = "text", "", 0
                     child.content = f"{marks}{child.content}{marks}"
@@ -1677,6 +1784,21 @@ def _backtick_math(state) -> None:
             if child.type == "math_inline" and len(child.content) > 2 and child.content[0] == "`" \
                     and child.content[-1] == "`" and "`" not in child.content[1:-1]:
                 child.content = child.content[1:-1]
+
+
+def _tilde_run(state, silent: bool) -> bool:
+    """A run of three tildes or more in a line is text, as GitHub shows it ("~~~x~~~": markdown-it struck
+    the x through between two tildes)."""
+    src, start, end = state.src, state.pos, state.posMax
+    if src[start] != "~" or start + 2 >= end or src[start + 1] != "~" or src[start + 2] != "~":
+        return False
+    stop = start
+    while stop < end and src[stop] == "~":
+        stop += 1
+    if not silent:
+        state.push("text", "", 0).content = src[start:stop]
+    state.pos = stop
+    return True
 
 
 def _single_tilde(state, silent: bool) -> bool:
@@ -1725,7 +1847,7 @@ def alert_of(token) -> str:
 
 
 def _alerts(state) -> None:
-    """A quote whose first line is ``[!NOTE]`` (TIP, IMPORTANT, WARNING,
+    """A quote of the top level whose first line is ``[!NOTE]`` (TIP, IMPORTANT, WARNING,
     CAUTION; any case) is that alert: the kind goes to the quote's tokens
     (:func:`alert_of`), the marker out of its text. (Before the inline rules:
     "[!NOTE]" would be a link's text.)"""
@@ -1733,7 +1855,9 @@ def _alerts(state) -> None:
     index = 0
     while index < len(tokens) - 2:
         token = tokens[index]
-        if token.type == "blockquote_open" and tokens[index + 1].type == "paragraph_open" \
+        # (a quote of the top level only: GitHub shows one in a list or another quote as a quote, its
+        # "[!NOTE]" as written)
+        if token.type == "blockquote_open" and token.level == 0 and tokens[index + 1].type == "paragraph_open" \
                 and tokens[index + 2].type == "inline":
             found = _ALERT.match(tokens[index + 2].content)
             if found:
@@ -2397,7 +2521,8 @@ def _environment_inline(name: str, body: str) -> str:
 
 
 #: Relations and arrows: one space on each side ("x→ 0", "a =b" were lopsided).
-_RELATION = re.compile(r"[ \t]*([=≤≥≠≈≡∼≃≅∝→←↔⇒⇐⇔⟹⟺↦∈∉∋⊂⊆⊃⊇<>])[ \t]*")
+# (the spaces before it from their first only: from each of a run's places a search looked through the rest)
+_RELATION = re.compile(r"(?:(?<![ \t])[ \t]+)?([=≤≥≠≈≡∼≃≅∝→←↔⇒⇐⇔⟹⟺↦∈∉∋⊂⊆⊃⊇<>])[ \t]*")
 #: A command left over: not understood (shown as written, as code).
 _LEFT_OVER = re.compile(r"\\[A-Za-z]+\*?(?:\s*\{[^{}]*\})*")
 
@@ -2426,10 +2551,14 @@ def _math(tex: str, small: bool = True, tight: bool = False) -> tuple[str, list[
         _TIGHT.reset(tight_token)
 
 
+_WHITE_RUN = re.compile(r"\s+")
+
+
 def _math_of(tex: str) -> tuple[str, list[list[str]]]:
     # (a line end in TeX is a space - "\\\\" ends a row: two environments on lines of their own were
-    # stacked, not side by side)
-    tex = re.sub(r"[ \t]*\n[ \t]*", " ", _MATH_MARKS.sub("", tex.strip()))
+    # stacked, not side by side; and a run of spaces one, as TeX reads it - first: each pass after it that
+    # begins with spaces looked through a run from each of its places, 8,000 spaces in a formula took 1.2 s)
+    tex = _WHITE_RUN.sub(" ", _MATH_MARKS.sub("", tex.strip()))
     tex = math_normal(tex)
     for written, mark in _ESCAPED.items():
         tex = tex.replace(written, mark)
@@ -2457,7 +2586,7 @@ def _math_of(tex: str) -> tuple[str, list[list[str]]]:
     tex = re.sub(r"\\(?:begin|end)\s*\{[A-Za-z*]*\}", "", tex)
     tex = re.sub(r"\\(?:displaystyle|limits|nolimits)(?![A-Za-z])", "", tex)
     tex = re.sub(r"\\[,;:!> ]", " ", tex)
-    tex = re.sub(r"[ \t]+([\^_])", r"\1", tex)  # ("\\sum _k": the script belongs to it)
+    tex = re.sub(r"(?<![ \t])[ \t]+([\^_])", r"\1", tex)  # ("\\sum _k": the script belongs to it)
     # (a command's own spaces are kept: "a \\leq b" reads "a ≤ b")
     tex = re.sub(r"\\([A-Za-z]+)(?![A-Za-z])", lambda m: _TEX.get(m.group(1), m.group(0)), tex)
     # (a function's name apart from what is before it: "n\\log n" read "nlog n")
@@ -2478,7 +2607,7 @@ def _math_of(tex: str) -> tuple[str, list[list[str]]]:
     # what is left of commands: not understood - marked (shown as written, as code)
     tex = _LEFT_OVER.sub(lambda m: UNKNOWN + m.group(0) + UNKNOWN_END, tex)
     # (an upright word's spaces outside its marks: "\text{if } x" read "if  x" - two spaces, a mark between)
-    tex = re.sub("([ \t]+)" + UPRIGHT_END, UPRIGHT_END + r"\1", re.sub(UPRIGHT + "([ \t]+)", r"\1" + UPRIGHT, tex))
+    tex = re.sub("(?<![ \t])([ \t]+)" + UPRIGHT_END, UPRIGHT_END + r"\1", re.sub(UPRIGHT + "([ \t]+)", r"\1" + UPRIGHT, tex))
     lines = []
     for line in tex.split("\n"):
         if UNKNOWN not in line:  # (spaced; tight in a script: "∑_(i=1)")
@@ -2487,7 +2616,7 @@ def _math_of(tex: str) -> tuple[str, list[list[str]]]:
                            for part in re.split("(\x10[^\x11]*\x11|\x12[^\x13]*\x13)", line))
         # (one space between words; none inside brackets: "\\left( x \\right)" reads "(x)")
         line = re.sub(r"[ \t]{2,}", " ", line)
-        line = re.sub(r"\s+([)\]⟩])", r"\1", re.sub(r"([(\[⟨])\s+", r"\1", line)).strip()
+        line = re.sub(r"(?<!\s)\s+([)\]⟩])", r"\1", re.sub(r"([(\[⟨])\s+", r"\1", line)).strip()
         if line:
             lines.append(line)
     tex = "\n".join(lines)
@@ -3044,8 +3173,19 @@ _CONTROLS = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]"
 
 def clean(text: str) -> str:
     """*text* without control characters: what a terminal or a label must
-    never get from a file (an ESC starts an escape sequence)."""
-    return by_lines(lambda piece: _CONTROLS.sub("", piece), text)
+    never get from a file (an ESC starts an escape sequence) - and no letter
+    with more than MARKS_ON_A_LETTER combining marks (the rest go: Unicode's
+    stream-safe text has 30 at most; "a" and 99,000 of them, one cluster no
+    cut can split, took Qt 0.14 s in one turn)."""
+    text = by_lines(lambda piece: _CONTROLS.sub("", piece), text)
+    return by_lines(lambda piece: _MARK_RUN.sub(r"\1", piece), text) if found_by_lines(_MARK_RUN, text) else text
+
+
+#: (clean) the combining marks one letter keeps at most.
+MARKS_ON_A_LETTER = 64
+_MARKS = "\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f"
+_MARK_RUN = re.compile("(?<![%s])([%s]{%d})[%s]+" % (_MARKS, _MARKS, MARKS_ON_A_LETTER, _MARKS))  # (from a run's
+# first mark only: from each of them a search looked through the rest of the run)
 
 
 #: Characters of a text a pass over it (a regular expression's) goes over at

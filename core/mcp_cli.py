@@ -43,22 +43,24 @@ def add_arguments(parser: argparse.ArgumentParser, *, standalone: bool = False) 
         "--mcp-write",
         action="store_true",
         help="When running as an MCP server, expose the nine write tools "
-        "(write_file, mkdir, remove, rename, copy, bulk_copy, symlink, "
-        "hardlink, chmod) and the mutating tools of the --mcp-tools groups. "
+        "(write_file, create_directory, delete_path, move_path, copy_file, copy_tree, "
+        "create_symlink, create_hardlink, set_permissions) and the mutating tools of the "
+        "--mcp-tools groups. "
         "Needs --mcp-root. Off by default — read-only is safe.",
     )
     parser.add_argument(
         "--mcp-allow-scripts",
         action="store_true",
-        help="Expose the script_list/api_schema/read/write/run/delete tools to the "
-        "MCP client. script_run executes arbitrary Python as you (in a "
+        help="Expose the list_scripts, get_script_api, read_script, write_script, "
+        "run_script and delete_script tools to the MCP client. run_script executes "
+        "arbitrary Python as you (in a "
         "child process), so this is gated behind its own opt-in (separate from "
         "--mcp-write). stdio only: refused together with --mcp-http.",
     )
     parser.add_argument(
         "--mcp-allow-exec",
         action="store_true",
-        help="Serve the exec group (remote_exec, remote_script, exec_backends): "
+        help="Serve the exec group (run_backend_command, run_backend_script): "
         "commands and scripts on remote hosts over SSH, SCP, Telnet, rsh, ADB, "
         "WinRM and Cisco (show only). Needs --mcp-tools exec (or all); its own "
         "opt-in, separate from --mcp-write. Refused in the paranoid security mode.",
@@ -70,7 +72,7 @@ def add_arguments(parser: argparse.ArgumentParser, *, standalone: bool = False) 
         metavar="GROUP[,GROUP...]",
         help="Add optional MCP capability groups on top of the file tools; "
         "repeatable or comma-separated, also via AXROSS_MCP_TOOLS. Groups: "
-        "metadata, duplicates, packer, archive, crypto, index, filetype, "
+        "metadata, duplicates, archive (also as packer), crypto, index, filetype, "
         "transfer, remote, exec, agent, extensions; 'all' is every group. Mutating tools "
         "of a group additionally need --mcp-write (exec: --mcp-allow-exec). "
         "Default: no group (the file tools only).",

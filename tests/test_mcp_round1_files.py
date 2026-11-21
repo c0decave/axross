@@ -36,6 +36,7 @@ from pathlib import Path
 
 import pytest
 
+from core import mcp_names as N  # noqa: E402
 from core import credentials
 from core import mcp_server as M
 from core import profiles as P
@@ -449,5 +450,5 @@ def test_sad_without_cryptography_the_crypto_group_is_left_out_with_one_line(tmp
     assert proc.returncode == 0, proc.stderr[-3000:]
     assert "Traceback" not in proc.stderr
     assert "'crypto' left out" in proc.stderr and "cryptography" in proc.stderr
-    names = {t["name"] for t in json.loads(proc.stdout)["tools"]}
+    names = {N.internal(t["name"]) for t in json.loads(proc.stdout)["tools"]}
     assert "encrypt" not in names and "metadata_read" in names

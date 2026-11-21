@@ -184,7 +184,7 @@ def test_happy_a_plain_answer(fake, tmp_path):
     assert sent["path"] == "/v1/chat/completions" and sent["model"] == "tiny"
     assert sent["messages"][-1] == {"role": "user", "content": "Say hello"}
     names = {t["function"]["name"] for t in sent["tools"]}
-    assert {"list_dir", "read_file", "stat"} <= names
+    assert {"list_directory", "read_file", "get_path_info"} <= names  # public names
 
 
 def test_happy_a_read_only_tool_call_runs_without_asking(fake, tmp_path):
@@ -341,10 +341,10 @@ def test_edge_write_and_exec_are_offered_only_when_allowed(fake, tmp_path):
     server = fake({"content": "a"}, {"content": "b"})
     _agent(server, tmp_path, groups=frozenset({"exec"})).run("x")
     names = {t["function"]["name"] for t in server.requests[0]["tools"]}
-    assert "write_file" not in names and "remote_exec" not in names
+    assert "write_file" not in names and "run_backend_command" not in names
     _agent(server, tmp_path, groups=frozenset({"exec"}), allow_write=True, allow_exec=True).run("y")
     names = {t["function"]["name"] for t in server.requests[1]["tools"]}
-    assert {"write_file", "remote_exec"} <= names
+    assert {"write_file", "run_backend_command"} <= names
 
 
 def test_edge_exec_tools_always_ask(fake, tmp_path):

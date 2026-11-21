@@ -91,11 +91,13 @@ def test_happy_alerts_in_qt_are_a_box_with_a_bar_and_a_translated_title():
 
 
 def test_edge_an_alert_with_only_its_marker_and_one_in_a_list():
+    """An alert in a list item is a quote saying "[!IMPORTANT]", as GitHub shows it (alerts are not nested -
+    the twenty-first review)."""
     doc = MD.parse("> [!CAUTION]\n\n- > [!IMPORTANT]\n  > deep\n")
-    assert [MD.alert_of(t) for t in doc.tokens if t.type == "blockquote_open"] == ["caution", "important"]
+    assert [MD.alert_of(t) for t in doc.tokens if t.type == "blockquote_open"] == ["caution", ""]
     lines = plain(term("> [!CAUTION]\n\n- > [!IMPORTANT]\n  > deep\n")).splitlines()
     assert lines[0] == "┃ ✖ Caution"
-    assert "• ┃ ❖ Important" in lines and "  ┃ deep" in lines
+    assert "• │ [!IMPORTANT] deep" in lines
 
 
 def test_edge_quotes_are_not_italic_any_more():

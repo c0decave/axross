@@ -82,5 +82,7 @@ def test_sad_the_mcp_search_tool_folds_non_ascii_names(db):
     real = MX.search_all
     with mock.patch.object(MX, "search_all", lambda **kw: real(**{**kw, "db_path": db})), \
             mock.patch("os.path.realpath", side_effect=lambda p, **k: os.path.normpath(p)):
-        rows = tool.handler({"needle": "ärger"}, M._ToolContext())
-    assert [r["name"] for r in rows] == ["Ärger.txt"]
+        # needle is search_index's former name for pattern: both still work.
+        for key in ("pattern", "needle"):
+            rows = tool.handler({key: "ärger"}, M._ToolContext())["entries"]
+            assert [r["name"] for r in rows] == ["Ärger.txt"]

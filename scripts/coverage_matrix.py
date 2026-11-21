@@ -388,7 +388,7 @@ FEATURES: tuple[Feature, ...] = (
         "Connections & backends",
         "backend-mobile",
         "ADB / MTP",
-        ["core/adb_client.py", "core/mtp_client.py"],
+        ["core/adb_client.py", "core/adb_server.py", "core/mtp_client.py"],
         [
             ("tests/test_mtp_confined.py::test_happy_the_device_is_read_and_written", "backend"),
             (
@@ -492,6 +492,7 @@ FEATURES: tuple[Feature, ...] = (
             "core/server_ops.py",
             "ui/transfer_dock.py",
             "ui/transfer_conflict_dialog.py",
+            "ui/transfer_progress.py",
         ],
         [
             (
@@ -1076,7 +1077,7 @@ FEATURES: tuple[Feature, ...] = (
         "mcp-server",
         "MCP server (stdio / HTTP, capability groups)",
         ["core/mcp_server.py", "core/mcp_http.py", "core/mcp_groups.py", "core/mcp_cli.py",
-         "core/partials.py",
+         "core/mcp_terms.py", "core/mcp_names.py", "core/partials.py",
          "core/confined_fs.py", "core/regex_worker.py"],
         [
             ("tests/test_mcp_groups_e2e.py::test_happy_stdio_server_serves_every_group", "process"),

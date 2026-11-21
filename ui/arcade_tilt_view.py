@@ -102,6 +102,7 @@ class TiltView(AC.ArcadeView):
         self._floor_origin = QPointF()
         self._title_cache = None
         self._hud = AC.HudCache()
+        self._sky = AC.Layer()                 # window-sized: its own slot, not the shared sprite cache
         self._start_music()
         self.start_loop()
 
@@ -202,7 +203,8 @@ class TiltView(AC.ArcadeView):
         dpr = self.dpr()
         key = (g.level, id(g.grid), round(tw, 2), dpr)
         if self._floor is not None and self._floor_key == key:
-            gone = self._bits_drawn - g.bits
+            # bits are only ever taken: the same count is the same set (no set difference a frame)
+            gone = self._bits_drawn - g.bits if len(g.bits) != len(self._bits_drawn) else ()
             if gone:                                   # eaten: paint those patches again
                 p = QPainter(self._floor)
                 p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -357,7 +359,7 @@ class TiltView(AC.ArcadeView):
                 p.setBrush(c)
                 r = rng.uniform(0.6, 1.8)
                 p.drawEllipse(QPointF(rng.uniform(0, w), rng.uniform(0, h)), r, r)
-        return AC.sprite(("tilt-sky", pal), self.width(), self.height(), draw, self.dpr())
+        return self._sky.get(("tilt-sky", pal), self.width(), self.height(), self.dpr(), draw)
 
     def paint_game(self, p: QPainter, dt: float) -> None:
         g = self.game

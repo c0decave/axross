@@ -20,6 +20,7 @@ never uses. The bytes a read asks for are always requested at once: a
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import errno
 import io
 import logging
@@ -137,6 +138,26 @@ def _watch_cancel(sftp_file):
         raise
 
 
+#: The size the file opened next is listed with (:func:`expected_size`).
+_EXPECTED_SIZE: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "axross_sftp_expected_size", default=None)
+
+
+@contextlib.contextmanager
+def expected_size(size: int | None):
+    """``open_read`` calls in the ``with`` body read a file listed with
+    *size* bytes (the transfer engine's copy loop): the first window asks
+    for that much and one byte more, not for a whole window. A 10-byte
+    file cost 32 pipelined READs of 32 KiB, 31 of them answered "end of
+    file" - for a folder of 10 000 small files 320 000 requests. A file
+    that is larger than listed is read on with the usual read-ahead."""
+    token = _EXPECTED_SIZE.set(None if size is None or size < 0 else int(size))
+    try:
+        yield
+    finally:
+        _EXPECTED_SIZE.reset(token)
+
+
 class ReadAheadRaw(io.RawIOBase):
     REQUEST = 32 * 1024  # paramiko's MAX_REQUEST_SIZE
     MIN_WINDOW = 256 * 1024
@@ -159,6 +180,13 @@ class ReadAheadRaw(io.RawIOBase):
         # a read from there is one plain request, not a window of answers
         # that say "end of file".
         self._short_at: int | None = None
+        # The listed size (expected_size), while reading has not passed it,
+        # and the end of the file once a read past that size came back
+        # short there: for a regular file SFTP v3 promises a READ returns
+        # all it asked for, or up to the end of the file (draft-ietf-
+        # secsh-filexfer-02, 6.4), so no further request has to say so.
+        self._hint: int | None = _EXPECTED_SIZE.get()
+        self._eof_at: int | None = None
 
     # -- io.RawIOBase ---------------------------------------------------
     def readable(self) -> bool:
@@ -237,6 +265,25 @@ class ReadAheadRaw(io.RawIOBase):
         hit = self._from_buffer(n)
         if hit is not None:
             return hit
+        if self._eof_at is not None and self._pos >= self._eof_at:
+            return b""
+        hint = self._hint
+        if hint is not None and (self._size is not None or self._pos > hint):
+            # Read past the listed size (the file grew), or its size is
+            # known from a seek to the end: the usual read-ahead from here.
+            self._hint = hint = None
+        if hint is not None:
+            # Up to one byte past the listed end in one round trip: an
+            # answer that stops at the listed end is the end of the file.
+            end = self._pos + min(max(n, 1), hint + 1 - self._pos, self.MAX_WINDOW)
+            self._fill(end)
+            if self._short_at is not None and self._short_at >= hint:
+                self._eof_at = self._short_at
+            hit = self._from_buffer(n)
+            if hit is not None:
+                return hit
+            if self._eof_at is not None and self._pos >= self._eof_at:
+                return b""
         if self._pos == self._seq_end:
             self._window = min(max(self._window * 2, self.MIN_WINDOW), self.MAX_WINDOW)
         else:

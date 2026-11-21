@@ -50,6 +50,36 @@ TRIM_SLACK = 200
 WALK_COMMIT_SLICE_S = 0.01
 
 
+class TransferWalk(list):
+    """A background walk (``transfer_files_in_background``): the list
+    ``[source backend, dest backend, cancel event]`` the manager keeps in
+    ``_walks``, and how far it got - for "Preparing: 3 210 files queued"
+    while the folders are listed and made, before a single job shows.
+
+    *built*: the walk is through, *pending* holds every job it made;
+    *committed*: how many of them the GUI thread has registered since."""
+
+    __eq__ = object.__eq__  # one walk is not another with the same backends
+    __hash__ = object.__hash__
+
+    def __init__(self, source_backend, dest_backend, move: bool = False) -> None:
+        super().__init__([source_backend, dest_backend, threading.Event()])
+        self.move = move
+        self.pending: list = []
+        self.built = False
+        self.committed = 0
+
+    @property
+    def queued(self) -> int:
+        """Jobs made (while walking) or registered (afterwards) so far."""
+        return self.committed if self.built else len(self.pending)
+
+    @property
+    def total(self) -> int | None:
+        """Jobs the walk made, once it is through; None while it walks."""
+        return len(self.pending) if self.built else None
+
+
 def _safe_basename(name: str, source_backend=None, dest_backend=None) -> str:
     """Return *name* only if it is a single path component that cannot
     escape its parent directory; otherwise raise :class:`ValueError`.
@@ -444,6 +474,7 @@ class TransferManager(QObject):
 
     job_added = pyqtSignal(object)  # TransferJob
     job_updated = pyqtSignal(str)  # job_id
+    job_started = pyqtSignal(str)  # job_id: a worker began it
     job_finished = pyqtSignal(str)  # job_id
     job_error = pyqtSignal(str, str)  # job_id, error_message
     # Emitted when a recursive directory transfer cannot create or list a
@@ -576,8 +607,12 @@ class TransferManager(QObject):
         source_item=None,
         stat_answer=None,
         batch_id: str | None = None,
+        link: bool = False,
     ) -> TransferJob:
         """Enqueue a single file transfer.
+
+        *link*: *source_path* is a symbolic link the job makes again as a
+        link at *dest_path* (inside a copied folder; TransferWorker._copy_link).
 
         *size* is the source size when the caller already has it from a
         listing (0 or None: ask the backend); *source_item* is that
@@ -591,6 +626,9 @@ class TransferManager(QObject):
         """
         if batch_id is None:
             batch_id = getattr(self._local, "batch_id", "") or ""
+        if link:
+            return self._link_job(source_backend, dest_backend, source_path, dest_path,
+                                  direction, move, if_exists, batch_id)
         # Get file size for progress
         if size:
             total_bytes = size
@@ -701,6 +739,45 @@ class TransferManager(QObject):
             dest_path,
             total_bytes,
         )
+        return job
+
+    def _link_job(self, source_backend, dest_backend, source_path: str, dest_path: str,
+                  direction: TransferDirection, move: bool, if_exists: str,
+                  batch_id: str) -> TransferJob:
+        """The job of :meth:`transfer_file` for a symbolic link: no bytes,
+        no temp file; journaled like a file (undo of a move puts it back)."""
+        sep = source_backend.separator()
+        job = TransferJob(
+            source_path=source_path,
+            dest_path=dest_path,
+            direction=direction,
+            filename=source_path.rsplit(sep, 1)[-1] if sep in source_path else source_path,
+            move=move,
+            use_temp_file=False,
+            if_exists=if_exists,
+            batch_id=batch_id,
+            link=True,
+        )
+        job.source_backend = source_backend
+        job.dest_backend = dest_backend
+        try:
+            from core.operation_journal import start_operation
+
+            job.operation_id = start_operation(
+                "move" if move else "transfer",
+                source=source_path,
+                dest=dest_path,
+                backend=getattr(dest_backend, "name", type(dest_backend).__name__),
+                details={
+                    "direction": direction.name,
+                    "link": True,
+                    "source_backend": _backend_label(source_backend),
+                    **({"batch": batch_id} if batch_id else {}),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.debug("operation journal start failed: %s", exc)
+        self._register(job)
         return job
 
     def transfer_files(
@@ -859,7 +936,7 @@ class TransferManager(QObject):
         on_done: Callable[[list[TransferJob]], None] | None = None,
         on_error: Callable[[Exception], None] | None = None,
         batch_id: str | None = None,
-    ) -> None:
+    ) -> TransferWalk:
         """:meth:`transfer_files` with the walk on a worker thread.
 
         Walking a remote tree is a round trip per folder (is_dir,
@@ -870,8 +947,9 @@ class TransferManager(QObject):
         *on_done* gets them there. :meth:`busy` is True for both backends
         meanwhile. After :meth:`shutdown` a walk's result is dropped, and
         after :meth:`cancel_all` too: then the walk stops listing, *on_done*
-        gets no jobs and a move removes no source folder."""
-        self._walk_in_background(
+        gets no jobs and a move removes no source folder. Returns the walk
+        (:class:`TransferWalk`): how many jobs it has made so far."""
+        return self._walk_in_background(
             source_backend, dest_backend, move, on_done, on_error,
             lambda: self.transfer_files(
                 source_backend,
@@ -897,7 +975,7 @@ class TransferManager(QObject):
         on_done: Callable[[list[TransferJob]], None] | None = None,
         on_error: Callable[[Exception], None] | None = None,
         batch_id: str | None = None,
-    ) -> None:
+    ) -> TransferWalk:
         """One file job per ``(source, dest)`` pair, each refusing an
         existing destination, built on a worker thread - the undo of a
         batch puts every file back at its own recorded path (core.undo).
@@ -937,26 +1015,31 @@ class TransferManager(QObject):
                 self._local.batch_id = outer_batch
             return jobs
 
-        self._walk_in_background(source_backend, dest_backend, move, on_done, on_error,
-                                 build, what=[src for src, _dest in pairs][:3])
+        return self._walk_in_background(source_backend, dest_backend, move, on_done, on_error,
+                                        build, what=[src for src, _dest in pairs][:3])
 
     def _walk_in_background(self, source_backend, dest_backend, move: bool, on_done,
                             on_error, build: Callable[[], list[TransferJob]], *,
-                            what) -> None:
+                            what) -> TransferWalk:
         """Run *build* (it queues jobs through transfer_file) on a worker
         thread; its jobs are registered on the GUI thread (_finish_walk)."""
-        walk = [source_backend, dest_backend, threading.Event()]
+        walk = TransferWalk(source_backend, dest_backend, move)
         self._walks.append(walk)
         self.walk_started.emit()
 
         def run() -> None:
-            self._local.pending = []
+            self._local.pending = walk.pending
             self._local.move_dirs = []
             self._local.cancelled = walk[2]
             jobs: list[TransferJob] = []
             error: Exception | None = None
+            from core.operation_journal import held_events
+
             try:
-                jobs = build()
+                # The walk's journal events (a start per file) go out in a
+                # few writes, all before any job reaches a worker.
+                with held_events():
+                    jobs = build()
             except Exception as exc:  # noqa: BLE001 - what was built is still queued
                 log.exception("Transfer walk of %s failed", what)
                 error = exc
@@ -966,9 +1049,24 @@ class TransferManager(QObject):
                 self._local.pending = None
                 self._local.move_dirs = None
                 self._local.cancelled = None
+                walk.built = True
                 self._walk_done(payload)
 
         threading.Thread(target=run, name="axross-transfer-walk", daemon=True).start()
+        return walk
+
+    def preparing(self) -> tuple[int, int | None] | None:
+        """``(jobs so far, all jobs)`` of the background walks still making
+        or registering jobs - all jobs None while one still walks - or None
+        when no walk runs. Cheap: for a status line several times a second."""
+        if not self._walks:
+            return None
+        queued, total = 0, 0
+        for walk in self._walks:
+            queued += getattr(walk, "queued", 0)
+            count = getattr(walk, "total", None)
+            total = None if total is None or count is None else total + count
+        return queued, total
 
     def _emit_directory_error(self, path: str, reason: str) -> None:
         self.directory_error.emit(path, reason)
@@ -1015,8 +1113,10 @@ class TransferManager(QObject):
             self._commit(job, refusal, hold=hold)
             index += 1
             if index < len(pending) and not index % 16 and time.monotonic() > deadline:
+                walk.committed = index
                 QTimer.singleShot(0, lambda: self._commit_walk(payload, index))
                 return
+        walk.committed = index
         self._end_walk(payload)
 
     def _end_walk(self, payload, *, cancelled_from: int | None = None) -> None:
@@ -1316,28 +1416,21 @@ class TransferManager(QObject):
                 dst_path, if_exists = resolved
 
             if getattr(item, "is_link", False):
-                # A symlinked folder (SMB lists it with its target's
-                # is_dir, LocalFS with its own): descending copies a folder
-                # outside the selection -- a move empties it -- and a link
-                # to an ancestor never ends. Shown in the transfer list;
-                # the link stays, so a moved folder holding it is kept. A
-                # dangling one has nothing to copy.
-                refusal = (FOLDER_LINK_REFUSAL if item.is_dir
-                           else _local_link_refusal(source_backend, src_path))
-                if refusal:
-                    jobs.append(
-                        self._refused_job(
-                            source_backend,
-                            dest_backend,
-                            src_path,
-                            dst_path,
-                            direction,
-                            move,
-                            refusal,
-                            retryable=False,
-                        )
-                    )
-                    continue
+                # A symbolic link - to a file, a folder (SMB lists that with
+                # its target's is_dir, LocalFS and SFTP with their own) or
+                # nothing - is copied as the link, with the same target, as
+                # cp -a, a local server-side copy and WinRM do: never
+                # followed. Descending into a linked folder copied a folder
+                # outside the selection (a move emptied it), a link to an
+                # ancestor never ended, and over SFTP a link to a folder
+                # failed the copy ("Failure"). Where one side has no links
+                # the job is skipped with a note (TransferWorker._copy_link).
+                jobs.append(self.transfer_file(
+                    source_backend, dest_backend, src_path, dst_path, direction,
+                    move=move, dest_listing=dest_listing, if_exists=if_exists,
+                    source_item=item, link=True,
+                ))
+                continue
             if item.is_dir:
                 if dest_listing.made_by_batch(source_backend, src_path):
                     # This copy's own folder, seen through a link to the
@@ -1543,6 +1636,7 @@ class TransferManager(QObject):
             source_mode=old_job.source_mode,
             source_mtime=old_job.source_mtime,
             batch_id=old_job.batch_id,
+            link=old_job.link,  # a link is retried as the link
         )
         # The session the job ran on may have dropped and been replaced
         # (a reconnect): the retry runs on the one in use now.
@@ -1754,6 +1848,7 @@ class TransferManager(QObject):
         job = self._jobs.get(job_id)
         if job:
             log.debug("Transfer started: %s (%s)", job.filename, job_id)
+        self.job_started.emit(job_id)
         self.job_updated.emit(job_id)
 
     def _on_job_finished(self, job_id: str) -> None:

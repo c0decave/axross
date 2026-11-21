@@ -80,17 +80,48 @@ def test_sad_a_script_without_the_keyword_is_told_which_one(inbox):
     assert (inbox / "Sent").exists()
 
 
-def test_sad_mcp_never_says_yes_even_when_the_client_sends_the_keyword(tmp_path, inbox):
+_YES_KEYWORDS = {"keep_namespace_root": True, "follow_dfs_link": True, "confirm_alias": True,
+                 "confirm": True}
+
+
+@pytest.mark.parametrize("name", ["remove", "delete_path"])  # the former name is an alias
+def test_sad_mcp_never_says_yes_even_when_the_client_sends_the_keyword(tmp_path, inbox, name):
     fs = _AsksFS()
     tools = M._build_tools(fs, allow_write=True, root=str(tmp_path))
-    resp = _call(tools, "remove", {"path": str(inbox), "recursive": True,
-                                   "keep_namespace_root": True, "follow_dfs_link": True})
-    result = resp["result"]
+    # The keywords: refused by the schema (additionalProperties: false) before
+    # the backend is asked anything - on every protocol revision.
+    for version in ("2024-11-05", "2025-11-25"):
+        resp = M._handle_request(
+            {"jsonrpc": "2.0", "id": 7, "method": "tools/call",
+             "params": {"name": name, "arguments": {"path": str(inbox), "recursive": True,
+                                                    **_YES_KEYWORDS}}},
+            tools, cancels=M._CancelRegistry(), protocol=M.ProtocolState(version))
+        refusal = resp.get("error") or resp["result"]
+        assert "error" in resp or refusal["isError"] is True, resp
+        assert "keep_namespace_root" in str(refusal), resp
+    assert fs.calls == [] and (inbox / "Sent").exists()
+    # Without them the backend asks, and MCP answers no: the model gets the question.
+    result = _call(tools, name, {"path": str(inbox), "recursive": True})["result"]
     assert result["isError"] is True
     assert result["_meta"]["type"] == "ConfirmationRequired"
     assert "Yes deletes them; INBOX stays." in result["content"][0]["text"]
     assert fs.calls == [(str(inbox), True, False)]
+    # The handler itself never passes a keyword either, should one get past
+    # the schema (a library caller, the agent's host path).
+    tool = next(t for t in tools if t.name == "remove")
+    with pytest.raises(ConfirmationRequired):
+        tool.handler({"path": str(inbox), "recursive": True, **_YES_KEYWORDS}, M._ToolContext())
+    assert fs.calls[-1] == (str(inbox), True, False)
     assert (inbox / "Sent").exists()
+
+
+def test_sad_no_alias_turns_a_former_argument_into_a_yes():
+    from core import mcp_names as N
+
+    targets = {new for names in N.ARG_ALIASES.values() for new in names.values()}
+    presets = {key for _target, preset, _renamed in N.MERGED.values() for key in preset}
+    renamed = {new for _t, _p, renamed in N.MERGED.values() for new in renamed.values()}
+    assert not (targets | presets | renamed) & set(_YES_KEYWORDS)
 
 
 # -- edge ----------------------------------------------------------------------------------

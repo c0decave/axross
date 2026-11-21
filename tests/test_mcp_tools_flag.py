@@ -50,12 +50,18 @@ BASE_WRITE_TOOLS = [
 
 
 def test_happy_single_group():
-    assert G.parse_groups(["packer"]) == frozenset({"packer"})
+    assert G.parse_groups(["crypto"]) == frozenset({"crypto"})
+
+
+def test_happy_the_former_packer_group_is_the_archive_group():
+    assert G.parse_groups(["packer"]) == frozenset({"archive"})
+    assert G.parse_groups(["packer,archive"]) == frozenset({"archive"})
+    assert G.groups_from(None, env_value="packer") == frozenset({"archive"})
 
 
 def test_happy_comma_separated_and_repeated_values_are_merged():
-    got = G.parse_groups(["packer,archive", "metadata"])
-    assert got == frozenset({"packer", "archive", "metadata"})
+    got = G.parse_groups(["crypto,archive", "metadata"])
+    assert got == frozenset({"crypto", "archive", "metadata"})
 
 
 def test_happy_all_expands_to_every_group():
@@ -64,7 +70,7 @@ def test_happy_all_expands_to_every_group():
 
 
 def test_edge_case_and_whitespace_are_ignored():
-    assert G.parse_groups([" Packer , ARCHIVE "]) == frozenset({"packer", "archive"})
+    assert G.parse_groups([" Crypto , ARCHIVE "]) == frozenset({"crypto", "archive"})
 
 
 def test_edge_all_with_other_groups_is_still_all():
@@ -92,8 +98,8 @@ def test_sad_flag_without_any_group_is_refused():
 
 
 def test_happy_env_value_is_merged_with_the_flag():
-    got = G.groups_from(["packer"], env_value="archive, metadata")
-    assert got == frozenset({"packer", "archive", "metadata"})
+    got = G.groups_from(["crypto"], env_value="archive, metadata")
+    assert got == frozenset({"crypto", "archive", "metadata"})
 
 
 def test_edge_empty_env_value_adds_nothing():
@@ -141,7 +147,7 @@ def test_sad_unknown_group_exits_2_with_one_line_before_any_server():
     code, err, serve, serve_http = _main("--mcp-server", "--mcp-tools", "backend")
     assert code == 2, err
     assert len(err.strip().splitlines()) == 1, err
-    assert "backend" in err and "packer" in err and "all" in err
+    assert "backend" in err and "archive" in err and "all" in err
     serve.assert_not_called()
     serve_http.assert_not_called()
 
@@ -159,7 +165,7 @@ def test_happy_groups_reach_the_stdio_config():
     )
     assert code == 0, err
     config = serve.call_args.args[0]
-    assert config.tool_groups == frozenset({"packer", "archive", "crypto"})
+    assert config.tool_groups == frozenset({"archive", "crypto"})  # packer: archive now
 
 
 def test_happy_env_groups_reach_the_stdio_config():

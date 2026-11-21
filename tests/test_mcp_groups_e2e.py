@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pytest
 
+from core import mcp_names as N  # noqa: E402
 from core import mcp_groups as G
 from core.profiles import ConnectionProfile
 from tests import metadata_testkit as K
@@ -174,12 +175,12 @@ def _call(client, name: str, args: dict) -> dict:
 def _drive(client, root: Path) -> None:
     init = client.rpc("initialize", {"protocolVersion": "2024-11-05"})
     assert init["result"]["serverInfo"]["name"] == "axross-mcp"
-    names = {t["name"] for t in client.rpc("tools/list")["result"]["tools"]}
+    names = {N.internal(t["name"]) for t in client.rpc("tools/list")["result"]["tools"]}
     expected = {
         "metadata_read", "metadata_remove", "duplicates_scan", "duplicates_dedupe", "pack",
         "archive_extract", "encrypt", "decrypt", "index_build", "file_type", "transfer_copy",
         "remote_open", "list_backends", "extensions_list", "write_file", "remote_exec",
-        "remote_script", "exec_backends", "agent_run",
+        "remote_script", "agent_run",
     }
     assert expected <= names
     assert {"script_run"}.isdisjoint(names)  # not requested
@@ -193,7 +194,7 @@ def _drive(client, root: Path) -> None:
     assert any(
         {os.path.basename(c["path"]) for c in g["copies"]} == {"a.txt", "b.txt"} for g in groups
     )
-    # packer + archive
+    # archive (packing too)
     packed = _call(
         client,
         "pack",
@@ -211,7 +212,7 @@ def _drive(client, root: Path) -> None:
     assert Path(dec["path"]).read_text() == "twin\n"
     # index -> search
     _call(client, "index_build", {"path": str(root)})
-    hits = {h["path"] for h in _call(client, "search", {"needle": "photo"})}
+    hits = {h["path"] for h in _call(client, "search", {"needle": "photo"})["entries"]}
     assert hits == {str(root / "photo.jpg"), str(Path(extracted["path"]) / "photo.jpg")}
     # filetype
     assert _call(client, "file_type", {"path": str(root / "photo.jpg")})["mime"] == "image/jpeg"
@@ -227,7 +228,8 @@ def _drive(client, root: Path) -> None:
     assert base64.b64decode(back["content_b64"]) == b"twin\n"
     # exec: no backend here has a remote shell (the lab run covers real
     # ones), so the group answers with an empty list and a clear refusal.
-    assert _call(client, "exec_backends", {}) == {"backends": []}
+    assert _call(client, "list_backends", {"can_run_commands": True}) == []
+    assert _call(client, "exec_backends", {}) == []  # the former name: the same call
     refused = client.rpc(
         "tools/call", {"name": "remote_exec", "arguments": {"backend": bid, "command": "id"}}
     )
@@ -288,7 +290,7 @@ def test_sad_stdio_without_write_offers_no_mutating_group_tool(world):
     )
     assert proc.returncode == 0, proc.stderr
     tools = json.loads(proc.stdout.splitlines()[1])["result"]["tools"]
-    names = {t["name"] for t in tools}
+    names = {N.internal(t["name"]) for t in tools}
     assert "metadata_read" in names and "pack" not in names and "transfer_copy" not in names
 
 

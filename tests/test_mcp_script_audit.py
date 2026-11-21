@@ -48,8 +48,8 @@ def test_script_write_is_audited_without_source(tmp_path, audit) -> None:
     _call(tools, "script_write", {"name": "audited_write", "source": source})
     lines = _audit_lines(audit)
     assert lines == [
-        "tool=script_write outcome=attempt name='audited_write'",
-        f"tool=script_write outcome=ok name='audited_write' size={len(source)}",
+        "tool=write_script outcome=attempt name='audited_write'",
+        f"tool=write_script outcome=ok name='audited_write' size={len(source)}",
     ]
     assert not any(SOURCE_MARKER in line for line in lines)
 
@@ -62,8 +62,8 @@ def test_script_run_is_audited_without_output(tmp_path, audit) -> None:
     assert OUTPUT_MARKER in result["stdout"]
     lines = _audit_lines(audit)
     assert lines == [
-        "tool=script_run outcome=attempt name='audited_run'",
-        "tool=script_run outcome=ok name='audited_run' exit=0",
+        "tool=run_script outcome=attempt name='audited_run'",
+        "tool=run_script outcome=ok name='audited_run' exit=0",
     ]
     assert not any(OUTPUT_MARKER in line for line in lines)
 
@@ -74,8 +74,8 @@ def test_script_delete_is_audited(tmp_path, audit) -> None:
     audit.clear()
     _call(tools, "script_delete", {"name": "audited_delete"})
     assert _audit_lines(audit) == [
-        "tool=script_delete outcome=attempt name='audited_delete'",
-        "tool=script_delete outcome=ok name='audited_delete'",
+        "tool=delete_script outcome=attempt name='audited_delete'",
+        "tool=delete_script outcome=ok name='audited_delete'",
     ]
 
 
@@ -85,8 +85,8 @@ def test_script_write_with_invalid_name_is_audited_as_refused(tmp_path, audit) -
         _call(tools, "script_write", {"name": "../escape", "source": SOURCE_MARKER})
     lines = _audit_lines(audit)
     assert lines == [
-        "tool=script_write outcome=attempt name='../escape'",
-        "tool=script_write outcome=refused name='../escape' error='ValueError'",
+        "tool=write_script outcome=attempt name='../escape'",
+        "tool=write_script outcome=refused name='../escape' error='ValueError'",
     ]
     assert not any(SOURCE_MARKER in line for line in lines)
 
@@ -96,8 +96,8 @@ def test_script_run_of_missing_script_is_audited_as_refused(tmp_path, audit) -> 
     with pytest.raises(FileNotFoundError):
         _call(tools, "script_run", {"name": "never_written"})
     assert _audit_lines(audit) == [
-        "tool=script_run outcome=attempt name='never_written'",
-        "tool=script_run outcome=refused name='never_written' error='FileNotFoundError'",
+        "tool=run_script outcome=attempt name='never_written'",
+        "tool=run_script outcome=refused name='never_written' error='FileNotFoundError'",
     ]
 
 
@@ -114,7 +114,7 @@ def test_script_run_that_raises_logs_only_the_exception_type(tmp_path, audit) ->
     assert result["error_type"] == "RuntimeError" and OUTPUT_MARKER in result["error"]
     lines = _audit_lines(audit)
     assert lines[-1] == (
-        "tool=script_run outcome=ok name='audited_raise' exit=1 error='RuntimeError'"
+        "tool=run_script outcome=ok name='audited_raise' exit=1 error='RuntimeError'"
     )
     assert not any(OUTPUT_MARKER in line for line in lines)
 
@@ -132,8 +132,8 @@ def test_script_run_that_exits_is_audited_with_its_exit_code(tmp_path, audit) ->
     assert result["exit"] == 3
     lines = _audit_lines(audit)
     assert lines == [
-        "tool=script_run outcome=attempt name='audited_exit'",
-        "tool=script_run outcome=ok name='audited_exit' exit=3",
+        "tool=run_script outcome=attempt name='audited_exit'",
+        "tool=run_script outcome=ok name='audited_exit' exit=3",
     ]
     assert not any(OUTPUT_MARKER in line for line in lines)
 
@@ -152,7 +152,7 @@ def test_script_run_with_a_text_exit_reports_it_like_python(tmp_path, audit) -> 
     result = _run_exit(tools, "audited_text_exit", "'bye'")
     assert result["exit"] == 1
     assert result["stderr"] == "bye\n"
-    assert _audit_lines(audit)[-1] == "tool=script_run outcome=ok name='audited_text_exit' exit=1"
+    assert _audit_lines(audit)[-1] == "tool=run_script outcome=ok name='audited_text_exit' exit=1"
 
 
 @pytest.mark.parametrize(
@@ -181,8 +181,8 @@ def test_script_audit_works_with_write_tools_enabled_too(tmp_path, audit) -> Non
     tools = _tools(tmp_path, allow_write=True)
     _call(tools, "script_delete", {"name": "absent_is_fine"})
     assert _audit_lines(audit) == [
-        "tool=script_delete outcome=attempt name='absent_is_fine'",
-        "tool=script_delete outcome=ok name='absent_is_fine'",
+        "tool=delete_script outcome=attempt name='absent_is_fine'",
+        "tool=delete_script outcome=ok name='absent_is_fine'",
     ]
 
 
@@ -194,5 +194,5 @@ def test_script_run_that_times_out_is_audited_as_such(tmp_path, audit) -> None:
     result = _call(tools, "script_run", {"name": "audited_loop", "timeout_s": 0.5})
     assert result["timed_out"] is True
     assert _audit_lines(audit)[-1] == (
-        f"tool=script_run outcome=ok name='audited_loop' exit={result['exit']} timed_out=True"
+        f"tool=run_script outcome=ok name='audited_loop' exit={result['exit']} timed_out=True"
     )

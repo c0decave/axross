@@ -83,7 +83,8 @@ class OverallProgressTest(unittest.TestCase):
         jobs[1].transferred_bytes = 100
         self.mgr.job_updated.emit(jobs[1].job_id)
         self.assertTrue(_wait(self.app, lambda: self.bar().value() == 50))
-        self.assertEqual(self.bar().format(), "%p%")
+        # The files beside the bytes: many small files show no movement in bytes.
+        self.assertEqual(self.bar().format(), "50% – 0 of 4 files")
 
     def test_happy_all_finished_shows_done(self) -> None:
         jobs = self.add(3)
@@ -156,7 +157,7 @@ class OverallProgressTest(unittest.TestCase):
         jobs[1].speed = 50.0
         self.dock._update_overall()
         # 1500 bytes left at 150 B/s
-        self.assertEqual(self.bar().format(), "%p% · 10s left")
+        self.assertEqual(self.bar().format(), "25% – 0 of 2 files · 10s left")
 
     def test_happy_show_current_selects_the_running_job(self) -> None:
         jobs = self.add(30, status=self.Status.DONE)

@@ -7,10 +7,10 @@ MOVE of folder ``A`` holding ``A/L -> B`` (``B`` outside ``A``) moved
 ``B``'s files out of ``B``; a link to an ancestor recursed until the
 stack or the path length gave out.
 
-Now such an entry is not descended into: it shows as a refused job in the
-transfer list, the link stays in the source (so a moved folder that holds
-it is kept), and the folder it points to is left alone. The conflict scan
-does not descend into it either.
+Such an entry is not descended into. A link inside the copied folder is
+made again as a link with the same target (a move moves the link); the
+folder it points to is left alone. A link selected on its own is still
+refused with a reason. The conflict scan does not descend into it either.
 """
 
 from __future__ import annotations
@@ -93,16 +93,18 @@ class FolderSymlinkTransferTest(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(self.b)), ["theirs.txt"])
         self.assertEqual((self.dst / "A" / "mine.txt").read_text(), "mine")
         self.assertFalse((self.a / "mine.txt").exists())
-        self.assertFalse((self.dst / "A" / "L").exists())
-        self.assertTrue(os.path.islink(self.a / "L"), "the link was removed")
-        refused = [j for j in jobs if j.status is TransferStatus.ERROR]
-        self.assertEqual([Path(j.source_path).name for j in refused], ["L"])
-        self.assertIn("symbolic link", refused[0].error_message)
+        # The link moved as the link: same target, nothing copied through it.
+        self.assertTrue(os.path.islink(self.dst / "A" / "L"))
+        self.assertEqual(os.readlink(self.dst / "A" / "L"), str(self.b))
+        self.assertFalse(os.path.lexists(self.a / "L"))
+        self.assertEqual([j for j in jobs if j.status is not TransferStatus.DONE], [])
 
     def test_happy_a_copy_does_not_copy_the_linked_folder(self) -> None:
         jobs = self._run(move=False)
         self.assertEqual((self.dst / "A" / "mine.txt").read_text(), "mine")
-        self.assertFalse((self.dst / "A" / "L").exists())
+        self.assertTrue(os.path.islink(self.dst / "A" / "L"))
+        self.assertEqual(os.readlink(self.dst / "A" / "L"), str(self.b))
+        self.assertTrue(os.path.islink(self.a / "L"))
         self.assertEqual(
             sorted(Path(j.source_path).name for j in jobs), ["L", "mine.txt"]
         )
@@ -113,12 +115,14 @@ class FolderSymlinkTransferTest(unittest.TestCase):
         self.assertEqual(
             sorted(Path(j.source_path).name for j in jobs), ["L", "loop", "mine.txt"]
         )
-        self.assertEqual(sorted(os.listdir(self.dst / "A")), ["mine.txt"])
+        self.assertEqual(sorted(os.listdir(self.dst / "A")), ["L", "loop", "mine.txt"])
+        self.assertTrue(os.path.islink(self.dst / "A" / "loop"))
 
-    def test_edge_a_symlinked_file_is_still_copied(self) -> None:
+    def test_edge_a_symlinked_file_is_copied_as_the_link(self) -> None:
         os.symlink(self.b / "theirs.txt", self.a / "file-link")
         self._run(move=False)
-        self.assertEqual((self.dst / "A" / "file-link").read_text(), "theirs")
+        self.assertTrue(os.path.islink(self.dst / "A" / "file-link"))
+        self.assertEqual(os.readlink(self.dst / "A" / "file-link"), str(self.b / "theirs.txt"))
 
     def test_edge_the_conflict_scan_does_not_descend_into_the_link(self) -> None:
         from core.transfer_conflicts import scan_conflicts
@@ -154,18 +158,15 @@ class LocalFolderSymlinkTransferTest(FolderSymlinkTransferTest):
             time.sleep(0.01)
         return {Path(j.source_path).name: j for j in jobs}
 
-    def test_sad_links_in_a_folder_are_skipped_with_a_clear_reason(self) -> None:
+    def test_sad_links_in_a_folder_are_copied_as_links(self) -> None:
         os.symlink("/nonexistent/x", self.a / "dangling")
         os.symlink("..", self.a / "loop")
         jobs = self._copy([self.a])
-        self.assertEqual(jobs["mine.txt"].status, TransferStatus.DONE)
-        for name in ("L", "loop"):
-            self.assertIn("symbolic link to a folder: not followed", jobs[name].error_message)
-        self.assertIn("dangling symbolic link", jobs["dangling"].error_message)
-        self.assertIn("/nonexistent/x", jobs["dangling"].error_message)
         for job in jobs.values():
-            self.assertNotIn("Errno", job.error_message)
-        self.assertEqual(sorted(os.listdir(self.dst / "A")), ["mine.txt"])
+            self.assertEqual(job.status, TransferStatus.DONE, job.error_message)
+        self.assertEqual(os.readlink(self.dst / "A" / "dangling"), "/nonexistent/x")
+        self.assertEqual(os.readlink(self.dst / "A" / "loop"), "..")
+        self.assertEqual(sorted(os.listdir(self.dst / "A")), ["L", "dangling", "loop", "mine.txt"])
 
     def test_sad_selected_links_are_skipped_with_a_clear_reason(self) -> None:
         os.symlink("/nonexistent/x", self.a / "dangling")

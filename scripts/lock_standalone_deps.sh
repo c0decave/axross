@@ -40,21 +40,65 @@ OUT_DIR="$(mktemp -d)"
 trap 'rm -rf "$OUT_DIR"' EXIT
 python3 -I scripts/export_standalone.py --requirements "$APP" > "$OUT_DIR/requirements.in"
 INPUT_SHA=$(sha256sum "$OUT_DIR/requirements.in" | cut -d' ' -f1)
+# The tools that build the release's sdist and wheel - build (axross's reviewed pin, build/requirements-dist-tools.txt)
+# and twine - hashed as the runtime's are, in the exported repo's packaging/requirements-build.txt: the release
+# builds with --no-isolation, the backend (setuptools) from the lock above, nothing unpinned from PyPI.
+REPO_PACKAGING="scripts/standalone_repo/axross-$APP/packaging"
+BUILD_LOCK="$REPO_PACKAGING/requirements-build.txt"
+BUILD_PIN=$(grep -o '^build==[^ ]*' build/requirements-dist-tools.txt)
+printf '%s\ntwine\n' "$BUILD_PIN" > "$OUT_DIR/requirements-build.in"
+BUILD_SHA=$(sha256sum "$OUT_DIR/requirements-build.in" | cut -d' ' -f1)
+# The tests' tool (pytest and what it needs), hashed too, in packaging/requirements-test.txt: the tests run in the
+# environment the sdist and wheel are then built in (--no-isolation) - an unpinned pytest from PyPI was in it.
+TEST_LOCK="$REPO_PACKAGING/requirements-test.txt"
+printf 'pytest\n' > "$OUT_DIR/requirements-test.in"
+TEST_SHA=$(sha256sum "$OUT_DIR/requirements-test.in" | cut -d' ' -f1)
 if [[ "$MODE" == "--check" ]]; then
     # a fresh resolution may pick newer releases; what must hold is the input
+    status=0
     if grep -q "^# input sha256 $INPUT_SHA " "$LOCK" 2>/dev/null; then
         echo "$LOCK is current (input $INPUT_SHA)"
-        exit 0
+    else
+        echo "$LOCK is not current: run scripts/lock_standalone_deps.sh $APP" >&2
+        status=1
     fi
-    echo "$LOCK is not current: run scripts/lock_standalone_deps.sh $APP" >&2
-    exit 1
+    if [[ -d "$REPO_PACKAGING" ]]; then
+        if grep -q "^# input sha256 $BUILD_SHA " "$BUILD_LOCK" 2>/dev/null; then
+            echo "$BUILD_LOCK is current (input $BUILD_SHA)"
+        else
+            echo "$BUILD_LOCK is not current: run scripts/lock_standalone_deps.sh $APP" >&2
+            status=1
+        fi
+        if grep -q "^# input sha256 $TEST_SHA " "$TEST_LOCK" 2>/dev/null; then
+            echo "$TEST_LOCK is current (input $TEST_SHA)"
+        else
+            echo "$TEST_LOCK is not current: run scripts/lock_standalone_deps.sh $APP" >&2
+            status=1
+        fi
+    fi
+    exit "$status"
 fi
-# preferences: this lock's pins, else axross's (uv keeps the versions of the output file)
-if [[ -f "$LOCK" ]]; then
-    cp "$LOCK" "$OUT_DIR/lock.txt"
-else
-    cat build/requirements-bundle.txt build/requirements-scan-tools.txt > "$OUT_DIR/lock.txt"
-fi
+# preferences: this lock's pins, then axross's for what it has none of yet - a new requirement (the build
+# backend) keeps the version axross reviewed (uv keeps the versions of the output file)
+python3 -I - "$LOCK" build/requirements-bundle.txt build/requirements-scan-tools.txt > "$OUT_DIR/lock.txt" <<'PY'
+import os, re, sys
+seen, out = set(), []
+for path in sys.argv[1:]:
+    if not os.path.isfile(path):
+        continue
+    block = []
+    for line in open(path, encoding="utf-8").read().splitlines() + [""]:
+        pin = re.match(r"([A-Za-z0-9_.-]+)==", line)
+        if pin or not line.startswith(" "):
+            if block and block[0][1] not in seen:
+                out += [text for text, _ in block]
+            if block:
+                seen.add(block[0][1])
+            block = [(line, pin.group(1).lower().replace("_", "-"))] if pin else []
+        elif block:
+            block.append((line, block[0][1]))
+print("\n".join(out))
+PY
 (cd "$OUT_DIR" && UV_NO_CONFIG=1 uv pip compile requirements.in --universal --python-version 3.11 \
     --generate-hashes --index-url https://pypi.org/simple --exclude-newer "$CUTOFF" "${EXCEPTIONS[@]}" \
     --custom-compile-command "scripts/lock_standalone_deps.sh $APP" --quiet --output-file lock.txt)
@@ -65,3 +109,66 @@ fi
 } > "$OUT_DIR/final.txt"
 cp "$OUT_DIR/final.txt" "$LOCK"
 echo "locked (releases up to $CUTOFF): $(grep -c '==' "$LOCK") pins in $LOCK"
+if [[ -d "$REPO_PACKAGING" ]]; then
+    # (preferences: this lock's pins, then axross's reviewed ones - build's dependencies, requests and the rest)
+    python3 -I - "$BUILD_LOCK" build/requirements-dist-tools.txt build/requirements-bundle.txt > "$OUT_DIR/build-lock.txt" <<'PY'
+import os, re, sys
+seen, out = set(), []
+for path in sys.argv[1:]:
+    if not os.path.isfile(path):
+        continue
+    block = []
+    for line in open(path, encoding="utf-8").read().splitlines() + [""]:
+        pin = re.match(r"([A-Za-z0-9_.-]+)==", line)
+        if pin or not line.startswith(" "):
+            if block and block[0][1] not in seen:
+                out += [text for text, _ in block]
+            if block:
+                seen.add(block[0][1])
+            block = [(line, pin.group(1).lower().replace("_", "-"))] if pin else []
+        elif block:
+            block.append((line, block[0][1]))
+print("\n".join(out))
+PY
+    (cd "$OUT_DIR" && UV_NO_CONFIG=1 uv pip compile requirements-build.in --universal --python-version 3.11 \
+        --generate-hashes --index-url https://pypi.org/simple --exclude-newer "$CUTOFF" "${EXCEPTIONS[@]}" \
+        --custom-compile-command "scripts/lock_standalone_deps.sh $APP" --quiet --output-file build-lock.txt)
+    {
+        echo "# The tools that build axross-$APP's sdist and wheel ($BUILD_PIN, twine) - the release installs them"
+        echo "# with --require-hashes and builds with --no-isolation (setuptools from requirements.lock.txt);"
+        echo "# input sha256 $BUILD_SHA - written by scripts/lock_standalone_deps.sh $APP."
+        cat "$OUT_DIR/build-lock.txt"
+    } > "$BUILD_LOCK"
+    echo "locked (releases up to $CUTOFF): $(grep -c '==' "$BUILD_LOCK") pins in $BUILD_LOCK"
+    # (preferences: this lock's pins, then the runtime lock's - a package both have keeps the runtime's version, so
+    # installing the tests' tool changes nothing the program runs with)
+    python3 -I - "$TEST_LOCK" "$LOCK" > "$OUT_DIR/test-lock.txt" <<'PY'
+import os, re, sys
+seen, out = set(), []
+for path in sys.argv[1:]:
+    if not os.path.isfile(path):
+        continue
+    block = []
+    for line in open(path, encoding="utf-8").read().splitlines() + [""]:
+        pin = re.match(r"([A-Za-z0-9_.-]+)==", line)
+        if pin or not line.startswith(" "):
+            if block and block[0][1] not in seen:
+                out += [text for text, _ in block]
+            if block:
+                seen.add(block[0][1])
+            block = [(line, pin.group(1).lower().replace("_", "-"))] if pin else []
+        elif block:
+            block.append((line, block[0][1]))
+print("\n".join(out))
+PY
+    (cd "$OUT_DIR" && UV_NO_CONFIG=1 uv pip compile requirements-test.in --universal --python-version 3.11 \
+        --generate-hashes --index-url https://pypi.org/simple --exclude-newer "$CUTOFF" "${EXCEPTIONS[@]}" \
+        --custom-compile-command "scripts/lock_standalone_deps.sh $APP" --quiet --output-file test-lock.txt)
+    {
+        echo "# The tests' tool of axross-$APP (pytest and its dependencies) - the CI and the release install it"
+        echo "# with --require-hashes, in the environment the sdist and wheel are built in;"
+        echo "# input sha256 $TEST_SHA - written by scripts/lock_standalone_deps.sh $APP."
+        cat "$OUT_DIR/test-lock.txt"
+    } > "$TEST_LOCK"
+    echo "locked (releases up to $CUTOFF): $(grep -c '==' "$TEST_LOCK") pins in $TEST_LOCK"
+fi

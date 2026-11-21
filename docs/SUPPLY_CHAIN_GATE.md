@@ -111,7 +111,8 @@ and wheel. The exporter refuses a lock made for other requirements (its
 header records the input's SHA-256) and ships it as `requirements.lock.txt`
 with a `supply-chain-gate.toml`; the exported CI installs exactly those files
 (`pip install --require-hashes -r requirements.lock.txt`, then
-`pip install --no-deps .`) and runs this gate on them in a job of its own: a
+`pip install --no-build-isolation --no-deps .`, its build backend pinned in the
+lock too) and runs this gate on them in a job of its own: a
 sparse checkout of axross's `security/` and scanners' lock into `.axross`,
 the standard-library check, the scanners installed from the lock cut down to
 what the check inspected, `verify-env`, then the check with the scanners - the

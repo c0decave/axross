@@ -390,7 +390,9 @@ def test_happy_qts_own_parser_shows_raw_html_alerts_emoji_and_math_as_markdown_i
         for written in ("<p", "<img", "<b>", "<kbd>", "<details>", "<summary>", "<sub>", "<script", "alert(1)",
                         "comment", "[!NOTE]", ":tada:", "$E", "\\frac", "<span>", "badge.svg", "img.example"):
             assert written not in text.split("<b>code</b>")[0].replace("$x$ <b>", ""), written
-        for shown in ("tagline", "▾ More Ctrl+C", "Inside md.", "H2O and x2", "ok", "ℹ Note", "Useful.",
+        # (a <details> without "open" folded, as markdown-it's page shows it - and GitHub: review 23)
+        assert "Inside md." not in text
+        for shown in ("tagline", "▸ More Ctrl+C", "H2O and x2", "ok", "ℹ Note", "Useful.",
                       "Done 🎉", "E = mc2", "prices $5 and $10", "$x$ <b>", "a\nb", "▣ Build", "▣ Logo", "plain"):
             assert shown in text, shown
         assert "<b>code</b> :tada: $x$" in text  # (code as written)

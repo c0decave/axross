@@ -371,6 +371,12 @@ def test_sad_copy_code_block_copies_one_block_not_its_neighbours():
     try:
         view.render("```\nfirst()\n\n\tindented_with_tab()\n```\n```\nsecond()\n```\n\n    indented code\n\n"
                     "Text\n\n```diff\n- removed\n+ added\n```\n")
+        from PyQt6.QtWidgets import QApplication
+
+        end = time.monotonic() + 10
+        while time.monotonic() < end and not view._readable:  # (a text with code: made on a worker)
+            QApplication.processEvents()
+            time.sleep(0.01)
         document = view.browser.document()
         assert view.code_block_at(document.find("first()").position()) == "first()\n\n\tindented_with_tab()\n"
         assert view.code_block_at(document.find("second()").position()) == "second()\n"

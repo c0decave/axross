@@ -154,7 +154,7 @@ Más capturas de pantalla, cada una con su explicación: **[la slideshow](../sli
    cada ejecución en un proceso hijo con timeout — no confinado a la
    raíz, trátalo como una shell.
    `--mcp-tools GRUPO[,…]` (o `all`) añade grupos de capacidades:
-   metadata, duplicates, packer, archive, crypto, index, filetype,
+   metadata, duplicates, archive, crypto, index, filetype,
    transfer, remote (perfiles guardados como backends adicionales,
    credenciales solo del keyring, nunca un prompt) y extensions; sus
    herramientas que modifican necesitan además `--mcp-write`. El
@@ -247,7 +247,7 @@ Más capturas de pantalla, cada una con su explicación: **[la slideshow](../sli
     responde «¿qué ES esto?» — repo git, datadir PostgreSQL,
     config-tree nginx, manifests k8s, Maildir, dir de logs,
     proyectos Python / Node / Docker, … Diseñado para que un agente
-    LLM planee sin un dump de list_dir de N-mil entradas.
+    LLM planee sin un listado de carpeta de miles de entradas.
 
 16. **Pruebas de credenciales autorizadas.** `axross.bruteforce()`,
     `spray()`, `enumerate_users()` para engagements de pentest con

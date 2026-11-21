@@ -35,6 +35,8 @@ from __future__ import annotations
 
 import logging
 import posixpath
+import re
+import time
 
 from PyQt6 import sip
 from PyQt6.QtCore import QFileSystemWatcher, Qt, QTimer, QUrl
@@ -52,6 +54,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.i18n import tr
+from core.markdown_cli import FOLDER_PAGES  # (the names a folder's own page goes by: a link to it opens it)
 from ui import markdown_view as MV
 from ui import viewer_window as VW
 from ui.close_corner import add_close_corner
@@ -70,8 +73,9 @@ STATE_NAME = "markdown"
 #: Matches find marks at most (and counts at most FIND_COUNT).
 FIND_MARKS = 1000
 FIND_COUNT = 10_000
-#: Names a folder's own page goes by (a link to the folder opens it).
-FOLDER_PAGES = ("README.md", "readme.md", "Readme.md", "README.markdown", "index.md")
+#: Seconds a search's count and marks take at most in one turn (_mark_matches): past it, "N+" - 10,000
+#: matches in a long page took 0.15 s at each Find Next.
+FIND_TURN = 0.03
 #: Images a link may name (shown at their own size).
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".svgz", ".ico")
 #: Places Back keeps.
@@ -90,6 +94,41 @@ Open a Markdown file with **Open…** (Ctrl+O), or name files on the command lin
 - find (Ctrl+F), zoom (Ctrl+Plus / Ctrl+Minus / Ctrl+0), Reload (F5), Edit (F4), Back (Alt+Left)
 - Export: HTML, PDF, Print (Ctrl+P); a file changed on disk is shown anew
 """
+
+
+def unreadable_reason(error) -> str:
+    """Why a file cannot be read, in words - not the system's error with its path again ("[Errno 2] No such
+    file or directory: '/…/gone.md'")."""
+    if isinstance(error, FileNotFoundError):
+        return tr("it does not exist")
+    if isinstance(error, PermissionError):
+        return tr("you may not read it")
+    if isinstance(error, IsADirectoryError):
+        return tr("it is a folder without a README")
+    if isinstance(error, OSError) and error.strerror:
+        return error.strerror
+    return str(error)
+
+
+#: Blocks of a page past which the top of the view is looked for by halves (_first_shown).
+HALVED_BLOCKS = 5000
+
+
+def _first_shown(browser) -> QTextCursor:
+    """A cursor at the top of what *browser* shows. On a long page found by halves over its blocks' places -
+    Qt's own hit test walks every frame before it: at the end of 50,000 code blocks, 0.09 s a search."""
+    document = browser.document()
+    if document.blockCount() <= HALVED_BLOCKS:
+        return browser.cursorForPosition(browser.viewport().rect().topLeft())
+    layout, top = document.documentLayout(), browser.verticalScrollBar().value()
+    low, high = 0, document.blockCount() - 1
+    while low < high:
+        middle = (low + high) // 2
+        if layout.blockBoundingRect(document.findBlockByNumber(middle)).bottom() < top:
+            low = middle + 1
+        else:
+            high = middle
+    return QTextCursor(document.findBlockByNumber(low))
 
 
 class MarkdownViewerDialog(QDialog):
@@ -350,11 +389,11 @@ class MarkdownViewerDialog(QDialog):
         target.addWidget(self.find_count)
 
     def _update_title(self) -> None:
-        self.view.page_name = posixpath.basename(self.path) if self.path else ""
+        self.view.page_name = self._name() if self.path else ""
         if not self.path:
             self.setWindowTitle(tr("Markdown Viewer"))
             return
-        name = posixpath.basename(self.path) or self.path
+        name = self._name() or self.path
         self.setWindowTitle(tr("{name} – Markdown Viewer").format(name=MV.printable(name)))
 
     def done(self, result: int) -> None:  # noqa: D401 - Qt override
@@ -394,25 +433,27 @@ class MarkdownViewerDialog(QDialog):
         if generation != self._generation or sip.isdeleted(self):
             return  # a newer Reload is on its way
         if isinstance(error, MV.BinaryFile):  # (a picture, a program: said in the page - it was garbage)
-            name = MV.printable(posixpath.basename(self.path) or self.path)
+            name = MV.printable(self._name() or self.path)
             self.view.show_text(tr("{name} is not a text file: it holds binary data, so it is not shown.").format(
                 name="`" + name.replace("`", "'") + "`"), anchor, scroll)
             self.view.status.setText("")
             self.loaded_once = True
             return
         if error is not None:
-            said = tr("Cannot read {path}: {error}").format(path=MV.printable(self.path), error=MV.printable(error))
+            why = unreadable_reason(error)
+            said = tr("Cannot read {path}: {error}").format(path=MV.printable(self.path), error=MV.printable(why))
             self.view.status.setText(said)
             # (said in the page too: a missing file was a blank page, the reason in the status line only)
-            name = MV.printable(posixpath.basename(self.path) or self.path).replace("`", "'")
+            name = MV.printable(self._name() or self.path).replace("`", "'")
             self.view.show_text(tr("{name} cannot be read: {error}").format(
-                name="`" + name + "`", error=MV.printable(error).replace("`", "'")), anchor, scroll)
+                name="`" + name + "`", error=MV.printable(why).replace("`", "'")), anchor, scroll)
             self.view.status.setText(said)
             return
         text, self.cut = result
         if self.shown_as == "text":
             text = as_code(text, self.path)
-        self.view.status.setText("")  # ("Reading…" done)
+        if self.view.status.text() == tr("Reading…"):  # ("Reading…" done - what was said since, a link
+            self.view.status.setText("")  # followed meanwhile "Not opened (…)", stays)
         self.view.show_text(text, anchor, scroll)
         self.loaded_once = True
         # (said once the page is made: "Rendering…" stays meanwhile - cleared
@@ -546,7 +587,7 @@ class MarkdownViewerDialog(QDialog):
         if cursor.hasSelection() and browser.viewport().rect().intersects(browser.cursorRect(start)):
             cursor = start
         else:  # (nothing found yet: from the top of what is shown, as a browser - it began at the end)
-            cursor = browser.cursorForPosition(browser.viewport().rect().topLeft())
+            cursor = _first_shown(browser)
             for _round in range(200):  # (a table, a picture begun above the view: its block after it)
                 if browser.cursorRect(cursor).top() >= 0 or cursor.atEnd():
                     break
@@ -559,7 +600,8 @@ class MarkdownViewerDialog(QDialog):
 
     def _mark_matches(self, needle: str) -> None:
         """Every match of *needle* marked (at most FIND_MARKS), the count of
-        them (at most FIND_COUNT) and which one is selected beside the field."""
+        them (at most FIND_COUNT, or as many as FIND_TURN finds: "N+") and
+        which one is selected beside the field."""
         browser = self.view.browser
         document = browser.document()
         marks, count, current = [], 0, 0
@@ -567,7 +609,11 @@ class MarkdownViewerDialog(QDialog):
         fmt = QTextCharFormat()
         fmt.setBackground(QColor("#f2cc60") if not MV._is_dark(self.view.palette()) else QColor("#7a5b00"))
         cursor = document.find(needle, 0)
+        deadline, capped = time.monotonic() + FIND_TURN, False
         while not cursor.isNull() and count < FIND_COUNT:
+            if count % 64 == 63 and time.monotonic() > deadline:
+                capped = True
+                break
             count += 1
             if cursor.selectionStart() == selected.selectionStart() and selected.hasSelection():
                 current = count
@@ -587,9 +633,9 @@ class MarkdownViewerDialog(QDialog):
         if not count:
             self.find_count.setText(tr("no match"))
         else:
-            total = f"{count}+" if count >= FIND_COUNT else str(count)
-            # ("N+": a part of the page is not laid out yet - more may come)
-            total = f"{total}+" if self.view.more() else total
+            # ("N+": counted for at most FIND_TURN, FIND_COUNT matches - or a part of the page is not laid
+            # out yet: more may come; one "+" either way, "2495++" said both)
+            total = f"{count}+" if count >= FIND_COUNT or capped or self.view.more() else str(count)
             self.find_count.setText(tr("{current} of {total}").format(current=current or "–", total=total))
 
     def end_find(self, focus: bool = True) -> None:
@@ -636,9 +682,13 @@ class MarkdownViewerDialog(QDialog):
         if scheme or url.toString().startswith("//"):
             return refused
         relative = url.path()
-        if not relative or relative.startswith("/") or "\0" in relative:
+        paths = self._paths()
+        if not relative or relative.startswith("/") or "\0" in relative or paths.isabs(relative) \
+                or paths.splitdrive(relative)[0]:
             return refused
-        path = posixpath.normpath(posixpath.join(posixpath.dirname(self.path) or "/", relative))
+        # (the document's own path functions: on Windows "C:\\docs\\a.md" - posixpath made its folder "/", and
+        # a link "b.md" the drive's root's)
+        path = paths.normpath(paths.join(paths.dirname(self.path) or paths.sep, relative))
         if MV.is_markdown(path):
             return "markdown", path, url.fragment()
         return "file", path, ""
@@ -687,14 +737,21 @@ class MarkdownViewerDialog(QDialog):
     def _beside(self, path: str) -> bool:
         """Whether *path* is in the document's folder or below it (its real
         place: a link through a symlink counts where it leads)."""
-        folder = posixpath.dirname(self.path) if self.path else ""
+        paths = self._paths()
+        folder = paths.dirname(self.path) if self.path else ""
         if not folder:
             return False
         if MV._is_local(self.backend):
-            import os
-
-            return MV._inside(os.path.realpath(path), os.path.realpath(folder))
+            return MV._inside(paths.realpath(path), paths.realpath(folder), paths)
         return MV._inside(posixpath.normpath(path), folder)
+
+    def _paths(self):
+        """The path functions of this window's backend (MV.path_functions): ntpath for a file on Windows."""
+        return MV.path_functions(MV._is_local(self.backend))
+
+    def _name(self, path: str | None = None) -> str:
+        """The file name of *path* (this window's file's): its last part, as the backend's paths are cut."""
+        return self._paths().basename(self.path if path is None else path)
 
     def _secret(self, path: str) -> str | None:
         if not MV._is_local(self.backend):
@@ -774,14 +831,14 @@ class MarkdownViewerDialog(QDialog):
         """A link to a file that is not Markdown: looked at on a worker
         thread - a folder opens its README, a text file is shown as its
         text, an image at its own size; anything else is named, not opened."""
-        backend, local = self.backend, MV._is_local(self.backend)
+        backend, local, paths = self.backend, MV._is_local(self.backend), self._paths()
         link_text = getattr(self.view, "last_link_text", "")
         self.view.status.setText(tr("Reading…"))
 
         def look():
             if backend.is_dir(path):
                 for name in FOLDER_PAGES:
-                    page = posixpath.join(path, name)
+                    page = paths.join(path, name)
                     if backend.exists(page):
                         return "markdown", page, None
                 return "refused", tr("Not opened (a folder without a README): {target}"), None
@@ -823,7 +880,7 @@ class MarkdownViewerDialog(QDialog):
                 self.view.say(where.replace("{target}", MV.printable(path)))
             elif kind == "image":
                 self.view.status.setText("")
-                zoom = MV.ImageZoom(image, MV.printable(posixpath.basename(where)), self)
+                zoom = MV.ImageZoom(image, MV.printable(self._name(where)), self)
                 zoom.show()
             elif where == path or self._may_open(where, link_text):  # (a folder's README: checked as a link -
                 self.navigate(where, shown_as=kind)  # one leading to a secret file opened it unasked)
@@ -835,31 +892,46 @@ class MarkdownViewerDialog(QDialog):
     def _export_name(self, suffix: str) -> str:
         import os
 
-        base = posixpath.splitext(posixpath.basename(self.path) or "page")[0] + suffix
+        base = self._paths().splitext(self._name() or "page")[0] + suffix
         if self.path and MV._is_local(self.backend):
             return os.path.join(os.path.dirname(self.path), base)
         return os.path.join(os.path.expanduser("~"), base)
 
-    def _whole_first(self, then) -> bool:
-        """Whether the page is laid out whole - else it is, then *then()*."""
-        if not self.view.more():
-            return True
-        self.view.load_rest(then)
-        return False
-
     def ask_export_html(self) -> str:
-        if not self._whole_first(self.ask_export_html):
-            return ""
+        # (the file asked for at once: the page laid out whole first took 24 s to minutes - the export works from
+        # the text, the images it shows read on a worker: _prepared)
         path, _chosen = QFileDialog.getSaveFileName(self, tr("Export HTML"), self._export_name(".html"),
                                                     tr("HTML (*.html *.htm)"))
         return self.export_html(path) if path else ""
 
     def ask_export_pdf(self) -> str:
-        if not self._whole_first(self.ask_export_pdf):
-            return ""
         path, _chosen = QFileDialog.getSaveFileName(self, tr("Export PDF"), self._export_name(".pdf"),
                                                     tr("PDF (*.pdf)"))
         return self.export_pdf(path) if path else ""
+
+    def _prepared(self, label: str):
+        """(the kind, the parts) of the page to print or export (MV.print_parts) - made on a worker thread with
+        the images they show that are not read yet (MV.image_names, the view's source), a progress window
+        with Cancel meanwhile; those images then the view's, as if the page had shown them. None when
+        cancelled. The page itself is not laid out for it."""
+        text = self.view.markdown.replace("\r\n", "\n").replace("\r", "\n")
+        full, source, read = self.view.full, self.view.source, set(self.view.originals)
+
+        def work():
+            kind, parts = MV.print_parts(text, full)
+            names = []
+            if source is not None:
+                names = [name for name in MV.image_names(kind, parts)
+                         if name not in read and source.kind(name)[0] in ("local", "data")][:MV.IMAGES]
+            return kind, parts, names, source.read(names) if names else {}
+
+        made = self._in_background(work, label)
+        if made is None:
+            return None
+        kind, parts, names, found = made
+        if names:
+            self.view.images_read(names, found, None)
+        return kind, parts
 
     def export_html(self, target: str) -> str:
         """The page as HTML for a web browser, written to the local file
@@ -869,21 +941,80 @@ class MarkdownViewerDialog(QDialog):
         from core import markdown_doc as MD
         from ui import markdown_html as H
 
-        title = posixpath.basename(self.path) if self.path else tr("Markdown Viewer")
+        title = self._name() if self.path else tr("Markdown Viewer")
         if self.view.full:
             text = MD.clean(self.view.markdown.removeprefix("\ufeff"))
-            images = _embedded(self.view.originals)
+            source, originals = self.view.source, dict(self.view.originals)
+
+            def work():
+                doc = MD.parse(text)
+                # (the images it shows that the page has not read yet - not laid out whole first: read here)
+                if source is not None:
+                    names = [name for name in _image_sources(doc) if name not in originals
+                             and source.kind(name)[0] in ("local", "data")][:MV.IMAGES]
+                    originals.update((name, image) for name, image in source.read(names).items()
+                                     if not isinstance(image, str))
+                return H.export_html(doc, title=title, dark=False, images=_embedded(originals))
+
             # (made on a worker thread, the window going on: big.md held it 3.2 s)
-            page = self._in_background(lambda: H.export_html(MD.parse(text), title=title, dark=False, images=images),
-                                       tr("Exporting HTML…"))
+            page = self._in_background(work, tr("Exporting HTML…"))
             if page is None:
                 return ""
         else:  # (Qt's own parser: its HTML, made as safe as the other's - not by its policy alone)
-            self.view.load_rest_now()
-            page = H.safe_page(self.view.browser.document().toHtml(), _embedded(self.view.originals))
-            page = page.replace("<head>", f'<head><meta http-equiv="Content-Security-Policy" '
-                                          f'content="{H.EXPORT_POLICY}">', 1)
+            page = self._md4c_html(tr("Exporting HTML…"))
+            if page is None:
+                return ""
         return self._write(target, page.encode("utf-8"))
+
+    def _md4c_html(self, label: str) -> str | None:
+        """Qt's own parser's page as HTML (light colours): its parts made on a worker (_prepared), each one
+        laid out and written as HTML a turn (the page's own document whole, then toHtml and safe_page on the
+        GUI thread: 0.4 to 4.4 s in one turn), made safe on a worker. None when cancelled."""
+        from PyQt6.QtCore import QCoreApplication
+        from PyQt6.QtWidgets import QProgressDialog
+
+        from ui import markdown_html as H
+
+        made = self._prepared(label)
+        if made is None:
+            return None
+        kind, parts = made
+        progress = QProgressDialog(label, tr("Cancel"), 0, len(parts), self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(400)
+        head, bodies = "", []
+        try:
+            for number, part_text in enumerate(parts):
+                if sip.isdeleted(self) or progress.wasCanceled():
+                    return None
+                part = self.view._part_document(None, part_text, counted=False, kind=kind, dark=False, printed=True)
+                try:
+                    written = part.toHtml()
+                finally:
+                    part.deleteLater()
+                opened = _BODY_OPEN.search(written)
+                closed = written.rfind("</body>")
+                if opened is None or closed < 0:
+                    continue
+                head = head or written[:opened.end()]
+                bodies.append(written[opened.end():closed])
+                progress.setValue(number + 1)
+                QCoreApplication.processEvents()  # (a turn between two parts: the window goes on)
+            if sip.isdeleted(self) or progress.wasCanceled():
+                return None
+        finally:
+            if not sip.isdeleted(progress):
+                progress.close()
+                progress.deleteLater()
+        whole = (head or "<html><head></head><body>") + "".join(bodies) + "</body></html>"
+        images = dict(self.view.originals)
+
+        def safe():
+            page = H.safe_page(whole, _embedded(images))
+            return page.replace("<head>", f'<head><meta http-equiv="Content-Security-Policy" '
+                                          f'content="{H.EXPORT_POLICY}">', 1)
+
+        return self._in_background(safe, label)
 
     def export_pdf(self, target: str) -> str:
         """The page as PDF (light colours) in the local file *target* - made
@@ -895,10 +1026,12 @@ class MarkdownViewerDialog(QDialog):
         try:
             writer = QPdfWriter(target)
             writer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
-            writer.setTitle(posixpath.basename(self.path) or tr("Markdown Viewer"))
+            writer.setTitle(self._name() or tr("Markdown Viewer"))
             done = self._print_to(writer, tr("Exporting PDF…"))
             del writer  # (the file is complete once the writer is gone)
         except Exception as exc:  # noqa: BLE001 - said, not raised
+            if sip.isdeleted(self):
+                return ""
             self.view.status.setText(tr("Export failed: {error}").format(error=MV.printable(exc)))
             return ""
         if not done:
@@ -906,7 +1039,8 @@ class MarkdownViewerDialog(QDialog):
                 os.remove(target)  # (a PDF cut short: none)
             except OSError:
                 pass
-            self.view.status.setText(tr("Export cancelled."))
+            if not sip.isdeleted(self):  # (the window closed meanwhile: cancelled, nothing to say it in)
+                self.view.status.setText(tr("Export cancelled."))
             return ""
         if not os.path.isfile(target):
             self.view.status.setText(tr("Export failed: {error}").format(error=MV.printable(target)))
@@ -920,14 +1054,18 @@ class MarkdownViewerDialog(QDialog):
         if support is None:
             return False
         printer = support.QPrinter(support.QPrinter.PrinterMode.HighResolution)
+        # (asked at once - the page laid out whole first took minutes, and a dialog made before that was left
+        # behind, a new one made the next time: the parts and their images are made after it, _print_to)
         dialog = support.QPrintDialog(printer, self)
-        if not self._whole_first(self.print_page):
-            return False
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return False
+        try:
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return False
+        finally:
+            dialog.deleteLater()
         if not self._print_to(printer, tr("Printing…")):
             printer.abort()
-            self.view.status.setText(tr("Printing cancelled."))
+            if not sip.isdeleted(self):  # (the window closed meanwhile)
+                self.view.status.setText(tr("Printing cancelled."))
             return False
         return True
 
@@ -949,9 +1087,15 @@ class MarkdownViewerDialog(QDialog):
             state.update(done=True, result=result, error=error)
             loop.quit()
 
+        # (the window closed meanwhile - Escape, its close button, axross quitting -: its delivery of *done*
+        # is dropped with it, MV.in_background; the loop waited on until the program ended, then raised)
+        closed = self.destroyed.connect(loop.quit)
         MV.in_background(work, done, owner=self)
         if not state["done"]:
             loop.exec()
+        if sip.isdeleted(self):
+            return None  # (nothing of the window left to touch: the export is cancelled)
+        self.destroyed.disconnect(closed)
         progress.close()
         progress.deleteLater()
         if not state["done"]:
@@ -970,9 +1114,7 @@ class MarkdownViewerDialog(QDialog):
         from PyQt6.QtCore import QCoreApplication
         from PyQt6.QtWidgets import QProgressDialog
 
-        text = self.view.markdown.replace("\r\n", "\n").replace("\r", "\n")
-        full = self.view.full
-        made = self._in_background(lambda: MV.print_parts(text, full), label)
+        made = self._prepared(label)
         if made is None:
             return False
         kind, parts = made
@@ -982,16 +1124,20 @@ class MarkdownViewerDialog(QDialog):
         pages = _PagePrinter(device, self.view.browser.document().defaultFont())
         try:
             for number, part_text in enumerate(parts):
-                if progress.wasCanceled() or sip.isdeleted(self):
+                if sip.isdeleted(self) or progress.wasCanceled():  # (the window first: the progress is its child)
                     return False
                 part = self.view._part_document(None, part_text, counted=False, kind=kind, dark=False, printed=True)
                 try:
-                    pages.add(part)
+                    for _page in pages.add(part):  # (a turn between two pages too: a part of 16 pages, 0.2 s)
+                        QCoreApplication.processEvents()
+                        if sip.isdeleted(self) or sip.isdeleted(progress) or progress.wasCanceled():
+                            return False
                 finally:
-                    part.deleteLater()
+                    if not sip.isdeleted(part):
+                        part.deleteLater()
                 progress.setValue(number + 1)
                 QCoreApplication.processEvents()  # (a turn between two parts: the window goes on)
-            return not progress.wasCanceled()
+            return not sip.isdeleted(self) and not progress.wasCanceled()
         finally:
             pages.end()
             if not sip.isdeleted(progress):
@@ -1033,7 +1179,9 @@ class _PagePrinter:
                                  self.body.height() - self.margin * self.scale + ascent + 5 * self.scale)
         self.number, self.used = 0, 0.0  # (pages begun; how far down the last one is written)
 
-    def add(self, document) -> None:
+    def add(self, document):
+        """*document* drawn on the pages after the last one's (see the class) - a page at a time: a generator,
+        each step one page drawn (the caller's turn may end between two)."""
         from PyQt6.QtGui import QTextBlockFormat, QTextCharFormat
 
         if not self.painter.isActive():
@@ -1066,6 +1214,8 @@ class _PagePrinter:
                     self.device.newPage()
                 self.number += 1
             self._draw(document, index, numbered=bool(index or not going_on))
+            if index + 1 < pages:
+                yield index
         block = document.lastBlock()
         last = layout.blockBoundingRect(block)
         # (the room below the last line too: the next document's first line kept its distance; the
@@ -1111,6 +1261,28 @@ def _print_support():
     except ImportError:
         return None
     return QtPrintSupport
+
+
+_BODY_OPEN = re.compile(r"<body\b[^<>]*>", re.IGNORECASE)
+
+
+def _image_sources(doc) -> list[str]:
+    """The names of the images markdown-it's *doc* shows (Markdown's and raw HTML's <img>), each once."""
+    from core import markdown_doc as MD
+
+    names: dict[str, None] = {}
+    for token in doc.tokens:
+        if token.type == "safe_html_block":
+            names.update((attrs.get("src", ""), None) for kind, *rest in MD.html_events(token)
+                         if kind == "start" and rest[0] == "img" and len(rest) > 1 and (attrs := rest[1]))
+        for child in token.children or ():
+            if child.type == "image" and child.attrGet("src"):
+                names[str(child.attrGet("src"))] = None
+            elif child.type == "safe_html_inline":
+                names.update((attrs.get("src", ""), None) for kind, *rest in MD.html_events(child)
+                             if kind == "start" and rest[0] == "img" and len(rest) > 1 and (attrs := rest[1]))
+    names.pop("", None)
+    return list(names)
 
 
 def _embedded(images: dict) -> dict[str, str]:

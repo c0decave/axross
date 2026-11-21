@@ -14,6 +14,7 @@ from PyQt6.QtCore import (
     QItemSelectionModel,
     QMimeData,
     QModelIndex,
+    QObject,
     QPoint,
     QRect,
     Qt,
@@ -805,6 +806,72 @@ def _drop_action(event) -> Qt.DropAction:
     if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
         return Qt.DropAction.CopyAction
     return Qt.DropAction.MoveAction
+
+
+def header_handle_at(header: QHeaderView, x: int) -> int:
+    """The logical section whose divider is at viewport position *x* of
+    *header*, else -1 - where QHeaderView itself starts a resize (its
+    grip margin each side of a divider; the left grip of a section is the
+    divider of the visible section before it)."""
+    from PyQt6.QtWidgets import QStyle
+
+    visual = header.visualIndexAt(x)
+    if visual < 0:
+        return -1
+    logical = header.logicalIndex(visual)
+    start = header.sectionViewportPosition(logical)
+    grip = header.style().pixelMetric(QStyle.PixelMetric.PM_HeaderGripMargin, None, header)
+    at_left = x < start + grip
+    at_right = x > start + header.sectionSize(logical) - grip
+    if header.isRightToLeft():
+        at_left, at_right = at_right, at_left
+    if at_right:
+        return logical
+    if at_left:
+        for before in range(visual - 1, -1, -1):
+            candidate = header.logicalIndex(before)
+            if not header.isSectionHidden(candidate):
+                return candidate
+    return -1
+
+
+class _HeaderHandles(QObject):
+    """The pane's column dividers, watched on the header's viewport.
+
+    A double-click on a divider is the pane's own fit (_fit_column_to_contents)
+    instead of Qt's resizeColumnToContents, which reads up to 1000 rows
+    through the model and misses a long entry further down; a press on the
+    divider right of Name remembers where the drag started, so the next
+    column follows the mouse instead of the steps of the drag adding up."""
+
+    def __init__(self, pane: FilePaneWidget, header: QHeaderView) -> None:
+        super().__init__(header)
+        self._pane = pane
+        self._header = header
+        header.viewport().installEventFilter(self)
+
+    def eventFilter(self, watched, event) -> bool:
+        kind = event.type()
+        if kind not in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick,
+                        QEvent.Type.MouseButtonRelease):
+            return False
+        if event.button() != Qt.MouseButton.LeftButton:
+            return False
+        header = self._header
+        pos = event.position().toPoint()
+        x = pos.x() if header.orientation() == Qt.Orientation.Horizontal else pos.y()
+        if kind == QEvent.Type.MouseButtonRelease:
+            self._pane._name_drag = None
+            return False
+        handle = header_handle_at(header, x)
+        if handle < 0 or header.sectionResizeMode(handle) != QHeaderView.ResizeMode.Interactive:
+            return False
+        if kind == QEvent.Type.MouseButtonDblClick:
+            self._pane._name_drag = None
+            self._pane._fit_column_to_contents(handle)
+            return True
+        self._pane._start_name_drag(handle)
+        return False
 
 
 class _DragTableView(QTableView):
@@ -1613,12 +1680,24 @@ class FilePaneWidget(QWidget):
         # width the other columns leave, so the columns always fill the
         # pane (no empty tail); dragging the divider right of Name moves
         # space between Name and the next visible column. Double-click on
-        # a divider fits that column to its content.
+        # a divider fits that column to its content (_HeaderHandles).
         header = self._table.horizontalHeader()
         header.setSectionsMovable(True)
         header.setStretchLastSection(False)
         header.setMinimumSectionSize(_MIN_COLUMN_WIDTH)
         self._fitting = False
+        #: A drag on the divider right of Name: (Name's width, the next
+        #: column, its width) when it started - see _start_name_drag.
+        self._name_drag: tuple[int, int, int] | None = None
+        #: The width the user dragged Name down to, or None: a long name
+        #: then takes no room from the other columns (_fit_widths).
+        self._name_cap: int | None = None
+        # What this pane changed since its last save: only that is
+        # written, onto what the file holds (another pane's changes stay).
+        self._dirty_widths: set[int] = set()
+        self._dirty_hidden: set[int] = set()
+        self._dirty_order = False
+        self._header_handles = _HeaderHandles(self, header)
         for col in range(self._model.columnCount()):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
             if col != 0:
@@ -1700,6 +1779,26 @@ class FilePaneWidget(QWidget):
         self._hover_timer.timeout.connect(self._activate_by_hover)
 
         status_layout.addStretch()
+
+        # A copy or move into this pane that is still running (see
+        # show_transfer_progress): "Copy in progress: 1,210 of 10,000" and
+        # a thin bar - the files may arrive minutes after their folders.
+        # Cut with "…" when the row is narrow (the whole text in its
+        # tooltip): a plain QLabel widened the pane's least width by its
+        # text while a copy ran.
+        self._transfer_label = ElidedLabel()
+        self._transfer_label.setObjectName("axPaneTransfer")
+        self._transfer_label.hide()
+        status_layout.addWidget(self._transfer_label)
+        self._transfer_bar = QProgressBar()
+        self._transfer_bar.setObjectName("axPaneTransferBar")
+        self._transfer_bar.setRange(0, 100)
+        self._transfer_bar.setTextVisible(False)
+        self._transfer_bar.setFixedHeight(6)
+        self._transfer_bar.setMinimumWidth(24)
+        self._transfer_bar.setMaximumWidth(64)
+        self._transfer_bar.hide()
+        status_layout.addWidget(self._transfer_bar)
 
         # Which proxy carries this pane's connection (empty = direct).
         self._proxy_label = QLabel()
@@ -4730,6 +4829,29 @@ class FilePaneWidget(QWidget):
             if window is not self and hasattr(window, "statusBar"):
                 window.statusBar().showMessage(text, 8000)
 
+    def show_transfer_progress(self, text: str, percent: int | None = None) -> None:
+        """Say in the status line that a copy or move into this pane is
+        still running (*text*, the bar at *percent*; None: a busy bar), or
+        hide that again (*text* empty). Kept apart from the status message,
+        which every reload of the folder replaces."""
+        if not text:
+            self._transfer_label.hide()
+            self._transfer_bar.hide()
+            return
+        if self._transfer_label.text() != text:
+            self._transfer_label.setText(text)
+        if percent is None:
+            self._transfer_bar.setRange(0, 0)
+        else:
+            self._transfer_bar.setRange(0, 100)
+            self._transfer_bar.setValue(max(0, min(100, int(percent))))
+        self._transfer_label.show()
+        self._transfer_bar.show()
+
+    def transfer_progress_text(self) -> str:
+        """What :meth:`show_transfer_progress` shows now, "" when hidden."""
+        return self._transfer_label.text() if not self._transfer_label.isHidden() else ""
+
     def status_message(self, text: str) -> None:
         """Show *text* in the pane's status line and the window's."""
         self._status.setText(text)
@@ -5957,47 +6079,47 @@ class FilePaneWidget(QWidget):
         self._fit_name_column()
 
     def _save_column_prefs(self) -> None:
-        """Persist this pane's column prefs without losing changes
-        another pane (in the same process) wrote concurrently.
+        """Write what this pane changed (the _dirty_* sets) onto the file.
 
-        Uses ``column_prefs.update`` which holds a per-path lock for
-        the entire load+modify+save cycle. The mutator merges *our*
-        deltas onto the on-disk state so two panes saving at the
-        same time don't clobber each other's widths."""
+        One file serves every pane, and each pane keeps the copy it read
+        when it opened. Writing that whole copy back put the other pane's
+        older order, widths and hidden columns over a newer change: a
+        column moved in one pane went back to its old place as soon as the
+        other pane resized a column, and so after the next start. So only
+        this pane's own changes are written, under ``column_prefs.update``'s
+        lock, onto what the file holds; what another pane wrote stays."""
         from ui import column_prefs as CP
 
-        local = getattr(self, "_column_prefs", None)
-        if local is None:
+        if getattr(self, "_column_prefs", None) is None:
             return
         try:
-            merged = CP.update(self._merge_into_prefs)
-            # Refresh our cached copy so subsequent mutations start
-            # from the merged baseline.
-            self._column_prefs = merged
+            CP.update(self._merge_into_prefs)
         except OSError as exc:
             log.warning("Could not persist column prefs: %s", exc)
+            return
+        self._dirty_widths.clear()
+        self._dirty_hidden.clear()
+        self._dirty_order = False
 
     def _merge_into_prefs(self, on_disk) -> None:
-        """Apply our local widths/hidden onto the freshly-loaded
-        on-disk prefs.
-
-        widths: per-column merge — ``on_disk.widths.update(local)``
-                preserves another pane's edit on column N when ours
-                edited column M. This is the lost-update fix: without
-                it, two panes resizing different columns concurrently
-                would each clobber the other's change.
-
-        hidden: last-writer-wins — replace ``on_disk.hidden`` with
-                ours. Hidden is a per-user preference (same human
-                drives both panes); merging would lock columns visible
-                that the user explicitly hid in the latest pane.
-        """
+        """Put this pane's changes onto the freshly loaded *on_disk* prefs:
+        the widths and hidden flags of the columns it changed, and its
+        order if it moved a column. Nothing else of the file changes."""
         local = getattr(self, "_column_prefs", None)
         if local is None:
             return
-        on_disk.widths.update(local.widths)
-        on_disk.hidden = set(local.hidden)
-        on_disk.order = list(local.order)
+        for col in self._dirty_widths:
+            if col in local.widths:
+                on_disk.widths[col] = local.widths[col]
+            else:
+                on_disk.widths.pop(col, None)
+        for col in self._dirty_hidden:
+            if col in local.hidden:
+                on_disk.hidden.add(col)
+            else:
+                on_disk.hidden.discard(col)
+        if self._dirty_order:
+            on_disk.order = list(local.order)
 
     def _restore_column_order(self, order: list[int]) -> None:
         """Apply a saved visual order; anything that is not a permutation of
@@ -6013,7 +6135,10 @@ class FilePaneWidget(QWidget):
             return
         header = self._table.horizontalHeader()
         self._column_prefs.order = [header.logicalIndex(v) for v in range(header.count())]
+        self._dirty_order = True
         self._save_column_prefs()
+        # Which columns step aside in a narrow pane goes by position.
+        self._fit_name_column()
 
     def _visible_columns(self) -> list[int]:
         return [c for c in range(self._model.columnCount()) if not self._table.isColumnHidden(c)]
@@ -6131,7 +6256,11 @@ class FilePaneWidget(QWidget):
         that does not fit takes (each gives up at most what its own content
         does not use, in proportion to that slack)."""
         widths = {c: self._preferred_width(c) for c in others}
-        missing = self._content_width(0) - (viewport - sum(widths.values()))
+        wanted = self._content_width(0)
+        if self._name_cap is not None:
+            # The user dragged Name narrower: that is what it wants.
+            wanted = min(wanted, self._name_cap)
+        missing = wanted - (viewport - sum(widths.values()))
         if missing <= 0 or not others:
             return widths
         slack = {
@@ -6212,20 +6341,56 @@ class FilePaneWidget(QWidget):
                 return logical
         return None
 
+    def _start_name_drag(self, handle: int) -> None:
+        """A press on the divider of *handle*: when it is Name's, remember
+        Name's and the next column's widths for _name_divider_dragged."""
+        self._name_drag = None
+        if handle != 0 or getattr(self, "_column_prefs", None) is None:
+            return
+        neighbour = self._next_visible_after_name()
+        if neighbour is None:
+            return
+        header = self._table.horizontalHeader()
+        self._name_drag = (header.sectionSize(0), neighbour, header.sectionSize(neighbour))
+
     def _name_divider_dragged(self, old: int, new: int) -> None:
         """The user dragged the divider right of Name: the neighbour pays
-        (or receives) the difference so the columns keep filling the pane."""
+        (or receives) the difference so the columns keep filling the pane.
+
+        During a mouse drag the difference is the one since the press: Qt
+        sets Name to its width at the press plus the mouse's way, while the
+        fit after each step may have given Name another width - taking the
+        difference step by step made the next column grow by more than the
+        mouse moved (80 px of mouse, 196 px of column). Name is never
+        dragged below the width it needs before any column steps aside
+        (_name_floor): further on, every other column of the pane went."""
         header = self._table.horizontalHeader()
         neighbour = self._next_visible_after_name()
-        if neighbour is not None and new != old:
-            width = max(header.minimumSectionSize(), header.sectionSize(neighbour) - (new - old))
-            self._fitting = True
-            try:
-                header.resizeSection(neighbour, width)
-            finally:
-                self._fitting = False
-            self._column_prefs.widths[neighbour] = int(width)
-            self._save_column_prefs()
+        drag = self._name_drag
+        if drag is not None and drag[1] == neighbour:
+            name_start, _neighbour, neighbour_start = drag
+        else:
+            name_start, neighbour_start = old, (
+                header.sectionSize(neighbour) if neighbour is not None else 0)
+        if neighbour is not None and new != name_start:
+            delta = new - name_start
+            if delta < 0:
+                floor = min(name_start, self._name_floor(self._table.viewport().width()))
+                delta = max(delta, floor - name_start)
+            delta = min(delta, neighbour_start - header.minimumSectionSize())
+            width = max(header.minimumSectionSize(), neighbour_start - delta)
+            # Narrower by hand: a long name does not take the room back.
+            self._name_cap = name_start + delta if delta < 0 else None
+            if header.sectionSize(neighbour) != width:
+                self._fitting = True
+                try:
+                    header.resizeSection(neighbour, width)
+                finally:
+                    self._fitting = False
+            if self._column_prefs.widths.get(neighbour) != int(width):
+                self._column_prefs.widths[neighbour] = int(width)
+                self._dirty_widths.add(neighbour)
+                self._save_column_prefs()
         self._fit_name_column()
 
     def _on_section_resized(self, idx: int, old: int, new: int) -> None:
@@ -6240,8 +6405,53 @@ class FilePaneWidget(QWidget):
         # ignore them so we don't persist garbage.
         if new >= 10:
             self._column_prefs.widths[int(idx)] = int(new)
+            self._dirty_widths.add(int(idx))
             self._save_column_prefs()
         self._fit_name_column()
+
+    def _fit_width(self, col: int) -> int:
+        """Width column *col* needs to show what it holds: its header
+        label, the rows in view and the longest texts of the listing
+        (_content_width: at most _MEASURE_ROWS texts read, the
+        _MEASURE_LONGEST longest measured). Bounded for any folder size -
+        Qt's resizeColumnToContents asks the model for up to 1000 rows."""
+        table = self._table
+        width = max(self._label_width(col), self._content_width(col))
+        rows = self._proxy.rowCount()
+        if rows:
+            top = max(table.rowAt(0), 0)
+            bottom = table.rowAt(max(table.viewport().height() - 1, 0))
+            if bottom < 0:
+                bottom = rows - 1
+            for row in range(top, min(bottom, top + 200) + 1):
+                width = max(width, table.sizeHintForIndex(self._proxy.index(row, col)).width())
+        return width
+
+    def _fit_column_to_contents(self, col: int) -> None:
+        """A double-click on the divider right of *col*: the column as wide
+        as its content (and label), kept as the user's width like a drag.
+
+        Name takes the room the others leave, so a fit only widens it -
+        the next column pays, as when its divider is dragged. Shrinking it
+        would only have handed the rest of the pane to the next column,
+        which then stayed that wide."""
+        if getattr(self, "_column_prefs", None) is None or self._table.isColumnHidden(col):
+            return
+        header = self._table.horizontalHeader()
+        wanted = self._fit_width(col)
+        if col != 0:
+            if header.sectionSize(col) != wanted:
+                header.resizeSection(col, wanted)  # -> _on_section_resized
+            elif self._column_prefs.widths.get(col) != wanted:
+                self._on_section_resized(col, wanted, wanted)
+            return
+        self._name_cap = None
+        self._name_drag = None
+        current = header.sectionSize(0)
+        if wanted > current:
+            header.resizeSection(0, wanted)  # -> _name_divider_dragged
+        else:
+            self._fit_name_column()
 
     def _show_header_menu(self, pos) -> None:
         """Right-click on the header opens a checkbox list of columns
@@ -6252,9 +6462,19 @@ class FilePaneWidget(QWidget):
 
         if getattr(self, "_column_prefs", None) is None:
             return
-        n = self._model.columnCount()
+        menu = self._build_header_menu()
+        try:
+            menu.exec(QCursor.pos())
+        finally:
+            menu.deleteLater()
+
+    def _build_header_menu(self) -> QMenu:
+        """The column chooser: one checkable entry per column, in the
+        order the columns stand (a moved column is listed where it is)."""
+        header = self._table.horizontalHeader()
         menu = QMenu(self)
-        for col in range(n):
+        for visual in range(header.count()):
+            col = header.logicalIndex(visual)
             label = (
                 self._model.headerData(
                     col,
@@ -6271,10 +6491,7 @@ class FilePaneWidget(QWidget):
                 action.setEnabled(False)
             else:
                 action.toggled.connect(lambda visible, c=col: self._toggle_column(c, visible))
-        try:
-            menu.exec(QCursor.pos())
-        finally:
-            menu.deleteLater()
+        return menu
 
     def _toggle_column(self, col: int, visible: bool) -> None:
         if getattr(self, "_column_prefs", None) is None:
@@ -6291,6 +6508,7 @@ class FilePaneWidget(QWidget):
             self._column_prefs.hidden.discard(col)
         else:
             self._column_prefs.hidden.add(col)
+        self._dirty_hidden.add(col)
         self._save_column_prefs()
         self._fit_name_column()
 

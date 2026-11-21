@@ -2,7 +2,12 @@
 # for Linux (also as an AppImage), macOS arm64 (also as a disk image with an
 # app) and Windows x64, SHA256SUMS, and notes from CHANGELOG.md. Every action
 # is pinned by its commit; the dependencies come from the hashed locks
-# (requirements.lock.txt, packaging/requirements-pyinstaller.txt). Only the
+# (requirements.lock.txt, packaging/requirements-pyinstaller.txt), and so do
+# the tools that build the sdist and wheel (packaging/requirements-build.txt:
+# build and twine; the backend, setuptools, from requirements.lock.txt -
+# --no-isolation, nothing unpinned from PyPI) and the tests' pytest
+# (packaging/requirements-test.txt); the sdist and wheel are built before
+# any test tool is installed. Only the
 # release job may write (contents: write), with the workflow's own token.
 # The heavy steps write their output to $RUNNER_TEMP/job.log as well; a
 # failed job shows the log's last lines as annotations
@@ -47,24 +52,28 @@ jobs:
         sudo apt-get update -q
         sudo apt-get install -y -q --no-install-recommends libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 \
             libfontconfig1 libdbus-1-3 libxcb-cursor0 libpulse0
+    - name: sdist and wheel
+      run: |
+        set -o pipefail
+        {
+          # (build and twine hashed - packaging/requirements-build.txt, scripts/lock_standalone_deps.sh -, the
+          # backend not fetched: --no-isolation builds with the setuptools of requirements.lock.txt; built before
+          # any test tool is in the environment)
+          python -m pip install --require-hashes -r requirements.lock.txt
+          python -m pip install --require-hashes -r packaging/requirements-build.txt
+          python -m build --no-isolation --outdir release/
+          python -m twine check --strict release/*
+        } 2>&1 | tee -a "$RUNNER_TEMP/job.log"
     - name: Tests against the locked dependencies
       env:
         QT_QPA_PLATFORM: offscreen
       run: |
         set -o pipefail
         {
-          python -m pip install --require-hashes -r requirements.lock.txt
-          python -m pip install --no-deps .
-          python -m pip install pytest
+          # (pytest and its dependencies hashed as well: packaging/requirements-test.txt)
+          python -m pip install --no-build-isolation --no-deps .
+          python -m pip install --require-hashes -r packaging/requirements-test.txt
           python -m pytest -q -rfE tests
-        } 2>&1 | tee -a "$RUNNER_TEMP/job.log"
-    - name: sdist and wheel
-      run: |
-        set -o pipefail
-        {
-          python -m pip install build twine
-          python -m build --outdir release/
-          python -m twine check --strict release/*
         } 2>&1 | tee -a "$RUNNER_TEMP/job.log"
     - name: The end of the job's log as annotations
       if: failure()
@@ -110,7 +119,7 @@ jobs:
         set -o pipefail
         {
           python -m pip install --require-hashes -r requirements.lock.txt -r packaging/requirements-pyinstaller.txt
-          python -m pip install --no-deps .
+          python -m pip install --no-build-isolation --no-deps .
         } 2>&1 | tee -a "$RUNNER_TEMP/job.log"
     - name: One-file binary (PyInstaller)
       run: |

@@ -16,6 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from axross._version import __version__  # noqa: E402
+from core import mcp_names as N  # noqa: E402
 from core import mcp_server as M  # noqa: E402
 
 
@@ -64,7 +65,7 @@ def test_happy_a_headless_server_reports_the_package_version(tmp_path):
     )
     replies = {m.get("id"): m for m in map(json.loads, proc.stdout.splitlines())}
     assert replies[1]["result"]["serverInfo"] == {"name": "axross-mcp", "version": __version__}
-    assert "list_dir" in [t["name"] for t in replies[2]["result"]["tools"]]
+    assert "list_dir" in [N.internal(t["name"]) for t in replies[2]["result"]["tools"]]
     assert "QT=False" in proc.stderr
 
 

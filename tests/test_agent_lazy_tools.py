@@ -57,7 +57,7 @@ def test_happy_a_new_agent_builds_no_tools_until_its_first_task(fake, tmp_path, 
     assert len(builds) == 1
     assert "a.txt" in server.requests[1]["messages"][-1]["content"]
     offered = {t["function"]["name"] for t in server.requests[0]["tools"]}
-    assert {"list_dir", "read_file", "stat"} <= offered
+    assert {"list_directory", "read_file", "get_path_info"} <= offered  # public names
     agent.run("and now?")
     assert len(builds) == 1, "built once per agent"
 

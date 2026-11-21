@@ -6,7 +6,7 @@ can work on a local directory tree through a JSON-RPC tool surface.
 The CLI server (`axross --mcp-server`, stdio or HTTP) serves the local
 filesystem (`LocalFS`), confined to the MCP root. Optional
 **capability groups** (`--mcp-tools`, §9) add metadata, the Duplicate
-Finder, the packer, archives, encryption, the search index, file-type
+Finder, archives (create, list, extract), encryption, the search index, file-type
 detection, transfers between backends, saved connection profiles as
 extra backends, and the extension list. A machine-readable manifest of
 every tool is `axross --mcp-list-tools` / [`mcp-tools.json`](mcp-tools.json)
@@ -37,15 +37,16 @@ axross --mcp-server
 # Or via env var (same behaviour):
 AXROSS_MCP=1 axross
 
-# The nine write tools (write_file, mkdir, remove, rename, copy,
-# bulk_copy, symlink, hardlink, chmod). Path-traversal capped to a
-# root you choose. AXROSS_MCP_WRITE=1 is the env-var equivalent:
+# The nine write tools (write_file, create_directory, delete_path,
+# move_path, copy_file, copy_tree, create_symlink, create_hardlink,
+# set_permissions). Path-traversal capped to a root you choose. AXROSS_MCP_WRITE=1 is the env-var equivalent:
 axross --mcp-server --mcp-write --mcp-root ~/data
 
-# Script tools (script_list/api_schema/read/write/delete/run) — stdio only:
+# Script tools (list_scripts, get_script_api, read_script, write_script,
+# delete_script, run_script) — stdio only:
 axross --mcp-server --mcp-allow-scripts
 
-# Capability groups (§9); AXROSS_MCP_TOOLS=metadata,packer is the
+# Capability groups (§9); AXROSS_MCP_TOOLS=metadata,archive is the
 # env-var equivalent, 'all' switches on every group:
 axross --mcp-server --mcp-tools metadata,filetype
 axross --mcp-server --mcp-write --mcp-root ~/data --mcp-tools all
@@ -68,7 +69,7 @@ the valid groups.
 explicit `axross --script FILE` runs the script (the variable is
 inherited by everything the client's environment starts), and
 `--script` together with `--mcp-server`, `--mcp-http` or
-`--mcp-list-tools` is refused (exit 2). A script run (`script_run`,
+`--mcp-list-tools` is refused (exit 2). A script run (`run_script`,
 a frozen build's `axross --script -` child) gets no `AXROSS_MCP*`
 variable.
 
@@ -202,7 +203,7 @@ docker run --rm -p 7331:7331 -v "$PWD:/data" -v "$PWD/certs:/certs:ro" \
 | Revision | What a session of it gets |
 |---|---|
 | 2024-11-05 | Tools as `{name, description, inputSchema}`, results as text; refused arguments are JSON-RPC error -32602. What axross always sent. |
-| 2025-06-18 | Also: each tool's `title` and **annotations** (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`, §2), an `outputSchema` for `stat`, `read_file`, `checksum` and `walk`, and `structuredContent` (the result object; the text block keeps the same JSON) for every tool whose result is an object. `serverInfo.title`. The `MCP-Protocol-Version` header on HTTP (§1.2). |
+| 2025-06-18 | Also: each tool's `title` and **annotations** (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`, §2), an `outputSchema` for `get_path_info`, `read_file`, `compute_file_checksum` and `walk_tree`, and `structuredContent` (the result object; the text block keeps the same JSON) for every tool whose result is an object. `serverInfo.title`. The `MCP-Protocol-Version` header on HTTP (§1.2). |
 | 2025-11-25 | Also: arguments a tool refuses (schema or value) come back as a tool error (`isError: true`) the model can read and correct, not as -32602; an unknown tool stays -32601. `serverInfo.description` and `websiteUrl`. |
 
 A client asking for anything else - 2025-03-26 (the one revision with
@@ -219,19 +220,19 @@ Python SDK over stdio and HTTP.
 ## 2. Tool surface
 
 The file tools below are always the base. Everything else (metadata,
-duplicates, packer, archives, encryption, index building, file types,
+duplicates, archives, encryption, index building, file types,
 transfers, remote profiles, extensions) is a capability group, see §9.
 
 Every tool carries a `title` and **annotations** (sent from 2025-06-18
 on, §1.4; in the manifest always): `readOnlyHint` - it changes nothing
-(`duplicates_scan` and `index_build` write axross's indexes, so they are
+(`scan_duplicates` and `build_index` write axross's indexes, so they are
 not read-only although `--mcp-write` does not gate them);
 `destructiveHint` - it can overwrite, remove or change what exists
 (`false`: it only adds, under a free name); `idempotentHint` - the same
 call again changes nothing more (`false` wherever a second call writes
 `x (2)` or that is not certain); `openWorldHint` - it reaches beyond the
-configured backends (`remote_open`, `remote_exec`, `remote_script`,
-`script_run`, `agent_run`). They are hints for a client's confirmation
+configured backends (`open_remote_profile`, `run_backend_command`, `run_backend_script`,
+`run_script`, `run_llm_agent`). They are hints for a client's confirmation
 dialogs, not guarantees - the gates are the flags. The table is
 `_TOOL_HINTS` in `core/mcp_server.py`; a tool without an entry fails
 `tests/test_mcp_protocol_revisions.py`.
@@ -240,35 +241,35 @@ dialogs, not guarantees - the gates are the flags. The table is
 
 | Name                 | Description                                                         |
 |----------------------|---------------------------------------------------------------------|
-| `list_dir(path)`     | Directory entries.                                                  |
-| `stat(path)`         | Name, type, size, mtime.                                            |
+| `list_directory(path)`     | Directory entries.                                                  |
+| `get_path_info(path)`         | Name, type, size, mtime.                                            |
 | `read_file(path, max_bytes=, encoding=, offset=)` | Base64-encoded file content; capped at 4 MiB by default. `encoding="text"` returns `text` (UTF-8, `replaced=true` when undecodable bytes were replaced) — for models that cannot decode Base64. `offset` starts at that byte; when more follows (`truncated=true`) `next_offset` says where to continue (a text page never ends inside a character). The Agent dock sizes each read to its tool-result limit. |
-| `checksum(path, algorithm=)`  | `sha256` (default), `sha1`, `md5` or `sha512`. Uses the backend's native hash only when it is of the requested algorithm, else streams the file through hashlib (emits progress). |
-| `search(needle, ext, min_size, max_size, limit)` | Offline metadata index, scoped to the active backend's id and the MCP root; at most `limit` results (default 1000, at most 10 000), a cancel stops it. |
-| `walk(path, max_depth, max_entries)`      | Bounded recursive listing (at most 100 000 entries, 64 levels); emits `notifications/progress`. Folders it could not list are named in `unreadable`; `complete` is false then. |
-| `recursive_checksum(path, algorithm, max_files, max_depth, max_file_bytes)` | Hash every file under a path (files over 1 GiB skipped by default); one progress frame per hashed file. A folder it could not list is an `error` record with `folder: true`; `complete` says whether every file was hashed. |
-| `grep(pattern, path, max_depth, max_matches)` | Regex search inside file contents. Skips files over 4 MiB, caps matches at 500; emits progress. Folders and files it could not read are named in `unreadable`; no match with `complete: false` is no answer. |
-| `list_versions(path)` | Per-version metadata where the backend supports it.                |
-| `open_version_read(path, version_id, max_bytes=)` | Base64 content of a specific version.          |
-| `preview(path, edge=256)` | Thumbnail of an image — returned as MCP **image content** with proper mimeType. Decoded by Qt, or by Pillow where there is no Qt (axross-headless-mcp with its `images` extra); without either the tool is not listed. |
+| `compute_file_checksum(path, algorithm=)`  | `sha256` (default), `sha1`, `md5` or `sha512`. Uses the backend's native hash only when it is of the requested algorithm, else streams the file through hashlib (emits progress). |
+| `search_index(pattern, ext, min_size, max_size, max_results)` | Offline metadata index, scoped to the active backend's id and the MCP root; at most `max_results` results (default 1000, at most 10 000), a cancel stops it. |
+| `walk_tree(path, max_depth, max_entries)`      | Bounded recursive listing (at most 100 000 entries, 64 levels); emits `notifications/progress`. Folders it could not list are named in `unreadable`; `complete` is false then. |
+| `compute_tree_checksums(path, algorithm, max_files, max_depth, max_file_bytes)` | Hash every file under a path (files over 1 GiB skipped by default); one progress frame per hashed file. A folder it could not list is an `error` record with `folder: true`; `complete` says whether every file was hashed. |
+| `search_content(pattern, path, max_depth, max_matches)` | Regex search inside file contents. Skips files over 4 MiB, caps matches at 500; emits progress. Folders and files it could not read are named in `unreadable`; no match with `complete: false` is no answer. |
+| `list_file_versions(path)` | Per-version metadata where the backend supports it.                |
+| `read_file_version(path, version_id, max_bytes=)` | Base64 content of a specific version.          |
+| `render_preview(path, edge=256)` | Thumbnail of an image — returned as MCP **image content** with proper mimeType. Decoded by Qt, or by Pillow where there is no Qt (axross-headless-mcp with its `images` extra); without either the tool is not listed. |
 
 ### Write tools (only when `--mcp-write`)
 
 | Name                              | Description                                                                |
 |-----------------------------------|----------------------------------------------------------------------------|
-| `write_file(path, content \| content_b64)` | Upload: `content` as UTF-8 text or `content_b64` as Base64 bytes, exactly one. A new file is 0600; a file written over keeps its mode without the bits `chmod` refuses (setuid, setgid, sticky, group and world write - `& 0755`); `copy` and `bulk_copy` carry modes the same way. |
-| `mkdir(path)`                     | Create directory.                                                          |
-| `remove(path, recursive=False)`   | Delete.                                                                    |
-| `rename(src, dst)`                | Rename / move.                                                             |
-| `copy(src, dst)`                  | Server-side copy where backend supports it; stream-copy fallback.          |
-| `bulk_copy(src, dst, max_files, max_depth, max_file_bytes, overwrite)` | Tree copy (files over 10 GiB skipped by default); one progress frame per copied file. |
-| `symlink(target, link_path)`      | `link_path` must lie under the root; `target` is deliberately **not** root-checked (it may dangle or point outside — later tools resolve links through `_enforce_root` before following them). No capability flag is checked; a backend without symlinks fails the call. |
-| `hardlink(target, link_path)`     | Both ends must lie under the root. No capability flag is checked; a backend without hardlinks fails the call. |
-| `chmod(path, mode)`               | POSIX mode bits. Accepts int or octal string.                              |
+| `write_file(path, content \| content_b64)` | Upload: `content` as UTF-8 text or `content_b64` as Base64 bytes, exactly one. A new file is 0600; a file written over keeps its mode without the bits `set_permissions` refuses (setuid, setgid, sticky, group and world write - `& 0755`); `copy_file` and `copy_tree` carry modes the same way. |
+| `create_directory(path)`                     | Create directory.                                                          |
+| `delete_path(path, recursive=False)`   | Delete.                                                                    |
+| `move_path(src, dst)`                | Rename / move.                                                             |
+| `copy_file(src, dst)`                  | Server-side copy where backend supports it; stream-copy fallback.          |
+| `copy_tree(src, dst, max_files, max_depth, max_file_bytes, overwrite)` | Tree copy (files over 10 GiB skipped by default); one progress frame per copied file. |
+| `create_symlink(target, link_path)`      | `link_path` must lie under the root; `target` is deliberately **not** root-checked (it may dangle or point outside — later tools resolve links through `_enforce_root` before following them). No capability flag is checked; a backend without symlinks fails the call. |
+| `create_hardlink(target, link_path)`     | Both ends must lie under the root. No capability flag is checked; a backend without hardlinks fails the call. |
+| `set_permissions(path, mode)`               | POSIX mode bits. Accepts int or octal string.                              |
 
 Every write tool resolves its paths via `_enforce_root` first — a
 payload like `/etc/passwd` is rejected before any IO hits the
-backend (the one exception is the `symlink` target, see above).
+backend (the one exception is the `create_symlink` target, see above).
 Every call emits audit-log entries on `core.mcp_server.audit`,
 containing the tool, outcome, path, and size — never the payload
 bytes.
@@ -277,20 +278,20 @@ bytes.
 
 | Name                          | Description                                                       |
 |-------------------------------|-------------------------------------------------------------------|
-| `script_list()`               | Names of the saved scripts in `~/.config/axross/scripts/`.        |
-| `script_api_schema(names?)`   | The `axross.*` API as JSON (same as `axross.api_schema(names)` and [`scripting-api.json`](scripting-api.json)): rules and errors for scripts; per function signature, typed parameters, return type, whole docstring, examples, `raises`, `mutates`, `prompts`; the public classes, the types the API returns and the methods of every backend session. `names: []` gives the index alone, a list of names only those. Read-only. |
-| `script_read(name)`           | Source of one saved script.                                       |
-| `script_write(name, source)`  | Save `<name>.py` (mode 0600); overwrites.                         |
-| `script_delete(name)`         | Remove a saved script; idempotent.                                |
-| `script_run(name, args?, timeout_s?)` | Run a saved script in its own Python process with `axross.*` in scope; `args` become `sys.argv[1:]`. Returns a structured reply (below). |
+| `list_scripts()`               | Names of the saved scripts in `~/.config/axross/scripts/`.        |
+| `get_script_api(names?)`   | The `axross.*` API as JSON (same as `axross.api_schema(names)` and [`scripting-api.json`](scripting-api.json)): rules and errors for scripts; per function signature, typed parameters, return type, whole docstring, examples, `raises`, `mutates`, `prompts`; the public classes, the types the API returns and the methods of every backend session. `names: []` gives the index alone, a list of names only those. Read-only. |
+| `read_script(name)`           | Source of one saved script.                                       |
+| `write_script(name, source)`  | Save `<name>.py` (mode 0600); overwrites.                         |
+| `delete_script(name)`         | Remove a saved script; idempotent.                                |
+| `run_script(name, args?, timeout?)` | Run a saved script in its own Python process with `axross.*` in scope; `args` become `sys.argv[1:]`. Returns a structured reply (below). |
 
-`script_run` in detail — what a client can rely on:
+`run_script` in detail — what a client can rely on:
 
 * **A child process, never the server.** stdin is empty: `input()` gets
   `EOFError` and can never read the JSON-RPC stream. The child runs in a
   process group of its own; when the run ends, every process it started
   ends with it (one that calls `setsid` escapes).
-* **Wall clock.** `timeout_s` (default 60, at most 600) stops the run:
+* **Wall clock.** `timeout` (default 60, at most 600) stops the run:
   SIGTERM to the group, SIGKILL 3 s later. `axross/tasks/start` + `axross/tasks/cancel`
   run and stop a script in the background.
 * **Reply.** `{name, exit, timed_out, duration_ms, stdout, stderr,
@@ -306,20 +307,20 @@ bytes.
   `axross.confirm()` raises `NonInteractiveError` unless the script
   passes `assume_yes=True`, and a write to a profile flagged
   *production* is refused unless the server was started with
-  `AXROSS_TARPIT_DISABLE=1`. `script_api_schema` marks every function
+  `AXROSS_TARPIT_DISABLE=1`. `get_script_api` marks every function
   that can need a human (`prompts`) or change state (`mutates`).
 * **Arguments.** `args`: at most 64 strings of at most 4096 characters,
-  no NUL; a bad `args` or `timeout_s` is refused before anything runs
+  no NUL; a bad `args` or `timeout` is refused before anything runs
   (`-32602`).
 
 **Security note:** the script tools are **not** confined to the MCP
 root at all. Names are restricted to `[A-Za-z0-9_-]+` inside the
-script directory, but `script_run` executes arbitrary Python with
+script directory, but `run_script` executes arbitrary Python with
 the server's user rights — it can read and write anything that user
 can, open network connections and use every `axross.*` backend. Treat
 `--mcp-allow-scripts` as handing the client a shell. It is refused in
-`paranoid` security mode and on `--mcp-http`. `script_write`,
-`script_delete` and `script_run` leave attempt / ok / refused lines
+`paranoid` security mode and on `--mcp-http`. `write_script`,
+`delete_script` and `run_script` leave attempt / ok / refused lines
 on `core.mcp_server.audit` (name, size, exit code, `timed_out`, the
 exception type — never the source, the arguments or the script's
 output).
@@ -385,8 +386,8 @@ a 2025-11-25 session gets -32601 for them. An unknown task id is -32602.
 
 Tasks are scoped per session on HTTP and server-wide on stdio. A
 cancel - and a tool's timeout - asks the tool to stop; the tools stop
-within one chunk or entry (checksum hashes local files chunk by chunk,
-transfer_copy checks between chunks). A tool that does not stop within
+within one chunk or entry (compute_file_checksum hashes local files chunk by chunk,
+copy_path_to_backend checks between chunks). A tool that does not stop within
 `TASK_STOP_GRACE_SECONDS` (10 s; a backend call that cannot be
 interrupted) is abandoned: the task ends (`cancelled`, or `error` after
 a timeout, with `abandoned: true`), its slot is free, the call runs out
@@ -413,12 +414,12 @@ are -32600. A client's response object is ignored (HTTP: 202).
 
 Pass `_meta.progressToken` on a `tools/call` and the server emits
 `notifications/progress` frames from the handlers that support them:
-`walk` (entries visited), `grep` (files scanned), `checksum` (bytes
-hashed, streaming fallback only), `recursive_checksum` (files hashed)
-and `bulk_copy` (files copied), and the long group tools of §9
-(`metadata_read` / `metadata_export` on folders, `metadata_remove`,
-`file_type_scan`, `duplicates_scan`, `duplicates_dedupe`,
-`index_build`, `pack`, `archive_extract`, `transfer_copy`). `total` is
+`walk_tree` (entries visited), `search_content` (files scanned), `compute_file_checksum` (bytes
+hashed, streaming fallback only), `compute_tree_checksums` (files hashed)
+and `copy_tree` (files copied), and the long group tools of §9
+(`read_metadata` / `export_metadata` on folders, `strip_metadata`,
+`scan_file_types`, `scan_duplicates`, `trash_duplicates`,
+`build_index`, `create_archive`, `extract_archive`, `copy_path_to_backend`). `total` is
 sent only when it is known (the bytes of one file, the files of a list);
 a walk does not know its count, and its cap (`max_entries`, `max_files`)
 is no total, so those frames have none. Inside a
@@ -440,7 +441,7 @@ server-side copy command or a spooled upload stop on it too.
 
 On stdio every `tools/call` and `resources/read` runs on a worker thread
 (at most 16 at once): the loop keeps reading, answers `ping` while a
-70 s pack runs, and delivers `notifications/cancelled` to the call. When
+70 s create_archive runs, and delivers `notifications/cancelled` to the call. When
 stdin closes, the calls in flight get 5 s to finish and answer (a client
 that pipes its requests still reads them), then what still runs is
 cancelled and the server exits. On HTTP every request runs on its own
@@ -464,13 +465,13 @@ Every tool has a wall-clock ceiling:
 
 | Class (`timeout_class`) | Timeout | Tools                                                                      |
 |-----------|---------|----------------------------------------------------------------------------|
-| `quick`   | 15 s    | `stat`, `read_file`, `list_dir`, `search`, `list_versions`, `open_version_read`, and every tool without an entry of its own — including the script tools other than `script_run` |
-| `walk`    | 60 s    | `walk`, `grep`                                                             |
-| `preview` | 30 s    | `preview`                                                                  |
-| `write`   | 30 s    | `write_file`, `mkdir`, `remove`, `rename`, `copy`, `symlink`, `hardlink`, `chmod` |
-| `stream`  | 300 s   | `checksum`, `recursive_checksum`, `bulk_copy`                              |
-| `long`    | 1800 s  | whole-tree group jobs (§9): `duplicates_scan`, `duplicates_dedupe`, `index_build`, `pack`, `archive_extract`, `transfer_copy`, `transfer_move`, `metadata_remove` |
-| `script`  | 610 s   | `script_run`. It stops its child at its own `timeout_s` (default 60 s, at most 600 s); the class adds the kill grace and the output drain, so the deadline only backs that up |
+| `quick`   | 15 s    | `get_path_info`, `read_file`, `list_directory`, `search_index`, `list_file_versions`, `read_file_version`, and every tool without an entry of its own — including the script tools other than `run_script` |
+| `walk_tree`    | 60 s    | `walk_tree`, `search_content`                                                             |
+| `render_preview` | 30 s    | `render_preview`                                                                  |
+| `write`   | 30 s    | `write_file`, `create_directory`, `delete_path`, `move_path`, `copy_file`, `create_symlink`, `create_hardlink`, `set_permissions` |
+| `stream`  | 300 s   | `compute_file_checksum`, `compute_tree_checksums`, `copy_tree`                              |
+| `long`    | 1800 s  | whole-tree group jobs (§9): `scan_duplicates`, `trash_duplicates`, `build_index`, `create_archive`, `extract_archive`, `copy_path_to_backend`, `move_file_to_backend`, `strip_metadata` |
+| `script`  | 610 s   | `run_script`. It stops its child at its own `timeout` (default 60 s, at most 600 s); the class adds the kill grace and the output drain, so the deadline only backs that up |
 
 The class of every group tool is in the manifest (§9.7). A
 `axross/tasks/start` task gets the same timeout as its tool.
@@ -479,7 +480,7 @@ Two parallel mechanisms back the deadline:
 
 1. A `threading.Timer` flips the handler's cancel event when the
    deadline elapses. Handlers that poll `ctx.check_cancel()`
-   (`walk`, `grep`) exit cleanly on the next tick.
+   (`walk_tree`, `search_content`) exit cleanly on the next tick.
 2. The dispatcher runs the handler on a dedicated worker thread
    and joins with the same timeout. If the handler is wedged in a
    single blocking IO call (`backend.read_file` on a huge blob;
@@ -499,7 +500,7 @@ cases, distinct from client-initiated cancel (-32603,
 
 **Honest caveat:** the hard-stop does *not* abort the backend
 call. A `write_file` that times out may still land bytes on the
-remote. A `remove` that times out may still delete the path. The
+remote. A `delete_path` that times out may still delete the path. The
 client sees a timeout response; the operator should assume the
 underlying operation's outcome is unknown and either re-check or
 re-issue with a suitable idempotency key. We can't safely
@@ -528,7 +529,7 @@ disable with `rate_limit_enabled = False`.
 ## 5. Multi-backend
 
 From the CLI, the `remote` group (§9.5) is the way to more backends:
-`remote_open` turns a saved connection profile into the backend
+`open_remote_profile` turns a saved connection profile into the backend
 `profile:<name>`, and the default `LocalFS` gets the id `local`.
 Embedding the server from Python, you can also pass a dict of
 `{id: backend}` as `ServerConfig.backends` (or
@@ -539,10 +540,10 @@ Embedding the server from Python, you can also pass a dict of
    `profile`, `protocol`, `production`) so the LLM can enumerate.
  - Every other tool's inputSchema gains an optional `backend: string`
    field (tools that name their backends themselves, like
-   `transfer_copy`, or touch none, do not). Omit it to route to the
+   `copy_path_to_backend`, or touch none, do not). Omit it to route to the
    default; pass an id to route elsewhere. Unknown ids land on -32602.
  - Backends of a static library registry are confined to the MCP root
-   like the default one; profiles opened with `remote_open` are not
+   like the default one; profiles opened with `open_remote_profile` are not
    (§9.5).
 
 Example:
@@ -703,30 +704,30 @@ we've thought about. The MCP tests live in `tests/test_mcp_*.py`:
 
 | File | Covers |
 |------|--------|
-| `tests/test_mcp_error_redaction.py` | Secrets in backend error text are redacted (tools/call, tasks, recursive_checksum). |
+| `tests/test_mcp_error_redaction.py` | Secrets in backend error text are redacted (tools/call, tasks, compute_tree_checksums). |
 | `tests/test_mcp_http_hardening.py` | DNS rebinding (Host/Origin), session cap and idle eviction, malformed params/ids, partial TLS flags, idle TCP client vs. accept. |
 | `tests/test_secfix_r7_host_header.py` | `Host` parsed strictly as `host[:port]` (`localhost:1@evil`, paths, spaces, bare IPv6 refused); two `Host`/`Origin` headers refused (MCP HTTP and reverse-serve). |
 | `tests/test_mcp_http_bearer_token.py` | Plain HTTP refuses requests without the bearer token (401, `/health` exempt), the token file is 0600 and never written through a symlink, `--mcp-http` always serves with one. |
 | `tests/test_mcp_http_sse_lifecycle.py` | One SSE stream per session, DELETE/idle eviction end it, replay on reconnect. |
-| `tests/test_mcp_search_root.py` | `search` never returns indexed paths outside the root. |
+| `tests/test_mcp_search_root.py` | `search_index` never returns indexed paths outside the root. |
 | `tests/test_mcp_tasks_limits.py` | `axross/tasks/start` rate limit, running-task cap, tool timeout. |
 | `tests/test_mcp_write_root.py` | `--mcp-write` needs `--mcp-root`; `--mcp-allow-scripts` refused with `--mcp-http`. |
 | `tests/test_mcp_secret_reads.py` | Secret files (§7.12) are not read, grepped, hashed, previewed, copied, moved or hard-linked, also through a symlink, a group tool or `resources/read`; their names are listed; `--mcp-allow-secret-reads` (stdio only) lets them be read. |
 | `tests/test_mcp_http_mode.py` | `--mcp-http` alone starts the HTTP server (it opened the window) and does not detach from the terminal. |
 | `tests/test_mcp_script_audit.py` | Script tools write the audit trail, without source or output. |
-| `tests/test_mcp_script_run_child.py` | `script_run` in a child: timeout and group kill, no grandchild left, `input()` never reads the stdio stream, cancel, output cap, argument checks, structured reply. |
+| `tests/test_mcp_script_run_child.py` | `run_script` in a child: timeout and group kill, no grandchild left, `input()` never reads the stdio stream, cancel, output cap, argument checks, structured reply. |
 | `tests/test_mcp_stdio_write_lock.py` | Concurrent stdio writers never interleave inside a line. |
 | `tests/test_mcp_tools_flag.py` | `--mcp-tools` / `AXROSS_MCP_TOOLS` parsing, unknown group exit 2, default surface unchanged, read-only `all` offers no mutating tool. |
 | `tests/test_mcp_group_metadata_filetype.py` | `metadata` and `filetype` groups: root escapes, symlinks, no overwrite, audit. |
 | `tests/test_mcp_group_duplicates_index.py` | `duplicates` and `index` groups: index rows outside the root never show, dedupe re-check, trash under the root. |
-| `tests/test_mcp_group_packer_archive.py` | `packer` and `archive` groups: zip-slip, password never logged, cancel leaves nothing. |
+| `tests/test_mcp_group_packer_archive.py` | The `archive` group (packing and unpacking): zip-slip, password never logged, cancel leaves nothing. |
 | `tests/test_mcp_group_crypto.py` | `crypto` group: passphrase never in answers, errors or audit; no overwrite. |
 | `tests/test_mcp_group_remote_transfer.py` | `remote` and `transfer` groups: no secrets listed, no prompts, host keys, production profiles, per-session scoping, resumable copy. |
 | `tests/test_exec_everywhere.py` | `exec()` of Telnet, rsh, ADB, WinRM and Cisco: exit status as `returncode`, stdin over a temporary file, env keys checked and values quoted, output caps, Cisco `show` only. |
 | `tests/test_mcp_group_exec.py` | `exec` group: off without `--mcp-allow-exec` (also under `all`), refused in paranoid mode, backends without a shell refused, interpreter per backend, production profiles run nothing, audit without command, stdin or output. |
 | `tests/test_mcp_group_extensions.py` | `extensions` group: listing never imports an extension. |
 | `tests/test_mcp_manifest.py` | `--mcp-list-tools` and the committed `docs/mcp-tools.json` stay in sync with the code. |
-| `tests/test_mcp_protocol_matrix.py` | Every registered protocol has a route: `remote_open` reaches each profile protocol (stored password handed over, files written and read back), browser sign-in and paranoid-mode refusals carry their reason, the URL-only ones open through `axross.open_url`. |
+| `tests/test_mcp_protocol_matrix.py` | Every registered protocol has a route: `open_remote_profile` reaches each profile protocol (stored password handed over, files written and read back), browser sign-in and paranoid-mode refusals carry their reason, the URL-only ones open through `axross.open_url`. |
 | `tests/test_mcp_docs_group_table.py` | The §9.2 table of this file and of its German and Spanish versions lists exactly the group tools of `docs/mcp-tools.json`. |
 | `tests/test_mcp_groups_e2e.py` | The real server over stdio and HTTP with `--mcp-tools all`: one call per group, `axross/tasks/start` + `axross/tasks/cancel`. |
 | `tests/test_fuzz_mcp.py` | Hostile requests against the dispatcher, both transports and every group tool. |
@@ -748,18 +749,18 @@ first `abspath` to collapse `..` / `.`, then `realpath` to
 resolve symlinks and a second prefix test against the resolved
 root. Without the second pass, a symlink placed under the
 configured root (either externally or by the LLM using the
-`symlink` write tool) would point at `/` and let
+`create_symlink` write tool) would point at `/` and let
 `write_file("/root/escape/etc/cron.d/evil")` slip past. Now
 rejected with `PermissionError`, answered as a tool result flagged
 `isError` with `_meta.type = "PermissionError"` and a text naming the
 root (§8). The
 capability groups (§9) run every local path through the same check.
-Tools that check many paths in one call (`grep`, `search`,
-`recursive_checksum`) resolve the root once per call and still resolve
+Tools that check many paths in one call (`search_content`, `search_index`,
+`compute_tree_checksums`) resolve the root once per call and still resolve
 every path on its own; the next call resolves the root again, so a
 root re-pointed while the server runs is seen by the next call.
 
-`remove`, `rename` and `transfer_move` act on the directory entry
+`delete_path`, `move_path` and `move_file_to_backend` act on the directory entry
 itself: after the same check they resolve only the parent
 (`_enforce_root_entry`), so on a symlink they remove or move the
 link, never the folder or file it points to. A link that points out
@@ -793,7 +794,7 @@ with `data.hard_stop = true`; the worker keeps running as a
 zombie (we can't safely interrupt blocking IO), but the client is
 unblocked.
 
-### 7.5 Grep ReDoS preflight
+### 7.5 search_content ReDoS preflight
 
 Before `re.compile`, patterns are tested against:
 
@@ -835,8 +836,8 @@ instead (§1.2), so a leaked session id alone is worthless there too.
 
 ### 7.9 Audit "attempt" before the backend call
 
-Every write tool — and `script_write`, `script_delete`,
-`script_run` — emits an `outcome=attempt` audit entry BEFORE
+Every write tool — and `write_script`, `delete_script`,
+`run_script` — emits an `outcome=attempt` audit entry BEFORE
 invoking the backend (or the script), then `outcome=ok` or
 `outcome=refused` after. A process crash between a successful backend call and the
 "ok" entry still leaves a trace: operators see an "attempt"
@@ -873,13 +874,13 @@ whatever the root (`core.protected_places.read_refusal`):
   and `config` (a private key may have any name);
 * GnuPG's `private-keys-v1.d/`, `openpgp-revocs.d/` and `secring.gpg`.
 
-Refused: `read_file`, `checksum`, `preview`, `open_version_read`,
-`resources/read`; in `grep` and `recursive_checksum` such a file is
-reported unreadable; `copy`, `bulk_copy`, `rename` and `hardlink` do not
+Refused: `read_file`, `compute_file_checksum`, `render_preview`, `read_file_version`,
+`resources/read`; in `search_content` and `compute_tree_checksums` such a file is
+reported unreadable; `copy_file`, `copy_tree`, `move_path` and `create_hardlink` do not
 take one (or a folder holding one) as their source; the capability
 groups (§9) see it as outside the root. A symlink to a secret is
-resolved and refused. Names stay listable (`list_dir`, `walk`, `stat`,
-`search`). In the agent sandbox the host's home counts too.
+resolved and refused. Names stay listable (`list_directory`, `walk_tree`, `get_path_info`,
+`search_index`). In the agent sandbox the host's home counts too.
 Anywhere (a project folder too): a file holding a private key or a
 password database (a KeePass signature at its start; `-----BEGIN …
 PRIVATE KEY-----`, OpenSSH or PuTTY in its first MiB - also after the
@@ -897,10 +898,10 @@ their copies such as `id_rsa.bak`, `*.ppk`, `*.p12`, `*.pfx`,
 `.dockercfg`, `*.jks`, `secring.gpg`. Past the first MiB every local read
 is scanned as it goes (core.protected_places.SecretScanningReader): a
 private key's BEGIN or END line anywhere in a file stops `read_file`,
-`grep`, `resources/read` and every tool that copies or transforms bytes
-(`encrypt`, `pack`, `transfer_copy` to a remote, `copy`...) - a key
+`search_content`, `resources/read` and every tool that copies or transforms bytes
+(`encrypt_file`, `create_archive`, `copy_path_to_backend` to a remote, `copy_file`...) - a key
 padded past 1 MiB is not handed out inside an archive or an .axenc
-either. **On a remote** (a profile opened with `remote_open`) the
+either. **On a remote** (a profile opened with `open_remote_profile`) the
 name-based rules apply too - the names above, `.ssh/` but its public
 files, `.gnupg/` private parts - and what `read_file` serves is scanned
 for a key.
@@ -927,7 +928,7 @@ scan as a guard against accidents, and keep secrets outside the root.
 Below `/proc` a
 process's `environ`, `cmdline`, `mem`, `maps`, `fd` and the like and all of
 `/proc/self` (a root of `/` would hand out axross's API keys), and
-`/run/secrets`. `chmod` refuses a file with other hard links.
+`/run/secrets`. `set_permissions` refuses a file with other hard links.
 `--mcp-allow-secret-reads` (stdio only) switches the check off; the
 agent's own tools always keep it. The write side (§2, the protected
 places of `core.protected_places`) is a list of its own and unchanged by
@@ -1028,7 +1029,7 @@ axross --mcp-server --mcp-tools metadata,filetype
 
 # Pack and extract inside ~/data (mutating tools need --mcp-write,
 # which needs --mcp-root)
-axross --mcp-server --mcp-write --mcp-root ~/data --mcp-tools packer,archive
+axross --mcp-server --mcp-write --mcp-root ~/data --mcp-tools archive
 
 # Build the search index and find duplicates, read-only
 axross --mcp-server --mcp-root ~/photos --mcp-tools index,duplicates
@@ -1047,48 +1048,49 @@ AXROSS_MCP=1 AXROSS_MCP_WRITE=1 AXROSS_MCP_TOOLS=all axross --mcp-root ~/data
 
 ### 9.2 Groups and tools
 
+Tool names read verb then resource since 0.15.183 (`list_directory`, `get_path_info`, `search_content` ...); `tools/call` still takes the former names (list_dir, stat, grep, ...), which `tools/list` no longer shows. Three former tools live on in another one, and their names still answer: export_metadata_file is `export_metadata` with `out`, exec_backends is `list_backends` with `can_run_commands`, extensions_info is `list_extensions` with `name`. The group packer is part of `archive` now; `--mcp-tools packer` still works. Renamed parameters still work too: `search_index`'s needle and limit (`pattern`, `max_results`), `run_script`'s timeout_s (`timeout`), `create_archive`'s folder (`path`), and the 0-based max_depth of `scan_file_types` and `copy_path_to_backend` (`subfolder_levels`).
+
 Read-only tools of a group need only `--mcp-tools <group>`; mutating
 ones are not even registered without `--mcp-write` (and `--mcp-write`
 is refused without `--mcp-root`). The `exec` group is the exception:
 its tools need `--mcp-allow-exec` instead, and `all` leaves the group
-out unless that flag is given (§9.8).
+out unless that flag is given (§9.8). `export_metadata` needs only
+`--mcp-tools metadata`; its `out` (save the export as a file) is there
+with `--mcp-write`.
 
 | Group | Tool | Kind | Required flags | Timeout class |
 |-------|------|------|----------------|---------------|
-| `metadata` | `metadata_read` | read-only | `--mcp-tools metadata` | stream |
-| `metadata` | `metadata_export` | read-only | `--mcp-tools metadata` | stream |
-| `metadata` | `metadata_export_file` | mutating | `--mcp-tools metadata` `--mcp-write` `--mcp-root DIR` | stream |
-| `metadata` | `metadata_remove` | mutating | `--mcp-tools metadata` `--mcp-write` `--mcp-root DIR` | long |
-| `duplicates` | `duplicates_scan` | read-only | `--mcp-tools duplicates` | long |
-| `duplicates` | `duplicates_scans` | read-only | `--mcp-tools duplicates` | quick |
-| `duplicates` | `duplicates_groups` | read-only | `--mcp-tools duplicates` | quick |
-| `duplicates` | `duplicates_dedupe` | mutating | `--mcp-tools duplicates` `--mcp-write` `--mcp-root DIR` | long |
-| `packer` | `pack_formats` | read-only | `--mcp-tools packer` | quick |
-| `packer` | `pack` | mutating | `--mcp-tools packer` `--mcp-write` `--mcp-root DIR` | long |
-| `archive` | `archive_list` | read-only | `--mcp-tools archive` | walk |
-| `archive` | `archive_extract` | mutating | `--mcp-tools archive` `--mcp-write` `--mcp-root DIR` | long |
-| `crypto` | `encrypt` | mutating | `--mcp-tools crypto` `--mcp-write` `--mcp-root DIR` | stream |
-| `crypto` | `decrypt` | mutating | `--mcp-tools crypto` `--mcp-write` `--mcp-root DIR` | stream |
-| `index` | `index_build` | read-only | `--mcp-tools index` | long |
-| `filetype` | `file_type` | read-only | `--mcp-tools filetype` | walk |
-| `filetype` | `file_type_scan` | read-only | `--mcp-tools filetype` | stream |
-| `transfer` | `transfer_copy` | mutating | `--mcp-tools transfer` `--mcp-write` `--mcp-root DIR` | long |
-| `transfer` | `transfer_move` | mutating | `--mcp-tools transfer` `--mcp-write` `--mcp-root DIR` | long |
-| `remote` | `remote_profiles` | read-only | `--mcp-tools remote` | quick |
-| `remote` | `remote_open` | read-only | `--mcp-tools remote` | walk |
-| `remote` | `remote_close` | read-only | `--mcp-tools remote` | quick |
+| `metadata` | `read_metadata` | read-only | `--mcp-tools metadata` | stream |
+| `metadata` | `export_metadata` | mutating | `--mcp-tools metadata` | stream |
+| `metadata` | `strip_metadata` | mutating | `--mcp-tools metadata` `--mcp-write` `--mcp-root DIR` | long |
+| `duplicates` | `scan_duplicates` | read-only | `--mcp-tools duplicates` | long |
+| `duplicates` | `list_duplicate_scans` | read-only | `--mcp-tools duplicates` | quick |
+| `duplicates` | `list_duplicate_groups` | read-only | `--mcp-tools duplicates` | quick |
+| `duplicates` | `trash_duplicates` | mutating | `--mcp-tools duplicates` `--mcp-write` `--mcp-root DIR` | long |
+| `archive` | `list_archive_formats` | read-only | `--mcp-tools archive` | quick |
+| `archive` | `create_archive` | mutating | `--mcp-tools archive` `--mcp-write` `--mcp-root DIR` | long |
+| `archive` | `list_archive_members` | read-only | `--mcp-tools archive` | walk |
+| `archive` | `extract_archive` | mutating | `--mcp-tools archive` `--mcp-write` `--mcp-root DIR` | long |
+| `crypto` | `encrypt_file` | mutating | `--mcp-tools crypto` `--mcp-write` `--mcp-root DIR` | stream |
+| `crypto` | `decrypt_file` | mutating | `--mcp-tools crypto` `--mcp-write` `--mcp-root DIR` | stream |
+| `index` | `build_index` | read-only | `--mcp-tools index` | long |
+| `filetype` | `identify_file_type` | read-only | `--mcp-tools filetype` | walk |
+| `filetype` | `scan_file_types` | read-only | `--mcp-tools filetype` | stream |
+| `transfer` | `copy_path_to_backend` | mutating | `--mcp-tools transfer` `--mcp-write` `--mcp-root DIR` | long |
+| `transfer` | `move_file_to_backend` | mutating | `--mcp-tools transfer` `--mcp-write` `--mcp-root DIR` | long |
+| `remote` | `list_remote_profiles` | read-only | `--mcp-tools remote` | quick |
+| `remote` | `open_remote_profile` | read-only | `--mcp-tools remote` | walk |
+| `remote` | `close_remote_profile` | read-only | `--mcp-tools remote` | quick |
 | `remote` | `list_backends` | read-only | `--mcp-tools remote` | quick |
-| `exec` | `remote_exec` | mutating | `--mcp-tools exec` `--mcp-allow-exec` | long |
-| `exec` | `remote_script` | mutating | `--mcp-tools exec` `--mcp-allow-exec` | long |
-| `exec` | `exec_backends` | read-only | `--mcp-tools exec` `--mcp-allow-exec` | quick |
-| `agent` | `agent_run` | read-only | `--mcp-tools agent` | long |
-| `extensions` | `extensions_list` | read-only | `--mcp-tools extensions` | quick |
-| `extensions` | `extensions_info` | read-only | `--mcp-tools extensions` | quick |
+| `exec` | `run_backend_command` | mutating | `--mcp-tools exec` `--mcp-allow-exec` | long |
+| `exec` | `run_backend_script` | mutating | `--mcp-tools exec` `--mcp-allow-exec` | long |
+| `agent` | `run_llm_agent` | read-only | `--mcp-tools agent` | long |
+| `extensions` | `list_extensions` | read-only | `--mcp-tools extensions` | quick |
 
-"Read-only" means: no file of the user changes. `duplicates_scan` and
-`index_build` do write axross' own indexes (the Duplicate Finder's
+"Read-only" means: no file of the user changes. `scan_duplicates` and
+`build_index` do write axross' own indexes (the Duplicate Finder's
 and the metadata search's, under `~/.local/share/axross/`), the same
-indexes the GUI uses; `remote_open` opens a network connection.
+indexes the GUI uses; `open_remote_profile` opens a network connection.
 
 What each group does:
 
@@ -1105,23 +1107,23 @@ What each group does:
   elsewhere never show), and dedupe: keep the oldest copy of each
   group and move the others to `<root>/.axross-trash`, after
   re-checking every copy on disk. A dry run unless `dry_run=false`.
-* **packer** — zip, tar.gz / tar.zst / tar.xz / tar.bz2, 7z (with a
+* **archive** — create zip, tar.gz / tar.zst / tar.xz / tar.bz2, 7z (with a
   password: AES-256, file list encrypted too) and single-file gz / zst
-  / xz / bz2. ZIP has no password option (ZipCrypto is broken).
-* **archive** — list members without extracting; extract into a fresh
+  / xz / bz2. ZIP has no password option (ZipCrypto is broken). List
+  members without extracting; extract into a fresh
   folder (`x.zip` → `x`, `x-1`, …) with the zip-slip, link, size
   (1 GiB), entry-count (10,000) and ratio (100:1, for members of
   64 MiB or more) guards of `core.archive`. Local archives only: copy a remote archive with
-  `transfer_copy` first.
+  `copy_path_to_backend` first.
 * **crypto** — the axross `.axenc` format of the GUI (AES-256-GCM,
   PBKDF2-SHA256 with 200,000 iterations, at most 1 GiB per file).
-* **index** — fill the offline metadata index that `search` reads, so
-  `search` finally has data without the GUI; `prune` drops rows of
+* **index** — fill the offline metadata index that `search_index` reads, so
+  `search_index` finally has data without the GUI; `prune` drops rows of
   files that are gone.
 * **filetype** — identify files by content (magic bytes, the same
   detector as the GUI) and flag an extension that lies.
 * **transfer** — copy files or trees, or move one file, between any
-  two backends (`local` and the profiles opened with `remote_open`);
+  two backends (`local` and the profiles opened with `open_remote_profile`);
   `resumable=true` copies in 4 MiB segments with a manifest under
   `$XDG_STATE_HOME/axross/resume/`, so an interrupted copy continues
   where it stopped when called again with the same arguments.
@@ -1154,7 +1156,7 @@ Every guard of the base server stays; the groups add layers:
    and sizes, never file contents, passphrases or passwords.
 6. **Secrets stay out of answers.** Passphrases and the 7z password
    are `writeOnly` schema fields that appear in no result, error or
-   audit line; `remote_profiles` lists profiles through a field
+   audit line; `list_remote_profiles` lists profiles through a field
    allow-list (no password, key, token, SAS or connection string).
 7. **Bounded work.** Every list has a cap (`max_files`, `max_groups`,
    `max_entries`, …, `truncated=true` when cut); long jobs report
@@ -1168,8 +1170,8 @@ Every guard of the base server stays; the groups add layers:
    whose CLOSE takes 30 minutes holds only that remote's writes, not the
    local disk's, even while a move from it waits. Waiting is first come,
    first served among calls that could go.
-9. **Outputs appear whole or not at all.** decrypt, encrypt, pack and the
-   copies write under a temporary name that carries the process id and
+9. **Outputs appear whole or not at all.** decrypt_file, encrypt_file, create_archive
+   and the copies write under a temporary name that carries the process id and
    rename when complete. Each temporary path is recorded in
    `~/.local/state/axross/partials/` (or `$XDG_STATE_HOME`); the next
    server start removes what a killed process left - only axross's own
@@ -1183,24 +1185,24 @@ Every guard of the base server stays; the groups add layers:
 No group is refused as a whole. What the paranoid mode blocks in the
 GUI and in scripting stays blocked here:
 
-* `remote_open` refuses the legacy protocols (`ftp`, `telnet`,
+* `open_remote_profile` refuses the legacy protocols (`ftp`, `telnet`,
   `cisco-telnet`, `tftp`, `gopher`, `nntp`, `pop3`, `rsh`);
-  `remote_profiles` reports them as `openable: false`.
+  `list_remote_profiles` reports them as `openable: false`.
 * `metadata_*` do not run ffprobe / ffmpeg on audio and video (the
   report carries the reason), exactly as in the GUI.
-* `extensions_list` reports `allowed: false` and every extension
+* `list_extensions` reports `allowed: false` and every extension
   `active: false`.
 * The script tools stay refused (`--mcp-allow-scripts` exits 2).
 * The `exec` group stays refused (`--mcp-allow-exec` exits 2).
 
 ### 9.5 Remote profiles
 
-* `remote_profiles` lists the saved profiles (name, protocol, host,
+* `list_remote_profiles` lists the saved profiles (name, protocol, host,
   port, user, auth type, whether a password is stored, production
-  flag) and says per profile whether `remote_open` would refuse it.
-* `remote_open(profile)` connects through the GUI's connection
+  flag) and says per profile whether `open_remote_profile` would refuse it.
+* `open_remote_profile(profile)` connects through the GUI's connection
   manager and registers the backend `profile:<name>`; every other tool
-  reaches it via `backend: "profile:<name>"`. `remote_close` drops it.
+  reaches it via `backend: "profile:<name>"`. `close_remote_profile` drops it.
 * **Credentials come from the keyring**, only when the profile stores
   its password ("Store password" in the connection dialog). The MCP
   server never prompts: a profile that needs a password that is not
@@ -1226,12 +1228,12 @@ GUI and in scripting stays blocked here:
   connection answers keepalives (a NAS flushing for 70 s lost the upload).
   Calls that did not stop are counted per backend: at 8 on one profile,
   new calls on that profile are refused (-32001, `AbandonedWorkers`)
-  while local tools and other profiles go on; `remote_close` tears the
-  connection down, which ends the stalled calls, and `remote_open` can
+  while local tools and other profiles go on; `close_remote_profile` tears the
+  connection down, which ends the stalled calls, and `open_remote_profile` can
   connect it again.
 * **What a remote sends is checked against what it said.** A copy or
   move whose source sends another number of bytes than its size is an
-  error (`size-mismatch`) and leaves nothing behind - `transfer_move`
+  error (`size-mismatch`) and leaves nothing behind - `move_file_to_backend`
   keeps the source then. Every count an answer carries (listing entries,
   extended attributes, in a listing and in a stat) is bounded by the
   bytes that carry it - a 13-byte answer claiming 4 billion entries is
@@ -1239,7 +1241,7 @@ GUI and in scripting stays blocked here:
   connection. A listing stops at 300,000 entries or 64 MiB of
   answers - names, longnames and attributes, extended ones too (900 KiB
   of them per entry took a listing past 2.5 GB); a name over 4 KiB is
-  left out, extended attributes are not kept. `checksum` and a
+  left out, extended attributes are not kept. `compute_file_checksum` and a
   server-side copy run no command on anything but a regular file (a
   symlink to `/dev/zero`: `sha256sum` ran on the server for good) nor on
   a file in `/proc`, `/sys` or `/dev` (`/proc/kmsg` is a regular file of
@@ -1251,8 +1253,8 @@ GUI and in scripting stays blocked here:
   resumes it) and replaces the destination only when it is complete - a
   failing source or a refused secret leaves an existing destination as
   it was. A hostile name in a remote folder (`C:..`) is skipped, not the
-  whole copy; a folder that cannot be listed makes `index_build`,
-  `file_type_scan`, `metadata_*` and `duplicates_scan` say `truncated`
+  whole copy; a folder that cannot be listed makes `build_index`,
+  `scan_file_types`, `metadata_*` and `scan_duplicates` say `truncated`
   (and name it in `unreadable`).
 * Opening an arbitrary URL is not offered: an LLM-chosen URL could
   point the server at `sftp://localhost` with the user's SSH agent, or
@@ -1268,22 +1270,22 @@ GUI and in scripting stays blocked here:
 ### 9.6 One JSON-RPC call per group
 
 ```json
-{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"metadata_read","arguments":{"path":"/home/me/data/IMG_0001.jpg"}}}
-{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"duplicates_scan","arguments":{"path":"/home/me/data/photos"}}}
-{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"pack","arguments":{"folder":"/home/me/data","names":["report","notes.txt"],"archive_name":"bundle","format":"7z","password":"…"}}}
-{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"archive_extract","arguments":{"path":"/home/me/data/bundle.zip"}}}
-{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"encrypt","arguments":{"path":"/home/me/data/notes.txt","passphrase":"…"}}}
-{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"index_build","arguments":{"path":"/home/me/data"}}}
-{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"file_type_scan","arguments":{"path":"/home/me/data/inbox","mismatches_only":true}}}
-{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"transfer_copy","arguments":{"src":"/home/me/data/report","dst_backend":"profile:nas","dst":"/backup/report","resumable":true}}}
-{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"remote_open","arguments":{"profile":"nas"}}}
-{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"extensions_list","arguments":{}}}
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_metadata","arguments":{"path":"/home/me/data/IMG_0001.jpg"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"scan_duplicates","arguments":{"path":"/home/me/data/photos"}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"create_archive","arguments":{"path":"/home/me/data","names":["report","notes.txt"],"archive_name":"bundle","format":"7z","password":"…"}}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"extract_archive","arguments":{"path":"/home/me/data/bundle.zip"}}}
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"encrypt_file","arguments":{"path":"/home/me/data/notes.txt","passphrase":"…"}}}
+{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"build_index","arguments":{"path":"/home/me/data"}}}
+{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"scan_file_types","arguments":{"path":"/home/me/data/inbox","mismatches_only":true}}}
+{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"copy_path_to_backend","arguments":{"src":"/home/me/data/report","dst_backend":"profile:nas","dst":"/backup/report","resumable":true}}}
+{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"open_remote_profile","arguments":{"profile":"nas"}}}
+{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"list_extensions","arguments":{}}}
 ```
 
 A long job in the background, cancellable on both transports:
 
 ```json
-{"jsonrpc":"2.0","id":11,"method":"axross/tasks/start","params":{"name":"duplicates_scan","arguments":{"path":"/home/me/data"}}}
+{"jsonrpc":"2.0","id":11,"method":"axross/tasks/start","params":{"name":"scan_duplicates","arguments":{"path":"/home/me/data"}}}
 {"jsonrpc":"2.0","id":12,"method":"axross/tasks/status","params":{"task_id":"<task_id>"}}
 {"jsonrpc":"2.0","id":13,"method":"axross/tasks/cancel","params":{"task_id":"<task_id>"}}
 ```
@@ -1303,7 +1305,7 @@ server, starts nothing and prints JSON:
   "generated_for": {"mcp_allow_exec": true, "mcp_allow_scripts": true, "mcp_tools": ["..."], "mcp_write": true},
   "timeout_classes": {"quick": 15.0, "walk": 60.0, "write": 30.0, "preview": 30.0, "stream": 300.0, "long": 1800.0,
                       "script": 610.0},
-  "groups": {"metadata": {"description": "...", "tools": ["metadata_read", "..."]}},
+  "groups": {"metadata": {"description": "...", "tools": ["read_metadata", "..."]}},
   "tools": [{"name": "...", "title": "...", "group": "...", "mutating": false,
              "required_flags": ["--mcp-tools metadata"],
              "transports": ["stdio", "http"], "timeout_class": "stream", "timeout_seconds": 300.0,
@@ -1322,18 +1324,19 @@ tool catalog is generated from this manifest.
 
 ### 9.8 Commands on remote hosts (`exec`)
 
-`--mcp-tools exec --mcp-allow-exec` adds three tools:
+`--mcp-tools exec --mcp-allow-exec` adds two tools and a field:
 
-* `exec_backends` lists every backend that can run commands, as
-  `{backend, class, kind}`; `kind` is `posix-shell` (SSH, SCP, Telnet,
+* `list_backends` gives every backend `commands`, and with
+  `can_run_commands=true` lists only those that can run commands;
+  `commands` is `posix-shell` (SSH, SCP, Telnet,
   rsh, ADB), `powershell` (WinRM) or `ios-show` (Cisco Telnet). Open
-  a saved profile with `remote_open` (group `remote`) first.
-* `remote_exec(backend, command, stdin?, env?, timeout?, max_output?)`
+  a saved profile with `open_remote_profile` (group `remote`) first.
+* `run_backend_command(backend, command, stdin?, env?, timeout?, max_output?)`
   runs one command and returns `{returncode, stdout, stderr,
   truncated_stdout, truncated_stderr}`. A non-zero exit is a result,
   not an error. Telnet and ADB have no separate error stream: their
   stderr arrives inside `stdout`.
-* `remote_script(backend, script, interpreter?, args?, env?, …)` sends
+* `run_backend_script(backend, script, interpreter?, args?, env?, …)` sends
   the script on stdin to `sh -s --`, `bash -s --`, `python3 -` or
   `perl -` (default `sh`), with `args` quoted after it. A WinRM host
   runs the script as PowerShell (`interpreter: "powershell"`, no
@@ -1343,7 +1346,7 @@ Limits and guards:
 
 * **Its own opt-in.** `--mcp-allow-exec` is a flag only (no
   `AXROSS_MCP_*` variable), `--mcp-tools all` without it registers
-  none of the three tools, and `--mcp-write` does not enable them.
+  none of the two tools, and `--mcp-write` does not enable them.
   The paranoid security mode refuses the flag (exit 2).
 * **Remote only.** A backend without a remote shell — the local file
   system, S3, WebDAV, … — is refused with "has no remote shell". A
@@ -1371,14 +1374,14 @@ Limits and guards:
   often carry passwords.
 
 ```json
-{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"remote_open","arguments":{"profile":"web01"}}}
-{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"remote_exec","arguments":{"backend":"profile:web01","command":"df -h /","timeout":30}}}
-{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"remote_script","arguments":{"backend":"profile:web01","interpreter":"python3","script":"import sys; print(sys.argv[1:])","args":["a b","c"]}}}
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"open_remote_profile","arguments":{"profile":"web01"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"run_backend_command","arguments":{"backend":"profile:web01","command":"df -h /","timeout":30}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"run_backend_script","arguments":{"backend":"profile:web01","interpreter":"python3","script":"import sys; print(sys.argv[1:])","args":["a b","c"]}}}
 ```
 
 ### 9.9 Hand a task to the local LLM (`agent`)
 
-`--mcp-tools agent` adds `agent_run(task, profile?, groups?, max_steps?)`:
+`--mcp-tools agent` adds `run_llm_agent(task, profile?, groups?, max_steps?)`:
 the client - another LLM - hands a task to the user's own model, the
 active LLM profile of the axross GUI (LM Studio, Ollama, vLLM,
 llama.cpp; any OpenAI-compatible server) or the one named. That model

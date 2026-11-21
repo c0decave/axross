@@ -79,9 +79,9 @@ def index(tmp_path):
 def test_happy_search_takes_a_limit_after_the_root_is_applied(index):
     root, seen = index
     tool = _tools(root)["search"]
-    hits = tool.handler({"needle": "hit-", "limit": 5}, M._ToolContext())
+    hits = tool.handler({"needle": "hit-", "limit": 5}, M._ToolContext())["entries"]
     assert len(hits) == 5 and all(h["path"].startswith(str(root)) for h in hits)
-    assert "maximum" in tool.schema["properties"]["limit"]
+    assert "maximum" in tool.schema["properties"]["max_results"]
     with pytest.raises(ValueError):
         tool.handler({"needle": "hit-", "limit": M.MAX_SEARCH_RESULTS + 1}, M._ToolContext())
 

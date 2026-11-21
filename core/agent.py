@@ -62,6 +62,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
+from core import mcp_names as _mcp_names
 from core.llm_profiles import LLMProfile
 from core.structured_log import log_event
 
@@ -80,7 +81,7 @@ Rules:
 - Paths are absolute on the backend they belong to. Call list_backends to see the
   backends; omit "backend" for the local file system, which is confined to a root
   directory.
-- Explore before you act: list_dir and stat first, keep reads small.
+- Explore before you act: list_directory and get_path_info first, keep reads small.
 - For text files use read_file with encoding "text" and write_file with "content";
   base64 (content_b64) is for binary data.
 - A call that changes something (writing, removing, renaming, running a remote
@@ -1055,7 +1056,8 @@ def _digest(args_text: str) -> str:
 _WRITE_PATH_ARGS = ("path", "src", "dst", "link_path", "dest_dir", "folder", "out")
 _FOLLOWS_FINAL_LINK = frozenset({("write_file", "path"), ("copy", "dst"), ("chmod", "path"),
                                  ("archive_extract", "dest_dir"), ("pack", "folder"),
-                                 ("metadata_export_file", "out")})
+                                 ("pack", "path"),
+                                 ("metadata_export", "out")})
 #: The key of the approval's own note (what the write means).
 APPROVAL_NOTE = "axross_note"
 
@@ -1296,13 +1298,17 @@ class Agent:
             out.append(
                 {
                     "type": "function",
-                    "function": {"name": t.name, "description": description, "parameters": schema},
+                    # The public verb_resource name the descriptions use
+                    # (core.mcp_names); _run_tool takes it back.
+                    "function": {"name": _mcp_names.public(t.name), "description": description,
+                                 "parameters": schema},
                 }
             )
         for name, spec in self._host.items():
             if name not in self._tools:
                 out.append({"type": "function",
-                            "function": {"name": name, "description": spec.get("description") or "",
+                            "function": {"name": _mcp_names.public(name),
+                                         "description": spec.get("description") or "",
                                          "parameters": spec["schema"]}})
         for name, tool in (self._external or {}).items():
             out.append(
@@ -1369,6 +1375,11 @@ class Agent:
         """(tool name, outcome, text for the model) of one tool call."""
         function = call.get("function") or {}
         name = str(function.get("name") or "")
+        if name not in self._tools and self._host.get(name) is None:
+            # The public name of an axross tool (what _functions offers).
+            meant = _mcp_names.internal(name)
+            if meant != name and (meant in self._tools or self._host.get(meant) is not None):
+                name = meant
         raw = function.get("arguments") or "{}"
         args_text = raw if isinstance(raw, str) else json.dumps(raw)
         tool = self._tools.get(name)
@@ -1391,6 +1402,10 @@ class Agent:
             )
             return name, "error", f"error: the arguments are not a JSON object{reason}"
         fields = f"tool={name} args_sha256={_digest(args_text)} args_len={len(args_text)}"
+        # A former argument name (core.mcp_names.ARG_ALIASES) is renamed
+        # first: the question and the target check see what the tool reads.
+        if tool is not None or spec is not None:
+            args = dict(_mcp_names.rename_args(name, args))
         if name in PAGED_READS and "max_bytes" not in args:
             # A read the tool-result limit would cut: ask for what fits, so the
             # next_offset it answers is where the model really stopped reading.

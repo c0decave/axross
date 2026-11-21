@@ -30,7 +30,7 @@ or `pipx install 'axross-headless-mcp[all]'`.
 - Read-only is the default. `--mcp-write` adds the write tools (write_file,
   mkdir, remove, rename, copy, ...) and needs `--mcp-root`. Add it only when the
   user wants the agent to change files.
-- `--mcp-tools GROUP,...` adds tool groups: metadata, duplicates, packer, archive,
+- `--mcp-tools GROUP,...` adds tool groups: metadata, duplicates, archive,
   crypto, index, filetype, transfer, remote, exec, agent, extensions (`all` for
   every one). Without it only the file tools are served.
 - `--mcp-allow-exec` (remote commands, needs `--mcp-tools exec`),
@@ -104,7 +104,7 @@ docker run -i --rm -v "$PWD:/data" ghcr.io/c0decave/axross-headless-mcp:latest \
 
 ## 6. Check it works
 
-Ask the server for `list_dir` on the root folder. A refused path lies outside
+Ask the server for `list_directory` on the root folder. A refused path lies outside
 `--mcp-root` (or is a secret file, refused on purpose).
 Logs: `~/.local/state/axross/logs/axross.log` (`-v` also on stderr; stdout is the
 protocol's). Reference: https://github.com/c0decave/axross/blob/main/docs/MCP.md

@@ -122,7 +122,7 @@ AREAS: tuple[Area, ...] = (
         *_core("transfer_manager", "transfer_pool", "transfer_worker", "transfer_hooks",
                "transfer_conflicts",
                "copy_resume", "sync", "scheduler", "operation_journal", "move_permissions"),
-        *_ui("transfer_dock", "transfer_conflict_dialog", "scheduler_dialog"),
+        *_ui("transfer_dock", "transfer_progress", "transfer_conflict_dialog", "scheduler_dialog"),
         *_models("transfer_model"),
     )),
     Area("search", "Indexing / Search", (
@@ -154,8 +154,8 @@ AREAS: tuple[Area, ...] = (
         *_ui("mcp_catalog_dialog"),
     )),
     Area("mcp.server", "MCP Server (axross as a server)",
-         _core("mcp_server", "mcp_http", "mcp_groups", "mcp_cli", "partials", "confined_fs",
-               "regex_worker")),
+         _core("mcp_server", "mcp_http", "mcp_groups", "mcp_cli", "mcp_names", "mcp_terms",
+               "partials", "confined_fs", "regex_worker")),
     Area("scripting", "Scripting", (
         *_core("scripting", "script_runner", "ui_helpers", "llm_guide"),
         *_ui("repl_widget", "script_editor", "scripting_guide", "scripts_dock"),

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import errno
 import hashlib
+import io
 import logging
 import os
 import re
@@ -37,6 +40,29 @@ SPEED_WINDOW = 3.0  # Seconds for rolling speed average
 # 1 MiB per read/write: protocols that do one synchronous request per call
 # (SMB via smbclient, ...) paid a round trip per 64 KiB before.
 CHUNK_SIZE = 1024 * 1024
+#: Why a symbolic link inside a copied folder was not copied (English; the
+#: Transfers panel translates it).
+LINK_NOT_COPIED = ("symbolic link not copied: one side cannot hold symbolic links "
+                   "(what it points to was not copied either)")
+#: errno of a symlink() or readlink() the file system or server does not do.
+_NO_LINKS_ERRNOS = frozenset({errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP, errno.ENOSYS})
+
+
+def _links_unsupported(exc: OSError) -> bool:
+    """*exc* says that symbolic links cannot be made or read there (vfat:
+    EPERM; an SFTP server without SYMLINK / READLINK: "Operation
+    unsupported") - not a refused permission or a lost connection."""
+    if exc.errno in _NO_LINKS_ERRNOS:
+        return True
+    return exc.errno is None and "unsupported" in str(exc).casefold()
+
+
+#: Small files read ahead together (TransferWorker._prefetch_small_files):
+#: at most this many per batch, each at most PREFETCH_FILE_BYTES, together
+#: at most PREFETCH_BYTES.
+PREFETCH_FILES = 64
+PREFETCH_FILE_BYTES = 64 * 1024
+PREFETCH_BYTES = 4 * 1024 * 1024
 #: rename / link answers that mean "not this way here": another file system
 #: (EXDEV), no hard links on it (EPERM / ENOTSUP / EOPNOTSUPP on vfat, exFAT,
 #: some FUSE file systems), too many links (EMLINK). The copy takes over.
@@ -58,6 +84,12 @@ PARTIAL_MARK = ".part-"
 FINGERPRINT_LEN = 8
 JOB_ID_LEN = 8
 _PARTIAL_TAIL_BYTES = JOB_ID_LEN + 1 + FINGERPRINT_LEN
+
+
+def _random_hex(nbytes: int) -> str:
+    from core.operation_journal import random_hex
+
+    return random_hex(nbytes)
 
 
 def source_fingerprint(item) -> str:
@@ -347,8 +379,20 @@ def _may_compare(backend, path: str, other_backend, *, written: bool, against=No
     return any(_could_match(f"{kind}:", other_backend) for kind in kinds)
 
 
+#: Checksums a batch already has, by (id(backend), path): _native_checksum
+#: takes them instead of asking the backend (TransferWorker._batch_checksums).
+_KNOWN_CHECKSUMS: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "axross_known_checksums", default=None)
+
+
 def _native_checksum(backend, path: str, side: str):
-    """``backend.checksum(path)``, or None when it fails."""
+    """``backend.checksum(path)``, or None when it fails - or the value a
+    batch hash already got for it."""
+    known = _KNOWN_CHECKSUMS.get()
+    if known:
+        value = known.get((id(backend), path))
+        if value:
+            return value
     try:
         return backend.checksum(path)
     except Exception as exc:
@@ -440,7 +484,7 @@ class _DestinationKept(Exception):
 class TransferJob:
     """Represents a single file transfer."""
 
-    job_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+    job_id: str = field(default_factory=lambda: _random_hex(JOB_ID_LEN // 2))
     source_path: str = ""
     dest_path: str = ""
     direction: TransferDirection = TransferDirection.DOWNLOAD
@@ -516,6 +560,17 @@ class TransferJob:
     # no second look before the rename).
     move_source_size: int | None = field(default=None, repr=False, compare=False)
     integrity_compared: bool = field(default=False, repr=False, compare=False)
+    # A symbolic link inside a copied folder: the job makes a link with the
+    # same target at the destination (TransferWorker._copy_link) - the
+    # target is never read or followed.
+    link: bool = False
+    # Why a skipped job (``skipped``) wrote nothing, in English (the
+    # Transfers panel translates it): "" for "newer" keeping the destination.
+    skip_note: str = ""
+    # The source's bytes, read ahead together with those of the small files
+    # queued after it (TransferWorker._prefetch_small_files); the copy takes
+    # them instead of opening the source. None: the copy reads the source.
+    prefetched: bytes | None = field(default=None, repr=False, compare=False)
 
     @property
     def eta_seconds(self) -> float:
@@ -672,12 +727,35 @@ def _hooks_of(job: "TransferJob", progress_callback) -> transfer_hooks.TransferH
     return transfer_hooks.TransferHooks(job.cancel_event)
 
 
-def _open_sequential(backend, path: str):
+def _open_sequential(backend, path: str, size: int | None = None):
     """``backend.open_read(path)`` for the copy loop, which reads front to
     back once: a download may stream instead of spooling
-    (core.read_spool.sequential_reads)."""
-    with read_spool.sequential_reads():
+    (core.read_spool.sequential_reads). *size*: what the listing says
+    the file holds - an SFTP read asks for that much at first, not for a
+    whole read-ahead window (core.sftp_io.expected_size)."""
+    from core.sftp_io import expected_size
+
+    with read_spool.sequential_reads(), expected_size(size):
         return backend.open_read(path)
+
+
+def _item_mtime(item) -> float | None:
+    """The modification time (epoch seconds) of a listing entry, or None."""
+    modified = getattr(item, "modified", None)
+    try:
+        stamp = float(modified.timestamp()) if modified is not None else 0.0
+    except (AttributeError, OSError, OverflowError, ValueError):
+        return None
+    return stamp if stamp > 0 else None
+
+
+def _listed_size(job: "TransferJob") -> int | None:
+    """The size *job*'s source was listed with, for the first read; None
+    when it says nothing about the data (a symlink lists its target's
+    path length)."""
+    if job.source_mode is None and job.source_mtime is None and not job.source_fingerprint:
+        return None
+    return max(int(job.total_bytes or 0), 0)
 
 
 def _copy_starts(progress_callback) -> None:
@@ -858,11 +936,460 @@ class TransferWorker(QObject):
             job, claimed = taken
             try:
                 if claimed:
-                    self._process_job(job)
+                    self._prefetch_small_files(job)
+                    if not self._upload_small_files(job):
+                        self._process_job(job)
                 else:
                     self._report_cancelled(job)
             finally:
+                job.prefetched = None
                 scheduler.done(job)
+
+    @staticmethod
+    def _prefetchable(job: TransferJob, backend=None) -> bool:
+        """*job* is a plain copy of a small file whose source can be read
+        ahead with others (``read_small_files``, SFTP), from *backend*."""
+        size = _listed_size(job)
+        source = job.source_backend
+        return (
+            size is not None
+            and size <= PREFETCH_FILE_BYTES
+            and not job.move
+            and not job.link
+            and not job.resume
+            and not job.temp_path
+            and job.prefetched is None
+            and job.status is TransferStatus.PENDING
+            and not job.cancel_event.is_set()
+            and (backend is None or source is backend)
+            and callable(getattr(source, "read_small_files", None))
+        )
+
+    def _prefetch_small_files(self, job: TransferJob) -> None:
+        """Read *job*'s small source together with those of the small files
+        queued after it, in one pipelined batch (``read_small_files``):
+        one by one, a folder of 10 000 files of 10 bytes cost three round
+        trips each - over 8 minutes from the local test server. Each job
+        still copies, checks and commits its file on its own; a file the
+        batch did not read in full is read by its job as before. Copies
+        only: a move compares its source before deleting it, and a read
+        ahead would let a change in between go unseen."""
+        if job.prefetched is not None or not self._prefetchable(job):
+            return
+        backend = job.source_backend
+        batch = [job]
+        if self._scheduler is not None:
+            batch += self._scheduler.upcoming(
+                PREFETCH_FILES - 1, lambda other: self._prefetchable(other, backend))
+        chosen, budget = [], PREFETCH_BYTES
+        for item in batch:
+            budget -= item.total_bytes
+            if budget < 0 and chosen:
+                break
+            chosen.append(item)
+        try:
+            # Under the job's Cancel: it closes the channel of a batch that
+            # waits on a silent network (the job then ends cancelled).
+            with transfer_hooks.active(transfer_hooks.TransferHooks(job.cancel_event)):
+                contents = backend.read_small_files(
+                    [(item.source_path, int(item.total_bytes or 0)) for item in chosen])
+        except Exception as exc:  # noqa: BLE001 - each job then reads its own file
+            log.debug("Reading %d small files ahead failed: %s", len(chosen), exc)
+            return
+        for item in chosen:
+            data = contents.get(item.source_path)
+            if data is not None and not item.cancel_event.is_set():
+                item.prefetched = data
+
+    @staticmethod
+    def _uploadable(job: TransferJob, dest=None) -> bool:
+        """*job* is a plain copy of a small file whose bytes are at hand (a
+        local source, or read ahead) into a destination that writes small
+        files in pipelined batches (``upload_small_files``, SFTP) - to
+        *dest*. A move, a resume, a link, a forced checksum, or a source
+        whose mode or time is not known goes the way of every job."""
+        size = _listed_size(job)
+        target = job.dest_backend
+        return (
+            size is not None
+            and size <= PREFETCH_FILE_BYTES
+            and not job.move
+            and not job.link
+            and not job.resume
+            and not job.temp_path
+            and not job.verify_checksum
+            and job.use_temp_file
+            and job.source_mtime
+            and copy_mode(job.source_mode) is not None
+            and job.status is TransferStatus.PENDING
+            and not job.cancel_event.is_set()
+            and (dest is None or target is dest)
+            and callable(getattr(target, "upload_small_files", None))
+            and (job.prefetched is not None or _is_local(job.source_backend))
+            and job.source_backend is not None
+        )
+
+    def _upload_small_files(self, job: TransferJob) -> bool:
+        """Copy *job* together with the small copies queued right after it
+        into the same destination (SFTP), in pipelined batches - False when
+        *job* is no such copy (it then runs on its own).
+
+        One by one, each small upload waited for five round trips (OPEN,
+        WRITE+CLOSE, the temp file's size, the look at the destination,
+        SETSTAT+RENAME): 130 ms a file against the local test server, 22
+        minutes for a folder of 10 000. Here the requests of up to 64 files
+        are on the wire together - and still each file is written to its
+        own hidden temp name with the source's mode, its size checked, the
+        destination looked at right before the rename (the conflict answers:
+        "fail" / "newer" never replace what appeared meanwhile), the
+        integrity check run, renamed into place and journaled on its own,
+        with its own signals; a file that fails, fails alone, its temp file
+        removed. A job whose source does not read as listed runs alone."""
+        if not self._uploadable(job):
+            return False
+        dest = job.dest_backend
+        batch = [job]
+        if self._scheduler is not None:
+            later = self._scheduler.upcoming(
+                PREFETCH_FILES - 1, lambda other: self._uploadable(other, dest), contiguous=True)
+            budget = PREFETCH_BYTES - job.total_bytes
+            chosen = []
+            for other in later:
+                budget -= other.total_bytes
+                if budget < 0:
+                    break
+                chosen.append(other)
+            batch += self._scheduler.take_these(chosen)
+        alone: list[TransferJob] = []
+        try:
+            self._upload_batch(batch, alone)
+        finally:
+            for other in batch[1:]:
+                if other not in alone:
+                    other.prefetched = None
+        for other in alone:
+            try:
+                if other.cancel_event.is_set():
+                    self._report_cancelled(other)
+                else:
+                    self._process_job(other)
+            finally:
+                if other is not job:
+                    other.prefetched = None
+        for other in batch[1:]:
+            self._scheduler.done(other)
+        return True
+
+    def _upload_batch(self, batch: list[TransferJob], alone: list[TransferJob]) -> None:
+        """The work of :meth:`_upload_small_files`; jobs it leaves to run on
+        their own go to *alone*."""
+        from core.transfer_conflicts import IF_EXISTS_NEWER, IF_EXISTS_OVERWRITE
+
+        from core.storage_identity import same_entry
+
+        dest = batch[0].dest_backend
+        ready: list[tuple[TransferJob, bytes]] = []
+        for job in batch:
+            try:
+                onto_itself = same_entry(job.source_backend, job.source_path, dest,
+                                         job.dest_path)
+            except Exception:  # noqa: BLE001 - the job on its own says what is wrong
+                onto_itself = True
+            data = None if onto_itself else self._small_source_bytes(job)
+            if data is None:
+                alone.append(job)
+            else:
+                ready.append((job, data))
+        if not ready:
+            return
+        live: list[str] = []
+        items = []
+        for job, data in ready:
+            job.status = TransferStatus.ACTIVE
+            self.job_started.emit(job.job_id)
+            self._record_journal_phase(job, "worker_start")
+            temp = self._temp_destination_path(job)
+            if _claim_live_partial(temp):
+                live.append(temp)
+            items.append({"temp": temp, "data": data, "dest": job.dest_path,
+                          "mode": copy_mode(job.source_mode) | 0o200})
+        discard: list[str] = []
+        try:
+            try:
+                with transfer_hooks.active(transfer_hooks.TransferHooks(ready[0][0].cancel_event)):
+                    written = dest.upload_small_files(items)
+            except Exception as exc:  # noqa: BLE001 - the batch's connection: each job fails
+                for (job, _data), item in zip(ready, items):
+                    discard.append(item["temp"])
+                    self._end_batch_job(job, exc)
+                return
+            commits = []
+            known = self._batch_checksums(ready, items, written)
+            token = _KNOWN_CHECKSUMS.set(known)
+            try:
+                outcomes = [self._judge_upload(job, data, item, result)
+                            for (job, data), item, result in zip(ready, items, written)]
+            finally:
+                _KNOWN_CHECKSUMS.reset(token)
+            for (job, _data), item, outcome in zip(ready, items, outcomes):
+                if outcome is None:
+                    commits.append((job, item))
+                else:
+                    discard.append(item["temp"])
+                    self._end_batch_job(job, outcome)
+            if not commits:
+                return
+            try:
+                committed = dest.commit_small_files([
+                    {"temp": item["temp"], "dest": job.dest_path,
+                     "mode": copy_mode(job.source_mode), "mtime": job.source_mtime,
+                     "decide": (None if job.if_exists == IF_EXISTS_OVERWRITE else
+                                lambda there, job=job: self._dest_verdict(job, there,
+                                                                          IF_EXISTS_NEWER))}
+                    for job, item in commits])
+            except Exception as exc:  # noqa: BLE001 - each job fails
+                for job, item in commits:
+                    discard.append(item["temp"])
+                    self._end_batch_job(job, exc)
+                return
+            for (job, item), result in zip(commits, committed):
+                if result.get("refused") is not None:
+                    discard.append(item["temp"])
+                    self._end_batch_job(job, result["refused"])
+                    continue
+                error = result.get("error")
+                if error is not None:
+                    discard.append(item["temp"])
+                    self._end_batch_job(job, error)
+                    continue
+                if not result.get("attributes_set"):
+                    self._apply_source_mtime(job)  # as after a rename without them
+                self._end_batch_job(job, None)
+        finally:
+            if discard:
+                try:
+                    dest.discard_small_files(discard)
+                except Exception as exc:  # noqa: BLE001 - leftovers are hidden partials
+                    log.warning("Could not remove %d partial upload(s): %s", len(discard), exc)
+            _release_live_partials(live)
+
+    @staticmethod
+    def _batch_checksums(ready, items, written) -> dict:
+        """The checksums the integrity check of a batch upload will ask
+        for, one remote command per batch (``checksum_many``: SFTP runs
+        ``sha256sum -- f1 f2 ...``) instead of one per file - keyed for
+        :data:`_KNOWN_CHECKSUMS`. A source on this machine has its hash from
+        the read already; a remote one (SFTP to SFTP) is hashed in one go
+        too, and the destination only when that gave something to compare
+        with. A file missing from the answer is asked on its own, as before;
+        a server without the tool or without commands answers nothing (and
+        is not asked per file either: it is remembered)."""
+        known: dict = {}
+        pairs = [(job, item) for (job, _data), item, result in zip(ready, items, written)
+                 if result.get("error") is None and not job.cancel_event.is_set()]
+        if not pairs:
+            return known
+        first = pairs[0][0]
+        src, dst = first.source_backend, first.dest_backend
+        try:
+            with transfer_hooks.active(transfer_hooks.TransferHooks(first.cancel_event)):
+                if not _hashes_whole_local_file(src):
+                    many = getattr(src, "checksum_many", None)
+                    if not callable(many) or not _may_compare(src, first.source_path, dst,
+                                                              written=False):
+                        return known
+                    for path, value in many([job.source_path for job, _item in pairs]).items():
+                        known[(id(src), path)] = value
+                    if not known:
+                        return known
+                many = getattr(dst, "checksum_many", None)
+                if callable(many) and _may_compare(dst, pairs[0][1]["temp"], src, written=True):
+                    for path, value in many([item["temp"] for _job, item in pairs]).items():
+                        known[(id(dst), path)] = value
+        except InterruptedError:
+            pass  # cancelled: each job sees its own Cancel
+        except Exception as exc:  # noqa: BLE001 - each file is asked on its own then
+            log.debug("Batch checksum failed: %s", exc)
+        return known
+
+    @staticmethod
+    def _small_source_bytes(job: TransferJob) -> bytes | None:
+        """*job*'s source bytes for a batch upload: those read ahead, or the
+        local file read whole - None when it does not hold what was listed
+        (then the job runs alone and says what is wrong). A local source
+        gets its SHA-256 for the integrity check, as the copy loop gives it
+        (_StreamedHash)."""
+        data = job.prefetched
+        job.prefetched = None
+        size = _listed_size(job)
+        if data is not None:
+            return data if len(data) == size else None
+        stamp = _local_stamp(job.source_path)
+        try:
+            with job.source_backend.open_read(job.source_path) as handle:
+                data = handle.read((size or 0) + 1)
+        except Exception as exc:  # noqa: BLE001 - the job on its own reports it
+            log.debug("Batch upload: %s not read (%s); copied on its own", job.source_path, exc)
+            return None
+        if len(data) != size or stamp is None or _local_stamp(job.source_path) != stamp:
+            return None
+        if _hashes_whole_local_file(job.source_backend):
+            job.streamed_source_checksum = f"sha256:{hashlib.sha256(data).hexdigest()}"
+            job.streamed_source_stamp = stamp
+        return data
+
+    def _judge_upload(self, job: TransferJob, data: bytes, item: dict, result: dict):
+        """None when *job*'s uploaded temp file may go on to its rename,
+        else what ends the job (an exception; a cancel)."""
+        if job.cancel_event.is_set():
+            return InterruptedError("Transfer cancelled")
+        if result.get("error") is not None:
+            return result["error"]
+        temp_stat = result.get("temp")
+        size = int(getattr(temp_stat, "size", -1))
+        if size != len(data):
+            return _PartialChanged(
+                errno.EIO,
+                f"the partial file {item['temp']} holds {size} bytes, this copy wrote "
+                f"{len(data)}: another transfer wrote to it as well; {job.dest_path} "
+                "was left as it was")
+        try:
+            with transfer_hooks.active(transfer_hooks.TransferHooks(job.cancel_event)):
+                self._verify_integrity(job, item["temp"])
+        except Exception as exc:  # noqa: BLE001 - a mismatch, a cancel
+            return exc
+        return None
+
+    @staticmethod
+    def _dest_verdict(job: TransferJob, there, if_newer: str):
+        """:meth:`_check_existing_destination` on the destination's LSTAT
+        *there*, taken right before the rename: True (the name is free, the
+        rename must not replace anything), False (replace it: "newer" and
+        the source is newer), or the exception that keeps it."""
+        if isinstance(there, FileNotFoundError):
+            return True
+        if isinstance(there, OSError) or there is None:
+            return OSError(f"cannot check whether {job.dest_path} already exists: {there}")
+        if job.if_exists == if_newer:
+            # A remote source's time as listed: asked now, its request would
+            # wait behind the batch on the same channel.
+            src_mtime = (TransferWorker._mtime_of(job.source_backend, job.source_path)
+                         if _is_local(job.source_backend) else job.source_mtime)
+            dst_mtime = _item_mtime(there)
+            if (src_mtime is not None and dst_mtime is not None
+                    and int(src_mtime) > int(dst_mtime)):
+                return False
+            return _DestinationKept(f"{job.dest_path} is not older than {job.source_path}; kept")
+        return FileExistsError(f"{job.dest_path} already exists; not overwritten")
+
+    def _end_batch_job(self, job: TransferJob, outcome) -> None:
+        """Signals and journal of one job of a batch upload, as _process_job
+        gives them: None done, _DestinationKept skipped, a cancel cancelled,
+        any other exception failed."""
+        if outcome is None:
+            job.transferred_bytes = job.total_bytes
+            self._finish_journal(job, status="done")
+            job.status = TransferStatus.DONE
+            self.progress.emit(job.job_id, job.total_bytes, job.total_bytes)
+            self.job_finished.emit(job.job_id)
+            log.info("Transfer complete: %s", job.filename)
+        elif isinstance(outcome, _DestinationKept):
+            job.skipped = True
+            self._finish_journal(job, status="skipped", error=str(outcome))
+            job.status = TransferStatus.DONE
+            self.job_finished.emit(job.job_id)
+            log.info("Transfer skipped: %s", outcome)
+        elif isinstance(outcome, InterruptedError) or _was_cancelled(job, outcome):
+            self._report_job_cancelled(job)
+        else:
+            job.error_message = str(outcome)
+            job.error = _without_traceback(outcome)
+            self._finish_journal(job, status="error", error=str(outcome))
+            job.status = TransferStatus.ERROR
+            self.job_error.emit(job.job_id, str(outcome))
+            log.error("Transfer error for %s: %s", job.filename, outcome)
+
+    @staticmethod
+    def _open_source(job: TransferJob, sequential: bool = False):
+        """The copy loop's handle on *job*'s source: the bytes read ahead
+        for it (_prefetch_small_files), else the backend's open_read."""
+        data = job.prefetched
+        if data is not None:
+            job.prefetched = None
+            return io.BytesIO(data)
+        if sequential:
+            return _open_sequential(job.source_backend, job.source_path, _listed_size(job))
+        return job.source_backend.open_read(job.source_path)
+
+    @staticmethod
+    def _copy_link(job: TransferJob) -> None:
+        """Make the symbolic link *job*'s source is at its destination, with
+        the same target (``readlink`` there, ``symlink`` here) - the target
+        is neither read nor followed, also when it points outside the copied
+        folder or to nothing. A move removes the source link afterwards.
+
+        Skipped with a note (``_DestinationKept``, ``job.skip_note``) where
+        one side has no symbolic links (S3, FTP, WebDAV ...): the copy then
+        holds neither the link nor what it points to. An existing
+        destination is replaced only where the conflict answers allow it
+        (``if_exists`` "overwrite"), through a hidden name and a rename, so
+        the old entry stays until the new link is there; a folder in the
+        way is never replaced."""
+        from core.transfer_conflicts import IF_EXISTS_NEWER, IF_EXISTS_OVERWRITE
+
+        src, dst = job.source_backend, job.dest_backend
+        if not (getattr(src, "supports_symlinks", False) and callable(getattr(src, "readlink", None))
+                and getattr(dst, "supports_symlinks", False)
+                and callable(getattr(dst, "symlink", None))):
+            job.skip_note = LINK_NOT_COPIED
+            raise _DestinationKept(f"{job.source_path}: {LINK_NOT_COPIED}")
+        try:
+            target = src.readlink(job.source_path)
+        except OSError as exc:
+            if not _links_unsupported(exc):
+                raise
+            job.skip_note = LINK_NOT_COPIED
+            raise _DestinationKept(f"{job.source_path}: {LINK_NOT_COPIED} ({exc})") from exc
+        if not target:
+            raise OSError(errno.EINVAL, f"{job.source_path}: the symbolic link has no target")
+        existing = None
+        if dst.exists(job.dest_path):
+            existing = dst.stat(job.dest_path)
+        if existing is None:
+            try:
+                dst.symlink(target, job.dest_path)  # never replaces what appears meanwhile
+            except OSError as exc:
+                if not _links_unsupported(exc):
+                    raise
+                job.skip_note = LINK_NOT_COPIED
+                raise _DestinationKept(f"{job.dest_path}: {LINK_NOT_COPIED} ({exc})") from exc
+        elif job.if_exists == IF_EXISTS_NEWER:
+            raise _DestinationKept(f"{job.dest_path}: destination kept")
+        elif job.if_exists != IF_EXISTS_OVERWRITE:
+            raise FileExistsError(errno.EEXIST, "a file of this name appeared meanwhile; "
+                                  "it was not replaced", job.dest_path)
+        elif getattr(existing, "is_dir", False) and not getattr(existing, "is_link", False):
+            raise IsADirectoryError(errno.EISDIR, "a folder of this name is there; "
+                                    "the link was not made", job.dest_path)
+        else:
+            job.temp_path = ""  # a name of this job's own, never a leftover
+            temp = TransferWorker._temp_destination_path(job)
+            dst.symlink(target, temp)
+            try:
+                TransferWorker._finalize_temp_destination(dst, temp, job.dest_path)
+            except BaseException:
+                with contextlib.suppress(Exception):
+                    dst.remove(temp)
+                raise
+        if job.move:
+            try:
+                src.remove(job.source_path)  # the link, not what it points to
+            except Exception as e:
+                raise OSError(
+                    f"move partially completed: made the link {job.dest_path}, but "
+                    f"removing the source link {job.source_path} failed: {e}"
+                ) from e
+        log.info("Symbolic link copied: %s -> %s (%s)", job.source_path, job.dest_path, target)
 
     def _report_cancelled(self, job: TransferJob) -> None:
         """A job cancelled while it waited for a busy session or path: the
@@ -940,6 +1467,11 @@ class TransferWorker(QObject):
             renamed = self._move_by_rename(job)
             if renamed is None:
                 renamed = self._move_on_server(job)
+            if renamed is None and job.link:
+                # A symbolic link in a copied folder: made again as a link
+                # with the same target, never followed.
+                self._copy_link(job)
+                renamed = 0
             if renamed is not None:
                 # One rename on the same file system: no byte copied, nothing
                 # to verify (it is the same file), no source left to remove.
@@ -1608,7 +2140,7 @@ class TransferWorker(QObject):
                 # Cancel and report their network bytes. Not around the
                 # rollback below: that must not be cancelled itself.
                 with transfer_hooks.active(_hooks_of(job, progress_callback)), \
-                        _open_sequential(source_backend, job.source_path) as src:
+                        self._open_source(job, sequential=True) as src:
                     dst = dest_backend.open_write(job.dest_path, append=False)
                     opened = True
                     _copy_starts(progress_callback)
@@ -1915,7 +2447,6 @@ class TransferWorker(QObject):
         Used for backends with real filesystem semantics (local, SFTP,
         SMB, NFS, iSCSI, Azure Files) where rename is atomic and cheap.
         """
-        source_backend = job.source_backend
         dest_backend = job.dest_backend
 
         from core.server_ops import _discard_or_close_writer, write_traits
@@ -2015,8 +2546,11 @@ class TransferWorker(QObject):
             # From the start the copy reads front to back once: a download
             # streams instead of spooling beside its local copy. A resume
             # seeks (and compares the partial), so it keeps the spool.
-            with transfer_hooks.active(hooks), read_spool.sequential_reads(resume_offset == 0):
-                source_handle = source_backend.open_read(job.source_path)
+            from core.sftp_io import expected_size
+
+            with transfer_hooks.active(hooks), read_spool.sequential_reads(resume_offset == 0), \
+                    expected_size(_listed_size(job) if resume_offset == 0 else None):
+                source_handle = self._open_source(job)
             with source_handle as src:
                 if resume_offset > 0 and not self._partial_matches_source(
                     src, dest_backend, temp_path, resume_offset

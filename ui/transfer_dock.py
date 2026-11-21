@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.i18n import percent_sign, tr, tr_n
+from core.i18n import format_count, format_percent, percent_sign, tr, tr_n
 from core.transfer_manager import TransferManager
 from core.transfer_worker import TransferJob, TransferStatus
 from models.transfer_model import COL_PROGRESS, ProgressBarDelegate, TransferModel
@@ -31,6 +31,25 @@ log = logging.getLogger(__name__)
 TABLE_FIT_ROWS = 100
 #: The overall bar is recomputed at most this often while jobs change.
 OVERALL_INTERVAL_MS = 250
+
+
+def preparing_text(queued: int, total: int | None) -> str:
+    """"Preparing: 3,210 files queued…" while the folders are still walked
+    (*total* None), "Preparing: 3,210 of 10,000 files queued" while the
+    jobs are registered."""
+    if total is None:
+        return tr_n(queued, "Preparing: {count} file queued…",
+                    "Preparing: {count} files queued…", count=format_count(queued))
+    return tr_n(total, "Preparing: {done} of {count} file queued",
+                "Preparing: {done} of {count} files queued",
+                done=format_count(queued), count=format_count(total))
+
+
+def files_text(percent: int, done: int, total: int) -> str:
+    """"12 % – 1,210 of 10,000 files": the overall bar of a batch."""
+    return tr_n(total, "{percent} – {done} of {count} file", "{percent} – {done} of {count} files",
+                percent=format_percent(percent), done=format_count(done),
+                count=format_count(total))
 
 
 class _OverallBar(QProgressBar):
@@ -86,6 +105,8 @@ class TransferDock(QDockWidget):
         #: Bytes of this batch's done jobs the manager has dropped from its
         #: list (core.transfer_manager.MAX_DONE_KEPT): still part of the bar.
         self._batch_dropped = 0
+        #: How many of those dropped jobs there were (the file count).
+        self._batch_dropped_files = 0
         #: (failed, cancelled) of the last batch once it ended: the bar
         #: keeps saying so until the next batch or Clear Finished.
         self._ended_badly = (0, 0)
@@ -268,6 +289,7 @@ class TransferDock(QDockWidget):
                 job = self._model.get_job(row) if row is not None else None
                 if job is not None:
                     self._batch_dropped += job.total_bytes
+                    self._batch_dropped_files += 1
         self._model.remove_jobs(job_ids)
         self._schedule_overall()
 
@@ -321,13 +343,36 @@ class TransferDock(QDockWidget):
             self._btn_cancel.setEnabled(True)
         self._schedule_overall()
 
+    def _preparing_text(self) -> str:
+        """"Preparing: 3,210 files queued…" while a folder walk still makes
+        jobs (the folders appear at the destination, no file yet), then
+        "Preparing: 3,210 of 10,000 files queued"; "" when none runs."""
+        preparing = getattr(self._manager, "preparing", None)
+        state = preparing() if callable(preparing) else None
+        if state is None:
+            return ""
+        return preparing_text(*state)
+
     def _update_overall(self) -> None:
         jobs = self._manager.all_jobs()
         self._sync_buttons(jobs)
-        self._set_idle(not jobs)
+        preparing = self._preparing_text()
+        if preparing:
+            # Asked again while the walk runs: it sends no signal meanwhile.
+            self._schedule_overall()
+        self._set_idle(not jobs and not preparing)
+        if not jobs and preparing:
+            self._show_ended_badly(False)
+            self._overall_progress.setValue(0)
+            self._overall_progress.setFormat(preparing)
+            self._overall_progress.setToolTip(tr(
+                "The folders are listed and made at the destination; the files "
+                "follow once all are queued"))
+            return
         if not jobs:
             self._batch.clear()
             self._batch_dropped = 0
+            self._batch_dropped_files = 0
             self._ended_badly = (0, 0)
             self._show_ended_badly(False)
             self._overall_progress.setValue(0)
@@ -346,6 +391,7 @@ class TransferDock(QDockWidget):
                 )
             self._batch.clear()
             self._batch_dropped = 0
+            self._batch_dropped_files = 0
             self._overall_progress.setValue(0)
             failed, cancelled = self._ended_badly
             if failed or cancelled:
@@ -371,9 +417,11 @@ class TransferDock(QDockWidget):
         self._ended_badly = (0, 0)
         self._show_ended_badly(False)
         total = done = self._batch_dropped
+        files = files_done = self._batch_dropped_files
         speed = 0.0
         for job in jobs:
             if job.status in running:
+                files += 1
                 total += job.total_bytes
                 done += min(job.transferred_bytes, job.total_bytes)
                 if job.status == TransferStatus.ACTIVE:
@@ -385,17 +433,28 @@ class TransferDock(QDockWidget):
                     job.transferred_bytes, job.total_bytes)
                 total += part
                 done += part
-        self._overall_progress.setValue(int(done * 100 / total) if total > 0 else 0)
+                files += 1
+                files_done += 1
+        if total > 0:
+            percent = int(done * 100 / total)
+        else:
+            percent = int(files_done * 100 / files) if files else 0
+        self._overall_progress.setValue(percent)
+        # "12 % – 1,210 of 10,000 files": how many files are through, not
+        # only the bytes - many small files show no movement in bytes.
+        text = files_text(percent, files_done, files) if files > 1 else ""
         remaining = total - done
         if speed > 0 and remaining > 0:
             left = TransferModel._format_eta(remaining / speed)
-            self._overall_progress.setFormat(tr("%p% · {left} left").format(left=left))
+            self._overall_progress.setFormat(
+                tr("{progress} · {left} left").format(progress=text, left=left) if text
+                else tr("%p% · {left} left").format(left=left))
             self._overall_progress.setToolTip(
                 tr("{done} of {total}, about {left} left at the current speed").format(
                     done=TransferModel._format_size(done),
                     total=TransferModel._format_size(total), left=left))
         else:
-            self._overall_progress.setFormat("%p" + percent_sign())
+            self._overall_progress.setFormat(text or "%p" + percent_sign())
             self._overall_progress.setToolTip("")
 
     def _show_ended_badly(self, bad: bool) -> None:

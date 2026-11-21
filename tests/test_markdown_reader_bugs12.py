@@ -286,6 +286,7 @@ def test_typo_no_letter_a_pages_font_lacks(full):
 
     from PyQt6.QtGui import QFont, QFontDatabase, QFontMetrics
 
+    from ui import markdown_view as MV
     from ui.markdown_html import MATH_FONTS
 
     view, _table = math_page(r"\mathcal{O}(n) + \underbrace{a+b}_{n} + \frac{1}{2}", full)
@@ -296,7 +297,8 @@ def test_typo_no_letter_a_pages_font_lacks(full):
     drawn = {letter for letter in ("\U0001d4aa", "⏟", "⏞")
              if any(QFontMetrics(QFont(family)).inFontUcs4(ord(letter)) for family in families)}
     assert not (set(text) & {"\U0001d4aa", "⏟", "⏞"}) - drawn, (repr(text), drawn)
-    maths = any(name in families and QFontMetrics(QFont(name)).inFontUcs4(0x1D4AA) for name in MATH_FONTS)
+    # (a maths font that has it itself - not through Qt's fallback fonts: markdown_view._check_script_letters)
+    maths = any(name in families and MV._raw_has(name, 0x1D4AA) for name in MATH_FONTS)
     assert ("\U0001d4aa" in text) == maths, (repr(text), maths)  # (𝒪 where a maths font of the page has it)
     assert "O" in text or "\U0001d4aa" in text
 

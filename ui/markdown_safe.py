@@ -85,7 +85,9 @@ def _as_link(match: re.Match) -> str:
     shown = url or mail
     target = url if url else f"mailto:{mail}"
     text = "".join("\\" + c if c in _PUNCTUATION else c for c in shown)
-    target = target.replace("\\", "%5C").replace("(", "%28").replace(")", "%29")
+    # (a backtick too: one in the address began a code span there - "<http://foo.bar.`baz>`" showed its
+    # markup, the spec's 356; CommonMark's link has %60 in its address as well)
+    target = target.replace("\\", "%5C").replace("(", "%28").replace(")", "%29").replace("`", "%60")
     return f"[{text}]({target})"
 
 

@@ -26,7 +26,9 @@ def status_text(job: TransferJob) -> str:
     cancelled job the reason (``job.error_message``) behind it - the bare
     word "error" left the user guessing what went wrong."""
     if job.skipped:
-        return tr("skipped")
+        # Why, when the job says (a symbolic link one side cannot hold).
+        note = getattr(job, "skip_note", "")
+        return f"{tr('skipped')}: {tr(note)}" if note else tr("skipped")
     word = tr(STATUS_WORDS.get(job.status, job.status.value))
     reason = _sentence(job)
     return f"{word}: {reason.splitlines()[0]}" if reason else word
@@ -211,6 +213,8 @@ class TransferModel(QAbstractTableModel):
                 return status_text(job)
 
         if role == Qt.ItemDataRole.ToolTipRole and col == COL_STATUS:
+            if job.skipped and getattr(job, "skip_note", ""):
+                return status_text(job)
             reason = _reason(job)
             if reason:
                 word = tr(STATUS_WORDS.get(job.status, job.status.value))

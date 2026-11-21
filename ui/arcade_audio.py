@@ -14,7 +14,7 @@ looked at how much was queued: the audio server only starts a stream
 once its buffer is full, every GUI hiccup (a level being built, a slow
 frame) made it run dry and fill up again, and the queue then stayed full -
 every effect waited behind up to a quarter second of music or silence.
-Now the sink gets a small buffer (:data:`LEAD_MS`) of its own and a
+Then the sink got a small buffer (:data:`LEAD_MS`) of its own and a
 precise 5 ms pump tops it up to exactly that from the sink's own
 ``bytesFree()`` - closed loop: an effect is heard after at most one
 buffer, a stall of the GUI thread shorter than the buffer is no gap, and
@@ -31,6 +31,19 @@ cached the same way. A cache file is written to a temporary name and
 renamed into place (a write cut short leaves no half file); one that
 still reads wrong (not whole 16-bit samples) is deleted and rendered
 again, and one effect that fails costs that effect, not the rest.
+
+Qt 6.10+ changed the sink under that loop - why the queue is deeper now:
+its PulseAudio sink no longer takes what is written as it comes. Pulse's
+own thread pulls fixed requests (up to 1024 frames, 46 ms here) out of
+the sink's ring, and what the ring cannot give is filled with silence
+(QPlatformAudioSinkStream::process). With the ring at 50 ms, kept full
+from the GUI thread, a pull found too little whenever the GUI thread was
+some 30 ms late - for anything in axross, not only the game: measured on
+the event loop with Trail Runner running, 5-11 % of the music came out
+as silence (the stutter). Now the ring is :data:`RING_MS` and the pump
+keeps :data:`FILL_MS` in it: a pull is always served, a stall of the GUI
+thread up to FILL_MS less one pull is no gap (0.2-0.3 % silence under
+the same load), and an effect waits FILL_MS at most, not a whole ring.
 """
 
 from __future__ import annotations
@@ -52,7 +65,9 @@ log = logging.getLogger(__name__)
 
 CACHE = Path.home() / ".cache" / "axross" / "arcade"
 SOUND_VERSION = "v2"
-LEAD_MS = 50                    # the sink's buffer: what an effect waits at most
+LEAD_MS = 50                    # a sink that is that small: kept full (tests, other sinks)
+FILL_MS = 90                    # what the pump keeps queued: a 46 ms pull + a 40 ms stall of the GUI thread
+RING_MS = 250                   # the ring the sink is opened with (Qt's own default): room above FILL_MS
 PUMP_MS = 5                     # how often it is topped up
 CHUNK = S.RATE // 50            # 20 ms: what a pump writes to a sink that does not tell its fill
 MAX_VOICES = 12
@@ -61,8 +76,18 @@ RETRY_MS = 700                  # the multimedia probe is still running: try the
 
 
 def lead_bytes(rate: int = S.RATE) -> int:
-    """The sink buffer in bytes (16-bit mono) for :data:`LEAD_MS`."""
+    """:data:`LEAD_MS` in bytes (16-bit mono)."""
     return int(rate * LEAD_MS / 1000) * 2
+
+
+def fill_bytes(rate: int = S.RATE) -> int:
+    """:data:`FILL_MS` in bytes: what the pump keeps queued in the sink."""
+    return int(rate * FILL_MS / 1000) * 2
+
+
+def ring_bytes(rate: int = S.RATE) -> int:
+    """:data:`RING_MS` in bytes: the ring the sink is opened with."""
+    return int(rate * RING_MS / 1000) * 2
 
 
 def open_sink(rate: int, device_id: str | None, volume: float, buffer_bytes: int):
@@ -271,7 +296,7 @@ class ArcadeAudio(QObject):
 
                 device_id = AR.source_output_id("games")
                 try:
-                    self._sink, self._io = open_sink(S.RATE, device_id, AR.source_gain("games"), lead_bytes())
+                    self._sink, self._io = open_sink(S.RATE, device_id, AR.source_gain("games"), ring_bytes())
                     self._device_id = device_id
                 except AudioPending:
                     log.debug("Arcade: audio still starting, trying again")
@@ -316,14 +341,21 @@ class ArcadeAudio(QObject):
     # -- the pump ------------------------------------------------------------------------------
 
     def _frames_wanted(self) -> int:
-        """How many frames the sink takes now: its free space (closed loop),
-        or one chunk for a sink that does not tell."""
+        """How many frames go to the sink now (closed loop): up to
+        :data:`FILL_MS` queued - what its ring holds is its size less its
+        free space - never more than is free; one chunk for a sink that
+        does not tell."""
         sink = self._sink
         free = getattr(sink, "bytesFree", None)
         if free is None:
             return CHUNK
         try:
-            return max(0, int(free()) // 2)
+            room = int(free())
+            size = getattr(sink, "bufferSize", None)
+            if size is not None:
+                queued = max(0, int(size()) - room)
+                room = min(room, fill_bytes() - queued)
+            return max(0, room // 2)
         except Exception:  # noqa: BLE001 - the device went away
             return 0
 

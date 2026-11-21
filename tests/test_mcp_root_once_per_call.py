@@ -76,7 +76,8 @@ def counting(watched):
 def search(root, db, needle, **kwargs):
     real = MX.search_all
     with mock.patch.object(MX, "search_all", lambda **kw: real(**{**kw, "db_path": db})):
-        return tool("search", root, **kwargs).handler({"needle": needle}, M._ToolContext())
+        return tool("search", root, **kwargs).handler({"needle": needle},
+                                                      M._ToolContext())["entries"]
 
 
 # --- fewer realpath calls ---------------------------------------------------------------
@@ -175,7 +176,8 @@ def test_sad_index_search_notices_a_swapped_root(tmp_path):
 
     def run():
         with mock.patch.object(MX, "search_all", lambda **kw: real(**{**kw, "db_path": db})):
-            return [r["name"] for r in search_tool.handler({"needle": "x"}, M._ToolContext())]
+            found = search_tool.handler({"needle": "x"}, M._ToolContext())["entries"]
+            return [r["name"] for r in found]
 
     assert run() == ["x.txt"]
     tmp = tmp_path / "root.new"
@@ -285,4 +287,4 @@ def test_happy_the_mcp_guides_say_the_root_is_resolved_per_call(name):
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     with open(os.path.join(root, name), encoding="utf-8") as fh:
         text = " ".join(fh.read().split())
-    assert "(`grep`, `search`, `recursive_checksum`)" in text
+    assert "(`search_content`, `search_index`, `compute_tree_checksums`)" in text

@@ -239,7 +239,10 @@ Bluetooth needs BlueZ on the system bus (Linux) or a supported USB stick.
     "markdown": App(
         dist="axross-markdown",
         package="axross_markdown",
-        rewrites=_child_path_rewrites("axross_markdown"),
+        # (a Markdown viewer has no backends to speak of: the registry's count not said at every start)
+        rewrites=_child_path_rewrites("axross_markdown") + (
+            ("core/backend_registry.py", 'log.info("Backend registry initialized: %d backends"',
+             'log.debug("Backend registry initialized: %d backends"'),),
         repo="https://github.com/c0decave/axross-markdown",
         repo_files="scripts/standalone_repo/axross-markdown",
         start="ui/markdown_app.py",
@@ -264,7 +267,7 @@ Bluetooth needs BlueZ on the system bus (Linux) or a supported USB stick.
               "ui/off_gui.py", "core/connect_worker.py", "core/connect_notice.py", "core/secure_storage.py",
               "core/lex_worker.py", "core/image_worker.py", "core/process_launcher.py", "core/previews.py",
               "core/xdg_dirs.py"),
-        version="0.16.7",
+        version="0.16.10",
         pitch=(
             "- **GitHub Markdown, complete** - CommonMark, tables, task lists, footnotes, alerts, "
             "definition lists, front matter.",
@@ -311,7 +314,8 @@ Every dependency is pinned and reviewed in `requirements.lock.txt`
         settings_text=("it reads axross's settings\n(`~/.config/axross`) for the language and - until "
                        "View → Theme chooses one in\n`~/.config/axross-markdown/settings.json` - the theme."),
         # (axross's tests of the reader that need nothing of axross but the reader - the release runs them)
-        tests=("test_markdown_corpus.py", "test_markdown_full.py", "test_markdown_golden.py",
+        tests=("test_markdown_corpus.py", "test_markdown_emoji_font_scan_budget.py", "test_markdown_full.py",
+               "test_markdown_golden.py",
                "test_markdown_image_safety.py", "test_markdown_raw_html.py", "test_markdown_reader_bugs.py",
                "test_markdown_reader_bugs2.py", "test_markdown_reader_bugs3.py", "test_markdown_reader_bugs4.py",
                "test_markdown_reader_bugs5.py", "test_markdown_reader_bugs6.py", "test_markdown_reader_bugs7.py",
@@ -321,10 +325,11 @@ Every dependency is pinned and reviewed in `requirements.lock.txt`
                "test_markdown_reader_bugs15.py", "test_markdown_reader_bugs16.py",
                "test_markdown_reader_bugs17.py", "test_markdown_reader_bugs18.py",
                "test_markdown_reader_bugs19.py", "test_markdown_reader_bugs20.py",
-               "test_markdown_reader_bugs21.py",
-               "test_markdown_reader_features.py",
+               "test_markdown_reader_bugs21.py", "test_markdown_reader_bugs22.py",
+               "test_markdown_reader_bugs23.py", "test_markdown_reader_features.py",
+               "test_markdown_reader_bugs24.py",
                "test_markdown_single_tilde_in_link.py", "test_markdown_viewer.py",
-               "test_markdown_viewer_window.py"),
+               "test_markdown_viewer_window.py", "markdown_heartbeat.py"),
         test_data=("golden/markdown",),
         readme="""\
 A Markdown file rendered in a window of its own - or in the terminal. The full set:
@@ -558,12 +563,12 @@ author), ported to PyQt6 and axross's backends.
 - **Object storage and the cloud:** S3 and S3-compatible stores, Azure Blob and Files, OneDrive, SharePoint, Google Drive, Dropbox.
 - **Code and data as folders:** Git and Subversion repositories, PostgreSQL, SQLite, Redis, MongoDB GridFS, LDAP.
 - **Devices and mail:** Android (ADB, MTP), IMAP, POP3, Exchange (EWS), NNTP, TFTP, Gopher, printers (PJL), WinRM, WMI, Cisco IOS.
-- **The same tools everywhere:** list, read, stat, search, grep, walk, hash and preview work alike on every backend.
+- **The same tools everywhere:** listing, reading, searching, hashing and previews work alike on every backend.
 - **Your saved connections:** axross's connection profiles, credentials from the system keyring, never shown to the model.
 - **Read-only by default:** writing, moving and deleting need `--mcp-write` and an explicit `--mcp-root`.
 - **Confined to one folder:** every path stays under `--mcp-root`, checked through the folder's own descriptors.
 - **Secrets stay put:** SSH and GnuPG keys, tokens and `.env` files are refused; every stream is scanned for keys.
-- **55 tools in 15 groups, opt in:** only the core tools are on until you name more groups or `all`.
+- **52 tools in 14 groups, opt in:** only the core tools are on until you name more groups or `all`.
 - **Search and grep across servers:** name, size and date search, content grep, an offline index for repeated searches.
 - **Checksums without downloading:** SHA-256 on the server where the backend offers it, recursive checksums of whole trees.
 - **Duplicate finder:** duplicate groups by wasted space, dedupe to the trash, every copy re-verified first, a dry run by default.
@@ -578,7 +583,7 @@ author), ported to PyQt6 and axross's backends.
 - **Current MCP over stdio or HTTP:** protocol 2025-11-25, 2025-06-18, 2024-11-05; bearer token, mTLS off loopback, an audit trail.
 - **Runs anywhere, no GUI:** `uvx`, `pipx` or the container image; the same code as the axross desktop app and its tests.
 
-**The 55 tools** (only the file tools are on until `--mcp-tools GROUP,...` or `all` adds groups): **files (always on)** `list_dir`, `stat`, `read_file`, `checksum`, `search`, `walk`, `recursive_checksum`, `preview`, `grep`, `list_versions`, `open_version_read`; **write (`--mcp-write`)** `write_file`, `mkdir`, `remove`, `rename`, `copy`, `bulk_copy`, `symlink`, `hardlink`, `chmod`; **metadata** `metadata_read`, `metadata_export`, `metadata_export_file`, `metadata_remove`; **duplicates** `duplicates_scan`, `duplicates_scans`, `duplicates_groups`, `duplicates_dedupe`; **archives** `archive_list`, `archive_extract`; **packing** `pack_formats`, `pack`; **crypto** `encrypt`, `decrypt`; **file types** `file_type`, `file_type_scan`; **index** `index_build`; **transfers** `transfer_copy`, `transfer_move`; **remote profiles** `remote_profiles`, `remote_open`, `remote_close`, `list_backends`; **remote commands (`--mcp-allow-exec`)** `remote_exec`, `remote_script`, `exec_backends`; **scripts (`--mcp-allow-scripts`)** `script_list`, `script_api_schema`, `script_read`, `script_write`, `script_delete`, `script_run`; **agent** `agent_run`; **extensions** `extensions_list`, `extensions_info`.
+**The 52 tools** (only the file tools are on until `--mcp-tools GROUP,...` or `all` adds groups): **files (always on)** `list_directory`, `get_path_info`, `read_file`, `compute_file_checksum`, `search_index`, `walk_tree`, `compute_tree_checksums`, `render_preview`, `search_content`, `list_file_versions`, `read_file_version`; **write (`--mcp-write`)** `write_file`, `create_directory`, `delete_path`, `move_path`, `copy_file`, `copy_tree`, `create_symlink`, `create_hardlink`, `set_permissions`; **metadata** `read_metadata`, `export_metadata`, `strip_metadata`; **duplicates** `scan_duplicates`, `list_duplicate_scans`, `list_duplicate_groups`, `trash_duplicates`; **archives** `list_archive_formats`, `create_archive`, `list_archive_members`, `extract_archive`; **crypto** `encrypt_file`, `decrypt_file`; **file types** `identify_file_type`, `scan_file_types`; **index** `build_index`; **transfers** `copy_path_to_backend`, `move_file_to_backend`; **remote profiles** `list_remote_profiles`, `open_remote_profile`, `close_remote_profile`, `list_backends`; **remote commands (`--mcp-allow-exec`)** `run_backend_command`, `run_backend_script`; **scripts (`--mcp-allow-scripts`)** `list_scripts`, `get_script_api`, `read_script`, `write_script`, `delete_script`, `run_script`; **agent** `run_llm_agent`; **extensions** `list_extensions`.
 
 ## Install
 
@@ -619,13 +624,16 @@ lists, reads, searches and hashes files on this machine and on axross's remote
 connections, and with `--mcp-write` writes them. No GUI and no Qt: it runs on a server,
 in a container or in CI.
 
-- **File tools** (always on, read-only): `list_dir`, `stat`, `read_file`, `checksum`,
-  `search`, `walk`, `recursive_checksum`, `grep`, `list_versions`, `open_version_read`,
-  and `preview` (image thumbnails; with the `images` extra, which brings Pillow).
-- **Write tools** (`--mcp-write --mcp-root DIR`): `write_file`, `mkdir`, `remove`,
-  `rename`, `copy`, `bulk_copy`, `symlink`, `hardlink`, `chmod`.
+- **File tools** (always on, read-only): `list_directory`, `get_path_info`, `read_file`, `compute_file_checksum`,
+  `search_index`, `walk_tree`, `compute_tree_checksums`, `search_content`, `list_file_versions`, `read_file_version`,
+  and `render_preview` (image thumbnails; with the `images` extra, which brings Pillow).
+- **Write tools** (`--mcp-write --mcp-root DIR`): `write_file`, `create_directory`, `delete_path`,
+  `move_path`, `copy_file`, `copy_tree`, `create_symlink`, `create_hardlink`, `set_permissions`.
+- Tool names read verb then resource since 0.15.183; `tools/call` still takes the former
+  names (list_dir, stat, grep, ...), which `tools/list` no longer shows, and the group
+  packer is part of archive (`--mcp-tools packer` still works).
 - **Capability groups** (`--mcp-tools GROUP,...` or `all`): metadata, duplicates,
-  packer, archive, crypto, index, filetype, transfer, remote (axross's saved
+  archive, crypto, index, filetype, transfer, remote (axross's saved
   connection profiles as further backends), exec (`--mcp-allow-exec`), agent,
   extensions.
 - Every path is confined to `--mcp-root` (default: your home folder); secret files
@@ -1024,11 +1032,16 @@ def project_extras(app: App) -> list[tuple[str, tuple[str, ...]]]:
     return extras
 
 
+#: What builds an exported project (its pyproject's build-system): in its lock too, so that
+#: ``pip install --no-build-isolation --no-deps .`` after the lock fetches nothing unpinned.
+BUILD_REQUIRES = ("setuptools>=77",)
+
+
 def requirements_in(app: App) -> str:
     """What the exported project can install - its dependencies and every
-    extra, one requirement a line: the input of its lock
-    (scripts/lock_standalone_deps.sh)."""
-    lines = list(app.requires)
+    extra, one requirement a line, and what builds it (BUILD_REQUIRES): the
+    input of its lock (scripts/lock_standalone_deps.sh)."""
+    lines = list(app.requires) + [r for r in BUILD_REQUIRES if r not in app.requires]
     for _name, reqs in project_extras(app):
         lines += [r for r in reqs if r not in lines]
     return "\n".join(lines) + "\n"
@@ -1093,7 +1106,7 @@ def _pyproject(app: App, version: str) -> str:
            if app.gui else "")
     data = ", ".join(json.dumps(g) for g in app.package_data)
     return f'''[build-system]
-requires = ["setuptools>=77"]
+requires = [{", ".join(json.dumps(r) for r in BUILD_REQUIRES)}]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -1192,6 +1205,8 @@ def _workflow(app: App, locked: bool = False) -> str:
     nothing pulled PyQt6 in). With a lock (*locked*) the tests install
     exactly its pins (``--require-hashes``) and the supply-chain gate runs
     on it (GATE_JOB)."""
+    # (a failure's pytest summary as annotations, readable through the API: the repo's ci_log_tail.py)
+    tail = bool(app.repo_files) and (ROOT / app.repo_files / "packaging" / "ci_log_tail.py").is_file()
     if app.kind == "mcp":
         return """name: tests
 
@@ -1247,11 +1262,23 @@ NEEDS    steps:
       - name: Tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest -q tests
-      - name: Build sdist and wheel
-        run: python -m pip install build && python -m build
-""".replace("INSTALL", "python -m pip install --require-hashes -r requirements.lock.txt && "
-                       "python -m pip install --no-deps . && python -m pip install pytest"
+        run: TESTS
+TAIL      - name: Build sdist and wheel
+        run: BUILD
+""".replace("BUILD", "python -m pip install --require-hashes -r packaging/requirements-build.txt && "
+                     "python -m build --no-isolation"
+            if locked and app.repo_files and (ROOT / app.repo_files / "packaging" / "requirements-build.txt").is_file()
+            else "python -m pip install build && python -m build").replace("TESTS", "|\n          set -o pipefail\n"
+                     "          python -m pytest -q -rfE tests 2>&1 | tee \"$RUNNER_TEMP/tests.log\""
+            if tail else "python -m pytest -q -rfE tests").replace(
+        "TAIL", "      - name: The end of the tests' output as annotations (the short summary)\n"
+                "        if: failure()\n"
+                "        run: python packaging/ci_log_tail.py \"$RUNNER_TEMP/tests.log\" tests 150\n"
+                if tail else "").replace("INSTALL", "python -m pip install --require-hashes -r requirements.lock.txt && "
+                       "python -m pip install --no-build-isolation --no-deps . && python -m pip install "
+                       + ("--require-hashes -r packaging/requirements-test.txt"
+                          if app.repo_files and (ROOT / app.repo_files / "packaging" / "requirements-test.txt").is_file()
+                          else "pytest")
             if locked else "python -m pip install . pytest").replace(
         "CALLED\n", "  # (the release runs it first: nothing is built for a release before the\n"
                     "  # gate and the tests pass)\n  workflow_call:\n\n" if locked else "\n").replace(
@@ -1301,10 +1328,12 @@ ROOT = Path(__file__).resolve().parents[1]
 PROBE = ("import atexit, sys; atexit.register(lambda: sys.stderr.write("
          "'QT=%s\\\\n' % any(m.split('.')[0] == 'PyQt6' for m in sys.modules))); "
          "from axross_headless_mcp.__main__ import main; sys.exit(main())")
-GROUP_TOOLS = {"metadata_read", "duplicates_groups", "pack_formats", "archive_list",
-               "index_build", "file_type", "remote_profiles", "agent_run", "extensions_list"}
+GROUP_TOOLS = {"read_metadata", "list_duplicate_groups", "list_archive_formats",
+               "list_archive_members", "build_index", "identify_file_type",
+               "list_remote_profiles", "run_llm_agent", "list_extensions"}
 #: Served only with --mcp-write.
-WRITE_TOOLS = {"write_file", "transfer_copy", "pack", "archive_extract", "encrypt"}
+WRITE_TOOLS = {"write_file", "copy_path_to_backend", "create_archive", "extract_archive",
+               "encrypt_file"}
 
 
 def _env(home: Path, **extra) -> dict:
@@ -1672,7 +1701,7 @@ def _lock_readme() -> str:
             "and malicious-package entries, a minimum age of 14 days, typosquatting, provenance, and a\n"
             "review of the files' content recorded in axross's baseline - and the CI runs the gate\n"
             "again on every push (`supply-chain-gate.toml`). To install exactly those files:\n\n"
-            "```sh\npip install --require-hashes -r requirements.lock.txt\npip install --no-deps .\n```\n\n")
+            "```sh\npip install --require-hashes -r requirements.lock.txt\npip install --no-build-isolation --no-deps .\n```\n\n")
 
 
 def _version() -> str:

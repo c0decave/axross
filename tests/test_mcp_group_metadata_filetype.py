@@ -1,8 +1,8 @@
 """MCP capability groups ``metadata`` and ``filetype``.
 
-metadata: metadata_read, metadata_export (read-only), metadata_export_file and
-metadata_remove (mutating: need --mcp-write). filetype: file_type,
-file_type_scan (read-only).
+metadata: metadata_read, metadata_export (read-only; with --mcp-write also its out, the
+former metadata_export_file) and metadata_remove (mutating: needs --mcp-write). filetype:
+file_type, file_type_scan (read-only).
 """
 
 from __future__ import annotations
@@ -45,12 +45,15 @@ def test_happy_read_only_metadata_tools_without_write(tree):
     root, _ = tree
     names = set(_meta(root))
     assert {"metadata_read", "metadata_export"} <= names
-    assert not {"metadata_remove", "metadata_export_file"} & names
+    assert "metadata_remove" not in names
+    assert "out" not in _meta(root)["metadata_export"].schema["properties"]
 
 
 def test_happy_mutating_metadata_tools_with_write(tree):
     root, _ = tree
-    assert {"metadata_remove", "metadata_export_file"} <= set(_meta(root, write=True))
+    tools = _meta(root, write=True)
+    assert {"metadata_remove", "metadata_export"} <= set(tools)
+    assert "out" in tools["metadata_export"].schema["properties"]
 
 
 def test_edge_groups_are_independent(tree):
@@ -158,7 +161,7 @@ def test_sad_metadata_export_unknown_format(tree):
     assert err.value.code == M.ERR_INVALID_PARAMS
 
 
-# -- metadata_export_file (mutating) -----------------------------------------------
+# -- metadata_export with out (mutating; formerly metadata_export_file) -------------
 
 
 def test_happy_export_file_lands_under_root_and_never_overwrites(tree, caplog):
@@ -166,15 +169,16 @@ def test_happy_export_file_lands_under_root_and_never_overwrites(tree, caplog):
     T.capture_audit(caplog)
     tools = _meta(root, write=True)
     target = str(root / "meta.json")
+    # The former export_metadata_file is export_metadata with out (its name still works).
     first = T.call(tools, "metadata_export_file", {"path": str(root), "out": target})
-    second = T.call(tools, "metadata_export_file", {"path": str(root), "out": target})
-    assert first["path"] == target
-    assert second["path"] == str(root / "meta (2).json")
+    second = T.call(tools, "metadata_export", {"path": str(root), "out": target})
+    assert first["out"] == target and first["path"] == str(root)
+    assert second["out"] == str(root / "meta (2).json")
     assert "SECRET" in open(target, encoding="utf-8").read()
     assert oct(os.stat(target).st_mode & 0o777) == "0o600"
     lines = T.audit_lines(caplog)
-    assert any("tool=metadata_export_file outcome=attempt" in ln for ln in lines)
-    assert sum("tool=metadata_export_file outcome=ok" in ln for ln in lines) == 2
+    assert any("tool=export_metadata outcome=attempt" in ln for ln in lines)
+    assert sum("tool=export_metadata outcome=ok" in ln for ln in lines) == 2
 
 
 def test_sad_export_file_outside_root_is_refused_and_audited(tree, caplog):
@@ -205,8 +209,8 @@ def test_happy_metadata_remove_writes_a_clean_copy(tree, caplog):
     assert K.MARK not in (root / "photo.clean.jpg").read_bytes()
     assert (root / "photo.jpg").read_bytes() == before  # the original is untouched
     lines = T.audit_lines(caplog)
-    assert any("tool=metadata_remove outcome=attempt" in ln for ln in lines)
-    assert any("tool=metadata_remove outcome=ok" in ln and "cleaned=1" in ln for ln in lines)
+    assert any("tool=strip_metadata outcome=attempt" in ln for ln in lines)
+    assert any("tool=strip_metadata outcome=ok" in ln and "cleaned=1" in ln for ln in lines)
 
 
 def test_edge_metadata_remove_twice_never_overwrites(tree):

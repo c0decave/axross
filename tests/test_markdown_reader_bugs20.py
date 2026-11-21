@@ -145,24 +145,21 @@ def test_sad_linkify_finds_every_link_of_a_long_line_in_pieces():
 
 class _Turns:
     """The most GUI-thread CPU time one event-loop turn took (a 5 ms timer's ticks) - not wall time:
-    on a loaded machine that is what the window itself spends."""
+    on a loaded machine that is what the window itself spends. And the longest wall-clock gap between two
+    ticks (tests/markdown_heartbeat.py): a worker holding Python's lock freezes the window though the GUI
+    thread spends nothing - over its budget stop() fails."""
 
     def __init__(self):
-        from PyQt6.QtCore import QTimer
+        from tests.markdown_heartbeat import Heartbeat
 
-        self.cpu, self.longest = time.thread_time(), 0.0
-        self.timer = QTimer()
-        self.timer.setInterval(5)
-        self.timer.timeout.connect(self._tick)
-        self.timer.start()
-
-    def _tick(self):
-        now = time.thread_time()
-        self.longest = max(self.longest, now - self.cpu)
-        self.cpu = now
+        self.beat = Heartbeat(5)
+        self.longest = self.gap = 0.0
 
     def stop(self) -> float:
-        self.timer.stop()
+        from tests.markdown_heartbeat import assert_responsive
+
+        self.longest, self.gap = self.beat.stop()
+        assert_responsive(self.gap, "the heartbeat's longest gap")
         return self.longest
 
 

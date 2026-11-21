@@ -154,8 +154,30 @@ def _redact_event(value: Any, key: str | None = None) -> Any:
     return redact(value)
 
 
+_RANDOM = threading.local()
+
+
+def _forget_random_pool() -> None:
+    _RANDOM.pool = b""  # a forked child must not repeat its parent's ids
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_forget_random_pool)
+
+
+def random_hex(nbytes: int) -> str:
+    """*nbytes* random bytes as hex, from os.urandom read 4 KiB at a time
+    (per thread): a folder copy asked the kernel twice per file (a job id
+    and an operation id through uuid4), a tenth of its walk on a VM."""
+    pool = getattr(_RANDOM, "pool", b"")
+    if len(pool) < nbytes:
+        pool = os.urandom(max(4096, nbytes))
+    _RANDOM.pool = pool[nbytes:]
+    return pool[:nbytes].hex()
+
+
 def new_operation_id() -> str:
-    return uuid.uuid4().hex[:12]
+    return random_hex(6)
 
 
 #: The batch the events written on this thread belong to (journal_batch).
@@ -315,7 +337,9 @@ class _JournalFile:
     finished one (worker_start before the first byte, the finish after the
     source was removed) must be in the file whenever the process dies after
     them - killed, crashed, the power button - exactly as with the file
-    opened per event. Neither way calls fsync: a crash of the whole machine
+    opened per event. (The one exception, :func:`held_events`, is for the
+    events of work that has not begun: the jobs a folder walk queues.)
+    Neither way calls fsync: a crash of the whole machine
     keeps what the kernel had written back, as before.
 
     Windows does not let a file that is open be deleted or replaced, so
@@ -403,13 +427,57 @@ class _JournalFile:
 _FILE = _JournalFile()
 
 
+#: Events :func:`held_events` keeps before it writes them in one go.
+HELD_EVENTS_MAX = 512
+_HELD = threading.local()
+
+
+def _write_held() -> None:
+    lines, path = getattr(_HELD, "lines", None), getattr(_HELD, "path", None)
+    if not lines or path is None:
+        return
+    data = b"".join(lines)
+    lines.clear()
+    with _LOCK:
+        _FILE.write(path, data)
+
+
+@contextlib.contextmanager
+def held_events():
+    """The events this thread journals in the ``with`` body are written
+    together, HELD_EVENTS_MAX at a time and the rest when the body ends -
+    in their order, one ``os.write`` each time instead of one per event.
+
+    For the walk of a folder copy, which opens one operation per file
+    before any file is touched (10 000 files: 10 000 writes, a third of
+    the walk's time): what is held then names work that has not begun.
+    A worker's events - the ones that tell an interrupted move from a
+    finished one - are never held (they are on other threads). A nested
+    ``with`` adds to the outer one."""
+    if getattr(_HELD, "lines", None) is not None:
+        yield
+        return
+    _HELD.lines, _HELD.path = [], None
+    try:
+        yield
+    finally:
+        try:
+            _write_held()
+        except OSError as exc:
+            log.warning("operation journal: %d held event(s) not written: %s",
+                        len(getattr(_HELD, "lines", None) or ()), exc)
+        finally:
+            _HELD.lines, _HELD.path = None, None
+
+
 def append_event(event: JournalEvent, *, journal_path: Path | None = None) -> None:
     """Append one redacted JSONL event to the operation journal. Paths
     keep their real names (see ``_PATH_FIELDS``); the log line about the
     event is redacted in full.
 
     The line is in the file (handed to the kernel) when this returns, see
-    :class:`_JournalFile`. The log line is DEBUG for an event that went as
+    :class:`_JournalFile` - except inside :func:`held_events` on this
+    thread. The log line is DEBUG for an event that went as
     planned - the journal is the record of it, and three INFO lines per
     copied file filled the log - and a WARNING for an error or a cancel."""
     if not _journal_enabled(journal_path):
@@ -419,8 +487,15 @@ def append_event(event: JournalEvent, *, journal_path: Path | None = None) -> No
     payload = _event_payload(event, current_batch())
     line = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     data = (line + "\n").encode("utf-8")
-    with _LOCK:
-        _FILE.write(path, data)
+    held = getattr(_HELD, "lines", None)
+    if held is not None and _HELD.path in (None, path):
+        _HELD.path = path
+        held.append(data)
+        if len(held) >= HELD_EVENTS_MAX:
+            _write_held()
+    else:
+        with _LOCK:
+            _FILE.write(path, data)
     level = logging.WARNING if event.status in {"error", "cancelled"} else logging.DEBUG
     if log.isEnabledFor(level):
         log_event(

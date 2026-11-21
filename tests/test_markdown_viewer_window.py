@@ -343,9 +343,11 @@ def test_edge_the_cells_laid_out_at_once_follow_the_parser_that_lays_them_out():
     table = "| a |\n|---|\n" + "".join(f"| {n} |\n" for n in range(rows))
     assert MV.renderable(table, rows + 1) == (table, "")
     part, why = MV.renderable(table, MV.MD4C_TABLE_CELLS)
-    assert not why and part.count(MV.CHUNK) == 1  # (two parts, laid out one after the other)
-    first = part.split(MV.CHUNK, 1)[0]
-    assert first.count("\n| ") == MV.MD4C_TABLE_CELLS - 1
+    # (three parts, laid out one after the other: the first a quarter as long - the page's first part)
+    assert not why and part.count(MV.CHUNK) == 2
+    first, second = part.split(MV.CHUNK)[:2]
+    assert first.count("\n| ") == (MV.MD4C_TABLE_CELLS - 1) // 4
+    assert second.count("\n| ") == MV.MD4C_TABLE_CELLS - 1  # (a full part after it, its header again)
 
 
 # -- keyboard -----------------------------------------------------------------------------------

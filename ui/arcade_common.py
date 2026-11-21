@@ -19,6 +19,18 @@ by a death or a level change). One :class:`ArcadeView` now owns them:
 * **sprites** (glows, dots) are rendered once into a QPixmap
   (:func:`sprite`) and blitted - a radial gradient per dot per frame was
   most of the paint time.
+
+What must not pile up over a session - why there are bounds: the sprite
+cache is shared by every game of the window and lives as long as axross.
+It was bounded by a count only (800) and also held the window-sized
+pictures (Tilt Maze's sky, Rockfall's vignette): every window size and
+every world kept a full-window pixmap - one drag of the window's corner
+left ~100 of them, 480 MB at 1600x800 (four times that on a HiDPI
+screen), the games got slower and slower. Now the cache also keeps to
+:data:`SPRITE_BUDGET` bytes, and a window-sized picture lives in its
+view's own one-slot :class:`Layer`, replaced when the size changes. The
+taps of :class:`HeldKeys` are bounded too (Byte Chase and Tilt Maze
+never take them: every key press of a session stayed in the list).
 """
 
 from __future__ import annotations
@@ -74,6 +86,9 @@ class HeldKeys:
     have gone to another window); auto-repeat releases are ignored (X11
     sends a release before each repeat)."""
 
+    #: Taps kept between two ticks: :meth:`take` needs only the last one.
+    TAPS = 4
+
     def __init__(self, mapping: dict):
         self.mapping = mapping
         self.order: list = []
@@ -86,6 +101,8 @@ class HeldKeys:
             self.order.append(key)
         if not auto_repeat:
             self.taps.append(key)
+            if len(self.taps) > self.TAPS:     # a view that never takes them: no list growing all session
+                del self.taps[:-self.TAPS]
         return True
 
     def release(self, key, auto_repeat: bool = False) -> bool:
@@ -171,16 +188,22 @@ def fit_title(text: str, width: float, height: float, *, start: float = 72.0) ->
 
 _SPRITES: OrderedDict = OrderedDict()
 _SPRITE_LIMIT = 800
+#: What the sprites may hold in all (bytes): a frame uses a few hundred
+#: KB of them, the rest is earlier sizes and worlds.
+SPRITE_BUDGET = 48 * 1024 * 1024
+_sprite_bytes = 0
 
 
-def sprite(key, width: float, height: float, draw, dpr: float = 1.0) -> QPixmap:
-    """A pixmap drawn once by ``draw(painter, w, h)`` and kept (LRU) under
-    *key* - the views blit these instead of building gradients per frame."""
-    full = (key, round(width, 1), round(height, 1), dpr)
-    pm = _SPRITES.get(full)
-    if pm is not None:
-        _SPRITES.move_to_end(full)
-        return pm
+def _pixmap_bytes(pm: QPixmap) -> int:
+    return pm.width() * pm.height() * 4
+
+
+def sprite_bytes() -> int:
+    """What the sprite cache holds now, in bytes."""
+    return _sprite_bytes
+
+
+def _new_pixmap(width: float, height: float, dpr: float, draw) -> QPixmap:
     pm = QPixmap(max(1, math.ceil(width * dpr)), max(1, math.ceil(height * dpr)))
     pm.setDevicePixelRatio(dpr)
     pm.fill(Qt.GlobalColor.transparent)
@@ -189,10 +212,52 @@ def sprite(key, width: float, height: float, draw, dpr: float = 1.0) -> QPixmap:
     p.setPen(Qt.PenStyle.NoPen)
     draw(p, width, height)
     p.end()
-    _SPRITES[full] = pm
-    while len(_SPRITES) > _SPRITE_LIMIT:
-        _SPRITES.popitem(last=False)
     return pm
+
+
+def sprite(key, width: float, height: float, draw, dpr: float = 1.0) -> QPixmap:
+    """A pixmap drawn once by ``draw(painter, w, h)`` and kept (LRU) under
+    *key* - the views blit these instead of building gradients per frame.
+    The cache keeps to :data:`_SPRITE_LIMIT` pixmaps and
+    :data:`SPRITE_BUDGET` bytes; something the size of the window belongs
+    in a :class:`Layer`, not here."""
+    global _sprite_bytes
+    full = (key, round(width, 1), round(height, 1), dpr)
+    pm = _SPRITES.get(full)
+    if pm is not None:
+        _SPRITES.move_to_end(full)
+        return pm
+    pm = _new_pixmap(width, height, dpr, draw)
+    _SPRITES[full] = pm
+    _sprite_bytes += _pixmap_bytes(pm)
+    while len(_SPRITES) > 1 and (len(_SPRITES) > _SPRITE_LIMIT or _sprite_bytes > SPRITE_BUDGET):
+        _key, old = _SPRITES.popitem(last=False)
+        _sprite_bytes -= _pixmap_bytes(old)
+    return pm
+
+
+def clear_sprites() -> None:
+    global _sprite_bytes
+    _SPRITES.clear()
+    _sprite_bytes = 0
+
+
+class Layer:
+    """One picture of a view the size of the window (a sky, a vignette):
+    drawn by ``draw(painter, w, h)`` when *key* or the size changes, else
+    the one kept - one slot, so a resize replaces it instead of adding a
+    full-window pixmap to the shared sprite cache."""
+
+    def __init__(self):
+        self.key = None
+        self.pixmap: QPixmap | None = None
+
+    def get(self, key, width: float, height: float, dpr: float, draw) -> QPixmap:
+        full = (key, round(width), round(height), dpr)
+        if self.pixmap is None or self.key != full:
+            self.pixmap = None                  # the old one goes before the new one is made
+            self.pixmap, self.key = _new_pixmap(width, height, dpr, draw), full
+        return self.pixmap
 
 
 def glow(colour: str, radius: float, dpr: float = 1.0, strength: int = 200) -> QPixmap:

@@ -3740,7 +3740,7 @@ _API_RULES = (
     (
         # core/script_runner.py (the namespace of a run); axross/__init__.py
         "namespace",
-        "A script run by script_run, axross --script or the Scripts dock finds the API bound "
+        "A script run by the MCP tool run_script, axross --script or the Scripts dock finds the API bound "
         "as axross; import axross gives the same names.",
     ),
     (
@@ -3782,7 +3782,7 @@ _API_RULES = (
         # core/mcp_server.py script_run sets AXROSS_NONINTERACTIVE=1;
         # core/safety_tarpit.py refuses an unwatched countdown
         "no-human",
-        "Under script_run nobody can answer: stdin is empty and AXROSS_NONINTERACTIVE=1 is "
+        "Under the MCP tool run_script nobody can answer: stdin is empty and AXROSS_NONINTERACTIVE=1 is "
         "set. A function with prompts=true raises NonInteractiveError (a PermissionError) "
         "instead of asking: confirm() unless assume_yes=True is passed, and a change on a "
         "production profile unless the operator started axross with "
@@ -3821,7 +3821,7 @@ _API_RULES = (
     (
         # core/mcp_server.py script_run (the reply)
         "output",
-        "print() goes to stdout, which script_run returns with stderr, the exit status and, "
+        "print() goes to stdout, which the MCP tool run_script returns with stderr, the exit status and, "
         "after an uncaught exception, error_type, error and traceback. Print a result a "
         "machine reads as one JSON document; sys.exit(n) sets the exit status.",
     ),
@@ -4413,7 +4413,7 @@ def api_schema(names: list[str] | None = None) -> dict:
     gives the index alone (groups, rules, errors, session methods). An
     unknown name raises :class:`ValueError`.
 
-    The MCP tool ``script_api_schema`` returns the same data, and
+    The MCP tool ``get_script_api`` returns the same data, and
     ``docs/scripting-api.json`` is a copy of it. For prose, use
     :func:`docs`::
 
@@ -4864,7 +4864,7 @@ def confirm(
     an empty answer is ``default_yes``.
 
     When no human can answer - no Qt window and no terminal (an MCP
-    ``script_run``, the Scripts dock, cron, a pipe) or
+    ``run_script`` call, the Scripts dock, cron, a pipe) or
     ``AXROSS_NONINTERACTIVE=1`` - it raises :class:`NonInteractiveError`
     instead of guessing, whatever ``default_yes`` says. Pass
     ``assume_yes=True`` to answer yes without asking in that case; a
@@ -4887,7 +4887,7 @@ def is_interactive() -> bool:
     """True when a human can answer :func:`confirm` right now.
 
     False under ``AXROSS_NONINTERACTIVE=1`` (set for every MCP
-    ``script_run``), off the GUI thread of a Qt window, and without a Qt
+    ``run_script`` call), off the GUI thread of a Qt window, and without a Qt
     window when stdin is not a terminal. Scripts that a machine may run
     can branch on it instead of catching :class:`NonInteractiveError`.
     """

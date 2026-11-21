@@ -1028,17 +1028,66 @@ def _restorable_path(path: str) -> bool:
     return True
 
 
+def _dump_state(state: dict) -> str:
+    import json
+
+    return json.dumps(state, ensure_ascii=True, indent=1) + "\n"
+
+
+#: The keys axross writes for a track; axross-amp adds its own (artist,
+#: album, disc, track), which merge_shared_state keeps.
+_OWN_TRACK_KEYS = ("path", "title", "duration")
+#: The objects in the state whose keys axross-amp may add to.
+_SHARED_OBJECTS = ("visual_options", "visual_custom")
+
+
+def merge_shared_state(own: dict, stored: dict) -> dict:
+    """*own* (what axross saves) over *stored* (what the state file holds at
+    this save): axross-amp shares the file and writes more than axross
+    knows. Every key axross does not write is kept - at the top, inside
+    visual_options and visual_custom, and in a track (matched by its path,
+    the n-th time a path is in the list to the n-th time it is in the file);
+    axross's own values win. A track no longer in the list takes what was
+    kept for it along."""
+    if not isinstance(stored, dict) or not stored:
+        return own
+    merged = dict(own)
+    for key, value in stored.items():
+        if key not in own:
+            merged[key] = value
+    for name in _SHARED_OBJECTS:
+        theirs, ours = stored.get(name), own.get(name)
+        if isinstance(theirs, dict) and isinstance(ours, dict):
+            merged[name] = {**ours, **{k: v for k, v in theirs.items() if k not in ours}}
+    theirs, ours = stored.get("tracks"), own.get("tracks")
+    if isinstance(theirs, list) and isinstance(ours, list):
+        extras: dict[str, list[dict]] = {}
+        for track in theirs:
+            if isinstance(track, dict) and isinstance(track.get("path"), str):
+                extras.setdefault(track["path"], []).append(
+                    {k: v for k, v in track.items() if k not in _OWN_TRACK_KEYS})
+        if any(any(found) for found in extras.values()):
+            seen: dict[str, int] = {}
+            tracks = []
+            for track in ours:
+                found = extras.get(track.get("path")) if isinstance(track, dict) else None
+                if found:
+                    n = seen.get(track["path"], 0)
+                    seen[track["path"]] = n + 1
+                    extra = found[min(n, len(found) - 1)]
+                    track = {**track, **{k: v for k, v in extra.items() if k not in track}}
+                tracks.append(track)
+            merged["tracks"] = tracks
+    return merged
+
+
 def encode_state(state: dict) -> str:
     """*state* as the JSON the state file holds, within MAX_STATE_BYTES (what
     read_state accepts): a playlist too long for it keeps its first tracks
     (and the current one). ASCII with escapes: a file name that is no UTF-8
     (an old Latin-1 collection, a FAT stick) is kept as its escapes - written
     as it was, it failed every save with UnicodeEncodeError."""
-    import json
-
-    def dump(s: dict) -> str:
-        return json.dumps(s, ensure_ascii=True, indent=1) + "\n"
-
+    dump = _dump_state
     text = dump(state)
     tracks = state.get("tracks")
     if len(text) <= MAX_STATE_BYTES or not isinstance(tracks, list) or not tracks:
@@ -1059,12 +1108,22 @@ def encode_state(state: dict) -> str:
     return dump(kept)
 
 
-def write_state(path, state: dict, *, keep_old: bool = False) -> None:
+def write_state(path, state: dict, *, keep_old: bool = False,
+                plain: dict | None = None) -> None:
     """Save *state* privately (0600, atomic); *keep_old* first keeps a copy
-    of an unreadable file next to it. ValueError when it cannot be encoded."""
+    of an unreadable file next to it. ValueError when it cannot be encoded.
+    *plain* is *state* without what merge_shared_state kept of the file: it
+    is saved instead (trimmed as encode_state trims) when *state* does not
+    fit whole - what axross-amp added must not cost tracks or the save."""
     from core.secure_storage import keep_unreadable_copy, write_secret_file
 
-    text = encode_state(state)
+    text = None
+    if plain is not None and plain is not state:
+        text = _dump_state(state)
+        if len(text) > MAX_STATE_BYTES:
+            text, state = None, plain
+    if text is None:
+        text = encode_state(state)
     if keep_old and not keep_unreadable_copy(path):
         raise OSError(f"{path} is unreadable and could not be kept aside")
     write_secret_file(str(path), text)
@@ -5178,6 +5237,11 @@ class PlayerPanel(QWidget):
         self._restoring = False
         #: What the file held while a restore checks its tracks (_state).
         self._restore_pending: dict | None = None
+        #: The face shown when the state was restored, and whether the user
+        #: picked another since: until then a save keeps the face the file
+        #: holds (axross-amp's, which axross may not have).
+        self._face_restored: str | None = None
+        self._face_picked = False
         self._last_save = time.monotonic()
         root = QVBoxLayout(self)
         top = QHBoxLayout()
@@ -6945,17 +7009,36 @@ class PlayerPanel(QWidget):
         """Write the playlist, the current track and position, volume, mute,
         shuffle, repeat, the visualization with its colours and options, and
         whether the equalizer and the playlist are open to the private
-        state file."""
+        state file - merged with what the file holds now (axross-amp shares
+        it: merge_shared_state, _keep_stored_face)."""
         self._save_timer.stop()
         if not self._state_path:
             return
         self._last_save = time.monotonic()
         try:
-            write_state(self._state_path, self._state(), keep_old=self._state_unreadable)
+            own = self._state()
+            stored, _usable = read_state(self._state_path)
+            self._keep_stored_face(own, stored)
+            write_state(self._state_path, merge_shared_state(own, stored),
+                        keep_old=self._state_unreadable, plain=own)
             self._state_unreadable = False
         except (OSError, ValueError) as exc:
             # A timer slot: nothing may escape (PyQt6 aborts on it).
             self.note.setText(tr("Cannot save the player state: {error}").format(error=exc))
+
+    def _keep_stored_face(self, state: dict, stored: dict) -> None:
+        """The face *stored* (the file, now) holds goes into *state* while
+        the user has not picked a face in axross since the restore: axross
+        shows only faces it knows, so a face of axross-amp's was replaced by
+        axross's own at every save. Picked once, axross's face is saved."""
+        if self._face_picked:
+            return
+        if self._face_restored is not None and self.visualizer.mode != self._face_restored:
+            self._face_picked = True
+            return
+        face = stored.get("visualizer")
+        if isinstance(face, str) and face:
+            state["visualizer"] = face
 
     def restore_state(self) -> None:
         """The last playlist, track (loaded at its position, not playing),
@@ -6966,6 +7049,7 @@ class PlayerPanel(QWidget):
         start); until then nothing is saved over the file."""
         state, usable = read_state(self._state_path)
         self._state_unreadable = not usable
+        self._face_restored = self.visualizer.mode
         if not state:
             return
         self._restoring = True
@@ -6979,6 +7063,7 @@ class PlayerPanel(QWidget):
         visual = state.get("visualizer")
         if isinstance(visual, str) and visual in Visualizer.MODES:
             self.visualizer.set_mode(visual, announce=False)
+        self._face_restored = self.visualizer.mode  # not picked by the user
         self.set_equalizer_open(state.get("equalizer_open") is not False)
         self._restore_visual_settings(state)
         self.set_playlist_open(state.get("playlist_open") is not False)

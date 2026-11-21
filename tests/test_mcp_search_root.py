@@ -36,7 +36,7 @@ class SearchRootScopeTest(unittest.TestCase):
         with mock.patch.object(
             MX, "search_all", lambda **kw: real(**{**kw, "db_path": self.db})
         ):
-            return self._tool().handler({"needle": needle}, M._ToolContext())
+            return self._tool().handler({"needle": needle}, M._ToolContext())["entries"]
 
     def test_inside_root_is_returned(self) -> None:
         names = {r["name"] for r in self._run("inside")}

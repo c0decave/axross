@@ -8,6 +8,8 @@ initialize sent no instructions."""
 
 from __future__ import annotations
 
+import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -18,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from core import mcp_groups as G  # noqa: E402
+from core import mcp_names as N  # noqa: E402
 from core import mcp_server as M  # noqa: E402
 from core.local_fs import LocalFS  # noqa: E402
 
@@ -60,11 +63,12 @@ def _initialize(version):
 @pytest.mark.parametrize("version", ["2025-11-25", "2025-06-18"])
 def test_happy_initialize_sends_short_factual_instructions(version):
     text = _initialize(version)["instructions"]
-    assert text == M.SERVER_INSTRUCTIONS and len(text) < 2500
+    assert text == M.SERVER_INSTRUCTIONS and len(text) < 4500
     # Facts about the tools, never requests to the model a client could
     # mistake for injected instructions.
     assert not re.search(r"\b(you|your|must|should|always|never|ignore|do not)\b", text, re.I)
-    for tool in ("list_dir", "walk", "stat", "read_file", "grep", "search", "list_backends"):
+    for tool in ("list_directory", "walk_tree", "get_path_info", "read_file", "search_content",
+                 "search_index", "list_backends"):
         assert tool in text
 
 
@@ -83,6 +87,8 @@ def test_edge_a_2024_session_gets_no_instructions():
 #: where a flag or a prerequisite applies).
 LABELS = ("Use when:", "Instead:", "Requires:", "Behavior:", "Returns:")
 REQUIRED_LABELS = ("Use when:", "Instead:", "Behavior:", "Returns:")
+#: Tools with no alternative to name: they leave out Instead.
+NO_ALTERNATIVE: set[str] = set()  # every tool names one (set_permissions since 0.15.183)
 #: The flag each gated kind of tool names on its Requires: line.
 GATE_FLAGS = {"write": "--mcp-write", "scripts": "--mcp-allow-scripts", "exec": "--mcp-allow-exec"}
 #: Tools that change or remove what exists: destructiveHint must say so.
@@ -90,7 +96,7 @@ DESTRUCTIVE = {"write_file", "remove", "rename", "chmod", "bulk_copy", "script_w
                "script_delete", "script_run", "duplicates_dedupe", "transfer_copy",
                "transfer_move", "remote_exec", "remote_script"}
 #: Tools that only add new entries under free names: never destructive.
-ADDITIVE = {"mkdir", "copy", "symlink", "hardlink", "metadata_export_file", "metadata_remove",
+ADDITIVE = {"mkdir", "copy", "symlink", "hardlink", "metadata_export", "metadata_remove",
             "pack", "archive_extract", "encrypt", "decrypt"}
 
 
@@ -153,7 +159,8 @@ def _summary_and_lines_faults(tool, names) -> list[str]:
     if not summary.endswith(".") or len(summary) > 200 or summary.startswith(LABELS):
         faults.append(f"summary: {summary!r}")
     lines = _lines(tool)
-    if not set(REQUIRED_LABELS) <= set(lines):
+    needed = set(REQUIRED_LABELS) - ({"Instead:"} if tool.name in NO_ALTERNATIVE else set())
+    if not needed <= set(lines):
         faults.append(f"labels: {sorted(lines)}")
     if list(lines) != [lab for lab in LABELS if lab in lines]:
         faults.append("label order")
@@ -161,7 +168,7 @@ def _summary_and_lines_faults(tool, names) -> list[str]:
         faults.append("empty line")
     # Instead: names at least one real sibling tool.
     words = set(re.findall(r"[a-z][a-z0-9_]+", lines.get("Instead:", "")))
-    if not words & (names - {tool.name}):
+    if tool.name not in NO_ALTERNATIVE and not words & (names - {N.public(tool.name)}):
         faults.append("Instead: names no other tool")
     if len(tool.description) > 900:
         faults.append(f"{len(tool.description)} characters")
@@ -170,17 +177,24 @@ def _summary_and_lines_faults(tool, names) -> list[str]:
 
 def test_sad_every_description_is_a_summary_then_labelled_lines(tmp_path):
     tools = _all_tools(tmp_path)
-    names = {t.name for t in tools}
+    names = {N.public(t.name) for t in tools}  # descriptions name tools by their public names
     faults = {t.name: f for t in tools if (f := _summary_and_lines_faults(t, names))}
     assert faults == {}
 
 
 def test_sad_a_gated_tool_names_its_flag(tmp_path):
+    # --mcp-write is the instructions' rule, said once there (FLAG_RULE): a
+    # write tool does not repeat it; the script and exec flags are named.
+    assert "--mcp-write" in TERMS.FLAG_RULE
     for tool in _all_tools(tmp_path):
         gate = _gate(tool)
         if gate is None:
             continue
-        assert GATE_FLAGS[gate] in _lines(tool).get("Requires:", ""), tool.name
+        requires = _lines(tool).get("Requires:", "")
+        if gate == "write":
+            assert "--mcp-write" not in requires, tool.name
+        else:
+            assert GATE_FLAGS[gate] in requires, tool.name
 
 
 def test_sad_the_behavior_line_agrees_with_the_annotations(tmp_path):
@@ -210,8 +224,9 @@ def test_sad_a_deadline_is_stated_where_the_tool_has_no_timeout_argument(tmp_pat
     for tool in _all_tools(tmp_path):
         props = tool.schema.get("properties", {})
         behavior = _lines(tool)["Behavior:"]
-        if {"timeout", "timeout_s"} & set(props):
-            assert "Time limit:" not in behavior, tool.name
+        own = {"timeout", "timeout_s"} & set(props)
+        if own:
+            assert f"Time limit: {own.pop()}" in behavior, tool.name  # its own argument
         else:
             assert f"Time limit: {M._duration_text(tool.timeout_seconds)}." in behavior, tool.name
 
@@ -344,18 +359,19 @@ from core import mcp_terms as TERMS  # noqa: E402
 
 
 def test_sad_the_idempotency_hint_is_what_the_text_says(tmp_path):
+    # idempotentHint carries it, defined once in the instructions
+    # (IDEMPOTENT_RULE); a description adds only what a repeat does.
+    assert "idempotentHint" in TERMS.IDEMPOTENT_RULE
     faults = []
     for tool in _all_tools(tmp_path):
         behavior = _lines(tool)["Behavior:"]
         hint = tool.annotations["idempotentHint"]
-        if tool.annotations["readOnlyHint"]:
-            if not hint:
-                faults.append(f"{tool.name}: read-only but not idempotent")
-            continue
-        says_yes = TERMS.IDEMPOTENT in behavior  # the one wording
-        says_no = "Not idempotent:" in behavior
-        if says_yes == says_no or says_yes != hint:
-            faults.append(f"{tool.name}: hint {hint}, text {behavior!r}")
+        if tool.annotations["readOnlyHint"] and not hint:
+            faults.append(f"{tool.name}: read-only but not idempotent")
+        if TERMS.IDEMPOTENT in behavior or "idempotent" in behavior.lower():
+            faults.append(f"{tool.name}: repeats the idempotency rule: {behavior!r}")
+        if "A repeat fails with" in behavior and not hint:
+            faults.append(f"{tool.name}: a failing repeat of a tool marked not idempotent")
     assert faults == []
 
 
@@ -402,21 +418,27 @@ def test_happy_the_b64_form_alone_is_a_whole_call(tmp_path, name, args, twins):
 
 
 def _depth_faults(tool) -> list[str]:
-    spec = tool.schema.get("properties", {}).get("max_depth")
-    if spec is None:
-        return []
-    start = "src" if "src" in tool.schema["properties"] else "path"
-    if tool.name in M._LEVEL_DEPTH_TOOLS:
-        ok = spec["description"].startswith(TERMS.levels_text(start)) and spec["minimum"] == 1
-    else:
-        ok = spec["description"] == TERMS.descend_text(start) and spec["minimum"] == 0
-    return [] if ok else [f"{tool.name}: {spec}"]
+    props = tool.schema.get("properties", {})
+    start = "src" if "src" in props else "path"
+    faults = []
+    if "max_depth" in props:  # levels counted from 1, in every tool
+        spec = props["max_depth"]
+        if not (spec["description"].startswith(TERMS.levels_text(start))
+                and spec["minimum"] == 1 and tool.name in M._LEVEL_DEPTH_TOOLS):
+            faults.append(f"{tool.name}: {spec}")
+    if "subfolder_levels" in props:  # subfolder levels counted from 0
+        spec = props["subfolder_levels"]
+        if not (spec["description"] == TERMS.descend_text(start) and spec["minimum"] == 0):
+            faults.append(f"{tool.name}: {spec}")
+    return faults
 
 
 def test_sad_max_depth_is_one_of_two_stated_counts(tmp_path):
     tools = _all_tools(tmp_path)
     assert {t.name for t in tools if "max_depth" in t.schema.get("properties", {})} == {
-        "walk", "grep", "recursive_checksum", "bulk_copy", "file_type_scan", "transfer_copy"}
+        "walk", "grep", "recursive_checksum", "bulk_copy"}
+    assert {t.name for t in tools if "subfolder_levels" in t.schema.get("properties", {})} == {
+        "file_type_scan", "transfer_copy"}
     assert [f for t in tools for f in _depth_faults(t)] == []
 
 
@@ -430,7 +452,7 @@ def test_edge_both_counts_reach_the_same_tree(tmp_path):
     import json
 
     walked = json.loads(_call(tools, "walk", {"path": ".", "max_depth": 2})["content"][0]["text"])
-    scanned = json.loads(_call(tools, "file_type_scan", {"path": ".", "max_depth": 1})
+    scanned = json.loads(_call(tools, "file_type_scan", {"path": ".", "subfolder_levels": 1})
                          ["content"][0]["text"])
     files = {e["name"] for e in walked["entries"] if not e["is_dir"]}
     assert files == {e["name"] for e in scanned["entries"]} == {"top.txt", "mid.txt"}
@@ -467,7 +489,8 @@ def test_sad_the_shared_rules_are_stated_once_in_the_instructions(tmp_path):
         for word in ("--mcp-allow-secret-reads", "AXROSS_SECURITY_MODE", "protected places"):
             if word in text:
                 faults.append(f"{tool.name}: {word}")
-        if "paranoid" in tool.description and TERMS.PARANOID_TAG not in tool.description:
+        if "paranoid" in tool.description and TERMS.PARANOID_TAG not in tool.description \
+                and "not in paranoid mode" not in tool.description:
             faults.append(f"{tool.name}: paranoid without its tag")
     assert faults == []
 
@@ -541,11 +564,10 @@ _HAPPY = [
     ("script_delete", {"name": "q"}),
     ("encrypt", {"path": "f.txt", "passphrase": "pw"}),
     ("transfer_copy", {"src": "sub", "dst": "sub3"}),
-    ("exec_backends", {}),
     ("decrypt", {"path": "f.txt.axenc", "passphrase": "pw"}),
     ("transfer_move", {"src": "w.txt", "dst": "moved/w.txt"}),
     ("metadata_read", {"path": "."}), ("metadata_export", {"path": "."}),
-    ("metadata_export_file", {"path": ".", "out": "meta.json"}),
+    ("metadata_export", {"path": ".", "out": "meta.json"}),
     ("metadata_remove", {"path": "."}),
     ("pack_formats", {}), ("pack", {"folder": ".", "names": ["sub"], "archive_name": "z"}),
     ("archive_list", {"path": "z.zip"}), ("archive_extract", {"path": "z.zip"}),
@@ -558,7 +580,7 @@ _HAPPY = [
 ]
 #: Tools with an outputSchema that need a remote host or a version history.
 _NOT_HERE = {"open_version_read", "remote_open", "remote_close", "remote_exec", "remote_script",
-             "agent_run", "extensions_info"}
+             "agent_run"}
 
 
 def test_happy_real_results_match_every_output_schema(tmp_path, monkeypatch):
@@ -653,7 +675,9 @@ def test_happy_search_pages_with_offset(tmp_path, monkeypatch):
     first = _json_call(tools, "search", {"limit": 2})
     second = _json_call(tools, "search", {"limit": 2, "offset": 2})
     last = _json_call(tools, "search", {"limit": 2, "offset": 4})
-    assert [r["name"] for r in first + second + last] == [f"f{n}" for n in range(5)]
+    rows = first["entries"] + second["entries"] + last["entries"]
+    assert [r["name"] for r in rows] == [f"f{n}" for n in range(5)]
+    assert (first["truncated"], second["truncated"], last["truncated"]) == (True, True, False)
 
 
 def test_happy_script_write_counts_bytes(tmp_path, monkeypatch):
@@ -736,7 +760,7 @@ def test_happy_search_narrows_to_a_folder_and_tells_an_empty_index(tmp_path, mon
     rows = [Row(tmp_path / "docs" / "a"), Row(tmp_path / "docsx" / "b"), Row(tmp_path / "c")]
     monkeypatch.setattr(MX, "search_all", lambda **kw: rows[:kw.get("limit", 9)])
     tools = _all_tools(tmp_path)
-    names = [r["name"] for r in _json_call(tools, "search", {"path": "docs"})]
+    names = [r["name"] for r in _json_call(tools, "search", {"path": "docs"})["entries"]]
     assert names == ["a"]
     reply = _call(tools, "search", {"needle": "zzz", "path": "nowhere"})
     assert reply["structuredContent"] == {"entries": [], "indexed": True, "truncated": False}
@@ -775,22 +799,28 @@ def test_sad_an_unknown_llm_profile_names_the_known_ones(tmp_path, monkeypatch):
 
 def test_happy_remote_timeouts_are_numbers_like_script_run(tmp_path):
     tools = {t.name: t for t in _all_tools(tmp_path)}
-    kinds = {tools["script_run"].schema["properties"]["timeout_s"]["type"]}
+    kinds = {tools["script_run"].schema["properties"]["timeout"]["type"]}
     for name in ("remote_exec", "remote_script"):
         kinds.add(tools[name].schema["properties"]["timeout"]["type"])
     assert kinds == {"number"}
 
 
+def _read_only_tools(tmp_path):
+    """What the server serves without --mcp-write (agent_run's model gets no more)."""
+    return M._build_tools(LocalFS(), allow_write=False, root=str(tmp_path), allow_scripts=True,
+                          tool_groups=frozenset(G.GROUPS), allow_exec=True)
+
+
 def test_sad_agent_run_says_which_tools_each_group_gives(tmp_path):
-    tools = _all_tools(tmp_path)
+    tools = _read_only_tools(tmp_path)
     for group, names in G.AGENT_GROUP_TOOLS.items():
-        served = {t.name for t in tools if t.group == group and not t.write}
-        if group == "remote":
-            served.add("list_backends")
+        served = {t.name for t in tools if t.group == group and not t.write
+                  and t.name != "list_backends"}  # served with any remote backend
         assert set(names) == served, group
-    text = next(t for t in tools if t.name == "agent_run").schema["properties"]["groups"]
-    assert all(name in text["description"] for names in G.AGENT_GROUP_TOOLS.values()
-               for name in names)
+    for names in (TERMS.AGENT_CORE_TOOLS, *G.AGENT_GROUP_TOOLS.values()):
+        assert all(N.public(name) in M.SERVER_INSTRUCTIONS for name in names)
+    core = {t.name for t in M._build_tools(LocalFS(), allow_write=False, root=str(tmp_path))}
+    assert set(TERMS.AGENT_CORE_TOOLS) == core
 
 
 def test_sad_every_optional_group_tool_names_its_flags(tmp_path):
@@ -802,21 +832,29 @@ def test_sad_every_optional_group_tool_names_its_flags(tmp_path):
 
 def test_sad_a_read_only_tool_points_at_no_write_tool_instead(tmp_path):
     tools = {t.name: t for t in _all_tools(tmp_path)}
-    gated = {n for n, t in tools.items() if t.write}
+    # Write tools a read-only server does not serve (export_metadata is
+    # served either way; only its out needs --mcp-write).
+    served = {t.name for t in _read_only_tools(tmp_path)}
+    gated = {N.public(n) for n, t in tools.items() if t.write and n not in served}
     for tool in tools.values():
         if tool.annotations["readOnlyHint"]:
             line = _lines(tool)["Instead:"]
             for name in set(re.findall(r"[a-z][a-z0-9_]+", line)) & gated:
-                assert f"{name} (needs --mcp-write)" in line, (tool.name, name)
+                assert re.search(rf"{name} \(needs [^)]*--mcp-write\)", line), (tool.name, name)
 
 
-def test_happy_extensions_info_matches_its_output_schema(tmp_path):
+def test_happy_list_extensions_with_a_name_lists_that_one(tmp_path):
     tools = _all_tools(tmp_path)
     listed = _json_call(tools, "extensions_list", {})["extensions"]
     if not listed:
         pytest.skip("no extension installed")
-    tool = next(t for t in tools if t.name == "extensions_info")
-    _validate(_call(tools, "extensions_info", {"ext_id": listed[0]["id"]}), tool.output_schema)
+    tool = next(t for t in tools if t.name == "extensions_list")
+    for key in ("id", "name"):
+        one = _call(tools, "extensions_list", {"name": listed[0][key]})
+        _validate(one, tool.output_schema)
+        assert [e["id"] for e in one["structuredContent"]["extensions"]] == [listed[0]["id"]]
+    missing = _call(tools, "extensions_list", {"name": "user:no-such-extension"})
+    assert missing.get("isError") and "no extension" in missing["content"][0]["text"]
 
 
 @pytest.mark.parametrize("name, args", [
@@ -831,7 +869,7 @@ def test_happy_a_repeat_fails_with_the_error_its_description_names(tmp_path, nam
     (tmp_path / "f.txt").write_text("x")
     tools = _all_tools(tmp_path)
     tool = next(t for t in tools if t.name == name)
-    named = re.search(r"it fails with '([^']+)'", tool.description).group(1)
+    named = re.search(r"A repeat fails with '([^']+)'", tool.description).group(1)
     assert not _call(tools, name, args).get("isError")
     again = _call(tools, name, args)
     assert again.get("isError"), again
@@ -908,3 +946,399 @@ def test_happy_walk_and_the_index_tools_give_iso_times(tmp_path, monkeypatch):
     assert all(c["modified"] and "T" in c["modified"] for c in copies)
     members = _json_call(tools, "archive_list", {"path": "z.zip"})["entries"]
     assert members[0]["modified"] and "T" in members[0]["modified"]
+
+
+# -- round six: verb_resource names, the former ones as hidden aliases ---------------
+#
+# Before: a mix of bare Unix words (stat, grep, walk, checksum) and verb_noun
+# compounds (list_dir, open_version_read); an agent could not guess a name.
+
+def _listed(tools, version="2025-11-25"):
+    state = M.ProtocolState(version)
+    return M._handle_request({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, tools,
+                             protocol=state)["result"]["tools"]
+
+
+def test_sad_every_public_name_is_verb_then_resource_and_unique(tmp_path):
+    names = [entry["name"] for entry in _listed(_all_tools(tmp_path))]
+    assert len(names) == len(set(names)) == 52
+    for name in names:
+        verb, _, rest = name.partition("_")
+        assert verb in N.VERBS and re.fullmatch(r"[a-z]+(_[a-z]+)*", rest), name
+    assert set(N.PUBLIC_NAMES) == {t.name for t in _all_tools(tmp_path)}
+    assert len(set(N.PUBLIC_NAMES.values())) == len(N.PUBLIC_NAMES)
+
+
+def test_sad_tools_list_shows_no_former_name(tmp_path):
+    listed = {entry["name"] for entry in _listed(_all_tools(tmp_path))}
+    renamed = {old for old, new in N.PUBLIC_NAMES.items() if old != new}
+    assert not listed & renamed
+    assert listed == set(N.PUBLIC_NAMES.values())
+
+
+@pytest.mark.parametrize("old, new", sorted(
+    (o, n) for o, n in N.PUBLIC_NAMES.items() if o != n))
+def test_happy_a_former_name_still_calls_the_same_tool(tmp_path, old, new):
+    tools = _all_tools(tmp_path)
+    results = []
+    for name in (old, new):
+        reply = M._handle_request({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                   "params": {"name": name, "arguments": {"bogus_arg": 1}}},
+                                  tools, protocol=M.ProtocolState("2025-11-25"))
+        result = reply.get("result") or {}
+        assert result.get("isError"), reply  # its own schema check refused it ...
+        results.append(result["content"][0]["text"].replace(repr(name), "<tool>"))
+    assert "Unknown tool" not in results[0] and results[0] == results[1], results  # ... alike
+
+
+def test_happy_the_alias_is_resolved_before_any_gating_and_audited_by_its_new_name(
+        tmp_path, caplog):
+    import logging
+
+    (tmp_path / "f.txt").write_text("x")
+    tools = _all_tools(tmp_path)
+    with caplog.at_level(logging.INFO, logger="core.mcp_server.audit"):
+        assert not _call(tools, "remove", {"path": "f.txt"}).get("isError")
+    lines = [r.getMessage() for r in caplog.records if r.name == "core.mcp_server.audit"]
+    assert any(line.startswith("tool=delete_path outcome=ok") for line in lines), lines
+    read_only = M._build_tools(LocalFS(), allow_write=False, root=str(tmp_path))
+    for name in ("remove", "delete_path"):  # not served read-only, under either name
+        assert "Unknown tool" in M._handle_request(
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": name, "arguments": {"path": "f.txt"}}},
+            read_only)["error"]["message"]
+
+
+def test_happy_tasks_start_takes_the_public_name_too(tmp_path):
+    tools = _all_tools(tmp_path)
+    reply = M._handle_request({"jsonrpc": "2.0", "id": 1, "method": "tasks/start",
+                               "params": {"name": "walk_tree", "arguments": {"path": "."}}},
+                              tools, tasks=M._TaskRegistry())
+    assert "task_id" in reply["result"]
+
+
+def test_sad_descriptions_name_tools_by_their_public_names(tmp_path):
+    renamed = {old for old, new in N.PUBLIC_NAMES.items() if old != new and "_" in old}
+    for entry in _listed(_all_tools(tmp_path)):
+        text = json.dumps(entry)
+        assert not {w for w in re.findall(r"[a-z][a-z0-9_]+", text)} & renamed, entry["name"]
+
+
+def test_happy_the_agent_offers_public_names_and_takes_both(tmp_path):
+    from core import agent as A
+
+    offered = {f["function"]["name"] for f in A.Agent.__dict__["_functions"](
+        type("Fake", (), {"_tool_list": _all_tools(tmp_path), "_host": {}, "_tools": {},
+                          "_external": {}})())}
+    assert "walk_tree" in offered and "walk" not in offered
+
+
+def test_happy_chmod_takes_every_octal_string_and_refuses_the_named_bits(tmp_path):
+    pattern = re.compile(M._CHMOD_PATTERN)
+    for text in ("644", "0644", "0o755", "0O640", "755", "600", "5", "0", "777", "4755"):
+        assert pattern.fullmatch(text), text  # parsed; the handler decides
+    (tmp_path / "f.txt").write_text("x")
+    tools = _all_tools(tmp_path)
+    assert not _call(tools, "set_permissions", {"path": "f.txt", "mode": "640"}).get("isError")
+    for bad in ("777", "4755", "664"):  # the refused bits the mode text names
+        refused = _call(tools, "set_permissions", {"path": "f.txt", "mode": bad})
+        assert refused.get("isError") and "refused" in refused["content"][0]["text"], bad
+
+
+def test_happy_read_file_version_pages_and_decodes_like_read_file(tmp_path, monkeypatch):
+    import io
+
+    class Versioned(LocalFS):
+        def list_versions(self, path):
+            return []
+
+        def open_version_read(self, path, version_id):
+            return io.BytesIO("héllo wörld".encode())
+
+    (tmp_path / "f.txt").write_text("now")
+    tools = M._build_tools(Versioned(), allow_write=False, root=str(tmp_path))
+    first = _json_call(tools, "read_file_version",
+                       {"path": "f.txt", "version_id": "v1", "max_bytes": 4, "encoding": "text"})
+    assert first["text"] == "hél" and first["truncated"] and first["next_offset"] == 4
+    rest = _json_call(tools, "read_file_version", {"path": "f.txt", "version_id": "v1",
+                                                   "offset": 4, "encoding": "text"})
+    assert rest["text"] == "lo wörld" and rest["truncated"] is False
+
+
+def test_happy_file_type_scan_lists_a_refused_secret_in_unreadable(tmp_path):
+    # The header is built here: the public export's leak gate refuses the literal.
+    key = "PRIVATE" + " KEY"
+    (tmp_path / "id_test").write_text(f"-----BEGIN OPENSSH {key}-----\nb3Bl\n"
+                                      f"-----END OPENSSH {key}-----\n")
+    (tmp_path / "a.txt").write_text("plain")
+    out = _json_call(_all_tools(tmp_path), "scan_file_types", {"path": "."})
+    assert [os.path.basename(p) for p in out["unreadable"]] == ["id_test"]
+    assert out["complete"] is False and [e["name"] for e in out["entries"]] == ["a.txt"]
+
+
+def test_happy_extract_archive_names_the_folder_after_the_archive(tmp_path):
+    import gzip
+    import tarfile
+
+    with gzip.open(tmp_path / "notes.txt.gz", "wb") as gz:
+        gz.write(b"note")
+    src = tmp_path / "x.txt"
+    src.write_text("x")
+    with tarfile.open(tmp_path / "x.tar.gz", "w:gz") as tar:
+        tar.add(src, arcname="x.txt")
+    tools = _all_tools(tmp_path)
+    one = _json_call(tools, "extract_archive", {"path": "notes.txt.gz"})
+    assert os.path.basename(one["path"]) == "notes.txt"
+    assert os.listdir(one["path"]) == ["notes.txt"]
+    two = _json_call(tools, "extract_archive", {"path": "x.tar.gz"})
+    assert os.path.basename(two["path"]) == "x"
+    again = _json_call(tools, "extract_archive", {"path": "x.tar.gz"})
+    assert os.path.basename(again["path"]) == "x-1"
+
+
+# -- round seven: three pairs merged, one naming rule, nothing said twice ------------
+#
+# Before: 55 tools - export_metadata beside export_metadata_file,
+# list_exec_backends a filtered list_backends, get_extension_info one
+# list_extensions entry; copy_between_backends and open_remote broke the
+# verb_resource pattern; the packer and archive groups split the archive
+# tools; every write tool repeated "Write guards apply.", the idempotency
+# line and "only with --mcp-write"; the instructions still said "remove".
+
+def _alias_words():
+    """Every name tools/call takes that tools/list does not show."""
+    former = {old for old, new in N.PUBLIC_NAMES.items() if old != new}
+    return former | set(N.MERGED)
+
+
+def test_sad_no_former_or_merged_name_appears_in_tools_list_or_the_instructions(tmp_path):
+    words = _alias_words()
+    with_underscore = {w for w in words if "_" in w}
+    texts = [json.dumps(entry) for entry in _listed(_all_tools(tmp_path))]
+    texts.append(M.SERVER_INSTRUCTIONS)
+    for text in texts:
+        assert not set(re.findall(r"[a-z][a-z0-9_]+", text)) & with_underscore, text[:80]
+        # A bare former name used as a tool's name: "remove deletes", "`stat`".
+        for word in words - with_underscore:
+            assert not re.search(rf"(`{word}`|\b{word} (deletes|lists|returns|reads|writes|"
+                                 rf"tool)\b|\bone {word} made\b)", text), (word, text[:80])
+    assert "delete_path deletes for good" in M.SERVER_INSTRUCTIONS
+
+
+def test_happy_the_merged_tools_answer_under_their_former_names(tmp_path):
+    (tmp_path / "f.txt").write_text("x")
+    tools = _all_tools(tmp_path)
+    listed = {entry["name"] for entry in _listed(tools)}
+    assert not listed & set(N.MERGED)
+    assert N.resolve("exec_backends", {}) == ("list_backends", {"can_run_commands": True})
+    assert N.resolve("extensions_info", {"ext_id": "bundled:x"}) == (
+        "extensions_list", {"name": "bundled:x"})
+    commands = _call(tools, "exec_backends", {})
+    assert not commands.get("isError") and commands["structuredContent"]["backends"] == []
+    saved = _json_call(tools, "metadata_export_file", {"path": "f.txt", "out": "meta.json"})
+    assert os.path.basename(saved["out"]) == "meta.json" and saved["size"] > 0
+    assert (tmp_path / "meta.json").read_text().startswith("{")
+    unknown = _call(tools, "extensions_info", {"ext_id": "user:no-such-extension"})
+    assert unknown.get("isError") and "no extension" in unknown["content"][0]["text"]
+
+
+def test_happy_export_metadata_saves_a_file_only_with_write(tmp_path):
+    (tmp_path / "f.txt").write_text("x")
+    read_only = next(t for t in _read_only_tools(tmp_path) if t.name == "metadata_export")
+    assert "out" not in read_only.schema["properties"] and not read_only.write
+    assert read_only.annotations["readOnlyHint"] is True
+    tools = _all_tools(tmp_path)
+    writing = next(t for t in tools if t.name == "metadata_export")
+    assert "out" in writing.schema["properties"] and writing.write
+    assert writing.annotations["readOnlyHint"] is False
+    assert writing.annotations["destructiveHint"] is False
+    text = _json_call(tools, "export_metadata", {"path": "f.txt"})
+    assert text["text"].startswith("{") and "out" not in text
+    first = _json_call(tools, "export_metadata", {"path": "f.txt", "out": "m.json"})
+    second = _json_call(tools, "export_metadata", {"path": "f.txt", "out": "m.json"})
+    assert first["path"].endswith("f.txt") and os.path.basename(second["out"]) == "m (2).json"
+    refused = _call(_read_only_tools(tmp_path), "export_metadata",
+                    {"path": "f.txt", "out": "x.json"})
+    assert refused.get("isError") and not (tmp_path / "x.json").exists()
+
+
+def test_happy_list_backends_says_which_backends_run_commands(tmp_path):
+    with_exec = {t.name: t for t in _all_tools(tmp_path)}["list_backends"]
+    assert "can_run_commands" in with_exec.schema["properties"]
+    listed = _call(_all_tools(tmp_path), "list_backends", {})["structuredContent"]["backends"]
+    assert listed and all("commands" in entry for entry in listed)
+    assert [e for e in listed if e["commands"]] == _call(
+        _all_tools(tmp_path), "list_backends", {"can_run_commands": True}
+    )["structuredContent"]["backends"]
+    no_exec = M._build_tools(LocalFS(), allow_write=False, root=str(tmp_path),
+                             tool_groups=frozenset({"remote"}))
+    plain = next(t for t in no_exec if t.name == "list_backends")
+    assert "can_run_commands" not in plain.schema["properties"]
+    assert all("commands" not in e
+               for e in _call(no_exec, "list_backends", {})["structuredContent"]["backends"])
+    # The exec group alone still has its lister.
+    exec_only = M._build_tools(LocalFS(), allow_write=False, root=str(tmp_path),
+                               tool_groups=frozenset({"exec"}), allow_exec=True)
+    assert "list_backends" in {t.name for t in exec_only}
+
+
+def test_happy_the_packer_group_is_the_archive_group_now(tmp_path):
+    assert "packer" not in G.GROUPS
+    assert G.parse_groups(["packer"]) == G.parse_groups(["archive"]) == frozenset({"archive"})
+    names = {t.name for t in M._build_tools(LocalFS(), allow_write=True, root=str(tmp_path),
+                                            tool_groups=G.check_groups({"packer"}))}
+    assert {"pack_formats", "pack", "archive_list", "archive_extract"} <= names
+    assert N.resolve("run_llm_agent", {"task": "t", "groups": ["packer", "archive"]}) == (
+        "agent_run", {"task": "t", "groups": ["archive"]})
+
+
+def test_sad_write_tools_leave_the_shared_rules_to_the_instructions(tmp_path):
+    for tool in _all_tools(tmp_path):
+        text = tool.description
+        assert TERMS.WRITE_TAG not in text and "Cancellable" not in text, tool.name
+        assert TERMS.IDEMPOTENT not in text, tool.name
+        assert "max_depth counts" not in _lines(tool)["Behavior:"], tool.name
+    assert "scan_file_types" not in TERMS.DEPTH_RULE
+    assert TERMS.WRITE_RULE in M.SERVER_INSTRUCTIONS
+
+
+def test_sad_every_b64_pair_says_its_rule_in_one_wording(tmp_path):
+    for tool in _all_tools(tmp_path):
+        for name, spec in tool.schema.get("properties", {}).items():
+            text = spec.get("description", "")
+            if "Required unless" in text:
+                assert re.search(rf"Required unless {name}_b64 is given(; not both)?\.$", text), (
+                    tool.name, name, text)
+            assert "Exactly one of" not in text, (tool.name, name)
+    assert "top-level oneOf" in TERMS.PATH_RULE
+
+
+def test_happy_search_index_text_is_its_structured_object(tmp_path):
+    reply = _call(_all_tools(tmp_path), "search", {})
+    assert json.loads(reply["content"][0]["text"]) == reply["structuredContent"]
+    assert set(reply["structuredContent"]) == {"entries", "indexed", "truncated"}
+
+
+def test_happy_a_public_close_name_is_never_held_back_by_stuck_calls(tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr(M._ABANDONED, "refusal", lambda name, args=None: seen.append(name))
+    _call(_all_tools(tmp_path), "close_remote_profile", {"backend": "profile:x"})
+    assert seen == ["remote_close"] and "remote_close" in M._ALWAYS_ALLOWED_TOOLS
+
+
+def test_sad_identify_file_type_describes_every_output_field(tmp_path):
+    tool = next(t for t in _all_tools(tmp_path) if t.name == "file_type")
+    props = tool.output_schema["properties"]
+    assert {k for k, v in props.items() if not v.get("description")} == set()
+
+
+def test_happy_the_resource_word_says_what_a_tool_takes(tmp_path):
+    # file: one file; path: a file or a folder (TERMS.NAME_RULE).
+    (tmp_path / "d").mkdir()
+    (tmp_path / "f.txt").write_text("x")
+    assert "path (a file or a folder)" in TERMS.NAME_RULE
+    tools = _all_tools(tmp_path)
+    assert _json_call(tools, "get_path_info", {"path": "d"})["is_dir"] is True
+    for name, args in (("copy_file", {"src": "d", "dst": "e"}),
+                       ("move_file_to_backend", {"src": "d", "dst": "m/d"})):
+        assert _call(tools, name, args).get("isError"), name
+    assert not _call(tools, "move_path", {"src": "d", "dst": "d2"}).get("isError")
+    assert not _call(tools, "delete_path", {"path": "d2", "recursive": True}).get("isError")
+
+
+# -- round eight: one parameter name per meaning --------------------------------------
+#
+# Before: max_depth counted from 1 in four tools and from 0 in two; the
+# timeout was timeout in two tools and timeout_s in one; a result cap was
+# limit in search_index and max_* everywhere else; search_index searched
+# for a needle and search_content for a pattern; create_archive alone took
+# folder for what every other tool calls path.
+
+_FORMER_KEYS = {"needle", "limit", "timeout_s", "folder", "folder_b64"}
+
+
+def test_sad_one_parameter_name_means_one_thing(tmp_path):
+    for tool in _all_tools(tmp_path):
+        props = tool.schema.get("properties", {})
+        assert not set(props) & _FORMER_KEYS, (tool.name, set(props) & _FORMER_KEYS)
+        if "max_depth" in props:  # always levels counted from 1
+            assert props["max_depth"]["minimum"] == 1, tool.name
+        if "subfolder_levels" in props:
+            assert props["subfolder_levels"]["minimum"] == 0, tool.name
+        if "timeout" in props:
+            assert props["timeout"]["type"] == "number", tool.name
+    assert "subfolder_levels" in TERMS.DEPTH_RULE and "max_<what>" in TERMS.PARAM_RULE
+    for old, new in [(o, n) for names in N.ARG_ALIASES.values() for o, n in names.items()]:
+        assert old in TERMS.PARAM_RULE or old.endswith("_b64") or old == "max_depth", old
+
+
+@pytest.mark.parametrize("name, old, new", [
+    ("search", {"needle": "a", "limit": 1}, {"pattern": "a", "max_results": 1}),
+    ("file_type_scan", {"path": ".", "max_depth": 0}, {"path": ".", "subfolder_levels": 0}),
+    ("transfer_copy", {"src": "d", "dst": "x", "max_depth": 0},
+     {"src": "d", "dst": "x", "subfolder_levels": 0}),
+    ("pack", {"folder": ".", "names": ["f.txt"], "archive_name": "z"},
+     {"path": ".", "names": ["f.txt"], "archive_name": "z"}),
+])
+def test_happy_a_former_parameter_name_still_works(tmp_path, name, old, new):
+    (tmp_path / "d").mkdir()
+    (tmp_path / "f.txt").write_text("x")
+    tools = _all_tools(tmp_path)
+    assert N.rename_args(name, old) == new
+    assert N.rename_args(N.public(name), {**old, **new}) == new  # the new key wins
+    first = _call(tools, name, old)
+    assert not first.get("isError"), first
+    if name == "pack":
+        assert os.path.exists(json.loads(first["content"][0]["text"])["path"])
+
+
+def test_happy_run_script_takes_its_former_timeout_s(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    tools = _all_tools(tmp_path)
+    _json_call(tools, "script_write", {"name": "t", "source": "print('ok')\n"})
+    for key in ("timeout", "timeout_s"):
+        out = _json_call(tools, "run_script", {"name": "t", key: 30})
+        assert out["stdout"].strip() == "ok" and out["timed_out"] is False
+    bad = _call(tools, "run_script", {"name": "t", "timeout_s": -1})
+    assert bad.get("isError")
+
+
+def test_happy_create_archive_takes_folder_b64_as_path_b64(tmp_path):
+    import base64
+
+    (tmp_path / "f.txt").write_text("x")
+    raw = base64.b64encode(str(tmp_path).encode()).decode()
+    out = _json_call(_all_tools(tmp_path), "pack",
+                     {"folder_b64": raw, "names": ["f.txt"], "archive_name": "b"})
+    assert os.path.basename(out["path"]) == "b.zip"
+
+
+def test_happy_copy_path_to_backend_copies_local_links_to_files_like_copy_tree(tmp_path):
+    src = tmp_path / "src"
+    (src / "real").mkdir(parents=True)
+    (src / "real" / "f.txt").write_text("data")
+    os.symlink("real/f.txt", src / "lf.txt")
+    os.symlink("real", src / "ld")
+    tools = _all_tools(tmp_path)
+    out = _json_call(tools, "copy_path_to_backend", {"src": "src", "dst": "dst"})
+    reasons = {os.path.basename(e["src"]): e.get("reason") for e in out["entries"]}
+    assert (tmp_path / "dst" / "lf.txt").read_text() == "data"
+    assert not (tmp_path / "dst" / "lf.txt").is_symlink()
+    assert reasons["ld"] == "symlink" and not (tmp_path / "dst" / "ld").exists()
+    # The same backend without resumable is the backend's own copy.
+    assert (tmp_path / "dst" / "real" / "f.txt").read_text() == "data"
+
+
+def test_sad_the_instructions_come_in_sections_and_say_how_errors_return():
+    text = M.SERVER_INSTRUCTIONS
+    for heading, _rules in TERMS.SECTIONS:
+        assert f"\n{heading}:\n" in text
+    assert all(len(line) < 900 for line in text.split("\n"))
+    assert "isError" in TERMS.ERROR_RULE and TERMS.ERROR_RULE in text
+
+
+def test_sad_set_permissions_names_an_alternative_and_says_it_is_not_recursive(tmp_path):
+    tool = next(t for t in _all_tools(tmp_path) if t.name == "chmod")
+    lines = _lines(tool)
+    assert "Instead:" in lines and "not recursive" in lines["Behavior:"]
+    assert "does not support Unix permissions" in lines["Behavior:"]

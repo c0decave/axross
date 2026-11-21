@@ -55,22 +55,29 @@ def test_happy_list_reports_state_without_importing(ext_home):
     assert not marker.exists()  # discovery parses, it never imports
 
 
-def test_happy_info_explains_why_nothing_runs(ext_home):
+def test_happy_a_name_lists_one_extension_and_why_nothing_runs(ext_home):
     tmp_path, _ = ext_home
-    info = T.call(_ext(tmp_path), "extensions_info", {"ext_id": "user:good"})
-    assert info["id"] == "user:good" and info["enabled"] is True
-    assert info["runnable_over_mcp"] is False and "GUI" in info["why_not_runnable"]
+    for args in ({"name": "user:good"}, {"name": "Good One"}):
+        out = T.call(_ext(tmp_path), "extensions_list", args)
+        assert [e["id"] for e in out["extensions"]] == ["user:good"]
+        assert out["extensions"][0]["enabled"] is True
+        assert out["runnable_over_mcp"] is False and "GUI" in out["why_not_runnable"]
+    # The former extensions_info is list_extensions with name (ext_id renamed).
+    old = T.call(_ext(tmp_path), "extensions_info", {"ext_id": "user:good"})
+    assert [e["id"] for e in old["extensions"]] == ["user:good"]
 
 
 def test_sad_unknown_extension_and_bad_args(ext_home):
     tmp_path, _ = ext_home
     tools = _ext(tmp_path)
-    with pytest.raises(T.RpcError) as err:
-        T.call(tools, "extensions_info", {"ext_id": "user:nope"})
-    assert "user:nope" in err.value.message
-    for args in ({}, {"ext_id": ""}, {"ext_id": 3}):
+    for name, args in (("extensions_list", {"name": "user:nope"}),
+                       ("extensions_info", {"ext_id": "user:nope"})):
         with pytest.raises(T.RpcError) as err:
-            T.call(tools, "extensions_info", args)
+            T.call(tools, name, args)
+        assert "user:nope" in err.value.message
+    for args in ({"name": ""}, {"name": 3}):
+        with pytest.raises(T.RpcError) as err:
+            T.call(tools, "extensions_list", args)
         assert err.value.code == M.ERR_INVALID_PARAMS
     with pytest.raises(T.RpcError):
         T.call(tools, "extensions_list", {"x": 1})
@@ -90,7 +97,7 @@ def test_edge_paranoid_mode_reports_extensions_blocked(ext_home):
 def test_edge_group_has_no_mutating_tool_and_no_backend_argument(ext_home):
     tmp_path, _ = ext_home
     tools = {n: t for n, t in _ext(tmp_path).items() if t.group == "extensions"}
-    assert set(tools) == {"extensions_list", "extensions_info"}
+    assert set(tools) == {"extensions_list"}
     assert not any(t.write for t in tools.values())
     assert all(t.accepts_backend is False for t in tools.values())
 

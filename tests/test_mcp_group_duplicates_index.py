@@ -160,7 +160,7 @@ def test_happy_dedupe_is_a_dry_run_by_default(tree, caplog):
     assert [os.path.basename(p) for p in plan["keep"]] == ["a.txt"]
     assert sorted(os.path.basename(p) for p in plan["trash"]) == ["b.txt", "d.txt"]
     assert (tree / "b.txt").exists() and (tree / "sub" / "d.txt").exists()
-    assert any("tool=duplicates_dedupe outcome=ok" in ln and "dry_run=True" in ln
+    assert any("tool=trash_duplicates outcome=ok" in ln and "dry_run=True" in ln
                for ln in T.audit_lines(caplog))
 
 
@@ -208,10 +208,10 @@ def test_happy_index_build_feeds_search(tmp_path):
     (root / "deep").mkdir(parents=True)
     (root / "deep" / "needle-xyz.txt").write_text("x")
     tools = _idx(root)
-    assert T.call(tools, "search", {"needle": "needle-xyz"}) == []
+    assert T.call(tools, "search", {"needle": "needle-xyz"})["entries"] == []
     out = T.call(tools, "index_build", {"path": str(root)})
     assert out["indexed"] >= 2 and out["pruned"] == 0
-    hits = T.call(tools, "search", {"needle": "needle-xyz"})
+    hits = T.call(tools, "search", {"needle": "needle-xyz"})["entries"]
     assert [h["name"] for h in hits] == ["needle-xyz.txt"]
 
 
@@ -224,7 +224,7 @@ def test_happy_index_build_prune_drops_vanished_files(tmp_path):
     os.unlink(root / "gone-qq.txt")
     out = T.call(tools, "index_build", {"prune": True})
     assert out["pruned"] == 1
-    assert T.call(tools, "search", {"needle": "gone-qq"}) == []
+    assert T.call(tools, "search", {"needle": "gone-qq"})["entries"] == []
 
 
 def test_edge_index_build_not_recursive(tmp_path):
@@ -234,7 +234,7 @@ def test_edge_index_build_not_recursive(tmp_path):
     (root / "d" / "low-ww.txt").write_text("x")
     tools = _idx(root)
     T.call(tools, "index_build", {"recursive": False})
-    names = {h["name"] for h in T.call(tools, "search", {"needle": "-ww"})}
+    names = {h["name"] for h in T.call(tools, "search", {"needle": "-ww"})["entries"]}
     assert names == {"top-ww.txt"}
 
 

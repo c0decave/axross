@@ -437,9 +437,92 @@ def test_happy_markdown_ships_its_reviewed_lock_and_runs_the_gate_on_it(tmp_path
     assert config["baseline_dir"] == ".axross/security/supply_chain_baseline"
     workflow = (out / ".github" / "workflows" / "tests.yml").read_text()
     assert "--require-hashes -r requirements.lock.txt" in workflow and "--no-deps ." in workflow
+    # (the build backend from the lock as well: nothing unpinned fetched for the build)
+    assert "--no-build-isolation --no-deps ." in workflow and "setuptools" in pins
+    # (a failure's pytest summary as annotations, readable through the API - v0.16.7's ci / test)
+    assert "-rfE tests 2>&1 | tee \"$RUNNER_TEMP/tests.log\"" in workflow and "set -o pipefail" in workflow
+    assert "if: failure()\n        run: python packaging/ci_log_tail.py \"$RUNNER_TEMP/tests.log\" tests 150" \
+        in workflow and (out / "packaging" / "ci_log_tail.py").is_file()
     assert "supply_chain_gate.py --config supply-chain-gate.toml check" in workflow
     assert "--scan-python" in workflow and "verify-env" in workflow
     assert "requirements.lock.txt" in (out / "README.md").read_text()
+
+
+def test_sad_the_markdown_release_builds_its_sdist_and_wheel_with_hashed_tools_only(tmp_path):
+    """0.16.8's release ran "pip install build twine" and an isolated "python -m build": build, twine and the
+    backend (setuptools>=77) came from PyPI unpinned and unhashed, past the lock and the gate. Now build and
+    twine come from packaging/requirements-build.txt (every pin hashed, written by lock_standalone_deps.sh),
+    and the build is --no-isolation: setuptools from requirements.lock.txt."""
+    import re
+
+    text = (STANDALONE_REPO / "axross-markdown" / ".github" / "workflows" / "release.yml").read_text()
+    step = next(step for step in _workflow("axross-markdown")["jobs"]["python"]["steps"]
+                if step.get("name") == "sdist and wheel")["run"]
+    assert "pip install --require-hashes -r packaging/requirements-build.txt" in step
+    assert "python -m build --no-isolation --outdir release/" in step
+    assert "pip install build" not in text and not re.search(r"python -m build(?! --no-isolation)", text)
+    lock = (STANDALONE_REPO / "axross-markdown" / "packaging" / "requirements-build.txt").read_text()
+    pins = re.findall(r"^([a-z0-9-]+)==\S+((?:\s*;[^\\\n]*)?) \\\n((?:    --hash=sha256:[0-9a-f]{64}(?: \\)?\n)+)",
+                      lock, re.MULTILINE)
+    names = {name for name, _marker, _hashes in pins}
+    assert {"build", "twine", "pyproject-hooks", "packaging"} <= names
+    assert len(pins) == len(re.findall(r"^[a-z0-9-]+==", lock, re.MULTILINE))  # (every pin with its hashes)
+    build = re.search(r"^build==\S+", lock, re.MULTILINE).group(0)
+    assert re.search(rf"^{re.escape(build)} ", (EXP.ROOT / "build" / "requirements-dist-tools.txt").read_text(),
+                     re.MULTILINE)  # (axross's reviewed build)
+    script = (EXP.ROOT / "scripts" / "lock_standalone_deps.sh").read_text()
+    assert "packaging/requirements-build.txt" in script and "--generate-hashes" in script
+    out = EXP.export("markdown", tmp_path / "md")
+    assert (out / "packaging" / "requirements-build.txt").read_text() == lock
+    workflow = (out / ".github" / "workflows" / "tests.yml").read_text()
+    assert "pip install --require-hashes -r packaging/requirements-build.txt && python -m build --no-isolation" \
+        in workflow and "pip install build" not in workflow
+
+
+def test_sad_the_markdown_release_and_ci_install_pytest_hashed_and_build_before_it(tmp_path):
+    """0.16.9's release ran "pip install pytest" (no version, no hash) in the job and interpreter that then
+    built the sdist and wheel with --no-isolation - pytest, pluggy and iniconfig unverified from PyPI in the
+    build environment (review 23's N10); the exported tests.yml likewise. pytest and its dependencies come
+    from packaging/requirements-test.txt now (every pin hashed, written by lock_standalone_deps.sh), and the
+    release builds the sdist and wheel before any test tool is installed."""
+    import re
+
+    text = (STANDALONE_REPO / "axross-markdown" / ".github" / "workflows" / "release.yml").read_text()
+    assert not re.search(r"pip install (?:[^\n]* )?pytest\b", text), "pytest unpinned in release.yml"
+    steps = _workflow("axross-markdown")["jobs"]["python"]["steps"]
+    names = [step.get("name") for step in steps]
+    build, tests = names.index("sdist and wheel"), names.index("Tests against the locked dependencies")
+    assert build < tests  # (built first: nothing of the tests' tools in its environment)
+    assert "pip install --require-hashes -r packaging/requirements-test.txt" in steps[tests]["run"]
+    assert "pip install --require-hashes -r requirements.lock.txt" in steps[build]["run"]
+    lock = (STANDALONE_REPO / "axross-markdown" / "packaging" / "requirements-test.txt").read_text()
+    pins = re.findall(r"^([a-z0-9-]+)==\S+((?:\s*;[^\\\n]*)?) \\\n((?:    --hash=sha256:[0-9a-f]{64}(?: \\)?\n)+)",
+                      lock, re.MULTILINE)
+    assert {"pytest", "pluggy", "iniconfig", "packaging"} <= {name for name, _m, _h in pins}
+    assert len(pins) == len(re.findall(r"^[a-z0-9-]+==", lock, re.MULTILINE))  # (every pin with its hashes)
+    runtime = (EXP.ROOT / "build" / "requirements-standalone-markdown.txt").read_text()
+    for name, version in re.findall(r"^([a-z0-9-]+)==(\S+)", lock, re.MULTILINE):  # (the program's own kept)
+        found = re.search(rf"^{re.escape(name)}==(\S+)", runtime, re.MULTILINE)
+        assert found is None or found.group(1) == version, (name, version)
+    script = (EXP.ROOT / "scripts" / "lock_standalone_deps.sh").read_text()
+    assert "packaging/requirements-test.txt" in script or "requirements-test.txt" in script
+    out = EXP.export("markdown", tmp_path / "md")
+    assert (out / "packaging" / "requirements-test.txt").read_text() == lock
+    workflow = (out / ".github" / "workflows" / "tests.yml").read_text()
+    assert "pip install --require-hashes -r packaging/requirements-test.txt" in workflow
+    assert not re.search(r"pip install (?:[^\n]* )?pytest\b", workflow), "pytest unpinned in tests.yml"
+    assert (out / "tests" / "markdown_heartbeat.py").is_file()  # (the stress tests' heartbeat goes with them)
+
+
+def test_sad_the_markdown_program_does_not_count_backends_at_every_start(tmp_path):
+    """"Backend registry initialized: 40 backends" on stderr at every start of a Markdown viewer: said at
+    DEBUG in the export (axross's own log keeps it)."""
+    out = EXP.export("markdown", tmp_path / "md")
+    registry = (out / "src" / "axross_markdown" / "_ax" / "core" / "backend_registry.py").read_text()
+    assert 'log.debug("Backend registry initialized: %d backends"' in registry
+    assert 'log.info("Backend registry initialized' not in registry
+    assert 'log.info("Backend registry initialized: %d backends"' in \
+        (EXP.ROOT / "core" / "backend_registry.py").read_text()
 
 
 def test_sad_a_lock_made_for_other_requirements_stops_the_export(tmp_path, monkeypatch):
@@ -614,6 +697,10 @@ def test_happy_ci_log_tail_escapes_and_splits(tmp_path):
     assert len(out) == 3 and all(line.startswith("::error title=a%3A b%2C c (") for line in out)
     assert "line 10:" in out[0] and "line 69:" in out[2] and "line 9:" not in "".join(out)
     assert "100%25 done" in out[0] and "\r" not in "".join(out) and "%0A" in out[0]
+    more = subprocess.run([sys.executable, "-I", str(STANDALONE_REPO / "axross-markdown" / "packaging"
+                                                      / "ci_log_tail.py"), str(log), "t", "45"],
+                          capture_output=True, text=True, check=True).stdout.splitlines()
+    assert len(more) == 3 and "line 25:" in more[0] and "line 24:" not in "".join(more)
     missing = subprocess.run([sys.executable, "-I", str(STANDALONE_REPO / "axross-markdown" /
                                                         "packaging" / "ci_log_tail.py"),
                               str(tmp_path / "none")], capture_output=True, text=True)

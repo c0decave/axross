@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from core import mcp_names as N  # noqa: E402
 from core import mcp_groups as G
 from core import mcp_server as M
 
@@ -71,14 +72,15 @@ def _manifest(groups=G.GROUPS, write=True, scripts=True, exec_=True) -> dict:
 
 def test_happy_manifest_describes_every_served_tool():
     manifest = _manifest()
-    served = [t.name for t in M._build_tools(
+    served = [N.public(t.name) for t in M._build_tools(
         M.default_backend(), allow_write=True, root="/x", allow_scripts=True,
         tool_groups=frozenset(G.GROUPS), allow_exec=True)]
-    assert [t["name"] for t in manifest["tools"]] == served
+    assert [t["name"] for t in manifest["tools"]] == served  # the public names
     for tool in manifest["tools"]:
         # title and annotations: what tools/list sends (MCP 2025-03-26 /
-        # 2025-06-18); output_schema only for the tools that have one.
-        assert set(tool) - {"output_schema"} == {
+        # 2025-06-18); output_schema only for the tools that have one; alias:
+        # the former name tools/call still takes.
+        assert set(tool) - {"output_schema", "alias"} == {
             "name", "title", "group", "mutating", "required_flags", "transports",
             "timeout_class", "timeout_seconds", "description", "annotations", "input_schema",
         }
@@ -93,21 +95,24 @@ def test_happy_manifest_describes_every_served_tool():
 
 
 def test_happy_required_flags_follow_group_and_mutation():
-    tools = {t["name"]: t for t in _manifest()["tools"]}
+    tools = {N.internal(t["name"]): t for t in _manifest()["tools"]}
     assert tools["list_dir"]["required_flags"] == []
     assert tools["write_file"]["required_flags"] == ["--mcp-write", "--mcp-root DIR"]
     assert tools["script_run"]["required_flags"] == ["--mcp-allow-scripts"]
     assert tools["script_run"]["transports"] == ["stdio"]
-    assert tools["pack_formats"]["required_flags"] == ["--mcp-tools packer"]
+    assert tools["pack_formats"]["required_flags"] == ["--mcp-tools archive"]
     assert tools["pack"]["required_flags"] == [
-        "--mcp-tools packer",
+        "--mcp-tools archive",
         "--mcp-write",
         "--mcp-root DIR",
     ]
     assert tools["pack"]["mutating"] is True and tools["pack_formats"]["mutating"] is False
     assert tools["list_backends"]["group"] == "remote"
     assert tools["remote_exec"]["required_flags"] == ["--mcp-tools exec", "--mcp-allow-exec"]
-    assert tools["remote_exec"]["mutating"] is True and tools["exec_backends"]["group"] == "exec"
+    assert tools["remote_exec"]["mutating"] is True and "exec_backends" not in tools
+    # export_metadata is served with its group alone; only its out writes.
+    assert tools["metadata_export"]["required_flags"] == ["--mcp-tools metadata"]
+    assert tools["metadata_export"]["mutating"] is True
     assert tools["read_file"]["transports"] == ["stdio", "http"]
 
 
@@ -141,7 +146,7 @@ def test_happy_cli_prints_the_manifest_without_starting_a_server():
 def test_happy_cli_honours_the_flags():
     proc = _cli("--mcp-tools", "packer")
     assert proc.returncode == 0, proc.stderr
-    names = {t["name"] for t in json.loads(proc.stdout)["tools"]}
+    names = {N.internal(t["name"]) for t in json.loads(proc.stdout)["tools"]}
     assert "pack_formats" in names and "pack" not in names and "write_file" not in names
 
 
@@ -150,7 +155,7 @@ def test_happy_cli_honours_the_env_variables():
     env.update(AXROSS_MCP_TOOLS="crypto", AXROSS_MCP_WRITE="1")
     proc = _cli(env=env)
     assert proc.returncode == 0, proc.stderr
-    names = {t["name"] for t in json.loads(proc.stdout)["tools"]}
+    names = {N.internal(t["name"]) for t in json.loads(proc.stdout)["tools"]}
     assert {"encrypt", "decrypt", "write_file"} <= names
 
 
@@ -194,7 +199,7 @@ def test_edge_script_tools_do_not_advertise_a_backend_argument():
     # The script tools work on the script directory and never read
     # ``backend``; with a registry (the remote group) the generic wiring
     # still offered it - a no-op argument a client would trust.
-    tools = {t["name"]: t for t in _manifest()["tools"]}
+    tools = {N.internal(t["name"]): t for t in _manifest()["tools"]}
     for name in ("script_list", "script_read", "script_write", "script_delete", "script_run"):
         assert "backend" not in tools[name]["input_schema"]["properties"], name
     assert "backend" in tools["read_file"]["input_schema"]["properties"]

@@ -609,6 +609,12 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         self._transfer_manager.job_finished.connect(self._release_idle_connections)
         self._transfer_manager.job_error.connect(self._release_idle_connections)
         self._transfer_manager.walk_finished.connect(self._release_idle_connections)
+        # A running copy or move in the status bar and its destination pane,
+        # also while the Transfers dock is closed (ui.transfer_progress).
+        from ui.transfer_progress import TransferProgress
+
+        self._transfer_progress = TransferProgress(self, self._transfer_manager,
+                                                   self._open_transfer_dock)
 
         # Extensions: only the switched-on ones are loaded, and none in the
         # paranoid security mode (core.extensions).
@@ -8934,8 +8940,12 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         # remote folder) runs off the GUI thread; the jobs are queued here
         # when it is done, in the same order.
         walk_errors: list = []
+        tracker = getattr(self, "_transfer_progress", None)
+        progress = tracker.begin(target, move) if tracker is not None else None
 
         def _walked(jobs) -> None:
+            if progress is not None:
+                tracker.walked(progress, jobs)
             if walk_errors:
                 # The walk stopped part-way: what it built is queued, the
                 # rest of the selection is not copied - said, not only logged.
@@ -8964,7 +8974,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             if kept is not None:
                 self._watch_transfer_summary(jobs, move, kept)
 
-        self._transfer_manager.transfer_files_in_background(
+        walk = self._transfer_manager.transfer_files_in_background(
             source_backend=source.backend,
             dest_backend=target.backend,
             source_paths=selected,
@@ -8975,6 +8985,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             on_done=_walked,
             on_error=walk_errors.append,  # called before on_done
         )
+        if progress is not None:
+            progress.walk = walk
 
         action = "Move" if move else "Copy"
         relay = " (relay via localhost)" if direction == TransferDirection.RELAY else ""
@@ -8986,6 +8998,16 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             target.backend.name,
             relay,
         )
+
+    def _open_transfer_dock(self) -> None:
+        """The status bar's transfer item was clicked: the Transfers dock,
+        in front, at the transfer running now."""
+        dock = getattr(self, "_transfer_dock", None)
+        if dock is None:
+            return
+        dock.show()
+        dock.raise_()
+        dock.show_current()
 
     def _note_transfer_preparing(self) -> None:
         """A conflict check began or ended: the Transfers dock's Cancel All

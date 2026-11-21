@@ -612,6 +612,41 @@ que se reemplazó mientras se copiaba, aunque tenga el mismo tamaño.
   de error, cada una una sola vez.
 - **Cancel All** detiene también una copia o un move cuyo recorrido
   de carpetas sigue en marcha: ninguno de sus ficheros entra en cola.
+- **Mientras se ejecuta.** Una copia de carpetas primero lee las
+  carpetas y las crea en el destino, luego pone en cola cada fichero y
+  después los copia: las carpetas pueden aparecer mucho antes que sus
+  ficheros. La barra de estado lo dice hasta que la copia termina,
+  también con el dock Transfers cerrado: "Preparing: 3,210 files
+  queued…", luego "Copying 1,210 of 10,000 files – 12 %"; un clic en
+  ella abre el dock Transfers. La línea de estado del panel de destino
+  muestra "Copy in progress: 1,210 of 10,000" con una barra fina, y la
+  barra general del dock "12 % – 1,210 of 10,000 files".
+- **Muchos ficheros pequeños.** Hacia y desde SFTP los ficheros pequeños
+  de una carpeta van por lotes (hasta 64 ficheros de 64 KiB como mucho,
+  sus peticiones en vuelo a la vez): cada fichero se sigue escribiendo en
+  su propio fichero temporal oculto, se comprueba su tamaño, se mira el
+  destino justo antes del rename (una respuesta como "no reemplazar" vale
+  también para un fichero que apareció entretanto), se renombra a su
+  sitio y se anota en el diario por separado; si uno falla, falla solo.
+  axross confirma enseguida lo que envía el servidor (TCP_QUICKACK en
+  Linux), así que un servidor que retiene su segunda respuesta hasta esa
+  confirmación (Nagle) no espera 40 ms por ella. Una carpeta de 10 000
+  ficheros de unos pocos bytes se copia en segundos, no en minutos,
+  también de un servidor SFTP a otro. La comprobación de integridad de
+  un lote calcula el hash de todos sus ficheros con un solo `sha256sum` en
+  el servidor (cada nombre entrecomillado, los lotes largos divididos), no
+  con una orden por fichero; un fichero cuya línea en la respuesta no es
+  clara se comprueba por separado.
+- **Enlaces dentro de una carpeta.** Un enlace simbólico dentro de una
+  carpeta copiada se copia como enlace, con el mismo destino: a un
+  fichero, a una carpeta o a nada, dentro de la carpeta copiada o fuera
+  de ella. Aquello a lo que apunta no se lee ni se sigue, y un move
+  mueve el enlace. Donde un lado no admite enlaces simbólicos (S3 y
+  otros almacenes de objetos, FTP, WebDAV, un servidor SFTP que no lee
+  enlaces) el enlace se omite con una nota en el dock Transfers
+  ("skipped: symbolic link not copied …"); la copia sigue. Un enlace que
+  seleccionas solo se copia como antes: un enlace a un fichero como ese
+  fichero; un enlace a una carpeta se rechaza con un motivo.
 - **Moves dentro de un servidor.** Un move cuyo origen y destino están
   en la misma conexión (soltar sobre una carpeta del mismo panel, F6
   entre dos paneles de una conexión, Cut y Paste) renombra cada fichero
@@ -789,12 +824,12 @@ nuevo al frente); la ventana muestra el fichero del índice.
   actualiza sus filas y quita las de ficheros borrados desde entonces — solo
   tras una pasada completa: una cancelada, o una que llegó al límite de
   entradas, no quita nada, y las filas bajo una carpeta que no se pudo listar
-  se quedan. La herramienta MCP `index_build` solo añade; con `prune` además
+  se quedan. La herramienta MCP `build_index` solo añade; con `prune` además
   pregunta al backend por cada path indexado bajo la carpeta y quita las
   filas cuyo fichero ya no está.
 - **Cómo se busca.** Subcadena del nombre (sin distinguir mayúsculas en
   ningún alfabeto: «ärger» encuentra `Ärger.txt`, «strasse» encuentra
-  `Straße.pdf`, también en la herramienta MCP `search`), extensión, rango de
+  `Straße.pdf`, también en la herramienta MCP `search_index`), extensión, rango de
   tamaño, rango de fechas, una conexión. Extensión, tamaño y fecha usan
   índices SQLite; una subcadena del nombre (`LIKE '%…%'`) no puede usar
   ninguno y lee todas las filas. La búsqueda corre en segundo plano y la
@@ -1832,7 +1867,7 @@ incrustado y el glifo de axross como icono de ventana.
 
 El prompt headless de ``confirm()`` solo pregunta cuando stdin es un
 terminal. Sin nadie que responda — cron, una pipe, el proceso hijo del
-Scripts dock, un ``script_run`` de MCP o ``AXROSS_NONINTERACTIVE=1`` —
+Scripts dock, un ``run_script`` de MCP o ``AXROSS_NONINTERACTIVE=1`` —
 lanza ``axross.NonInteractiveError`` en vez de usar el valor por
 defecto; ``assume_yes=True`` responde que sí sin preguntar.
 
@@ -1888,8 +1923,8 @@ axross --mcp-server --mcp-write --mcp-root ~/data    # añade tools de escritura
 axross --mcp-server --mcp-http 127.0.0.1:7331        # HTTP, loopback
 ```
 
-Las herramientas de ficheros de solo lectura (`list_dir`, `stat`,
-`read_file`, `checksum`, `search`, `walk`, `grep`, …), las de escritura
+Las herramientas de ficheros de solo lectura (`list_directory`, `get_path_info`,
+`read_file`, `compute_file_checksum`, `search_index`, `walk_tree`, `search_content`, …), las de escritura
 con `--mcp-write`, los grupos de capacidades de `--mcp-tools`
 (`axross --mcp-list-tools` imprime cada herramienta que sirve un
 conjunto de flags), endpoints `resources/*`, log forwarding por
@@ -2072,7 +2107,7 @@ un `.git/commondir` que el agente cree ahí se aparta al terminar su tarea
 Git de submódulos y worktrees (`.git/modules/<nombre>`,
 `.git/worktrees/<nombre>`) creados durante la tarea. Un repositorio nuevo que
 el agente cree en su carpeta no está cubierto (el límite documentado de un
-worker comprometido). El `chmod` de MCP no pone los bits setuid, setgid ni
+worker comprometido). El `set_permissions` de MCP no pone los bits setuid, setgid ni
 sticky, no da escritura al grupo o a todos y no cambia un archivo con otros
 hard links (su modo vale para todos sus nombres).
 
@@ -2461,7 +2496,7 @@ Dentro de un contenedor elige bubblewrap: podman no puede arrancar
 contenedores propios ahí.
 
 Un cliente MCP puede pasar una tarea al mismo modelo local con
-`--mcp-tools agent` (`agent_run`); ese modelo solo puede leer
+`--mcp-tools agent` (`run_llm_agent`); ese modelo solo puede leer
 ([MCP_es.md](MCP_es.md) §9.9).
 
 ### Hablar con el agente
@@ -2771,8 +2806,9 @@ security mode; *Check Now* sigue funcionando.
 - `~/.config/axross/agent/voice.json` — los ajustes de Voice (`0o600`).
 - `~/.config/axross/audio.json` — los ajustes de Audio: backend,
   dispositivo de salida y de entrada, volúmenes (`0o600`).
-- `~/.config/axross/column_prefs.json` — anchos y columnas ocultas,
-  un solo archivo para todos los panels.
+- `~/.config/axross/column_prefs.json` — orden, anchos y columnas
+  ocultas, un solo archivo para todos los panels; un panel guarda solo lo
+  que cambiaste en él, así que el cambio de otro panel se queda.
 - `~/.config/axross/agent/settings.json` — Agent Settings (modos, accesos,
   perfiles de sandbox, servidores MCP; `0o600`).
 - `~/.config/axross/agent/sessions/` — un fichero JSON por tab de Agent guardado (`0o600`).

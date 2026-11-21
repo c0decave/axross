@@ -49,10 +49,10 @@ def test_happy_encrypt_then_decrypt_round_trip(root, caplog):
     assert oct(os.stat(dec["path"]).st_mode & 0o777) == "0o600"
     lines = T.audit_lines(caplog)
     assert [ln.split()[0:2] for ln in lines] == [
-        ["tool=encrypt", "outcome=attempt"],
-        ["tool=encrypt", "outcome=ok"],
-        ["tool=decrypt", "outcome=attempt"],
-        ["tool=decrypt", "outcome=ok"],
+        ["tool=encrypt_file", "outcome=attempt"],
+        ["tool=encrypt_file", "outcome=ok"],
+        ["tool=decrypt_file", "outcome=attempt"],
+        ["tool=decrypt_file", "outcome=ok"],
     ]
     assert not any(PASS in ln for ln in lines)
 
@@ -82,7 +82,7 @@ def test_sad_wrong_passphrase_writes_nothing_and_leaks_nothing(root, caplog):
     assert WRONG not in err.value.message and PASS not in err.value.message
     assert set(os.listdir(root)) == before
     lines = T.audit_lines(caplog)
-    assert any("tool=decrypt outcome=refused" in ln for ln in lines)
+    assert any("tool=decrypt_file outcome=refused" in ln for ln in lines)
     assert not any(WRONG in ln or PASS in ln for ln in lines)
 
 

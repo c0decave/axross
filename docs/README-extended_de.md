@@ -150,7 +150,7 @@ Weitere Screenshots, jeder mit Erklärung: **[die Slideshow](../slideshow_de.md)
    lässt das LLM eigene Python-Skripte schreiben und mit deinen
    Rechten ausführen**, jeden Lauf in einem Kindprozess mit Timeout —
    nicht auf die Root begrenzt, also wie eine Shell behandeln. `--mcp-tools GRUPPE[,…]` (oder `all`) fügt
-   Capability-Gruppen hinzu: metadata, duplicates, packer, archive,
+   Capability-Gruppen hinzu: metadata, duplicates, archive,
    crypto, index, filetype, transfer, remote (gespeicherte Profile als
    weitere Backends, Credentials nur aus dem Keyring, nie ein Prompt)
    und extensions; ihre mutierenden Tools brauchen zusätzlich
@@ -238,8 +238,8 @@ Weitere Screenshots, jeder mit Erklärung: **[die Slideshow](../slideshow_de.md)
     matcht eine 15-Pattern-Bibliothek und beantwortet „was IST
     das?" — git-Repo, PostgreSQL-Datadir, nginx-Config-Tree,
     k8s-Manifests, Maildir, Web-Log-Dir, Python / Node /
-    Docker-Projekte, … Damit ein LLM-Agent ohne N-tausend-Eintrag-
-    list_dir-Dump planen kann.
+    Docker-Projekte, … Damit ein LLM-Agent ohne eine Ordnerliste mit
+    Tausenden Einträgen planen kann.
 
 16. **Autorisierte Credential-Tests.** `axross.bruteforce()`,
     `spray()`, `enumerate_users()` für Pentest-Engagements mit

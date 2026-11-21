@@ -20,6 +20,7 @@ import threading
 
 import pytest
 
+from core import mcp_names as N  # noqa: E402
 from core import mcp_groups as G
 from core import mcp_http
 from core import mcp_server as M
@@ -95,7 +96,7 @@ def test_happy_a_2024_session_lists_tools_as_before(tmp_path):
 def test_happy_a_new_session_gets_titles_annotations_and_output_schemas(tmp_path):
     tools = _all_tools(tmp_path)
     state, _ = _session(tools, NEW)
-    listing = {t["name"]: t for t in M._handle_request(
+    listing = {N.internal(t["name"]): t for t in M._handle_request(
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, tools, protocol=state
     )["result"]["tools"]}
     assert listing["read_file"]["title"] == "Read file"

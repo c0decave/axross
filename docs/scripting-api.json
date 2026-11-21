@@ -44,7 +44,7 @@
   "rules": [
     {
       "id": "namespace",
-      "text": "A script run by script_run, axross --script or the Scripts dock finds the API bound as axross; import axross gives the same names."
+      "text": "A script run by the MCP tool run_script, axross --script or the Scripts dock finds the API bound as axross; import axross gives the same names."
     },
     {
       "id": "sessions",
@@ -64,7 +64,7 @@
     },
     {
       "id": "no-human",
-      "text": "Under script_run nobody can answer: stdin is empty and AXROSS_NONINTERACTIVE=1 is set. A function with prompts=true raises NonInteractiveError (a PermissionError) instead of asking: confirm() unless assume_yes=True is passed, and a change on a production profile unless the operator started axross with AXROSS_TARPIT_DISABLE=1. is_interactive() tells a script which case it is in. Pass assume_yes=True only for an action the operator asked for."
+      "text": "Under the MCP tool run_script nobody can answer: stdin is empty and AXROSS_NONINTERACTIVE=1 is set. A function with prompts=true raises NonInteractiveError (a PermissionError) instead of asking: confirm() unless assume_yes=True is passed, and a change on a production profile unless the operator started axross with AXROSS_TARPIT_DISABLE=1. is_interactive() tells a script which case it is in. Pass assume_yes=True only for an action the operator asked for."
     },
     {
       "id": "bounded-reads",
@@ -84,7 +84,7 @@
     },
     {
       "id": "output",
-      "text": "print() goes to stdout, which script_run returns with stderr, the exit status and, after an uncaught exception, error_type, error and traceback. Print a result a machine reads as one JSON document; sys.exit(n) sets the exit status."
+      "text": "print() goes to stdout, which the MCP tool run_script returns with stderr, the exit status and, after an uncaught exception, error_type, error and traceback. Print a result a machine reads as one JSON document; sys.exit(n) sets the exit status."
     }
   ],
   "errors": [
@@ -4769,7 +4769,7 @@
       ],
       "returns": "bool",
       "summary": "Show a Yes/No dialog. Returns True on Yes, False otherwise.",
-      "doc": "Show a Yes/No dialog. Returns True on Yes, False otherwise.\n\nHeadless fallback (no Qt event loop): reads a single y/n from\nstdin when stdin is a terminal, so ``--script`` and\nREPL-without-GUI both work. Accepts ``y/yes/j/ja/s/si/sí`` as Yes;\nan empty answer is ``default_yes``.\n\nWhen no human can answer - no Qt window and no terminal (an MCP\n``script_run``, the Scripts dock, cron, a pipe) or\n``AXROSS_NONINTERACTIVE=1`` - it raises :class:`NonInteractiveError`\ninstead of guessing, whatever ``default_yes`` says. Pass\n``assume_yes=True`` to answer yes without asking in that case; a\nhuman who can be asked is still asked.\n\nExample::\n\n    if axross.confirm(\"Delete 47 files? Cannot be undone.\",\n                      title=\"Confirm cleanup\"):\n        for p in doomed:\n            backend.remove(p)",
+      "doc": "Show a Yes/No dialog. Returns True on Yes, False otherwise.\n\nHeadless fallback (no Qt event loop): reads a single y/n from\nstdin when stdin is a terminal, so ``--script`` and\nREPL-without-GUI both work. Accepts ``y/yes/j/ja/s/si/sí`` as Yes;\nan empty answer is ``default_yes``.\n\nWhen no human can answer - no Qt window and no terminal (an MCP\n``run_script`` call, the Scripts dock, cron, a pipe) or\n``AXROSS_NONINTERACTIVE=1`` - it raises :class:`NonInteractiveError`\ninstead of guessing, whatever ``default_yes`` says. Pass\n``assume_yes=True`` to answer yes without asking in that case; a\nhuman who can be asked is still asked.\n\nExample::\n\n    if axross.confirm(\"Delete 47 files? Cannot be undone.\",\n                      title=\"Confirm cleanup\"):\n        for p in doomed:\n            backend.remove(p)",
       "examples": [
         "if axross.confirm(\"Delete 47 files? Cannot be undone.\",\n                  title=\"Confirm cleanup\"):\n    for p in doomed:\n        backend.remove(p)"
       ],
@@ -4820,7 +4820,7 @@
       "parameters": [],
       "returns": "bool",
       "summary": "True when a human can answer :func:`confirm` right now.",
-      "doc": "True when a human can answer :func:`confirm` right now.\n\nFalse under ``AXROSS_NONINTERACTIVE=1`` (set for every MCP\n``script_run``), off the GUI thread of a Qt window, and without a Qt\nwindow when stdin is not a terminal. Scripts that a machine may run\ncan branch on it instead of catching :class:`NonInteractiveError`.",
+      "doc": "True when a human can answer :func:`confirm` right now.\n\nFalse under ``AXROSS_NONINTERACTIVE=1`` (set for every MCP\n``run_script`` call), off the GUI thread of a Qt window, and without a Qt\nwindow when stdin is not a terminal. Scripts that a machine may run\ncan branch on it instead of catching :class:`NonInteractiveError`.",
       "examples": [],
       "raises": [],
       "mutates": false,
@@ -4877,7 +4877,7 @@
       ],
       "returns": "dict",
       "summary": "Describe the scripting API as JSON-serialisable data, for a machine.",
-      "doc": "Describe the scripting API as JSON-serialisable data, for a machine.\n\nBuilt from the live objects with :mod:`inspect` and :mod:`ast`, so it\nis never out of date. ``functions`` has one entry per public function:\n``name``, ``group``, ``signature``, ``parameters`` (``name``, ``kind``,\n``annotation``, ``required``, ``default`` or ``default_repr``),\n``returns``, ``summary`` (the first docstring paragraph), ``doc`` (the\nwhole docstring), ``examples`` (its literal code blocks), ``raises``\n(what the axross layer raises itself), ``mutates`` (can change files,\nremote state or settings) and ``prompts`` (can wait for a human, or\nraises :class:`NonInteractiveError` without one). ``classes`` lists the\npublic classes, ``types`` the other classes the API takes or returns\n(``FileItem`` and the result types) with fields, properties and\nmethods; ``backend_protocol`` lists what every session from\n:func:`open`, :func:`open_url`, :func:`localfs` or :func:`ramfs` has,\nwith ``mutates``, ``optional`` and ``fallback``; ``groups`` orders the\nnames by topic; ``rules`` and ``errors`` are the conventions and the\nexceptions a script meets; ``legend`` explains every field.\n\n``names`` narrows ``functions``, ``classes`` and ``types`` to those\nnames plus the types they and the session methods use; ``names=[]``\ngives the index alone (groups, rules, errors, session methods). An\nunknown name raises :class:`ValueError`.\n\nThe MCP tool ``script_api_schema`` returns the same data, and\n``docs/scripting-api.json`` is a copy of it. For prose, use\n:func:`docs`::\n\n    import json\n    print(json.dumps(axross.api_schema([\"read_text\"]), indent=2))",
+      "doc": "Describe the scripting API as JSON-serialisable data, for a machine.\n\nBuilt from the live objects with :mod:`inspect` and :mod:`ast`, so it\nis never out of date. ``functions`` has one entry per public function:\n``name``, ``group``, ``signature``, ``parameters`` (``name``, ``kind``,\n``annotation``, ``required``, ``default`` or ``default_repr``),\n``returns``, ``summary`` (the first docstring paragraph), ``doc`` (the\nwhole docstring), ``examples`` (its literal code blocks), ``raises``\n(what the axross layer raises itself), ``mutates`` (can change files,\nremote state or settings) and ``prompts`` (can wait for a human, or\nraises :class:`NonInteractiveError` without one). ``classes`` lists the\npublic classes, ``types`` the other classes the API takes or returns\n(``FileItem`` and the result types) with fields, properties and\nmethods; ``backend_protocol`` lists what every session from\n:func:`open`, :func:`open_url`, :func:`localfs` or :func:`ramfs` has,\nwith ``mutates``, ``optional`` and ``fallback``; ``groups`` orders the\nnames by topic; ``rules`` and ``errors`` are the conventions and the\nexceptions a script meets; ``legend`` explains every field.\n\n``names`` narrows ``functions``, ``classes`` and ``types`` to those\nnames plus the types they and the session methods use; ``names=[]``\ngives the index alone (groups, rules, errors, session methods). An\nunknown name raises :class:`ValueError`.\n\nThe MCP tool ``get_script_api`` returns the same data, and\n``docs/scripting-api.json`` is a copy of it. For prose, use\n:func:`docs`::\n\n    import json\n    print(json.dumps(axross.api_schema([\"read_text\"]), indent=2))",
       "examples": [
         "import json\nprint(json.dumps(axross.api_schema([\"read_text\"]), indent=2))"
       ],

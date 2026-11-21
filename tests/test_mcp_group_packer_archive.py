@@ -64,8 +64,8 @@ def test_happy_pack_zip_and_never_overwrite(tree, caplog):
         assert set(zf.namelist()) == {"docs/", "docs/a.txt", "docs/b.txt", "single.txt"}
         assert zf.read("docs/a.txt") == b"alpha\n"
     lines = T.audit_lines(caplog)
-    assert any("tool=pack outcome=attempt" in ln for ln in lines)
-    assert any("tool=pack outcome=ok" in ln and "bundle.zip" in ln for ln in lines)
+    assert any("tool=create_archive outcome=attempt" in ln for ln in lines)
+    assert any("tool=create_archive outcome=ok" in ln and "bundle.zip" in ln for ln in lines)
 
 
 def test_happy_pack_tar_gz(tree):
@@ -223,7 +223,7 @@ def test_happy_extract_into_a_fresh_folder_each_time(tree, caplog):
     assert first == {"path": str(tree / "x"), "files": 2}
     assert second["path"] == str(tree / "x-1")
     assert (tree / "x" / "dir" / "two.txt").read_text() == "22"
-    assert any("tool=archive_extract outcome=ok" in ln for ln in T.audit_lines(caplog))
+    assert any("tool=extract_archive outcome=ok" in ln for ln in T.audit_lines(caplog))
 
 
 def test_happy_extract_into_dest_dir(tree):
@@ -244,7 +244,7 @@ def test_sad_zip_slip_is_refused_and_leaves_nothing(tree, caplog):
         T.call(_ar(tree), "archive_extract", {"path": str(tree / "slip.zip")})
     assert not (tree / "slip").exists()
     assert not (tree.parent.parent / "evil.txt").exists()
-    assert any("tool=archive_extract outcome=refused" in ln for ln in T.audit_lines(caplog))
+    assert any("tool=extract_archive outcome=refused" in ln for ln in T.audit_lines(caplog))
 
 
 def test_sad_extract_dest_outside_root(tree):

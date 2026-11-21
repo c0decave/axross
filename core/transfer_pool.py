@@ -22,6 +22,7 @@ the order and the work are the same as with the single worker before.
 
 from __future__ import annotations
 
+import heapq
 import itertools
 import logging
 import os
@@ -248,6 +249,64 @@ class JobScheduler:
             for lane, job in lanes:
                 self._lanes.setdefault(lane, deque()).append((next(self._seq), job))
             self._cond.notify_all()
+
+    def upcoming(self, limit: int, where: Callable[[TransferJob], bool], *,
+                 contiguous: bool = False) -> list[TransferJob]:
+        """Up to *limit* waiting jobs for which *where* is true, in queue
+        order - not taken, only looked at (a worker reads their small
+        sources ahead). Each lane is looked into for at most 4 x *limit*
+        jobs, so a long queue costs no more than a short one; *contiguous*:
+        only the jobs at the head of the queue, up to the first one *where*
+        refuses (they may then run before nothing that was queued earlier)."""
+        found: list[tuple[int, TransferJob]] = []
+        with self._cond:
+            if contiguous:
+                heads = heapq.nsmallest(
+                    limit, (pair for queue in self._lanes.values()
+                            for pair in itertools.islice(queue, limit)),
+                    key=lambda pair: pair[0])
+                for seq, job in heads:
+                    if not where(job):
+                        break
+                    found.append((seq, job))
+                return [job for _seq, job in found]
+            for queue in self._lanes.values():
+                taken = 0
+                for looked, (seq, job) in enumerate(queue):
+                    if looked >= 4 * limit or taken >= limit:
+                        break
+                    if where(job):
+                        found.append((seq, job))
+                        taken += 1
+        found.sort(key=lambda pair: pair[0])
+        return [job for _seq, job in found[:limit]]
+
+    def take_these(self, jobs: list[TransferJob]) -> list[TransferJob]:
+        """Take the waiting *jobs* for the calling worker, as :meth:`take`
+        would one by one, as far as their sessions and paths are free (in
+        order; the first that is not stops it). Each taken job counts as
+        running until :meth:`done` - beyond the limit, as one batch of the
+        worker that took them. Returns those taken."""
+        taken: list[TransferJob] = []
+        with self._cond:
+            for job in jobs:
+                lane = self._lane_of(job)
+                queue = self._lanes.get(lane)
+                position = next((i for i, (_seq, queued) in enumerate(queue or ())
+                                 if queued is job), None)
+                if position is None or job.cancel_event.is_set():
+                    break
+                if not self._sessions_free(lane, job):
+                    break
+                claim = _claim_for(job, lane)
+                if not self._paths_free(claim):
+                    break
+                del queue[position]
+                if not queue:
+                    del self._lanes[lane]
+                self._hold(job, claim)
+                taken.append(job)
+        return taken
 
     def pending(self) -> int:
         with self._cond:

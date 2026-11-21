@@ -87,7 +87,7 @@ jobs:
         replies = {m.get("id"): m for m in map(json.loads, open("replies.jsonl"))}
         assert replies[1]["result"]["protocolVersion"] == "2025-11-25", replies
         names = {t["name"] for t in replies[2]["result"]["tools"]}
-        assert {"read_file", "metadata_read", "remote_profiles"} <= names, names
+        assert {"read_file", "read_metadata", "list_remote_profiles"} <= names, names
         print(len(names), "tools")
         EOF
           docker run --rm --platform "linux/$arch" --entrypoint python "$tag" -c \

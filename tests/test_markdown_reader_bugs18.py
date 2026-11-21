@@ -181,23 +181,20 @@ def test_sad_a_scroll_bar_move_after_ctrl_end_stays_where_it_was_put(full):
 # -- 3, 4. Export and Print: the whole page, a part a turn, Cancel ---------------------------------
 
 class _Turns:
-    """The GUI thread's own time of each event-loop turn while it runs."""
+    """The GUI thread's own time of each event-loop turn while it runs. And the window's longest
+    wall-clock gap between two beats (tests/markdown_heartbeat.py): over its budget worst() fails."""
 
     def __init__(self):
-        from PyQt6.QtCore import QTimer
+        from tests.markdown_heartbeat import Heartbeat
 
-        self.turns, self._last = [], time.thread_time()
-        self.timer = QTimer()
-        self.timer.timeout.connect(self._beat)
-        self.timer.start(5)
-
-    def _beat(self):
-        now = time.thread_time()
-        self.turns.append(now - self._last)
-        self._last = now
+        self.beat = Heartbeat(5)
+        self.turns = self.beat.turns
 
     def worst(self) -> float:
-        self.timer.stop()
+        from tests.markdown_heartbeat import assert_responsive
+
+        _turn, gap = self.beat.stop()
+        assert_responsive(gap, "the heartbeat's longest gap")
         return round(max(self.turns, default=0.0), 3)
 
 

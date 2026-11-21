@@ -37,19 +37,19 @@ prompt-injected docs/web can steer them.
 
 **Trust boundary.** Host machine ↔ LLM agent. The CLI serves one
 `LocalFS` backend, plus — with `--mcp-tools remote` — saved connection
-profiles the client opens with `remote_open` (backend
+profiles the client opens with `open_remote_profile` (backend
 `profile:<name>`). The MCP root is `--mcp-root` when given and
 defaults to `backend.home()` otherwise; write tools, script execution
 and each capability group are opt-in (`--mcp-write`,
 `--mcp-allow-scripts`, `--mcp-tools GROUP`), and a group's mutating
 tools additionally need `--mcp-write`. The root confines the file
 tools and every local path of the group tools — the script tools are
-not root-confined at all (`script_run` executes arbitrary Python as
+not root-confined at all (`run_script` executes arbitrary Python as
 the server's user), and paths on an opened remote profile are not
 either (the profile's server account is the boundary there).
 
 **Defenses in place.** Per-tool argument schemas; path
-normalisation against MCP root (except the `symlink` target, which is
+normalisation against MCP root (except the `create_symlink` target, which is
 deliberately not root-checked; reads resolve links through
 `_enforce_root` before following them); per-scope task registry with
 `MAX_TASKS_PER_SCOPE` (retention cap) and `MAX_RUNNING_TASKS_PER_SCOPE`
@@ -59,7 +59,7 @@ deliberately not root-checked; reads resolve links through
 default OFF and, when enabled, require an explicit `--mcp-root` (the
 default root is `$HOME`); script tools require explicit
 `--mcp-allow-scripts` AND a non-paranoid `security_mode`, and are
-refused together with `--mcp-http`; `script_run` runs the script in a
+refused together with `--mcp-http`; `run_script` runs the script in a
 child process (`core.script_runner.run_bounded`: stdin on /dev/null,
 its own process group killed when the run ends, a wall-clock
 `timeout_s`, stdout/stderr capped, `AXROSS_NONINTERACTIVE=1` so
@@ -71,7 +71,7 @@ schemas refuse unknown arguments; pack / extract / decrypt / encrypt
 / metadata export and cleaned copies only create fresh names under
 the root (never overwrite); dedupe re-checks every copy and trashes
 into `<root>/.axross-trash`; the tools that read files through a
-folder or a name list (`pack`, `duplicates_scan`, `transfer_copy`, the
+folder or a name list (`create_archive`, `scan_duplicates`, `copy_path_to_backend`, the
 metadata and file-type walks) leave every secret file
 (`core.protected_places`: SSH and GnuPG private keys, axross' tokens)
 out and list it in `skipped`, as `read_file` refuses it; the downloader
@@ -79,8 +79,8 @@ check of MCP server commands (`core/mcp_runner.py`) fails closed: a
 word naming a runner anywhere in the command, nix / pixi / pkgx / dnx,
 or an interpreter with code on its line (`python -c`, `node -e`,
 `perl -e`, …) makes the command run only in a container; passphrases and the 7z password are
-never in results, errors or audit lines; `remote_profiles` uses a
-field allow-list (no secrets); `remote_open` takes passwords only
+never in results, errors or audit lines; `list_remote_profiles` uses a
+field allow-list (no secrets); `open_remote_profile` takes passwords only
 from the keyring of a profile that stores them, never prompts
 (refuses unknown SSH host keys and browser sign-ins — Dropbox's
 sign-in reads stdin, which on stdio is the protocol stream), refuses
@@ -95,7 +95,7 @@ windows-style drive letters under Linux MCP root); cancellation
 races during long-running tasks; a synchronous `tools/call` on stdio
 cannot be cancelled by `notifications/cancelled` (single-threaded
 loop) — only its timeout stops it, and a hard-stopped worker keeps
-running in the background; verify that `script_run`
+running in the background; verify that `run_script`
 truly cannot escape via `os.system` / `ctypes` even when allowed
 (it is not sandboxed: with `--mcp-allow-scripts` the client has the
 server user's full rights); a process a script starts with `setsid`
@@ -104,8 +104,8 @@ disk use of a run. Group-specific: hostile archives and
 media files reach the existing parsers (`core.archive`,
 `core.metadata_formats`, ffprobe) under client control; a saved
 profile is a capability grant the client can exercise with every
-tool (`--mcp-root` does not apply to it); `duplicates_scan` and
-`index_build` write axross' own index databases, so an LLM can grow
+tool (`--mcp-root` does not apply to it); `scan_duplicates` and
+`build_index` write axross' own index databases, so an LLM can grow
 them (walks are capped at `MAX_WALK_ENTRIES`); the TOCTOU window
 between the root check and the write also exists for the
 fresh-name placement of group outputs on remote backends

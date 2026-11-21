@@ -209,6 +209,8 @@ class EditorTab(QWidget):
         typed at line 170, the preview showed the top."""
         if not getattr(self, "_typed", False) or not self.previewing:
             return
+        if self.preview.timer.isActive():  # (a page of the text before the typing, just shown - a long table's
+            return  # first page: followed then, the typed one's never was - the next page follows the typing)
         self._typed = False
         self.preview.show_source_line(self.preview.markdown, self.editor.textCursor().blockNumber())
 

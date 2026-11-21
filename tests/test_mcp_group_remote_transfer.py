@@ -214,7 +214,7 @@ def test_sad_production_profile_is_read_only_over_mcp(root, saved, caplog):
     with pytest.raises(T.RpcError) as err:
         T.call(tools, "mkdir", {"backend": opened["backend"], "path": "/x"})
     assert "production" in err.value.message
-    assert any("tool=mkdir outcome=refused" in ln for ln in T.audit_lines(caplog))
+    assert any("tool=create_directory outcome=refused" in ln for ln in T.audit_lines(caplog))
 
 
 def test_edge_backends_are_scoped_per_http_session(root, saved):
@@ -234,7 +234,7 @@ def test_edge_open_backend_cap(root, saved, monkeypatch):
     T.call(tools, "remote_open", {"profile": "ram1"})
     with pytest.raises(T.RpcError) as err:
         T.call(tools, "remote_open", {"profile": "ram2"})
-    assert "remote_close" in err.value.message
+    assert "close_remote_profile" in err.value.message
 
 
 def test_sad_archive_tools_refuse_a_remote_backend(root, saved):
@@ -336,7 +336,7 @@ def test_happy_copy_a_file_to_a_remote_and_back(root, saved, caplog):
     assert back["copied"] == 1
     assert (root / "b.txt").read_bytes() == b"alpha bytes\n"
     lines = T.audit_lines(caplog)
-    assert any("tool=transfer_copy outcome=ok" in ln and "copied=1" in ln for ln in lines)
+    assert any("tool=copy_path_to_backend outcome=ok" in ln and "copied=1" in ln for ln in lines)
 
 
 def test_happy_copy_a_tree_and_skip_existing(root, saved):

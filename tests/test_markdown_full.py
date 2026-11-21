@@ -166,6 +166,7 @@ def test_happy_the_view_renders_the_full_set_and_footnote_links_scroll(folder):
     view.show()
     assert view.full
     view.render(FULL)
+    assert _wait(app, lambda: view._readable)  # (a text with code: made on a worker)
     assert view.headings() == ["Head one", "Head one"]
     assert {"head-one", "head-one-1"} <= set(view.anchors) and "fn1" in view.names
     text = view.browser.toPlainText()

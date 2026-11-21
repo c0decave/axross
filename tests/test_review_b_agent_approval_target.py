@@ -45,7 +45,7 @@ def _agent(root, confirm):
 
 def _write(path, content="# notes\n"):
     return {"function": {"name": "write_file", "arguments": json.dumps(
-        {"path": str(path), "content": content, "encoding": "text"})}}
+        {"path": str(path), "content": content})}}
 
 
 def test_sad_the_question_names_the_symlinks_target(root):

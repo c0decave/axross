@@ -304,7 +304,7 @@ def test_sad_stalled_remote_calls_refuse_only_their_backend(monkeypatch):
         stuck = _call("list_dir", {"backend": "profile:nas", "path": "/"})
         assert stuck["error"]["code"] == M.ERR_RATE_LIMITED
         assert "profile:nas" in stuck["error"]["message"]
-        assert "remote_close" in stuck["error"]["message"]
+        assert "close_remote_profile" in stuck["error"]["message"]
         moved = _call("transfer_copy", {"src_backend": "profile:nas", "src": "/a", "dst": "/b"})
         assert moved["error"]["code"] == M.ERR_RATE_LIMITED
         # Other work goes on: a local tool, the way out, another profile.

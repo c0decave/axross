@@ -255,16 +255,10 @@ def test_guard_nested_formulas_never_hold_up_the_window(full):
     view.full = view.full and full
     view.resize(900, 700)
     view.show()
-    beats, last = [], [time.thread_time()]  # (the GUI thread's own time a turn: not the loaded machine's)
+    from tests.markdown_heartbeat import Heartbeat, assert_responsive
 
-    def beat():
-        now = time.thread_time()
-        beats.append(now - last[0])
-        last[0] = now
 
-    timer = QTimer()
-    timer.timeout.connect(beat)
-    timer.start(10)
+    heartbeat = Heartbeat(10)  # (the GUI thread's own time a turn - not the loaded machine's - and the gaps)
     began = time.monotonic()
     view.render(text)
     view.load_rest()
@@ -273,7 +267,9 @@ def test_guard_nested_formulas_never_hold_up_the_window(full):
     for share in (0.25, 0.5, 0.75, 1.0):  # (laid out by Qt as it is shown: scrolled through)
         bar.setValue(int(bar.maximum() * share))
         pump(0.2)
-    timer.stop()
+    _turn, gap = heartbeat.stop()
+    beats = heartbeat.turns
+    assert_responsive(gap, "the heartbeat's longest gap")
     took = time.monotonic() - began
     assert max(beats) < 0.3, (round(took, 2), sorted(round(beat, 3) for beat in beats)[-5:])  # (deep.md: 18 s)
     assert "Formula 14" in view.browser.toPlainText()
@@ -383,26 +379,21 @@ def test_sad_thousands_of_spans_in_a_line_never_hold_up_the_window(full, text):
     view.full = view.full and full
     view.resize(900, 700)
     view.show()
-    beats, last = [], [time.thread_time()]  # (the GUI thread's own time a turn: not the loaded machine's)
+    from tests.markdown_heartbeat import Heartbeat, assert_responsive
 
-    def beat():
-        now = time.thread_time()
-        beats.append(now - last[0])
-        last[0] = now
 
     import gc
 
     gc.collect()  # (the tests before it left objects a collection would take its time for, then)
-    last[0] = time.thread_time()  # (the first turn starts here: the collection is not the view's)
-    timer = QTimer()
-    timer.timeout.connect(beat)
-    timer.start(10)
+    heartbeat = Heartbeat(10)  # (the GUI thread's own time a turn - not the loaded machine's - and the gaps)
     view.render(text)
     assert until(lambda: view._readable, 60)
     view.load_rest()  # (all of it: past EAGER_PARTS the rest waits for the reader)
     assert until(lambda: not view.more(), 60)
     pump(0.5)
-    timer.stop()
+    _turn, gap = heartbeat.stop()
+    beats = heartbeat.turns
+    assert_responsive(gap, "the heartbeat's longest gap")
     # (2.2 to 3.5 s before: Qt lays a line of spans out in time growing with their square - the bound
     # leaves room for a busy machine)
     assert max(beats) < 0.5, sorted(round(beat, 3) for beat in beats)[-4:]

@@ -93,3 +93,29 @@ def test_sad_opening_a_markdown_file_does_not_hold_the_window_with_slow_fonts(
     finally:
         dialog.close()
         dialog.deleteLater()
+
+
+class _DefaultFontHasAll:
+    """The machine's default font (DejaVu Sans, say) draws every emoji; no
+    colour emoji font is installed."""
+
+    def __init__(self, font):
+        self.has = font.family() == QtGui.QFont().family()
+
+    def inFontUcs4(self, _sign):
+        return self.has
+
+
+def test_edge_the_default_font_that_draws_them_is_the_emoji_family(monkeypatch):
+    """Before (the first hotfix): only the emoji still missing were counted per
+    family, so the default font - asked first - was never the page's emoji
+    family, and a machine without a colour emoji font lost its fallback."""
+    monkeypatch.setattr(MV, "_EMOJI_DRAWN", [])
+    monkeypatch.setattr(MV, "_EMOJI_FAMILY", [])
+    monkeypatch.setattr(QtGui.QFontDatabase, "families",
+                        staticmethod(lambda *a: ["Zed Mono", "Other Sans"]))
+    monkeypatch.setattr(QtGui, "QFontMetrics", _DefaultFontHasAll)
+    MV.emoji_fonts()
+    assert MV._EMOJI_DRAWN == [None]
+    assert MV._EMOJI_FAMILY == [QtGui.QFontInfo(QtGui.QFont()).family()]
+    assert MV._EMOJI_FAMILY[0]

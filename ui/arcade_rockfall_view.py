@@ -100,6 +100,7 @@ class RockfallView(AC.ArcadeView):
         self._title_landed: set = set()
         self._title_shake = 0.0
         self._hud_cache = AC.HudCache()
+        self._vignette = AC.Layer()            # window-sized: its own slot, not the shared sprite cache
         self._music()
         self.start_loop()
 
@@ -330,7 +331,7 @@ class RockfallView(AC.ArcadeView):
         self.particles.advance(dt)
         self.particles.draw(p, lambda x, y: QPointF(ox + x * s, oy + y * s), s, dpr)
         # the cave darkens towards the window's edges; the headlamp warms the digger's spot
-        p.drawPixmap(0, 0, AC.sprite(("rock-vignette",), self.width(), self.height(), _draw_vignette, dpr))
+        p.drawPixmap(0, 0, self._vignette.get("rock-vignette", self.width(), self.height(), dpr, _draw_vignette))
         AC.blit_centred(p, AC.glow("#fde68a", s * 2.2, dpr, 40), ox + (px + 0.5) * s, oy + (py + 0.4) * s)
         self._hud(p, pal, now)
 

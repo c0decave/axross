@@ -55,21 +55,20 @@ def _view(text: str, full: bool, size=(900, 700)):
 class Turns:
     """The GUI thread's own time of each event-loop turn (a 5 ms timer's
     beats) while it runs - what holds the window up, whatever else the
-    machine does."""
+    machine does. And the window's longest wall-clock gap between two beats (tests/markdown_heartbeat.py),
+    over its budget worst() fails."""
 
     def __init__(self):
-        self.turns, self._last = [], time.thread_time()
-        self.timer = QTimer()
-        self.timer.timeout.connect(self._beat)
-        self.timer.start(5)
+        from tests.markdown_heartbeat import Heartbeat
 
-    def _beat(self):
-        now = time.thread_time()
-        self.turns.append(now - self._last)
-        self._last = now
+        self.beat = Heartbeat(5)
+        self.turns = self.beat.turns
 
     def worst(self) -> float:
-        self.timer.stop()
+        from tests.markdown_heartbeat import assert_responsive
+
+        _turn, gap = self.beat.stop()
+        assert_responsive(gap, "the heartbeat's longest gap")
         return round(max(self.turns, default=0.0), 3)
 
 

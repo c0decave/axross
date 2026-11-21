@@ -187,6 +187,10 @@ def _idle(w) -> bool:
         return False
     if w.win._transfer_manager._walks:  # jobs not registered yet
         return False
+    if w.win._transfer_manager.unfinished():
+        # A worker sets a job's status before its signal reaches the GUI
+        # thread: closing the window then asked "Transfers running".
+        return False
     return all(j.status not in (TransferStatus.PENDING, TransferStatus.ACTIVE)
                for j in w.win._transfer_manager.all_jobs())
 

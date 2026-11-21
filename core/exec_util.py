@@ -94,6 +94,76 @@ def digest_from_sum_output(output: str, algorithm: str) -> str:
     return ""
 
 
+#: What a backslash-marked ``sha256sum`` line writes for a character of a
+#: name (GNU coreutils: backslash and newline, since 9.0 carriage return).
+_SUM_ESCAPES = {ord("\\"): b"\\", ord("n"): b"\n", ord("r"): b"\r"}
+
+
+def _unescape_sum_name(name: bytes) -> bytes | None:
+    """A name of a backslash-marked sum line, unescaped; None for an escape
+    GNU does not write (the line is not trusted then)."""
+    out = bytearray()
+    i = 0
+    while i < len(name):
+        byte = name[i]
+        if byte != 0x5C:  # "\"
+            out.append(byte)
+            i += 1
+            continue
+        if i + 1 >= len(name) or name[i + 1] not in _SUM_ESCAPES:
+            return None
+        out += _SUM_ESCAPES[name[i + 1]]
+        i += 2
+    return bytes(out)
+
+
+def digests_from_sum_output(output: bytes, names: list[bytes], algorithm: str) -> dict[bytes, str]:
+    """The lowercase hex digest of each of *names* (the operands as the
+    command got them, bytes) in the output of one ``sha256sum -- n1 n2 ...``.
+
+    A line is ``[\\]<hex><space><space or *><name>``; a leading backslash
+    marks a name with ``\\\\``, ``\\n`` (and ``\\r``) escaped (GNU coreutils), other
+    bytes of a name - blanks, non-UTF-8 - come as they are. Only a line
+    whose digest has the algorithm's length and whose name is one of
+    *names* counts, and a name claimed by two lines by none of them: a
+    sum tool that does not escape (busybox) splits a name with a newline
+    over two lines, and its first part may be another operand's name. A
+    name without a usable line is not in the result - the caller checks
+    that file another way. A file the tool could not read has no line
+    (its error is on stderr)."""
+    expected = _DIGEST_HEX_LEN.get(algorithm)
+    wanted = set(names)
+    found: dict[bytes, str] = {}
+    claimed: set[bytes] = set()
+    for line in (output or b"").split(b"\n"):
+        escaped = line.startswith(b"\\")
+        if escaped:
+            line = line[1:]
+        if not expected or len(line) < expected + 2:
+            continue
+        digest, sep, name = line[:expected], line[expected:expected + 2], line[expected + 2:]
+        if sep not in (b"  ", b" *"):
+            continue
+        try:
+            text = digest.decode("ascii").lower()
+        except UnicodeDecodeError:
+            continue
+        if any(c not in "0123456789abcdef" for c in text):
+            continue
+        if escaped:
+            name = _unescape_sum_name(name)
+            if name is None:
+                continue
+        if name not in wanted:
+            continue
+        if name in claimed:
+            found.pop(name, None)  # two lines for one name: neither is trusted
+            continue
+        claimed.add(name)
+        found[name] = text
+    return found
+
+
 def shell_path(path: str) -> str:
     """*path* quoted as an operand of a remote shell command.
 

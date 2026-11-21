@@ -285,7 +285,7 @@ def test_e2e_free_space_prompt_reaches_the_model_with_the_duplicate_tools(env, s
     user_text = " ".join(m.get("content") or "" for m in request["messages"] if m["role"] == "user")
     assert "duplicate" in user_text.lower() and str(env.root) in user_text
     tools = {t["function"]["name"] for t in request.get("tools", [])}
-    assert any(name.startswith("duplicates_") for name in tools), sorted(tools)
+    assert any(name.endswith("_duplicates") or "duplicate_" in name for name in tools), sorted(tools)
 
 
 def test_e2e_a_user_prompt_made_in_the_dialog_runs_from_the_slash(env, store):

@@ -579,6 +579,37 @@ list, and a walk that stops part-way says how much was queued.
   the queue, each failed transfer once.
 - **Cancel All** also stops a copy or move whose folder walk is
   still running: none of its files is queued.
+- **While it runs.** A folder copy first lists the folders and makes them
+  at the destination, then queues every file, then copies them: the
+  folders can appear long before their files. The status bar says so
+  until the copy has ended, also with the Transfers dock closed -
+  "Preparing: 3,210 files queued…", then "Copying 1,210 of 10,000 files
+  – 12 %"; a click on it opens the Transfers dock. The destination pane's
+  status line shows "Copy in progress: 1,210 of 10,000" with a thin bar,
+  and the dock's overall bar "12 % – 1,210 of 10,000 files".
+- **Many small files.** To and from SFTP the small files of a folder go
+  in batches (up to 64 files of at most 64 KiB, their requests on the
+  wire together): every file is still written to its own hidden temp
+  file, its size checked, the destination looked at right before the
+  rename (an answer such as "do not replace" holds for a file that
+  appeared meanwhile), renamed into place and journaled on its own; one
+  that fails, fails alone. axross acknowledges what the server sends at
+  once (TCP_QUICKACK on Linux), so a server that holds its second answer
+  for an acknowledgement (Nagle) does not wait 40 ms for it. A folder of
+  10,000 files of a few bytes copies in seconds, not minutes - also from
+  one SFTP server to another. The integrity check of a batch hashes all
+  its files with one `sha256sum` on the server (every name quoted, long
+  batches split), not one command per file; a file whose line in the
+  answer is not clear is hashed on its own.
+- **Links inside a folder.** A symbolic link inside a copied folder is
+  copied as the link, with the same target - to a file, a folder or
+  nothing, inside the copied folder or outside it: what it points to is
+  neither read nor followed, and a move moves the link. Where one side
+  cannot hold symbolic links (S3 and other object stores, FTP, WebDAV,
+  an SFTP server that does not read links) the link is skipped with a
+  note in the Transfers dock ("skipped: symbolic link not copied …"); the
+  copy goes on. A link you select on its own is copied as before: a link
+  to a file as that file, a link to a folder is refused with a reason.
 - **Moves within one server.** A move whose source and destination are
   on the same connection (a drop onto a folder in the same pane, F6
   between two panes of one connection, Cut and Paste) renames each file
@@ -755,12 +786,12 @@ index file.
   indexes. Indexing the same folder again updates its rows in place and
   drops the rows of files deleted since — only after a complete walk: a
   cancelled run, or one that hit the entry limit, removes nothing, and rows
-  under a folder whose listing failed stay. The MCP tool `index_build` only
+  under a folder whose listing failed stay. The MCP tool `build_index` only
   adds; with `prune` it also asks the backend for every indexed path under
   the folder and drops the rows whose file is gone.
 - **How it is searched.** Name substring (case-insensitive for every
   script: "ärger" finds `Ärger.txt`, "strasse" finds `Straße.pdf` - also in
-  the MCP `search` tool), extension, size range, date range, one
+  the MCP `search_index` tool), extension, size range, date range, one
   connection. Extension, size and date use SQLite indexes; a name
   substring (`LIKE '%…%'`) cannot use one and reads every row. The search
   runs in the background and the window lists the first 5000 matches (it
@@ -881,9 +912,15 @@ archives, is axross' own Find Files (`core.file_search`,
   invisible characters in names (zero width space, line separators, tag
   characters) are shown as �, right-to-left marks stay; hovering a name
   shows it in full; dragging from
-  empty space draws a selection box (Ctrl adds); the divider right of
-  *Name* moves space between *Name* and the next column, double-click
-  on a divider fits the column; the back / forward mouse buttons walk
+  empty space draws a selection box (Ctrl adds); dragging a column
+  header moves the column, and every pane opened later shows the new
+  order; the divider right of *Name* moves space between *Name* and the
+  next column, down to the width *Name* needs before other columns step
+  aside; a double-click on a divider fits the column to its entries (the
+  rows in view and the longest ones of the folder, fast in any folder;
+  on *Name*'s divider it only widens *Name*, taking the room from the
+  next column); the right-click menu on the header lists the columns in
+  their order to show or hide them; the back / forward mouse buttons walk
   the folder history and a wheel click opens the row under the pointer.
 
 ## Editors and viewers
@@ -1737,7 +1774,7 @@ icon; the bundled axross glyph is the dialog's window-icon.
 
 The headless ``confirm()`` prompt only asks when stdin is a terminal.
 Without a human — cron, a pipe, the Scripts dock's child process, an
-MCP ``script_run``, or ``AXROSS_NONINTERACTIVE=1`` — it raises
+MCP ``run_script`` call, or ``AXROSS_NONINTERACTIVE=1`` — it raises
 ``axross.NonInteractiveError`` instead of answering its default; pass
 ``assume_yes=True`` to answer yes without asking there.
 
@@ -1862,8 +1899,8 @@ axross --mcp-server --mcp-write --mcp-root ~/data    # add write tools (capped t
 axross --mcp-server --mcp-http 127.0.0.1:7331        # HTTP, loopback
 ```
 
-The read-only file tools (`list_dir`, `stat`, `read_file`, `checksum`,
-`search`, `walk`, `grep`, …), the write tools when `--mcp-write` is
+The read-only file tools (`list_directory`, `get_path_info`, `read_file`, `compute_file_checksum`,
+`search_index`, `walk_tree`, `search_content`, …), the write tools when `--mcp-write` is
 set, the capability groups of `--mcp-tools` (`axross --mcp-list-tools`
 prints every tool a set of flags serves), `resources/*` endpoints,
 `notifications/message` log forwarding, per-tool timeouts,
@@ -2054,7 +2091,7 @@ like a `.git/config.worktree` and the `commondir` and `config.worktree` of
 the submodules' and worktrees' Git folders (`.git/modules/<name>`,
 `.git/worktrees/<name>`) made during the task. A new repository the agent
 makes in its folder is not covered (the documented limit of a compromised
-worker). MCP `chmod` sets no setuid, setgid or sticky bit,
+worker). MCP `set_permissions` sets no setuid, setgid or sticky bit,
 makes nothing group- or world-writable and does not change a file that has
 other hard links (its mode belongs to every name).
 
@@ -2481,7 +2518,7 @@ Inside a container use bubblewrap - podman cannot start containers of
 its own there.
 
 An MCP client can hand a task to the same local model with
-`--mcp-tools agent` (`agent_run`); that model can only read
+`--mcp-tools agent` (`run_llm_agent`); that model can only read
 ([MCP.md](MCP.md) §9.9).
 
 ### Talking with the agent
@@ -2785,8 +2822,9 @@ environment or in the paranoid security mode; *Check Now* still works.
   of the last session on start* (Settings → General) is off. Its `window`
   object also holds the look (theme, compact, monochrome icons, font size,
   hidden files) and the language.
-- `~/.config/axross/column_prefs.json` — column widths and hidden
-  columns, one file shared by all panes.
+- `~/.config/axross/column_prefs.json` — column order, widths and
+  hidden columns, one file shared by all panes; a pane writes only what
+  you changed in it, so another pane's change stays.
 - `~/.config/axross/settings.json` — small preferences: open size limit,
   pane activation, metadata write mode and confirmation, remember the sudo
   password, hosts searched at once, the security mode, the update settings

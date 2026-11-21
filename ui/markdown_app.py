@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import sys
 
+from core.markdown_cli import folder_page as _folder_page  # (a folder given: its README, as a link opens it)
 from ui.standalone_app import run, smoke_ms_from_env
 
 NAME = "axross-markdown"
@@ -47,7 +48,7 @@ class MarkdownApp:
 
         opened = []
         for path in paths or [""]:
-            full = os.path.abspath(os.path.expanduser(path)) if path else ""
+            full = _folder_page(os.path.abspath(os.path.expanduser(path))) if path else ""
             viewer = open_markdown_viewer(self.backend, full, parent, opener=self.ask_open,
                                           editor=self.edit, view_menu=self.view_menu)
             self.viewers.append(viewer)
@@ -238,7 +239,7 @@ def main(argv: list[str] | None = None) -> int:
         # The terminal view (core.markdown_cli, axross-mdcat): no Qt is started.
         from core.markdown_cli import main as terminal
 
-        return terminal([a for a in rest if a not in TERMINAL])
+        return terminal([a for a in rest if a not in TERMINAL], prog=NAME)
     if rest[:1] == ["--script"]:  # (a build's check: ui.standalone_app.bundle_check)
         return run(NAME, TITLE, "markdown", build, argv, smoke_ms=smoke_ms_from_env())
     try:
@@ -282,7 +283,7 @@ def missing_library(error: ImportError) -> str | None:
     without it) - None for any other ImportError."""
     import re
 
-    found = re.search(r"([\w.+-]+\.so(?:\.\d+)*): cannot open shared object file", str(error))
+    found = re.search(r"(?<![\w.+-])([\w.+-]+\.so(?:\.\d+)*): cannot open shared object file", str(error))
     if found is None:
         return None
     library = found.group(1)

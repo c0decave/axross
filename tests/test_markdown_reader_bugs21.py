@@ -146,7 +146,7 @@ def _blocks(document):
 
 # -- M2. the editor's preview follows the typing in a long text and in one without headings --------
 
-def _typed_into_preview(text: str, line: int):
+def _typed_into_preview(text: str, line: int, back: int = 0):
     from PyQt6.QtGui import QTextCursor
 
     from ui.editor_window import EditorWindow
@@ -165,6 +165,7 @@ def _typed_into_preview(text: str, line: int):
         cursor.movePosition(QTextCursor.MoveOperation.Start)
         cursor.movePosition(QTextCursor.MoveOperation.Down, n=line)
         cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock)
+        cursor.movePosition(QTextCursor.MoveOperation.Left, n=back)  # (in a table's row: before its last "|")
         tab.editor.setTextCursor(cursor)
         tab.editor.insertPlainText(" TYPEDHERE")
         assert until(lambda: "TYPEDHERE" in preview.markdown and preview._readable, 120)
@@ -262,7 +263,7 @@ def test_sad_a_heading_or_cell_past_the_cap_is_cut_and_said():
     rows = shown.split("\n")
     assert len(rows[0]) <= MV.LINE_CAP + 10 and rows[0].endswith("…")
     assert len(rows[4]) <= MV.LINE_CAP + 20 and "…" in rows[4]
-    assert "c" * 5000 in shown  # (code as it is)
+    assert "c" * 5000 in shown.replace("\n", "")  # (code all of it - in lines of LINE_CAP: bugs22's F4)
     assert str(MV.LINE_CAP) in why
     quoted = MV.renderable("> | a |\n> |---|\n> | " + "y" * 5000 + " |\n")[0]
     assert "y" * 5000 not in quoted and "…" in quoted
@@ -388,6 +389,14 @@ def test_sad_an_image_box_is_painted_again_in_a_new_theme(tmp_path):
     from ui import markdown_view as MV
 
     view = MV.MarkdownView(MV.ImageSource(LocalFS(), str(tmp_path / "a.md")))
+    # (a light theme of its own to begin with: in one process with the whole suite the application's palette
+    # was what a test of the main window's themes left - dark, the box dark from the start: 44 > 150 failed)
+    palette = QPalette(APP.palette())
+    for role in (QPalette.ColorRole.Base, QPalette.ColorRole.Window):
+        palette.setColor(role, QColor("#ffffff"))
+    for role in (QPalette.ColorRole.Text, QPalette.ColorRole.WindowText):
+        palette.setColor(role, QColor("#1f2328"))
+    view.setPalette(palette)
     view.resize(900, 600)
     view.show()
     view.render("![local](missing.png) ![remote](https://img.example/x.png)\n")
@@ -395,7 +404,7 @@ def test_sad_an_image_box_is_painted_again_in_a_new_theme(tmp_path):
                  and view._readable, 30)
     pump(1.0)
     light = view.images["missing.png"].pixelColor(2, 6).lightness()
-    palette = QPalette(APP.palette())
+    palette = QPalette(palette)
     for role in (QPalette.ColorRole.Base, QPalette.ColorRole.Window):
         palette.setColor(role, QColor("#111111"))
     for role in (QPalette.ColorRole.Text, QPalette.ColorRole.WindowText):
@@ -517,7 +526,7 @@ def test_sad_clamping_images_looks_at_a_bounded_number_a_turn():
     assert until(lambda: view._unclamped >= document.characterCount() - 1, 30)
 
 
-_EMOJI_TURNS = r"""import os, sys, time
+_EMOJI_TURNS = r"""import cProfile, io, os, pstats, sys, time
 sys.path.insert(0, sys.argv[1])
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 from PyQt6.QtWidgets import QApplication
@@ -526,11 +535,30 @@ from tests.test_markdown_reader_bugs11 import pump, until
 from tests.test_markdown_reader_bugs16 import Turns
 from ui import markdown_html as H
 from ui import markdown_view as MV
-for full in (True, False):
+from PyQt6.QtWidgets import QTextBrowser
+# (what Qt itself takes to paint a view full of them - with Ubuntu's Noto Color Emoji, a bitmap font, FreeType
+# decodes each glyph's bitmap at each paint: 0.055 s, whatever the page does; measured first - its fonts
+# found and fontconfig's cache of them made before the pages' turns are counted: review 23's N14, a turn of
+# 0.95 s once in six runs)
+plain = QTextBrowser()
+plain.resize(1000, 800)
+plain.show()
+plain.setPlainText("\U0001F389 " * 3000)
+pump(0.3)
+began = time.thread_time()
+plain.viewport().repaint()
+painted = round(time.thread_time() - began, 3)
+print("qt paint", painted)
+plain.close()
+
+
+def measure(full, profile=None):
     view = MV.MarkdownView(None)
     view.full = view.full and full
     view.resize(1000, 800)
     view.show()
+    if profile is not None:
+        profile.enable()
     turns = Turns()
     view.render("\U0001F389 " * 50_000 + "\n")
     assert until(lambda: view._readable and view.markdown, 120)
@@ -540,8 +568,27 @@ for full in (True, False):
     view.go_end()
     pump(0.5)
     until(laid, 60)
-    print("parser", full, "weight", H.picture_weight(), "worst", turns.worst(), "family", MV._EMOJI_FAMILY[0])
+    worst = turns.worst()
+    if profile is not None:
+        profile.disable()
     view.close()
+    view.deleteLater()
+    pump(0.1)
+    return worst
+
+
+for full in (True, False):
+    worst = measure(full)
+    if worst >= 0.1 + painted:  # (once more, as within_turn does: a runner busy with another job for a while)
+        again = measure(full)
+        if again >= 0.1 + painted:  # (and a third time under the profiler: a failure says what took the time)
+            profile = cProfile.Profile()
+            measure(full, profile)
+            out = io.StringIO()
+            pstats.Stats(profile, stream=out).sort_stats("tottime").print_stats(15)
+            print("profile of the turns", full, out.getvalue().replace("\n", "\n# "))
+        worst = min(worst, again)
+    print("parser", full, "weight", H.picture_weight(), "worst", worst, "family", MV._EMOJI_FAMILY[0])
 """
 
 
@@ -580,7 +627,10 @@ def test_sad_a_paragraph_of_emoji_holds_no_turn_whatever_the_fonts(tmp_path, fon
     (markdown-it) and 0.68 s (Qt's own parser) - with its colour emoji font among hundreds of others, an
     emoji cost ten times what it costs here. An emoji weighs PICTURE_WEIGHT (128) letters in a paragraph's
     pieces, whatever the fonts: with DejaVu alone, the machine's own fonts, and those with a colour emoji
-    font, the window's own CPU in a turn stays under 0.1 s, both parsers."""
+    font, the window's own CPU in a turn stays under 0.1 s, both parsers - on top of what Qt takes to paint
+    a view full of emoji once (v0.16.7's CI: Ubuntu's Noto Color Emoji is a bitmap font, each glyph's bitmap
+    decoded at each layout and each paint, 67 µs an emoji - a view of them 0.055 s, whatever the page does;
+    a scroll bar hidden and shown again at each part laid out made Qt lay all of the page out anew: 0.19 s)."""
     import subprocess
 
     from ui import markdown_html as H
@@ -598,5 +648,7 @@ def test_sad_a_paragraph_of_emoji_holds_no_turn_whatever_the_fonts(tmp_path, fon
     assert result.returncode == 0, result.stderr[-3000:]
     rows = [line.split() for line in result.stdout.splitlines() if line.startswith("parser")]
     assert len(rows) == 2, result.stdout
-    for row in rows:
-        assert int(row[3]) == H.PICTURE_WEIGHT == 128 and float(row[5]) < 0.1, (fonts, row)
+    painted = float(next(line.split()[2] for line in result.stdout.splitlines() if line.startswith("qt paint")))
+    for row in rows:  # (the page's own time on top of Qt's paint of a view of emoji; the profile when over it)
+        assert int(row[3]) == H.PICTURE_WEIGHT == 128 and float(row[5]) < 0.1 + painted, \
+            (fonts, row, painted, result.stdout[-6000:])

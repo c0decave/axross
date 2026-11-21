@@ -25,6 +25,9 @@ that answers. A device id is the same under both backends (PipeWire's
 node.name is the name PulseAudio clients see), so a chosen device survives
 a change of backend. Read by the Media Player, the media preview and the
 Agent dock's voice.
+
+axross-amp shares the file: a save keeps the keys it does not know (such
+as axross-amp's ``amp_output``) as the file holds them.
 """
 
 from __future__ import annotations
@@ -142,11 +145,27 @@ class AudioSettings:
         return cls.from_dict(raw)
 
     def save(self, path: Path | None = None) -> None:
+        """Write the settings over the file's: the keys axross does not know
+        (axross-amp shares the file and keeps its own there, its output
+        device ``amp_output`` among them) are kept as the file has them at
+        this save; a missing, broken or non-object file keeps nothing."""
         path = Path(path or settings_file())
         path.parent.mkdir(parents=True, exist_ok=True)
         from core.json_store import write_private
 
-        write_private(path, json.dumps(self.to_dict(), indent=2))
+        own = self.to_dict()
+        kept = {key: value for key, value in _stored(path).items() if key not in own}
+        write_private(path, json.dumps({**own, **kept}, indent=2))
+
+
+def _stored(path: Path) -> dict:
+    """The object *path* holds, or {} (missing, unreadable, broken, not an
+    object) - nothing to keep, and no reason for the save to fail."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
 
 
 def apply_saved_backend(environ: dict | None = None) -> str | None:
