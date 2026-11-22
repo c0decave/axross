@@ -21,6 +21,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 not installed")
 
 from PyQt6.QtWidgets import QApplication  # noqa: E402
+from tests import markdown_timing as TB  # noqa: E402
+
+#: The longest a helper waits for a page to be ready (it goes on as soon as it is).
+READY_SECONDS = 120
 
 APP = QApplication.instance() or QApplication([])
 
@@ -89,13 +93,13 @@ def test_sad_a_drop_at_95_percent_shows_its_place_at_once(full):
     began, cpu = time.monotonic(), time.thread_time()
     target = int(bar.maximum() * 0.95)
     bar.setValue(target)
-    while time.monotonic() - began < 30 and not shown(view).strip():
+    while time.monotonic() - began < TB.READY_SECONDS and not shown(view).strip():
         pump(0.02)
     took, spent = time.monotonic() - began, time.thread_time() - cpu
     assert shown(view).strip(), "nothing shown where the thumb was dropped"
     # (all of the page up to there laid out first: 6 s; under a loaded machine's
     # time a generous bound, the window's own CPU the tight one)
-    assert took < 3.0 and spent < 0.6, (took, spent)
+    TB.budget(took < 3.0 and spent < 0.6, (took, spent))
     # (where it was dropped, not back at the top - the page's height made exact as it comes)
     assert abs(bar.value() - target) < view.browser.viewport().height(), (bar.value(), target)
 
@@ -117,7 +121,7 @@ def test_sad_find_of_the_last_word_of_a_long_page_is_fast(full, tmp_path):
     dialog.resize(1000, 800)
     dialog.show()
     try:
-        end = time.monotonic() + 60
+        end = time.monotonic() + TB.READY_SECONDS
         while time.monotonic() < end and not dialog.view._readable:
             pump(0.01)
         pump(1.0)
@@ -126,11 +130,11 @@ def test_sad_find_of_the_last_word_of_a_long_page_is_fast(full, tmp_path):
         dialog.find_field.setText("zebraquux")
         QTest.keyClick(dialog.find_field, Qt.Key.Key_Return)
         browser = dialog.view.browser
-        while time.monotonic() - began < 30 and browser.textCursor().selectedText().lower() != "zebraquux":
+        while time.monotonic() - began < TB.READY_SECONDS and browser.textCursor().selectedText().lower() != "zebraquux":
             pump(0.02)
         took, spent = time.monotonic() - began, time.thread_time() - cpu
         assert browser.textCursor().selectedText().lower() == "zebraquux"
-        assert took < 4.0 and spent < 1.0, (took, spent)  # (all of it laid out first: 10 s)
+        TB.budget(took < 4.0 and spent < 1.0, (took, spent))  # (all of it laid out first: 10 s)
     finally:
         dialog.close()
         dialog.deleteLater()
@@ -150,7 +154,7 @@ def jumped(full: bool, monkeypatch):
     view = view_of(long_text(800), full)
     bar = view.browser.verticalScrollBar()
     bar.setValue(int(bar.maximum() * 0.8))
-    end = time.monotonic() + 30
+    end = time.monotonic() + READY_SECONDS  # (a wait for the page, not a budget: a slow runner's page was measured half made)
     while time.monotonic() < end and not shown(view).strip():
         pump(0.02)
     pump(0.3)
@@ -190,7 +194,7 @@ def test_sad_after_a_jump_an_anchor_in_a_gap_lands_on_its_heading(full, monkeypa
     assert found
     name = f"section-{found.group(1)}"
     assert view.go_to_anchor(name)
-    end = time.monotonic() + 20
+    end = time.monotonic() + TB.READY_SECONDS
     while time.monotonic() < end and top_text(view) != f"Section {found.group(1)}":
         pump(0.02)
     assert top_text(view) == f"Section {found.group(1)}"
@@ -210,7 +214,7 @@ def test_sad_after_a_jump_find_finds_a_word_in_a_gap(full, monkeypatch, tmp_path
     found = view.browser.find(word)
     if not found:
         assert view.seek(word, False, lambda: None)
-        end = time.monotonic() + 20
+        end = time.monotonic() + TB.READY_SECONDS
         while time.monotonic() < end and view.browser.document().find(word).isNull():
             pump(0.02)
     hit = view.browser.document().find(word)
@@ -223,7 +227,7 @@ def test_sad_a_page_shown_again_after_a_jump_is_shown_at_the_same_place(full, mo
     before = top_text(view)
     assert before.strip()
     view.render(view.markdown)  # (a reload)
-    end = time.monotonic() + 30
+    end = time.monotonic() + TB.READY_SECONDS
     while time.monotonic() < end and top_text(view) != before:
         pump(0.02)
     assert top_text(view) == before

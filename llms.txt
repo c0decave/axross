@@ -1,6 +1,6 @@
 # axross
 
-> A multi-protocol file manager (SFTP, SMB, S3, WebDAV, FTP, cloud drives, databases, devices and more) with a headless MCP server and a Python scripting API (`axross.*`), so an LLM agent can browse, transfer, inspect and change files, and run commands on remote hosts, within limits the operator sets with start flags.
+> A multi-protocol file manager (SFTP, SMB, S3, WebDAV, FTP, cloud drives, databases, devices and more) with a headless MCP server and a Python scripting API (`axross.*`), so an LLM agent can browse, transfer, inspect and change files, run commands on remote hosts and work with Android devices, within limits the operator sets with start flags.
 
 ## Start here
 
@@ -10,6 +10,6 @@
 
 ## Reference
 
-- [MCP server](docs/MCP.md): transports, security hardening, error codes, capability groups.
+- [MCP server](docs/MCP.md): transports, security hardening, error codes, capability groups, Android devices on an ADB profile (the `adb` group, §9.10).
 - [Scripting](docs/SCRIPTING.md): the REPL, the Scripts dock and scripts a machine runs.
 - [Scripting reference](docs/SCRIPTING_REFERENCE.md): every `axross.*` function with signature and docstring.

@@ -200,28 +200,31 @@ def _unmark(document: QTextDocument, since: int = 0) -> None:
     (from position *since* on: a part of a page as it comes in): the mark,
     and the backslash after it where it stayed (code). Only characters go;
     the HTML question was settled by the parser."""
-    # The marks are found in the document's raw text (a position there is
-    # a position in the document) and taken out from the last one back, so
-    # the places before stay where they are: QTextDocument.find() from
-    # each mark again took 2.4 s for 20,000 "<" (quadratic).
-    raw = document.toRawText()
-    marks = [m.start() for m in re.finditer(_MARK, raw)]
+    # The marks are found in the blocks' texts from *since* on (the raw text of all of the page, read for each
+    # part, was 0.013 s of each part's turn of a big table) and taken out from the last one back, so the
+    # places before stay where they are: QTextDocument.find() from each mark again took 2.4 s for 20,000 "<"
+    # (quadratic).
+    marks = []  # (the mark's position in the document, whether "\\<" follows it)
+    block = document.findBlock(since)
+    while block.isValid():
+        text = block.text()
+        if _MARK in text:
+            # (a position in the document counts UTF-16 units, a Python index characters: each character beyond
+            # the BMP (an emoji) before a mark moves it one further - the wrong characters went, after an emoji)
+            wide = [m.start() for m in _WIDE.finditer(text)] if not text.isascii() else []
+            before, base = 0, block.position()
+            for found in re.finditer(_MARK, text):
+                start = found.start()
+                while before < len(wide) and wide[before] < start:
+                    before += 1
+                if base + start + before >= since:
+                    marks.append((base + start + before, text[start + 1:start + 3] == "\\<"))
+        block = block.next()
     if not marks:
         return
-    # A position in the document counts UTF-16 units, a Python index
-    # characters: each character beyond the BMP (an emoji) before a mark
-    # moves it one further (the wrong characters went, after an emoji).
-    wide = [m.start() for m in _WIDE.finditer(raw)]
     cursor = QTextCursor(document)
     cursor.beginEditBlock()
-    before = len(wide)
-    for start in reversed(marks):
-        while before and wide[before - 1] > start:
-            before -= 1
-        added = raw[start + 1:start + 3] == "\\<"
-        position = start + before
-        if position < since:
-            break  # (an earlier part's: unmarked with it)
+    for position, added in reversed(marks):
         cursor.setPosition(position)
         cursor.setPosition(position + (2 if added else 1), QTextCursor.MoveMode.KeepAnchor)
         cursor.removeSelectedText()

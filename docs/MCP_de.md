@@ -44,8 +44,8 @@ axross --mcp-server
 # Per Env-Var (gleiches Verhalten):
 AXROSS_MCP=1 axross
 
-# Die neun Schreib-Tools (write_file, create_directory, delete_path,
-# move_path, copy_file, copy_tree, create_symlink, create_hardlink,
+# Die neun Schreib-Tools (write_file, restore_file_version, create_directory,
+# delete_path, move_path, copy_file, copy_tree, create_link,
 # set_permissions). Path-Traversal gekappt an einer
 # gewählten Wurzel. AXROSS_MCP_WRITE=1 ist das Env-Var-Gegenstück:
 axross --mcp-server --mcp-write --mcp-root ~/data
@@ -55,7 +55,7 @@ axross --mcp-server --mcp-write --mcp-root ~/data
 axross --mcp-server --mcp-allow-scripts
 
 # Capability-Gruppen (§9); AXROSS_MCP_TOOLS=metadata,archive ist das
-# Env-Var-Gegenstück, 'all' schaltet jede Gruppe ein:
+# Env-Var-Gegenstück, 'all' schaltet jede Gruppe außer adb ein ('all,adb': jede):
 axross --mcp-server --mcp-tools metadata,filetype
 axross --mcp-server --mcp-write --mcp-root ~/data --mcp-tools all
 
@@ -64,7 +64,7 @@ axross --mcp-server --mcp-write --mcp-root ~/data --mcp-tools all
 axross --mcp-server --mcp-tools remote,exec --mcp-allow-exec
 
 # Das Tool-Manifest (JSON) zu einem Satz Flags ausgeben, nichts starten:
-axross --mcp-list-tools --mcp-tools all --mcp-write
+axross --mcp-list-tools --mcp-tools all,adb --mcp-write
 ```
 
 `--mcp-write` ohne `--mcp-root` wird verweigert (Exit 2): die
@@ -185,9 +185,9 @@ siehe §9.
 | `read_file(path, max_bytes=, encoding=, offset=)` | Base64-kodierter Inhalt; standardmäßig auf 4 MiB gekappt. `encoding="text"` liefert `text` (UTF-8, `replaced=true`, wenn nicht dekodierbare Bytes ersetzt wurden) — für Modelle, die kein Base64 dekodieren können. `offset` beginnt bei diesem Byte; folgt noch mehr (`truncated=true`), sagt `next_offset`, wo es weitergeht (eine Textseite endet nie mitten in einem Zeichen). Das Agent-Dock bemisst jeden Lesevorgang nach seinem Limit für Tool-Ergebnisse. |
 | `compute_file_checksum(path, algorithm=)`  | `sha256` (Default), `sha1`, `md5` oder `sha512`. Nutzt den nativen Hash des Backends nur, wenn er vom angefragten Algorithmus ist, sonst Streaming durch hashlib (sendet Progress). |
 | `search_index(pattern, ext, min_size, max_size, max_results)` | Offline-Metadaten-Index, auf die aktive Backend-ID und die MCP-Root beschränkt; höchstens `max_results` Treffer (Standard 1000, höchstens 10 000), ein Abbruch beendet die Suche. |
-| `walk_tree(path, max_depth, max_entries)`      | Begrenzte rekursive Listung; sendet `notifications/progress`. Ordner, die sich nicht listen ließen, stehen in `unreadable`; `complete` ist dann false. |
+| `walk_tree(path, max_depth, max_entries, offset)`      | Begrenzte rekursive Listung, die Einträge jedes Ordners nach Namen; sendet `notifications/progress`. Über `max_entries` hinaus trägt das Ergebnis `next_offset`: als `offset` übergeben ergibt es die nächste Seite (jede Seite läuft wieder ab `path`). Ordner, die sich nicht listen ließen, stehen in `unreadable`; `complete` ist dann false. |
 | `compute_tree_checksums(path, algorithm, max_files, max_depth, max_file_bytes)` | Hasht jede Datei unter einem Pfad (Dateien über 1 GiB per Default übersprungen); ein Progress-Frame pro gehashter Datei. Ein nicht listbarer Ordner ist ein `error`-Eintrag mit `folder: true`; `complete` sagt, ob jede Datei gehasht wurde. |
-| `search_content(pattern, path, max_depth, max_matches)` | Regex-Suche in Datei-Inhalten. Dateien >4 MiB übersprungen, max. 500 Treffer; sendet Progress. Nicht lesbare Ordner und Dateien stehen in `unreadable`; kein Treffer bei `complete: false` ist keine Antwort. |
+| `search_content(pattern, path, max_depth, max_matches, offset)` | Regex-Suche in Datei-Inhalten. Dateien >4 MiB übersprungen, max. 500 Treffer je Call – `next_offset` blättert weiter; sendet Progress. Nicht lesbare Ordner und Dateien stehen in `unreadable`; kein Treffer bei `complete: false` ist keine Antwort. |
 | `list_file_versions(path)` | Metadaten pro Version — wo das Backend es unterstützt.              |
 | `read_file_version(path, version_id, max_bytes=)` | Base64-Inhalt einer bestimmten Version.         |
 | `render_preview(path, edge=256)` | Thumbnail eines Bildes — als MCP **image content** mit korrektem mimeType. |
@@ -196,19 +196,19 @@ siehe §9.
 
 | Name                              | Beschreibung                                                               |
 |-----------------------------------|----------------------------------------------------------------------------|
-| `write_file(path, content \| content_b64)` | Upload: `content` als UTF-8-Text oder `content_b64` als Base64-Bytes, genau eins davon. |
+| `write_file(path, content \| content_b64, write_mode=, offset=)` | Upload: `content` als UTF-8-Text oder `content_b64` als Base64-Bytes, genau eins davon. `write_mode`: `replace` (Default, die ganze Datei), `create` (nur eine neue Datei; ein vergebener Name scheitert mit `File exists`), `append` (ans Ende einer vorhandenen Datei), `at_offset` (ab `offset` überschreiben, höchstens bis zur Dateigröße). `append` und `at_offset` schreiben die Datei über eine Temp-Datei neu, also auch atomar; die vorhandene Datei darf höchstens 64 MiB groß sein. |
+| `restore_file_version(path, version_id)` | Eine ältere Version (`list_file_versions`) wieder zum aktuellen Inhalt machen: über eine Temp-Datei gestreamt, wo das Backend umbenennt. Auf einem versionierenden Backend ist die Wiederherstellung selbst eine neue Version. Die lokale Platte hält keine Versionen: dort scheitert es. |
 | `create_directory(path)`                     | Verzeichnis anlegen.                                                       |
 | `delete_path(path, recursive=False)`   | Löschen.                                                                   |
 | `move_path(src, dst)`                | Umbenennen / Verschieben.                                                  |
 | `copy_file(src, dst)`                  | Server-seitige Kopie wo unterstützt; Stream-Fallback sonst.                |
 | `copy_tree(src, dst, max_files, max_depth, max_file_bytes, overwrite)` | Baum-Kopie (Dateien über 10 GiB per Default übersprungen); ein Progress-Frame pro kopierter Datei. |
-| `create_symlink(target, link_path)`      | `link_path` muss unter der Root liegen; `target` wird bewusst **nicht** gegen die Root geprüft (darf ins Leere oder nach außen zeigen — spätere Tools lösen Links über `_enforce_root` auf, bevor sie ihnen folgen). Kein Capability-Flag wird geprüft; ein Backend ohne Symlinks lässt den Call scheitern. |
-| `create_hardlink(target, link_path)`     | Beide Enden müssen unter der Root liegen. Kein Capability-Flag wird geprüft; ein Backend ohne Hardlinks lässt den Call scheitern. |
+| `create_link(target, link_path, kind=)` | `kind: "symbolic"` (Default): `link_path` muss unter der Root liegen und lokal auch das, wohin `target` führt (es darf ins Leere zeigen); SFTP und NFS speichern `target` wie angegeben. `kind: "hard"`: beide Enden unter der Root, eine geheime Datei abgelehnt. Ein Backend ohne solche Links lässt den Call mit einer klaren Meldung scheitern. Die früheren `create_symlink` und `create_hardlink` rufen es mit ihrem `kind` auf. |
 | `set_permissions(path, mode)`               | POSIX-Mode-Bits. Akzeptiert int oder Oktal-String.                         |
 
 Jeder Schreib-Tool-Aufruf läuft zuerst durch `_enforce_root` — eine
 Payload wie `/etc/passwd` wird abgewiesen, bevor irgendein IO das
-Backend erreicht (einzige Ausnahme: das `create_symlink`-Target, siehe oben).
+Backend erreicht (das `target` eines symbolischen Links wird dort geprüft, wohin es führt, siehe oben).
 Jeder Call schreibt Audit-Einträge auf den Logger
 `core.mcp_server.audit`, mit Tool, Ergebnis, Pfad und Größe —
 niemals mit den Payload-Bytes.
@@ -381,8 +381,8 @@ Jedes Tool hat einen Wall-Clock-Deckel:
 | `quick`     | 15 s    | `get_path_info`, `read_file`, `list_directory`, `search_index`, `list_file_versions`, `read_file_version` und jedes Tool ohne eigenen Eintrag — auch die Script-Tools außer `run_script` |
 | `walk_tree`      | 60 s    | `walk_tree`, `search_content`                                                             |
 | `render_preview`   | 30 s    | `render_preview`                                                                  |
-| `write`     | 30 s    | `write_file`, `create_directory`, `delete_path`, `move_path`, `copy_file`, `create_symlink`, `create_hardlink`, `set_permissions` |
-| `stream`    | 300 s   | `compute_file_checksum`, `compute_tree_checksums`, `copy_tree`                              |
+| `write`     | 30 s    | `write_file`, `create_directory`, `delete_path`, `move_path`, `copy_file`, `create_link`, `set_permissions`, `restore_from_trash` |
+| `stream`    | 300 s   | `compute_file_checksum`, `compute_tree_checksums`, `copy_tree`, `restore_file_version`      |
 | `long`      | 1800 s  | Ganzbaum-Jobs der Gruppen (§9): `scan_duplicates`, `trash_duplicates`, `build_index`, `create_archive`, `extract_archive`, `copy_path_to_backend`, `move_file_to_backend`, `strip_metadata` |
 | `script`    | 610 s   | `run_script`. Es stoppt sein Kind schon bei seinem eigenen `timeout` (Default 60 s, höchstens 600 s); die Klasse rechnet Kill-Grace und Output-Drain dazu, die Deadline sichert also nur ab |
 
@@ -584,7 +584,7 @@ nichts begrenzt — siehe §2.
 `..`/`.`-Kollaps, dann `realpath` um Symlinks aufzulösen und
 erneut gegen die Root zu prüfen. Ohne den zweiten Pass könnte ein
 Symlink unter der Root (extern oder vom LLM selbst über das
-`create_symlink`-Write-Tool angelegt) nach `/` zeigen und
+`create_link`-Write-Tool angelegt) nach `/` zeigen und
 `write_file("/root/escape/etc/cron.d/evil")` durchlassen. Jetzt
 `PermissionError`, beantwortet als Tool-Ergebnis mit `isError` und
 `_meta.type = "PermissionError"` und einem Text, der die Root nennt (§8).
@@ -713,7 +713,7 @@ Inhalt heraus, egal welcher Root (`core.protected_places.read_refusal`):
 
 Verweigert: `read_file`, `compute_file_checksum`, `render_preview`, `read_file_version`,
 `resources/read`; in `search_content` und `compute_tree_checksums` gilt so eine Datei
-als unlesbar; `copy_file`, `copy_tree`, `move_path` und `create_hardlink` nehmen sie
+als unlesbar; `copy_file`, `copy_tree`, `move_path` und `create_link` mit `kind: "hard"` nehmen sie
 (oder einen Ordner, der eine enthält) nicht als Quelle; die
 Capability-Gruppen (§9) sehen sie als außerhalb des Roots. Ein Symlink
 auf ein Geheimnis wird aufgelöst und verweigert. Namen bleiben
@@ -801,9 +801,16 @@ Grund sieht. Falsche Argumente bleiben -32602, ein unbekanntes Tool -32601.
 
 Ohne `--mcp-tools` bietet der Server genau die Tools aus §2.
 `--mcp-tools GRUPPE[,GRUPPE...]` (wiederholbar; `AXROSS_MCP_TOOLS` wird
-dazu vereinigt) fügt Gruppen hinzu; `all` fügt jede Gruppe hinzu. Eine
+dazu vereinigt) fügt Gruppen hinzu; `all` fügt jede allgemeine Gruppe
+hinzu – jede außer `adb`, einer Gruppe für eine Art Gerät, die es nur
+beim Namen gibt: `--mcp-tools all,adb` ist jede Gruppe. Eine
 unbekannte Gruppe beendet den Start mit Exit-Code 2 und einer
-stderr-Zeile mit den gültigen Gruppen. Das Flag heißt `--mcp-tools`,
+stderr-Zeile mit den gültigen Gruppen.
+
+**Kompatibilität (0.15.184):** bis 0.15.183 hielt `all` jede Gruppe;
+seit die Gruppe `adb` (20 Tools) da ist, lässt `all` sie weg, damit ein
+Dateimanager-Client 54 statt 74 Tools bekommt. Willst du die
+Android-Tools, nenne sie: `--mcp-tools all,adb` oder `remote,adb`. Das Flag heißt `--mcp-tools`,
 nicht `--backend`: "Backend" ist in axross schon ein Protokoll-Backend,
 und Remote-Backends sind selbst eine der Gruppen.
 
@@ -826,7 +833,11 @@ axross --mcp-server --mcp-write --mcp-root ~/data --mcp-tools remote,transfer
 # Befehle auf den geöffneten Profilen (SSH, Telnet, rsh, ADB, WinRM, Cisco)
 axross --mcp-server --mcp-tools remote,exec --mcp-allow-exec
 
-# Alles, über Loopback-HTTP
+# Ein Android-Telefon als ADB-Profil: Identität, Apps, SMS, Log;
+# Änderungen (Installieren, Starten, Stoppen, Rechte, Neustart) brauchen --mcp-write
+axross --mcp-server --mcp-write --mcp-root ~/apks --mcp-tools remote,adb
+
+# Jede allgemeine Gruppe (alle außer adb), über Loopback-HTTP; all,adb für jede
 axross --mcp-server --mcp-http 127.0.0.1:7331 --mcp-write --mcp-root ~/data --mcp-tools all
 # ... oder mit Environment-Variablen
 AXROSS_MCP=1 AXROSS_MCP_WRITE=1 AXROSS_MCP_TOOLS=all axross --mcp-root ~/data
@@ -834,7 +845,7 @@ AXROSS_MCP=1 AXROSS_MCP_WRITE=1 AXROSS_MCP_TOOLS=all axross --mcp-root ~/data
 
 ### 9.2 Gruppen und Tools
 
-Seit 0.15.183 heißen die Tools Verb, dann Ressource (`list_directory`, `get_path_info`, `search_content` …) – `tools/call` nimmt die früheren Namen (list_dir, stat, grep, …) weiter an, `tools/list` zeigt sie nicht mehr. Drei frühere Tools stecken jetzt in einem anderen, ihre Namen antworten weiter: export_metadata_file ist `export_metadata` mit `out`, exec_backends ist `list_backends` mit `can_run_commands`, extensions_info ist `list_extensions` mit `name`. Die Gruppe packer gehört jetzt zu `archive`; `--mcp-tools packer` geht weiter. Umbenannte Parameter gehen ebenso: needle und limit von `search_index` (`pattern`, `max_results`), timeout_s von `run_script` (`timeout`), folder von `create_archive` (`path`) und das ab 0 zählende max_depth von `scan_file_types` und `copy_path_to_backend` (`subfolder_levels`).
+Seit 0.15.183 heißen die Tools Verb, dann Ressource (`list_directory`, `get_path_info`, `search_content` …) – `tools/call` nimmt die früheren Namen (list_dir, stat, grep, …) weiter an, `tools/list` zeigt sie nicht mehr. Frühere Tools stecken jetzt in einem anderen, ihre Namen antworten weiter: export_metadata_file ist `export_metadata` mit `out`, exec_backends ist `list_backends` mit `can_run_commands`, extensions_info ist `list_extensions` mit `name`; seit 0.15.184 sind create_symlink und create_hardlink `create_link` mit `kind`, run_backend_script ist `run_backend_command` mit `script`. Die Gruppe packer gehört jetzt zu `archive`; `--mcp-tools packer` geht weiter. Umbenannte Parameter gehen ebenso: needle und limit von `search_index` (`pattern`, `max_results`), timeout_s von `run_script` (`timeout`), folder von `create_archive` (`path`), das ab 0 zählende max_depth von `scan_file_types` und `copy_path_to_backend` (`subfolder_levels`) und profile von `run_llm_agent` (`llm_profile`).
 
 Read-only-Tools einer Gruppe brauchen nur `--mcp-tools <gruppe>`;
 mutierende werden ohne `--mcp-write` gar nicht registriert (und
@@ -853,6 +864,8 @@ speichern) gibt es mit `--mcp-write`.
 | `duplicates` | `list_duplicate_scans` | read-only | `--mcp-tools duplicates` | quick |
 | `duplicates` | `list_duplicate_groups` | read-only | `--mcp-tools duplicates` | quick |
 | `duplicates` | `trash_duplicates` | mutating | `--mcp-tools duplicates` `--mcp-write` `--mcp-root DIR` | long |
+| `duplicates` | `list_trash` | read-only | `--mcp-tools duplicates` | quick |
+| `duplicates` | `restore_from_trash` | mutating | `--mcp-tools duplicates` `--mcp-write` `--mcp-root DIR` | write |
 | `archive` | `list_archive_formats` | read-only | `--mcp-tools archive` | quick |
 | `archive` | `create_archive` | mutating | `--mcp-tools archive` `--mcp-write` `--mcp-root DIR` | long |
 | `archive` | `list_archive_members` | read-only | `--mcp-tools archive` | walk |
@@ -868,9 +881,29 @@ speichern) gibt es mit `--mcp-write`.
 | `remote` | `open_remote_profile` | read-only | `--mcp-tools remote` | walk |
 | `remote` | `close_remote_profile` | read-only | `--mcp-tools remote` | quick |
 | `remote` | `list_backends` | read-only | `--mcp-tools remote` | quick |
+| `adb` | `get_device_info` | read-only | `--mcp-tools adb` | walk |
+| `adb` | `list_device_properties` | read-only | `--mcp-tools adb` | walk |
+| `adb` | `get_battery_status` | read-only | `--mcp-tools adb` | walk |
+| `adb` | `list_apps` | read-only | `--mcp-tools adb` | walk |
+| `adb` | `get_app_info` | read-only | `--mcp-tools adb` | walk |
+| `adb` | `list_running_apps` | read-only | `--mcp-tools adb` | walk |
+| `adb` | `get_logcat` | read-only | `--mcp-tools adb` | walk |
+| `adb` | `take_screenshot` | mutating | `--mcp-tools adb` | walk |
+| `adb` | `list_sms` | read-only | `--mcp-tools adb` | stream |
+| `adb` | `start_app` | mutating | `--mcp-tools adb` `--mcp-write` `--mcp-root DIR` | walk |
+| `adb` | `stop_app` | mutating | `--mcp-tools adb` `--mcp-write` `--mcp-root DIR` | walk |
+| `adb` | `install_app` | mutating | `--mcp-tools adb` `--mcp-write` `--mcp-root DIR` | long |
+| `adb` | `uninstall_app` | mutating | `--mcp-tools adb` `--mcp-write` `--mcp-root DIR` | stream |
+| `adb` | `export_app` | mutating | `--mcp-tools adb` `--mcp-write` `--mcp-root DIR` | long |
+| `adb` | `grant_permission` | mutating | `--mcp-tools adb` `--mcp-write` `--mcp-root DIR` | walk |
+| `adb` | `revoke_permission` | mutating | `--mcp-tools adb` `--mcp-write` `--mcp-root DIR` | walk |
+| `adb` | `reboot_device` | mutating | `--mcp-tools adb` `--mcp-write` `--mcp-root DIR` | walk |
+| `adb` | `write_sms` | mutating | `--mcp-tools adb` `--mcp-write` `--mcp-root DIR` | walk |
+| `adb` | `compose_sms` | mutating | `--mcp-tools adb` `--mcp-write` `--mcp-root DIR` | walk |
+| `adb` | `send_at_command` | mutating | `--mcp-tools adb` `--mcp-write` `--mcp-root DIR` | stream |
 | `exec` | `run_backend_command` | mutating | `--mcp-tools exec` `--mcp-allow-exec` | long |
-| `exec` | `run_backend_script` | mutating | `--mcp-tools exec` `--mcp-allow-exec` | long |
 | `agent` | `run_llm_agent` | read-only | `--mcp-tools agent` | long |
+| `agent` | `list_llm_profiles` | read-only | `--mcp-tools agent` | quick |
 | `extensions` | `list_extensions` | read-only | `--mcp-tools extensions` | quick |
 
 "Read-only" heißt: keine Datei des Users ändert sich. `scan_duplicates`
@@ -895,6 +928,13 @@ Was jede Gruppe tut:
   Kopie jeder Gruppe behalten und die anderen nach
   `<root>/.axross-trash` verschieben, nachdem jede Kopie auf der Platte
   erneut geprüft wurde. Ein Dry Run, solange nicht `dry_run=false`.
+  `list_trash` listet diesen Trash (nur Einträge, deren ursprünglicher
+  Ort in der MCP-Root liegt, neueste zuerst, seitenweise), und
+  `restore_from_trash` holt einen zurück – an seinen ursprünglichen Pfad
+  oder nach `dst`, nie über einen vorhandenen Eintrag, nie außerhalb
+  einer schreibbaren Root oder an einen geschützten Ort, und gar nicht,
+  wenn sein Eintrag sich nicht verifizieren lässt (das HMAC von
+  core.trash).
 * **archive** — packen als zip, tar.gz / tar.zst / tar.xz / tar.bz2, 7z
   (mit Passwort: AES-256, auch die Dateiliste verschlüsselt) und
   Einzeldatei-gz / zst / xz / bz2; ZIP hat keine Passwort-Option
@@ -919,6 +959,7 @@ Was jede Gruppe tut:
   dort weitermacht, wo er stand, wenn er mit denselben Argumenten
   erneut aufgerufen wird.
 * **remote** — siehe §9.5.
+* **adb** — Android-Geräte, als ADB-Profile geöffnet; siehe §9.10.
 * **exec** — Befehle und Scripts auf entfernten Hosts ausführen; siehe §9.8.
 * **agent** — eine Aufgabe an das eigene LLM des Users übergeben; siehe §9.9.
 * **extensions** — installierte Extensions auflisten, ob eingeschaltet
@@ -975,6 +1016,9 @@ GUI und im Scripting blockiert, bleibt hier blockiert:
   Exit 2).
 * Die Gruppe `exec` bleibt verweigert (`--mcp-allow-exec` endet mit
   Exit 2).
+* Die `adb`-Tools, die ein Gerät ändern (Starten, Stoppen,
+  Installieren, Deinstallieren, Rechte, Neustart, SMS, AT), werden
+  verweigert; die lesenden und `export_app` laufen.
 
 ### 9.5 Remote-Profile
 
@@ -1053,15 +1097,15 @@ Gruppen-Tabelle und die sieben Timeout-Klassen (`quick`, `walk`, `write`,
 Jedes Schema nennt Typen, Pflichtfelder, Enums, Defaults und Grenzen,
 und Gruppen-Tools lehnen unbekannte Argumente ab
 (`additionalProperties: false`). [`mcp-tools.json`](mcp-tools.json) ist
-das Manifest für `--mcp-tools all --mcp-write --mcp-allow-scripts
---mcp-allow-exec`; `tests/test_mcp_manifest.py` schlägt fehl, sobald es
+das Manifest für `--mcp-tools all,adb --mcp-write --mcp-allow-scripts
+--mcp-allow-exec` (jede Gruppe); `tests/test_mcp_manifest.py` schlägt fehl, sobald es
 nicht mehr zum Code passt. [LLM_GUIDE.md](LLM_GUIDE.md) ist die kurze
 Anleitung für LLM-Clients (englisch); ihr Tool-Katalog wird aus diesem
 Manifest erzeugt.
 
 ### 9.8 Befehle auf entfernten Hosts (`exec`)
 
-`--mcp-tools exec --mcp-allow-exec` fügt zwei Tools und ein Feld hinzu:
+`--mcp-tools exec --mcp-allow-exec` fügt ein Tool und ein Feld hinzu:
 
 * `list_backends` gibt jedem Backend `commands` und listet mit
   `can_run_commands=true` nur die, die Befehle ausführen können;
@@ -1074,17 +1118,19 @@ Manifest erzeugt.
   truncated_stdout, truncated_stderr}`. Ein Exit-Status ungleich 0 ist
   ein Ergebnis, kein Fehler. Telnet und ADB haben keinen eigenen
   Fehlerkanal: ihr stderr kommt in `stdout` an.
-* `run_backend_script(backend, script, interpreter?, args?, env?, …)` schickt
+* `run_backend_command(backend, script, interpreter?, args?, env?, …)` –
+  `script` statt `command` – schickt
   das Script über stdin an `sh -s --`, `bash -s --`, `python3 -` oder
   `perl -` (Default `sh`), mit `args` gequotet dahinter. Ein WinRM-Host
   führt das Script als PowerShell aus (`interpreter: "powershell"`,
-  keine `args`); ein Cisco-Gerät führt keine Scripts aus.
+  keine `args`); ein Cisco-Gerät führt keine Scripts aus. Das frühere
+  `run_backend_script` ruft es so auf.
 
 Grenzen und Schutz:
 
 * **Eigenes Opt-in.** `--mcp-allow-exec` gibt es nur als Flag (keine
-  `AXROSS_MCP_*`-Variable), `--mcp-tools all` ohne es registriert keines
-  der zwei Tools, und `--mcp-write` schaltet sie nicht frei. Der
+  `AXROSS_MCP_*`-Variable), `--mcp-tools all` ohne es registriert das
+  Tool nicht, und `--mcp-write` schaltet es nicht frei. Der
   Security-Mode `paranoid` verweigert das Flag (Exit 2).
 * **Nur entfernt.** Ein Backend ohne entfernte Shell — das lokale
   Dateisystem, S3, WebDAV, … — wird mit „has no remote shell"
@@ -1116,13 +1162,15 @@ Grenzen und Schutz:
 ```json
 {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"open_remote_profile","arguments":{"profile":"web01"}}}
 {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"run_backend_command","arguments":{"backend":"profile:web01","command":"df -h /","timeout":30}}}
-{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"run_backend_script","arguments":{"backend":"profile:web01","interpreter":"python3","script":"import sys; print(sys.argv[1:])","args":["a b","c"]}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"run_backend_command","arguments":{"backend":"profile:web01","interpreter":"python3","script":"import sys; print(sys.argv[1:])","args":["a b","c"]}}}
 ```
 
 ### 9.9 Eine Aufgabe an das lokale LLM übergeben (`agent`)
 
-`--mcp-tools agent` fügt `run_llm_agent(task, profile?, groups?, max_steps?)`
-hinzu: der Client - ein anderes LLM - übergibt eine Aufgabe an das
+`--mcp-tools agent` fügt `list_llm_profiles()` hinzu – Namen und Modelle
+der Profile und welches aktiv ist, nie einen Schlüssel, einen Endpunkt oder
+einen Host – und `run_llm_agent(task, llm_profile?, groups?, max_steps?)`
+(der frühere Argumentname `profile` geht weiter): der Client - ein anderes LLM - übergibt eine Aufgabe an das
 eigene Modell des Users, das aktive LLM-Profil der axross-GUI (LM
 Studio, Ollama, vLLM, llama.cpp; jeder OpenAI-kompatible Server) oder
 das genannte. Dieses Modell arbeitet mit den Read-only-Datei-Tools von
@@ -1149,3 +1197,64 @@ wurde.
   Modell-Request.
 * Der API-Key kommt aus dem Keyring und steht in keinem Ergebnis und
   keiner Log-Zeile.
+
+### 9.10 Android-Geräte (`adb`)
+
+`--mcp-tools remote,adb` fügt 20 Tools für ein Android-Gerät hinzu, das
+als ADB-Profil offen ist (`open_remote_profile`: TCP zum `adb tcpip`-Port
+des Telefons, USB oder der adb-Server dieses Rechners). Jedes adb-Tool
+nimmt die Backend-ID, und zwar zwingend: `backend: "profile:phone"`. Die
+Tools, die das Gerät oder die MCP-Root ändern, gibt es nur mit
+`--mcp-write`. `all` schließt die Gruppe nicht ein (seit 0.15.184): nenne
+sie, `--mcp-tools all,adb`.
+
+| Tool | Was es tut | Was Android erlaubt |
+|---|---|---|
+| `get_device_info` | Hersteller, Modell, Android-Version, SDK, Sicherheitspatch, Build, ABIs, Seriennummer, IMEI / MEID, die UID der Shell | die Build-Properties überall; die IMEI nur, wo der Telefondienst der Shell antwortet oder eine Herstellereigenschaft sie trägt (Luhn-geprüft), sonst null mit Grund |
+| `list_device_properties` | `getprop`, gefiltert per Glob | überall |
+| `get_battery_status` | Ladung, Zustand, Gesundheit, Temperatur, Spannung | überall; `simulated`, wenn `dumpsys battery set` die Werte überschreibt |
+| `list_apps`, `get_app_info` | Pakete mit Version, UID, Installer, System / Nutzer, aktiv; Versionen, Zeiten, Flags, APK-Pfade und Rechte einer App | überall (ältere `pm`-Optionen fallen zurück) |
+| `list_running_apps` | Apps mit Prozess, ihre PIDs und ihr Speicher, die App im Vordergrund | `ps -A` (vor Android 8 ein schlichtes `ps`) |
+| `get_logcat` | die neuesten Log-Zeilen nach Priorität, Tag oder App | überall; nach App erst ab Android 7 |
+| `take_screenshot` | der Bildschirm als Bild (mit `out` und `--mcp-write`: ein neues PNG in der Root) | sichere Fenster bleiben schwarz |
+| `list_sms` | `content://sms` nach Ordner, neueste zuerst, seitenweise | nur wo die Shell READ_SMS hat (auf vielen Builds nicht) |
+| `start_app` / `stop_app` | die Launcher-Activity (der Monkey, wo Android sie nicht auflöst) / `am force-stop` | überall |
+| `install_app` / `uninstall_app` | eine `.apk` aus der MCP-Root über `/data/local/tmp` (danach entfernt) / `pm uninstall` | das Telefon kann ablehnen: andere Signatur, Downgrade, Installation über USB aus (Xiaomi), ein sehr altes Ziel-SDK; System-Apps werden verweigert |
+| `export_app` | die APK-Dateien einer App (Basis und Splits) in einen Ordner der MCP-Root | überall |
+| `grant_permission` / `revoke_permission` | `pm grant` / `pm revoke` eines Laufzeitrechts, zurückgelesen | nur Laufzeit- und Entwicklungsrechte |
+| `reboot_device` | in Android, Recovery oder den Bootloader | die meisten Builds lassen die Shell neu starten |
+| `write_sms` | eine Nachricht in Posteingang, Gesendet oder Entwürfe, zurückgelesen | seit Android 4.4 schreibt nur die Standard-SMS-App; das Schreiben der Shell fällt still weg, außer ihre App-Op WRITE_SMS ist erlaubt – das Tool liest zurück und sagt es |
+| `compose_sms` | öffnet die SMS-App mit Nummer und Text | sendet nie selbst: ein Mensch tippt auf Senden |
+| `send_at_command` | ein AT-Befehl an das Modem, eine Antwort von höchstens 4 KiB, 1–30 s | nur wo ein Modem-Knoten existiert und root ihn öffnet (`adb root`, `su`) |
+
+Schutz:
+
+* **Befehle sind Argumentlisten**, jedes Argument für die `sh` des Geräts
+  gequotet; ein Argument mit einem Steuerzeichen außer Tab wird
+  abgelehnt, ebenso eine Befehlszeile über 16 KiB. Paket-, Activity- und
+  Rechtenamen, Property-Filter, Log-Tags, Telefonnummern, SMS-Ordner,
+  AT-Befehle (kein `;`) und Modem-Knoten werden vorher gegen enge Muster
+  geprüft.
+* **Antworten sind nicht vertrauenswürdiger Text:** Steuer-, Bidi- und
+  andere unsichtbare Zeichen (U+061C, U+2060–U+206F, die Tag-Zeichen)
+  fallen weg, jedes Feld und jede Liste ist begrenzt, Zahlen gelten nur
+  aus ASCII-Ziffern. Wo der eigene Text einer App die Zeilen einer
+  Antwort nachahmen kann (ihr versionName in `dumpsys package`), sagt
+  `get_app_info` `consistent: false`, statt der Kopie zu trauen.
+* **Die APK** von `install_app` wird über die begrenzte Root geöffnet:
+  kein `..`, kein symbolischer Link, kein zweiter Hardlink, ein reguläres
+  ZIP von höchstens 4 GiB; gesendet wird aus der geöffneten Datei, bei der
+  geprüften Größe abgeschnitten (eine Datei, die dabei wächst, wird
+  abgelehnt), und ihre Kopie in `/data/local/tmp` wird auch entfernt, wenn
+  das Senden oder die Installation scheitert.
+* **Produktionsprofile und der Mode paranoid:** die Tools, die das Gerät
+  ändern, werden auf einem als Produktion markierten Profil und im
+  Security-Mode paranoid verweigert; die lesenden laufen.
+* **Audit:** jeder ändernde Call schreibt `attempt` und `ok` oder
+  `refused` mit Backend, Paket und Recht – nie einen SMS-Text, eine
+  Telefonnummer oder einen AT-Befehl (nur dessen SHA-256-Anfang und
+  Länge).
+* **Zeit:** jeder Call hat eine Frist; danach startet kein Befehl mehr,
+  und `notifications/cancelled` beendet ihn zwischen zwei Befehlen.
+* `run_llm_agent` bekommt keines dieser Tools, der Agent der GUI auch
+  nicht.

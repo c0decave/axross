@@ -43,8 +43,8 @@ def add_arguments(parser: argparse.ArgumentParser, *, standalone: bool = False) 
         "--mcp-write",
         action="store_true",
         help="When running as an MCP server, expose the nine write tools "
-        "(write_file, create_directory, delete_path, move_path, copy_file, copy_tree, "
-        "create_symlink, create_hardlink, set_permissions) and the mutating tools of the "
+        "(write_file, restore_file_version, create_directory, delete_path, move_path, "
+        "copy_file, copy_tree, create_link, set_permissions) and the mutating tools of the "
         "--mcp-tools groups. "
         "Needs --mcp-root. Off by default — read-only is safe.",
     )
@@ -60,7 +60,7 @@ def add_arguments(parser: argparse.ArgumentParser, *, standalone: bool = False) 
     parser.add_argument(
         "--mcp-allow-exec",
         action="store_true",
-        help="Serve the exec group (run_backend_command, run_backend_script): "
+        help="Serve the exec group (run_backend_command: a command or a script): "
         "commands and scripts on remote hosts over SSH, SCP, Telnet, rsh, ADB, "
         "WinRM and Cisco (show only). Needs --mcp-tools exec (or all); its own "
         "opt-in, separate from --mcp-write. Refused in the paranoid security mode.",
@@ -73,7 +73,8 @@ def add_arguments(parser: argparse.ArgumentParser, *, standalone: bool = False) 
         help="Add optional MCP capability groups on top of the file tools; "
         "repeatable or comma-separated, also via AXROSS_MCP_TOOLS. Groups: "
         "metadata, duplicates, archive (also as packer), crypto, index, filetype, "
-        "transfer, remote, exec, agent, extensions; 'all' is every group. Mutating tools "
+        "transfer, remote, adb (Android devices on an ADB profile), exec, agent, extensions; "
+        "'all' is every group but adb (a device group: name it, e.g. 'all,adb'). Mutating tools "
         "of a group additionally need --mcp-write (exec: --mcp-allow-exec). "
         "Default: no group (the file tools only).",
     )
@@ -85,7 +86,7 @@ def add_arguments(parser: argparse.ArgumentParser, *, standalone: bool = False) 
         "flags (and their AXROSS_MCP_* variables) would serve - name, group, "
         "read-only or mutating, required flags, input schema, timeout class, "
         "description - and exit without starting a server. docs/mcp-tools.json "
-        "is this output for '--mcp-tools all --mcp-write --mcp-allow-scripts "
+        "is this output for '--mcp-tools all,adb --mcp-write --mcp-allow-scripts "
         "--mcp-allow-exec'.",
     )
     parser.add_argument(

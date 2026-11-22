@@ -92,12 +92,15 @@ NO_ALTERNATIVE: set[str] = set()  # every tool names one (set_permissions since 
 #: The flag each gated kind of tool names on its Requires: line.
 GATE_FLAGS = {"write": "--mcp-write", "scripts": "--mcp-allow-scripts", "exec": "--mcp-allow-exec"}
 #: Tools that change or remove what exists: destructiveHint must say so.
-DESTRUCTIVE = {"write_file", "remove", "rename", "chmod", "bulk_copy", "script_write",
-               "script_delete", "script_run", "duplicates_dedupe", "transfer_copy",
-               "transfer_move", "remote_exec", "remote_script"}
+DESTRUCTIVE = {"write_file", "restore_version", "remove", "rename", "chmod", "bulk_copy",
+               "script_write", "script_delete", "script_run", "duplicates_dedupe",
+               "transfer_copy", "transfer_move", "remote_exec",
+               # adb: what changes or ends something on the device
+               "stop_app", "install_app", "uninstall_app", "revoke_permission", "reboot_device",
+               "send_at_command"}
 #: Tools that only add new entries under free names: never destructive.
-ADDITIVE = {"mkdir", "copy", "symlink", "hardlink", "metadata_export", "metadata_remove",
-            "pack", "archive_extract", "encrypt", "decrypt"}
+ADDITIVE = {"mkdir", "copy", "symlink", "metadata_export", "metadata_remove",
+            "pack", "archive_extract", "encrypt", "decrypt", "export_app", "trash_restore"}
 
 
 def _lines(tool) -> dict:
@@ -555,8 +558,11 @@ _HAPPY = [
     ("recursive_checksum", {"path": "."}), ("grep", {"pattern": "hi"}),
     ("write_file", {"path": "w.txt", "content": "x"}), ("mkdir", {"path": "d1"}),
     ("copy", {"src": "f.txt", "dst": "c.txt"}), ("rename", {"src": "c.txt", "dst": "r.txt"}),
-    ("hardlink", {"target": "f.txt", "link_path": "h.txt"}),
+    ("symlink", {"target": "f.txt", "link_path": "h.txt", "kind": "hard"}),
     ("symlink", {"target": "f.txt", "link_path": "s.txt"}),
+    ("write_file", {"path": "w.txt", "content": "y", "write_mode": "append"}),
+    ("write_file", {"path": "w.txt", "content": "z", "write_mode": "at_offset", "offset": 0}),
+    ("write_file", {"path": "new.txt", "content": "n", "write_mode": "create"}),
     ("chmod", {"path": "w.txt", "mode": "600"}), ("remove", {"path": "r.txt"}),
     ("bulk_copy", {"src": "sub", "dst": "sub2"}),
     ("script_write", {"name": "q", "source": "print(1)"}), ("script_list", {}),
@@ -572,15 +578,23 @@ _HAPPY = [
     ("pack_formats", {}), ("pack", {"folder": ".", "names": ["sub"], "archive_name": "z"}),
     ("archive_list", {"path": "z.zip"}), ("archive_extract", {"path": "z.zip"}),
     ("duplicates_scan", {}), ("duplicates_scans", {}), ("duplicates_groups", {}),
-    ("duplicates_dedupe", {}), ("index_build", {}),
+    ("duplicates_dedupe", {}), ("index_build", {}), ("trash_list", {}),
+    ("llm_profiles", {}),
     ("file_type_scan", {"path": "."}), ("remote_profiles", {}), ("extensions_list", {}),
     ("list_dir", {"path": "."}), ("search", {}), ("list_versions", {"path": "f.txt"}),
     ("list_backends", {}), ("file_type", {"path": "f.txt"}),
     ("script_api_schema", {"names": []}),
 ]
 #: Tools with an outputSchema that need a remote host or a version history.
-_NOT_HERE = {"open_version_read", "remote_open", "remote_close", "remote_exec", "remote_script",
-             "agent_run"}
+_NOT_HERE = {"open_version_read", "restore_version", "remote_open", "remote_close",
+             "remote_exec", "agent_run",
+             # needs a trashed entry (tests/test_mcp_trash_versions_paging.py)
+             "trash_restore"} | {
+    # an Android device's (tests/test_adb_device.py checks them against a fake phone)
+    "get_device_info", "list_device_properties", "get_battery_status", "list_apps",
+    "get_app_info", "list_running_apps", "get_logcat", "list_sms", "start_app", "stop_app",
+    "install_app", "uninstall_app", "export_app", "grant_permission", "revoke_permission",
+    "reboot_device", "write_sms", "compose_sms", "send_at_command"}
 
 
 def test_happy_real_results_match_every_output_schema(tmp_path, monkeypatch):
@@ -763,10 +777,11 @@ def test_happy_search_narrows_to_a_folder_and_tells_an_empty_index(tmp_path, mon
     names = [r["name"] for r in _json_call(tools, "search", {"path": "docs"})["entries"]]
     assert names == ["a"]
     reply = _call(tools, "search", {"needle": "zzz", "path": "nowhere"})
-    assert reply["structuredContent"] == {"entries": [], "indexed": True, "truncated": False}
+    assert reply["structuredContent"] == {"entries": [], "indexed": True, "truncated": False,
+                                          "next_offset": None}
     monkeypatch.setattr(MX, "search_all", lambda **kw: [])
     assert _call(tools, "search", {})["structuredContent"] == {
-        "entries": [], "indexed": False, "truncated": False}
+        "entries": [], "indexed": False, "truncated": False, "next_offset": None}
 
 
 def test_happy_duplicate_groups_page_with_offset(tmp_path, monkeypatch):
@@ -800,8 +815,7 @@ def test_sad_an_unknown_llm_profile_names_the_known_ones(tmp_path, monkeypatch):
 def test_happy_remote_timeouts_are_numbers_like_script_run(tmp_path):
     tools = {t.name: t for t in _all_tools(tmp_path)}
     kinds = {tools["script_run"].schema["properties"]["timeout"]["type"]}
-    for name in ("remote_exec", "remote_script"):
-        kinds.add(tools[name].schema["properties"]["timeout"]["type"])
+    kinds.add(tools["remote_exec"].schema["properties"]["timeout"]["type"])
     assert kinds == {"number"}
 
 
@@ -862,7 +876,7 @@ def test_happy_list_extensions_with_a_name_lists_that_one(tmp_path):
     ("rename", {"src": "f.txt", "dst": "g.txt"}),
     ("copy", {"src": "f.txt", "dst": "g.txt"}),
     ("symlink", {"target": "f.txt", "link_path": "s"}),
-    ("hardlink", {"target": "f.txt", "link_path": "h"}),
+    ("symlink", {"target": "f.txt", "link_path": "h", "kind": "hard"}),
     ("transfer_move", {"src": "f.txt", "dst": "m/f.txt"}),
 ])
 def test_happy_a_repeat_fails_with_the_error_its_description_names(tmp_path, name, args):
@@ -961,7 +975,7 @@ def _listed(tools, version="2025-11-25"):
 
 def test_sad_every_public_name_is_verb_then_resource_and_unique(tmp_path):
     names = [entry["name"] for entry in _listed(_all_tools(tmp_path))]
-    assert len(names) == len(set(names)) == 52
+    assert len(names) == len(set(names)) == 74
     for name in names:
         verb, _, rest = name.partition("_")
         assert verb in N.VERBS and re.fullmatch(r"[a-z]+(_[a-z]+)*", rest), name
@@ -1216,7 +1230,7 @@ def test_sad_every_b64_pair_says_its_rule_in_one_wording(tmp_path):
 def test_happy_search_index_text_is_its_structured_object(tmp_path):
     reply = _call(_all_tools(tmp_path), "search", {})
     assert json.loads(reply["content"][0]["text"]) == reply["structuredContent"]
-    assert set(reply["structuredContent"]) == {"entries", "indexed", "truncated"}
+    assert set(reply["structuredContent"]) == {"entries", "indexed", "truncated", "next_offset"}
 
 
 def test_happy_a_public_close_name_is_never_held_back_by_stuck_calls(tmp_path, monkeypatch):

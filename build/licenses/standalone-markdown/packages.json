@@ -1,0 +1,120 @@
+{
+ "packages": [
+  {
+   "pin": "linkify-it-py",
+   "name": "linkify-it-py",
+   "version": "2.2.0",
+   "license": "MIT",
+   "url": "https://github.com/tsutsu3/linkify-it-py",
+   "from": "linkify_it_py-2.2.0-py3-none-any.whl",
+   "sha256": "3adc40eb5af300b2605fcfdb968c24e1d780a90f1f2221af7c15e5111e94d443",
+   "texts": [
+    "LICENSE"
+   ]
+  },
+  {
+   "pin": "markdown-it-py",
+   "name": "markdown-it-py",
+   "version": "4.2.0",
+   "license": "MIT",
+   "url": "https://github.com/executablebooks/markdown-it-py",
+   "from": "markdown_it_py-4.2.0-py3-none-any.whl",
+   "sha256": "9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a",
+   "texts": [
+    "LICENSE",
+    "LICENSE.markdown-it"
+   ]
+  },
+  {
+   "pin": "mdit-py-plugins",
+   "name": "mdit-py-plugins",
+   "version": "0.6.1",
+   "license": "MIT",
+   "url": "https://github.com/executablebooks/mdit-py-plugins",
+   "from": "mdit_py_plugins-0.6.1-py3-none-any.whl",
+   "sha256": "214c82fb2ac524472ab6a5bcab1de80f73b50443e187f401bfd77efbc7c6481d",
+   "texts": [
+    "LICENSE",
+    "mdit_py_plugins/admon/LICENSE",
+    "mdit_py_plugins/container/LICENSE",
+    "mdit_py_plugins/deflist/LICENSE",
+    "mdit_py_plugins/footnote/LICENSE",
+    "mdit_py_plugins/front_matter/LICENSE",
+    "mdit_py_plugins/texmath/LICENSE"
+   ]
+  },
+  {
+   "pin": "mdurl",
+   "name": "mdurl",
+   "version": "0.1.2",
+   "license": "MIT",
+   "url": "https://github.com/executablebooks/mdurl",
+   "from": "mdurl-0.1.2-py3-none-any.whl",
+   "sha256": "84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8",
+   "texts": [
+    "LICENSE"
+   ]
+  },
+  {
+   "pin": "pillow",
+   "name": "pillow",
+   "version": "13.0.0",
+   "license": "MIT-CMU",
+   "url": "https://github.com/python-pillow/Pillow",
+   "from": "pillow-13.0.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+   "sha256": "a625df9a2a5597fa5e5266e01aefc82604bb85d291e3547981e863560d75da6c",
+   "texts": [
+    "LICENSE"
+   ]
+  },
+  {
+   "pin": "pygments",
+   "name": "Pygments",
+   "version": "2.21.0",
+   "license": "BSD-2-Clause",
+   "url": "https://github.com/pygments/pygments",
+   "from": "pygments-2.21.0-py3-none-any.whl",
+   "sha256": "2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9",
+   "texts": [
+    "AUTHORS",
+    "LICENSE"
+   ]
+  },
+  {
+   "pin": "pyqt6",
+   "name": "PyQt6",
+   "version": "6.11.0",
+   "license": "GPL-3.0-only OR LicenseRef-Riverbank-Commercial",
+   "url": "https://www.riverbankcomputing.com/software/pyqt/",
+   "from": "pyqt6-6.11.0-cp310-abi3-manylinux_2_34_x86_64.whl",
+   "sha256": "8555277989fa7d114cb3c3443fd261d566909f7268ceedd41d93a5f02d37ec05",
+   "texts": [
+    "LICENSE"
+   ]
+  },
+  {
+   "pin": "pyqt6-qt6",
+   "name": "PyQt6-Qt6",
+   "version": "6.11.2",
+   "license": "LGPL-3.0-only",
+   "url": "https://www.qt.io",
+   "from": "pyqt6_qt6-6.11.2-py3-none-manylinux_2_34_x86_64.whl",
+   "sha256": "da7d747ad917f044d841ff834f17d2c50a0cc5d0e3b16479d8662544207d0567",
+   "texts": [
+    "LICENSE"
+   ]
+  },
+  {
+   "pin": "pyqt6-sip",
+   "name": "PyQt6_sip",
+   "version": "13.13.0",
+   "license": "BSD-2-Clause",
+   "url": "https://github.com/Python-SIP/sip",
+   "from": "pyqt6_sip-13.13.0-cp310-cp310-manylinux1_x86_64.manylinux_2_5_x86_64.whl",
+   "sha256": "0f4329bcf7c4bbfd1f34b51f9fe417f839b18ae5035b6e9de1c7718b821f45aa",
+   "texts": [
+    "LICENSE"
+   ]
+  }
+ ]
+}

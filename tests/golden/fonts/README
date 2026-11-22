@@ -1,0 +1,3 @@
+DejaVu fonts 2.37 (https://dejavu-fonts.github.io/), Sans, Sans Bold and Sans Mono - the fonts the golden
+images of the Markdown reader are drawn with (tests/test_markdown_golden.py), whatever fonts the machine has.
+Their licence: LICENSE (Bitstream Vera; the DejaVu changes are in the public domain).

@@ -111,7 +111,7 @@ DETECTED_PREFIX = "detected:"
 #: Ticked in a fresh tab: read-only use of these is harmless.
 DEFAULT_GROUPS = AGS.DEFAULT_GROUPS
 #: Tools that run something on a remote host: Auto still asks for them.
-EXEC_TOOLS = frozenset({"remote_exec", "remote_script"})
+EXEC_TOOLS = frozenset({"remote_exec"})  # a command or a script (0.15.184)
 MODE_NAMES = {"ask": "Ask", "plan": "Plan", "auto": "Auto", "bypass": "Bypass"}
 PLAN_PROMPT = (
     "\nPlan mode: you cannot change anything now. Investigate with the read tools, then answer "

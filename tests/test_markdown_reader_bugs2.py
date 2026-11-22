@@ -30,6 +30,7 @@ pytest.importorskip("mdit_py_plugins", reason="mdit-py-plugins not installed")
 
 from core import markdown_doc as MD  # noqa: E402
 from core import markdown_term as T  # noqa: E402
+from tests import markdown_timing as TB  # noqa: E402
 
 ANSI = re.compile(r"\x1b(\[[0-9;]*m|\]8;;[^\x1b]*\x1b\\)")
 
@@ -193,11 +194,11 @@ def test_happy_a_page_in_parts_shows_what_it_shows_at_once(monkeypatch, full):
         view = MV.MarkdownView(None)
         view.full = view.full and full
         view.render(text)
-        end = time.monotonic() + 15
+        end = time.monotonic() + TB.READY_SECONDS
         while view.status.text().startswith(MV.tr("Rendering…")) and time.monotonic() < end:
             app.processEvents()
         view.load_rest()  # (a long page is laid out as it is read: all of it, to compare)
-        while view.more() and time.monotonic() < end + 30:
+        while view.more() and time.monotonic() < end + TB.READY_SECONDS:
             app.processEvents()
         levels, block = [], view.browser.document().begin()
         while block.isValid():
@@ -291,7 +292,7 @@ def test_sad_a_data_image_is_shown_in_qt_and_the_page_goes_on():
     try:
         view.render(text)
         name = f"data:image/png;base64,{payload}"
-        end = time.monotonic() + 5
+        end = time.monotonic() + TB.READY_SECONDS
         while time.monotonic() < end and not isinstance(view.originals.get(name), QImage):
             _qt().processEvents()
             time.sleep(0.01)
@@ -373,7 +374,7 @@ def test_sad_copy_code_block_copies_one_block_not_its_neighbours():
                     "Text\n\n```diff\n- removed\n+ added\n```\n")
         from PyQt6.QtWidgets import QApplication
 
-        end = time.monotonic() + 10
+        end = time.monotonic() + TB.READY_SECONDS
         while time.monotonic() < end and not view._readable:  # (a text with code: made on a worker)
             QApplication.processEvents()
             time.sleep(0.01)
@@ -533,8 +534,12 @@ def test_sad_a_wide_window_never_scrolls_sideways_by_a_pixel():
         for width in (1000, 1250):
             view.resize(width, 700)
             view.render(MV.read_text(LocalFS(), str(readme))[0])
-            end = time.monotonic() + 0.8
-            while time.monotonic() < end:
+            end = time.monotonic() + TB.READY_SECONDS  # (the page made - a wait for it, not 0.8 s of pumps)
+            while time.monotonic() < end and not (view._readable and not view._scheduled):
+                _qt().processEvents()
+                time.sleep(0.01)
+            settled = time.monotonic() + 0.3
+            while time.monotonic() < settled:
                 _qt().processEvents()
                 time.sleep(0.01)
             assert view.browser.horizontalScrollBar().maximum() == 0, width

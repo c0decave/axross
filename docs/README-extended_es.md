@@ -156,7 +156,9 @@ Más capturas de pantalla, cada una con su explicación: **[la slideshow](../sli
    `--mcp-tools GRUPO[,…]` (o `all`) añade grupos de capacidades:
    metadata, duplicates, archive, crypto, index, filetype,
    transfer, remote (perfiles guardados como backends adicionales,
-   credenciales solo del keyring, nunca un prompt) y extensions; sus
+   credenciales solo del keyring, nunca un prompt), adb (dispositivos Android
+   en un perfil ADB: identidad, apps y sus permisos, SMS, log, capturas) y
+   extensions; sus
    herramientas que modifican necesitan además `--mcp-write`. El
    grupo `exec` ejecuta comandos y scripts en hosts remotos (SSH,
    Telnet, rsh, ADB, WinRM, Cisco `show`), solo con su propio

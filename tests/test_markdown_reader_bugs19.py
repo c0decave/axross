@@ -27,6 +27,7 @@ pytest.importorskip("markdown_it")
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from tests.test_markdown_reader_bugs11 import pump, until  # noqa: E402
+from tests import markdown_timing as TB  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -94,7 +95,7 @@ def test_sad_a_formula_nested_thousands_deep_is_shown_without_an_error(kind, dep
                  lambda t: H.display_html(t, H.LIGHT)):
         began = time.monotonic()
         step(tex)
-        assert time.monotonic() - began < 2.0, (kind, depth, step)
+        TB.budget(time.monotonic() - began < 2.0, (kind, depth, step))
 
 
 def test_sad_braced_is_linear_and_capped():
@@ -108,7 +109,7 @@ def test_sad_braced_is_linear_and_capped():
         MD._braced("\\sqrt{" + deep + "}")
     began = time.monotonic()  # (before: each group read again for each one around it)
     MD._braced(("\\frac{a}{\\sqrt{b}} + " * 4000))
-    assert time.monotonic() - began < 1.0
+    TB.budget(time.monotonic() - began < 1.0, 'time.monotonic() - began < 1.0')
 
 
 def test_sad_a_formula_deeper_than_the_cap_is_shown_as_written_with_a_note():
@@ -192,7 +193,7 @@ def test_sad_mdcat_shows_a_link_of_a_megabyte_in_seconds():
     url = "https://e.com/" + "a" * 1_000_000
     began = time.thread_time()  # (its own CPU time: by the clock a loaded machine took 3 s)
     shown = T.render(url + "\n", T.Options(width=80, depth="truecolor", hyperlinks=True))
-    assert time.thread_time() - began < 2.0, time.thread_time() - began
+    TB.budget(time.thread_time() - began < 2.0, time.thread_time() - began)
     assert len(shown) < 3 * len(url) and shown.count("a") >= 1_000_000
     short = T.render("[e](https://e.com/x)\n", T.Options(hyperlinks=True))
     assert "\x1b]8;;https://e.com/x\x1b\\" in short  # (a link of a usual length: still a hyperlink)
@@ -245,7 +246,7 @@ def test_sad_a_line_of_10_mb_never_holds_the_event_loop():
     held Python's lock - the GUI thread idle, its event loop held 1.7 s. Now a piece at a time."""
     view, longest = _render_gaps("word " * 2_000_000)
     assert "word word" in view.browser.document().begin().text()
-    assert longest < 0.25, longest
+    TB.budget(longest < 0.25, longest)
 
 
 def test_sad_a_short_text_of_brackets_inside_each_other_is_parsed_off_the_gui_thread():
@@ -253,7 +254,7 @@ def test_sad_a_short_text_of_brackets_inside_each_other_is_parsed_off_the_gui_th
     time that grows with their square: the window held 1.1 s."""
     view, longest = _render_gaps("[" * 8000 + "~x~" + "]" * 8000)
     assert "x" in view.browser.toPlainText()
-    assert longest < 0.25, longest
+    TB.budget(longest < 0.25, longest)
 
 
 def test_sad_the_pieces_of_a_long_line_are_cut_where_a_word_begins():
@@ -303,7 +304,7 @@ def test_sad_the_gui_thread_waits_for_pythons_lock_a_millisecond_at_most_once_a_
         sys.setswitchinterval(0.005)
         done = []
         MV.in_background(lambda: 1, lambda result, error: done.append(result))
-        assert until(lambda: done, 10)
+        assert TB.until_within(until, lambda: done, 10)
         assert sys.getswitchinterval() <= MV.WORKER_SWITCH_SECONDS <= 0.001
     finally:
         sys.setswitchinterval(before)
@@ -322,7 +323,7 @@ def test_sad_task_lists_find_their_list_in_one_pass():
     md = MD.make_parser()
     began = time.monotonic()
     doc = MD.parse("- [ ] t\n" * 20_000, parser=md)
-    assert time.monotonic() - began < 6.0
+    TB.budget(time.monotonic() - began < 6.0, 'time.monotonic() - began < 6.0')
     assert sum(1 for t in doc.tokens if t.type == "list_item_open" and t.attrGet("class") == "task-list-item") \
         == 20_000
     theirs = MD.make_parser()  # (the plugin's own rule: the same page)
@@ -381,7 +382,7 @@ def test_sad_the_window_shows_the_first_part_of_a_long_text_of_one_kind_in_time(
     began = time.monotonic()
     view.render(text)
     assert until(lambda: view._readable and view.markdown, 120)
-    assert time.monotonic() - began < 1.5, time.monotonic() - began
+    TB.budget(time.monotonic() - began < 1.5, time.monotonic() - began)
 
 
 def test_sad_mdcat_draws_a_table_of_100000_rows_as_it_goes_with_little_memory():
@@ -394,7 +395,7 @@ def test_sad_mdcat_draws_a_table_of_100000_rows_as_it_goes_with_little_memory():
     began = time.monotonic()
     parts = T.render_parts(text, options)
     first = next(parts)
-    assert time.monotonic() - began < 2.0
+    TB.budget(time.monotonic() - began < 2.0, 'time.monotonic() - began < 2.0')
     assert first.startswith("┌") and "r0 " in first and "└" not in first
     rest = "".join(parts)
     assert rest.rstrip().endswith("┘") and rest.count("┌") == 0 and rest.count("╞") == 0
@@ -437,7 +438,7 @@ def test_sad_mdcat_shows_a_line_of_10_mb_in_seconds_with_little_memory():
 
     began = time.thread_time()  # (its own CPU time: on a loaded machine the wall time is twice that)
     shown = T.render("word " * 2_000_000, T.Options(width=100, depth="truecolor"))
-    assert time.thread_time() - began < 4.0, time.thread_time() - began
+    TB.budget(time.thread_time() - began < 4.0, time.thread_time() - began)
     assert shown.count("\n") == 100_000 and shown.count("word") == 2_000_000
     tracemalloc.start()  # (2 MB of it: 115 MB held before)
     T.render("word " * 400_000, T.Options(width=100, depth="truecolor"))
@@ -506,7 +507,9 @@ def test_sad_view_theme_is_chosen_applied_and_kept_in_the_programs_own_settings(
     viewer = MarkdownApp().open_paths([""])[0]
     assert viewer.view_button is not None and viewer.view_button.text() == "&View"
     menu = viewer.view_button.menu()
-    theme_menu = next(action.menu() for action in menu.actions() if action.menu() is not None)
+    # (0.17.0: the page's Theme first - tests/test_markdown_themes.py -, the window's after it)
+    theme_menu = next(action.menu() for action in menu.actions()
+                      if action.menu() is not None and action.menu().objectName() == "window_theme")
     theme_menu.aboutToShow.emit()
     actions = {action.data(): action for action in theme_menu.actions()}
     assert set(actions) == {theme_id for theme_id, _label in themes.THEME_CHOICES}
@@ -600,7 +603,7 @@ def test_sad_a_binary_file_is_said_to_be_one_not_shown_as_garbage(tmp_path):
     picture.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + bytes(range(256)) * 20)
     viewer = MarkdownViewerDialog(LocalFS(), str(picture))
     viewer.show()
-    assert until(lambda: viewer.view._readable and viewer.view.markdown, 30)
+    assert until(lambda: viewer.view._readable and viewer.view.markdown, TB.READY_SECONDS)
     shown = viewer.view.browser.toPlainText()
     assert "not a text file" in shown and "picture.md" in shown and "IHDR" not in shown
     from core import markdown_cli

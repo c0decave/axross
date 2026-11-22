@@ -29,6 +29,7 @@ pytest.importorskip("mdit_py_plugins", reason="mdit-py-plugins not installed")
 
 from core import markdown_doc as MD  # noqa: E402
 from core import markdown_term as T  # noqa: E402
+from tests import markdown_timing as TB  # noqa: E402
 
 FULL = """---
 title: Demo
@@ -435,13 +436,14 @@ def test_edge_the_columns_of_a_huge_table_are_fitted_in_time():
     assert T.fit_columns([3, 3], 10) == [3, 3] and T.fit_columns([10] * 10, 30) is None
     started = time.monotonic()
     widths = T.fit_columns([100_000] * 30, 4000)
-    assert sum(widths) == 4000 and time.monotonic() - started < 1  # (a column a step: minutes)
+    assert sum(widths) == 4000
+    TB.budget(time.monotonic() - started < 1, 'time.monotonic() - started < 1')  # (a column a step: minutes)
 
 
 def test_edge_a_word_of_a_megabyte_is_cut_in_linear_time():
     started = time.monotonic()
     out = _term("x" * (1 << 20), width=80, depth="none")
-    assert time.monotonic() - started < 20  # (each cut went over all of the rest: over 3 minutes)
+    TB.budget(time.monotonic() - started < 20, 'time.monotonic() - started < 20')  # (each cut went over all of the rest: over 3 minutes)
     assert out.count("\n") == (1 << 20) // 80 + 1 and _lines_fit(out, 80)
     assert T.wrap([T.Span("漢字漢字")], 3) == [[T.Span("漢")], [T.Span("字")], [T.Span("漢")], [T.Span("字")]]
 
@@ -644,4 +646,4 @@ def test_sad_autolinks_of_hostile_lines_stay_linear():
     _escape_html("`" * 200_000 + "<a:b>" * 100_000)
     _escape_html("<" * 1_000_000)
     _escape_html("\\" * 500_000 + "<x:y>")
-    assert time.monotonic() - start < 5
+    TB.budget(time.monotonic() - start < 5, 'time.monotonic() - start < 5')

@@ -27,6 +27,7 @@ from PyQt6.QtGui import QTextCursor  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from tests.test_markdown_reader_bugs11 import pump, until  # noqa: E402
+from tests import markdown_timing as TB  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -173,7 +174,7 @@ def _copy(view, start: str | None, end: str | None) -> str:
     from PyQt6.QtTest import QTest
 
     QTest.keyClick(browser, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
-    assert until(lambda: APP.clipboard().text() != "OLD", 30), view.status.text()
+    assert until(lambda: APP.clipboard().text() != "OLD", TB.READY_SECONDS), view.status.text()
     return APP.clipboard().text()
 
 
@@ -185,7 +186,7 @@ def _view(text: str, full: bool):
     view.resize(900, 700)
     view.show()
     view.render(text)
-    assert until(lambda: view._readable and not view.more(), 30)
+    assert until(lambda: view._readable and not view.more(), TB.READY_SECONDS)
     pump(0.2)
     return view
 
@@ -271,7 +272,7 @@ def test_guard_nested_formulas_never_hold_up_the_window(full):
     beats = heartbeat.turns
     assert_responsive(gap, "the heartbeat's longest gap")
     took = time.monotonic() - began
-    assert max(beats) < 0.3, (round(took, 2), sorted(round(beat, 3) for beat in beats)[-5:])  # (deep.md: 18 s)
+    TB.budget(max(beats) < 0.3, (round(took, 2), sorted(round(beat, 3) for beat in beats)[-5:]))  # (deep.md: 18 s)
     assert "Formula 14" in view.browser.toPlainText()
 
 
@@ -396,7 +397,7 @@ def test_sad_thousands_of_spans_in_a_line_never_hold_up_the_window(full, text):
     assert_responsive(gap, "the heartbeat's longest gap")
     # (2.2 to 3.5 s before: Qt lays a line of spans out in time growing with their square - the bound
     # leaves room for a busy machine)
-    assert max(beats) < 0.5, sorted(round(beat, 3) for beat in beats)[-4:]
+    TB.budget(max(beats) < 0.5, sorted(round(beat, 3) for beat in beats)[-4:])
 
 
 # -- 10. a drag or the selection clipboard: as Copy -------------------------------------------------------

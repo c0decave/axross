@@ -15,13 +15,13 @@
     "url": "https://github.com/c0decave/axross-headless-mcp",
     "source": "github"
   },
-  "version": "0.15.183",
+  "version": "0.15.184",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "axross-headless-mcp",
-      "version": "0.15.183",
+      "version": "0.15.184",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
@@ -50,7 +50,7 @@
     },
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/c0decave/axross-headless-mcp:0.15.183",
+      "identifier": "ghcr.io/c0decave/axross-headless-mcp:0.15.184",
       "transport": {
         "type": "stdio"
       },

@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from tests.test_markdown_reader_bugs11 import pump, until  # noqa: E402
 from tests.test_markdown_reader_bugs20 import _settle, _Turns  # noqa: E402
+from tests import markdown_timing as TB  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 #: What Qt took here to lay out the calibration page (machine_factor) - where the budgets were measured.
@@ -117,9 +118,9 @@ def within_turn(measure, text: str, label=None) -> float:
     again, gap_again = measured()
     budget = max(budget, budget - TURN + 0.1 * factor)
     best = min(longest, again)
-    assert best < budget, (label, longest, again, budget)
-    assert min(gap, gap_again) < max(gap_budget, HB.GAP * factor), \
-        (label, "the window did not answer for", gap, gap_again, gap_budget)
+    TB.budget(best < budget, (label, longest, again, budget))
+    TB.budget(min(gap, gap_again) < max(gap_budget, HB.GAP * factor),
+              (label, "the window did not answer for", gap, gap_again, gap_budget))
     return best
 
 
@@ -397,7 +398,7 @@ def _ops_turns(text: str, full: bool, tmp_path, whole: bool = False) -> None:
     pump(0.3)
     copied = turns.stop()
     if whole:
-        assert max(found, copied) < turn_for(text), (found, copied)
+        TB.budget(max(found, copied) < turn_for(text), (found, copied))
         return
     turns = _Turns()
     target = str(tmp_path / "page.pdf")
@@ -405,7 +406,7 @@ def _ops_turns(text: str, full: bool, tmp_path, whole: bool = False) -> None:
     pump(0.2)
     printed = turns.stop()
     assert made == target and os.path.getsize(target) > 0
-    assert max(found, copied, printed) < turn_for(text), (found, copied, printed)
+    TB.budget(max(found, copied, printed) < turn_for(text), (found, copied, printed))
 
 
 # -- F2 and F5: the editor's preview ------------------------------------------------------------------
@@ -477,7 +478,7 @@ def test_sad_the_preview_of_3000_code_blocks_holds_no_turn_while_typing():
             until(lambda: tab.preview._readable and not tab.preview.timer.isActive()
                   and not tab.preview._scheduled, 60)
         longest = turns.stop()
-        assert longest < TURN, longest
+        TB.budget(longest < TURN, longest)
     finally:
         tab.editor.document().setModified(False)
         window.close()
@@ -561,7 +562,7 @@ def test_sad_find_copy_pdf_and_the_preview_of_the_grid_hold_no_turn(cell, tmp_pa
         pump(0.2)
         until(lambda: tab.preview._readable and not tab.preview.timer.isActive() and not tab.preview._scheduled, 120)
         longest = turns.stop()
-        assert longest < turn_for(text), (SEED, cell, longest)
+        TB.budget(longest < turn_for(text), (SEED, cell, longest))
     finally:
         tab.editor.document().setModified(False)
         window.close()
@@ -573,7 +574,7 @@ def test_sad_find_copy_pdf_and_the_preview_of_the_grid_hold_no_turn(cell, tmp_pa
 def test_slow_the_whole_grid_holds_no_turn(cell, full):
     text = grid_document(*cell)
     longest = _longest_turn(text, full)
-    assert longest < turn_for(text), (cell, longest)
+    TB.budget(longest < turn_for(text), (cell, longest))
 
 
 # -- the small things --------------------------------------------------------------------------------
@@ -585,7 +586,7 @@ def test_sad_a_missing_file_is_said_in_words(tmp_path):
 
     viewer = MarkdownViewerDialog(LocalFS(), str(tmp_path / "gone.md"))
     viewer.show()
-    assert until(lambda: "gone.md" in viewer.view.browser.toPlainText(), 30)
+    assert TB.until_within(until, lambda: "gone.md" in viewer.view.browser.toPlainText(), 30)
     shown = viewer.view.browser.toPlainText()
     assert "it does not exist" in shown and "Errno" not in shown and str(tmp_path) not in shown, shown
     assert "Errno" not in viewer.view.status.text()
@@ -599,7 +600,7 @@ def test_sad_a_folder_given_opens_its_readme(tmp_path):
     app = markdown_app.MarkdownApp()
     viewer = app.open_paths([str(tmp_path)])[0]
     assert viewer.path == str(tmp_path / "README.md")
-    assert until(lambda: "The folder's page" in viewer.view.browser.toPlainText(), 30)
+    assert TB.until_within(until, lambda: "The folder's page" in viewer.view.browser.toPlainText(), 30)
     text, why = markdown_cli._read(str(tmp_path))
     assert why == "" and "The folder's page" in text
     empty = tmp_path / "empty"
@@ -624,7 +625,7 @@ def test_sad_zoom_reaches_25_and_400_percent_exactly():
     view = MV.MarkdownView(None)
     view.show()
     view.render("# Zoom\n\nText.\n")
-    assert until(lambda: view._readable, 30)
+    assert until(lambda: view._readable, TB.READY_SECONDS)
     for _ in range(80):
         view.zoom_by(-1)
     assert view.zoom_percent() == 25
@@ -652,7 +653,7 @@ def test_sad_an_alert_in_a_list_or_a_quote_is_a_quote(full):
     view.full = view.full and full
     view.show()
     view.render("- item\n\n  > [!NOTE]\n  > nested\n\n> > [!TIP]\n> > deeper\n\n> [!WARNING]\n> top\n")
-    assert until(lambda: view._readable, 30)
+    assert until(lambda: view._readable, TB.READY_SECONDS)
     shown = view.browser.toPlainText()
     assert "[!NOTE]" in shown and "[!TIP]" in shown and "[!WARNING]" not in shown, shown
 

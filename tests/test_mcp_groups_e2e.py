@@ -1,4 +1,4 @@
-"""End to end: the real ``axross --mcp-server --mcp-tools all --mcp-write
+"""End to end: the real ``axross --mcp-server --mcp-tools all,adb --mcp-write
 --mcp-root <tmp> --mcp-allow-exec`` as a subprocess, over stdio and over
 HTTP on loopback.
 
@@ -76,7 +76,7 @@ def world(tmp_path):
 class _Stdio:
     def __init__(self, home: Path, root: Path) -> None:
         self.proc = subprocess.Popen(
-            [sys.executable, str(REPO / "main.py"), "--mcp-server", "--mcp-tools", "all",
+            [sys.executable, str(REPO / "main.py"), "--mcp-server", "--mcp-tools", "all,adb",
              "--mcp-write", "--mcp-root", str(root), "--mcp-allow-exec"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, bufsize=1, env=_child_env(home), cwd=REPO,
@@ -125,7 +125,7 @@ class _Http:
             self.port = s.getsockname()[1]
         self.proc = subprocess.Popen(
             [sys.executable, str(REPO / "main.py"), "--mcp-server", "--mcp-http",
-             f"127.0.0.1:{self.port}", "--mcp-tools", "all", "--mcp-write", "--mcp-root", str(root),
+             f"127.0.0.1:{self.port}", "--mcp-tools", "all,adb", "--mcp-write", "--mcp-root", str(root),
              "--mcp-allow-exec"],
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             env={**_child_env(home), "AXROSS_MCP_HTTP_TOKEN": _HTTP_TOKEN}, cwd=REPO,
@@ -180,7 +180,8 @@ def _drive(client, root: Path) -> None:
         "metadata_read", "metadata_remove", "duplicates_scan", "duplicates_dedupe", "pack",
         "archive_extract", "encrypt", "decrypt", "index_build", "file_type", "transfer_copy",
         "remote_open", "list_backends", "extensions_list", "write_file", "remote_exec",
-        "remote_script", "agent_run",
+        "agent_run", "llm_profiles", "trash_list", "trash_restore", "restore_version",
+        "get_device_info", "install_app",
     }
     assert expected <= names
     assert {"script_run"}.isdisjoint(names)  # not requested
@@ -234,6 +235,11 @@ def _drive(client, root: Path) -> None:
         "tools/call", {"name": "remote_exec", "arguments": {"backend": bid, "command": "id"}}
     )
     assert "no remote shell" in refused["error"]["message"]
+    # adb: no phone here (tests/test_adb_device.py drives a fake one), so a
+    # device tool says what it needs.
+    refused = client.rpc(
+        "tools/call", {"name": "get_device_info", "arguments": {"backend": bid}})
+    assert "no Android device" in refused["error"]["message"]
     # agent: the child has no LLM profile, so the hand-off says how to get one
     refused = client.rpc("tools/call", {"name": "agent_run", "arguments": {"task": "summarise"}})
     assert "LLM profile" in refused["error"]["message"]

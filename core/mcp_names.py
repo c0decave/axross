@@ -3,15 +3,16 @@
 tools/list shows these names; tools/call accepts them and, as hidden
 aliases, the names the tools had up to 0.15.182, which stay their
 internal names (_Tool.name: the hint, timeout and schema tables, the agent's
-confirmation rules and the tests key on them). Three former tools were
-merged into another one (MERGED): their name still works, with its
+confirmation rules and the tests key on them). Former tools that were
+merged into another one (MERGED) still answer to their names, with their
 arguments translated. Audit lines carry the public name. No imports:
 core.mcp_server, core.mcp_groups and core.agent load this at import time.
 
 Verbs: list (several entries), get (one entry's details), read, write,
 search, walk, compute, create, delete, move, copy, set, run, scan, trash,
 export, strip, extract, encrypt, decrypt, build, identify, open, close,
-render. The resource is the thing the verb acts on, singular for one
+render, restore; for devices (the adb group) start, stop, install,
+uninstall, grant, revoke, reboot, take, compose, send. The resource is the thing the verb acts on, singular for one
 (read_file), plural for a listing (list_scripts): file (one file),
 directory (one folder), tree (a folder and everything below it), path
 (a file or a folder).
@@ -33,6 +34,7 @@ PUBLIC_NAMES: dict[str, str] = {
     "grep": "search_content",
     "list_versions": "list_file_versions",
     "open_version_read": "read_file_version",
+    "restore_version": "restore_file_version",
     "list_backends": "list_backends",
     # write tools
     "write_file": "write_file",
@@ -41,8 +43,7 @@ PUBLIC_NAMES: dict[str, str] = {
     "rename": "move_path",
     "copy": "copy_file",
     "bulk_copy": "copy_tree",
-    "symlink": "create_symlink",
-    "hardlink": "create_hardlink",
+    "symlink": "create_link",
     "chmod": "set_permissions",
     # saved scripts
     "script_list": "list_scripts",
@@ -59,6 +60,8 @@ PUBLIC_NAMES: dict[str, str] = {
     "duplicates_scans": "list_duplicate_scans",
     "duplicates_groups": "list_duplicate_groups",
     "duplicates_dedupe": "trash_duplicates",
+    "trash_list": "list_trash",
+    "trash_restore": "restore_from_trash",
     "pack_formats": "list_archive_formats",
     "pack": "create_archive",
     "archive_list": "list_archive_members",
@@ -74,17 +77,30 @@ PUBLIC_NAMES: dict[str, str] = {
     "remote_open": "open_remote_profile",
     "remote_close": "close_remote_profile",
     "remote_exec": "run_backend_command",
-    "remote_script": "run_backend_script",
     "agent_run": "run_llm_agent",
+    "llm_profiles": "list_llm_profiles",
     "extensions_list": "list_extensions",
+    # adb (0.15.184): named verb_resource from the start, no former names
+    **{name: name for name in (
+        "get_device_info", "list_device_properties", "get_battery_status", "list_apps",
+        "get_app_info", "list_running_apps", "get_logcat", "take_screenshot", "list_sms",
+        "start_app", "stop_app", "install_app", "uninstall_app", "export_app",
+        "grant_permission", "revoke_permission", "reboot_device", "write_sms", "compose_sms",
+        "send_at_command")},
 }
-#: A former tool merged into another one (0.15.183): its name -> (the
+#: A former tool merged into another one (0.15.183, 0.15.184): its name -> (the
 #: internal name of the tool that does its job now, arguments to set,
 #: arguments renamed {old: new}).
 MERGED: dict[str, tuple[str, dict, dict]] = {
     "metadata_export_file": ("metadata_export", {}, {}),
     "exec_backends": ("list_backends", {"can_run_commands": True}, {}),
     "extensions_info": ("extensions_list", {}, {"ext_id": "name"}),
+    # 0.15.184: one link tool, one remote command tool
+    "create_symlink": ("symlink", {"kind": "symbolic"}, {}),
+    "hardlink": ("symlink", {"kind": "hard"}, {}),
+    "create_hardlink": ("symlink", {"kind": "hard"}, {}),
+    "remote_script": ("remote_exec", {}, {}),
+    "run_backend_script": ("remote_exec", {}, {}),
 }
 #: Former --mcp-tools group names -> the group that holds their tools now
 #: (also in run_llm_agent's groups argument).
@@ -100,6 +116,8 @@ ARG_ALIASES: dict[str, dict[str, str]] = {
     "file_type_scan": {"max_depth": "subfolder_levels"},
     "transfer_copy": {"max_depth": "subfolder_levels"},
     "pack": {"folder": "path", "folder_b64": "path_b64"},
+    # 0.15.184: profile meant a connection profile everywhere else
+    "agent_run": {"profile": "llm_profile"},
 }
 #: public name -> internal name (also every internal name to itself).
 INTERNAL_NAMES: dict[str, str] = {
@@ -109,7 +127,8 @@ INTERNAL_NAMES: dict[str, str] = {
 VERBS = frozenset({
     "list", "get", "read", "write", "search", "walk", "compute", "render", "create",
     "delete", "move", "copy", "set", "run", "scan", "trash", "export", "strip", "extract",
-    "encrypt", "decrypt", "build", "identify", "open", "close",
+    "encrypt", "decrypt", "build", "identify", "open", "close", "restore",
+    "compose", "start", "stop", "install", "uninstall", "grant", "revoke", "reboot", "take", "send",
 })
 
 

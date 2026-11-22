@@ -71,7 +71,12 @@ _SERIAL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:%@\-]{0,127}")
 _HEX4_RE = re.compile(rb"[0-9A-Fa-f]{4}")
 _FIELD_RE = re.compile(r"(usb|product|model|device|transport_id):(\S*)")
 _FIELD_VALUE_RE = re.compile(r"[A-Za-z0-9._\-]{0,64}")
-_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f\u00a0\u2000-\u200f\u2028-\u202e\u2066-\u2069\ufeff]")
+#: C0 / C1 controls, the blanks and the invisible and bidirectional formatting
+#: characters (U+061C, U+180E, U+2060-U+206F, the tag characters among them):
+#: a FAIL text or a USB name with one of them read in another order.
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f\u00a0\u00ad\u034f\u061c\u115f\u1160\u180b-\u180f"
+                         r"\u2000-\u200f\u2028-\u202f\u205f-\u206f\u3000\u3164\ufe00-\ufe0f"
+                         r"\ufeff\uffa0\ufff9-\ufffb\U000e0000-\U000e007f\U000e0100-\U000e01ef]")
 
 #: The states adb prints; anything else is shown as "unknown".
 STATES = frozenset({

@@ -23,8 +23,8 @@ MANIFEST = json.loads((ROOT / "docs" / "mcp-tools.json").read_text(encoding="utf
 SCRIPTING = json.loads((ROOT / "docs" / "scripting-api.json").read_text(encoding="utf-8"))
 
 #: snake_case names the prose uses that are not tools, tool arguments or
-#: scripting names: fields of the script_run reply.
-RESULT_FIELDS = {"error_type", "timed_out"}
+#: scripting names: fields of the script_run reply, the paging field of a result.
+RESULT_FIELDS = {"error_type", "timed_out", "next_offset"}
 
 
 def _guide() -> str:

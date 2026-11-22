@@ -388,9 +388,13 @@ FEATURES: tuple[Feature, ...] = (
         "Connections & backends",
         "backend-mobile",
         "ADB / MTP",
-        ["core/adb_client.py", "core/adb_server.py", "core/mtp_client.py"],
+        ["core/adb_client.py", "core/adb_server.py", "core/adb_device.py", "core/mtp_client.py",
+         "ui/android_device.py"],
         [
             ("tests/test_mtp_confined.py::test_happy_the_device_is_read_and_written", "backend"),
+            ("tests/test_adb_device.py::test_e2e_every_tool_against_the_fake_phone", "backend"),
+            ("tests/test_android_device_window.py::"
+             "test_the_window_stays_responsive_while_a_slow_phone_answers", "ui"),
             (
                 "tests/test_remove_matrix.py::"
                 "test_happy_e2e_a_symlink_to_a_folder_is_deleted_as_the_pane_deletes_it",
@@ -906,6 +910,13 @@ FEATURES: tuple[Feature, ...] = (
             "core/markdown_doc.py",
             "core/markdown_term.py",
             "core/markdown_cli.py",
+            "core/markdown_themes.py",
+            "core/markdown_settings.py",
+            "core/markdown_update.py",
+            "core/ed25519_pure.py",
+            "ui/markdown_theme_ui.py",
+            "ui/markdown_update_ui.py",
+            "ui/markdown_about.py",
         ],
         [
             (

@@ -68,22 +68,28 @@ def install_excepthook(title: str) -> None:
 
 
 def prepare_process(*, multimedia: bool = False) -> None:
-    """Before any Qt object: the interface language and - for a program
-    that plays sound (*multimedia*) - CA certificates for https streams (a
-    frozen build), no GPU probe in Qt's FFmpeg and the audio backend the
-    user chose, each as axross's main.py does it. Without *multimedia*
+    """Before any Qt object: the interface language, the host's CA
+    certificates for https (a frozen build's OpenSSL looks for the build
+    machine's: core.tls_env - every program, not only one that plays
+    sound) and - for a program that plays sound (*multimedia*) - no GPU
+    probe in Qt's FFmpeg and the audio backend the user chose, each as
+    axross's main.py does it. Without *multimedia*
     nothing of Qt Multimedia is imported (nor bundled)."""
     from core.i18n import detect_language, install, stored_language
 
+    try:  # (every program: an https client of its own - axross-markdown's updates - needs the host's CAs too)
+        from core.tls_env import apply_ca_bundle
+    except ImportError:  # (a tool exported without it)
+        pass
+    else:
+        apply_ca_bundle()
     if multimedia:
         try:
             from core.audio_settings import apply_saved_backend
             from core.multimedia_env import apply_no_gpu_probe
-            from core.tls_env import apply_ca_bundle
         except ImportError:   # a tool exported without sound
             log.warning("no multimedia modules: sound is not prepared")
         else:
-            apply_ca_bundle()
             apply_no_gpu_probe()
             apply_saved_backend()
     install(detect_language(configured=stored_language()))
@@ -91,22 +97,29 @@ def prepare_process(*, multimedia: bool = False) -> None:
 
 def settings_file(name: str):
     """The program's own settings (its theme): ~/.config/NAME/settings.json
-    (XDG_CONFIG_HOME's when set) - not axross's session.json."""
+    (XDG_CONFIG_HOME's when set; axross-markdown's: $AXROSS_MARKDOWN_SETTINGS
+    when set, core.markdown_settings) - not axross's session.json."""
     import os
     from pathlib import Path
 
+    if name == "axross-markdown" and os.environ.get("AXROSS_MARKDOWN_SETTINGS", "").strip():
+        return Path(os.environ["AXROSS_MARKDOWN_SETTINGS"].strip()).expanduser()
     base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
     return Path(base) / name / "settings.json"
 
 
 def _settings(name: str) -> dict:
-    from ui.state_files import _read_json_file
-
     try:
-        data = _read_json_file(settings_file(name))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+        from core.markdown_settings import read_settings
+    except ImportError:  # (a tool exported without it)
+        from ui.state_files import _read_json_file
+
+        try:
+            data = _read_json_file(settings_file(name))
+        except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+    return read_settings(settings_file(name))  # (a typo in the file: what can still be read of it)
 
 
 def stored_theme(name: str) -> str | None:
@@ -121,11 +134,19 @@ def store_theme(name: str, theme: str) -> None:
     """Keep *theme* in the program's own settings."""
     import json
 
-    from ui.state_files import _write_private_text
-
-    data = _settings(name)
-    data["theme"] = theme
     try:
+        from core.markdown_settings import write_settings
+    except ImportError:  # (a tool exported without it)
+        write_settings = None
+    try:
+        if write_settings is not None:
+            # (the rest kept - a file with a typo kept aside, never taken for empty: core.markdown_settings)
+            write_settings({"theme": theme}, settings_file(name))
+            return
+        from ui.state_files import _write_private_text
+
+        data = _settings(name)
+        data["theme"] = theme
         _write_private_text(settings_file(name), json.dumps(data, indent=2, sort_keys=True) + "\n")
     except OSError:
         log.warning("Could not keep the theme in %s", settings_file(name), exc_info=True)

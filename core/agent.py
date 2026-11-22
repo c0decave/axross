@@ -727,7 +727,7 @@ class OllamaContextWatch:
 def needs_confirmation(name: str, *, write: bool, group: str) -> bool:
     """Whether a call needs the user's yes: every mutating tool, and every
     tool of the exec group that runs something."""
-    return bool(write) or (group == "exec" and name in ("remote_exec", "remote_script"))
+    return bool(write) or (group == "exec" and name == "remote_exec")
 
 
 @dataclass
@@ -1054,7 +1054,8 @@ def _digest(args_text: str) -> str:
 #: they write, and the (tool, argument) pairs that follow a final symlink
 #: (the others act on the link itself: remove, rename, a new link).
 _WRITE_PATH_ARGS = ("path", "src", "dst", "link_path", "dest_dir", "folder", "out")
-_FOLLOWS_FINAL_LINK = frozenset({("write_file", "path"), ("copy", "dst"), ("chmod", "path"),
+_FOLLOWS_FINAL_LINK = frozenset({("write_file", "path"), ("restore_version", "path"),
+                                 ("copy", "dst"), ("chmod", "path"),
                                  ("archive_extract", "dest_dir"), ("pack", "folder"),
                                  ("pack", "path"),
                                  ("metadata_export", "out")})

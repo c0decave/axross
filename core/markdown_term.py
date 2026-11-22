@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from urllib.parse import quote, unquote, urlsplit
 
 from core import markdown_doc as MD
+from core import markdown_themes as MT
 
 ESC = "\x1b"
 #: The most bytes / pixels of one image read for the terminal (as the viewer).
@@ -54,22 +55,10 @@ IMAGES_PIXELS = 100_000_000
 IMAGE_COLUMNS = 80
 IMAGE_ROWS = 40
 
-DARK = {
-    "text": "#e6edf3", "muted": "#8b949e", "link": "#58a6ff",
-    "h1": "#79c0ff", "h2": "#d2a8ff", "h3": "#7ee787", "h4": "#e3b341", "h5": "#ffa657", "h6": "#8b949e",
-    "code_fg": "#ff7b72", "code_bg": "#2d333b", "pre_bg": "#161b22", "quote": "#8b949e",
-    "rule": "#3d444d", "mark": "#3fb950", "open": "#8b949e", "image": "#d2a8ff", "border": "#545d68",
-    "math": "#ffa657", "note": "#4493f8", "tip": "#3fb950", "important": "#ab7df8", "warning": "#d29922",
-    "caution": "#f85149",
-}
-LIGHT = {
-    "text": "#1f2328", "muted": "#59636e", "link": "#0969da",
-    "h1": "#0550ae", "h2": "#8250df", "h3": "#1a7f37", "h4": "#9a6700", "h5": "#bc4c00", "h6": "#59636e",
-    "code_fg": "#b31d28", "code_bg": "#eff1f3", "pre_bg": "#f6f8fa", "quote": "#59636e",
-    "rule": "#d1d9e0", "mark": "#1a7f37", "open": "#59636e", "image": "#8250df", "border": "#afb8c1",
-    "math": "#953800", "note": "#0969da", "tip": "#1a7f37", "important": "#8250df", "warning": "#9a6700",
-    "caution": "#d1242f",
-}
+#: The colours on a dark and on a light ground (the terminal's own: "--theme auto", "dark", "light"); every
+#: theme has its own (core.markdown_themes, Options.theme).
+DARK = MT.DARK_TERM
+LIGHT = MT.LIGHT_TERM
 #: The 16-colour fallback of each role (SGR foreground numbers).
 BASIC = {"text": 39, "muted": 90, "link": 94, "h1": 96, "h2": 95, "h3": 92, "h4": 93, "h5": 33,
          "h6": 90, "code_fg": 91, "quote": 90, "rule": 90, "mark": 92, "open": 90, "image": 95,
@@ -176,6 +165,9 @@ class Painter:
     depth: str = "truecolor"
     palette: dict = field(default_factory=lambda: DARK)
     hyperlinks: bool = True
+    #: the page's ground ("#rrggbb") when it is painted (a theme's: on_ground) - a 256-colour text keeps
+    #: its contrast on it (core.markdown_themes.readable256)
+    ground: str = ""
 
     def _colour(self, value: str, background: bool) -> str:
         if not value:
@@ -185,6 +177,8 @@ class Painter:
             r, g, b = _rgb(hex_colour)
             return f"{48 if background else 38};2;{r};{g};{b}"
         if self.depth == "256" and hex_colour:
+            if self.ground and not background:
+                return f"38;5;{MT.readable256(hex_colour, self.ground)}"
             return f"{48 if background else 38};5;{_xterm256(*_rgb(hex_colour))}"
         if self.depth == "16" and not background and value in BASIC:
             return str(BASIC[value])
@@ -608,7 +602,9 @@ def draw_blocks(image, painter: Painter, columns: int, rows: int) -> list[str]:
     foreground the upper, the background the lower)."""
     cols, cells = _fit(image, columns, rows)
     small = image.resize((cols, cells * 2))
-    background = (0x16, 0x1b, 0x22) if painter.palette is DARK else (0xff, 0xff, 0xff)
+    background = _rgb(painter.ground) if painter.ground else (0x16, 0x1b, 0x22) if painter.palette is DARK \
+        else _rgb(painter.palette["page_bg"]) if "page_bg" in painter.palette and painter.palette is not LIGHT \
+        else (0xff, 0xff, 0xff)
 
     def over(pixel):
         r, g, b, a = pixel
@@ -721,6 +717,94 @@ class Options:
     folder: str = ""                # the document's folder (images, links)
     image_columns: int = IMAGE_COLUMNS
     image_rows: int = IMAGE_ROWS
+    #: a theme's id (core.markdown_themes) - "": Dark's or Light's colours (*dark*) on the terminal's own ground
+    theme: str = ""
+    #: the theme's page ground painted behind the text (truecolor and 256 colours: on_ground)
+    background: bool = False
+
+
+def palette_of(options: Options) -> dict:
+    """The colours of *options*: its theme's, else Dark's or Light's."""
+    theme = MT.get(options.theme) if options.theme else None
+    if theme is not None:
+        return theme.term
+    return DARK if options.dark else LIGHT
+
+
+def ground_of(options: Options) -> str:
+    """The ground painted behind the text ("#rrggbb"), or "" - the terminal's own."""
+    theme = MT.get(options.theme) if options.theme else None
+    if theme is None or not options.background or options.depth not in ("truecolor", "256"):
+        return ""
+    return theme.term["page_bg"]
+
+
+def painter_of(options: Options, hyperlinks: bool | None = None) -> Painter:
+    return Painter(options.depth, palette_of(options), options.hyperlinks if hyperlinks is None else hyperlinks,
+                   ground_of(options))
+
+
+_SGR = re.compile(r"\x1b\[([0-9;]*)m")
+_ESCAPES = re.compile(r"\x1b\[[0-9;]*m|\x1b\]8;;[^\x1b]*\x1b\\")
+
+
+def _resets(params: str) -> tuple[bool, bool]:
+    """Whether the SGR sequence of *params* ends the foreground (a reset, 39) and the background (a reset,
+    49) - an extended colour's arguments (38;2;r;g;b, 48;5;n) are neither."""
+    values = params.split(";") if params else [""]
+    fg = bg = False
+    index = 0
+    while index < len(values):
+        value = values[index]
+        if value in ("38", "48", "58") and index + 1 < len(values):
+            index += 5 if values[index + 1] == "2" else 3 if values[index + 1] == "5" else 1
+            continue
+        if value in ("", "0", "00"):
+            fg = bg = True
+        elif value == "39":
+            fg = True
+        elif value == "49":
+            bg = True
+        index += 1
+    return fg, bg
+
+
+def on_ground(text: str, ground: str, width: int, depth: str, fg: str = "") -> str:
+    """*text* (lines for the terminal) on the page's *ground* in its text colour *fg*: each line begins on
+    them, every reset of the background or of the colour sets them again (the terminal's own text colour
+    on a theme's ground could be unreadable), and the line is filled with the ground to *width* columns
+    (spaces: less -R passes no erase-line). A picture's line (kitty's, iTerm2's protocol) stays as drawn."""
+    if not ground or depth not in ("truecolor", "256") or not text:
+        return text
+    if depth == "truecolor":
+        r, g, b = _rgb(ground)
+        back = f"{ESC}[48;2;{r};{g};{b}m"
+        if fg:
+            r, g, b = _rgb(fg)
+        front = f"{ESC}[38;2;{r};{g};{b}m" if fg else ""
+    else:
+        back = f"{ESC}[48;5;{MT.nearest256(ground)}m"
+        front = f"{ESC}[38;5;{MT.readable256(fg, ground)}m" if fg else ""
+
+    def again(match: re.Match) -> str:
+        fg_ends, bg_ends = _resets(match.group(1))
+        return match.group(0) + (back if bg_ends else "") + (front if fg_ends else "")
+
+    end = text.endswith("\n")
+    lines = (text[:-1] if end else text).split("\n")
+    out = []
+    for line in lines:
+        if f"{ESC}_G" in line or f"{ESC}]1337;" in line:
+            out.append(line)
+            continue
+        visible = MD.cell_width(_ESCAPES.sub("", line))
+        out.append(back + front + _SGR.sub(again, line) + " " * max(0, width - visible) + f"{ESC}[0m")
+    return "\n".join(out) + ("\n" if end else "")
+
+
+def ground_text(options: Options) -> str:
+    """The text colour on the ground of *options* ("" when none is painted)."""
+    return palette_of(options)["text"] if ground_of(options) else ""
 
 
 class Renderer:
@@ -731,7 +815,7 @@ class Renderer:
         #: a table drawn in parts (render_parts): the columns its first part was drawn with
         self.tables = {} if tables is None else tables
         self._goes_on = False
-        self.p = Painter(options.depth, DARK if options.dark else LIGHT, options.hyperlinks)
+        self.p = painter_of(options)
         self.lines: list[str] = []
         self.notes: dict[str, list[str]] = {}
         #: the images drawn (IMAGES at most), the pixels they may still take
@@ -1318,18 +1402,21 @@ class Renderer:
                     TerminalTrueColorFormatter,
                 )
 
-                style = "github-dark" if self.o.dark else "default"
+                theme = MT.get(self.o.theme) if self.o.theme else None
+                style = MT.pygments_style(theme) if theme is not None else \
+                    "github-dark" if self.o.dark else "default"
                 # (lexed in a child: a lexer's pattern stuck in backtracking held the terminal for ever -
                 # too slow, the block plain: core.markdown_doc.code_tokens)
                 tokens = MD.code_tokens(text if text.endswith("\n") else text + "\n", lang,
-                                        style if self.p.depth in ("truecolor", "256") else "default")
+                                        style if isinstance(style, str) and self.p.depth in ("truecolor", "256")
+                                        else "default")
                 if tokens is not None:
                     if self.p.depth == "truecolor":
                         formatter = TerminalTrueColorFormatter(style=style)
                     elif self.p.depth == "256":
                         formatter = Terminal256Formatter(style=style)
                     else:
-                        formatter = TerminalFormatter(bg="dark" if self.o.dark else "light")
+                        formatter = TerminalFormatter(bg="dark" if (theme or self.o.dark) else "light")
                     return formatted(tokens, formatter).rstrip("\n").split("\n")
             except ImportError:
                 pass
@@ -1997,6 +2084,7 @@ def render_parts(text: str, options: Options | None = None):
     text = labeled_inline_notes(text)  # (a text with inline notes in parts too)
     parts = _text_parts(text)
     labels = notes_of(text) if len(parts) > 1 else None
+    ground = ground_of(options)
     for number, (part, apart, first) in enumerate(parts):
         doc = MD.parse(part, notes=(labels, number == len(parts) - 1, first) if labels else None)
         try:
@@ -2004,18 +2092,20 @@ def render_parts(text: str, options: Options | None = None):
         except (Exception, RecursionError) as exc:  # noqa: BLE001 - a block's fault: the part as written,
             shown = Renderer(options).render(MD.as_written(doc.source or part, exc))  # never a traceback
         if shown.strip():  # (a part of nothing to show - definitions, a comment: no empty lines either)
-            yield ("\n" + shown) if apart and GOES_ON not in part[:2] else shown  # (a table's next part: on)
+            shown = ("\n" + shown) if apart and GOES_ON not in part[:2] else shown  # (a table's next part: on)
+            yield on_ground(shown, ground, options.width, options.depth, ground_text(options)) if ground else shown
     if flattened or shallower or wide:
         note = " ".join(([f"(lists nested more than {LIST_DEPTH} deep are shown flatter)"] if flattened else [])
                         + ([f"(quotes nested more than {MD.QUOTE_DEPTH} deep are shown flatter)"] if shallower
                            else [])
                         + ([f"(tables of more than {TABLE_COLUMNS} columns are shown as written)"] if wide
                            else []))
-        painter = Painter(options.depth, DARK if options.dark else LIGHT)
+        painter = painter_of(options)
         import textwrap
 
-        yield "\n" + "\n".join(painter.paint(line, Style(fg="muted", italic=True))
-                                for line in textwrap.wrap(note, max(20, options.width))) + "\n"
+        yield on_ground("\n" + "\n".join(painter.paint(line, Style(fg="muted", italic=True))
+                                          for line in textwrap.wrap(note, max(20, options.width))) + "\n",
+                        ground, options.width, options.depth, ground_text(options))
 
 
 def render(text: str, options: Options | None = None) -> str:
@@ -2026,4 +2116,5 @@ def render(text: str, options: Options | None = None) -> str:
 
 
 __all__ = ["ALERT_TITLES", "DARK", "LIGHT", "Options", "Painter", "Renderer", "colour_depth", "dark_background",
-           "fit_columns", "image_protocol", "locate", "read_picture", "render", "render_parts", "safe_url", "wrap"]
+           "fit_columns", "ground_of", "ground_text", "image_protocol", "locate", "on_ground", "painter_of", "palette_of",
+           "read_picture", "render", "render_parts", "safe_url", "wrap"]

@@ -35,13 +35,13 @@ BASE_READ_TOOLS = [
 ]
 BASE_WRITE_TOOLS = [
     "write_file",
+    "restore_version",
     "mkdir",
     "remove",
     "rename",
     "copy",
     "bulk_copy",
     "symlink",
-    "hardlink",
     "chmod",
 ]
 
@@ -64,8 +64,10 @@ def test_happy_comma_separated_and_repeated_values_are_merged():
     assert got == frozenset({"crypto", "archive", "metadata"})
 
 
-def test_happy_all_expands_to_every_group():
-    assert G.parse_groups(["all"]) == frozenset(G.GROUPS)
+def test_happy_all_expands_to_every_group_but_the_device_ones():
+    # 0.15.184: adb, a group for one kind of device, comes only by name.
+    assert G.parse_groups(["all"]) == frozenset(G.GROUPS) - G.OPT_IN_GROUPS
+    assert G.parse_groups(["all,adb"]) == frozenset(G.GROUPS)
     assert "all" not in G.GROUPS
 
 
@@ -74,7 +76,7 @@ def test_edge_case_and_whitespace_are_ignored():
 
 
 def test_edge_all_with_other_groups_is_still_all():
-    assert G.parse_groups(["metadata,all"]) == frozenset(G.GROUPS)
+    assert G.parse_groups(["metadata,all"]) == frozenset(G.ALL_GROUPS)
 
 
 def test_edge_no_values_means_no_groups():
@@ -171,7 +173,7 @@ def test_happy_groups_reach_the_stdio_config():
 def test_happy_env_groups_reach_the_stdio_config():
     code, err, serve, _ = _main("--mcp-server", env={"AXROSS_MCP_TOOLS": "all"})
     assert code == 0, err
-    assert serve.call_args.args[0].tool_groups == frozenset(G.GROUPS)
+    assert serve.call_args.args[0].tool_groups == frozenset(G.ALL_GROUPS)
 
 
 def test_edge_no_flag_keeps_the_default_config():

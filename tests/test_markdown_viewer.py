@@ -37,6 +37,7 @@ from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from core.local_fs import LocalFS  # noqa: E402
 from ui import markdown_view as MDV  # noqa: E402
+from tests import markdown_timing as TB  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -135,7 +136,8 @@ def test_the_no_html_flags_keep_their_bits():
     from PyQt6.QtGui import QTextDocument
 
     feature = QTextDocument.MarkdownFeature
-    assert MDV.FEATURES.value == feature.MarkdownDialectGitHub.value | feature.MarkdownNoHTML.value
+    # (without md4c's MD_FLAG_UNDERLINE, 0x4000: "_em_" is emphasis, not an underline - the 27th review's M1)
+    assert MDV.FEATURES.value == (feature.MarkdownDialectGitHub.value | feature.MarkdownNoHTML.value) & ~0x4000
 
 
 def test_an_svg_that_names_other_files_is_not_decoded():
@@ -445,7 +447,7 @@ def test_happy_the_editor_shows_a_live_preview(docs, tmp_path):
         editor.preview_action.setChecked(True)
         assert tab.previewing and tab.preview.headings() == ["Other"]
         tab.editor.setPlainText("# Typed\n\n## Live\n")
-        assert wait_until(lambda: tab.preview.headings() == ["Typed", "Live"], timeout=5)
+        assert TB.until_within(wait_until, lambda: tab.preview.headings() == ["Typed", "Live"], 5)
         editor.preview_action.setChecked(False)
         assert not tab.previewing
     finally:

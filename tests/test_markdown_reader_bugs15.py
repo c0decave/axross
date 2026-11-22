@@ -26,6 +26,7 @@ from PyQt6.QtCore import QTimer  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from tests.test_markdown_reader_bugs11 import pump, until  # noqa: E402
+from tests import markdown_timing as TB  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -111,7 +112,7 @@ def test_hostile_a_folders_readme_is_checked_as_a_link(tmp_path):
     asked = []
     dialog.ask_outside = lambda path, text="": asked.append(path) or False
     try:
-        assert until(lambda: "Doc" in dialog.view.browser.toPlainText(), 20)
+        assert TB.until_within(until, lambda: "Doc" in dialog.view.browser.toPlainText(), 20)
         dialog.follow(QUrl("sub2"))
         pump(1.0)
         assert dialog.path == str(doc / "index.md") and "hunter2" not in dialog.view.browser.toPlainText()
@@ -192,6 +193,9 @@ def test_guard_one_huge_block_never_holds_up_the_window(bomb, full):
     timer = QTimer()
     timer.timeout.connect(beat)
     timer.start(5)
+    from tests.markdown_heartbeat import Heartbeat, assert_responsive
+
+    heart = Heartbeat()  # (the gap: the window's wall time but its own wait for a CPU another job had)
     view.render(BOMBS[bomb]())
     assert until(lambda: view._readable and view.markdown, 120)
     def laid() -> bool:  # (as far as it goes at once)
@@ -203,12 +207,13 @@ def test_guard_one_huge_block_never_holds_up_the_window(bomb, full):
     pump(0.5)
     until(laid, 30)
     timer.stop()
+    _turn, gap = heart.stop()
     worst = sorted(turns, reverse=True)[:3]
-    assert worst[0][0] < 0.3, worst
-    from tests.markdown_heartbeat import assert_responsive
-
-    assert_responsive(max(wall for _cpu, wall in turns), "the longest gap between two beats")  # (the window
-    # frozen by a worker holding Python's lock: wall time, not the GUI thread's)
+    TB.budget(worst[0][0] < 0.3, worst)
+    # (the window frozen by a worker holding Python's lock: wall time, not the GUI thread's - but the time
+    # it waited for a CPU the machine gave another job: the raw wall time between two beats failed the
+    # suite in one process under load, 0.16.11 as 0.16.12 - review 25's R9)
+    assert_responsive(gap, "the longest gap between two beats")
 
 
 # -- 5. reference links in Qt's own parser ------------------------------------------------------------
@@ -442,7 +447,7 @@ def test_sad_a_copy_holds_items_numbers_and_a_formulas_number_once(full):
     APP.clipboard().setText("EMPTY")
     view.browser.select_all()
     view.copy_selection()
-    assert until(lambda: APP.clipboard().text() != "EMPTY", 30)
+    assert TB.until_within(until, lambda: APP.clipboard().text() != "EMPTY", 30)
     copied = [line.rstrip() for line in APP.clipboard().text().splitlines() if line.strip()]
     assert copied == ["T", "1. first", "2. second", "  ◦ inner", "• bullet", "☐ task", "$$x = 1 \\tag{B}$$",
                       "After."], copied

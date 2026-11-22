@@ -48,6 +48,7 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+import importlib.util
 import json
 import re
 import shutil
@@ -62,6 +63,8 @@ PACKAGES = ("core", "ui", "resources", "axross", "models", "security")
 #: Packages whose __init__ is written here instead of copied (axross's own
 #: imports the scripting API on first use - not part of a tool).
 STUB_INITS = {"axross/__init__.py": '"""The version of the axross code this tool comes from."""\n'}
+#: The licences of an export's one-file programs (App.third_party), at its root and in its package.
+LICENCES = "THIRD_PARTY_LICENSES.txt"
 
 
 @dataclass(frozen=True)
@@ -134,6 +137,10 @@ class App:
     #: export runs them - and the folders of tests/ they read (golden pages).
     tests: tuple[str, ...] = ()
     test_data: tuple[str, ...] = ()
+    #: one-file programs with PyQt6 (GPL-3.0) and Qt (LGPL-3.0) in its releases: THIRD_PARTY_LICENSES.txt
+    #: (scripts/standalone_licences.py: the licence texts of its lock's packages, the source code) and a
+    #: NOTICE beside LICENSE, the texts in its package as well (Help > About shows them, the binaries carry them)
+    third_party: bool = False
 
 
 def _child_path_rewrites(package: str) -> tuple[tuple[str, str, str], ...]:
@@ -154,6 +161,23 @@ def _probe_rewrites(package: str) -> tuple[tuple[str, str, str], ...]:
     # The multimedia probe starts itself as a child: by its new module name.
     return (("core/multimedia_probe.py", '"-m", "core.multimedia_probe"',
              f'"-m", "{package}._ax.core.multimedia_probe"'),)
+
+
+def theme_rows() -> str:
+    """The README's table of the reader's themes (core.markdown_themes): name, ground, the contrast of its
+    text and links."""
+    sys.path.insert(0, str(ROOT))
+    try:
+        from core import markdown_themes as MT
+    finally:
+        sys.path.remove(str(ROOT))
+    rows = []
+    for theme in MT.THEMES.values():
+        page = theme.page
+        text, link = MT.contrast(page["text"], page["page_bg"]), MT.contrast(page["link"], page["page_bg"])
+        rows.append(f"| {theme.label} | {'dark' if theme.dark else 'light'} `{page['page_bg']}` | "
+                    f"{text:.1f}:1 | {link:.1f}:1{' (AAA)' if theme.aaa else ''} |")
+    return "\n".join(rows)
 
 
 APPS = {
@@ -266,8 +290,13 @@ Bluetooth needs BlueZ on the system bus (Linux) or a supported USB stick.
               "axross/_version.py", "core/backend_guard.py", "core/atomic_io.py",
               "ui/off_gui.py", "core/connect_worker.py", "core/connect_notice.py", "core/secure_storage.py",
               "core/lex_worker.py", "core/image_worker.py", "core/process_launcher.py", "core/previews.py",
-              "core/xdg_dirs.py"),
-        version="0.16.10",
+              "core/xdg_dirs.py",
+              # (0.17.0: the themes, the window's theme menu, the updates of the one-file programs)
+              "core/markdown_themes.py", "core/markdown_settings.py", "core/markdown_update.py",
+              "core/ed25519_pure.py", "ui/markdown_theme_ui.py", "ui/markdown_update_ui.py", "ui/markdown_about.py"),
+        version="0.17.3",
+        third_party=True,
+        package_data=("*.json", LICENCES),
         pitch=(
             "- **GitHub Markdown, complete** - CommonMark, tables, task lists, footnotes, alerts, "
             "definition lists, front matter.",
@@ -275,7 +304,8 @@ Bluetooth needs BlueZ on the system bus (Linux) or a supported USB stick.
             "matrices and cases, drawn as text.",
             "- **An outline beside the text** - every heading one click away; find (Ctrl+F) "
             "marks every match.",
-            "- **Highlighted code** - fenced blocks coloured by Pygments, in light and dark themes.",
+            "- **Twelve themes** - Light, Dark, Sepia, Solar, Arctic, Retro, Slate, Paper, High Contrast and "
+            "more; code coloured by Pygments in each; every one WCAG AA.",
             "- **Local images** - the pictures beside the file, clickable when linked, bounded "
             "in size.",
             "- **Shown, never run** - no scripts, styles, frames or forms; nothing is loaded "
@@ -286,7 +316,8 @@ Bluetooth needs BlueZ on the system bus (Linux) or a supported USB stick.
             "text, following the typing.",
             "- **In the terminal too** - `axross-mdcat`: colours, box-drawn tables, links and "
             "pictures, no Qt needed.",
-            "- **Export** - the page as HTML with its images inside, as PDF, or printed.",
+            "- **Export, and signed updates** - the page as HTML, PDF or printed; the one-file programs "
+            "update themselves from signed releases.",
         ),
         shots=(
             ("docs/screenshots/viewer-light.png", "The viewer: outline, alerts, tables, task lists"),
@@ -305,14 +336,17 @@ axross-markdown --html notes.md > notes.html   # the page for a web browser
 ```
 
 Or a one-file program without Python - Linux (also as an AppImage), macOS (also as a disk
-image) and Windows - from the [latest release](https://github.com/c0decave/axross-markdown/releases/latest).
+image) and Windows - from the [latest release](https://github.com/c0decave/axross-markdown/releases/latest);
+it updates itself from the signed releases ([how]({extended}#updates)).
 
 Every dependency is pinned and reviewed in `requirements.lock.txt`
 ([how to install exactly those]({extended}#the-exact-reviewed-dependencies)).
 """,
         tagline="GitHub Markdown in a window of its own - or in the terminal: read, never run.",
         settings_text=("it reads axross's settings\n(`~/.config/axross`) for the language and - until "
-                       "View → Theme chooses one in\n`~/.config/axross-markdown/settings.json` - the theme."),
+                       "View → Window Theme chooses one in\n`~/.config/axross-markdown/settings.json` - the "
+                       "window's theme. The page's theme (View → Theme), the terminal's (`terminal_theme`) and "
+                       "the updates (`update_mode`) are kept in that file too."),
         # (axross's tests of the reader that need nothing of axross but the reader - the release runs them)
         tests=("test_markdown_corpus.py", "test_markdown_emoji_font_scan_budget.py", "test_markdown_full.py",
                "test_markdown_golden.py",
@@ -327,10 +361,20 @@ Every dependency is pinned and reviewed in `requirements.lock.txt`
                "test_markdown_reader_bugs19.py", "test_markdown_reader_bugs20.py",
                "test_markdown_reader_bugs21.py", "test_markdown_reader_bugs22.py",
                "test_markdown_reader_bugs23.py", "test_markdown_reader_features.py",
-               "test_markdown_reader_bugs24.py",
+               "test_markdown_reader_bugs24.py", "test_markdown_reader_bugs25.py", "test_markdown_reader_bugs26.py",
+               "test_markdown_freeze_sweep.py", "test_markdown_regex_audit.py",
                "test_markdown_single_tilde_in_link.py", "test_markdown_viewer.py",
-               "test_markdown_viewer_window.py", "markdown_heartbeat.py"),
-        test_data=("golden/markdown",),
+               "test_markdown_viewer_window.py", "markdown_heartbeat.py",
+               "test_markdown_themes.py", "test_markdown_update.py", "test_markdown_about.py",
+               # (0.17.1: the marker timing - which tests, and the check that none is missing)
+               "markdown_timing.py", "test_markdown_timing_marks.py",
+               # (0.17.2: the page's font is its text font whatever fonts are installed)
+               "test_markdown_fonts.py",
+               # (0.17.3: the twenty-seventh review - Find after an emoji, Qt's own parser's headings, emphasis
+               # and link titles, the settings file, the updater's failures)
+               "test_markdown_reader_bugs27.py", "test_markdown_settings.py"),
+        # (and the fonts the golden pictures are drawn with: theirs, whatever the machine has - their licence beside)
+        test_data=("golden/markdown", "golden/fonts"),
         readme="""\
 A Markdown file rendered in a window of its own - or in the terminal. The full set:
 CommonMark, GitHub's tables (aligned as written), task lists, strike-through and
@@ -344,6 +388,7 @@ link opens in the browser only after a question that shows its real address.
 - [Export and print](#export-and-print)
 - [Themes](#themes)
 - [In the terminal: axross-mdcat](#in-the-terminal-axross-mdcat)
+- [Updates](#updates)
 - [The security model](#the-security-model)
 - [Limits](#limits)
 - [Install options](#install-options)
@@ -365,7 +410,8 @@ link opens in the browser only after a question that shows its real address.
 | F5 | Read the file and its images again (a file changed on disk is read again by itself) |
 | F4 | Edit: the file in an editor, the rendering beside the text - after a pause at the line typed at |
 | Ctrl+P | Print |
-| Alt+V | The View menu: the theme |
+| Alt+V | The View menu: the page's theme, the window's theme |
+| Alt+H | The Help menu: Check for Updates…, Updates |
 | Ctrl+M | Maximise the window, or back |
 
 A right click on a code block copies the block as written; on a heading, a link to it as
@@ -388,12 +434,29 @@ axross-markdown --html notes.md > notes.html
 
 ## Themes
 
-*View > Theme* (Alt+V): **Modern (follow system)** - light or dark as the desktop's
-colour scheme is, and anew when it changes; light when the desktop does not say - Modern
-Light, Modern Dark, Classic, Light Mode (the desktop's own palette), Hacker and Amber.
-The choice is kept in `~/.config/axross-markdown/settings.json` (`$XDG_CONFIG_HOME` when
-set); without one, the theme chosen in axross is taken, if axross is installed. The
-page, its code and its formulas follow the theme.
+*View > Theme* (Alt+V) colours the page - its ground, text, headings, links, code and the
+code's syntax, quotes, tables, alerts, formulas and the selection - in one of twelve
+themes, or **Automatic**: Light or Dark as the window is.
+
+| Theme | Ground | Text | Links |
+|---|---|---|---|
+THEME_ROWS
+
+Every theme's body text and links reach WCAG AA (4.5:1) on its ground, the High Contrast
+ones AAA (7:1); the numbers are the contrast ratios (a test measures every theme, and every
+other text colour of it). The names say what a theme looks like: Solar is Solarized-like,
+Arctic Nord-like, Retro a warm Gruvbox-like palette, Night Violet Dracula-like and Slate
+One-Dark-like. Every open window changes with the choice, kept in
+`~/.config/axross-markdown/settings.json` (`page_theme`). A switch is one change: the page
+stays in its old colours until it is made anew in the new ones (no flash, no blank page
+between), and switches faster than one in 0.4 s are taken together - the last of them
+counts.
+
+*View > Window Theme*: the window's own colours - **Modern (follow system)** (light or dark
+as the desktop's colour scheme is, and anew when it changes; light when the desktop does
+not say), Modern Light, Modern Dark, Classic, Light Mode (the desktop's own palette),
+Hacker and Amber - kept in the same file (`theme`); without one, the theme chosen in
+axross is taken, if axross is installed.
 
 ## In the terminal: axross-mdcat
 
@@ -408,7 +471,9 @@ axross-markdown --term README.md        # the same, from the window's program
 |---|---|
 | `-w N`, `--width N` | Columns (default: the terminal's, at most 100; at least 20) |
 | `--color auto/always/never/truecolor/256/16` | Colours (auto follows NO_COLOR, FORCE_COLOR, COLORTERM and whether it is a terminal) |
-| `--theme auto/dark/light` | Colours for a dark or a light background (auto: COLORFGBG, else dark) |
+| `--theme NAME` | A theme of the window's (`--list-themes`), its ground painted behind the text; `auto` (the default): the terminal's own ground, colours for dark or light (COLORFGBG, else dark). Default: `$AXROSS_MDCAT_THEME`, else `terminal_theme` in the settings |
+| `--list-themes` | The themes, with the contrast of their text and links and a sample |
+| `--background auto/on/off` | Paint the theme's ground (auto: for a theme, not for `auto`) |
 | `--images auto/kitty/iterm/blocks/none` | Pictures with kitty's or iTerm2's protocol, in coloured half-blocks, or none |
 | `--image-width N` | Columns a picture may take |
 | `--no-links` | No terminal hyperlinks (OSC 8) |
@@ -416,6 +481,11 @@ axross-markdown --term README.md        # the same, from the window's program
 | `--toc` | The headings only, with their anchors |
 | `--watch` | Draw the file anew whenever it changes (Ctrl+C ends); a file not there yet is said and waited for |
 | `--version` | The version |
+| `--check-update`, `--update`, `--update-mode off/notify/auto` | The updates ([below](#updates)) |
+
+With 256 colours a theme's colours are the nearest that keep their contrast on the
+nearest ground; with 16 the terminal's own colours are used and no ground is painted;
+`NO_COLOR` (or `--color never`) means none at all.
 
 Headings, emphasis, inline and fenced code (coloured), quotes and alerts, nested and task
 lists, tables drawn with box characters (wrapped to fit; a long one drawn as it goes, a
@@ -427,6 +497,53 @@ a file can send the terminal an escape sequence of its own.
 - At most 200 pictures a text, as in the window; then a line says the rest are not drawn.
 - It stops as soon as the program it writes into has ended (`axross-mdcat big.md | head`).
 - Output that cannot be written (a full disk) is said; the exit status is 1.
+
+## Updates
+
+The one-file programs - the Linux binary and the AppImage, the macOS binary, Windows'
+`axross-markdown.exe` and `axross-mdcat.exe` - update themselves from the GitHub releases.
+*Help > Updates*: **Off**, **Tell me about new versions** (the default) or **Install new
+versions automatically**; the window asks GitHub at its start and every 24 hours, always on a
+thread of its own - it never waits for the network. *Help > Check for Updates…* asks at once.
+Without a window:
+
+```sh
+axross-markdown --check-update          # is a newer release out?
+axross-markdown --update                # install it (axross-mdcat --update on Windows)
+axross-markdown --update-mode off       # or notify, auto
+```
+
+A pip or pipx install is never replaced: it is told `pip install -U axross-markdown`. The
+terminal view asks no network itself; it says (on standard error, in a terminal) when the
+last check found a newer version. `AXROSS_MARKDOWN_NO_UPDATE_CHECK=1` keeps the automatic
+checks off whatever the setting says.
+
+Before anything is replaced:
+
+- every request and every redirect goes over https to GitHub's hosts only (`api.github.com`,
+  `github.com`, `release-assets.githubusercontent.com`, `objects.githubusercontent.com`),
+  each answer bounded in size (the program at most 400 MiB);
+- the release is strictly newer than the running program - and the file has the release's
+  version in its name (`axross-markdown-0.17.1-linux-x86_64`): an older release's file can
+  never stand for a newer one;
+- `SHA256SUMS.sig` is a valid Ed25519 signature of `SHA256SUMS` by the release key whose
+  public half the program pins (no signature, another key: refused before the program is
+  fetched); the file has its entry there, the size the release states and that SHA-256;
+- no archive is fetched or unpacked: the files are the bare programs.
+
+The new program is written beside the running one, hashed again and run once
+(`--self-test`: it must start here and say its version - a release that cannot run on this
+system never replaces this one), then put in place with one rename; the old one stays as
+`axross-markdown.previous` for a minute of the new one's running. On Windows the running
+program is renamed aside first (it may be renamed, not overwritten). The AppImage file
+itself (`$APPIMAGE`) is replaced, never by the plain binary. Should the program in place
+not be the file checked, the old one is put back. It takes effect at the next start. The
+macOS app (`axross Markdown.app`) is not changed in place - its program is part of its
+signed seal: the notice points to the release's disk image.
+
+How a release is signed: the release workflow makes a draft; the maintainer signs its
+`SHA256SUMS` on their own machine and publishes it (`scripts/sign_release.py release
+vX.Y.Z --key KEY --publish`) - the key never comes near CI.
 
 ## The security model
 
@@ -460,6 +577,9 @@ What a file holds is shown, never run:
   than 300,000 cells); lists nested more than 16 levels and quotes more than 8 are shown
   flatter.
 - Mermaid, PlantUML, GeoJSON and STL blocks are shown as their source.
+- Updates: tried against a fake GitHub (its API, its redirects, signed and badly signed
+  releases) and on Linux; the Windows replacement and the macOS binary's are not tried on
+  those systems yet. A release before 0.17.0 has no signature: 0.16.x is updated by hand once.
 - Code is coloured in a process of its own; a block that takes longer than 5 seconds is
   shown without colours.
 - An emoji short code (`:tada:`) of an emoji no installed font has stays as written.
@@ -492,7 +612,7 @@ pip install "axross-markdown[linkify]"   # bare addresses linked as GitHub links
 The Markdown view started as the Markdown viewer of
 [sandbox-ai](https://github.com/c0decave/sandbox-ai)'s Files page (MIT, the same
 author), ported to PyQt6 and axross's backends.
-""",
+""".replace("THEME_ROWS", theme_rows()),
     ),
     "mcp": App(
         dist="axross-headless-mcp",
@@ -568,22 +688,22 @@ author), ported to PyQt6 and axross's backends.
 - **Read-only by default:** writing, moving and deleting need `--mcp-write` and an explicit `--mcp-root`.
 - **Confined to one folder:** every path stays under `--mcp-root`, checked through the folder's own descriptors.
 - **Secrets stay put:** SSH and GnuPG keys, tokens and `.env` files are refused; every stream is scanned for keys.
-- **52 tools in 14 groups, opt in:** only the core tools are on until you name more groups or `all`.
+- **74 tools in 15 groups, opt in:** only the core tools are on until you name more groups or `all` (every group but the Android one, `adb`: name it, `all,adb`).
 - **Search and grep across servers:** name, size and date search, content grep, an offline index for repeated searches.
 - **Checksums without downloading:** SHA-256 on the server where the backend offers it, recursive checksums of whole trees.
-- **Duplicate finder:** duplicate groups by wasted space, dedupe to the trash, every copy re-verified first, a dry run by default.
+- **Duplicate finder:** duplicate groups by wasted space, dedupe to the trash, every copy re-verified first, a dry run by default; the trash listed and restored from.
 - **Metadata, read and removed:** EXIF / GPS / XMP / IPTC, Office and PDF properties, media tags; removal writes a cleaned copy.
 - **Archives, safely:** list and extract zip, tar.*, 7z and rar, guarded against zip-slip, bombs, link members and spoofing names.
 - **Packing:** zip, tar.gz / .zst / .xz / .bz2 and 7z, optionally AES-256 with encrypted file names.
 - **Encryption:** encrypt and decrypt files (AES-256-GCM, PBKDF2-SHA256).
 - **File types by content:** magic-byte detection that flags files whose extension lies.
 - **Copy and move between any two backends:** SFTP to S3, SMB to Google Drive - atomic, resumable, never half-written under the final name.
-- **Earlier versions:** list and read previous versions where the storage keeps them.
-- **Remote commands, only if allowed:** SSH, WinRM (PowerShell), ADB and more with `--mcp-allow-exec`, off by default.
+- **Earlier versions:** list, read and restore previous versions where the storage keeps them; append to a file or patch bytes at an offset.
+- **Remote commands, only if allowed:** SSH, WinRM (PowerShell), ADB and more with `--mcp-allow-exec`, off by default; Android phones on an ADB profile (identity, apps and their permissions, SMS, log, screenshots; changes with `--mcp-write`) with `--mcp-tools adb` (not part of `all`).
 - **Current MCP over stdio or HTTP:** protocol 2025-11-25, 2025-06-18, 2024-11-05; bearer token, mTLS off loopback, an audit trail.
 - **Runs anywhere, no GUI:** `uvx`, `pipx` or the container image; the same code as the axross desktop app and its tests.
 
-**The 52 tools** (only the file tools are on until `--mcp-tools GROUP,...` or `all` adds groups): **files (always on)** `list_directory`, `get_path_info`, `read_file`, `compute_file_checksum`, `search_index`, `walk_tree`, `compute_tree_checksums`, `render_preview`, `search_content`, `list_file_versions`, `read_file_version`; **write (`--mcp-write`)** `write_file`, `create_directory`, `delete_path`, `move_path`, `copy_file`, `copy_tree`, `create_symlink`, `create_hardlink`, `set_permissions`; **metadata** `read_metadata`, `export_metadata`, `strip_metadata`; **duplicates** `scan_duplicates`, `list_duplicate_scans`, `list_duplicate_groups`, `trash_duplicates`; **archives** `list_archive_formats`, `create_archive`, `list_archive_members`, `extract_archive`; **crypto** `encrypt_file`, `decrypt_file`; **file types** `identify_file_type`, `scan_file_types`; **index** `build_index`; **transfers** `copy_path_to_backend`, `move_file_to_backend`; **remote profiles** `list_remote_profiles`, `open_remote_profile`, `close_remote_profile`, `list_backends`; **remote commands (`--mcp-allow-exec`)** `run_backend_command`, `run_backend_script`; **scripts (`--mcp-allow-scripts`)** `list_scripts`, `get_script_api`, `read_script`, `write_script`, `delete_script`, `run_script`; **agent** `run_llm_agent`; **extensions** `list_extensions`.
+**The 74 tools** (only the file tools are on until `--mcp-tools GROUP,...` or `all` adds groups; `all` leaves out the Android tools, `all,adb` has them): **files (always on)** `list_directory`, `get_path_info`, `read_file`, `compute_file_checksum`, `search_index`, `walk_tree`, `compute_tree_checksums`, `render_preview`, `search_content`, `list_file_versions`, `read_file_version`; **write (`--mcp-write`)** `write_file`, `restore_file_version`, `create_directory`, `delete_path`, `move_path`, `copy_file`, `copy_tree`, `create_link`, `set_permissions`; **metadata** `read_metadata`, `export_metadata`, `strip_metadata`; **duplicates** `scan_duplicates`, `list_duplicate_scans`, `list_duplicate_groups`, `trash_duplicates`, `list_trash`, `restore_from_trash`; **archives** `list_archive_formats`, `create_archive`, `list_archive_members`, `extract_archive`; **crypto** `encrypt_file`, `decrypt_file`; **file types** `identify_file_type`, `scan_file_types`; **index** `build_index`; **transfers** `copy_path_to_backend`, `move_file_to_backend`; **remote profiles** `list_remote_profiles`, `open_remote_profile`, `close_remote_profile`, `list_backends`; **Android devices** `get_device_info`, `list_device_properties`, `get_battery_status`, `list_apps`, `get_app_info`, `list_running_apps`, `get_logcat`, `take_screenshot`, `list_sms`, and with `--mcp-write` `start_app`, `stop_app`, `install_app`, `uninstall_app`, `export_app`, `grant_permission`, `revoke_permission`, `reboot_device`, `write_sms`, `compose_sms`, `send_at_command`; **remote commands (`--mcp-allow-exec`)** `run_backend_command`; **scripts (`--mcp-allow-scripts`)** `list_scripts`, `get_script_api`, `read_script`, `write_script`, `delete_script`, `run_script`; **agent** `run_llm_agent`, `list_llm_profiles`; **extensions** `list_extensions`.
 
 ## Install
 
@@ -627,15 +747,19 @@ in a container or in CI.
 - **File tools** (always on, read-only): `list_directory`, `get_path_info`, `read_file`, `compute_file_checksum`,
   `search_index`, `walk_tree`, `compute_tree_checksums`, `search_content`, `list_file_versions`, `read_file_version`,
   and `render_preview` (image thumbnails; with the `images` extra, which brings Pillow).
-- **Write tools** (`--mcp-write --mcp-root DIR`): `write_file`, `create_directory`, `delete_path`,
-  `move_path`, `copy_file`, `copy_tree`, `create_symlink`, `create_hardlink`, `set_permissions`.
+- **Write tools** (`--mcp-write --mcp-root DIR`): `write_file` (replace, create, append or
+  at an offset), `restore_file_version`, `create_directory`, `delete_path`, `move_path`,
+  `copy_file`, `copy_tree`, `create_link`, `set_permissions`.
 - Tool names read verb then resource since 0.15.183; `tools/call` still takes the former
   names (list_dir, stat, grep, ...), which `tools/list` no longer shows, and the group
-  packer is part of archive (`--mcp-tools packer` still works).
+  packer is part of archive (`--mcp-tools packer` still works). Since 0.15.184
+  create_symlink and create_hardlink are `create_link` (`kind`), run_backend_script is
+  `run_backend_command` with `script`; the former names still answer.
 - **Capability groups** (`--mcp-tools GROUP,...` or `all`): metadata, duplicates,
   archive, crypto, index, filetype, transfer, remote (axross's saved
   connection profiles as further backends), exec (`--mcp-allow-exec`), agent,
-  extensions.
+  extensions; and adb (Android devices opened as ADB profiles), which `all` leaves out
+  since 0.15.184: `--mcp-tools all,adb` is every group.
 - Every path is confined to `--mcp-root` (default: your home folder); secret files
   (SSH and GnuPG private keys, tokens) are refused unless `--mcp-allow-secret-reads`.
 
@@ -706,6 +830,31 @@ A client sends `Authorization: Bearer <token>`. Anything but loopback needs mTLS
 docker run -i --rm -v "$PWD:/data" ghcr.io/c0decave/axross-headless-mcp:latest \
     --mcp-server --mcp-root /data --mcp-tools all
 ```
+
+### Android devices (the adb group)
+
+`--mcp-tools remote,adb` (and `--mcp-write` for the tools that change the device or
+write into the root); `all` does not include adb, `all,adb` does. The device is an ADB profile of axross (TCP to the phone's
+`adb tcpip` port, USB, or the adb server of this computer on 127.0.0.1:5037), opened
+with `open_remote_profile`; each tool takes its backend id (`backend='profile:phone'`).
+Commands go to the phone as argument lists, each argument quoted; every input is
+checked against a narrow pattern and every answer is cleaned of control, bidi and
+invisible characters and bounded.
+
+- Reading: `get_device_info` (the IMEI only where the phone service answers the shell
+  or a vendor property holds it), `list_device_properties`, `get_battery_status`,
+  `list_apps`, `get_app_info` (versions, permissions), `list_running_apps`,
+  `get_logcat`, `take_screenshot` (an image; with `out` a PNG in the root), `list_sms`
+  (only where the shell has READ_SMS).
+- Changing: `start_app`, `stop_app`, `install_app` (an `.apk` from the root: no link,
+  no `..`, at most 4 GiB, removed from `/data/local/tmp` again), `uninstall_app`,
+  `export_app` (an app's APKs into the root), `grant_permission`, `revoke_permission`,
+  `reboot_device`, `write_sms` (read back: Android drops the shell's write unless
+  WRITE_SMS is allowed), `compose_sms` (prepares, never sends), `send_at_command` (root
+  and a modem node only).
+
+The tools that change the device are refused on a profile flagged production and in
+the paranoid security mode, and leave audit lines without message texts.
 
 ### Settings
 
@@ -1115,7 +1264,7 @@ version = "{version}"
 description = "{app.summary}"
 readme = "README.md"
 license = "Apache-2.0"
-license-files = ["LICENSE"]
+license-files = [{'"LICENSE", "NOTICE"' if app.third_party else '"LICENSE"'}]
 requires-python = ">=3.11"
 dependencies = [
     {deps},
@@ -1200,6 +1349,47 @@ GATE_JOB = """
 
 
 def _workflow(app: App, locked: bool = False) -> str:
+    """CI of the exported project (_base_workflow) - for a tool whose tests mark the ones that pass or fail
+    by elapsed time (tests/markdown_timing.py in App.tests): the blocking job runs all but those (``-m "not
+    timing"``: the tests that assert their content and a duration - ``budgets`` - with the duration a
+    warning), a job of its own the timing ones and the budgets strictly (``-m "timing or budgets"``) with
+    ``continue-on-error`` and their summary as warnings; a caller passing ``blocking_only`` (the release)
+    runs the blocking job only, so a release never waits for a duration. Locally nothing changes: the whole
+    suite, strictly, is the bar."""
+    text = _base_workflow(app, locked)
+    if "markdown_timing.py" not in app.tests or app.kind != "qt":
+        return text
+    run = 'python -m pytest -q -rfE tests 2>&1 | tee "$RUNNER_TEMP/tests.log"'
+    if run not in text or "  workflow_call:\n" not in text:
+        raise ExportError("export: the test job is not as the timing split expects it")
+    start = text.index("  test:\n")
+    end = text.index("      - name: Build sdist and wheel", start)
+    job = text[start:end]
+    timing = (job.replace("  test:\n", "  # The tests that pass or fail by elapsed time only, and the durations of those that\n"
+                          "  # assert their content too (tests/markdown_timing.py: timing, budgets): a shared\n"
+                          "  # runner about twice as slow fails them without a bug - run strictly and said as\n"
+                          "  # warnings, blocking nothing. Locally the whole suite, strictly, is the bar.\n"
+                          "  timing:\n    if: ${{ !inputs.blocking_only }}\n", 1)
+              .replace("    runs-on: ubuntu-24.04\n", "    runs-on: ubuntu-24.04\n    continue-on-error: true\n", 1)
+              .replace("      - name: Tests\n", "      - name: The timing tests\n", 1)
+              .replace(run, 'python -m pytest -q -rfE -m "timing or budgets" tests 2>&1 | tee "$RUNNER_TEMP/timing.log"')
+              .replace('        run: python packaging/ci_log_tail.py "$RUNNER_TEMP/tests.log" tests 150\n',
+                       '        run: python packaging/ci_log_tail.py --warning "$RUNNER_TEMP/timing.log" '
+                       '"timing tests (not blocking)" 150\n')
+              .replace("      - name: The end of the tests' output as annotations (the short summary)\n",
+                       "      - name: Their summary as warnings (the timing tests block nothing)\n"))
+    text = text.replace(run, 'python -m pytest -q -rfE -m "not timing" tests 2>&1 | tee "$RUNNER_TEMP/tests.log"', 1)
+    text = text.replace("      - name: Tests\n", "      - name: Tests (all but the timing ones - those run in the job timing;"
+                        " a duration over its budget a warning here)\n", 1)
+    text = text.replace("  workflow_call:\n", "  workflow_call:\n    inputs:\n      blocking_only:\n"
+                        "        description: the blocking tests only (the release does not wait for the timing ones)\n"
+                        "        type: boolean\n        default: false\n", 1)
+    marker = "\n  supply-chain:\n"
+    at = text.index(marker) if marker in text else len(text)
+    return text[:at] + "\n" + timing.rstrip("\n") + "\n" + text[at:]
+
+
+def _base_workflow(app: App, locked: bool = False) -> str:
     """CI of the exported project: its tests on Linux with Qt offscreen -
     or, for the MCP server, on three Pythons without Qt (and a check that
     nothing pulled PyQt6 in). With a lock (*locked*) the tests install
@@ -1309,7 +1499,7 @@ def test_happy_the_program_starts_and_ends_cleanly(tmp_path):
 
 def _mcp_smoke_test(app: App) -> str:
     return '''"""axross-headless-mcp answers an MCP client over stdio and over HTTP - every tool
-group listed, a file read - and PyQt6 is never imported. The installed
+group listed (all,adb: every group), a file read - and PyQt6 is never imported. The installed
 package when there is one, else this checkout's src/."""
 
 import importlib.util
@@ -1330,10 +1520,10 @@ PROBE = ("import atexit, sys; atexit.register(lambda: sys.stderr.write("
          "from axross_headless_mcp.__main__ import main; sys.exit(main())")
 GROUP_TOOLS = {"read_metadata", "list_duplicate_groups", "list_archive_formats",
                "list_archive_members", "build_index", "identify_file_type",
-               "list_remote_profiles", "run_llm_agent", "list_extensions"}
+               "list_remote_profiles", "run_llm_agent", "list_extensions", "get_device_info"}
 #: Served only with --mcp-write.
 WRITE_TOOLS = {"write_file", "copy_path_to_backend", "create_archive", "extract_archive",
-               "encrypt_file"}
+               "encrypt_file", "install_app"}
 
 
 def _env(home: Path, **extra) -> dict:
@@ -1369,7 +1559,7 @@ def test_happy_stdio_initialize_lists_every_group_and_reads_a_file(tmp_path):
                     "arguments": {"path": str(data / "hello.txt"), "encoding": "text"}}},
     ]
     proc = subprocess.run(
-        [sys.executable, "-c", PROBE, "--mcp-root", str(data), "--mcp-tools", "all",
+        [sys.executable, "-c", PROBE, "--mcp-root", str(data), "--mcp-tools", "all,adb",
          "--mcp-write"],
         input="".join(json.dumps(r) + "\\n" for r in requests), capture_output=True,
         text=True, timeout=120, env=_env(tmp_path), cwd=tmp_path)
@@ -1384,7 +1574,7 @@ def test_happy_stdio_initialize_lists_every_group_and_reads_a_file(tmp_path):
 
 
 def test_happy_the_manifest_of_every_group(tmp_path):
-    proc = subprocess.run([sys.executable, "-c", PROBE, "--mcp-list-tools", "--mcp-tools", "all"],
+    proc = subprocess.run([sys.executable, "-c", PROBE, "--mcp-list-tools", "--mcp-tools", "all,adb"],
                           capture_output=True, text=True, timeout=120, env=_env(tmp_path),
                           cwd=tmp_path)
     assert proc.returncode == 0, proc.stderr[-2000:]
@@ -1420,7 +1610,7 @@ def test_happy_http_initialize_lists_every_group_and_reads_a_file(tmp_path):
     port, token = _free_port(), "smoke-token-0123456789"
     proc = subprocess.Popen(
         [sys.executable, "-c", PROBE, "--mcp-http", f"127.0.0.1:{port}", "--mcp-root", str(data),
-         "--mcp-tools", "all"], env=_env(tmp_path, AXROSS_MCP_HTTP_TOKEN=token), cwd=tmp_path,
+         "--mcp-tools", "all,adb"], env=_env(tmp_path, AXROSS_MCP_HTTP_TOKEN=token), cwd=tmp_path,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     url = f"http://127.0.0.1:{port}/messages"
     try:
@@ -1504,7 +1694,10 @@ def export(name: str, out: Path) -> Path:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(source, target)
     start_module = app.start[:-3].replace("/", ".")
-    (pkg / "__init__.py").write_text(f'"""{app.title} (see README.md)."""\n', encoding="utf-8")
+    version = app.version or _version()
+    # (its own version: python -m PACKAGE --version from a checkout's src/ said axross's - core.markdown_cli)
+    (pkg / "__init__.py").write_text(f'"""{app.title} (see README.md)."""\n\n__version__ = "{version}"\n',
+                                     encoding="utf-8")
     if rewritten:
         main_text = (
             f'"""{app.title}: ``python -m {app.package}`` / ``{app.dist}``."""\n\n'
@@ -1527,7 +1720,6 @@ def export(name: str, out: Path) -> Path:
             "    return run()\n\n\n"
             'if __name__ == "__main__":\n    sys.exit(main())\n')
     (pkg / "__main__.py").write_text(main_text, encoding="utf-8")
-    version = app.version or _version()
     (out / "pyproject.toml").write_text(_pyproject(app, version), encoding="utf-8")
     marker = f"{app.readme_marker}\n" if app.readme_marker else ""
     shared = app.settings_text or ("its settings are axross's\n(`~/.config/axross`), so both share the "
@@ -1538,7 +1730,7 @@ def export(name: str, out: Path) -> Path:
               f"out by\naxross's `scripts/export_standalone.py {name}`; {shared}\n\n")
     install = (f"## Install and run\n\n```sh\npip install {app.dist}      # or, from this folder: "
                f"pip install .\n{app.dist}\n```\n\n{_lock_readme() if lock is not None else ''}")
-    tail = f"## Tests\n\n{tests_text(app)}## Licence\n\nApache-2.0, as axross.\n"
+    tail = f"## Tests\n\n{tests_text(app)}## Licence\n\nApache-2.0, as axross.\n{_binaries_licence(app)}"
     if app.pitch:
         (out / "README.md").write_text(f"{marker}{short_readme(app)}", encoding="utf-8")
         (out / "docs").mkdir(exist_ok=True)
@@ -1554,6 +1746,12 @@ def export(name: str, out: Path) -> Path:
             f"{marker}# {app.dist}\n\n{app.summary}.\n\n{app.readme}\n{origin}{install}{tail}",
             encoding="utf-8")
     shutil.copyfile(ROOT / "LICENSE", out / "LICENSE")
+    if app.third_party:
+        _write_licences(app, name, version, lock, out, pkg)
+        # (the sdist the complete corresponding source of the one-file programs, as THIRD_PARTY_LICENSES.txt
+        # says: the build's scripts, its locks and the tests - setuptools put in only the package and its
+        # metadata; packaging/reproducible_sdist.py --check holds the release to it)
+        (out / "MANIFEST.in").write_text(MANIFEST, encoding="utf-8")
     if app.repo_files:
         shutil.copytree(ROOT / app.repo_files, out, dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
@@ -1574,6 +1772,21 @@ def export(name: str, out: Path) -> Path:
     return out
 
 
+#: MANIFEST.in of an export with one-file programs (App.third_party): its sdist holds what they are built from.
+MANIFEST = """\
+# What the sdist holds beside the package (scripts/export_standalone.py): the one-file programs' complete
+# corresponding source - the build's scripts, its hashed locks, the tests and the licences.
+include LICENSE NOTICE THIRD_PARTY_LICENSES.txt CHANGELOG.md README.md
+include requirements.lock.txt supply-chain-gate.toml
+graft .github
+graft packaging
+graft scripts
+graft tests
+graft docs
+global-exclude __pycache__ *.py[cod]
+"""
+
+
 #: The conftest of an export with axross's tests: a home of its own for the
 #: run (no test writes the user's settings) and the package from src/ (or
 #: the installed one) - the tests' imports are renamed as the code's.
@@ -1587,8 +1800,18 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
 SRC = Path(__file__).resolve().parents[1] / "src"
-if SRC.is_dir() and str(SRC) not in sys.path:
+if os.environ.get("AXROSS_MARKDOWN_TEST_INSTALLED"):  # (the release's tests: of the wheel built, installed - not
+    import importlib.util  # this checkout's src/)
+
+    sys.path[:] = [p for p in sys.path if Path(p or ".").resolve() != SRC]
+    for _package in (init.parent.name for init in SRC.glob("*/__init__.py")):
+        _found = importlib.util.find_spec(_package)
+        if _found is None or SRC in Path(_found.origin).resolve().parents:
+            raise SystemExit(f"tests/conftest.py: {_package} is not installed - pip install the wheel first")
+elif SRC.is_dir() and str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
     os.environ["PYTHONPATH"] = os.pathsep.join(p for p in (str(SRC), os.environ.get("PYTHONPATH", "")) if p)
 _home = tempfile.mkdtemp(prefix="axross-test-home-")
@@ -1598,15 +1821,74 @@ for _name, _sub in (("XDG_CONFIG_HOME", ".config"), ("XDG_DATA_HOME", ".local/sh
                     ("XDG_CACHE_HOME", ".cache"), ("XDG_STATE_HOME", ".local/state")):
     os.environ[_name] = os.path.join(_home, _sub)
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("AXROSS_MARKDOWN_NO_UPDATE_CHECK", "1")  # (no test asks GitHub: the updater's use a fake)
+os.environ.pop("AXROSS_MARKDOWN_SETTINGS", None)  # (a settings file of the user's is no test's)
+
+
+@pytest.fixture(autouse=True)
+def _own_configuration(tmp_path_factory, monkeypatch):
+    """Every test its own home, settings and state - a choice one test makes and keeps (a theme, an update
+    mode) is no later test's starting point: HOME, XDG_CONFIG_HOME and XDG_STATE_HOME a fresh folder each
+    (the caches - fonts - and data stay the run's), and the page's theme back to "auto" after it."""
+    home = tmp_path_factory.mktemp("home")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(home / ".local" / "state"))
+    yield
+    _reset_theme()
+
+
+def _reset_theme():
+    """The process's ThemeHub (ui.markdown_theme_ui) as a new one is: "auto", nothing pending."""
+    import time
+
+    for name, module in list(sys.modules.items()):
+        if name.endswith("ui.markdown_theme_ui") and getattr(module, "_HUB", None):
+            hub = module._HUB[0]
+            try:
+                hub._timer.stop()
+            except RuntimeError:  # (deleted with its application)
+                module._HUB.clear()
+                continue
+            hub._pending, hub._theme, hub._applied, hub.clock = None, "auto", float("-inf"), time.monotonic
+
+
+def pytest_configure(config):
+    """The markers ``timing`` and ``budgets`` (tests/markdown_timing.py); under ``-m "not timing"`` (the
+    blocking job) a duration over its budget is a warning, its test's content still asserted."""
+    from tests.markdown_timing import configure
+
+    configure(config)
 
 
 def pytest_collection_modifyitems(config, items):
-    """axross's tests of its own export of the tool (test_packaging_*) need axross."""
+    """axross's tests of its own export of the tool (test_packaging_*) need axross; the tests that pass or
+    fail by elapsed time only get the marker ``timing``, those that assert their content and a duration
+    ``budgets`` (tests/markdown_timing.py): the CI runs ``-m "not timing"`` as the blocking job (a budget
+    missed a warning there) and ``-m "timing or budgets"`` strictly in a job that does not block. Locally:
+    all, strictly."""
     import pytest
 
     for item in items:
         if item.name.startswith("test_packaging_"):
             item.add_marker(pytest.mark.skip(reason="tests axross's export of the tool: run in axross"))
+    from tests.markdown_timing import mark
+
+    mark(items)
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_call(item):
+    """A stress test whose heartbeat froze (tests/markdown_heartbeat.py's Frozen) is run once more before it
+    fails: a second job beside it can take its few tenths of a second now and then - a freeze of the
+    window's own fails both times."""
+    try:
+        return (yield)
+    except AssertionError as error:
+        heartbeat = sys.modules.get("tests.markdown_heartbeat")
+        if heartbeat is None or not isinstance(error, heartbeat.Frozen):
+            raise
+        return heartbeat.measure_again(item.runtest, error)
 '''
 
 
@@ -1680,7 +1962,7 @@ def short_readme(app: App) -> str:
             f"## Tests\n\n{tests_text(app)}"
             "## Licence\n\nApache-2.0, as [axross](https://github.com/c0decave/axross): the same "
             f"code, written out by axross's\n`scripts/export_standalone.py`. Everything in detail: "
-            f"the [extended README]({extended}).\n")
+            f"the [extended README]({extended}).\n{_binaries_licence(app)}")
 
 
 def tests_text(app: App) -> str:
@@ -1689,9 +1971,23 @@ def tests_text(app: App) -> str:
     command = "```sh\npython -m pytest tests\n```\n\n"
     if not app.tests:
         return command
-    return (command + f"The tool's own tests from axross - {len(app.tests)} files, their imports renamed as the "
+    text = (command + f"The tool's own tests from axross - {len(app.tests)} files, their imports renamed as the "
             "code's - and a test that the program starts and ends cleanly; Qt's offscreen platform, no "
             "display needed.\n\n")
+    if "markdown_timing.py" in app.tests:
+        text += ("Tests that pass or fail by elapsed time only - the window's heartbeat and turn budgets, the "
+                 "freeze sweep, the stress grids - carry the marker `timing`; tests that assert what the page "
+                 "shows or refuses *and* a duration carry `budgets`: their content is asserted as any test's, "
+                 "each duration through `budget()` (`tests/markdown_timing.py`; "
+                 "`tests/test_markdown_timing_marks.py` fails when a test asserts a duration otherwise, or a "
+                 "`timing` test asserts anything but a duration - a security test never does). The CI's "
+                 "blocking job runs `-m \"not timing\"`: every content assertion blocks, a duration over its "
+                 "budget is a warning there. A job of its own that blocks nothing runs `-m \"timing or "
+                 "budgets\"` strictly (a shared runner about twice as slow fails a duration without a bug); a "
+                 "release waits for the blocking job only.\n\n"
+                 "**Locally nothing changes:** `python -m pytest tests` runs the whole suite at full "
+                 "strictness, durations included - that is the bar for every change.\n\n")
+    return text
 
 
 def _lock_readme() -> str:
@@ -1702,6 +1998,42 @@ def _lock_readme() -> str:
             "review of the files' content recorded in axross's baseline - and the CI runs the gate\n"
             "again on every push (`supply-chain-gate.toml`). To install exactly those files:\n\n"
             "```sh\npip install --require-hashes -r requirements.lock.txt\npip install --no-build-isolation --no-deps .\n```\n\n")
+
+
+def _binaries_licence(app: App) -> str:
+    """The README's word on the one-file programs' licence (App.third_party)."""
+    if not app.third_party:
+        return ""
+    return (f"\nThe one-file programs of the releases contain PyQt6 (GPL-3.0) and Qt (LGPL-3.0): each is a "
+            f"combined work,\ndistributed under the **GPL-3.0**. [{LICENCES}]({app.repo}/blob/main/{LICENCES}) "
+            "- beside them on every release page,\ninside them, and in the program under Help → About - lists "
+            "what they contain with the licence\ntexts, and where the source code of each part is.\n")
+
+
+def _write_licences(app: App, name: str, version: str, lock: str | None, out: Path, pkg: Path) -> None:
+    """THIRD_PARTY_LICENSES.txt (scripts/standalone_licences.py) and NOTICE of *app*: at the export's root
+    and the texts in its package (package data: the program reads them, the binaries carry them)."""
+    if lock is None:
+        raise ExportError(f"export: {app.dist}: the licences of its programs need its lock")
+    spec = importlib.util.spec_from_file_location("standalone_licences", ROOT / "scripts" / "standalone_licences.py")
+    licences = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(licences)
+    head = (ROOT / "NOTICE").read_text(encoding="utf-8").split("=" * 20)[0].strip()
+    notice = (f"{app.dist}\n(written out from axross, {AXROSS_URL})\n\n{head}\n\n"
+              "The one-file programs of its releases contain PyQt6 (GPL-3.0-only) and Qt\n"
+              "(LGPL-3.0-only): each is a combined work, distributed under the GPL-3.0.\n"
+              f"{LICENCES} lists what they contain, with the licence texts\n"
+              "and where the source code of each part is.\n")
+    pyinstaller = ROOT / app.repo_files / "packaging" / "requirements-pyinstaller.txt"
+    try:
+        text = licences.render(name, title=app.dist, version=version, repo=app.repo, axross=AXROSS_URL,
+                               lock=lock, licence=(ROOT / "LICENSE").read_text(encoding="utf-8"), notice=notice,
+                               pyinstaller_lock=pyinstaller.read_text(encoding="utf-8") if pyinstaller.is_file() else "")
+    except licences.LicenceError as exc:
+        raise ExportError(str(exc)) from None
+    (out / "NOTICE").write_text(notice, encoding="utf-8")
+    for target in (out / LICENCES, pkg / LICENCES):
+        target.write_text(text, encoding="utf-8")
 
 
 def _version() -> str:

@@ -27,6 +27,7 @@ pytest.importorskip("markdown_it")
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from tests.test_markdown_reader_bugs11 import pump, until  # noqa: E402
+from tests import markdown_timing as TB  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -138,7 +139,7 @@ def test_sad_linkify_finds_every_link_of_a_long_line_in_pieces():
     assert len(texts) == 13  # (the pieces joined again around the links: markdown-it's text_join)
     began = time.thread_time()
     MD.parse("word " * 2_000_000)
-    assert time.thread_time() - began < 30
+    TB.budget(time.thread_time() - began < 30, 'time.thread_time() - began < 30')
 
 
 # -- H2a. a long line of inline spans, a long word, a wide table: laid out in pieces ---------------
@@ -193,7 +194,7 @@ def test_sad_a_long_line_of_spans_never_holds_the_window(name, full):
     until(lambda: not view._scheduled and not view.status.text().startswith("Rendering"), 240)
     pump(0.3)
     longest = turns.stop()
-    assert longest < 0.25, (name, longest)
+    TB.budget(longest < 0.25, (name, longest))
     shown = view.browser.toPlainText()
     assert ("h0" in shown and "r0c0" in shown) if name.startswith("table") else "aaaa" in shown or "a" in shown
 
@@ -239,7 +240,7 @@ def test_sad_a_long_text_with_inline_notes_shows_its_first_part_at_once():
     first = next(parts)
     took = time.thread_time() - began
     assert "Para 0" in first and "Para 1499" not in first
-    assert took < 2.0, took
+    TB.budget(took < 2.0, took)
     rest = "".join(parts)
     assert "Para 1499" in rest and "[1500]" in rest
 
@@ -281,7 +282,7 @@ def test_sad_the_window_shows_a_long_text_with_inline_notes_in_parts():
     assert until(lambda: view._readable and view.markdown, 120)
     assert view._page is not None and len(view._page["parts"]) > 1
     assert "Para 0" in view.browser.toPlainText() and "Para 1499" not in view.browser.toPlainText()
-    assert time.monotonic() - began < 60
+    TB.budget(time.monotonic() - began < 60, 'time.monotonic() - began < 60')
 
 
 # -- axross-mdcat: --watch of a missing file, a closed pipe, a full disk, 6,000 images, --help -------
@@ -294,14 +295,14 @@ def test_sad_mdcat_watch_says_a_missing_file_and_waits_for_it(tmp_path):
     try:
         import select
 
-        ready, _w, _x = select.select([run.stderr], [], [], 30)  # (it said nothing at all: no reading for ever)
+        ready, _w, _x = select.select([run.stderr], [], [], TB.READY_SECONDS)  # (it said nothing at all: no reading for ever)
         assert ready, "nothing said of the missing file"
         said = run.stderr.readline()
         assert "later.md" in said and "waiting for it" in said, said
         name.write_text("# Arrived\n", encoding="utf-8")
         out = ""
         began = time.monotonic()
-        while "Arrived" not in out and time.monotonic() - began < 30:
+        while "Arrived" not in out and time.monotonic() - began < TB.READY_SECONDS:
             out += run.stdout.readline()
         assert "Arrived" in out
     finally:
@@ -322,7 +323,7 @@ def test_sad_mdcat_stops_when_its_pipe_closes(tmp_path):
     began = time.monotonic()
     status = run.wait(120)
     error = run.stderr.read().decode()
-    assert time.monotonic() - began < 2.0
+    TB.budget(time.monotonic() - began < 2.0, 'time.monotonic() - began < 2.0')
     assert status == 0 and "Traceback" not in error and "BrokenPipe" not in error, error
 
 
@@ -410,7 +411,7 @@ def test_sad_the_editor_preview_follows_the_line_typed_at():
         tab.editor.setTextCursor(cursor)
         tab.editor.insertPlainText("typed ")
         assert until(lambda: "typed" in preview.browser.toPlainText(), 60)
-        assert until(lambda: preview.browser.verticalScrollBar().value() > 0, 10)
+        assert TB.until_within(until, lambda: preview.browser.verticalScrollBar().value() > 0, 10)
         pump(0.3)
         bar, document = preview.browser.verticalScrollBar(), preview.browser.document()
         found = document.find("typed")
@@ -479,7 +480,7 @@ def test_sad_the_zoom_button_shows_the_level_the_text_is_at(tmp_path):
     page.write_text("# Zoom\n\nSome text.\n", encoding="utf-8")
     viewer = MarkdownViewerDialog(LocalFS(), str(page))
     viewer.show()
-    assert until(lambda: viewer.view._readable and viewer.view.markdown, 30)
+    assert until(lambda: viewer.view._readable and viewer.view.markdown, TB.READY_SECONDS)
     assert viewer.zoom_reset.text() == "100%"
     viewer.view.zoom_by(2)
     larger = int(viewer.zoom_reset.text().rstrip("%"))
@@ -555,7 +556,7 @@ def test_sad_a_lexer_stuck_in_backtracking_leaves_the_terminal_and_the_export_pl
     began = time.thread_time()
     shown = T.render(HOSTILE_PAGE, T.Options(width=80, depth="truecolor"))
     page = H.export_html(MD.parse(HOSTILE_PAGE))
-    assert time.thread_time() - began < 1.0, time.thread_time() - began
+    TB.budget(time.thread_time() - began < 1.0, time.thread_time() - began)
     assert "HOSTILE = 1" in T._strip_ansi(shown) and "After." in shown
     assert "HOSTILE = 1" in page and "After." in page
 
@@ -575,7 +576,7 @@ def test_sad_a_lexer_stuck_in_backtracking_never_holds_the_window(hostile_lexer,
     assert until(lambda: view._readable and view.markdown, 60)
     until(lambda: not view._scheduled and not view.status.text().startswith("Rendering"), 60)
     pump(0.5)
-    assert turns.stop() < 0.25
+    TB.budget(turns.stop() < 0.25, 'turns.stop() < 0.25')
     assert "HOSTILE = 1" in view.browser.toPlainText() and "After." in view.browser.toPlainText()
 
 

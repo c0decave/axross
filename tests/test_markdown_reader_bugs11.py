@@ -24,6 +24,7 @@ pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 not installed")
 from PyQt6.QtCore import QPoint, Qt, QUrl  # noqa: E402
 from PyQt6.QtGui import QTextCursor  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
+from tests import markdown_timing as TB  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -138,7 +139,7 @@ def at_chapter(dialog, name: str = "chapter-150", below: int = 300) -> tuple[str
     view = dialog.view
     view.clicked(QUrl("#" + name))
     shown = name.replace("-", " ").capitalize()
-    assert until(lambda: heading_block(view, shown) is not None, 30), "never laid out"
+    assert until(lambda: heading_block(view, shown) is not None, TB.READY_SECONDS), "never laid out"
     settled(view)
     bar = view.browser.verticalScrollBar()
     bar.setValue(bar.value() + below)
@@ -168,7 +169,7 @@ def test_guard_a_reload_keeps_the_place_after_a_jump(full, tmp_path, small_parts
         dialog.reload()
         pump(0.5)
         settled(dialog.view)
-        assert until(lambda: same_place(before, place(dialog.view)), 20), (before, place(dialog.view))
+        assert TB.until_within(until, lambda: same_place(before, place(dialog.view)), 20), (before, place(dialog.view))
     finally:
         close(dialog)
 
@@ -185,7 +186,7 @@ def test_guard_a_reload_of_a_short_page_keeps_the_place(full, tmp_path, small_pa
         dialog.reload()
         pump(0.5)
         settled(view)
-        assert until(lambda: same_place(before, place(view)), 20), (before, place(view))
+        assert TB.until_within(until, lambda: same_place(before, place(view)), 20), (before, place(view))
     finally:
         close(dialog)
 
@@ -198,10 +199,10 @@ def test_guard_a_live_reload_keeps_the_place(full, tmp_path, small_parts):
         path = Path(dialog.path)
         path.write_text(path.read_text(encoding="utf-8") + "\nAppended line.\n", encoding="utf-8")
         dialog._file_changed()  # (what the watcher calls)
-        assert until(lambda: "Appended line." in dialog.view.markdown, 20)
+        assert TB.until_within(until, lambda: "Appended line." in dialog.view.markdown, 20)
         pump(0.3)
         settled(dialog.view)
-        assert until(lambda: same_place(before, place(dialog.view)), 20), (before, place(dialog.view))
+        assert TB.until_within(until, lambda: same_place(before, place(dialog.view)), 20), (before, place(dialog.view))
     finally:
         close(dialog)
 
@@ -230,7 +231,7 @@ def test_guard_folding_and_unfolding_details_keeps_the_place(tmp_path, small_par
             view.clicked(QUrl(href))
             pump(0.5)
             settled(view)
-            assert until(lambda: same_place(before, place(view), 60), 20), (before, place(view))
+            assert TB.until_within(until, lambda: same_place(before, place(view), 60), 20), (before, place(view))
     finally:
         close(dialog)
 
@@ -245,7 +246,7 @@ def test_guard_an_anchor_jump_puts_its_heading_on_top(full, tmp_path, small_part
         for name in ("chapter-150", "chapter-60"):  # (past what is laid out; in the gap before it)
             view.clicked(QUrl("#" + name))
             shown = name.replace("-", " ").capitalize()
-            assert until(lambda: heading_block(view, shown) is not None
+            assert TB.until_within(until, lambda: heading_block(view, shown) is not None
                          and 0 <= y_of(view, heading_block(view, shown)) < 40, 30), \
                 (name, heading_block(view, shown) and y_of(view, heading_block(view, shown)), place(view))
             settled(view)
@@ -286,13 +287,13 @@ def test_guard_a_footnote_link_and_its_way_back(full, tmp_path, small_parts):
             found = document.find("The far note text")
             return None if found.isNull() else found.block()
 
-        assert until(lambda: note() is not None and in_view(view, note()), 30), (view.status.text(), place(view))
-        assert time.monotonic() - began < 8  # (all of the page laid out first: 7 to 90 s)
+        assert TB.until_within(until, lambda: note() is not None and in_view(view, note()), 30), (view.status.text(), place(view))
+        TB.budget(time.monotonic() - began < 8, 'time.monotonic() - began < 8')  # (all of the page laid out first: 7 to 90 s)
         assert view._gaps or view.more(), "all of the page laid out for a note"
         back = [link for link in note_links(note()) if link != links[0]]
         assert back, "no way back"
         view.clicked(QUrl(back[-1]))
-        assert until(lambda: in_view(view, document.find("Top: go to").block()), 20), place(view)
+        assert TB.until_within(until, lambda: in_view(view, document.find("Top: go to").block()), 20), place(view)
     finally:
         close(dialog)
 
@@ -317,7 +318,7 @@ def test_guard_find_in_order_across_gaps_and_round(full, tmp_path, small_parts):
         view = dialog.view
         browser = view.browser
         QTest.keyClick(browser, Qt.Key.Key_End, Qt.KeyboardModifier.ControlModifier)
-        assert until(lambda: "zebraquux" in browser.toPlainText() and not view._scheduled, 30)
+        assert TB.until_within(until, lambda: "zebraquux" in browser.toPlainText() and not view._scheduled, 30)
         settled(view)
         QTest.keyClick(browser, Qt.Key.Key_Home, Qt.KeyboardModifier.ControlModifier)
         pump(0.3)
@@ -331,12 +332,12 @@ def test_guard_find_in_order_across_gaps_and_round(full, tmp_path, small_parts):
             began = time.monotonic()
             dialog.find_next(backward)
             want = {0: "Middle", 1: "Last", 2: "Middle", 3: "Last"}[len(order)]
-            assert until(lambda w=want: selected_line(view).startswith(w) and visible_selection(view), 15), \
+            assert TB.until_within(until, lambda w=want: selected_line(view).startswith(w) and visible_selection(view), 15), \
                 (order, want, selected_line(view), browser.cursorRect(), view.status.text())
             order.append((selected_line(view)[:6], round(time.monotonic() - began, 2)))
             settled(view)
             assert visible_selection(view), (order, browser.cursorRect())
-        assert all(took < 5 for _line, took in order), order  # (round: all laid out first - 7 to 68 s)
+        TB.budget(all(took < 5 for _line, took in order), order)  # (round: all laid out first - 7 to 68 s)
         assert view._gaps, "find laid out all of the page"
     finally:
         close(dialog)
@@ -358,7 +359,7 @@ def test_guard_a_copy_across_a_gap_holds_all_of_it(full, tmp_path, small_parts):
         browser.setTextCursor(cursor)
         APP.clipboard().setText("")
         QTest.keyClick(browser, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
-        assert until(lambda: "CHMARK149" in APP.clipboard().text(), 30), APP.clipboard().text()[-200:]
+        assert TB.until_within(until, lambda: "CHMARK149" in APP.clipboard().text(), 30), APP.clipboard().text()[-200:]
         copied = APP.clipboard().text()
         missing = [n for n in range(1, 150) if f"CHMARK{n:03d}" not in copied]
         assert not missing, missing[:10]
@@ -378,7 +379,7 @@ def test_guard_the_outline_lists_every_heading(full, tmp_path, small_parts):
             (len(listed), listed[:3], listed[-3:])
         row = listed.index("Chapter 80")
         view.jump(view.outline.item(row))
-        assert until(lambda: heading_block(view, "Chapter 80") is not None
+        assert TB.until_within(until, lambda: heading_block(view, "Chapter 80") is not None
                      and 0 <= y_of(view, heading_block(view, "Chapter 80")) < 40, 30), place(view)
         assert view.outline.count() == CHAPTERS + 1
     finally:
@@ -460,7 +461,7 @@ def test_sad_md4c_a_page_of_many_tables_is_made_whole_without_a_freeze(tmp_path,
         timer.stop()
         # (each table's room made over all of the page once it was whole,
         # a relayout each: 2 s here, 37 s for gap.md's 1000 tables)
-        assert max(beats) < 1.0, sorted(beats)[-5:]
+        TB.budget(max(beats) < 1.0, sorted(beats)[-5:])
         from PyQt6.QtGui import QTextTable
 
         document = view.browser.document()
@@ -486,7 +487,7 @@ def test_sad_find_after_ctrl_end_then_home_takes_the_first_match_first(tmp_path,
         settled(view)
         view.browser.setTextCursor(QTextCursor(view.browser.document()))
         dialog.find_next()
-        assert until(lambda: view.browser.textCursor().hasSelection(), 15)
+        assert TB.until_within(until, lambda: view.browser.textCursor().hasSelection(), 15)
         assert re.match("Middle", selected_line(view)), selected_line(view)
     finally:
         close(dialog)
@@ -501,7 +502,7 @@ def test_sad_md4c_parts_carry_the_link_definitions_they_use_only():
     text += "".join(f"[ref{n}]: https://example.com/{n}\n" for n in range(300))
     began = time.monotonic()
     parts = MV.markdown_parts(text)
-    assert time.monotonic() - began < 2.0
+    TB.budget(time.monotonic() - began < 2.0, 'time.monotonic() - began < 2.0')
     assert len(parts) > 100
     for part in parts[:-1]:  # (every one of the 300: 300 lines more each part, 8 s for gap.md before it showed)
         defined = re.findall(r"(?m)^\[(ref\d+)\]:", part)
@@ -524,7 +525,7 @@ def test_sad_a_reload_never_shows_a_blank_page(full, tmp_path, small_parts):
         assert view.browser.document().toPlainText().strip()
         dialog.reload()
         blank = False
-        end = time.monotonic() + 10
+        end = time.monotonic() + TB.READY_SECONDS
         while time.monotonic() < end:
             pump(0.005)
             blank = blank or not view.browser.document().toPlainText().strip()

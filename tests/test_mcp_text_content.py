@@ -35,7 +35,8 @@ def test_happy_read_text(tmp_path):
 def test_happy_write_text(tmp_path):
     target, text = tmp_path / "w.txt", "zwei\nZeilen ✓\n"
     r = T.call(_tools(tmp_path), "write_file", {"path": str(target), "content": text})
-    assert target.read_text(encoding="utf-8") == text and r == {"size": len(text.encode())}
+    assert target.read_text(encoding="utf-8") == text and r == {"size": len(text.encode()),
+                                                              "file_size": len(text.encode())}
 
 
 def test_happy_base64_stays_the_default(tmp_path):

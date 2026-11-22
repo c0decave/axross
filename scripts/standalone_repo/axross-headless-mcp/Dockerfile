@@ -4,7 +4,7 @@
 #   docker build -t axross-headless-mcp .
 #   docker run -i --rm -v "$PWD:/data" axross-headless-mcp            # read-only
 #   docker run -i --rm -v "$PWD:/data" axross-headless-mcp \
-#       --mcp-root /data --mcp-write --mcp-tools all                  # everything
+#       --mcp-root /data --mcp-write --mcp-tools all                  # every group but adb
 #
 # The release image (ghcr.io/c0decave/axross-headless-mcp) is built by axross's
 # release workflow from Dockerfile.mcp; this file is for directories that build

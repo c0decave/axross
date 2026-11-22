@@ -116,6 +116,20 @@ import unittest  # noqa: E402
 import unittest.case  # noqa: E402
 
 
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_call(item):
+    """A Markdown window's stress test whose heartbeat froze (tests/markdown_heartbeat.py's Frozen) is run
+    once more before it fails: its budget is a few tenths of a second, which a second pytest beside it can
+    take now and then - a freeze of the window's own fails both times."""
+    try:
+        return (yield)
+    except AssertionError as error:
+        heartbeat = sys.modules.get("tests.markdown_heartbeat")
+        if heartbeat is None or not isinstance(error, heartbeat.Frozen):
+            raise
+        return heartbeat.measure_again(item.runtest, error)
+
+
 def pytest_configure(config):
     """core.cloud_http pauses before it retries a 429 / 5xx answer (seconds,
     up to the server's Retry-After): every test of a fake cloud service that
@@ -124,6 +138,19 @@ def pytest_configure(config):
     from core import cloud_http
 
     cloud_http._sleep = lambda _seconds: None
+    from tests.markdown_timing import configure
+
+    configure(config)  # (the markers timing and budgets; under -m "not timing" a budget missed is a warning)
+
+
+def pytest_collection_modifyitems(config, items):
+    """The Markdown reader's tests that pass or fail by elapsed time only get the marker ``timing``, those
+    that assert their content and a duration (budget()) ``budgets`` (tests/markdown_timing.py): ``-m "not
+    timing"`` leaves the first out where a slow runner would fail them without a bug, and makes a budget
+    missed a warning. Locally the whole suite runs, at full strictness."""
+    from tests.markdown_timing import mark
+
+    mark(items)
 
 
 #: subTest parameter values execnet can send from an xdist worker as they are.
@@ -165,6 +192,32 @@ def _record_escaped(exc_type, exc, tb) -> None:
 
 if sys.excepthook is sys.__excepthook__:
     sys.excepthook = _record_escaped
+
+
+@pytest.fixture(autouse=True)
+def _markdown_theme_reset():
+    """The Markdown reader's page theme (ui.markdown_theme_ui's ThemeHub, one a process) back to "auto"
+    after a test, and what it kept in axross's settings gone: one test's View > Theme is no later test's."""
+    yield
+    module = sys.modules.get("ui.markdown_theme_ui")
+    if module is None or not module._HUB:
+        return
+    import time
+
+    hub = module._HUB[0]
+    try:
+        hub._timer.stop()
+    except RuntimeError:  # (deleted with its application)
+        module._HUB.clear()
+        return
+    hub._pending, hub._theme, hub._applied, hub.clock = None, "auto", float("-inf"), time.monotonic
+    try:
+        from core import open_limits
+
+        if open_limits.read_setting(module.AXROSS_SETTING) is not None:
+            open_limits.write_setting(module.AXROSS_SETTING, "auto")
+    except Exception:  # noqa: BLE001 - an unreadable settings file: nothing kept to undo
+        pass
 
 
 @pytest.fixture(autouse=True)

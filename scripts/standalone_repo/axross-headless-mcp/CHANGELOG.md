@@ -4,6 +4,57 @@ What changed in each release of axross-headless-mcp. The code is axross's MCP
 server (https://github.com/c0decave/axross), written out by axross's
 `scripts/export_standalone.py mcp`; its version is axross's.
 
+## 0.15.184 - 2026-11-22
+
+The MCP server's part of axross 0.15.184: Android devices as a tool group,
+fewer and fuller tools.
+
+- **A new tool group `adb`: Android devices** opened as ADB profiles
+  (`--mcp-tools remote,adb`; every tool names its backend,
+  `backend='profile:phone'`). Reading: `get_device_info` (model, Android
+  version, SDK, security patch, serial, IMEI / MEID where the phone gives
+  it to the shell - else null with the reason), `list_device_properties`,
+  `get_battery_status`, `list_apps`, `get_app_info` (versions, permissions),
+  `list_running_apps`, `get_logcat`, `take_screenshot` (an image; with
+  `out` a PNG in the root) and `list_sms`. With `--mcp-write`:
+  `start_app`, `stop_app`, `install_app` (an APK from the MCP root),
+  `uninstall_app`, `export_app` (an app's APKs into the root),
+  `grant_permission`, `revoke_permission`, `reboot_device`, `write_sms`
+  (read back: Android drops the shell's write unless WRITE_SMS is
+  allowed), `compose_sms` (prepares, never sends) and `send_at_command` (one
+  AT command, root only). Commands are argument lists, each argument
+  quoted; inputs are checked against narrow patterns, answers cleaned and
+  bounded, every call has a deadline; the tools that change the device are
+  refused on production profiles and in the paranoid mode, and audited
+  without message texts.
+- **Compatibility: `--mcp-tools all` no longer includes `adb`.** `all` is
+  every general group (metadata, duplicates, archive, crypto, index,
+  filetype, transfer, remote, exec, agent, extensions); a device group comes
+  only by name: `--mcp-tools all,adb` is every group, `remote,adb` a phone.
+  A server started with `all` serves 54 tools instead of 74.
+- **What the tools could not do before:** `list_trash` and
+  `restore_from_trash` (the trash `trash_duplicates` fills; only entries from
+  inside the MCP root, back to a free place in it, a tampered record
+  refused); `write_file` with `write_mode` `create` (never replaces),
+  `append` and `at_offset` (`offset`; both rewrite a file of at most 64 MiB
+  through a temp file); `restore_file_version` (an older version made
+  current again on S3, Dropbox, Drive, OneDrive, Azure, WebDAV, Git);
+  `list_llm_profiles` (names and models only, never a key or an endpoint);
+  `offset` / `next_offset` to page on in `walk_tree`, `search_content` and
+  `list_duplicate_scans` (`max_scans`); `search_index` and
+  `list_duplicate_groups` name their `next_offset` too. `walk_tree` and
+  `search_content` take each folder's entries by name now, so pages are
+  stable; `list_file_versions` lists newest first. `write_file` is no longer
+  marked idempotent (an append adds again).
+- **Merged, same safety class:** `create_symlink` and `create_hardlink` are
+  `create_link` (`kind`: symbolic or hard); `run_backend_script` is
+  `run_backend_command` with `script`. The former names still answer, as
+  does `run_llm_agent`'s former `profile` (now `llm_profile`), with the
+  results they always gave (`create_link`: `{ok: true}`, plus `target` when
+  another one was stored); other results only gained fields (`write_file`'s
+  `file_size`, the pages' `offset` / `next_offset`). `send_sms`, never
+  released, is `compose_sms`. 74 tools in 15 groups.
+
 ## 0.15.183 - 2026-11-21
 
 The MCP server's part of axross 0.15.183: consistent tool and parameter

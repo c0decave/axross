@@ -9,7 +9,9 @@ screen. No Qt: it starts fast and works over SSH.
     axross-mdcat --watch notes.md       # drawn anew whenever the file changes
 
 Colours follow the terminal (NO_COLOR, FORCE_COLOR, COLORTERM, TERM;
-``--color``), the theme its background (COLORFGBG; ``--theme``), images its
+``--color``) and the theme (``--theme NAME``, ``--list-themes``: one of
+core.markdown_themes, its ground painted; ``auto``: the terminal's own
+ground, dark or light as COLORFGBG says), images its
 picture protocol (kitty, iTerm2 / WezTerm, else coloured half-blocks;
 ``--images``). Through ``less`` (search with ``/``, ``n``), links stay links
 only where that less passes them on (566 and later); else they are plain
@@ -88,9 +90,12 @@ def _read(name: str) -> tuple[str, str]:
 
 def program_version() -> str:
     """The version of the program this is: axross-markdown's own (its
-    package, written out by scripts/export_standalone.py, is installed with
-    one) - or axross's."""
+    package, written out by scripts/export_standalone.py, says it - run
+    from a checkout's src/ as installed) - or axross's."""
     if "axross_markdown" in sys.modules:
+        own = getattr(sys.modules["axross_markdown"], "__version__", "")
+        if isinstance(own, str) and own:  # (before the metadata: src/ said axross's or an installed older one's)
+            return own
         try:
             from importlib.metadata import version
 
@@ -119,8 +124,15 @@ def _parser() -> argparse.ArgumentParser:
                     choices=("auto", "always", "never", "truecolor", "256", "16"),
                     help="colours: auto (a terminal's, NO_COLOR / FORCE_COLOR / COLORTERM), always, never, "
                          "or a depth (default: auto)")
-    ap.add_argument("--theme", default="auto", choices=("auto", "dark", "light"),
-                    help="colours for a dark or a light background (default: auto - COLORFGBG, else dark)")
+    from core.markdown_themes import CHOICES
+
+    ap.add_argument("--theme", default=None, choices=CHOICES, metavar="NAME",
+                    help="the colours: auto (the terminal's own ground - COLORFGBG says dark or light, else dark) "
+                         "or a theme (--list-themes), its ground painted; default: $AXROSS_MDCAT_THEME, else "
+                         "terminal_theme in ~/.config/axross-markdown/settings.json, else auto")
+    ap.add_argument("--list-themes", action="store_true", help="list the themes, with their contrast, and exit")
+    ap.add_argument("--background", default="auto", choices=("auto", "on", "off"),
+                    help="paint the theme's ground behind the text (default: auto - for a theme, not for auto)")
     ap.add_argument("--images", default="auto", choices=("auto", "kitty", "iterm", "blocks", "none"),
                     help="pictures with kitty's or iTerm2's protocol, in coloured half-blocks, or none "
                          "(default: auto - the terminal's)")
@@ -134,6 +146,13 @@ def _parser() -> argparse.ArgumentParser:
     ap.add_argument("--watch", action="store_true",
                     help="draw the file anew whenever it changes (Ctrl+C ends)")
     ap.add_argument("--version", action="store_true", help="show the version and exit")
+    ap.add_argument("--check-update", action="store_true",
+                    help="ask GitHub whether a newer release is out, and exit")
+    ap.add_argument("--update", action="store_true",
+                    help="install a newer release (the one-file programs; pip: says the command), and exit")
+    ap.add_argument("--update-mode", choices=("off", "notify", "auto"),
+                    help="the window's checks for updates: off, notify (the default) or auto (install), kept")
+    ap.add_argument("--self-test", action="store_true", help=argparse.SUPPRESS)
     return ap
 
 
@@ -220,6 +239,12 @@ def _main(argv: list[str] | None = None) -> int:
     if args.version:
         print(f"{PROG[0]} {program_version()}")
         return 0
+    if args.self_test:
+        return self_test()
+    if args.update_mode or args.check_update or args.update:
+        return update_main(args)
+    if args.list_themes:
+        return list_themes(_depth(args.color))
     from core import markdown_doc as MD
 
     if not MD.available():
@@ -231,7 +256,13 @@ def _main(argv: list[str] | None = None) -> int:
     size = shutil.get_terminal_size((80, 24))
     width = max(MIN_WIDTH, args.width or min(size.columns, MAX_WIDTH))
     depth = _depth(args.color)
-    dark = T.dark_background() if args.theme == "auto" else args.theme == "dark"
+    from core import markdown_themes as MT
+
+    theme_id = MT.normalize(args.theme or MT.terminal_default())
+    theme = MT.get(theme_id)
+    dark = T.dark_background() if theme is None else theme.dark
+    args.theme_id = theme.id if theme is not None else ""
+    args.ground = theme is not None and args.background != "off"
     paging = args.pager is not False and sys.stdout.isatty() and not args.watch
     images = args.images
     if images == "auto":
@@ -269,6 +300,9 @@ def _main(argv: list[str] | None = None) -> int:
         _close_pager(pager)
     else:
         _write("".join(buffered))
+    notice = newer_notice()
+    if notice:
+        print(notice, file=sys.stderr)
     return status[0]
 
 
@@ -463,21 +497,125 @@ def _rendered(args, width, depth, dark, images, hyperlinks, status: list[int]):
         folder = os.path.dirname(os.path.abspath(name)) if name != "-" else os.getcwd()
         options = T.Options(width=width, depth=depth, dark=dark, hyperlinks=hyperlinks,
                             images=images, folder=folder,
-                            image_columns=args.image_width or min(T.IMAGE_COLUMNS, width))
+                            image_columns=args.image_width or min(T.IMAGE_COLUMNS, width),
+                            theme=getattr(args, "theme_id", ""), background=getattr(args, "ground", False))
+        ground = T.ground_of(options)
         if args.toc:
             doc = MD.parse(text)
-            painter = T.Painter(depth, T.DARK if dark else T.LIGHT)
+            painter = T.painter_of(options)
             lines = [painter.paint("  " * (h.level - 1) + MD.clean(h.text), T.Style(fg=f"h{h.level}",
                                                                                       bold=h.level <= 2))
                      + painter.paint(f"  #{h.anchor}", T.Style(fg="muted", dim=True)) for h in doc.headings]
-            body = iter(["\n".join(lines) + "\n"])
+            body = iter([T.on_ground("\n".join(lines) + "\n", ground, width, depth, T.ground_text(options))])
         else:
             body = T.render_parts(text, options)
         if len(args.files) > 1:
-            painter = T.Painter(depth, T.DARK if dark else T.LIGHT)
+            painter = T.painter_of(options)
             title = painter.paint(f"━━ {shown} ", T.Style(fg="muted", bold=True))
-            yield ("\n" if number else "") + title + "\n\n"
+            yield T.on_ground(("\n" if number else "") + title + "\n\n", ground, width, depth,
+                              T.ground_text(options))
         yield from body
+
+
+def list_themes(depth: str) -> int:
+    """--list-themes: each theme's id, name, ground and the contrast of its text and links (WCAG), a
+    sample in its colours where the terminal has them."""
+    from core import markdown_term as T
+    from core import markdown_themes as MT
+
+    print(f"{'auto':22} the terminal's own ground: Dark's or Light's colours (COLORFGBG says which)")
+    for theme in MT.THEMES.values():
+        page = theme.term
+        text, link = MT.contrast(page["text"], page["page_bg"]), MT.contrast(page["link"], page["page_bg"])
+        level = "AAA" if min(text, link) >= 7 else "AA"
+        sample = ""
+        if depth in ("truecolor", "256"):
+            options = T.Options(depth=depth, theme=theme.id, background=True)
+            painter = T.painter_of(options, hyperlinks=False)
+            sample = "  " + T.on_ground(painter.paint(" Heading ", T.Style(fg="h1", bold=True))
+                                        + "text " + painter.paint("link", T.Style(fg="link", underline=True))
+                                        + " ", page["page_bg"], 0, depth, page["text"])
+        print(f"{theme.id:22} {theme.label:20} {'dark' if theme.dark else 'light':5}  text {text:5.2f}:1  "
+              f"links {link:5.2f}:1  {level}{sample}")
+    return 0
+
+
+def self_test() -> int:
+    """--self-test (the updater runs a new program so before it replaces this one): a page rendered, the
+    answer core.markdown_update.self_test waits for."""
+    from core import markdown_doc as MD
+    from core import markdown_term as T
+
+    if not MD.available():
+        print(f"{PROG[0]}: markdown-it-py is missing", file=sys.stderr)
+        return 1
+    shown = T.render("# Self-test\n\n| a |\n|---|\n| 1 |\n", T.Options(width=40, depth="none"))
+    if "Self-test" not in shown:
+        print(f"{PROG[0]}: the page was not rendered", file=sys.stderr)
+        return 1
+    print(f"{PROG[0]} {program_version()} ok")
+    return 0
+
+
+def update_main(args) -> int:
+    """--update-mode, --check-update, --update: said on standard error, the result on standard output."""
+    from core import markdown_update as MU
+
+    if args.update_mode:
+        try:
+            MU.set_mode(args.update_mode)
+        except OSError as exc:
+            print(f"{PROG[0]}: the setting could not be kept: {exc.strerror or exc}", file=sys.stderr)
+            return 1
+        print(f"{PROG[0]}: updates: {args.update_mode}")
+        if not (args.check_update or args.update):
+            return 0
+    install = MU.detect_install()
+    current = program_version()
+    try:
+        if args.update:
+            def progress(count: int, _last=[0]) -> None:  # noqa: B006 - a counter of this call
+                if count - _last[0] >= 8 << 20:
+                    _last[0] = count
+                    print(f"{PROG[0]}: {count >> 20} MiB…", file=sys.stderr, flush=True)
+
+            print(f"{PROG[0]}: {MU.update(install, current, progress=progress)}")
+            return 0
+        result = MU.check(current)
+        MU.record_check(result)
+    except MU.UpdateError as exc:
+        print(f"{PROG[0]}: {exc}", file=sys.stderr)
+        return 1
+    except (OSError, Exception) as exc:  # noqa: BLE001 - (a reset connection, a full disk: said, no traceback)
+        print(f"{PROG[0]}: the update failed: {type(exc).__name__}: {exc}"[:400], file=sys.stderr)
+        return 1
+    if result.newer:
+        how = f"{PROG[0]} --update" if install.can_update else (
+            f"installed with pip - to update it: {MU.pip_hint(result.release.version)}" if install.kind == "pip"
+            else install.why_not())
+        print(f"{result.text} - {how}")
+    else:
+        print(result.text)
+    return 0
+
+
+def newer_notice(stream=None) -> str:
+    """What the last check found newer than this program (a line for standard error), or "": the terminal
+    view asks no network itself - the window's checks and --check-update keep what they found."""
+    from core import markdown_update as MU
+
+    stream = sys.stderr if stream is None else stream
+    try:
+        if MU.mode() == "off" or not MU.checks_allowed()[0] or not stream.isatty():
+            return ""
+        newer = MU.seen_newer(program_version())
+    except Exception:  # noqa: BLE001 - unreadable settings: nothing to say
+        return ""
+    if not newer:
+        return ""
+    install = MU.detect_install()
+    how = f"{PROG[0]} --update" if install.can_update else install.why_not()
+    return f"{PROG[0]}: axross-markdown {newer} is available - {how}"
 
 
 if __name__ == "__main__":

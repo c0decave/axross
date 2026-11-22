@@ -846,18 +846,23 @@ def _html_headings(token, doc: Document, counts: dict, taken: set) -> None:
         doc.headings.append(Heading(int(event[1][1]), title, anchor))
 
 
-def parse(text: str, parser=None, notes=None) -> Document:
+def parse(text: str, parser=None, notes=None, anchors=None, held=None) -> Document:
     """*text* parsed (see the module docstring). *notes*: (the labels of a
     long text's footnotes in the order they are numbered - note_labels -,
     whether this is its last part): a part of it parsed with them numbered
     across the text, their list in the last part only (moved there:
-    notes_to_end)."""
+    notes_to_end). *anchors*: a dict a long text's parts are parsed with one
+    after another - their headings' anchors numbered across the text, as one
+    parse of all of it numbers them ("intro", "intro-1"). *held*: (a dict the parts are parsed with one after
+    another, whether this is the last part) - the raw HTML's blocks a part leaves open (a <details> around many
+    parts) open at the next part's start, and closed in the last part only: each part closed them at its end, and
+    their own end tag in a later part was dropped (Export HTML closed a big fold after its first part)."""
     md = parser or make_parser()
     if text.startswith("\ufeff"):  # (a BOM: no character of the text)
         text = text[1:]
     text = flatter(text, LIST_DEPTH)[0]  # (deeper lists: at LIST_DEPTH, as every view shows them)
     text = quote_flatter(text)[0]  # (deeper quotes: at QUOTE_DEPTH)
-    env: dict = {}
+    env: dict = {} if held is None else {"held_html": held}
     if notes is not None:  # (labels: (label, how often it is referred to) - the last part's ↩ that many)
         labels, last, *more = notes
         places = labels.places if isinstance(labels, NoteLabels) else {}
@@ -900,11 +905,12 @@ def parse(text: str, parser=None, notes=None) -> Document:
                 kept.append(token)
         tokens = kept
     doc = Document(tokens=tokens, parser=md, source=text)
-    counts: dict[str, int] = {}
+    counts: dict[str, int] = {} if anchors is None else anchors.setdefault("counts", {})
     # The anchors of the footnotes (fn1, fnref1 - the plugin's) are no
     # heading's: a heading "fn1" took the place footnote 1 is linked to.
     notes = sum(1 for token in tokens if token.type == "footnote_open")
-    taken = {f"{kind}{number}" for number in range(1, notes + 1) for kind in ("fn", "fnref")}
+    taken = set() if anchors is None else anchors.setdefault("taken", set())
+    taken.update(f"{kind}{number}" for number in range(1, notes + 1) for kind in ("fn", "fnref"))
     for index, token in enumerate(tokens):
         if token.type == "front_matter":
             doc.front_matter = token.content
@@ -1340,6 +1346,9 @@ def _safe_html(state) -> None:
 
     md = state.md
     blocks = _Sanitizer(md, HTML_BLOCK)
+    held = state.env.get("held_html")
+    if held is not None:  # (a part of a long text: what the parts before it left open - parse's *held*)
+        blocks.open = list(held[0].get("open", ()))
     tokens = state.tokens
     for token in tokens:
         if token.type == "html_block":
@@ -1367,7 +1376,10 @@ def _safe_html(state) -> None:
                 end = Token("safe_html_inline", "", 0)
                 end.meta = {"html": closing}
                 token.children.append(end)
-    closing = blocks.close()
+    if held is not None and not held[1]:
+        held[0]["open"], closing = list(blocks.open), []  # (closed in a later part)
+    else:
+        closing = blocks.close()
     if closing:
         end = Token("safe_html_block", "", 0)
         end.block, end.meta = True, {"html": closing}
@@ -1394,8 +1406,9 @@ def quote_flatter(text: str, depth: int = QUOTE_DEPTH) -> tuple[str, bool]:
     item's marker too ("- >>>>…") -, whether a line was). A fenced block's
     code is never changed: inside one only the marks of the quotes it is in
     are its line's (a quote's code of ">>>>" lines stayed as written)."""
-    if ">" * (depth + 1) not in text.replace(" ", "").replace("\t", ""):
-        return text, False
+    if text.count(">") <= depth or ">" * (depth + 1) not in "".join(
+            text[at:at + LINES_AT_ONCE].replace(" ", "").replace("\t", "") for at in range(0, len(text), LINES_AT_ONCE)):
+        return text, False  # (in pieces: the spaces of 8 MB taken out at once held Python's lock 0.06 s a pass)
     out, fence, changed = [], None, False
     for line in text.split("\n"):
         if fence is not None and fence[1] == 0:  # (a fenced block in no quote: its lines as they are)
@@ -1570,8 +1583,8 @@ def _hidden_bad(match: re.Match) -> str:
 
 
 #: A link markdown-it left as text: its address refused (javascript:, …).
-_TEXT_LINK = re.compile(r"\[([^\[\]\n]{1,500})\]\(\s*<?([^()\s<>]*(?:\([^()\s]*\)[^()\s<>]*)*)>?"
-                        r"(?:\s+\"[^\"\n]*\")?\s*\)")
+_TEXT_LINK = re.compile(r"\[([^\[\]\n]{1,500})\]\(\s*+<?([^()\s<>]*(?:\([^()\s]*\)[^()\s<>]*)*)>?"
+                        r"(?:\s++\"[^\"\n]*\")?\s*+\)")  # (possessive: its runs of spaces tried once - quadratic)
 
 
 #: An image markdown-it left as text, its address refused ("![x](file:…)": "!x" was shown).
@@ -2565,8 +2578,8 @@ def _math_of(tex: str) -> tuple[str, list[list[str]]]:
     # \left and \right first: "\left\| v \right\|" left "‖v ‖"
     tex = re.sub(r"\\(?:left|right|middle|big|Big|bigg|Bigg)[lr]?(?![A-Za-z])\.?", "", tex)
     # norms and absolute values: their bars close to what they hold
-    tex = re.sub(r"\\lVert\s*(.*?)\s*\\rVert", r"‖\1‖", tex)
-    tex = re.sub(r"\\lvert\s*(.*?)\s*\\rvert", r"|\1|", tex)
+    tex = paired(tex, "\\lVert", "\\rVert", lambda inside: "‖" + inside.strip() + "‖", lines=True)
+    tex = paired(tex, "\\lvert", "\\rvert", lambda inside: "|" + inside.strip() + "|", lines=True)
     tex = re.sub(r"\\\|\s*([^|\n]*?)\s*\\\|", r"‖\1‖", tex)
     tex = tex.replace("\\|", "‖")
     environments: list[list[str]] = []
@@ -2613,7 +2626,7 @@ def _math_of(tex: str) -> tuple[str, list[list[str]]]:
         if UNKNOWN not in line:  # (spaced; tight in a script: "∑_(i=1)")
             line = "".join(_RELATION.sub(r"\1", part) if part[:1] in (SUB, SUP) or _TIGHT.get()
                            else _RELATION.sub(r" \1 ", part)
-                           for part in re.split("(\x10[^\x11]*\x11|\x12[^\x13]*\x13)", line))
+                           for part in marked_parts(line))
         # (one space between words; none inside brackets: "\\left( x \\right)" reads "(x)")
         line = re.sub(r"[ \t]{2,}", " ", line)
         line = re.sub(r"(?<!\s)\s+([)\]⟩])", r"\1", re.sub(r"([(\[⟨])\s+", r"\1", line)).strip()
@@ -2745,10 +2758,71 @@ def _written_run(text: str, kind: str) -> str:
     return text
 
 
+def paired(text: str, opener: str, closer: str, change, lines: bool = False) -> str:
+    """*text* with each *opener* ... *closer* (the first *closer* after it - on the same line when *lines*)
+    as *change(what is between)*, as ``re.sub(opener + "(.*?)" + closer)`` does (an opener never closed:
+    as written) - in one pass. (That pattern looked for each opener's closer to the text's end: an opener
+    repeated and never closed was quadratic - the regular expression audit's "\\lVert" 1,000 times.)"""
+    out, at, end, line_end = [], 0, -1, -1
+    while True:
+        start = text.find(opener, at)
+        if start < 0:
+            break
+        inside = start + len(opener)
+        if end < inside:  # (the closer looked for again only once the last one found lies behind)
+            end = text.find(closer, inside)
+            if end < 0:
+                break  # (none after it: none after any later opener)
+        if lines:
+            if line_end < inside:
+                line_end = text.find("\n", inside)
+                line_end = len(text) if line_end < 0 else line_end
+            if line_end < end:  # (its closer on another line: as written, the next opener looked at)
+                out.append(text[at:inside])
+                at = inside
+                continue
+        out.append(text[at:start])
+        out.append(change(text[inside:end]))
+        at = end + len(closer)
+    out.append(text[at:])
+    return "".join(out)
+
+
+def marked_parts(line: str) -> list[str]:
+    """*line* split into its scripts (SUB ... SUB_END, SUP ... SUP_END) and what is between them, as
+    ``re.split("(SUB[^SUB_END]*SUB_END|SUP[^SUP_END]*SUP_END)", line)`` - in one pass (each opener, each
+    closer looked for once past the last one found)."""
+    closers = {SUB: SUB_END, SUP: SUP_END}
+    nexts = {SUB: -1, SUP: -1}  # (the next opener of each kind at or after *at*: None - no more)
+    ends = {SUB: -1, SUP: -1}  # (the next closer of each kind: None - no more)
+    parts, at, begun = [], 0, 0
+    while True:
+        for kind in (SUB, SUP):
+            if nexts[kind] is not None and nexts[kind] < at:
+                found = line.find(kind, at)
+                nexts[kind] = found if found >= 0 else None
+        open_ones = [nexts[kind] for kind in (SUB, SUP) if nexts[kind] is not None]
+        if not open_ones:
+            break
+        start = min(open_ones)
+        kind = line[start]
+        if ends[kind] is not None and ends[kind] < start:
+            found = line.find(closers[kind], start + 1)
+            ends[kind] = found if found >= 0 else None
+        if ends[kind] is None:  # (never closed: text - and so is every later one of its kind)
+            nexts[kind] = None
+            continue
+        parts.append(line[begun:start])
+        parts.append(line[start:ends[kind] + 1])
+        at = begun = ends[kind] + 1
+    parts.append(line[begun:])
+    return parts
+
+
 def _written(marked: str) -> str:
     """Marked text (a single script) written out."""
-    text = re.sub(SUB + "(.*?)" + SUB_END, lambda m: _written_run(m.group(1), "sub"), marked)
-    text = re.sub(SUP + "(.*?)" + SUP_END, lambda m: _written_run(m.group(1), "sup"), text)
+    text = paired(marked, SUB, SUB_END, lambda inside: _written_run(inside, "sub"), lines=True)
+    text = paired(text, SUP, SUP_END, lambda inside: _written_run(inside, "sup"), lines=True)
     return _MATH_MARKS.sub("", text)
 
 
@@ -3167,8 +3241,13 @@ def math_display(tex: str) -> tuple[str, bool]:
 # -- shared helpers of the views --------------------------------------------------------------
 
 #: C0 and C1 control characters but tab and newline, DEL, and the bidi
-#: controls a text could use to make a name read as another one.
-_CONTROLS = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
+#: controls a text could use to make a name read as another one - its marks
+#: too (ALM, LRM, RLM: "a" and an Arabic letter mark 15,000 times, a code
+#: line of 30 KB, took Qt 0.45 s to lay out, a direction a mark).
+_CONTROLS = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]")
+#: (clean) Unicode's line and paragraph separators: spaces. (Qt takes each for a line or a paragraph of its
+#: own: 30,000 of them in a table's row, one part, held the window 0.75 s - GitHub's page shows a space.)
+_SEPARATORS = {0x2028: " ", 0x2029: " "}
 
 
 def clean(text: str) -> str:
@@ -3178,6 +3257,8 @@ def clean(text: str) -> str:
     stream-safe text has 30 at most; "a" and 99,000 of them, one cluster no
     cut can split, took Qt 0.14 s in one turn)."""
     text = by_lines(lambda piece: _CONTROLS.sub("", piece), text)
+    if "\u2028" in text or "\u2029" in text:
+        text = by_lines(lambda piece: piece.translate(_SEPARATORS), text)
     return by_lines(lambda piece: _MARK_RUN.sub(r"\1", piece), text) if found_by_lines(_MARK_RUN, text) else text
 
 
@@ -3261,6 +3342,11 @@ def _extends(ch: str) -> bool:
         or unicodedata.category(ch) in ("Mn", "Me", "Cf")
 
 
+#: (cluster_end) the most characters one character a reader sees is taken to hold: the marks on a letter, an
+#: emoji's joined pictures - a longer run of marks or format signs is cut after so many.
+CLUSTER_MARKS = 32
+
+
 def cluster_end(text: str, start: int) -> int:
     """Where the character a reader sees that begins at *start* ends: a
     letter with its marks, an emoji with its skin tone, variation selector
@@ -3269,6 +3355,9 @@ def cluster_end(text: str, start: int) -> int:
     if end < size and _regional(text[start]) and _regional(text[end]):
         end += 1
     picture = _pictographic(text[start])
+    # (CLUSTER_MARKS at most - Unicode's stream-safe text keeps 30 marks in a row: a line of 30,000 format
+    # signs, a "nested, one run" of U+1BCA0, was one character that no piece cut, 0.4 s in one layout)
+    size = min(size, start + CLUSTER_MARKS)
     while end < size:
         ch = text[end]
         if ch == _ZWJ and picture and end + 1 < size and _pictographic(text[end + 1]):

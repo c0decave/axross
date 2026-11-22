@@ -152,8 +152,9 @@ Weitere Screenshots, jeder mit Erklärung: **[die Slideshow](../slideshow_de.md)
    nicht auf die Root begrenzt, also wie eine Shell behandeln. `--mcp-tools GRUPPE[,…]` (oder `all`) fügt
    Capability-Gruppen hinzu: metadata, duplicates, archive,
    crypto, index, filetype, transfer, remote (gespeicherte Profile als
-   weitere Backends, Credentials nur aus dem Keyring, nie ein Prompt)
-   und extensions; ihre mutierenden Tools brauchen zusätzlich
+   weitere Backends, Credentials nur aus dem Keyring, nie ein Prompt),
+   adb (Android-Geräte als ADB-Profil: Identität, Apps und ihre Rechte,
+   SMS, Log, Screenshots) und extensions; ihre mutierenden Tools brauchen zusätzlich
    `--mcp-write`. Die Gruppe `exec` führt Befehle und Scripts auf
    entfernten Hosts aus (SSH, Telnet, rsh, ADB, WinRM, Cisco `show`),
    nur mit ihrem eigenen `--mcp-allow-exec`; `agent` übergibt eine

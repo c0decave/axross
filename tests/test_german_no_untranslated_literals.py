@@ -131,6 +131,7 @@ ALLOWED_PATTERNS: tuple[tuple[str, str], ...] = (
 #: Single strings that are names or data, not words, with why.
 ALLOWED: dict[str, str] = {
     "axross": "the product name",
+    "axross-markdown": "the program's name (axross's Markdown viewer on its own: Help > About axross-markdown…)",
     "{} — axross": "a window's subject and the product name",
     "UTF-8": "an encoding name",
     "FUSE": "the file-system interface's name, the title of the Mount as FUSE messages",

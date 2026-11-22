@@ -353,6 +353,28 @@ local shell's name in terminal bookmarks and saved layouts.
   to a temporary name beside the file first, which replaces it when
   complete - a broken upload leaves the old file as it was.
 
+- **The Android Device window.** On an ADB pane, right-click > More >
+  *Android Device…* (or *Pane > Android Device…* in the menu bar) opens a
+  window of the phone itself, one per connection. *Info*: maker, model,
+  Android version, security patch, serial, the IMEI where the phone gives
+  it to the shell, battery and free storage; *Reboot…* into Android,
+  recovery or the bootloader. *Apps*: the installed apps, filtered by name
+  and kind; *Details…* shows an app's version, install times and
+  permissions (*Grant…*, *Revoke…*); *Start*, *Stop*, *Uninstall…*,
+  *Install APK…* and *Back Up APK…* (the APK files into a folder, under
+  fresh names). *SMS*: the messages of a box, where Android lets the shell
+  read them; *Write into Store…* stores a message without sending it,
+  *Prepare SMS…* opens the phone's SMS app with number and text - axross
+  never sends one, a person at the phone taps Send. *Logcat*: the newest
+  lines by priority, tag or app, *Follow* reads them every two seconds,
+  *Pause* holds the view, *Save…* writes them to a file. *Screenshot*: the
+  screen, *Save…* as PNG. Every change asks first; Uninstall and Reboot
+  count down three seconds (Esc stops them), and on a profile marked
+  production every change passes the production countdown. In the
+  paranoid security mode the changes are off. The phone is asked in the
+  background: a slow one never holds the window. The same tools are the
+  MCP server's `adb` group (docs/MCP.md, §9.10).
+
 ## Multi-pane layout
 
 - Add panes by splitting with **Ctrl+Shift+H** /
@@ -1099,9 +1121,25 @@ bar docks it again.
   and its output into a pipe or a file is UTF-8.
   When a system library the window needs is missing (libEGL on a minimal
   Linux), it names the library and the package that provides it and
-  points to `--term` / `--html`. axross-markdown follows the desktop's
-  light or dark scheme; *View → Theme* (Alt+V) chooses another, kept in
-  `~/.config/axross-markdown/settings.json`. In the terminal a link longer
+  points to `--term` / `--html`. The viewer's *View → Theme* (Alt+V)
+  colours the page - its ground, text, headings, links, code, quotes,
+  tables, alerts and formulas - in one of twelve themes: Light, Dark,
+  Sepia, Solar Light, Solar Dark, Arctic, Retro, Night Violet, Slate,
+  Paper, High Contrast Light and High Contrast Dark. Every one of them
+  keeps body text and links at WCAG AA contrast, and the two High
+  Contrast themes at AAA. *Automatic (as axross)*, the default, follows
+  axross's own theme, light or dark. The choice applies to every open
+  viewer and the editor's preview, and axross keeps it in its settings.
+  A switch is a single change, with no flash: the page keeps its old
+  colours until it has been laid out in the new ones. The standalone
+  axross-markdown has the same menu, keeps the choice in
+  `~/.config/axross-markdown/settings.json`, and sets the window's own
+  colours under *View → Window Theme* (by default it follows the
+  desktop's light or dark scheme). Its one-file programs update
+  themselves from signed releases (*Help → Updates*: off, tell me, or
+  install automatically; `--check-update`, `--update`).
+  `axross-mdcat --theme NAME` uses the same themes in the terminal, and
+  `--list-themes` lists them. In the terminal a link longer
   than 2083 characters is shown as its text, a table of more than 500 rows
   is drawn as it goes, and one of more than 64 columns is shown as written
   (the end of the output says so). axross-mdcat stops as soon as the

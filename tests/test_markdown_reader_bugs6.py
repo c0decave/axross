@@ -19,6 +19,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 not installed")
 
 from PyQt6.QtWidgets import QApplication  # noqa: E402
+from tests import markdown_timing as TB  # noqa: E402
+
+#: The longest a helper waits for a page to be ready (it goes on as soon as it is).
+READY_SECONDS = 120
 
 APP = QApplication.instance() or QApplication([])
 ANSI = re.compile(r"\x1b(\[[0-9;]*m|\]8;;[^\x1b]*\x1b\\)")
@@ -40,7 +44,7 @@ def view_of(text: str, full: bool, path: str = "", width: int = 900, height: int
     view.resize(width, height)
     view.show()
     view.render(text)
-    end = time.monotonic() + 20
+    end = time.monotonic() + READY_SECONDS  # (a wait for the page, not a budget: a slow runner's page was measured half made)
     while time.monotonic() < end and (view.status.text().startswith(MV.tr("Rendering…"))
                                       or view.asked - set(view.images)):
         APP.processEvents()
@@ -128,7 +132,7 @@ def _dialog(path, monkeypatch, eager: int | None = None, full: bool = True):
     dialog.view.full = dialog.view.full and full  # (before the file is read and rendered)
     dialog.resize(1000, 700)
     dialog.show()
-    end = time.monotonic() + 20
+    end = time.monotonic() + READY_SECONDS  # (a wait for the page, not a budget: a slow runner's page was measured half made)
     while time.monotonic() < end and (not dialog.view.browser.toPlainText()
                                       or dialog.view.status.text().startswith(MV.tr("Rendering…"))):
         APP.processEvents()
@@ -219,7 +223,7 @@ def test_sad_markdown_its_page_shows_the_start_of_a_long_file_at_once():
         APP.processEvents()
         time.sleep(0.005)
     # (the process's own time - the parse on its worker too -, not the wall's: under load that was flaky)
-    assert time.process_time() - cpu < 1.5, time.process_time() - cpu
+    TB.budget(time.process_time() - cpu < 1.5, time.process_time() - cpu)
     view.load_rest()
     end = time.monotonic() + 120
     while time.monotonic() < end and view.more():
@@ -559,4 +563,4 @@ def test_sad_a_paragraph_of_many_raw_tags_is_sanitized_in_linear_time():
     text = "Start " + "<b>x</b> " * 30_000 + "<script> named, never closed.\n"
     began = time.process_time()
     MD.parse(text)
-    assert time.process_time() - began < 5, time.process_time() - began
+    TB.budget(time.process_time() - began < 5, time.process_time() - began)

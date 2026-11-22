@@ -14,6 +14,13 @@ never run: raw HTML kept to a safe subset (no scripts, styles, frames,
 forms or event handlers), nothing from the network (ui.markdown_view).
 ``--help`` says all of it; ``--term``, ``--html``, ``--help`` and
 ``--version`` never start Qt (nor import it).
+
+View > Theme chooses the page's theme (ui.markdown_theme_ui, twelve of them),
+View > Window Theme the window's (axross's themes). Help > Check for Updates…
+and Help > Updates: the one-file programs update themselves from the signed
+releases (core.markdown_update, ui.markdown_update_ui); ``--check-update``,
+``--update`` and ``--update-mode`` do it without a window, ``--self-test`` is
+what the updater runs a new program with before it replaces this one.
 """
 
 from __future__ import annotations
@@ -50,7 +57,7 @@ class MarkdownApp:
         for path in paths or [""]:
             full = _folder_page(os.path.abspath(os.path.expanduser(path))) if path else ""
             viewer = open_markdown_viewer(self.backend, full, parent, opener=self.ask_open,
-                                          editor=self.edit, view_menu=self.view_menu)
+                                          editor=self.edit, view_menu=self.view_menu, help_menu=self.help_menu)
             self.viewers.append(viewer)
             opened.append(viewer)
         return opened
@@ -72,8 +79,8 @@ class MarkdownApp:
         return opened
 
     def view_menu(self, menu) -> None:
-        """View > Theme: axross's themes ("Modern (follow system)" the
-        first), the choice kept in the program's own settings
+        """View > Window Theme (after the page's Theme, which the viewer adds): axross's themes ("Modern
+        (follow system)" the first), the choice kept in the program's own settings
         (ui.standalone_app.settings_file)."""
         from PyQt6.QtGui import QActionGroup
         from PyQt6.QtWidgets import QApplication
@@ -81,7 +88,8 @@ class MarkdownApp:
         from core.i18n import tr
         from ui.standalone_app import fill_theme_menu
 
-        themes = menu.addMenu(tr("Theme"))
+        themes = menu.addMenu(tr("Window Theme"))
+        themes.setObjectName("window_theme")
 
         def refill() -> None:  # (the one in use checked - another window may have chosen one)
             for group in themes.findChildren(QActionGroup):
@@ -91,6 +99,23 @@ class MarkdownApp:
 
         themes.aboutToShow.connect(refill)
         refill()
+
+    def help_menu(self, menu) -> None:
+        """Help: Check for Updates… and Updates (Off / Tell me / Install automatically) - the checks run
+        off the window's thread (ui.markdown_update_ui)."""
+        from ui.markdown_update_ui import controller
+
+        controller().fill_help_menu(menu)
+        menu.addSeparator()
+        from core.i18n import tr
+
+        menu.addAction(tr("About {name}…").format(name=NAME), lambda: self.about(menu.parentWidget()))
+
+    def about(self, parent=None):
+        """The About window (ui.markdown_about)."""
+        from ui.markdown_about import show_about
+
+        return show_about(parent.window() if parent is not None else None)
 
     def edit(self, backend, path: str):
         """Edit: the file in the editor window, the preview beside it."""
@@ -111,9 +136,19 @@ class MarkdownApp:
 
 def build(app, args: list[str]):
     """The windows for *args* (files; none: a viewer without one)."""
+    from core.markdown_settings import window_state_path
+    from ui import viewer_window
+
+    # (the window's size in the program's own state: it was written into axross's ~/.config/axross/session.json)
+    viewer_window.STATE_FILE = window_state_path()
     program = MarkdownApp()
     program.open_paths(list(args))
     app._ax_markdown = program  # noqa: SLF001 - kept with the application
+    from ui.markdown_update_ui import controller
+    from ui.standalone_app import smoke_ms_from_env
+
+    if smoke_ms_from_env() is None:  # (a build's start test asks no network)
+        controller().start()  # (the checks at the start and every 24 hours, on a thread of their own)
     return None
 
 
@@ -211,6 +246,13 @@ def _parser():
                         help="show the files in the terminal (axross-mdcat)")
     parser.add_argument("--html", metavar="FILE", help="write FILE's page for a web browser to standard output")
     parser.add_argument("--version", action="version", version=f"{NAME} {program_version()}")
+    parser.add_argument("--check-update", action="store_true",
+                        help="ask GitHub whether a newer release is out, and exit (no window)")
+    parser.add_argument("--update", action="store_true",
+                        help="install a newer release - the one-file programs (pip: says the command) - and exit")
+    parser.add_argument("--update-mode", choices=("off", "notify", "auto"),
+                        help="the window's checks for updates: off, notify (the default) or auto (install), kept")
+    parser.add_argument("--self-test", action="store_true", help=argparse.SUPPRESS)
     return parser
 
 
@@ -246,6 +288,16 @@ def main(argv: list[str] | None = None) -> int:
         options = _parser().parse_args(rest)
     except SystemExit as stop:  # (--help, --version: said; an unknown option: said, exit 2)
         return int(stop.code or 0)
+    if options.self_test:
+        return self_test()
+    if options.update_mode or options.check_update or options.update:
+        from core.markdown_cli import PROG, update_main
+
+        PROG[0] = NAME
+        try:
+            return update_main(options)
+        finally:
+            PROG[0] = "axross-mdcat"
     if options.html is not None:
         if options.files:
             print(f"{NAME}: --html takes one file (- for standard input)", file=sys.stderr)
@@ -260,6 +312,26 @@ def main(argv: list[str] | None = None) -> int:
             raise
         print(f"{NAME}: {said}", file=sys.stderr)
         return 1
+
+
+def self_test() -> int:
+    """``--self-test``: the program runs here - a page rendered, Qt's libraries loaded (no window: a
+    missing system library fails it) - and says ``axross-markdown X.Y.Z ok`` (core.markdown_update runs a
+    new program so before it replaces this one)."""
+    from core import markdown_cli
+
+    try:
+        from PyQt6 import QtCore, QtGui, QtWidgets  # noqa: F401 - their libraries loaded is the test
+
+        from ui import markdown_html  # noqa: F401
+    except ImportError as exc:
+        print(f"{NAME}: {missing_library(exc) or exc}", file=sys.stderr)
+        return 1
+    markdown_cli.PROG[0] = NAME
+    try:
+        return markdown_cli.self_test()
+    finally:
+        markdown_cli.PROG[0] = "axross-mdcat"
 
 
 #: The packages that bring a system library Qt's window needs (Debian and

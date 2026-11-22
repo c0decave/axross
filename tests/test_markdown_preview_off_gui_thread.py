@@ -28,6 +28,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 not installed")
 
 from PyQt6.QtWidgets import QApplication  # noqa: E402
+from tests import markdown_timing as TB  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -95,7 +96,7 @@ def test_sad_a_long_table_does_not_freeze_the_window(app):
     """8,000 table rows (64 KB) took about 11 s on the GUI thread."""
     api = _preview("|a|b|c|\n|-|-|-|\n" + "|x|y|z|\n" * 8000)
     try:
-        assert api.gui_seconds < 2.0, f"the GUI thread was busy {api.gui_seconds:.1f} s"
+        TB.budget(api.gui_seconds < 2.0, f"the GUI thread was busy {api.gui_seconds:.1f} s")
         shown = api.widget.toPlainText()
         assert shown.lstrip().startswith("a\nb\nc\nx\ny\nz")
         assert "Preview cut" in shown  # the note says only the beginning is shown
@@ -107,7 +108,7 @@ def test_sad_crafted_emphasis_does_not_freeze_the_window(app):
     """64 KB of ``*a*a...`` (one paragraph, 32,000 format runs) took 8 s."""
     api = _preview("*a" * 32000)
     try:
-        assert api.gui_seconds < 2.0, f"the GUI thread was busy {api.gui_seconds:.1f} s"
+        TB.budget(api.gui_seconds < 2.0, f"the GUI thread was busy {api.gui_seconds:.1f} s")
         assert "Preview cut" in api.widget.toPlainText()
     finally:
         api.widget.close()

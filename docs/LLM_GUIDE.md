@@ -21,16 +21,18 @@ way around it from the client side.
 |---|---|
 | *(none)* | The read-only file tools of the default backend (group `core`). |
 | `--mcp-write` (needs `--mcp-root DIR`) | The write tools (group `write`) and the mutating tools of every enabled group. |
-| `--mcp-tools GROUP[,…]` or `all` | Capability groups: metadata, duplicates, archive, crypto, index, filetype, transfer, remote, agent, extensions — and exec, which `all` leaves out. |
+| `--mcp-tools GROUP[,…]` or `all` | Capability groups: metadata, duplicates, archive, crypto, index, filetype, transfer, remote, agent, extensions — and exec, which `all` leaves out without `--mcp-allow-exec`; adb (Android devices on an ADB profile) comes only by name: `all,adb`. |
 | `--mcp-allow-exec` | The `exec` group: commands and scripts on remote hosts. |
 | `--mcp-tools agent` | `run_llm_agent`: hand a task to the user's own local LLM, which reads with axross' tools and changes nothing. |
 | `--mcp-allow-scripts` (stdio only) | The script tools: saved Python scripts with the `axross.*` API, run as the server's user. |
 
 Tool names read verb then resource (since 0.15.183); `tools/call` still takes
 the former names (list_dir, stat, grep, ...), which `tools/list` no longer shows.
-Three former tools answer as part of another: export_metadata_file is
+Former tools answer as part of another: export_metadata_file is
 `export_metadata` with `out`, exec_backends is `list_backends` with
-`can_run_commands`, extensions_info is `list_extensions` with `name`; the
+`can_run_commands`, extensions_info is `list_extensions` with `name`,
+create_symlink and create_hardlink are `create_link` with `kind`,
+run_backend_script is `run_backend_command` with `script`; the
 group packer is part of `archive` (`--mcp-tools packer` still works).
 
 The `paranoid` security mode refuses `--mcp-allow-scripts`,
@@ -85,7 +87,16 @@ those flags would serve.
   bytes) — exactly one — and replaces the file, atomically
   where the backend allows it (one upload on object stores, a temporary
   sibling renamed into place elsewhere); a backend without rename
-  (TFTP) is written directly.
+  (TFTP) is written directly. `write_mode: "create"` never replaces (a
+  taken name fails with `File exists`); `"append"` adds at the end and
+  `"at_offset"` (with `offset`) overwrites bytes in place — both rewrite an
+  existing file of at most 64 MiB.
+- An older version (`list_file_versions`) becomes the current content again
+  with `restore_file_version`; `trash_duplicates` moves copies to axross's
+  trash, which `list_trash` lists and `restore_from_trash` undoes.
+- Results cut by a cap say so (`truncated`); `walk_tree`, `search_content`,
+  `search_index`, `list_duplicate_scans` and `list_duplicate_groups` page on:
+  pass the result's `next_offset` as `offset`.
 - Group tools never overwrite: archives, extracted folders, decrypted
   files and exports get a fresh name (`bundle (2).zip`, `x-1`), which
   the result reports. Use the path from the result, not the one you
@@ -119,9 +130,9 @@ those flags would serve.
 - `run_backend_command` returns `{returncode, stdout, stderr, truncated_stdout,
   truncated_stderr}`. A non-zero `returncode` is a result, not an
   error — read `stderr`. Telnet and ADB deliver stderr inside `stdout`.
-- `run_backend_script` sends a script on stdin to `sh` (default), `bash`,
-  `python3` or `perl`, with `args` quoted after it; prefer it to
-  building a long quoted one-liner. WinRM hosts take PowerShell
+- `run_backend_command` with `script` instead of `command` sends a script on
+  stdin to `sh` (default), `bash`, `python3` or `perl`, with `args` quoted
+  after it; prefer it to building a long quoted one-liner. WinRM hosts take PowerShell
   (`interpreter: "powershell"`, no `args`); Cisco devices take no
   scripts.
 - `env` sets variables for the command (names `[A-Za-z_][A-Za-z0-9_]*`).
@@ -135,7 +146,8 @@ those flags would serve.
 ## 8. Delegating to the user's local model (`--mcp-tools agent`)
 
 - `run_llm_agent(task)` hands a task to the user's own LLM (the active
-  profile of the axross GUI, or `profile`). It reads with axross' tools
+  profile of the axross GUI, or `llm_profile`; `list_llm_profiles` names
+  them). It reads with axross' tools
   inside the MCP root (plus the read-only tools of `groups`) and returns
   `{answer, stopped, calls, profile, model}`.
 - Use it to keep file content on the user's machine — summarising
@@ -285,25 +297,25 @@ decision: report it instead of retrying another way.
 
 <!-- BEGIN GENERATED TOOL CATALOG (python -m core.llm_guide) -->
 
-52 tools in 14 sets, from `docs/mcp-tools.json` (generated for `--mcp-tools agent,archive,crypto,duplicates,exec,extensions,filetype,index,metadata,remote,transfer --mcp-write --mcp-allow-scripts --mcp-allow-exec`). A tool marked *backend* takes the optional `backend` argument (an id from `list_backends`; omit it for the default backend).
+74 tools in 15 sets, from `docs/mcp-tools.json` (generated for `--mcp-tools adb,agent,archive,crypto,duplicates,exec,extensions,filetype,index,metadata,remote,transfer --mcp-write --mcp-allow-scripts --mcp-allow-exec`). A tool marked *backend* takes the optional `backend` argument (an id from `list_backends`; omit it for the default backend).
 
 Timeout classes: `quick` 15 s, `preview` 30 s, `write` 30 s, `walk` 60 s, `stream` 300 s, `script` 610 s, `long` 1800 s.
 
 Rules every tool shares (the server's initialize instructions; a description names one with a short tag such as "Refuses secret files."):
 
-- Names are verb_resource; the resource says what a tool takes or makes: file, directory (one folder), tree (a folder and all below it), path (a file or a folder). Former names (up to 0.15.182) still work.
-- One parameter name, one meaning: path is what a tool works on, max_<what> caps a result, offset pages, timeout is seconds, pattern is what a search looks for. Former names (needle, limit, timeout_s, folder, a 0-based max_depth) still work.
+- Names are verb_resource; the resource says what a tool takes or makes: file, directory (one folder), tree (a folder and all below it), path (a file or a folder). Former names (up to 0.15.182) and merged tools' names still work.
+- One parameter name, one meaning: path is what a tool works on, max_<what> caps a result, offset pages (a result's next_offset), timeout is seconds, pattern what a search looks for, profile a connection profile, llm_profile an LLM one. Former names (needle, limit, timeout_s, folder, a 0-based max_depth, run_llm_agent's profile) still work.
 - max_depth counts levels from 1 in every tool (1 = path's own entries); subfolder_levels counts subfolders from 0 (0 = path's own files).
-- Paths are absolute or relative to the MCP root; local paths stay inside the root, a remote backend takes that host's paths. Tools take backend only when there is more than one; its ids come from list_backends, served then ('profile:<name>' after open_remote_profile); omitted, the default backend. A <name>_b64 argument carries the raw bytes of a non-UTF-8 name in base64, as listings return it (name_b64), and replaces <name>; the server, not the schema, requires one of the two (clients refuse a top-level oneOf).
-- Tools and arguments that change files (export_metadata's out) need --mcp-write; the script tools --mcp-allow-scripts, the remote command tools --mcp-allow-exec - neither in paranoid mode, the script tools only over stdio; each optional group its --mcp-tools name; a read-only tool that points at a write tool says '(needs --mcp-write)'. delete_path deletes for good; only trash_duplicates moves files to axross's restorable trash.
+- Paths are absolute or relative to the MCP root; local paths stay inside the root, a remote backend takes that host's paths as given. Tools take backend only when there is more than one; its ids come from list_backends, served then ('profile:<name>' after open_remote_profile); omitted, the default backend. A <name>_b64 argument carries the raw bytes of a non-UTF-8 name in base64, as listings return it (name_b64), and replaces <name>; the server, not the schema, requires one of the two (clients refuse a top-level oneOf).
+- Tools and arguments that change files (export_metadata's out) need --mcp-write, the script tools --mcp-allow-scripts, the remote command tools --mcp-allow-exec - neither in paranoid mode, the script tools only over stdio; each optional group its --mcp-tools name ('all': every group but adb); a read-only tool that points at a write tool says '(needs --mcp-write)'. delete_path deletes for good; trash_duplicates moves files to axross's trash (list_trash, restore_from_trash).
 - Secret files (SSH and GnuPG private keys, axross's tokens; on remote hosts also .env and credentials files) are refused unless the server runs with --mcp-allow-secret-reads.
 - Write guards: writes stay inside a writable MCP root and outside protected places (shell and session start files, autostart, user services, SSH and GnuPG folders, axross settings); production-flagged profiles are read-only.
-- Paranoid mode (AXROSS_SECURITY_MODE=paranoid or the app setting) turns off scripts, extensions, remote commands, ffmpeg/ffprobe and legacy protocols.
-- truncated: a limit (max_*, max_depth or subfolder_levels leaving a folder unentered) cut the result; the tree tools have no cursor (narrow path or raise the limit), search_index and list_duplicate_groups page with offset. Tree walks also carry complete, false when anything was cut or left unread. A folder or file they could not read is in unreadable ({path, error} in walk_tree and search_content; paths in scan_file_types (folders, secret files), folder paths in scan_duplicates and build_index), or an error entry (compute_tree_checksums, copy_tree, copy_path_to_backend).
-- A call past its time limit fails with a timeout error (JSON-RPC -32002) and returns nothing; work it started may still finish. run_script, run_backend_command and run_backend_script stop at their own timeout argument instead. Long tools send progress notifications and stop on notifications/cancelled.
+- Paranoid mode (AXROSS_SECURITY_MODE=paranoid or the app setting) turns off scripts, extensions, remote commands, device changes (adb), ffmpeg/ffprobe and legacy protocols.
+- truncated: a limit (max_*, max_depth or subfolder_levels leaving a folder unentered) cut the result; a tool with offset pages on, the other tree tools narrow path or raise the limit. Tree walks also carry complete, false when anything was cut or left unread. A folder or file they could not read is in unreadable ({path, error} in walk_tree and search_content; paths in scan_file_types (folders, secret files), folder paths in scan_duplicates and build_index), or an error entry (compute_tree_checksums, copy_tree, copy_path_to_backend).
+- A call past its time limit fails with a timeout error (JSON-RPC -32002) and returns nothing; work it started may still finish. run_script and run_backend_command take their own timeout instead. Long tools send progress notifications and stop on notifications/cancelled.
 - Errors: a tool that fails answers isError true, the message as text ('tool <name> failed: ...') and _meta.type the error's kind (FileNotFoundError, PermissionError ...), without structuredContent; an unknown tool is a JSON-RPC error, and so are refused arguments before protocol 2025-11-25.
 - idempotentHint true: a repeat changes nothing more; where a repeat fails, the description names the error.
-- run_llm_agent's model gets the core file tools (list_directory, get_path_info, read_file, compute_file_checksum, search_index, walk_tree, compute_tree_checksums, render_preview, search_content, list_file_versions, read_file_version) and, per group asked for: metadata read_metadata, export_metadata; duplicates scan_duplicates, list_duplicate_scans, list_duplicate_groups; archive list_archive_formats, list_archive_members; index build_index; filetype identify_file_type, scan_file_types; remote list_remote_profiles, open_remote_profile, close_remote_profile; extensions list_extensions; remote adds list_backends.
+- run_llm_agent's model gets the core file tools (list_directory, get_path_info, read_file, compute_file_checksum, search_index, walk_tree, compute_tree_checksums, render_preview where served, search_content, list_file_versions, read_file_version) and, per group asked for: metadata read_metadata, export_metadata; duplicates scan_duplicates, list_duplicate_scans, list_duplicate_groups, list_trash; archive list_archive_formats, list_archive_members; index build_index; filetype identify_file_type, scan_file_types; remote list_remote_profiles, open_remote_profile, close_remote_profile, list_backends; extensions list_extensions.
 
 ### `core`
 
@@ -385,7 +397,7 @@ Find files and folders by name, extension and size in the offline metadata index
 
 **Behavior:** read-only; results can be stale. Searches only the rows of backend (the default backend if omitted). The given filters must all match; none gives every indexed entry. Pages with offset and max_results. Time limit: 15 s.
 
-**Returns:** {entries: [{backend_id, path, name, size, is_dir, modified}], indexed (false: no index yet - no entries may mean that), truncated (more after this page)}.
+**Returns:** {entries: [{backend_id, path, name, size, is_dir, modified}], indexed (false: no index yet - no entries may mean that), truncated (more after this page), next_offset (null: no further page)}.
 
 - `ext` (string): File extension, matched whole in any case; a leading dot is ignored, e.g. 'pdf'.
 - `max_results` (integer, default `1000`, 1..10000): Most results to return.
@@ -404,12 +416,13 @@ List the live folder tree under path, breadth-first, to max_depth levels.
 
 **Instead:** list_directory for one level; search_index for the faster, maybe stale index; search_content for contents.
 
-**Behavior:** read-only. Symlinked folders are listed, not entered. Hitting max_entries, or a folder at max_depth left unentered, sets truncated (no cursor: rerun on a subfolder); an unlistable subfolder goes to unreadable. Time limit: 60 s.
+**Behavior:** read-only; hidden entries included, each folder's by name. Symlinked folders are listed, not entered. Past max_entries: truncated, and next_offset for the next page. A folder at max_depth left unentered sets truncated; an unlistable one goes to unreadable. Time limit: 60 s.
 
-**Returns:** {entries: [{path, name, is_dir, is_link, size, modified}], truncated, unreadable: [{path, error}], complete (false when anything was cut or unread)}.
+**Returns:** {entries: [{path, name, is_dir, is_link, size, modified}], truncated, unreadable: [{path, error}], complete (nothing cut or unread), offset, next_offset}.
 
 - `max_depth` (integer, default `4`, 1..64): Levels to visit, counted from 1: 1 = path's own entries.
 - `max_entries` (integer, default `1000`, 1..100000): Most entries to return (files and folders together).
+- `offset` (integer, default `0`, 0..10000000): Entries to skip, for the next page: the previous call's next_offset (the tree is walked again from path).
 - `path` (string): The folder to walk (absolute, or relative to the MCP root). Required unless path_b64 is given.
 - `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
 
@@ -458,24 +471,25 @@ Search file contents under a folder for lines matching a regular expression.
 
 **Behavior:** read-only, breadth-first; include narrows by file name. Files are read as UTF-8, binary ones too (bad bytes: U+FFFD); over 4 MiB they are skipped; lines are cut at 500 characters. Patterns with nested quantifiers or slower than 5 s on a file are refused (ReDoS). Secret files go to unreadable. Time limit: 60 s.
 
-**Returns:** {matches: [{path, line_no, line}], files_scanned, truncated (max_matches, or a folder at max_depth not searched), unreadable, complete}. An empty result with complete=false does not mean the pattern is absent; when truncated, narrow path or include.
+**Returns:** {matches: [{path, line_no, line}], files_scanned, truncated (max_matches, or a folder at max_depth unsearched), unreadable, complete, offset, next_offset (the page after max_matches)}. An empty result with complete=false does not mean the pattern is absent.
 
 - `pattern` (string, required): A Python regular expression, matched against each line, e.g. 'import|require' or '(?i)password'.
 - `include` (string): Only files whose name matches this glob, case-sensitive, e.g. '*.py' or '*.[ch]'.
 - `max_depth` (integer, default `2`, 1..64): Levels to visit, counted from 1: 1 = path's own entries.
 - `max_matches` (integer, default `100`, 1..500): Most matching lines to return.
+- `offset` (integer, default `0`, 0..10000000): Matches to skip, for the next page: the previous call's next_offset (the files are searched again, in the same order).
 - `path` (string): The folder to search (absolute, or relative to the MCP root); default the MCP root, '/' on a remote backend.
 - `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
 
 #### `list_file_versions` — read-only · quick (15 s) · stdio + http · *backend*
 
-List the stored older versions of one file.
+List the stored versions of one file, newest first, the current one marked is_current.
 
-**Use when:** you need an earlier state on a versioning backend (S3, Dropbox, Drive, Azure, WebDAV, Git).
+**Use when:** you need an earlier state on a versioning backend (S3, Dropbox, Drive, OneDrive, Azure, WebDAV, Git).
 
-**Instead:** read_file_version to read one; read_file for the current one.
+**Instead:** read_file_version to read one; restore_file_version (needs --mcp-write) to make one current.
 
-**Behavior:** read-only. Unsorted (the backend's order). Backends without versions, the local disk too, give [] (read_file_version fails there). Time limit: 15 s.
+**Behavior:** read-only. Undated versions come last. A backend without versions, the local disk too, gives [] (read_file_version fails there). Time limit: 15 s.
 
 **Returns:** a JSON array of {version_id, size, modified (ISO 8601 or null), is_current, label (may be empty)}; structuredContent: {versions}.
 
@@ -507,21 +521,41 @@ Write tools; only with --mcp-write, which needs --mcp-root.
 
 #### `write_file` — mutating · write (30 s) · stdio + http · *backend*
 
-Create a file or replace its whole contents with text or bytes.
+Create a file, replace its contents, append to it, or overwrite bytes at an offset.
 
-**Use when:** saving content to one file; to edit, read_file, change, write back. It always replaces: when the file must not exist yet, check with get_path_info first.
+**Use when:** saving one file, whole or in part (see write_mode).
 
-**Instead:** copy_file to duplicate a file; create_directory for folders.
+**Instead:** copy_file to duplicate a file; restore_file_version for an older version; create_directory for folders.
 
-**Behavior:** destructive - replaces the file. Atomic on the local disk (temp file, rename): a replaced file keeps its mode, a new one gets 0600. The parent must exist; a symlink at path is followed, a folder fails. The 16 MiB limit is the whole request, so content_b64 carries about 12 MiB. Time limit: 30 s.
+**Behavior:** destructive - replace overwrites the file. create fails with 'File exists' if path exists. append and at_offset rewrite an existing file of at most 64 MiB through a temp file; an offset past its end fails. Atomic on the local disk: a replaced file keeps its mode, a new one gets 0600; a failed write leaves the old file where the backend renames (TFTP writes in place). The parent must exist; a symlink at path is followed. Each append adds again. Time limit: 30 s.
 
-**Returns:** {size: bytes written}.
+**Returns:** {size (bytes written), file_size (the file's size after)}.
 
 Needs: `--mcp-write` `--mcp-root DIR`.
 
-- `content` (string): The new content as text, stored UTF-8 encoded. Required unless content_b64 is given; not both.
-- `content_b64` (string): content as base64 of the raw bytes, for binary files; give this or content.
-- `path` (string): The file to create or replace (absolute, or relative to the MCP root). Required unless path_b64 is given.
+- `content` (string): The new content as text, stored UTF-8 encoded (the request is limited to 16 MiB). Required unless content_b64 is given; not both.
+- `content_b64` (string): content as base64 of the raw bytes, for binary files; about 12 MiB at most.
+- `offset` (integer, >= 0): Byte position where at_offset starts writing, at most the file's size. Needed by write_mode at_offset; omit it for the other modes.
+- `path` (string): The file to write (absolute, or relative to the MCP root). Required unless path_b64 is given.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
+- `write_mode` (string, one of `replace`, `create`, `append`, `at_offset`, default `"replace"`): replace: the whole file (created if missing); create: a new file only; append: add at the end of an existing file; at_offset: overwrite from offset on, growing the file if the content runs past its end.
+
+#### `restore_file_version` — mutating · stream (300 s) · stdio + http · *backend*
+
+Make an older version of a file its current content again, on a backend that keeps versions.
+
+**Use when:** undoing a change on S3, Dropbox, Drive, OneDrive, Azure, WebDAV or Git; pick the version_id with list_file_versions.
+
+**Instead:** read_file_version to look first; write_file to write new content.
+
+**Behavior:** destructive - the current content is replaced; on a versioning backend the old current content stays a version and the restore adds a new one, so a repeat adds another. Streamed through a temp file and renamed where the backend can. Backends without versions (the local disk too) fail. Time limit: 5 min.
+
+**Returns:** {path, version_id, size (bytes restored)}.
+
+Needs: `--mcp-write` `--mcp-root DIR`.
+
+- `version_id` (string, required): The version_id of an entry from list_file_versions for this path.
+- `path` (string): The file to restore (absolute, or relative to the MCP root). Required unless path_b64 is given.
 - `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
 
 #### `create_directory` — mutating · write (30 s) · stdio + http · *backend*
@@ -620,42 +654,24 @@ Needs: `--mcp-write` `--mcp-root DIR`.
 - `src` (string): The file or folder to copy (absolute, or relative to the MCP root). Required unless src_b64 is given.
 - `src_b64` (string): src as base64 of its raw bytes, for non-UTF-8 names; replaces src.
 
-#### `create_symlink` — mutating · write (30 s) · stdio + http · *backend*
+#### `create_link` — mutating · write (30 s) · stdio + http · *backend*
 
-Create a symbolic link at link_path pointing to target.
+Create a link at link_path: a symbolic link to target, or with kind=hard a second name of the file target.
 
-**Use when:** a second path should lead to a file or folder.
+**Use when:** a second path should lead to a file or folder (symbolic), or one file must appear under two names on one file system (hard).
 
-**Instead:** create_hardlink for a second name of one file; copy_file for a copy.
+**Instead:** copy_file for an independent copy; move_path to rename.
 
-**Behavior:** only adds. A repeat fails with 'File exists'. Locally the target must also stay inside the root; it may dangle. Local disk, SFTP and NFS only. Time limit: 30 s.
+**Behavior:** only adds. A repeat fails with 'File exists'. Symbolic: target is stored as given and may dangle; locally it must stay inside the root. Hard: target must be an existing file inside the root. Refuses secret files. Local disk, SFTP and NFS only; elsewhere it fails, e.g. 'S3Session has no symbolic links'. Time limit: 30 s.
 
-**Returns:** {ok: true}, plus target when the one stored differs.
+**Returns:** {ok: true}, plus target when the symbolic link stored another one.
 
 Needs: `--mcp-write` `--mcp-root DIR`.
 
+- `kind` (string, one of `symbolic`, `hard`, default `"symbolic"`): symbolic: a link by path (folders too, across file systems); hard: another name of the same file.
 - `link_path` (string): The new link's own path; must not exist yet (absolute, or relative to the MCP root). Required unless link_path_b64 is given.
 - `link_path_b64` (string): link_path as base64 of its raw bytes, for non-UTF-8 names; replaces link_path.
-- `target` (string): What the link points to: absolute, or relative to the link's folder, e.g. '../shared/data.csv'. SFTP and NFS store it as given. Required unless target_b64 is given.
-- `target_b64` (string): target as base64 of its raw bytes, for non-UTF-8 names; replaces target.
-
-#### `create_hardlink` — mutating · write (30 s) · stdio + http · *backend*
-
-Create a hard link: a second name for an existing file.
-
-**Use when:** one file must appear under two paths.
-
-**Instead:** create_symlink for folders or across file systems; copy_file for a copy.
-
-**Behavior:** only adds. A repeat fails with 'File exists'. One file system; local disk, SFTP and NFS only. Refuses secret files. Time limit: 30 s.
-
-**Returns:** {ok: true}.
-
-Needs: `--mcp-write` `--mcp-root DIR`.
-
-- `link_path` (string): The new name; must not exist yet (absolute, or relative to the MCP root). Required unless link_path_b64 is given.
-- `link_path_b64` (string): link_path as base64 of its raw bytes, for non-UTF-8 names; replaces link_path.
-- `target` (string): The existing file to link to; unlike symlink's target it is resolved like any path (absolute, or relative to the MCP root). Required unless target_b64 is given.
+- `target` (string): kind symbolic: what the link points to, absolute or relative to the link's folder, e.g. '../shared/data.csv' (SFTP and NFS store it as given). kind hard: the existing file, absolute or relative to the MCP root. Required unless target_b64 is given.
 - `target_b64` (string): target as base64 of its raw bytes, for non-UTF-8 names; replaces target.
 
 #### `set_permissions` — mutating · write (30 s) · stdio + http · *backend*
@@ -789,30 +805,437 @@ Needs: `--mcp-allow-scripts`.
 - `args` (array of string, default `[]`): Command-line arguments, the script's sys.argv[1:], e.g. ['--dry-run', 'docs']; no NUL characters.
 - `timeout` (number, default `60.0`, <= 600.0): Wall-clock limit for the run in seconds.
 
+### `adb`
+
+Android devices opened as ADB profiles (needs the remote group): identity, properties, battery, apps and their permissions, running apps, the log, a screenshot, SMS; start, stop, install, uninstall, back up apps, grant and revoke permissions, reboot, write an SMS into the store, prepare one for sending, AT commands to the modem (mutating; refused on production profiles and in the paranoid security mode).
+
+#### `get_device_info` — read-only · walk (60 s) · stdio + http · *backend*
+
+Identify the Android device: maker, model, Android version, SDK, security patch, build, CPU ABIs, serial, IMEI or MEID.
+
+**Use when:** knowing which phone this is or how current its patches are.
+
+**Instead:** list_device_properties for any other property.
+
+**Requires:** --mcp-tools adb; an ADB profile opened with open_remote_profile.
+
+**Behavior:** read-only. A value the shell may not read is null; its _note says why. Time limit: 60 s.
+
+**Returns:** {manufacturer, brand, model, device, product, android_version, sdk, security_patch, build_id, build_fingerprint, build_type, abis, serial, serial_note, imei, meid, imei_note, shell_uid, root}.
+
+Needs: `--mcp-tools adb`.
+
+#### `list_device_properties` — read-only · walk (60 s) · stdio + http · *backend*
+
+List the device's system properties (getprop) whose names match a glob.
+
+**Use when:** a detail get_device_info does not give (persist.*, gsm.*, a vendor's).
+
+**Instead:** get_device_info for the usual identity fields.
+
+**Requires:** --mcp-tools adb; an ADB profile opened with open_remote_profile.
+
+**Behavior:** read-only; values cut at 1000 characters. Time limit: 60 s.
+
+**Returns:** {properties: {name: value}, count (matching), truncated}.
+
+Needs: `--mcp-tools adb`.
+
+- `filter` (string, default `"*"`): A property name or a glob of names, e.g. 'ro.build.*'.
+- `max_results` (integer, default `500`, 1..5000): The most properties returned.
+
+#### `get_battery_status` — read-only · walk (60 s) · stdio + http · *backend*
+
+Read the battery's charge, charging state, health, temperature and voltage (dumpsys battery).
+
+**Use when:** checking whether the phone charges or overheats.
+
+**Instead:** get_device_info for what the phone is.
+
+**Requires:** --mcp-tools adb; an ADB profile opened with open_remote_profile.
+
+**Behavior:** read-only; simulated is true when 'dumpsys battery set' overrides the values. Time limit: 60 s.
+
+**Returns:** {level_percent, status, health, plugged [ac, usb, wireless, dock], temperature_c, voltage_mv, technology, present, simulated, note}.
+
+Needs: `--mcp-tools adb`.
+
+#### `list_apps` — read-only · walk (60 s) · stdio + http · *backend*
+
+List the installed apps with version code, uid, installer, system or user app, enabled or not.
+
+**Use when:** finding a package name for the other app tools.
+
+**Instead:** get_app_info for one app's permissions; list_running_apps for what runs.
+
+**Requires:** --mcp-tools adb; an ADB profile opened with open_remote_profile.
+
+**Behavior:** read-only; older pm versions give fewer fields (null). Time limit: 60 s.
+
+**Returns:** {apps: [{package, version_code, uid, installer, system, enabled}], count, offset, truncated}, by package.
+
+Needs: `--mcp-tools adb`.
+
+- `kind` (string, one of `all`, `user`, `system`, default `"all"`): user: installed by the user; system: part of the system image.
+- `match` (string): Only packages whose name contains this (any case). Default: all.
+- `max_results` (integer, default `200`, 1..5000): The most apps returned.
+- `offset` (integer, default `0`, 0..1000000): Apps to skip (the next page).
+- `state` (string, one of `any`, `enabled`, `disabled`, default `"any"`): Only enabled or only disabled apps.
+
+#### `get_app_info` — read-only · walk (60 s) · stdio + http · *backend*
+
+Get one app's version, SDK levels, install times, installer, flags, APK paths and permissions (requested, install-time and runtime, granted or not).
+
+**Use when:** checking what an app may do or which version is installed.
+
+**Instead:** list_apps to find the package; grant_permission (needs --mcp-write) to change one.
+
+**Requires:** --mcp-tools adb; an ADB profile opened with open_remote_profile.
+
+**Behavior:** read-only (dumpsys package). consistent is false when the app's own versionName imitates dump lines; those values are then null. Time limit: 60 s.
+
+**Returns:** {package, apk_paths, enabled, version_code, version_name, min_sdk, target_sdk, first_install_time, last_update_time, installer, uid, data_dir, system, debuggable, flags, requested_permissions, install_permissions, runtime_permissions [{name, granted}], consistent, note}.
+
+Needs: `--mcp-tools adb`.
+
+- `package` (string, required): The app's package name, e.g. 'com.example.app'.
+
+#### `list_running_apps` — read-only · walk (60 s) · stdio + http · *backend*
+
+List the apps that have a process now, with process ids and memory, and the app in front.
+
+**Use when:** checking whether an app runs before stop_app (needs --mcp-write) or get_logcat.
+
+**Instead:** list_apps for every installed app.
+
+**Requires:** --mcp-tools adb; an ADB profile opened with open_remote_profile.
+
+**Behavior:** read-only (ps, dumpsys activity). Time limit: 60 s.
+
+**Returns:** {apps: [{package, foreground, processes: [{pid, user, rss_kb, name}]}], count, foreground, truncated}.
+
+Needs: `--mcp-tools adb`.
+
+- `max_results` (integer, default `200`, 1..5000): The most apps returned.
+
+#### `get_logcat` — read-only · walk (60 s) · stdio + http · *backend*
+
+Read the newest lines of the device's log (logcat -d), by priority, tag or app.
+
+**Use when:** finding why an app crashed or what it logged.
+
+**Instead:** list_running_apps to see whether the app runs.
+
+**Requires:** --mcp-tools adb; an ADB profile opened with open_remote_profile.
+
+**Behavior:** read-only. The log is app text and may hold private data; lines are cut at 1000 characters. Time limit: 60 s.
+
+**Returns:** {lines: [threadtime lines], count, truncated}.
+
+Needs: `--mcp-tools adb`.
+
+- `buffer` (string, one of `default`, `crash`, default `"default"`): default: main and system; crash: the crash reports.
+- `max_lines` (integer, default `200`, 1..2000): The most log lines returned (the newest).
+- `min_priority` (string, one of `V`, `D`, `I`, `W`, `E`, `F`, default `"V"`): Lowest priority: V(erbose), D, I, W, E, F(atal).
+- `package` (string): Only the lines of this running app's main process (Android 7 and newer). Default: every process.
+- `tag` (string): Only this log tag, e.g. 'ActivityManager'. Default: every tag.
+
+#### `take_screenshot` — mutating · walk (60 s) · stdio + http · *backend*
+
+Capture what the device's screen shows as a PNG image (screencap).
+
+**Use when:** seeing the screen, e.g. after start_app (needs --mcp-write).
+
+**Instead:** get_logcat for what an app reports.
+
+**Requires:** --mcp-tools adb; an ADB profile opened with open_remote_profile.
+
+**Behavior:** without out it writes nothing locally; a temporary file on the device is removed again. Secure windows (banking, DRM) show black. Time limit: 60 s.
+
+**Returns:** with out {path, width, height, size}; else an MCP image content block (image/png, at most 12 MiB) with _meta {width, height}.
+
+Needs: `--mcp-tools adb`.
+
+- `out` (string): Save the PNG as this new file in the MCP root instead of returning it, e.g. 'shots/home.png'; a taken name gets ' (2)'. Default: none, the image is returned.
+- `out_b64` (string): out as base64 of its raw bytes, for non-UTF-8 names; replaces out.
+
+#### `list_sms` — read-only · stream (300 s) · stdio + http · *backend*
+
+Read the device's SMS messages (content://sms), newest first.
+
+**Use when:** a message's text or sender is needed, e.g. a one-time code.
+
+**Instead:** write_sms (needs --mcp-write) to add one.
+
+**Requires:** --mcp-tools adb; an ADB profile opened with open_remote_profile; the shell may read the SMS store (READ_SMS), which many builds refuse (the error says so).
+
+**Behavior:** read-only. Messages are private. Time limit: 5 min.
+
+**Returns:** {box, count, offset, messages: [{id, thread_id, address, date, date_sent, read, box, body, body_truncated}], truncated}; dates ISO 8601 UTC.
+
+Needs: `--mcp-tools adb`.
+
+- `box` (string, one of `all`, `inbox`, `sent`, `draft`, `outbox`, `failed`, `queued`, default `"inbox"`): Which messages: inbox, sent, draft, outbox, failed, queued or all.
+- `max_body` (integer, default `1000`, 1..4000): The longest text kept of a message.
+- `max_results` (integer, default `20`, 1..50): The most messages returned.
+- `offset` (integer, default `0`, 0..1000000): Messages to skip (the next page).
+
+#### `start_app` — mutating · walk (60 s) · stdio + http · *backend*
+
+Start an installed app at its launcher activity, or at the activity named.
+
+**Use when:** opening an app on the phone.
+
+**Instead:** stop_app to end it; list_running_apps to see what runs.
+
+**Requires:** --mcp-tools adb; not in paranoid mode; an ADB profile opened with open_remote_profile.
+
+**Behavior:** the app runs and comes to the front (am start; the monkey's launcher intent where Android cannot resolve the activity). Time limit: 60 s.
+
+**Returns:** {package, component, method, started, already_running, output}.
+
+Needs: `--mcp-tools adb` `--mcp-write` `--mcp-root DIR`.
+
+- `package` (string, required): The app's package name, e.g. 'com.example.app'.
+- `activity` (string): An activity of the app instead of the launcher one, e.g. '.SettingsActivity'. Default: the launcher activity.
+
+#### `stop_app` — mutating · walk (60 s) · stdio + http · *backend*
+
+Force-stop an app (am force-stop).
+
+**Use when:** an app hangs or has to start afresh.
+
+**Instead:** uninstall_app to remove it; start_app to start it again.
+
+**Requires:** --mcp-tools adb; not in paranoid mode; an ADB profile opened with open_remote_profile.
+
+**Behavior:** destructive: its processes end, alarms and jobs are cancelled until it starts again, unsaved work is lost. A repeat stops nothing more; a package that is not installed fails with 'is not installed'. Time limit: 60 s.
+
+**Returns:** {package, stopped, running (null: not checkable)}.
+
+Needs: `--mcp-tools adb` `--mcp-write` `--mcp-root DIR`.
+
+- `package` (string, required): The app's package name, e.g. 'com.example.app'.
+
+#### `install_app` — mutating · long (1800 s) · stdio + http · *backend*
+
+Install one APK file from the MCP root on the device (pm install).
+
+**Use when:** putting a built or downloaded app onto the phone.
+
+**Instead:** uninstall_app to remove one; export_app to copy one off the phone.
+
+**Requires:** --mcp-tools adb; not in paranoid mode; an ADB profile opened with open_remote_profile; a regular .apk (a ZIP, at most 4 GiB, no link) in the local root, no split APKs.
+
+**Behavior:** destructive with replace=true (an installed app of that package is updated, its data kept). Sent to a fresh name in /data/local/tmp, removed again. A refusal names Android's reason. Time limit: 30 min.
+
+**Returns:** {installed, replace, grant_permissions, allow_downgrade, size, output, cleanup}.
+
+Needs: `--mcp-tools adb` `--mcp-write` `--mcp-root DIR`.
+
+- `allow_downgrade` (boolean, default `false`): Allow a lower version code than the installed one (-d).
+- `allow_test_only` (boolean, default `false`): Take an APK an IDE built as test-only (-t).
+- `grant_permissions` (boolean, default `false`): Grant every runtime permission it asks for (-g).
+- `path` (string): The APK, in the MCP root, e.g. 'build/app.apk'. Required unless path_b64 is given.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
+- `replace` (boolean, default `true`): Update an installed app of the same package (pm install -r).
+
+#### `uninstall_app` — mutating · stream (300 s) · stdio + http · *backend*
+
+Uninstall an app (pm uninstall), with its data unless keep_data=true.
+
+**Use when:** an app has to go for good.
+
+**Instead:** stop_app to only end it; export_app first to keep its APK.
+
+**Requires:** --mcp-tools adb; not in paranoid mode; an ADB profile opened with open_remote_profile.
+
+**Behavior:** destructive: the app and by default everything it stored are gone. System apps are refused. A repeat fails with 'is not installed'. Time limit: 5 min.
+
+**Returns:** {package, uninstalled, kept_data}.
+
+Needs: `--mcp-tools adb` `--mcp-write` `--mcp-root DIR`.
+
+- `package` (string, required): The app's package name, e.g. 'com.example.app'.
+- `keep_data` (boolean, default `false`): Keep the app's data and caches (pm uninstall -k).
+
+#### `export_app` — mutating · long (1800 s) · stdio + http · *backend*
+
+Copy an installed app's APK files (base and splits) into a folder of the MCP root.
+
+**Use when:** keeping a backup of an app or inspecting its APK.
+
+**Instead:** get_app_info for its paths and version only.
+
+**Requires:** --mcp-tools adb; an ADB profile opened with open_remote_profile; a local MCP root.
+
+**Behavior:** changes nothing on the device; each file gets a fresh name ('<package>-<versionCode>-base.apk', then ' (2)'). Not the app's data. Time limit: 30 min.
+
+**Returns:** {package, version_code, files: [{source, path, size}], total_size}.
+
+Needs: `--mcp-tools adb` `--mcp-write` `--mcp-root DIR`.
+
+- `package` (string, required): The app's package name, e.g. 'com.example.app'.
+- `path` (string, default `"."`): The folder in the MCP root that takes the files.
+- `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
+
+#### `grant_permission` — mutating · walk (60 s) · stdio + http · *backend*
+
+Grant an app one runtime permission it declares (pm grant).
+
+**Use when:** an app needs a permission without a tap on the phone.
+
+**Instead:** revoke_permission to take one back; get_app_info to see the state.
+
+**Requires:** --mcp-tools adb; not in paranoid mode; an ADB profile opened with open_remote_profile.
+
+**Behavior:** changes what the app may do. Install-time and signature permissions are refused with Android's reason. Time limit: 60 s.
+
+**Returns:** {package, permission, granted (as read back; null: not readable)}.
+
+Needs: `--mcp-tools adb` `--mcp-write` `--mcp-root DIR`.
+
+- `package` (string, required): The app's package name, e.g. 'com.example.app'.
+- `permission` (string, required): The permission, e.g. 'android.permission.CAMERA'.
+
+#### `revoke_permission` — mutating · walk (60 s) · stdio + http · *backend*
+
+Revoke one runtime permission of an app (pm revoke).
+
+**Use when:** taking back what an app was allowed.
+
+**Instead:** grant_permission to give one; get_app_info to see the state.
+
+**Requires:** --mcp-tools adb; not in paranoid mode; an ADB profile opened with open_remote_profile.
+
+**Behavior:** destructive: Android ends the app's processes when it loses a permission, unsaved work is lost. Time limit: 60 s.
+
+**Returns:** {package, permission, granted (as read back; null: not readable)}.
+
+Needs: `--mcp-tools adb` `--mcp-write` `--mcp-root DIR`.
+
+- `package` (string, required): The app's package name, e.g. 'com.example.app'.
+- `permission` (string, required): The permission, e.g. 'android.permission.CAMERA'.
+
+#### `reboot_device` — mutating · walk (60 s) · stdio + http · *backend*
+
+Restart the device, into Android, recovery or the bootloader.
+
+**Use when:** a restart is the fix, or recovery or fastboot is needed.
+
+**Instead:** stop_app when one app is the problem.
+
+**Requires:** --mcp-tools adb; not in paranoid mode; an ADB profile opened with open_remote_profile.
+
+**Behavior:** destructive: every app ends, unsaved work is lost, the connection drops; close_remote_profile and open it again once the device is up. Time limit: 60 s.
+
+**Returns:** {rebooting, mode, note}.
+
+Needs: `--mcp-tools adb` `--mcp-write` `--mcp-root DIR`.
+
+- `mode` (string, one of `system`, `recovery`, `bootloader`, default `"system"`): system: Android; recovery; bootloader (fastboot).
+
+#### `write_sms` — mutating · walk (60 s) · stdio + http · *backend*
+
+Store a message in the device's SMS store: in the inbox as if received, in sent or as a draft.
+
+**Use when:** a test needs a message on the phone.
+
+**Instead:** compose_sms to prepare a real one; list_sms to read them.
+
+**Requires:** --mcp-tools adb; not in paranoid mode; an ADB profile opened with open_remote_profile; Android lets only the default SMS app write (since 4.4): the shell's write is dropped unless its app-op WRITE_SMS is allowed.
+
+**Behavior:** adds one message, sends nothing; read back, a dropped one fails with the reason. Time limit: 60 s.
+
+**Returns:** {stored (null: not checkable), id, box, date_ms, note}.
+
+Needs: `--mcp-tools adb` `--mcp-write` `--mcp-root DIR`.
+
+- `address` (string, required): The sender (inbox) or recipient: a number or a sender name.
+- `body` (string, required): The text; line feeds and tabs kept, trailing line feeds dropped.
+- `box` (string, one of `inbox`, `sent`, `draft`, default `"inbox"`): Where the message goes.
+- `date_ms` (integer, 1..32503680000000): Its date in milliseconds since 1970. Default: now.
+- `read` (boolean, default `true`): Mark it as read.
+
+#### `compose_sms` — mutating · walk (60 s) · stdio + http · *backend*
+
+Open the device's SMS app with a number and a text filled in (a SENDTO intent); it does not send.
+
+**Use when:** a message is to go out once a person at the phone agrees.
+
+**Instead:** write_sms to store one without sending.
+
+**Requires:** --mcp-tools adb; not in paranoid mode; an ADB profile opened with open_remote_profile.
+
+**Behavior:** changes what the phone shows; never sends: a person taps Send (Android gives the shell no stable way to send). Time limit: 60 s.
+
+**Returns:** {sent: false, composed: true, number, note, why_not_sent}.
+
+Needs: `--mcp-tools adb` `--mcp-write` `--mcp-root DIR`.
+
+- `number` (string, required): The recipient's number, e.g. '+4915112345678'.
+- `text` (string, required): The message.
+
+#### `send_at_command` — mutating · stream (300 s) · stdio + http · *backend*
+
+Send one AT command to the device's modem and return its reply.
+
+**Use when:** asking the modem itself (AT+CSQ signal, AT+CGMI maker, AT+COPS? network).
+
+**Instead:** get_device_info for the IMEI and build.
+
+**Requires:** --mcp-tools adb; not in paranoid mode; an ADB profile opened with open_remote_profile; a modem node (/dev/smd*, /dev/umts_atc0, /dev/radio/*, ttyACM, ttyUSB) and root (adb root or su); else refused with the reason.
+
+**Behavior:** destructive: an AT command can change modem settings or switch the radio off. Time limit: timeout; the reply is cut at 4096 bytes.
+
+**Returns:** {device, command, as_root, reply: [lines], status (OK, ERROR, +CME ERROR: n), complete, note}.
+
+Needs: `--mcp-tools adb` `--mcp-write` `--mcp-root DIR`.
+
+- `command` (string, required): One AT command, e.g. 'AT+CSQ' (no ';').
+- `device` (string): The modem's device node. Default: the first known one present.
+- `timeout` (number, default `5`, 1..30): Seconds to wait for the reply.
+
 ### `agent`
 
 Hand a task to the user's own LLM (the active profile of the axross GUI): it works with the read-only tools inside the MCP root and answers; it can change nothing.
 
 #### `run_llm_agent` — read-only · long (1800 s) · stdio + http
 
-Hand a task to the user's own LLM profile; its model uses axross tools that write no files and answers in text.
+Delegate a file task to the user's own configured LLM, which reads files with axross's read-only tools and answers in text.
 
-**Use when:** file contents should stay with the user's model.
+**Use when:** file contents should stay with the user's model (its answer may quote them: ask for a summary).
 
-**Instead:** read_file or search_content directly - faster, when the contents may reach you.
+**Instead:** read_file or search_content - faster, when the contents may reach you; list_llm_profiles for names.
 
 **Requires:** --mcp-tools agent; an LLM profile from the axross app.
 
-**Behavior:** does not write files itself; sends file contents to the configured LLM, one request per step up to max_steps (an API profile bills each), so it is not read-only. Its model gets the core file tools and the asked groups' tools (both listed in the instructions); the remote group reaches beyond the MCP root. Time limit: 30 min.
+**Behavior:** does not write files itself; sends file contents to the configured LLM, one request per step up to max_steps (an API profile bills each), so it is not read-only. Its model gets the read-only tools the instructions list; with remote it may open saved connections, beyond the MCP root. Time limit: 30 min.
 
 **Returns:** {answer, stopped (answered|max_steps|cancelled), calls, profile, model}.
 
 Needs: `--mcp-tools agent`.
 
 - `task` (string, required): What the model should do, in plain language, e.g. 'Summarise the PDFs in reports/2024 in five bullet points'.
-- `groups` (array of string): Extra tool groups for the model, each with its tools that need no --mcp-write (the instructions list them). remote and extensions fail unless this server runs with them; the others work anyway. Default: none, the core file tools only.
+- `groups` (array of string): Extra tool groups for the model, each with its tools that need no --mcp-write (the instructions list them). remote and extensions only when this server serves them; the other groups always. Default: none, the core file tools only.
+- `llm_profile` (string): Name of an LLM profile (from list_llm_profiles); omit it for the active one.
 - `max_steps` (integer, default `10`, 1..30): Most model requests for this task; reaching it ends with stopped=max_steps.
-- `profile` (string): Name of an LLM profile set up in the axross app; omit it for the active one. Ask the user for another name: no tool lists them, but an unknown name's error does.
+
+#### `list_llm_profiles` — read-only · quick (15 s) · stdio + http
+
+List the LLM profiles set up in the axross app: each name and model, and which one is active.
+
+**Use when:** choosing run_llm_agent's llm_profile.
+
+**Instead:** list_remote_profiles for connection profiles, which are another kind.
+
+**Requires:** --mcp-tools agent.
+
+**Behavior:** read-only; reads the app's settings file, never the keyring: no API key, endpoint or host is returned. An empty list: no profile set up yet. Time limit: 15 s.
+
+**Returns:** {profiles: [{name, model, active}], active (its name, or null)}.
+
+Needs: `--mcp-tools agent`.
 
 ### `archive`
 
@@ -949,11 +1372,11 @@ Needs: `--mcp-tools crypto` `--mcp-write` `--mcp-root DIR`.
 
 ### `duplicates`
 
-Duplicate Finder: scan a folder into the duplicate index, list scans and duplicate groups; dedupe to the axross trash (mutating, dry run by default).
+Duplicate Finder: scan a folder into the duplicate index, list scans and duplicate groups; dedupe to the axross trash (mutating, dry run by default), list the trash and restore from it (mutating).
 
 #### `scan_duplicates` — read-only · long (1800 s) · stdio + http · *backend*
 
-Run a duplicate scan: hash every file under a folder into the Duplicate Finder's index.
+Run a duplicate scan: hash every file under a folder into axross's duplicate index, which list_duplicate_groups reads.
 
 **Use when:** before list_duplicate_groups or trash_duplicates, or after changes.
 
@@ -961,7 +1384,7 @@ Run a duplicate scan: hash every file under a folder into the Duplicate Finder's
 
 **Requires:** --mcp-tools duplicates.
 
-**Behavior:** writes index rows, never files. path must be a folder. Each run adds a scan record. Symlinks, the axross trash and secret files are skipped; unchanged files are not hashed again unless rehash. Remote backends use their own checksum (ETag-only ones index nothing). Time limit: 30 min.
+**Behavior:** writes index rows, never files. path must be a folder. Each run adds a scan record; a complete one drops files gone since the last. Symlinks, the axross trash and secret files are skipped; unchanged files are not hashed again unless rehash. Remote backends use their own checksum (ETag-only ones index nothing). Time limit: 30 min.
 
 **Returns:** {scan_id, root, backend_id, algorithm, files_indexed, status (complete|cancelled|failed), truncated (max_files), complete (no cap, no unreadable folder), unreadable (folder paths)}.
 
@@ -983,11 +1406,14 @@ List past duplicate scans (scan history), newest first.
 
 **Requires:** --mcp-tools duplicates.
 
-**Behavior:** read-only; this backend's scans (local: inside the MCP root), the newest 1000 only. Time limit: 15 s.
+**Behavior:** read-only; this backend's scans (local: inside the MCP root), paged with offset and max_scans. Time limit: 15 s.
 
-**Returns:** {scans: [{scan_id, root, backend_id, algorithm, started_at, finished_at (ISO 8601, null while running), files_indexed, files_in_index, duplicate_groups, status, error}], truncated}.
+**Returns:** {scans: [{scan_id, root, backend_id, algorithm, started_at, finished_at (ISO 8601, null while running), files_indexed, files_in_index, duplicate_groups, status, error}], offset, truncated, next_offset (null: no further page)}.
 
 Needs: `--mcp-tools duplicates`.
+
+- `max_scans` (integer, default `100`, 1..1000): Return at most this many scans; more sets truncated=true.
+- `offset` (integer, default `0`, 0..2147483647): Scans to skip, for the next page: the previous call's next_offset.
 
 #### `list_duplicate_groups` — read-only · quick (15 s) · stdio + http · *backend*
 
@@ -1001,7 +1427,7 @@ List groups of identical files from the duplicate index, every copy inside path.
 
 **Behavior:** read-only; the index as of the last scan, no file is read. Groups are ordered by algorithm, then hash value, so offset pages are stable; empty files never group. keep=true marks the oldest copy (no mtime: the shorter, then alphabetically first path), the one trash_duplicates keeps. Pages with offset and max_groups. Time limit: 15 s.
 
-**Returns:** {path, truncated, groups: [{algorithm, value, size, copies: [{path, size, mtime (Unix seconds), modified (ISO 8601), scan_id, keep}]}]}.
+**Returns:** {path, truncated, next_offset, groups: [{algorithm, value, size, copies: [{path, size, mtime (Unix seconds), modified (ISO 8601), scan_id, keep}]}]}.
 
 Needs: `--mcp-tools duplicates`.
 
@@ -1014,7 +1440,7 @@ Needs: `--mcp-tools duplicates`.
 
 #### `trash_duplicates` — mutating · long (1800 s) · stdio + http · *backend*
 
-Keep the copy marked keep=true (the oldest) of each duplicate group inside path and move the others to the axross trash; copies outside path do not count.
+Move all but one copy of each duplicate group under path to the restorable axross trash, keeping the oldest (keep=true in list_duplicate_groups).
 
 **Use when:** after list_duplicate_groups; run dry_run=true first.
 
@@ -1022,9 +1448,9 @@ Keep the copy marked keep=true (the oldest) of each duplicate group inside path 
 
 **Requires:** --mcp-tools duplicates.
 
-**Behavior:** destructive but restorable; dry_run=true (default) only plans. Trashed copies leave the index. Copies are re-checked first; changed ones go to refused. Moves done before a cancel or timeout stay: rerun to finish. The trash is .axross-trash in the MCP root (remote: home); restore in the axross app. Time limit: 30 min.
+**Behavior:** destructive but restorable (restore_from_trash); dry_run=true (default) only plans. Copies are re-checked first; changed ones go to refused; trashed ones leave the index. Moves done before a cancel or timeout stay: rerun to finish. Copies outside path are never touched or counted. Time limit: 30 min.
 
-**Returns:** {path, dry_run, groups, undated_groups (survivor chosen by path), keep, trash (planned), removed (done; [] on dry_run), refused, failed, trash_root}.
+**Returns:** {path, dry_run, groups, undated_groups (survivor chosen by path), keep, trash (planned), removed (done; [] on dry_run), refused, failed, trash_root (.axross-trash in the MCP root; remote: the home's)}.
 
 Needs: `--mcp-tools duplicates` `--mcp-write` `--mcp-root DIR`.
 
@@ -1034,54 +1460,73 @@ Needs: `--mcp-tools duplicates` `--mcp-write` `--mcp-root DIR`.
 - `path_b64` (string): path as base64 of its raw bytes, for non-UTF-8 names; replaces path.
 - `scan_id` (integer, 0..2147483647): Only groups with at least one copy from this scan (a scan_id from list_duplicate_scans); 0 = rows from before scans were recorded. Omit for all scans.
 
+#### `list_trash` — read-only · quick (15 s) · stdio + http · *backend*
+
+List what is in axross's trash: what trash_duplicates moved there, newest first.
+
+**Use when:** finding the trash_id to restore, or checking what a dedupe took.
+
+**Instead:** restore_from_trash (needs --mcp-write) to put an entry back; list_duplicate_groups for duplicates still in place.
+
+**Requires:** --mcp-tools duplicates.
+
+**Behavior:** read-only; reads the trash's records, never the trashed files. The trash is .axross-trash in the MCP root (remote: in the home folder); entries whose original place is outside the MCP root are left out. Time limit: 15 s.
+
+**Returns:** {trash_root, entries: [{trash_id, original_path, trashed_at (ISO 8601), size, is_dir, label}], count (all entries), offset, truncated, next_offset (null: no further page)}.
+
+Needs: `--mcp-tools duplicates`.
+
+- `max_results` (integer, default `100`, 1..1000): Return at most this many entries.
+- `offset` (integer, default `0`, 0..2147483647): Entries to skip, for the next page: the previous call's next_offset.
+
+#### `restore_from_trash` — mutating · write (30 s) · stdio + http · *backend*
+
+Move one entry out of axross's trash back to where it was, or to dst.
+
+**Use when:** undoing trash_duplicates for one file or folder.
+
+**Instead:** list_trash first, for the trash_id; restore_file_version for a backend's own version history.
+
+**Requires:** --mcp-tools duplicates.
+
+**Behavior:** only adds - never replaces: a taken target fails with 'target already exists'. A repeat fails with 'trash entry not found'. The target must be writable (locally: in the MCP root); missing parent folders are made. An entry whose record does not verify (changed by someone else) is refused. Time limit: 30 s.
+
+**Returns:** {trash_id, path (where it is now), is_dir}.
+
+Needs: `--mcp-tools duplicates` `--mcp-write` `--mcp-root DIR`.
+
+- `trash_id` (string, required): The trash_id of an entry from list_trash.
+- `dst` (string): Where to put it instead of its original path (absolute, or relative to the MCP root); must not exist. Default: the original path.
+- `dst_b64` (string): dst as base64 of its raw bytes, for non-UTF-8 names; replaces dst.
+
 ### `exec`
 
 Run commands and scripts on remote hosts over SSH, SCP, Telnet, rsh, ADB, WinRM (PowerShell) and Cisco (show commands only); only with --mcp-allow-exec (mutating), refused in the paranoid security mode and on production profiles.
 
 #### `run_backend_command` — mutating · long (1800 s) · stdio + http · *backend*
 
-Run one command line on a remote host (SSH, Telnet, ADB, WinRM, Cisco).
+Run one command line, or a script, on a remote host (SSH, Telnet, ADB, WinRM, Cisco).
 
-**Use when:** a shell command is needed there (ps, df, a Cisco show).
+**Use when:** a shell command is needed there (ps, df, a Cisco show), or a script with loops.
 
-**Instead:** run_backend_script for scripts; the file tools for files.
+**Instead:** run_script on this machine; the file tools for files.
 
 **Requires:** --mcp-tools exec and --mcp-allow-exec; not in paranoid mode; a backend that list_backends gives commands (not null).
 
-**Behavior:** destructive - runs with the profile user's rights. Refused on production profiles. A non-zero exit is a result; Cisco always reports 0, Telnet and ADB the real code (stderr inside stdout). Time limit: timeout; past it the call fails and no output returns.
+**Behavior:** destructive - runs with the profile user's rights. Refused on production profiles. Give command or script, not both; Cisco runs no scripts. A non-zero exit is a result; Cisco always reports 0, Telnet and ADB the real code (stderr inside stdout). Time limit: timeout; past it the call fails and no output returns.
 
 **Returns:** {returncode, stdout, stderr, truncated_stdout, truncated_stderr} (text, UTF-8 with undecodable bytes replaced).
 
 Needs: `--mcp-tools exec` `--mcp-allow-exec`.
 
-- `command` (string, required): The command line, run by the remote's shell, e.g. 'df -h /'.
-- `env` (object): Environment variables for the command as {NAME: value}, e.g. {"LANG": "C"}. On POSIX shells they are exported in the command line, so other users of the host may see the values: pass no secrets this way.
+- `args` (array of string): Arguments of script ($1... / sys.argv[1:]) as raw strings; the server shell-quotes each one. POSIX hosts only. Default: none.
+- `command` (string): The command line, run by the remote's shell in the folder a login starts in (prefix 'cd /dir && '), e.g. 'df -h /'. Give this or script.
+- `env` (object): Environment variables for the command or script as {NAME: value}, e.g. {"LANG": "C"}. On POSIX shells they are exported in the command line, so other users of the host may see the values: pass no secrets this way.
+- `interpreter` (string, one of `bash`, `perl`, `powershell`, `python3`, `sh`): What runs script. Default: powershell on WinRM, sh on POSIX; bash, perl, python3 and sh are POSIX only; a mismatch fails.
 - `max_output` (integer, default `1048576`, 1..16777216): Most bytes of stdout kept; stderr keeps min(max_output, 1 MiB). truncated_stdout / truncated_stderr tell when output was cut.
-- `stdin` (string): Text fed to the command's stdin (UTF-8); not supported on WinRM or Cisco. Default: none.
-- `timeout` (number, default `60`, 1..1740): Seconds the command may run (at most 1740, below the call's 30 min); longer fails with a timeout error and returns no output.
-
-#### `run_backend_script` — mutating · long (1800 s) · stdio + http · *backend*
-
-Run a multi-line script on a remote host: sh, bash, python3 or perl on POSIX, PowerShell on WinRM.
-
-**Use when:** the job needs loops or a scripting language there.
-
-**Instead:** run_backend_command for one command; run_script on this machine.
-
-**Requires:** --mcp-tools exec and --mcp-allow-exec; not in paranoid mode; a backend that list_backends gives commands (not null).
-
-**Behavior:** destructive - runs with the profile user's rights. The script goes to the interpreter's stdin, so it cannot read stdin itself. Refused on production profiles and Cisco. Time limit: timeout; past it the call fails and no output returns.
-
-**Returns:** {returncode, stdout, stderr, truncated_stdout, truncated_stderr} (text, UTF-8 with undecodable bytes replaced).
-
-Needs: `--mcp-tools exec` `--mcp-allow-exec`.
-
-- `script` (string, required): The script text, e.g. 'for f in /var/log/*.log; do wc -l "$f"; done'.
-- `args` (array of string): Arguments passed to the script ($1... / sys.argv[1:]) as raw strings; the server shell-quotes each one. POSIX hosts only. Default: none.
-- `env` (object): Environment variables for the script as {NAME: value}, e.g. {"LANG": "C"}. On POSIX shells they are exported in the command line, so other users of the host may see the values: pass no secrets this way.
-- `interpreter` (string, one of `bash`, `perl`, `powershell`, `python3`, `sh`): What runs the script. powershell: WinRM only (its default); bash, perl, python3, sh (the POSIX default): POSIX only; a mismatch fails.
-- `max_output` (integer, default `1048576`, 1..16777216): Most bytes of stdout kept; stderr keeps min(max_output, 1 MiB). truncated_stdout / truncated_stderr tell when output was cut.
-- `timeout` (number, default `60`, 1..1740): Seconds the script may run (at most 1740, below the call's 30 min); longer fails with a timeout error and returns no output.
+- `script` (string): A multi-line script instead of command, fed to the interpreter's stdin (so it cannot read stdin itself), e.g. 'for f in /var/log/*.log; do wc -l "$f"; done'.
+- `stdin` (string): Text fed to command's stdin (UTF-8); not with script, not on WinRM or Cisco. Default: none.
+- `timeout` (number, default `60`, 1..1740): Seconds the command or script may run (at most 1740, below the call's 30 min); longer fails with a timeout error and returns no output.
 
 ### `extensions`
 
@@ -1215,7 +1660,7 @@ Export the read_metadata data of a file or folder as one JSON or CSV text, retur
 
 **Requires:** --mcp-tools metadata.
 
-**Behavior:** without out it writes nothing; reads as read_metadata does. A returned text over 16 MiB fails; save a big folder's with out. With out: only adds; each call adds a file, written via a temporary name; new local files are mode 0600. Time limit: 5 min.
+**Behavior:** without out it writes nothing; reads as read_metadata does. A returned text over 16 MiB fails; save a big folder's with out. With out (served with --mcp-write): only adds; each call adds a new file (locally mode 0600). Time limit: 5 min.
 
 **Returns:** {path, format, files (number of file reports), truncated, text}; with out {path, out (the file written), format, files, truncated, size (bytes)}.
 
@@ -1318,7 +1763,7 @@ List the backend ids this session can address, the default marked; also which ca
 
 Needs: `--mcp-tools remote`.
 
-- `can_run_commands` (boolean, default `false`): true: only the backends run_backend_command and run_backend_script can use (commands not null).
+- `can_run_commands` (boolean, default `false`): true: only the backends run_backend_command can use (commands not null).
 
 ### `transfer`
 
@@ -1334,7 +1779,7 @@ Copy a file or folder tree to another backend, or resumably within one.
 
 **Requires:** --mcp-tools transfer.
 
-**Behavior:** never changes the source; one backend with resumable=false is its own copy, as in copy_tree. Existing files are skipped unless overwrite=true (destructive). Local links to files are copied as files, as copy_tree does; other links and special files are skipped. Each skipped entry has a reason; a secret file's is outside-root. resumable=true with the same arguments continues an interrupted run. Mode and mtime are not kept. Time limit: 30 min.
+**Behavior:** never changes the source; within one backend and resumable=false it copies as copy_tree does. Existing files are skipped unless overwrite=true (destructive). Local links to files are copied as files; other links and special files are skipped. Each skipped entry has a reason; a secret file's is outside-root. resumable=true with the same arguments continues an interrupted run. Mode and mtime are not kept. Time limit: 30 min.
 
 **Returns:** {src, dst, copied, truncated, complete, entries}; entry fields and reasons explained in outputSchema.
 

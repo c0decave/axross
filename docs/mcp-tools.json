@@ -3,6 +3,7 @@
     "mcp_allow_exec": true,
     "mcp_allow_scripts": true,
     "mcp_tools": [
+      "adb",
       "agent",
       "archive",
       "crypto",
@@ -18,10 +19,36 @@
     "mcp_write": true
   },
   "groups": {
+    "adb": {
+      "description": "Android devices opened as ADB profiles (needs the remote group): identity, properties, battery, apps and their permissions, running apps, the log, a screenshot, SMS; start, stop, install, uninstall, back up apps, grant and revoke permissions, reboot, write an SMS into the store, prepare one for sending, AT commands to the modem (mutating; refused on production profiles and in the paranoid security mode).",
+      "tools": [
+        "get_device_info",
+        "list_device_properties",
+        "get_battery_status",
+        "list_apps",
+        "get_app_info",
+        "list_running_apps",
+        "get_logcat",
+        "take_screenshot",
+        "list_sms",
+        "start_app",
+        "stop_app",
+        "install_app",
+        "uninstall_app",
+        "export_app",
+        "grant_permission",
+        "revoke_permission",
+        "reboot_device",
+        "write_sms",
+        "compose_sms",
+        "send_at_command"
+      ]
+    },
     "agent": {
       "description": "Hand a task to the user's own LLM (the active profile of the axross GUI): it works with the read-only tools inside the MCP root and answers; it can change nothing.",
       "tools": [
-        "run_llm_agent"
+        "run_llm_agent",
+        "list_llm_profiles"
       ]
     },
     "archive": {
@@ -57,19 +84,20 @@
       ]
     },
     "duplicates": {
-      "description": "Duplicate Finder: scan a folder into the duplicate index, list scans and duplicate groups; dedupe to the axross trash (mutating, dry run by default).",
+      "description": "Duplicate Finder: scan a folder into the duplicate index, list scans and duplicate groups; dedupe to the axross trash (mutating, dry run by default), list the trash and restore from it (mutating).",
       "tools": [
         "scan_duplicates",
         "list_duplicate_scans",
         "list_duplicate_groups",
-        "trash_duplicates"
+        "trash_duplicates",
+        "list_trash",
+        "restore_from_trash"
       ]
     },
     "exec": {
       "description": "Run commands and scripts on remote hosts over SSH, SCP, Telnet, rsh, ADB, WinRM (PowerShell) and Cisco (show commands only); only with --mcp-allow-exec (mutating), refused in the paranoid security mode and on production profiles.",
       "tools": [
-        "run_backend_command",
-        "run_backend_script"
+        "run_backend_command"
       ]
     },
     "extensions": {
@@ -130,13 +158,13 @@
       "description": "Write tools; only with --mcp-write, which needs --mcp-root.",
       "tools": [
         "write_file",
+        "restore_file_version",
         "create_directory",
         "delete_path",
         "move_path",
         "copy_file",
         "copy_tree",
-        "create_symlink",
-        "create_hardlink",
+        "create_link",
         "set_permissions"
       ]
     }
@@ -148,19 +176,19 @@
     "2024-11-05"
   ],
   "rules": [
-    "Names are verb_resource; the resource says what a tool takes or makes: file, directory (one folder), tree (a folder and all below it), path (a file or a folder). Former names (up to 0.15.182) still work.",
-    "One parameter name, one meaning: path is what a tool works on, max_<what> caps a result, offset pages, timeout is seconds, pattern is what a search looks for. Former names (needle, limit, timeout_s, folder, a 0-based max_depth) still work.",
+    "Names are verb_resource; the resource says what a tool takes or makes: file, directory (one folder), tree (a folder and all below it), path (a file or a folder). Former names (up to 0.15.182) and merged tools' names still work.",
+    "One parameter name, one meaning: path is what a tool works on, max_<what> caps a result, offset pages (a result's next_offset), timeout is seconds, pattern what a search looks for, profile a connection profile, llm_profile an LLM one. Former names (needle, limit, timeout_s, folder, a 0-based max_depth, run_llm_agent's profile) still work.",
     "max_depth counts levels from 1 in every tool (1 = path's own entries); subfolder_levels counts subfolders from 0 (0 = path's own files).",
-    "Paths are absolute or relative to the MCP root; local paths stay inside the root, a remote backend takes that host's paths. Tools take backend only when there is more than one; its ids come from list_backends, served then ('profile:<name>' after open_remote_profile); omitted, the default backend. A <name>_b64 argument carries the raw bytes of a non-UTF-8 name in base64, as listings return it (name_b64), and replaces <name>; the server, not the schema, requires one of the two (clients refuse a top-level oneOf).",
-    "Tools and arguments that change files (export_metadata's out) need --mcp-write; the script tools --mcp-allow-scripts, the remote command tools --mcp-allow-exec - neither in paranoid mode, the script tools only over stdio; each optional group its --mcp-tools name; a read-only tool that points at a write tool says '(needs --mcp-write)'. delete_path deletes for good; only trash_duplicates moves files to axross's restorable trash.",
+    "Paths are absolute or relative to the MCP root; local paths stay inside the root, a remote backend takes that host's paths as given. Tools take backend only when there is more than one; its ids come from list_backends, served then ('profile:<name>' after open_remote_profile); omitted, the default backend. A <name>_b64 argument carries the raw bytes of a non-UTF-8 name in base64, as listings return it (name_b64), and replaces <name>; the server, not the schema, requires one of the two (clients refuse a top-level oneOf).",
+    "Tools and arguments that change files (export_metadata's out) need --mcp-write, the script tools --mcp-allow-scripts, the remote command tools --mcp-allow-exec - neither in paranoid mode, the script tools only over stdio; each optional group its --mcp-tools name ('all': every group but adb); a read-only tool that points at a write tool says '(needs --mcp-write)'. delete_path deletes for good; trash_duplicates moves files to axross's trash (list_trash, restore_from_trash).",
     "Secret files (SSH and GnuPG private keys, axross's tokens; on remote hosts also .env and credentials files) are refused unless the server runs with --mcp-allow-secret-reads.",
     "Write guards: writes stay inside a writable MCP root and outside protected places (shell and session start files, autostart, user services, SSH and GnuPG folders, axross settings); production-flagged profiles are read-only.",
-    "Paranoid mode (AXROSS_SECURITY_MODE=paranoid or the app setting) turns off scripts, extensions, remote commands, ffmpeg/ffprobe and legacy protocols.",
-    "truncated: a limit (max_*, max_depth or subfolder_levels leaving a folder unentered) cut the result; the tree tools have no cursor (narrow path or raise the limit), search_index and list_duplicate_groups page with offset. Tree walks also carry complete, false when anything was cut or left unread. A folder or file they could not read is in unreadable ({path, error} in walk_tree and search_content; paths in scan_file_types (folders, secret files), folder paths in scan_duplicates and build_index), or an error entry (compute_tree_checksums, copy_tree, copy_path_to_backend).",
-    "A call past its time limit fails with a timeout error (JSON-RPC -32002) and returns nothing; work it started may still finish. run_script, run_backend_command and run_backend_script stop at their own timeout argument instead. Long tools send progress notifications and stop on notifications/cancelled.",
+    "Paranoid mode (AXROSS_SECURITY_MODE=paranoid or the app setting) turns off scripts, extensions, remote commands, device changes (adb), ffmpeg/ffprobe and legacy protocols.",
+    "truncated: a limit (max_*, max_depth or subfolder_levels leaving a folder unentered) cut the result; a tool with offset pages on, the other tree tools narrow path or raise the limit. Tree walks also carry complete, false when anything was cut or left unread. A folder or file they could not read is in unreadable ({path, error} in walk_tree and search_content; paths in scan_file_types (folders, secret files), folder paths in scan_duplicates and build_index), or an error entry (compute_tree_checksums, copy_tree, copy_path_to_backend).",
+    "A call past its time limit fails with a timeout error (JSON-RPC -32002) and returns nothing; work it started may still finish. run_script and run_backend_command take their own timeout instead. Long tools send progress notifications and stop on notifications/cancelled.",
     "Errors: a tool that fails answers isError true, the message as text ('tool <name> failed: ...') and _meta.type the error's kind (FileNotFoundError, PermissionError ...), without structuredContent; an unknown tool is a JSON-RPC error, and so are refused arguments before protocol 2025-11-25.",
     "idempotentHint true: a repeat changes nothing more; where a repeat fails, the description names the error.",
-    "run_llm_agent's model gets the core file tools (list_directory, get_path_info, read_file, compute_file_checksum, search_index, walk_tree, compute_tree_checksums, render_preview, search_content, list_file_versions, read_file_version) and, per group asked for: metadata read_metadata, export_metadata; duplicates scan_duplicates, list_duplicate_scans, list_duplicate_groups; archive list_archive_formats, list_archive_members; index build_index; filetype identify_file_type, scan_file_types; remote list_remote_profiles, open_remote_profile, close_remote_profile; extensions list_extensions; remote adds list_backends."
+    "run_llm_agent's model gets the core file tools (list_directory, get_path_info, read_file, compute_file_checksum, search_index, walk_tree, compute_tree_checksums, render_preview where served, search_content, list_file_versions, read_file_version) and, per group asked for: metadata read_metadata, export_metadata; duplicates scan_duplicates, list_duplicate_scans, list_duplicate_groups, list_trash; archive list_archive_formats, list_archive_members; index build_index; filetype identify_file_type, scan_file_types; remote list_remote_profiles, open_remote_profile, close_remote_profile, list_backends; extensions list_extensions."
   ],
   "server": "axross-mcp",
   "timeout_classes": {
@@ -525,7 +553,7 @@
         "readOnlyHint": true,
         "title": "Search the file index"
       },
-      "description": "Find files and folders by name, extension and size in the offline metadata index.\nUse when: looking up names fast across folders indexed before.\nInstead: walk_tree for the live tree (slower, never stale); search_content for contents.\nRequires: an index from build_index or the axross app.\nBehavior: read-only; results can be stale. Searches only the rows of backend (the default backend if omitted). The given filters must all match; none gives every indexed entry. Pages with offset and max_results. Time limit: 15 s.\nReturns: {entries: [{backend_id, path, name, size, is_dir, modified}], indexed (false: no index yet - no entries may mean that), truncated (more after this page)}.",
+      "description": "Find files and folders by name, extension and size in the offline metadata index.\nUse when: looking up names fast across folders indexed before.\nInstead: walk_tree for the live tree (slower, never stale); search_content for contents.\nRequires: an index from build_index or the axross app.\nBehavior: read-only; results can be stale. Searches only the rows of backend (the default backend if omitted). The given filters must all match; none gives every indexed entry. Pages with offset and max_results. Time limit: 15 s.\nReturns: {entries: [{backend_id, path, name, size, is_dir, modified}], indexed (false: no index yet - no entries may mean that), truncated (more after this page), next_offset (null: no further page)}.",
       "group": "core",
       "input_schema": {
         "additionalProperties": false,
@@ -626,15 +654,24 @@
             "description": "false: this backend has no index rows at all",
             "type": "boolean"
           },
+          "next_offset": {
+            "description": "the offset of the next page; null: none",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "truncated": {
-            "description": "true: more matches after this page (offset + max_results)",
+            "description": "true: more matches after this page",
             "type": "boolean"
           }
         },
         "required": [
           "entries",
           "indexed",
-          "truncated"
+          "truncated",
+          "next_offset"
         ],
         "type": "object"
       },
@@ -656,7 +693,7 @@
         "readOnlyHint": true,
         "title": "Walk folder tree"
       },
-      "description": "List the live folder tree under path, breadth-first, to max_depth levels.\nUse when: you need every file and folder below a path.\nInstead: list_directory for one level; search_index for the faster, maybe stale index; search_content for contents.\nBehavior: read-only. Symlinked folders are listed, not entered. Hitting max_entries, or a folder at max_depth left unentered, sets truncated (no cursor: rerun on a subfolder); an unlistable subfolder goes to unreadable. Time limit: 60 s.\nReturns: {entries: [{path, name, is_dir, is_link, size, modified}], truncated, unreadable: [{path, error}], complete (false when anything was cut or unread)}.",
+      "description": "List the live folder tree under path, breadth-first, to max_depth levels.\nUse when: you need every file and folder below a path.\nInstead: list_directory for one level; search_index for the faster, maybe stale index; search_content for contents.\nBehavior: read-only; hidden entries included, each folder's by name. Symlinked folders are listed, not entered. Past max_entries: truncated, and next_offset for the next page. A folder at max_depth left unentered sets truncated; an unlistable one goes to unreadable. Time limit: 60 s.\nReturns: {entries: [{path, name, is_dir, is_link, size, modified}], truncated, unreadable: [{path, error}], complete (nothing cut or unread), offset, next_offset}.",
       "group": "core",
       "input_schema": {
         "additionalProperties": false,
@@ -677,6 +714,13 @@
             "description": "Most entries to return (files and folders together).",
             "maximum": 100000,
             "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "description": "Entries to skip, for the next page: the previous call's next_offset (the tree is walked again from path).",
+            "maximum": 10000000,
+            "minimum": 0,
             "type": "integer"
           },
           "path": {
@@ -738,6 +782,19 @@
             },
             "type": "array"
           },
+          "next_offset": {
+            "description": "the offset of the next page; null: none",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "offset": {
+            "description": "entries skipped",
+            "minimum": 0,
+            "type": "integer"
+          },
           "truncated": {
             "type": "boolean"
           },
@@ -764,7 +821,9 @@
           "entries",
           "truncated",
           "unreadable",
-          "complete"
+          "complete",
+          "offset",
+          "next_offset"
         ],
         "type": "object"
       },
@@ -969,7 +1028,7 @@
         "readOnlyHint": true,
         "title": "Search file contents"
       },
-      "description": "Search file contents under a folder for lines matching a regular expression.\nUse when: finding which files contain a word or pattern, with line numbers.\nInstead: search_index or walk_tree to match names; read_file for a whole file.\nBehavior: read-only, breadth-first; include narrows by file name. Files are read as UTF-8, binary ones too (bad bytes: U+FFFD); over 4 MiB they are skipped; lines are cut at 500 characters. Patterns with nested quantifiers or slower than 5 s on a file are refused (ReDoS). Secret files go to unreadable. Time limit: 60 s.\nReturns: {matches: [{path, line_no, line}], files_scanned, truncated (max_matches, or a folder at max_depth not searched), unreadable, complete}. An empty result with complete=false does not mean the pattern is absent; when truncated, narrow path or include.",
+      "description": "Search file contents under a folder for lines matching a regular expression.\nUse when: finding which files contain a word or pattern, with line numbers.\nInstead: search_index or walk_tree to match names; read_file for a whole file.\nBehavior: read-only, breadth-first; include narrows by file name. Files are read as UTF-8, binary ones too (bad bytes: U+FFFD); over 4 MiB they are skipped; lines are cut at 500 characters. Patterns with nested quantifiers or slower than 5 s on a file are refused (ReDoS). Secret files go to unreadable. Time limit: 60 s.\nReturns: {matches: [{path, line_no, line}], files_scanned, truncated (max_matches, or a folder at max_depth unsearched), unreadable, complete, offset, next_offset (the page after max_matches)}. An empty result with complete=false does not mean the pattern is absent.",
       "group": "core",
       "input_schema": {
         "additionalProperties": false,
@@ -995,6 +1054,13 @@
             "description": "Most matching lines to return.",
             "maximum": 500,
             "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "description": "Matches to skip, for the next page: the previous call's next_offset (the files are searched again, in the same order).",
+            "maximum": 10000000,
+            "minimum": 0,
             "type": "integer"
           },
           "path": {
@@ -1053,6 +1119,18 @@
             },
             "type": "array"
           },
+          "next_offset": {
+            "description": "the offset of the next page; null: none",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "offset": {
+            "minimum": 0,
+            "type": "integer"
+          },
           "truncated": {
             "type": "boolean"
           },
@@ -1080,7 +1158,9 @@
           "files_scanned",
           "truncated",
           "unreadable",
-          "complete"
+          "complete",
+          "offset",
+          "next_offset"
         ],
         "type": "object"
       },
@@ -1102,7 +1182,7 @@
         "readOnlyHint": true,
         "title": "List file versions"
       },
-      "description": "List the stored older versions of one file.\nUse when: you need an earlier state on a versioning backend (S3, Dropbox, Drive, Azure, WebDAV, Git).\nInstead: read_file_version to read one; read_file for the current one.\nBehavior: read-only. Unsorted (the backend's order). Backends without versions, the local disk too, give [] (read_file_version fails there). Time limit: 15 s.\nReturns: a JSON array of {version_id, size, modified (ISO 8601 or null), is_current, label (may be empty)}; structuredContent: {versions}.",
+      "description": "List the stored versions of one file, newest first, the current one marked is_current.\nUse when: you need an earlier state on a versioning backend (S3, Dropbox, Drive, OneDrive, Azure, WebDAV, Git).\nInstead: read_file_version to read one; restore_file_version (needs --mcp-write) to make one current.\nBehavior: read-only. Undated versions come last. A backend without versions, the local disk too, gives [] (read_file_version fails there). Time limit: 15 s.\nReturns: a JSON array of {version_id, size, modified (ISO 8601 or null), is_current, label (may be empty)}; structuredContent: {versions}.",
       "group": "core",
       "input_schema": {
         "additionalProperties": false,
@@ -1290,12 +1370,12 @@
     {
       "annotations": {
         "destructiveHint": true,
-        "idempotentHint": true,
+        "idempotentHint": false,
         "openWorldHint": true,
         "readOnlyHint": false,
         "title": "Write file"
       },
-      "description": "Create a file or replace its whole contents with text or bytes.\nUse when: saving content to one file; to edit, read_file, change, write back. It always replaces: when the file must not exist yet, check with get_path_info first.\nInstead: copy_file to duplicate a file; create_directory for folders.\nBehavior: destructive - replaces the file. Atomic on the local disk (temp file, rename): a replaced file keeps its mode, a new one gets 0600. The parent must exist; a symlink at path is followed, a folder fails. The 16 MiB limit is the whole request, so content_b64 carries about 12 MiB. Time limit: 30 s.\nReturns: {size: bytes written}.",
+      "description": "Create a file, replace its contents, append to it, or overwrite bytes at an offset.\nUse when: saving one file, whole or in part (see write_mode).\nInstead: copy_file to duplicate a file; restore_file_version for an older version; create_directory for folders.\nBehavior: destructive - replace overwrites the file. create fails with 'File exists' if path exists. append and at_offset rewrite an existing file of at most 64 MiB through a temp file; an offset past its end fails. Atomic on the local disk: a replaced file keeps its mode, a new one gets 0600; a failed write leaves the old file where the backend renames (TFTP writes in place). The parent must exist; a symlink at path is followed. Each append adds again. Time limit: 30 s.\nReturns: {size (bytes written), file_size (the file's size after)}.",
       "group": "write",
       "input_schema": {
         "additionalProperties": false,
@@ -1305,22 +1385,38 @@
             "type": "string"
           },
           "content": {
-            "description": "The new content as text, stored UTF-8 encoded. Required unless content_b64 is given; not both.",
+            "description": "The new content as text, stored UTF-8 encoded (the request is limited to 16 MiB). Required unless content_b64 is given; not both.",
             "type": "string"
           },
           "content_b64": {
             "contentEncoding": "base64",
-            "description": "content as base64 of the raw bytes, for binary files; give this or content.",
+            "description": "content as base64 of the raw bytes, for binary files; about 12 MiB at most.",
             "type": "string"
           },
+          "offset": {
+            "description": "Byte position where at_offset starts writing, at most the file's size. Needed by write_mode at_offset; omit it for the other modes.",
+            "minimum": 0,
+            "type": "integer"
+          },
           "path": {
-            "description": "The file to create or replace (absolute, or relative to the MCP root). Required unless path_b64 is given.",
+            "description": "The file to write (absolute, or relative to the MCP root). Required unless path_b64 is given.",
             "minLength": 1,
             "type": "string"
           },
           "path_b64": {
             "contentEncoding": "base64",
             "description": "path as base64 of its raw bytes, for non-UTF-8 names; replaces path.",
+            "type": "string"
+          },
+          "write_mode": {
+            "default": "replace",
+            "description": "replace: the whole file (created if missing); create: a new file only; append: add at the end of an existing file; at_offset: overwrite from offset on, growing the file if the content runs past its end.",
+            "enum": [
+              "replace",
+              "create",
+              "append",
+              "at_offset"
+            ],
             "type": "string"
           }
         },
@@ -1330,13 +1426,20 @@
       "name": "write_file",
       "output_schema": {
         "properties": {
+          "file_size": {
+            "description": "the file's size afterwards",
+            "minimum": 0,
+            "type": "integer"
+          },
           "size": {
+            "description": "bytes of content written",
             "minimum": 0,
             "type": "integer"
           }
         },
         "required": [
-          "size"
+          "size",
+          "file_size"
         ],
         "type": "object"
       },
@@ -1347,6 +1450,79 @@
       "timeout_class": "write",
       "timeout_seconds": 30.0,
       "title": "Write file",
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "alias": "restore_version",
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Restore file version"
+      },
+      "description": "Make an older version of a file its current content again, on a backend that keeps versions.\nUse when: undoing a change on S3, Dropbox, Drive, OneDrive, Azure, WebDAV or Git; pick the version_id with list_file_versions.\nInstead: read_file_version to look first; write_file to write new content.\nBehavior: destructive - the current content is replaced; on a versioning backend the old current content stays a version and the restore adds a new one, so a repeat adds another. Streamed through a temp file and renamed where the backend can. Backends without versions (the local disk too) fail. Time limit: 5 min.\nReturns: {path, version_id, size (bytes restored)}.",
+      "group": "write",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Backend id from list_backends; omit for the default.",
+            "type": "string"
+          },
+          "path": {
+            "description": "The file to restore (absolute, or relative to the MCP root). Required unless path_b64 is given.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "path_b64": {
+            "contentEncoding": "base64",
+            "description": "path as base64 of its raw bytes, for non-UTF-8 names; replaces path.",
+            "type": "string"
+          },
+          "version_id": {
+            "description": "The version_id of an entry from list_file_versions for this path.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "version_id"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "restore_file_version",
+      "output_schema": {
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "size": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "version_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "version_id",
+          "size"
+        ],
+        "type": "object"
+      },
+      "required_flags": [
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "stream",
+      "timeout_seconds": 300.0,
+      "title": "Restore file version",
       "transports": [
         "stdio",
         "http"
@@ -1762,15 +1938,24 @@
         "idempotentHint": true,
         "openWorldHint": true,
         "readOnlyHint": false,
-        "title": "Create symbolic link"
+        "title": "Create link"
       },
-      "description": "Create a symbolic link at link_path pointing to target.\nUse when: a second path should lead to a file or folder.\nInstead: create_hardlink for a second name of one file; copy_file for a copy.\nBehavior: only adds. A repeat fails with 'File exists'. Locally the target must also stay inside the root; it may dangle. Local disk, SFTP and NFS only. Time limit: 30 s.\nReturns: {ok: true}, plus target when the one stored differs.",
+      "description": "Create a link at link_path: a symbolic link to target, or with kind=hard a second name of the file target.\nUse when: a second path should lead to a file or folder (symbolic), or one file must appear under two names on one file system (hard).\nInstead: copy_file for an independent copy; move_path to rename.\nBehavior: only adds. A repeat fails with 'File exists'. Symbolic: target is stored as given and may dangle; locally it must stay inside the root. Hard: target must be an existing file inside the root. Refuses secret files. Local disk, SFTP and NFS only; elsewhere it fails, e.g. 'S3Session has no symbolic links'. Time limit: 30 s.\nReturns: {ok: true}, plus target when the symbolic link stored another one.",
       "group": "write",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
           "backend": {
             "description": "Backend id from list_backends; omit for the default.",
+            "type": "string"
+          },
+          "kind": {
+            "default": "symbolic",
+            "description": "symbolic: a link by path (folders too, across file systems); hard: another name of the same file.",
+            "enum": [
+              "symbolic",
+              "hard"
+            ],
             "type": "string"
           },
           "link_path": {
@@ -1784,7 +1969,7 @@
             "type": "string"
           },
           "target": {
-            "description": "What the link points to: absolute, or relative to the link's folder, e.g. '../shared/data.csv'. SFTP and NFS store it as given. Required unless target_b64 is given.",
+            "description": "kind symbolic: what the link points to, absolute or relative to the link's folder, e.g. '../shared/data.csv' (SFTP and NFS store it as given). kind hard: the existing file, absolute or relative to the MCP root. Required unless target_b64 is given.",
             "minLength": 1,
             "type": "string"
           },
@@ -1797,7 +1982,7 @@
         "type": "object"
       },
       "mutating": true,
-      "name": "create_symlink",
+      "name": "create_link",
       "output_schema": {
         "properties": {
           "ok": {
@@ -1820,74 +2005,7 @@
       ],
       "timeout_class": "write",
       "timeout_seconds": 30.0,
-      "title": "Create symbolic link",
-      "transports": [
-        "stdio",
-        "http"
-      ]
-    },
-    {
-      "alias": "hardlink",
-      "annotations": {
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": true,
-        "readOnlyHint": false,
-        "title": "Create hard link"
-      },
-      "description": "Create a hard link: a second name for an existing file.\nUse when: one file must appear under two paths.\nInstead: create_symlink for folders or across file systems; copy_file for a copy.\nBehavior: only adds. A repeat fails with 'File exists'. One file system; local disk, SFTP and NFS only. Refuses secret files. Time limit: 30 s.\nReturns: {ok: true}.",
-      "group": "write",
-      "input_schema": {
-        "additionalProperties": false,
-        "properties": {
-          "backend": {
-            "description": "Backend id from list_backends; omit for the default.",
-            "type": "string"
-          },
-          "link_path": {
-            "description": "The new name; must not exist yet (absolute, or relative to the MCP root). Required unless link_path_b64 is given.",
-            "minLength": 1,
-            "type": "string"
-          },
-          "link_path_b64": {
-            "contentEncoding": "base64",
-            "description": "link_path as base64 of its raw bytes, for non-UTF-8 names; replaces link_path.",
-            "type": "string"
-          },
-          "target": {
-            "description": "The existing file to link to; unlike symlink's target it is resolved like any path (absolute, or relative to the MCP root). Required unless target_b64 is given.",
-            "minLength": 1,
-            "type": "string"
-          },
-          "target_b64": {
-            "contentEncoding": "base64",
-            "description": "target as base64 of its raw bytes, for non-UTF-8 names; replaces target.",
-            "type": "string"
-          }
-        },
-        "type": "object"
-      },
-      "mutating": true,
-      "name": "create_hardlink",
-      "output_schema": {
-        "properties": {
-          "ok": {
-            "const": true,
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "ok"
-        ],
-        "type": "object"
-      },
-      "required_flags": [
-        "--mcp-write",
-        "--mcp-root DIR"
-      ],
-      "timeout_class": "write",
-      "timeout_seconds": 30.0,
-      "title": "Create hard link",
+      "title": "Create link",
       "transports": [
         "stdio",
         "http"
@@ -2590,7 +2708,7 @@
         "readOnlyHint": false,
         "title": "Export file metadata"
       },
-      "description": "Export the read_metadata data of a file or folder as one JSON or CSV text, returned or saved as a new file.\nUse when: you need the metadata as a document to quote, diff or keep next to the data.\nInstead: read_metadata for structured fields.\nRequires: --mcp-tools metadata.\nBehavior: without out it writes nothing; reads as read_metadata does. A returned text over 16 MiB fails; save a big folder's with out. With out: only adds; each call adds a file, written via a temporary name; new local files are mode 0600. Time limit: 5 min.\nReturns: {path, format, files (number of file reports), truncated, text}; with out {path, out (the file written), format, files, truncated, size (bytes)}.",
+      "description": "Export the read_metadata data of a file or folder as one JSON or CSV text, returned or saved as a new file.\nUse when: you need the metadata as a document to quote, diff or keep next to the data.\nInstead: read_metadata for structured fields.\nRequires: --mcp-tools metadata.\nBehavior: without out it writes nothing; reads as read_metadata does. A returned text over 16 MiB fails; save a big folder's with out. With out (served with --mcp-write): only adds; each call adds a new file (locally mode 0600). Time limit: 5 min.\nReturns: {path, format, files (number of file reports), truncated, text}; with out {path, out (the file written), format, files, truncated, size (bytes)}.",
       "group": "metadata",
       "input_schema": {
         "additionalProperties": false,
@@ -2826,7 +2944,7 @@
         "readOnlyHint": false,
         "title": "Scan for duplicates"
       },
-      "description": "Run a duplicate scan: hash every file under a folder into the Duplicate Finder's index.\nUse when: before list_duplicate_groups or trash_duplicates, or after changes.\nInstead: list_duplicate_scans for past scans; compute_file_checksum for one file.\nRequires: --mcp-tools duplicates.\nBehavior: writes index rows, never files. path must be a folder. Each run adds a scan record. Symlinks, the axross trash and secret files are skipped; unchanged files are not hashed again unless rehash. Remote backends use their own checksum (ETag-only ones index nothing). Time limit: 30 min.\nReturns: {scan_id, root, backend_id, algorithm, files_indexed, status (complete|cancelled|failed), truncated (max_files), complete (no cap, no unreadable folder), unreadable (folder paths)}.",
+      "description": "Run a duplicate scan: hash every file under a folder into axross's duplicate index, which list_duplicate_groups reads.\nUse when: before list_duplicate_groups or trash_duplicates, or after changes.\nInstead: list_duplicate_scans for past scans; compute_file_checksum for one file.\nRequires: --mcp-tools duplicates.\nBehavior: writes index rows, never files. path must be a folder. Each run adds a scan record; a complete one drops files gone since the last. Symlinks, the axross trash and secret files are skipped; unchanged files are not hashed again unless rehash. Remote backends use their own checksum (ETag-only ones index nothing). Time limit: 30 min.\nReturns: {scan_id, root, backend_id, algorithm, files_indexed, status (complete|cancelled|failed), truncated (max_files), complete (no cap, no unreadable folder), unreadable (folder paths)}.",
       "group": "duplicates",
       "input_schema": {
         "additionalProperties": false,
@@ -2946,7 +3064,7 @@
         "readOnlyHint": true,
         "title": "List duplicate scans"
       },
-      "description": "List past duplicate scans (scan history), newest first.\nUse when: choosing a scan_id, or checking that a scan finished.\nInstead: scan_duplicates to run one; list_duplicate_groups for the duplicates.\nRequires: --mcp-tools duplicates.\nBehavior: read-only; this backend's scans (local: inside the MCP root), the newest 1000 only. Time limit: 15 s.\nReturns: {scans: [{scan_id, root, backend_id, algorithm, started_at, finished_at (ISO 8601, null while running), files_indexed, files_in_index, duplicate_groups, status, error}], truncated}.",
+      "description": "List past duplicate scans (scan history), newest first.\nUse when: choosing a scan_id, or checking that a scan finished.\nInstead: scan_duplicates to run one; list_duplicate_groups for the duplicates.\nRequires: --mcp-tools duplicates.\nBehavior: read-only; this backend's scans (local: inside the MCP root), paged with offset and max_scans. Time limit: 15 s.\nReturns: {scans: [{scan_id, root, backend_id, algorithm, started_at, finished_at (ISO 8601, null while running), files_indexed, files_in_index, duplicate_groups, status, error}], offset, truncated, next_offset (null: no further page)}.",
       "group": "duplicates",
       "input_schema": {
         "additionalProperties": false,
@@ -2954,6 +3072,20 @@
           "backend": {
             "description": "Backend id from list_backends; omit for the default.",
             "type": "string"
+          },
+          "max_scans": {
+            "default": 100,
+            "description": "Return at most this many scans; more sets truncated=true.",
+            "maximum": 1000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "description": "Scans to skip, for the next page: the previous call's next_offset.",
+            "maximum": 2147483647,
+            "minimum": 0,
+            "type": "integer"
           }
         },
         "type": "object"
@@ -2962,6 +3094,18 @@
       "name": "list_duplicate_scans",
       "output_schema": {
         "properties": {
+          "next_offset": {
+            "description": "the offset of the next page; null: none",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "offset": {
+            "minimum": 0,
+            "type": "integer"
+          },
           "scans": {
             "items": {
               "properties": {
@@ -3033,7 +3177,9 @@
         },
         "required": [
           "scans",
-          "truncated"
+          "offset",
+          "truncated",
+          "next_offset"
         ],
         "type": "object"
       },
@@ -3057,7 +3203,7 @@
         "readOnlyHint": true,
         "title": "List duplicate groups"
       },
-      "description": "List groups of identical files from the duplicate index, every copy inside path.\nUse when: reviewing duplicates after scan_duplicates.\nInstead: trash_duplicates (needs --mcp-write) with dry_run for the trash plan.\nRequires: --mcp-tools duplicates.\nBehavior: read-only; the index as of the last scan, no file is read. Groups are ordered by algorithm, then hash value, so offset pages are stable; empty files never group. keep=true marks the oldest copy (no mtime: the shorter, then alphabetically first path), the one trash_duplicates keeps. Pages with offset and max_groups. Time limit: 15 s.\nReturns: {path, truncated, groups: [{algorithm, value, size, copies: [{path, size, mtime (Unix seconds), modified (ISO 8601), scan_id, keep}]}]}.",
+      "description": "List groups of identical files from the duplicate index, every copy inside path.\nUse when: reviewing duplicates after scan_duplicates.\nInstead: trash_duplicates (needs --mcp-write) with dry_run for the trash plan.\nRequires: --mcp-tools duplicates.\nBehavior: read-only; the index as of the last scan, no file is read. Groups are ordered by algorithm, then hash value, so offset pages are stable; empty files never group. keep=true marks the oldest copy (no mtime: the shorter, then alphabetically first path), the one trash_duplicates keeps. Pages with offset and max_groups. Time limit: 15 s.\nReturns: {path, truncated, next_offset, groups: [{algorithm, value, size, copies: [{path, size, mtime (Unix seconds), modified (ISO 8601), scan_id, keep}]}]}.",
       "group": "duplicates",
       "input_schema": {
         "additionalProperties": false,
@@ -3182,6 +3328,14 @@
             },
             "type": "array"
           },
+          "next_offset": {
+            "description": "the offset of the next page; null: none",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "path": {
             "type": "string"
           },
@@ -3192,7 +3346,8 @@
         "required": [
           "path",
           "truncated",
-          "groups"
+          "groups",
+          "next_offset"
         ],
         "type": "object"
       },
@@ -3216,7 +3371,7 @@
         "readOnlyHint": false,
         "title": "Move duplicates to trash"
       },
-      "description": "Keep the copy marked keep=true (the oldest) of each duplicate group inside path and move the others to the axross trash; copies outside path do not count.\nUse when: after list_duplicate_groups; run dry_run=true first.\nInstead: list_duplicate_groups to look; delete_path to delete for good.\nRequires: --mcp-tools duplicates.\nBehavior: destructive but restorable; dry_run=true (default) only plans. Trashed copies leave the index. Copies are re-checked first; changed ones go to refused. Moves done before a cancel or timeout stay: rerun to finish. The trash is .axross-trash in the MCP root (remote: home); restore in the axross app. Time limit: 30 min.\nReturns: {path, dry_run, groups, undated_groups (survivor chosen by path), keep, trash (planned), removed (done; [] on dry_run), refused, failed, trash_root}.",
+      "description": "Move all but one copy of each duplicate group under path to the restorable axross trash, keeping the oldest (keep=true in list_duplicate_groups).\nUse when: after list_duplicate_groups; run dry_run=true first.\nInstead: list_duplicate_groups to look; delete_path to delete for good.\nRequires: --mcp-tools duplicates.\nBehavior: destructive but restorable (restore_from_trash); dry_run=true (default) only plans. Copies are re-checked first; changed ones go to refused; trashed ones leave the index. Moves done before a cancel or timeout stay: rerun to finish. Copies outside path are never touched or counted. Time limit: 30 min.\nReturns: {path, dry_run, groups, undated_groups (survivor chosen by path), keep, trash (planned), removed (done; [] on dry_run), refused, failed, trash_root (.axross-trash in the MCP root; remote: the home's)}.",
       "group": "duplicates",
       "input_schema": {
         "additionalProperties": false,
@@ -3360,6 +3515,203 @@
       "timeout_class": "long",
       "timeout_seconds": 1800.0,
       "title": "Move duplicates to trash",
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "alias": "trash_list",
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "List the axross trash"
+      },
+      "description": "List what is in axross's trash: what trash_duplicates moved there, newest first.\nUse when: finding the trash_id to restore, or checking what a dedupe took.\nInstead: restore_from_trash (needs --mcp-write) to put an entry back; list_duplicate_groups for duplicates still in place.\nRequires: --mcp-tools duplicates.\nBehavior: read-only; reads the trash's records, never the trashed files. The trash is .axross-trash in the MCP root (remote: in the home folder); entries whose original place is outside the MCP root are left out. Time limit: 15 s.\nReturns: {trash_root, entries: [{trash_id, original_path, trashed_at (ISO 8601), size, is_dir, label}], count (all entries), offset, truncated, next_offset (null: no further page)}.",
+      "group": "duplicates",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Backend id from list_backends; omit for the default.",
+            "type": "string"
+          },
+          "max_results": {
+            "default": 100,
+            "description": "Return at most this many entries.",
+            "maximum": 1000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "description": "Entries to skip, for the next page: the previous call's next_offset.",
+            "maximum": 2147483647,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "list_trash",
+      "output_schema": {
+        "properties": {
+          "count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "entries": {
+            "items": {
+              "properties": {
+                "is_dir": {
+                  "type": "boolean"
+                },
+                "label": {
+                  "description": "may be empty",
+                  "type": "string"
+                },
+                "original_path": {
+                  "type": "string"
+                },
+                "size": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "trash_id": {
+                  "type": "string"
+                },
+                "trashed_at": {
+                  "description": "ISO 8601, or null",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "trash_id",
+                "original_path",
+                "trashed_at",
+                "size",
+                "is_dir",
+                "label"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_offset": {
+            "description": "the offset of the next page; null: none",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "offset": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "trash_root": {
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "trash_root",
+          "entries",
+          "count",
+          "offset",
+          "truncated",
+          "next_offset"
+        ],
+        "type": "object"
+      },
+      "required_flags": [
+        "--mcp-tools duplicates"
+      ],
+      "timeout_class": "quick",
+      "timeout_seconds": 15.0,
+      "title": "List the axross trash",
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "alias": "trash_restore",
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Restore from the trash"
+      },
+      "description": "Move one entry out of axross's trash back to where it was, or to dst.\nUse when: undoing trash_duplicates for one file or folder.\nInstead: list_trash first, for the trash_id; restore_file_version for a backend's own version history.\nRequires: --mcp-tools duplicates.\nBehavior: only adds - never replaces: a taken target fails with 'target already exists'. A repeat fails with 'trash entry not found'. The target must be writable (locally: in the MCP root); missing parent folders are made. An entry whose record does not verify (changed by someone else) is refused. Time limit: 30 s.\nReturns: {trash_id, path (where it is now), is_dir}.",
+      "group": "duplicates",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Backend id from list_backends; omit for the default.",
+            "type": "string"
+          },
+          "dst": {
+            "description": "Where to put it instead of its original path (absolute, or relative to the MCP root); must not exist. Default: the original path.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "dst_b64": {
+            "contentEncoding": "base64",
+            "description": "dst as base64 of its raw bytes, for non-UTF-8 names; replaces dst.",
+            "type": "string"
+          },
+          "trash_id": {
+            "description": "The trash_id of an entry from list_trash.",
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "trash_id"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "restore_from_trash",
+      "output_schema": {
+        "properties": {
+          "is_dir": {
+            "type": "boolean"
+          },
+          "path": {
+            "type": "string"
+          },
+          "trash_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "trash_id",
+          "path",
+          "is_dir"
+        ],
+        "type": "object"
+      },
+      "required_flags": [
+        "--mcp-tools duplicates",
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "write",
+      "timeout_seconds": 30.0,
+      "title": "Restore from the trash",
       "transports": [
         "stdio",
         "http"
@@ -4419,7 +4771,7 @@
         "readOnlyHint": false,
         "title": "Copy path to backend"
       },
-      "description": "Copy a file or folder tree to another backend, or resumably within one.\nUse when: data must cross backends, or a big copy should be resumable.\nInstead: copy_tree within one backend; move_file_to_backend to move a file.\nRequires: --mcp-tools transfer.\nBehavior: never changes the source; one backend with resumable=false is its own copy, as in copy_tree. Existing files are skipped unless overwrite=true (destructive). Local links to files are copied as files, as copy_tree does; other links and special files are skipped. Each skipped entry has a reason; a secret file's is outside-root. resumable=true with the same arguments continues an interrupted run. Mode and mtime are not kept. Time limit: 30 min.\nReturns: {src, dst, copied, truncated, complete, entries}; entry fields and reasons explained in outputSchema.",
+      "description": "Copy a file or folder tree to another backend, or resumably within one.\nUse when: data must cross backends, or a big copy should be resumable.\nInstead: copy_tree within one backend; move_file_to_backend to move a file.\nRequires: --mcp-tools transfer.\nBehavior: never changes the source; within one backend and resumable=false it copies as copy_tree does. Existing files are skipped unless overwrite=true (destructive). Local links to files are copied as files; other links and special files are skipped. Each skipped entry has a reason; a secret file's is outside-root. resumable=true with the same arguments continues an interrupted run. Mode and mtime are not kept. Time limit: 30 min.\nReturns: {src, dst, copied, truncated, complete, entries}; entry fields and reasons explained in outputSchema.",
       "group": "transfer",
       "input_schema": {
         "additionalProperties": false,
@@ -4915,6 +5267,2064 @@
       ]
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Android device info"
+      },
+      "description": "Identify the Android device: maker, model, Android version, SDK, security patch, build, CPU ABIs, serial, IMEI or MEID.\nUse when: knowing which phone this is or how current its patches are.\nInstead: list_device_properties for any other property.\nRequires: --mcp-tools adb; an ADB profile opened with open_remote_profile.\nBehavior: read-only. A value the shell may not read is null; its _note says why. Time limit: 60 s.\nReturns: {manufacturer, brand, model, device, product, android_version, sdk, security_patch, build_id, build_fingerprint, build_type, abis, serial, serial_note, imei, meid, imei_note, shell_uid, root}.",
+      "group": "adb",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Backend id of an opened ADB profile, e.g. 'profile:phone'.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "backend"
+        ],
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "get_device_info",
+      "output_schema": {
+        "properties": {
+          "abis": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "android_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "brand": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "build_fingerprint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "build_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "build_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "imei": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "imei_note": {
+            "type": "string"
+          },
+          "manufacturer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "meid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "product": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "root": {
+            "type": "boolean"
+          },
+          "sdk": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "security_patch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "serial": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "serial_note": {
+            "type": "string"
+          },
+          "shell_uid": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "manufacturer",
+          "brand",
+          "model",
+          "device",
+          "product",
+          "android_version",
+          "sdk",
+          "security_patch",
+          "build_id",
+          "build_fingerprint",
+          "build_type",
+          "abis",
+          "serial",
+          "serial_note",
+          "imei",
+          "meid",
+          "imei_note",
+          "shell_uid",
+          "root"
+        ],
+        "type": "object"
+      },
+      "required_flags": [
+        "--mcp-tools adb"
+      ],
+      "timeout_class": "walk",
+      "timeout_seconds": 60.0,
+      "title": "Android device info",
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Android system properties"
+      },
+      "description": "List the device's system properties (getprop) whose names match a glob.\nUse when: a detail get_device_info does not give (persist.*, gsm.*, a vendor's).\nInstead: get_device_info for the usual identity fields.\nRequires: --mcp-tools adb; an ADB profile opened with open_remote_profile.\nBehavior: read-only; values cut at 1000 characters. Time limit: 60 s.\nReturns: {properties: {name: value}, count (matching), truncated}.",
+      "group": "adb",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Backend id of an opened ADB profile, e.g. 'profile:phone'.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "filter": {
+            "default": "*",
+            "description": "A property name or a glob of names, e.g. 'ro.build.*'.",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:@*?\\-]+$",
+            "type": "string"
+          },
+          "max_results": {
+            "default": 500,
+            "description": "The most properties returned.",
+            "maximum": 5000,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "backend"
+        ],
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "list_device_properties",
+      "output_schema": {
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "properties": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "properties",
+          "count",
+          "truncated"
+        ],
+        "type": "object"
+      },
+      "required_flags": [
+        "--mcp-tools adb"
+      ],
+      "timeout_class": "walk",
+      "timeout_seconds": 60.0,
+      "title": "Android system properties",
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Android battery status"
+      },
+      "description": "Read the battery's charge, charging state, health, temperature and voltage (dumpsys battery).\nUse when: checking whether the phone charges or overheats.\nInstead: get_device_info for what the phone is.\nRequires: --mcp-tools adb; an ADB profile opened with open_remote_profile.\nBehavior: read-only; simulated is true when 'dumpsys battery set' overrides the values. Time limit: 60 s.\nReturns: {level_percent, status, health, plugged [ac, usb, wireless, dock], temperature_c, voltage_mv, technology, present, simulated, note}.",
+      "group": "adb",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Backend id of an opened ADB profile, e.g. 'profile:phone'.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "backend"
+        ],
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "get_battery_status",
+      "output_schema": {
+        "properties": {
+          "health": {
+            "type": "string"
+          },
+          "level_percent": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "note": {
+            "type": "string"
+          },
+          "plugged": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "present": {
+            "type": "boolean"
+          },
+          "simulated": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string"
+          },
+          "technology": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "temperature_c": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "voltage_mv": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "level_percent",
+          "status",
+          "health",
+          "plugged",
+          "temperature_c",
+          "voltage_mv",
+          "technology",
+          "present",
+          "simulated",
+          "note"
+        ],
+        "type": "object"
+      },
+      "required_flags": [
+        "--mcp-tools adb"
+      ],
+      "timeout_class": "walk",
+      "timeout_seconds": 60.0,
+      "title": "Android battery status",
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Installed Android apps"
+      },
+      "description": "List the installed apps with version code, uid, installer, system or user app, enabled or not.\nUse when: finding a package name for the other app tools.\nInstead: get_app_info for one app's permissions; list_running_apps for what runs.\nRequires: --mcp-tools adb; an ADB profile opened with open_remote_profile.\nBehavior: read-only; older pm versions give fewer fields (null). Time limit: 60 s.\nReturns: {apps: [{package, version_code, uid, installer, system, enabled}], count, offset, truncated}, by package.",
+      "group": "adb",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Backend id of an opened ADB profile, e.g. 'profile:phone'.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "kind": {
+            "default": "all",
+            "description": "user: installed by the user; system: part of the system image.",
+            "enum": [
+              "all",
+              "user",
+              "system"
+            ],
+            "type": "string"
+          },
+          "match": {
+            "description": "Only packages whose name contains this (any case). Default: all.",
+            "maxLength": 255,
+            "pattern": "^[A-Za-z0-9_.]*$",
+            "type": "string"
+          },
+          "max_results": {
+            "default": 200,
+            "description": "The most apps returned.",
+            "maximum": 5000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "description": "Apps to skip (the next page).",
+            "maximum": 1000000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "state": {
+            "default": "any",
+            "description": "Only enabled or only disabled apps.",
+            "enum": [
+              "any",
+              "enabled",
+              "disabled"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "backend"
+        ],
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "list_apps",
+      "output_schema": {
+        "properties": {
+          "apps": {
+            "items": {
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "installer": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "package": {
+                  "type": "string"
+                },
+                "system": {
+                  "type": "boolean"
+                },
+                "uid": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "version_code": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "package",
+                "version_code",
+                "uid",
+                "installer",
+                "system",
+                "enabled"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "apps",
+          "count",
+          "offset",
+          "truncated"
+        ],
+        "type": "object"
+      },
+      "required_flags": [
+        "--mcp-tools adb"
+      ],
+      "timeout_class": "walk",
+      "timeout_seconds": 60.0,
+      "title": "Installed Android apps",
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Android app details"
+      },
+      "description": "Get one app's version, SDK levels, install times, installer, flags, APK paths and permissions (requested, install-time and runtime, granted or not).\nUse when: checking what an app may do or which version is installed.\nInstead: list_apps to find the package; grant_permission (needs --mcp-write) to change one.\nRequires: --mcp-tools adb; an ADB profile opened with open_remote_profile.\nBehavior: read-only (dumpsys package). consistent is false when the app's own versionName imitates dump lines; those values are then null. Time limit: 60 s.\nReturns: {package, apk_paths, enabled, version_code, version_name, min_sdk, target_sdk, first_install_time, last_update_time, installer, uid, data_dir, system, debuggable, flags, requested_permissions, install_permissions, runtime_permissions [{name, granted}], consistent, note}.",
+      "group": "adb",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Backend id of an opened ADB profile, e.g. 'profile:phone'.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "package": {
+            "description": "The app's package name, e.g. 'com.example.app'.",
+            "maxLength": 255,
+            "minLength": 1,
+            "pattern": "^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)*$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "backend"
+        ],
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "get_app_info",
+      "output_schema": {
+        "properties": {
+          "apk_paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "consistent": {
+            "type": "boolean"
+          },
+          "data_dir": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "debuggable": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "first_install_time": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "flags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "install_permissions": {
+            "items": {
+              "properties": {
+                "granted": {
+                  "type": "boolean"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "granted"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "installer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_update_time": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "min_sdk": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "note": {
+            "type": "string"
+          },
+          "package": {
+            "type": "string"
+          },
+          "requested_permissions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "runtime_permissions": {
+            "items": {
+              "properties": {
+                "granted": {
+                  "type": "boolean"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "granted"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "system": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "target_sdk": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "uid": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "version_code": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "version_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "package",
+          "apk_paths",
+          "enabled",
+          "version_code",
+          "version_name",
+          "min_sdk",
+          "target_sdk",
+          "first_install_time",
+          "last_update_time",
+          "installer",
+          "uid",
+          "data_dir",
+          "system",
+          "debuggable",
+          "flags",
+          "requested_permissions",
+          "install_permissions",
+          "runtime_permissions",
+          "consistent",
+          "note"
+        ],
+        "type": "object"
+      },
+      "required_flags": [
+        "--mcp-tools adb"
+      ],
+      "timeout_class": "walk",
+      "timeout_seconds": 60.0,
+      "title": "Android app details",
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Running Android apps"
+      },
+      "description": "List the apps that have a process now, with process ids and memory, and the app in front.\nUse when: checking whether an app runs before stop_app (needs --mcp-write) or get_logcat.\nInstead: list_apps for every installed app.\nRequires: --mcp-tools adb; an ADB profile opened with open_remote_profile.\nBehavior: read-only (ps, dumpsys activity). Time limit: 60 s.\nReturns: {apps: [{package, foreground, processes: [{pid, user, rss_kb, name}]}], count, foreground, truncated}.",
+      "group": "adb",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Backend id of an opened ADB profile, e.g. 'profile:phone'.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "max_results": {
+            "default": 200,
+            "description": "The most apps returned.",
+            "maximum": 5000,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "backend"
+        ],
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "list_running_apps",
+      "output_schema": {
+        "properties": {
+          "apps": {
+            "items": {
+              "properties": {
+                "foreground": {
+                  "type": "boolean"
+                },
+                "package": {
+                  "type": "string"
+                },
+                "processes": {
+                  "items": {
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "pid": {
+                        "type": "integer"
+                      },
+                      "rss_kb": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "user": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "pid",
+                      "user",
+                      "rss_kb",
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "package",
+                "foreground",
+                "processes"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "foreground": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "apps",
+          "count",
+          "foreground",
+          "truncated"
+        ],
+        "type": "object"
+      },
+      "required_flags": [
+        "--mcp-tools adb"
+      ],
+      "timeout_class": "walk",
+      "timeout_seconds": 60.0,
+      "title": "Running Android apps",
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Android log"
+      },
+      "description": "Read the newest lines of the device's log (logcat -d), by priority, tag or app.\nUse when: finding why an app crashed or what it logged.\nInstead: list_running_apps to see whether the app runs.\nRequires: --mcp-tools adb; an ADB profile opened with open_remote_profile.\nBehavior: read-only. The log is app text and may hold private data; lines are cut at 1000 characters. Time limit: 60 s.\nReturns: {lines: [threadtime lines], count, truncated}.",
+      "group": "adb",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Backend id of an opened ADB profile, e.g. 'profile:phone'.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "buffer": {
+            "default": "default",
+            "description": "default: main and system; crash: the crash reports.",
+            "enum": [
+              "default",
+              "crash"
+            ],
+            "type": "string"
+          },
+          "max_lines": {
+            "default": 200,
+            "description": "The most log lines returned (the newest).",
+            "maximum": 2000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "min_priority": {
+            "default": "V",
+            "description": "Lowest priority: V(erbose), D, I, W, E, F(atal).",
+            "enum": [
+              "V",
+              "D",
+              "I",
+              "W",
+              "E",
+              "F"
+            ],
+            "type": "string"
+          },
+          "package": {
+            "description": "Only the lines of this running app's main process (Android 7 and newer). Default: every process.",
+            "maxLength": 255,
+            "minLength": 1,
+            "pattern": "^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)*$",
+            "type": "string"
+          },
+          "tag": {
+            "description": "Only this log tag, e.g. 'ActivityManager'. Default: every tag.",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.\\-]+$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "backend"
+        ],
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "get_logcat",
+      "output_schema": {
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "lines": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "lines",
+          "count",
+          "truncated"
+        ],
+        "type": "object"
+      },
+      "required_flags": [
+        "--mcp-tools adb"
+      ],
+      "timeout_class": "walk",
+      "timeout_seconds": 60.0,
+      "title": "Android log",
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Android screenshot"
+      },
+      "description": "Capture what the device's screen shows as a PNG image (screencap).\nUse when: seeing the screen, e.g. after start_app (needs --mcp-write).\nInstead: get_logcat for what an app reports.\nRequires: --mcp-tools adb; an ADB profile opened with open_remote_profile.\nBehavior: without out it writes nothing locally; a temporary file on the device is removed again. Secure windows (banking, DRM) show black. Time limit: 60 s.\nReturns: with out {path, width, height, size}; else an MCP image content block (image/png, at most 12 MiB) with _meta {width, height}.",
+      "group": "adb",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Backend id of an opened ADB profile, e.g. 'profile:phone'.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "out": {
+            "description": "Save the PNG as this new file in the MCP root instead of returning it, e.g. 'shots/home.png'; a taken name gets ' (2)'. Default: none, the image is returned.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "out_b64": {
+            "contentEncoding": "base64",
+            "description": "out as base64 of its raw bytes, for non-UTF-8 names; replaces out.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "backend"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "take_screenshot",
+      "required_flags": [
+        "--mcp-tools adb"
+      ],
+      "timeout_class": "walk",
+      "timeout_seconds": 60.0,
+      "title": "Android screenshot",
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Read SMS messages"
+      },
+      "description": "Read the device's SMS messages (content://sms), newest first.\nUse when: a message's text or sender is needed, e.g. a one-time code.\nInstead: write_sms (needs --mcp-write) to add one.\nRequires: --mcp-tools adb; an ADB profile opened with open_remote_profile; the shell may read the SMS store (READ_SMS), which many builds refuse (the error says so).\nBehavior: read-only. Messages are private. Time limit: 5 min.\nReturns: {box, count, offset, messages: [{id, thread_id, address, date, date_sent, read, box, body, body_truncated}], truncated}; dates ISO 8601 UTC.",
+      "group": "adb",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Backend id of an opened ADB profile, e.g. 'profile:phone'.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "box": {
+            "default": "inbox",
+            "description": "Which messages: inbox, sent, draft, outbox, failed, queued or all.",
+            "enum": [
+              "all",
+              "inbox",
+              "sent",
+              "draft",
+              "outbox",
+              "failed",
+              "queued"
+            ],
+            "type": "string"
+          },
+          "max_body": {
+            "default": 1000,
+            "description": "The longest text kept of a message.",
+            "maximum": 4000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_results": {
+            "default": 20,
+            "description": "The most messages returned.",
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "description": "Messages to skip (the next page).",
+            "maximum": 1000000,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "backend"
+        ],
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "list_sms",
+      "output_schema": {
+        "properties": {
+          "box": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "messages": {
+            "items": {
+              "properties": {
+                "address": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "body": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "body_truncated": {
+                  "type": "boolean"
+                },
+                "box": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "date": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "date_sent": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "type": "integer"
+                },
+                "read": {
+                  "type": "boolean"
+                },
+                "thread_id": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "thread_id",
+                "address",
+                "date",
+                "date_sent",
+                "read",
+                "box",
+                "body",
+                "body_truncated"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "box",
+          "count",
+          "offset",
+          "truncated",
+          "messages"
+        ],
+        "type": "object"
+      },
+      "required_flags": [
+        "--mcp-tools adb"
+      ],
+      "timeout_class": "stream",
+      "timeout_seconds": 300.0,
+      "title": "Read SMS messages",
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Start an Android app"
+      },
+      "description": "Start an installed app at its launcher activity, or at the activity named.\nUse when: opening an app on the phone.\nInstead: stop_app to end it; list_running_apps to see what runs.\nRequires: --mcp-tools adb; not in paranoid mode; an ADB profile opened with open_remote_profile.\nBehavior: the app runs and comes to the front (am start; the monkey's launcher intent where Android cannot resolve the activity). Time limit: 60 s.\nReturns: {package, component, method, started, already_running, output}.",
+      "group": "adb",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "activity": {
+            "description": "An activity of the app instead of the launcher one, e.g. '.SettingsActivity'. Default: the launcher activity.",
+            "maxLength": 255,
+            "minLength": 1,
+            "pattern": "^\\.?[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)*$",
+            "type": "string"
+          },
+          "backend": {
+            "description": "Backend id of an opened ADB profile, e.g. 'profile:phone'.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "package": {
+            "description": "The app's package name, e.g. 'com.example.app'.",
+            "maxLength": 255,
+            "minLength": 1,
+            "pattern": "^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)*$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "backend"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "start_app",
+      "output_schema": {
+        "properties": {
+          "already_running": {
+            "type": "boolean"
+          },
+          "component": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "method": {
+            "type": "string"
+          },
+          "output": {
+            "type": "string"
+          },
+          "package": {
+            "type": "string"
+          },
+          "started": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "package",
+          "component",
+          "method",
+          "started",
+          "already_running",
+          "output"
+        ],
+        "type": "object"
+      },
+      "required_flags": [
+        "--mcp-tools adb",
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "walk",
+      "timeout_seconds": 60.0,
+      "title": "Start an Android app",
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Stop an Android app"
+      },
+      "description": "Force-stop an app (am force-stop).\nUse when: an app hangs or has to start afresh.\nInstead: uninstall_app to remove it; start_app to start it again.\nRequires: --mcp-tools adb; not in paranoid mode; an ADB profile opened with open_remote_profile.\nBehavior: destructive: its processes end, alarms and jobs are cancelled until it starts again, unsaved work is lost. A repeat stops nothing more; a package that is not installed fails with 'is not installed'. Time limit: 60 s.\nReturns: {package, stopped, running (null: not checkable)}.",
+      "group": "adb",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Backend id of an opened ADB profile, e.g. 'profile:phone'.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "package": {
+            "description": "The app's package name, e.g. 'com.example.app'.",
+            "maxLength": 255,
+            "minLength": 1,
+            "pattern": "^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)*$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "backend"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "stop_app",
+      "output_schema": {
+        "properties": {
+          "package": {
+            "type": "string"
+          },
+          "running": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "stopped": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "package",
+          "stopped",
+          "running"
+        ],
+        "type": "object"
+      },
+      "required_flags": [
+        "--mcp-tools adb",
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "walk",
+      "timeout_seconds": 60.0,
+      "title": "Stop an Android app",
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Install an Android app"
+      },
+      "description": "Install one APK file from the MCP root on the device (pm install).\nUse when: putting a built or downloaded app onto the phone.\nInstead: uninstall_app to remove one; export_app to copy one off the phone.\nRequires: --mcp-tools adb; not in paranoid mode; an ADB profile opened with open_remote_profile; a regular .apk (a ZIP, at most 4 GiB, no link) in the local root, no split APKs.\nBehavior: destructive with replace=true (an installed app of that package is updated, its data kept). Sent to a fresh name in /data/local/tmp, removed again. A refusal names Android's reason. Time limit: 30 min.\nReturns: {installed, replace, grant_permissions, allow_downgrade, size, output, cleanup}.",
+      "group": "adb",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_downgrade": {
+            "default": false,
+            "description": "Allow a lower version code than the installed one (-d).",
+            "type": "boolean"
+          },
+          "allow_test_only": {
+            "default": false,
+            "description": "Take an APK an IDE built as test-only (-t).",
+            "type": "boolean"
+          },
+          "backend": {
+            "description": "Backend id of an opened ADB profile, e.g. 'profile:phone'.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "grant_permissions": {
+            "default": false,
+            "description": "Grant every runtime permission it asks for (-g).",
+            "type": "boolean"
+          },
+          "path": {
+            "description": "The APK, in the MCP root, e.g. 'build/app.apk'. Required unless path_b64 is given.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "path_b64": {
+            "contentEncoding": "base64",
+            "description": "path as base64 of its raw bytes, for non-UTF-8 names; replaces path.",
+            "type": "string"
+          },
+          "replace": {
+            "default": true,
+            "description": "Update an installed app of the same package (pm install -r).",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "backend"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "install_app",
+      "output_schema": {
+        "properties": {
+          "allow_downgrade": {
+            "type": "boolean"
+          },
+          "cleanup": {
+            "type": "string"
+          },
+          "grant_permissions": {
+            "type": "boolean"
+          },
+          "installed": {
+            "type": "boolean"
+          },
+          "output": {
+            "type": "string"
+          },
+          "replace": {
+            "type": "boolean"
+          },
+          "size": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "installed",
+          "replace",
+          "grant_permissions",
+          "allow_downgrade",
+          "size",
+          "output",
+          "cleanup"
+        ],
+        "type": "object"
+      },
+      "required_flags": [
+        "--mcp-tools adb",
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "long",
+      "timeout_seconds": 1800.0,
+      "title": "Install an Android app",
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Uninstall an Android app"
+      },
+      "description": "Uninstall an app (pm uninstall), with its data unless keep_data=true.\nUse when: an app has to go for good.\nInstead: stop_app to only end it; export_app first to keep its APK.\nRequires: --mcp-tools adb; not in paranoid mode; an ADB profile opened with open_remote_profile.\nBehavior: destructive: the app and by default everything it stored are gone. System apps are refused. A repeat fails with 'is not installed'. Time limit: 5 min.\nReturns: {package, uninstalled, kept_data}.",
+      "group": "adb",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Backend id of an opened ADB profile, e.g. 'profile:phone'.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "keep_data": {
+            "default": false,
+            "description": "Keep the app's data and caches (pm uninstall -k).",
+            "type": "boolean"
+          },
+          "package": {
+            "description": "The app's package name, e.g. 'com.example.app'.",
+            "maxLength": 255,
+            "minLength": 1,
+            "pattern": "^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)*$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "backend"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "uninstall_app",
+      "output_schema": {
+        "properties": {
+          "kept_data": {
+            "type": "boolean"
+          },
+          "package": {
+            "type": "string"
+          },
+          "uninstalled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "package",
+          "uninstalled",
+          "kept_data"
+        ],
+        "type": "object"
+      },
+      "required_flags": [
+        "--mcp-tools adb",
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "stream",
+      "timeout_seconds": 300.0,
+      "title": "Uninstall an Android app",
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Copy an app's APK off the device"
+      },
+      "description": "Copy an installed app's APK files (base and splits) into a folder of the MCP root.\nUse when: keeping a backup of an app or inspecting its APK.\nInstead: get_app_info for its paths and version only.\nRequires: --mcp-tools adb; an ADB profile opened with open_remote_profile; a local MCP root.\nBehavior: changes nothing on the device; each file gets a fresh name ('<package>-<versionCode>-base.apk', then ' (2)'). Not the app's data. Time limit: 30 min.\nReturns: {package, version_code, files: [{source, path, size}], total_size}.",
+      "group": "adb",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Backend id of an opened ADB profile, e.g. 'profile:phone'.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "package": {
+            "description": "The app's package name, e.g. 'com.example.app'.",
+            "maxLength": 255,
+            "minLength": 1,
+            "pattern": "^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)*$",
+            "type": "string"
+          },
+          "path": {
+            "default": ".",
+            "description": "The folder in the MCP root that takes the files.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "path_b64": {
+            "contentEncoding": "base64",
+            "description": "path as base64 of its raw bytes, for non-UTF-8 names; replaces path.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "backend"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "export_app",
+      "output_schema": {
+        "properties": {
+          "files": {
+            "items": {
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": "integer"
+                },
+                "source": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source",
+                "path",
+                "size"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "package": {
+            "type": "string"
+          },
+          "total_size": {
+            "type": "integer"
+          },
+          "version_code": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "package",
+          "version_code",
+          "total_size",
+          "files"
+        ],
+        "type": "object"
+      },
+      "required_flags": [
+        "--mcp-tools adb",
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "long",
+      "timeout_seconds": 1800.0,
+      "title": "Copy an app's APK off the device",
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Grant an app permission"
+      },
+      "description": "Grant an app one runtime permission it declares (pm grant).\nUse when: an app needs a permission without a tap on the phone.\nInstead: revoke_permission to take one back; get_app_info to see the state.\nRequires: --mcp-tools adb; not in paranoid mode; an ADB profile opened with open_remote_profile.\nBehavior: changes what the app may do. Install-time and signature permissions are refused with Android's reason. Time limit: 60 s.\nReturns: {package, permission, granted (as read back; null: not readable)}.",
+      "group": "adb",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Backend id of an opened ADB profile, e.g. 'profile:phone'.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "package": {
+            "description": "The app's package name, e.g. 'com.example.app'.",
+            "maxLength": 255,
+            "minLength": 1,
+            "pattern": "^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)*$",
+            "type": "string"
+          },
+          "permission": {
+            "description": "The permission, e.g. 'android.permission.CAMERA'.",
+            "maxLength": 255,
+            "minLength": 3,
+            "pattern": "^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "permission",
+          "backend"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "grant_permission",
+      "output_schema": {
+        "properties": {
+          "granted": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "package": {
+            "type": "string"
+          },
+          "permission": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "permission",
+          "granted"
+        ],
+        "type": "object"
+      },
+      "required_flags": [
+        "--mcp-tools adb",
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "walk",
+      "timeout_seconds": 60.0,
+      "title": "Grant an app permission",
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Revoke an app permission"
+      },
+      "description": "Revoke one runtime permission of an app (pm revoke).\nUse when: taking back what an app was allowed.\nInstead: grant_permission to give one; get_app_info to see the state.\nRequires: --mcp-tools adb; not in paranoid mode; an ADB profile opened with open_remote_profile.\nBehavior: destructive: Android ends the app's processes when it loses a permission, unsaved work is lost. Time limit: 60 s.\nReturns: {package, permission, granted (as read back; null: not readable)}.",
+      "group": "adb",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Backend id of an opened ADB profile, e.g. 'profile:phone'.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "package": {
+            "description": "The app's package name, e.g. 'com.example.app'.",
+            "maxLength": 255,
+            "minLength": 1,
+            "pattern": "^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)*$",
+            "type": "string"
+          },
+          "permission": {
+            "description": "The permission, e.g. 'android.permission.CAMERA'.",
+            "maxLength": 255,
+            "minLength": 3,
+            "pattern": "^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "permission",
+          "backend"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "revoke_permission",
+      "output_schema": {
+        "properties": {
+          "granted": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "package": {
+            "type": "string"
+          },
+          "permission": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "permission",
+          "granted"
+        ],
+        "type": "object"
+      },
+      "required_flags": [
+        "--mcp-tools adb",
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "walk",
+      "timeout_seconds": 60.0,
+      "title": "Revoke an app permission",
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Reboot the Android device"
+      },
+      "description": "Restart the device, into Android, recovery or the bootloader.\nUse when: a restart is the fix, or recovery or fastboot is needed.\nInstead: stop_app when one app is the problem.\nRequires: --mcp-tools adb; not in paranoid mode; an ADB profile opened with open_remote_profile.\nBehavior: destructive: every app ends, unsaved work is lost, the connection drops; close_remote_profile and open it again once the device is up. Time limit: 60 s.\nReturns: {rebooting, mode, note}.",
+      "group": "adb",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Backend id of an opened ADB profile, e.g. 'profile:phone'.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "mode": {
+            "default": "system",
+            "description": "system: Android; recovery; bootloader (fastboot).",
+            "enum": [
+              "system",
+              "recovery",
+              "bootloader"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "backend"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "reboot_device",
+      "output_schema": {
+        "properties": {
+          "mode": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "rebooting": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "rebooting",
+          "mode",
+          "note"
+        ],
+        "type": "object"
+      },
+      "required_flags": [
+        "--mcp-tools adb",
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "walk",
+      "timeout_seconds": 60.0,
+      "title": "Reboot the Android device",
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Write an SMS into the store"
+      },
+      "description": "Store a message in the device's SMS store: in the inbox as if received, in sent or as a draft.\nUse when: a test needs a message on the phone.\nInstead: compose_sms to prepare a real one; list_sms to read them.\nRequires: --mcp-tools adb; not in paranoid mode; an ADB profile opened with open_remote_profile; Android lets only the default SMS app write (since 4.4): the shell's write is dropped unless its app-op WRITE_SMS is allowed.\nBehavior: adds one message, sends nothing; read back, a dropped one fails with the reason. Time limit: 60 s.\nReturns: {stored (null: not checkable), id, box, date_ms, note}.",
+      "group": "adb",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "address": {
+            "description": "The sender (inbox) or recipient: a number or a sender name.",
+            "maxLength": 40,
+            "minLength": 1,
+            "pattern": "^[0-9A-Za-z+#*() .\\-]+$",
+            "type": "string"
+          },
+          "backend": {
+            "description": "Backend id of an opened ADB profile, e.g. 'profile:phone'.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "body": {
+            "description": "The text; line feeds and tabs kept, trailing line feeds dropped.",
+            "maxLength": 1600,
+            "minLength": 1,
+            "type": "string"
+          },
+          "box": {
+            "default": "inbox",
+            "description": "Where the message goes.",
+            "enum": [
+              "inbox",
+              "sent",
+              "draft"
+            ],
+            "type": "string"
+          },
+          "date_ms": {
+            "description": "Its date in milliseconds since 1970. Default: now.",
+            "maximum": 32503680000000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "read": {
+            "default": true,
+            "description": "Mark it as read.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "address",
+          "body",
+          "backend"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "write_sms",
+      "output_schema": {
+        "properties": {
+          "box": {
+            "type": "string"
+          },
+          "date_ms": {
+            "type": "integer"
+          },
+          "id": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "note": {
+            "type": "string"
+          },
+          "stored": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "stored",
+          "id",
+          "box",
+          "date_ms",
+          "note"
+        ],
+        "type": "object"
+      },
+      "required_flags": [
+        "--mcp-tools adb",
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "walk",
+      "timeout_seconds": 60.0,
+      "title": "Write an SMS into the store",
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Prepare an SMS on the phone"
+      },
+      "description": "Open the device's SMS app with a number and a text filled in (a SENDTO intent); it does not send.\nUse when: a message is to go out once a person at the phone agrees.\nInstead: write_sms to store one without sending.\nRequires: --mcp-tools adb; not in paranoid mode; an ADB profile opened with open_remote_profile.\nBehavior: changes what the phone shows; never sends: a person taps Send (Android gives the shell no stable way to send). Time limit: 60 s.\nReturns: {sent: false, composed: true, number, note, why_not_sent}.",
+      "group": "adb",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Backend id of an opened ADB profile, e.g. 'profile:phone'.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "number": {
+            "description": "The recipient's number, e.g. '+4915112345678'.",
+            "pattern": "^\\+?[0-9*#]{2,20}$",
+            "type": "string"
+          },
+          "text": {
+            "description": "The message.",
+            "maxLength": 1600,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "number",
+          "text",
+          "backend"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "compose_sms",
+      "output_schema": {
+        "properties": {
+          "composed": {
+            "type": "boolean"
+          },
+          "note": {
+            "type": "string"
+          },
+          "number": {
+            "type": "string"
+          },
+          "sent": {
+            "type": "boolean"
+          },
+          "why_not_sent": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sent",
+          "composed",
+          "number",
+          "note",
+          "why_not_sent"
+        ],
+        "type": "object"
+      },
+      "required_flags": [
+        "--mcp-tools adb",
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "walk",
+      "timeout_seconds": 60.0,
+      "title": "Prepare an SMS on the phone",
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Send an AT command to the modem"
+      },
+      "description": "Send one AT command to the device's modem and return its reply.\nUse when: asking the modem itself (AT+CSQ signal, AT+CGMI maker, AT+COPS? network).\nInstead: get_device_info for the IMEI and build.\nRequires: --mcp-tools adb; not in paranoid mode; an ADB profile opened with open_remote_profile; a modem node (/dev/smd*, /dev/umts_atc0, /dev/radio/*, ttyACM, ttyUSB) and root (adb root or su); else refused with the reason.\nBehavior: destructive: an AT command can change modem settings or switch the radio off. Time limit: timeout; the reply is cut at 4096 bytes.\nReturns: {device, command, as_root, reply: [lines], status (OK, ERROR, +CME ERROR: n), complete, note}.",
+      "group": "adb",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Backend id of an opened ADB profile, e.g. 'profile:phone'.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "command": {
+            "description": "One AT command, e.g. 'AT+CSQ' (no ';').",
+            "maxLength": 256,
+            "minLength": 2,
+            "pattern": "^[Aa][Tt][A-Za-z0-9+#*=?,.:\\\"&%!/<>@^_() \\-]*$",
+            "type": "string"
+          },
+          "device": {
+            "description": "The modem's device node. Default: the first known one present.",
+            "maxLength": 64,
+            "minLength": 6,
+            "pattern": "^/dev/[A-Za-z0-9_/]+$",
+            "type": "string"
+          },
+          "timeout": {
+            "default": 5,
+            "description": "Seconds to wait for the reply.",
+            "maximum": 30,
+            "minimum": 1,
+            "type": "number"
+          }
+        },
+        "required": [
+          "command",
+          "backend"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "send_at_command",
+      "output_schema": {
+        "properties": {
+          "as_root": {
+            "type": "boolean"
+          },
+          "command": {
+            "type": "string"
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "device": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "reply": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "device",
+          "command",
+          "as_root",
+          "reply",
+          "status",
+          "complete",
+          "note"
+        ],
+        "type": "object"
+      },
+      "required_flags": [
+        "--mcp-tools adb",
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "stream",
+      "timeout_seconds": 300.0,
+      "title": "Send an AT command to the modem",
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
       "alias": "remote_exec",
       "annotations": {
         "destructiveHint": true,
@@ -4923,18 +7333,25 @@
         "readOnlyHint": false,
         "title": "Run backend command"
       },
-      "description": "Run one command line on a remote host (SSH, Telnet, ADB, WinRM, Cisco).\nUse when: a shell command is needed there (ps, df, a Cisco show).\nInstead: run_backend_script for scripts; the file tools for files.\nRequires: --mcp-tools exec and --mcp-allow-exec; not in paranoid mode; a backend that list_backends gives commands (not null).\nBehavior: destructive - runs with the profile user's rights. Refused on production profiles. A non-zero exit is a result; Cisco always reports 0, Telnet and ADB the real code (stderr inside stdout). Time limit: timeout; past it the call fails and no output returns.\nReturns: {returncode, stdout, stderr, truncated_stdout, truncated_stderr} (text, UTF-8 with undecodable bytes replaced).",
+      "description": "Run one command line, or a script, on a remote host (SSH, Telnet, ADB, WinRM, Cisco).\nUse when: a shell command is needed there (ps, df, a Cisco show), or a script with loops.\nInstead: run_script on this machine; the file tools for files.\nRequires: --mcp-tools exec and --mcp-allow-exec; not in paranoid mode; a backend that list_backends gives commands (not null).\nBehavior: destructive - runs with the profile user's rights. Refused on production profiles. Give command or script, not both; Cisco runs no scripts. A non-zero exit is a result; Cisco always reports 0, Telnet and ADB the real code (stderr inside stdout). Time limit: timeout; past it the call fails and no output returns.\nReturns: {returncode, stdout, stderr, truncated_stdout, truncated_stderr} (text, UTF-8 with undecodable bytes replaced).",
       "group": "exec",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
+          "args": {
+            "description": "Arguments of script ($1... / sys.argv[1:]) as raw strings; the server shell-quotes each one. POSIX hosts only. Default: none.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "backend": {
             "description": "Backend id from list_backends (can_run_commands=true), e.g. 'profile:web1'.",
             "minLength": 1,
             "type": "string"
           },
           "command": {
-            "description": "The command line, run by the remote's shell, e.g. 'df -h /'.",
+            "description": "The command line, run by the remote's shell in the folder a login starts in (prefix 'cd /dir && '), e.g. 'df -h /'. Give this or script.",
             "minLength": 1,
             "type": "string"
           },
@@ -4942,11 +7359,22 @@
             "additionalProperties": {
               "type": "string"
             },
-            "description": "Environment variables for the command as {NAME: value}, e.g. {\"LANG\": \"C\"}. On POSIX shells they are exported in the command line, so other users of the host may see the values: pass no secrets this way.",
+            "description": "Environment variables for the command or script as {NAME: value}, e.g. {\"LANG\": \"C\"}. On POSIX shells they are exported in the command line, so other users of the host may see the values: pass no secrets this way.",
             "propertyNames": {
               "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
             },
             "type": "object"
+          },
+          "interpreter": {
+            "description": "What runs script. Default: powershell on WinRM, sh on POSIX; bash, perl, python3 and sh are POSIX only; a mismatch fails.",
+            "enum": [
+              "bash",
+              "perl",
+              "powershell",
+              "python3",
+              "sh"
+            ],
+            "type": "string"
           },
           "max_output": {
             "default": 1048576,
@@ -4955,20 +7383,24 @@
             "minimum": 1,
             "type": "integer"
           },
+          "script": {
+            "description": "A multi-line script instead of command, fed to the interpreter's stdin (so it cannot read stdin itself), e.g. 'for f in /var/log/*.log; do wc -l \"$f\"; done'.",
+            "minLength": 1,
+            "type": "string"
+          },
           "stdin": {
-            "description": "Text fed to the command's stdin (UTF-8); not supported on WinRM or Cisco. Default: none.",
+            "description": "Text fed to command's stdin (UTF-8); not with script, not on WinRM or Cisco. Default: none.",
             "type": "string"
           },
           "timeout": {
             "default": 60,
-            "description": "Seconds the command may run (at most 1740, below the call's 30 min); longer fails with a timeout error and returns no output.",
+            "description": "Seconds the command or script may run (at most 1740, below the call's 30 min); longer fails with a timeout error and returns no output.",
             "maximum": 1740,
             "minimum": 1,
             "type": "number"
           }
         },
         "required": [
-          "command",
           "backend"
         ],
         "type": "object"
@@ -5015,120 +7447,6 @@
       ]
     },
     {
-      "alias": "remote_script",
-      "annotations": {
-        "destructiveHint": true,
-        "idempotentHint": false,
-        "openWorldHint": true,
-        "readOnlyHint": false,
-        "title": "Run backend script"
-      },
-      "description": "Run a multi-line script on a remote host: sh, bash, python3 or perl on POSIX, PowerShell on WinRM.\nUse when: the job needs loops or a scripting language there.\nInstead: run_backend_command for one command; run_script on this machine.\nRequires: --mcp-tools exec and --mcp-allow-exec; not in paranoid mode; a backend that list_backends gives commands (not null).\nBehavior: destructive - runs with the profile user's rights. The script goes to the interpreter's stdin, so it cannot read stdin itself. Refused on production profiles and Cisco. Time limit: timeout; past it the call fails and no output returns.\nReturns: {returncode, stdout, stderr, truncated_stdout, truncated_stderr} (text, UTF-8 with undecodable bytes replaced).",
-      "group": "exec",
-      "input_schema": {
-        "additionalProperties": false,
-        "properties": {
-          "args": {
-            "description": "Arguments passed to the script ($1... / sys.argv[1:]) as raw strings; the server shell-quotes each one. POSIX hosts only. Default: none.",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "backend": {
-            "description": "Backend id from list_backends (can_run_commands=true), e.g. 'profile:web1'.",
-            "minLength": 1,
-            "type": "string"
-          },
-          "env": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "description": "Environment variables for the script as {NAME: value}, e.g. {\"LANG\": \"C\"}. On POSIX shells they are exported in the command line, so other users of the host may see the values: pass no secrets this way.",
-            "propertyNames": {
-              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
-            },
-            "type": "object"
-          },
-          "interpreter": {
-            "description": "What runs the script. powershell: WinRM only (its default); bash, perl, python3, sh (the POSIX default): POSIX only; a mismatch fails.",
-            "enum": [
-              "bash",
-              "perl",
-              "powershell",
-              "python3",
-              "sh"
-            ],
-            "type": "string"
-          },
-          "max_output": {
-            "default": 1048576,
-            "description": "Most bytes of stdout kept; stderr keeps min(max_output, 1 MiB). truncated_stdout / truncated_stderr tell when output was cut.",
-            "maximum": 16777216,
-            "minimum": 1,
-            "type": "integer"
-          },
-          "script": {
-            "description": "The script text, e.g. 'for f in /var/log/*.log; do wc -l \"$f\"; done'.",
-            "minLength": 1,
-            "type": "string"
-          },
-          "timeout": {
-            "default": 60,
-            "description": "Seconds the script may run (at most 1740, below the call's 30 min); longer fails with a timeout error and returns no output.",
-            "maximum": 1740,
-            "minimum": 1,
-            "type": "number"
-          }
-        },
-        "required": [
-          "script",
-          "backend"
-        ],
-        "type": "object"
-      },
-      "mutating": true,
-      "name": "run_backend_script",
-      "output_schema": {
-        "properties": {
-          "returncode": {
-            "type": "integer"
-          },
-          "stderr": {
-            "type": "string"
-          },
-          "stdout": {
-            "type": "string"
-          },
-          "truncated_stderr": {
-            "type": "boolean"
-          },
-          "truncated_stdout": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "returncode",
-          "stdout",
-          "stderr",
-          "truncated_stdout",
-          "truncated_stderr"
-        ],
-        "type": "object"
-      },
-      "required_flags": [
-        "--mcp-tools exec",
-        "--mcp-allow-exec"
-      ],
-      "timeout_class": "long",
-      "timeout_seconds": 1800.0,
-      "title": "Run backend script",
-      "transports": [
-        "stdio",
-        "http"
-      ]
-    },
-    {
       "alias": "agent_run",
       "annotations": {
         "destructiveHint": false,
@@ -5137,13 +7455,13 @@
         "readOnlyHint": false,
         "title": "Ask the user's LLM"
       },
-      "description": "Hand a task to the user's own LLM profile; its model uses axross tools that write no files and answers in text.\nUse when: file contents should stay with the user's model.\nInstead: read_file or search_content directly - faster, when the contents may reach you.\nRequires: --mcp-tools agent; an LLM profile from the axross app.\nBehavior: does not write files itself; sends file contents to the configured LLM, one request per step up to max_steps (an API profile bills each), so it is not read-only. Its model gets the core file tools and the asked groups' tools (both listed in the instructions); the remote group reaches beyond the MCP root. Time limit: 30 min.\nReturns: {answer, stopped (answered|max_steps|cancelled), calls, profile, model}.",
+      "description": "Delegate a file task to the user's own configured LLM, which reads files with axross's read-only tools and answers in text.\nUse when: file contents should stay with the user's model (its answer may quote them: ask for a summary).\nInstead: read_file or search_content - faster, when the contents may reach you; list_llm_profiles for names.\nRequires: --mcp-tools agent; an LLM profile from the axross app.\nBehavior: does not write files itself; sends file contents to the configured LLM, one request per step up to max_steps (an API profile bills each), so it is not read-only. Its model gets the read-only tools the instructions list; with remote it may open saved connections, beyond the MCP root. Time limit: 30 min.\nReturns: {answer, stopped (answered|max_steps|cancelled), calls, profile, model}.",
       "group": "agent",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
           "groups": {
-            "description": "Extra tool groups for the model, each with its tools that need no --mcp-write (the instructions list them). remote and extensions fail unless this server runs with them; the others work anyway. Default: none, the core file tools only.",
+            "description": "Extra tool groups for the model, each with its tools that need no --mcp-write (the instructions list them). remote and extensions only when this server serves them; the other groups always. Default: none, the core file tools only.",
             "items": {
               "enum": [
                 "metadata",
@@ -5158,16 +7476,17 @@
             },
             "type": "array"
           },
+          "llm_profile": {
+            "description": "Name of an LLM profile (from list_llm_profiles); omit it for the active one.",
+            "minLength": 1,
+            "type": "string"
+          },
           "max_steps": {
             "default": 10,
             "description": "Most model requests for this task; reaching it ends with stopped=max_steps.",
             "maximum": 30,
             "minimum": 1,
             "type": "integer"
-          },
-          "profile": {
-            "description": "Name of an LLM profile set up in the axross app; omit it for the active one. Ask the user for another name: no tool lists them, but an unknown name's error does.",
-            "type": "string"
           },
           "task": {
             "description": "What the model should do, in plain language, e.g. 'Summarise the PDFs in reports/2024 in five bullet points'.",
@@ -5241,6 +7560,74 @@
       "timeout_class": "long",
       "timeout_seconds": 1800.0,
       "title": "Ask the user's LLM",
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "alias": "llm_profiles",
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "List LLM profiles"
+      },
+      "description": "List the LLM profiles set up in the axross app: each name and model, and which one is active.\nUse when: choosing run_llm_agent's llm_profile.\nInstead: list_remote_profiles for connection profiles, which are another kind.\nRequires: --mcp-tools agent.\nBehavior: read-only; reads the app's settings file, never the keyring: no API key, endpoint or host is returned. An empty list: no profile set up yet. Time limit: 15 s.\nReturns: {profiles: [{name, model, active}], active (its name, or null)}.",
+      "group": "agent",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "list_llm_profiles",
+      "output_schema": {
+        "properties": {
+          "active": {
+            "description": "the active profile's name",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "profiles": {
+            "items": {
+              "properties": {
+                "active": {
+                  "type": "boolean"
+                },
+                "model": {
+                  "description": "'' when not set",
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "model",
+                "active"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "profiles",
+          "active"
+        ],
+        "type": "object"
+      },
+      "required_flags": [
+        "--mcp-tools agent"
+      ],
+      "timeout_class": "quick",
+      "timeout_seconds": 15.0,
+      "title": "List LLM profiles",
       "transports": [
         "stdio",
         "http"
@@ -5366,7 +7753,7 @@
         "properties": {
           "can_run_commands": {
             "default": false,
-            "description": "true: only the backends run_backend_command and run_backend_script can use (commands not null).",
+            "description": "true: only the backends run_backend_command can use (commands not null).",
             "type": "boolean"
           }
         },

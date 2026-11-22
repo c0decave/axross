@@ -9,10 +9,12 @@ and --help, the console it was started from (attach_console).
 
 import sys
 
-#: The arguments that write to standard output (the terminal view, --html, --version, --help).
-OUTPUT_ARGS = ("--term", "-t", "--cat", "--html", "--version", "--help", "-h")
-#: ... and those whose streams are a parent's pipes only (an SVG drawn in a child, a build's check).
-PIPED_ARGS = ("--svg-worker", "--lex-worker", "--image-worker", "--script")
+#: The arguments that write to standard output (the terminal view, --html, --version, --help, the updates).
+OUTPUT_ARGS = ("--term", "-t", "--cat", "--html", "--version", "--help", "-h", "--check-update", "--update",
+               "--update-mode")
+#: ... and those whose streams are a parent's pipes only (an SVG drawn in a child, a build's check, the
+#: self-test the updater runs a downloaded program with).
+PIPED_ARGS = ("--svg-worker", "--lex-worker", "--image-worker", "--script", "--self-test")
 
 
 def attach_console(argv, platform=sys.platform, kernel32=None) -> bool:

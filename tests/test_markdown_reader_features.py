@@ -30,6 +30,7 @@ pytest.importorskip("mdit_py_plugins", reason="mdit-py-plugins not installed")
 
 from core import markdown_doc as MD  # noqa: E402
 from core import markdown_term as T  # noqa: E402
+from tests import markdown_timing as TB  # noqa: E402
 
 ANSI = re.compile(r"\x1b(\[[0-9;]*m|\]8;;[^\x1b]*\x1b\\)")
 
@@ -161,7 +162,7 @@ def test_sad_hostile_math_is_bounded_and_escaped():
     began = time.monotonic()
     MD.math_text("{" * 9000 + "x" + "}" * 9000)
     MD.math_text(r"\frac{a}{b}" * 1500)
-    assert time.monotonic() - began < 2
+    TB.budget(time.monotonic() - began < 2, 'time.monotonic() - began < 2')
     out = term("$\x1b]8;;http://x\x1b\\a<b$\n", depth="truecolor")
     assert "\x1b]8;;http://x" not in out
     pytest.importorskip("PyQt6.QtWidgets")

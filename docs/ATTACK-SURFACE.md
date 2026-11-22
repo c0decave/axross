@@ -49,8 +49,8 @@ the server's user), and paths on an opened remote profile are not
 either (the profile's server account is the boundary there).
 
 **Defenses in place.** Per-tool argument schemas; path
-normalisation against MCP root (except the `create_symlink` target, which is
-deliberately not root-checked; reads resolve links through
+normalisation against MCP root (a `create_link` symbolic target is checked
+where it leads, and may dangle; reads resolve links through
 `_enforce_root` before following them); per-scope task registry with
 `MAX_TASKS_PER_SCOPE` (retention cap) and `MAX_RUNNING_TASKS_PER_SCOPE`
 (concurrency cap); `tasks/start` draws from the same rate limiter

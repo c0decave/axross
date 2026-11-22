@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import QApplication  # noqa: E402
 APP = QApplication.instance() or QApplication([])
 
 from ui import markdown_view as MV  # noqa: E402
+from tests import markdown_timing as TB  # noqa: E402
 
 
 class _SlowNoEmojiMetrics:
@@ -46,7 +47,7 @@ def test_sad_hundreds_of_fonts_without_emoji_do_not_hold_the_window(monkeypatch)
     start = time.monotonic()
     MV.emoji_fonts()
     took = time.monotonic() - start
-    assert took < MV.EMOJI_SCAN_SECONDS + 1.0, took   # 2000 fonts at 5 ms: 10 s before
+    TB.budget(took < MV.EMOJI_SCAN_SECONDS + 1.0, took)   # 2000 fonts at 5 ms: 10 s before
     assert MV._EMOJI_DRAWN == [frozenset()]           # nothing found: all stay as written
     assert MV._EMOJI_FAMILY == [""]
 
@@ -89,7 +90,7 @@ def test_sad_opening_a_markdown_file_does_not_hold_the_window_with_slow_fonts(
     dialog = open_markdown_viewer(LocalFS(), str(page))
     took = time.monotonic() - start
     try:
-        assert took < 1.5, took
+        TB.budget(took < 1.5, took)
     finally:
         dialog.close()
         dialog.deleteLater()

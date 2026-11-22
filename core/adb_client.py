@@ -1532,6 +1532,40 @@ class AdbSession(SessionLifecycle):
         except Exception as exc:
             raise self._error(f"ADB push({remote_path})", exc, timeout) from exc
 
+    def push_stream(self, source, remote_path: str) -> None:
+        """Send the open binary file *source* to *remote_path* (mode 0644)
+        as it is: no temporary name - for a fresh private name of the
+        caller's (core.adb_device's APK upload). An exception out of
+        *source* (its Cancel, its size check) drops the connection that
+        carried the half transfer."""
+        _checked(remote_path)
+        timeout = self._transport_timeout
+        try:
+            with self._transfer_channel() as device:
+                device.push(_StreamSource(source), _RawCommand(remote_path), st_mode=_PUSH_MODE,
+                            transport_timeout_s=timeout, read_timeout_s=timeout)
+        except (InterruptedError, ValueError):
+            raise
+        except Exception as exc:
+            raise self._error(f"ADB push({remote_path})", exc, timeout) from exc
+
+    def pull_stream(self, remote_path: str, sink, max_bytes: int) -> None:
+        """Write the device file *remote_path* into the open binary file
+        *sink*; OSError (EFBIG) once more than *max_bytes* arrive - the
+        connection is closed then, so the rest of the file is not read."""
+        _checked(remote_path)
+        timeout = self._transport_timeout
+        try:
+            with self._transfer_channel() as device:
+                device.pull(_RawCommand(remote_path),
+                            _CappedSink(sink, max_bytes, remote_path,
+                                        abort=lambda: _close_quietly(device)),
+                            transport_timeout_s=timeout, read_timeout_s=timeout)
+        except Exception as exc:
+            if isinstance(exc, OSError) and exc.errno == errno.EFBIG:
+                raise
+            raise self._pull_refused(remote_path, exc) from exc
+
     def _commit_push(self, temp: str, remote_path: str) -> None:
         """The complete *temp* becomes *remote_path* (a rename in one
         folder); a folder in the target's place is refused."""
@@ -1914,6 +1948,40 @@ class _PushSource(io.BytesIO):
         if data:
             self._hooks.sent(self.done, self._total, check=False)
         return data
+
+
+class _StreamSource(io.BytesIO):
+    """An open binary file in the shape adb_shell's push reads (a BytesIO;
+    the adb server's push reads any file object)."""
+
+    def __init__(self, fh) -> None:
+        super().__init__()
+        self._fh = fh
+
+    def read(self, n: int | None = -1) -> bytes:  # type: ignore[override]
+        return self._fh.read(n)
+
+
+class _CappedSink(io.BytesIO):
+    """Where adb_shell's pull writes for :meth:`AdbSession.pull_stream`:
+    *fh*, refusing more than *limit* bytes (the connection is closed
+    first, *abort*, so the pull's own clean-up ends at once)."""
+
+    def __init__(self, fh, limit: int, path: str, abort) -> None:
+        super().__init__()
+        self._fh = fh
+        self._limit = int(limit)
+        self._path = path
+        self._abort = abort
+        self.done = 0
+
+    def write(self, data) -> int:  # type: ignore[override]
+        if self.done + len(data) > self._limit:
+            self._abort()
+            raise OSError(errno.EFBIG, f"ADB pull({self._path}): larger than {self._limit} bytes")
+        self._fh.write(data)
+        self.done += len(data)
+        return len(data)
 
 
 @contextlib.contextmanager

@@ -298,7 +298,7 @@ def test_edge_the_write_tools_compared_cover_files_groups_and_commands(root) -> 
     names = set(_write_tools(root))
     assert {"write_file", "remove", "rename", "mkdir", "copy", "chmod"} <= names
     assert {"transfer_move", "archive_extract", "metadata_remove", "encrypt"} <= names
-    assert {"remote_exec", "remote_script"} <= names
+    assert {"remote_exec"} <= names
 
 
 def test_edge_negative_control_without_the_switch_the_same_call_writes(root) -> None:

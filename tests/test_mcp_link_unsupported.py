@@ -42,6 +42,8 @@ def _tool(backend, root, name):
 
 
 def _call(backend, root, name, **args):
+    if name == "hardlink":  # create_link with kind=hard since 0.15.184
+        name, args = "symlink", {**args, "kind": "hard"}
     return _tool(backend, root, name).handler(args, M._ToolContext())
 
 

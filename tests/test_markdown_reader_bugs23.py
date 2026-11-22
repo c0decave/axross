@@ -34,6 +34,7 @@ from tests.test_markdown_reader_bugs11 import pump, until  # noqa: E402
 from tests.test_markdown_reader_bugs20 import _Turns  # noqa: E402
 from tests.test_markdown_reader_bugs22 import (  # noqa: E402,F401 - _closed_after: the fixture, used by name
     PARSERS, _closed_after, _longest_turn, within_turn)
+from tests import markdown_timing as TB  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -78,7 +79,7 @@ def _shown(text: str, full: bool = False) -> str:
     view.resize(900, 700)
     view.show()
     view.render(text)
-    assert until(lambda: view._readable, 30)
+    assert until(lambda: view._readable, TB.READY_SECONDS)
     until(lambda: not view._scheduled, 30)
     shown = view.browser.document().toPlainText()
     view.close()
@@ -140,17 +141,19 @@ def test_sad_closing_the_window_during_an_export_ends_the_export(tmp_path, kind,
     page = tmp_path / "small.md"
     page.write_text("# Hi\n\ntext\n", encoding="utf-8")
     viewer = open_markdown_viewer(LocalFS(), str(page))  # (as axross opens one: deleted when closed)
-    assert until(lambda: viewer.view._readable, 30)
+    assert until(lambda: viewer.view._readable, TB.READY_SECONDS)
     pump(0.2)
-    slow_html, slow_parts = H.export_html, MV.print_parts
-    monkeypatch.setattr(H, "export_html", lambda *a, **k: (time.sleep(1.5), slow_html(*a, **k))[1])
+    slow_html, slow_parts = H.export_html_pieces, MV.print_parts
+    # (markdown-it's Export HTML makes its page a piece at a time: export_html_pieces - 0.16.12)
+    monkeypatch.setattr(H, "export_html_pieces", lambda *a, **k: (time.sleep(1.5), slow_html(*a, **k))[1])
     monkeypatch.setattr(MV, "print_parts", lambda *a, **k: (time.sleep(1.5), slow_parts(*a, **k))[1])
     QTimer.singleShot(100, viewer.close)
     began = time.monotonic()
     target = str(tmp_path / f"page.{kind}")
     made = viewer.export_html(target) if kind == "html" else viewer.export_pdf(target)
     took = time.monotonic() - began
-    assert made == "" and took < 1.2, (made, took)
+    assert made == "", (made, took)
+    TB.budget(took < 1.2, (made, took))
     assert not os.path.exists(target)
     pump(2.0)  # (the worker's result, delivered to no one)
 
@@ -237,7 +240,7 @@ def test_sad_qt_s_own_parser_shows_setext_headings_cut_in_parts_as_headings():
     view.resize(900, 700)
     view.show()
     view.render("".join(f"Heading {n}\n===\n" for n in range(3000)))
-    assert until(lambda: view._readable, 30)
+    assert until(lambda: view._readable, TB.READY_SECONDS)
     view.load_rest_now()
     until(lambda: not view.more() and not view._scheduled, 60)
     document = view.browser.document()
@@ -262,7 +265,7 @@ def test_sad_the_passes_before_qt_s_own_parser_are_linear():
         began = time.monotonic()
         MV._md4c_page(text)
         took = time.monotonic() - began
-        assert took < 8, (text[:10], took)
+        TB.budget(took < 8, (text[:10], took))
 
 
 def test_happy_the_linear_passes_do_what_they_did():

@@ -48,10 +48,11 @@ BUILD_LOCK="$REPO_PACKAGING/requirements-build.txt"
 BUILD_PIN=$(grep -o '^build==[^ ]*' build/requirements-dist-tools.txt)
 printf '%s\ntwine\n' "$BUILD_PIN" > "$OUT_DIR/requirements-build.in"
 BUILD_SHA=$(sha256sum "$OUT_DIR/requirements-build.in" | cut -d' ' -f1)
-# The tests' tool (pytest and what it needs), hashed too, in packaging/requirements-test.txt: the tests run in the
-# environment the sdist and wheel are then built in (--no-isolation) - an unpinned pytest from PyPI was in it.
+# The tests' tools (pytest and what it needs; numpy, which the golden-image tests compare pictures with - without it
+# they skipped), hashed too, in packaging/requirements-test.txt: the tests run in the environment the sdist and
+# wheel are then built in (--no-isolation) - an unpinned pytest from PyPI was in it.
 TEST_LOCK="$REPO_PACKAGING/requirements-test.txt"
-printf 'pytest\n' > "$OUT_DIR/requirements-test.in"
+printf 'pytest\nnumpy\n' > "$OUT_DIR/requirements-test.in"
 TEST_SHA=$(sha256sum "$OUT_DIR/requirements-test.in" | cut -d' ' -f1)
 if [[ "$MODE" == "--check" ]]; then
     # a fresh resolution may pick newer releases; what must hold is the input
@@ -141,8 +142,8 @@ PY
     } > "$BUILD_LOCK"
     echo "locked (releases up to $CUTOFF): $(grep -c '==' "$BUILD_LOCK") pins in $BUILD_LOCK"
     # (preferences: this lock's pins, then the runtime lock's - a package both have keeps the runtime's version, so
-    # installing the tests' tool changes nothing the program runs with)
-    python3 -I - "$TEST_LOCK" "$LOCK" > "$OUT_DIR/test-lock.txt" <<'PY'
+    # installing the tests' tool changes nothing the program runs with - then axross's reviewed ones: numpy)
+    python3 -I - "$TEST_LOCK" "$LOCK" build/requirements-bundle.txt > "$OUT_DIR/test-lock.txt" <<'PY'
 import os, re, sys
 seen, out = set(), []
 for path in sys.argv[1:]:
@@ -165,7 +166,7 @@ PY
         --generate-hashes --index-url https://pypi.org/simple --exclude-newer "$CUTOFF" "${EXCEPTIONS[@]}" \
         --custom-compile-command "scripts/lock_standalone_deps.sh $APP" --quiet --output-file test-lock.txt)
     {
-        echo "# The tests' tool of axross-$APP (pytest and its dependencies) - the CI and the release install it"
+        echo "# The tests' tools of axross-$APP (pytest and its dependencies, numpy) - the CI and the release install them"
         echo "# with --require-hashes, in the environment the sdist and wheel are built in;"
         echo "# input sha256 $TEST_SHA - written by scripts/lock_standalone_deps.sh $APP."
         cat "$OUT_DIR/test-lock.txt"

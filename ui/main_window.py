@@ -942,6 +942,17 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
 
         pane_menu.addSeparator()
 
+        # The active pane's phone, when it is an ADB connection (ui.android_device).
+        self._android_device_action = pane_menu.addAction(tr("Android &Device…"))
+        self._android_device_action.setToolTip(
+            tr("Model, battery, apps, SMS, log and screen of the active pane's phone"))
+        self._android_device_action.triggered.connect(
+            lambda _checked=False: self._open_android_device())
+        self._menu_icon(self._android_device_action, "android")
+        pane_menu.aboutToShow.connect(self._sync_android_device_action)
+
+        pane_menu.addSeparator()
+
         next_pane_action = pane_menu.addAction(tr("&Next Pane\tTab"))
         next_pane_action.triggered.connect(self._cycle_next_pane)
 
@@ -3500,6 +3511,23 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             self._menu_icon(toggle, "mail")
             menu.addAction(toggle)
             self._mail_dock_view_actions.append(toggle)
+
+    def _sync_android_device_action(self) -> None:
+        from ui.android_device import is_android
+
+        pane = getattr(self, "_active_pane", None)
+        self._android_device_action.setEnabled(
+            pane is not None and is_android(getattr(pane, "_backend", None)))
+
+    def _open_android_device(self):
+        """Pane > Android Device…: the window of the active pane's phone."""
+        pane = getattr(self, "_active_pane", None)
+        opener = getattr(pane, "open_android_device", None)
+        if opener is None or opener() is None:
+            self.statusBar().showMessage(
+                tr("The active pane is no Android device (connect one over ADB first)"), 5000)
+            return None
+        return True
 
     def _setup_central(self) -> None:
         self._setup_workspaces()

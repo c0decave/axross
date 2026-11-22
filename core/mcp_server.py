@@ -266,12 +266,13 @@ SERVER_WEBSITE = "https://github.com/c0decave/axross-headless-mcp"
 #: model - a client shows it as the server's own text.
 from core import mcp_names as _mcp_names  # noqa: E402
 from core import mcp_terms as _mcp_terms  # noqa: E402
+from core import adb_device as _adb_device  # noqa: E402
 
 SERVER_INSTRUCTIONS = (
     "axross file tools for the local disk and remote storage.\n"
-    "Start: list_directory lists one folder, walk_tree a tree, get_path_info one entry; "
-    "read_file reads in pages (offset, next_offset). search_content searches contents "
-    "live; search_index queries the offline index that build_index fills.\n"
+    "Start: list_directory (one folder), walk_tree (a tree), get_path_info (one entry); "
+    "read_file reads in pages. search_content searches contents live, search_index the "
+    "offline index build_index fills.\n"
     + "".join(f"\n{heading}:\n" + "".join(f"- {rule}\n" for rule in rules)
               for heading, rules in _mcp_terms.SECTIONS)
 ).rstrip("\n")
@@ -296,6 +297,12 @@ ERR_INVALID_PARAMS = -32602
 ERR_INTERNAL = -32603
 
 MAX_READ_BYTES = 4 * 1024 * 1024  # 4 MiB cap on a single read_file
+#: write_file's write_mode values (replace: the whole file, as before 0.15.184).
+WRITE_MODES = ("replace", "create", "append", "at_offset")
+#: The largest existing file write_file's append and at_offset rewrite: the
+#: file is read, changed and written back through a temp file (atomic, on
+#: every backend that can write), so it is held in memory once.
+MAX_EDIT_FILE_BYTES = 64 * 1024 * 1024
 #: Most entries of a folder moved to another folder whose symlinks are
 #: checked (rename, transfer_move): a relative link points elsewhere from
 #: its new place. A bigger folder is refused.
@@ -522,7 +529,10 @@ def _call_schema(tool) -> dict:
 
 #: Tools whose ``backend`` argument is required when they have one: the
 #: default backend (the local disk) cannot run what they run.
-_BACKEND_REQUIRED = frozenset({"remote_exec", "remote_script"})
+_BACKEND_REQUIRED = frozenset({"remote_exec"})
+#: The adb group's tools: their backend is an opened ADB profile, always named.
+_ADB_TOOLS = frozenset(_adb_device.MUTATING | {
+    d["name"] for d in _adb_device.tool_definitions()})
 
 #: Tools whose list argument ``names`` holds identifiers, not file names.
 _NO_NAME_TWINS = frozenset({"script_api_schema"})
@@ -764,6 +774,19 @@ STREAM_HASH_PROGRESS_EVERY = 4
 # quietly pull a multi-GB VM image through a WAN backend. Callers
 # that really want to hash those can bump ``max_file_bytes`` per-call.
 RECURSIVE_CHECKSUM_MAX_FILE_BYTES = 1 << 30  # 1 GiB
+
+
+def _sorted_children(items):
+    """A folder's entries by name: a walk's order is the same on every call,
+    so its offset continues where the call before stopped."""
+    try:
+        return sorted(items, key=lambda item: str(getattr(item, "name", "") or ""))
+    except TypeError:
+        return list(items)
+
+
+#: The most entries (walk_tree) or matches (search_content) an offset may skip.
+MAX_WALK_OFFSET = 10_000_000
 
 
 def _list_or_note(backend, folder: str, root: str, unreadable: list[dict]):
@@ -2011,6 +2034,8 @@ def _confine_local(backend, backends: dict | None, roots: tuple, *,
 #: for minutes: commands on remote hosts, the user's own LLM, scripts.
 _UNSERIALIZED_GROUPS = frozenset({"exec", "agent"})
 _UNSERIALIZED_TOOLS = frozenset({"script_run"})
+#: Tools that write into this machine's root what they read on another backend.
+_ALSO_LOCAL_TOOLS = frozenset({"export_app", "take_screenshot"})
 #: Tools that change their source too (moved away).
 _MOVING_TOOLS = frozenset({"transfer_move"})
 #: The lock key of this machine's disk.
@@ -2109,6 +2134,9 @@ def _changed_backends(name: str, args, resolve=None) -> list[str]:
 
     if not isinstance(args, dict):
         return [LOCAL_LOCK_KEY]
+    if name in _ALSO_LOCAL_TOOLS:
+        # A device read that writes its result into the MCP root.
+        return sorted({key("backend", args.get("backend")), LOCAL_LOCK_KEY})
     if "dst_backend" in args or "src_backend" in args or name.startswith("transfer_"):
         keys = {key("dst_backend", args.get("dst_backend"))}
         if name in _MOVING_TOOLS:
@@ -2255,7 +2283,8 @@ def _build_tools(
     # The exec group's commands run on remote backends that list_backends
     # names (can_run_commands): it needs the registry as the remote group does.
     exec_served = "exec" in groups and bool(allow_exec) and _exec_allowed_by_policy()
-    if remote_registry is None and ("remote" in groups or exec_served):
+    # The adb group works on opened ADB profiles: it needs the registry too.
+    if remote_registry is None and ("remote" in groups or "adb" in groups or exec_served):
         remote_registry = _groups.RemoteRegistry()
     if remote_registry is not None:
         backends = dict(backends or {})
@@ -2793,6 +2822,7 @@ def _build_tools(
         entries = [e for e in entries if _in_root(e.path)]
         more = len(entries) > offset + limit or not scanned_all
         entries = entries[offset:offset + limit]
+        next_offset = offset + len(entries) if more and entries else None
         if entries:
             indexed = True
         else:
@@ -2814,6 +2844,7 @@ def _build_tools(
             ],
             "indexed": indexed,
             "truncated": more,
+            "next_offset": next_offset,
         }
 
     def _walk(args, ctx):
@@ -2832,31 +2863,43 @@ def _build_tools(
         # An explicit 0 is a depth (it acts like 1), not "use the default".
         max_depth = 4 if args.get("max_depth") is None else int(args["max_depth"])
         max_entries = int(args.get("max_entries") or 1000)
-        if max_depth < 0 or max_entries <= 0:
-            raise ValueError("walk: max_depth must be ≥0 and max_entries > 0")
-        if max_depth > MAX_TREE_DEPTH or max_entries > MAX_WALK_ENTRIES:
-            raise ValueError(f"walk: max_depth must be ≤ {MAX_TREE_DEPTH} and max_entries "
-                             f"≤ {MAX_WALK_ENTRIES}")
+        offset = 0 if args.get("offset") is None else int(args["offset"])
+        if max_depth < 0 or max_entries <= 0 or offset < 0:
+            raise ValueError("walk: max_depth and offset must be ≥0 and max_entries > 0")
+        if max_depth > MAX_TREE_DEPTH or max_entries > MAX_WALK_ENTRIES \
+                or offset > MAX_WALK_OFFSET:
+            raise ValueError(f"walk: max_depth must be ≤ {MAX_TREE_DEPTH}, max_entries "
+                             f"≤ {MAX_WALK_ENTRIES} and offset ≤ {MAX_WALK_OFFSET}")
         entries: list[dict] = []
         unreadable: list[dict] = []
         depth_cut = False  # a folder at max_depth was listed but not entered
+        more = False  # an entry past max_entries was seen
+        skipped = 0  # entries left out for the offset
         queue: list[tuple[str, int]] = [(path, 0)]
-        while queue and len(entries) < max_entries:
+        while queue and not more:
             ctx.check_cancel()
             cur, depth = queue.pop(0)
             children = _list_or_note(backend, cur, path, unreadable)
             if children is None:
                 continue
-            for child in children:
-                if len(entries) >= max_entries:
-                    break
+            for child in _sorted_children(children):
                 name = getattr(child, "name", "")
                 if not name or name in (".", ".."):
                     continue
                 full = _safe_child_path(backend, cur, name)
                 if full is None:
                     continue
+                if len(entries) >= max_entries:
+                    more = True
+                    break
                 is_dir = bool(getattr(child, "is_dir", False))
+                if is_dir and depth + 1 < max_depth:
+                    queue.append((full, depth + 1))
+                elif is_dir:
+                    depth_cut = True
+                if skipped < offset:
+                    skipped += 1
+                    continue
                 entries.append(
                     {
                         "path": full,
@@ -2868,10 +2911,6 @@ def _build_tools(
                                      if getattr(child, "modified", None) else None),
                     }
                 )
-                if is_dir and depth + 1 < max_depth:
-                    queue.append((full, depth + 1))
-                elif is_dir:
-                    depth_cut = True
                 if len(entries) % WALK_PROGRESS_EVERY == 0:
                     ctx.check_cancel()
                     ctx.progress(
@@ -2879,14 +2918,17 @@ def _build_tools(
                         total=None,  # max_entries is a cap, not the count
                         message=f"walked {len(entries)} entries @ {cur}",
                     )
-        # truncated: a limit cut the tree - max_entries, or max_depth (a
-        # folder there was not entered); complete: nothing cut or left out.
-        truncated = (len(entries) >= max_entries and bool(queue)) or depth_cut
+        # truncated: a limit cut the tree - max_entries (more entries came),
+        # or max_depth (a folder there was not entered); complete: nothing
+        # cut or left out. next_offset continues after max_entries.
+        truncated = more or depth_cut
         return {
             "entries": entries,
             "truncated": truncated,
             "unreadable": unreadable,
             "complete": not truncated and not unreadable,
+            "offset": offset,
+            "next_offset": offset + len(entries) if more else None,
         }
 
     def _recursive_checksum(args, ctx):
@@ -3194,7 +3236,7 @@ def _build_tools(
                 "match; none gives every indexed entry. Pages with offset and max_results.\n"
                 "Returns: {entries: [{backend_id, path, name, size, is_dir, modified}], "
                 "indexed (false: no index yet - no entries may mean that), truncated (more "
-                "after this page)}."
+                "after this page), next_offset (null: no further page)}."
             ),
             schema={
                 "type": "object",
@@ -3233,13 +3275,14 @@ def _build_tools(
                 "Use when: you need every file and folder below a path.\n"
                 "Instead: list_directory for one level; search_index for the faster, maybe "
                 "stale index; search_content for contents.\n"
-                "Behavior: read-only. Symlinked folders are listed, not entered. Hitting "
-                "max_entries, or a folder at max_depth left unentered, sets truncated (no "
-                "cursor: rerun on a subfolder); an unlistable subfolder goes to "
+                "Behavior: read-only; hidden entries included, each folder's by name. "
+                "Symlinked folders are listed, not entered. Past max_entries: truncated, and "
+                "next_offset for the next page. A folder "
+                "at max_depth left unentered sets truncated; an unlistable one goes to "
                 "unreadable.\n"
                 "Returns: {entries: [{path, name, is_dir, is_link, size, modified}], "
-                "truncated, unreadable: [{path, error}], complete (false when anything was "
-                "cut or unread)}."
+                "truncated, unreadable: [{path, error}], complete (nothing cut or unread), "
+                "offset, next_offset}."
             ),
             schema={
                 "type": "object",
@@ -3251,6 +3294,11 @@ def _build_tools(
                                     "default": 1000,
                                     "description": "Most entries to return (files and "
                                                    "folders together)."},
+                    "offset": {"type": "integer", "minimum": 0, "maximum": MAX_WALK_OFFSET,
+                               "default": 0,
+                               "description": "Entries to skip, for the next page: the "
+                                              "previous call's next_offset (the tree is "
+                                              "walked again from path)."},
                 },
                 "required": ["path"],
             },
@@ -3308,7 +3356,16 @@ def _build_tools(
         if not path:
             raise ValueError("list_file_versions requires a path")
         path = _scope_path(path, backend)
-        versions = backend.list_versions(path)
+        # Newest first, the current one before an older one of the same
+        # time; an undated version last (the backend's order among them).
+        def newest_first(version):
+            try:
+                when = float(getattr(version, "modified", None).timestamp())
+            except (AttributeError, TypeError, ValueError, OverflowError, OSError):
+                when = None
+            return (when is None, -(when or 0.0), not getattr(version, "is_current", False))
+
+        versions = sorted(backend.list_versions(path), key=newest_first)
         return [
             {
                 "version_id": getattr(v, "version_id", ""),
@@ -3402,9 +3459,11 @@ def _build_tools(
         max_depth = 2 if args.get("max_depth") is None else int(args["max_depth"])
         max_matches = int(args.get("max_matches") or 100)
         max_matches = min(max_matches, MAX_GREP_MATCHES)
-        if max_depth < 0 or max_matches <= 0:
+        offset = 0 if args.get("offset") is None else int(args["offset"])
+        if max_depth < 0 or max_matches <= 0 or not 0 <= offset <= MAX_WALK_OFFSET:
             raise ValueError(
-                "grep: max_depth must be ≥0 and max_matches > 0",
+                f"grep: max_depth must be ≥0, max_matches > 0 and offset 0 to "
+                f"{MAX_WALK_OFFSET}",
             )
         if max_depth > MAX_TREE_DEPTH:
             raise ValueError(f"grep: max_depth must be ≤ {MAX_TREE_DEPTH}")
@@ -3434,9 +3493,10 @@ def _build_tools(
             return matchers[0].matching_lines(text, limit)
 
         try:
+            skip = [offset]  # matches still to leave out for the offset
             files_scanned = _grep_walk(
                 backend, _matching_lines, scope, refuse_secret, start, max_depth, max_matches,
-                matches, unreadable, queue, ctx, include, depth_cut,
+                matches, unreadable, queue, ctx, include, depth_cut, skip,
             )
         except regex_worker.RegexTimeout as exc:
             raise ValueError(
@@ -3449,20 +3509,25 @@ def _build_tools(
         finally:
             for matcher in matchers:
                 matcher.close()
-        truncated = len(matches) >= max_matches or bool(depth_cut)
+        full_page = len(matches) >= max_matches
+        truncated = full_page or bool(depth_cut)
         return {
             "matches": matches,
             "files_scanned": files_scanned,
             "truncated": truncated,
             "unreadable": unreadable,
             "complete": not truncated and not unreadable,
+            "offset": offset,
+            "next_offset": offset + len(matches) if full_page else None,
         }
 
     def _grep_walk(backend, matching_lines, scope, refuse_secret, start, max_depth,
                    max_matches, matches, unreadable, queue, ctx, include=None,
-                   depth_cut=None) -> int:
+                   depth_cut=None, skip=None) -> int:
         """grep's walk: fills *matches* / *unreadable*, returns the number
-        of files scanned. *matching_lines(text, limit)* runs the pattern."""
+        of files scanned. *matching_lines(text, limit)* runs the pattern.
+        *skip* ``[n]``: the first n matches are left out (the offset)."""
+        skip = skip if skip is not None else [0]
         files_scanned = 0
         while queue and len(matches) < max_matches:
             ctx.check_cancel()
@@ -3470,7 +3535,7 @@ def _build_tools(
             children = _list_or_note(backend, cur, start, unreadable)
             if children is None:
                 continue
-            for child in children:
+            for child in _sorted_children(children):
                 if len(matches) >= max_matches:
                     break
                 name = getattr(child, "name", "")
@@ -3519,11 +3584,14 @@ def _build_tools(
                 if isinstance(raw, str):
                     raw = raw.encode("utf-8", errors="replace")
                 text = raw.decode("utf-8", errors="replace")
-                hits = matching_lines(text, max_matches - len(matches))
+                hits = matching_lines(text, skip[0] + max_matches - len(matches))
                 if not hits:
                     continue
                 lines = text.splitlines()
                 for lineno in hits:
+                    if skip[0] > 0:
+                        skip[0] -= 1
+                        continue
                     matches.append(
                         {
                             "path": full,
@@ -3626,9 +3694,9 @@ def _build_tools(
                     "quantifiers or slower than 5 s on a file are refused (ReDoS). Secret files "
                     "go to unreadable.\n"
                     "Returns: {matches: [{path, line_no, line}], files_scanned, truncated "
-                    "(max_matches, or a folder at max_depth not searched), unreadable, "
-                    "complete}. An empty result with complete=false does not mean the "
-                    "pattern is absent; when truncated, narrow path or include."
+                    "(max_matches, or a folder at max_depth unsearched), unreadable, "
+                    "complete, offset, next_offset (the page after max_matches)}. An empty "
+                    "result with complete=false does not mean the pattern is absent."
                 ),
                 schema={
                     "type": "object",
@@ -3652,6 +3720,11 @@ def _build_tools(
                         "max_matches": {"type": "integer", "minimum": 1,
                                         "maximum": MAX_GREP_MATCHES, "default": 100,
                                         "description": "Most matching lines to return."},
+                        "offset": {"type": "integer", "minimum": 0,
+                                   "maximum": MAX_WALK_OFFSET, "default": 0,
+                                   "description": "Matches to skip, for the next page: the "
+                                                  "previous call's next_offset (the files "
+                                                  "are searched again, in the same order)."},
                     },
                     "required": ["pattern"],
                 },
@@ -3660,12 +3733,14 @@ def _build_tools(
             _Tool(
                 name="list_versions",
                 description=(
-                    "List the stored older versions of one file.\n"
+                    "List the stored versions of one file, newest first, the current one "
+                    "marked is_current.\n"
                     "Use when: you need an earlier state on a versioning backend (S3, Dropbox, "
-                    "Drive, Azure, WebDAV, Git).\n"
-                    "Instead: read_file_version to read one; read_file for the current one.\n"
-                    "Behavior: read-only. Unsorted (the backend's order). Backends without "
-                    "versions, the local disk too, give [] (read_file_version fails there).\n"
+                    "Drive, OneDrive, Azure, WebDAV, Git).\n"
+                    "Instead: read_file_version to read one; restore_file_version (needs "
+                    "--mcp-write) to make one current.\n"
+                    "Behavior: read-only. Undated versions come last. A backend without "
+                    "versions, the local disk too, gives [] (read_file_version fails there).\n"
                     "Returns: a JSON array of {version_id, size, modified (ISO 8601 or null), "
                     "is_current, label (may be empty)}; structuredContent: {versions}."
                 ),
@@ -3731,6 +3806,63 @@ def _build_tools(
 
     if allow_write:
 
+        def _existing_bytes(backend, safe: str) -> bytes:
+            """The whole current content of *safe* (append, at_offset): at
+            most MAX_EDIT_FILE_BYTES, else ValueError before anything is
+            written."""
+            try:
+                size = int(getattr(backend.stat(safe), "size", 0) or 0)
+            except FileNotFoundError:
+                raise FileNotFoundError(errno.ENOENT, "No such file (append and at_offset "
+                                        "change an existing file)", safe) from None
+            if backend.is_dir(safe):
+                raise IsADirectoryError(errno.EISDIR, "Is a directory", safe)
+            if size > MAX_EDIT_FILE_BYTES:
+                raise ValueError(f"write_file: {safe} has {size} bytes; append and at_offset "
+                                 f"rewrite files of at most {MAX_EDIT_FILE_BYTES >> 20} MiB")
+            with backend.open_read(safe) as fh:
+                old, more = _read_capped_stream(fh, MAX_EDIT_FILE_BYTES)
+            if more:
+                raise ValueError(f"write_file: {safe} grew past "
+                                 f"{MAX_EDIT_FILE_BYTES >> 20} MiB while it was read")
+            return old
+
+        def _create_only(backend, safe: str, data: bytes) -> None:
+            """*data* as the new file *safe*, never over anything there: a
+            temp file renamed without replacing (FileExistsError when the
+            name is taken, also when it was taken since the check). A
+            remote backend without such a rename checks, then writes."""
+            import os as _os
+            import posixpath as _pp
+            import secrets as _secrets
+
+            if backend.exists(safe):
+                raise FileExistsError(errno.EEXIST, "File exists", safe)
+            if _is_remote(backend) or not (hasattr(backend, "rename_no_replace")
+                                           and hasattr(backend, "create_new")):
+                from core.atomic_io import atomic_write
+
+                atomic_write(backend, safe, data, new_mode=0o600)
+                return
+            from core import partials
+
+            folder, name = _pp.split(safe.replace("\\", "/"))
+            tmp = backend.join(folder or "/", f".{name[:80]}.axross-part-{_os.getpid()}-"
+                                              f"{_secrets.token_hex(4)}")
+            record = partials.track(tmp)
+            try:
+                with backend.create_new(tmp, 0o600) as fh:
+                    fh.write(data)
+                backend.rename_no_replace(tmp, safe)
+            except BaseException:
+                try:
+                    backend.remove(tmp)
+                except OSError:
+                    pass
+                raise
+            finally:
+                partials.done(record)
+
         def _write_file(args, ctx):
             backend = _resolve_backend(args)
             path = args.get("path")
@@ -3740,12 +3872,25 @@ def _build_tools(
                 raise ValueError(
                     "write_file requires path and exactly one of content (text) or content_b64"
                 )
+            how = args.get("write_mode") or "replace"
+            if how not in WRITE_MODES:
+                raise ValueError(f"write_file: write_mode must be one of {', '.join(WRITE_MODES)}")
+            offset = args.get("offset")
+            if how == "at_offset":
+                if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+                    raise ValueError("write_file: write_mode at_offset needs offset, a byte "
+                                     "position of 0 or more")
+            elif offset is not None:
+                raise ValueError("write_file: offset is only for write_mode at_offset")
             # Audit "attempt" BEFORE the backend call. A subsequent
             # process death between the write and the "ok" entry
             # still leaves a trace in the audit log — operators see
             # an "attempt" without matching "ok" and know the
             # outcome is unknown.
-            _audit("write_file", "attempt", path=path)
+            fields = {"write_mode": how} if how != "replace" else {}
+            if offset is not None:
+                fields["offset"] = offset
+            _audit("write_file", "attempt", path=path, **fields)
             try:
                 safe = _write_path(path, backend)
                 _refuse_root(safe, backend, "write_file")
@@ -3755,15 +3900,29 @@ def _build_tools(
                     data = content.encode("utf-8")
                 else:
                     data = _strict_b64(content_b64, "content_b64")
+                if how == "create":
+                    _create_only(backend, safe, data)
+                    _audit("write_file", "ok", path=safe, size=len(data), **fields)
+                    return {"size": len(data), "file_size": len(data)}
+                whole = data
+                if how in ("append", "at_offset"):
+                    old = _existing_bytes(backend, safe)
+                    if how == "append":
+                        whole = old + data
+                    elif offset > len(old):
+                        raise ValueError(f"write_file: offset {offset} is past the end of the "
+                                         f"file ({len(old)} bytes); append adds at the end")
+                    else:
+                        whole = old[:offset] + data + old[offset + len(data):]
                 new_file = not _is_remote(backend) and not backend.exists(safe)
                 confined_write = getattr(backend, "confined_atomic_write", None)
                 if confined_write is not None:
                     # Temp file + rename relative to the folder's descriptor.
-                    confined_write(safe, data)
+                    confined_write(safe, whole)
                 else:
                     from core.atomic_io import atomic_write
 
-                    atomic_write(backend, safe, data)
+                    atomic_write(backend, safe, whole)
                 if new_file:
                     # A file the server creates is the user's alone (mode
                     # 0600), as the group tools' files; an existing file
@@ -3773,10 +3932,50 @@ def _build_tools(
                     except (OSError, NotImplementedError):
                         pass
             except BaseException as exc:
-                _audit("write_file", "refused", path=path, error=type(exc).__name__)
+                _audit("write_file", "refused", path=path, error=type(exc).__name__, **fields)
                 raise
-            _audit("write_file", "ok", path=safe, size=len(data))
-            return {"size": len(data)}
+            _audit("write_file", "ok", path=safe, size=len(data), **fields)
+            return {"size": len(data), "file_size": len(whole)}
+
+        def _restore_version(args, ctx):
+            backend = _resolve_backend(args)
+            path = args.get("path")
+            version_id = args.get("version_id")
+            if not path or not isinstance(version_id, str) or not version_id:
+                raise ValueError("restore_file_version requires path + version_id")
+            _audit("restore_version", "attempt", path=path, version_id=version_id)
+            try:
+                safe = _write_path(path, backend)
+                _refuse_root(safe, backend, "restore_file_version")
+
+                class _Reader:
+                    """The version's bytes, with progress and the call's cancel."""
+
+                    def __init__(self, fh):
+                        self._fh, self.done = fh, 0
+
+                    def read(self, size=-1):
+                        ctx.check_cancel()
+                        chunk = self._fh.read(size)
+                        self.done += len(chunk or b"")
+                        ctx.progress(float(self.done), None, f"{self.done} bytes restored")
+                        return chunk
+
+                with backend.open_version_read(safe, version_id) as fh:
+                    reader = _Reader(fh)
+                    confined_stream = getattr(backend, "confined_atomic_write_stream", None)
+                    if confined_stream is not None:
+                        written = confined_stream(safe, reader)
+                    else:
+                        from core.atomic_io import atomic_write_stream
+
+                        written = atomic_write_stream(backend, safe, reader)
+            except BaseException as exc:
+                _audit("restore_version", "refused", path=path, version_id=version_id,
+                       error=type(exc).__name__)
+                raise
+            _audit("restore_version", "ok", path=safe, version_id=version_id, size=written)
+            return {"path": safe, "version_id": version_id, "size": written}
 
         def _mkdir(args, ctx):
             backend = _resolve_backend(args)
@@ -4200,6 +4399,14 @@ def _build_tools(
                 return resolved
             return target
 
+        def _link(args, ctx):
+            """create_link: a symbolic link, or with kind=hard a hard link."""
+            kind = args.get("kind") or "symbolic"
+            if kind not in ("symbolic", "hard"):
+                raise ValueError("create_link: kind must be symbolic or hard")
+            rest = {k: v for k, v in args.items() if k != "kind"}
+            return _hardlink(rest, ctx) if kind == "hard" else _symlink(rest, ctx)
+
         def _symlink(args, ctx):
             backend = _resolve_backend(args)
             target = args.get("target")
@@ -4212,7 +4419,7 @@ def _build_tools(
             # folder, renamed over a folder another call had just checked,
             # led that call's write there (core.confined_fs refuses that
             # now as well). The target may be dangling.
-            _audit("symlink", "attempt", target=target, link_path=link_path)
+            _audit("symlink", "attempt", kind="symbolic", target=target, link_path=link_path)
             try:
                 # An entry: a link at a missing ~/.config would lead every
                 # later write around ~/.config/autostart.
@@ -4229,7 +4436,9 @@ def _build_tools(
                     error=type(exc).__name__,
                 )
                 raise
-            _audit("symlink", "ok", target=made, link_path=safe_link)
+            _audit("symlink", "ok", kind="symbolic", target=made, link_path=safe_link)
+            # The result of create_symlink before 0.15.184, kept: a former
+            # name's caller gets what it always got.
             return {"ok": True} if made == target else {"ok": True, "target": made}
 
         def _hardlink(args, ctx):
@@ -4243,7 +4452,7 @@ def _build_tools(
             # resolve later. Allowing an outside-root target would
             # create an inside-root alias to data the MCP server was
             # not meant to expose, so cap both ends.
-            _audit("hardlink", "attempt", target=target, link_path=link_path)
+            _audit("hardlink", "attempt", kind="hard", target=target, link_path=link_path)
             try:
                 # A second name of a secret file is the secret.
                 safe_target = _refuse_secret(_write_path(target, backend), backend)
@@ -4259,7 +4468,7 @@ def _build_tools(
                     error=type(exc).__name__,
                 )
                 raise
-            _audit("hardlink", "ok", target=target, link_path=safe_link)
+            _audit("hardlink", "ok", kind="hard", target=target, link_path=safe_link)
             return {"ok": True}
 
         def _chmod(args, ctx):
@@ -4338,38 +4547,88 @@ def _build_tools(
                 _Tool(
                     name="write_file",
                     description=(
-                        "Create a file or replace its whole contents with text or bytes.\n"
-                        "Use when: saving content to one file; to edit, read_file, change, write "
-                        "back. It always replaces: when the file must not exist yet, check with "
-                        "get_path_info first.\n"
-                        "Instead: copy_file to duplicate a file; create_directory for folders.\n"
-                        f"Behavior: destructive - replaces the file. Atomic on the "
-                        "local disk (temp file, rename): a replaced file keeps its mode, a new one "
-                        "gets 0600. The parent must exist; a symlink at path is followed, a folder "
-                        "fails. The 16 MiB limit is the whole request, so content_b64 carries about "
-                        f"12 MiB.\n"
-                        "Returns: {size: bytes written}."
+                        "Create a file, replace its contents, append to it, or overwrite bytes "
+                        "at an offset.\n"
+                        "Use when: saving one file, whole or in part (see write_mode).\n"
+                        "Instead: copy_file to duplicate a file; restore_file_version for an "
+                        "older version; create_directory for folders.\n"
+                        "Behavior: destructive - replace overwrites the file. create fails with "
+                        "'File exists' if path exists. append and at_offset rewrite an existing "
+                        f"file of at most {MAX_EDIT_FILE_BYTES >> 20} MiB through a temp file; an "
+                        "offset past its end fails. Atomic on the local disk: a replaced file "
+                        "keeps its mode, a new one gets 0600; a failed write leaves the old "
+                        "file where the backend renames (TFTP writes in place). The parent "
+                        "must exist; a symlink at path is followed. Each "
+                        "append adds again.\n"
+                        "Returns: {size (bytes written), file_size (the file's size after)}."
                     ),
                     schema={
                         "type": "object",
                         "properties": {
-                            "path": _path_spec("The file to create or replace"),
+                            "path": _path_spec("The file to write"),
                             "content": {
                                 "type": "string",
                                 "description": "The new content as text, stored UTF-8 "
-                                               "encoded. Required unless content_b64 is "
-                                               "given; not both.",
+                                               "encoded (the request is limited to 16 MiB). "
+                                               "Required unless content_b64 is given; not "
+                                               "both.",
                             },
                             "content_b64": {
                                 "type": "string",
                                 "contentEncoding": "base64",
                                 "description": "content as base64 of the raw bytes, for "
-                                               "binary files; give this or content.",
+                                               "binary files; about 12 MiB at most.",
+                            },
+                            "write_mode": {
+                                "type": "string",
+                                "enum": list(WRITE_MODES),
+                                "default": "replace",
+                                "description": "replace: the whole file (created if missing); "
+                                               "create: a new file only; append: add at the "
+                                               "end of an existing file; at_offset: overwrite "
+                                               "from offset on, growing the file if the content "
+                                               "runs past its end.",
+                            },
+                            "offset": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "description": "Byte position where at_offset starts writing, "
+                                               "at most the file's size. Needed by write_mode "
+                                               "at_offset; omit it for the other modes.",
                             },
                         },
                         "required": ["path"],
                     },
                     handler=_write_file,
+                    write=True,
+                ),
+                _Tool(
+                    name="restore_version",
+                    description=(
+                        "Make an older version of a file its current content again, on a "
+                        "backend that keeps versions.\n"
+                        "Use when: undoing a change on S3, Dropbox, Drive, OneDrive, Azure, "
+                        "WebDAV or Git; pick the version_id with list_file_versions.\n"
+                        "Instead: read_file_version to look first; write_file to write new "
+                        "content.\n"
+                        "Behavior: destructive - the current content is replaced; on a "
+                        "versioning backend the old current content stays a version and the "
+                        "restore adds a new one, so a repeat adds another. Streamed through a "
+                        "temp file and renamed where the backend can. Backends without versions "
+                        "(the local disk too) fail.\n"
+                        "Returns: {path, version_id, size (bytes restored)}."
+                    ),
+                    schema={
+                        "type": "object",
+                        "properties": {
+                            "path": _path_spec("The file to restore"),
+                            "version_id": {"type": "string", "minLength": 1,
+                                           "description": "The version_id of an entry from "
+                                                          "list_file_versions for this path."},
+                        },
+                        "required": ["path", "version_id"],
+                    },
+                    handler=_restore_version,
                     write=True,
                 ),
                 _Tool(
@@ -4518,53 +4777,40 @@ def _build_tools(
                 _Tool(
                     name="symlink",
                     description=(
-                        "Create a symbolic link at link_path pointing to target.\n"
-                        "Use when: a second path should lead to a file or folder.\n"
-                        "Instead: create_hardlink for a second name of one file; copy_file for a "
-                        "copy.\n"
-                        f"Behavior: only adds. A repeat fails with 'File exists'. Locally "
-                        "the target must also stay inside the root; it may dangle. Local disk, SFTP "
-                        f"and NFS only.\n"
-                        "Returns: {ok: true}, plus target when the one stored differs."
+                        "Create a link at link_path: a symbolic link to target, or with "
+                        "kind=hard a second name of the file target.\n"
+                        "Use when: a second path should lead to a file or folder (symbolic), or "
+                        "one file must appear under two names on one file system (hard).\n"
+                        "Instead: copy_file for an independent copy; move_path to rename.\n"
+                        f"Behavior: only adds. A repeat fails with 'File exists'. Symbolic: "
+                        "target is stored as given and may dangle; locally it must stay inside "
+                        "the root. Hard: target must be an existing file inside the root. "
+                        f"{_SECRET_TAG} Local disk, SFTP and NFS only; elsewhere it fails, "
+                        "e.g. 'S3Session has no symbolic links'.\n"
+                        "Returns: {ok: true}, plus target when the symbolic link stored "
+                        "another one."
                     ),
                     schema={
                         "type": "object",
                         "properties": {
                             "target": {"type": "string", "minLength": 1,
-                                       "description": "What the link points to: absolute, or "
-                                                      "relative to the link's folder, e.g. "
-                                                      "'../shared/data.csv'. SFTP and NFS "
-                                                      "store it as given."},
+                                       "description": "kind symbolic: what the link points "
+                                                      "to, absolute or relative to the link's "
+                                                      "folder, e.g. '../shared/data.csv' "
+                                                      "(SFTP and NFS store it as given). kind "
+                                                      "hard: the existing file, absolute or "
+                                                      "relative to the MCP root."},
                             "link_path": _path_spec("The new link's own path; must not exist "
                                                     "yet"),
+                            "kind": {"type": "string", "enum": ["symbolic", "hard"],
+                                     "default": "symbolic",
+                                     "description": "symbolic: a link by path (folders too, "
+                                                    "across file systems); hard: another "
+                                                    "name of the same file."},
                         },
                         "required": ["target", "link_path"],
                     },
-                    handler=_symlink,
-                    write=True,
-                ),
-                _Tool(
-                    name="hardlink",
-                    description=(
-                        "Create a hard link: a second name for an existing file.\n"
-                        "Use when: one file must appear under two paths.\n"
-                        "Instead: create_symlink for folders or across file systems; copy_file for "
-                        "a copy.\n"
-                        f"Behavior: only adds. A repeat fails with 'File exists'. One file "
-                        f"system; local disk, SFTP and NFS only. {_SECRET_TAG}\n"
-                        "Returns: {ok: true}."
-                    ),
-                    schema={
-                        "type": "object",
-                        "properties": {
-                            "target": _path_spec("The existing file to link to; unlike "
-                                                 "symlink's target it is resolved like any "
-                                                 "path"),
-                            "link_path": _path_spec("The new name; must not exist yet"),
-                        },
-                        "required": ["target", "link_path"],
-                    },
-                    handler=_hardlink,
+                    handler=_link,
                     write=True,
                 ),
                 _Tool(
@@ -5005,8 +5251,8 @@ def _build_tools(
                     "can_run_commands": {
                         "type": "boolean",
                         "default": False,
-                        "description": "true: only the backends run_backend_command and "
-                        "run_backend_script can use (commands not null).",
+                        "description": "true: only the backends run_backend_command "
+                        "can use (commands not null).",
                     }} if exec_served else {}},
                 handler=_list_backends,
                 group="remote" if remote_registry is not None else "core",
@@ -5024,7 +5270,15 @@ def _build_tools(
                     "description": "Backend id from list_backends; omit for the default.",
                 },
             )
-            if tool.name in _BACKEND_REQUIRED:
+            if tool.name in _ADB_TOOLS:
+                # The default backend is no phone: say which one.
+                props["backend"] = {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Backend id of an opened ADB profile, e.g. 'profile:phone'.",
+                }
+                tool.schema["required"] = [*tool.schema.get("required", []), "backend"]
+            elif tool.name in _BACKEND_REQUIRED:
                 # The default backend runs no commands: say which one.
                 props["backend"] = {
                     "type": "string",
@@ -5061,8 +5315,11 @@ def _build_tools(
     from core.previews import preview_available
 
     if not preview_available():
-        # Neither Qt's image classes nor Pillow: preview could only fail.
+        # Neither Qt's image classes nor Pillow: preview could only fail -
+        # and no other tool points at it.
         tools = [t for t in tools if t.name != "preview"]
+        for tool in tools:
+            tool.description = tool.description.replace("; render_preview for an image", "")
     def _lock_resolve(kind, value):
         if kind == "backend":
             return _resolve_backend({"backend": value})
@@ -5122,14 +5379,14 @@ _TOOL_HINTS: dict[str, tuple[str, bool, bool, bool, bool]] = {
     "open_version_read": ("Read older file version", True, False, True, False),
     "list_backends": ("List backends", True, False, True, False),
     # write (--mcp-write)
-    "write_file": ("Write file", False, True, True, False),
+    "write_file": ("Write file", False, True, False, False),
+    "restore_version": ("Restore file version", False, True, False, False),
     "mkdir": ("Create folder", False, False, True, False),
     "remove": ("Delete file or folder", False, True, True, False),
     "rename": ("Move or rename", False, True, True, False),
     "copy": ("Copy file", False, False, True, False),
     "bulk_copy": ("Copy folder tree", False, True, True, False),
-    "symlink": ("Create symbolic link", False, False, True, False),
-    "hardlink": ("Create hard link", False, False, True, False),
+    "symlink": ("Create link", False, False, True, False),
     "chmod": ("Change permissions", False, True, True, False),
     # scripts (--mcp-allow-scripts)
     "script_list": ("List scripts", True, False, True, False),
@@ -5146,6 +5403,8 @@ _TOOL_HINTS: dict[str, tuple[str, bool, bool, bool, bool]] = {
     "duplicates_scans": ("List duplicate scans", True, False, True, False),
     "duplicates_groups": ("List duplicate groups", True, False, True, False),
     "duplicates_dedupe": ("Move duplicates to trash", False, True, True, False),
+    "trash_list": ("List the axross trash", True, False, True, False),
+    "trash_restore": ("Restore from the trash", False, False, True, False),
     "pack_formats": ("List archive formats", True, False, True, False),
     "pack": ("Create archive", False, False, False, False),
     "archive_list": ("List archive members", True, False, True, False),
@@ -5161,9 +5420,13 @@ _TOOL_HINTS: dict[str, tuple[str, bool, bool, bool, bool]] = {
     "remote_open": ("Open remote profile", False, False, True, True),
     "remote_close": ("Close remote profile", False, False, True, True),
     "remote_exec": ("Run backend command", False, True, False, True),
-    "remote_script": ("Run backend script", False, True, False, True),
     "agent_run": ("Ask the user's LLM", False, False, False, True),
+    "llm_profiles": ("List LLM profiles", True, False, True, False),
     "extensions_list": ("List extensions", True, False, True, False),
+    # adb (core.adb_device defines them; take_screenshot with out is a write)
+    **{d["name"]: (d["title"], d["annotations"]["readOnlyHint"],
+                   d["annotations"]["destructiveHint"], d["annotations"]["idempotentHint"], True)
+       for d in _adb_device.tool_definitions()},
 }
 
 _BOOLEAN = {"type": "boolean"}
@@ -5238,8 +5501,12 @@ _OUTPUT_SCHEMAS: dict[str, dict] = {
                 },
             },
             "complete": {"type": "boolean"},
+            "offset": {"type": "integer", "minimum": 0, "description": "entries skipped"},
+            "next_offset": {"type": ["integer", "null"], "minimum": 0,
+                            "description": "the offset of the next page; null: none"},
         },
-        "required": ["entries", "truncated", "unreadable", "complete"],
+        "required": ["entries", "truncated", "unreadable", "complete", "offset",
+                     "next_offset"],
     },
 }
 
@@ -5258,6 +5525,8 @@ _EXEC_RESULT = _object(
 _UNREADABLE = {"type": "array", "items": _object({"path": _STR, "error": _STR}, "path", "error")}
 _STRINGS = {"type": "array", "items": _STR}
 _ISO = {"type": ["string", "null"], "description": "ISO 8601, or null"}
+_NEXT_OFFSET = {"type": ["integer", "null"], "minimum": 0,
+                "description": "the offset of the next page; null: none"}
 _REPORT = _object({
     "path": _STR, "name": _STR, "kind": {"type": ["string", "null"]},
     "size": {"type": ["integer", "null"]}, "error": _STR, "truncated": _BOOLEAN,
@@ -5329,10 +5598,20 @@ _OUTPUT_SCHEMAS.update({
             "path": _STR, "line_no": {"type": "integer", "minimum": 1}, "line": _STR},
             "path", "line_no", "line")},
         "files_scanned": _INT0, "truncated": _BOOLEAN, "unreadable": _UNREADABLE,
-        "complete": _BOOLEAN}, "matches", "files_scanned", "truncated", "unreadable", "complete"),
+        "complete": _BOOLEAN, "offset": _INT0,
+        "next_offset": {"type": ["integer", "null"], "minimum": 0,
+                        "description": "the offset of the next page; null: none"}},
+        "matches", "files_scanned", "truncated", "unreadable", "complete", "offset",
+        "next_offset"),
     "open_version_read": None,  # read_file's (set below)
-    "write_file": _object({"size": _INT0}, "size"),
-    "mkdir": _OK, "remove": _OK, "rename": _OK, "copy": _OK, "hardlink": _OK, "chmod": _OK,
+    "write_file": _object({"size": {"type": "integer", "minimum": 0,
+                                    "description": "bytes of content written"},
+                           "file_size": {"type": "integer", "minimum": 0,
+                                         "description": "the file's size afterwards"}},
+                          "size", "file_size"),
+    "restore_version": _object({"path": _STR, "version_id": _STR, "size": _INT0},
+                               "path", "version_id", "size"),
+    "mkdir": _OK, "remove": _OK, "rename": _OK, "copy": _OK, "chmod": _OK,
     "symlink": _object({"ok": {"type": "boolean", "const": True},
                         "target": {"type": "string",
                                    "description": "the target stored, when not the one given"}},
@@ -5372,7 +5651,6 @@ _OUTPUT_SCHEMAS.update({
     "remote_close": _object({"backend": _STR, "closed": {"type": "boolean", "const": True}},
                             "backend", "closed"),
     "remote_exec": _EXEC_RESULT,
-    "remote_script": _EXEC_RESULT,
     "transfer_copy": _object({
         "src": _STR, "dst": _STR, "copied": _INT0, "truncated": _BOOLEAN, "complete": _BOOLEAN,
         "entries": {"type": "array", "items": _object({
@@ -5458,7 +5736,18 @@ _OUTPUT_SCHEMAS.update({
         "files_in_index": _INT0, "duplicate_groups": _INT0,
         "status": {"type": "string", "enum": ["complete", "cancelled", "failed", "running"]},
         "error": _STR}, "scan_id", "root", "backend_id", "algorithm", "status")},
-        "truncated": _BOOLEAN}, "scans", "truncated"),
+        "offset": _INT0, "truncated": _BOOLEAN, "next_offset": _NEXT_OFFSET},
+        "scans", "offset", "truncated", "next_offset"),
+    "trash_list": _object({
+        "trash_root": _STR, "count": _INT0, "offset": _INT0, "truncated": _BOOLEAN,
+        "next_offset": _NEXT_OFFSET,
+        "entries": {"type": "array", "items": _object({
+            "trash_id": _STR, "original_path": _STR, "trashed_at": _ISO, "size": _INT0,
+            "is_dir": _BOOLEAN, "label": {"type": "string", "description": "may be empty"}},
+            "trash_id", "original_path", "trashed_at", "size", "is_dir", "label")}},
+        "trash_root", "entries", "count", "offset", "truncated", "next_offset"),
+    "trash_restore": _object({"trash_id": _STR, "path": _STR, "is_dir": _BOOLEAN},
+                             "trash_id", "path", "is_dir"),
     "duplicates_groups": _object({"path": _STR, "truncated": _BOOLEAN,
                                   "groups": {"type": "array", "items": _object({
                                       "algorithm": _STR, "value": _STR, "size": _INT0,
@@ -5471,8 +5760,9 @@ _OUTPUT_SCHEMAS.update({
                                           "scan_id": {"type": ["integer", "null"]},
                                           "keep": _BOOLEAN},
                                           "path", "size", "mtime", "scan_id", "keep")}},
-                                      "algorithm", "value", "size", "copies")}},
-                                 "path", "truncated", "groups"),
+                                      "algorithm", "value", "size", "copies")},
+                                  "next_offset": _NEXT_OFFSET},
+                                 "path", "truncated", "groups", "next_offset"),
     "duplicates_dedupe": _object({
         "path": _STR, "dry_run": _BOOLEAN, "groups": _INT0, "undated_groups": _INT0,
         "keep": _STRINGS, "trash": _STRINGS, "removed": _STRINGS,
@@ -5531,6 +5821,12 @@ _OUTPUT_SCHEMAS.update({
             "outcome": {"type": "string",
                         "enum": ["ok", "error", "declined", "unavailable"]}}, "name")},
         "profile": _STR, "model": _STR}, "answer", "stopped", "calls", "profile", "model"),
+    "llm_profiles": _object({
+        "profiles": {"type": "array", "items": _object({
+            "name": _STR, "model": {"type": "string", "description": "'' when not set"},
+            "active": _BOOLEAN}, "name", "model", "active")},
+        "active": {"type": ["string", "null"], "description": "the active profile's name"}},
+        "profiles", "active"),
     "list_dir": _object({"entries": {"type": "array", "items": _object({
         "name": _STR, "is_dir": _BOOLEAN, "is_link": _BOOLEAN, "size": _INT0, "modified": _ISO},
         "name", "is_dir", "is_link", "size", "modified")}}, "entries"),
@@ -5540,9 +5836,9 @@ _OUTPUT_SCHEMAS.update({
         "indexed": {"type": "boolean",
                     "description": "false: this backend has no index rows at all"},
         "truncated": {"type": "boolean",
-                      "description": "true: more matches after this page (offset + "
-                                     "max_results)"}},
-        "entries", "indexed", "truncated"),
+                      "description": "true: more matches after this page"},
+        "next_offset": _NEXT_OFFSET},
+        "entries", "indexed", "truncated", "next_offset"),
     "list_versions": _object({"versions": {"type": "array", "items": _object({
         "version_id": _STR, "size": _INT0, "modified": _ISO, "is_current": _BOOLEAN,
         "label": _STR}, "version_id", "size", "modified", "is_current", "label")}},
@@ -5613,6 +5909,8 @@ _TIMEOUT_CLASS_BY_TOOL = {
     # Writes: one round-trip per call, but a slow backend (SMB over a
     # flaky link) can take a while to acknowledge.
     "write_file": "write",
+    # restore_version streams a whole older version (as bulk_copy a file).
+    "restore_version": "stream",
     "mkdir": "write",
     "remove": "write",
     "rename": "write",
@@ -5626,7 +5924,6 @@ _TIMEOUT_CLASS_BY_TOOL = {
     # only backs that up (DEFAULT_TIMEOUT_SCRIPT).
     "script_run": "script",
     "symlink": "write",
-    "hardlink": "write",
     "chmod": "write",
 }
 # Seconds per tool, derived from the class table (kept for callers that
@@ -5667,7 +5964,7 @@ def _describe_requirements(tools: list[_Tool]) -> None:
         clause = " and ".join(flags)
         if tool.group == "scripts":
             clause += " (stdio only)"
-        if tool.group in ("scripts", "exec"):
+        if tool.group in ("scripts", "exec") or tool.name in _groups.ADB_DEVICE_CHANGES:
             clause += "; not in paranoid mode"
         lines = tool.description.split("\n")
         for i, line in enumerate(lines):

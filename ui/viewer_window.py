@@ -231,9 +231,15 @@ def install_window_keys(window: QWidget, *, fullscreen: bool) -> list[QShortcut]
 # -- persistence ---------------------------------------------------------------
 
 
+#: The file the viewers' window states are kept in instead of axross's session.json (None: that one) - a
+#: program of its own (axross-markdown: core.markdown_settings.window_state_path) keeps them in its own state,
+#: never in axross's config folder.
+STATE_FILE: Path | None = None
+
+
 def _settings_path() -> Path:
     # Looked up per call: tests and the window patch the module attribute.
-    return Path(i18n.SETTINGS_FILE)
+    return Path(STATE_FILE) if STATE_FILE is not None else Path(i18n.SETTINGS_FILE)
 
 
 def _read_settings():

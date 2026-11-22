@@ -32,11 +32,11 @@ WRITE_RULE = (
 )
 PARANOID_RULE = (
     "Paranoid mode (AXROSS_SECURITY_MODE=paranoid or the app setting) turns off scripts, "
-    "extensions, remote commands, ffmpeg/ffprobe and legacy protocols."
+    "extensions, remote commands, device changes (adb), ffmpeg/ffprobe and legacy protocols."
 )
 PATH_RULE = (
     "Paths are absolute or relative to the MCP root; local paths stay inside the root, a "
-    "remote backend takes that host's paths. Tools take backend only when there is more "
+    "remote backend takes that host's paths as given. Tools take backend only when there is more "
     "than one; its ids come from list_backends, served then ('profile:<name>' after "
     "open_remote_profile); omitted, the default backend. A <name>_b64 "
     "argument carries the raw bytes of a non-UTF-8 name in base64, as listings return it "
@@ -54,26 +54,30 @@ IDEMPOTENT_RULE = (
 NAME_RULE = (
     "Names are verb_resource; the resource says what a tool takes or makes: file, "
     "directory (one folder), tree (a folder and all below it), path (a file or a folder). "
-    "Former names (up to 0.15.182) still work."
+    "Former names (up to 0.15.182) and merged tools' names still work."
 )
 PARAM_RULE = (
     "One parameter name, one meaning: path is what a tool works on, max_<what> caps a "
-    "result, offset pages, timeout is seconds, pattern is what a search looks for. Former "
-    "names (needle, limit, timeout_s, folder, a 0-based max_depth) still work."
+    "result, offset pages (a result's next_offset), timeout is seconds, pattern what a "
+    "search looks for, profile a connection profile, llm_profile an LLM one. Former "
+    "names (needle, limit, timeout_s, folder, a 0-based max_depth, run_llm_agent's profile) "
+    "still work."
 )
 FLAG_RULE = (
-    "Tools and arguments that change files (export_metadata's out) need --mcp-write; the "
+    "Tools and arguments that change files (export_metadata's out) need --mcp-write, the "
     "script tools --mcp-allow-scripts, the remote command tools --mcp-allow-exec - neither "
     "in paranoid mode, the script tools only over stdio; each optional group its "
-    "--mcp-tools name; a read-only tool that points at a write tool says '(needs "
-    "--mcp-write)'. "
-    + _N.public("remove") + " deletes for good; only " + _N.public("duplicates_dedupe")
-    + " moves files to axross's restorable trash."
+    "--mcp-tools name ('all': every group but adb); a read-only tool that "
+    "points at a write tool says '(needs --mcp-write)'. "
+    + _N.public("remove") + " deletes for good; " + _N.public("duplicates_dedupe")
+    + " moves files to axross's trash (" + _N.public("trash_list") + ", "
+    + _N.public("trash_restore") + ")."
 )
 LIMIT_RULE = (
     "truncated: a limit (max_*, max_depth or subfolder_levels leaving a folder unentered) "
-    "cut the result; the tree tools have no cursor (narrow path or raise the limit), "
-    "search_index and list_duplicate_groups page with offset. Tree walks also carry complete, false when anything was cut or left unread. A "
+    "cut the result; a tool with offset pages on, the other tree tools narrow path or raise "
+    "the limit. Tree walks also carry complete, false when anything was cut or left unread. "
+    "A "
     "folder or file they could not read is in unreadable ({path, error} in walk_tree and "
     "search_content; paths in scan_file_types (folders, secret files), folder paths in "
     "scan_duplicates and build_index), or an error "
@@ -81,8 +85,8 @@ LIMIT_RULE = (
 )
 TIME_RULE = (
     "A call past its time limit fails with a timeout error (JSON-RPC -32002) and returns "
-    "nothing; work it started may still finish. run_script, run_backend_command and "
-    "run_backend_script stop at their own timeout argument instead. Long tools send "
+    "nothing; work it started may still finish. run_script and run_backend_command take "
+    "their own timeout instead. Long tools send "
     "progress notifications and stop on notifications/cancelled."
 )
 ERROR_RULE = (
@@ -98,7 +102,7 @@ AGENT_CORE_TOOLS = ("list_dir", "stat", "read_file", "checksum", "search", "walk
                     "open_version_read")
 AGENT_GROUP_TOOLS = {
     "metadata": ("metadata_read", "metadata_export"),
-    "duplicates": ("duplicates_scan", "duplicates_scans", "duplicates_groups"),
+    "duplicates": ("duplicates_scan", "duplicates_scans", "duplicates_groups", "trash_list"),
     "archive": ("pack_formats", "archive_list"),
     "index": ("index_build",),
     "filetype": ("file_type", "file_type_scan"),
@@ -107,10 +111,12 @@ AGENT_GROUP_TOOLS = {
 }
 AGENT_RULE = (
     "run_llm_agent's model gets the core file tools ("
-    + ", ".join(_N.public(n) for n in AGENT_CORE_TOOLS) + ") and, per group asked for: "
+    + ", ".join(_N.public(n) + (" where served" if n == "preview" else "")
+                for n in AGENT_CORE_TOOLS) + ") and, per group asked for: "
     + "; ".join(f"{g} {', '.join(_N.public(n) for n in names)}"
+                + (", list_backends" if g == "remote" else "")
                 for g, names in AGENT_GROUP_TOOLS.items())
-    + "; remote adds list_backends."
+    + "."
 )
 #: The instructions' sections, each a heading and its rules (one line each).
 SECTIONS = (

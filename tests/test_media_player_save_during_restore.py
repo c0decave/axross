@@ -44,7 +44,7 @@ def test_sad_a_restore_that_never_finishes_does_not_block_every_save(tmp_path):
 
         # The check answers after all: the list saves as itself, nothing twice.
         (work, done), = pending
-        done([(0, "/mnt/hung-nfs/old.mp3", "Old", 0)])
+        done([(0, "/mnt/hung-nfs/old.mp3", "Old", 0, True)])
         panel.save_state()
         paths = [t["path"] for t in json.loads(state.read_text())["tracks"]]
         assert sorted(paths) == sorted(["/mnt/hung-nfs/old.mp3", str(song)])

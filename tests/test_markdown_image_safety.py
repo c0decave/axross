@@ -38,6 +38,7 @@ APP = QApplication.instance() or QApplication([])
 
 from core.local_fs import LocalFS  # noqa: E402
 from ui import markdown_view as MDV  # noqa: E402
+from tests import markdown_timing as TB  # noqa: E402
 
 HEAD = (b'<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
         b'width="100" height="100">')
@@ -64,7 +65,7 @@ def test_safety_a_use_bomb_is_refused_at_once():
     started = time.monotonic()
     image, why = MDV.decode(fan_out(8))
     assert image is None and why
-    assert time.monotonic() - started < 3.0
+    TB.budget(time.monotonic() - started < 3.0, 'time.monotonic() - started < 3.0')
 
 
 def test_safety_a_use_bomb_as_a_data_image_is_refused(tmp_path):
@@ -73,7 +74,7 @@ def test_safety_a_use_bomb_as_a_data_image_is_refused(tmp_path):
     started = time.monotonic()
     found = source.read([name])
     assert isinstance(found[name], str)
-    assert time.monotonic() - started < 3.0
+    TB.budget(time.monotonic() - started < 3.0, 'time.monotonic() - started < 3.0')
 
 
 def test_safety_a_slow_svg_is_stopped_by_the_documents_time(monkeypatch):
@@ -82,11 +83,12 @@ def test_safety_a_slow_svg_is_stopped_by_the_documents_time(monkeypatch):
     image, why = MDV.decode(costly(), budget)
     took = time.monotonic() - started
     assert image is None and why, "drawn after all"
-    assert took < 6.0, took
+    TB.budget(took < 6.0, took)
     # the document's time is used up: the next SVG is not drawn at all
     started = time.monotonic()
     image, why = MDV.decode(costly(), budget)
-    assert image is None and time.monotonic() - started < 1.0
+    assert image is None
+    TB.budget(time.monotonic() - started < 1.0, 'time.monotonic() - started < 1.0')
 
 
 def test_happy_an_svg_is_still_drawn_at_its_size():

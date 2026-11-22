@@ -395,6 +395,30 @@ die lokale Shell in Terminal-Lesezeichen und gespeicherten Layouts.
   sie fertig ersetzt – ein abgebrochener Upload lässt die alte Datei, wie
   sie war.
 
+- **Das Fenster Android-Gerät.** In einem ADB-Pane öffnet Rechtsklick >
+  Mehr > *Android-Gerät…* (oder *Pane > Android-Gerät…* in der Menüleiste)
+  ein Fenster für das Telefon selbst, eines je Verbindung. *Info*:
+  Hersteller, Modell, Android-Version, Sicherheitspatch, Seriennummer, die
+  IMEI, wo das Telefon sie der Shell gibt, Akku und freier Speicher; *Neu
+  starten…* in Android, Recovery oder den Bootloader. *Apps*: die
+  installierten Apps, gefiltert nach Name und Art; *Details…* zeigt Version,
+  Installationszeiten und Berechtigungen einer App (*Erteilen…*,
+  *Entziehen…*); *Start*, *Stopp*, *Deinstallieren…*, *APK installieren…*
+  und *APK sichern…* (die APK-Dateien in einen Ordner, unter neuen Namen).
+  *SMS*: die Nachrichten eines Ordners, wo Android die Shell sie lesen
+  lässt; *In den Speicher schreiben…* legt eine Nachricht ab, ohne sie zu
+  senden, *SMS vorbereiten…* öffnet die SMS-App des Telefons mit Nummer und
+  Text – axross sendet nie selbst, ein Mensch am Telefon tippt auf Senden.
+  *Logcat*: die neuesten Zeilen nach Priorität, Tag oder App, *Mitlaufen*
+  liest sie alle zwei Sekunden, *Pause* hält die Ansicht an, *Speichern…*
+  schreibt sie in eine Datei. *Screenshot*: der Bildschirm, *Speichern…*
+  als PNG. Jede Änderung fragt vorher; Deinstallieren und Neustart zählen
+  drei Sekunden herunter (Esc hält sie auf), und auf einem als Produktion
+  markierten Profil läuft jede Änderung durch den Produktions-Countdown.
+  Im Security-Mode paranoid sind die Änderungen aus. Das Telefon wird im
+  Hintergrund gefragt: ein langsames hält das Fenster nie auf. Dieselben
+  Werkzeuge sind die Gruppe `adb` des MCP-Servers (docs/MCP_de.md, §9.10).
+
 ## Multi-Pane-Layout
 
 - Panes anlegen durch Splitten mit **Strg+Umschalt+H** /
@@ -1177,9 +1201,26 @@ eines floating Panels dockt es wieder an.
   UTF-8.
   Fehlt eine Systembibliothek, die das Fenster braucht (libEGL auf einem
   minimalen Linux), nennt es die Bibliothek und das Paket, das sie
-  liefert, und verweist auf `--term` / `--html`. axross-markdown folgt dem
-  hellen oder dunklen Schema des Desktops; *Ansicht → Theme* (Alt+A) wählt
-  ein anderes, gespeichert in `~/.config/axross-markdown/settings.json`.
+  liefert, und verweist auf `--term` / `--html`. Mit *Ansicht → Theme*
+  (Alt+A) färbst du im Betrachter die Seite – Grund, Text, Überschriften,
+  Links, Code, Zitate, Tabellen, Hinweise und Formeln – in einem von zwölf
+  Themes: Hell, Dunkel, Sepia, Solar hell, Solar dunkel, Arktis, Retro,
+  Nachtviolett, Schiefer, Papier, Hoher Kontrast hell und Hoher Kontrast
+  dunkel. Jedes hält Fließtext und Links auf WCAG-AA-Kontrast, die beiden
+  mit hohem Kontrast auf AAA. *Automatisch (wie axross)* ist die
+  Voreinstellung und folgt dem Theme von axross, hell oder dunkel. Deine
+  Wahl gilt für jeden offenen Betrachter und die Vorschau im Editor, und
+  axross merkt sie sich in seinen Einstellungen. Ein Wechsel ist eine
+  einzige Änderung ohne Aufblitzen: Die Seite behält ihre alten Farben,
+  bis sie in den neuen fertig gesetzt ist. Das eigenständige
+  axross-markdown hat dasselbe Menü und speichert deine Wahl in
+  `~/.config/axross-markdown/settings.json`. Die Farben des Fensters
+  selbst wählst du dort im Menü Ansicht unter *Fenster-Theme*; ohne Wahl folgen
+  sie dem hellen oder dunklen Schema des Desktops. Seine Programme aus
+  einer Datei aktualisieren sich aus signierten Releases (im Menü Hilfe
+  unter *Updates*: aus, melden oder automatisch installieren; `--check-update`,
+  `--update`). Mit `axross-mdcat --theme NAME` nutzt du dieselben Themes
+  im Terminal, und `--list-themes` listet sie auf.
   Im Terminal erscheint ein Link über 2083 Zeichen als sein Text, eine
   Tabelle mit mehr als 500 Zeilen wird beim Schreiben gezeichnet, und eine
   mit mehr als 64 Spalten steht wie geschrieben da (das Ende der Ausgabe

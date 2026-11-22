@@ -1,7 +1,8 @@
 """``axross --mcp-list-tools`` prints a machine-readable manifest of the MCP
 tools a start with the same flags would serve, without starting a server;
-docs/mcp-tools.json is that manifest for ``--mcp-tools all --mcp-write
---mcp-allow-scripts --mcp-allow-exec`` and must stay in sync with the code."""
+docs/mcp-tools.json is that manifest for ``--mcp-tools all,adb --mcp-write
+--mcp-allow-scripts --mcp-allow-exec`` (every group: ``all`` leaves the device
+group adb out) and must stay in sync with the code."""
 
 from __future__ import annotations
 
@@ -20,9 +21,10 @@ from core import mcp_server as M
 
 ROOT = Path(__file__).resolve().parents[1]
 COMMITTED = ROOT / "docs" / "mcp-tools.json"
-FULL_FLAGS = ("--mcp-tools", "all", "--mcp-write", "--mcp-allow-scripts", "--mcp-allow-exec")
+FULL_FLAGS = ("--mcp-tools", "all,adb", "--mcp-write", "--mcp-allow-scripts",
+              "--mcp-allow-exec")
 REGENERATE = (
-    "python main.py --mcp-list-tools --mcp-tools all --mcp-write --mcp-allow-scripts "
+    "python main.py --mcp-list-tools --mcp-tools all,adb --mcp-write --mcp-allow-scripts "
     "--mcp-allow-exec > docs/mcp-tools.json"
 )
 

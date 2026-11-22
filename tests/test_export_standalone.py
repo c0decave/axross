@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -56,8 +57,9 @@ def test_happy_the_project_has_its_command_and_only_what_the_tool_needs(exported
     for module in heavy:
         assert module not in files, module
     # (markdown: 64 - its SVGs are drawn through core.svg_gate and core.svg_worker's child; 72 - the
-    # editor's highlighting child, core.lex_worker, runs on core.image_worker's pool of children)
-    assert len(files) < {"amp": 75, "markdown": 72}.get(name, 45), len(files)
+    # editor's highlighting child, core.lex_worker, runs on core.image_worker's pool of children; 80 -
+    # 0.17.0's themes, their menu, the settings file, the updater, its Ed25519 and its menu: six more)
+    assert len(files) < {"amp": 75, "markdown": 80}.get(name, 45), len(files)
 
 
 def test_happy_no_exported_module_imports_axross_directly(exported):
@@ -440,7 +442,9 @@ def test_happy_markdown_ships_its_reviewed_lock_and_runs_the_gate_on_it(tmp_path
     # (the build backend from the lock as well: nothing unpinned fetched for the build)
     assert "--no-build-isolation --no-deps ." in workflow and "setuptools" in pins
     # (a failure's pytest summary as annotations, readable through the API - v0.16.7's ci / test)
-    assert "-rfE tests 2>&1 | tee \"$RUNNER_TEMP/tests.log\"" in workflow and "set -o pipefail" in workflow
+    # (0.17.1: the blocking job leaves the timing tests to the job timing - test_sad_the_timing_tests_...)
+    assert "-rfE -m \"not timing\" tests 2>&1 | tee \"$RUNNER_TEMP/tests.log\"" in workflow \
+        and "set -o pipefail" in workflow
     assert "if: failure()\n        run: python packaging/ci_log_tail.py \"$RUNNER_TEMP/tests.log\" tests 150" \
         in workflow and (out / "packaging" / "ci_log_tail.py").is_file()
     assert "supply_chain_gate.py --config supply-chain-gate.toml check" in workflow
@@ -491,7 +495,7 @@ def test_sad_the_markdown_release_and_ci_install_pytest_hashed_and_build_before_
     assert not re.search(r"pip install (?:[^\n]* )?pytest\b", text), "pytest unpinned in release.yml"
     steps = _workflow("axross-markdown")["jobs"]["python"]["steps"]
     names = [step.get("name") for step in steps]
-    build, tests = names.index("sdist and wheel"), names.index("Tests against the locked dependencies")
+    build, tests = names.index("sdist and wheel"), names.index("Tests of the built wheel against the locked dependencies")
     assert build < tests  # (built first: nothing of the tests' tools in its environment)
     assert "pip install --require-hashes -r packaging/requirements-test.txt" in steps[tests]["run"]
     assert "pip install --require-hashes -r requirements.lock.txt" in steps[build]["run"]
@@ -574,7 +578,7 @@ def test_sad_the_markdown_release_builds_nothing_before_the_gate_and_the_tests(t
 
     yaml = pytest.importorskip("yaml")
     jobs = _workflow("axross-markdown")["jobs"]
-    assert jobs["ci"] == {"uses": "./.github/workflows/tests.yml"}
+    assert jobs["ci"] == {"uses": "./.github/workflows/tests.yml", "with": {"blocking_only": True}}
 
     def needs(job: str) -> set:
         direct = jobs[job].get("needs", [])
@@ -714,3 +718,229 @@ def test_happy_the_appimage_script_works_with_relative_paths():
     assert 'OUT="$(cd "$(dirname -- "$OUT")" && pwd)/$(basename -- "$OUT")"' in text
     assert 'ELF="$(cd "$(dirname -- "$ELF")" && pwd)/$(basename -- "$ELF")"' in text
     assert text.index('OUT="$(cd') < text.index('(cd "$WORK/check" && "$OUT" --appimage-extract')
+
+
+# -- the licences of axross-markdown's one-file programs (review 25's P1) -------------------------------------
+
+_LICENCES_SPEC = importlib.util.spec_from_file_location("standalone_licences",
+                                                        ROOT / "scripts" / "standalone_licences.py")
+LIC = importlib.util.module_from_spec(_LICENCES_SPEC)
+_LICENCES_SPEC.loader.exec_module(LIC)
+
+
+def _lock_pins() -> dict[str, str]:
+    return {pin: version for pin, version, _h in LIC.pins(EXP.lock_path("markdown").read_text())}
+
+
+def test_sad_the_markdown_export_writes_the_licences_its_binaries_need(tmp_path):
+    """0.16.11's one-file programs carried PyQt6 (GPL-3.0) and Qt (LGPL-3.0) - and markdown-it-py, Pygments,
+    Pillow, ... - but not one licence text; the README said Apache-2.0 only, axross's NOTICE and
+    THIRD_PARTY_LICENSES.md stayed behind. The export writes THIRD_PARTY_LICENSES.txt (every package of the
+    lock the programs carry, with its licence text, the GPL-3.0 and LGPL-3.0 among them; the programs a GPL-3.0
+    combined work; where the source code is, PyQt6's and Qt's of the very versions) and a NOTICE - at the
+    root and in the package (package data: the program and the binaries carry it)."""
+    out = EXP.export("markdown", tmp_path / "md")
+    text = (out / EXP.LICENCES).read_text(encoding="utf-8")
+    assert (out / "src" / "axross_markdown" / EXP.LICENCES).read_text(encoding="utf-8") == text
+    assert "GNU GENERAL PUBLIC LICENSE\n                       Version 3, 29 June 2007" in text
+    assert "GNU LESSER GENERAL PUBLIC LICENSE" in text and "Version 3, 29 June 2007" in text
+    assert "Apache License\n                           Version 2.0, January 2004" in text  # (its own, LICENSE)
+    flat = " ".join(text.split())
+    assert "each such program is a combined work and is distributed under the terms of the GPL-3.0" in flat
+    pins = _lock_pins()
+    pyqt, qt = pins["pyqt6"], pins["pyqt6-qt6"]
+    minor = ".".join(qt.split(".")[:2])
+    assert f"https://pypi.org/project/PyQt6/{pyqt}/#files" in flat
+    assert f"https://download.qt.io/official_releases/qt/{minor}/{qt}/src/" in flat
+    assert f"{EXP.APPS['markdown'].repo} (git tag v{EXP.APPS['markdown'].version})" in flat
+    listed = text.split("What the programs contain")[1].split("Licence texts")[0]
+    for pin, version in pins.items():
+        if pin in LIC.BUILD_ONLY:  # (setuptools builds the sdist and wheel: not in the programs)
+            assert pin not in listed.lower(), pin
+            continue
+        assert re.search(rf"^{re.escape(pin)} {re.escape(version)} ", listed.lower().replace("_", "-"), re.M), pin
+        assert re.search(rf"^\S+ {re.escape(version)}: ", text, re.M), (pin, "no licence text")
+    notice = (out / "NOTICE").read_text(encoding="utf-8")
+    assert "Copyright 2026 Marco Lux" in notice and "GPL-3.0" in notice and EXP.LICENCES in notice
+    assert notice.strip() in text  # (the NOTICE at the end of the licences as well)
+    pyproject = (out / "pyproject.toml").read_text()
+    assert 'license-files = ["LICENSE", "NOTICE"]' in pyproject
+    assert f'"*" = ["*.json", "{EXP.LICENCES}"]' in pyproject
+    readme = (out / "README.md").read_text()
+    licence = readme.split("## Licence")[1]
+    assert "**GPL-3.0**" in licence and EXP.LICENCES in licence and "Help → About" in licence
+    # (the other tools carry no PyQt6 binaries of their own: nothing new there)
+    assert not EXP.APPS["media-player"].third_party and not EXP.APPS["mcp"].third_party
+
+
+def test_sad_a_lock_pin_without_its_licence_texts_stops_the_export():
+    """A new pin (scripts/lock_standalone_deps.sh) without the texts of its version: the export stops, saying
+    to take them (scripts/standalone_licences.py markdown --refresh) - the binaries never go out with the
+    texts of another version."""
+    lock = EXP.lock_path("markdown").read_text()
+    pyqt = _lock_pins()["pyqt6"]
+    with pytest.raises(LIC.LicenceError, match="standalone_licences.py markdown --refresh"):
+        LIC.bundled("markdown", lock.replace(f"pyqt6=={pyqt} ", "pyqt6==6.99.0 "))
+    packages = {p["pin"]: p for p in LIC.bundled("markdown", lock)}
+    assert set(packages) == set(_lock_pins()) - LIC.BUILD_ONLY
+    assert all(p["texts"] for p in packages.values())
+
+
+def test_sad_the_markdown_binaries_carry_the_licences_or_are_not_built():
+    """packaging/axross-markdown.spec: THIRD_PARTY_LICENSES.txt (package data of axross_markdown) in the
+    window program and in axross-mdcat.exe, the interpreter's LICENSE.txt beside it - the build stops when
+    either is missing."""
+    import ast
+
+    text = (STANDALONE_REPO / "axross-markdown" / "packaging" / "axross-markdown.spec").read_text()
+    assert text.count('datas=with_licences(collect_data_files("axross_markdown")),') == 2
+    assert "datas=collect_data_files(" not in text
+    tree = ast.parse(text)
+    keep = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "with_licences"
+            or isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "LICENCES" for t in node.targets)]
+    space = {"os": os, "sys": sys}
+    exec(compile(ast.Module(body=keep, type_ignores=[]), "spec", "exec"), space)  # noqa: S102 - the spec's own code
+    assert space["LICENCES"] == EXP.LICENCES
+    with pytest.raises(SystemExit, match="THIRD_PARTY_LICENSES.txt"):
+        space["with_licences"]([("/x/axross_markdown/_ax/resources/i18n/de.json", "axross_markdown/_ax/resources/i18n")])
+    datas = [(f"/site/axross_markdown/{EXP.LICENCES}", "axross_markdown")]
+    found = space["with_licences"](datas)
+    assert found[0] == datas[0] and found[1][1] == "licenses/python" and found[1][0].endswith("LICENSE.txt")
+
+
+def test_sad_the_markdown_release_puts_the_licences_beside_the_binaries(tmp_path):
+    """The release page carried the binaries without a word of their licence: LICENSE, NOTICE and
+    THIRD_PARTY_LICENSES.txt go up with them (and into SHA256SUMS), and each binary is checked to carry its
+    licences (packaging/licences_check.py, inside it) - the check passes against the export's package."""
+    steps = _workflow("axross-markdown")["jobs"]["release"]["steps"]
+    run = next(step["run"] for step in steps if step.get("name") == "SHA256SUMS and the notes")
+    copy = "cp LICENSE NOTICE THIRD_PARTY_LICENSES.txt assets/"
+    assert copy in run and run.index(copy) < run.index("sha256sum")
+    assert "assets/*" in next(step["run"] for step in steps if step.get("name") == "The GitHub release")
+    smoke = next(step["run"] for step in _workflow("axross-markdown")["jobs"]["binaries"]["steps"]
+                 if str(step.get("name", "")).startswith("Smoke tests"))
+    assert 'AXROSS_BUNDLE_SMOKE=1 "$bin" --script packaging/licences_check.py' in smoke
+    out = EXP.export("markdown", tmp_path / "md")
+    for name in ("LICENSE", "NOTICE", EXP.LICENCES):
+        assert (out / name).is_file(), name
+    pytest.importorskip("PyQt6.QtWidgets")
+    result = subprocess.run([sys.executable, "-I", "-c",
+                             f"import sys, runpy; sys.path.insert(0, {str(out / 'src')!r}); "
+                             f"runpy.run_path({str(out / 'packaging' / 'licences_check.py')!r})"],
+                            env=dict(os.environ, QT_QPA_PLATFORM="offscreen", HOME=str(tmp_path)),
+                            cwd=tmp_path, capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0 and "licences carried" in result.stdout, result.stderr[-2000:]
+    notes = (STANDALONE_REPO / "axross-markdown" / "packaging" / "release_notes.py").read_text()
+    assert '"THIRD_PARTY_LICENSES.txt" in names' in notes
+
+
+def test_happy_help_about_shows_the_name_version_and_the_licences_in_the_export(tmp_path):
+    """Help > About axross-markdown… in the exported program: its name and version, the licence statement and
+    THIRD_PARTY_LICENSES.txt (from its package), read-only."""
+    pytest.importorskip("PyQt6.QtWidgets")
+    out = EXP.export("markdown", tmp_path / "md")
+    script = f"""
+import sys
+sys.path.insert(0, {str(out / 'src')!r})
+from PyQt6.QtWidgets import QApplication, QPlainTextEdit
+app = QApplication([])
+from axross_markdown._ax.ui.markdown_about import AboutDialog
+from axross_markdown._ax.ui.markdown_app import MarkdownApp
+viewer = MarkdownApp().open_paths([""])[0]
+assert viewer.help_button is not None and viewer.help_button.text() == "&Help"
+action = viewer.help_button.menu().actions()[-1]  # (0.17.0: the updates first, About last)
+assert action.text() == "About axross-markdown…", action.text()
+action.trigger()
+about = [w for w in app.topLevelWidgets() if isinstance(w, AboutDialog) and w.isVisible()]
+assert len(about) == 1, about
+about = about[0]
+assert about.parentWidget() is viewer
+text = about.findChild(QPlainTextEdit, "licences")
+assert text.isReadOnly()
+print(about.windowTitle())
+print(about.title.text())
+print(about.statement.text())
+print(text.toPlainText() == open({str(out / EXP.LICENCES)!r}, encoding="utf-8").read())
+"""
+    result = subprocess.run([sys.executable, "-I", "-c", script],
+                            env=dict(os.environ, QT_QPA_PLATFORM="offscreen", HOME=str(tmp_path)),
+                            cwd=tmp_path, capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stderr[-3000:]
+    title, name, statement, same = result.stdout.splitlines()[-4:]
+    assert title == "About axross-markdown"
+    assert name == f"axross-markdown {EXP.APPS['markdown'].version}"
+    assert "Apache License 2.0" in statement and "GPL-3.0" in statement and "LGPL-3.0" in statement
+    assert same == "True"
+
+
+def test_sad_the_version_from_a_source_checkout_is_the_programs_own(tmp_path):
+    """``python -m axross_markdown --version`` from the export's src/ said axross's version (0.15.183):
+    program_version() fell back to axross's _version.py when the package was not installed. The export
+    writes the program's own __version__ into its package, and program_version takes it first."""
+    out = EXP.export("markdown", tmp_path / "md")
+    version = EXP.APPS["markdown"].version
+    assert version != EXP._version()  # (else this would not tell the two apart)
+    assert f'__version__ = "{version}"' in (out / "src" / "axross_markdown" / "__init__.py").read_text()
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    env.update(PYTHONPATH=str(out / "src"), HOME=str(tmp_path))
+    for module, said in (("axross_markdown", "axross-markdown"), ("axross_markdown._ax.core.markdown_cli",
+                                                                  "axross-mdcat")):
+        result = subprocess.run([sys.executable, "-m", module, "--version"], env=env, cwd=out / "src",
+                                capture_output=True, text=True, timeout=60)
+        assert result.returncode == 0, result.stderr[-2000:]
+        assert result.stdout.strip().splitlines()[-1] == f"{said} {version}", result.stdout
+
+
+def test_sad_the_golden_image_tests_get_numpy_from_the_test_lock():
+    """tests/test_markdown_golden.py compares pictures with numpy (importorskip): numpy was in neither lock,
+    and the golden-image tests always skipped in the export's CI. packaging/requirements-test.txt pins it, with
+    every hash, for the CI's Python (3.12: axross's reviewed version) and for 3.11."""
+    lock = (STANDALONE_REPO / "axross-markdown" / "packaging" / "requirements-test.txt").read_text()
+    found = re.findall(r"^numpy==(\S+) ; (python_full_version [<>=]+ '3\.12') \\\n((?:    --hash=sha256:[0-9a-f]{64}"
+                       r"(?: \\)?\n)+)", lock, re.MULTILINE)
+    assert {marker for _v, marker, _h in found} == {"python_full_version < '3.12'", "python_full_version >= '3.12'"}
+    for version, marker, hashes in found:
+        assert hashes.count("--hash=") >= 10, version
+    ci = next(v for v, marker, _h in found if ">=" in marker)
+    bundle = (EXP.ROOT / "build" / "requirements-bundle.txt").read_text()
+    assert re.search(rf"^numpy=={re.escape(ci)} ", bundle, re.MULTILINE), ci
+    assert "printf 'pytest\\nnumpy\\n'" in (EXP.ROOT / "scripts" / "lock_standalone_deps.sh").read_text()
+    for name in ("tests.yml", "release.yml"):
+        path = STANDALONE_REPO / "axross-markdown" / ".github" / "workflows" / name
+        text = path.read_text() if path.is_file() else EXP._workflow(EXP.APPS["markdown"], True)
+        assert 'python-version: "3.12"' in text, name
+
+
+def test_sad_the_timing_tests_run_on_their_own_and_block_no_release(tmp_path):
+    """0.17.0's CI: 133 tests failed on a runner about twice as slow - heartbeats, turn budgets, waits as
+    assertions - without a bug. The tests that pass or fail by elapsed time (the marker timing,
+    tests/markdown_timing.py) run in a job of their own with continue-on-error, their summary as warnings;
+    the blocking job and the release's own tests run the rest; the release calls tests.yml with
+    blocking_only and so never waits for the timing job. Actions pinned, installs hashed in both."""
+    yaml = pytest.importorskip("yaml")
+    out = EXP.export("markdown", tmp_path / "md")
+    text = (out / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+    tests = yaml.safe_load(text)
+    jobs = tests["jobs"]
+    assert tests[True]["workflow_call"]["inputs"]["blocking_only"]["type"] == "boolean"
+    blocking = next(s["run"] for s in jobs["test"]["steps"] if "pytest" in str(s.get("run", "")))
+    assert '-m "not timing"' in blocking and "continue-on-error" not in jobs["test"]
+    timing = jobs["timing"]
+    assert timing["continue-on-error"] is True and timing["if"] == "${{ !inputs.blocking_only }}"
+    assert timing["needs"] == "supply-chain"
+    runs = [str(s.get("run", "")) for s in timing["steps"]]
+    assert any('-m "timing or budgets" tests' in r for r in runs)  # (0.17.3: the budgets strictly too)
+    assert any("ci_log_tail.py --warning" in r for r in runs)
+    install = next(r for r in runs if "requirements.lock.txt" in r)
+    assert install.count("--require-hashes") == 2  # (the lock and pytest's: hashed, as the blocking job's)
+    uses = [line.strip() for line in text.splitlines() if "uses:" in line]
+    assert uses and all(_SHA_PIN.search(line) for line in uses)
+    release = _workflow("axross-markdown")
+    assert release["jobs"]["ci"]["with"] == {"blocking_only": True}
+    python = next(s["run"] for s in release["jobs"]["python"]["steps"] if "pytest" in str(s.get("run", "")))
+    assert '-m "not timing"' in python
+    assert (out / "tests" / "markdown_timing.py").is_file() and (out / "tests" / "test_markdown_timing_marks.py").is_file()
+    readme = (out / "README.md").read_text(encoding="utf-8")
+    assert '-m "timing or budgets"' in readme and "full strictness" in readme
+    assert "a duration over its budget is a warning" in readme
+

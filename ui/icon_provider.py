@@ -466,6 +466,12 @@ _BOOKMARK_ICONS = {
     "tablet": _svg(
         '<rect x="5" y="3" width="14" height="18" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/>',
     ),
+    # The Android Device window: the robot's head and body.
+    "android": _svg(
+        '<path d="M6 11a6 6 0 0 1 12 0z"/><rect x="6" y="13" width="12" height="8" rx="2"/>'
+        '<line x1="8" y1="3" x2="9.5" y2="5.5"/><line x1="16" y1="3" x2="14.5" y2="5.5"/>'
+        '<line x1="10" y1="8.5" x2="10" y2="8.5"/><line x1="14" y1="8.5" x2="14" y2="8.5"/>',
+    ),
     "server": _svg(
         '<rect x="2" y="4" width="20" height="6" rx="1"/>'
         '<rect x="2" y="14" width="20" height="6" rx="1"/>'
@@ -913,6 +919,7 @@ _ICON_COLORS: dict[str, str | None] = {
     "laptop": "#5dade2",  # light blue
     "phone": "#27ae60",  # green
     "tablet": "#27ae60",  # green
+    "android": "#27ae60",  # green
     "server": "#546e7a",  # slate
     "database": "#d35400",  # burnt orange
     "usb": "#8e44ad",  # purple

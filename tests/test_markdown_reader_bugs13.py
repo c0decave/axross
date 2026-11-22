@@ -27,6 +27,7 @@ from PyQt6.QtGui import QTextCursor  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from tests.test_markdown_reader_bugs11 import close, opened, pump, settled, until  # noqa: E402
+from tests import markdown_timing as TB  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -199,7 +200,7 @@ def test_guard_a_selection_across_gaps_copies_what_the_page_shows(full, pieces, 
     try:
         view = dialog.view
         view.clicked(QUrl("#section-100"))
-        assert until(lambda: not view.browser.document().find("Text 100 ").isNull(), 30)
+        assert TB.until_within(until, lambda: not view.browser.document().find("Text 100 ").isNull(), 30)
         settled(view)
         assert view._gaps, "no gap"
         copied = _normal(_copied(view, "Text 3 ", "Text 100 "))
@@ -237,7 +238,7 @@ def test_guard_no_formula_takes_long_to_lay_out():
         took = time.thread_time() - began
         if took > 0.05:
             slow.append((round(took, 3), tex[:60]))
-    assert not slow, slow[:5]
+    TB.budget(not slow, slow[:5])  # (each formula's layout timed: a budget)
 
 
 @pytest.mark.parametrize("full", [True, False], ids=["markdown-it", "md4c"])
@@ -261,8 +262,8 @@ def test_guard_a_page_of_hostile_formulas_never_holds_up_the_window(full):
     _turn, gap = heartbeat.stop()
     beats = heartbeat.turns
     assert_responsive(gap, "the heartbeat's longest gap")
-    assert time.monotonic() - began < 60
-    assert max(beats) < 0.5, sorted(beats)[-5:]  # (one formula: 19 s, 32 s)
+    TB.budget(time.monotonic() - began < 60, 'time.monotonic() - began < 60')
+    TB.budget(max(beats) < 0.5, sorted(beats)[-5:])  # (one formula: 19 s, 32 s)
     assert "Formula 37" in view.browser.toPlainText()
 
 

@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from tests.test_markdown_reader_bugs11 import pump, until  # noqa: E402
 from tests.test_markdown_reader_bugs20 import _settle, _Turns  # noqa: E402
+from tests import markdown_timing as TB  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -132,7 +133,7 @@ def test_sad_the_editor_colours_every_common_language(lang):
     try:
         editor.set_language(get_lexer_by_name(lang).name)
         editor.setPlainText(SAMPLES[lang] * 3)
-        assert until(lambda: any(block.layout().formats() for block in _blocks(editor.document())), 30), lang
+        assert TB.until_within(until, lambda: any(block.layout().formats() for block in _blocks(editor.document())), 30), lang
     finally:
         editor.deleteLater()
 
@@ -252,7 +253,7 @@ def test_sad_no_hostile_shape_in_any_container_holds_the_window(shape, place, fu
     (2.3 s), a heading (1.6 s), one code span of 90,000 characters anywhere (0.8 to 1.8 s) Qt laid it out
     in one turn. Every shape, every container, both parsers: no turn of the GUI thread over 0.25 s."""
     longest = _longest_turn(CONTAINERS[place](HOSTILE_SHAPES[shape]()), full)
-    assert longest < 0.25, (shape, place, longest)
+    TB.budget(longest < 0.25, (shape, place, longest))
 
 
 def test_sad_a_heading_or_cell_past_the_cap_is_cut_and_said():
@@ -284,7 +285,7 @@ def test_sad_a_note_cited_100000_times_shows_its_first_ways_back_and_a_count():
     page = "".join(H.to_html_parts(MD.parse(text)))
     assert "and 99,980 more" in page
     longest = _longest_turn(text, True)
-    assert longest < 0.25, longest
+    TB.budget(longest < 0.25, longest)
 
 
 # -- H3. many headings: each part as quick as the first ------------------------------------------------
@@ -314,7 +315,7 @@ def test_sad_a_page_of_many_headings_is_laid_out_in_linear_time(monkeypatch):
     until(lambda: not view.more(), 120)
     assert len(costs) > 20
     first, last = sorted(costs[2:7])[2], sorted(costs[-5:])[2]
-    assert last < 3 * first + 0.01, (first, last)
+    TB.budget(last < 3 * first + 0.01, (first, last))  # (linear: the last parts' cost as the first's)
     assert view.go_to_anchor("heading-1999", remember=False)
 
 
@@ -363,7 +364,7 @@ def test_sad_ctrl_wheel_and_ctrl_equals_zoom_through_the_view_within_bounds(tmp_
     page.write_text("# Zoom\n\nText.\n", encoding="utf-8")
     viewer = MarkdownViewerDialog(LocalFS(), str(page))
     viewer.show()
-    assert until(lambda: viewer.view._readable and viewer.view.markdown, 30)
+    assert until(lambda: viewer.view._readable and viewer.view.markdown, TB.READY_SECONDS)
     browser = viewer.view.browser
     wheel = QWheelEvent(QPointF(10, 10), QPointF(10, 10), QPoint(0, 0), QPoint(0, 120), Qt.MouseButton.NoButton,
                         Qt.KeyboardModifier.ControlModifier, Qt.ScrollPhase.NoScrollPhase, False)
@@ -401,7 +402,7 @@ def test_sad_an_image_box_is_painted_again_in_a_new_theme(tmp_path):
     view.show()
     view.render("![local](missing.png) ![remote](https://img.example/x.png)\n")
     assert until(lambda: "missing.png" in view.images and not view.images["missing.png"].isNull()
-                 and view._readable, 30)
+                 and view._readable, TB.READY_SECONDS)
     pump(1.0)
     light = view.images["missing.png"].pixelColor(2, 6).lightness()
     palette = QPalette(palette)
@@ -422,7 +423,7 @@ def test_sad_a_missing_file_says_why_in_the_page(tmp_path):
 
     viewer = MarkdownViewerDialog(LocalFS(), str(tmp_path / "gone.md"))
     viewer.show()
-    assert until(lambda: "gone.md" in viewer.view.browser.toPlainText(), 30)
+    assert TB.until_within(until, lambda: "gone.md" in viewer.view.browser.toPlainText(), 30)
     assert "cannot be read" in viewer.view.browser.toPlainText()
 
 
@@ -523,7 +524,7 @@ def test_sad_clamping_images_looks_at_a_bounded_number_a_turn():
     view._clamped_room = None
     view.clamp_images()
     assert view._unclamped < document.characterCount() - 1  # (stopped: the rest in the next turn)
-    assert until(lambda: view._unclamped >= document.characterCount() - 1, 30)
+    assert TB.until_within(until, lambda: view._unclamped >= document.characterCount() - 1, 30)
 
 
 _EMOJI_TURNS = r"""import cProfile, io, os, pstats, sys, time

@@ -21,13 +21,13 @@ naming it, and a Content-Security-Policy that lets it load nothing.
 from __future__ import annotations
 
 import base64
-import functools
 import html
 import logging
 import posixpath
 import re
 
 from core import markdown_doc as MD
+from core import markdown_themes as MT
 
 log = logging.getLogger(__name__)
 
@@ -35,25 +35,10 @@ log = logging.getLogger(__name__)
 #: with it; a block of megabytes held up the window).
 HIGHLIGHT_LIMIT = 200_000
 
-LIGHT = {
-    "text": "#1f2328", "muted": "#59636e", "link": "#0969da",
-    # (headings in the text's colour - their size and weight make the order)
-    "h1": "#1f2328", "h2": "#1f2328", "h3": "#1f2328", "h4": "#1f2328", "h5": "#1f2328", "h6": "#59636e",
-    "code_bg": "#eff1f3", "code_fg": "#1f2328", "pre_bg": "#f6f8fa", "quote_bg": "#f6f8fa", "highlight": "#9a6700",
-    "highlight_bg": "#fff8c5",
-    "quote_fg": "#59636e", "rule": "#d1d9e0", "th_bg": "#eef2f7", "mark": "#1a7f37", "math": "#1f2328",
-    "note": "#0969da", "tip": "#1a7f37", "important": "#8250df", "warning": "#9a6700", "caution": "#d1242f",
-    "alert_bg": "#f6f8fa", "zebra": "#f6f8fa",
-}
-DARK = {
-    "text": "#e6edf3", "muted": "#9198a1", "link": "#4493f8",
-    "h1": "#e6edf3", "h2": "#e6edf3", "h3": "#e6edf3", "h4": "#e6edf3", "h5": "#e6edf3", "h6": "#9198a1",
-    "code_bg": "#2d333b", "code_fg": "#e6edf3", "pre_bg": "#161b22", "quote_bg": "#1c2128", "highlight": "#e3b341",
-    "highlight_bg": "#4d3800",
-    "quote_fg": "#9198a1", "rule": "#3d444d", "th_bg": "#212830", "mark": "#3fb950", "math": "#e6edf3",
-    "note": "#4493f8", "tip": "#3fb950", "important": "#ab7df8", "warning": "#d29922", "caution": "#f85149",
-    "alert_bg": "#161b22", "zebra": "#1c2128",
-}
+#: The page's colours on a light and on a dark ground - the themes "Light" and "Dark" (core.markdown_themes, where
+#: every theme's colours are; a theme stands where *dark* stood: colours(theme) its page's).
+LIGHT = MT.LIGHT_PAGE
+DARK = MT.DARK_PAGE
 
 #: The faces a formula is set in - inline and displayed, cells of cases and
 #: matrices too (in a monospace font they stood apart from the text): a math
@@ -69,8 +54,9 @@ ALERT_TITLES = {kind: (sign, title) for kind, sign, title in (
     ("warning", "⚠", "Warning"), ("caution", "✖", "Caution"))}
 
 
-def colours(dark: bool) -> dict[str, str]:
-    return DARK if dark else LIGHT
+def colours(dark) -> dict[str, str]:
+    """The page's colours: of a theme (core.markdown_themes.Theme), else Dark's (*dark* true) or Light's."""
+    return MT.colours_of(dark)
 
 
 def style_sheet(dark: bool) -> str:
@@ -155,15 +141,11 @@ def _highlight(code: str, lang: str, dark: bool) -> str | None:
     return formatted(tokens, formatter)
 
 
-#: GitHub's colours of code on a light page (its "prettylights" palette):
-#: Pygments' own default was a Qt-era green and blue.
-GITHUB_LIGHT = {"keyword": "#cf222e", "string": "#0a3069", "comment": "#6e7781", "number": "#0550ae",
-                "function": "#8250df", "class": "#953800", "constant": "#0550ae", "tag": "#116329",
-                "deleted": "#82071e"}
-#: ... and on a dark one (GitHub's dark theme - Pygments' github-dark left builtins uncoloured).
-GITHUB_DARK = {"keyword": "#ff7b72", "string": "#a5d6ff", "comment": "#8b949e", "number": "#79c0ff",
-               "function": "#d2a8ff", "class": "#ffa657", "constant": "#79c0ff", "tag": "#7ee787",
-               "deleted": "#ffa198"}
+#: GitHub's colours of code on a light page (its "prettylights" palette): Pygments' own default was a
+#: Qt-era green and blue - and on a dark one (Pygments' github-dark left builtins uncoloured). The themes
+#: "Light" and "Dark"; every theme has its own (core.markdown_themes).
+GITHUB_LIGHT = MT.LIGHT_CODE
+GITHUB_DARK = MT.DARK_CODE
 
 
 def _github_light():
@@ -171,28 +153,10 @@ def _github_light():
     return _github_style(False)
 
 
-@functools.lru_cache(maxsize=2)
-def _github_style(dark: bool):
-    """A Pygments style of GITHUB_DARK or GITHUB_LIGHT."""
-    from pygments.style import Style
-    from pygments.token import Comment, Error, Generic, Keyword, Name, Number, Operator, String
-
-    c = GITHUB_DARK if dark else GITHUB_LIGHT
-
-    class GitHub(Style):
-        background_color = "#161b22" if dark else "#f6f8fa"
-        styles = {
-            # (function names bold, comments italic: as Pygments' github-dark)
-            Comment: "italic " + c["comment"], Keyword: c["keyword"], Keyword.Constant: c["constant"],
-            Name.Function: "bold " + c["function"], Name.Class: c["class"], Name.Builtin: c["constant"],
-            Name.Decorator: c["function"], Name.Tag: c["tag"], Name.Attribute: c["constant"],
-            Name.Constant: c["constant"], String: c["string"], String.Escape: c["constant"],
-            String.Interpol: c["constant"], Number: c["number"], Operator: c["constant"],
-            Operator.Word: c["keyword"], Generic.Deleted: c["deleted"], Generic.Inserted: c["tag"],
-            Generic.Heading: "bold " + c["constant"], Error: c["deleted"],
-        }
-
-    return GitHub
+def _github_style(dark):
+    """A Pygments style of GITHUB_DARK or GITHUB_LIGHT (*dark*) - or of a theme's code colours
+    (core.markdown_themes.pygments_style)."""
+    return MT.pygments_style(dark)
 
 
 def _code_gap(tokens, idx: int, env) -> str:
@@ -1446,7 +1410,6 @@ def _mark_task_lists(tokens) -> None:
             token.attrs.pop("class", None)
 
 
-_TBODY = re.compile(r"<tbody>.*?</tbody>", re.DOTALL)
 #: A table's header cell that says nothing of its alignment.
 _TH_UNALIGNED = re.compile(r"<th(?=[\s>])(?![^<>]*\balign=)")
 #: (under a first and second level heading a light rule, as GitHub's)
@@ -1484,7 +1447,9 @@ def _join_table_parts(tokens) -> tuple[list, set[int]]:
         table = tokens[index:close + 1]
         first = next((t for t in table if t.type == "inline"), None)
         later = first is not None and first.content.startswith(CHUNK)
-        if not later:
+        if not later or widths is None:  # (a long text's piece that begins inside a big table: its first part
+            # the first here - its later ones each a part of its own, as in all of the text parsed at once: they
+            # were two to a part, 58 KB of long cells laid out in one turn of Export PDF, 0.12 s)
             widths = _widths(table)
         elif widths is not None:
             head_end = next(k for k, t in enumerate(table) if t.type == "thead_close")
@@ -1554,8 +1519,8 @@ def to_html_parts(doc: MD.Document, dark: bool = False, blocks: int = 2500, togg
     table_tag = (r'<table class="data" border="1" cellspacing="0" cellpadding="6" style="border-collapse: collapse; '
                  f'border-color: {palette["rule"]}; border-style: solid; margin-top: 4px; margin-bottom: 14px"\\1>')
 
-    def _zebra(match: re.Match) -> str:  # (every second row of a table's body on a tint)
-        rows = match.group(0).split("<tr>")
+    def _zebra(inside: str) -> str:  # (every second row of a table's body on a tint)
+        rows = ("<tbody>" + inside + "</tbody>").split("<tr>")
         return rows[0] + "".join((f'<tr bgcolor="{palette["zebra"]}">' if n % 2 == 0 else "<tr>") + row
                                  for n, row in enumerate(rows[1:], 1))
 
@@ -1570,7 +1535,7 @@ def to_html_parts(doc: MD.Document, dark: bool = False, blocks: int = 2500, togg
         body = _TABLE.sub(table_tag, body)
         if ' piece="' in body:  # (a table's pieces in a container one under another: no room between them)
             body = _PIECE.sub(_piece_margins, body)
-        body = _TBODY.sub(_zebra, body)
+        body = MD.paired(body, "<tbody>", "</tbody>", _zebra) if "<tbody>" in body else body
         body = _HEADING_END.sub(r'\1<hr class="heading-rule" />', body)
         # (the line between a long list's parts - ui.markdown_view.renderable - as low as it gets)
         body = _TH_UNALIGNED.sub('<th align="left"', body)  # (a header on the left, as GitHub's - Qt centred it)
@@ -1599,8 +1564,9 @@ CODE_PART_LINES = 200
 #: part at a time - 30,000 lines in a box held the window 5 to 30 s (as
 #: Qt's own parser's page: ui.markdown_view.BOX_BLOCKS).
 BOXED_LINES = 500
-#: ... or characters (a table of 2,000 columns as written: 200 lines of 4,000 - 0.5 s in a box).
-BOXED_CHARS = 40_000
+#: ... or characters (a table of 2,000 columns as written: 200 lines of 4,000 - 0.5 s in a box; 30 KB of ">"
+#: 0.16 s at 40,000).
+BOXED_CHARS = 12_000
 #: Characters of a band at most.
 BAND_CHARS = 16_000
 
@@ -1633,6 +1599,12 @@ BOX_WEIGHT = 3
 INLINE_BLOCK_CHARS = 200
 
 
+#: (_weight) what Pygments colours apart in a code block, about: a word, a run of signs.
+_CODE_SPANS = re.compile(r"\w+|[^\w\s]+")
+#: (_weight) the characters of a code block its spans are counted in at most.
+CODE_SPANS_READ = 64_000
+
+
 def _weight(token, blocks: int) -> int:
     """What *token* costs to lay out, in blocks (_part_ranges) - a block of no content at least one (a rule,
     an empty code block: 100,000 rules weighed nothing, one part, 1.3 s), a box (a code block, a formula)
@@ -1642,8 +1614,13 @@ def _weight(token, blocks: int) -> int:
         weight += BOX_WEIGHT
     if token.type in ("math_block", "math_block_label"):  # (a display formula: tables in tables to lay out)
         weight += min(blocks, 1 + 12 * token.content.count("\\begin") + 3 * token.content.count("\\frac"))
-    elif token.type in ("fence", "code_block"):  # (each of its lines a block of the page)
-        weight += token.content.count("\n")
+    elif token.type in ("fence", "code_block"):  # (each of its lines a block of the page - and its letters, as an
+        # inline's: lines of 2,000 picture signs were a part of 16 lines, 0.13 s)
+        weight += token.content.count("\n") + _weighed(token.content) // INLINE_BLOCK_CHARS
+        if token.type == "fence" and token.info.strip() and weight < blocks:  # (coloured by Pygments: each of
+            # its spans a format to lay out, weighed as an inline's - two blocks of 233 lines and 1,991 spans
+            # were a part with lists and tables around them, 0.3 s; read as far as a part's worth at most)
+            weight += len(_CODE_SPANS.findall(token.content, 0, CODE_SPANS_READ)) // 8
     elif token.type == "paragraph_open" and (token.meta or {}).get("piece"):
         weight += blocks  # (a long paragraph's piece: a part of its own)
     elif token.type == "inline":  # (its spans, and its letters: a line's worth a block - a quote of 300 rows of
@@ -1794,18 +1771,19 @@ def _in_bands(tokens: list) -> list:
     out = []
     for token in tokens:
         if token.type not in ("fence", "code_block") \
-                or (token.content.count("\n") <= BOXED_LINES and len(token.content) <= BOXED_CHARS) \
+                or (token.content.count("\n") <= BOXED_LINES and _weighed(token.content) <= BOXED_CHARS) \
                 or (token.info or "").strip().lower().startswith("math"):
             out.append(token)
             continue
         lines = token.content.splitlines(keepends=True)
         bands, band, size = [], [], 0
         for line in lines:  # (CODE_PART_LINES lines a band, or BAND_CHARS characters: long lines wrap)
-            if band and (len(band) >= CODE_PART_LINES or size + len(line) > BAND_CHARS):
+            weight = _weighed(line)
+            if band and (len(band) >= CODE_PART_LINES or size + weight > BAND_CHARS):
                 bands.append(band)
                 band, size = [], 0
             band.append(line)
-            size += len(line)
+            size += weight
         if band:
             bands.append(band)
         plain = len(token.content) > HIGHLIGHT_LIMIT  # (the block as a whole: past it, none coloured)
@@ -1830,7 +1808,22 @@ PARAGRAPH_TEXT = 6000
 #: or without a colour emoji font, 50,000 emoji in a paragraph held the window 0.3 s (markdown-it) and 0.5 s
 #: (Qt's own parser) a turn when one counted as 8 letters.
 PICTURE_WEIGHT = 128
-_PICTURE_SIGNS = re.compile("[\U0001F000-\U0010FFFF]")
+#: ... and what Qt shapes as dearly: the Ogham space mark, the one space a font draws (no font of most
+#: machines has it - "a" and U+1680 15,000 times, 30 KB, took 0.3 s to lay out in a part), and the format
+#: signs shaped with what follows them - the prepended concatenation marks (Arabic's number signs, Syriac's
+#: abbreviation mark, Kaithi's), the Mongolian vowel separator, the interlinear annotations, the
+#: hieroglyphs' and shorthand's format controls, the musical beams and slurs (each 0.4 to 0.8 s a part).
+_PICTURE_SIGNS = re.compile("[\u0600-\u0605\u06dd\u070f\u0890\u0891\u08e2\u1680\u180e\ufff9-\ufffb"
+                            "\U000110bd\U000110cd\U00013430-\U0001345f\U0001bca0-\U0001bca3\U0001d173-\U0001d17a"
+                            "\U0001F000-\U0010FFFF]")
+
+
+def _weighed(text: str) -> int:
+    """*text*'s length, an emoji or a picture sign picture_weight() letters (a code block's box, its bands:
+    30 KB of picture signs in one box took 0.3 s to lay out)."""
+    if text.isascii():
+        return len(text)
+    return len(text) + ((picture_weight() - 1) * len(_PICTURE_SIGNS.findall(text)) if not text.isascii() else 0)
 
 
 def picture_weight() -> int:
@@ -1848,6 +1841,10 @@ def piece_floor(weight: int) -> int:
 #: formula, a code span is laid out as a thing of its own.
 _SPAN_COST = {"image": 30, "math_inline": 30, "math_inline_double": 30, "code_inline": 10, "html_inline": 10,
               "footnote_ref": 10}
+
+
+#: (_paragraph_pieces) the letters of a piece of a word without a space, at most.
+WORD_PIECE = 1000
 
 
 def _paragraph_pieces(tokens: list) -> list:
@@ -1882,30 +1879,38 @@ def _paragraph_pieces(tokens: list) -> list:
                 words, at = child.content, 0
                 while at < len(words):
                     cut = words.find(" ", at + step, at + 2 * step)
-                    if cut < 0:  # (no space near: cut in the word - between two letters as they are seen;
-                        # 99,000 letters in one word held the window 1.1 s)
-                        cut = len(words) if at + 2 * step >= len(words) \
-                            else MD.cluster_end(words, at + step - 1)
-                    children.append(child.copy(content=words[at:cut]))
+                    in_word = cut < 0
+                    if in_word:  # (no space near: cut in the word - between two letters as they are seen;
+                        # 99,000 letters in one word held the window 1.1 s - in pieces of WORD_PIECE, each a block:
+                        # Qt lays out a word longer than a line letter by letter, and each change to its block
+                        # again - 12,000 a block in a list item, 0.11 s a turn)
+                        word = min(step, WORD_PIECE)
+                        cut = len(words) if len(words) - at <= word else MD.cluster_end(words, at + word - 1)
+                    children.append(child.copy(content=words[at:cut], meta={**(child.meta or {}), "in_word": in_word}))
                     at = cut
             elif child.type == "code_inline" and len(child.content) > PARAGRAPH_TEXT:
                 # (one code span of 90,000 characters - "`a``a``a`...", its inner runs no end to it - laid
                 # out as one: 0.8 to 1.8 s in any container; in spans of its own, one after another)
                 code, at = child.content, 0
+                # (without a space to break a line at - no-break spaces, letters - in spans of WORD_PIECE, each its
+                # own piece: 6,000 of them a span were laid out letter by letter, 0.18 s a zoom's turn)
+                size = PARAGRAPH_TEXT if " " in code else WORD_PIECE
                 while at < len(code):
-                    cut = len(code) if at + PARAGRAPH_TEXT >= len(code) else MD.cluster_end(code, at + PARAGRAPH_TEXT - 1)
-                    children.append(child.copy(content=code[at:cut]))
+                    cut = len(code) if at + size >= len(code) else MD.cluster_end(code, at + size - 1)
+                    children.append(child.copy(content=code[at:cut], meta={**(child.meta or {}),
+                                                                          "in_word": size == WORD_PIECE}))
                     at = cut
             else:
                 children.append(child)
         groups, group, size, wrappers = [], [], 0, []
         Token = MD.token_class()
         for child in children:
-            full = len(group) >= PARAGRAPH_SPANS or size >= step
+            in_word = bool((child.meta or {}).get("in_word"))
+            full = len(group) >= PARAGRAPH_SPANS or size >= (min(step, WORD_PIECE) if in_word else step)
             # (no space for twice as long: cut between two spans all the same - "`a" 49,500 times, 25,000
             # code spans and not one space, held the window 17 s in Qt's layout; "$a$" 30,000 times 3 s)
             if full and (child.type in ("softbreak", "text")
-                         and (child.type == "softbreak" or child.content[:1].isspace())
+                         and (child.type == "softbreak" or child.content[:1].isspace()) or in_word
                          or len(group) >= 2 * PARAGRAPH_SPANS or size >= 2 * step) \
                     and child.nesting != -1:
                 # (inside a link, emphasis, a strike: those ended at the cut and begun again after it - cut at
@@ -2177,11 +2182,11 @@ EXPORT_POLICY = ("default-src 'none'; style-src 'unsafe-inline'; img-src data:; 
                  "form-action 'none'; base-uri 'none'")
 
 
-def _export_style(dark: bool) -> str:
+def _export_style(dark) -> str:
     c = colours(dark)
     alerts = "\n".join(f".markdown-alert-{kind} {{ border-left-color: {c[kind]}; }}" for kind in ALERT_TITLES)
     return f"""
-body {{ color: {c['text']}; background: {'#0d1117' if dark else '#ffffff'}; max-width: 52em; margin: 2em auto;
+body {{ color: {c['text']}; background: {c['page_bg']}; max-width: 52em; margin: 2em auto;
        padding: 0 1em; font: 16px/1.6 -apple-system, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif; }}
 h1, h2 {{ border-bottom: 1px solid {c['rule']}; padding-bottom: .3em; }}
 h1 {{ color: {c['h1']}; }} h2 {{ color: {c['h2']}; }} h3 {{ color: {c['h3']}; }}
@@ -2232,6 +2237,40 @@ _TEX_MARK = re.compile(r'<td><a name="axross-tex:[^"]*"></a>&#8203;</td>|<a name
                        re.DOTALL)
 
 
+#: (by_blocks) the size of the pieces of a page a pass over it changes one at a time (characters).
+BLOCKS_AT_ONCE = 1 << 17
+#: (by_blocks) where a piece of a page may end: before a block's tag at a line's start - no tag, no link's
+#: text and no formula's mark goes on past one.
+_BLOCK_TAG_LINE = re.compile(r"\n(?=<(?:p|h[1-6]|div|table|tr|pre|ul|ol|li|dl|blockquote|hr|section|details)\b)")
+
+
+def by_blocks(change, page: str) -> str:
+    """*change(piece)* of *page*'s pieces of about BLOCKS_AT_ONCE characters, joined - each ended before a
+    block's tag (_BLOCK_TAG_LINE), or after a tag once none begins for that long: one pass of a regular
+    expression over all of a page keeps Python's lock - 47 MB of Qt's HTML held the window up to 0.33 s
+    on a worker, 2.2 s under load."""
+    if len(page) <= 2 * BLOCKS_AT_ONCE:
+        return change(page)
+    pieces, begin = [], 0
+    while begin < len(page):
+        cut = begin + BLOCKS_AT_ONCE
+        if cut >= len(page) - BLOCKS_AT_ONCE // 2:
+            pieces.append(change(page[begin:]))
+            break
+        found = _BLOCK_TAG_LINE.search(page, cut, cut + BLOCKS_AT_ONCE)
+        if found is not None:
+            end = found.start() + 1
+        else:  # (no block begins for that long - one code block, one paragraph: outside a tag, never inside
+            # one - an image's cut in two were no image either piece made safe; a "<" or ">" in a value or a
+            # text is "&lt;", "&gt;")
+            end = cut + BLOCKS_AT_ONCE
+            if page.rfind("<", begin, end) > page.rfind(">", begin, end):  # (inside a tag: after its end)
+                end = page.find(">", end) + 1 or len(page)
+        pieces.append(change(page[begin:end]))
+        begin = end
+    return "".join(pieces)
+
+
 def safe_page(page: str, images: dict | None = None) -> str:
     """*page* (any HTML - Qt's own, for one) made a page of its own as safe
     as :func:`export_html`'s without counting on its policy (a word
@@ -2259,8 +2298,11 @@ def safe_page(page: str, images: dict | None = None) -> str:
         kept = target.lower().startswith(_KEPT_LINKS) or (target and _RELATIVE_LINK.match(target))
         return match.group(0) if kept else match.group(1)
 
-    page = _TEX_MARK.sub(lambda match: match.group(1) or "", page)
-    return _QT_LINE_HEIGHT.sub(_line_height, _HREF.sub(link, _IMG_TAG.sub(image, page)))
+    def safe(piece: str) -> str:
+        piece = _TEX_MARK.sub(lambda match: match.group(1) or "", piece)
+        return _QT_LINE_HEIGHT.sub(_line_height, _HREF.sub(link, _IMG_TAG.sub(image, piece)))
+
+    return by_blocks(safe, page)
 
 
 #: Qt's line heights in its own HTML: a number without unit and a type of
@@ -2285,6 +2327,11 @@ def export_html(doc: MD.Document, title: str = "", dark: bool = False, images: d
     and checked (beside the file, bounded, not a secret) - only those are in
     it, every other image is a chip naming it; its policy lets it load
     nothing at all (:data:`EXPORT_POLICY`)."""
+    return "".join(export_html_pieces([doc], title, dark, images))
+
+
+def export_body(doc: MD.Document, dark: bool = False, images: dict | None = None) -> str:
+    """*doc*'s body of the page export_html makes, made safe (safe_page)."""
     md = doc.parser
     _install_rules(md, dark)
     _mark_task_lists(doc.tokens)
@@ -2296,14 +2343,26 @@ def export_html(doc: MD.Document, title: str = "", dark: bool = False, images: d
         log.warning("A page could not be rendered; shown as written", exc_info=True)
         written = MD.as_written(doc.source, exc, md)
         body = md.renderer.render(written.tokens, md.options, {"browser": True, "images": images or {}})
-    body = safe_page(_TASK.sub(_task, body), images)
-    title = html.escape(MD.clean(title or (doc.headings[0].text if doc.headings else "Markdown")))
-    return (f'<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n'
+    return safe_page(by_blocks(lambda piece: _TASK.sub(_task, piece), body), images)
+
+
+def export_html_pieces(docs, title: str = "", dark: bool = False, images: dict | None = None) -> list[str]:
+    """export_html's page of the Documents *docs* - a long text's pieces, parsed one after another
+    (ui.markdown_view.parsed_pieces): the page in pieces, each piece's tokens let go once its body is made
+    (all of a text of 4 MB parsed at once held 700 MiB more)."""
+    bodies, first = [], None
+    for doc in docs:
+        if first is None and doc.headings:
+            first = doc.headings[0].text
+        bodies.append(export_body(doc, dark, images))
+        del doc
+    title = html.escape(MD.clean(title or first or "Markdown"))
+    return [f'<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n'
             f'<meta http-equiv="Content-Security-Policy" content="{EXPORT_POLICY}">\n'
             f'<meta name="referrer" content="no-referrer">\n'
             f'<meta name="viewport" content="width=device-width, initial-scale=1">\n'
             f"<title>{title}</title>\n<style>{_export_style(dark)}</style>\n</head>\n"
-            f'<body>\n<article class="markdown-body">\n{body}</article>\n</body>\n</html>\n')
+            f'<body>\n<article class="markdown-body">\n', *bodies, "</article>\n</body>\n</html>\n"]
 
 
 def anchor_names(page: str) -> set[str]:
@@ -2312,4 +2371,4 @@ def anchor_names(page: str) -> set[str]:
 
 
 __all__ = ["ALERT_TITLES", "ANCHORS", "DARK", "EXPORT_POLICY", "LIGHT", "anchor_names", "colours",
-           "events_html", "export_html", "safe_page", "style_sheet", "to_html", "to_html_parts"]
+           "events_html", "export_body", "export_html", "export_html_pieces", "safe_page", "style_sheet", "to_html", "to_html_parts"]

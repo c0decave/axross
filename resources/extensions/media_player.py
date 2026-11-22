@@ -1041,16 +1041,257 @@ _OWN_TRACK_KEYS = ("path", "title", "duration")
 _SHARED_OBJECTS = ("visual_options", "visual_custom")
 
 
-def merge_shared_state(own: dict, stored: dict) -> dict:
+def _track_paths(state) -> list[str] | None:
+    """The paths of *state*'s tracks in order ("" for an entry without one);
+    None when it has no list."""
+    tracks = state.get("tracks") if isinstance(state, dict) else None
+    if not isinstance(tracks, list):
+        return None
+    return [t["path"] if isinstance(t, dict) and isinstance(t.get("path"), str) else ""
+            for t in tracks]
+
+
+def _current_path(state) -> str | None:
+    """The path of *state*'s current track (None: there is none)."""
+    paths = _track_paths(state)
+    current = state.get("current") if paths is not None else None
+    if not isinstance(current, int) or isinstance(current, bool) \
+            or not 0 <= current < len(paths):
+        return None
+    return paths[current]
+
+
+def playlist_merge(own: dict, stored: dict, base: dict | None) -> str:
+    """How a save merges the playlist (review 14: a track added in axross-amp
+    while axross ran was lost at axross's next save; review 15: it still
+    was when axross had changed its list too). *base* is the state - its
+    tracks and current - as axross last read or wrote its own playlist; a
+    list changed when its paths in order differ from the base's (tags
+    filled in are no edit of a list, a reorder is one):
+
+    * "theirs": only the file's list changed - the file's list is written,
+      the track axross moved to found there by its path;
+    * "their_current": the same list, only the file moved to another track -
+      axross's list with the file's current track and position;
+    * "both": both lists changed - axross's list with the file's changes
+      since the base made in it (_both_playlist);
+    * "ours": only axross changed its list, or nothing changed, or there is
+      no base (or no list in the file) - axross's, as before.
+
+    The same rules as axross-amp's on its side (merge_playlist)."""
+    if not isinstance(base, dict) or not isinstance(stored, dict):
+        return "ours"
+    base_paths = _track_paths(base)
+    own_paths = _track_paths(own)
+    theirs = _track_paths(stored)
+    if base_paths is None or own_paths is None:
+        return "ours"
+    if own_paths != base_paths:
+        return "both" if theirs is not None and theirs != base_paths else "ours"
+    if theirs is not None and theirs != base_paths:
+        return "theirs"
+    if "current" in stored and _current_path(stored) != _current_path(base) \
+            and _current_path(own) == _current_path(base):
+        return "their_current"
+    return "ours"
+
+
+def _occurrences(paths: list[str]) -> list[tuple[str, int]]:
+    """Each path with how many times it came before: the n-th copy of a
+    track is an entry of its own."""
+    seen: dict[str, int] = {}
+    out = []
+    for path in paths:
+        n = seen.get(path, 0)
+        seen[path] = n + 1
+        out.append((path, n))
+    return out
+
+
+def _both_playlist(own: dict, stored: dict, base: dict) -> dict:
+    """The playlist when both axross's list (*own*) and the file's
+    (*stored*) changed since *base* - the three-way merge axross-amp makes
+    the same way on its side (merge_lists). By the tracks' paths, each copy
+    of a path its own (the second copy of a track is another entry):
+
+    * an entry is kept when both have it, or one added it since the base;
+      one that either removed is gone (an entry without a path, in the
+      file's list, is none);
+    * the order is the one that changed: where only the file reordered the
+      entries it shares with the base, the file's order, else axross's
+      (review 16, M7: a reorder in one program was undone by an edit in
+      the other); then what the other added goes right after the nearest
+      entry before it in its list that is in the result, or at the start -
+      one it added at its end after the last of its entries in the result;
+    * each entry: axross's where it has it, else the file's;
+    * the current track: axross's current entry where it is kept, with
+      axross's position; else the file's current entry, with the file's
+      position; else none (-1, 0).
+
+    merge_shared_state adds the file's extra keys to axross's entries."""
+    own_tracks = own.get("tracks") or []
+    their_tracks = stored["tracks"]
+    b = _occurrences(_track_paths(base) or [])
+    o = _occurrences(_track_paths(own) or [])
+    t = _occurrences(_track_paths(stored) or [])
+    in_base, in_own, in_theirs = set(b), set(o), set(t)
+
+    def kept(key) -> bool:
+        if key[0] == "" and key not in in_own:
+            return False  # the file's entry without a path
+        return (key in in_own and key in in_theirs) or \
+            (key in in_own and key not in in_base) or \
+            (key in in_theirs and key not in in_base)
+
+    def reordered(side, present) -> bool:
+        return [k for k in side if k in in_base] != [k for k in b if k in present]
+
+    theirs_first = reordered(t, in_theirs) and not reordered(o, in_own)
+    first, first_tracks, second, second_tracks = (
+        (t, their_tracks, o, own_tracks) if theirs_first else (o, own_tracks, t, their_tracks))
+    own_at = {key: n for n, key in enumerate(o)}
+
+    def entry(key, tracks, n):
+        return own_tracks[own_at[key]] if key in own_at else tracks[n]
+
+    # A linked list (the next node of each, -1 the start): every insert in
+    # constant time, a list of MAX_PLAYLIST_ENTRIES merges at once.
+    entries: list = []
+    keys: list = []
+    following: dict[int, int | None] = {}
+    node_of: dict = {}
+    last = -1
+    for n, key in enumerate(first):
+        if not kept(key):
+            continue
+        node = len(entries)
+        entries.append(entry(key, first_tracks, n))
+        keys.append(key)
+        node_of[key] = node
+        following[last] = node
+        last = node
+    following[last] = None
+    # (an entry added at the end of its list - nothing kept after it - goes
+    # after the last of that list's entries in the result: the entry before
+    # it may have been moved away by the other's reorder)
+    kept_after = [False] * (len(second) + 1)
+    for n in range(len(second) - 1, -1, -1):
+        kept_after[n] = kept_after[n + 1] or kept(second[n])
+    in_second = set(second)
+    end_anchor = None
+    for n, key in enumerate(second):
+        if not kept(key) or key in node_of:
+            continue
+        anchor = -1
+        if not kept_after[n + 1]:
+            if end_anchor is None:
+                end_anchor = -1
+                node = following[-1]
+                while node is not None:
+                    if keys[node] in in_second:
+                        end_anchor = node
+                    node = following[node]
+            anchor = end_anchor
+        else:
+            for before in range(n - 1, -1, -1):
+                if second[before] in node_of:
+                    anchor = node_of[second[before]]
+                    break
+        node = len(entries)
+        entries.append(entry(key, second_tracks, n))
+        keys.append(key)
+        node_of[key] = node
+        following[node] = following[anchor]
+        following[anchor] = node
+        if not kept_after[n + 1]:
+            end_anchor = node
+    order = []
+    node = following[-1]
+    while node is not None:
+        order.append(node)
+        node = following[node]
+    tracks = [entries[node] for node in order]
+    at = {keys[node]: n for n, node in enumerate(order)}
+
+    def current_of(state, side):
+        here = state.get("current")
+        if isinstance(here, int) and not isinstance(here, bool) and 0 <= here < len(side):
+            return at.get(side[here])
+        return None
+
+    mine = current_of(own, o)
+    if mine is not None:
+        return {"tracks": tracks, "current": mine, "position_ms": own.get("position_ms", 0)}
+    theirs = current_of(stored, t)
+    if theirs is not None:
+        return {"tracks": tracks, "current": theirs,
+                "position_ms": stored.get("position_ms", 0)}
+    return {"tracks": tracks, "current": -1, "position_ms": 0}
+
+
+def _missing(value) -> bool:
+    return value is None or value == "" or (isinstance(value, (int, float))
+                                             and not isinstance(value, bool) and value == 0)
+
+
+def _their_playlist(own: dict, stored: dict, base: dict) -> dict:
+    """The file's tracks (each entry as it is, what axross knows of the same
+    track - matched by path, the n-th time to the n-th time - filling in
+    what the entry lacks), with the current track and position: the track
+    axross moved to since *base* where the file has it (nearest to axross's
+    place in the list), else the file's."""
+    ours: dict[str, list[dict]] = {}
+    for track in own.get("tracks") or []:
+        if isinstance(track, dict) and isinstance(track.get("path"), str):
+            ours.setdefault(track["path"], []).append(track)
+    seen: dict[str, int] = {}
+    tracks = []
+    for track in stored["tracks"]:
+        found = ours.get(track.get("path")) if isinstance(track, dict) else None
+        if found:
+            n = seen.get(track["path"], 0)
+            seen[track["path"]] = n + 1
+            mine = found[min(n, len(found) - 1)]
+            track = {**track, **{k: v for k, v in mine.items()
+                                 if _missing(track.get(k)) and not _missing(v)}}
+        tracks.append(track)
+    here = _current_path(own)
+    at = None
+    if here is not None and here != _current_path(base):
+        places = [n for n, path in enumerate(_track_paths(stored)) if path == here]
+        if places:
+            at = min(places, key=lambda n: abs(n - own["current"]))
+    if at is not None:
+        return {"tracks": tracks, "current": at, "position_ms": own.get("position_ms", 0)}
+    return {"tracks": tracks, "current": stored.get("current", -1),
+            "position_ms": stored.get("position_ms", 0)}
+
+
+def merge_shared_state(own: dict, stored: dict, base: dict | None = None) -> dict:
     """*own* (what axross saves) over *stored* (what the state file holds at
     this save): axross-amp shares the file and writes more than axross
     knows. Every key axross does not write is kept - at the top, inside
     visual_options and visual_custom, and in a track (matched by its path,
     the n-th time a path is in the list to the n-th time it is in the file);
     axross's own values win. A track no longer in the list takes what was
-    kept for it along."""
+    kept for it along.
+
+    The playlist (tracks, current, position_ms) is merged three ways with
+    *base*, what axross last read or wrote of it (playlist_merge): a list
+    only axross-amp changed is axross-amp's, one both changed is axross's
+    with axross-amp's changes made in it (_both_playlist). Without a base
+    it is axross's."""
     if not isinstance(stored, dict) or not stored:
         return own
+    whose = playlist_merge(own, stored, base)
+    if whose == "theirs":
+        return {**merge_shared_state({k: v for k, v in own.items() if k != "tracks"}, stored),
+                **_their_playlist(own, stored, base)}
+    if whose == "both":
+        own = {**own, **_both_playlist(own, stored, base)}
+    elif whose == "their_current":
+        own = {**own, "current": stored.get("current", -1),
+               "position_ms": stored.get("position_ms", 0)}
     merged = dict(own)
     for key, value in stored.items():
         if key not in own:
@@ -1079,6 +1320,29 @@ def merge_shared_state(own: dict, stored: dict) -> dict:
                 tracks.append(track)
             merged["tracks"] = tracks
     return merged
+
+
+def plain_state(merged: dict, own: dict) -> dict:
+    """*own* with the playlist *merged* writes, but none of the keys
+    merge_shared_state kept of the file in its tracks: what write_state
+    saves when *merged* does not fit whole (a list axross-amp changed must
+    not fall back to axross's older one)."""
+    if merged is own:
+        return own
+    tracks = merged.get("tracks")
+    if not isinstance(tracks, list):
+        return own
+    return {**own, "current": merged.get("current", -1),
+            "position_ms": merged.get("position_ms", 0),
+            "tracks": [{k: t[k] for k in _OWN_TRACK_KEYS if k in t}
+                       if isinstance(t, dict) else t for t in tracks]}
+
+
+def playlist_base(state: dict) -> dict:
+    """What a three-way merge of the playlist compares with: *state*'s track
+    paths in order and its current track."""
+    return {"tracks": [{"path": path} for path in _track_paths(state) or []],
+            "current": state.get("current", -1)}
 
 
 def encode_state(state: dict) -> str:
@@ -1112,9 +1376,9 @@ def write_state(path, state: dict, *, keep_old: bool = False,
                 plain: dict | None = None) -> None:
     """Save *state* privately (0600, atomic); *keep_old* first keeps a copy
     of an unreadable file next to it. ValueError when it cannot be encoded.
-    *plain* is *state* without what merge_shared_state kept of the file: it
-    is saved instead (trimmed as encode_state trims) when *state* does not
-    fit whole - what axross-amp added must not cost tracks or the save."""
+    *plain* is *state* without what merge_shared_state kept of the file
+    (plain_state): it is saved instead (trimmed as encode_state trims) when
+    *state* does not fit whole - what axross-amp added must not cost tracks or the save."""
     from core.secure_storage import keep_unreadable_copy, write_secret_file
 
     text = None
@@ -5131,6 +5395,8 @@ TRANSFER_MIME_TYPE = "application/x-axross-transfer"
 _PATH_ROLE = Qt.ItemDataRole.UserRole
 #: A track's length in seconds when known (0: unknown).
 _DURATION_ROLE = Qt.ItemDataRole.UserRole + 1
+#: A track that was not there when the list was restored (kept, greyed).
+_MISSING_ROLE = Qt.ItemDataRole.UserRole + 2
 #: The state is saved this long after the last change, and every this many
 #: seconds while playing (the position).
 _SAVE_DELAY_MS = 1000
@@ -5237,6 +5503,10 @@ class PlayerPanel(QWidget):
         self._restoring = False
         #: What the file held while a restore checks its tracks (_state).
         self._restore_pending: dict | None = None
+        #: The playlist as axross last read or wrote it (playlist_base):
+        #: what a save merges the file's with (merge_shared_state). None
+        #: until the restore: axross's list is written as it is.
+        self._playlist_base: dict | None = None
         #: The face shown when the state was restored, and whether the user
         #: picked another since: until then a save keeps the face the file
         #: holds (axross-amp's, which axross may not have).
@@ -5995,12 +6265,31 @@ class PlayerPanel(QWidget):
         self._fail_streak = 0
         self.play_item(item)
 
+    def _mark_missing(self, item: QListWidgetItem) -> None:
+        """*item*'s file is not there (a drive not mounted): kept in the
+        list, greyed and said so - not removed (review 16, M8)."""
+        item.setData(_MISSING_ROLE, True)
+        item.setForeground(self.palette().color(QPalette.ColorGroup.Disabled,
+                                                QPalette.ColorRole.Text))
+        item.setToolTip(plain_tooltip(
+            f"{item.data(_PATH_ROLE)}\n{tr('Not found (a drive not mounted?): kept in the list')}"))
+
     def play_item(self, item: QListWidgetItem, *, record: bool = True) -> None:
         """Play *item*. A local track is probed in a child first, the first
         time (core.media_gate): Qt Multimedia's FFmpeg opens it inside
         axross, and one that crashes the probe would have ended it."""
         self._probe_token = None
         path = item.data(_PATH_ROLE)
+        if item.data(_MISSING_ROLE):
+            if is_stream(path) or os.path.lexists(path):
+                # (back: its drive mounted again)
+                item.setData(_MISSING_ROLE, False)
+                item.setData(Qt.ItemDataRole.ForegroundRole, None)
+                item.setToolTip(plain_tooltip(path))
+            else:
+                self._set_current(item)
+                self._probe_refused(item, tr("Not found (a drive not mounted?)"))
+                return
         media_gate = _media_gate()
         if media_gate is not None and not is_stream(path):
             known, refusal = media_gate.known(path)
@@ -7019,9 +7308,17 @@ class PlayerPanel(QWidget):
             own = self._state()
             stored, _usable = read_state(self._state_path)
             self._keep_stored_face(own, stored)
-            write_state(self._state_path, merge_shared_state(own, stored),
-                        keep_old=self._state_unreadable, plain=own)
+            base = self._playlist_base
+            merged = merge_shared_state(own, stored, base)
+            write_state(self._state_path, merged,
+                        keep_old=self._state_unreadable, plain=plain_state(merged, own))
             self._state_unreadable = False
+            # The file's list (or track) merged in is not taken into the list
+            # shown: the base is axross's own list as it is now, not what was
+            # written - at the next save axross's list is unchanged, so the
+            # file's (with the other program's tracks and axross's edit) is
+            # kept whole, and a later edit in axross is merged against it.
+            self._playlist_base = playlist_base(own)
         except (OSError, ValueError) as exc:
             # A timer slot: nothing may escape (PyQt6 aborts on it).
             self.note.setText(tr("Cannot save the player state: {error}").format(error=exc))
@@ -7050,6 +7347,7 @@ class PlayerPanel(QWidget):
         state, usable = read_state(self._state_path)
         self._state_unreadable = not usable
         self._face_restored = self.visualizer.mode
+        self._playlist_base = playlist_base({})  # no list yet: one axross-amp writes is kept
         if not state:
             return
         self._restoring = True
@@ -7088,27 +7386,41 @@ class PlayerPanel(QWidget):
             "current": next((n for n, entry in enumerate(wanted) if entry[0] == current), -1),
             "position_ms": position if isinstance(position, int) and position > 0 else 0,
         }
+        # The list as read (what is restorable of it, as a save during the
+        # check writes it): tracks found gone later are axross's edit.
+        self._playlist_base = playlist_base(self._restore_pending)
 
         #: The track to load, when its probe refused it (work fills it).
         refused: set = set()
 
         def work():
-            found = [entry for entry in wanted if is_stream(entry[1]) or _is_track(entry[1])]
+            # (a track not there now - a drive not mounted - is kept, marked:
+            # left out, it was taken for axross's own removal and gone from
+            # the shared list for good, axross-amp's as well: review 16, M8)
+            found = [entry + (not (is_stream(entry[1]) or os.path.lexists(entry[1])),)
+                     for entry in wanted
+                     if is_stream(entry[1]) or _is_track(entry[1])
+                     or not os.path.lexists(entry[1])]
             # The track to load probed first (core.media_gate): one that
             # crashed Qt's FFmpeg would have ended axross at every start.
             media_gate = _media_gate()
             if media_gate is None:
                 return found
             refused.update(entry[0] for entry in found if entry[0] == current
-                           and not is_stream(entry[1])
+                           and not is_stream(entry[1]) and not entry[4]
                            and media_gate.probe_refusal(entry[1]) is not None)
             return found
 
         def done(found) -> None:
             try:
                 items = {index: self._append(path, title, duration)
-                         for index, path, title, duration in found}
+                         for index, path, title, duration, _ in found}
+                for index, _path, _title, _duration, missing in found:
+                    if missing:
+                        self._mark_missing(items[index])
                 item = items.get(current) if isinstance(current, int) else None
+                if item is not None and item.data(_MISSING_ROLE):
+                    item = None
                 if item is not None and current in refused:
                     item.setForeground(QColor("#c0392b"))
                     item = None

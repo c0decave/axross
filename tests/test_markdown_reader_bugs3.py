@@ -22,6 +22,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 not installed")
 
 from PyQt6.QtWidgets import QApplication  # noqa: E402
+from tests import markdown_timing as TB  # noqa: E402
+
+#: The longest a helper waits for a page to be ready (it goes on as soon as it is).
+READY_SECONDS = 120
 
 APP = QApplication.instance() or QApplication([])
 ANSI = re.compile(r"\x1b(\[[0-9;]*m|\]8;;[^\x1b]*\x1b\\)")
@@ -45,7 +49,7 @@ def view_of(text: str, full: bool, path: str = "", width: int = 900):
     view.resize(width, 700)
     view.show()
     view.render(text)
-    end = time.monotonic() + 10
+    end = time.monotonic() + READY_SECONDS  # (a wait for the page, not a budget: a slow runner's page was measured half made)
     while time.monotonic() < end and (view.status.text() or view.asked - set(view.images)):
         APP.processEvents()
         time.sleep(0.005)
@@ -151,7 +155,7 @@ def test_sad_qts_own_parser_exports_only_checked_images_and_safe_links(tmp_path)
     viewer.show()  # (images are asked for as the page is laid out)
     viewer.reload()
     try:
-        end = time.monotonic() + 10
+        end = time.monotonic() + TB.READY_SECONDS
         while time.monotonic() < end and "pic.png" not in viewer.view.originals:
             APP.processEvents()
             time.sleep(0.01)
@@ -476,7 +480,7 @@ def test_sad_the_question_names_the_links_text_when_it_differs(tmp_path, monkeyp
     viewer = MarkdownViewerDialog(LocalFS(), str(tmp_path / "doc.md"))
     viewer.show()
     try:
-        end = time.monotonic() + 5
+        end = time.monotonic() + TB.READY_SECONDS
         while time.monotonic() < end and not viewer.loaded_once:
             APP.processEvents()
         pump(0.2)

@@ -25,6 +25,7 @@ from PyQt6.QtGui import QTextCursor  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from tests.test_markdown_reader_bugs11 import close, gap_text, opened, pump, settled, until  # noqa: E402
+from tests import markdown_timing as TB  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -49,7 +50,7 @@ def test_sad_select_all_then_copy_copies_all_of_a_long_page_at_once(full, jump, 
         began = time.monotonic()
         QTest.keyClick(browser, Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
         QTest.keyClick(browser, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)  # (at once: nothing selected yet)
-        assert until(lambda: APP.clipboard().text() != "OLD", 20), view.status.text()
+        assert TB.until_within(until, lambda: APP.clipboard().text() != "OLD", 20), view.status.text()
         took = time.monotonic() - began
         copied = APP.clipboard().text()
         missing = [n for n in range(1, 401) if f"CHMARK{n:03d}" not in copied]
@@ -57,7 +58,7 @@ def test_sad_select_all_then_copy_copies_all_of_a_long_page_at_once(full, jump, 
         assert copied.index("CHMARK001") < copied.index("CHMARK200") < copied.index("CHMARK400")
         assert "Last zebraquux two." in copied
         assert not re.search("[\ue000-\uf8ff]", copied), "a mark of the page's passes copied"
-        assert took < 3.0, took  # (laid out first: 9 s, 58 s for Qt's own parser - or nothing at all)
+        TB.budget(took < 3.0, took)  # (laid out first: 9 s, 58 s for Qt's own parser - or nothing at all)
     finally:
         close(dialog)
 
@@ -120,7 +121,7 @@ def test_sad_the_terminal_shows_a_long_text_with_footnotes_at_once(small_pieces)
     text = noted_text()
     began = time.monotonic()
     first = next(T.render_parts(text, T.Options(width=80)))
-    assert time.monotonic() - began < 1.0  # (all of it first: 5.9 s for gap.md)
+    TB.budget(time.monotonic() - began < 1.0, 'time.monotonic() - began < 1.0')  # (all of it first: 5.9 s for gap.md)
     assert "Section 0" in first and "Section 2999" not in first
     whole = re.sub(r"\x1b\[[0-9;]*m|\x1b\]8;;[^\x1b]*\x1b\\", "", T.render(text, T.Options(width=80)))
     assert "The first note" in whole and "The third" in whole and "[^first]" not in whole
@@ -160,7 +161,7 @@ def test_sad_an_anchor_in_a_piece_not_parsed_yet_is_gone_to(small_pieces, tmp_pa
     try:
         view = dialog.view
         view.clicked(QUrl("#section-2900"))
-        assert until(lambda: (lambda block: block.isValid() and block.text() == "Section 2900"
+        assert TB.until_within(until, lambda: (lambda block: block.isValid() and block.text() == "Section 2900"
                               and 0 <= view.browser.cursorRect(QTextCursor(block)).top() < 60)(
             view.browser.document().find("Section 2900").block()), 20), view.status.text()
     finally:

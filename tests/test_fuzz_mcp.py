@@ -211,6 +211,12 @@ _GROUP_ARG_KEYS = [
     "profile",
     "backend",
     "ext_id",
+    # 0.15.184: paging, the trash, the LLM profiles
+    "offset",
+    "max_scans",
+    "max_results",
+    "trash_id",
+    "llm_profile",
 ]
 
 
@@ -248,9 +254,12 @@ def test_sad_group_tools_answer_every_malformed_call(tmp_path, monkeypatch):
         "metadata_export_file": {"path": root, "out": root + "/m.json"},
         "metadata_remove": {"path": root + "/a.txt"},
         "duplicates_scan": {"path": root},
-        "duplicates_scans": {},
-        "duplicates_groups": {"path": root},
+        "duplicates_scans": {"max_scans": 2, "offset": 1},
+        "duplicates_groups": {"path": root, "max_groups": 2, "offset": 1},
         "duplicates_dedupe": {"path": root},
+        "trash_list": {"max_results": 2, "offset": 0},
+        "trash_restore": {"trash_id": "nope", "dst": root + "/back.txt"},
+        "llm_profiles": {},
         "pack_formats": {},
         "pack": {"folder": root, "names": ["a.txt"], "archive_name": "fz"},
         "archive_list": {"path": root + "/a.txt"},
@@ -268,7 +277,10 @@ def test_sad_group_tools_answer_every_malformed_call(tmp_path, monkeypatch):
         "list_backends": {},
         "extensions_list": {},
         "extensions_info": {"ext_id": "bundled:nope"},
-        "agent_run": {"task": "summarise a.txt", "groups": ["filetype"]},
+        "agent_run": {"task": "summarise a.txt", "groups": ["filetype"], "llm_profile": "x"},
+        # adb: no phone here, so each answers that the backend is none
+        # (test_sad_adb_tools_answer_every_malformed_call drives a fake one).
+        **{name: {"backend": "profile:phone", **args} for name, args in _ADB_BASE.items()},
     }
     assert set(names) <= set(base), sorted(set(names) - set(base))
     shaped = {
@@ -317,6 +329,232 @@ def test_sad_group_tools_answer_every_malformed_call(tmp_path, monkeypatch):
     assert set(after) == set(before), "a group tool wrote outside the root"
     secret = outside / "secret.txt"
     assert after[secret] == before[secret] and secret.read_text() == "outside the root\n"
+
+
+# -- the file and write tools, with every mode and page -----------------------------
+
+#: Argument names of the file and write tools (0.15.184's modes and pages too).
+_FILE_ARG_KEYS = sorted({
+    "path", "pattern", "max_depth", "max_entries", "max_matches", "offset", "include",
+    "encoding", "max_bytes", "algorithm", "max_files", "max_file_bytes", "version_id",
+    "content", "content_b64", "write_mode", "src", "dst", "overwrite", "recursive",
+    "target", "link_path", "kind", "mode", "ext", "min_size", "max_size", "max_results",
+    "path_b64", "src_b64", "dst_b64", "edge"})
+
+
+class _VersionedFS(LocalFS):
+    """The local disk with one older version of every file: restore_file_version
+    and read_file_version reach their streaming code."""
+
+    def list_versions(self, path):
+        from models.file_version import FileVersion
+
+        return [FileVersion(version_id="v1", size=3, is_current=False)]
+
+    def open_version_read(self, path, version_id):
+        if version_id != "v1":
+            raise OSError(f"no version {version_id!r}")
+        return io.BytesIO(b"old")
+
+
+def test_sad_file_tools_answer_every_malformed_call(tmp_path):
+    # The always-on and write tools - write_file's create / append /
+    # at_offset, restore_file_version, create_link's kinds, the offsets of
+    # walk_tree and search_content - against well-formed calls with one
+    # field made hostile: each call is answered, a failure is a refusal or
+    # an I/O error (never a TypeError, KeyError ... out of a handler), and
+    # nothing outside the root changes.
+    (tmp_path / "root" / "sub").mkdir(parents=True)
+    (tmp_path / "root" / "a.txt").write_text("hello\n")
+    (tmp_path / "root" / "sub" / "b.bin").write_bytes(b"\x00\xff" * 100)
+    (tmp_path / "secret.txt").write_text("outside the root\n")
+    root = str(tmp_path / "root")
+    before = {p: p.stat().st_mtime_ns for p in tmp_path.iterdir()}
+    tools = M._build_tools(_VersionedFS(), allow_write=True, root=root)
+    names = sorted(t.name for t in tools)
+    base = {
+        "list_dir": {"path": root}, "stat": {"path": root + "/a.txt"},
+        "read_file": {"path": root + "/a.txt", "offset": 1, "encoding": "text"},
+        "checksum": {"path": root + "/a.txt"}, "search": {"pattern": "a", "offset": 1},
+        "walk": {"path": root, "max_entries": 2, "offset": 1},
+        "recursive_checksum": {"path": root, "max_files": 2},
+        "preview": {"path": root + "/a.txt"},
+        "grep": {"pattern": "h", "path": root, "max_matches": 1, "offset": 1},
+        "list_versions": {"path": root + "/a.txt"},
+        "open_version_read": {"path": root + "/a.txt", "version_id": "v1"},
+        "write_file": {"path": root + "/w.txt", "content": "x", "write_mode": "replace"},
+        "write_file:create": {"path": root + "/n.txt", "content": "x", "write_mode": "create"},
+        "write_file:append": {"path": root + "/a.txt", "content": "x", "write_mode": "append"},
+        "write_file:at_offset": {"path": root + "/a.txt", "content_b64": "eA==",
+                                 "write_mode": "at_offset", "offset": 2},
+        "restore_version": {"path": root + "/a.txt", "version_id": "v1"},
+        "mkdir": {"path": root + "/d"}, "remove": {"path": root + "/w.txt"},
+        "rename": {"src": root + "/n.txt", "dst": root + "/m.txt"},
+        "copy": {"src": root + "/a.txt", "dst": root + "/c.txt"},
+        "bulk_copy": {"src": root + "/sub", "dst": root + "/sub2"},
+        "symlink": {"target": "a.txt", "link_path": root + "/s"},
+        "symlink:hard": {"target": root + "/a.txt", "link_path": root + "/h", "kind": "hard"},
+        "chmod": {"path": root + "/a.txt", "mode": "640"},
+    }
+    calls = sorted(base)
+    assert set(names) <= {c.split(":")[0] for c in calls}, sorted(set(names) - set(base))
+    weird = _weird(root) + ["create", "append", "at_offset", "hard", "symbolic", "v9",
+                            root + "/../" + os.path.basename(root) + "/a.txt", 10**12,
+                            MAX := M.MAX_WALK_OFFSET, MAX + 1]
+    allowed = {"ValueError", "OSError", "PermissionError", "FileNotFoundError",
+               "FileExistsError", "IsADirectoryError", "NotADirectoryError", "TimeoutError",
+               "PreviewNotAvailable", "PreviewTooLarge", "PreviewDecodeFailed", "CancelledError",
+               "UnicodeEncodeError", "OverflowError", "ValidationError", "RemoteNameError"}
+    rng = random.Random(0x66696C65)
+    cancels = M._CancelRegistry()
+    seen: set = set()
+    for n in range(iterations(900)):
+        call = calls[n % len(calls)] if n < len(calls) * 3 else rng.choice(calls)
+        name, args = call.split(":")[0], dict(base[call])
+        if n >= len(calls) and rng.random() < 0.8:
+            key = rng.choice(list(args) if rng.random() < 0.6 else _FILE_ARG_KEYS)
+            if key in args and rng.random() < 0.15:
+                del args[key]
+            else:
+                args[key] = rng.choice(weird)
+        req = {"jsonrpc": "2.0", "id": n, "method": "tools/call",
+               "params": {"name": name, "arguments": args}}
+        resp, exc = run_bounded(lambda req=req: M._handle_request(
+            req, tools, cancels=cancels, protocol=M.ProtocolState("2025-11-25"),
+            session_id="ff"), timeout=30.0)
+        assert exc is None, f"call {n} {req!r:.300} raised {exc!r}"
+        assert resp is not None and ("result" in resp) != ("error" in resp), resp
+        json.dumps(resp)
+        result = resp.get("result") or {}
+        if result.get("isError"):
+            kind = (result.get("_meta") or {}).get("type")
+            seen.add(kind)
+            assert kind in allowed, f"call {n} {req!r:.300}: {result['content'][0]['text'][:300]}"
+    # A fuzzed set_permissions may have closed a folder to its owner: open
+    # the root again, so the comparison below and pytest's clean-up see it.
+    for folder, dirs, _files in os.walk(root):
+        for d in dirs:
+            try:
+                os.chmod(os.path.join(folder, d), 0o700, follow_symlinks=False)
+            except (OSError, NotImplementedError):
+                pass
+    after = {p: p.stat().st_mtime_ns for p in tmp_path.iterdir()}
+    assert set(after) == set(before), "a file tool wrote outside the root"
+    assert (tmp_path / "secret.txt").read_text() == "outside the root\n"
+
+
+# -- the adb group against a phone that answers garbage --------------------------
+
+#: A well-formed call of each adb tool (the backend added where it is used).
+_ADB_BASE = {
+    "get_device_info": {}, "list_device_properties": {"filter": "ro.*"},
+    "get_battery_status": {}, "list_apps": {"kind": "user", "match": "notes"},
+    "get_app_info": {"package": "org.x"}, "list_running_apps": {},
+    "get_logcat": {"max_lines": 5, "tag": "Notes"}, "take_screenshot": {},
+    "list_sms": {"box": "inbox", "max_results": 3}, "start_app": {"package": "org.x"},
+    "stop_app": {"package": "org.x"}, "install_app": {"path": "a.apk"},
+    "uninstall_app": {"package": "org.x"}, "export_app": {"package": "org.x"},
+    "grant_permission": {"package": "org.x", "permission": "android.permission.CAMERA"},
+    "revoke_permission": {"package": "org.x", "permission": "android.permission.CAMERA"},
+    "reboot_device": {"mode": "recovery"}, "write_sms": {"address": "Bank", "body": "a\nb"},
+    "compose_sms": {"number": "+4915112345678", "text": "x"},
+    "send_at_command": {"command": "AT+CSQ", "timeout": 1},
+}
+_ADB_ARG_KEYS = sorted({k for args in _ADB_BASE.values() for k in args}
+                       | {"activity", "replace", "keep_data", "out", "offset", "max_body", "read",
+                          "date_ms", "device", "min_priority", "buffer", "state", "max_results",
+                          "grant_permissions", "allow_downgrade", "allow_test_only", "backend"})
+
+
+def _device_garbage(rng: random.Random) -> list:
+    """What a hostile or broken phone might answer to any command."""
+    from tests.test_adb_device import parcel
+
+    digits = "0123456789\u0661\u0662\u00b2\uff11"
+    return [
+        "", "\n", "\x00\xff", "Error: x", "Exception occurred\njava.lang.SecurityException: no",
+        "package:", "package:org.x versionCode:\u00b2 uid:-1 installer=", "package:" + "a." * 200,
+        "[ro.x]: [", "[ro.x]: [y]\n[ro.a]: [b\n", "Row: 0 _id=", "Row: 0 _id=\u0661",
+        "Row: 0 _id=1, thread_id=, date=x, date_sent=-5, read=1, type=\u00b2, address=, body=",
+        "Row: 0 _id=1, thread_id=1, date=99999999999999999999, date_sent=0, read=1, type=9, "
+        "address=a, body=b, body=c", "No result found.", parcel("x" * 70), parcel("", code=7),
+        "Result: Parcel(\n  0x00000000: ffffffff ffffffff '....')", "AXDEV /dev/smd11",
+        "AXDEV /dev/../etc", "AXAT_DONE", "AXAT_NOACCESS", "Success", "Failure [", "Failure [X: y]",
+        "PID USER RSS NAME\nx y z w\n-1 a b org.x", "USER PID\n", "  level: \u00b2\n  scale: 0",
+        "  level: 5\n  scale: 0\n  temperature: -\u0661", "Packages:\n  Package [org.x] (1):\n"
+        "    versionCode=\u00b2 minSdk= targetSdk=\n    flags=[\n    requested permissions:\n",
+        "  topResumedActivity=ActivityRecord{x u0 org.x/", "\u202e" * 50 + "\U000e0041" * 50,
+        "x" * 300_000, "".join(rng.choice(digits + "abc:=[], \n") for _ in range(400)),
+    ]
+
+
+def test_sad_adb_tools_answer_every_malformed_call(tmp_path, monkeypatch):
+    # Every adb tool, against malformed arguments and against a phone whose
+    # every answer is garbage: each call is answered, a failure is a
+    # refusal or an I/O error - never a TypeError, KeyError, IndexError or
+    # the like out of a parser - and nothing is written outside the root.
+    from core import mcp_groups as G
+    from tests.fake_android import tiny_png
+    from tests.test_adb_device import AdbSession, FakeShell, _profile
+
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "a.apk").write_bytes(b"PK\x03\x04apk")
+    (tmp_path / "secret.txt").write_text("outside the root\n")
+    before = {p: p.stat().st_mtime_ns for p in tmp_path.iterdir()}
+    rng = random.Random(0x616462)
+    garbage = _device_garbage(rng)
+
+    class Shell(FakeShell):
+        def exec(self, command, *, timeout, stdout_cap):
+            out = rng.choice(garbage)
+            return type("R", (), {"returncode": rng.choice([0, 0, 1, 127]),
+                                  "stdout": out.encode("utf-8", "surrogatepass")[:stdout_cap],
+                                  "truncated_stdout": False})()
+
+        def pull_stream(self, remote_path, sink, max_bytes):
+            sink.write(rng.choice([b"", b"PK\x03\x04", tiny_png(), b"\x89PNG\r\n\x1a\nIHDR"]))
+
+    registry = G.RemoteRegistry()
+    registry.attach("profile:phone", AdbSession(Shell([])), _profile())
+    tools = M._build_tools(LocalFS(), allow_write=True, root=str(root),
+                           tool_groups=frozenset({"remote", "adb"}), remote_registry=registry)
+    names = sorted(t.name for t in tools if t.group == "adb")
+    assert set(names) == set(_ADB_BASE), sorted(set(names) ^ set(_ADB_BASE))
+    weird = _weird(str(root)) + ["com.x;id", "AT;ATD1", "/dev/smd11", "\u0661", "a" * 300]
+    allowed = {"ValueError", "DeviceRefused", "OSError", "PermissionError", "TimeoutError",
+               "InterruptedError", "FileNotFoundError", "IsADirectoryError", "NotADirectoryError",
+               "FileExistsError", "ConnectionResetError"}
+    seen_types = set()
+    outcomes: list[str] = []
+    cancels = M._CancelRegistry()
+    for n in range(iterations(800)):
+        name = names[n % len(names)] if n < len(names) * 3 else rng.choice(names)
+        args = {"backend": "profile:phone", **_ADB_BASE[name]}
+        if rng.random() < 0.7:
+            key = rng.choice(list(args) if rng.random() < 0.7 else _ADB_ARG_KEYS)
+            if key != "backend" or rng.random() < 0.1:
+                args[key] = rng.choice(weird)
+        req = {"jsonrpc": "2.0", "id": n, "method": "tools/call",
+               "params": {"name": name, "arguments": args}}
+        resp, exc = run_bounded(lambda req=req: M._handle_request(req, tools, cancels=cancels,
+                                                                  session_id=""), timeout=30.0)
+        assert exc is None, f"call {n} {req!r:.300} raised {exc!r}"
+        assert resp is not None and ("result" in resp) != ("error" in resp), resp
+        json.dumps(resp)
+        result = resp.get("result") or {}
+        outcomes.append("error" if "error" in resp else "refused" if result.get("isError") else "ok")
+        if result.get("isError"):
+            kind = (result.get("_meta") or {}).get("type")
+            seen_types.add(kind)
+            assert kind in allowed, f"call {n} {req!r:.300}: {result['content'][0]['text'][:300]}"
+    # The garbage reaches the parsers: some calls even succeed on it.
+    assert outcomes.count("ok") > 20 and outcomes.count("refused") > 20, (
+        outcomes.count("ok"), outcomes.count("refused"), outcomes.count("error"))
+    assert "DeviceRefused" in seen_types or "ValueError" in seen_types
+    after = {p: p.stat().st_mtime_ns for p in tmp_path.iterdir()}
+    assert set(after) == set(before), "an adb tool wrote outside the root"
+    assert (tmp_path / "secret.txt").read_text() == "outside the root\n"
 
 
 # -- stdio transport ----------------------------------------------------------

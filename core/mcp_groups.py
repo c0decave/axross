@@ -5,8 +5,9 @@ other axross feature an LLM may drive is a *capability group* the operator
 switches on at start:
 
 ``--mcp-tools metadata,packer`` or ``AXROSS_MCP_TOOLS=metadata,packer``;
-``all`` means every group. No flag keeps the plain file tools exactly as
-before.
+``all`` means every general group - every group but the device ones of
+:data:`OPT_IN_GROUPS` (adb), which come only by name (``all,adb``). No flag
+keeps the plain file tools exactly as before.
 
 Safety layering, on top of every guard of the base server:
 
@@ -59,11 +60,19 @@ GROUPS: tuple[str, ...] = (
     "filetype",
     "transfer",
     "remote",
+    "adb",
     "exec",
     "agent",
     "extensions",
 )
 ALL = "all"
+#: Groups for one kind of device, not for files: ``all`` leaves them out
+#: (0.15.184) - they come only by name, e.g. ``--mcp-tools all,adb``. An
+#: agent of a file manager gets the file tools; one that drives a phone
+#: asks for the phone's.
+OPT_IN_GROUPS: frozenset[str] = frozenset({"adb"})
+#: What ``all`` means: :data:`GROUPS` without :data:`OPT_IN_GROUPS`.
+ALL_GROUPS: tuple[str, ...] = tuple(g for g in GROUPS if g not in OPT_IN_GROUPS)
 #: Former group names (up to 0.15.182) -> the group that holds their tools now.
 GROUP_ALIASES = N.GROUP_ALIASES
 #: Environment variable equivalent of ``--mcp-tools``; merged with the flag.
@@ -74,7 +83,8 @@ GROUP_DESCRIPTIONS: dict[str, str] = {
     "metadata": "Show and export file metadata (EXIF/XMP/IPTC, Office, PDF, media tags); "
     "remove it (mutating, writes a cleaned copy).",
     "duplicates": "Duplicate Finder: scan a folder into the duplicate index, list scans and "
-    "duplicate groups; dedupe to the axross trash (mutating, dry run by default).",
+    "duplicate groups; dedupe to the axross trash (mutating, dry run by default), list the "
+    "trash and restore from it (mutating).",
     "archive": "List archive formats and an archive's members; create zip / tar.* / 7z / "
     "single-file compression archives, 7z optionally AES-256 encrypted, and extract one into "
     "a fresh folder (both mutating). The former group name packer still works.",
@@ -85,6 +95,11 @@ GROUP_DESCRIPTIONS: dict[str, str] = {
     "(mutating).",
     "remote": "List saved connection profiles (no secrets), open one as an extra backend "
     "that every tool can address with its backend argument, close it again.",
+    "adb": "Android devices opened as ADB profiles (needs the remote group): identity, "
+    "properties, battery, apps and their permissions, running apps, the log, a screenshot, "
+    "SMS; start, stop, install, uninstall, back up apps, grant and revoke permissions, "
+    "reboot, write an SMS into the store, prepare one for sending, AT commands to the modem "
+    "(mutating; refused on production profiles and in the paranoid security mode).",
     "agent": "Hand a task to the user's own LLM (the active profile of the axross GUI): it "
     "works with the read-only tools inside the MCP root and answers; it can change nothing.",
     "exec": "Run commands and scripts on remote hosts over SSH, SCP, Telnet, rsh, ADB, "
@@ -120,7 +135,7 @@ def _resolve(names: list[str]) -> frozenset[str]:
         listed = ", ".join(repr(n) for n in unknown)
         raise GroupError(f"unknown MCP tool group {listed}; valid groups: {_valid_names()}")
     if ALL in names:
-        return frozenset(GROUPS)
+        return frozenset(ALL_GROUPS) | frozenset(n for n in names if n != ALL)
     return frozenset(names)
 
 
@@ -666,8 +681,8 @@ def _build_metadata(env: GroupEnv) -> list:
                 "gets ' (2)', ' (3)' ... ('meta (2).json'). Default: none, the text is returned."
             )
             saved = (
-                " With out: only adds; each call adds a file, written via a temporary name; "
-                "new local files are mode 0600."
+                " With out (served with --mcp-write): only adds; each call adds a new file "
+                "(locally mode 0600)."
             )
         tool = _tool(
             "metadata_export",
@@ -1071,6 +1086,8 @@ def _build_duplicates(env: GroupEnv) -> list:
 
     def _scans(args, ctx):
         backend = env.resolve_backend(args)
+        max_scans = _int_arg(args, "max_scans", 100, 1, _MAX_LISTED)
+        offset = _int_arg(args, "offset", 0, 0, 2**31 - 1)
         bid = cas.backend_id_for(backend)
         out = []
         for s in cas.list_scans(None):
@@ -1093,7 +1110,79 @@ def _build_duplicates(env: GroupEnv) -> list:
                     "error": redact_text(s.error or ""),
                 }
             )
-        return {"scans": out[:_MAX_LISTED], "truncated": len(out) > _MAX_LISTED}
+        more = len(out) > offset + max_scans
+        return {"scans": out[offset:offset + max_scans], "offset": offset, "truncated": more,
+                "next_offset": offset + max_scans if more else None}
+
+    def _trash_root(backend) -> str | None:
+        """The trash the trash tools work on: the MCP root's own
+        .axross-trash on the local disk (the one trash_duplicates fills;
+        never a link leading elsewhere), the home's on a remote backend
+        (None: core.trash's default)."""
+        if not (env.root and _is_local(backend)):
+            return None
+        from core.trash import TRASH_DIRNAME
+
+        trash_root = os.path.join(env.scope_path(env.root, backend), TRASH_DIRNAME)
+        if os.path.islink(trash_root) or (os.path.lexists(trash_root)
+                                          and not os.path.isdir(trash_root)):
+            raise PermissionError(f"{trash_root} is not a folder of the root")
+        return trash_root
+
+    def _visible(backend, entry) -> bool:
+        """An entry whose original place the tools may read: a trash shared
+        with the GUI also holds files from outside the MCP root."""
+        return bool(entry.original_path) and _confined(env, backend, entry.original_path) \
+            is not None
+
+    def _trash_entries(args, ctx):
+        from core import trash as TR
+
+        backend = env.resolve_backend(args)
+        max_results = _int_arg(args, "max_results", 100, 1, _MAX_LISTED)
+        offset = _int_arg(args, "offset", 0, 0, 2**31 - 1)
+        trash_root = _trash_root(backend)
+        entries = [e for e in TR.list_trash(backend, trash_root) if _visible(backend, e)]
+        page = entries[offset:offset + max_results]
+        more = len(entries) > offset + max_results
+        return {
+            "trash_root": trash_root or TR._resolve_root(backend, None),
+            "entries": [{"trash_id": e.trash_id, "original_path": e.original_path,
+                         "trashed_at": _iso(e.trashed_at), "size": e.size, "is_dir": e.is_dir,
+                         "label": e.label} for e in page],
+            "count": len(entries),
+            "offset": offset,
+            "truncated": more,
+            "next_offset": offset + max_results if more else None,
+        }
+
+    def _trash_restore(args, ctx):
+        trash_id = _str_arg(args, "trash_id")
+        wanted = args.get("dst")
+
+        def work():
+            from core import trash as TR
+
+            backend = env.resolve_backend(args)
+            trash_root = _trash_root(backend)
+            entry = next((e for e in TR.list_trash(backend, trash_root)
+                          if e.trash_id == trash_id), None)
+            if entry is None or not _visible(backend, entry):
+                raise FileNotFoundError(f"restore_from_trash: trash entry not found: {trash_id}")
+            target = wanted if wanted is not None else entry.original_path
+            if not isinstance(target, str) or not target:
+                raise ValueError("dst must be a non-empty path")
+            # A new entry, checked as one: inside a writable root, outside
+            # the protected places (core.trash checks those again).
+            safe = env.entry_path(target, backend)
+            env.refuse_root(safe, backend, "restore_from_trash")
+            if backend.exists(safe):
+                raise FileExistsError(f"restore_from_trash: target already exists: {safe}")
+            placed = TR.restore(backend, trash_id, trash_root, target=safe)
+            return {"trash_id": trash_id, "path": placed, "is_dir": entry.is_dir}
+
+        return _audited(env, "trash_restore", {"trash_id": trash_id, "dst": wanted}, work,
+                        lambda r: {"trash_id": trash_id, "path": r["path"]})
 
     def _groups(args, backend):
         """Duplicate groups inside the confined folder: every copy of a group
@@ -1138,8 +1227,9 @@ def _build_duplicates(env: GroupEnv) -> list:
                     ],
                 }
             )
-        return {"path": folder, "groups": out,
-                "truncated": len(groups) > offset + max_groups}
+        more = len(groups) > offset + max_groups
+        return {"path": folder, "groups": out, "truncated": more,
+                "next_offset": offset + max_groups if more else None}
 
     def _dedupe(args, ctx):
         dry_run = _bool_arg(args, "dry_run", True)
@@ -1235,14 +1325,14 @@ def _build_duplicates(env: GroupEnv) -> list:
     return [
         _tool(
             "duplicates_scan",
-            "Run a duplicate scan: hash every file under a folder into the Duplicate "
-            "Finder's index.\n"
+            "Run a duplicate scan: hash every file under a folder into axross's duplicate "
+            "index, which list_duplicate_groups reads.\n"
             "Use when: before list_duplicate_groups or trash_duplicates, or after "
             "changes.\n"
             "Instead: list_duplicate_scans for past scans; compute_file_checksum for one "
             "file.\n"
             "Behavior: writes index rows, never files. path must be a folder. Each run "
-            "adds a scan record. Symlinks, the axross trash and "
+            "adds a scan record; a complete one drops files gone since the last. Symlinks, the axross trash and "
             "secret files are skipped; unchanged files are not hashed again unless "
             "rehash. Remote backends use their own checksum (ETag-only ones index "
             "nothing).\n"
@@ -1275,12 +1365,19 @@ def _build_duplicates(env: GroupEnv) -> list:
             "Use when: choosing a scan_id, or checking that a scan finished.\n"
             "Instead: scan_duplicates to run one; list_duplicate_groups for the "
             "duplicates.\n"
-            "Behavior: read-only; this backend's scans (local: inside the MCP root), the "
-            "newest 1000 only.\n"
+            "Behavior: read-only; this backend's scans (local: inside the MCP root), paged "
+            "with offset and max_scans.\n"
             "Returns: {scans: [{scan_id, root, backend_id, algorithm, started_at, "
             "finished_at (ISO 8601, null while running), files_indexed, files_in_index, "
-            "duplicate_groups, status, error}], truncated}.",
-            {},
+            "duplicate_groups, status, error}], offset, truncated, next_offset (null: no "
+            "further page)}.",
+            {
+                "max_scans": _int_prop("Return at most this many scans; more sets "
+                                       "truncated=true.",
+                                       minimum=1, maximum=_MAX_LISTED, default=100),
+                "offset": _int_prop("Scans to skip, for the next page: the previous call's "
+                                    "next_offset.", minimum=0, maximum=2**31 - 1, default=0),
+            },
             _scans,
             group="duplicates",
         ),
@@ -1296,8 +1393,8 @@ def _build_duplicates(env: GroupEnv) -> list:
             "files never group. keep=true marks the oldest copy (no "
             "mtime: the shorter, then alphabetically first path), the one "
             "trash_duplicates keeps. Pages with offset and max_groups.\n"
-            f"Returns: {{path, truncated, groups: [{{algorithm, value, size, copies: "
-            f"[{copy_shape}]}}]}}.",
+            f"Returns: {{path, truncated, next_offset, groups: [{{algorithm, value, size, "
+            f"copies: [{copy_shape}]}}]}}.",
             {
                 **scope,
                 "max_groups": _int_prop(
@@ -1318,18 +1415,17 @@ def _build_duplicates(env: GroupEnv) -> list:
         ),
         _tool(
             "duplicates_dedupe",
-            "Keep the copy marked keep=true (the oldest) of each duplicate group inside path "
-            "and move the others to the axross trash; copies outside path do not count.\n"
+            "Move all but one copy of each duplicate group under path to the restorable "
+            "axross trash, keeping the oldest (keep=true in list_duplicate_groups).\n"
             "Use when: after list_duplicate_groups; run dry_run=true first.\n"
             "Instead: list_duplicate_groups to look; delete_path to delete for good.\n"
-            "Behavior: destructive but restorable; dry_run=true (default) only plans. "
-            f"Trashed copies leave the index. "
-            "Copies are re-checked first; changed ones go to refused. Moves done before "
-            "a cancel or timeout stay: rerun to finish. The trash is .axross-trash in the "
-            "MCP root (remote: home); restore in the axross app.\n"
+            "Behavior: destructive but restorable (restore_from_trash); dry_run=true "
+            "(default) only plans. Copies are re-checked first; changed ones go to "
+            "refused; trashed ones leave the index. Moves done before a cancel or timeout "
+            "stay: rerun to finish. Copies outside path are never touched or counted.\n"
             "Returns: {path, dry_run, groups, undated_groups (survivor chosen by path), "
             "keep, trash (planned), removed (done; [] on dry_run), refused, failed, "
-            "trash_root}.",
+            "trash_root (.axross-trash in the MCP root; remote: the home's)}.",
             {
                 **scope,
                 "dry_run": _bool_prop(
@@ -1341,6 +1437,57 @@ def _build_duplicates(env: GroupEnv) -> list:
             group="duplicates",
             write=True,
             timeout_class="long",
+        ),
+        _tool(
+            "trash_list",
+            "List what is in axross's trash: what trash_duplicates moved there, newest "
+            "first.\n"
+            "Use when: finding the trash_id to restore, or checking what a dedupe took.\n"
+            "Instead: restore_from_trash (needs --mcp-write) to put an entry back; "
+            "list_duplicate_groups for duplicates still in place.\n"
+            "Behavior: read-only; reads the trash's records, never the trashed files. The "
+            "trash is .axross-trash in the MCP root (remote: in the home folder); entries "
+            "whose original place is outside the MCP root are left out.\n"
+            "Returns: {trash_root, entries: [{trash_id, original_path, trashed_at (ISO "
+            "8601), size, is_dir, label}], count (all entries), offset, truncated, "
+            "next_offset (null: no further page)}.",
+            {
+                "max_results": _int_prop("Return at most this many entries.", minimum=1,
+                                         maximum=_MAX_LISTED, default=100),
+                "offset": _int_prop("Entries to skip, for the next page: the previous call's "
+                                    "next_offset.", minimum=0, maximum=2**31 - 1, default=0),
+            },
+            _trash_entries,
+            group="duplicates",
+        ),
+        _tool(
+            "trash_restore",
+            "Move one entry out of axross's trash back to where it was, or to dst.\n"
+            "Use when: undoing trash_duplicates for one file or folder.\n"
+            "Instead: list_trash first, for the trash_id; restore_file_version for a "
+            "backend's own version history.\n"
+            "Behavior: only adds - never replaces: a taken target fails with 'target "
+            "already exists'. A repeat fails with 'trash entry not found'. The target must "
+            "be writable (locally: in the MCP root); missing parent folders are made. An entry whose "
+            "record does not verify (changed by someone else) is refused.\n"
+            "Returns: {trash_id, path (where it is now), is_dir}.",
+            {
+                "trash_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "description": "The trash_id of an entry from list_trash.",
+                },
+                "dst": _path_prop(
+                    "Where to put it instead of its original path (absolute, or relative to "
+                    "the MCP root); must not exist. Default: the original path."
+                ),
+            },
+            _trash_restore,
+            group="duplicates",
+            required=("trash_id",),
+            write=True,
+            timeout_class="write",
         ),
     ]
 
@@ -3028,9 +3175,9 @@ def _build_transfer(env: GroupEnv) -> list:
             "Copy a file or folder tree to another backend, or resumably within one.\n"
             "Use when: data must cross backends, or a big copy should be resumable.\n"
             "Instead: copy_tree within one backend; move_file_to_backend to move a file.\n"
-            "Behavior: never changes the source; one backend with resumable=false is its "
-            "own copy, as in copy_tree. Existing files are skipped unless overwrite=true "
-            "(destructive). Local links to files are copied as files, as copy_tree does; "
+            "Behavior: never changes the source; within one backend and resumable=false it "
+            "copies as copy_tree does. Existing files are skipped unless overwrite=true "
+            "(destructive). Local links to files are copied as files; "
             "other links and special files are skipped. Each skipped entry has a reason; "
             "a secret file's is outside-root. resumable=true with the same arguments "
             "continues an interrupted run. Mode and mtime are not kept.\n"
@@ -3289,6 +3436,8 @@ def _build_exec(env: GroupEnv) -> list:
             "command_len": len(command),
             "stdin_len": len(stdin) if stdin is not None else 0,
         }
+        if tool == "remote_script":
+            fields["script"] = True  # audited as run_backend_command with a script
         return _audited(
             env,
             tool,
@@ -3305,6 +3454,14 @@ def _build_exec(env: GroupEnv) -> list:
         )
 
     def _remote_exec(args, ctx):
+        has_script = args.get("script") is not None
+        if has_script == (args.get("command") is not None):
+            raise ValueError("run_backend_command takes command or script, exactly one")
+        if has_script:
+            return _remote_script(args, ctx)
+        for key in ("interpreter", "args"):
+            if args.get(key) is not None:
+                raise ValueError(f"{key} goes with script, not with command")
         backend, kind = target(args)
         command = _str_arg(args, "command")
         stdin = args.get("stdin")
@@ -3317,6 +3474,9 @@ def _build_exec(env: GroupEnv) -> list:
         )
 
     def _remote_script(args, ctx):
+        if args.get("stdin") is not None:
+            raise ValueError("a script goes to the interpreter's stdin: stdin goes with "
+                             "command only")
         backend, kind = target(args)
         script = _str_arg(args, "script")
         interpreter = args.get("interpreter") or ("powershell" if kind == "powershell" else "sh")
@@ -3389,76 +3549,56 @@ def _build_exec(env: GroupEnv) -> list:
     return [
         _tool(
             "remote_exec",
-            "Run one command line on a remote host (SSH, Telnet, ADB, WinRM, Cisco).\n"
-            "Use when: a shell command is needed there (ps, df, a Cisco show).\n"
-            "Instead: run_backend_script for scripts; the file tools for files.\n"
+            "Run one command line, or a script, on a remote host (SSH, Telnet, ADB, WinRM, "
+            "Cisco).\n"
+            "Use when: a shell command is needed there (ps, df, a Cisco show), or a script "
+            "with loops.\n"
+            "Instead: run_script on this machine; the file tools for files.\n"
             f"{gate}"
             "Behavior: destructive - runs with the profile user's rights. Refused on "
-            "production profiles. A non-zero exit is a result; "
-            "Cisco always reports 0, Telnet and ADB the real code (stderr inside "
-            "stdout). Time limit: timeout; past it the call fails and no output "
-            "returns.\n"
+            "production profiles. Give command or script, not both; Cisco runs no scripts. "
+            "A non-zero exit is a result; Cisco always reports 0, Telnet and ADB the real "
+            "code (stderr inside stdout). Time limit: timeout; past it the call fails and "
+            "no output returns.\n"
             f"Returns: {result}.",
             {
                 "command": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "The command line, run by the remote's shell, e.g. "
-                    "'df -h /'.",
+                    "description": "The command line, run by the remote's shell in the "
+                    "folder a login starts in (prefix 'cd /dir && '), e.g. 'df -h /'. Give "
+                    "this or script.",
                 },
-                "stdin": {
-                    "type": "string",
-                    "description": "Text fed to the command's stdin (UTF-8); not supported on "
-                    "WinRM or Cisco. Default: none.",
-                },
-                "env": env_prop("command"),
-                "timeout": timeout_prop("command"),
-                "max_output": cap_prop,
-            },
-            _remote_exec,
-            group="exec",
-            required=("command",),
-            write=True,
-            timeout_class="long",
-        ),
-        _tool(
-            "remote_script",
-            "Run a multi-line script on a remote host: sh, bash, python3 or perl on "
-            "POSIX, PowerShell on WinRM.\n"
-            "Use when: the job needs loops or a scripting language there.\n"
-            "Instead: run_backend_command for one command; run_script on this machine.\n"
-            f"{gate}"
-            "Behavior: destructive - runs with the profile user's rights. The script goes to the interpreter's stdin, so it cannot "
-            "read stdin itself. Refused on production profiles and Cisco. Time limit: "
-            "timeout; past it the call fails and no output returns.\n"
-            f"Returns: {result}.",
-            {
                 "script": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "The script text, e.g. 'for f in /var/log/*.log; do wc -l "
-                    "\"$f\"; done'.",
+                    "description": "A multi-line script instead of command, fed to the "
+                    "interpreter's stdin (so it cannot read stdin itself), e.g. 'for f in "
+                    "/var/log/*.log; do wc -l \"$f\"; done'.",
                 },
                 "interpreter": {
                     "type": "string",
                     "enum": sorted([*_POSIX_INTERPRETERS, "powershell"]),
-                    "description": "What runs the script. powershell: WinRM only (its default); "
-                    "bash, perl, python3, sh (the POSIX default): POSIX only; a mismatch "
-                    "fails.",
+                    "description": "What runs script. Default: powershell on WinRM, sh on "
+                    "POSIX; bash, perl, python3 and sh are POSIX only; a mismatch fails.",
                 },
                 "args": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Arguments passed to the script ($1... / sys.argv[1:]) as raw "
+                    "description": "Arguments of script ($1... / sys.argv[1:]) as raw "
                     "strings; the server shell-quotes each one. POSIX hosts only. Default: none.",
                 },
-                "env": env_prop("script"),
-                "timeout": timeout_prop("script"),
+                "stdin": {
+                    "type": "string",
+                    "description": "Text fed to command's stdin (UTF-8); not with script, "
+                    "not on WinRM or Cisco. Default: none.",
+                },
+                "env": env_prop("command or script"),
+                "timeout": timeout_prop("command or script"),
                 "max_output": cap_prop,
             },
-            _remote_script,
+            _remote_exec,
             group="exec",
-            required=("script",),
             write=True,
             timeout_class="long",
         ),
@@ -3488,7 +3628,7 @@ def _build_agent(env: GroupEnv) -> list:
         from core import llm_profiles as LP
 
         task = _str_arg(args, "task")
-        name = args.get("profile")
+        name = args.get("llm_profile")
         settings = LP.LLMSettings.load()
         profile = settings.profile(name) if name else settings.active_profile()
         if profile is None:
@@ -3529,20 +3669,35 @@ def _build_agent(env: GroupEnv) -> list:
         return {"answer": result.answer, "stopped": result.stopped, "calls": result.calls,
                 "profile": profile.name, "model": profile.model}
 
+    def _llm_profiles(args, ctx):
+        from core import llm_profiles as LP
+
+        # Names and models only: never a key (the keyring is not opened),
+        # an endpoint or a host.
+        settings = LP.LLMSettings.load()
+        active = settings.active_profile()
+        return {
+            "profiles": [{"name": p.name, "model": p.model,
+                          "active": active is not None and p.name == active.name}
+                         for p in settings.profiles],
+            "active": active.name if active is not None else None,
+        }
+
     return [
         _tool(
             "agent_run",
-            "Hand a task to the user's own LLM profile; its model uses axross tools that "
-            "write no files and answers in text.\n"
-            "Use when: file contents should stay with the user's model.\n"
-            "Instead: read_file or search_content directly - faster, when the contents "
-            "may reach you.\n"
+            "Delegate a file task to the user's own configured LLM, which reads files with "
+            "axross's read-only tools and answers in text.\n"
+            "Use when: file contents should stay with the user's model (its answer may "
+            "quote them: ask for a summary).\n"
+            "Instead: read_file or search_content - faster, when the contents may reach "
+            "you; list_llm_profiles for names.\n"
             "Requires: an LLM profile from the axross app.\n"
             "Behavior: does not write files itself; sends file contents to the "
             "configured LLM, one request per step up to max_steps (an API profile bills "
-            "each), so it is not read-only. Its model gets the core file tools "
-            "and the asked groups' tools (both listed in the instructions); the remote "
-            "group reaches beyond the MCP root.\n"
+            "each), so it is not read-only. Its model gets the read-only tools the "
+            "instructions list; with remote it may open saved connections, beyond the MCP "
+            "root.\n"
             "Returns: {answer, stopped (answered|max_steps|cancelled), calls, profile, "
             "model}.",
             {
@@ -3553,19 +3708,19 @@ def _build_agent(env: GroupEnv) -> list:
                     "description": "What the model should do, in plain language, e.g. "
                     "'Summarise the PDFs in reports/2024 in five bullet points'.",
                 },
-                "profile": {
+                "llm_profile": {
                     "type": "string",
-                    "description": "Name of an LLM profile set up in the axross app; omit it "
-                    "for the active one. Ask the user for another name: no tool lists them, "
-                    "but an unknown name's error does.",
+                    "minLength": 1,
+                    "description": "Name of an LLM profile (from list_llm_profiles); omit "
+                    "it for the active one.",
                 },
                 "groups": {
                     "type": "array",
                     "items": {"type": "string", "enum": list(AGENT_GROUPS)},
                     "description": "Extra tool groups for the model, each with its tools "
                     "that need no --mcp-write (the instructions list them). remote and "
-                    "extensions fail unless this server runs with them; the others work "
-                    "anyway. Default: none, the core file tools only.",
+                    "extensions only when this server serves them; the other groups "
+                    "always. Default: none, the core file tools only.",
                 },
                 "max_steps": _int_prop(
                     "Most model requests for this task; reaching it ends with "
@@ -3581,7 +3736,228 @@ def _build_agent(env: GroupEnv) -> list:
             accepts_backend=False,
             timeout_class="long",
         ),
+        _tool(
+            "llm_profiles",
+            "List the LLM profiles set up in the axross app: each name and model, and "
+            "which one is active.\n"
+            "Use when: choosing run_llm_agent's llm_profile.\n"
+            "Instead: list_remote_profiles for connection profiles, which are another "
+            "kind.\n"
+            "Behavior: read-only; reads the app's settings file, never the keyring: no API "
+            "key, endpoint or host is returned. An empty list: no profile set up yet.\n"
+            "Returns: {profiles: [{name, model, active}], active (its name, or null)}.",
+            {},
+            _llm_profiles,
+            group="agent",
+            accepts_backend=False,
+        ),
     ]
+
+
+# ---------------------------------------------------------------------------
+# adb
+# ---------------------------------------------------------------------------
+
+#: The adb tools that change the device: refused on production profiles and
+#: in the paranoid security mode (export_app and take_screenshot's out only
+#: write into the MCP root).
+ADB_DEVICE_CHANGES = frozenset({
+    "start_app", "stop_app", "install_app", "uninstall_app", "grant_permission",
+    "revoke_permission", "reboot_device", "write_sms", "compose_sms", "send_at_command"})
+
+
+def is_adb_session(backend) -> bool:
+    """Whether *backend* is an ADB connection (core.adb_client.AdbSession)."""
+    return callable(getattr(backend, "exec", None)) and any(
+        cls.__name__ == "AdbSession" for cls in type(backend).__mro__)
+
+
+class AdbShell:
+    """An ADB session as core.adb_device's shell (exec, push_stream,
+    pull_stream)."""
+
+    def __init__(self, session) -> None:
+        self._session = session
+
+    def exec(self, command: str, *, timeout: float, stdout_cap: int):
+        return self._session.exec(command, timeout=timeout, stdout_cap=stdout_cap)
+
+    def push_stream(self, source, remote_path: str) -> None:
+        self._session.push_stream(source, remote_path)
+
+    def pull_stream(self, remote_path: str, sink, max_bytes: int) -> None:
+        self._session.pull_stream(remote_path, sink, max_bytes)
+
+
+def _adb_audit_fields(name: str, args: dict) -> dict:
+    """What an adb call's audit lines say: the backend, the package and the
+    permission - never a message, a number or an AT command's text."""
+    import hashlib
+
+    fields = {"backend": args.get("backend") or "default"}
+    for key in ("package", "permission", "box", "mode"):
+        if isinstance(args.get(key), str):
+            fields[key] = args[key][:255]
+    if name == "install_app" and isinstance(args.get("path"), str):
+        fields["path"] = args["path"][:1024]
+    if name == "send_at_command" and isinstance(args.get("command"), str):
+        fields["command_sha256"] = hashlib.sha256(args["command"].encode()).hexdigest()[:16]
+        fields["command_len"] = len(args["command"])
+    return fields
+
+
+def _build_adb(env: GroupEnv) -> list:
+    import time
+
+    from core import adb_device as A
+
+    local_root = env.root is not None and _is_local(env.default_backend)
+
+    def device(args, tool, ctx):
+        backend = env.resolve_backend(args)
+        if not is_adb_session(backend):
+            raise ValueError(
+                f"backend {args.get('backend') or 'default'!r} ({type(backend).__name__}) is no "
+                "Android device: open an ADB profile with open_remote_profile (--mcp-tools remote) "
+                "and pass its backend id, e.g. backend='profile:phone'")
+        if tool.name in ADB_DEVICE_CHANGES:
+            if env.remote is not None:
+                env.remote.refuse_production(backend)
+            from core.security_mode import current_policy
+
+            # Checked at the call: the mode can change after the tools were built.
+            if not current_policy().allow_remote_exec:
+                raise PermissionError("the paranoid security mode refuses changes on a device")
+        cancel = _cancel_event(ctx)
+        deadline = time.monotonic() + max(5.0, float(tool.timeout_seconds or 60.0)
+                                          - A.DEADLINE_MARGIN)
+        return A.AndroidTools(AdbShell(backend), deadline=deadline, cancelled=cancel.is_set)
+
+    def local_folder(raw: str, *, must_exist: bool = True) -> str:
+        if not local_root:
+            raise ValueError("this server has no local MCP root to write into")
+        folder = env.write_path(raw, env.default_backend)
+        if must_exist and not _is_dir(env.default_backend, folder):
+            raise ValueError(f"not a folder: {raw}")
+        return folder
+
+    def apk_source(args):
+        """The APK of install_app, opened through the confined root: no
+        '..', no symbolic link (the name the open went through is checked
+        against the file opened), one regular file."""
+        import stat as stat_module
+
+        raw = _str_arg(args, "path")
+        if any(part == ".." for part in re.split(r"[/\\]", raw)):
+            raise ValueError("install_app: path must not hold '..'")
+        if not raw.lower().endswith(".apk"):
+            raise ValueError("install_app: path must name an .apk file (split APKs, .apks and "
+                             ".xapk are not taken)")
+        if not local_root:
+            raise ValueError("install_app takes its APK from the local MCP root, which this "
+                             "server does not have")
+        backend = env.default_backend
+        path = env.scope_path(raw, backend)
+        fh = backend.open_read(path)
+        try:
+            opened = os.fstat(fh.fileno())
+            named = os.lstat(path)
+            if stat_module.S_ISLNK(named.st_mode) or (named.st_dev, named.st_ino) != (
+                    opened.st_dev, opened.st_ino):
+                raise ValueError("install_app: path is a symbolic link (or was swapped while it "
+                                 "was opened); give the APK itself")
+        except BaseException:
+            fh.close()
+            raise
+        return fh
+
+    def run(tool, args, ctx):
+        args = dict(args or {})
+        name = tool.name
+        tools = device(args, tool, ctx)
+        if name == "install_app":
+            source = apk_source(args)
+            return A.call(tools, name, args, local=source)
+        if name == "export_app":
+            folder = local_folder(args.get("path") or ".")
+            backend = env.default_backend
+
+            def place(file_name, write):
+                counter = {}
+
+                def fill(fh):
+                    counting = _CountingWriter(fh)
+                    write(counting)
+                    counter["size"] = counting.count
+
+                where = _place_new(env, backend, backend.join(folder, file_name), fill)
+                return where, counter.get("size", 0)
+
+            return A.call(tools, name, {k: v for k, v in args.items() if k != "path"},
+                          place=place)
+        if name == "take_screenshot":
+            out = args.pop("out", None)
+            shot = A.call(tools, name, args)
+            if out is None:
+                import base64
+
+                from core.mcp_server import _PreviewResult
+
+                return _PreviewResult(data_b64=base64.b64encode(shot["png"]).decode("ascii"),
+                                      mime="image/png", width=shot["width"], height=shot["height"])
+            raw = _str_arg({"out": out}, "out")
+            if not raw.lower().endswith(".png"):
+                raw += ".png"
+            target = env.write_path(raw, env.default_backend) if local_root else None
+            if target is None:
+                raise ValueError("this server has no local MCP root to write into")
+            where = _place_new(env, env.default_backend, target, shot["png"])
+            return {"path": where, "width": shot["width"], "height": shot["height"],
+                    "size": shot["size"]}
+        return A.call(tools, name, args)
+
+    def handler(tool):
+        def call(args, ctx):
+            if not tool.write:
+                return run(tool, args, ctx)
+            fields = _adb_audit_fields(tool.name, args or {})
+            return _audited(env, tool.name, fields, lambda: run(tool, args, ctx),
+                            lambda result: fields)
+
+        return call
+
+    built = []
+    for definition in A.tool_definitions():
+        name = definition["name"]
+        props = dict(definition["properties"])
+        description = definition["description"]
+        write = definition["mutating"]
+        write_args: tuple = ()
+        annotations = dict(definition["annotations"])
+        if name == "take_screenshot" and env.allow_write and local_root:
+            props["out"] = _path_prop(
+                "Save the PNG as this new file in the MCP root instead of returning it, e.g. "
+                "'shots/home.png'; a taken name gets ' (2)'. Default: none, the image is returned.")
+            description = description.replace(
+                "Behavior: read-only;", "Behavior: without out it writes nothing locally;").replace(
+                "Returns: an MCP", "Returns: with out {path, width, height, size}; else an MCP")
+            write, write_args = True, ("out",)
+            annotations.update(readOnlyHint=False, idempotentHint=False)
+        if name in ("install_app", "export_app") and not local_root:
+            continue  # their files live in the local root
+        tool = _tool(name, description, props, None, group="adb",
+                     required=tuple(definition["required"]), write=write,
+                     timeout_class=definition["timeout_class"])
+        tool.handler = handler(tool)
+        tool.title = definition["title"]
+        tool.annotations = annotations
+        tool.write_args = write_args
+        if definition["output_schema"] is not None:
+            import copy
+
+            tool.output_schema = copy.deepcopy(definition["output_schema"])
+        built.append(tool)
+    return built
 
 
 # ---------------------------------------------------------------------------
@@ -3597,6 +3973,7 @@ _BUILDERS: dict[str, Callable[[GroupEnv], list]] = {
     "filetype": _build_filetype,
     "transfer": _build_transfer,
     "remote": _build_remote,
+    "adb": _build_adb,
     "exec": _build_exec,
     "agent": _build_agent,
     "extensions": _build_extensions,
@@ -3746,12 +4123,14 @@ def manifest_json(manifest: dict) -> str:
 
 __all__ = [
     "ALL",
+    "ALL_GROUPS",
     "BASE_GROUP_DESCRIPTIONS",
     "ENV_VAR",
     "GROUPS",
     "GROUP_DESCRIPTIONS",
     "GroupEnv",
     "GroupError",
+    "OPT_IN_GROUPS",
     "build_group_tools",
     "check_groups",
     "groups_from",

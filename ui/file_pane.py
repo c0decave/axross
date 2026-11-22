@@ -159,6 +159,7 @@ CONTEXT_COMMANDS: dict[str, tuple[str | None, str | None]] = {
     "trash-browser": ("trash", None),
     "terminal": ("terminal", None),
     "external-terminal": ("terminal", None),
+    "android-device": ("android", None),
     "fuse-ro": (None, None),
     "fuse-rw": (None, None),
     "fuse-unmount": (None, None),
@@ -2331,7 +2332,8 @@ class FilePaneWidget(QWidget):
             return
         if self._open_markdown_viewer(full_path, item.name):
             return
-        if self._looks_like_image(item.name) and self._open_image_viewer(full_path):
+        if self._looks_like_image(item.name) and (self._open_image_viewer(full_path)
+                                                  or self._open_remote_image(item.name)):
             return
         if self._open_document_viewer(full_path, item.name):
             return
@@ -2419,6 +2421,28 @@ class FilePaneWidget(QWidget):
         from ui.markdown_viewer import open_markdown_viewer
 
         open_markdown_viewer(self._backend, path, self, source_pane=self)
+        return True
+
+    def _open_remote_image(self, name: str) -> bool:
+        """An image on a remote backend (ADB, SFTP, SMB, ...) in the media
+        viewer, which reads it off the GUI thread into a temporary copy.
+        Before, a double-click on a PNG on a phone opened the hex editor: the
+        image viewer is for local files only. False when *name* is no image
+        the viewer shows or the security mode blocks it (the caller then goes
+        on to the hex editor)."""
+        from core import media_collect as MC
+        from core.security_mode import current_policy
+        from ui import media_viewer as MV
+
+        if MC.classify(name) != MC.IMAGE:
+            return False
+        policy = current_policy()
+        if not policy.allow_auto_preview:
+            log.info("Opening %s in the hex editor: the '%s' security mode blocks the media viewer",
+                     name, policy.name)
+            return False
+        options = MV.MediaViewOptions(kinds=frozenset({MC.IMAGE}), start_mode=MV.START_BROWSE)
+        self.open_media_viewer(options, only_names={name})
         return True
 
     def _open_document_viewer(self, path: str, name: str) -> bool:
@@ -3853,7 +3877,8 @@ class FilePaneWidget(QWidget):
         #   Markdown            -> the Markdown viewer (F4 still edits it)
         if self._open_markdown_viewer(full_path, item.name):
             return
-        if self._looks_like_image(item.name) and self._open_image_viewer(full_path):
+        if self._looks_like_image(item.name) and (self._open_image_viewer(full_path)
+                                                  or self._open_remote_image(item.name)):
             return
         if self._open_document_viewer(full_path, item.name):
             return
@@ -4466,6 +4491,13 @@ class FilePaneWidget(QWidget):
         add_tags_menu(self, more)
         group(more)
         self._add_terminal_actions(more)
+        from ui.android_device import is_android
+
+        if is_android(self._backend):
+            # The phone itself: info, apps, SMS, log, screen (ui.android_device).
+            device = more_entry("android-device", tr("Android Device…"),
+                                lambda _checked=False: self.open_android_device())
+            device.setToolTip(tr("Model, battery, apps, SMS, log and screen of this phone"))
         self._add_fuse_actions(more, more_entry)
         if len(selected) == 1 and not hostile:
             # One entry: the editor shows and sets one entry's mode (with
@@ -4637,6 +4669,14 @@ class FilePaneWidget(QWidget):
                 )
         except Exception as exc:  # noqa: BLE001 — never let fuse break the menu
             log.debug("Skipping FUSE menu entry: %s", exc)
+
+    def open_android_device(self):
+        """The Android Device window of this pane's ADB connection."""
+        from ui.android_device import is_android, open_for
+
+        if not is_android(self._backend):
+            return None
+        return open_for(self._backend, self.window())
 
     def _add_terminal_actions(self, menu: QMenu) -> None:
         """Open Terminal Here (embedded dock) and, for local folders, Open

@@ -25,6 +25,7 @@ from PyQt6.QtCore import QTimer, QUrl  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from tests.test_markdown_reader_bugs11 import pump, until  # noqa: E402
+from tests import markdown_timing as TB  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -127,7 +128,7 @@ def test_guard_a_big_block_in_a_container_never_holds_up_the_window(bomb, full):
     pump(0.5)
     until(laid, 30)
     worst = turns.worst()
-    assert worst < 0.25, (worst, sorted(turns.turns)[-4:])
+    TB.budget(worst < 0.25, (worst, sorted(turns.turns)[-4:]))
 
 
 @pytest.mark.parametrize("full", [True, False], ids=["markdown-it", "md4c"])
@@ -150,7 +151,7 @@ def test_guard_copy_of_many_formulas_takes_a_piece_a_turn(bomb, full):
     worst = turns.worst()
     copied = App.clipboard().text()
     assert ("$x_{2999}^2 + \\frac{a}{b}$" if bomb == "list_math" else "$x_{5999}^2$") in copied
-    assert worst < 0.25, (worst, sorted(turns.turns)[-4:])
+    TB.budget(worst < 0.25, (worst, sorted(turns.turns)[-4:]))
 
 
 # -- 1. a block too big for its container: whole, in its place (laid out in parts inside it) -----------
@@ -298,7 +299,7 @@ def test_sad_a_new_search_after_scrolling_starts_from_the_view():
     dialog.resize(900, 700)
     dialog.show()
     dialog.view.render(text)
-    assert until(lambda: dialog.view._readable, 30)
+    assert until(lambda: dialog.view._readable, TB.READY_SECONDS)
     pump(0.3)
     browser = dialog.view.browser
     for fraction, at_least in ((0.1, 3), (0.6, 23)):

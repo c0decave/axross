@@ -19,6 +19,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 not installed")
 
 from PyQt6.QtWidgets import QApplication  # noqa: E402
+from tests import markdown_timing as TB  # noqa: E402
+
+#: The longest a helper waits for a page to be ready (it goes on as soon as it is).
+READY_SECONDS = 120
 
 APP = QApplication.instance() or QApplication([])
 ANSI = re.compile(r"\x1b(\[[0-9;]*m|\]8;;[^\x1b]*\x1b\\)")
@@ -42,7 +46,7 @@ def view_of(text: str, full: bool, path: str = "", width: int = 900):
     view.resize(width, 700)
     view.show()
     view.render(text)
-    end = time.monotonic() + 20
+    end = time.monotonic() + READY_SECONDS  # (a wait for the page, not a budget: a slow runner's page was measured half made)
     while time.monotonic() < end and (view.status.text() or view.asked - set(view.images)):
         APP.processEvents()
         time.sleep(0.005)
@@ -138,7 +142,7 @@ def test_sad_the_viewer_says_it_is_rendering_a_long_file(tmp_path):
     path.write_text("# Long\n\n" + "A sentence of prose, long enough. " * 20_000 + "\n", encoding="utf-8")
     dialog = MarkdownViewerDialog(LocalFS(), str(path))
     dialog.show()
-    seen, end = set(), time.monotonic() + 30
+    seen, end = set(), time.monotonic() + TB.READY_SECONDS
     while time.monotonic() < end:
         APP.processEvents()
         seen.add(dialog.view.status.text())
@@ -328,7 +332,8 @@ def test_sad_the_terminal_shows_the_start_of_a_long_list_at_once(tmp_path, capsy
     began = time.monotonic()
     parts = T.render_parts(text, T.Options(width=80, depth="none"))
     first = next(parts)
-    assert time.monotonic() - began < 1.5 and "item 0 with" in first
+    assert "item 0 with" in first
+    TB.budget(time.monotonic() - began < 1.5, 'time.monotonic() - began < 1.5')
     rest = "".join(parts)
     assert "item 59999 with" in rest and "60000. item 59999" in ANSI.sub("", rest)  # (numbered on)
     path = tmp_path / "long.md"

@@ -20,6 +20,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 not installed")
 
 from PyQt6.QtWidgets import QApplication  # noqa: E402
+from tests import markdown_timing as TB  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 ROOT = Path(__file__).resolve().parent.parent
@@ -95,7 +96,7 @@ def test_sad_an_idle_page_is_not_laid_out_again_and_again(name, full, width, mon
         # (a table a pixel too wide: the right margin flipped 65 <-> 64 forever,
         # the page laid out again each time - 19 % of a CPU, idle)
         assert len(calls) == 0, f"{len(calls)} fittings while idle"
-        assert spent < 0.3, f"{spent:.2f} s of CPU in 2 s idle"
+        TB.budget(spent < 0.3, f"{spent:.2f} s of CPU in 2 s idle")
     finally:
         dialog.close()
         dialog.deleteLater()

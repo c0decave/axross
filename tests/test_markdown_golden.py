@@ -12,7 +12,13 @@ the commit says so::
     python tests/test_markdown_golden.py --update
 
 They are made for one font and one Qt (``golden.json``): elsewhere the
-test is skipped, not failed.
+test is skipped, not failed. The font is the test's own - DejaVu Sans, Bold
+and Mono in tests/golden/fonts (their licence beside them) - and the child that
+draws the pages sees no other (a fontconfig file of that folder alone): a CI
+runner's fonts drew the signs DejaVu has not (✓, ⚠, the formulas' and the
+emoji's) in fonts of their own, 1.66 % of the pixels apart. Where fontconfig
+does not take the file (no fontconfig: macOS, Windows) the fonts the child sees
+are others than the record's - skipped, said why.
 """
 
 from __future__ import annotations
@@ -40,6 +46,8 @@ WIDTH = 900
 #: A reference's name: <showcase>_<parser>_<theme>.png
 _REFERENCE = re.compile(r".+_(?:full|md4c)_(?:light|dark)\.png")
 FONT = ("DejaVu Sans", 9)
+#: The fonts the pages are drawn with - and the only ones the drawing child sees (_fontconfig).
+FONTS = Path(__file__).resolve().parent / "golden" / "fonts"
 
 _RENDER = r"""
 import json, os, sys, time
@@ -51,7 +59,9 @@ from PyQt6.QtWidgets import QApplication
 app = QApplication([])
 font = QFont({family!r}, {size!r})
 app.setFont(font)
-info = {{"family": QFontInfo(font).family(), "qt": QT_VERSION_STR}}
+from PyQt6.QtGui import QFontDatabase
+info = {{"family": QFontInfo(font).family(), "qt": QT_VERSION_STR,
+        "families": sorted(QFontDatabase.families())}}
 from core.local_fs import LocalFS
 from ui import markdown_view as MV
 
@@ -95,12 +105,28 @@ print(json.dumps(info))
 """
 
 
+def _fontconfig(folder: Path) -> Path:
+    """A fontconfig file that knows the fonts of FONTS alone (sans-serif, serif and monospace: theirs), its
+    cache in *folder*."""
+    config = folder / "fonts.conf"
+    alias = "".join(f"<alias><family>{generic}</family><prefer><family>{family}</family></prefer></alias>"
+                    for generic, family in (("sans-serif", "DejaVu Sans"), ("serif", "DejaVu Sans"),
+                                            ("monospace", "DejaVu Sans Mono")))
+    config.write_text('<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "fonts.dtd"><fontconfig>'
+                      f"<dir>{FONTS}</dir><cachedir>{folder / 'cache'}</cachedir>{alias}</fontconfig>\n",
+                      encoding="utf-8")
+    return config
+
+
 def render(out: str) -> dict:
-    """Every showcase rendered into *out*; the font and Qt they were made with."""
+    """Every showcase rendered into *out*; the font and Qt they were made with, and the fonts the drawing
+    child saw (those of FONTS alone)."""
     paths = sorted(str(p) for p in GOLDEN.glob("*.md"))
     script = _RENDER.format(root=str(ROOT), family=FONT[0], size=FONT[1], out=out, paths=paths, width=WIDTH)
-    done = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=300,
-                          env={**os.environ, "QT_QPA_PLATFORM": "offscreen"})
+    with tempfile.TemporaryDirectory() as fonts:
+        done = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=300,
+                              env={**os.environ, "QT_QPA_PLATFORM": "offscreen",
+                                   "FONTCONFIG_FILE": str(_fontconfig(Path(fonts)))})
     assert done.returncode == 0, done.stderr[-3000:]
     return json.loads(done.stdout.strip().splitlines()[-1])
 

@@ -372,6 +372,31 @@ layouts guardados.
   archivo, que lo sustituye al completarse - una subida rota deja el
   archivo antiguo como estaba.
 
+- **La ventana Dispositivo Android.** En un panel ADB, clic derecho > Más
+  > *Dispositivo Android…* (o *Pane > Dispositivo Android…* en la barra de
+  menús) abre una ventana del propio teléfono, una por conexión. *Info*:
+  fabricante, modelo, versión de Android, parche de seguridad, número de
+  serie, el IMEI donde el teléfono se lo da al shell, batería y
+  almacenamiento libre; *Reiniciar…* en Android, recovery o el bootloader.
+  *Apps*: las apps instaladas, filtradas por nombre y tipo; *Detalles…*
+  muestra la versión, las fechas de instalación y los permisos de una app
+  (*Conceder…*, *Revocar…*); *Iniciar*, *Detener*, *Desinstalar…*,
+  *Instalar APK…* y *Copiar APK…* (los ficheros APK en una carpeta, con
+  nombres nuevos). *SMS*: los mensajes de una carpeta, donde Android deja
+  leerlos al shell; *Escribir en el almacén…* guarda un mensaje sin
+  enviarlo, *Preparar SMS…* abre la app de SMS del teléfono con número y
+  texto - axross nunca envía, una persona en el teléfono pulsa Enviar.
+  *Logcat*: las líneas más recientes por prioridad, tag o app, *Seguir* las
+  lee cada dos segundos, *Pausa* detiene la vista, *Guardar…* las escribe
+  en un fichero. *Captura*: la pantalla, *Guardar…* como PNG. Cada cambio
+  pregunta antes; Desinstalar y Reiniciar cuentan tres segundos (Esc los
+  detiene), y en un perfil marcado como producción cada cambio pasa por la
+  cuenta atrás de producción. En el security mode paranoid los cambios
+  están desactivados. El teléfono se consulta en segundo plano: uno lento
+  nunca bloquea la ventana. Las mismas herramientas son el grupo `adb` del
+  servidor MCP (docs/MCP_es.md, §9.10). La interfaz está en inglés o
+  alemán; los nombres de arriba traducen los de la versión inglesa.
+
 ## Layout multi-panel
 
 - Añade panels dividiendo con **Ctrl+Shift+H** /
@@ -1111,9 +1136,25 @@ vuelve a acoplar.
   desde una consola), y su salida a una tubería o a un archivo es UTF-8.
   Si falta una biblioteca del sistema que la ventana necesita (libEGL en un
   Linux mínimo), nombra la biblioteca y el paquete que la trae y remite a
-  `--term` / `--html`. axross-markdown sigue el esquema claro u oscuro del
-  escritorio; *View → Theme* (Alt+V) elige otro, guardado en
-  `~/.config/axross-markdown/settings.json`. En la terminal un enlace de
+  `--term` / `--html`. Con *View → Theme* (Alt+V) del visor coloreas la
+  página (fondo, texto, títulos, enlaces, código, citas, tablas, avisos y
+  fórmulas) con uno de doce temas: Light, Dark, Sepia, Solar Light, Solar
+  Dark, Arctic, Retro, Night Violet, Slate, Paper, High Contrast Light y
+  High Contrast Dark. Todos mantienen el texto y los enlaces con el
+  contraste WCAG AA, y los dos de alto contraste con AAA. *Automatic (as
+  axross)*, el predeterminado, sigue el tema de axross, claro u oscuro. Tu
+  elección vale para cada visor abierto y para la vista previa del
+  editor, y axross la guarda en sus ajustes. Un cambio de tema es un
+  único cambio, sin destellos: la página conserva sus colores antiguos
+  hasta que está compuesta con los nuevos. El axross-markdown
+  independiente tiene el mismo menú y guarda tu elección en
+  `~/.config/axross-markdown/settings.json`. Allí eliges los colores de la
+  propia ventana en *View → Window Theme*; si no eliges ninguno, siguen el
+  esquema claro u oscuro del escritorio. Sus programas de un solo archivo
+  se actualizan desde versiones firmadas (*Help → Updates*: apagado,
+  avisar o instalar automáticamente; `--check-update`, `--update`). Con
+  `axross-mdcat --theme NAME` usas los mismos temas en la terminal, y
+  `--list-themes` los muestra. En la terminal un enlace de
   más de 2083 caracteres se muestra como su texto, una tabla de más de 500
   filas se dibuja sobre la marcha, y una de más de 64 columnas se muestra
   tal como está escrita (el final de la salida lo dice). axross-mdcat se

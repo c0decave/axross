@@ -1421,7 +1421,12 @@ def test_edge_a_state_with_gone_tracks_and_odd_values(tmp_path):
         "current": 7, "position_ms": -5}), encoding="utf-8")
     panel = MP.PlayerPanel(engine=FakeEngine(), state_path=str(state))
     try:
-        assert rows(panel) == ["keep.mp3"]
+        # A track not there (a drive not mounted) is kept, marked - not taken
+        # out of the shared list for good (review 16, M8); a file that is no
+        # track is left out.
+        assert rows(panel) == ["gone.mp3", "keep.mp3"]
+        assert panel.playlist.item(0).data(MP._MISSING_ROLE)
+        assert not panel.playlist.item(1).data(MP._MISSING_ROLE)
         assert panel.volume.value() == 100 and not panel.muted and panel.repeat == "off"
         assert panel.current_row() == -1
     finally:

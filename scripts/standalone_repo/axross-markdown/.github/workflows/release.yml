@@ -1,6 +1,8 @@
 # A tag vX.Y.Z makes the GitHub release: sdist and wheel, one-file programs
 # for Linux (also as an AppImage), macOS arm64 (also as a disk image with an
-# app) and Windows x64, SHA256SUMS, and notes from CHANGELOG.md. Every action
+# app) and Windows x64, their licences (LICENSE, NOTICE and
+# THIRD_PARTY_LICENSES.txt: the binaries contain PyQt6 and Qt and are GPL-3.0
+# combined works), SHA256SUMS, and notes from CHANGELOG.md. Every action
 # is pinned by its commit; the dependencies come from the hashed locks
 # (requirements.lock.txt, packaging/requirements-pyinstaller.txt), and so do
 # the tools that build the sdist and wheel (packaging/requirements-build.txt:
@@ -14,6 +16,14 @@
 # (packaging/ci_log_tail.py), readable through the API without the logs.
 # Nothing is built before axross's supply-chain gate and the tests
 # (tests.yml, called as a reusable workflow) pass.
+# The release is made as a draft: the maintainer signs its SHA256SUMS on
+# their own machine and publishes it (scripts/sign_release.py release vX.Y.Z
+# --key KEY --publish - the key never comes near CI). Beside each program
+# goes the same file under a name with its version (axross-markdown-X.Y.Z-
+# linux-x86_64, -x86_64.AppImage, -macos-arm64, -windows-x64.exe,
+# axross-mdcat-X.Y.Z-windows-x64.exe): the ones the updater fetches
+# (core/markdown_update.py) - an older release's file never stands for a
+# newer one - bare programs, no archive.
 name: release
 
 on:
@@ -26,9 +36,14 @@ permissions:
 
 jobs:
   # The supply-chain gate on requirements.lock.txt, then the tests (tests.yml):
-  # no job below starts before both pass.
+  # no job below starts before both pass. The blocking tests only: those that pass
+  # or fail by elapsed time (the marker timing, tests/markdown_timing.py) run in
+  # tests.yml's job timing on every push, and block nothing - a release never
+  # waits for them.
   ci:
     uses: ./.github/workflows/tests.yml
+    with:
+      blocking_only: true
 
   python:
     needs: ci
@@ -61,19 +76,26 @@ jobs:
           # any test tool is in the environment)
           python -m pip install --require-hashes -r requirements.lock.txt
           python -m pip install --require-hashes -r packaging/requirements-build.txt
-          python -m build --no-isolation --outdir release/
+          # (the sdist the same bytes for the same commit: its files' times the commit's, in a fixed order -
+          # packaging/reproducible_sdist.py; the wheel is reproducible already)
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) python -m build --no-isolation --outdir release/
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) python packaging/reproducible_sdist.py release/*.tar.gz
           python -m twine check --strict release/*
+          # (the sdist holds what THIRD_PARTY_LICENSES.txt says it holds: the build's scripts and locks)
+          python packaging/reproducible_sdist.py --check release/*.tar.gz
         } 2>&1 | tee -a "$RUNNER_TEMP/job.log"
-    - name: Tests against the locked dependencies
+    - name: Tests of the built wheel against the locked dependencies
       env:
         QT_QPA_PLATFORM: offscreen
+        # (the tests import the installed wheel, not this checkout's src/: tests/conftest.py)
+        AXROSS_MARKDOWN_TEST_INSTALLED: "1"
       run: |
         set -o pipefail
         {
           # (pytest and its dependencies hashed as well: packaging/requirements-test.txt)
-          python -m pip install --no-build-isolation --no-deps .
+          python -m pip install --no-deps release/*.whl
           python -m pip install --require-hashes -r packaging/requirements-test.txt
-          python -m pytest -q -rfE tests
+          python -m pytest -q -rfE -m "not timing" tests  # (the timing ones: tests.yml's job timing)
         } 2>&1 | tee -a "$RUNNER_TEMP/job.log"
     - name: The end of the job's log as annotations
       if: failure()
@@ -127,11 +149,24 @@ jobs:
         {
           python -m PyInstaller --clean --noconfirm --distpath build/dist --workpath build/work packaging/axross-markdown.spec
           mkdir -p release
+          version=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')
           case "${{ runner.os }}" in
             Windows) cp build/dist/axross-markdown.exe "release/axross-markdown-${{ matrix.suffix }}"
-                     cp build/dist/axross-mdcat.exe "release/axross-mdcat-${{ matrix.suffix }}" ;;
-            *) cp build/dist/axross-markdown "release/axross-markdown-${{ matrix.suffix }}" ;;
+                     cp build/dist/axross-mdcat.exe "release/axross-mdcat-${{ matrix.suffix }}"
+                     # (the files the updater fetches: the version in their names)
+                     cp build/dist/axross-markdown.exe "release/axross-markdown-${version}-${{ matrix.suffix }}"
+                     cp build/dist/axross-mdcat.exe "release/axross-mdcat-${version}-${{ matrix.suffix }}" ;;
+            *) cp build/dist/axross-markdown "release/axross-markdown-${{ matrix.suffix }}"
+               cp build/dist/axross-markdown "release/axross-markdown-${version}-${{ matrix.suffix }}" ;;
           esac
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            # (the build machine's libraries in the program: each, its package's licence, its source package -
+            # packaging/system_libraries.py - beside the binaries too)
+            { cat build/system-licences/INDEX.txt
+              for text in build/system-licences/*.copyright; do
+                printf '\n%s\n%s\n\n' "==== licenses/system/$(basename "$text")" "===="; cat "$text"
+              done; } > "release/SYSTEM-LIBRARIES-${{ matrix.suffix }}.txt"
+          fi
         } 2>&1 | tee -a "$RUNNER_TEMP/job.log"
     - name: Smoke tests (--version, --html, an SVG drawn by --svg-worker; on Linux --term and the window)
       env:
@@ -144,6 +179,9 @@ jobs:
           version=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')
           got=$("$bin" --version | tail -n 1 | tr -d '\r')
           [ "$got" = "axross-markdown $version" ] || { echo "::error::--version says '$got'"; exit 1; }
+          # (what the updater runs a downloaded program with before it replaces the one running)
+          got=$("release/axross-markdown-${version}-${{ matrix.suffix }}" --self-test | tail -n 1 | tr -d '\r')
+          [ "$got" = "axross-markdown $version ok" ] || { echo "::error::--self-test says '$got'"; exit 1; }
           printf '# Smoke\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```python\nprint(1)\n```\n' > smoke.md
           "$bin" --html smoke.md > smoke.html
           grep -q '<table' smoke.html || { echo "::error::--html wrote no table"; exit 1; }
@@ -155,10 +193,17 @@ jobs:
           # colours asserted) and --image-worker (a PNG decoded).
           AXROSS_BUNDLE_SMOKE=1 "$bin" --script packaging/children_check.py > children.txt
           grep -q 'children checked' children.txt || { echo "::error::a child of the binary failed"; cat children.txt; exit 1; }
+          # The licences inside it, as Help > About reads them (THIRD_PARTY_LICENSES.txt: PyQt6's GPL-3.0,
+          # Qt's LGPL-3.0, the source code) and the interpreter's LICENSE.txt.
+          AXROSS_BUNDLE_SMOKE=1 "$bin" --script packaging/licences_check.py > licences.txt
+          grep -q 'licences carried' licences.txt || { echo "::error::the binary does not carry its licences"; cat licences.txt; exit 1; }
           # The terminal view colours code through its own lexing child (a 24-bit colour code in the output).
           printf '```yaml\nname: build\nretries: 3\n```\n' > yaml.md
           if [ "${{ runner.os }}" = "Windows" ]; then
             # (the window program opens no console there: the terminal view is axross-mdcat.exe)
+            # (the updater runs a downloaded axross-mdcat.exe so before it replaces the one running)
+            got=$("release/axross-mdcat-${version}-${{ matrix.suffix }}" --self-test | tail -n 1 | tr -d '\r')
+            [ "$got" = "axross-mdcat $version ok" ] || { echo "::error::axross-mdcat.exe --self-test says '$got'"; exit 1; }
             "release/axross-mdcat-${{ matrix.suffix }}" --no-pager --color never smoke.md > mdcat.txt
             grep -q 'Smoke' mdcat.txt || { echo "::error::axross-mdcat.exe wrote no heading"; exit 1; }
             "release/axross-mdcat-${{ matrix.suffix }}" --no-pager --color truecolor yaml.md > yaml.txt
@@ -181,6 +226,10 @@ jobs:
         {
           bash packaging/build_appimage.sh release/axross-markdown-linux-x86_64 release/axross-markdown-x86_64.AppImage
           APPIMAGE_EXTRACT_AND_RUN=1 ./release/axross-markdown-x86_64.AppImage --version
+          version=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')
+          cp release/axross-markdown-x86_64.AppImage "release/axross-markdown-${version}-x86_64.AppImage"
+          got=$(APPIMAGE_EXTRACT_AND_RUN=1 "./release/axross-markdown-${version}-x86_64.AppImage" --self-test | tail -n 1)
+          [ "$got" = "axross-markdown $version ok" ] || { echo "::error::the AppImage's --self-test says '$got'"; exit 1; }
         } 2>&1 | tee -a "$RUNNER_TEMP/job.log"
     - name: Disk image with the app (macOS)
       if: runner.os == 'macOS'
@@ -211,24 +260,31 @@ jobs:
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
       with:
         path: artifacts
+        # (this workflow's own: tests.yml's supply-chain report is no asset of the release)
+        pattern: "{python,binaries-*}"
+        merge-multiple: true
     - name: SHA256SUMS and the notes
       run: |
         set -o pipefail
         {
           mkdir assets
           find artifacts -type f -exec cp {} assets/ \;
+          # (the binaries are GPL-3.0 combined works: their licences and where the source code is, beside them)
+          cp LICENSE NOTICE THIRD_PARTY_LICENSES.txt assets/
           (cd assets && sha256sum -- * > ../SHA256SUMS) && mv SHA256SUMS assets/
           cat assets/SHA256SUMS
           python3 packaging/release_notes.py "$GITHUB_REF_NAME" assets > notes.md
         } 2>&1 | tee -a "$RUNNER_TEMP/job.log"
+    # (a draft: signed and published by hand - scripts/sign_release.py)
     - name: The GitHub release
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
         set -o pipefail
-        gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
+        gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
             --title "axross-markdown ${GITHUB_REF_NAME#v}" --notes-file notes.md assets/* \
             2>&1 | tee -a "$RUNNER_TEMP/job.log"
+        echo "::notice::draft $GITHUB_REF_NAME made: sign SHA256SUMS (SHA256SUMS.sig) and publish it with scripts/sign_release.py release $GITHUB_REF_NAME --key KEY --publish"
     - name: The end of the job's log as annotations
       if: failure()
       run: python3 packaging/ci_log_tail.py "$RUNNER_TEMP/job.log" "release job"

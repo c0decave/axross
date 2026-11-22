@@ -28,11 +28,13 @@ or `pipx install 'axross-headless-mcp[all]'`.
 - `--mcp-root DIR` - the only folder the tools may touch. Ask the user which
   folder; never pick the home folder or `/` on your own.
 - Read-only is the default. `--mcp-write` adds the write tools (write_file,
-  mkdir, remove, rename, copy, ...) and needs `--mcp-root`. Add it only when the
-  user wants the agent to change files.
+  create_directory, delete_path, move_path, copy_file, restore_file_version, ...) and
+  needs `--mcp-root`. Add it only when the user wants the agent to change files.
 - `--mcp-tools GROUP,...` adds tool groups: metadata, duplicates, archive,
-  crypto, index, filetype, transfer, remote, exec, agent, extensions (`all` for
-  every one). Without it only the file tools are served.
+  crypto, index, filetype, transfer, remote, adb (Android devices opened as ADB
+  profiles: identity, apps, permissions, SMS, log, screenshots, AT commands), exec,
+  agent, extensions. `all` is every group but adb, which comes only by name
+  (`all,adb`, or `remote,adb` for a phone). Without it only the file tools are served.
 - `--mcp-allow-exec` (remote commands, needs `--mcp-tools exec`),
   `--mcp-allow-scripts` (runs Python) and `--mcp-allow-secret-reads` (private keys,
   tokens) are separate opt-ins. Do not set them unless the user asks for exactly

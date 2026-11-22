@@ -27,6 +27,7 @@ from PyQt6.QtCore import QPoint, QTimer  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from tests.test_markdown_reader_bugs11 import pump, until  # noqa: E402
+from tests import markdown_timing as TB  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -138,7 +139,7 @@ def test_guard_a_big_block_in_any_container_never_holds_up_the_window(container,
         pump(0.3)
         until(lambda: not view._scheduled and not view.status.text().startswith("Rendering"), 60)
         worst = turns.worst()
-        assert worst < 0.25, (worst, sorted(turns.turns)[-4:])
+        TB.budget(worst < 0.25, (worst, sorted(turns.turns)[-4:]))
         view.load_rest_now()
         until(lambda: not view.more(), 120)
         shown = view.browser.toPlainText()
@@ -188,7 +189,7 @@ def test_sad_formulas_past_a_headings_hundred_are_said_and_quick(full):
 
     turns = Turns()
     view = _view("# " + " ".join(f"w{n} $x_{{{n}}}^2$" for n in range(8000)) + "\n\nText.\n", full)
-    assert turns.worst() < 0.6
+    TB.budget(turns.worst() < 0.6, 'turns.worst() < 0.6')
     assert "TeX" in view.notice.text() and str(MV.LINE_CAP) in view.notice.text()
     # (since the twentieth review a heading's text past LINE_CAP characters is cut - the editor shows it)
     shown = view.browser.toPlainText()
@@ -216,7 +217,8 @@ def test_sad_a_deep_quote_after_a_lists_marker_is_shown_flatter_everywhere():
     for full in (True, False):
         turns = Turns()
         view = _view(text, full)
-        assert turns.worst() < 0.25 and "deep" in view.browser.toPlainText()
+        assert "deep" in view.browser.toPlainText()
+        TB.budget(turns.worst() < 0.25, 'turns.worst() < 0.25')
         assert "flatter" in view.notice.text()
 
 
@@ -309,7 +311,7 @@ def test_sad_a_drag_makes_its_text_only_when_asked():
     view.browser.selectAll()
     began = time.thread_time()
     data = view.browser.createMimeDataFromSelection()
-    assert time.thread_time() - began < 0.1
+    TB.budget(time.thread_time() - began < 0.1, 'time.thread_time() - began < 0.1')
     assert "$x_{5999}^2$" in data.text()
 
 
@@ -321,7 +323,7 @@ def test_sad_a_reload_during_a_copy_says_the_copy_was_cancelled():
     pump(0.05)
     assert view.status.text().startswith("Copying")
     view.render(view.markdown)
-    assert until(lambda: "cancelled" in view.status.text(), 30), view.status.text()
+    assert TB.until_within(until, lambda: "cancelled" in view.status.text(), 30), view.status.text()
 
 
 def test_sad_a_reload_during_a_copy_says_so_while_the_new_page_is_made():
@@ -353,7 +355,7 @@ def test_sad_ctrl_end_shows_the_end_at_once(full):
     def shown() -> str:
         return browser.cursorForPosition(QPoint(5, 5)).block().text()
 
-    assert until(lambda: shown().startswith("H9999"), 5), shown()
+    assert TB.until_within(until, lambda: shown().startswith("H9999"), 5), shown()
 
 
 # -- 14. the window keeps its least width ----------------------------------------------------------
@@ -449,7 +451,7 @@ def test_sad_a_list_of_thousands_of_notes_is_still_cut_between_its_notes():
     pump(0.3)
     until(lambda: not view._scheduled and not view.status.text().startswith("Rendering"), 60)
     worst = turns.worst()
-    assert worst < 0.25, (worst, sorted(turns.turns)[-4:])
+    TB.budget(worst < 0.25, (worst, sorted(turns.turns)[-4:]))
 
 
 def test_sad_a_long_note_in_pieces_has_one_way_back_and_is_cut_in_parts():
@@ -509,7 +511,7 @@ def test_sad_a_workers_delivery_is_never_destroyed_on_the_worker_thread(monkeypa
     got = []
     for _ in range(20):
         MV.in_background(lambda: time.sleep(0.05) or 1, lambda result, error: got.append(result))  # (no thread kept)
-    deadline = time.monotonic() + 10
+    deadline = time.monotonic() + TB.READY_SECONDS
     while any(t.name == "markdown-view" for t in threading.enumerate()) and time.monotonic() < deadline:
         time.sleep(0.01)
     gc.collect()
