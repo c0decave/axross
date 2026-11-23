@@ -511,15 +511,22 @@ def test_sad_the_program_answers_as_each_child_it_starts(worker, module, monkeyp
 
 # -- code blocks lexed in a child: a lexer stuck in backtracking never holds the reader ----------------
 
-# A Python lexer whose first token runs a catastrophic match (~2.5 s) on a text with HOSTILE - in the
-# lexing child and in this process (as tests/test_code_editor_lex_child.py's).
+# A Python lexer stuck in catastrophic backtracking on a text with HOSTILE (as
+# tests/test_code_editor_lex_child.py's). In the lexing child (STUCK) it never comes out: the child is
+# ended at the bound, every time - one match of about 1 s, as it was, came out within the 1 s bound on
+# a fast or idle machine (the child answered in 1.08-1.15 s here) and the block was coloured: the race.
+# In this process (exec'd without STUCK) one match: a lexing on the GUI thread shows as a gap of a
+# second, not a hung test.
 _HOSTILE = r'''
 import re as _re
 from pygments.lexers import python as _python
 _real = _python.PythonLexer.get_tokens_unprocessed
 def _slow(self, text, *args):
     if "HOSTILE" in text:
-        _re.match(r"(a+)+$", "a" * 25 + "b")
+        while True:
+            _re.match(r"(a+)+$", "a" * 25 + "b")
+            if not globals().get("STUCK"):
+                break
     return _real(self, text, *args)
 _python.PythonLexer.get_tokens_unprocessed = _slow
 '''
@@ -532,7 +539,7 @@ def hostile_lexer(monkeypatch, tmp_path):
     from core import markdown_doc as MD
 
     script = tmp_path / "hostile_lexer.py"
-    script.write_text(_HOSTILE + LW._CHILD_SOURCE)
+    script.write_text("STUCK = True\n" + _HOSTILE + LW._CHILD_SOURCE)
     real = LW.worker_argv
     monkeypatch.setattr(LW, "worker_argv", lambda *a, **kw: [sys.executable, "-I", str(script), *real(*a, **kw)[-4:]])
     from pygments.lexers import python as py
@@ -559,6 +566,15 @@ def test_sad_a_lexer_stuck_in_backtracking_leaves_the_terminal_and_the_export_pl
     TB.budget(time.thread_time() - began < 1.0, time.thread_time() - began)
     assert "HOSTILE = 1" in T._strip_ansi(shown) and "After." in shown
     assert "HOSTILE = 1" in page and "After." in page
+
+
+def test_sad_the_stuck_lexer_never_answers_whatever_the_machine(hostile_lexer):
+    """The tests above rest on the lexing child never answering within its bound: with one match of about
+    1 s it answered in 1.08-1.15 s - within a bound a little longer than 1 s, or a faster machine's 1 s,
+    and the block came back coloured (the export test failed once so). Twice the bound: still nothing."""
+    from core import markdown_doc as MD
+
+    assert MD.code_tokens("HOSTILE = 1\n", "python", seconds=2 * MD.CODE_LEX_SECONDS) is None
 
 
 @pytest.mark.parametrize("full", [True, False], ids=["markdown-it", "md4c"])

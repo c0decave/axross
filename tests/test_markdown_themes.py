@@ -66,6 +66,75 @@ def test_happy_every_theme_reaches_wcag_aa_for_its_text_and_links():
     assert [theme.id for theme in MT.THEMES.values() if theme.aaa] == ["high-contrast-light", "high-contrast-dark"]
 
 
+_ALERTS = ("note", "tip", "important", "warning", "caution")
+
+
+def _drawn_pairs(theme):
+    """Every (what, foreground, ground, least) a theme draws text with, listed here on its own (not from
+    MT.PAGE_PAIRS): the syntax colours on a code block's grey and on the tint a code block has in an alert,
+    links in a table's header and rows and in inline code (Qt's own parser's page colours a linked
+    `code` as a link), muted text (struck, a code block's label) in tables and code, alert titles (bold,
+    the text's size: no large text), and the terminal's colours on its ground."""
+    page, code, term = theme.page, theme.code, theme.term
+    least = 7.0 if theme.aaa else 4.5
+    pairs = [(f"code.{kind} on {ground}", colour, page[ground], least)
+             for kind, colour in code.items() for ground in ("pre_bg", "code_bg")]
+    pairs += [(f"link on {ground}", page["link"], page[ground], least) for ground in ("th_bg", "zebra", "code_bg")]
+    pairs += [(f"muted on {ground}", page["muted"], page[ground], 4.5)
+              for ground in ("th_bg", "zebra", "pre_bg", "code_bg")]
+    pairs += [(f"{kind} title on alert_bg", page[kind], page["alert_bg"], 4.5) for kind in _ALERTS]
+    pairs += [(f"term.{role}", term[role], term["page_bg"], 4.5)
+              for role in ("text", "muted", "link", "quote", "image", "math", "mark", "open",
+                           *(f"h{n}" for n in range(1, 7)), *_ALERTS)]
+    pairs += [("term.code_fg on code_bg", term["code_fg"], term["code_bg"], 4.5),
+              ("term.muted on pre_bg (a code block's label)", term["muted"], term["pre_bg"], 4.5)]
+    pairs += [(f"term code.{kind}", colour, term["page_bg"], 4.5) for kind, colour in code.items()]
+    return pairs
+
+
+def test_happy_every_text_colour_reaches_aa_on_every_ground_it_is_drawn_on():
+    """Not only on the page: the syntax colours at AA's 4.5 (they had 3:1 - Arctic's keywords 3.74, Retro's
+    3.37 in an alert), a link on a table's header (Retro 4.31) and in inline code (Dark 4.11), muted text in
+    tables and code (Solar Light 4.36), alert titles (Retro's caution 3.82), the terminal's red (Retro 4.29)
+    and its code block's label (Solar Light 4.36) - the High Contrast themes' code and links AAA."""
+    low = [(theme.id, what, round(MT.contrast(fg, bg), 2), least) for theme in MT.THEMES.values()
+           for what, fg, bg, least in _drawn_pairs(theme) if MT.contrast(fg, bg) < least]
+    assert not low, low
+
+
+def test_happy_the_contrast_report_measures_every_ground_a_colour_is_drawn_on():
+    """MT.contrast_report (the release's contrast check, and test_happy_every_theme_reaches_wcag_aa_...)
+    holds each of those pairs at its floor - the syntax colours no longer at 3."""
+    for theme in MT.THEMES.values():
+        report = {(fg, bg): least for fg, bg, _ratio, least in MT.contrast_report(theme)}
+        least = 7.0 if theme.aaa else 4.5
+        for kind in MT.CODE_KEYS:
+            assert report[(f"code.{kind}", "pre_bg")] == least and report[(f"code.{kind}", "code_bg")] == least
+            assert report[(f"term.code.{kind}", "term.page_bg")] == 4.5
+        for ground in ("th_bg", "zebra", "code_bg"):  # (a High Contrast theme's AAA row is the later one)
+            assert report[("link", ground)] == least
+        for ground in ("th_bg", "zebra", "pre_bg", "code_bg"):
+            assert report[("muted", ground)] == 4.5
+        for kind in _ALERTS:
+            assert report[(kind, "alert_bg")] == 4.5, (theme.id, kind)
+            assert report[(f"term.{kind}", "term.page_bg")] == 4.5
+        assert report[("term.code_fg", "term.code_bg")] == 4.5 and report[("term.muted", "term.pre_bg")] == 4.5
+
+
+def test_happy_code_in_an_alert_is_on_the_code_ground_in_its_syntax_colours():
+    """Why the syntax colours are measured on code_bg too: a code block in an alert stands on the inline
+    code's tint (markdown-it's page) - Retro's keyword there was 3.37:1."""
+    pytest.importorskip("markdown_it")
+    pytest.importorskip("pygments")
+    from core import markdown_doc as MD
+    from ui import markdown_html as H
+
+    theme = MT.THEMES["retro"]
+    page = "".join(H.to_html_parts(MD.parse("> [!CAUTION]\n> careful\n> ```python\n> def f(): pass\n> ```\n"),
+                                   theme, 0)).lower()
+    assert f'bgcolor="{theme.page["code_bg"]}"' in page and theme.code["keyword"] in page
+
+
 def test_happy_contrast_is_wcag_s():
     assert MT.contrast("#000000", "#ffffff") == pytest.approx(21.0)
     assert MT.contrast("#777777", "#ffffff") == pytest.approx(4.48, abs=0.01)
@@ -517,6 +586,55 @@ def test_sad_switching_the_theme_of_a_big_page_keeps_the_window_answering(qt, tm
     _turn, gap = beat.stop()
     assert _ground(viewer.view) == MT.THEMES["slate"].page["page_bg"]
     HB.assert_responsive(gap, ("theme switch", full))
+
+
+@PARSERS
+def test_sad_a_slow_theme_switch_says_at_once_that_the_choice_was_taken(qt, tmp_path, full):
+    """A page that took a while (the render timer at twice its time - 10,000 sections on Qt's own parser
+    showed nothing for 4 s, the new page at 6 s): the status says the theme is being applied in the turn of
+    the choice - the old page still shown, nothing made in that turn - until the new page is there. A page
+    made at once says nothing (its new page comes after the typing's short pause)."""
+    from core.i18n import tr
+    from ui import markdown_theme_ui as TU
+    from ui import markdown_view as MV
+
+    text = "".join(f"## Part {n}\n\nWords *and* `code`.\n\n" for n in range(40))
+    viewer = _viewer(tmp_path, text, full)
+    view = viewer.view
+    applying = tr("Applying the theme…")
+    view.timer.setInterval(3000)  # (as a page of 1.5 s leaves it: MarkdownView._finish)
+    TU.hub().choose("dark")
+    assert view.status.text() == applying
+    assert view.theme is MT.THEMES["light"] and _ground(view) == "#ffffff"  # (the old page: nothing made yet)
+    # (made anew after the short pause, not the typing's: the timer at 3 s made the choice wait 3 s more)
+    assert view.timer.isActive() and view.timer.interval() == MV.RENDER_DELAY
+    assert _switched(view, "dark", 60)
+    _pump(0.1)
+    assert applying not in view.status.text() and _ground(view) == MT.THEMES["dark"].page["page_bg"]
+    view.timer.setInterval(MV.RENDER_DELAY)  # (a page made at once)
+    TU.hub()._applied = float("-inf")  # (no rate limit between the two choices of this test)
+    TU.hub().choose("sepia")
+    assert applying not in view.status.text()
+    assert _switched(view, "sepia", 60)
+
+
+def test_happy_export_html_says_it_is_in_light_colours_when_the_page_s_theme_is_another(qt, tmp_path):
+    """Export HTML is in Light's colours whatever the page's theme (Qt's own parser's export too): "Saved"
+    says so when the page shows another theme."""
+    from core.i18n import tr
+    from ui import markdown_theme_ui as TU
+
+    viewer = _viewer(tmp_path, "# Title\n\nWords.\n")
+    out = tmp_path / "light.html"
+    assert viewer.export_html(str(out)) == str(out)
+    assert viewer.view.status.text() == tr("Saved: {path}").format(path=str(out))
+    TU.hub().choose("retro")
+    assert _switched(viewer.view, "retro", 60)
+    out = tmp_path / "retro.html"
+    assert viewer.export_html(str(out)) == str(out)
+    assert viewer.view.status.text() == tr("Saved in light colours: {path}").format(path=str(out))
+    page = out.read_text(encoding="utf-8")
+    assert f"background: {MT.LIGHT_PAGE['page_bg']}" in page and MT.THEMES["retro"].page["page_bg"] not in page
 
 
 def test_sad_1_a_theme_chosen_and_kept_here(qt_plain):

@@ -782,9 +782,21 @@ def self_test_answer(version: str, program: str = PROGRAM) -> str:
     return f"{program} {version} ok"
 
 
-def _run_alone(args, *, timeout: float, **kwargs):
+def _child_env() -> dict:
+    """The environment for a child program: core.subprocess_env's clean one (no loader path of a one-file
+    build inherited) - the environment as it is where an export has no such module."""
+    try:
+        from core.subprocess_env import clean_child_env
+
+        return clean_child_env()
+    except Exception:  # noqa: BLE001 - (an export without it)
+        return dict(os.environ)
+
+
+def _run_alone(args, *, timeout: float, env: dict | None = None, **kwargs):
     """subprocess.run of *args* in a process group of its own, all of it ended at the time-out: a one-file
-    program is its bootloader's child - killing the bootloader alone left the program running."""
+    program is its bootloader's child - killing the bootloader alone left the program running. *env*: the
+    child's environment (else _child_env)."""
     if os.name == "nt":
         kwargs["creationflags"] = kwargs.get("creationflags", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     else:
@@ -793,7 +805,7 @@ def _run_alone(args, *, timeout: float, **kwargs):
     if capture:
         kwargs["stdout"] = kwargs["stderr"] = subprocess.PIPE
     check = kwargs.pop("check", False)
-    with subprocess.Popen(args, **kwargs) as process:
+    with subprocess.Popen(args, env=_child_env() if env is None else env, **kwargs) as process:
         try:
             out, err = process.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -810,7 +822,7 @@ def _end_group(process) -> None:
     try:
         if os.name == "nt":
             subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)], capture_output=True, timeout=30,
-                           check=False)
+                           check=False, env=_child_env())
         else:
             import signal
 
@@ -826,12 +838,7 @@ def _end_group(process) -> None:
 def self_test(path: Path, version: str, program: str = PROGRAM, *, timeout: float = SELF_TEST_SECONDS,
               run=None) -> None:
     """*path* run once with ``--self-test``: it must answer :func:`self_test_answer` - else SelfTestFailed."""
-    try:
-        from core.subprocess_env import clean_child_env
-
-        env = clean_child_env()
-    except Exception:  # noqa: BLE001 - (an export without it: the environment as it is)
-        env = dict(os.environ)
+    env = _child_env()
     env[NO_CHECK_ENV] = "1"
     env.setdefault("QT_QPA_PLATFORM", "offscreen")
     run = _run_alone if run is None else run

@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import base64
 import hashlib
 import importlib.util
 import json
@@ -161,6 +162,53 @@ def _probe_rewrites(package: str) -> tuple[tuple[str, str, str], ...]:
     # The multimedia probe starts itself as a child: by its new module name.
     return (("core/multimedia_probe.py", '"-m", "core.multimedia_probe"',
              f'"-m", "{package}._ax.core.multimedia_probe"'),)
+
+
+#: The DER prefix of an Ed25519 public key (SubjectPublicKeyInfo, RFC 8410): 12 bytes, so its base64
+#: and the raw key's base64 joined are the PEM's body.
+_ED25519_SPKI = bytes.fromhex("302a300506032b6570032100")
+
+
+def release_keys(source: Path | None = None) -> list[str]:
+    """The release keys the updater pins (core/markdown_update.py TRUSTED_KEYS: base64 of the raw 32 bytes)."""
+    text = (source or ROOT / "core" / "markdown_update.py").read_text(encoding="utf-8")
+    found = re.search(r"^TRUSTED_KEYS\b[^=\n]*=\s*\((.*?)\n\)", text, re.MULTILINE | re.DOTALL)
+    keys = re.findall(r'^\s*"([A-Za-z0-9+/]{43}=)"', found.group(1), re.MULTILINE) if found else []
+    if not keys or any(len(base64.b64decode(key, validate=True)) != 32 for key in keys):
+        # (SystemExit: APPS calls this before ExportError is defined)
+        raise SystemExit("export: core/markdown_update.py pins no Ed25519 release key (TRUSTED_KEYS)")
+    return keys
+
+
+def release_key_check(keys: list[str] | None = None) -> str:
+    """The README's section on checking a download's SHA256SUMS.sig by hand: the pinned key(s) as PEM and
+    the commands (OpenSSL 3, coreutils)."""
+    keys = release_keys() if keys is None else keys
+    pems = ["-----BEGIN PUBLIC KEY-----\n" + base64.b64encode(_ED25519_SPKI + base64.b64decode(key)).decode()
+            + "\n-----END PUBLIC KEY-----" for key in keys]
+    rotation = ("" if len(pems) == 1 else
+                f" While the key is rotated {len(pems)} keys are pinned and a signature by either is valid;"
+                " the other:\n\n" + "\n\n".join(f"```text\n{pem}\n```" for pem in pems[1:]) + "\n\n")
+    return f"""### Checking a download by hand
+
+`SHA256SUMS.sig` is the raw Ed25519 signature (64 bytes) of the exact bytes of `SHA256SUMS`, made
+with the release key whose public half the program pins.{rotation} With OpenSSL 3.0 or newer, in
+the folder with the downloads, `SHA256SUMS` and `SHA256SUMS.sig`:
+
+```sh
+cat > axross-markdown-release-key.pem <<'EOF'
+{pems[0]}
+EOF
+openssl pkeyutl -verify -pubin -inkey axross-markdown-release-key.pem -rawin \\
+    -in SHA256SUMS -sigfile SHA256SUMS.sig
+sha256sum --check --ignore-missing SHA256SUMS
+```
+
+OpenSSL says `Signature Verified Successfully` (else `Signature Verification Failure`, and exits
+with 1); then every file downloaded must say `OK` (on macOS: `shasum -a 256 -c --ignore-missing
+SHA256SUMS`). From 0.17.4 on each file is also attested by the release workflow: `gh
+attestation verify FILE --repo c0decave/axross-markdown`.
+"""
 
 
 def theme_rows() -> str:
@@ -294,7 +342,7 @@ Bluetooth needs BlueZ on the system bus (Linux) or a supported USB stick.
               # (0.17.0: the themes, the window's theme menu, the updates of the one-file programs)
               "core/markdown_themes.py", "core/markdown_settings.py", "core/markdown_update.py",
               "core/ed25519_pure.py", "ui/markdown_theme_ui.py", "ui/markdown_update_ui.py", "ui/markdown_about.py"),
-        version="0.17.3",
+        version="0.17.4",
         third_party=True,
         package_data=("*.json", LICENCES),
         pitch=(
@@ -372,7 +420,10 @@ Every dependency is pinned and reviewed in `requirements.lock.txt`
                "test_markdown_fonts.py",
                # (0.17.3: the twenty-seventh review - Find after an emoji, Qt's own parser's headings, emphasis
                # and link titles, the settings file, the updater's failures)
-               "test_markdown_reader_bugs27.py", "test_markdown_settings.py"),
+               "test_markdown_reader_bugs27.py", "test_markdown_settings.py",
+               # (0.17.4: what the twenty-seventh review left - Qt's own parser's comments, the 1,000,000-line
+               # code block's gap, a resize's flash and its relayout)
+               "test_markdown_reader_bugs28.py"),
         # (and the fonts the golden pictures are drawn with: theirs, whatever the machine has - their licence beside)
         test_data=("golden/markdown", "golden/fonts"),
         readme="""\
@@ -545,6 +596,7 @@ How a release is signed: the release workflow makes a draft; the maintainer sign
 `SHA256SUMS` on their own machine and publishes it (`scripts/sign_release.py release
 vX.Y.Z --key KEY --publish`) - the key never comes near CI.
 
+RELEASE_KEY_CHECK
 ## The security model
 
 What a file holds is shown, never run:
@@ -612,7 +664,7 @@ pip install "axross-markdown[linkify]"   # bare addresses linked as GitHub links
 The Markdown view started as the Markdown viewer of
 [sandbox-ai](https://github.com/c0decave/sandbox-ai)'s Files page (MIT, the same
 author), ported to PyQt6 and axross's backends.
-""".replace("THEME_ROWS", theme_rows()),
+""".replace("THEME_ROWS", theme_rows()).replace("RELEASE_KEY_CHECK", release_key_check()),
     ),
     "mcp": App(
         dist="axross-headless-mcp",
@@ -1219,21 +1271,49 @@ def locked_requirements(name: str) -> str | None:
     return text
 
 
+#: The hashed locks of an exported project's own files (App.repo_files) the gate checks beside its
+#: requirements.lock.txt: PyInstaller's (axross's reviewed pins of build/requirements-bundle.txt).
+GATE_REPO_LOCKS = ("packaging/requirements-pyinstaller.txt",)
+#: Its hashed locks the gate does not check yet: pins axross's reviewed baseline has no entry for (the
+#: build lock's twine, readme-renderer, nh3, docutils, requests-toolbelt; the test lock's pytest, iniconfig) -
+#: the gate would stop every run on them.
+#: One moves to GATE_REPO_LOCKS when its pins are reviewed (security/supply_chain_gate.py accept) and
+#: GATE_AXROSS_COMMIT names an axross commit whose baseline has those reviews.
+GATE_UNREVIEWED_LOCKS = ("packaging/requirements-build.txt", "packaging/requirements-test.txt")
+
+
+def gate_locks(app: App) -> list[str]:
+    """The locks the exported project's supply-chain gate checks: requirements.lock.txt and those of
+    GATE_REPO_LOCKS its own files bring."""
+    own = ROOT / app.repo_files if app.repo_files else None
+    return ["requirements.lock.txt"] + [rel for rel in GATE_REPO_LOCKS if own is not None and (own / rel).is_file()]
+
+
+def gate_config(app: App, name: str) -> str:
+    """supply-chain-gate.toml of the exported project (GATE_CONFIG)."""
+    own = ROOT / app.repo_files if app.repo_files else None
+    index = ["pyproject.toml", ".github/workflows/tests.yml"] + (
+        [".github/workflows/release.yml"] if own is not None and (own / ".github/workflows/release.yml").is_file()
+        else [])
+    return GATE_CONFIG.format(name=name, dist=app.dist, locks=json.dumps(gate_locks(app)),
+                              index=json.dumps(index))
+
+
 #: The gate's settings in an exported project: axross's gate, checked out by
-#: its CI next to the project (.axross), on the project's lock and axross's
-#: reviewed baseline - the same review the lock passed in axross.
+#: its CI next to the project (.axross), on the project's locks and axross's
+#: reviewed baseline - the same review the locks passed in axross.
 GATE_CONFIG = """\
 # axross's supply-chain gate (docs/SUPPLY_CHAIN_GATE.md in axross) on this
-# program's lock. The CI checks out axross's security/ folder and its
+# program's locks. The CI checks out axross's security/ folder and its
 # scanners' lock into .axross and runs
 #   python -I .axross/security/supply_chain_gate.py --config supply-chain-gate.toml check
-# Every pin must have a reviewed entry in axross's baseline: the lock is
-# axross's (build/requirements-standalone-{name}.txt), written here by
-# scripts/export_standalone.py {name}.
+# Every pin must have a reviewed entry in axross's baseline: the locks are
+# axross's (build/requirements-standalone-{name}.txt; PyInstaller's pins those
+# of axross's own build), written here by scripts/export_standalone.py {name}.
 root = "."
-locks = ["requirements.lock.txt"]
+locks = {locks}
 scanner_lock = ".axross/build/requirements-scan-tools.txt"
-index_config = ["pyproject.toml", ".github/workflows/tests.yml"]
+index_config = {index}
 baseline_dir = ".axross/security/supply_chain_baseline"
 cache_dir = ".supply-chain-cache"
 min_age_days = 14
@@ -1393,8 +1473,9 @@ def _base_workflow(app: App, locked: bool = False) -> str:
     """CI of the exported project: its tests on Linux with Qt offscreen -
     or, for the MCP server, on three Pythons without Qt (and a check that
     nothing pulled PyQt6 in). With a lock (*locked*) the tests install
-    exactly its pins (``--require-hashes``) and the supply-chain gate runs
-    on it (GATE_JOB)."""
+    exactly its pins (``--require-hashes``, wheels only: ``--only-binary=:all:``
+    - in a block scalar, its ": " would end a plain YAML scalar) and the
+    supply-chain gate runs on it (GATE_JOB)."""
     # (a failure's pytest summary as annotations, readable through the API: the repo's ci_log_tail.py)
     tail = bool(app.repo_files) and (ROOT / app.repo_files / "packaging" / "ci_log_tail.py").is_file()
     if app.kind == "mcp":
@@ -1455,7 +1536,7 @@ NEEDS    steps:
         run: TESTS
 TAIL      - name: Build sdist and wheel
         run: BUILD
-""".replace("BUILD", "python -m pip install --require-hashes -r packaging/requirements-build.txt && "
+""".replace("BUILD", "|\n          python -m pip install --require-hashes --only-binary=:all: -r packaging/requirements-build.txt && "
                      "python -m build --no-isolation"
             if locked and app.repo_files and (ROOT / app.repo_files / "packaging" / "requirements-build.txt").is_file()
             else "python -m pip install build && python -m build").replace("TESTS", "|\n          set -o pipefail\n"
@@ -1464,9 +1545,10 @@ TAIL      - name: Build sdist and wheel
         "TAIL", "      - name: The end of the tests' output as annotations (the short summary)\n"
                 "        if: failure()\n"
                 "        run: python packaging/ci_log_tail.py \"$RUNNER_TEMP/tests.log\" tests 150\n"
-                if tail else "").replace("INSTALL", "python -m pip install --require-hashes -r requirements.lock.txt && "
+                if tail else "").replace("INSTALL", "|\n          python -m pip install --require-hashes --only-binary=:all: "
+                       "-r requirements.lock.txt && "
                        "python -m pip install --no-build-isolation --no-deps . && python -m pip install "
-                       + ("--require-hashes -r packaging/requirements-test.txt"
+                       + ("--require-hashes --only-binary=:all: -r packaging/requirements-test.txt"
                           if app.repo_files and (ROOT / app.repo_files / "packaging" / "requirements-test.txt").is_file()
                           else "pytest")
             if locked else "python -m pip install . pytest").replace(
@@ -1761,8 +1843,7 @@ def export(name: str, out: Path) -> Path:
     (workflows / "tests.yml").write_text(_workflow(app, lock is not None), encoding="utf-8")
     if lock is not None:
         (out / "requirements.lock.txt").write_text(lock, encoding="utf-8")
-        (out / "supply-chain-gate.toml").write_text(GATE_CONFIG.format(name=name, dist=app.dist),
-                                                   encoding="utf-8")
+        (out / "supply-chain-gate.toml").write_text(gate_config(app, name), encoding="utf-8")
         with (out / ".gitignore").open("a", encoding="utf-8") as fh:
             fh.write(".axross/\n.supply-chain-cache/\nsupply-chain-report/\nreduced/\n")
     (out / "tests").mkdir()

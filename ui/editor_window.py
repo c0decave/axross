@@ -679,7 +679,13 @@ class EditorWindow(QMainWindow):
         self.encoding_label.setText(tab.document.encoding_name)
         self.eol_label.setText(tab.document.newline_name)
         self.language_combo.setCurrentText(tab.editor.language)
-        self.preview_action.setChecked(tab.previewing)
+        # (only shown as it is: its toggled signal set the tab's preview again - a move of the cursor, a tab
+        # chosen, made the preview of all of the text anew, 0.012 s of the turn and a parse on a worker)
+        blocked = self.preview_action.blockSignals(True)
+        try:
+            self.preview_action.setChecked(tab.previewing)
+        finally:
+            self.preview_action.blockSignals(blocked)
 
     def _set_preview(self, on: bool) -> None:
         tab = self.current_tab()

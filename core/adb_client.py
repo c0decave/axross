@@ -499,19 +499,28 @@ def _load_signer(path: str) -> "PythonRSASigner":
 #   -rw-rw---- 1 u0_a123 u0_a123 98765 2025-12-01 03:11 photo.jpg
 #   lrwxrwxrwx 1 root root 11 1971-01-01 00:00 sdcard -> /storage/self/primary
 #   crw-rw-rw- 1 root root 10, 229 2024-03-28 10:40 fuse
-# The old toolbox ``ls`` (Android 5 and older) has no link-count column,
-# and no size for a folder or a link:
+#   d?????????   ? ?      ?             ?                ? postinstall
+# The last one is an entry ls could not stat (EACCES in / of a phone):
+# every field but the type and the name is a "?". The old toolbox ``ls``
+# (Android 5 and older) has no link-count column, and no size for a folder
+# or a link:
 #   drwxrwx--x root     sdcard_r          2014-03-28 10:40 Alarms
 #   -rw-rw---- root     sdcard_r   123456 2014-03-28 10:41 photo.jpg
 #   crw-rw---- system   audio     14,   3 2014-03-28 10:40 dsp
-# The leading "total N" line is skipped. Other quirks:
-#   * the name may contain spaces
-#   * a device node shows "major, minor" where the size goes
-#   * some Android builds use ``-h`` for bigger sizes (rare)
-# Each regex captures the whole mode + numeric size + "YYYY-MM-DD HH:MM"
-# + the remainder (name, possibly containing " -> target" for links).
-# Toybox is tried first: on a toolbox line whose owner is a bare uid
-# ("10055 10055 123 ...") the toolbox pattern alone reads it right.
+# A busybox or GNU ls prints the date as "Jan  2 03:04" / "Jan  2  2023";
+# ``ls -lZ`` puts the SELinux context (u:object_r:system_file:s0) between
+# the group and the size. The "total N" line is skipped. The name is what
+# follows the ONE blank after the date: blanks around it belong to it.
+#
+# AdbSession lists with ``ls -lab`` where ls takes -b (toybox, GNU,
+# busybox builds with it): a line feed, a tab, a backslash, a blank or any
+# other unprintable byte of a name comes escaped (``\n``, ``\ ``,
+# ``\303``), so one physical line is one entry and its name is decoded
+# (core.telnet_client.ls_unescape). The toolbox ls of Android 5 and older
+# refuses -b ("Unknown option"): it is listed without, and an entry whose
+# name went on over a line break is left out with a warning (its first
+# line names ANOTHER file, which a delete would remove) - two lines are
+# never joined into one name.
 _LS_LINE_RES = None  # lazily compiled — import-time re isn't hot enough
 # to matter AND keeps the module's import surface small.
 
@@ -526,6 +535,11 @@ _SPECIAL_TYPES = frozenset(_SPECIAL_NAMES)
 #: Guards each session's ``_special_paths`` (a listing and a stat of two
 #: threads changed it at once: "dictionary changed size during iteration").
 _SPECIAL_LOCK = threading.Lock()
+#: An ls that does not take -b says so in one of these ways (toolbox:
+#: "ls: Unknown option '-b'. Aborting.", busybox / GNU: "invalid option").
+_LS_NO_ESCAPE = None
+#: What an entry ls could not stat says instead of its size and date.
+NOT_STATTABLE = "ls could not read its attributes (permission denied)"
 
 
 def _checked(path: str) -> str:
@@ -538,24 +552,35 @@ def _checked(path: str) -> str:
 
 
 def _compile_ls_res():
-    global _LS_LINE_RES
+    global _LS_LINE_RES, _LS_NO_ESCAPE
     if _LS_LINE_RES is None:
         import re
 
         mode = r"^(?P<mode>[bcdlps-][rwxstST-]{9})[.+@]?\s+"
         owner = r"(?P<user>\S+)\s+(?P<group>\S+)\s+"
+        # ls -Z: the SELinux context between the group and the size.
+        context = r"(?:(?P<context>[^\s:]*:[^\s:]*:[^\s:]*:\S+)\s+)?"
+        date = (r"(?P<date>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?"
+                r"|[A-Z][a-z]{2}\s+\d{1,2}\s+(?:\d{1,2}:\d{2}|\d{4}))")
         # The name is exactly what follows the ONE space after the date.
-        tail = r"(?P<date>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}) (?P<name>.+)"
+        tail = date + r" (?P<name>.+)"
         device = r"(?P<major>\d+),\s*(?P<minor>\d+)\s+"
+        unknown = r"^(?P<mode>[bcdlps?-]\?{9})[.+@]?"
         _LS_LINE_RES = (
-            # toybox: link count, and a size (or major, minor) always
+            # toybox / GNU / busybox: link count, and a size (or major, minor) always
             re.compile(
-                mode + r"(?P<links>\d+)\s+" + owner
+                mode + r"(?P<links>\d+)\s+" + owner + context
                 + r"(?:(?P<size>\d+)\s+|" + device + ")" + tail
             ),
             # toolbox: no link count; no size for a folder or a link
-            re.compile(mode + owner + r"(?:(?P<size>\d+)\s+|" + device + ")?" + tail),
+            re.compile(mode + owner + context + r"(?:(?P<size>\d+)\s+|" + device + ")?" + tail),
+            # an entry ls could not stat: links, owner, group, size, date all "?"
+            re.compile(unknown + r"(?:\s+\?){5} (?P<name>.+)"),
+            re.compile(unknown + r"(?:\s+\?){4} (?P<name>.+)"),
         )
+        _LS_NO_ESCAPE = re.compile(
+            r"(?im)^(?:ls: )?(?:unknown|invalid|illegal|unrecognized) option"
+            r"|^ls: (?:unknown|invalid|illegal|unrecognized) option|^usage: ls|invalid option -- '?b")
     return _LS_LINE_RES
 
 
@@ -563,27 +588,84 @@ def _is_ls_entry(line: str) -> bool:
     return any(regex.fullmatch(line) for regex in _compile_ls_res())
 
 
+_LS_ESCAPES = {"n": 10, "t": 9, "r": 13, "a": 7, "b": 8, "f": 12, "v": 11, "e": 27}
+
+
+def ls_unescape(text: str) -> str:
+    """A name as ``ls -b`` prints it, back to the name: ``\\ `` is a blank,
+    ``\\n`` a line feed, ``\\NNN`` an octal byte. Bytes that are no UTF-8
+    stay surrogate escapes, as every other name of this backend
+    (:func:`_as_text`), so the name can be sent back as it is."""
+    if "\\" not in text:
+        return text
+    import re
+
+    out = bytearray()
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch != "\\" or i + 1 >= len(text):
+            out += ch.encode("utf-8", "surrogateescape")
+            i += 1
+            continue
+        nxt = text[i + 1]
+        octal = re.match(r"[0-7]{1,3}", text[i + 1:i + 4])
+        if octal:
+            out.append(int(octal.group(0), 8) & 0xFF)
+            i += 1 + len(octal.group(0))
+        elif nxt in _LS_ESCAPES:
+            out.append(_LS_ESCAPES[nxt])
+            i += 2
+        else:  # \\ \  \" \' ...: the character itself
+            out += nxt.encode("utf-8", "surrogateescape")
+            i += 2
+    return out.decode("utf-8", "surrogateescape")
+
+
+def _ls_lines(out: str) -> list[str]:
+    """The physical lines of an ``ls`` answer (LF only; a CR before each LF
+    of a CRLF answer dropped). Each is a record of its own: no line ever
+    continues another's name."""
+    lines = split_lf_only_stream(out)
+    if lines and lines[-1] == "":
+        lines.pop()  # the final line feed ends the last line, it is no name
+    if lines and all(line.endswith("\r") for line in lines):
+        lines = [line[:-1] for line in lines]
+    return lines
+
+
 def _ls_entries(out: str) -> list[tuple[str, str]]:
-    """``ls -la`` output as ``(line, rest)`` records: a name with a line
-    break keeps its other lines (see core.telnet_client.ls_records)."""
-    from core.telnet_client import ls_records
-
-    return ls_records(out, _is_ls_entry)
+    """``ls -la`` output as ``(line, "")`` records, one per physical line
+    (kept in this shape for its callers; two lines are never joined)."""
+    return [(line, "") for line in _ls_lines(out)]
 
 
-def _parse_ls_entry(line: str, rest: str = "") -> tuple[FileItem, str] | None:
-    """One ``ls -la`` output line (toybox or toolbox) as ``(FileItem,
-    file-type character)``; None for ``total N`` or an unparseable line.
+def ls_refuses_escape(out: str) -> bool:
+    """Whether *out* is an ls refusing the -b option (and listing nothing)."""
+    _compile_ls_res()
+    return bool(_LS_NO_ESCAPE.search(out)) and not any(
+        _is_ls_entry(line) for line in _ls_lines(out))
+
+
+def _parse_ls_entry(line: str, rest: str = "", *,
+                    escaped: bool = False) -> tuple[FileItem, str] | None:
+    """One ``ls -la`` output line (toybox, toolbox, busybox, GNU) as
+    ``(FileItem, file-type character)``; None for ``total N`` or an
+    unparseable line.
 
     A device node, FIFO or socket is an entry like any other, with size
     0 ("major, minor" is no size); its type character (``c``, ``b``,
-    ``p``, ``s``) tells the caller it holds no file content.
+    ``p``, ``s``) tells the caller it holds no file content. An entry ls
+    could not stat (``d????????? ? ? ? ? ? name``) is listed with its name
+    and type, unknown size, time and mode, and ``stat_error`` set.
 
     The line is not stripped: blanks around a name belong to it ("report "
     cut to "report" named another file, which a delete then removed).
-    *rest*: the further lines of a name with a line break.
+    *escaped*: the line came from ``ls -b`` (name and link target are
+    decoded). *rest* is no longer used (two lines are never one name);
+    a non-empty one is refused.
     """
-    if not line or line.startswith("total "):
+    if not line or line.startswith("total ") or rest:
         return None
     m = None
     for regex in _compile_ls_res():
@@ -594,25 +676,39 @@ def _parse_ls_entry(line: str, rest: str = "") -> tuple[FileItem, str] | None:
         log.debug("ADB ls: unparseable line %r", line)
         return None
     mode = m.group("mode")
-    is_dir = mode.startswith("d")
-    is_link = mode.startswith("l")
-    name = m.group("name") + rest
+    kind = mode[0]
+    is_dir = kind == "d"
+    is_link = kind == "l"
+    name = m.group("name")
+    if "?" in mode:  # not stattable: every field but type and name unknown
+        if escaped:
+            name = ls_unescape(name)
+        return FileItem(name=name, is_dir=is_dir, is_link=is_link,
+                        stat_error=NOT_STATTABLE), kind
     link_target = ""
     size = m.group("size")
     if is_link and " -> " in name:
         from core.telnet_client import split_link_field
 
+        # ls -b escapes the blanks: only one " -> " is left, the arrow.
         # toolbox prints no size for a link: an ambiguous name is kept whole.
         name, link_target = split_link_field(name, int(size) if size is not None else None)
-    # Android's ``ls -la`` without --full-time omits seconds. ls runs under
-    # TZ=UTC0 (AdbSession._LS): the date is UTC, returned aware (FileItem
-    # converts it); the device's wall clock was handed out as local time.
-    try:
-        modified = datetime.strptime(m.group("date"), "%Y-%m-%d %H:%M").replace(
-            tzinfo=timezone.utc
-        )
-    except ValueError:
-        modified = datetime.fromtimestamp(0)
+    if escaped:
+        name, link_target = ls_unescape(name), ls_unescape(link_target)
+    # ls runs under TZ=UTC0 (AdbSession._LS): the date is UTC, returned
+    # aware (FileItem converts it); the device's wall clock was handed out
+    # as local time.
+    date = m.group("date")
+    if date[:1].isdigit():
+        try:
+            modified = datetime.strptime(date[:16].replace("  ", " "), "%Y-%m-%d %H:%M").replace(
+                tzinfo=timezone.utc)
+        except ValueError:
+            modified = datetime.fromtimestamp(0, timezone.utc)
+    else:
+        from core.telnet_client import _parse_ls_date
+
+        modified = _parse_ls_date(date, utc=True)
     item = FileItem(
         name=name,
         size=int(size) if size is not None else 0,
@@ -621,16 +717,52 @@ def _parse_ls_entry(line: str, rest: str = "") -> tuple[FileItem, str] | None:
         is_link=is_link,
         link_target=link_target,
     )
-    return item, mode[0]
+    return item, kind
 
 
-def _parse_ls_line(line: str) -> FileItem | None:
+def _parse_ls_line(line: str, *, escaped: bool = False) -> FileItem | None:
     """Parse one ``ls -la`` output line into a FileItem. Returns None
     for ``total N`` or otherwise unparseable lines; whether an answer
     without a single parsed line is an error is the caller's to say
     (it is: see :meth:`AdbSession.list_dir`)."""
-    entry = _parse_ls_entry(line)
+    entry = _parse_ls_entry(line, escaped=escaped)
     return entry[0] if entry is not None else None
+
+
+def parse_ls_listing(out: str, *, escaped: bool) -> tuple[list[tuple[FileItem, str]], list[str],
+                                                         list[str], list[str]]:
+    """An ``ls -la`` answer as ``(entries, errors, unparsed, dropped)``:
+    the ``(FileItem, type char)`` of each entry line ("." and ".." kept),
+    the ``ls:`` messages, the lines no pattern reads, and the names left
+    out because they went on over a line break (an unescaped listing
+    only: its first line names another file)."""
+    entries: list[tuple[FileItem, str]] = []
+    errors: list[str] = []
+    unparsed: list[str] = []
+    dropped: list[str] = []
+    after_entry = False
+    for line in _ls_lines(out):
+        entry = _parse_ls_entry(line, escaped=escaped)
+        if entry is not None:
+            entries.append(entry)
+            after_entry = True
+            continue
+        if line.startswith("ls:") or line.startswith("ls "):
+            errors.append(line.strip())
+        elif line.startswith("total ") or not line.strip() and not after_entry:
+            pass
+        elif after_entry and not escaped and entries:
+            # A name with a line break, from an ls without -b: its first
+            # line is not its name. Never joined, never listed under a
+            # name that is another file's.
+            dropped.append(entries.pop()[0].name)
+            unparsed.append(line)
+            after_entry = False
+            continue
+        else:
+            unparsed.append(line)
+        after_entry = False
+    return entries, errors, unparsed, dropped
 
 
 # --------------------------------------------------------------------------
@@ -1250,26 +1382,32 @@ class AdbSession(SessionLifecycle):
     # ------------------------------------------------------------------
     # Listing / stat
     # ------------------------------------------------------------------
+    def _ls(self, flags: str, operand: str) -> tuple[str, bool]:
+        """``(answer, escaped)`` of ``ls -la<flags> OPERAND``: with -b where
+        this device's ls takes it (asked once per session: toolbox ls of
+        Android 5 and older refuses it), else without."""
+        q = self._shell_q(operand)
+        if self.__dict__.get("_ls_escape") is not False:
+            out = self._shell(f"{self._LS} -b{flags} {q}")
+            if not ls_refuses_escape(out):
+                self._ls_escape = True
+                return out, True
+            log.info("ADB %s: ls takes no -b; names with a line break cannot be listed",
+                     self._label)
+            self._ls_escape = False
+        return self._shell(f"{self._LS}{flags} {q}"), False
+
     def list_dir(self, path: str) -> list[FileItem]:
         from core.exec_util import ls_dir_operand, ls_error
 
         # /sdcard itself is a symlink on Android: list through it.
-        out = self._shell(f"{self._LS} {self._shell_q(ls_dir_operand(path))}")
+        out, escaped = self._ls("", ls_dir_operand(path))
+        entries, errors, unparsed, dropped = parse_ls_listing(out, escaped=escaped)
         items: list[FileItem] = []
-        listed = False
-        errors: list[str] = []
-        unparsed: list[str] = []
         special: dict[str, str] = {}
-        for line, rest in _ls_entries(out):
-            entry = _parse_ls_entry(line, rest)
-            if entry is None:
-                if line.startswith("ls:"):
-                    errors.append(line.strip())
-                elif line.strip() and not line.startswith("total "):
-                    unparsed.append(line.rstrip())
-                continue
-            fi, kind = entry
-            listed = True  # "." and ".." too: the folder is there
+        # "." and ".." too, and a name left out: the folder is there.
+        listed = bool(entries) or bool(dropped)
+        for fi, kind in entries:
             if fi.name in (".", ".."):
                 continue
             if kind in _SPECIAL_TYPES:
@@ -1280,13 +1418,17 @@ class AdbSession(SessionLifecycle):
             # be an empty listing (review B13, 2026-10-17). An entry ls
             # could not stat beside a listing stays a partial listing.
             raise ls_error(f"ADB list_dir({path})", errors[0])
-        if unparsed and not listed:
+        if unparsed and not listed and not dropped:
             # An ls whose lines this parser cannot read at all (another
             # ls build) is no empty folder: a copy would take it as one.
             raise OSError(
                 f"ADB list_dir({path}): unreadable answer from ls: {unparsed[0][:200]!r}"
             )
-        if unparsed:
+        if dropped:
+            log.warning(
+                "ADB list_dir(%s): %d name(s) with a line break left out (this ls cannot "
+                "escape them), first starting %r", path, len(dropped), dropped[0][:200])
+        elif unparsed:
             log.warning(
                 "ADB list_dir(%s): %d ls line(s) not understood, first %r",
                 path, len(unparsed), unparsed[0][:200],
@@ -1314,15 +1456,11 @@ class AdbSession(SessionLifecycle):
 
         # Use ``ls -la -d <path>`` — -d prevents directories from
         # expanding their contents.
-        out = self._shell(f"{self._LS} -d {self._shell_q(path)}")
-        errors: list[str] = []
-        for line, rest in _ls_entries(out):
-            entry = _parse_ls_entry(line, rest)
-            if entry is None:
-                if line.startswith("ls:"):
-                    errors.append(line.strip())
-                continue
-            fi, kind = entry
+        out, escaped = self._ls(" -d", path)
+        entries, errors, _unparsed, dropped = parse_ls_listing(out, escaped=escaped)
+        if dropped and not entries:
+            raise OSError(f"ADB stat({path}): ls answered a name with a line break")
+        for fi, kind in entries:
             with _SPECIAL_LOCK:
                 known = self.__dict__.setdefault("_special_paths", {})
                 if kind in _SPECIAL_TYPES:

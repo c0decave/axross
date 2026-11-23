@@ -41,7 +41,7 @@ import re
 import time
 
 from PyQt6 import sip
-from PyQt6.QtCore import QFileSystemWatcher, QPoint, Qt, QTimer, QUrl
+from PyQt6.QtCore import QFileSystemWatcher, Qt, QTimer, QUrl
 from PyQt6.QtGui import QColor, QImage, QKeySequence, QShortcut, QTextCharFormat, QTextCursor, QTextDocument
 from PyQt6.QtWidgets import (
     QDialog,
@@ -114,33 +114,21 @@ def unreadable_reason(error) -> str:
     return str(error)
 
 
-#: Blocks of a page past which the top of the view is looked for by halves (_first_shown).
-HALVED_BLOCKS = 5000
+#: Blocks of a page past which the top of the view is looked for by halves (ui.markdown_view.shown_at).
+HALVED_BLOCKS = MV.HALVED_BLOCKS
 #: (_write) characters of an exported page encoded and written at a time.
 WRITTEN_AT_ONCE = 1 << 20
 
 
 def _first_shown(browser) -> QTextCursor:
-    """A cursor at the top of what *browser* shows. On a long page found by halves over its blocks' places -
-    Qt's own hit test walks every frame before it: at the end of 50,000 code blocks, 0.09 s a search."""
-    return _shown_at(browser, 0)
+    """A cursor at the top of what *browser* shows (ui.markdown_view.shown_at)."""
+    return QTextCursor(MV.shown_at(browser, 0))
 
 
 def _shown_at(browser, offset: int) -> QTextCursor:
-    """A cursor at *offset* pixels below the top of what *browser* shows (above it: negative) - found as
-    _first_shown finds the top."""
-    document = browser.document()
-    if document.blockCount() <= HALVED_BLOCKS:
-        return browser.cursorForPosition(browser.viewport().rect().topLeft() + QPoint(0, offset))
-    layout, top = document.documentLayout(), browser.verticalScrollBar().value() + offset
-    low, high = 0, document.blockCount() - 1
-    while low < high:
-        middle = (low + high) // 2
-        if layout.blockBoundingRect(document.findBlockByNumber(middle)).bottom() < top:
-            low = middle + 1
-        else:
-            high = middle
-    return QTextCursor(document.findBlockByNumber(low))
+    """A cursor at *offset* pixels below the top of what *browser* shows (above it: negative) -
+    ui.markdown_view.shown_at."""
+    return QTextCursor(MV.shown_at(browser, offset))
 
 
 def find_mark_format(theme) -> QTextCharFormat:
@@ -1065,8 +1053,11 @@ class MarkdownViewerDialog(QDialog):
         """The page as HTML for a web browser, written to the local file
         *target* (ui.markdown_html.export_html: the images read for the page
         in it, nothing it may load from elsewhere). Returns *target*, or ""
-        when it could not be written (said in the status line)."""
+        when it could not be written (said in the status line). It is in
+        Light's colours whatever the page's theme - said with "Saved" when the
+        page shows another."""
         from core import markdown_doc as MD
+        from core import markdown_themes as MT
         from ui import markdown_html as H
 
         title = self._name() if self.path else tr("Markdown Viewer")
@@ -1103,7 +1094,10 @@ class MarkdownViewerDialog(QDialog):
             page = self._md4c_html(tr("Exporting HTML…"))
             if page is None:
                 return ""
-        return self._write(target, page, tr("Exporting HTML…"))
+        written = self._write(target, page, tr("Exporting HTML…"))
+        if written and not sip.isdeleted(self) and self.view.theme is not MT.THEMES["light"]:
+            self.view.status.setText(tr("Saved in light colours: {path}").format(path=MV.printable(target)))
+        return written
 
     def _md4c_html(self, label: str) -> list[str] | None:
         """Qt's own parser's page as HTML (light colours): its parts made on a worker (_prepared), each one

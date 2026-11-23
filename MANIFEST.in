@@ -24,6 +24,7 @@ include docs/releases/RELEASE-NOTES-0.15.181.md
 include docs/releases/RELEASE-NOTES-0.15.182.md
 include docs/releases/RELEASE-NOTES-0.15.183.md
 include docs/releases/RELEASE-NOTES-0.15.184.md
+include docs/releases/RELEASE-NOTES-0.15.185.md
 include docs/mcp-tools.json docs/scripting-api.json
 include llms.txt
 # Belt and braces should a glob come back above.

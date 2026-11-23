@@ -461,7 +461,7 @@ def test_typo_a_mixed_lists_tasks_show_their_box_not_a_bullet_too(full):
         == QTextBlockFormat.MarkerType.NoMarker
 
 
-GITHUB = {False: {"keyword": "#cf222e", "string": "#0a3069", "comment": "#6e7781"},
+GITHUB = {False: {"keyword": "#cf222e", "string": "#0a3069", "comment": "#666e77"},
           True: {"keyword": "#ff7b72", "string": "#a5d6ff", "comment": "#8b949e"}}
 
 

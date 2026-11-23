@@ -93,6 +93,7 @@ from PyQt6.QtGui import (
     QTextListFormat,
 )
 from PyQt6.QtWidgets import (
+    QAbstractScrollArea,
     QDialog,
     QLabel,
     QListWidget,
@@ -1138,6 +1139,9 @@ def _why(why: dict) -> str:
 
 
 _HTML_TAG = re.compile(r"</?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?/?>")
+#: A tag whose attributes' quoted values may hold "<" and ">" ("<a href="x<!--y">": the tag was not seen, its
+#: text shown) - a value at most a line, 1,000 characters (linear).
+_HTML_TAG_QUOTED = re.compile(r"</?[A-Za-z][A-Za-z0-9-]*+(?:\s(?:[^<>\"'\n]|\"[^\"\n]{0,1000}\"|'[^'\n]{0,1000}'|\n)*+)?/?>")
 #: A tag as CommonMark reads one (its attributes' names and values as they may be written): another one -
 #: "<a href="hi'>" - is text, as written.
 _VALID_TAG = re.compile(r"<[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*"
@@ -2094,6 +2098,8 @@ _HTML_BLOCK_ENDS = {"<!--": "-->", "<?": "?>", "<![CDATA[": "]]>"}
 _TAG_ALONE = re.compile(r" {0,3}(?:<[A-Za-z][A-Za-z0-9-]*+(?:[ \t]++[^<>\n]*+)?/?>|</[A-Za-z][A-Za-z0-9-]*+[ \t]*+>)"
                         r"[ \t]*+\Z")
 _RAW_KEPT = frozenset(("script", "pre", "style", "textarea"))
+#: A line that begins an HTML block of GFM's first kind - its end the line that holds its end tag.
+_RAW_BLOCK = re.compile(r" {0,3}<(script|pre|style|textarea)(?=[ \t>]|\Z)", re.IGNORECASE)
 #: (_html_blocks) a tag, or text between tags.
 _TAG_OR_TEXT = re.compile(r"(<[^<>]*>)|([^<]+|<)")
 _LITERAL_MARKS = re.compile(r"([\\`*_\[\]#|~])")
@@ -2125,6 +2131,29 @@ def _html_blocks(text: str) -> str:
             out.append(row)
             index += 1
             continue
+        raw = _RAW_BLOCK.match(row) if "<" in row else None
+        if raw is not None:  # (GFM's first kind: to the line that holds its end tag - the rest of that line
+            # the block's, as written: "<script>x</script>1. *bar*" was a list item of "bar" in emphasis)
+            name = raw.group(1).lower()
+            if starts is None:
+                starts, at = [], 0
+                for line in rows:
+                    starts.append(at)
+                    at += len(line) + 1
+            closing = None if name in missing else \
+                re.compile(rf"</{name}\s*>", re.IGNORECASE).search(text, starts[index] + raw.end())
+            if closing is None:
+                missing.add(name)
+                out.append(row)
+                index += 1
+                continue
+            last = bisect.bisect_right(starts, closing.start()) - 1
+            out.extend(rows[index:last])
+            cut = closing.end() - starts[last]
+            rest = rows[last][cut:]
+            out.append(rows[last][:cut] + (_literal_row(rest) if rest.strip() else rest))
+            index = last + 1
+            continue
         found = _HTML_BLOCK.match(row) if "<" in row else None
         if found is None and "<" in row and (index == 0 or not rows[index - 1].strip()) and _TAG_ALONE.match(row) \
                 and row.lstrip(" </").split(">")[0].split()[0].lower() not in _RAW_KEPT:
@@ -2148,13 +2177,16 @@ def _html_blocks(text: str) -> str:
             where = -1 if closer in missing else text.find(closer, begin)
             if where < 0:
                 missing.add(closer)  # (none after here: nor after any later one)
+                if not row[:1].isspace():  # (never closed, at the top level: to the text's end - as GFM; its
+                    # code blocks and all were shown after it. Indented, it may be a list item's: _drop_comments)
+                    return "\n".join(out)
                 out.append(row)
                 index += 1
                 continue
             index = bisect.bisect_right(starts, where)  # (the rows to the one the end is in: gone)
             # (what follows the end on its line is the block's too: raw HTML, its Markdown as written - the
-            # spec's 146, "<!-- foo -->*bar*")
-            rest = text[where + len(closer):starts[index] - 1 if index < len(rows) else len(text)]
+            # spec's 146, "<!-- foo -->*bar*"; a comment opened there hides that line's rest only)
+            rest = _hidden_rest(text[where + len(closer):starts[index] - 1 if index < len(rows) else len(text)])
             out.append(_literal_row(rest) if rest.strip() else "")
             continue
         while index < len(rows) and rows[index].strip():  # (a block tag's lines, to an empty one)
@@ -2168,20 +2200,32 @@ def _html_blocks(text: str) -> str:
 LITERAL_PIECE = 4096
 
 
+#: A row's start Qt's own parser reads as a block's: a list item's mark, a quote's, a setext underline's.
+_LITERAL_LEAD = re.compile(r"([ \t]*+)(\d{1,9}(?=[.)])|[-+>=])")
+
+
 def _literal_row(row: str) -> str:
     """*row* of an HTML block: its tags as they are, its text's Markdown marks escaped (as written) - in
-    pieces of LITERAL_PIECE characters, each match of the tags' pattern apart (linear, never one long call)."""
+    pieces of LITERAL_PIECE characters, each match of the tags' pattern apart (linear, never one long call).
+    A list item's, a quote's or an underline's mark at its start escaped too ("<div>" over "- a" was a list,
+    "<!-- x -->1. *bar*" a list item: the spec's 146)."""
     if len(row) <= LITERAL_PIECE:
-        return "".join(tag or _LITERAL_MARKS.sub(r"\\\1", words) for tag, words in _TAG_OR_TEXT.findall(row))
-    out = []
-    for found in _TAG_OR_TEXT.finditer(row):
-        tag, words = found.groups()
-        if tag:
-            out.append(tag)
-            continue
-        for at in range(0, len(words), LITERAL_PIECE):
-            out.append(_LITERAL_MARKS.sub(r"\\\1", words[at:at + LITERAL_PIECE]))
-    return "".join(out)
+        shown = "".join(tag or _LITERAL_MARKS.sub(r"\\\1", words) for tag, words in _TAG_OR_TEXT.findall(row))
+    else:
+        out = []
+        for found in _TAG_OR_TEXT.finditer(row):
+            tag, words = found.groups()
+            if tag:
+                out.append(tag)
+                continue
+            for at in range(0, len(words), LITERAL_PIECE):
+                out.append(_LITERAL_MARKS.sub(r"\\\1", words[at:at + LITERAL_PIECE]))
+        shown = "".join(out)
+    lead = _LITERAL_LEAD.match(shown, 0, LITERAL_PIECE)
+    if lead is None:
+        return shown
+    at = lead.end() if lead.group(2)[:1].isdigit() else lead.start(2)
+    return shown[:at] + "\\" + shown[at:]
 
 
 #: A link's address of more than ADDRESS_CHARS characters: the link as written (its "](" escaped) - Qt's
@@ -2461,7 +2505,7 @@ def _outside_code(text: str, notes: list | None = None, labels: set | frozenset 
     # (spaces between words: one, as markdown-it and a browser show them -
     # Qt's own parser kept every one; indentation and a line end's two stay)
     if "  " in text:
-        text = _SPACES_BETWEEN.sub(" ", text)
+        text = _SPACES_BETWEEN.sub(_spaces_between, text)
     if "&" in text:
         text = _ENTITY.sub(_entity, text)
     text = _html_to_markdown(text, keep)
@@ -2612,6 +2656,22 @@ def _plain_alt(alt: str) -> str:
 
 
 _SPACES_BETWEEN = re.compile(r"(?<=[^\s|]) {2,}(?=[^\s|])")
+#: A line's start of containers' marks only (a quote's, a list item's) and the room between them.
+_CONTAINER_MARKS_ONLY = re.compile(r"[ \t>]*+(?:(?:[-+*]|\d{1,9}[.)])[ \t>]*+)*+\Z")
+
+
+def _spaces_between(match: re.Match) -> str:
+    """One space for a run of them between words - but not after a line's containers' marks: that is
+    indentation (">     <!-- x" is code in a quote, "-      code" in a list item: made "> <!-- x", the code
+    was a paragraph, the comment hid what followed)."""
+    start, text = match.start(), match.string
+    if text[start - 1] not in ">-+*.)":
+        return " "
+    lead = text[max(0, start - LEAD_REACH):start]
+    newline = lead.rfind("\n")
+    if newline < 0 and start > LEAD_REACH:
+        return " "
+    return match.group(0) if _CONTAINER_MARKS_ONLY.match(lead, newline + 1) else " "
 
 
 _ADDRESS = re.compile(r"(\]\([ \t]*)([A-Za-z][A-Za-z0-9+.\-]*://[^()\s]+)")
@@ -3159,19 +3219,96 @@ _BLANK_LINE = re.compile(r"\n[ \t]*\n")
 #: but the comments as text: the spec's 149 to 151, 646, 647).
 _HIDDEN_HTML = re.compile(r"<(?:!--|\?|!\[CDATA\[|![A-Za-z])")
 _HIDDEN_ENDS = {"<!--": "-->", "<?": "?>", "<![CDATA[": "]]>"}
-#: A paragraph's end: an empty line (in a quote, a line of its marks only).
-_PARAGRAPH_END = re.compile(r"\n[ \t>]*\n")
 #: What may stand before an HTML block's opener on its line: a quote's marks, an item's, the indentation.
 _BLOCK_LEAD = re.compile(r"[ \t>]*+(?:(?:[-+*]|\d{1,9}[.)])[ \t]++[ \t>]*+)*+\Z")
+#: A container's mark in a line's lead: a quote's, a list item's (with the room after it).
+_LEAD_MARK = re.compile(r">|(?:[-+*]|\d{1,9}[.)])(?=[ \t])")
+#: A line (after its quote marks and up to three spaces) that ends a paragraph before it: an ATX heading, a
+#: setext heading's underline, a fence, a list item that may interrupt one, a deeper quote, an HTML block
+#: (GFM's kinds 1 to 6) - and an empty line.
+_PARAGRAPH_STOP = re.compile(r"[ \t]*\Z|#{1,6}(?:[ \t]|\Z)|=+[ \t]*\Z|-+[ \t]*\Z|`{3,}|~{3,}|(?:[-+*]|1[.)])[ \t]+\S"
+                             r"|<(?:!--|\?|![A-Za-z]|!\[CDATA\[|(?:script|pre|style|textarea)(?:[ \t>]|\Z)"
+                             r"|/?(?:address|article|aside|blockquote|body|center|dd|details|dialog|dir|div|dl|dt|"
+                             r"fieldset|figcaption|figure|footer|form|h[1-6]|header|hr|html|legend|li|main|menu|nav|"
+                             r"ol|p|section|summary|table|ul)(?:[ \t>/]|\Z))", re.IGNORECASE)
+#: How far back a tag around an opener is looked for, and how far on it may run (characters).
+TAG_REACH = 4096
+#: How much of a line's start is read for its containers' marks (characters).
+LEAD_REACH = 256
+
+
+def _columns(row: str, begin: int = 0) -> tuple[int, int]:
+    """(the column after *row*'s leading spaces and tabs from *begin* - a tab to the next stop of 4 -, the
+    index after them)."""
+    column, index = 0, begin
+    while index < len(row) and row[index] in " \t":
+        column = column + 1 if row[index] == " " else column + 4 - column % 4
+        index += 1
+    return column, index
+
+
+def _lead_shape(lead: str) -> tuple[int, int, int, bool]:
+    """(the column a line's *lead* - its indentation, quotes' and list items' marks - ends at, the column
+    its innermost container's content begins at, its quotes' depth, whether it holds a list item's mark)."""
+    column, content, depth, listed, index = 0, 0, 0, False, 0
+    while index < len(lead):
+        char = lead[index]
+        if char in " \t":
+            column = column + 1 if char == " " else column + 4 - column % 4
+            index += 1
+            continue
+        mark = _LEAD_MARK.match(lead, index)
+        if mark is None:
+            break
+        index = mark.end()
+        column += mark.end() - mark.start()
+        after, end = _columns(lead, index)
+        if char == ">":
+            depth += 1
+            content = column + (1 if end > index else 0)  # (one space after ">" is its own)
+            column += after
+        else:  # (a list item's: 1 to 4 columns after it its own, 5 or more one - the rest indentation)
+            listed = True
+            content = column + (after if after <= 4 else 1)
+            column += after
+        index = end
+    return column, content, depth, listed
+
+
+def _hidden_rest(rest: str) -> str:
+    """The rest of an HTML block's last line (raw HTML, as written) without what raw HTML hides in it - a
+    comment opened there and never closed hides the rest of that line only (it hid all of the page: a
+    second "<!--" after "-->" read as a block of its own)."""
+    out, index = [], 0
+    while True:
+        found = _HIDDEN_HTML.search(rest, index)
+        if found is None:
+            out.append(rest[index:])
+            return "".join(out)
+        out.append(rest[index:found.start()])
+        opener = found.group(0)
+        closer = _HIDDEN_ENDS.get(opener, ">") if opener in _HIDDEN_ENDS or opener == "<![CDATA[" else ">"
+        end = rest.find(closer, found.end())
+        if end < 0:
+            return "".join(out)
+        index = end + len(closer)
 
 
 def _drop_comments(text: str) -> str:
-    """*text* without what raw HTML hides (_HIDDEN_HTML), as GFM reads it. At a block's start (its line's
-    first thing): an HTML block, to the end it looks for wherever it is - never closed, to the text's end;
-    the rest of the end's line the block's (as written). Anywhere else: inline, hidden only when closed in
-    its paragraph - else it is text ("Type <!-- to begin a comment." hid all that followed: a README's
-    rest). Linear: each closer's and the paragraph's end looked for once from where the last search ended
-    (not found: never again)."""
+    """*text* without what raw HTML hides (_HIDDEN_HTML), as GFM reads it - one pass, linear: each closer,
+    each paragraph's end looked for once from where the last search ended (not found: never again).
+
+    - At a block's start (its line's first thing after its containers' marks, at most three columns in): an
+      HTML block, to the line that holds its end - in its container: a quote's or a list item's block ends
+      with it, closed or not (``> <!-- a`` hid all that followed the quote); at the top level, never closed,
+      to the text's end. The rest of the end's line is the block's (as written).
+    - Four columns in or more: no block (indented code, or a paragraph's line - ``para\n    <!-- x`` hid
+      what followed); code is left as written.
+    - Anywhere else: inline, hidden only when closed in its paragraph - which ends at an empty line and at
+      any line that interrupts a paragraph (a heading, a rule, a fence, a list item, a deeper quote, an
+      HTML block: ``text <!-- a\n# Heading\nb --> end`` hid the heading) - in a table's row, in its cell.
+      Not closed so, it is text ("Type <!-- to begin a comment.").
+    - An opener inside a tag's attribute (``<a href="x<!--y">``) is the tag's."""
     out, index, line_start, scanned = [], 0, 0, 0
     found_at: dict = {}
 
@@ -3180,6 +3317,59 @@ def _drop_comments(text: str) -> str:
         if where is None or 0 <= where < at:
             where = found_at[key] = find(at)
         return where
+
+    def line_end_of(at: int) -> int:
+        end = text.find("\n", at)
+        return len(text) if end < 0 else end
+
+    def shape_of(begin: int, end: int) -> tuple[str, tuple[int, int, int, bool]]:
+        """(the line text[begin:end]'s first LEAD_REACH characters after its lead of spaces and quote marks,
+        the lead's _lead_shape)."""
+        row = text[begin:min(end, begin + LEAD_REACH)]
+        bare = row.lstrip(" \t>")
+        return bare, _lead_shape(row[:len(row) - len(bare)])
+
+    def stops_paragraph(begin: int, end: int, depth: int) -> bool:
+        """Whether the line text[begin:end] ends a paragraph in a quote of *depth* (or none: 0)."""
+        bare, (column, content, marks, _listed) = shape_of(begin, end)
+        if marks > depth or not bare.strip():
+            return True  # (a deeper quote; an empty line, or one of a quote's marks alone)
+        if column - (content if marks else 0) >= 4:
+            return False  # (four columns in: the paragraph's own line)
+        return _PARAGRAPH_STOP.match(bare) is not None or (bare[:1] in "-*_" and _thematic(text[begin:end].lstrip(" \t>")))
+
+    def paragraph_end(at: int, depth: int) -> int:
+        """Where the paragraph *at* is in ends (the "\\n" before its stopping line): -1, the text's end."""
+        newline = text.find("\n", at)
+        while newline >= 0:
+            end = line_end_of(newline + 1)
+            if stops_paragraph(newline + 1, end, depth):
+                return newline
+            newline = end if end < len(text) else -1
+        return -1
+
+    def container_end(begin: int, depth: int, content: int, listed: bool, closed: int) -> int:
+        """The end of the last line from *begin* on that is its container's still: a quote of *depth* (an
+        HTML block has no lazy line - one without the marks ends it), a list item's (*listed*) whose content
+        is *content* columns in - its empty lines included. Read no further than the line of *closed* (the
+        block's end: -1 none) - each line read once."""
+        last = line_end_of(begin)
+        while last < len(text) and not 0 <= closed < last:
+            end = line_end_of(last + 1)
+            bare, (column, _content, marks, _listed) = shape_of(last + 1, end)
+            if marks < depth:
+                return last
+            if listed and bare.strip() and column < content:
+                return last
+            last = end
+        return last
+
+    def previous_line(begin: int) -> str:
+        """The first LEAD_REACH characters of the line before the one *begin* starts ("" at the start)."""
+        if begin == 0:
+            return ""
+        start = text.rfind("\n", max(0, begin - 1 - TAG_REACH), begin - 1) + 1
+        return text[start:min(begin - 1, start + LEAD_REACH)]
 
     while True:
         found = _HIDDEN_HTML.search(text, index)
@@ -3191,30 +3381,65 @@ def _drop_comments(text: str) -> str:
         if newline >= 0:
             line_start = newline + 1
         scanned = start
+        # (an opener in a tag's attribute: the tag's - "<a href="x<!--y">" hid all to the next "-->")
+        tag_at = text.rfind("<", max(line_start, index, start - TAG_REACH), start)
+        if tag_at >= 0:
+            tag = _VALID_TAG.match(text, tag_at, min(len(text), tag_at + TAG_REACH))
+            if tag is not None and tag.end() > start:
+                out.append(text[index:tag.end()])
+                index = scanned = tag.end()
+                continue
         if opener.startswith("<!") and opener not in _HIDDEN_ENDS and opener != "<![CDATA[" and opener != "<!--":
             opener = "<!"
         closer = _HIDDEN_ENDS.get(opener, ">")
-        block = start - line_start <= 64 and _BLOCK_LEAD.match(text, line_start, start) is not None
+        lead = text[line_start:start] if start - line_start <= LEAD_REACH else None
+        shape = _lead_shape(lead) if lead is not None and _BLOCK_LEAD.match(lead) else None
         if opener == "<!--" and text.startswith(">", found.end()):  # ("<!-->", "<!--->": a comment, whole)
             end, closer = found.end(), ">"
         elif opener == "<!--" and text.startswith("->", found.end()):
             end, closer = found.end(), "->"
         else:
             end = next_of(closer, lambda at, c=closer: text.find(c, at), found.end())
-        if block:
+        if shape is not None and shape[0] - shape[1] >= 4:
+            before = previous_line(line_start)
+            before_bare = before.lstrip(" \t>")
+            if shape[3] or line_start == 0 or not before_bare.strip() \
+                    or before[:len(before) - len(before_bare)].count(">") < shape[2]:
+                # (four columns in after its containers' marks, first in its block: indented code - as written)
+                out.append(text[index:found.end()])
+                index = found.end()
+                continue
+        elif shape is not None:
+            column, content, depth, listed = shape
+            if not depth and not listed and column:  # (indented, no mark: a list item's line - or the top level)
+                before = previous_line(line_start)
+                if LIST_ITEM.match(before) or before[:1] in (" ", "\t"):
+                    listed, content = True, column
             out.append(text[index:start])
-            if end < 0:  # (an HTML block never closed: to the text's end, as GFM - and markdown-it's page)
-                return "".join(out)
+            if not depth and not listed:  # (the top level: to its end wherever it is - never closed, the text's)
+                if end < 0:
+                    return "".join(out)
+            else:
+                last = container_end(start, depth, content, listed, end)
+                if end < 0 or end > last:  # (its container ends first: the block with it)
+                    index = last
+                    continue
             index = end + len(closer)
-            line_end = text.find("\n", index)
-            line_end = len(text) if line_end < 0 else line_end
+            line_end = line_end_of(index)
             if text[index:line_end].strip():
-                out.append(_literal_row(text[index:line_end]))
+                out.append(_literal_row(_hidden_rest(text[index:line_end])))
             index = line_end
             continue
-        gap = next_of(_PARAGRAPH_END, lambda at: (lambda m: m.start() if m else -1)(_PARAGRAPH_END.search(text, at)),
-                      found.end())
-        if end < 0 or 0 <= gap < end:  # (not closed in its paragraph: text - its "<" escaped, no tag of it)
+        lead_marks = text[line_start:min(start, line_start + LEAD_REACH)]
+        depth = lead_marks[:len(lead_marks) - len(lead_marks.lstrip(" \t>"))].count(">")
+        gap = next_of(("paragraph", depth), lambda at, d=depth: paragraph_end(at, d), found.end())
+        row_end = -1
+        if lead_marks.lstrip(" \t>")[:1] == "|":  # (in a table's row: in its cell)
+            row_end = line_end_of(start)
+            pipe = text.find("|", found.end(), row_end)
+            row_end = pipe if pipe >= 0 else row_end
+        if end < 0 or 0 <= gap < end or 0 <= row_end < end:
+            # (not closed in its paragraph: text - its "<" escaped, no tag of it)
             out.append(text[index:start] + "\\")
             index = start
             out.append(text[index:found.end()])
@@ -3232,7 +3457,7 @@ def _html_tags(text: str, keep) -> str:
         return text
     sanitizer = markdown_doc.sanitizer()
     out, links, scripts, index, opened = [], [], [], 0, []
-    for m in _HTML_TAG.finditer(text):
+    for m in _HTML_TAG_QUOTED.finditer(text):
         backslashes = m.start() - len(text[max(0, m.start() - 64):m.start()].rstrip("\\")) - max(0, m.start() - 64)
         if backslashes % 2 or not _VALID_TAG.fullmatch(m.group(0)):
             continue  # ("\<br/>", "<a href="hi'>": no tag, as written - the first was a line break, "\" before it)
@@ -4382,8 +4607,35 @@ class MarkdownBrowser(QTextBrowser):
                 self.view.zoom_image(name)
 
     def resizeEvent(self, event):  # noqa: N802 - Qt
-        super().resizeEvent(event)
+        document = self.document()
+        if self.lineWrapMode() == QTextBrowser.LineWrapMode.FixedPixelWidth and document.blockCount() > RESIZE_BLOCKS \
+                and round(document.pageSize().width()) == self.lineWrapColumnOrWidth() \
+                and not getattr(self.view, "_replacing_now", False):
+            # (the page's width is the wrap's, the window's size whatever: QTextEdit's own resizeEvent laid all of
+            # a page with a table or a quote's box in it out again - its "contentHasAlignment" - at each resize:
+            # 0.48 s a step of a drag over 10,000 sections read to their end. Only its scroll bars follow the
+            # view; a change of the wrap is fit_later's - a part a turn)
+            QAbstractScrollArea.resizeEvent(self, event)
+            self.fit_bars()
+        else:
+            super().resizeEvent(event)
         self.view.fit_later()
+
+    def fit_bars(self) -> None:
+        """The scroll bars' ranges and steps for the page's size in the view's (as QTextEdit sets them - without
+        laying the page out again: resizeEvent)."""
+        size = self.document().documentLayout().documentSize().toSize()
+        vertical, horizontal = self.verticalScrollBar(), self.horizontalScrollBar()
+        viewport = self.viewport().size()
+        for _ in range(4):  # (a bar shown or hidden changes the view's size: again, as Qt does - a few times)
+            horizontal.setRange(0, max(0, size.width() - viewport.width()))
+            horizontal.setPageStep(viewport.width())
+            vertical.setRange(0, max(0, size.height() - viewport.height()))
+            vertical.setPageStep(viewport.height())
+            now = self.viewport().size()
+            if now == viewport:
+                break
+            viewport = now
 
     def contextMenuEvent(self, event):  # noqa: N802 - Qt
         """The usual menu - and Copy Code Block on a code block."""
@@ -4657,6 +4909,9 @@ class MarkdownView(QWidget):
         made_last = getattr(self, "_made", None)
         again_made = again is not None and made_last is not None and made_last[0] == made_key
         if again is not None:
+            reading = self._reading_next
+            if reading is not None and tuple(reading[0]) != (0, 0):
+                self._freeze_view(generation)
             with self._replacing():  # (its parts gone: none of them laid out anew at the new size)
                 document = self.browser.document()
                 if document.blockCount() > DISPOSE_BLOCKS:
@@ -4702,10 +4957,14 @@ class MarkdownView(QWidget):
                 return  # (a newer page is on its way)
             if error is not None:
                 self._idle()
+                self._thaw_view()
                 self.status.setText(_t("Cannot render: {error}", error=printable(error)))
                 return
             result, copy = pair
             self._made = (made_key, result)  # (a zoom lays it out again: relaid)
+            pieces_made = getattr(self, "_pieces_made", None)
+            if pieces_made is None or pieces_made[0] != made_key:  # (the later pieces parsed of this page: kept)
+                self._pieces_made = (made_key, {})
             if _EMOJI_FAMILY and _EMOJI_FAMILY[0] and _EMOJI_FAMILY[0] not in self.browser.font().families():
                 self.browser.setFont(with_emoji_family(self.browser.font()))  # (the family emoji_fonts found)
             why, page = copy
@@ -4976,12 +5235,28 @@ class MarkdownView(QWidget):
             self._parse_next(generation, dark, toggled)
 
         notes = self._pieces_notes(piece, len(page["texts"]))
+        made_key = (getattr(self, "_made", None) or (None,))[0]
+        pieces_made = getattr(self, "_pieces_made", None)
+        kept = pieces_made[1] if pieces_made is not None and pieces_made[0] == made_key else None
+
+        def done_kept(result, error):  # (kept for the page made again - a zoom, a resize: _pieces_made)
+            if error is None and kept is not None:
+                kept[piece] = _fresh(result)
+            done(result, error)
+
+        if kept is not None and piece in kept:
+            # (parsed before for this page as it is - a zoom, a resize made it again: from what was kept, a
+            # piece a turn - the place read waited 0.65 s for its piece to be parsed again, the page's top
+            # shown meanwhile)
+            result = _fresh(kept[piece])
+            QTimer.singleShot(0, lambda: None if sip.isdeleted(self) else done(result, None))
+            return
 
         def parse():  # (its <details> numbered from a place of its own: the same whatever came first)
             made = _page(text, dark, toggled, piece * DETAILS_SPAN, notes)
             return made + ([part_headings("html", part) for part in made[0]],)
 
-        in_background(lambda: held_while(parse), owner=self, done=done)
+        in_background(lambda: held_while(parse), owner=self, done=done_kept)
 
     def _page_more(self, page, piece: int | None = None) -> None:
         """A long text's later part parsed: its parts after the page's, its
@@ -5271,6 +5546,28 @@ class MarkdownView(QWidget):
         if self._stand_in:
             return document.documentLayout().blockBoundingRect(document.lastBlock()).top()
         return bar.maximum() + bar.pageStep()
+
+    def _freeze_view(self, generation: int) -> None:
+        """(a page made anew as it is - a zoom, a resize - away from its first part) the view's picture kept
+        until the place read is shown again (_thaw_view), at most FROZEN_MS: the page's top was painted
+        meanwhile - empty, then its first part for 0.65 s (10,000 sections), then the place again; at every
+        step of a drag."""
+        viewport = self.browser.viewport()
+        self._frozen = generation
+        if viewport.updatesEnabled():
+            viewport.setUpdatesEnabled(False)
+        QTimer.singleShot(FROZEN_MS, lambda: None if sip.isdeleted(self) or getattr(self, "_frozen", None)
+                          != generation else self._thaw_view())
+
+    def _thaw_view(self) -> None:
+        """The view painted again (see _freeze_view)."""
+        if getattr(self, "_frozen", None) is None or sip.isdeleted(self):
+            return
+        self._frozen = None
+        viewport = self.browser.viewport()
+        if not viewport.updatesEnabled():
+            viewport.setUpdatesEnabled(True)
+            viewport.update()
 
     def _hold(self, anchor=None, seconds: float = 3.0) -> None:
         """*anchor* (a block and how far above the view's top it begins -
@@ -5781,10 +6078,12 @@ class MarkdownView(QWidget):
         laid out first, the view there - not all of the page up to it."""
         reading, self._reading_next = getattr(self, "_reading_next", None), None
         if reading is None:
+            self._thaw_view()
             return
         origin, offset = reading
         number = self._number_of(origin)
         if number is None or not number:
+            self._thaw_view()
             return  # (in the first part: where it was, in pixels)
         self._page["where"] = 0  # (not the old place's pixels: the part's)
         self._readable = True
@@ -5808,6 +6107,7 @@ class MarkdownView(QWidget):
                 block = self.browser.document().findBlock(self._starts[number].position() + into)
                 self._target = None
                 self._hold((QTextCursor(block), pixels))
+            self._thaw_view()
             QTimer.singleShot(0, lambda: None if sip.isdeleted(self) else self.returned.emit())
             return
         self.go_to_part(number, lambda: self._back_to(origin, offset))
@@ -5837,7 +6137,7 @@ class MarkdownView(QWidget):
         up to there first: 18 s)."""
         if self._page is None or not self._starts or not self._readable:
             return None
-        block = self.browser.cursorForPosition(QPoint(0, 0)).block()
+        block = shown_at(self.browser)
         number = self.part_at(block.position())
         origin = (self._page.get("origin") or [])[number:number + 1]
         if not origin:
@@ -6292,8 +6592,9 @@ class MarkdownView(QWidget):
         return gap
 
     def _view_anchor(self):
-        """The block on top of the view and how far above the view's top it begins."""
-        block = self.browser.cursorForPosition(QPoint(0, 0)).block()
+        """The block on top of the view and how far above the view's top it begins (by halves on a long
+        page: shown_at)."""
+        block = shown_at(self.browser)
         top = self.browser.document().documentLayout().blockBoundingRect(block).top()
         return QTextCursor(block), self.browser.verticalScrollBar().value() - top
 
@@ -7260,7 +7561,7 @@ class MarkdownView(QWidget):
         (its signals off: marking it jumps nowhere)."""
         if not self.outline.count() or not self.outline.isVisible():
             return
-        top = self.browser.cursorForPosition(QPoint(4, 4)).position()
+        top = shown_at(self.browser, 4).position()
         here = (self.part_at(top), top)
         current = -1
         low, high = 0, self.outline.count()  # (the entries go down the text - by part: a halving search)
@@ -7318,7 +7619,16 @@ class MarkdownView(QWidget):
         if sip.isdeleted(self) or self._look() is self.theme:
             return
         if self.markdown:
-            self.timer.start()
+            slow = self.timer.interval() > RENDER_DELAY
+            # (a choice, not typing: made anew after the short pause - the render timer's own interval, twice
+            # the last rendering's time, kept a big page's new theme 4 to 12 s away; the next rendering sets
+            # the typing's pause again)
+            self.timer.start(RENDER_DELAY)
+            if slow:
+                # (a page that took a while: made on a worker - 10,000 sections on Qt's own parser showed
+                # nothing for 4 s, the new page at 6 s. The status says the choice was taken until the new
+                # page is there - "Rendering…" follows it, _idle clears it)
+                self._busy(tr("Applying the theme…"), True)
         else:
             self.theme = self._look()
             self.dark = bool(self.theme)
@@ -7667,6 +7977,10 @@ class MarkdownView(QWidget):
 ZOOM_RANGE = (0.25, 4.0)
 #: Blocks laid out past which a zoom lays the page out anew a part a turn (zoom_by).
 ZOOM_BLOCKS = 3000
+#: How long a zoom's or a resize's page made anew keeps the view's picture at most (ms: _freeze_view).
+FROZEN_MS = 1500
+#: Blocks past which a resize of the view leaves the page's layout as it is when its width stays (resizeEvent).
+RESIZE_BLOCKS = 3000
 #: ... or characters (a few long lines of signs no font has - the Ogham space mark - were laid out again in
 #: the zoom's turn: 200 KB, 0.18 s).
 ZOOM_CHARS = 60_000
@@ -9237,6 +9551,30 @@ def _same_code(block, other) -> bool:
     quote = QTextFormat.Property.BlockQuoteLevel
     return a.indent() == b.indent() and a.leftMargin() == b.leftMargin() \
         and a.intProperty(quote) == b.intProperty(quote)
+
+
+#: Blocks of a page past which the block at a place of the view is looked for by halves (shown_at).
+HALVED_BLOCKS = 5000
+
+
+def shown_at(browser, offset: int = 0):
+    """The block at *offset* pixels below the top of what *browser* shows (above it: negative). On a long
+    page found by halves over its blocks' places: Qt's own hit test (cursorForPosition) walks every block
+    and frame of the page - at the end of 50,000 code blocks 0.09 s a search, and the laying out of each part
+    of a code block of 1,000,000 lines into the gap Ctrl+End and Ctrl+Home left took one (the view kept where
+    it was): a turn that grew with the page (review 26's 0.1 to 3.6 s)."""
+    document = browser.document()
+    if document.blockCount() <= HALVED_BLOCKS:
+        return browser.cursorForPosition(browser.viewport().rect().topLeft() + QPoint(0, offset)).block()
+    layout, top = document.documentLayout(), browser.verticalScrollBar().value() + offset
+    low, high = 0, document.blockCount() - 1
+    while low < high:
+        middle = (low + high) // 2
+        if layout.blockBoundingRect(document.findBlockByNumber(middle)).bottom() < top:
+            low = middle + 1
+        else:
+            high = middle
+    return document.findBlockByNumber(low)
 
 
 def _stand_in_rect(layout, block):

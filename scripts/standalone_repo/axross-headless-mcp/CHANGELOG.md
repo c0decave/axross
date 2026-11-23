@@ -4,6 +4,13 @@ What changed in each release of axross-headless-mcp. The code is axross's MCP
 server (https://github.com/c0decave/axross), written out by axross's
 `scripts/export_standalone.py mcp`; its version is axross's.
 
+## 0.15.185 - 2026-11-23
+
+The MCP server's part of axross 0.15.185: the file tools on an ADB profile
+(`list_directory`, `get_path_info`, `walk_tree`, `search_index`) read
+folders with entries the phone will not show whole again. Such an entry is listed with its name and type,
+and names come escaped, so two lines of `ls` never make one name.
+
 ## 0.15.184 - 2026-11-22
 
 The MCP server's part of axross 0.15.184: Android devices as a tool group,

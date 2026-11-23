@@ -4,21 +4,26 @@
 # THIRD_PARTY_LICENSES.txt: the binaries contain PyQt6 and Qt and are GPL-3.0
 # combined works), SHA256SUMS, and notes from CHANGELOG.md. Every action
 # is pinned by its commit; the dependencies come from the hashed locks
-# (requirements.lock.txt, packaging/requirements-pyinstaller.txt), and so do
+# (requirements.lock.txt, packaging/requirements-pyinstaller.txt - wheels
+# only, --only-binary=:all: - no sdist built with unhashed build tools), and so do
 # the tools that build the sdist and wheel (packaging/requirements-build.txt:
 # build and twine; the backend, setuptools, from requirements.lock.txt -
 # --no-isolation, nothing unpinned from PyPI) and the tests' pytest
 # (packaging/requirements-test.txt); the sdist and wheel are built before
 # any test tool is installed. Only the
-# release job may write (contents: write), with the workflow's own token.
+# release job may write (contents: write; id-token and attestations for
+# the provenance), with the workflow's own token.
 # The heavy steps write their output to $RUNNER_TEMP/job.log as well; a
 # failed job shows the log's last lines as annotations
 # (packaging/ci_log_tail.py), readable through the API without the logs.
 # Nothing is built before axross's supply-chain gate and the tests
 # (tests.yml, called as a reusable workflow) pass.
+# Every asset (SHA256SUMS too) gets GitHub's build provenance attestation
+# (actions/attest-build-provenance: this workflow, this tag, GitHub's runner).
 # The release is made as a draft: the maintainer signs its SHA256SUMS on
 # their own machine and publishes it (scripts/sign_release.py release vX.Y.Z
-# --key KEY --publish - the key never comes near CI). Beside each program
+# --key KEY --publish - the key never comes near CI; it signs nothing whose
+# attestation gh attestation verify does not find). Beside each program
 # goes the same file under a name with its version (axross-markdown-X.Y.Z-
 # linux-x86_64, -x86_64.AppImage, -macos-arm64, -windows-x64.exe,
 # axross-mdcat-X.Y.Z-windows-x64.exe): the ones the updater fetches
@@ -35,7 +40,8 @@ permissions:
   contents: read
 
 jobs:
-  # The supply-chain gate on requirements.lock.txt, then the tests (tests.yml):
+  # The supply-chain gate on requirements.lock.txt and
+  # packaging/requirements-pyinstaller.txt (supply-chain-gate.toml), then the tests (tests.yml):
   # no job below starts before both pass. The blocking tests only: those that pass
   # or fail by elapsed time (the marker timing, tests/markdown_timing.py) run in
   # tests.yml's job timing on every push, and block nothing - a release never
@@ -74,8 +80,8 @@ jobs:
           # (build and twine hashed - packaging/requirements-build.txt, scripts/lock_standalone_deps.sh -, the
           # backend not fetched: --no-isolation builds with the setuptools of requirements.lock.txt; built before
           # any test tool is in the environment)
-          python -m pip install --require-hashes -r requirements.lock.txt
-          python -m pip install --require-hashes -r packaging/requirements-build.txt
+          python -m pip install --require-hashes --only-binary=:all: -r requirements.lock.txt
+          python -m pip install --require-hashes --only-binary=:all: -r packaging/requirements-build.txt
           # (the sdist the same bytes for the same commit: its files' times the commit's, in a fixed order -
           # packaging/reproducible_sdist.py; the wheel is reproducible already)
           SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) python -m build --no-isolation --outdir release/
@@ -94,7 +100,7 @@ jobs:
         {
           # (pytest and its dependencies hashed as well: packaging/requirements-test.txt)
           python -m pip install --no-deps release/*.whl
-          python -m pip install --require-hashes -r packaging/requirements-test.txt
+          python -m pip install --require-hashes --only-binary=:all: -r packaging/requirements-test.txt
           python -m pytest -q -rfE -m "not timing" tests  # (the timing ones: tests.yml's job timing)
         } 2>&1 | tee -a "$RUNNER_TEMP/job.log"
     - name: The end of the job's log as annotations
@@ -140,7 +146,7 @@ jobs:
       run: |
         set -o pipefail
         {
-          python -m pip install --require-hashes -r requirements.lock.txt -r packaging/requirements-pyinstaller.txt
+          python -m pip install --require-hashes --only-binary=:all: -r requirements.lock.txt -r packaging/requirements-pyinstaller.txt
           python -m pip install --no-build-isolation --no-deps .
         } 2>&1 | tee -a "$RUNNER_TEMP/job.log"
     - name: One-file binary (PyInstaller)
@@ -253,6 +259,9 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
+      # (the build provenance attestation: a Sigstore certificate for this workflow run, stored with GitHub)
+      id-token: write
+      attestations: write
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
@@ -275,6 +284,12 @@ jobs:
           cat assets/SHA256SUMS
           python3 packaging/release_notes.py "$GITHUB_REF_NAME" assets > notes.md
         } 2>&1 | tee -a "$RUNNER_TEMP/job.log"
+    # (each asset's SHA-256 bound to this repository, this workflow and this tag: scripts/sign_release.py
+    # checks it with gh attestation verify before it signs SHA256SUMS)
+    - name: Build provenance of every asset
+      uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+      with:
+        subject-path: assets/*
     # (a draft: signed and published by hand - scripts/sign_release.py)
     - name: The GitHub release
       env:

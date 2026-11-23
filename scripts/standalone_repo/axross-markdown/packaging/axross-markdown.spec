@@ -11,10 +11,13 @@ Every module of the package goes in (the viewer imports parts of itself
 late), with its data (the interface languages). The Qt plugins axross's own
 binaries leave out are left out here too (axross scripts/bundle_options.py):
 platforms nobody selects (VNC - CVE-2026-79680 - eglfs, linuxfb, minimal),
-the GTK theme and glib network plugins (they need the host's newer glib) and
-the CUPS print plugin (Qt prints to PDF). On Linux the build machine's own
-libraries those plugins pulled in go with them: a system library stays only
-when something left in the program loads it (packaging/system_libraries.py:
+the GTK theme and glib network plugins (they need the host's newer glib)
+and the CUPS print plugin (Qt prints to PDF). Here the minimal platform of
+Windows and macOS goes too (DROPPED_HERE: qminimal.dll, libqminimal.dylib):
+the window runs on windows or cocoa; the children, the self-test and the
+CI's smoke tests on offscreen. On Linux the build machine's own libraries
+those plugins pulled in go with them: a system library stays only when
+something left in the program loads it (packaging/system_libraries.py:
 the DT_NEEDED closure - 0.17.2's program carried 94, libcups.so.2, libgtk-3
 and gnutls among them, 48 loaded by nothing), and each one that stays goes
 in with its package's copyright file and an index of the source packages
@@ -42,11 +45,13 @@ DROPPED = ("platformthemes/libqgtk3.so", "networkinformation/libqglib.so",
            "platforms/libqvkkhrdisplay.so", "libQt6EglFSDeviceIntegration.so.6",
            "printsupport/libcupsprintersupport.so")
 DROPPED_FOLDERS = ("egldeviceintegrations", "sqldrivers")
+# (beyond axross's DROPPED: the minimal platform of the Windows and macOS wheels, which nothing here selects)
+DROPPED_HERE = ("platforms/qminimal.dll", "platforms/libqminimal.dylib")
 
 
 def dropped(path):
     path = path.replace("\\", "/")
-    if any(path == d or path.endswith("/" + d) for d in DROPPED):
+    if any(path == d or path.endswith("/" + d) for d in DROPPED + DROPPED_HERE):
         return True
     return any(f in DROPPED_FOLDERS for f in path.split("/")[:-1])
 

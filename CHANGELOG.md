@@ -4,6 +4,28 @@ What changed in each axross release, for the people who use it. The full
 notes of a release, with every fix, are on its
 [GitHub release page](https://github.com/c0decave/axross/releases).
 
+## 0.15.185 - 2026-11-23
+
+A hotfix for ADB folders: listings of a phone's `/` and other folders with
+entries the shell may not read are whole again. The Markdown reader is that
+of axross-markdown 0.17.4. The downloads are the same as for 0.15.184;
+installed binaries update to it.
+
+- **ADB: folders with entries the phone will not show list again.** In `/`
+  of a phone, an entry the shell may not read (`postinstall`, `config`)
+  came as a line of question marks; axross took it for the second line of
+  the name before it, lost both and warned "Skipping unsafe item name".
+  Such an entry is now listed as what it is - a folder, a link or a file
+  whose size and date cannot be read - and the phone lists names escaped
+  (`ls -b`), so a name with a blank, a line break or an odd byte is read
+  exactly; two lines are never joined into one name. The toolbox `ls` of
+  Android 5 and older, which cannot escape, leaves out a name with a line
+  break instead.
+- **Markdown reader** (axross-markdown 0.17.4): HTML comments in the
+  built-in parser are read as GFM reads them, a resize or zoom of a long
+  page keeps the place read, every theme colour reaches AA, and a code
+  block of a million lines no longer holds the window.
+
 ## 0.15.184 - 2026-11-22
 
 Android phones get a window of their own and an MCP tool group, the Markdown

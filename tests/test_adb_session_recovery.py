@@ -61,7 +61,7 @@ def test_happy_a_dropped_connection_is_reported_and_the_next_call_reconnects(pho
 
 def test_sad_the_device_closing_during_a_command_fails_at_once_without_spinning(phone):
     def hook(cmd):
-        if cmd.startswith("TZ=UTC0 ls -la -d"):
+        if cmd.startswith("TZ=UTC0 ls -la") and " -d " in cmd:
             time.sleep(0.3)
             for conn in list(phone.open_conns):
                 conn.shutdown(socket.SHUT_RDWR)  # FIN from the device

@@ -425,7 +425,8 @@ def _preview(text: str):
     return window, tab
 
 
-def _type_at(tab, line: int, back: int, typed: str) -> None:
+def _place_at(tab, line: int, back: int) -> None:
+    """The editor's cursor *back* characters before the end of its *line*."""
     from PyQt6.QtGui import QTextCursor
 
     cursor = tab.editor.textCursor()
@@ -434,6 +435,10 @@ def _type_at(tab, line: int, back: int, typed: str) -> None:
     cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock)
     cursor.movePosition(QTextCursor.MoveOperation.Left, n=back)
     tab.editor.setTextCursor(cursor)
+
+
+def _type_at(tab, line: int, back: int, typed: str) -> None:
+    _place_at(tab, line, back)
     tab.editor.insertPlainText(typed)
 
 
@@ -525,8 +530,13 @@ GRID_CONTAINERS = {
     "strike": lambda run, blocks: ["~~" + run + "~~", ""] + blocks,
 }
 GRID = [(c, i, b) for c in GRID_CONTAINERS for i in INLINE for b in BLOCKS]
-#: The sample's seed: AXROSS_STRESS_SEED, else the day's (a run is reproducible; each day another sample).
-SEED = int(os.environ.get("AXROSS_STRESS_SEED") or time.strftime("%Y%m%d"))
+#: The sample's seed: AXROSS_STRESS_SEED (another sample, reproducible by it), else a fixed one - every run
+#: the same sample (the day's seed made a test pass one day and fail the next with no change; the whole grid
+#: is test_slow_the_whole_grid_holds_no_turn's).
+SEED = int(os.environ.get("AXROSS_STRESS_SEED") or 0)
+#: The cells the preview's test takes whatever the seed: typing at the end of a line of 390,000 characters
+#: (the link text of 30,000 entities) - Qt lays out a whole line again at each edit (typed_turn_for).
+PREVIEW_CELLS = [("link text", "entity", "many rules")]
 #: Documents of the grid a run opens (both parsers each).
 SAMPLE = int(os.environ.get("AXROSS_STRESS_SAMPLE") or 6)
 
@@ -538,8 +548,50 @@ def grid_document(container: str, inline: str, blocks: str) -> str:
     return "\n".join(lines) + "\n" + ("\n[^1]: The note.\n" if inline == "footnote ref" else "")
 
 
-def _sampled(count: int) -> list:
-    return random.Random(SEED).sample(GRID, count)
+def _sampled(count: int, always=()) -> list:
+    sample = random.Random(SEED).sample(GRID, count)
+    return sample + [cell for cell in always if cell not in sample]
+
+
+#: What a bare QPlainTextEdit took here to take a typed word at the end of a line and paint it (by length).
+_EDITED: dict = {}
+#: A typed line at least this long gets Qt's own cost on top of its budget (typed_turn_for).
+LONG_LINE = 100_000
+
+
+def typed_turn_for(text: str, line: int) -> float:
+    """turn_for(*text*) - and for typing at the end of a long *line* of it, on top of it what Qt itself takes
+    for that in a bare QPlainTextEdit (no colours, no preview, no line numbers): Qt lays out and shapes the
+    whole of a block again at each edit, then paints it - 0.10 s for a line of 390,000 characters here (the
+    editor's own turn was 0.11 to 0.115 s), whatever the editor does. At most TURN more."""
+    from PyQt6.QtGui import QTextCursor
+    from PyQt6.QtWidgets import QPlainTextEdit
+
+    row = text.split("\n", line + 1)[line]
+    if len(row) < LONG_LINE:
+        return turn_for(text)
+    if len(row) not in _EDITED:
+        editor = QPlainTextEdit()
+        editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        editor.resize(600, 700)
+        editor.show()
+        editor.setPlainText(row)
+        pump(0.3)
+        took = []
+        for _ in range(3):
+            cursor = editor.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            editor.setTextCursor(cursor)
+            began = time.thread_time()
+            editor.insertPlainText(" typed")
+            QApplication.processEvents()
+            took.append(time.thread_time() - began)
+            pump(0.1)
+        editor.document().setModified(False)
+        editor.close()
+        editor.deleteLater()
+        _EDITED[len(row)] = min(took)
+    return turn_for(text) + min(_EDITED[len(row)], TURN)
 
 
 @PARSERS
@@ -550,19 +602,23 @@ def test_sad_a_sample_of_the_grid_holds_no_turn(cell, full):
     within_turn(lambda: _longest_turn(text, full), text, (SEED, cell))
 
 
-@pytest.mark.parametrize("cell", _sampled(2), ids=lambda cell: "/".join(cell))
+@pytest.mark.parametrize("cell", _sampled(2, PREVIEW_CELLS), ids=lambda cell: "/".join(cell))
 def test_sad_find_copy_pdf_and_the_preview_of_the_grid_hold_no_turn(cell, tmp_path):
     text = grid_document(*cell)
     _ops_turns(text, True, tmp_path)
     window, tab = _preview(text)
     try:
+        # (the cursor where the typing goes first, as a user's is: the test's own move to a line's end, the
+        # first one laid out there, was 0.03 s of the measured turn)
+        _place_at(tab, 0, 0)
+        pump(0.2)
         turns = _Turns()
-        _type_at(tab, 0, 0, " typed")
+        tab.editor.insertPlainText(" typed")
         until(lambda: "typed" in tab.preview.markdown, 10)
         pump(0.2)
         until(lambda: tab.preview._readable and not tab.preview.timer.isActive() and not tab.preview._scheduled, 120)
         longest = turns.stop()
-        TB.budget(longest < turn_for(text), (SEED, cell, longest))
+        TB.budget(longest < typed_turn_for(text, 0), (SEED, cell, longest, typed_turn_for(text, 0)))
     finally:
         tab.editor.document().setModified(False)
         window.close()

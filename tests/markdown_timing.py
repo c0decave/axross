@@ -241,6 +241,8 @@ BUDGETS = frozenset({
     "test_markdown_reader_bugs26::test_sad_find_and_zoom_on_a_long_code_block_laid_out_hold_no_turn",
     "test_markdown_reader_bugs26::test_sad_highlighted_code_weighs_its_spans_too",
     "test_markdown_reader_bugs26::test_sad_openers_never_closed_are_read_in_one_pass",
+    "test_markdown_reader_bugs28::test_sad_a_resize_that_keeps_the_text_s_width_lays_nothing_out_again",
+    "test_markdown_reader_bugs28::test_sad_the_comment_rules_stay_linear",
     "test_markdown_reader_bugs5::test_sad_the_terminal_shows_the_start_of_a_long_list_at_once",
     "test_markdown_reader_bugs6::test_sad_markdown_its_page_shows_the_start_of_a_long_file_at_once",
     "test_markdown_reader_bugs7::test_sad_a_long_run_of_spaces_takes_qts_own_parser_no_time",

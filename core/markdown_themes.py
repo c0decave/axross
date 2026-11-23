@@ -11,8 +11,11 @@ Arctic for a Nord-like one, Retro for a warm Gruvbox-like one, Night Violet
 for a Dracula-like one, Slate for a One-Dark-like one).
 
 Every theme's body text and links reach WCAG 2.x contrast AA (4.5:1) on its
-page - the two High Contrast themes AAA (7:1) - and the other text roles too
-(tests/test_markdown_themes.py measures each: :func:`contrast`).
+page - the two High Contrast themes AAA (7:1) - and the other text roles too,
+each on every ground it is drawn on: the syntax colours on a code block's
+grounds, links and muted text in tables and code, alert titles, and the
+terminal's colours (:func:`contrast_report`; tests/test_markdown_themes.py
+measures each).
 
 Nothing here imports Qt: the terminal (axross-mdcat) uses it as it is.
 
@@ -46,7 +49,7 @@ LIGHT_PAGE = {
 DARK_PAGE = {
     "text": "#e6edf3", "muted": "#9198a1", "link": "#4493f8",
     "h1": "#e6edf3", "h2": "#e6edf3", "h3": "#e6edf3", "h4": "#e6edf3", "h5": "#e6edf3", "h6": "#9198a1",
-    "code_bg": "#2d333b", "code_fg": "#e6edf3", "pre_bg": "#161b22", "quote_bg": "#1c2128", "highlight": "#e3b341",
+    "code_bg": "#272c33", "code_fg": "#e6edf3", "pre_bg": "#161b22", "quote_bg": "#1c2128", "highlight": "#e3b341",
     "highlight_bg": "#4d3800",
     "quote_fg": "#9198a1", "rule": "#3d444d", "th_bg": "#212830", "mark": "#3fb950", "math": "#e6edf3",
     "note": "#4493f8", "tip": "#3fb950", "important": "#ab7df8", "warning": "#d29922", "caution": "#f85149",
@@ -54,8 +57,8 @@ DARK_PAGE = {
     "page_bg": "#0d1117", "selection_bg": "#264f78", "selection_fg": "#ffffff",
 }
 #: GitHub's colours of code on a light page (its "prettylights" palette - ui.markdown_html.GITHUB_LIGHT).
-LIGHT_CODE = {"keyword": "#cf222e", "string": "#0a3069", "comment": "#6e7781", "number": "#0550ae",
-              "function": "#8250df", "class": "#953800", "constant": "#0550ae", "tag": "#116329",
+LIGHT_CODE = {"keyword": "#cf222e", "string": "#0a3069", "comment": "#666e77", "number": "#0550ae",
+              "function": "#804edf", "class": "#953800", "constant": "#0550ae", "tag": "#116329",
               "deleted": "#82071e"}
 #: ... and on a dark one (GitHub's dark theme - ui.markdown_html.GITHUB_DARK).
 DARK_CODE = {"keyword": "#ff7b72", "string": "#a5d6ff", "comment": "#8b949e", "number": "#79c0ff",
@@ -158,13 +161,13 @@ THEMES: dict[str, Theme] = {theme.id: theme for theme in (
         highlight="#7f5200", highlight_bg="#f0d78c", selection_bg="#d8c38c", selection_fg="#2a2016"),
         _code("#9e2418", "#3b6420", "#6f5d48", "#8a3a0f", "#663c8a", "#7f5200", "#1d5a8f", "#3b6420", "#9e2418")),
     _theme("solar-light", "Solar Light", False, _page(
-        bg="#fdf6e3", text="#4f6369", muted="#5b6e74", link="#1a64a0",
-        headings=("#8f4a00", "#8f4a00", "#2b6a1e", "#2b6a1e", "#4f6369", "#5b6e74"),
+        bg="#fdf6e3", text="#4f6369", muted="#596b71", link="#1a64a0",
+        headings=("#8f4a00", "#8f4a00", "#2b6a1e", "#2b6a1e", "#4f6369", "#596b71"),
         code_bg="#eee8d5", code_fg="#a8312f", pre_bg="#eee8d5", quote_bg="#f3ecd6", quote_fg="#556a70",
         rule="#d9d2bc", th_bg="#eee8d5", zebra="#f6efdc", mark="#4d6b00", math="#5a4fa0",
         alerts=("#1a64a0", "#4d6b00", "#5a4fa0", "#8a5d00", "#b22a26"), alert_bg="#f3ecd6",
         highlight="#7a5300", highlight_bg="#f4e2a6", selection_bg="#e2d9bd", selection_fg="#073642"),
-        _code("#4d6b00", "#1d6f69", "#5f7278", "#9e3430", "#1a64a0", "#8a5d00", "#8c3170", "#1a64a0", "#b22a26")),
+        _code("#4d6b00", "#1d6f69", "#596b71", "#9e3430", "#1a64a0", "#8a5d00", "#8c3170", "#1a64a0", "#b22a26")),
     _theme("solar-dark", "Solar Dark", True, _page(
         bg="#002b36", text="#9fb0b0", muted="#93a1a1", link="#6cb4e8",
         headings=("#d4a62a", "#d4a62a", "#a3b84a", "#a3b84a", "#9fb0b0", "#93a1a1"),
@@ -172,23 +175,23 @@ THEMES: dict[str, Theme] = {theme.id: theme for theme in (
         rule="#2a4f58", th_bg="#073642", zebra="#03303b", mark="#a3b84a", math="#a8a6ec",
         alerts=("#6cb4e8", "#a3b84a", "#a8a6ec", "#d4a62a", "#f07b70"), alert_bg="#05313c",
         highlight="#e6c15a", highlight_bg="#3d3a10", selection_bg="#1d4b57", selection_fg="#eee8d5"),
-        _code("#a3b84a", "#4fc4b8", "#8a9a9a", "#f07b70", "#6cb4e8", "#d4a62a", "#e87ab4", "#6cb4e8", "#f07b70")),
+        _code("#a3b84a", "#4fc4b8", "#8c9c9c", "#f07b70", "#6cb4e8", "#d4a62a", "#e87ab4", "#6cb4e8", "#f07b70")),
     _theme("arctic", "Arctic", True, _page(
         bg="#2e3440", text="#e5e9f0", muted="#b0b8c8", link="#88c0d0",
         headings=("#8fbcbb", "#88c0d0", "#81a1c1", "#a3be8c", "#ebcb8b", "#b0b8c8"),
         code_bg="#3b4252", code_fg="#eceff4", pre_bg="#3b4252", quote_bg="#353b49", quote_fg="#c0c7d4",
         rule="#4c566a", th_bg="#3b4252", zebra="#333947", mark="#a3be8c", math="#b9a3cf",
-        alerts=("#88c0d0", "#a3be8c", "#c7a8d4", "#ebcb8b", "#e48a92"), alert_bg="#353b49",
+        alerts=("#88c0d0", "#a3be8c", "#c7a8d4", "#ebcb8b", "#e48c94"), alert_bg="#353b49",
         highlight="#ebcb8b", highlight_bg="#4f4a33", selection_bg="#4c566a", selection_fg="#eceff4"),
-        _code("#81a1c1", "#a3be8c", "#9aa3b5", "#c7a8d4", "#88c0d0", "#8fbcbb", "#d6a58e", "#81a1c1", "#e48a92")),
+        _code("#96b1cc", "#a3be8c", "#a7aebe", "#c7a8d4", "#88c0d0", "#8fbcbb", "#d6a58e", "#96b1cc", "#e799a0")),
     _theme("retro", "Retro", True, _page(
-        bg="#282828", text="#ebdbb2", muted="#bdae93", link="#83a598",
+        bg="#282828", text="#ebdbb2", muted="#bdae93", link="#88a99c",
         headings=("#fabd2f", "#b8bb26", "#8ec07c", "#83a598", "#fe8019", "#bdae93"),
         code_bg="#3c3836", code_fg="#fe8019", pre_bg="#32302f", quote_bg="#32302f", quote_fg="#d5c4a1",
         rule="#504945", th_bg="#3c3836", zebra="#2f2d2c", mark="#b8bb26", math="#d3869b",
-        alerts=("#83a598", "#b8bb26", "#d3869b", "#fabd2f", "#fb4934"), alert_bg="#32302f",
+        alerts=("#83a598", "#b8bb26", "#d3869b", "#fabd2f", "#fc6857"), alert_bg="#32302f",
         highlight="#fabd2f", highlight_bg="#504228", selection_bg="#504945", selection_fg="#fbf1c7"),
-        _code("#fb4934", "#b8bb26", "#a89984", "#d3869b", "#8ec07c", "#fabd2f", "#d3869b", "#83a598", "#fb4934")),
+        _code("#fc7b6c", "#b8bb26", "#aea08c", "#d68ea2", "#8ec07c", "#fabd2f", "#d68ea2", "#88a99c", "#fc7b6c")),
     _theme("night-violet", "Night Violet", True, _page(
         bg="#282a36", text="#f8f8f2", muted="#b3b8d6", link="#8be9fd",
         headings=("#bd93f9", "#ff79c6", "#50fa7b", "#ffb86c", "#f1fa8c", "#b3b8d6"),
@@ -196,7 +199,7 @@ THEMES: dict[str, Theme] = {theme.id: theme for theme in (
         rule="#44475a", th_bg="#343746", zebra="#2c2e3b", mark="#50fa7b", math="#f1fa8c",
         alerts=("#8be9fd", "#50fa7b", "#bd93f9", "#ffb86c", "#ff6e6e"), alert_bg="#2f3140",
         highlight="#f1fa8c", highlight_bg="#4a4a2c", selection_bg="#44475a", selection_fg="#f8f8f2"),
-        _code("#ff79c6", "#f1fa8c", "#9ba3cf", "#bd93f9", "#50fa7b", "#8be9fd", "#bd93f9", "#ff79c6", "#ff6e6e")),
+        _code("#ff79c6", "#f1fa8c", "#9ba3cf", "#bd93f9", "#50fa7b", "#8be9fd", "#bd93f9", "#ff79c6", "#ff7878")),
     _theme("high-contrast-light", "High Contrast Light", False, _page(
         bg="#ffffff", text="#000000", muted="#333333", link="#0000c8",
         headings=("#000000", "#000000", "#000000", "#000000", "#000000", "#333333"),
@@ -222,7 +225,7 @@ THEMES: dict[str, Theme] = {theme.id: theme for theme in (
         rule="#3e4451", th_bg="#2f343e", zebra="#2b2f37", mark="#98c379", math="#d19a66",
         alerts=("#6fb6f2", "#98c379", "#c98ee0", "#e5c07b", "#ef8a92"), alert_bg="#2c313a",
         highlight="#e5c07b", highlight_bg="#4a4430", selection_bg="#3e4451", selection_fg="#e6e9ef"),
-        _code("#c98ee0", "#98c379", "#959cab", "#d19a66", "#6fb6f2", "#e5c07b", "#56c2cf", "#ef8a92", "#ef8a92")),
+        _code("#c98ee0", "#98c379", "#9aa1af", "#d19a66", "#6fb6f2", "#e5c07b", "#56c2cf", "#ef8a92", "#ef8a92")),
     _theme("paper", "Paper", False, _page(
         bg="#f8f6f0", text="#1c1b19", muted="#55524b", link="#1d4f91",
         headings=("#111110", "#111110", "#111110", "#111110", "#111110", "#55524b"),
@@ -329,36 +332,50 @@ def contrast(a, b) -> float:
     return (high + 0.05) / (low + 0.05)
 
 
-#: (foreground role, background role, the least ratio) a theme's page must reach - AA's 4.5 for text,
-#: 3 for the alerts' coloured bars and titles (bold, large: AA's large text) and the rules are no text.
+#: (foreground role, background role, the least ratio) a theme's page must reach - AA's 4.5 for text on
+#: every ground it is drawn on (a link in a table's header and in inline code, muted text - struck, a code
+#: block's label - in tables and code, an alert's title: bold, but of the text's size, no large text), 3 for
+#: the alerts' coloured bars beside the page (no text).
 PAGE_PAIRS = (
     ("text", "page_bg", 4.5), ("link", "page_bg", 4.5), ("muted", "page_bg", 4.5), ("math", "page_bg", 4.5),
     *((f"h{n}", "page_bg", 4.5) for n in range(1, 7)),
-    ("code_fg", "code_bg", 4.5), ("text", "pre_bg", 4.5), ("quote_fg", "quote_bg", 4.5),
+    ("code_fg", "code_bg", 4.5), ("text", "pre_bg", 4.5), ("text", "code_bg", 4.5), ("quote_fg", "quote_bg", 4.5),
     ("text", "th_bg", 4.5), ("text", "zebra", 4.5),
     ("text", "highlight_bg", 4.5),  # (a <mark>, and Find's marks: ui.markdown_viewer.find_mark_format)
+    *(("link", ground, 4.5) for ground in ("th_bg", "zebra", "code_bg")),
+    *(("muted", ground, 4.5) for ground in ("th_bg", "zebra", "pre_bg", "code_bg")),
     ("mark", "page_bg", 3.0), ("selection_fg", "selection_bg", 4.5), ("text", "alert_bg", 4.5),
-    *((kind, "alert_bg", 3.0) for kind in ("note", "tip", "important", "warning", "caution")),
+    *((kind, "alert_bg", 4.5) for kind in ("note", "tip", "important", "warning", "caution")),
     *((kind, "page_bg", 3.0) for kind in ("note", "tip", "important", "warning", "caution")),
 )
-#: The text and links of a High Contrast theme: AAA.
+#: The text and links of a High Contrast theme: AAA - on the page and on every ground a link is drawn on.
 AAA_PAIRS = (("text", "page_bg", 7.0), ("link", "page_bg", 7.0), ("text", "pre_bg", 7.0),
-             ("code_fg", "code_bg", 7.0), ("text", "highlight_bg", 7.0))  # (the last: <mark> and Find's marks)
+             ("code_fg", "code_bg", 7.0), ("text", "highlight_bg", 7.0),  # (<mark> and Find's marks)
+             *(("link", ground, 7.0) for ground in ("th_bg", "zebra", "code_bg")))
+#: The terminal's text roles (core.markdown_term): each on the theme's ground - an alert's title, a heading,
+#: a link, a quote, a task's box, an image's name, a formula, muted notes.
+TERM_TEXT = ("text", "muted", "link", *(f"h{n}" for n in range(1, 7)), "quote", "mark", "open", "image", "math",
+             "note", "tip", "important", "warning", "caution")
 
 
 def contrast_report(theme: Theme) -> list[tuple[str, str, float, float]]:
-    """(foreground, background, ratio, the least allowed) of every pair the page and its code must reach -
-    the syntax colours each on the code's ground (3:1: a token's colour sets it apart, the text's
-    weight is the reader's)."""
-    page = theme.page
+    """(foreground, background, ratio, the least allowed) of every pair the page, its code and the terminal
+    must reach: :data:`PAGE_PAIRS` (and :data:`AAA_PAIRS` for a High Contrast theme); the syntax colours on
+    both grounds a code block has (pre_bg, and code_bg in an alert) at AA's 4.5 (AAA's 7 for a High Contrast
+    theme) - they are text; the terminal's text roles on its ground, inline code on its ground, a code
+    block's label on its, and the syntax colours on the ground (axross-mdcat paints code on the page)."""
+    page, term = theme.page, theme.term
     rows = [(fg, bg, contrast(page[fg], page[bg]), least) for fg, bg, least in PAGE_PAIRS]
     if theme.aaa:
         rows += [(fg, bg, contrast(page[fg], page[bg]), least) for fg, bg, least in AAA_PAIRS]
-    rows += [(f"code.{kind}", "pre_bg", contrast(colour, page["pre_bg"]), 3.0)
+    least = 7.0 if theme.aaa else 4.5
+    rows += [(f"code.{kind}", ground, contrast(colour, page[ground]), least)
+             for kind, colour in theme.code.items() for ground in ("pre_bg", "code_bg")]
+    rows += [(f"term.{role}", "term.page_bg", contrast(term[role], term["page_bg"]), 4.5) for role in TERM_TEXT]
+    rows += [("term.code_fg", "term.code_bg", contrast(term["code_fg"], term["code_bg"]), 4.5),
+             ("term.muted", "term.pre_bg", contrast(term["muted"], term["pre_bg"]), 4.5)]
+    rows += [(f"term.code.{kind}", "term.page_bg", contrast(colour, term["page_bg"]), 4.5)
              for kind, colour in theme.code.items()]
-    term = theme.term
-    rows += [(f"term.{role}", "term.page_bg", contrast(term[role], term["page_bg"]), 4.5)
-             for role in ("text", "link")]
     return rows
 
 
@@ -424,6 +441,6 @@ def terminal_default(environ=None, path: Path | None = None) -> str:
 
 
 __all__ = ["AUTO", "CHOICES", "CODE_KEYS", "DARK_CODE", "DARK_PAGE", "DARK_TERM", "ENV_TERM", "LIGHT_CODE",
-           "LIGHT_PAGE", "LIGHT_TERM", "PAGE_KEYS", "SETTING_PAGE", "SETTING_TERM", "TERM_KEYS", "THEMES", "Theme",
-           "code_of", "colours_of", "contrast", "contrast_report", "for_dark", "get", "luminance", "nearest256",
-           "normalize", "pygments_style", "readable256", "terminal_default", "xterm256_rgb"]
+           "LIGHT_PAGE", "LIGHT_TERM", "PAGE_KEYS", "SETTING_PAGE", "SETTING_TERM", "TERM_KEYS", "TERM_TEXT", "THEMES",
+           "Theme", "code_of", "colours_of", "contrast", "contrast_report", "for_dark", "get", "luminance",
+           "nearest256", "normalize", "pygments_style", "readable256", "terminal_default", "xterm256_rgb"]

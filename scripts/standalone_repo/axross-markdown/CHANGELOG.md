@@ -4,6 +4,68 @@ What changed in each release of axross-markdown. The code is axross's
 Markdown viewer (https://github.com/c0decave/axross), written out by axross's
 `scripts/export_standalone.py markdown`.
 
+## 0.17.4 - 2026-11-23
+
+What the twenty-seventh review left open, and two tests that failed now
+and then.
+
+- **Comments in Qt's own parser** (axross's built-in viewer; the window
+  without markdown-it) are read as GFM reads them. A `<!--` four columns in
+  (`para` over `    <!-- x`), one in a quote or a list item never closed
+  (`> <!-- a`), one in a table's cell, one inside a tag's attribute
+  (`<a href="x<!--y">`) hid what followed - all of the quote, the next
+  cells, the rest of the page. A comment in a paragraph now ends with the
+  paragraph at a heading, a rule, an underline, a list item, a deeper quote
+  or an HTML block; one never closed at the top of the page hides the rest
+  of it, code blocks too (they were shown); a quote's or a list item's ends
+  with it. The lines of an HTML block stay as written: `<div>` over `- a`
+  is no list, `<!-- x -->1. *bar*` and `<script>…</script>1. *bar*` no list
+  item. Code indented in a quote (`>     code`) stays code. Each case as
+  markdown-it's page shows it.
+- **A code block of 1,000,000 lines** after Ctrl+End and Ctrl+Home: each part
+  laid out into the gap between asked Qt's hit test where the view's top
+  is, which walks every block before it - each turn longer as the page
+  grew, 0.1 to 3.6 s at the end, 9 to 15 minutes for all of it. Now found
+  by halves: all of it in 3 minutes here, no turn over 0.05 s, the heap
+  at 1.4 GB.
+- **A resize** of a long page read to its end (markdown-it) showed it empty,
+  then its top for about 0.65 s, then the place read again; a zoom showed
+  the top for 0.4 s. The page's later pieces are kept for a page made
+  again as it is, and the view's picture stays until the place read is
+  shown. And a resize that keeps the text's width (a window wider than
+  the text) laid all of a page with a table or a quote in it out again -
+  Qt's own resize did, 0.48 s of the window a step of a drag over 10,000
+  sections; now only the scroll bars follow, 0.004 s.
+- **Themes:** every text colour reaches AA (4.5:1) on every ground it is
+  drawn on, as the 0.17.0 notes said - the syntax colours were held to
+  3:1, and comments, keywords and reds in Light, Solar Light, Solar Dark,
+  Arctic, Retro, Night Violet and Slate were below 4.5 (Arctic's keywords
+  3.74, Retro's 3.82); links in table headers and inline code, muted text
+  in tables and code, alert titles and the terminal's code were not
+  measured. Each colour moved only as far as AA needs. A theme chosen for
+  a big page waited for the typing's pause - twice the page's last
+  rendering, 4 to 12 s - before it was made; now after 0.3 s, and the
+  status line says the theme is being applied. Export HTML says when it
+  saved Light's colours for a page shown in another theme.
+- **The editor's preview** was made again whenever the cursor moved in a tab
+  whose View > Markdown Preview check was out of step with it.
+- **Releases:** `scripts/sign_release.py` signs only files the release
+  workflow attested (`gh attestation verify` of each, against this
+  repository's workflow and tag), wants all five files the updater
+  fetches, refuses a SHA256SUMS the updater would refuse (a name twice),
+  and opens an encrypted key (its `--no-verify-files` is gone). Every
+  install from a hashed lock takes wheels only (`--only-binary=:all:`);
+  the supply-chain gate checks PyInstaller's lock too (the build and test
+  locks wait for a review of their pins); the README says how to check
+  `SHA256SUMS.sig` with OpenSSL; the Windows and macOS programs leave Qt's
+  minimal platform plugin out.
+- **Tests:** the lexer stuck in backtracking that two tests rest on answered
+  in 1.08 to 1.15 s against their 1 s bound - on a faster machine within
+  it, the code coloured, the test failed. It never answers now. The grid's
+  sample is the same every run (it was the day's), and typing at the end
+  of a line of 390,000 characters gets on top of its budget what Qt itself
+  takes for that edit in a bare editor (0.10 s here).
+
 ## 0.17.3 - 2026-11-22
 
 The twenty-seventh review's findings (0.17.2 at 7/10).

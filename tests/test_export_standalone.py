@@ -435,10 +435,10 @@ def test_happy_markdown_ships_its_reviewed_lock_and_runs_the_gate_on_it(tmp_path
     pins = {line.split("==")[0] for line in lock.splitlines() if "==" in line and not line.startswith("#")}
     assert {"pyqt6", "markdown-it-py", "mdit-py-plugins", "pygments", "pillow", "linkify-it-py"} <= pins
     config = tomllib.loads((out / "supply-chain-gate.toml").read_text())
-    assert config["locks"] == ["requirements.lock.txt"]
+    assert config["locks"] == ["requirements.lock.txt", "packaging/requirements-pyinstaller.txt"]
     assert config["baseline_dir"] == ".axross/security/supply_chain_baseline"
     workflow = (out / ".github" / "workflows" / "tests.yml").read_text()
-    assert "--require-hashes -r requirements.lock.txt" in workflow and "--no-deps ." in workflow
+    assert "--require-hashes --only-binary=:all: -r requirements.lock.txt" in workflow and "--no-deps ." in workflow
     # (the build backend from the lock as well: nothing unpinned fetched for the build)
     assert "--no-build-isolation --no-deps ." in workflow and "setuptools" in pins
     # (a failure's pytest summary as annotations, readable through the API - v0.16.7's ci / test)
@@ -462,7 +462,7 @@ def test_sad_the_markdown_release_builds_its_sdist_and_wheel_with_hashed_tools_o
     text = (STANDALONE_REPO / "axross-markdown" / ".github" / "workflows" / "release.yml").read_text()
     step = next(step for step in _workflow("axross-markdown")["jobs"]["python"]["steps"]
                 if step.get("name") == "sdist and wheel")["run"]
-    assert "pip install --require-hashes -r packaging/requirements-build.txt" in step
+    assert "pip install --require-hashes --only-binary=:all: -r packaging/requirements-build.txt" in step
     assert "python -m build --no-isolation --outdir release/" in step
     assert "pip install build" not in text and not re.search(r"python -m build(?! --no-isolation)", text)
     lock = (STANDALONE_REPO / "axross-markdown" / "packaging" / "requirements-build.txt").read_text()
@@ -479,7 +479,8 @@ def test_sad_the_markdown_release_builds_its_sdist_and_wheel_with_hashed_tools_o
     out = EXP.export("markdown", tmp_path / "md")
     assert (out / "packaging" / "requirements-build.txt").read_text() == lock
     workflow = (out / ".github" / "workflows" / "tests.yml").read_text()
-    assert "pip install --require-hashes -r packaging/requirements-build.txt && python -m build --no-isolation" \
+    assert "pip install --require-hashes --only-binary=:all: -r packaging/requirements-build.txt && " \
+           "python -m build --no-isolation" \
         in workflow and "pip install build" not in workflow
 
 
@@ -497,8 +498,8 @@ def test_sad_the_markdown_release_and_ci_install_pytest_hashed_and_build_before_
     names = [step.get("name") for step in steps]
     build, tests = names.index("sdist and wheel"), names.index("Tests of the built wheel against the locked dependencies")
     assert build < tests  # (built first: nothing of the tests' tools in its environment)
-    assert "pip install --require-hashes -r packaging/requirements-test.txt" in steps[tests]["run"]
-    assert "pip install --require-hashes -r requirements.lock.txt" in steps[build]["run"]
+    assert "pip install --require-hashes --only-binary=:all: -r packaging/requirements-test.txt" in steps[tests]["run"]
+    assert "pip install --require-hashes --only-binary=:all: -r requirements.lock.txt" in steps[build]["run"]
     lock = (STANDALONE_REPO / "axross-markdown" / "packaging" / "requirements-test.txt").read_text()
     pins = re.findall(r"^([a-z0-9-]+)==\S+((?:\s*;[^\\\n]*)?) \\\n((?:    --hash=sha256:[0-9a-f]{64}(?: \\)?\n)+)",
                       lock, re.MULTILINE)
@@ -513,7 +514,7 @@ def test_sad_the_markdown_release_and_ci_install_pytest_hashed_and_build_before_
     out = EXP.export("markdown", tmp_path / "md")
     assert (out / "packaging" / "requirements-test.txt").read_text() == lock
     workflow = (out / ".github" / "workflows" / "tests.yml").read_text()
-    assert "pip install --require-hashes -r packaging/requirements-test.txt" in workflow
+    assert "pip install --require-hashes --only-binary=:all: -r packaging/requirements-test.txt" in workflow
     assert not re.search(r"pip install (?:[^\n]* )?pytest\b", workflow), "pytest unpinned in tests.yml"
     assert (out / "tests" / "markdown_heartbeat.py").is_file()  # (the stress tests' heartbeat goes with them)
 
@@ -565,7 +566,9 @@ def test_happy_the_release_workflow_pins_every_action_and_writes_only_in_its_rel
     assert workflow[True]["push"]["tags"] == ["v*.*.*"]  # YAML's "on" reads as True
     writers = [job for job, spec in workflow["jobs"].items() if spec.get("permissions")]
     assert writers == ["release"]
-    assert workflow["jobs"]["release"]["permissions"] == {"contents": "write"}
+    # (axross-markdown: id-token and attestations as well - the build provenance of its assets)
+    attest = {"id-token": "write", "attestations": "write"} if name == "axross-markdown" else {}
+    assert workflow["jobs"]["release"]["permissions"] == {"contents": "write", **attest}
     assert "gh release create" in text and "SHA256SUMS" in text and "${{ github.token }}" in text
 
 
@@ -643,7 +646,7 @@ def test_happy_the_markdown_binaries_follow_axross_s_build():
     text = (STANDALONE_REPO / "axross-markdown" / ".github" / "workflows" / "release.yml").read_text()
     for needle in ("--version", "--html smoke.md", "--term --no-pager", "AXROSS_SMOKE_MS",
                    "packaging/build_appimage.sh", "packaging/build_macos_dmg.sh",
-                   "--require-hashes -r requirements.lock.txt -r packaging/requirements-pyinstaller.txt"):
+                   "--require-hashes --only-binary=:all: -r requirements.lock.txt -r packaging/requirements-pyinstaller.txt"):
         assert needle in text, needle
 
 
@@ -944,3 +947,94 @@ def test_sad_the_timing_tests_run_on_their_own_and_block_no_release(tmp_path):
     assert '-m "timing or budgets"' in readme and "full strictness" in readme
     assert "a duration over its budget is a warning" in readme
 
+
+
+def _pip_installs(text: str) -> list[str]:
+    """The pip install commands of a workflow, a command continued over lines with "\\" joined."""
+    joined = re.sub(r"\\\n\s*", " ", text)
+    return [part.strip() for line in joined.splitlines() for part in line.split("&&") if "pip" in part
+            and " install " in part]
+
+
+def test_sad_every_install_from_a_hashed_lock_takes_wheels_only(tmp_path):
+    """No install had --only-binary=:all:: a pin whose wheel was missing (a new platform, a yanked wheel) was
+    built from its sdist, with build dependencies pip fetched unhashed. Every pin the locks hold for Python
+    3.12 on the release's runners has a hashed wheel (PyPI, measured for this change)."""
+    out = EXP.export("markdown", tmp_path / "md")
+    for path in (STANDALONE_REPO / "axross-markdown" / ".github" / "workflows" / "release.yml",
+                 out / ".github" / "workflows" / "tests.yml"):
+        installs = _pip_installs(path.read_text(encoding="utf-8"))
+        locked = [cmd for cmd in installs if " -r " in cmd]
+        assert locked, path
+        for cmd in locked:
+            assert "--require-hashes" in cmd and "--only-binary=:all:" in cmd, (path.name, cmd)
+        # (what is not from a lock: this project, built with the lock's setuptools, and the wheel just built)
+        assert all("--no-deps" in cmd for cmd in installs if cmd not in locked), (path.name, installs)
+
+
+def test_sad_the_gate_checks_every_lock_the_builds_install_from_or_says_why_not(tmp_path):
+    """The gate checked requirements.lock.txt only: PyInstaller's lock, which goes into every binary, was never
+    checked. Each hashed lock a workflow installs from is now one of the gate's - or one of
+    GATE_UNREVIEWED_LOCKS, whose pins axross's baseline has not reviewed - and each of the gate's has every
+    pin reviewed in axross's baseline (else the gate would stop every run)."""
+    import json
+    import tomllib
+
+    out = EXP.export("markdown", tmp_path / "md")
+    config = tomllib.loads((out / "supply-chain-gate.toml").read_text(encoding="utf-8"))
+    assert config["locks"] == ["requirements.lock.txt", "packaging/requirements-pyinstaller.txt"]
+    assert ".github/workflows/release.yml" in config["index_config"]
+    installed = set()
+    for path in (out / ".github" / "workflows" / "release.yml", out / ".github" / "workflows" / "tests.yml"):
+        for cmd in _pip_installs(path.read_text(encoding="utf-8")):
+            installed |= set(re.findall(r"-r (\S+)", cmd))
+    installed.discard("reduced/requirements-scan-tools.txt")  # (the gate's scanners: axross's lock, checked)
+    assert installed == {"requirements.lock.txt", "packaging/requirements-pyinstaller.txt",
+                         "packaging/requirements-build.txt", "packaging/requirements-test.txt"}
+    assert installed - set(config["locks"]) == set(EXP.GATE_UNREVIEWED_LOCKS)
+    baseline = EXP.ROOT / "security" / "supply_chain_baseline"
+    for rel in config["locks"]:
+        for name, version in re.findall(r"^([A-Za-z0-9_.-]+)==([^\s;\\]+)", (out / rel).read_text(), re.MULTILINE):
+            entry = baseline / f"{re.sub(r'[-_.]+', '-', name).lower()}.json"
+            assert entry.is_file() and version in json.loads(entry.read_text())["versions"], (rel, name, version)
+
+
+def test_sad_the_readme_says_how_to_check_sha256sums_sig_and_the_command_works(tmp_path):
+    """SHA256SUMS.sig had no documented way to be checked. The extended README has the pinned key as PEM
+    and an OpenSSL command; run here as written, with a throwaway key, it accepts the signature and refuses
+    a changed SHA256SUMS."""
+    import base64
+    import hashlib
+    import shutil
+
+    out = EXP.export("markdown", tmp_path / "md")
+    readme = (out / "docs" / "README-extended.md").read_text(encoding="utf-8")
+    assert "### Checking a download by hand" in readme
+    for key in EXP.release_keys():  # (the key the updater pins, as PEM)
+        body = base64.b64encode(bytes.fromhex("302a300506032b6570032100") + base64.b64decode(key)).decode()
+        assert f"-----BEGIN PUBLIC KEY-----\n{body}\n-----END PUBLIC KEY-----" in readme
+    assert EXP.release_key_check() in readme
+    pytest.importorskip("cryptography")
+    if shutil.which("openssl") is None or shutil.which("sha256sum") is None:
+        pytest.skip("no openssl or sha256sum")
+    version = subprocess.run(["openssl", "version"], capture_output=True, text=True).stdout
+    if not re.match(r"OpenSSL [3-9]\.", version):
+        pytest.skip(f"-rawin needs OpenSSL 3: {version.strip()}")
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    key = Ed25519PrivateKey.generate()
+    raw = key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    commands = EXP.release_key_check([base64.b64encode(raw).decode()]).split("```sh\n", 1)[1].split("```", 1)[0]
+    folder = tmp_path / "downloads"
+    folder.mkdir()
+    (folder / "axross-markdown-9.9.9-linux-x86_64").write_bytes(b"the program\n")
+    sums = f"{hashlib.sha256(b'the program' + bytes([10])).hexdigest()}  axross-markdown-9.9.9-linux-x86_64\n"
+    (folder / "SHA256SUMS").write_text(sums)
+    (folder / "SHA256SUMS.sig").write_bytes(key.sign(sums.encode()))
+    run = subprocess.run(["bash", "-e", "-c", commands], cwd=folder, capture_output=True, text=True, timeout=60)
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "Signature Verified Successfully" in run.stdout and "linux-x86_64: OK" in run.stdout
+    (folder / "SHA256SUMS").write_text(sums.replace("9.9.9", "9.9.8"))
+    run = subprocess.run(["bash", "-e", "-c", commands], cwd=folder, capture_output=True, text=True, timeout=60)
+    assert run.returncode != 0 and "Signature Verified Successfully" not in run.stdout

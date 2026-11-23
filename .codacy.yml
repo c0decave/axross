@@ -1,6 +1,6 @@
 # Codacy reads every file a tool reports on as UTF-8 when it writes its SARIF
 # report, and an image or audio file stopped it for good (tests/test_codacy_config.py);
-# the gzipped Outlook fixtures of the mail tests likewise.
+# the gzipped Outlook fixtures of the mail tests and the golden pictures' fonts likewise.
 exclude_paths:
   - "**/*.png"
   - "**/*.wav"
@@ -8,3 +8,4 @@ exclude_paths:
   - "**/*.ogg"
   - "**/*.flac"
   - "**/*.gz"
+  - "**/*.ttf"

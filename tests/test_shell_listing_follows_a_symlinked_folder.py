@@ -156,7 +156,8 @@ def test_edge_the_root_is_listed_as_a_single_slash(maker):
     sent: list[str] = []
     sess = MAKERS[maker](sent)
     sess.list_dir("/")
-    assert sent and sent[0].endswith("ls -la /"), sent
+    # (the ADB session lists with escaped names: ls -la -b)
+    assert sent and sent[0].endswith(("ls -la /", "ls -la -b /")), sent
 
 
 @pytest.mark.parametrize("maker", MAKERS)

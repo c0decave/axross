@@ -26,7 +26,7 @@ def _session() -> AdbSession:
     s = AdbSession.__new__(AdbSession)
 
     def shell(cmd):
-        if cmd == "TZ=UTC0 ls -la /dev/":
+        if cmd in ("TZ=UTC0 ls -la /dev/", "TZ=UTC0 ls -la -b /dev/"):
             return DEV
         name = cmd.split()[-1]
         return f"crw-rw-rw- 1 root root 1, 3 2024-01-01 00:00 {name}\n"

@@ -10,6 +10,8 @@
 *.png binary
 # archives (tests/fixtures/mail: the PST/OST fixtures)
 *.gz binary
+# fonts (tests/golden/fonts: the Markdown reader's golden pictures)
+*.ttf binary
 # audio (tests/fixtures/audio)
 *.flac binary
 *.mp3 binary
